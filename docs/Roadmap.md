@@ -1,7 +1,7 @@
 # Roadmap
 
 Milestones are intentionally small and each leaves the project in a runnable
-state.
+state. Status follows the agreed phase order.
 
 ## M0 — Foundation ✅
 
@@ -9,53 +9,61 @@ state.
 - Documentation suite (`docs/*.md`).
 - Coding standards + pre-commit + CI skeleton.
 
-## M1 — FRIDAY Core ✅ (this milestone)
+## M1 — Core Runtime ✅
 
-- `friday-core` Rust crate:
-  - Async **event bus** (`core/src/event`).
-  - **Plugin SDK** + `PluginManager` router (`core/src/plugin`).
-  - Layered **memory** interfaces (`core/src/memory`).
-  - **Protocol** transport for request/response (`core/src/protocol`).
-  - **Runtime** that wires it together (`core/src/runtime`).
+- `friday-core` Rust crate: async **event bus**, **Plugin SDK** +
+  `PluginManager` router, layered **memory** interfaces, **protocol**
+  transport, **runtime** wiring, **logging** (tracing).
 - Reference `echo_plugin` example + integration test (passing).
 
-## M2 — Memory backends ✅
+## M2 — Memory Engine ✅
 
-- Implement `WorkingMemory` (in-process, ephemeral).
-- Implement `SessionMemory` and `LongTermMemory` over an embedded **redb** store
+- `WorkingMemory` (in-process, ephemeral).
+- `SessionMemory` and `LongTermMemory` over an embedded **redb** store
   (pure-Rust ACID; chosen over SQLite because this dev machine's Rust toolchain
   is GNU with no C compiler, so `rusqlite` cannot build here — see `Memory.md`).
-- Implement `VectorMemory` with in-memory cosine-similarity search over stored
-  embeddings.
-- Wire memory events: `memory.store`, `memory.recall`, `memory.search`.
+- `VectorMemory` with in-memory cosine-similarity search over stored embeddings.
+- `MemoryEngine::default_layers` convenience.
 
-## M3 — Permission & safety layer
+## M3 — Planner Engine ✅
 
-- Define a `Permission` enum and an approval gate on the execution path.
-- Block the forbidden actions from `Security.md` by default.
-- Audit log for every privileged action.
+- `friday-planner` crate with four independent engine plugins:
+  - **Intent Engine** — `goal.raw` → `intent.created` (rule-based parser/classifier).
+  - **Planning Engine** — `intent.created` → `plan.created` (builds a DAG `TaskGraph`).
+  - **Execution Engine** — `plan.created` → `task.started` / `exec.action` → `task.completed`.
+  - **Verification Engine** — `task.completed`/`task.failed` → `verification.*`, driving retry/replan.
+- Plans are a **DAG**; every task has an explicit lifecycle (`TaskState`).
+- End-to-end pipeline test against a `MockExecutor` (happy path + retry path).
 
-## M4 — AI Orchestrator (Python)
+## M4 — Execution Plugins ⏳
 
-- Planner + reasoning models routing through the event bus.
+- Real capability plugins consuming `exec.action`: Terminal, Filesystem,
+  Browser, Windows (C#), Git.
+- **Permission & safety layer**: `Permission` enum + approval gate on the
+  execution path (see `Security.md`); forbidden actions blocked by default;
+  audit log for every privileged action.
+
+## M5 — AI Layer ⏳
+
+- LLM provider abstraction (local via Ollama + cloud fallback).
 - Model specialist registry (conversation, planning, vision, coding, speech,
-  embedding).
-- Local-first with Ollama, cloud fallback.
+  reasoning, embedding) and model routing.
+- Replaces the rule-based Intent classifier and Planning heuristics with
+  model-driven ones behind the same event contract.
 
-## M5 — Voice & Vision
+## M6 — Vision ⏳
+
+- Screen capture, OCR, scene understanding, UI element tree plugins.
+
+## M7 — Voice ⏳
 
 - Wake word → STT → conversation → TTS pipeline as plugins.
-- Screen capture + OCR + scene understanding plugin.
 
-## M6 — Windows integration (C#)
+## M8 — GUI ⏳
 
-- Window management, clipboard, file operations, app launching via a C# service
-  exposed over the protocol transport.
+- Desktop UI (React + Tauri): status surface, permission prompts, memory
+  viewer, plugin manager.
 
-## M7 — Desktop UI (React + Tauri)
-
-- Status surface, permission prompts, memory viewer, plugin manager UI.
-
-## M8 — Packaging & installer (Rust)
-
-- Single native installer, auto-update, signed binary.
+> The four reasoning engines and the standard event vocabulary are **locked**
+> (see `Architecture.md`, `Planner.md`, `Execution.md`). New features must answer:
+> which event do they consume, which do they produce, which plugin owns them.
