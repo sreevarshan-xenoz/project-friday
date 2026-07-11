@@ -209,6 +209,28 @@ impl Provider for OpenAiProvider {
     }
 }
 
+/// Telemetry metrics for each request made through the Inference Fabric.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InferenceMetrics {
+    pub request_id: String,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub provider: String,
+    pub model: String,
+    pub latency_ms: u64,
+    pub success: bool,
+    pub retry_count: usize,
+    pub error: Option<String>,
+}
+
+/// Representation of health state persisted locally.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistedProviderHealth {
+    pub name: String,
+    pub reliability: f64,
+    pub consecutive_failures: usize,
+    pub circuit_state: String, // "Closed", "Open", "HalfOpen"
+}
+
 /// Coordinates model selection, state tracking, and error recovery.
 pub struct InferenceFabric {
     pub providers: HashMap<String, Box<dyn Provider>>,
@@ -292,6 +314,76 @@ impl InferenceFabric {
         });
         
         candidates
+    }
+
+    /// Persists health scores and circuit states to a local file.
+    pub fn persist_health(&self) {
+        let scores = self.health_scores.lock().unwrap();
+        let circuits = self.circuits.lock().unwrap();
+        
+        let mut persisted = Vec::new();
+        for (name, reliability) in scores.iter() {
+            let (consec_failures, state_str) = if let Some(cb) = circuits.get(name) {
+                let state_str = match cb.state {
+                    CircuitState::Closed => "Closed",
+                    CircuitState::Open => "Open",
+                    CircuitState::HalfOpen => "HalfOpen",
+                };
+                (cb.failures, state_str.to_string())
+            } else {
+                (0, "Closed".to_string())
+            };
+            persisted.push(PersistedProviderHealth {
+                name: name.clone(),
+                reliability: *reliability,
+                consecutive_failures: consec_failures,
+                circuit_state: state_str,
+            });
+        }
+
+        let _ = std::fs::create_dir_all(".fabric");
+        if let Ok(file) = std::fs::File::create(".fabric/provider_health.json") {
+            let _ = serde_json::to_writer_pretty(file, &persisted);
+        }
+    }
+
+    /// Loads health scores and circuit states from local file if exists.
+    pub fn load_health(&self) {
+        if let Ok(file) = std::fs::File::open(".fabric/provider_health.json") {
+            if let Ok(persisted) = serde_json::from_reader::<_, Vec<PersistedProviderHealth>>(file) {
+                let mut scores = self.health_scores.lock().unwrap();
+                let mut circuits = self.circuits.lock().unwrap();
+                for p in persisted {
+                    scores.insert(p.name.clone(), p.reliability);
+                    if let Some(cb) = circuits.get_mut(&p.name) {
+                        cb.failures = p.consecutive_failures;
+                        cb.state = match p.circuit_state.as_str() {
+                            "Open" => CircuitState::Open,
+                            "HalfOpen" => CircuitState::HalfOpen,
+                            _ => CircuitState::Closed,
+                        };
+                        if cb.state == CircuitState::Open {
+                            cb.last_failure = Some(Instant::now());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Logs request telemetry to a local JSON Lines file.
+    pub fn log_metrics(&self, metrics: &InferenceMetrics) {
+        let _ = std::fs::create_dir_all(".fabric");
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(".fabric/metrics.jsonl")
+        {
+            use std::io::Write;
+            if let Ok(line) = serde_json::to_string(metrics) {
+                let _ = writeln!(file, "{}", line);
+            }
+        }
     }
 
     /// Create default fabric configuration dynamically based on registry config file or env vars.
@@ -417,6 +509,7 @@ impl InferenceFabric {
             });
         }
 
+        fabric.load_health();
         fabric
     }
 }
@@ -424,40 +517,128 @@ impl InferenceFabric {
 #[async_trait]
 impl ModelClient for InferenceFabric {
     async fn complete(&self, prompt: &str) -> Result<String, String> {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        tracing::info!("[Inference Request {}] Starting completion routing...", request_id);
+
         let candidates = self.select_candidates(self.default_mode);
         if candidates.is_empty() {
-            return Err("No active providers configured for this routing mode.".to_string());
+            let err_msg = "No active providers configured for this routing mode.".to_string();
+            let metrics = InferenceMetrics {
+                request_id: request_id.clone(),
+                timestamp: chrono::Utc::now(),
+                provider: "none".to_string(),
+                model: "none".to_string(),
+                latency_ms: 0,
+                success: false,
+                retry_count: 0,
+                error: Some(err_msg.clone()),
+            };
+            self.log_metrics(&metrics);
+            return Err(err_msg);
         }
 
         let mut last_error = String::new();
+        let mut attempts = 0;
+        let start = Instant::now();
+
         for (model, provider) in candidates {
+            tracing::info!(
+                "[Inference Request {}] Attempting candidate: {}/{}...",
+                request_id,
+                provider.name(),
+                model.id
+            );
+
+            attempts += 1;
             match provider.complete(&model.id, prompt, false).await {
                 Ok(response) => {
-                    let mut guard = self.health_scores.lock().unwrap();
-                    if let Some(score) = guard.get_mut(provider.name()) {
-                        *score = (*score + 0.1).min(1.0);
+                    let latency_ms = start.elapsed().as_millis() as u64;
+                    tracing::info!(
+                        "[Inference Request {}] Success on candidate {}/{} ({}ms)",
+                        request_id,
+                        provider.name(),
+                        model.id,
+                        latency_ms
+                    );
+
+                    // Update reliability score
+                    {
+                        let mut guard = self.health_scores.lock().unwrap();
+                        if let Some(score) = guard.get_mut(provider.name()) {
+                            *score = (*score + 0.1).min(1.0);
+                        }
                     }
-                    let mut cb_guard = self.circuits.lock().unwrap();
-                    if let Some(cb) = cb_guard.get_mut(provider.name()) {
-                        cb.record_success();
+
+                    // Reset circuit breaker consecutive failure counter
+                    {
+                        let mut cb_guard = self.circuits.lock().unwrap();
+                        if let Some(cb) = cb_guard.get_mut(provider.name()) {
+                            cb.record_success();
+                        }
                     }
+
+                    self.persist_health();
+
+                    // Log metrics
+                    let metrics = InferenceMetrics {
+                        request_id: request_id.clone(),
+                        timestamp: chrono::Utc::now(),
+                        provider: provider.name().to_string(),
+                        model: model.id.clone(),
+                        latency_ms,
+                        success: true,
+                        retry_count: attempts - 1,
+                        error: None,
+                    };
+                    self.log_metrics(&metrics);
+
                     return Ok(response);
                 }
                 Err(err) => {
-                    tracing::warn!("Provider {} call failed: {}. Trip tracking...", provider.name(), err);
-                    let mut guard = self.health_scores.lock().unwrap();
-                    if let Some(score) = guard.get_mut(provider.name()) {
-                        *score = (*score - 0.2).max(0.0);
+                    tracing::warn!(
+                        "[Inference Request {}] Candidate {}/{} failed: {}. Retrying next...",
+                        request_id,
+                        provider.name(),
+                        model.id,
+                        err
+                    );
+
+                    // Degrade reliability rating
+                    {
+                        let mut guard = self.health_scores.lock().unwrap();
+                        if let Some(score) = guard.get_mut(provider.name()) {
+                            *score = (*score - 0.2).max(0.0);
+                        }
                     }
-                    let mut cb_guard = self.circuits.lock().unwrap();
-                    if let Some(cb) = cb_guard.get_mut(provider.name()) {
-                        cb.record_failure();
+
+                    // Trip circuit failure
+                    {
+                        let mut cb_guard = self.circuits.lock().unwrap();
+                        if let Some(cb) = cb_guard.get_mut(provider.name()) {
+                            cb.record_failure();
+                        }
                     }
+
+                    self.persist_health();
                     last_error = err;
                 }
             }
         }
 
-        Err(format!("All candidates failed. Last error: {}", last_error))
+        let latency_ms = start.elapsed().as_millis() as u64;
+        let final_err = format!("All candidates failed. Last error: {}", last_error);
+        let metrics = InferenceMetrics {
+            request_id: request_id.clone(),
+            timestamp: chrono::Utc::now(),
+            provider: "all".to_string(),
+            model: "none".to_string(),
+            latency_ms,
+            success: false,
+            retry_count: attempts,
+            error: Some(final_err.clone()),
+        };
+        self.log_metrics(&metrics);
+
+        Err(final_err)
     }
 }
