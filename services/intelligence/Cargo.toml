@@ -1,0 +1,22 @@
+[package]
+name = "friday-intelligence"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "FRIDAY Intelligence Layer (M5): System 1/2 Router, Prompt Compiler, Response Interpreter"
+
+[dependencies]
+friday-core = { path = "../../core" }
+friday-planner = { path = "../../planner" }
+friday-context = { path = "../context" }
+friday-capabilities = { path = "../capabilities" }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
