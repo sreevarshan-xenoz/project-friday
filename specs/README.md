@@ -60,6 +60,7 @@ work this directory supersedes it.
 | Capabilities        | `capabilities.md`   | `services/capabilities`              | ✅ M4.6  |
 | Services            | `services.md`       | `services/action-runtime/adapters`   | ✅ M4.5  |
 | IPC (Windows bridge)| `ipc.md`            | `plugins/windows` + `windows-host`   | ✅ M4.5.2|
-| Simulation          | `simulation.md`     | `services/simulation` (new)          | 🚧 M4.7  |
+| Simulation          | `simulation.md`     | `services/simulation`                | ✅ M4.7  |
+| Experience (Engine) | `experience.md`     | `friday-core`                        | ✅ M4.8  |
 | Context Builder     | `context.md`        | `services/context` (new)             | 🚧 M4.10 |
 | Intelligence        | `intelligence.md`   | `services/intelligence` (new)        | ⏳ M5    |
