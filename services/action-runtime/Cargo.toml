@@ -1,0 +1,20 @@
+[package]
+name = "friday-actions"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "FRIDAY Action Runtime: dispatch/timeout/cancel/retry/telemetry + permission gate + audit"
+
+[dependencies]
+friday-core = { path = "../../core" }
+friday-planner = { path = "../../planner" }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tokio = { version = "1", features = ["full"] }
