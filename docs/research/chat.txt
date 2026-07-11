@@ -1,0 +1,1090 @@
+Yep. I know exactly what you're aiming for.
+
+Not a chatbot.
+
+Not a voice assistant that opens Chrome.
+
+You want **a digital employee that lives inside Windows.**
+
+Something that can see, hear, think, remember, plan, and operate the PC exactly like a skilled human would.
+
+Imagine saying:
+
+> "Friday, finish my assignment, reply to those emails, download the lecture slides, convert them to notes, commit the code to GitHub, then start Cyberpunk when I'm done."
+
+...and it actually does it.
+
+That's a completely different level than Siri, Alexa, or even ChatGPT Desktop.
+
+---
+
+# What "FRIDAY" actually needs
+
+Instead of one AI model, it needs around **15-20 specialized systems** working together.
+
+```
+                YOU
+                 │
+          Wake Word Engine
+                 │
+         Speech Recognition
+                 │
+          Conversation Brain
+                 │
+       Planner / Task Manager
+                 │
+      ┌──────────┼───────────┐
+      │          │           │
+ Desktop      Browser      Memory
+ Controller   Controller
+      │          │
+ Vision      Keyboard/Mouse
+      │          │
+      └──── Windows API ─────┘
+```
+
+The "LLM" is only about **20%** of the project.
+
+The rest is engineering.
+
+---
+
+# The capabilities I'd build
+
+## 1. Vision 👀
+
+Friday constantly understands what's on your monitor.
+
+Not screenshots every few seconds.
+
+Live desktop understanding.
+
+It knows
+
+* which window is active
+* where every button is
+* what text is visible
+* what notifications appeared
+* which game you're playing
+* what IDE is open
+
+Think of GPT-4 Vision running continuously.
+
+---
+
+## 2. Voice
+
+Real wake word
+
+```
+"Hey Friday"
+```
+
+No push-to-talk.
+
+Far-field microphone.
+
+Interruptible speech.
+
+Natural conversations.
+
+Emotion detection.
+
+Multiple voices.
+
+Streaming responses.
+
+---
+
+## 3. Mouse & Keyboard Control
+
+Instead of APIs only...
+
+Friday literally becomes another user.
+
+It can
+
+* move mouse
+* drag
+* type
+* right click
+* press shortcuts
+* scroll
+* resize windows
+
+Exactly like a human.
+
+---
+
+## 4. Browser Agent
+
+Instead of Selenium...
+
+It understands websites visually.
+
+For example
+
+```
+Friday,
+book me a train ticket.
+```
+
+It opens Chrome.
+
+Searches.
+
+Logs in.
+
+Reads options.
+
+Clicks.
+
+Pays (after confirmation).
+
+---
+
+## 5. Windows Controller
+
+Control literally everything.
+
+Examples
+
+```
+Install Blender.
+
+Uninstall Discord.
+
+Update NVIDIA drivers.
+
+Empty recycle bin.
+
+Restart explorer.exe
+
+Increase volume
+
+Turn WiFi off
+
+Pair Bluetooth
+
+Create new folder
+
+Rename files
+
+Zip folder
+
+Change wallpaper
+
+Enable Dark Mode
+```
+
+Everything.
+
+---
+
+## 6. Coding Agent
+
+Like Codex...
+
+but inside your PC.
+
+```
+Friday
+
+Open VS Code.
+
+Find bug.
+
+Fix it.
+
+Run tests.
+
+Commit.
+
+Push to GitHub.
+```
+
+---
+
+## 7. File System Brain
+
+Friday remembers
+
+```
+Your Downloads
+
+Projects
+
+Assignments
+
+Photos
+
+Videos
+
+Notes
+
+Passwords (encrypted)
+
+PDFs
+
+```
+
+You can ask
+
+```
+Where did I save that AI report
+last month?
+```
+
+It finds it.
+
+---
+
+## 8. Long-Term Memory
+
+Unlike ChatGPT...
+
+It remembers forever.
+
+Example
+
+```
+You prefer Python.
+
+You hate Java.
+
+Your gym time is 6 PM.
+
+Your laptop has RTX 3060.
+
+Your professor likes PDFs.
+
+Your favorite anime is...
+```
+
+It builds a knowledge graph.
+
+---
+
+## 9. Planning
+
+This is the missing piece in almost every assistant.
+
+Instead of
+
+```
+User
+↓
+
+LLM
+↓
+
+Answer
+```
+
+Friday becomes
+
+```
+Goal
+
+↓
+
+Break into subtasks
+
+↓
+
+Execute
+
+↓
+
+Check
+
+↓
+
+Retry
+
+↓
+
+Verify
+
+↓
+
+Report
+```
+
+Exactly like a human employee.
+
+---
+
+## 10. Learning
+
+Imagine this.
+
+You resize Chrome.
+
+Move Discord.
+
+Open Spotify.
+
+Every single day.
+
+Friday notices.
+
+After a week...
+
+```
+Good evening.
+
+Would you like me to prepare
+your workspace?
+```
+
+It already knows.
+
+---
+
+# Advanced abilities
+
+Imagine saying
+
+```
+Friday
+
+Watch my coding style.
+
+Learn it.
+
+From now on
+write code like me.
+```
+
+Or
+
+```
+Observe how I edit videos.
+
+Remember.
+
+Next time edit automatically.
+```
+
+This is where it becomes frighteningly useful.
+
+---
+
+# The tech stack I would choose
+
+### Brain
+
+* GPT-5 / local model fallback
+
+### Memory
+
+* SQLite
+* Vector DB
+* Knowledge Graph
+
+### Voice
+
+* Whisper
+* Silero VAD
+* Piper / Kokoro TTS or cloud TTS
+
+### Vision
+
+* OCR
+* UI Automation
+* Vision-language model
+
+### Automation
+
+* Windows UI Automation
+* Accessibility APIs
+* Win32 API
+* PowerShell
+* COM Automation
+* Mouse/Keyboard simulation
+
+### Browser
+
+* Playwright
+* Chromium DevTools Protocol
+
+### Coding
+
+* Local filesystem
+* Git integration
+* Terminal execution
+
+### Language
+
+* Python for orchestration
+* Rust for performance-critical modules
+* C# where Windows integration is strongest
+
+---
+
+# The architecture
+
+```
+Friday.exe
+
+│
+
+├── Voice Engine
+
+├── Vision Engine
+
+├── Memory Engine
+
+├── Planner
+
+├── Skills
+
+│      ├── Browser
+
+│      ├── Windows
+
+│      ├── Coding
+
+│      ├── Files
+
+│      ├── Terminal
+
+│      ├── Email
+
+│      ├── Calendar
+
+│      ├── Games
+
+│      └── Office
+
+├── AI Brain
+
+├── Security Manager
+
+├── Permission Manager
+
+└── Plugin SDK
+```
+
+---
+
+# The biggest mistake people make
+
+They start by building:
+
+```
+Speech
+
+↓
+
+ChatGPT
+
+↓
+
+Text-to-Speech
+```
+
+That's just a talking chatbot.
+
+A real desktop agent should instead be:
+
+```
+Goal
+
+↓
+
+Planner
+
+↓
+
+Reasoning
+
+↓
+
+Skill Selection
+
+↓
+
+Execution
+
+↓
+
+Verification
+
+↓
+
+Memory Update
+
+↓
+
+Conversation
+```
+
+Notice that **conversation comes last**, not first.
+
+---
+
+# If this were my project
+
+I would treat it like building an operating system companion, not an assistant.
+
+I'd split it into milestones:
+
+1. **Core OS Agent**: Voice, memory, Windows control, terminal, files.
+2. **Desktop Vision**: Continuous screen understanding, UI detection, visual reasoning.
+3. **Browser Intelligence**: Navigate websites, fill forms, complete tasks visually.
+4. **Developer Mode**: Code editing, Git, debugging, automation.
+5. **Autonomous Planning**: Multi-step goals, retries, verification, scheduling.
+6. **Learning & Personalization**: Observe habits, build long-term knowledge, adapt workflows.
+7. **Plugin Ecosystem**: Let anyone add new skills without modifying the core.
+
+This is the direction companies like OpenAI, Microsoft, and Anthropic are all moving toward. Building a polished version is a major engineering effort, but it's absolutely achievable as an ambitious long-term project.
+
+Given what I know about your interests, I also wouldn't build it as "just another AI app." I'd make **FRIDAY** the central intelligence that coordinates every capability through a plugin system. That way, new skills like CAD control, Android automation, smart home integration, or even robotics become installable modules instead of requiring changes to the core.
+
+That architecture scales from "open Notepad" all the way to "spend the next two hours preparing my project presentation and ask me only if you get stuck."
+Hell yes. This is the point where most people immediately start writing Python.
+
+We're **not** doing that.
+
+We're going to build this like a real software company would.
+
+Think of this as building **the operating system's AI layer**, not "another AI project."
+
+---
+
+# PROJECT FRIDAY
+
+> **Mission**
+>
+> Build the world's best open-source desktop AI agent that can use Windows like a human.
+
+Not "an AI assistant."
+
+Not "Jarvis clone."
+
+A genuine **Desktop Intelligence Platform.**
+
+---
+
+# Step 0: Foundation
+
+Before writing a single line of code we need the architecture.
+
+Our project should look like this:
+
+```
+FRIDAY/
+
+├── docs/
+│
+├── architecture/
+│
+├── prototypes/
+│
+├── services/
+│
+├── models/
+│
+├── sdk/
+│
+├── frontend/
+│
+├── desktop/
+│
+├── plugins/
+│
+├── memory/
+│
+├── tests/
+│
+├── scripts/
+│
+├── assets/
+│
+└── README.md
+```
+
+Everything from now on belongs inside one ecosystem.
+
+---
+
+# Step 0.1 Define the Philosophy
+
+Our AI has only one job.
+
+> **Understand. Plan. Execute. Verify. Learn.**
+
+Everything else is a module.
+
+---
+
+# Step 0.2 Decide the Language
+
+This is where many projects become slow forever.
+
+### I would NOT use only Python.
+
+Instead
+
+| Component           | Language      |
+| ------------------- | ------------- |
+| Core Engine         | Rust          |
+| AI Orchestrator     | Python        |
+| Windows Integration | C#            |
+| Desktop UI          | React + Tauri |
+| Plugins             | Python/Rust   |
+| Memory Engine       | Rust          |
+| Vision              | Python        |
+| Installer           | Rust          |
+
+Why?
+
+Python is amazing for AI.
+
+Rust is amazing for performance.
+
+C# is amazing for Windows.
+
+Use each language where it wins.
+
+---
+
+# Step 0.3 Development Machine
+
+Luckily your laptop is already capable.
+
+Your specs:
+
+✅ RTX 3060 6GB
+
+✅ Ryzen 7
+
+✅ 32GB RAM
+
+✅ 1TB SSD
+
+That is enough for local development.
+
+---
+
+# Step 0.4 Software
+
+Install
+
+```
+Python 3.12
+
+Rust
+
+Visual Studio 2022 Build Tools
+
+Visual Studio Code
+
+Git
+
+Node.js LTS
+
+Docker Desktop
+
+Ollama
+
+PowerShell 7
+
+Windows Terminal
+
+uv
+
+pnpm
+```
+
+Avoid pip wherever possible.
+
+Use **uv**.
+
+---
+
+# Step 0.5 Coding Standards
+
+Never allow random files.
+
+Everything should follow
+
+```
+Black
+
+ruff
+
+mypy
+
+pre-commit
+
+pytest
+```
+
+Rust
+
+```
+cargo fmt
+
+clippy
+```
+
+---
+
+# Step 0.6 Documentation
+
+Before coding
+
+Create
+
+```
+docs/
+
+Vision.md
+
+Architecture.md
+
+Modules.md
+
+CodingStandards.md
+
+Roadmap.md
+
+API.md
+
+Security.md
+
+Memory.md
+
+Voice.md
+
+VisionSystem.md
+
+PluginSDK.md
+```
+
+Every module gets documentation first.
+
+---
+
+# Step 0.7 Git
+
+Never develop on main.
+
+```
+main
+
+dev
+
+feature/*
+```
+
+---
+
+# Step 0.8 CI/CD
+
+GitHub Actions
+
+Every push
+
+```
+Lint
+
+Tests
+
+Formatting
+
+Security Scan
+
+Build
+```
+
+---
+
+# Step 0.9 Plugin Architecture
+
+This is probably the most important decision.
+
+Friday itself should know almost nothing.
+
+Everything becomes a plugin.
+
+Example
+
+```
+Voice Plugin
+
+Vision Plugin
+
+Browser Plugin
+
+Git Plugin
+
+Terminal Plugin
+
+Windows Plugin
+
+Discord Plugin
+
+Spotify Plugin
+
+Steam Plugin
+
+Minecraft Plugin
+
+OBS Plugin
+
+VSCode Plugin
+```
+
+The core simply routes tasks.
+
+---
+
+# Step 0.10 Event Bus
+
+Nothing talks directly.
+
+Everything communicates through events.
+
+Example
+
+```
+Voice
+
+↓
+
+Event
+
+↓
+
+Planner
+
+↓
+
+Execution
+
+↓
+
+Verification
+
+↓
+
+Memory
+
+↓
+
+Voice
+```
+
+This makes the project scalable.
+
+---
+
+# Step 0.11 Memory
+
+Separate memory into layers.
+
+```
+Working Memory
+
+↓
+
+Session Memory
+
+↓
+
+Long-term Memory
+
+↓
+
+Knowledge Graph
+
+↓
+
+Vector Database
+```
+
+Exactly how humans remember.
+
+---
+
+# Step 0.12 AI Models
+
+Instead of one model...
+
+We'll have specialists.
+
+Example
+
+```
+Conversation Model
+
+↓
+
+Planning Model
+
+↓
+
+Vision Model
+
+↓
+
+Coding Model
+
+↓
+
+Speech Model
+
+↓
+
+Reasoning Model
+
+↓
+
+Embedding Model
+```
+
+One giant model trying to do everything is usually slower and less reliable than a coordinated set of specialized models.
+
+---
+
+# Step 0.13 Permissions
+
+Friday should NEVER be able to
+
+```
+Delete files
+
+Format drives
+
+Send emails
+
+Transfer money
+
+Install software
+```
+
+without explicit approval.
+
+Everything dangerous goes through a permission layer.
+
+---
+
+# Step 0.14 Logging
+
+Everything.
+
+```
+Voice
+
+Planning
+
+Errors
+
+Actions
+
+Memory
+
+Latency
+
+Models
+
+Performance
+
+```
+
+You'll thank yourself later.
+
+---
+
+# Step 0.15 Our Final Architecture
+
+```
+                   USER
+                     │
+          Wake Word Engine
+                     │
+          Speech Recognition
+                     │
+          Conversation Engine
+                     │
+             Goal Interpreter
+                     │
+            Planning Engine
+                     │
+             Event Bus
+                     │
+      ┌──────────────┼──────────────┐
+      │              │              │
+ Vision        Windows Skill     Browser
+      │              │              │
+ Terminal        Filesystem      Coding
+      │              │              │
+      └──────────────┼──────────────┘
+                     │
+              Verification
+                     │
+              Memory Engine
+                     │
+               Knowledge Graph
+                     │
+              Plugin Manager
+                     │
+                 Voice Reply
+```
+
+---
+
+# Step 0.16 Project Name
+
+I'd avoid calling the repository simply `Friday`, because there are already many projects with that name.
+
+Some better options:
+
+```
+friday-core
+friday-os
+friday-ai
+project-friday
+friday-engine
+atlas
+sentinel
+iris-core
+```
+
+---
+
+# What I would change from the research
+
+After reading the research, there are three architectural upgrades I'd make:
+
+1. **Use an event-driven architecture from day one.** Don't let modules call each other directly. An event bus keeps the system modular and makes adding new capabilities much easier.
+
+2. **Treat every capability as a plugin.** Voice, browser control, coding, and Windows automation should all be replaceable modules. If a better speech recognizer appears next year, you swap the plugin instead of rewriting the application.
+
+3. **Separate reasoning from execution.** The LLM should decide *what* to do. Specialized executors should decide *how* to do it. That keeps the AI from generating fragile automation logic directly.
+
+---
+
+## Our next milestone
+
+We won't start with voice.
+
+We won't start with a GUI.
+
+We'll start by designing the **FRIDAY Core**, because every other subsystem depends on it.
+
+That means defining:
+
+* The complete folder structure
+* The internal architecture
+* The event bus
+* The plugin SDK
+* The memory system
+* The service interfaces
+* The communication protocol between modules
+
+If we get those right, the project can grow from a simple desktop assistant into a true autonomous desktop operating companion without needing to be rebuilt later.
