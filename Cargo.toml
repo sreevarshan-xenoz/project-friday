@@ -8,6 +8,7 @@ members = [
     "services/simulation",
     "services/context",
     "services/intelligence",
+    "e2e",
     "plugins/windows"
 ]
 
