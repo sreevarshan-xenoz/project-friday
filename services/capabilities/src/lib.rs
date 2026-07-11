@@ -21,6 +21,7 @@ pub mod model;
 pub mod orchestrator;
 pub mod ranking;
 pub mod registry;
+pub mod sim;
 
 pub use cost::{CostEstimator, PlanCost};
 pub use graph::{CapabilityGraph, GraphNode};
@@ -33,3 +34,7 @@ pub use orchestrator::{
 };
 pub use ranking::score;
 pub use registry::CapabilityRegistry;
+pub use sim::{
+    Precondition, Prediction, ResourceForecast, RollbackPlan, SideEffect, SimRequest, SimResult,
+    Simulatable, StepEstimate, WindowInfo, WorldState,
+};
