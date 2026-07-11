@@ -25,6 +25,7 @@ pub use error::{FridayError, Result};
 pub use event::{Event, EventBus, Priority, MAX_HOPS};
 pub use memory::{cosine_similarity, LongTermMemory, SessionMemory, VectorMemory, WorkingMemory};
 pub use memory::{MemoryEngine, MemoryEntry, MemoryLayer, MemoryLayerKind};
+pub use memory::{ExecutionExperience, ExperienceEngine, ExperienceTask};
 pub use plugin::{Plugin, PluginContext, PluginManager, PluginMetadata, PluginMetadataBuilder};
 pub use protocol::{ModuleId, ProtocolMessage, Transport};
 pub use runtime::Friday;
