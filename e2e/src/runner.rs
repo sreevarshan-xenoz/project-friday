@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 use std::path::Path;
+use std::io::Write;
 use uuid::Uuid;
 use chrono::Utc;
 
@@ -8,7 +9,7 @@ use friday_core::memory::{MemoryEngine, ExecutionExperience, ExperienceTask};
 use friday_capabilities::registry::CapabilityRegistry;
 use friday_simulation::simulator::SimulationEngine;
 use friday_context::ContextBuilder;
-use friday_intelligence::{IntelligenceRouter, PromptCompiler, ResponseInterpreter, MockModelClient, ModelProvider, ModelClient};
+use friday_intelligence::{IntelligenceRouter, PromptCompiler, ResponseInterpreter, MockModelClient, ModelProvider, ModelClient, InferenceFabric};
 use friday_actions::runtime::AgentKernel;
 use friday_actions::request::ActionRequest;
 use friday_actions::adapters::{FilesystemAdapter, GitAdapter};
@@ -77,8 +78,13 @@ pub async fn run_vertical_slice(
     let compiled_prompt = PromptCompiler::compile_to_string(&ast, provider);
 
     // LLM Completion
-    let model = MockModelClient { response: mock_llm_json.to_string() };
-    let raw_llm_response = model.complete(&compiled_prompt).await?;
+    let raw_llm_response = if mock_llm_json.is_empty() {
+        let fabric = InferenceFabric::default_from_env();
+        fabric.complete(&compiled_prompt).await?
+    } else {
+        let model = MockModelClient { response: mock_llm_json.to_string() };
+        model.complete(&compiled_prompt).await?
+    };
 
     // Response Interpretation & Ontology Verification
     let mut known_caps = Vec::new();
@@ -107,6 +113,23 @@ pub async fn run_vertical_slice(
     } else {
         task_graph.clone()
     };
+
+    // 6.5 Interactive Approval (Human Collaboration)
+    if mock_llm_json.is_empty() && (sim_report.risk == friday_simulation::RiskLevel::High || sim_report.confidence.confidence < 0.8) {
+        println!("\n[Warning] Plan execution requires human approval.");
+        println!("  - Reason: Risk level is {:?}, Confidence is {:.1}%", sim_report.risk, sim_report.confidence.confidence * 100.0);
+        println!("  - Proposed Tasks:");
+        for task in &final_task_graph.tasks {
+            println!("    * {} ({})", task.name, task.capability);
+        }
+        print!("Proceed with execution? (y/N): ");
+        let _ = std::io::stdout().flush();
+        let mut input = String::new();
+        let _ = std::io::stdin().read_line(&mut input);
+        if !input.trim().eq_ignore_ascii_case("y") {
+            return Err("Execution rejected by user".to_string());
+        }
+    }
 
     // 7. Execution Loop (topological walk)
     let levels = friday_planner::levels(&final_task_graph)?;
