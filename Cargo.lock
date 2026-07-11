@@ -138,6 +138,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "friday-context"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "friday-capabilities",
+ "friday-core",
+ "friday-planner",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "friday-core"
 version = "0.1.0"
 dependencies = [
@@ -154,6 +169,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "friday-intelligence"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "friday-capabilities",
+ "friday-context",
+ "friday-core",
+ "friday-planner",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "friday-planner"
 version = "0.1.0"
 dependencies = [
@@ -163,6 +195,21 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "friday-simulation"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "friday-actions",
+ "friday-capabilities",
+ "friday-planner",
+ "friday-windows",
+ "serde",
+ "serde_json",
+ "tokio",
  "uuid",
 ]
 
