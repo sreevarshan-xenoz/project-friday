@@ -82,3 +82,74 @@ async fn engine_routes_by_layer() {
     assert_eq!(got.content, serde_json::json!({"v": 42}));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn test_experience_engine_durability_and_queries() {
+    use friday_core::memory::experience::{ExecutionExperience, ExperienceEngine, ExperienceTask};
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    let dir = std::env::temp_dir().join(format!("friday-experience-test-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let db_path = dir.join("experience.redb");
+
+    let exp_id = Uuid::new_v4();
+    let plan_id = Uuid::new_v4();
+
+    // 1. Open database and record an experience
+    {
+        let engine = ExperienceEngine::open(&db_path).unwrap();
+        let exp = ExecutionExperience {
+            experience_id: exp_id,
+            intent: "build cargo project".to_string(),
+            plan_id,
+            success: true,
+            actual_duration_ms: 1200,
+            predicted_duration_ms: 1000,
+            timing_drift: 0.2,
+            tasks: vec![
+                ExperienceTask {
+                    id: Uuid::new_v4(),
+                    name: "compile cargo".to_string(),
+                    capability: "terminal.run".to_string(),
+                    success: true,
+                    duration_ms: 1200,
+                    retry_count: 0,
+                    error: None,
+                }
+            ],
+            resource_forecast: serde_json::json!({"cpu": 10.0}),
+            resource_actual: serde_json::json!({"cpu": 12.0}),
+            timestamp: Utc::now(),
+        };
+
+        engine.record(&exp).unwrap();
+
+        // Retrieve and check
+        let retrieved = engine.retrieve(exp_id).unwrap().unwrap();
+        assert_eq!(retrieved.intent, "build cargo project");
+        assert_eq!(retrieved.actual_duration_ms, 1200);
+        assert!(retrieved.success);
+        assert_eq!(retrieved.tasks.len(), 1);
+        assert_eq!(retrieved.tasks[0].capability, "terminal.run");
+    }
+
+    // 2. Reopen and check durability and queries
+    {
+        let engine = ExperienceEngine::open(&db_path).unwrap();
+        let retrieved = engine.retrieve(exp_id).unwrap().unwrap();
+        assert_eq!(retrieved.intent, "build cargo project");
+
+        let all = engine.list().unwrap();
+        assert_eq!(all.len(), 1);
+
+        let matches = engine.query_by_intent("cargo").unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].experience_id, exp_id);
+
+        let none_matches = engine.query_by_intent("windows").unwrap();
+        assert_eq!(none_matches.len(), 0);
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
