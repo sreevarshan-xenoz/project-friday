@@ -152,6 +152,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "friday-windows"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "friday-actions",
+ "friday-core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "futures-core"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"

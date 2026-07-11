@@ -109,11 +109,18 @@ OS-specific or browser complexity.
   `commit`, `checkout`, `branch`, `merge`, `diff`, `push`, `pull`), each backed
   by the Git CLI behind a normalized `ActionResult`. Swappable to `libgit2`
   later with nothing above changing. Proves the action model is abstract enough.
-- **M4.5.2 — Windows Bridge** 🚧 — *just IPC*. Rust → IPC (named pipes /
-  gRPC) → C# Windows Host → Win32 / UI Automation / COM. Actions like
-  `OpenApplication`, `FocusWindow`, `EnumerateWindows`, `GetForegroundWindow`.
-  No planning, permissions, retries, or AI logic — a device driver for Windows.
-  Isolate under `plugins/windows/{bridge,ipc,actions}`.
+- **M4.5.2 — Windows Bridge** ✅ — *just IPC*, a device driver for Windows.
+  Rust (`plugins/windows`, crate `friday-windows`, platform-agnostic) →
+  **Named Pipes** (versioned `BridgeFrame` over `friday_core::protocol`) →
+  standalone C# `windows-host` microservice → Win32 / UI Automation / COM /
+  PowerShell. Exposes *intent*, not Win32 APIs: `windows.open/close/focus/
+  move/resize/capture/list/foreground` plus vision-ready `windows.click/type/
+  scroll` and `windows.clipboard.*`. The Rust side never sees an `HWND` or
+  `HRESULT`; all errors are normalized into a `BridgeError` set; every action is
+  async + lifecycle-aware (maps onto the kernel `LifecycleManager`). A capability
+  manifest is shipped (feeds M4.6). Design locked in `docs/WindowsBridge.md`;
+  covered by cross-platform mock-host tests + a real-Notepad harness (skipped in
+  CI, opt-in via `FRIDAY_WINDOWS_HOST_TEST`).
 - **M4.5.3 — Browser Runtime** 🚧 — a **browser session manager**, not "Chrome
   automation": `BrowserRuntime → Session → Tab → Page → DOM`. Actions like
   `OpenTab`, `Navigate`, `Click`, `Fill`, `Scroll`, `WaitFor`, `Screenshot`,

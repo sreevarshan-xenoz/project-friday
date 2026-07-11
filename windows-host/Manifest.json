@@ -1,0 +1,20 @@
+{
+  "bridge": "windows",
+  "version": "1.0",
+  "protocol_version": 1,
+  "capabilities": [
+    "windows.open",
+    "windows.close",
+    "windows.focus",
+    "windows.move",
+    "windows.resize",
+    "windows.capture",
+    "windows.list",
+    "windows.foreground",
+    "windows.click",
+    "windows.type",
+    "windows.scroll",
+    "windows.clipboard.read",
+    "windows.clipboard.write"
+  ]
+}

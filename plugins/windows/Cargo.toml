@@ -1,0 +1,21 @@
+[package]
+name = "friday-windows"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "FRIDAY Windows Bridge: platform-agnostic ActionAdapter over IPC to a C# host"
+
+[dependencies]
+friday-core = { path = "../../core" }
+friday-actions = { path = "../../services/action-runtime" }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util", "macros"] }
