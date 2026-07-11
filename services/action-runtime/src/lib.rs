@@ -15,7 +15,7 @@ pub mod permission;
 pub mod request;
 pub mod runtime;
 
-pub use adapters::{ActionAdapter, FilesystemAdapter, TerminalAdapter};
+pub use adapters::{ActionAdapter, FilesystemAdapter, GitAdapter, TerminalAdapter};
 pub use audit::{AuditEngine, AuditEntry};
 pub use kernel::{
     CancellationToken, ExecutionContext, ExecutionContextBuilder, Kernel, LifecycleError,

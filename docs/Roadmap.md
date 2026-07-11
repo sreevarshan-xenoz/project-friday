@@ -99,22 +99,27 @@ and wired into the `ActionRuntime`.
 > inheritance/merge, lifecycle transitions, resource acquire/release,
 > cancellation propagation, metrics recording).
 
-## M4.5 — Windows Bridge, Git Plugin, Browser Runtime 📋 (split into three)
+## M4.5 — Execution Plugins (three independent deliverables) 🔶
 
-No single "execution plugins" blob; three independent deliverables:
+Built one at a time to validate the stable kernel before introducing
+OS-specific or browser complexity.
 
-1. **Windows Bridge** — *just IPC*. Rust → IPC → C# → Windows API. No planner
-   logic, no permissions, no AI. Windows calls only. Isolate under
-   `plugins/windows/{bridge,ipc,actions}`.
-2. **Git Plugin** — define actions (`GitClone`, `GitCommit`, `GitPush`,
-   `GitCheckout`, `GitBranch`, `GitDiff`, `GitStatus`). CLI-backed initially,
-   swap to `libgit2` later with nothing above changing. Exposed as actions, not
-   shell wrapping.
-3. **Browser Runtime** — treat the browser as a *persistent session* exactly
-   like Terminal: `Browser Session → Tab → Page → DOM → Actions`. Never launch
-   Chrome per command.
+- **M4.5.1 — Git Plugin** ✅ — `GitAdapter` (`adapters::git`), `tool = "git"`.
+  Git is exposed as **capabilities** (`clone`, `init`, `status`, `add`,
+  `commit`, `checkout`, `branch`, `merge`, `diff`, `push`, `pull`), each backed
+  by the Git CLI behind a normalized `ActionResult`. Swappable to `libgit2`
+  later with nothing above changing. Proves the action model is abstract enough.
+- **M4.5.2 — Windows Bridge** 🚧 — *just IPC*. Rust → IPC (named pipes /
+  gRPC) → C# Windows Host → Win32 / UI Automation / COM. Actions like
+  `OpenApplication`, `FocusWindow`, `EnumerateWindows`, `GetForegroundWindow`.
+  No planning, permissions, retries, or AI logic — a device driver for Windows.
+  Isolate under `plugins/windows/{bridge,ipc,actions}`.
+- **M4.5.3 — Browser Runtime** 🚧 — a **browser session manager**, not "Chrome
+  automation": `BrowserRuntime → Session → Tab → Page → DOM`. Actions like
+  `OpenTab`, `Navigate`, `Click`, `Fill`, `Scroll`, `WaitFor`, `Screenshot`,
+  `ExtractText`, `EvaluateScript`. Every action is session-aware.
 
-## M4.6 — Capability Registry 📋 (next big addition)
+## M4.6 — Capability Registry + Negotiation 🚧
 
 Replace the flat `PluginManager → plugins` view with a `CapabilityRegistry`
 that plugins advertise into. Each capability declares:
@@ -130,6 +135,26 @@ Capability {
 The planner then reasons over *capabilities* ("I need `create_file`"), not
 plugin names. This becomes decisive once multiple plugins expose the same
 capability and the platform must route by cost/latency/confirmation.
+
+**Capability Negotiation** (part of M4.6): plugins report *runtime
+availability*, not just static capability lists. The planner adapts
+automatically — e.g. `Browser: ✗ Chrome not installed` means the planner routes
+around it instead of failing mid-plan.
+
+## M4.7 — Dry Run / Plan Preview 🚧
+
+Every plan should be executable **without side effects** before it runs. The
+runtime renders a preview (steps, estimated time, affected resources) and awaits
+approval — critical for safety, debugging, and user trust (e.g. "Delete
+everything in Downloads" → preview of 143 files + recycle bin, ~18s, awaiting
+approval). Implemented as a mode on the execution path, not a separate code fork.
+
+> **Event envelope (deferred, non-breaking):** rather than retrofitting
+> `execution_id`/`trace_id` onto every frozen event type, future work wraps
+> events in `EventEnvelope<T> { event_id, execution_id, trace_id, timestamp,
+> payload }`. The inner event schema is unchanged; the envelope adds distributed
+> tracing, replay, and correlation. This is the preferred path over editing the
+> locked event types.
 
 
 ## M5 — Intelligence Layer ⏳

@@ -13,9 +13,11 @@ use async_trait::async_trait;
 use crate::request::{ActionRequest, ActionResult};
 
 pub mod filesystem;
+pub mod git;
 pub mod terminal;
 
 pub use filesystem::FilesystemAdapter;
+pub use git::GitAdapter;
 pub use terminal::TerminalAdapter;
 
 /// A swappable capability. Implementors handle a normalized
