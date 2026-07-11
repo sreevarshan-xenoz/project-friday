@@ -62,5 +62,8 @@ work this directory supersedes it.
 | IPC (Windows bridge)| `ipc.md`            | `plugins/windows` + `windows-host`   | ✅ M4.5.2|
 | Simulation          | `simulation.md`     | `services/simulation`                | ✅ M4.7  |
 | Experience (Engine) | `experience.md`     | `friday-core`                        | ✅ M4.8  |
-| Context Builder     | `context.md`        | `services/context` (new)             | 🚧 M4.10 |
-| Intelligence        | `intelligence.md`   | `services/intelligence` (new)        | ⏳ M5    |
+| Context Builder     | `context.md`        | `services/context`                   | ✅ M4.10 |
+| Cognitive Engine    | `intelligence.md`   | `services/intelligence`              | ✅ M5    |
+| Evaluation          | `evaluation.md`     | `services/evaluation` (new)          | 🚧 M5.5  |
+| Knowledge Graph     | `knowledge_graph.md` | `friday-core`                        | 🚧 M5.6  |
+| Reasoning Session   | `reasoning_session.md`| `services/intelligence`             | 🚧 M5.7  |
