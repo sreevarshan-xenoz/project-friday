@@ -21,9 +21,11 @@ pub mod ipc;
 pub mod manifest;
 pub mod model;
 pub mod protocol;
+pub mod sim;
 
 pub use bridge::WindowsAdapter;
 pub use manifest::CAPABILITY_MANIFEST;
+pub use sim::sim_registry;
 
 use friday_capabilities::model::{Capability, Platform};
 
