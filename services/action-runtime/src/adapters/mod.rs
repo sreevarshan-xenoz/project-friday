@@ -14,6 +14,7 @@ use crate::request::{ActionRequest, ActionResult};
 
 pub mod filesystem;
 pub mod git;
+pub mod sim;
 pub mod terminal;
 
 pub use filesystem::FilesystemAdapter;
