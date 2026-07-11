@@ -190,18 +190,33 @@ and economics* of every service. Implemented in the `friday-capabilities` crate
 > trait is unchanged; "service" is the organizing term above it. The execution
 > runtime type is `AgentKernel` (`friday-actions`).
 
-## M4.7 — Dry Run / Plan Preview 🚧
+## M4.7 — Plan Simulation Engine 🚧
 
-Every plan should be executable **without side effects** before it runs. The
-runtime (now `AgentKernel`) renders a preview — steps, estimated time, affected
-resources, and **cost/risk** via `CostEstimator::estimate` — and awaits approval,
-critical for safety, debugging, and user trust (e.g. "Delete everything in
-Downloads" → preview of 143 files + recycle bin, ~18s, low risk, awaiting
-approval). Implemented as a mode on the execution path. The Capability model's
-`dry_run` flag lets the planner skip providers that cannot simulate safely, and
-the kernel's `ExecutionContext` already carries the hooks to no-op side effects.
-Service health from the `ServiceOrchestrator` lets Dry Run warn when a chosen
-provider is `Recovering`/`Disabled`.
+Not "Dry Run" — a whole **subsystem** that simulates an entire execution before it
+happens, like a CPU simulator for plans. Dry Run is only one feature of it. The
+planner produces a `TaskGraph`; the engine virtualizes every action by asking each
+capability *"what would happen?"* — the filesystem reports 143 files deleted, git
+3 commits, browser 4 tabs, windows "Notepad launched" — with **no side effects**.
+
+Implemented as a new crate `friday-simulation` (`services/simulation`) with:
+
+- **`simulator`** — walks the `TaskGraph`, calls each capability's `simulate`
+  (virtual execution), accumulates `SimulatedEffect`s into a `SimulationReport`.
+- **`validator`** — pre-flight checks: missing permissions, unavailable services,
+  dependency failures, circular plans (DAG cycle), impossible actions.
+- **`optimizer`** — pure graph optimization (no LLM): collapse redundant
+  open/close, merge repeated navigations, reorder for `supports_parallel`
+  concurrency. Turns `Open→Nav→Close→Open→Nav` into `Open→Nav→Nav→Close`.
+- **`estimator`** — wraps `CostEstimator` into a `PlanCost` (time, success
+  probability, risk, token cost) for the preview.
+- **`approval`** — the user approves **plans, not actions**: a `PlanSummary`
+  (N actions, windows, browsers, files, ~time, risk) → YES/NO.
+- **`report`** — after execution, `Prediction vs Actual vs Difference` (e.g.
+  predicted 5s, actual 7s → 71% accuracy). Feeds Learning (M9).
+
+Capabilities must expose a `simulate` path; the `dry_run` flag gates providers that
+cannot simulate safely. `AgentKernel`'s `ExecutionContext` already carries the
+hooks to no-op side effects. Full spec: `specs/simulation.md`.
 
 ## M4.8 — Workflow Recorder 🚧
 
@@ -217,7 +232,9 @@ higher-ranked providers (`score = reliability*100 - latency*0.05 - cost`), respe
 `dependencies`/`resource_requirements`/`supports_parallel` for concurrency, and
 skip `Recovering`/`Disabled` providers (via `ServiceOrchestrator` health). Uses
 `CostEstimator` to choose the cheapest safe plan and to surface trade-offs to the
-user before execution.
+user before execution. Mostly statistics once M4.7 exists: it reuses the
+simulator's `validator` + `optimizer` + `estimator` and adds learned weights from
+Simulation `report`s (M9).
 
 > **Event envelope (deferred, non-breaking):** rather than retrofitting
 > `execution_id`/`trace_id` onto every frozen event type, future work wraps
@@ -226,20 +243,40 @@ user before execution.
 > tracing, replay, and correlation. This is the preferred path over editing the
 > locked event types.
 
+## M4.10 — Context Builder 🚧
+
+The missing architectural piece before M5. M5 must **not** be `User → LLM`. It is
+`User → Context Builder → LLM`. The Context Builder assembles everything the model
+needs and the **LLM never assembles context itself**:
+
+- relevant **memories** (`friday-core` memory),
+- available **capabilities** + ranked providers (`CapabilityRegistry`),
+- **active services** + their health (`ServiceOrchestrator`),
+- **current windows** (Windows bridge) and **open browser tabs**,
+- the **current project** (detected from cwd / git / recent files),
+- **execution history** (`AgentKernel` metrics + audit),
+- **recent failures** (`ServiceOrchestrator` telemetry),
+- **user preferences** (memory).
+
+Produces an `LLMContext` handed to the Intelligence Layer. Full spec:
+`specs/context.md`. This is what makes M5 "intelligence" instead of "a prompt."
+
 ## Revised ordering (subsystems, not just milestones)
 
 ```
 ✅ M1  Foundation
 ✅ M2  Memory
 ✅ M3  Planner
-✅ M4  Execution Kernel (AgentKernel: runtime, lifecycle, context, resources)
+✅ M4  Agent Kernel (AgentKernel: runtime, lifecycle, context, resources)
+✅ M4.5 Services (filesystem, terminal, git, windows)
 ✅ M4.6 Capability Intelligence
 ✅ M4.6.5 Service Orchestrator + Cost Estimator
-🚧 M4.7 Dry Run Engine
-🚧 M4.8 Workflow Recorder
-⏳ M4.9 Plan Optimizer
-⏳ M5  Intelligence Layer
-⏳ M6  Browser Runtime      (now trivial: just declares capabilities)
+🚧 M4.7  Plan Simulation Engine
+🚧 M4.8  Workflow Recorder
+🚧 M4.9  Plan Optimizer
+🚧 M4.10 Context Builder
+⏳ M5  Intelligence Layer        (LLM sits ABOVE the kernel, fed by Context Builder)
+⏳ M6  Browser Runtime           (now trivial: just declares capabilities)
 ⏳ M7  Vision
 ⏳ M8  Voice
 ⏳ M9  Learning
@@ -311,3 +348,12 @@ Thanks to M4.6 it only declares capabilities; the registry handles the rest.
 > **Architectural discipline (must hold through M5+):** the core stays ignorant —
 > the planner never knows plugin internals, plugins never know about each other,
 > and the runtime only knows about capabilities and contracts.
+
+## Specification discipline
+
+From M4.7 onward, every subsystem has a stable specification **before**
+implementation. The authoritative specs live in **`/specs`** (`README.md` indexes
+them): `kernel`, `events`, `capabilities`, `planner`, `services`, `ipc`, `memory`,
+`simulation` (M4.7), `context` (M4.10), `intelligence` (M5). `docs/` remains as
+design history; `/specs` supersedes it for new work. The LLM sits **above** the
+kernel (fed by the Context Builder), exactly as shown in `specs/README.md`.
