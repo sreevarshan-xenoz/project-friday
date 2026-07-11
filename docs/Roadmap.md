@@ -19,10 +19,14 @@ state.
   - **Runtime** that wires it together (`core/src/runtime`).
 - Reference `echo_plugin` example + integration test (passing).
 
-## M2 — Memory backends
+## M2 — Memory backends ✅
 
-- Implement `WorkingMemory` (in-process) and `SessionMemory` (SQLite).
-- Implement `VectorMemory` over a local embedding index.
+- Implement `WorkingMemory` (in-process, ephemeral).
+- Implement `SessionMemory` and `LongTermMemory` over an embedded **redb** store
+  (pure-Rust ACID; chosen over SQLite because this dev machine's Rust toolchain
+  is GNU with no C compiler, so `rusqlite` cannot build here — see `Memory.md`).
+- Implement `VectorMemory` with in-memory cosine-similarity search over stored
+  embeddings.
 - Wire memory events: `memory.store`, `memory.recall`, `memory.search`.
 
 ## M3 — Permission & safety layer

@@ -18,8 +18,12 @@ impl Plugin for EchoPlugin {
     }
 
     async fn handle_event(&self, event: &Event) -> friday_core::Result<Vec<Event>> {
-        Ok(vec![Event::new("demo.pong", &self.meta.id, event.payload.clone())
-            .with_trace(event.trace_id)])
+        Ok(vec![Event::new(
+            "demo.pong",
+            &self.meta.id,
+            event.payload.clone(),
+        )
+        .with_trace(event.trace_id)])
     }
 }
 
@@ -32,17 +36,23 @@ async fn routes_ping_to_pong() {
         .subscribes(&["demo.ping"])
         .emits(&["demo.pong"])
         .build();
-    friday.register_plugin(Box::new(EchoPlugin { meta })).await.unwrap();
+    friday
+        .register_plugin(Box::new(EchoPlugin { meta }))
+        .await
+        .unwrap();
 
     let bus = friday.bus().clone();
     let mut rx = bus.subscribe();
 
-    bus.publish(Event::new("demo.ping", "test", serde_json::json!({ "x": 1 })))
-        .await
-        .unwrap();
+    bus.publish(Event::new(
+        "demo.ping",
+        "test",
+        serde_json::json!({ "x": 1 }),
+    ))
+    .await
+    .unwrap();
 
-    let handle =
-        tokio::spawn(async move { friday.run_with_timeout(Duration::from_secs(1)).await });
+    let handle = tokio::spawn(async move { friday.run_with_timeout(Duration::from_secs(1)).await });
 
     let got = tokio::time::timeout(Duration::from_secs(1), async {
         loop {

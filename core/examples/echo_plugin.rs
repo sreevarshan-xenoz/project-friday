@@ -38,7 +38,9 @@ async fn main() -> friday_core::Result<()> {
         .subscribes(&["demo.ping"])
         .emits(&["demo.pong"])
         .build();
-    friday.register_plugin(Box::new(EchoPlugin { meta })).await?;
+    friday
+        .register_plugin(Box::new(EchoPlugin { meta }))
+        .await?;
 
     let bus = friday.bus().clone();
     bus.publish(Event::new(

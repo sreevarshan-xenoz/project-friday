@@ -20,7 +20,10 @@ Defined by the `Plugin` trait (`core/src/plugin/sdk.rs`):
 | Speech Recognition  | `audio.speech`                | Python   | Planned    |
 | Conversation Engine | `conv.turn`                   | Python   | Planned    |
 | Goal Interpreter    | `goal.raw`                    | Python   | Planned    |
-| Planning Engine     | `plan.request`                | Python   | Planned    |
+| Intent Engine       | `goal.raw` → `intent.resolved`| Python   | Planned    |
+| Planning Engine     | `intent.resolved` → `plan.created` | Python | Planned  |
+| Execution Engine    | `plan.created` → `exec.result`| Rust/Py  | Planned    |
+| Verification Engine | `exec.result` → `verify.*`    | Python   | Planned    |
 | Voice Reply (TTS)   | `voice.speak`                 | Python   | Planned    |
 | Vision              | `vision.frame`, `vision.query`| Python   | Planned    |
 | Windows Skill       | `win.*`                       | C#       | Planned    |
@@ -34,6 +37,18 @@ Defined by the `Plugin` trait (`core/src/plugin/sdk.rs`):
 | Steam               | `steam.*`                     | Rust     | Planned    |
 | OBS                 | `obs.*`                       | Rust     | Planned    |
 | VSCode              | `vscode.*`                    | TS/Rust  | Planned    |
+
+## Core reasoning engines (frozen design)
+
+The planner is split into four independent engines so each stage is debuggable
+and replaceable. They are ordinary bus plugins, not core-specialised code.
+
+| Engine              | Consumes            | Produces                  | Design doc        |
+| ------------------- | ------------------- | ------------------------- | ----------------- |
+| Intent Engine       | `goal.raw`          | `intent.resolved`         | `docs/Planner.md` |
+| Planning Engine     | `intent.resolved`   | `plan.created`            | `docs/Planner.md` |
+| Execution Engine    | `plan.created`      | `exec.action`,`exec.result`| `docs/Execution.md` |
+| Verification Engine | `exec.result`       | `verify.passed/failed`    | `docs/Planner.md` |
 
 ## Reference plugins shipped with the core
 

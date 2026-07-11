@@ -16,11 +16,16 @@ in a new plugin rather than rewriting the application.
                      │
           Conversation Engine
                      │
-             Goal Interpreter
-                     │
+            Intent Engine
+                     │   goal.raw / intent.resolved
             Planning Engine
+                     │   plan.created
+            Execution Engine
+                     │   exec.action / exec.result
+          Verification Engine
+                     │   verify.passed / verify.failed
                      │
-             Event Bus
+                 Event Bus
                      │
       ┌──────────────┼──────────────┐
       │              │              │
@@ -30,8 +35,6 @@ in a new plugin rather than rewriting the application.
       │              │              │
       └──────────────┼──────────────┘
                      │
-              Verification
-                     │
               Memory Engine
                      │
                Knowledge Graph
@@ -40,6 +43,24 @@ in a new plugin rather than rewriting the application.
                      │
                  Voice Reply
 ```
+
+## The four reasoning engines
+
+"Planner" is intentionally **not** a single component. It is split into four
+independent engines, each with exactly one responsibility. This separation makes
+debugging, recovery, and evaluation dramatically easier because every stage has
+a clear input event and output event.
+
+| Engine              | Consumes            | Produces             | Responsibility                                  |
+| ------------------- | ------------------- | -------------------- | ------------------------------------------------ |
+| **Intent Engine**   | `goal.raw`          | `intent.resolved`    | Understand what the user actually wants → structured goal. |
+| **Planning Engine** | `intent.resolved`   | `plan.created`       | Decompose the goal into ordered, executable steps. |
+| **Execution Engine**| `plan.created`      | `exec.action`, `exec.result` | Choose the correct plugin and perform the action. |
+| **Verification Engine** | `exec.result`   | `verify.passed` / `verify.failed` | Confirm success; retry or trigger a replan on failure. |
+
+The engines are ordinary plugins on the bus — they are not special-cased in the
+core. Swapping or upgrading one (e.g. a better planner) never touches another.
+Full design in [`docs/Planner.md`](Planner.md) and [`docs/Execution.md`](Execution.md).
 
 ## Language allocation (use each where it wins)
 
@@ -59,10 +80,10 @@ in a new plugin rather than rewriting the application.
 Two distinct channels, both defined in `friday-core`:
 
 1. **Events** (`core/src/event`) — fire-and-forget, broadcast to every
-   subscriber. Used for the autonomous pipeline (voice → planner → execution →
+   subscriber. Used for the autonomous pipeline (intent → planning → execution →
    verification → memory → voice). An `Event` is `{ id, kind, source, payload,
    trace_id, priority, hops }` where `kind` is a dot-namespaced topic such as
-   `voice.transcript` or `plan.task.created`.
+   `voice.transcript` or `plan.created`.
 2. **Protocol messages** (`core/src/protocol`) — correlated request/response
    between two named modules via a `Transport`. Used when a module needs a
    specific answer from another (e.g. "transcribe this audio clip").
@@ -75,9 +96,18 @@ construction and dispatches each event only to plugins whose
 re-published back onto the bus, forming the pipeline. A `hops` counter
 (`MAX_HOPS = 16`) prevents accidental feedback loops.
 
+## Memory
+
+The memory system is layered (working → session → long-term → knowledge graph →
+vector). Durable tiers use an embedded **redb** store (pure-Rust, ACID, no C
+toolchain required); SQLite can be dropped in later behind the same interface.
+See [`docs/Memory.md`](Memory.md).
+
 ## Core invariants
 
 - The core contains **no intelligence**. All behaviour is in plugins.
 - Nothing is reachable without going through the bus or the transport.
 - Dangerous actions pass through the permission layer before execution
   (see `Security.md`).
+- Every new feature answers three questions: **which event does it consume?
+  which event does it produce? which plugin owns it?**

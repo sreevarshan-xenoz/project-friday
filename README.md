@@ -71,6 +71,17 @@ Start with [`docs/Vision.md`](docs/Vision.md) and
 [`docs/Architecture.md`](docs/Architecture.md). The plugin contract lives in
 [`docs/PluginSDK.md`](docs/PluginSDK.md).
 
+### Locked architecture documents
+
+These define the frozen foundation and require explicit review + a version bump
+to change:
+
+`Architecture.md`, `Planner.md`, `Execution.md`, `Memory.md`, `Security.md`,
+`PluginSDK.md`, `API.md`, `docs/research/` (original research).
+
+Every new feature must answer: **which event does it consume? which event does
+it produce? which plugin owns it?**
+
 ## Contributing
 
 - Branch from `dev` into `feature/*`; never commit to `main`.

@@ -35,7 +35,11 @@ pub struct Event {
 }
 
 impl Event {
-    pub fn new(kind: impl Into<String>, source: impl Into<String>, payload: serde_json::Value) -> Self {
+    pub fn new(
+        kind: impl Into<String>,
+        source: impl Into<String>,
+        payload: serde_json::Value,
+    ) -> Self {
         Self {
             id: Uuid::new_v4(),
             kind: kind.into(),
@@ -60,7 +64,11 @@ impl Event {
     }
 
     /// Convenience for JSON object payloads.
-    pub fn json(kind: impl Into<String>, source: impl Into<String>, value: serde_json::Value) -> Self {
+    pub fn json(
+        kind: impl Into<String>,
+        source: impl Into<String>,
+        value: serde_json::Value,
+    ) -> Self {
         Self::new(kind, source, value)
     }
 }

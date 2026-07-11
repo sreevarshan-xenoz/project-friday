@@ -1,7 +1,10 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use uuid::Uuid;
+
+use super::backends::{LongTermMemory, SessionMemory, VectorMemory, WorkingMemory};
 
 /// The distinct memory tiers from the architecture. Each is a pluggable layer
 /// that can be backed by a different store.
@@ -137,5 +140,18 @@ impl MemoryEngine {
             Some(l) => l.search(query, limit).await,
             None => Ok(Vec::new()),
         }
+    }
+
+    /// Construct an engine pre-loaded with the four standard tiers, with the
+    /// durable tiers persisted under `dir`. Creates `dir` if missing.
+    pub fn default_layers(dir: &Path) -> crate::error::Result<Self> {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| crate::error::FridayError::Memory("init".into(), e.to_string()))?;
+        let mut engine = MemoryEngine::new();
+        engine.register_layer(Box::new(WorkingMemory::new()));
+        engine.register_layer(Box::new(SessionMemory::open(&dir.join("session.redb"))?));
+        engine.register_layer(Box::new(LongTermMemory::open(&dir.join("longterm.redb"))?));
+        engine.register_layer(Box::new(VectorMemory::new()));
+        Ok(engine)
     }
 }

@@ -52,9 +52,12 @@ impl PluginManager {
     }
 
     fn plugins_for<'a>(&'a self, kind: &'a str) -> impl Iterator<Item = &'a Box<dyn Plugin>> + 'a {
-        self.plugins
-            .iter()
-            .filter(move |p| p.metadata().subscribes.iter().any(|k| matches_kind(k, kind)))
+        self.plugins.iter().filter(move |p| {
+            p.metadata()
+                .subscribes
+                .iter()
+                .any(|k| matches_kind(k, kind))
+        })
     }
 
     /// Begin routing. Subscribes to the bus and dispatches every received
@@ -92,7 +95,9 @@ impl PluginManager {
                         }
                     }
                 }
-                Err(e) => tracing::error!(plugin = %id, error = %e, "plugin failed to handle event"),
+                Err(e) => {
+                    tracing::error!(plugin = %id, error = %e, "plugin failed to handle event")
+                }
             }
         }
     }

@@ -53,3 +53,13 @@ backend (e.g. SQLite session store, vector index), implement the trait and call
 4. Vector embeddings enable "remember when I asked about X" style recall.
 
 This is the **Learn** stage of the core loop.
+
+## Durable storage implementation note
+
+The durable tiers (Session, Long-Term) are backed by **redb**, a pure-Rust
+embedded ACID key-value store. We chose it over SQLite because the reference dev
+machine runs the `x86_64-pc-windows-gnu` Rust toolchain with no C compiler in
+`PATH`, so `rusqlite`'s bundled SQLite cannot compile. The `MemoryLayer` trait
+is storage-agnostic, so a SQLite (or any other) backend can be dropped in later
+behind the same interface without touching callers.
+
