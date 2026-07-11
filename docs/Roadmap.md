@@ -69,7 +69,7 @@ All M4.1–M4.4 paths covered by unit + end-to-end tests wired into `Friday`.
 Today the flow is `Planner → Action Runtime → Adapter`, but every action was
 stateless and independent. M4.4.5 introduces the **stable kernel** every future
 capability depends on, implemented in a `kernel` module inside `friday-actions`
-and wired into the `ActionRuntime`.
+and wired into the `AgentKernel`.
 
 - **Execution Context** — immutable [`ExecutionContext`] carried by every action:
   `execution_id`, `session_id`, `parent_execution`, `user_id`, `cwd`,
@@ -89,7 +89,7 @@ and wired into the `ActionRuntime`.
   execution time, retries, plugin used, success, resource placeholders) with
   `success_rate` and `avg_execution_ms` for "why is Browser slower than
   Terminal?"-style questions.
-- **Wiring** — `ActionRuntime::run_action` is the single public dispatch path:
+- **Wiring** — `AgentKernel::run_action` is the single public dispatch path:
   permission → timeout + deadline + **cancellation** + bounded retries →
   metrics → audit → lifecycle, attaching `execution_id` to `exec.result`.
 
@@ -154,21 +154,54 @@ single source of truth for *what FRIDAY can do, who can do it, and how well*.
 - Design locked in `docs/CapabilityIntelligence.md`; full test coverage
   (ranking example, health/monitor, manifest, graph, integration).
 
+## M4.6.5 — Service Orchestrator + Cost Estimator ✅
+
+Built **before** Dry Run so the kernel owns not just execution but the *lifecycle
+and economics* of every service. Implemented in the `friday-capabilities` crate
+(`services/capabilities`):
+
+- **`ServiceOrchestrator`** — lifecycle state machine per service:
+  `Created → Starting → Healthy → Recovering → Disabled`. Each service registers a
+  `ServiceProbe` (liveness/health) and a `RecoveryPolicy` (steps to heal it).
+- **`RecoveryPolicy` + `RecoveryStep`** — a `StaticRecoveryPolicy` runs an ordered
+  set of steps (e.g. `RecoveryStep::Restart`) via a recovery hook; the orchestrator
+  drives `Recovering` and maps outcomes back to `Healthy`/`Disabled`.
+- **Background loop** — `start_loop(interval)` probes on a timer, transitions
+  `Healthy → Recovering` on probe failure, and records **`Telemetry`** (restarts,
+  failures, errors, last latency) per service.
+- **`sync_to_registry()`** — pushes orchestrator health into the
+  `CapabilityRegistry` (`set_provider_health`), so the Knowledge subsystem and the
+  planner see live service health without knowing how it is produced.
+- **`CostEstimator`** — `CostEstimator::estimate(capabilities)` returns a
+  `PlanCost { estimated_ms, expected_success, risk, token_cost }` from a slice of
+  `Capability`. Used by Dry Run (M4.7) to render cost/risk before a plan runs.
+- Full test coverage (register/probe/healthy, offline→recover, disabled,
+  background loop, telemetry, cost math).
+
+> **`ActionRuntime` → `AgentKernel` rename.** The execution runtime type is
+> renamed to reflect its role as the **kernel** of the Agent OS: it owns execution,
+> permissions, audit, metrics, lifecycle, sessions, resources, and capability
+> routing. The `run_action` dispatch path and all event contracts are unchanged.
+
 > **Terminology shift (authorized restructure):** we now speak of **services**
 > (a filesystem service, a git service, a windows service, a future browser
 > service) rather than bare plugins, and of **subsystems** rather than a flat
 > milestone list — see the `docs/Architecture.md` addendum. The `ActionAdapter`
-> trait is unchanged; "service" is the organizing term above it.
+> trait is unchanged; "service" is the organizing term above it. The execution
+> runtime type is `AgentKernel` (`friday-actions`).
 
 ## M4.7 — Dry Run / Plan Preview 🚧
 
 Every plan should be executable **without side effects** before it runs. The
-runtime renders a preview (steps, estimated time, affected resources) and awaits
-approval — critical for safety, debugging, and user trust (e.g. "Delete
-everything in Downloads" → preview of 143 files + recycle bin, ~18s, awaiting
+runtime (now `AgentKernel`) renders a preview — steps, estimated time, affected
+resources, and **cost/risk** via `CostEstimator::estimate` — and awaits approval,
+critical for safety, debugging, and user trust (e.g. "Delete everything in
+Downloads" → preview of 143 files + recycle bin, ~18s, low risk, awaiting
 approval). Implemented as a mode on the execution path. The Capability model's
 `dry_run` flag lets the planner skip providers that cannot simulate safely, and
 the kernel's `ExecutionContext` already carries the hooks to no-op side effects.
+Service health from the `ServiceOrchestrator` lets Dry Run warn when a chosen
+provider is `Recovering`/`Disabled`.
 
 ## M4.8 — Workflow Recorder 🚧
 
@@ -176,6 +209,15 @@ Record successfully executed plans as reusable workflows. Built on the
 `CapabilityGraph` (which tasks map to which capabilities) so a recorded workflow
 is portable across providers — if Browser later beats Windows for `open_url`, the
 same workflow re-routes automatically.
+
+## M4.9 — Plan Optimizer 🚧
+
+Re-order and prune plan steps using the Capability Intelligence knowledge: prefer
+higher-ranked providers (`score = reliability*100 - latency*0.05 - cost`), respect
+`dependencies`/`resource_requirements`/`supports_parallel` for concurrency, and
+skip `Recovering`/`Disabled` providers (via `ServiceOrchestrator` health). Uses
+`CostEstimator` to choose the cheapest safe plan and to surface trade-offs to the
+user before execution.
 
 > **Event envelope (deferred, non-breaking):** rather than retrofitting
 > `execution_id`/`trace_id` onto every frozen event type, future work wraps
@@ -190,10 +232,12 @@ same workflow re-routes automatically.
 ✅ M1  Foundation
 ✅ M2  Memory
 ✅ M3  Planner
-✅ M4  Execution Kernel (runtime, lifecycle, context, resources)
-🚧 M4.6 Capability Intelligence
+✅ M4  Execution Kernel (AgentKernel: runtime, lifecycle, context, resources)
+✅ M4.6 Capability Intelligence
+✅ M4.6.5 Service Orchestrator + Cost Estimator
 🚧 M4.7 Dry Run Engine
 🚧 M4.8 Workflow Recorder
+⏳ M4.9 Plan Optimizer
 ⏳ M5  Intelligence Layer
 ⏳ M6  Browser Runtime      (now trivial: just declares capabilities)
 ⏳ M7  Vision
@@ -212,7 +256,8 @@ ranking, health, and discovery.
 
 Stop thinking in "plugins"; think in **services** inside **subsystems**:
 
-- **Kernel** — execution, lifecycle, context, resources (`friday-actions` + kernel).
+- **Kernel** — `AgentKernel`: execution, lifecycle, context, resources, permissions,
+  audit, sessions, capability routing (`friday-actions`).
 - **Knowledge** — memory (`friday-core`), Capability Intelligence
   (`friday-capabilities`), registry.
 - **Services** — filesystem, git, terminal, windows, (future) browser, vision.

@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use friday_actions::adapters::ActionAdapter;
 use friday_actions::kernel::{ExecutionContext, LifecycleState, ResourceId, ResourceManager};
 use friday_actions::request::{ActionRequest, ActionResult};
-use friday_actions::runtime::ActionRuntime;
+use friday_actions::runtime::AgentKernel;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -74,7 +74,7 @@ fn context_merge_combines_branches() {
 
 #[tokio::test]
 async fn cancellation_propagates_to_running_action() {
-    let rt = Arc::new(ActionRuntime::new());
+    let rt = Arc::new(AgentKernel::new());
     rt.register_adapter(Box::new(SlowAdapter)).await;
 
     let ctx = ExecutionContext::builder().build();
@@ -107,7 +107,7 @@ async fn cancellation_propagates_to_running_action() {
 
 #[tokio::test]
 async fn successful_action_records_metrics_and_completes() {
-    let rt = Arc::new(ActionRuntime::new());
+    let rt = Arc::new(AgentKernel::new());
     rt.register_adapter(Box::new(FastAdapter)).await;
 
     let ctx = ExecutionContext::builder().build();

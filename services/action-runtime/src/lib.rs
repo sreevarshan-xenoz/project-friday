@@ -24,4 +24,4 @@ pub use kernel::{
 };
 pub use permission::{PermissionDecision, PermissionEngine};
 pub use request::{ActionRequest, ActionResult};
-pub use runtime::{ActionRuntime, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT};
+pub use runtime::{AgentKernel, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT};

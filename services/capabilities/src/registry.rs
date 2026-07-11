@@ -97,6 +97,17 @@ impl CapabilityRegistry {
         }
     }
 
+    /// Negotiation write-back for a whole provider: set health + availability on
+    /// every capability it advertises (used by the Service Orchestrator).
+    pub fn set_provider_health(&self, provider: &str, health: Health) {
+        if let Some(caps) = self.providers.write().unwrap().get_mut(provider) {
+            for cap in caps.iter_mut() {
+                cap.health = health;
+                cap.available = health.available();
+            }
+        }
+    }
+
     /// Every `(provider, capability)` pair.
     pub fn all(&self) -> Vec<(String, Capability)> {
         self.providers

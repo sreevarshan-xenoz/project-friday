@@ -128,6 +128,7 @@ name = "friday-capabilities"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "chrono",
  "friday-actions",
  "friday-windows",
  "serde",

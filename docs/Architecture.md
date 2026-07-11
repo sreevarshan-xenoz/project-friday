@@ -124,13 +124,20 @@ the frozen architecture.
   *service* (filesystem, git, terminal, windows, future browser) may internally
   use multiple adapters/bridges (e.g. the Windows service = Rust adapter + C#
   host over IPC). The `ActionAdapter` trait is unchanged.
-- **Subsystems** group the work: **Kernel** (execution/lifecycle/context/
-  resources in `friday-actions`), **Knowledge** (memory + `friday-capabilities`
+- **Subsystems** group the work: **Kernel** (the `AgentKernel` in `friday-actions`
+  owns execution/lifecycle/context/resources/permissions/audit/sessions +
+  capability routing), **Knowledge** (memory + `friday-capabilities`
   registry/ranking/health/graph), **Services**, **Perception**, **Cognition**
   (planner + M5 LLM), **Autonomy**.
 - The planner now reasons over **capabilities + ranked providers** held in the
   Capability Intelligence registry, never over plugin names. See
   `docs/CapabilityIntelligence.md`.
+- **`ServiceOrchestrator`** (in `friday-capabilities`) owns per-service lifecycle
+  (`Created/Starting/Healthy/Recovering/Disabled`), probing, recovery policies, and
+  telemetry, and pushes live health into the registry via `set_provider_health`.
+  **`CostEstimator`** turns a `Capability` slice into a `PlanCost` (time, success
+  probability, risk, token cost) used by Dry Run (M4.7) and the Plan Optimizer
+  (M4.9). The execution runtime type is renamed `ActionRuntime` → `AgentKernel`.
 - Services advertise a rich `Capability` (id, group, actions, platform, latency,
   reliability, health, cost, confidence, …) via `manifest.json` discovery or an
   in-code `capabilities()` function. The registry scores providers and filters

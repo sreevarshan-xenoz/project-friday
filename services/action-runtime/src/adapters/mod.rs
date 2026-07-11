@@ -2,7 +2,7 @@
 //! world.
 //!
 //! Each adapter implements [`ActionAdapter`] and is registered with the
-//! [`crate::runtime::ActionRuntime`] under a `tool` name. The runtime routes an
+//! [`crate::runtime::AgentKernel`] under a `tool` name. The kernel routes an
 //! `exec.action` to the adapter whose `tool()` matches, then calls
 //! [`ActionAdapter::execute`]. Adapters must never make permission decisions,
 //! never publish events, and never talk to other adapters — the runtime and the

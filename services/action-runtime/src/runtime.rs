@@ -44,7 +44,7 @@ pub const DEFAULT_MAX_RETRIES: u32 = 2;
 /// The decoupled action dispatcher. Registered as a plugin; owns the adapter
 /// registry, the permission engine, the audit engine, and the kernel (lifecycle,
 /// metrics, sessions, resources).
-pub struct ActionRuntime {
+pub struct AgentKernel {
     meta: PluginMetadata,
     adapters: tokio::sync::Mutex<HashMap<String, Box<dyn ActionAdapter>>>,
     permission: PermissionEngine,
@@ -57,13 +57,13 @@ pub struct ActionRuntime {
     sessions_by_plan: StdMutex<HashMap<String, Uuid>>,
 }
 
-impl Default for ActionRuntime {
+impl Default for AgentKernel {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ActionRuntime {
+impl AgentKernel {
     pub fn new() -> Self {
         let meta = PluginMetadata::builder("action-runtime", "Action Runtime")
             .description("Decoupled dispatcher: context, permission, dispatch, retry, audit")
@@ -376,7 +376,7 @@ impl ActionRuntime {
 }
 
 #[async_trait]
-impl Plugin for ActionRuntime {
+impl Plugin for AgentKernel {
     fn metadata(&self) -> &PluginMetadata {
         &self.meta
     }

@@ -1,13 +1,13 @@
 //! End-to-end test of the Action Runtime wired into the FRIDAY core.
 //!
-//! A plan's `exec.action` events are routed to the ActionRuntime, which applies
+//! A plan's `exec.action` events are routed to the AgentKernel, which applies
 //! the permission gate, dispatches to a real adapter, records an audit entry,
 //! and emits `exec.result`. We assert on the emitted events as well as the
 //! audit trail.
 
 use async_trait::async_trait;
 use friday_actions::adapters::{FilesystemAdapter, TerminalAdapter};
-use friday_actions::runtime::ActionRuntime;
+use friday_actions::runtime::AgentKernel;
 use friday_core::event::Event;
 use friday_core::plugin::{Plugin, PluginMetadata};
 use friday_core::Friday;
@@ -40,7 +40,7 @@ async fn run_action(capability: &str, params: serde_json::Value, timeout: Durati
     let mut friday = Friday::new();
     register_engines(&mut friday).await.unwrap();
 
-    let rt = ActionRuntime::new().with_timeout(timeout);
+    let rt = AgentKernel::new().with_timeout(timeout);
     rt.register_adapter(Box::new(FilesystemAdapter::new()))
         .await;
     rt.register_adapter(Box::new(TerminalAdapter::new())).await;
