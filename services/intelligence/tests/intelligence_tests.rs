@@ -273,3 +273,46 @@ async fn test_inference_fabric_advanced_features() {
     assert_eq!(calls_p1.load(std::sync::atomic::Ordering::SeqCst), 3); // still 3, skipped!
     assert_eq!(calls_p2.load(std::sync::atomic::Ordering::SeqCst), 2); // openrouter called again
 }
+
+#[tokio::test]
+async fn test_inference_fabric_persistence_and_telemetry() {
+    use friday_intelligence::{InferenceFabric, RoutingMode, ModelInfo, ModelClient};
+    
+    // Clean up before test
+    let _ = std::fs::remove_dir_all(".fabric");
+    
+    let mut fabric = InferenceFabric::new();
+    fabric.default_mode = RoutingMode::Free;
+    
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    fabric.register_provider(Box::new(TestProvider {
+        name: "openrouter".to_string(),
+        succeed: true,
+        response: "Metric Response".to_string(),
+        calls,
+    }));
+    fabric.register_model(ModelInfo {
+        id: "model-1".to_string(),
+        family: "llama".to_string(),
+        provider: "openrouter".to_string(),
+        latency_ms: 100,
+        reliability: 1.0,
+        capabilities: vec![],
+        max_context: 2048,
+    });
+    
+    let res = fabric.complete("test metric log").await.unwrap();
+    assert_eq!(res, "Metric Response");
+    
+    // Assert files are created
+    assert!(std::path::Path::new(".fabric/provider_health.json").exists());
+    assert!(std::path::Path::new(".fabric/metrics.jsonl").exists());
+    
+    // Assert metrics.jsonl contains valid JSON
+    let metrics_content = std::fs::read_to_string(".fabric/metrics.jsonl").unwrap();
+    assert!(metrics_content.contains("request_id"));
+    assert!(metrics_content.contains("model-1"));
+    
+    // Clean up after test
+    let _ = std::fs::remove_dir_all(".fabric");
+}
