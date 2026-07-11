@@ -24,3 +24,23 @@ pub mod protocol;
 
 pub use bridge::WindowsAdapter;
 pub use manifest::CAPABILITY_MANIFEST;
+
+use friday_capabilities::model::{Capability, Platform};
+
+/// Capabilities this bridge advertises to the Capability Intelligence registry.
+pub fn capabilities() -> Vec<Capability> {
+    CAPABILITY_MANIFEST
+        .capabilities
+        .iter()
+        .map(|c| {
+            let verb = c.strip_prefix("windows.").unwrap_or(c);
+            Capability::new(*c, *c, "Windows")
+                .with_actions(&[verb])
+                .with_description(format!("Windows bridge intent {verb}"))
+                .with_platform(Platform::Windows)
+                .with_latency(30)
+                .with_reliability(0.9)
+                .with_confidence(0.9)
+        })
+        .collect()
+}

@@ -230,3 +230,19 @@ fn run_git(cwd: &Path, args: &[impl AsRef<OsStr>]) -> ActionResult {
         Err(e) => ActionResult::error(format!("failed to spawn git: {e}")),
     }
 }
+
+/// Capability record published to the Capability Intelligence registry.
+pub fn capabilities() -> Vec<friday_capabilities::model::Capability> {
+    vec![
+        friday_capabilities::model::Capability::new("git", "Git Service", "Git")
+            .with_actions(&[
+                "clone", "init", "status", "add", "commit", "checkout", "branch", "merge", "diff",
+                "push", "pull",
+            ])
+            .with_description("Version control operations via the Git CLI")
+            .with_latency(200)
+            .with_reliability(0.97)
+            .with_dependencies(&["filesystem"])
+            .with_dry_run(true),
+    ]
+}

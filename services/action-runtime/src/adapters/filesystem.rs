@@ -198,3 +198,24 @@ impl FilesystemAdapter {
         ActionResult::success(json!({ "path": path, "entries": items }))
     }
 }
+
+/// Capability record published to the Capability Intelligence registry.
+pub fn capabilities() -> Vec<friday_capabilities::model::Capability> {
+    vec![
+        friday_capabilities::model::Capability::new("filesystem", "Filesystem Service", "Files")
+            .with_actions(&[
+                "create_file",
+                "read_file",
+                "write_file",
+                "delete_file",
+                "rename",
+                "copy",
+                "move",
+                "list_directory",
+            ])
+            .with_description("Local filesystem read, write, list and mutation operations")
+            .with_latency(5)
+            .with_reliability(0.999)
+            .with_dry_run(true),
+    ]
+}

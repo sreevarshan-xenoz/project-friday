@@ -33,3 +33,13 @@ pub trait ActionAdapter: Send + Sync {
     /// Execute a single normalized request.
     async fn execute(&self, req: ActionRequest) -> ActionResult;
 }
+
+/// Aggregate the capabilities advertised by every built-in service adapter.
+/// Consumed by the Capability Intelligence registry at startup.
+pub fn all_capabilities() -> Vec<friday_capabilities::model::Capability> {
+    let mut caps = Vec::new();
+    caps.extend(filesystem::capabilities());
+    caps.extend(terminal::capabilities());
+    caps.extend(git::capabilities());
+    caps
+}

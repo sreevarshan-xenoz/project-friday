@@ -113,6 +113,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "friday-capabilities",
  "friday-core",
  "friday-planner",
  "serde",
@@ -120,6 +121,19 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "friday-capabilities"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "friday-actions",
+ "friday-windows",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -157,6 +171,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "friday-actions",
+ "friday-capabilities",
  "friday-core",
  "serde",
  "serde_json",

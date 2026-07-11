@@ -111,3 +111,30 @@ See [`docs/Memory.md`](Memory.md).
   (see `Security.md`).
 - Every new feature answers three questions: **which event does it consume?
   which event does it produce? which plugin owns it?**
+
+---
+
+## Addendum — Services & Subsystems (M4.6, authorized extension)
+
+The M4.6 Capability Intelligence work reorganizes how we *name* things without
+changing the locked contracts below. This addendum is an authorized extension of
+the frozen architecture.
+
+- **Service, not plugin, is the organizing term above `ActionAdapter`.** A
+  *service* (filesystem, git, terminal, windows, future browser) may internally
+  use multiple adapters/bridges (e.g. the Windows service = Rust adapter + C#
+  host over IPC). The `ActionAdapter` trait is unchanged.
+- **Subsystems** group the work: **Kernel** (execution/lifecycle/context/
+  resources in `friday-actions`), **Knowledge** (memory + `friday-capabilities`
+  registry/ranking/health/graph), **Services**, **Perception**, **Cognition**
+  (planner + M5 LLM), **Autonomy**.
+- The planner now reasons over **capabilities + ranked providers** held in the
+  Capability Intelligence registry, never over plugin names. See
+  `docs/CapabilityIntelligence.md`.
+- Services advertise a rich `Capability` (id, group, actions, platform, latency,
+  reliability, health, cost, confidence, …) via `manifest.json` discovery or an
+  in-code `capabilities()` function. The registry scores providers and filters
+  by availability, enabling autonomous routing and self-healing.
+
+The event vocabulary, `friday-core` API, and `friday-planner` API remain frozen;
+Capability Intelligence is an additive layer the planner consults.

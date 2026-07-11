@@ -1,0 +1,21 @@
+[package]
+name = "friday-capabilities"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "FRIDAY Capability Intelligence: registry, ranking, health, manifest discovery, graph"
+
+[dependencies]
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util", "macros"] }
+friday-actions = { path = "../../services/action-runtime" }
+friday-windows = { path = "../../plugins/windows" }

@@ -126,27 +126,39 @@ OS-specific or browser complexity.
   `OpenTab`, `Navigate`, `Click`, `Fill`, `Scroll`, `WaitFor`, `Screenshot`,
   `ExtractText`, `EvaluateScript`. Every action is session-aware.
 
-## M4.6 — Capability Registry + Negotiation 🚧
+## M4.6 — Capability Intelligence ✅
 
-Replace the flat `PluginManager → plugins` view with a `CapabilityRegistry`
-that plugins advertise into. Each capability declares:
+Renamed from "Capability Registry": it is now the **Knowledge** subsystem — the
+single source of truth for *what FRIDAY can do, who can do it, and how well*.
 
-```rust
-Capability {
-    name, description, actions,
-    permissions, cost, latency,
-    requires_confirmation,
-}
-```
+- `friday-capabilities` crate (`services/capabilities`):
+  - **Rich `Capability` model** — `id`, `name`, `group`, `actions`,
+    `permissions`, `platform`, `latency_ms`, `reliability`, `version`,
+    `dependencies`, `resource_requirements`, `supports_parallel`, `dry_run`,
+    `available`, `health`, `cost`, `confidence`.
+  - **`CapabilityRegistry`** — `provider → capabilities`; query, rank, filter by
+    availability. Planner reasons over capabilities + ranked providers, not
+    hardcoded plugin names.
+  - **Provider ranking** — `score = reliability*100 - latency*0.05 - cost`
+    (Browser `open_url` → 98 vs Windows → 81; no hardcoding).
+  - **Health + `Monitor`** — `Healthy/Busy/Offline/Recovering/Disabled` states,
+    periodic probes, and a self-healing recovery hook (runtime restarts a
+    crashed service).
+  - **Manifest discovery** — services ship `manifest.json`; startup scans →
+    validates → registers. Dynamic capabilities (e.g. `browser.chrome.*` appears
+    when Chrome is installed) are data, not code.
+  - **`CapabilityGraph`** — capabilities grouped by `group` for LLM traversal
+    (token savings at M5).
+- Existing services publish capabilities: `filesystem`, `terminal`, `git`,
+  `windows` (verified by an integration test aggregating real adapters).
+- Design locked in `docs/CapabilityIntelligence.md`; full test coverage
+  (ranking example, health/monitor, manifest, graph, integration).
 
-The planner then reasons over *capabilities* ("I need `create_file`"), not
-plugin names. This becomes decisive once multiple plugins expose the same
-capability and the platform must route by cost/latency/confirmation.
-
-**Capability Negotiation** (part of M4.6): plugins report *runtime
-availability*, not just static capability lists. The planner adapts
-automatically — e.g. `Browser: ✗ Chrome not installed` means the planner routes
-around it instead of failing mid-plan.
+> **Terminology shift (authorized restructure):** we now speak of **services**
+> (a filesystem service, a git service, a windows service, a future browser
+> service) rather than bare plugins, and of **subsystems** rather than a flat
+> milestone list — see the `docs/Architecture.md` addendum. The `ActionAdapter`
+> trait is unchanged; "service" is the organizing term above it.
 
 ## M4.7 — Dry Run / Plan Preview 🚧
 
@@ -154,7 +166,16 @@ Every plan should be executable **without side effects** before it runs. The
 runtime renders a preview (steps, estimated time, affected resources) and awaits
 approval — critical for safety, debugging, and user trust (e.g. "Delete
 everything in Downloads" → preview of 143 files + recycle bin, ~18s, awaiting
-approval). Implemented as a mode on the execution path, not a separate code fork.
+approval). Implemented as a mode on the execution path. The Capability model's
+`dry_run` flag lets the planner skip providers that cannot simulate safely, and
+the kernel's `ExecutionContext` already carries the hooks to no-op side effects.
+
+## M4.8 — Workflow Recorder 🚧
+
+Record successfully executed plans as reusable workflows. Built on the
+`CapabilityGraph` (which tasks map to which capabilities) so a recorded workflow
+is portable across providers — if Browser later beats Windows for `open_url`, the
+same workflow re-routes automatically.
 
 > **Event envelope (deferred, non-breaking):** rather than retrofitting
 > `execution_id`/`trace_id` onto every frozen event type, future work wraps
@@ -163,6 +184,45 @@ approval). Implemented as a mode on the execution path, not a separate code fork
 > tracing, replay, and correlation. This is the preferred path over editing the
 > locked event types.
 
+## Revised ordering (subsystems, not just milestones)
+
+```
+✅ M1  Foundation
+✅ M2  Memory
+✅ M3  Planner
+✅ M4  Execution Kernel (runtime, lifecycle, context, resources)
+🚧 M4.6 Capability Intelligence
+🚧 M4.7 Dry Run Engine
+🚧 M4.8 Workflow Recorder
+⏳ M5  Intelligence Layer
+⏳ M6  Browser Runtime      (now trivial: just declares capabilities)
+⏳ M7  Vision
+⏳ M8  Voice
+⏳ M9  Learning
+⏳ M10 Autonomy
+```
+
+Because Capability Intelligence exists, M5 becomes `LLM → need capability →
+registry → best provider → runtime → result`; the LLM never sees implementation
+details. And the Browser service (M6) is now tiny — it only declares
+`Navigate/Click/Type/Screenshot/ExtractText`; the registry handles routing,
+ranking, health, and discovery.
+
+## Subsystem map
+
+Stop thinking in "plugins"; think in **services** inside **subsystems**:
+
+- **Kernel** — execution, lifecycle, context, resources (`friday-actions` + kernel).
+- **Knowledge** — memory (`friday-core`), Capability Intelligence
+  (`friday-capabilities`), registry.
+- **Services** — filesystem, git, terminal, windows, (future) browser, vision.
+  A service may internally use multiple plugins/bridges/adapters.
+- **Perception** — vision, voice.
+- **Cognition** — planner, LLM routing, reasoning (`friday-planner`, M5).
+- **Autonomy** — learning, workflows, background agents.
+
+This matches the architecture already built and scales to Windows / Android /
+Linux / cloud workers / remote machines.
 
 ## M5 — Intelligence Layer ⏳
 
@@ -170,22 +230,31 @@ approval). Implemented as a mode on the execution path, not a separate code fork
 - Local/cloud model routing, structured output, tool selection, context
   assembly.
 - Replaces the rule-based Intent classifier and Planning heuristics with
-  model-driven ones behind the same event contract.
+  model-driven ones behind the same event contract, querying Capability
+  Intelligence instead of knowing plugins.
 
-## M6 — Perception ⏳
+## M6 — Browser Runtime ⏳
 
-- Screen understanding, OCR, UI automation, window discovery.
+A **browser session manager**, not "Chrome automation": `BrowserRuntime →
+Session → Tab → Page → DOM`. Actions `OpenTab`, `Navigate`, `Click`, `Fill`,
+`Scroll`, `WaitFor`, `Screenshot`, `ExtractText`, `EvaluateScript`. Session-aware.
+Thanks to M4.6 it only declares capabilities; the registry handles the rest.
 
-## M7 — Voice ⏳
+## M7 — Vision ⏳
+
+- Screen understanding, OCR, UI automation, window discovery (consumes the
+  Windows bridge's `click`/`type`/`capture` intents).
+
+## M8 — Voice ⏳
 
 - Wake word, VAD, streaming STT, streaming TTS, interruptions.
 
-## M8 — Learning ⏳
+## M9 — Learning ⏳
 
 - Habit detection, preference extraction, workflow learning, knowledge-graph
   updates.
 
-## M9 — Autonomy ⏳
+## M10 — Autonomy ⏳
 
 - Background tasks, long-running jobs, scheduling, goal monitoring,
   self-recovery.
