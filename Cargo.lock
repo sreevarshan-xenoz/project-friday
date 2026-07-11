@@ -169,6 +169,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "friday-e2e"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "friday-actions",
+ "friday-capabilities",
+ "friday-context",
+ "friday-core",
+ "friday-intelligence",
+ "friday-planner",
+ "friday-simulation",
+ "friday-windows",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "friday-intelligence"
 version = "0.1.0"
 dependencies = [
