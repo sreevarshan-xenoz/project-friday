@@ -1,6 +1,15 @@
 [workspace]
 resolver = "2"
-members = ["core", "planner", "services/action-runtime", "services/capabilities", "plugins/windows"]
+members = [
+    "core",
+    "planner",
+    "services/action-runtime",
+    "services/capabilities",
+    "services/simulation",
+    "services/context",
+    "services/intelligence",
+    "plugins/windows"
+]
 
 [workspace.package]
 edition = "2021"
