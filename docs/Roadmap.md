@@ -271,13 +271,15 @@ Produces an `LLMContext` handed to the Intelligence Layer. Full spec:
 ✅ M4.5 Services (filesystem, terminal, git, windows)
 ✅ M4.6 Capability Intelligence
 ✅ M4.6.5 Service Orchestrator + Cost Estimator
-🚧 M4.7  Plan Simulation Engine
-🚧 M4.8  Workflow Recorder
-🚧 M4.9  Plan Optimizer
-🚧 M4.10 Context Builder
-⏳ M5  Intelligence Layer        (LLM sits ABOVE the kernel, fed by Context Builder)
+✅ M4.7  Plan Simulation Engine
+✅ M4.8  Experience Engine (Procedural Memory)
+✅ M4.10 Context Builder
+✅ M5  Cognitive Engine (System 1/2 Router, Compiler, Response Interpreter)
+🚧 M5.5 Evaluation & Benchmarking Framework
+🚧 M5.6 Knowledge Graph
+🚧 M5.7 Reasoning Session
 ⏳ M6  Browser Runtime           (now trivial: just declares capabilities)
-⏳ M7  Vision
+⏳ M7  Desktop World Model (Vision)
 ⏳ M8  Voice
 ⏳ M9  Learning
 ⏳ M10 Autonomy
