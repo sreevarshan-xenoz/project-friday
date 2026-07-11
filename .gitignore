@@ -32,3 +32,6 @@ secrets*
 # Logs
 logs/
 *.log
+
+# FRIDAY local fabric cache
+.fabric/
