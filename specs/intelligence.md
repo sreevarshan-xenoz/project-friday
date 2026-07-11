@@ -1,55 +1,60 @@
-# Intelligence Specification (M5)
+# Intelligence Specification — Cognition Layer (M5)
 
-**Status:** ⏳ planned. **Spec-first:** implement against this file.
+**Status:** ✅ Implemented cognitive foundations (Router, Prompt Compiler, Response Interpreter).
 
-The Intelligence Layer is the **LLM**, and it sits **above the kernel**, not inside
-it. It is fed by the Context Builder and reasons over Capability Intelligence. It
-never sees plugin internals and never assembles its own context.
-
-## Crate
-
-`services/intelligence` — crate `friday-intelligence`. Depends on
-`friday-context` (M4.10), `friday-capabilities`, `friday-planner`.
-
-## Position in the stack
+The Cognition Layer governs FRIDAY's reasoning and sits **above the kernel**, not inside it. It translates the compiled `AgentContext` from the Context Builder into a structured, validated `TaskGraph` planner blueprint.
 
 ```
-User → Context Builder → Intelligence Layer → Planner → Simulation → Kernel
+Goal.raw ──> Context Builder ──> AgentContext
+                                      │
+                                      ▼
+                        [Intelligence Router]
+                        ├───────────────────┐
+                  (System 1)            (System 2)
+                        │                   │
+                  Direct Exec          Prompt Compiler
+                                            │
+                                            ▼
+                                     Model Providers
+                                            │
+                                            ▼
+                                   [Response Interpreter]
+                                            │
+                                            ▼
+                                       TaskGraph
 ```
 
-The Intelligence Layer receives **only** an `LLMContext` (from `specs/context.md`)
-plus the goal. It does **not** query memory, the registry, or services directly.
+## Subsystem Architecture
 
-## Provider abstraction
+The cognition layer is implemented in the `friday-intelligence` crate (`services/intelligence/`) and divided into four decoupled subsystems:
 
-- Local model via **Ollama** + cloud fallback (configurable).
-- Structured output parsing into the planner's `TaskGraph` / `intent` shapes.
-- Tool selection is done by **querying Capability Intelligence**, not by hardcoding
-  plugin names.
+### 1. Intelligence Router (`router.rs`)
+Directs user goals according to cognitive complexity:
+- **System 1 (Reactive)**: Greetings, simple queries, or direct single-capability execution commands (e.g. "open notepad", "ping"). These route immediately without planning, simulation, or verification.
+- **System 2 (Reflective)**: Complex, plannable, multi-step requests. These invoke the context-gathering pipeline, prompt compilation, simulation engines, and verification loops.
 
-## What it replaces (behind the same contract)
+### 2. Prompt Compiler (`compiler.rs`)
+Translates `AgentContext` into an intermediate structured **Prompt AST** containing:
+- System instructions
+- Registered capability schemas
+- Relevant historical memories
+- Relevant procedural execution experiences
+- System/project state (cwd, sessions, healthy services)
 
-At M5 the rule-based **Intent** and **Planning** engines are replaced by
-model-driven ones — but they still emit the **same events** (`intent.created`,
-`plan.created`) and produce the **same `TaskGraph`**. Nothing downstream (Simulation,
-Kernel, Services) changes. This is why the event vocabulary and `TaskGraph` are
-frozen.
+The AST is compiled to target-tailored string formats:
+- **Claude (XML)**: Uses precise XML boundary tags (`<capabilities>`, `<user_goal>`).
+- **Ollama (Compact)**: Strips verbose telemetry to fit in local, smaller context windows.
+- **Gemini / OpenAI (Markdown)**: Renders standard Markdown heading blocks.
 
-## Consumes / produces
+### 3. Response Interpreter (`parser.rs`)
+Strictly validates and parses raw model outputs to protect the system's ontology:
+- Strips markdown formatting code-fences.
+- Parses output into a typed `LlmResponse` intermediate struct.
+- **Ontology Verification**: Compares proposed capability IDs against known registered IDs in the capability registry. Typos (e.g., `windows.launch`) trigger a fuzzy suggestion lookup (e.g., *"Did you mean 'windows.open'?"*) and raise a parser error, preventing the LLM from inventing new terms.
+- Compiles the valid response into a planner `TaskGraph` DAG.
 
-- Consumes: `LLMContext` (from Context Builder), `goal.raw`.
-- Produces: `intent.created`, `plan.created` (into the existing Planner pipeline),
-  ultimately `exec.action` via the kernel.
+### 4. Isolated Model Clients (`providers.rs`)
+Interfaces with LLM execution targets via the `ModelClient` async trait, ensuring that LLM backends can be swapped seamlessly (e.g., swapping Ollama for Gemini or Claude) without affecting the router, compiler, or interpreter code.
 
-## Constraints
-
-- The LLM never assembles context (Context Builder owns that).
-- The LLM never calls plugins directly (it emits intents/plans; the kernel dispatches).
-- All model output is validated by the Simulator (M4.7) before execution.
-
-## See also
-
-- `specs/context.md` (feeds this layer).
-- `specs/capabilities.md` (tool/provider selection).
-- `specs/planner.md` (same event contract preserved).
-- `M5` in `docs/Roadmap.md`.
+## Verification & Testing
+All cognitive foundations are verified by unit and integration tests located in `services/intelligence/tests/intelligence_tests.rs`.
