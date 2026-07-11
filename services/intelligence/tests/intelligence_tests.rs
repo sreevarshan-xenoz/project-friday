@@ -109,3 +109,88 @@ fn test_response_interpreter_validations() {
     assert!(parse_err.contains("Ontology Violation"));
     assert!(parse_err.contains("windows.open") || parse_err.contains("windows.close")); // suggestion check
 }
+
+struct TestProvider {
+    name: String,
+    succeed: bool,
+    response: String,
+    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl friday_intelligence::Provider for TestProvider {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    async fn complete(&self, _model_id: &str, _prompt: &str, _require_json: bool) -> Result<String, String> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self.succeed {
+            Ok(self.response.clone())
+        } else {
+            Err("Simulated failure".to_string())
+        }
+    }
+    async fn check_health(&self) -> bool {
+        self.succeed
+    }
+}
+
+#[tokio::test]
+async fn test_inference_fabric_failover() {
+    use friday_intelligence::{InferenceFabric, RoutingMode, ModelInfo, ModelClient};
+
+    let mut fabric = InferenceFabric::new();
+    fabric.default_mode = RoutingMode::Hybrid;
+
+    let calls_p1 = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let calls_p2 = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+    // ollama: fails, latency=100ms
+    fabric.register_provider(Box::new(TestProvider {
+        name: "ollama".to_string(),
+        succeed: false,
+        response: "".to_string(),
+        calls: calls_p1.clone(),
+    }));
+    fabric.register_model(ModelInfo {
+        id: "local-llama".to_string(),
+        family: "llama".to_string(),
+        provider: "ollama".to_string(),
+        latency_ms: 100,
+        reliability: 1.0,
+        supports_json: true,
+        supports_tools: true,
+        max_context: 2048,
+    });
+
+    // openrouter: succeeds, latency=500ms
+    fabric.register_provider(Box::new(TestProvider {
+        name: "openrouter".to_string(),
+        succeed: true,
+        response: "Target Answer".to_string(),
+        calls: calls_p2.clone(),
+    }));
+    fabric.register_model(ModelInfo {
+        id: "cloud-gemini".to_string(),
+        family: "gemini".to_string(),
+        provider: "openrouter".to_string(),
+        latency_ms: 500,
+        reliability: 1.0,
+        supports_json: true,
+        supports_tools: true,
+        max_context: 8192,
+    });
+
+    // First request: ollama (faster) is tried, fails, then openrouter (slower) succeeds
+    let res = fabric.complete("Hello").await.unwrap();
+    assert_eq!(res, "Target Answer");
+    assert_eq!(calls_p1.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(calls_p2.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    // Second request: openrouter is now ranked higher because ollama's health degraded to 0.8.
+    // So openrouter is tried first and succeeds directly.
+    let res2 = fabric.complete("Hello again").await.unwrap();
+    assert_eq!(res2, "Target Answer");
+    assert_eq!(calls_p1.load(std::sync::atomic::Ordering::SeqCst), 1); // still 1
+    assert_eq!(calls_p2.load(std::sync::atomic::Ordering::SeqCst), 2); // now 2
+}
