@@ -59,26 +59,45 @@ gate + audit engine before reaching an adapter).
 - **M4.4 — Terminal Plugin** ✅ — `TerminalAdapter` over a **persistent shell
   session** (same process/cwd/env across calls), with a sentinel-echo protocol
   over merged stdout/stderr.
-- **M4.5 — Windows / Browser / Git** ⏳ — Windows via C# over IPC (isolated
-  under `plugins/windows/{bridge,ipc,actions}`); Browser postponed; Git exposed
-  as actions (not CLI wrapping).
 
 All M4.1–M4.4 paths covered by unit + end-to-end tests wired into `Friday`.
+(The next sub-milestones — M4.4.5 (kernel), M4.5 (Windows/Git/Browser), M4.6
+(Capability Registry) — are documented as dedicated sections below.)
 
-## M4.4.5 — Execution Context & Resource Manager 📋 (next)
+## M4.4.5 — Execution Context & Resource Manager ✅ (kernel frozen)
 
-Today the flow is `Planner → Action Runtime → Adapter`, but every action is
-stateless and independent. We are missing the **execution context** that binds a
-related sequence of actions ("open VS Code → compile → run → read log → fix →
-run again") into one unit, so state isn't hand-carried between plugins.
+Today the flow is `Planner → Action Runtime → Adapter`, but every action was
+stateless and independent. M4.4.5 introduces the **stable kernel** every future
+capability depends on, implemented in a `kernel` module inside `friday-actions`
+and wired into the `ActionRuntime`.
 
-- **Execution Context** carried by every action:
-  `session_id`, `cwd`, `environment`, `user`, `permissions`, `variables`,
-  `cancellation_token`, `trace_id`, `started_at`.
-- **Resource Manager** that *owns* long-lived resources so plugins can't leak
-  them: terminal sessions, browser sessions, windows, websocket connections,
-  file watches, microphones, cameras, clipboard. Each resource is created,
-  referenced by id, and reclaimed through the manager.
+- **Execution Context** — immutable [`ExecutionContext`] carried by every action:
+  `execution_id`, `session_id`, `parent_execution`, `user_id`, `cwd`,
+  `environment`, `variables`, `permissions`, `trace_id`, `deadline`,
+  `metadata`, plus a shared [`CancellationToken`]. Child contexts inherit the
+  parent's session/identity and are cancelled together; parallel DAG branches
+  get isolated children and [`ExecutionContext::merge`] folds them back.
+- **Lifecycle Manager** — one [`LifecycleManager`] state machine
+  (`Created → Waiting → Running → Paused → Cancelled → Completed → Archived`)
+  shared by tasks, sessions, resources, and workflows.
+- **Resource Manager** — the sole owner of long-lived resources via the
+  [`ManagedResource`] trait (`acquire`/`release`/`heartbeat`/`shutdown`);
+  `shutdown_all` reclaims everything on stop so nothing leaks.
+- **Session Manager** — [`SessionManager`] preserves continuity (cwd, env,
+  shell history, variables, auth) so work continues instead of restarting.
+- **Metrics** — automatic per-execution [`MetricSample`] (planning/queue/
+  execution time, retries, plugin used, success, resource placeholders) with
+  `success_rate` and `avg_execution_ms` for "why is Browser slower than
+  Terminal?"-style questions.
+- **Wiring** — `ActionRuntime::run_action` is the single public dispatch path:
+  permission → timeout + deadline + **cancellation** + bounded retries →
+  metrics → audit → lifecycle, attaching `execution_id` to `exec.result`.
+
+> **Runtime API is now declared STABLE.** M4.5 (Windows/Git/Browser), M4.6
+> (Capability Registry), and M5+ must build on these contracts without changing
+> them. All kernel features covered by unit + integration tests (context
+> inheritance/merge, lifecycle transitions, resource acquire/release,
+> cancellation propagation, metrics recording).
 
 ## M4.5 — Windows Bridge, Git Plugin, Browser Runtime 📋 (split into three)
 

@@ -1,8 +1,8 @@
 //! Unit tests for the filesystem adapter's individual actions.
 
 use friday_actions::adapters::FilesystemAdapter;
-use friday_actions::ActionAdapter;
 use friday_actions::request::{ActionRequest, ActionResult};
+use friday_actions::ActionAdapter;
 use serde_json::json;
 use std::path::PathBuf;
 use uuid::Uuid;

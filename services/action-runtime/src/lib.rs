@@ -10,12 +10,18 @@
 
 pub mod adapters;
 pub mod audit;
+pub mod kernel;
 pub mod permission;
 pub mod request;
 pub mod runtime;
 
 pub use adapters::{ActionAdapter, FilesystemAdapter, TerminalAdapter};
 pub use audit::{AuditEngine, AuditEntry};
+pub use kernel::{
+    CancellationToken, ExecutionContext, ExecutionContextBuilder, Kernel, LifecycleError,
+    LifecycleManager, LifecycleState, ManagedResource, MetricSample, Metrics, ResourceId,
+    ResourceManager, Session, SessionManager,
+};
 pub use permission::{PermissionDecision, PermissionEngine};
 pub use request::{ActionRequest, ActionResult};
 pub use runtime::{ActionRuntime, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT};
