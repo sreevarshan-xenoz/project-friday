@@ -158,8 +158,7 @@ async fn test_inference_fabric_failover() {
         provider: "ollama".to_string(),
         latency_ms: 100,
         reliability: 1.0,
-        supports_json: true,
-        supports_tools: true,
+        capabilities: vec![],
         max_context: 2048,
     });
 
@@ -176,8 +175,7 @@ async fn test_inference_fabric_failover() {
         provider: "openrouter".to_string(),
         latency_ms: 500,
         reliability: 1.0,
-        supports_json: true,
-        supports_tools: true,
+        capabilities: vec![],
         max_context: 8192,
     });
 
@@ -193,4 +191,85 @@ async fn test_inference_fabric_failover() {
     assert_eq!(res2, "Target Answer");
     assert_eq!(calls_p1.load(std::sync::atomic::Ordering::SeqCst), 1); // still 1
     assert_eq!(calls_p2.load(std::sync::atomic::Ordering::SeqCst), 2); // now 2
+}
+
+#[tokio::test]
+async fn test_inference_fabric_advanced_features() {
+    use friday_intelligence::{InferenceFabric, RoutingMode, ModelInfo, ModelCapability, ModelClient, CircuitState};
+
+    let mut fabric = InferenceFabric::new();
+    fabric.default_mode = RoutingMode::Hybrid;
+
+    let calls_p1 = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let calls_p2 = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+    // ollama: fails 3 times to trip circuit, latency=100ms
+    fabric.register_provider(Box::new(TestProvider {
+        name: "ollama".to_string(),
+        succeed: false,
+        response: "".to_string(),
+        calls: calls_p1.clone(),
+    }));
+    fabric.register_model(ModelInfo {
+        id: "local-llama".to_string(),
+        family: "llama".to_string(),
+        provider: "ollama".to_string(),
+        latency_ms: 100,
+        reliability: 1.0,
+        capabilities: vec![ModelCapability::Json, ModelCapability::Local],
+        max_context: 2048,
+    });
+
+    // openrouter: succeeds, latency=500ms, requires Vision capability for capability testing
+    fabric.register_provider(Box::new(TestProvider {
+        name: "openrouter".to_string(),
+        succeed: true,
+        response: "Vision Answer".to_string(),
+        calls: calls_p2.clone(),
+    }));
+    fabric.register_model(ModelInfo {
+        id: "cloud-gemini".to_string(),
+        family: "gemini".to_string(),
+        provider: "openrouter".to_string(),
+        latency_ms: 500,
+        reliability: 1.0,
+        capabilities: vec![ModelCapability::Json, ModelCapability::Vision],
+        max_context: 8192,
+    });
+
+    // 1. Test Capability-Based Routing:
+    // If fabric requires Vision, ollama (which lacks it) must be skipped entirely
+    fabric.required_capabilities = vec![ModelCapability::Vision];
+    let res = fabric.complete("Hello").await.unwrap();
+    assert_eq!(res, "Vision Answer");
+    assert_eq!(calls_p1.load(std::sync::atomic::Ordering::SeqCst), 0); // skipped!
+    assert_eq!(calls_p2.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    // 2. Test Circuit Breaker:
+    // Restrict required capabilities to Local to force all calls to ollama
+    fabric.required_capabilities = vec![ModelCapability::Local];
+    
+    // Call 1: fails
+    let _ = fabric.complete("Hello").await.unwrap_err();
+    // Call 2: fails
+    let _ = fabric.complete("Hello").await.unwrap_err();
+    // Call 3: fails
+    let _ = fabric.complete("Hello").await.unwrap_err();
+
+    assert_eq!(calls_p1.load(std::sync::atomic::Ordering::SeqCst), 3);
+
+    // Verify circuit is now OPEN
+    {
+        let circuits = fabric.circuits.lock().unwrap();
+        let cb = circuits.get("ollama").unwrap();
+        assert_eq!(cb.state, CircuitState::Open);
+    }
+
+    // Reset required capabilities to Json. Ollama supports Json, but its circuit is OPEN,
+    // so it must be skipped, routing directly to openrouter (which also supports Json).
+    fabric.required_capabilities = vec![ModelCapability::Json];
+    let res = fabric.complete("Hello").await.unwrap();
+    assert_eq!(res, "Vision Answer");
+    assert_eq!(calls_p1.load(std::sync::atomic::Ordering::SeqCst), 3); // still 3, skipped!
+    assert_eq!(calls_p2.load(std::sync::atomic::Ordering::SeqCst), 2); // openrouter called again
 }
