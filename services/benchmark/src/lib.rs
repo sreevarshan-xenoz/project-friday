@@ -133,6 +133,9 @@ pub struct Metrics {
     pub recovery_by_subsystem: Vec<SubsystemRecovery>,
     /// Mean |predicted - actual| across calibration bins (lower is better).
     pub calibration_error: f64,
+    /// Current qualification sprint: (subsystem name, progress in [0,1]).
+    /// Rendered as a one-line progress bar on the dashboard.
+    pub qualification_sprint: (String, f64),
 }
 
 /// Full result of one benchmark run.
@@ -683,6 +686,23 @@ pub fn run_benchmark_with(chaos: bool, n: usize, model: &mut ConfidenceModel) ->
         .collect();
     recovery_by_subsystem.sort_by(|a, b| a.subsystem.cmp(&b.subsystem));
 
+    // Current Qualification Sprint progress (proxy: Windows recovery coverage
+    // from the simulated benchmark; replaced by the composite Windows
+    // qualification metric once the corpus in specs/windows-qualification.md
+    // is instrumented).
+    let windows_coverage = recovery_by_subsystem
+        .iter()
+        .find(|r| r.subsystem == "windows")
+        .map(|r| {
+            let att = r.attempts as f64;
+            if att > 0.0 {
+                r.recovered as f64 / att
+            } else {
+                0.0
+            }
+        })
+        .unwrap_or(0.0);
+
     // Calibration error across non-empty bins.
     let mut cal_bins = Vec::new();
     let mut cal_error_sum = 0.0;
@@ -768,6 +788,7 @@ pub fn run_benchmark_with(chaos: bool, n: usize, model: &mut ConfidenceModel) ->
         recovery_cost_mean,
         recovery_by_subsystem,
         calibration_error,
+        qualification_sprint: ("Windows".to_string(), windows_coverage),
     };
 
     let _ = std::fs::remove_dir_all(&temp);
@@ -793,6 +814,16 @@ pub fn render_dashboard(result: &BenchmarkResult) -> String {
             "Normal"
         },
         m.total_tasks
+    ));
+
+    let (qs_name, qs_pct) = &m.qualification_sprint;
+    let filled = (qs_pct * 10.0).round().clamp(0.0, 10.0) as usize;
+    let bar = format!("{}{}", "█".repeat(filled), "░".repeat(10 - filled));
+    s.push_str(&format!(
+        "Current Qualification Sprint: {}  {} {:.0}%\n\n",
+        qs_name,
+        bar,
+        qs_pct * 100.0
     ));
 
     s.push_str("## Resilience Metrics (failure is never hidden)\n");

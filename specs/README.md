@@ -69,3 +69,4 @@ work this directory supersedes it.
 | Reasoning Session   | `reasoning_session.md`| `services/intelligence`             | 🚧 M5.7  |
 | Benchmark (QA)      | `benchmark.md`        | `services/benchmark`                 | ✅ QA    |
 | Recovery            | `recovery.md`         | `services/recovery`                  | ✅ QA    |
+| Windows Qualification| `windows-qualification.md` | `windows-host`                  | 🟡 Sprint 001 |
