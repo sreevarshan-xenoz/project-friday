@@ -84,7 +84,11 @@ pub fn render_report(r: &SimulationReport) -> String {
     if !r.fallbacks.is_empty() {
         out.push_str("Fallback Paths\n");
         for fb in &r.fallbacks {
-            let status = if fb.available { "available" } else { "UNAVAILABLE" };
+            let status = if fb.available {
+                "available"
+            } else {
+                "UNAVAILABLE"
+            };
             out.push_str(&format!("  {} -> {} [{status}]\n", fb.from, fb.to));
         }
     }
@@ -93,7 +97,12 @@ pub fn render_report(r: &SimulationReport) -> String {
     if !r.issues.is_empty() {
         out.push_str("Issues\n");
         for i in &r.issues {
-            out.push_str(&format!("  [{}] {}: {}\n", i.severity.as_str(), i.kind, i.message));
+            out.push_str(&format!(
+                "  [{}] {}: {}\n",
+                i.severity.as_str(),
+                i.kind,
+                i.message
+            ));
         }
     }
 

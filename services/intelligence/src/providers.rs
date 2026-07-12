@@ -47,9 +47,9 @@ pub enum ModelCapability {
 /// Represents metadata for a model hosted by a specific provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
-    pub id: String,          // e.g. "google/gemini-2.5-flash"
-    pub family: String,      // e.g. "gemini-2.5-flash"
-    pub provider: String,    // e.g. "openrouter"
+    pub id: String,       // e.g. "google/gemini-2.5-flash"
+    pub family: String,   // e.g. "gemini-2.5-flash"
+    pub provider: String, // e.g. "openrouter"
     pub latency_ms: u64,
     pub reliability: f64,
     pub capabilities: Vec<ModelCapability>,
@@ -60,7 +60,12 @@ pub struct ModelInfo {
 #[async_trait]
 pub trait Provider: Send + Sync {
     fn name(&self) -> &str;
-    async fn complete(&self, model_id: &str, prompt: &str, require_json: bool) -> Result<String, String>;
+    async fn complete(
+        &self,
+        model_id: &str,
+        prompt: &str,
+        require_json: bool,
+    ) -> Result<String, String>;
     async fn check_health(&self) -> bool;
 }
 
@@ -138,10 +143,15 @@ impl Provider for OpenAiProvider {
         &self.name
     }
 
-    async fn complete(&self, model_id: &str, prompt: &str, _require_json: bool) -> Result<String, String> {
+    async fn complete(
+        &self,
+        model_id: &str,
+        prompt: &str,
+        _require_json: bool,
+    ) -> Result<String, String> {
         let client = reqwest::Client::new();
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
-        
+
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             reqwest::header::AUTHORIZATION,
@@ -156,7 +166,9 @@ impl Provider for OpenAiProvider {
         if self.name == "openrouter" {
             headers.insert(
                 reqwest::header::HeaderName::from_static("http-referer"),
-                reqwest::header::HeaderValue::from_static("https://github.com/project-friday/friday"),
+                reqwest::header::HeaderValue::from_static(
+                    "https://github.com/project-friday/friday",
+                ),
             );
             headers.insert(
                 reqwest::header::HeaderName::from_static("x-title"),
@@ -174,7 +186,8 @@ impl Provider for OpenAiProvider {
             ]
         });
 
-        let res = client.post(&url)
+        let res = client
+            .post(&url)
             .headers(headers)
             .json(&body)
             .send()
@@ -184,10 +197,14 @@ impl Provider for OpenAiProvider {
         if !res.status().is_success() {
             let status = res.status();
             let err_body = res.text().await.unwrap_or_default();
-            return Err(format!("Provider {} returned error status {}: {}", self.name, status, err_body));
+            return Err(format!(
+                "Provider {} returned error status {}: {}",
+                self.name, status, err_body
+            ));
         }
 
-        let json: serde_json::Value = res.json()
+        let json: serde_json::Value = res
+            .json()
             .await
             .map_err(|e| format!("Failed to parse response JSON: {}", e))?;
 
@@ -201,8 +218,12 @@ impl Provider for OpenAiProvider {
     async fn check_health(&self) -> bool {
         let client = reqwest::Client::new();
         let url = format!("{}/models", self.base_url.trim_end_matches('/'));
-        let res = client.get(&url)
-            .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", self.api_key))
+        let res = client
+            .get(&url)
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", self.api_key),
+            )
             .send()
             .await;
         res.is_ok() && res.unwrap().status().is_success()
@@ -254,8 +275,14 @@ impl InferenceFabric {
     }
 
     pub fn register_provider(&mut self, provider: Box<dyn Provider>) {
-        self.health_scores.lock().unwrap().insert(provider.name().to_string(), 1.0);
-        self.circuits.lock().unwrap().insert(provider.name().to_string(), CircuitBreaker::new(30)); // 30s cooldown
+        self.health_scores
+            .lock()
+            .unwrap()
+            .insert(provider.name().to_string(), 1.0);
+        self.circuits
+            .lock()
+            .unwrap()
+            .insert(provider.name().to_string(), CircuitBreaker::new(30)); // 30s cooldown
         self.providers.insert(provider.name().to_string(), provider);
     }
 
@@ -270,7 +297,10 @@ impl InferenceFabric {
 
         for model in &self.models {
             // Check capability match
-            let has_caps = self.required_capabilities.iter().all(|cap| model.capabilities.contains(cap));
+            let has_caps = self
+                .required_capabilities
+                .iter()
+                .all(|cap| model.capabilities.contains(cap));
             if !has_caps {
                 continue;
             }
@@ -284,7 +314,11 @@ impl InferenceFabric {
 
             let matches = match mode {
                 RoutingMode::Fast => model.provider == "groq" || model.provider == "cerebras",
-                RoutingMode::Quality => model.provider == "gemini" || model.provider == "groq" || model.provider == "cerebras",
+                RoutingMode::Quality => {
+                    model.provider == "gemini"
+                        || model.provider == "groq"
+                        || model.provider == "cerebras"
+                }
                 RoutingMode::Free => model.provider == "openrouter",
                 RoutingMode::Local => model.provider == "ollama",
                 RoutingMode::Hybrid => model.provider == "ollama" || model.provider == "openrouter",
@@ -296,23 +330,25 @@ impl InferenceFabric {
                 }
             }
         }
-        
+
         let scores = self.health_scores.clone();
         candidates.sort_by(|a, b| {
             let guard = scores.lock().unwrap();
             let rel_a = guard.get(a.1.name()).copied().unwrap_or(1.0);
             let rel_b = guard.get(b.1.name()).copied().unwrap_or(1.0);
-            
+
             // Primary sort: reliability descending
-            let rel_cmp = rel_b.partial_cmp(&rel_a).unwrap_or(std::cmp::Ordering::Equal);
+            let rel_cmp = rel_b
+                .partial_cmp(&rel_a)
+                .unwrap_or(std::cmp::Ordering::Equal);
             if rel_cmp != std::cmp::Ordering::Equal {
                 return rel_cmp;
             }
-            
+
             // Secondary sort: latency ascending
             a.0.latency_ms.cmp(&b.0.latency_ms)
         });
-        
+
         candidates
     }
 
@@ -320,7 +356,7 @@ impl InferenceFabric {
     pub fn persist_health(&self) {
         let scores = self.health_scores.lock().unwrap();
         let circuits = self.circuits.lock().unwrap();
-        
+
         let mut persisted = Vec::new();
         for (name, reliability) in scores.iter() {
             let (consec_failures, state_str) = if let Some(cb) = circuits.get(name) {
@@ -350,7 +386,8 @@ impl InferenceFabric {
     /// Loads health scores and circuit states from local file if exists.
     pub fn load_health(&self) {
         if let Ok(file) = std::fs::File::open(".fabric/provider_health.json") {
-            if let Ok(persisted) = serde_json::from_reader::<_, Vec<PersistedProviderHealth>>(file) {
+            if let Ok(persisted) = serde_json::from_reader::<_, Vec<PersistedProviderHealth>>(file)
+            {
                 let mut scores = self.health_scores.lock().unwrap();
                 let mut circuits = self.circuits.lock().unwrap();
                 for p in persisted {
@@ -389,7 +426,7 @@ impl InferenceFabric {
     /// Create default fabric configuration dynamically based on registry config file or env vars.
     pub fn default_from_env() -> Self {
         let mut fabric = Self::new();
-        
+
         // Attempt to load dynamic model registry from workspace config file
         let mut registry_loaded = false;
         if let Ok(content) = std::fs::read_to_string("model_registry.json") {
@@ -416,7 +453,11 @@ impl InferenceFabric {
                     provider: "openrouter".to_string(),
                     latency_ms: 800,
                     reliability: 1.0,
-                    capabilities: vec![ModelCapability::Json, ModelCapability::Tools, ModelCapability::LongContext],
+                    capabilities: vec![
+                        ModelCapability::Json,
+                        ModelCapability::Tools,
+                        ModelCapability::LongContext,
+                    ],
                     max_context: 1_000_000,
                 });
                 fabric.register_model(ModelInfo {
@@ -430,7 +471,7 @@ impl InferenceFabric {
                 });
             }
         }
-        
+
         // Groq Console (Tier 1 Ultra-fast)
         if let Ok(key) = std::env::var("GROQ_API_KEY") {
             fabric.register_provider(Box::new(OpenAiProvider {
@@ -485,7 +526,11 @@ impl InferenceFabric {
                     provider: "gemini".to_string(),
                     latency_ms: 600,
                     reliability: 1.0,
-                    capabilities: vec![ModelCapability::Json, ModelCapability::Tools, ModelCapability::LongContext],
+                    capabilities: vec![
+                        ModelCapability::Json,
+                        ModelCapability::Tools,
+                        ModelCapability::LongContext,
+                    ],
                     max_context: 1_000_000,
                 });
             }
@@ -504,7 +549,11 @@ impl InferenceFabric {
                 provider: "ollama".to_string(),
                 latency_ms: 1000,
                 reliability: 1.0,
-                capabilities: vec![ModelCapability::Json, ModelCapability::Tools, ModelCapability::Local],
+                capabilities: vec![
+                    ModelCapability::Json,
+                    ModelCapability::Tools,
+                    ModelCapability::Local,
+                ],
                 max_context: 32768,
             });
         }
@@ -518,7 +567,10 @@ impl InferenceFabric {
 impl ModelClient for InferenceFabric {
     async fn complete(&self, prompt: &str) -> Result<String, String> {
         let request_id = uuid::Uuid::new_v4().to_string();
-        tracing::info!("[Inference Request {}] Starting completion routing...", request_id);
+        tracing::info!(
+            "[Inference Request {}] Starting completion routing...",
+            request_id
+        );
 
         let candidates = self.select_candidates(self.default_mode);
         if candidates.is_empty() {
@@ -640,5 +692,11 @@ impl ModelClient for InferenceFabric {
         self.log_metrics(&metrics);
 
         Err(final_err)
+    }
+}
+
+impl Default for InferenceFabric {
+    fn default() -> Self {
+        Self::new()
     }
 }

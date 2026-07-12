@@ -28,7 +28,11 @@ pub struct SimRequest {
 }
 
 impl SimRequest {
-    pub fn new(tool: impl Into<String>, action: impl Into<String>, params: serde_json::Value) -> Self {
+    pub fn new(
+        tool: impl Into<String>,
+        action: impl Into<String>,
+        params: serde_json::Value,
+    ) -> Self {
         Self {
             tool: tool.into(),
             action: action.into(),

@@ -73,7 +73,8 @@ pub fn optimize(graph: &TaskGraph, _registry: &CapabilityRegistry) -> (TaskGraph
                 && prev.params == t.params
                 && !depended_on(graph, t.id)
             {
-                diff.removed.push(format!("pruned duplicate {}", t.capability));
+                diff.removed
+                    .push(format!("pruned duplicate {}", t.capability));
                 i += 1;
                 continue;
             }

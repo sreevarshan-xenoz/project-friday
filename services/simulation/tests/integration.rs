@@ -9,7 +9,7 @@ use friday_simulation::{render_report, SimulationEngine};
 fn test_simulation_full_flow() {
     // 1. Build capability registry
     let reg = Arc::new(CapabilityRegistry::new());
-    
+
     // Register filesystem capabilities
     for c in friday_actions::adapters::all_capabilities() {
         reg.register("friday-actions", c);
@@ -27,7 +27,10 @@ fn test_simulation_full_flow() {
 
     // 2. Build immutable WorldState
     let mut world = WorldState::from_registry(&reg);
-    world.filesystem.path_counts.insert("Downloads".to_string(), 143);
+    world
+        .filesystem
+        .path_counts
+        .insert("Downloads".to_string(), 143);
     world.filesystem.writable = true;
 
     // 3. Build TaskGraph
@@ -45,12 +48,7 @@ fn test_simulation_full_flow() {
     );
 
     // Task 2: Git Init
-    let t2 = graph.add_task(
-        "Git Init",
-        "git.init",
-        serde_json::Value::Null,
-        &[],
-    );
+    let t2 = graph.add_task("Git Init", "git.init", serde_json::Value::Null, &[]);
 
     // Task 3: Git Commit (depends on t1 and t2)
     let _t3 = graph.add_task(
@@ -75,7 +73,9 @@ fn test_simulation_full_flow() {
 
     // 4. Run Simulation
     let engine = SimulationEngine::new(reg.clone(), sims, world);
-    let report = engine.simulate_plan(&graph).expect("simulation should succeed");
+    let report = engine
+        .simulate_plan(&graph)
+        .expect("simulation should succeed");
 
     // 5. Verify results
     assert_eq!(report.intent, "Test Full Flow Intent");
@@ -90,10 +90,19 @@ fn test_simulation_full_flow() {
     // Confidence check
     assert!(report.confidence.confidence > 0.0);
     assert!(report.confidence.confidence <= 1.0);
-    assert!(report.confidence.assumptions.iter().any(|a| a.contains("disk writable: true")));
+    assert!(report
+        .confidence
+        .assumptions
+        .iter()
+        .any(|a| a.contains("disk writable: true")));
 
     // Preconditions check
-    assert_eq!(report.issues.len(), 1, "Expected exactly 1 issue but got: {:?}", report.issues);
+    assert_eq!(
+        report.issues.len(),
+        1,
+        "Expected exactly 1 issue but got: {:?}",
+        report.issues
+    );
     assert_eq!(report.issues[0].kind, "impossible_action");
 
     // Side effects & Resource forecast check
@@ -103,7 +112,15 @@ fn test_simulation_full_flow() {
 
     // Check Plan Diff (WorldState progression)
     // The "before" Downloads count was 143.
-    assert_eq!(*report.world_before.filesystem.path_counts.get("Downloads").unwrap(), 143);
+    assert_eq!(
+        *report
+            .world_before
+            .filesystem
+            .path_counts
+            .get("Downloads")
+            .unwrap(),
+        143
+    );
     // After applying the filesystem.create_file (if it target is README.md) or window launch side-effects:
     // Let's verify that a window was launched in the after state
     assert!(report.world_after.windows.iter().any(|w| w.app == "chrome"));
@@ -149,7 +166,9 @@ fn test_optimizer_prune_duplicates() {
     );
 
     let engine = SimulationEngine::new(reg, sims, world);
-    let report = engine.simulate_plan(&graph).expect("simulation should succeed");
+    let report = engine
+        .simulate_plan(&graph)
+        .expect("simulation should succeed");
 
     // The optimized plan should prune the second redundant task
     let opt_plan = report.optimized_plan.expect("must have optimized plan");
@@ -157,7 +176,10 @@ fn test_optimizer_prune_duplicates() {
     assert_eq!(opt_plan.tasks[0].id, t1);
 
     let diff = report.optimizer_diff.expect("must have optimizer diff");
-    assert!(diff.removed.iter().any(|r| r.contains("pruned duplicate filesystem.create_file")));
+    assert!(diff
+        .removed
+        .iter()
+        .any(|r| r.contains("pruned duplicate filesystem.create_file")));
 }
 
 #[test]
@@ -179,12 +201,7 @@ fn test_optimizer_collapse_open_close() {
     // So by defining Close before Open, and having both depend on t_dummy,
     // Kahn's algorithm will push Close, then Open onto the queue,
     // which pops Open, then Close, resulting in a deterministic [t_dummy, Open, Close] order.
-    let t_dummy = graph.add_task(
-        "List windows",
-        "windows.list",
-        serde_json::Value::Null,
-        &[],
-    );
+    let t_dummy = graph.add_task("List windows", "windows.list", serde_json::Value::Null, &[]);
     let _t2 = graph.add_task(
         "Close window",
         "windows.close",
@@ -203,7 +220,9 @@ fn test_optimizer_collapse_open_close() {
     );
 
     let engine = SimulationEngine::new(reg, sims, world);
-    let report = engine.simulate_plan(&graph).expect("simulation should succeed");
+    let report = engine
+        .simulate_plan(&graph)
+        .expect("simulation should succeed");
 
     // The optimized plan should collapse both the open and close, leaving only the dummy task
     let opt_plan = report.optimized_plan.expect("must have optimized plan");
@@ -211,5 +230,8 @@ fn test_optimizer_collapse_open_close() {
     assert_eq!(opt_plan.tasks[0].id, t_dummy);
 
     let diff = report.optimizer_diff.expect("must have optimizer diff");
-    assert!(diff.collapsed.iter().any(|c| c.contains("collapsed windows.open + windows.close")));
+    assert!(diff
+        .collapsed
+        .iter()
+        .any(|c| c.contains("collapsed windows.open + windows.close")));
 }

@@ -57,7 +57,10 @@ impl Simulatable for WindowsAdapter {
             pre.push(Precondition {
                 description: "a target app was specified".into(),
                 kind: "state".into(),
-                satisfied: req.str_param("app").or_else(|| req.str_param("name")).is_some(),
+                satisfied: req
+                    .str_param("app")
+                    .or_else(|| req.str_param("name"))
+                    .is_some(),
             });
         }
         pre
@@ -83,11 +86,14 @@ impl Simulatable for WindowsAdapter {
                 vec![e]
             }
             "focus" | "foreground" => {
-                vec![SideEffect::leaf("window.focus", "focus window", 0.0).with_target(app.unwrap_or_default())]
+                vec![SideEffect::leaf("window.focus", "focus window", 0.0)
+                    .with_target(app.unwrap_or_default())]
             }
             "move" | "resize" => {
-                vec![SideEffect::leaf("window.geometry", "change window geometry", 0.0)
-                    .with_target(app.unwrap_or_default())]
+                vec![
+                    SideEffect::leaf("window.geometry", "change window geometry", 0.0)
+                        .with_target(app.unwrap_or_default()),
+                ]
             }
             "capture" => vec![SideEffect::leaf("screen.capture", "capture screen", 0.0)],
             "list" => vec![SideEffect::leaf("window.list", "list windows (read)", 0.0)],

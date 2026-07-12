@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use friday_context::AgentContext;
+use serde::{Deserialize, Serialize};
 
 /// Model providers that FRIDAY can route prompts to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,9 +40,18 @@ impl PromptCompiler {
             )
         }).collect();
 
-        let memories = context.relevant_memories.iter().map(|m| {
-            format!("- [{:?}] {}: {}", m.layer, m.key, serde_json::to_string(&m.content).unwrap_or_default())
-        }).collect();
+        let memories = context
+            .relevant_memories
+            .iter()
+            .map(|m| {
+                format!(
+                    "- [{:?}] {}: {}",
+                    m.layer,
+                    m.key,
+                    serde_json::to_string(&m.content).unwrap_or_default()
+                )
+            })
+            .collect();
 
         let experiences = context.experiences.iter().map(|e| {
             format!(
@@ -57,9 +66,7 @@ impl PromptCompiler {
 
         let active_state = format!(
             "Current Project CWD: {}\nHealthy Services: {:?}\nActive sessions: {:?}",
-            context.current_project,
-            context.healthy_services,
-            context.active_sessions
+            context.current_project, context.healthy_services, context.active_sessions
         );
 
         PromptAst {
@@ -78,12 +85,15 @@ impl PromptCompiler {
             ModelProvider::Claude => {
                 // Claude prefers XML tags for precise context boundary separation
                 let mut p = String::new();
-                p.push_str(&format!("<system>\n{}\n</system>\n\n", ast.system_instruction));
-                
+                p.push_str(&format!(
+                    "<system>\n{}\n</system>\n\n",
+                    ast.system_instruction
+                ));
+
                 p.push_str("<capabilities>\n");
                 for cap in &ast.capabilities {
                     p.push_str(cap);
-                    p.push_str("\n");
+                    p.push('\n');
                 }
                 p.push_str("</capabilities>\n\n");
 
@@ -91,7 +101,7 @@ impl PromptCompiler {
                     p.push_str("<relevant_memories>\n");
                     for mem in &ast.memories {
                         p.push_str(mem);
-                        p.push_str("\n");
+                        p.push('\n');
                     }
                     p.push_str("</relevant_memories>\n\n");
                 }
@@ -100,12 +110,15 @@ impl PromptCompiler {
                     p.push_str("<procedural_memory_experiences>\n");
                     for exp in &ast.experiences {
                         p.push_str(exp);
-                        p.push_str("\n");
+                        p.push('\n');
                     }
                     p.push_str("</procedural_memory_experiences>\n\n");
                 }
 
-                p.push_str(&format!("<active_state>\n{}\n</active_state>\n\n", ast.active_state));
+                p.push_str(&format!(
+                    "<active_state>\n{}\n</active_state>\n\n",
+                    ast.active_state
+                ));
                 p.push_str(&format!("<user_goal>\n{}\n</user_goal>", ast.goal));
                 p
             }
@@ -116,7 +129,7 @@ impl PromptCompiler {
                 p.push_str("AVAILABLE TOOLS:\n");
                 for cap in &ast.capabilities {
                     p.push_str(cap);
-                    p.push_str("\n");
+                    p.push('\n');
                 }
                 p.push_str("\nCONTEXT:\n");
                 p.push_str(&ast.active_state);
@@ -127,23 +140,29 @@ impl PromptCompiler {
             ModelProvider::Gemini | ModelProvider::OpenAi => {
                 // Standard markdown header format
                 let mut p = String::new();
-                p.push_str(&format!("### System Instruction\n{}\n\n", ast.system_instruction));
+                p.push_str(&format!(
+                    "### System Instruction\n{}\n\n",
+                    ast.system_instruction
+                ));
                 p.push_str("### Available Capabilities\n");
                 for cap in &ast.capabilities {
                     p.push_str(cap);
-                    p.push_str("\n");
+                    p.push('\n');
                 }
                 p.push_str("\n### Relevant memories\n");
                 for mem in &ast.memories {
                     p.push_str(mem);
-                    p.push_str("\n");
+                    p.push('\n');
                 }
                 p.push_str("\n### Past Experiences\n");
                 for exp in &ast.experiences {
                     p.push_str(exp);
-                    p.push_str("\n");
+                    p.push('\n');
                 }
-                p.push_str(&format!("\n### Active System State\n{}\n\n", ast.active_state));
+                p.push_str(&format!(
+                    "\n### Active System State\n{}\n\n",
+                    ast.active_state
+                ));
                 p.push_str(&format!("### Target Goal\n{}", ast.goal));
                 p
             }

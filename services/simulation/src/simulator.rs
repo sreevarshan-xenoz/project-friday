@@ -92,7 +92,12 @@ impl SimulationEngine {
     /// Resolve the best available provider for a capability id, trying the id
     /// directly then its `tool` prefix.
     fn resolve(&self, cap_id: &str) -> Option<(String, Capability)> {
-        if let Some(first) = self.registry.ranked_providers_for(cap_id).into_iter().next() {
+        if let Some(first) = self
+            .registry
+            .ranked_providers_for(cap_id)
+            .into_iter()
+            .next()
+        {
             return Some(first);
         }
         let tool = cap_id.split('.').next().unwrap_or(cap_id);
@@ -138,8 +143,7 @@ impl SimulationEngine {
             let (rtool, raction) = split_cap(&resolved_cap_id);
             let sim = self.sims.get(&rtool).cloned();
             let chosen_cap = provider.as_ref().map(|(_, c)| c.clone());
-            let cap = chosen_cap
-                .or_else(|| self.resolve(&resolved_cap_id).map(|(_, c)| c));
+            let cap = chosen_cap.or_else(|| self.resolve(&resolved_cap_id).map(|(_, c)| c));
 
             if let (Some(cap), Some(sim)) = (cap, sim) {
                 let req = SimRequest::new(rtool, raction, task.params.clone());
@@ -209,9 +213,9 @@ impl SimulationEngine {
         let windows = flat.iter().filter(|e| e.kind == "window.launch").count();
         let browsers = flat.iter().filter(|e| e.kind == "browser.tab").count();
         let files_affected = flat.iter().filter(|e| e.kind.starts_with("file.")).count();
-        let destructive = flat.iter().any(|e| {
-            matches!(e.kind.as_str(), "file.delete" | "dir.delete")
-        });
+        let destructive = flat
+            .iter()
+            .any(|e| matches!(e.kind.as_str(), "file.delete" | "dir.delete"));
 
         let summary = PlanSummary {
             actions: graph.tasks.len(),
@@ -225,9 +229,7 @@ impl SimulationEngine {
         let approval_required = matches!(risk_level, RiskLevel::High)
             || destructive
             || unknown_effects > 0
-            || issues
-                .iter()
-                .any(|i| i.severity == IssueSeverity::Warning);
+            || issues.iter().any(|i| i.severity == IssueSeverity::Warning);
 
         Ok(SimulationReport {
             plan_id: graph.plan_id,

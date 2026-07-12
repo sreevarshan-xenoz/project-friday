@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use friday_capabilities::sim::{
-    Precondition, Prediction, ResourceForecast, RollbackPlan, SideEffect, SimRequest, SimResult,
-    Simulatable, StepEstimate, WorldState,
+    Precondition, ResourceForecast, RollbackPlan, SideEffect, SimRequest, Simulatable,
+    StepEstimate, WorldState,
 };
 
 use crate::adapters::{FilesystemAdapter, GitAdapter, TerminalAdapter};
@@ -50,8 +50,16 @@ impl Simulatable for FilesystemAdapter {
             "create_file" | "write_file" => {
                 let target = path.clone();
                 let mut e = SideEffect::leaf("file.create", "create/overwrite file", 1.0)
-                    .with_child(SideEffect::leaf("disk.usage", "disk space used", size as f64))
-                    .with_child(SideEffect::leaf("filesystem.change", "filesystem mutated", 1.0));
+                    .with_child(SideEffect::leaf(
+                        "disk.usage",
+                        "disk space used",
+                        size as f64,
+                    ))
+                    .with_child(SideEffect::leaf(
+                        "filesystem.change",
+                        "filesystem mutated",
+                        1.0,
+                    ));
                 if let Some(t) = target {
                     e = e.with_target(t);
                 }
@@ -60,8 +68,16 @@ impl Simulatable for FilesystemAdapter {
             "delete_file" => {
                 let target = path.clone();
                 let mut e = SideEffect::leaf("file.delete", "delete file", 1.0)
-                    .with_child(SideEffect::leaf("disk.usage", "disk space freed", -(size as f64)))
-                    .with_child(SideEffect::leaf("filesystem.change", "filesystem mutated", 1.0));
+                    .with_child(SideEffect::leaf(
+                        "disk.usage",
+                        "disk space freed",
+                        -(size as f64),
+                    ))
+                    .with_child(SideEffect::leaf(
+                        "filesystem.change",
+                        "filesystem mutated",
+                        1.0,
+                    ));
                 if let Some(t) = target {
                     e = e.with_target(t);
                 }
@@ -75,10 +91,16 @@ impl Simulatable for FilesystemAdapter {
                 .with_target(req.str_param("to").unwrap_or_default())],
             "copy" => vec![SideEffect::leaf("file.copy", "copy file", 1.0)
                 .with_target(req.str_param("to").unwrap_or_default())],
-            "read_file" => vec![SideEffect::leaf("file.read", "read file (no mutation)", 0.0)
-                .with_target(path.unwrap_or_default())],
-            "list_directory" => vec![SideEffect::leaf("dir.list", "list directory (no mutation)", 0.0)
-                .with_target(path.unwrap_or_default())],
+            "read_file" => vec![
+                SideEffect::leaf("file.read", "read file (no mutation)", 0.0)
+                    .with_target(path.unwrap_or_default()),
+            ],
+            "list_directory" => {
+                vec![
+                    SideEffect::leaf("dir.list", "list directory (no mutation)", 0.0)
+                        .with_target(path.unwrap_or_default()),
+                ]
+            }
             other => vec![SideEffect::leaf(
                 format!("filesystem.{other}"),
                 format!("filesystem action '{other}'"),
@@ -91,7 +113,7 @@ impl Simulatable for FilesystemAdapter {
         let size = content_size(req) as f64;
         StepEstimate {
             latency_ms: 5,
-            cost: (size / 1024.0).min(50.0).max(0.0),
+            cost: (size / 1024.0).clamp(0.0, 50.0),
             reliability: 0.999,
         }
     }
@@ -142,10 +164,14 @@ impl Simulatable for TerminalAdapter {
 
     fn side_effects(&self, req: &SimRequest) -> Vec<SideEffect> {
         let cmd = req.str_param("command").unwrap_or_default();
-        vec![SideEffect::leaf("process.spawn", "spawn shell process", 1.0).with_child(
-            SideEffect::leaf("shell.command", "shell command executed", 1.0).with_target(cmd),
-        )
-        .with_child(SideEffect::leaf("cpu.usage", "cpu time used", 2.0))]
+        vec![
+            SideEffect::leaf("process.spawn", "spawn shell process", 1.0)
+                .with_child(
+                    SideEffect::leaf("shell.command", "shell command executed", 1.0)
+                        .with_target(cmd),
+                )
+                .with_child(SideEffect::leaf("cpu.usage", "cpu time used", 2.0)),
+        ]
     }
 
     fn estimate(&self, _req: &SimRequest) -> StepEstimate {
@@ -188,17 +214,37 @@ impl Simulatable for GitAdapter {
     fn side_effects(&self, req: &SimRequest) -> Vec<SideEffect> {
         match req.action.as_str() {
             "clone" => vec![SideEffect::leaf("git.clone", "clone repository", 1.0)
-                .with_child(SideEffect::leaf("disk.usage", "disk space used", 1_000_000.0))
-                .with_child(SideEffect::leaf("network.usage", "network used", 5_000_000.0))],
+                .with_child(SideEffect::leaf(
+                    "disk.usage",
+                    "disk space used",
+                    1_000_000.0,
+                ))
+                .with_child(SideEffect::leaf(
+                    "network.usage",
+                    "network used",
+                    5_000_000.0,
+                ))],
             "commit" => vec![SideEffect::leaf("git.commit", "create commit", 1.0)
                 .with_child(SideEffect::leaf("repo.change", "repository mutated", 1.0))
                 .with_child(SideEffect::leaf("disk.usage", "disk space used", 10.0))],
-            "push" | "pull" => vec![SideEffect::leaf(format!("git.{}", req.action), req.action.clone(), 1.0)
-                .with_child(SideEffect::leaf("network.usage", "network used", 2_000_000.0))],
+            "push" | "pull" => {
+                vec![
+                    SideEffect::leaf(format!("git.{}", req.action), req.action.clone(), 1.0)
+                        .with_child(SideEffect::leaf(
+                            "network.usage",
+                            "network used",
+                            2_000_000.0,
+                        )),
+                ]
+            }
             "merge" => vec![SideEffect::leaf("git.merge", "merge branches", 1.0)
                 .with_child(SideEffect::leaf("repo.change", "repository mutated", 1.0))],
             "init" => vec![SideEffect::leaf("git.init", "initialize repository", 1.0)],
-            _ => vec![SideEffect::leaf(format!("git.{}", req.action), req.action.clone(), 0.0)],
+            _ => vec![SideEffect::leaf(
+                format!("git.{}", req.action),
+                req.action.clone(),
+                0.0,
+            )],
         }
     }
 
