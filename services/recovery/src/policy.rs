@@ -147,4 +147,48 @@ impl RecoveryGraph {
             },
         }
     }
+
+    /// **Recovery Replay**: every step in the policy that would resolve this
+    /// failure *now* (not just the first chosen one), with its confidence. Lets
+    /// us ask "would another policy have worked better?" — invaluable for
+    /// improving recovery after the fact.
+    pub fn recover_alternatives(
+        &self,
+        action: &str,
+        category: FailureCategory,
+        available_caps: &HashSet<String>,
+    ) -> Vec<(RecoveryAction, f64)> {
+        self.policies
+            .get(action)
+            .map(|p| p.actions_for(category).to_vec())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|a| a.resolves(category, available_caps))
+            .map(|a| {
+                let c = a.confidence();
+                (a, c)
+            })
+            .collect()
+    }
+
+    /// Like [`Self::recover_alternatives`] but reports learned confidence.
+    pub fn recover_alternatives_with(
+        &self,
+        action: &str,
+        category: FailureCategory,
+        available_caps: &HashSet<String>,
+        model: &ConfidenceModel,
+    ) -> Vec<(RecoveryAction, f64)> {
+        self.policies
+            .get(action)
+            .map(|p| p.actions_for(category).to_vec())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|a| a.resolves(category, available_caps))
+            .map(|a| {
+                let c = model.effective(a.confidence(), action, category, &a);
+                (a, c)
+            })
+            .collect()
+    }
 }

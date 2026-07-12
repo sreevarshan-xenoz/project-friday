@@ -8,6 +8,42 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Formal lifecycle stage for a recovery policy (or the runtime as a whole).
+///
+/// Every new recovery policy is promoted **Prototype → Shadow → Limited →
+/// Production → Qualified**; it only affects real executions once it has agreed
+/// with actual outcomes in shadow mode. The runtime `RecoveryMode` selects how
+/// far along that ladder the system currently operates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum RecoveryMode {
+    /// Recovery is computed but never acted on, never recorded.
+    Off,
+    /// Recovery is computed and *recorded* ("I would have chosen…") but does not
+    /// affect execution. The default rollout stage.
+    #[default]
+    Shadow,
+    /// Recovery is computed, recorded, and actively applied to real failures.
+    Active,
+}
+
+impl RecoveryMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RecoveryMode::Off => "off",
+            RecoveryMode::Shadow => "shadow",
+            RecoveryMode::Active => "active",
+        }
+    }
+
+    pub fn from_mode_str(s: &str) -> Self {
+        match s.to_ascii_lowercase().as_str() {
+            "off" => RecoveryMode::Off,
+            "active" => RecoveryMode::Active,
+            _ => RecoveryMode::Shadow,
+        }
+    }
+}
+
 /// The reason an action failed. Drives which recovery policy applies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FailureCategory {
@@ -96,6 +132,24 @@ impl RecoveryAction {
             RecoveryAction::SuggestElevation => 0.60,
             RecoveryAction::AskUser => 0.95,
             RecoveryAction::Escalate => 0.90,
+        }
+    }
+
+    /// Estimated recovery cost in milliseconds (a prior, like confidence). Lets
+    /// the planner later weigh **Fast Recovery** vs **Reliable Recovery** — a
+    /// second dimension of resilience.
+    pub fn cost_ms(&self) -> u64 {
+        match self {
+            RecoveryAction::Retry { attempts } => *attempts as u64 * 50,
+            RecoveryAction::RestartService { .. } => 2_000,
+            RecoveryAction::WaitAndRetry { ms } => ms + 200,
+            RecoveryAction::UseProvider { .. } => 800,
+            RecoveryAction::UseAlternateCapability { .. } => 500,
+            RecoveryAction::RestoreSession => 1_000,
+            RecoveryAction::CleanupAndRetry { .. } => 300,
+            RecoveryAction::SuggestElevation => 0,
+            RecoveryAction::AskUser => 0,
+            RecoveryAction::Escalate => 0,
         }
     }
 

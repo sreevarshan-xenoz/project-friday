@@ -26,6 +26,7 @@
       "recovery_attempts": 0,
       "recovery_recovered": 0,
       "recovery_confidence_mean": 0.0,
+      "recovery_cost_mean": 0.0,
       "recovery_by_subsystem": [],
       "calibration_error": 0.035166666666667123
     },
@@ -726,19 +727,24 @@
       "failed_count": 10,
       "recovery_attempts": 20,
       "recovery_recovered": 10,
-      "recovery_confidence_mean": 1.0,
+      "recovery_confidence_mean": 0.9000000000000001,
+      "recovery_cost_mean": 500.0,
       "recovery_by_subsystem": [
         {
           "subsystem": "browser",
           "attempts": 10,
           "recovered": 10,
-          "mean_confidence": 1.0
+          "mean_confidence": 0.9000000000000001,
+          "mean_cost_ms": 500.0,
+          "qualified": true
         },
         {
           "subsystem": "git",
           "attempts": 10,
           "recovered": 0,
-          "mean_confidence": 0.0
+          "mean_confidence": 0.0,
+          "mean_cost_ms": 0.0,
+          "qualified": false
         }
       ],
       "calibration_error": 0.02310000000000051
@@ -1423,17 +1429,489 @@
     ]
   },
   "confidence_model": {
-    "outcomes": {
-      "git.commit|provider|\"Escalate\"": {
-        "trials": 20,
-        "successes": 0
+    "observations": [
+      {
+        "subsystem": "git",
+        "action": "git.commit",
+        "category": "Provider",
+        "chosen_step": "Escalate",
+        "predicted_confidence": 0.9,
+        "outcome": false,
+        "latency_ms": 0.0,
+        "user_interrupted": false
       },
-      "browser.navigate|provider|{\"UseAlternateCapability\":{\"capability\":\"windows.navigate\"}}": {
-        "trials": 20,
-        "successes": 20
+      {
+        "subsystem": "git",
+        "action": "git.commit",
+        "category": "Provider",
+        "chosen_step": "Escalate",
+        "predicted_confidence": 0.9,
+        "outcome": false,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "git",
+        "action": "git.commit",
+        "category": "Provider",
+        "chosen_step": "Escalate",
+        "predicted_confidence": 0.9,
+        "outcome": false,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "git",
+        "action": "git.commit",
+        "category": "Provider",
+        "chosen_step": "Escalate",
+        "predicted_confidence": 0.9,
+        "outcome": false,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "git",
+        "action": "git.commit",
+        "category": "Provider",
+        "chosen_step": "Escalate",
+        "predicted_confidence": 0.9,
+        "outcome": false,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "git",
+        "action": "git.commit",
+        "category": "Provider",
+        "chosen_step": "Escalate",
+        "predicted_confidence": 0.9,
+        "outcome": false,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "git",
+        "action": "git.commit",
+        "category": "Provider",
+        "chosen_step": "Escalate",
+        "predicted_confidence": 0.9,
+        "outcome": false,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "git",
+        "action": "git.commit",
+        "category": "Provider",
+        "chosen_step": "Escalate",
+        "predicted_confidence": 0.9,
+        "outcome": false,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "git",
+        "action": "git.commit",
+        "category": "Provider",
+        "chosen_step": "Escalate",
+        "predicted_confidence": 0.9,
+        "outcome": false,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "git",
+        "action": "git.commit",
+        "category": "Provider",
+        "chosen_step": "Escalate",
+        "predicted_confidence": 0.9,
+        "outcome": false,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "browser",
+        "action": "browser.navigate",
+        "category": "Provider",
+        "chosen_step": {
+          "UseAlternateCapability": {
+            "capability": "windows.navigate"
+          }
+        },
+        "predicted_confidence": 0.9,
+        "outcome": true,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "browser",
+        "action": "browser.navigate",
+        "category": "Provider",
+        "chosen_step": {
+          "UseAlternateCapability": {
+            "capability": "windows.navigate"
+          }
+        },
+        "predicted_confidence": 0.9,
+        "outcome": true,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "browser",
+        "action": "browser.navigate",
+        "category": "Provider",
+        "chosen_step": {
+          "UseAlternateCapability": {
+            "capability": "windows.navigate"
+          }
+        },
+        "predicted_confidence": 0.9,
+        "outcome": true,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "browser",
+        "action": "browser.navigate",
+        "category": "Provider",
+        "chosen_step": {
+          "UseAlternateCapability": {
+            "capability": "windows.navigate"
+          }
+        },
+        "predicted_confidence": 0.9,
+        "outcome": true,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "browser",
+        "action": "browser.navigate",
+        "category": "Provider",
+        "chosen_step": {
+          "UseAlternateCapability": {
+            "capability": "windows.navigate"
+          }
+        },
+        "predicted_confidence": 0.9,
+        "outcome": true,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "browser",
+        "action": "browser.navigate",
+        "category": "Provider",
+        "chosen_step": {
+          "UseAlternateCapability": {
+            "capability": "windows.navigate"
+          }
+        },
+        "predicted_confidence": 0.9,
+        "outcome": true,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "browser",
+        "action": "browser.navigate",
+        "category": "Provider",
+        "chosen_step": {
+          "UseAlternateCapability": {
+            "capability": "windows.navigate"
+          }
+        },
+        "predicted_confidence": 0.9,
+        "outcome": true,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "browser",
+        "action": "browser.navigate",
+        "category": "Provider",
+        "chosen_step": {
+          "UseAlternateCapability": {
+            "capability": "windows.navigate"
+          }
+        },
+        "predicted_confidence": 0.9,
+        "outcome": true,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "browser",
+        "action": "browser.navigate",
+        "category": "Provider",
+        "chosen_step": {
+          "UseAlternateCapability": {
+            "capability": "windows.navigate"
+          }
+        },
+        "predicted_confidence": 0.9,
+        "outcome": true,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "browser",
+        "action": "browser.navigate",
+        "category": "Provider",
+        "chosen_step": {
+          "UseAlternateCapability": {
+            "capability": "windows.navigate"
+          }
+        },
+        "predicted_confidence": 0.9,
+        "outcome": true,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "git",
+        "action": "git.commit",
+        "category": "Provider",
+        "chosen_step": "Escalate",
+        "predicted_confidence": 0.9,
+        "outcome": false,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "git",
+        "action": "git.commit",
+        "category": "Provider",
+        "chosen_step": "Escalate",
+        "predicted_confidence": 0.9,
+        "outcome": false,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "git",
+        "action": "git.commit",
+        "category": "Provider",
+        "chosen_step": "Escalate",
+        "predicted_confidence": 0.9,
+        "outcome": false,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "git",
+        "action": "git.commit",
+        "category": "Provider",
+        "chosen_step": "Escalate",
+        "predicted_confidence": 0.9,
+        "outcome": false,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "git",
+        "action": "git.commit",
+        "category": "Provider",
+        "chosen_step": "Escalate",
+        "predicted_confidence": 0.9,
+        "outcome": false,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "git",
+        "action": "git.commit",
+        "category": "Provider",
+        "chosen_step": "Escalate",
+        "predicted_confidence": 0.9,
+        "outcome": false,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "git",
+        "action": "git.commit",
+        "category": "Provider",
+        "chosen_step": "Escalate",
+        "predicted_confidence": 0.9,
+        "outcome": false,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "git",
+        "action": "git.commit",
+        "category": "Provider",
+        "chosen_step": "Escalate",
+        "predicted_confidence": 0.9,
+        "outcome": false,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "git",
+        "action": "git.commit",
+        "category": "Provider",
+        "chosen_step": "Escalate",
+        "predicted_confidence": 0.9,
+        "outcome": false,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "git",
+        "action": "git.commit",
+        "category": "Provider",
+        "chosen_step": "Escalate",
+        "predicted_confidence": 0.9,
+        "outcome": false,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "browser",
+        "action": "browser.navigate",
+        "category": "Provider",
+        "chosen_step": {
+          "UseAlternateCapability": {
+            "capability": "windows.navigate"
+          }
+        },
+        "predicted_confidence": 0.9,
+        "outcome": true,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "browser",
+        "action": "browser.navigate",
+        "category": "Provider",
+        "chosen_step": {
+          "UseAlternateCapability": {
+            "capability": "windows.navigate"
+          }
+        },
+        "predicted_confidence": 0.9,
+        "outcome": true,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "browser",
+        "action": "browser.navigate",
+        "category": "Provider",
+        "chosen_step": {
+          "UseAlternateCapability": {
+            "capability": "windows.navigate"
+          }
+        },
+        "predicted_confidence": 0.9,
+        "outcome": true,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "browser",
+        "action": "browser.navigate",
+        "category": "Provider",
+        "chosen_step": {
+          "UseAlternateCapability": {
+            "capability": "windows.navigate"
+          }
+        },
+        "predicted_confidence": 0.9,
+        "outcome": true,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "browser",
+        "action": "browser.navigate",
+        "category": "Provider",
+        "chosen_step": {
+          "UseAlternateCapability": {
+            "capability": "windows.navigate"
+          }
+        },
+        "predicted_confidence": 0.9,
+        "outcome": true,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "browser",
+        "action": "browser.navigate",
+        "category": "Provider",
+        "chosen_step": {
+          "UseAlternateCapability": {
+            "capability": "windows.navigate"
+          }
+        },
+        "predicted_confidence": 0.9,
+        "outcome": true,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "browser",
+        "action": "browser.navigate",
+        "category": "Provider",
+        "chosen_step": {
+          "UseAlternateCapability": {
+            "capability": "windows.navigate"
+          }
+        },
+        "predicted_confidence": 0.9,
+        "outcome": true,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "browser",
+        "action": "browser.navigate",
+        "category": "Provider",
+        "chosen_step": {
+          "UseAlternateCapability": {
+            "capability": "windows.navigate"
+          }
+        },
+        "predicted_confidence": 0.9,
+        "outcome": true,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "browser",
+        "action": "browser.navigate",
+        "category": "Provider",
+        "chosen_step": {
+          "UseAlternateCapability": {
+            "capability": "windows.navigate"
+          }
+        },
+        "predicted_confidence": 0.9,
+        "outcome": true,
+        "latency_ms": 0.0,
+        "user_interrupted": false
+      },
+      {
+        "subsystem": "browser",
+        "action": "browser.navigate",
+        "category": "Provider",
+        "chosen_step": {
+          "UseAlternateCapability": {
+            "capability": "windows.navigate"
+          }
+        },
+        "predicted_confidence": 0.9,
+        "outcome": true,
+        "latency_ms": 0.0,
+        "user_interrupted": false
       }
-    },
-    "min_samples": 0,
-    "prior_weight": 0.0
+    ],
+    "min_samples": 20,
+    "prior_weight": 5.0
   }
 }

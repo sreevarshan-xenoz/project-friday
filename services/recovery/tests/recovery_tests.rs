@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use friday_recovery::taxonomy::{FailureCategory, RecoveryAction};
-use friday_recovery::{default_graph, ConfidenceModel, RecoveryGraph};
+use friday_recovery::{default_graph, ConfidenceModel, RecoveryGraph, RecoveryObservation};
 
 fn caps(set: &[&str]) -> HashSet<String> {
     set.iter().map(|s| s.to_string()).collect()
@@ -131,4 +131,42 @@ fn confidence_model_learns_from_outcomes() {
         learned > 0.95,
         "learned confidence should approach observed ~1.0, got {learned}"
     );
+}
+
+#[test]
+fn recover_alternatives_lists_every_resolving_step() {
+    let g = default_graph();
+    let avail = caps(&["windows.navigate", "filesystem.create_file"]);
+    // Under a Provider failure, only reroute steps with a live target resolve.
+    let alts = g.recover_alternatives("browser.navigate", FailureCategory::Provider, &avail);
+    assert!(
+        alts.iter()
+            .any(|(s, _)| matches!(s, RecoveryAction::UseAlternateCapability { .. })),
+        "replay should surface the alternate-capability step"
+    );
+}
+
+#[test]
+fn observations_capture_latency_and_interruption() {
+    let mut m = ConfidenceModel::new();
+    m.record_observation(RecoveryObservation {
+        subsystem: "browser".into(),
+        action: "browser.navigate".into(),
+        category: FailureCategory::Provider,
+        chosen_step: RecoveryAction::UseAlternateCapability {
+            capability: "windows.navigate".into(),
+        },
+        predicted_confidence: 0.9,
+        outcome: true,
+        latency_ms: 120.0,
+        user_interrupted: false,
+    });
+    let lat = m.mean_latency_ms(
+        "browser.navigate",
+        FailureCategory::Provider,
+        &RecoveryAction::UseAlternateCapability {
+            capability: "windows.navigate".into(),
+        },
+    );
+    assert_eq!(lat, Some(120.0));
 }

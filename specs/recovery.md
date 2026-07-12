@@ -115,19 +115,29 @@ Simulation Engine predicts will **fail**, classifies the `FailureCategory`, call
 *independent* metrics:
 
 - **Raw MTBF** — mean tasks between failures, counting *every* interruption. Recovery
-  is ignored entirely; this is the engineering reality.
-- **User Success Rate** — fraction of tasks the user ultimately got (predicted
-  success **or** recovered). Can be high while Raw MTBF is poor.
-- **First-Pass Success** — fraction completed with *no* recovery at all.
-- **Recovery Effectiveness** — of recovery attempts, the fraction that resolved.
-- **Recovery Confidence** (mean, learned) + **Recovery by Subsystem** coverage %.
-- **Reliability Trend** across `benchmarks/<date>.json` historical day snapshots
-  (Normal/Chaos Raw MTBF + Chaos User Success), with a `ConfidenceModel` carried
-  forward so confidence learns across runs.
+   is ignored entirely; this is the engineering reality.
+- **First-Pass Success** — *Robustness*: fraction completed with *no* recovery at all.
+- **Recovery Effectiveness** — *Resilience*: of recovery attempts, the fraction that
+   resolved.
+- **User Success Rate** — *User Experience*: fraction of tasks the user ultimately
+   got (predicted success **or** recovered). Can be high while Raw MTBF is poor.
+- **Recovery Confidence** (mean, learned) + **Recovery by Subsystem**: coverage %,
+   mean estimated cost, and a **Qualified** flag (coverage ≥ 85%).
+- **Resilience Trend** across `benchmarks/<date>.json` historical day snapshots
+   (Normal/Chaos Raw MTBF + Chaos User Success), with a `ConfidenceModel` carried
+   forward so confidence learns across runs.
+
+The four headline numbers each describe a *different property* (Stability,
+Robustness, Resilience, User Experience) — together they tell the whole story, and
+no single one can be gamed to hide the others.
 
 A capability lacking a recovery policy (or whose policy can't resolve the category)
 yields `recovered = false` → Raw MTBF stays low and Recovery Effectiveness drops —
 that is the honest regression signal, not a silent crash.
+
+The sprint target is **subsystem health**, not a single MTBF number. E.g. drive
+`git` recovery coverage `0% → 30% → 60% → 90%`; subsystem health is what moves
+Raw MTBF.
 
 ## Learning (Outcome → Experience → Updated Confidence)
 
@@ -152,12 +162,62 @@ recording only *"I would have chosen …"*. Compare actual outcome vs the graph'
 decision; once they consistently agree, flip on live recovery. This is how production
 routing/recovery logic is introduced safely.
 
+## Lifecycle & Recovery Mode
+
+Every new recovery policy is promoted through formal stages:
+
+```
+Prototype → Shadow → Limited → Production → Qualified
+```
+
+The runtime `RecoveryMode` (`Off` / `Shadow` / `Active`, in `taxonomy.rs`) selects
+how far along that ladder the system currently operates. Production users can opt
+into `Active` recovery only after a policy has proven itself in `Shadow`.
+
+## Recovery Replay
+
+`RecoveryGraph::recover_alternatives(action, category, available)` returns **every**
+step in the policy that would resolve the failure now (not just the first chosen
+one), with its confidence. Replaying a past failure then shows:
+
+```
+Failure → Policy Chosen → Confidence → Outcome → Alternative Policies
+```
+
+so we can ask *would another policy have worked better?* — invaluable for improving
+recovery after the fact.
+
+## Recovery Cost
+
+Each `RecoveryAction` carries an estimated `cost_ms()` (a prior, like confidence).
+The dashboard reports mean estimated Recovery Cost per subsystem, and the
+`ConfidenceModel` records real `latency_ms` per observation. Eventually the planner
+can choose between **Fast Recovery** and **Reliable Recovery** — a second dimension
+of resilience.
+
+## Skill Qualification
+
+Recovery eventually becomes a **certification requirement**, not a nice-to-have.
+Per skill (e.g. `Git Commit`): Normal %, Chaos %, Recovered %, Failed %, and a
+Qualified YES/NO. This turns resilience into an engineering gate.
+
+## Git: strategy recovery, not a fake provider
+
+Git has no natural alternate provider the way browser navigation does, so we do
+**not** invent one (that would make the benchmark less meaningful). Instead we
+improve Git's *strategy* recovery: wait for lock removal, retry after cleanup,
+detect detached HEAD and suggest checkout, recover from merge conflict with
+guidance, and reopen the repository if the working directory changed. Those are
+genuine recovery paths.
+
 ## Acceptance criteria (met)
 
 - [x] `friday-recovery` builds clean (clippy/fmt/tests); `FailureCategory`,
-      `RecoveryAction` (honest `resolves`), `RecoveryGraph`, `ConfidenceModel`.
+      `RecoveryAction` (honest `resolves`, `cost_ms`), `RecoveryGraph`
+      (`recover` / `recover_with` / `recover_alternatives`), `ConfidenceModel`
+      (rich `RecoveryObservation`s), `RecoveryMode`.
 - [x] Benchmark reports Raw MTBF, User Success Rate, First-Pass Success, Recovery
-      Effectiveness, learned confidence, per-subsystem coverage, and a Reliability
-      Trend from historical snapshots.
+      Effectiveness, learned confidence, per-subsystem coverage **with cost and a
+      Qualified flag**, and a Resilience Trend from historical snapshots.
 - [x] Killing a provider (Chaos Mode) honestly lowers Raw MTBF; recovery is shown as
       a *separate* number, never folded into MTBF.

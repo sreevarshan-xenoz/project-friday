@@ -326,31 +326,47 @@ should *describe reality, not reward clever implementation* — a component fail
 recovery saving the task is a success for the **user** but still a failure for the
 **system**. Those are tracked as **separate** metrics.
 
-- **Four independent reliability metrics** (see `specs/recovery.md`): **Raw MTBF**
-  (every interruption counts; recovery ignored), **User Success Rate** (did the user
-  ultimately get it), **First-Pass Success** (succeeded with no recovery), and
-  **Recovery Effectiveness** (of attempts, fraction resolved). Recovery never hides
-  failure.
+- **Resilience Dashboard** (`friday-benchmark`, see `specs/recovery.md`): four
+  *independent* metrics, each a different property — **Raw MTBF** (Stability),
+  **First-Pass Success** (Robustness), **Recovery Effectiveness** (Resilience),
+  **User Success Rate** (User Experience). Recovery never hides failure, and no
+  single number can be gamed to disguise the others.
 - **Recovery Graph** (`friday-recovery`): action-level policies keyed by
   `FailureCategory`. Honest `resolves()`: reroute steps (`UseProvider`,
   `UseAlternateCapability`) resolve iff their target is available; conditional steps
   (`Retry`, `RestartService`, …) resolve **only** for transient categories
   (`Network`/`Timeout`/`Resource`) — a dead provider is *not* healed by retrying it;
   escalation steps (`AskUser`, `Escalate`, `SuggestElevation`) never auto-resolve.
-- **Learning Recovery Confidence** (`ConfidenceModel`): base confidence is a prior;
-  observed outcomes are recorded and `effective()` converges to the real success
-  rate, persisted across runs in `benchmarks/<date>.json`.
+- **Learning Recovery Confidence** (`ConfidenceModel`): rich `RecoveryObservation`s
+  (subsystem, step, predicted confidence, outcome, latency, interruption); base
+  confidence is a prior and `effective()` converges to the real success rate,
+  persisted across runs in `benchmarks/<date>.json`.
+- **Recovery Cost**: each `RecoveryAction` has an estimated `cost_ms()`; the
+  dashboard reports mean cost per subsystem so the planner can later weigh Fast vs
+  Reliable recovery.
+- **Recovery Replay** (`recover_alternatives`): replay a past failure to see the
+  chosen policy, its confidence, the outcome, and every *alternative* resolving step
+  — so we can ask "would another policy have worked better?".
+- **Lifecycle & Recovery Mode**: every policy climbs `Prototype → Shadow →
+  Limited → Production → Qualified`; the runtime `RecoveryMode` (`Off`/`Shadow`/
+  `Active`) gates how far along, and production users opt into `Active` only after
+  shadow agreement. Skill Qualification makes recovery a certification gate
+  (Normal/Chaos/Recovered/Failed/Qualified per skill).
 - **Benchmark** (`friday-benchmark`): reports the four metrics, per-subsystem
-  Recovery %, learned confidence, and a **Reliability Trend** from historical day
-  snapshots (`cargo run -p friday-benchmark -- --save`).
+  Recovery % (with cost + a Qualified flag), learned confidence, and a **Resilience
+  Trend** from historical day snapshots (`cargo run -p friday-benchmark -- --save`).
 - **Runtime integration is shadow-mode only** (not live yet): the graph runs during
   real executions without affecting them, recording "I would have chosen…"; once it
   agrees with actual outcomes it can be promoted to live recovery.
 
-**Chaos Raw MTBF target ladder:** `3 → 10 → 25 → 100 → 500`. We start from the honest
-`3` (browser→windows fallback only; other subsystems have no real fallback when their
-provider is killed) and climb as genuine fallbacks are added. Each run is a day
-snapshot so progress is auditable.
+**Target is subsystem health, not a single MTBF.** Drive e.g. `git` recovery
+coverage `0% → 30% → 60% → 90%`; subsystem health is what moves Raw MTBF. The honest
+floor is Raw MTBF `3` (browser→windows fallback only; other subsystems have no real
+fallback when their provider is killed). Qualification bar: Raw MTBF `>100`,
+First-Pass `>90%`, Recovery Effectiveness `>85%`, User Success `>99%`. Git earns
+recovery via *strategy* paths (wait for lock, retry after cleanup, detached-HEAD
+guidance, merge-conflict guidance, reopen repo) — **not** a fabricated alternate
+provider. Each run is a day snapshot so progress is auditable.
 
 Because Capability Intelligence exists, M5 becomes `LLM → need capability →
 registry → best provider → runtime → result`; the LLM never sees implementation

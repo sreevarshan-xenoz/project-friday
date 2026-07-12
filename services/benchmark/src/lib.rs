@@ -84,6 +84,10 @@ pub struct SubsystemRecovery {
     pub recovered: usize,
     /// Mean Recovery Confidence over resolved recoveries.
     pub mean_confidence: f64,
+    /// Mean estimated Recovery Cost (ms) over resolved recoveries.
+    pub mean_cost_ms: f64,
+    /// True once coverage meets the qualification bar (>= 85%).
+    pub qualified: bool,
 }
 
 /// Aggregate reliability metrics for a run.
@@ -124,6 +128,8 @@ pub struct Metrics {
     pub recovery_attempts: usize,
     pub recovery_recovered: usize,
     pub recovery_confidence_mean: f64,
+    /// Mean estimated Recovery Cost (ms) over resolved recoveries.
+    pub recovery_cost_mean: f64,
     pub recovery_by_subsystem: Vec<SubsystemRecovery>,
     /// Mean |predicted - actual| across calibration bins (lower is better).
     pub calibration_error: f64,
@@ -502,7 +508,8 @@ pub fn run_benchmark_with(chaos: bool, n: usize, model: &mut ConfidenceModel) ->
     let mut rec_attempts = 0usize;
     let mut rec_recovered = 0usize;
     let mut rec_conf_sum = 0.0f64;
-    let mut sub_stats: HashMap<String, (usize, usize, f64)> = HashMap::new();
+    let mut sub_stats: HashMap<String, (usize, usize, f64, f64)> = HashMap::new();
+    let mut rec_cost_sum = 0.0f64;
 
     // Calibration accumulators: 10 bins over [0,1].
     let mut cal_count = [0usize; 10];
@@ -533,7 +540,6 @@ pub fn run_benchmark_with(chaos: bool, n: usize, model: &mut ConfidenceModel) ->
         // counts it; only User Success / First-Pass accounting separate out
         // whether recovery ultimately saved the task.
         let mut recovered = false;
-        let mut rec_conf = 0.0f64;
         let mut rec_cat = FailureCategory::Provider;
         let mut rec_step = RecoveryAction::Escalate;
         if !pred {
@@ -552,17 +558,18 @@ pub fn run_benchmark_with(chaos: bool, n: usize, model: &mut ConfidenceModel) ->
                 .unwrap_or("unknown")
                 .to_string();
             rec_attempts += 1;
-            if r.recovered {
-                recovered = true;
-                rec_conf = r.confidence;
-                rec_recovered += 1;
-                rec_conf_sum += rec_conf;
-            }
-            let e = sub_stats.entry(sub).or_insert((0, 0, 0.0));
+            let e = sub_stats.entry(sub).or_insert((0, 0, 0.0, 0.0));
             e.0 += 1;
             if r.recovered {
+                recovered = true;
+                let rec_conf = r.confidence;
+                rec_recovered += 1;
+                rec_conf_sum += rec_conf;
+                let cost = r.chosen.cost_ms() as f64;
+                rec_cost_sum += cost;
                 e.1 += 1;
                 e.2 += rec_conf;
+                e.3 += cost;
             }
         }
 
@@ -642,11 +649,21 @@ pub fn run_benchmark_with(chaos: bool, n: usize, model: &mut ConfidenceModel) ->
     } else {
         0.0
     };
+    let recovery_cost_mean = if rec_recovered > 0 {
+        rec_cost_sum / rec_recovered as f64
+    } else {
+        0.0
+    };
 
     let mut recovery_by_subsystem: Vec<SubsystemRecovery> = sub_stats
         .into_iter()
-        .map(
-            |(subsystem, (attempts, recovered, conf_sum))| SubsystemRecovery {
+        .map(|(subsystem, (attempts, recovered, conf_sum, cost_sum))| {
+            let coverage = if attempts > 0 {
+                recovered as f64 / attempts as f64
+            } else {
+                0.0
+            };
+            SubsystemRecovery {
                 subsystem,
                 attempts,
                 recovered,
@@ -655,8 +672,14 @@ pub fn run_benchmark_with(chaos: bool, n: usize, model: &mut ConfidenceModel) ->
                 } else {
                     0.0
                 },
-            },
-        )
+                mean_cost_ms: if recovered > 0 {
+                    cost_sum / recovered as f64
+                } else {
+                    0.0
+                },
+                qualified: attempts > 0 && coverage >= 0.85,
+            }
+        })
         .collect();
     recovery_by_subsystem.sort_by(|a, b| a.subsystem.cmp(&b.subsystem));
 
@@ -742,6 +765,7 @@ pub fn run_benchmark_with(chaos: bool, n: usize, model: &mut ConfidenceModel) ->
         recovery_attempts: rec_attempts,
         recovery_recovered: rec_recovered,
         recovery_confidence_mean,
+        recovery_cost_mean,
         recovery_by_subsystem,
         calibration_error,
     };
@@ -760,7 +784,7 @@ pub fn run_benchmark_with(chaos: bool, n: usize, model: &mut ConfidenceModel) ->
 pub fn render_dashboard(result: &BenchmarkResult) -> String {
     let m = &result.metrics;
     let mut s = String::new();
-    s.push_str("# FRIDAY Reliability Dashboard\n\n");
+    s.push_str("# FRIDAY Resilience Dashboard\n\n");
     s.push_str(&format!(
         "Mode: **{}**  |  Tasks: **{}**\n\n",
         if result.chaos {
@@ -771,26 +795,33 @@ pub fn render_dashboard(result: &BenchmarkResult) -> String {
         m.total_tasks
     ));
 
-    s.push_str("## Reliability Metrics (failure is never hidden)\n");
-    s.push_str("| Metric | Value | Meaning |\n|---|---|---|\n");
+    s.push_str("## Resilience Metrics (failure is never hidden)\n");
+    s.push_str(
+        "Each metric describes a *different property* — together they tell the whole story.\n",
+    );
+    s.push_str("| Metric | Property | Value | Meaning |\n|---|---|---|---|\n");
     s.push_str(&format!(
-        "| **Raw MTBF** | {:.1} | every interruption counts; recovery ignored |\n",
+        "| **Raw MTBF** | Stability | {:.1} | every interruption counts; recovery ignored |\n",
         m.raw_mtbf
     ));
     s.push_str(&format!(
-        "| **User Success Rate** | {:.1}% | did the user ultimately get it (incl. recovered) |\n",
-        m.user_success_rate * 100.0
-    ));
-    s.push_str(&format!(
-        "| **First-Pass Success** | {:.1}% | succeeded with *no* recovery |\n",
+        "| **First-Pass Success** | Robustness | {:.1}% | succeeded with *no* recovery |\n",
         m.first_pass_rate * 100.0
     ));
     if let Some(r) = m.recovery_effectiveness {
         s.push_str(&format!(
-            "| **Recovery Effectiveness** | {:.1}% | of attempts, fraction that resolved |\n",
+            "| **Recovery Effectiveness** | Resilience | {:.1}% | of attempts, fraction that resolved |\n",
             r * 100.0
         ));
     }
+    s.push_str(&format!(
+        "| **User Success Rate** | User Experience | {:.1}% | did the user ultimately get it (incl. recovered) |\n",
+        m.user_success_rate * 100.0
+    ));
+    s.push_str(&format!(
+        "| Recovery Cost (mean est.) | — | {:.0} ms | avg estimated cost of resolved recoveries |\n",
+        m.recovery_cost_mean
+    ));
     s.push_str(&format!(
         "| Simulation Accuracy | {:.1}% |\n",
         m.simulation_accuracy * 100.0
@@ -823,8 +854,8 @@ pub fn render_dashboard(result: &BenchmarkResult) -> String {
 
     if !m.recovery_by_subsystem.is_empty() {
         s.push_str("## Recovery by Subsystem (Recovery Graph)\n");
-        s.push_str("| Subsystem | Attempts | Recovered | Coverage | Mean Confidence |\n");
-        s.push_str("|---|---|---|---|---|\n");
+        s.push_str("| Subsystem | Attempts | Recovered | Coverage | Mean Confidence | Mean Cost | Qualified |\n");
+        s.push_str("|---|---|---|---|---|---|---|\n");
         for r in &m.recovery_by_subsystem {
             let cov = if r.attempts > 0 {
                 r.recovered as f64 / r.attempts as f64
@@ -832,12 +863,14 @@ pub fn render_dashboard(result: &BenchmarkResult) -> String {
                 0.0
             };
             s.push_str(&format!(
-                "| {} | {} | {} | {:.1}% | {:.1}% |\n",
+                "| {} | {} | {} | {:.1}% | {:.1}% | {:.0} ms | {} |\n",
                 r.subsystem,
                 r.attempts,
                 r.recovered,
                 cov * 100.0,
-                r.mean_confidence * 100.0
+                r.mean_confidence * 100.0,
+                r.mean_cost_ms,
+                if r.qualified { "YES" } else { "—" }
             ));
         }
         s.push('n');
@@ -957,7 +990,7 @@ pub fn render_trend(history: &[BenchmarkDay]) -> String {
         return String::new();
     }
     let mut s = String::new();
-    s.push_str("## Reliability Trend (historical `benchmarks/<date>.json`)\n");
+    s.push_str("## Resilience Trend (historical `benchmarks/<date>.json`)\n");
     s.push_str(
         "| Date | Normal Raw MTBF | Chaos Raw MTBF | Chaos User Success |\n|---|---|---|---|\n",
     );

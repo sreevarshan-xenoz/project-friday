@@ -1,55 +1,64 @@
 //! Learning Recovery Confidence.
 //!
 //! Base confidence (`RecoveryAction::confidence`) is a prior. The
-//! [`ConfidenceModel`] records actual outcomes of each recovery step and blends
-//! them with the prior, so confidence *adjusts automatically* as evidence
-//! accumulates — exactly the "Outcome → Experience → Updated Confidence" loop:
-//!
-//! ```text
-//! RecoveryGraph → Policy → Outcome → ConfidenceModel → Updated Confidence
-//! ```
-
-use std::collections::HashMap;
+//! [`ConfidenceModel`] records actual outcomes of each recovery step — as rich
+//! [`RecoveryObservation`]s, not just booleans — and blends them with the prior,
+//! so confidence *adjusts automatically* as evidence accumulates (the
+//! "Outcome → Experience → Updated Confidence" loop). Storing latency and
+//! interruption lets us later ask *which recoveries are slow?* and *which
+//! recoveries annoy users?*:
 
 use serde::{Deserialize, Serialize};
 
 use crate::taxonomy::{FailureCategory, RecoveryAction};
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-struct Sample {
-    trials: u32,
-    successes: u32,
+/// One observed recovery attempt. Stored (not aggregated away) so future
+/// analysis can slice by latency, interruption, subsystem, etc.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecoveryObservation {
+    pub subsystem: String,
+    pub action: String,
+    pub category: FailureCategory,
+    pub chosen_step: RecoveryAction,
+    /// Confidence predicted *before* the outcome was known.
+    pub predicted_confidence: f64,
+    /// Whether the task ultimately succeeded.
+    pub outcome: bool,
+    /// Wall-clock cost of the recovery, milliseconds.
+    pub latency_ms: f64,
+    /// True if a human interrupted / cancelled the recovery.
+    pub user_interrupted: bool,
 }
 
-/// Stable string key for a (action, category, step) outcome. JSON object keys
-/// must be strings, so we compose one rather than serializing the enum tuple.
-fn outcome_key(action: &str, category: FailureCategory, step: &RecoveryAction) -> String {
-    let step_json = serde_json::to_string(step).unwrap_or_default();
-    format!("{}|{}|{}", action, category.as_str(), step_json)
-}
-
-/// Accumulates observed recovery outcomes and yields a learned confidence per
-/// (action, category, step). Persisted across runs inside `BenchmarkDay` so the
-/// benchmark compounds evidence over time.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Accumulates [`RecoveryObservation`]s and yields a learned confidence per
+/// (subsystem, action, category, step). Persisted across runs inside
+/// `BenchmarkDay` so the benchmark compounds evidence over time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfidenceModel {
-    outcomes: HashMap<String, Sample>,
+    observations: Vec<RecoveryObservation>,
     /// Trials below this count fall back to the base prior (with shrinkage).
     min_samples: u32,
     /// Weight of the base prior relative to observed trials (Laplace-style).
     prior_weight: f64,
 }
 
+impl Default for ConfidenceModel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConfidenceModel {
     pub fn new() -> Self {
         Self {
-            outcomes: HashMap::new(),
+            observations: Vec::new(),
             min_samples: 20,
             prior_weight: 5.0,
         }
     }
 
-    /// Record whether a recovery step ultimately delivered a successful outcome.
+    /// Convenience: record a simple outcome (latency 0, no interruption, the
+    /// subsystem inferred from the action prefix).
     pub fn record(
         &mut self,
         action: &str,
@@ -57,12 +66,34 @@ impl ConfidenceModel {
         step: &RecoveryAction,
         success: bool,
     ) {
-        let key = outcome_key(action, category, step);
-        let s = self.outcomes.entry(key).or_default();
-        s.trials += 1;
-        if success {
-            s.successes += 1;
-        }
+        let subsystem = action.split('.').next().unwrap_or("unknown").to_string();
+        self.record_observation(RecoveryObservation {
+            subsystem,
+            action: action.to_string(),
+            category,
+            chosen_step: step.clone(),
+            predicted_confidence: step.confidence(),
+            outcome: success,
+            latency_ms: 0.0,
+            user_interrupted: false,
+        });
+    }
+
+    /// Record a fully-specified observation.
+    pub fn record_observation(&mut self, obs: RecoveryObservation) {
+        self.observations.push(obs);
+    }
+
+    fn matching(
+        &self,
+        action: &str,
+        category: FailureCategory,
+        step: &RecoveryAction,
+    ) -> Vec<&RecoveryObservation> {
+        self.observations
+            .iter()
+            .filter(|o| o.action == action && o.category == category && &o.chosen_step == step)
+            .collect()
     }
 
     /// Learned confidence for a step: a shrinkage estimator that equals the base
@@ -75,14 +106,14 @@ impl ConfidenceModel {
         category: FailureCategory,
         step: &RecoveryAction,
     ) -> f64 {
-        let key = outcome_key(action, category, step);
-        match self.outcomes.get(&key) {
-            Some(s) if s.trials >= self.min_samples => {
-                let observed = s.successes as f64 / s.trials as f64;
-                (observed * s.trials as f64 + base * self.prior_weight)
-                    / (s.trials as f64 + self.prior_weight)
-            }
-            _ => base,
+        let matches = self.matching(action, category, step);
+        if matches.len() >= self.min_samples as usize {
+            let trials = matches.len() as f64;
+            let successes = matches.iter().filter(|o| o.outcome).count() as f64;
+            let observed = successes / trials;
+            (observed * trials + base * self.prior_weight) / (trials + self.prior_weight)
+        } else {
+            base
         }
     }
 
@@ -93,8 +124,45 @@ impl ConfidenceModel {
         category: FailureCategory,
         step: &RecoveryAction,
     ) -> Option<(u32, u32)> {
-        self.outcomes
-            .get(&outcome_key(action, category, step))
-            .map(|s| (s.trials, s.successes))
+        let m = self.matching(action, category, step);
+        if m.is_empty() {
+            None
+        } else {
+            let trials = m.len() as u32;
+            let successes = m.iter().filter(|o| o.outcome).count() as u32;
+            Some((trials, successes))
+        }
+    }
+
+    /// Mean recovery latency (ms) for a step, if observed.
+    pub fn mean_latency_ms(
+        &self,
+        action: &str,
+        category: FailureCategory,
+        step: &RecoveryAction,
+    ) -> Option<f64> {
+        let m = self.matching(action, category, step);
+        if m.is_empty() {
+            None
+        } else {
+            let sum: f64 = m.iter().map(|o| o.latency_ms).sum();
+            Some(sum / m.len() as f64)
+        }
+    }
+
+    /// Fraction of recoveries for a step that a user interrupted, if observed.
+    pub fn user_interrupt_rate(
+        &self,
+        action: &str,
+        category: FailureCategory,
+        step: &RecoveryAction,
+    ) -> Option<f64> {
+        let m = self.matching(action, category, step);
+        if m.is_empty() {
+            None
+        } else {
+            let interrupted = m.iter().filter(|o| o.user_interrupted).count() as f64;
+            Some(interrupted / m.len() as f64)
+        }
     }
 }
