@@ -1,20 +1,51 @@
 //! `cargo run -p friday-benchmark -- [tasks]`
 //!
-//! Set `CHAOS=1` in the environment to run under Chaos Mode (random providers
-//! taken offline). Emits a JSON report and a markdown dashboard.
+//! Set `CHAOS=1` in the environment to run a single Chaos Mode run. Add
+//! `--save` to run both Normal + Chaos modes and persist a day snapshot to
+//! `benchmarks/<date>.json`, then print the historical MTBF trend.
 
 use std::env;
 use std::path::PathBuf;
 
-use friday_benchmark::{render_dashboard, run_benchmark};
+use friday_benchmark::{
+    load_history, render_dashboard, render_trend, run_benchmark, run_day, save_day,
+};
 
 fn main() {
-    let chaos = env::var("CHAOS").map(|v| v == "1").unwrap_or(false);
-    let tasks: usize = env::args()
-        .nth(1)
-        .and_then(|s| s.parse().ok())
+    let args: Vec<String> = env::args().collect();
+    let save = args.iter().any(|a| a == "--save");
+    let tasks: usize = args
+        .iter()
+        .find_map(|s| s.parse::<usize>().ok())
         .unwrap_or(600);
 
+    if save {
+        eprintln!("Running FRIDAY benchmark (both modes): {} tasks", tasks);
+        let day = run_day(tasks);
+        let path = save_day(&day);
+        println!("{}", render_dashboard(&day.chaos));
+        println!(
+            "{}",
+            render_trend(&load_history(
+                PathBuf::from(friday_benchmark::BENCHMARKS_DIR).as_path()
+            ))
+        );
+        eprintln!(
+            "\nNormal MTBF={:.1}  Chaos MTBF={:.1}  sim_acc={:.1}%  planner_acc={:.1}%  cal_err={:.3}",
+            day.normal.metrics.mtbf_tasks,
+            day.chaos.metrics.mtbf_tasks,
+            day.chaos.metrics.simulation_accuracy * 100.0,
+            day.chaos.metrics.planner_accuracy * 100.0,
+            day.chaos.metrics.calibration_error,
+        );
+        if let Some(r) = day.chaos.metrics.recovery_success {
+            eprintln!("recovery_success={:.1}%", r * 100.0);
+        }
+        eprintln!("Day snapshot written to {}", path.display());
+        return;
+    }
+
+    let chaos = env::var("CHAOS").map(|v| v == "1").unwrap_or(false);
     eprintln!("Running FRIDAY benchmark: {} tasks, chaos={}", tasks, chaos);
 
     let result = run_benchmark(chaos, tasks);

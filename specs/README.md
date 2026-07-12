@@ -68,3 +68,4 @@ work this directory supersedes it.
 | Knowledge Graph     | `knowledge_graph.md` | `friday-core`                        | 🚧 M5.6  |
 | Reasoning Session   | `reasoning_session.md`| `services/intelligence`             | 🚧 M5.7  |
 | Benchmark (QA)      | `benchmark.md`        | `services/benchmark`                 | ✅ QA    |
+| Recovery            | `recovery.md`         | `services/recovery`                  | ✅ QA    |

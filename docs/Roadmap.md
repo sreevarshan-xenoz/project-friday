@@ -318,6 +318,28 @@ Produces an `LLMContext` handed to the Intelligence Layer. Full spec:
 Alpha 1 → Qualification → Reliability → Dogfooding → Beta → Public Testing → v1.0
 ```
 
+## Reliability Sprint (the current work)
+
+**North-star metric is graceful degradation, not feature count.** We reject feature
+PRs that cannot justify themselves against the reliability benchmark. The headline
+number is **Chaos MTBF** — mean tasks between failures when `CHAOS=1` randomly kills
+providers. A recovered failure does **not** count against MTBF.
+
+- **Recovery Graph** (`friday-recovery`, spec `specs/recovery.md`): action-level
+  recovery policies keyed by `FailureCategory`. Pure, deterministic, serializable
+  (authored in Rust or JSON). A missing policy → `recovered = false` → MTBF drops
+  (regression detector).
+- **Recovery Confidence**: every `RecoveryAction` carries a base confidence; below
+  `APPROVAL_THRESHOLD` (0.5) or on `AskUser` the recovery escalates to the approval
+  policy (human-in-the-loop).
+- **Benchmark** (`friday-benchmark`): reports Recovery Success, mean Recovery
+  Confidence, **per-subsystem Recovery %**, and an **MTBF trend** from historical
+  `benchmarks/<date>.json` snapshots (`cargo run -p friday-benchmark -- --save`).
+
+**Chaos MTBF target ladder:** `3 → 10 → 25 → 100 → 500`. We start from the honest
+`3` (browser→windows fallback only) and climb as the Recovery Graph covers every
+subsystem. Each run is a day snapshot so progress is auditable.
+
 Because Capability Intelligence exists, M5 becomes `LLM → need capability →
 registry → best provider → runtime → result`; the LLM never sees implementation
 details. And the Browser service (M6) is now tiny — it only declares

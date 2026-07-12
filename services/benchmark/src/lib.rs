@@ -16,12 +16,12 @@
 //!
 //! Set `CHAOS=1` to randomly kill providers before the run.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rand::SeedableRng;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -33,6 +33,7 @@ use friday_capabilities::sim::{
 };
 use friday_planner::planning::TaskGraph;
 use friday_planner::{parse, plan};
+use friday_recovery::{default_graph, FailureCategory};
 use friday_simulation::{IssueSeverity, SimulationEngine, SimulationReport};
 
 /// A single benchmark task drawn from the corpus.
@@ -50,7 +51,7 @@ pub struct CorpusTask {
 }
 
 /// One row of the reliability dashboard.
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct TaskRecord {
     pub name: String,
     pub capability: String,
@@ -64,7 +65,7 @@ pub struct TaskRecord {
 }
 
 /// A calibration bucket: stated confidence vs observed success rate.
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct CalibrationBin {
     pub bin_low: f64,
     pub bin_high: f64,
@@ -73,8 +74,20 @@ pub struct CalibrationBin {
     pub avg_actual: f64,
 }
 
+/// Per-subsystem recovery coverage (the Recovery Graph, not the sim fallback).
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SubsystemRecovery {
+    pub subsystem: String,
+    /// Times this subsystem needed recovery.
+    pub attempts: usize,
+    /// Times the Recovery Graph produced a resolving step.
+    pub recovered: usize,
+    /// Mean Recovery Confidence over resolved recoveries.
+    pub mean_confidence: f64,
+}
+
 /// Aggregate reliability metrics for a run.
-#[derive(Serialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Default, Clone)]
 pub struct Metrics {
     pub total_tasks: usize,
     pub resolved: usize,
@@ -93,12 +106,17 @@ pub struct Metrics {
     pub planner_accuracy: f64,
     /// Only meaningful under Chaos Mode (Some when a fallback was needed).
     pub recovery_success: Option<f64>,
+    /// Recovery Graph coverage: attempts / resolved / mean confidence.
+    pub recovery_attempts: usize,
+    pub recovery_recovered: usize,
+    pub recovery_confidence_mean: f64,
+    pub recovery_by_subsystem: Vec<SubsystemRecovery>,
     /// Mean |predicted - actual| across calibration bins (lower is better).
     pub calibration_error: f64,
 }
 
 /// Full result of one benchmark run.
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct BenchmarkResult {
     pub chaos: bool,
     pub metrics: Metrics,
@@ -275,6 +293,18 @@ pub fn build_registry() -> Arc<CapabilityRegistry> {
     reg
 }
 
+/// The set of capability ids that currently have a live (available) provider.
+/// Under Chaos Mode the killed providers report `available() == false`, so this
+/// is exactly the set the Recovery Graph consults when deciding whether a
+/// reroute/`UseAlternateCapability` step can resolve.
+fn available_caps(reg: &CapabilityRegistry) -> HashSet<String> {
+    reg.capabilities()
+        .iter()
+        .filter(|c| reg.available(&c.id))
+        .map(|c| c.id.clone())
+        .collect()
+}
+
 /// Minimal simulator for the inference fabric (the M5 subsystem). There is no
 /// production `Simulatable` for it yet — this lets the benchmark exercise it and
 /// surface the gap (no fallback path when inference is unavailable).
@@ -436,12 +466,18 @@ pub fn run_benchmark(chaos: bool, n: usize) -> BenchmarkResult {
     let mut with_issues = 0usize;
     let mut approval = 0usize;
     let mut fallback_used = 0usize;
-    let mut fb_generated = 0usize;
-    let mut fb_resolved = 0usize;
     let mut rollback = 0usize;
     let mut confidence_sum = 0.0f64;
     let mut failures = 0usize;
     let mut sim_correct = 0usize;
+
+    // Recovery Graph accumulators.
+    let graph = default_graph();
+    let available = available_caps(&registry);
+    let mut rec_attempts = 0usize;
+    let mut rec_recovered = 0usize;
+    let mut rec_conf_sum = 0.0f64;
+    let mut sub_stats: HashMap<String, (usize, usize, f64)> = HashMap::new();
 
     // Calibration accumulators: 10 bins over [0,1].
     let mut cal_count = [0usize; 10];
@@ -465,10 +501,46 @@ pub fn run_benchmark(chaos: bool, n: usize) -> BenchmarkResult {
             .iter()
             .any(|i| i.kind == "unavailable_service");
         let pred = predicted_success(&report);
+
+        // Recovery Graph: when the simulation predicts a failure (e.g. a killed
+        // provider under Chaos Mode), attempt a deterministic, action-level
+        // recovery. A resolved recovery means the task is *not* counted as a
+        // failure against MTBF.
+        let mut recovered = false;
+        let mut rec_conf = 0.0f64;
+        if !pred {
+            let cat = report
+                .issues
+                .iter()
+                .map(|i| FailureCategory::from_kind(&i.kind))
+                .find(|c| !matches!(c, FailureCategory::Unknown))
+                .unwrap_or(FailureCategory::Provider);
+            let r = graph.recover(&task.capability, cat, &available);
+            let sub = task
+                .capability
+                .split('.')
+                .next()
+                .unwrap_or("unknown")
+                .to_string();
+            rec_attempts += 1;
+            if r.recovered {
+                recovered = true;
+                rec_conf = r.confidence;
+                rec_recovered += 1;
+                rec_conf_sum += rec_conf;
+            }
+            let e = sub_stats.entry(sub).or_insert((0, 0, 0.0));
+            e.0 += 1;
+            if r.recovered {
+                e.1 += 1;
+                e.2 += rec_conf;
+            }
+        }
+
         let actual = if task.sandbox {
             sandbox_actual(task)
         } else {
-            pred
+            pred || recovered
         };
         if is_resolved {
             resolved += 1;
@@ -490,17 +562,11 @@ pub fn run_benchmark(chaos: bool, n: usize) -> BenchmarkResult {
         if fb_used {
             fallback_used += 1;
         }
-        if !report.fallbacks.is_empty() {
-            fb_generated += 1;
-            if fb_used {
-                fb_resolved += 1;
-            }
-        }
         if report.rollback_available {
             rollback += 1;
         }
         confidence_sum += report.confidence.confidence;
-        if !pred {
+        if !pred && !recovered {
             failures += 1;
         }
         if pred == actual {
@@ -525,12 +591,37 @@ pub fn run_benchmark(chaos: bool, n: usize) -> BenchmarkResult {
         });
     }
 
-    // Recovery success: when a fallback path was required, did one resolve?
-    let recovery = if fb_generated > 0 {
-        Some(fb_resolved as f64 / fb_generated as f64)
+    // Recovery Success now reflects the Recovery Graph (deterministic,
+    // action-level recovery) rather than the sim-engine fallback paths. The sim
+    // fallback numbers are still surfaced via `fallback_used` / rollback columns.
+    let recovery = if rec_attempts > 0 {
+        Some(rec_recovered as f64 / rec_attempts as f64)
     } else {
         None
     };
+
+    let recovery_confidence_mean = if rec_recovered > 0 {
+        rec_conf_sum / rec_recovered as f64
+    } else {
+        0.0
+    };
+
+    let mut recovery_by_subsystem: Vec<SubsystemRecovery> = sub_stats
+        .into_iter()
+        .map(
+            |(subsystem, (attempts, recovered, conf_sum))| SubsystemRecovery {
+                subsystem,
+                attempts,
+                recovered,
+                mean_confidence: if recovered > 0 {
+                    conf_sum / recovered as f64
+                } else {
+                    0.0
+                },
+            },
+        )
+        .collect();
+    recovery_by_subsystem.sort_by(|a, b| a.subsystem.cmp(&b.subsystem));
 
     // Calibration error across non-empty bins.
     let mut cal_bins = Vec::new();
@@ -589,6 +680,10 @@ pub fn run_benchmark(chaos: bool, n: usize) -> BenchmarkResult {
         },
         planner_accuracy: measure_planner_accuracy(),
         recovery_success: recovery,
+        recovery_attempts: rec_attempts,
+        recovery_recovered: rec_recovered,
+        recovery_confidence_mean,
+        recovery_by_subsystem,
         calibration_error,
     };
 
@@ -642,7 +737,33 @@ pub fn render_dashboard(result: &BenchmarkResult) -> String {
     if let Some(r) = m.recovery_success {
         s.push_str(&format!("| Recovery Success | {:.1}% |\n", r * 100.0));
     }
+    s.push_str(&format!(
+        "| Recovery Confidence (mean) | {:.1}% |\n",
+        m.recovery_confidence_mean * 100.0
+    ));
     s.push('n');
+
+    if !m.recovery_by_subsystem.is_empty() {
+        s.push_str("## Recovery by Subsystem (Recovery Graph)\n");
+        s.push_str("| Subsystem | Attempts | Recovered | Coverage | Mean Confidence |\n");
+        s.push_str("|---|---|---|---|---|\n");
+        for r in &m.recovery_by_subsystem {
+            let cov = if r.attempts > 0 {
+                r.recovered as f64 / r.attempts as f64
+            } else {
+                0.0
+            };
+            s.push_str(&format!(
+                "| {} | {} | {} | {:.1}% | {:.1}% |\n",
+                r.subsystem,
+                r.attempts,
+                r.recovered,
+                cov * 100.0,
+                r.mean_confidence * 100.0
+            ));
+        }
+        s.push('n');
+    }
 
     s.push_str("## Risk & Resolution\n");
     s.push_str("| Resolved | Unresolved | Low | Medium | High | Issues | Approval | Fallback | Rollback |\n");
@@ -668,6 +789,93 @@ pub fn render_dashboard(result: &BenchmarkResult) -> String {
             "| {:.1}-{:.1} | {} | {:.2} | {:.2} |\n",
             b.bin_low, b.bin_high, b.count, b.avg_predicted, b.avg_actual
         ));
+    }
+    s.push('n');
+    s
+}
+
+/// One day's benchmark snapshot: both modes, so the MTBF trend can be plotted
+/// over time. Saved to `benchmarks/<date>.json`.
+#[derive(Serialize, Deserialize)]
+pub struct BenchmarkDay {
+    pub date: String,
+    pub normal: BenchmarkResult,
+    pub chaos: BenchmarkResult,
+}
+
+/// Directory (relative to repo root) where day snapshots are persisted.
+pub const BENCHMARKS_DIR: &str = "benchmarks";
+
+/// `YYYY-MM-DD` stamp for the current day.
+pub fn today_stamp() -> String {
+    chrono::Utc::now().format("%Y-%m-%d").to_string()
+}
+
+/// Run both Normal and Chaos modes and bundle them into a day snapshot.
+pub fn run_day(tasks: usize) -> BenchmarkDay {
+    let normal = run_benchmark(false, tasks);
+    let chaos = run_benchmark(true, tasks);
+    BenchmarkDay {
+        date: today_stamp(),
+        normal,
+        chaos,
+    }
+}
+
+/// Persist a day snapshot to `benchmarks/<date>.json` (overwrites same day).
+pub fn save_day(day: &BenchmarkDay) -> PathBuf {
+    let dir = PathBuf::from(BENCHMARKS_DIR);
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join(format!("{}.json", day.date));
+    let json = serde_json::to_string_pretty(day).expect("serialize day");
+    std::fs::write(&path, json).expect("write day snapshot");
+    path
+}
+
+/// Load every `benchmarks/<date>.json`, sorted by date (oldest first).
+pub fn load_history(dir: &Path) -> Vec<BenchmarkDay> {
+    let mut days = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.extension().and_then(|x| x.to_str()) == Some("json") {
+                if let Ok(text) = std::fs::read_to_string(&p) {
+                    if let Ok(d) = serde_json::from_str::<BenchmarkDay>(&text) {
+                        days.push(d);
+                    }
+                }
+            }
+        }
+    }
+    days.sort_by(|a, b| a.date.cmp(&b.date));
+    days
+}
+
+/// MTBF trend across historical snapshots: (date, normal_mtbf, chaos_mtbf).
+pub fn mtbf_trend(history: &[BenchmarkDay]) -> Vec<(String, f64, f64)> {
+    history
+        .iter()
+        .map(|d| {
+            (
+                d.date.clone(),
+                d.normal.metrics.mtbf_tasks,
+                d.chaos.metrics.mtbf_tasks,
+            )
+        })
+        .collect()
+}
+
+/// Render the historical MTBF trend (Normal vs Chaos) as a markdown table.
+pub fn render_trend(history: &[BenchmarkDay]) -> String {
+    let trend = mtbf_trend(history);
+    if trend.is_empty() {
+        return String::new();
+    }
+    let mut s = String::new();
+    s.push_str("## MTBF Trend (historical `benchmarks/<date>.json`)\n");
+    s.push_str("| Date | Normal MTBF | Chaos MTBF |\n|---|---|---|\n");
+    for (date, n, c) in trend {
+        s.push_str(&format!("| {} | {:.1} | {:.1} |\n", date, n, c));
     }
     s.push('n');
     s

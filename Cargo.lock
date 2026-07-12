@@ -225,6 +225,7 @@ dependencies = [
  "friday-actions",
  "friday-capabilities",
  "friday-planner",
+ "friday-recovery",
  "friday-simulation",
  "friday-windows",
  "rand",
@@ -327,6 +328,14 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "friday-recovery"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

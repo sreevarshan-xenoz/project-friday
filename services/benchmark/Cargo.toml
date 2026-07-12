@@ -10,6 +10,7 @@ friday-capabilities = { path = "../capabilities" }
 friday-simulation = { path = "../simulation" }
 friday-actions = { path = "../action-runtime" }
 friday-windows = { path = "../../plugins/windows" }
+friday-recovery = { path = "../recovery" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
