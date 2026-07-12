@@ -21,7 +21,12 @@ fn main() {
 
     if save {
         eprintln!("Running FRIDAY benchmark (both modes): {} tasks", tasks);
-        let day = run_day(tasks);
+        let history = load_history(PathBuf::from(friday_benchmark::BENCHMARKS_DIR).as_path());
+        let prior = history
+            .last()
+            .map(|d| d.confidence_model.clone())
+            .unwrap_or_default();
+        let day = run_day(tasks, &prior);
         let path = save_day(&day);
         println!("{}", render_dashboard(&day.chaos));
         println!(
@@ -31,16 +36,15 @@ fn main() {
             ))
         );
         eprintln!(
-            "\nNormal MTBF={:.1}  Chaos MTBF={:.1}  sim_acc={:.1}%  planner_acc={:.1}%  cal_err={:.3}",
-            day.normal.metrics.mtbf_tasks,
-            day.chaos.metrics.mtbf_tasks,
+            "\nNormal Raw MTBF={:.1}  Chaos Raw MTBF={:.1}  Chaos User Success={:.1}%  Recovery Eff={:?}  sim_acc={:.1}%  planner_acc={:.1}%  cal_err={:.3}",
+            day.normal.metrics.raw_mtbf,
+            day.chaos.metrics.raw_mtbf,
+            day.chaos.metrics.user_success_rate * 100.0,
+            day.chaos.metrics.recovery_effectiveness,
             day.chaos.metrics.simulation_accuracy * 100.0,
             day.chaos.metrics.planner_accuracy * 100.0,
             day.chaos.metrics.calibration_error,
         );
-        if let Some(r) = day.chaos.metrics.recovery_success {
-            eprintln!("recovery_success={:.1}%", r * 100.0);
-        }
         eprintln!("Day snapshot written to {}", path.display());
         return;
     }
@@ -58,14 +62,16 @@ fn main() {
 
     print!("{}", render_dashboard(&result));
     eprintln!(
-        "\nMTBF={:.1}  sim_acc={:.1}%  planner_acc={:.1}%  cal_err={:.3}",
-        result.metrics.mtbf_tasks,
+        "\nRaw MTBF={:.1}  User Success={:.1}%  First-Pass={:.1}%  sim_acc={:.1}%  planner_acc={:.1}%  cal_err={:.3}",
+        result.metrics.raw_mtbf,
+        result.metrics.user_success_rate * 100.0,
+        result.metrics.first_pass_rate * 100.0,
         result.metrics.simulation_accuracy * 100.0,
         result.metrics.planner_accuracy * 100.0,
         result.metrics.calibration_error,
     );
-    if let Some(r) = result.metrics.recovery_success {
-        eprintln!("recovery_success={:.1}%", r * 100.0);
+    if let Some(r) = result.metrics.recovery_effectiveness {
+        eprintln!("recovery_effectiveness={:.1}%", r * 100.0);
     }
     eprintln!("Reports written to {}", out_dir.display());
 }

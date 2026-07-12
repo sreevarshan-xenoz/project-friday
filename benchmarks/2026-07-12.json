@@ -14,10 +14,15 @@
       "fallback_used": 0,
       "rollback_available": 30,
       "mean_confidence": 0.9648333333333329,
-      "mtbf_tasks": 60.0,
       "simulation_accuracy": 1.0,
       "planner_accuracy": 1.0,
-      "recovery_success": null,
+      "raw_mtbf": 60.0,
+      "user_success_rate": 1.0,
+      "recovery_effectiveness": null,
+      "first_pass_rate": 1.0,
+      "first_pass_count": 60,
+      "recovered_count": 0,
+      "failed_count": 0,
       "recovery_attempts": 0,
       "recovery_recovered": 0,
       "recovery_confidence_mean": 0.0,
@@ -710,28 +715,33 @@
       "fallback_used": 10,
       "rollback_available": 20,
       "mean_confidence": 0.7948333333333325,
-      "mtbf_tasks": 60.0,
-      "simulation_accuracy": 0.6666666666666666,
+      "simulation_accuracy": 0.8333333333333334,
       "planner_accuracy": 1.0,
-      "recovery_success": 1.0,
+      "raw_mtbf": 3.0,
+      "user_success_rate": 0.8333333333333334,
+      "recovery_effectiveness": 0.5,
+      "first_pass_rate": 0.6666666666666666,
+      "first_pass_count": 40,
+      "recovered_count": 10,
+      "failed_count": 10,
       "recovery_attempts": 20,
-      "recovery_recovered": 20,
-      "recovery_confidence_mean": 0.8000000000000002,
+      "recovery_recovered": 10,
+      "recovery_confidence_mean": 1.0,
       "recovery_by_subsystem": [
         {
           "subsystem": "browser",
           "attempts": 10,
           "recovered": 10,
-          "mean_confidence": 0.9000000000000001
+          "mean_confidence": 1.0
         },
         {
           "subsystem": "git",
           "attempts": 10,
-          "recovered": 10,
-          "mean_confidence": 0.7000000000000001
+          "recovered": 0,
+          "mean_confidence": 0.0
         }
       ],
-      "calibration_error": 0.5231000000000006
+      "calibration_error": 0.02310000000000051
     },
     "calibration": [
       {
@@ -739,7 +749,7 @@
         "bin_high": 0.1,
         "count": 10,
         "avg_predicted": 0.0,
-        "avg_actual": 1.0
+        "avg_actual": 0.0
       },
       {
         "bin_low": 0.9,
@@ -979,7 +989,7 @@
         "issues": 2,
         "fallback_used": false,
         "predicted_success": false,
-        "actual_success": true
+        "actual_success": false
       },
       {
         "name": "git.commit#1",
@@ -990,7 +1000,7 @@
         "issues": 2,
         "fallback_used": false,
         "predicted_success": false,
-        "actual_success": true
+        "actual_success": false
       },
       {
         "name": "git.commit#2",
@@ -1001,7 +1011,7 @@
         "issues": 2,
         "fallback_used": false,
         "predicted_success": false,
-        "actual_success": true
+        "actual_success": false
       },
       {
         "name": "git.commit#3",
@@ -1012,7 +1022,7 @@
         "issues": 2,
         "fallback_used": false,
         "predicted_success": false,
-        "actual_success": true
+        "actual_success": false
       },
       {
         "name": "git.commit#4",
@@ -1023,7 +1033,7 @@
         "issues": 2,
         "fallback_used": false,
         "predicted_success": false,
-        "actual_success": true
+        "actual_success": false
       },
       {
         "name": "git.commit#5",
@@ -1034,7 +1044,7 @@
         "issues": 2,
         "fallback_used": false,
         "predicted_success": false,
-        "actual_success": true
+        "actual_success": false
       },
       {
         "name": "git.commit#6",
@@ -1045,7 +1055,7 @@
         "issues": 2,
         "fallback_used": false,
         "predicted_success": false,
-        "actual_success": true
+        "actual_success": false
       },
       {
         "name": "git.commit#7",
@@ -1056,7 +1066,7 @@
         "issues": 2,
         "fallback_used": false,
         "predicted_success": false,
-        "actual_success": true
+        "actual_success": false
       },
       {
         "name": "git.commit#8",
@@ -1067,7 +1077,7 @@
         "issues": 2,
         "fallback_used": false,
         "predicted_success": false,
-        "actual_success": true
+        "actual_success": false
       },
       {
         "name": "git.commit#9",
@@ -1078,7 +1088,7 @@
         "issues": 2,
         "fallback_used": false,
         "predicted_success": false,
-        "actual_success": true
+        "actual_success": false
       },
       {
         "name": "win.open#0",
@@ -1411,5 +1421,19 @@
         "actual_success": true
       }
     ]
+  },
+  "confidence_model": {
+    "outcomes": {
+      "git.commit|provider|\"Escalate\"": {
+        "trials": 20,
+        "successes": 0
+      },
+      "browser.navigate|provider|{\"UseAlternateCapability\":{\"capability\":\"windows.navigate\"}}": {
+        "trials": 20,
+        "successes": 20
+      }
+    },
+    "min_samples": 0,
+    "prior_weight": 0.0
   }
 }

@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::confidence::ConfidenceModel;
 use crate::taxonomy::{FailureCategory, RecoveryAction};
 
 /// Below this confidence, the chosen recovery is escalated to the user via the
@@ -91,18 +92,38 @@ impl RecoveryGraph {
         category: FailureCategory,
         available_caps: &HashSet<String>,
     ) -> RecoveryResult {
+        self.recover_with(
+            action,
+            category,
+            available_caps,
+            &ConfidenceModel::default(),
+        )
+    }
+
+    /// Like [`Self::recover`] but blends each step's base confidence with the
+    /// learned [`ConfidenceModel`] (so approval decisions track observed
+    /// outcomes across runs).
+    pub fn recover_with(
+        &self,
+        action: &str,
+        category: FailureCategory,
+        available_caps: &HashSet<String>,
+        model: &ConfidenceModel,
+    ) -> RecoveryResult {
         let steps: Vec<RecoveryAction> = self
             .policies
             .get(action)
             .map(|p| p.actions_for(category).to_vec())
             .unwrap_or_default();
 
-        let chosen_idx = steps.iter().position(|a| a.resolves(available_caps));
+        let chosen_idx = steps
+            .iter()
+            .position(|a| a.resolves(category, available_caps));
 
         match chosen_idx {
             Some(i) => {
                 let chosen = steps[i].clone();
-                let confidence = chosen.confidence();
+                let confidence = model.effective(chosen.confidence(), action, category, &chosen);
                 let needs_approval =
                     confidence < APPROVAL_THRESHOLD || matches!(chosen, RecoveryAction::AskUser);
                 RecoveryResult {

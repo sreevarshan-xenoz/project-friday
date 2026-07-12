@@ -19,7 +19,7 @@ fn benchmark_runs_and_produces_metrics() {
         "planner accuracy dropped: {:.2}",
         r.metrics.planner_accuracy
     );
-    assert!(r.metrics.mtbf_tasks.is_finite() && r.metrics.mtbf_tasks > 0.0);
+    assert!(r.metrics.raw_mtbf.is_finite() && r.metrics.raw_mtbf > 0.0);
     // Calibration error should be small when the model is honest.
     assert!(
         r.metrics.calibration_error <= 0.25,
@@ -34,7 +34,7 @@ fn chaos_mode_runs_and_measures_recovery() {
     assert!(r.metrics.total_tasks > 0);
     // Under chaos some providers are offline; the run must still complete and
     // surface a recovery figure (browser -> windows fallback).
-    assert!(r.metrics.recovery_success.is_some());
+    assert!(r.metrics.recovery_effectiveness.is_some());
 }
 
 #[test]

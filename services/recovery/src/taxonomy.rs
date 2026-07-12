@@ -56,7 +56,7 @@ impl FailureCategory {
 
 /// A single, deterministic recovery step. Recovery is a *graph*: an ordered list
 /// of these per (action, category), tried in order until one resolves.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RecoveryAction {
     /// Retry the same action a bounded number of times (transient faults).
     Retry { attempts: u32 },
@@ -99,19 +99,51 @@ impl RecoveryAction {
         }
     }
 
-    /// Would this step resolve the failure given what is *currently available*
-    /// (the set of capability ids with a live provider)?
+    /// Would this step resolve the failure given the *category* of failure and
+    /// what is *currently available* (the set of capability ids with a live
+    /// provider)?
     ///
-    /// Steps that do not depend on another provider (retry, restart, wait,
-    /// restore, cleanup, elevate, ask, escalate) always resolve. Reroute steps
-    /// only resolve if their target capability is available.
-    pub fn resolves(&self, available_caps: &std::collections::HashSet<String>) -> bool {
+    /// Per the Reliability discipline, not every action can paper over every
+    /// failure:
+    ///
+    /// * **Reroute steps** (`UseProvider`, `UseAlternateCapability`) resolve iff
+    ///   their target capability is currently available. These are the only
+    ///   steps that legitimately heal a dead provider.
+    /// * **Conditional steps** (`Retry`, `WaitAndRetry`, `RestartService`,
+    ///   `RestoreSession`, `CleanupAndRetry`) resolve *only* for transient
+    ///   categories (`Network`, `Timeout`, `Resource`) — e.g. an HTTP 429 you can
+    ///   wait out, or a stale lock you can clear. They do **not** resolve a
+    ///   `Provider`-offline or `Permission`-denied failure; retrying a dead
+    ///   provider just burns time.
+    /// * **Human/higher-authority steps** (`SuggestElevation`, `AskUser`,
+    ///   `Escalate`) never auto-resolve; they hand off.
+    pub fn resolves(
+        &self,
+        category: FailureCategory,
+        available_caps: &std::collections::HashSet<String>,
+    ) -> bool {
         match self {
             RecoveryAction::UseProvider { capability }
             | RecoveryAction::UseAlternateCapability { capability } => {
                 available_caps.contains(capability)
             }
-            _ => true,
+            RecoveryAction::Retry { .. }
+            | RecoveryAction::WaitAndRetry { .. }
+            | RecoveryAction::RestartService { .. }
+            | RecoveryAction::RestoreSession
+            | RecoveryAction::CleanupAndRetry { .. } => is_transient(category),
+            RecoveryAction::SuggestElevation
+            | RecoveryAction::AskUser
+            | RecoveryAction::Escalate => false,
         }
     }
+}
+
+/// A failure is "transient" if a bounded retry/wait/restart could plausibly fix
+/// it without external help (the resource is still fundamentally reachable).
+pub fn is_transient(c: FailureCategory) -> bool {
+    matches!(
+        c,
+        FailureCategory::Network | FailureCategory::Timeout | FailureCategory::Resource
+    )
 }

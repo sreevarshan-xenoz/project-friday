@@ -321,24 +321,36 @@ Alpha 1 → Qualification → Reliability → Dogfooding → Beta → Public Tes
 ## Reliability Sprint (the current work)
 
 **North-star metric is graceful degradation, not feature count.** We reject feature
-PRs that cannot justify themselves against the reliability benchmark. The headline
-number is **Chaos MTBF** — mean tasks between failures when `CHAOS=1` randomly kills
-providers. A recovered failure does **not** count against MTBF.
+PRs that cannot justify themselves against the reliability benchmark. A benchmark
+should *describe reality, not reward clever implementation* — a component failing and
+recovery saving the task is a success for the **user** but still a failure for the
+**system**. Those are tracked as **separate** metrics.
 
-- **Recovery Graph** (`friday-recovery`, spec `specs/recovery.md`): action-level
-  recovery policies keyed by `FailureCategory`. Pure, deterministic, serializable
-  (authored in Rust or JSON). A missing policy → `recovered = false` → MTBF drops
-  (regression detector).
-- **Recovery Confidence**: every `RecoveryAction` carries a base confidence; below
-  `APPROVAL_THRESHOLD` (0.5) or on `AskUser` the recovery escalates to the approval
-  policy (human-in-the-loop).
-- **Benchmark** (`friday-benchmark`): reports Recovery Success, mean Recovery
-  Confidence, **per-subsystem Recovery %**, and an **MTBF trend** from historical
-  `benchmarks/<date>.json` snapshots (`cargo run -p friday-benchmark -- --save`).
+- **Four independent reliability metrics** (see `specs/recovery.md`): **Raw MTBF**
+  (every interruption counts; recovery ignored), **User Success Rate** (did the user
+  ultimately get it), **First-Pass Success** (succeeded with no recovery), and
+  **Recovery Effectiveness** (of attempts, fraction resolved). Recovery never hides
+  failure.
+- **Recovery Graph** (`friday-recovery`): action-level policies keyed by
+  `FailureCategory`. Honest `resolves()`: reroute steps (`UseProvider`,
+  `UseAlternateCapability`) resolve iff their target is available; conditional steps
+  (`Retry`, `RestartService`, …) resolve **only** for transient categories
+  (`Network`/`Timeout`/`Resource`) — a dead provider is *not* healed by retrying it;
+  escalation steps (`AskUser`, `Escalate`, `SuggestElevation`) never auto-resolve.
+- **Learning Recovery Confidence** (`ConfidenceModel`): base confidence is a prior;
+  observed outcomes are recorded and `effective()` converges to the real success
+  rate, persisted across runs in `benchmarks/<date>.json`.
+- **Benchmark** (`friday-benchmark`): reports the four metrics, per-subsystem
+  Recovery %, learned confidence, and a **Reliability Trend** from historical day
+  snapshots (`cargo run -p friday-benchmark -- --save`).
+- **Runtime integration is shadow-mode only** (not live yet): the graph runs during
+  real executions without affecting them, recording "I would have chosen…"; once it
+  agrees with actual outcomes it can be promoted to live recovery.
 
-**Chaos MTBF target ladder:** `3 → 10 → 25 → 100 → 500`. We start from the honest
-`3` (browser→windows fallback only) and climb as the Recovery Graph covers every
-subsystem. Each run is a day snapshot so progress is auditable.
+**Chaos Raw MTBF target ladder:** `3 → 10 → 25 → 100 → 500`. We start from the honest
+`3` (browser→windows fallback only; other subsystems have no real fallback when their
+provider is killed) and climb as genuine fallbacks are added. Each run is a day
+snapshot so progress is auditable.
 
 Because Capability Intelligence exists, M5 becomes `LLM → need capability →
 registry → best provider → runtime → result`; the LLM never sees implementation

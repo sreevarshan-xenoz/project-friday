@@ -33,7 +33,7 @@ use friday_capabilities::sim::{
 };
 use friday_planner::planning::TaskGraph;
 use friday_planner::{parse, plan};
-use friday_recovery::{default_graph, FailureCategory};
+use friday_recovery::{default_graph, ConfidenceModel, FailureCategory, RecoveryAction};
 use friday_simulation::{IssueSeverity, SimulationEngine, SimulationReport};
 
 /// A single benchmark task drawn from the corpus.
@@ -100,13 +100,27 @@ pub struct Metrics {
     pub fallback_used: usize,
     pub rollback_available: usize,
     pub mean_confidence: f64,
-    /// Mean tasks between failures (higher is better).
-    pub mtbf_tasks: f64,
     pub simulation_accuracy: f64,
     pub planner_accuracy: f64,
-    /// Only meaningful under Chaos Mode (Some when a fallback was needed).
-    pub recovery_success: Option<f64>,
-    /// Recovery Graph coverage: attempts / resolved / mean confidence.
+
+    // ---- Four *independent* reliability metrics (recovery never hides failure) ----
+    /// **Raw MTBF** — mean tasks between failures, counting *every* interruption.
+    /// Recovery is ignored entirely; this is the engineering reality.
+    pub raw_mtbf: f64,
+    /// **User Success Rate** — fraction of tasks the user ultimately got
+    /// (predicted success OR recovered). Can be high while Raw MTBF is poor.
+    pub user_success_rate: f64,
+    /// **Recovery Effectiveness** — of recovery attempts, the fraction that
+    /// resolved. `None` when nothing needed recovery this run.
+    pub recovery_effectiveness: Option<f64>,
+    /// **First-Pass Success** — fraction completed with *no* recovery at all.
+    pub first_pass_rate: f64,
+    /// Partition of all tasks: succeeded unaided / recovered / failed.
+    pub first_pass_count: usize,
+    pub recovered_count: usize,
+    pub failed_count: usize,
+
+    /// Recovery Graph coverage: attempts / resolved / mean (learned) confidence.
     pub recovery_attempts: usize,
     pub recovery_recovered: usize,
     pub recovery_confidence_mean: f64,
@@ -439,9 +453,19 @@ pub fn measure_planner_accuracy() -> f64 {
     hits as f64 / cases.len() as f64
 }
 
-/// Run the full benchmark. When `chaos` is true, providers are randomly killed
-/// first (deterministic given the seeded RNG).
+/// Run the full benchmark with a fresh (intra-run) confidence model. See
+/// [`run_benchmark_with`] for the model-aware variant used by the day snapshot.
 pub fn run_benchmark(chaos: bool, n: usize) -> BenchmarkResult {
+    let mut model = ConfidenceModel::default();
+    run_benchmark_with(chaos, n, &mut model)
+}
+
+/// Run the full benchmark, recording recovery outcomes into `model` so its
+/// confidence estimates learn from evidence across (and within) runs.
+///
+/// When `chaos` is true, providers are randomly killed first (deterministic
+/// given the seeded RNG).
+pub fn run_benchmark_with(chaos: bool, n: usize, model: &mut ConfidenceModel) -> BenchmarkResult {
     let temp = std::env::temp_dir().join(format!("friday-bench-{}", Uuid::new_v4()));
     let _ = std::fs::create_dir_all(&temp);
 
@@ -468,7 +492,8 @@ pub fn run_benchmark(chaos: bool, n: usize) -> BenchmarkResult {
     let mut fallback_used = 0usize;
     let mut rollback = 0usize;
     let mut confidence_sum = 0.0f64;
-    let mut failures = 0usize;
+    let mut failures = 0usize; // Raw MTBF: every predicted failure, recovery ignored.
+    let mut failed_count = 0usize; // tasks that ultimately did NOT succeed.
     let mut sim_correct = 0usize;
 
     // Recovery Graph accumulators.
@@ -504,18 +529,22 @@ pub fn run_benchmark(chaos: bool, n: usize) -> BenchmarkResult {
 
         // Recovery Graph: when the simulation predicts a failure (e.g. a killed
         // provider under Chaos Mode), attempt a deterministic, action-level
-        // recovery. A resolved recovery means the task is *not* counted as a
-        // failure against MTBF.
+        // recovery. Crucially this does NOT hide the failure — Raw MTBF still
+        // counts it; only User Success / First-Pass accounting separate out
+        // whether recovery ultimately saved the task.
         let mut recovered = false;
         let mut rec_conf = 0.0f64;
+        let mut rec_cat = FailureCategory::Provider;
+        let mut rec_step = RecoveryAction::Escalate;
         if !pred {
-            let cat = report
+            rec_cat = report
                 .issues
                 .iter()
                 .map(|i| FailureCategory::from_kind(&i.kind))
                 .find(|c| !matches!(c, FailureCategory::Unknown))
                 .unwrap_or(FailureCategory::Provider);
-            let r = graph.recover(&task.capability, cat, &available);
+            let r = graph.recover_with(&task.capability, rec_cat, &available, model);
+            rec_step = r.chosen.clone();
             let sub = task
                 .capability
                 .split('.')
@@ -542,6 +571,13 @@ pub fn run_benchmark(chaos: bool, n: usize) -> BenchmarkResult {
         } else {
             pred || recovered
         };
+        if !actual {
+            failed_count += 1;
+        }
+        // Feed the outcome back into the learning ConfidenceModel.
+        if !pred {
+            model.record(&task.capability, rec_cat, &rec_step, actual);
+        }
         if is_resolved {
             resolved += 1;
         } else {
@@ -566,7 +602,8 @@ pub fn run_benchmark(chaos: bool, n: usize) -> BenchmarkResult {
             rollback += 1;
         }
         confidence_sum += report.confidence.confidence;
-        if !pred && !recovered {
+        // Raw MTBF counts every predicted failure regardless of recovery.
+        if !pred {
             failures += 1;
         }
         if pred == actual {
@@ -591,9 +628,9 @@ pub fn run_benchmark(chaos: bool, n: usize) -> BenchmarkResult {
         });
     }
 
-    // Recovery Success now reflects the Recovery Graph (deterministic,
-    // action-level recovery) rather than the sim-engine fallback paths. The sim
-    // fallback numbers are still surfaced via `fallback_used` / rollback columns.
+    // Recovery Effectiveness: of recovery attempts, the fraction that resolved.
+    // This is a *separate* number from Raw MTBF and User Success — recovery can
+    // be effective while the system is still failing underneath.
     let recovery = if rec_attempts > 0 {
         Some(rec_recovered as f64 / rec_attempts as f64)
     } else {
@@ -650,10 +687,27 @@ pub fn run_benchmark(chaos: bool, n: usize) -> BenchmarkResult {
     };
 
     let total = corpus.len();
-    let mtbf = if failures == 0 {
+    let raw_mtbf = if failures == 0 {
         total as f64
     } else {
         total as f64 / failures as f64
+    };
+
+    // Partition of all tasks into succeeded-unaided / recovered / failed. These
+    // three are mutually exclusive and exhaustive. Recovery never moves a task
+    // out of "failed" for Raw MTBF; it only changes whether the user still got
+    // what they wanted (User Success) and whether it was first-pass.
+    let first_pass_count = total.saturating_sub(rec_recovered + failed_count);
+    let recovered_count = rec_recovered;
+    let user_success_rate = if total > 0 {
+        (total - failed_count) as f64 / total as f64
+    } else {
+        0.0
+    };
+    let first_pass_rate = if total > 0 {
+        first_pass_count as f64 / total as f64
+    } else {
+        0.0
     };
 
     let metrics = Metrics {
@@ -672,14 +726,19 @@ pub fn run_benchmark(chaos: bool, n: usize) -> BenchmarkResult {
         } else {
             0.0
         },
-        mtbf_tasks: mtbf,
+        raw_mtbf,
+        user_success_rate,
+        recovery_effectiveness: recovery,
+        first_pass_rate,
+        first_pass_count,
+        recovered_count,
+        failed_count,
         simulation_accuracy: if total > 0 {
             sim_correct as f64 / total as f64
         } else {
             0.0
         },
         planner_accuracy: measure_planner_accuracy(),
-        recovery_success: recovery,
         recovery_attempts: rec_attempts,
         recovery_recovered: rec_recovered,
         recovery_confidence_mean,
@@ -712,12 +771,26 @@ pub fn render_dashboard(result: &BenchmarkResult) -> String {
         m.total_tasks
     ));
 
-    s.push_str("## Headline Metrics\n");
-    s.push_str("| Metric | Value |\n|---|---|\n");
+    s.push_str("## Reliability Metrics (failure is never hidden)\n");
+    s.push_str("| Metric | Value | Meaning |\n|---|---|---|\n");
     s.push_str(&format!(
-        "| MTBF (tasks between failures) | {:.1} |\n",
-        m.mtbf_tasks
+        "| **Raw MTBF** | {:.1} | every interruption counts; recovery ignored |\n",
+        m.raw_mtbf
     ));
+    s.push_str(&format!(
+        "| **User Success Rate** | {:.1}% | did the user ultimately get it (incl. recovered) |\n",
+        m.user_success_rate * 100.0
+    ));
+    s.push_str(&format!(
+        "| **First-Pass Success** | {:.1}% | succeeded with *no* recovery |\n",
+        m.first_pass_rate * 100.0
+    ));
+    if let Some(r) = m.recovery_effectiveness {
+        s.push_str(&format!(
+            "| **Recovery Effectiveness** | {:.1}% | of attempts, fraction that resolved |\n",
+            r * 100.0
+        ));
+    }
     s.push_str(&format!(
         "| Simulation Accuracy | {:.1}% |\n",
         m.simulation_accuracy * 100.0
@@ -734,12 +807,17 @@ pub fn render_dashboard(result: &BenchmarkResult) -> String {
         "| Calibration Error | {:.3} |\n",
         m.calibration_error
     ));
-    if let Some(r) = m.recovery_success {
-        s.push_str(&format!("| Recovery Success | {:.1}% |\n", r * 100.0));
-    }
     s.push_str(&format!(
-        "| Recovery Confidence (mean) | {:.1}% |\n",
+        "| Recovery Confidence (mean, learned) | {:.1}% |\n",
         m.recovery_confidence_mean * 100.0
+    ));
+    s.push('n');
+
+    s.push_str("## Outcome Partition\n");
+    s.push_str("| First-Pass | Recovered | Failed | Total |\n|---|---|---|---|\n");
+    s.push_str(&format!(
+        "| {} | {} | {} | {} |\n",
+        m.first_pass_count, m.recovered_count, m.failed_count, m.total_tasks
     ));
     s.push('n');
 
@@ -794,13 +872,15 @@ pub fn render_dashboard(result: &BenchmarkResult) -> String {
     s
 }
 
-/// One day's benchmark snapshot: both modes, so the MTBF trend can be plotted
-/// over time. Saved to `benchmarks/<date>.json`.
+/// One day's benchmark snapshot: both modes, so the reliability trend can be
+/// plotted over time. Saved to `benchmarks/<date>.json`. The `confidence_model`
+/// is carried forward across runs so Recovery Confidence learns from evidence.
 #[derive(Serialize, Deserialize)]
 pub struct BenchmarkDay {
     pub date: String,
     pub normal: BenchmarkResult,
     pub chaos: BenchmarkResult,
+    pub confidence_model: ConfidenceModel,
 }
 
 /// Directory (relative to repo root) where day snapshots are persisted.
@@ -811,14 +891,17 @@ pub fn today_stamp() -> String {
     chrono::Utc::now().format("%Y-%m-%d").to_string()
 }
 
-/// Run both Normal and Chaos modes and bundle them into a day snapshot.
-pub fn run_day(tasks: usize) -> BenchmarkDay {
-    let normal = run_benchmark(false, tasks);
-    let chaos = run_benchmark(true, tasks);
+/// Run both Normal and Chaos modes, accumulating recovery outcomes into a single
+/// confidence model seeded from `prior` (so learning compounds across days).
+pub fn run_day(tasks: usize, prior: &ConfidenceModel) -> BenchmarkDay {
+    let mut model = prior.clone();
+    let normal = run_benchmark_with(false, tasks, &mut model);
+    let chaos = run_benchmark_with(true, tasks, &mut model);
     BenchmarkDay {
         date: today_stamp(),
         normal,
         chaos,
+        confidence_model: model,
     }
 }
 
@@ -851,15 +934,17 @@ pub fn load_history(dir: &Path) -> Vec<BenchmarkDay> {
     days
 }
 
-/// MTBF trend across historical snapshots: (date, normal_mtbf, chaos_mtbf).
-pub fn mtbf_trend(history: &[BenchmarkDay]) -> Vec<(String, f64, f64)> {
+/// Reliability trend across historical snapshots:
+/// `(date, normal_raw_mtbf, chaos_raw_mtbf, chaos_user_success_rate)`.
+pub fn mtbf_trend(history: &[BenchmarkDay]) -> Vec<(String, f64, f64, f64)> {
     history
         .iter()
         .map(|d| {
             (
                 d.date.clone(),
-                d.normal.metrics.mtbf_tasks,
-                d.chaos.metrics.mtbf_tasks,
+                d.normal.metrics.raw_mtbf,
+                d.chaos.metrics.raw_mtbf,
+                d.chaos.metrics.user_success_rate,
             )
         })
         .collect()
@@ -872,10 +957,18 @@ pub fn render_trend(history: &[BenchmarkDay]) -> String {
         return String::new();
     }
     let mut s = String::new();
-    s.push_str("## MTBF Trend (historical `benchmarks/<date>.json`)\n");
-    s.push_str("| Date | Normal MTBF | Chaos MTBF |\n|---|---|---|\n");
-    for (date, n, c) in trend {
-        s.push_str(&format!("| {} | {:.1} | {:.1} |\n", date, n, c));
+    s.push_str("## Reliability Trend (historical `benchmarks/<date>.json`)\n");
+    s.push_str(
+        "| Date | Normal Raw MTBF | Chaos Raw MTBF | Chaos User Success |\n|---|---|---|---|\n",
+    );
+    for (date, n, c, u) in trend {
+        s.push_str(&format!(
+            "| {} | {:.1} | {:.1} | {:.1}% |\n",
+            date,
+            n,
+            c,
+            u * 100.0
+        ));
     }
     s.push('n');
     s
