@@ -1,0 +1,17 @@
+[package]
+name = "friday-benchmark"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+friday-planner = { path = "../../planner" }
+friday-capabilities = { path = "../capabilities" }
+friday-simulation = { path = "../simulation" }
+friday-actions = { path = "../action-runtime" }
+friday-windows = { path = "../../plugins/windows" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+rand = "0.8"

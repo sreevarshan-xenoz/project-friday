@@ -6,6 +6,7 @@ members = [
     "services/action-runtime",
     "services/capabilities",
     "services/simulation",
+    "services/benchmark",
     "services/context",
     "services/intelligence",
     "e2e",

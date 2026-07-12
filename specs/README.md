@@ -67,3 +67,4 @@ work this directory supersedes it.
 | Evaluation          | `evaluation.md`     | `services/evaluation` (new)          | 🚧 M5.5  |
 | Knowledge Graph     | `knowledge_graph.md` | `friday-core`                        | 🚧 M5.6  |
 | Reasoning Session   | `reasoning_session.md`| `services/intelligence`             | 🚧 M5.7  |
+| Benchmark (QA)      | `benchmark.md`        | `services/benchmark`                 | ✅ QA    |

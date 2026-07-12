@@ -3,6 +3,36 @@
 Milestones are intentionally small and each leaves the project in a runnable
 state. Status follows the agreed phase order.
 
+## Phase Model — Alpha Qualification (current)
+
+All architecture milestones (M0–M5) are **complete** and the runtime API is
+**frozen**. We are now in **Alpha Qualification**: the job is no longer to add
+architecture — it is to *prove the system is reliable*. Every change from here is
+measured against real numbers, not vibes.
+
+Qualification phases:
+
+1. **Alpha 1** — internal dogfooding build; everything wired end-to-end.
+2. **Qualification** — Benchmark Sprint(s): break the platform with hundreds of
+   tasks; track **MTBF**, **simulation accuracy**, **planner accuracy**,
+   **recovery success**, and **confidence calibration**. No feature PR is merged
+   without a benchmark that demonstrates the need or a measurable reliability gain.
+3. **Reliability** — drive MTBF up; **Chaos Mode (`CHAOS=1`)** hardened; fallback
+   paths made real, not declared.
+4. **Dogfooding** — daily use by the team; telemetry + dashboards live.
+5. **Beta** — external testers.
+6. **Public Testing** — open.
+7. **v1.0** — stable.
+
+**PR policy:** reject any PR that adds a feature without (a) a benchmark that
+demonstrates the need, or (b) a measurable reliability improvement. The hardest
+real-world risk is **Windows** (Explorer, focus stealing, UAC, race conditions, AV,
+keyboard hooks, clipboard, multi-monitor) — the benchmark harness weights
+Windows-heavy task mixes accordingly.
+
+The benchmark harness lives in `services/benchmark` (`friday-benchmark`); its spec
+is `specs/benchmark.md`. Run it with `CHAOS=1 cargo run -p friday-benchmark -- 600`.
+
 ## M0 — Foundation ✅
 
 - Folder structure, git branches, tooling (cargo, uv, node).
@@ -283,6 +313,9 @@ Produces an `LLMContext` handed to the Intelligence Layer. Full spec:
 ⏳ M8  Voice
 ⏳ M9  Learning
 ⏳ M10 Autonomy
+
+# Alpha Qualification (current phase)
+Alpha 1 → Qualification → Reliability → Dogfooding → Beta → Public Testing → v1.0
 ```
 
 Because Capability Intelligence exists, M5 becomes `LLM → need capability →

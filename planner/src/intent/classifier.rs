@@ -21,7 +21,10 @@ impl IntentType {
                 || r.contains("chrome")
                 || r.contains("edge")
                 || r.contains("firefox")
-                || r.contains("web"))
+                || r.contains("web")
+                || r.contains("google")
+                || r.contains("duckduckgo")
+                || r.contains("bing"))
         {
             IntentType::BrowserSearch
         } else if r.contains("open") {
