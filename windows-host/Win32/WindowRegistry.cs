@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using WindowsHost.Model;
 
 namespace WindowsHost.Win32;
