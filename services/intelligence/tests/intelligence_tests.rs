@@ -1,19 +1,33 @@
 use friday_context::AgentContext;
 use friday_intelligence::{
-    CognitiveMode, IntelligenceRouter, ModelProvider, PromptCompiler, ResponseInterpreter
+    CognitiveMode, IntelligenceRouter, ModelProvider, PromptCompiler, ResponseInterpreter,
 };
 
 #[test]
 fn test_intelligence_router() {
     // System 1 chitchat/greeting matches
-    assert_eq!(IntelligenceRouter::route("Hello there!"), CognitiveMode::System1);
-    assert_eq!(IntelligenceRouter::route("what time is it"), CognitiveMode::System1);
-    
+    assert_eq!(
+        IntelligenceRouter::route("Hello there!"),
+        CognitiveMode::System1
+    );
+    assert_eq!(
+        IntelligenceRouter::route("what time is it"),
+        CognitiveMode::System1
+    );
+
     // System 1 direct command matches
-    assert_eq!(IntelligenceRouter::route("open notepad"), CognitiveMode::System1);
+    assert_eq!(
+        IntelligenceRouter::route("open notepad"),
+        CognitiveMode::System1
+    );
 
     // System 2 complex plannable actions
-    assert_eq!(IntelligenceRouter::route("compile the main Rust application and run tests, then commit changes to git"), CognitiveMode::System2);
+    assert_eq!(
+        IntelligenceRouter::route(
+            "compile the main Rust application and run tests, then commit changes to git"
+        ),
+        CognitiveMode::System2
+    );
 }
 
 #[test]
@@ -107,7 +121,8 @@ fn test_response_interpreter_validations() {
 
     let parse_err = ResponseInterpreter::parse_response(bad_response, &known_caps).unwrap_err();
     assert!(parse_err.contains("Ontology Violation"));
-    assert!(parse_err.contains("windows.open") || parse_err.contains("windows.close")); // suggestion check
+    assert!(parse_err.contains("windows.open") || parse_err.contains("windows.close"));
+    // suggestion check
 }
 
 struct TestProvider {
@@ -122,7 +137,12 @@ impl friday_intelligence::Provider for TestProvider {
     fn name(&self) -> &str {
         &self.name
     }
-    async fn complete(&self, _model_id: &str, _prompt: &str, _require_json: bool) -> Result<String, String> {
+    async fn complete(
+        &self,
+        _model_id: &str,
+        _prompt: &str,
+        _require_json: bool,
+    ) -> Result<String, String> {
         self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if self.succeed {
             Ok(self.response.clone())
@@ -137,7 +157,7 @@ impl friday_intelligence::Provider for TestProvider {
 
 #[tokio::test]
 async fn test_inference_fabric_failover() {
-    use friday_intelligence::{InferenceFabric, RoutingMode, ModelInfo, ModelClient};
+    use friday_intelligence::{InferenceFabric, ModelClient, ModelInfo, RoutingMode};
 
     let mut fabric = InferenceFabric::new();
     fabric.default_mode = RoutingMode::Hybrid;
@@ -195,7 +215,9 @@ async fn test_inference_fabric_failover() {
 
 #[tokio::test]
 async fn test_inference_fabric_advanced_features() {
-    use friday_intelligence::{InferenceFabric, RoutingMode, ModelInfo, ModelCapability, ModelClient, CircuitState};
+    use friday_intelligence::{
+        CircuitState, InferenceFabric, ModelCapability, ModelClient, ModelInfo, RoutingMode,
+    };
 
     let mut fabric = InferenceFabric::new();
     fabric.default_mode = RoutingMode::Hybrid;
@@ -248,7 +270,7 @@ async fn test_inference_fabric_advanced_features() {
     // 2. Test Circuit Breaker:
     // Restrict required capabilities to Local to force all calls to ollama
     fabric.required_capabilities = vec![ModelCapability::Local];
-    
+
     // Call 1: fails
     let _ = fabric.complete("Hello").await.unwrap_err();
     // Call 2: fails
@@ -276,14 +298,14 @@ async fn test_inference_fabric_advanced_features() {
 
 #[tokio::test]
 async fn test_inference_fabric_persistence_and_telemetry() {
-    use friday_intelligence::{InferenceFabric, RoutingMode, ModelInfo, ModelClient};
-    
+    use friday_intelligence::{InferenceFabric, ModelClient, ModelInfo, RoutingMode};
+
     // Clean up before test
     let _ = std::fs::remove_dir_all(".fabric");
-    
+
     let mut fabric = InferenceFabric::new();
     fabric.default_mode = RoutingMode::Free;
-    
+
     let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     fabric.register_provider(Box::new(TestProvider {
         name: "openrouter".to_string(),
@@ -300,19 +322,19 @@ async fn test_inference_fabric_persistence_and_telemetry() {
         capabilities: vec![],
         max_context: 2048,
     });
-    
+
     let res = fabric.complete("test metric log").await.unwrap();
     assert_eq!(res, "Metric Response");
-    
+
     // Assert files are created
     assert!(std::path::Path::new(".fabric/provider_health.json").exists());
     assert!(std::path::Path::new(".fabric/metrics.jsonl").exists());
-    
+
     // Assert metrics.jsonl contains valid JSON
     let metrics_content = std::fs::read_to_string(".fabric/metrics.jsonl").unwrap();
     assert!(metrics_content.contains("request_id"));
     assert!(metrics_content.contains("model-1"));
-    
+
     // Clean up after test
     let _ = std::fs::remove_dir_all(".fabric");
 }
