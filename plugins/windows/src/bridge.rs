@@ -42,7 +42,15 @@ impl WindowsAdapter {
             Err(e) => return ActionResult::error(format!("protocol_error: {e}")),
         };
         if response.ok {
-            ActionResult::success(response.output)
+            let mut result = ActionResult::success(response.output);
+            // Surface host annotations (e.g. launch_resolution) to callers via
+            // the normalized metadata map without expanding the contract.
+            if let Some(meta) = response.meta {
+                for (k, v) in meta {
+                    result.metadata.insert(k, serde_json::Value::String(v));
+                }
+            }
+            result
         } else {
             let code = response.error.unwrap_or_else(|| "Unknown".into());
             let err = BridgeError::from_code(&code);
