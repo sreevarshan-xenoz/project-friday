@@ -1,11 +1,11 @@
-use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
-use friday_core::memory::{MemoryEntry, MemoryLayerKind, MemoryEngine, ExecutionExperience};
-use friday_capabilities::registry::CapabilityRegistry;
-use friday_capabilities::orchestrator::{ServiceOrchestrator, ServiceState};
 use friday_capabilities::model::Capability;
+use friday_capabilities::orchestrator::{ServiceOrchestrator, ServiceState};
+use friday_capabilities::registry::CapabilityRegistry;
+use friday_core::memory::{ExecutionExperience, MemoryEngine, MemoryEntry, MemoryLayerKind};
 
 /// Structured, fully packaged context sent to the Intelligence Layer.
 /// The LLM never performs retrieval; the Context Builder does.
@@ -59,7 +59,9 @@ impl ContextBuilder {
         capabilities.sort_by(|a, b| {
             let score_a = a.reliability * 100.0 - (a.latency_ms as f64 * 0.05);
             let score_b = b.reliability * 100.0 - (b.latency_ms as f64 * 0.05);
-            score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+            score_b
+                .partial_cmp(&score_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         capabilities.truncate(15); // Budget limit: Top 15 capabilities
 
@@ -92,7 +94,9 @@ impl ContextBuilder {
 
         // 4. Retrieve past experiences from ExperienceEngine database
         let mut experiences = Vec::new();
-        if let Ok(engine) = friday_core::memory::experience::ExperienceEngine::open(&self.experience_db_path) {
+        if let Ok(engine) =
+            friday_core::memory::experience::ExperienceEngine::open(&self.experience_db_path)
+        {
             if let Ok(exps) = engine.query_by_intent(goal) {
                 experiences = exps;
                 experiences.truncate(3); // Budget limit: Top 3 relevant experiences
