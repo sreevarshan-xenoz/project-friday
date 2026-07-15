@@ -85,8 +85,8 @@ async fn engine_routes_by_layer() {
 
 #[test]
 fn test_experience_engine_durability_and_queries() {
-    use friday_core::memory::experience::{ExecutionExperience, ExperienceEngine, ExperienceTask};
     use chrono::Utc;
+    use friday_core::memory::experience::{ExecutionExperience, ExperienceEngine, ExperienceTask};
     use uuid::Uuid;
 
     let dir = std::env::temp_dir().join(format!("friday-experience-test-{}", Uuid::new_v4()));
@@ -107,17 +107,15 @@ fn test_experience_engine_durability_and_queries() {
             actual_duration_ms: 1200,
             predicted_duration_ms: 1000,
             timing_drift: 0.2,
-            tasks: vec![
-                ExperienceTask {
-                    id: Uuid::new_v4(),
-                    name: "compile cargo".to_string(),
-                    capability: "terminal.run".to_string(),
-                    success: true,
-                    duration_ms: 1200,
-                    retry_count: 0,
-                    error: None,
-                }
-            ],
+            tasks: vec![ExperienceTask {
+                id: Uuid::new_v4(),
+                name: "compile cargo".to_string(),
+                capability: "terminal.run".to_string(),
+                success: true,
+                duration_ms: 1200,
+                retry_count: 0,
+                error: None,
+            }],
             resource_forecast: serde_json::json!({"cpu": 10.0}),
             resource_actual: serde_json::json!({"cpu": 12.0}),
             timestamp: Utc::now(),
