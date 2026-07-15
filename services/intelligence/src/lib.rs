@@ -3,7 +3,10 @@ pub mod parser;
 pub mod providers;
 pub mod router;
 
-pub use compiler::{PromptAst, PromptCompiler, ModelProvider};
+pub use compiler::{ModelProvider, PromptAst, PromptCompiler};
 pub use parser::{LlmResponse, ParsedTask, ResponseInterpreter};
-pub use providers::{ModelClient, MockModelClient, RoutingMode, ModelCapability, ModelInfo, Provider, OpenAiProvider, InferenceFabric, CircuitState, CircuitBreaker};
+pub use providers::{
+    CircuitBreaker, CircuitState, InferenceFabric, MockModelClient, ModelCapability, ModelClient,
+    ModelInfo, OpenAiProvider, Provider, RoutingMode,
+};
 pub use router::{CognitiveMode, IntelligenceRouter};
