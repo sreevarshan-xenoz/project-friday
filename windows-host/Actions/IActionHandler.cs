@@ -1,5 +1,6 @@
 using System.Text.Json;
 using WindowsHost.IPC;
+using WindowsHost.Win32;
 
 namespace WindowsHost.Actions;
 
