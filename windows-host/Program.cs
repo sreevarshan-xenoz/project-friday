@@ -8,6 +8,7 @@ using WindowsHost;
 using WindowsHost.Actions;
 using WindowsHost.IPC;
 using WindowsHost.Security;
+using WindowsHost.Win32;
 
 /// <summary>
 /// FRIDAY Windows Host Service.
@@ -25,6 +26,9 @@ public static class Program
         var pipeName = $"friday-windows-{session}";
         var dispatcher = new Dispatcher();
         var manifest = Manifest.Load();
+        // One registry for the host's lifetime: stable window ids (returned to
+        // Rust) must resolve across every pipe connection, not per-request.
+        var registry = new WindowRegistry();
 
         Console.WriteLine($"[windows-host] listening on \\\\.\\pipe\\{pipeName}");
         while (true)
@@ -34,12 +38,12 @@ public static class Program
             try
             {
                 pipe.WaitForConnection();
-                HandleClient(pipe, dispatcher, manifest);
+                HandleClient(pipe, dispatcher, manifest, registry);
             }
             catch (Exception ex)
             {
                 // A bad client must never take down the host.
-                Console.Error.WriteLine($"[windows-host] client error: {ex.Message}");
+                Console.Error.WriteLine($"[windows-host] client error: {ex}");
             }
             finally
             {
@@ -49,7 +53,7 @@ public static class Program
         }
     }
 
-    private static void HandleClient(NamedPipeServerStream pipe, Dispatcher dispatcher, JsonElement manifest)
+    private static void HandleClient(NamedPipeServerStream pipe, Dispatcher dispatcher, JsonElement manifest, WindowRegistry registry)
     {
         // 4-byte little-endian length prefix + UTF-8 JSON (matches Rust wire format).
         var lenBytes = ArrayPool<byte>.Shared.Rent(4);
@@ -68,7 +72,7 @@ public static class Program
                     ? new BridgeResponse { Ok = false, Error = validation }
                     : frame.Message.Action == "windows.manifest"
                         ? new BridgeResponse { Ok = true, Output = manifest }
-                        : dispatcher.Dispatch(frame.Message.Action, frame.Message.Payload, new WindowRegistry());
+                        : dispatcher.Dispatch(frame.Message.Action, frame.Message.Payload, registry);
 
                 var respFrame = FrameCodec.Respond(frame, response);
                 var outBytes = FrameCodec.Encode(respFrame);
