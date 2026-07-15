@@ -26,7 +26,7 @@ public class ClickHandler : IActionHandler
         Native.SetCursorPos(absX, absY);
         Native.mouse_event(Native.MOUSEEVENTF_LEFTDOWN, absX, absY, 0, UIntPtr.Zero);
         Native.mouse_event(Native.MOUSEEVENTF_LEFTUP, absX, absY, 0, UIntPtr.Zero);
-        return new BridgeResponse { Ok = true, Output = JsonSerializer.SerializeToElement(new { ok = true }) };
+        return new BridgeResponse { Ok = true, Output = Serde.ToElement(new { ok = true }) };
     }
 }
 
@@ -50,7 +50,7 @@ public class TypeHandler : IActionHandler
             Native.keybd_event((byte)c, 0, 0, UIntPtr.Zero);
             Native.keybd_event((byte)c, 0, Native.KEYEVENTF_KEYUP, UIntPtr.Zero);
         }
-        return new BridgeResponse { Ok = true, Output = JsonSerializer.SerializeToElement(new { ok = true }) };
+        return new BridgeResponse { Ok = true, Output = Serde.ToElement(new { ok = true }) };
     }
 }
 
@@ -68,6 +68,6 @@ public class ScrollHandler : IActionHandler
         // WM_MOUSEWHEEL wParam high-order word carries the scroll delta.
         var wParam = (IntPtr)((delta << 16) & 0xFFFF0000);
         Native.PostMessage(hwnd, Native.WM_MOUSEWHEEL, wParam, IntPtr.Zero);
-        return new BridgeResponse { Ok = true, Output = JsonSerializer.SerializeToElement(new { ok = true }) };
+        return new BridgeResponse { Ok = true, Output = Serde.ToElement(new { ok = true }) };
     }
 }
