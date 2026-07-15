@@ -2,6 +2,8 @@
 //! the correlated request/response body and adds exactly one field —
 //! `protocol_version` — so the frozen core contract is untouched.
 
+use std::collections::HashMap;
+
 use friday_core::protocol::{ModuleId, ProtocolMessage};
 use serde::{Deserialize, Serialize};
 
@@ -32,6 +34,10 @@ pub struct BridgeResponse {
     pub output: serde_json::Value,
     #[serde(default)]
     pub error: Option<String>,
+    /// Free-form host annotations (e.g. `launch_resolution`: `New Instance` /
+    /// `Existing Instance` / `Failed`). Optional so older hosts stay compatible.
+    #[serde(default)]
+    pub meta: Option<HashMap<String, String>>,
 }
 
 impl BridgeResponse {
@@ -40,6 +46,7 @@ impl BridgeResponse {
             ok: true,
             output,
             error: None,
+            meta: None,
         }
     }
 
@@ -48,6 +55,7 @@ impl BridgeResponse {
             ok: false,
             output: serde_json::Value::Null,
             error: Some(code.to_string()),
+            meta: None,
         }
     }
 }
@@ -73,6 +81,7 @@ impl BridgeFrame {
             "ok": response.ok,
             "output": response.output,
             "error": response.error,
+            "meta": response.meta,
         });
         Self {
             protocol_version: self.protocol_version,
