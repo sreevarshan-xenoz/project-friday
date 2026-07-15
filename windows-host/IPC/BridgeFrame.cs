@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace WindowsHost.IPC;
 
 /// <summary>
@@ -34,4 +36,8 @@ public class BridgeResponse
     public bool Ok { get; set; }
     public JsonElement Output { get; set; }
     public string? Error { get; set; }
+    // Optional host annotations (e.g. launch_resolution: New Instance /
+    // Existing Instance / Failed). Not part of the frozen Rust contract shape
+    // beyond being a free-form map, so it is safe to extend.
+    public Dictionary<string, string>? Meta { get; set; }
 }
