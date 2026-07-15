@@ -15,19 +15,35 @@ impl IntelligenceRouter {
     /// Route the goal to either System 1 or System 2.
     pub fn route(goal: &str) -> CognitiveMode {
         let clean = goal.trim().to_lowercase();
-        
+
         // System 1 greetings, status checks, and simple one-step commands
         let simple_phrases = [
-            "hello", "hi", "hey", "who are you", "what is your name", 
-            "what time is it", "current date", "ping", "help"
+            "hello",
+            "hi",
+            "hey",
+            "who are you",
+            "what is your name",
+            "what time is it",
+            "current date",
+            "ping",
+            "help",
         ];
         let simple_actions = [
-            "open notepad", "open chrome", "open calculator", "open calc",
-            "git status", "list files", "clear clipboard", "get clipboard"
+            "open notepad",
+            "open chrome",
+            "open calculator",
+            "open calc",
+            "git status",
+            "list files",
+            "clear clipboard",
+            "get clipboard",
         ];
 
         // Match exact or prefix matching for chitchat/status checks
-        if simple_phrases.iter().any(|&p| clean == p || clean.starts_with(p)) {
+        if simple_phrases
+            .iter()
+            .any(|&p| clean == p || clean.starts_with(p))
+        {
             return CognitiveMode::System1;
         }
 
