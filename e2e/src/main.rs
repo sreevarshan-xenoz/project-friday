@@ -4,7 +4,7 @@ use friday_e2e::runner::run_vertical_slice;
 async fn main() {
     run_diagnostics().await;
     println!();
-    
+
     println!("==================================================");
     println!("          FRIDAY Developer Console (v0.1)         ");
     println!("==================================================");
@@ -76,13 +76,18 @@ async fn main() {
 
     match trace_result {
         Ok(trace) => {
-            println!("✔ Context loaded successfully ({} capabilities, {} memories)", 
-                trace.context.capabilities.len(), 
+            println!(
+                "✔ Context loaded successfully ({} capabilities, {} memories)",
+                trace.context.capabilities.len(),
                 trace.context.relevant_memories.len()
             );
 
             println!("\n[Planner]");
-            println!("✔ Generated {} tasks under intent '{}'", trace.final_task_graph.tasks.len(), trace.final_task_graph.intent);
+            println!(
+                "✔ Generated {} tasks under intent '{}'",
+                trace.final_task_graph.tasks.len(),
+                trace.final_task_graph.intent
+            );
 
             println!("\n[Simulation & Optimization]");
             println!("✔ Validation: Passed");
@@ -108,7 +113,10 @@ async fn main() {
             // Save trace replay
             let trace_path = temp_dir.join("trace_replay.json");
             if friday_e2e::trace::TraceReplayEngine::save(&trace, &trace_path).is_ok() {
-                println!("✔ Saved trace replay file to: {}", trace_path.to_string_lossy());
+                println!(
+                    "✔ Saved trace replay file to: {}",
+                    trace_path.to_string_lossy()
+                );
             }
         }
         Err(e) => {
@@ -125,10 +133,13 @@ async fn run_diagnostics() {
     println!("          FRIDAY Boot Check (Alpha 1)            ");
     println!("==================================================");
     let start = std::time::Instant::now();
-    
+
     // 1. Registry Check
     let registry = std::sync::Arc::new(friday_capabilities::registry::CapabilityRegistry::new());
-    println!("  ✓ Capability Registry: Initialized ({} definitions)", registry.all().len());
+    println!(
+        "  ✓ Capability Registry: Initialized ({} definitions)",
+        registry.all().len()
+    );
 
     // 2. Memory Check
     let temp_dir = std::env::temp_dir();
@@ -142,12 +153,19 @@ async fn run_diagnostics() {
     // 3. Inference Fabric / Provider Health Check
     let fabric = friday_intelligence::InferenceFabric::default_from_env();
     let provider_count = fabric.providers.len();
-    println!("  ✓ Inference Fabric: Loaded ({} active providers)", provider_count);
+    println!(
+        "  ✓ Inference Fabric: Loaded ({} active providers)",
+        provider_count
+    );
 
     // 4. Windows Bridge Check
-    let windows_mock = std::sync::Arc::new(friday_windows::ipc::MockTransport::new(std::sync::Arc::new(|_| {
-        friday_windows::protocol::BridgeResponse { ok: true, error: None, output: serde_json::json!({}) }
-    })));
+    let windows_mock = std::sync::Arc::new(friday_windows::ipc::MockTransport::new(
+        std::sync::Arc::new(|_| friday_windows::protocol::BridgeResponse {
+            ok: true,
+            error: None,
+            output: serde_json::json!({}),
+        }),
+    ));
     let _windows = friday_windows::WindowsAdapter::new(windows_mock);
     println!("  ✓ Windows Bridge: Mock Transport Connected");
 
