@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
-use std::path::Path;
 use friday_context::AgentContext;
 use friday_intelligence::LlmResponse;
 use friday_planner::TaskGraph;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 /// Capture all telemetry of a single vertical stack execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,8 +28,7 @@ impl TraceReplayEngine {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        std::fs::write(path, json)
-            .map_err(|e| format!("Failed to write trace to file: {}", e))?;
+        std::fs::write(path, json).map_err(|e| format!("Failed to write trace to file: {}", e))?;
         Ok(())
     }
 
