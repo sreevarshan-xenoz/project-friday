@@ -11,7 +11,8 @@ members = [
     "services/context",
     "services/intelligence",
     "e2e",
-    "plugins/windows"
+    "plugins/windows",
+    "services/windows-qual"
 ]
 
 [workspace.package]
