@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use chrono::{DateTime, Utc};
+use redb::{Database, ReadableTable, TableDefinition};
+use serde::{Deserialize, Serialize};
 use std::path::Path;
-use redb::{Database, TableDefinition, ReadableTable};
+use uuid::Uuid;
 
 use crate::error::{FridayError, Result};
 
@@ -51,12 +51,14 @@ impl ExperienceEngine {
     pub fn open(path: &Path) -> Result<Self> {
         let db = Database::create(path)
             .map_err(|e| FridayError::Memory("experience".to_string(), e.to_string()))?;
-        
+
         // Initialize the table
-        let txn = db.begin_write()
+        let txn = db
+            .begin_write()
             .map_err(|e| FridayError::Memory("experience".to_string(), e.to_string()))?;
         {
-            let _table = txn.open_table(EXPERIENCE_TABLE)
+            let _table = txn
+                .open_table(EXPERIENCE_TABLE)
                 .map_err(|e| FridayError::Memory("experience".to_string(), e.to_string()))?;
         }
         txn.commit()
@@ -68,13 +70,17 @@ impl ExperienceEngine {
     /// Record a completed execution experience.
     pub fn record(&self, exp: &ExecutionExperience) -> Result<()> {
         let json = serde_json::to_string(exp)?;
-        let txn = self.db.begin_write()
+        let txn = self
+            .db
+            .begin_write()
             .map_err(|e| FridayError::Memory("experience".to_string(), e.to_string()))?;
         {
-            let mut table = txn.open_table(EXPERIENCE_TABLE)
+            let mut table = txn
+                .open_table(EXPERIENCE_TABLE)
                 .map_err(|e| FridayError::Memory("experience".to_string(), e.to_string()))?;
             let key = exp.experience_id.to_string();
-            table.insert(key.as_str(), json.as_str())
+            table
+                .insert(key.as_str(), json.as_str())
                 .map_err(|e| FridayError::Memory("experience".to_string(), e.to_string()))?;
         }
         txn.commit()
@@ -84,11 +90,15 @@ impl ExperienceEngine {
 
     /// Retrieve an experience by its ID.
     pub fn retrieve(&self, id: Uuid) -> Result<Option<ExecutionExperience>> {
-        let txn = self.db.begin_read()
+        let txn = self
+            .db
+            .begin_read()
             .map_err(|e| FridayError::Memory("experience".to_string(), e.to_string()))?;
-        let table = txn.open_table(EXPERIENCE_TABLE)
+        let table = txn
+            .open_table(EXPERIENCE_TABLE)
             .map_err(|e| FridayError::Memory("experience".to_string(), e.to_string()))?;
-        match table.get(id.to_string().as_str())
+        match table
+            .get(id.to_string().as_str())
             .map_err(|e| FridayError::Memory("experience".to_string(), e.to_string()))?
         {
             Some(v) => {
@@ -101,15 +111,20 @@ impl ExperienceEngine {
 
     /// List all recorded experiences.
     pub fn list(&self) -> Result<Vec<ExecutionExperience>> {
-        let txn = self.db.begin_read()
+        let txn = self
+            .db
+            .begin_read()
             .map_err(|e| FridayError::Memory("experience".to_string(), e.to_string()))?;
-        let table = txn.open_table(EXPERIENCE_TABLE)
+        let table = txn
+            .open_table(EXPERIENCE_TABLE)
             .map_err(|e| FridayError::Memory("experience".to_string(), e.to_string()))?;
         let mut out = Vec::new();
-        for kv in table.iter()
+        for kv in table
+            .iter()
             .map_err(|e| FridayError::Memory("experience".to_string(), e.to_string()))?
         {
-            let (_k, v) = kv.map_err(|e| FridayError::Memory("experience".to_string(), e.to_string()))?;
+            let (_k, v) =
+                kv.map_err(|e| FridayError::Memory("experience".to_string(), e.to_string()))?;
             let exp: ExecutionExperience = serde_json::from_str(v.value())?;
             out.push(exp);
         }
@@ -120,7 +135,8 @@ impl ExperienceEngine {
     pub fn query_by_intent(&self, intent: &str) -> Result<Vec<ExecutionExperience>> {
         let all = self.list()?;
         let query = intent.to_lowercase();
-        let out = all.into_iter()
+        let out = all
+            .into_iter()
             .filter(|e| e.intent.to_lowercase().contains(&query))
             .collect();
         Ok(out)
