@@ -1,13 +1,13 @@
-use std::sync::Arc;
-use friday_capabilities::registry::CapabilityRegistry;
 use friday_capabilities::model::Capability;
-use friday_core::memory::{MemoryEngine, MemoryEntry, MemoryLayerKind};
+use friday_capabilities::registry::CapabilityRegistry;
 use friday_context::ContextBuilder;
+use friday_core::memory::{MemoryEngine, MemoryEntry, MemoryLayerKind};
+use std::sync::Arc;
 
 #[tokio::test]
 async fn test_context_builder_retrieval_and_pruning() {
     let reg = Arc::new(CapabilityRegistry::new());
-    
+
     // Register some mock capabilities
     reg.register(
         "filesystem",
@@ -48,7 +48,10 @@ async fn test_context_builder_retrieval_and_pruning() {
 
     // Verify capabilities retrieved and deduplicated
     assert!(!context.capabilities.is_empty());
-    assert!(context.capabilities.iter().any(|c| c.id == "filesystem.create_file"));
+    assert!(context
+        .capabilities
+        .iter()
+        .any(|c| c.id == "filesystem.create_file"));
 
     // Verify memories retrieved
     assert!(!context.relevant_memories.is_empty());
