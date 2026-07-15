@@ -3,7 +3,7 @@ use friday_e2e::runner::run_vertical_slice;
 #[tokio::test]
 async fn test_vertical_slice_end_to_end() {
     let goal = "Create a folder named Research, initialize a Git repository, create a README.md, commit it, and open the folder.";
-    
+
     let temp_dir = std::env::temp_dir().join(format!("friday-e2e-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir).unwrap();
 
@@ -60,7 +60,9 @@ async fn test_vertical_slice_end_to_end() {
         ]
     }"##.replace("TARGET_DIR", &target_dir_str);
 
-    let trace = run_vertical_slice(goal, &mock_llm_json, &temp_dir).await.unwrap();
+    let trace = run_vertical_slice(goal, &mock_llm_json, &temp_dir)
+        .await
+        .unwrap();
 
     // Verify telemetry trace outcomes
     assert_eq!(trace.goal, goal);
@@ -69,11 +71,11 @@ async fn test_vertical_slice_end_to_end() {
     }
     assert_eq!(trace.task_durations_ms.len(), 5);
     assert!(trace.execution_errors.is_empty());
-    
+
     // Verify trace saving and loading roundtrip
     let trace_file = temp_dir.join("trace.json");
     friday_e2e::trace::TraceReplayEngine::save(&trace, &trace_file).unwrap();
-    
+
     let loaded = friday_e2e::trace::TraceReplayEngine::load(&trace_file).unwrap();
     assert_eq!(loaded.goal, goal);
     assert_eq!(loaded.task_durations_ms.len(), 5);
