@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text;
 using WindowsHost.IPC;
@@ -17,11 +19,11 @@ public class ClipboardReadHandler : IActionHandler
         {
             var h = Native.GetClipboardData(Native.CF_UNICODETEXT);
             if (h == IntPtr.Zero)
-                return new BridgeResponse { Ok = true, Output = JsonSerializer.SerializeToElement(new { text = "" }) };
+                return new BridgeResponse { Ok = true, Output = Serde.ToElement(new { text = "" }) };
             var ptr = Native.GlobalLock(h);
             var text = Marshal.PtrToStringUni(ptr) ?? "";
             Native.GlobalUnlock(h);
-            return new BridgeResponse { Ok = true, Output = JsonSerializer.SerializeToElement(new { text }) };
+            return new BridgeResponse { Ok = true, Output = Serde.ToElement(new { text }) };
         }
         finally
         {
@@ -51,7 +53,7 @@ public class ClipboardWriteHandler : IActionHandler
             Native.EmptyClipboard();
             if (Native.SetClipboardData(Native.CF_UNICODETEXT, h) == IntPtr.Zero)
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "set clipboard failed");
-            return new BridgeResponse { Ok = true, Output = JsonSerializer.SerializeToElement(new { ok = true }) };
+            return new BridgeResponse { Ok = true, Output = Serde.ToElement(new { ok = true }) };
         }
         finally
         {
@@ -91,7 +93,7 @@ public class CaptureWindowHandler : IActionHandler
         return new BridgeResponse
         {
             Ok = true,
-            Output = JsonSerializer.SerializeToElement(new { data = base64, width = w, height = h }),
+            Output = Serde.ToElement(new { data = base64, width = w, height = h }),
         };
     }
 }
