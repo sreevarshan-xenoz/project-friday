@@ -40,8 +40,8 @@ impl ResponseInterpreter {
         let clean = clean.trim();
 
         // 2. Parse JSON
-        let parsed: LlmResponse = serde_json::from_str(clean)
-            .map_err(|e| format!("JSON syntax error: {}", e))?;
+        let parsed: LlmResponse =
+            serde_json::from_str(clean).map_err(|e| format!("JSON syntax error: {}", e))?;
 
         // 3. Ontology Validation (Strict capability check)
         for task in &parsed.tasks {
@@ -49,7 +49,8 @@ impl ResponseInterpreter {
             if !known_capabilities.contains(cap) {
                 // Try fuzzy namespace match, e.g. "windows.launch" -> "windows.open"
                 let prefix = cap.split('.').next().unwrap_or(cap);
-                let closest = known_capabilities.iter()
+                let closest = known_capabilities
+                    .iter()
                     .filter(|c| c.starts_with(prefix))
                     .min_by_key(|c| {
                         // Very simple distance metric: difference in length
@@ -82,19 +83,16 @@ impl ResponseInterpreter {
 
         // Pass 1: create all tasks with empty dependencies first to generate Uuids
         for t in &parsed.tasks {
-            let id = graph.add_task(
-                t.name.clone(),
-                t.capability.clone(),
-                t.params.clone(),
-                &[],
-            );
+            let id = graph.add_task(t.name.clone(), t.capability.clone(), t.params.clone(), &[]);
             added_ids.push(id);
         }
 
         // Pass 2: map index-based dependencies onto the task Uuids
         for (i, t) in parsed.tasks.iter().enumerate() {
             let task_id = added_ids[i];
-            let mapped_dependencies: Vec<Uuid> = t.depends_on_indices.iter()
+            let mapped_dependencies: Vec<Uuid> = t
+                .depends_on_indices
+                .iter()
                 .filter_map(|&idx| added_ids.get(idx).cloned())
                 .collect();
 
