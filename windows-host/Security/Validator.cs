@@ -1,3 +1,5 @@
+using WindowsHost.IPC;
+
 namespace WindowsHost.Security;
 
 /// <summary>
