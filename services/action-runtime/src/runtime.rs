@@ -83,6 +83,15 @@ impl AgentKernel {
         }
     }
 
+    /// Override the permission engine. Lets deployments inject policy (e.g.
+    /// deny specific tool/action pairs) without forking the runtime. The engine
+    /// applies uniformly to every backend — native, plugin, and MCP — so no
+    /// backend needs its own permission logic.
+    pub fn with_permission(mut self, permission: PermissionEngine) -> Self {
+        self.permission = permission;
+        self
+    }
+
     /// Override the default per-attempt timeout.
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.default_timeout = timeout;
@@ -218,14 +227,34 @@ impl AgentKernel {
             .build();
 
         let result = self.run_action(req, ctx).await;
-        vec![Self::result_event(
+        let mut events = vec![Self::result_event(
             &task_id,
             &plan_id,
             &capability,
             &result,
             event.trace_id,
             execution_id,
-        )]
+        )];
+        // M9.3: an adapter may annotate created artifacts; emit one
+        // `artifact.created` per path so reflection/memory can track real output.
+        if let Some(paths) = result.metadata.get("artifact_paths").and_then(|p| p.as_array()) {
+            for path in paths {
+                if let Some(p) = path.as_str() {
+                    events.push(events::event(
+                        events::ARTIFACT_CREATED,
+                        "action-runtime",
+                        json!({
+                            "path": p,
+                            "capability": capability,
+                            "task_id": task_id,
+                            "plan_id": plan_id,
+                        }),
+                        event.trace_id,
+                    ));
+                }
+            }
+        }
+        events
     }
 
     /// Execute a normalized request inside a context. This is the single, public

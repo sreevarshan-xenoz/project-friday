@@ -7,6 +7,7 @@
 
 use async_trait::async_trait;
 use friday_actions::adapters::{FilesystemAdapter, TerminalAdapter};
+use friday_actions::permission::PermissionEngine;
 use friday_actions::runtime::AgentKernel;
 use friday_core::event::Event;
 use friday_core::plugin::{Plugin, PluginMetadata};
@@ -240,4 +241,110 @@ async fn mcp_adapter_respects_cancellation() {
     assert!(!result.success);
     let err = result.error.clone().unwrap_or_default();
     assert!(err.contains("cancelled"), "expected cancellation, got: {err}");
+}
+
+/// M9.2: the unified permission gate covers MCP with no MCP-specific code. We
+/// register the *real* filesystem server as an McpAdapter, then inject a
+/// PermissionEngine that denies `mcp:filesystem.write_file`. The MCP write must
+/// be blocked at the gate � exactly like a native write would be � proving the
+/// runtime owns permission, not the backend.
+#[tokio::test]
+async fn mcp_write_is_gated_by_unified_permission() {
+    if std::env::var("FRIDAY_REAL_MCP").map(|v| v != "1").unwrap_or(true) {
+        eprintln!("skipping real MCP test (set FRIDAY_REAL_MCP=1 to enable)");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("friday-real-perm-{}", uuid::Uuid::new_v4().simple()));
+    std::fs::create_dir_all(&root).unwrap();
+
+    let root_str = root.to_string_lossy().to_string();
+    let (command, args): (&str, Vec<String>) = if cfg!(windows) {
+        (
+            "cmd",
+            vec!["/c".into(), "npx".into(), "--yes".into(),
+                 "@modelcontextprotocol/server-filesystem".into(), root_str],
+        )
+    } else {
+        (
+            "npx",
+            vec!["--yes".into(), "@modelcontextprotocol/server-filesystem".into(), root_str],
+        )
+    };
+    let (transport, _child) = friday_mcp::transport::stdio_transport_for(command, &args)
+        .expect("spawn real filesystem MCP server");
+
+    let mut kernel = AgentKernel::new()
+        .with_permission(PermissionEngine::new().deny_substring("mcp:filesystem.write_file"));
+    kernel
+        .register_mcp_server("filesystem", transport)
+        .await
+        .expect("register real fs server as adapter");
+
+    let ctx = friday_actions::kernel::ExecutionContext::builder()
+        .execution_id(uuid::Uuid::new_v4())
+        .session_id(uuid::Uuid::new_v4())
+        .build();
+    let result = kernel
+        .run_action(
+            friday_actions::request::ActionRequest::new(
+                "mcp:filesystem",
+                "write_file",
+                serde_json::json!({ "path": root.join("x.md").to_string_lossy(), "content": "y" }),
+            ),
+            ctx,
+        )
+        .await;
+
+    assert!(!result.success, "denied MCP write must not execute");
+    let err = result.error.clone().unwrap_or_default();
+    assert!(err.contains("permission"), "expected permission denial, got: {err}");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// M9.3: artifact tracking. A successful MCP `write_file` annotates the created
+/// path; the runtime emits an `artifact.created` event (hermetic server, so it
+/// runs in CI without Node). Reflection/memory can consume this uniformly.
+#[tokio::test]
+async fn mcp_write_emits_artifact_created() {
+    use friday_mcp::server::{FakeMcpServer, FakeTransport};
+
+    let (client_side, server_side) = FakeTransport::pair();
+    let server = FakeMcpServer::new().with_call_handler(|name, _args| {
+        serde_json::json!({ "content": [ { "type": "text", "text": format!("did {name}") } ], "is_error": false })
+    });
+    tokio::spawn(server.serve(server_side));
+
+    let kernel = AgentKernel::new();
+    kernel
+        .register_mcp_server("fake", Box::new(client_side))
+        .await
+        .expect("register");
+
+    let ctx = friday_actions::kernel::ExecutionContext::builder()
+        .execution_id(uuid::Uuid::new_v4())
+        .session_id(uuid::Uuid::new_v4())
+        .build();
+    let events = kernel
+        .run_action(
+            friday_actions::request::ActionRequest::new(
+                "mcp:fake",
+                "write_file",
+                serde_json::json!({ "path": "/tmp/report.md", "content": "x" }),
+            ),
+            ctx,
+        )
+        .await;
+
+    // run_action returns the EXEC_RESULT; the bus path emits artifact.created
+    // separately, so assert via the public dispatch used by the kernel's
+    // on_exec_action. Here we verify the artifact annotation directly.
+    assert!(events.success, "write should succeed: {:?}", events.error);
+    let paths = events.metadata.get("artifact_paths").and_then(|p| p.as_array());
+    assert!(paths.is_some(), "write_file must annotate artifact_paths");
+    assert_eq!(
+        paths.unwrap()[0].as_str(),
+        Some("/tmp/report.md"),
+        "artifact path should match the written file"
+    );
 }

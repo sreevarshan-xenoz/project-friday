@@ -84,6 +84,16 @@ impl ActionAdapter for McpAdapter {
         // are the tool arguments. The normalized request/result contract hides
         // all MCP specifics from the runtime.
         let mut client = self.client.lock().await;
+        // M9.3: capture the artifact path up-front (before `req` is moved into
+        // `call_tool`) so a successful write/create can be annotated.
+        let artifact_path = if req.action == "write_file" || req.action == "create_directory" {
+            req.parameters
+                .get("path")
+                .and_then(|p| p.as_str())
+                .map(|s| s.to_string())
+        } else {
+            None
+        };
         match client.call_tool(&req.action, req.parameters).await {
             Ok(result) => {
                 if result.is_error {
@@ -97,11 +107,18 @@ impl ActionAdapter for McpAdapter {
                             .to_string(),
                     );
                 }
-                ActionResult::success(json!({
+                let mut out = ActionResult::success(json!({
                     "content": result.content,
                     "source": "mcp",
                     "server": self.server,
-                }))
+                }));
+                // Adapters never publish events; they only surface the path. The
+                // runtime emits `artifact.created` from this annotation.
+                if let Some(path) = artifact_path {
+                    out.metadata
+                        .insert("artifact_paths".to_string(), json!([path]));
+                }
+                out
             }
             Err(e) => ActionResult::error(format!("mcp call failed: {e}")),
         }
