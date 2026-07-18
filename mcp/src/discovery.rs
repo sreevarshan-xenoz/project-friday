@@ -39,6 +39,9 @@ pub enum McpTransportConfig {
     /// Remote server reached over WebSocket (PR4). One JSON-RPC message per text
     /// frame.
     Remote { url: String },
+    /// Remote server reached over SSE (PR5): a long-lived `GET {url}/sse` stream
+    /// for server→client frames and `POST {url}/message` for client→server frames.
+    Sse { url: String },
 }
 
 /// Connect, handshake, list tools, and register them. Returns the discovered
@@ -151,7 +154,8 @@ pub fn filesystem_server_config(root: &str) -> McpServerConfig {
 }
 
 /// Build a boxed transport for a server config. stdio spawns a subprocess;
-/// `Remote` connects over WebSocket (PR4). Returns `None` if launch/connect
+/// `Remote` connects over WebSocket (PR4); `Sse` connects over SSE (PR5). Returns
+/// `None` if launch/connect
 /// fails (the caller logs and skips — a missing server must not crash boot).
 async fn build_transport(config: &McpServerConfig) -> Option<Box<dyn Transport>> {
     match &config.transport {
@@ -169,6 +173,15 @@ async fn build_transport(config: &McpServerConfig) -> Option<Box<dyn Transport>>
                 Ok(transport) => Some(transport),
                 Err(e) => {
                     tracing::warn!(server = %config.name, url = %url, error = %e, "failed to connect to MCP server; skipping");
+                    None
+                }
+            }
+        }
+        McpTransportConfig::Sse { url } => {
+            match crate::transport_sse::sse_transport_for(url).await {
+                Ok(transport) => Some(transport),
+                Err(e) => {
+                    tracing::warn!(server = %config.name, url = %url, error = %e, "failed to connect to MCP (SSE) server; skipping");
                     None
                 }
             }

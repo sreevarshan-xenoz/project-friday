@@ -21,6 +21,7 @@ thiserror = { workspace = true }
 futures = { workspace = true }
 anyhow = "1"
 tokio-tungstenite = { workspace = true }
+reqwest = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util", "macros"] }

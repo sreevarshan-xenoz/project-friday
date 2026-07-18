@@ -5,8 +5,8 @@
 //!
 //! * [`protocol`] — the MCP JSON-RPC state machine ([`protocol::McpClient`]),
 //!   transport-agnostic.
-//! * [`transport`] — [`transport::Transport`] implementations (stdio now;
-//!   WebSocket/SSE later) plus [`transport::ProcessLauncher`] (process lifecycle
+//! * [`transport`] — [`transport::Transport`] implementations (stdio, WebSocket
+//!   (PR4), SSE (PR5)) plus [`transport::ProcessLauncher`] (process lifecycle
 //!   kept separate from transport).
 //! * [`server`] — a hermetic in-process [`server::FakeMcpServer`] for tests (no
 //!   Node required).
@@ -23,4 +23,5 @@ pub mod integration;
 pub mod protocol;
 pub mod server;
 pub mod transport;
+pub mod transport_sse;
 pub mod transport_ws;
