@@ -60,6 +60,7 @@ work this directory supersedes it.
 | Capabilities        | `capabilities.md`   | `services/capabilities`              | ✅ M4.6  |
 | Services            | `services.md`       | `services/action-runtime/adapters`   | ✅ M4.5  |
 | IPC (Windows bridge)| `ipc.md`            | `plugins/windows` + `windows-host`   | ✅ M4.5.2|
+| Execution Runtime   | `architecture/execution-runtime-unification.md` | `services/action-runtime` | ✅ M8 |
 | Simulation          | `simulation.md`     | `services/simulation`                | ✅ M4.7  |
 | Experience (Engine) | `experience.md`     | `friday-core`                        | ✅ M4.8  |
 | Context Builder     | `context.md`        | `services/context`                   | ✅ M4.10 |
@@ -70,3 +71,13 @@ work this directory supersedes it.
 | Benchmark (QA)      | `benchmark.md`        | `services/benchmark`                 | ✅ QA    |
 | Recovery            | `recovery.md`         | `services/recovery`                  | ✅ QA    |
 | Windows Qualification| `windows-qualification.md` | `windows-host`                  | 🟡 Sprint 001 |
+
+## Architecture Decision Records
+
+| ADR   | Title                                                | Status  |
+|-------|------------------------------------------------------|---------|
+| ADR-0007 | Execution Runtime Unification — MCP as a first-class `ActionAdapter` | Accepted |
+
+ADRs live in `specs/adr/`. Each records Context, Decision, Consequences, and
+Alternatives Considered, so the *why* behind a frozen architectural boundary
+survives beyond the commit history.
