@@ -10,11 +10,18 @@ description = "FRIDAY Planner: intent, planning, execution, and verification eng
 
 [dependencies]
 friday-core = { path = "../core" }
+friday-capabilities = { path = "../services/capabilities" }
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
 tracing.workspace = true
+chrono.workspace = true
+anyhow = "1"
+redb = "2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util", "macros"] }
+tokio-tungstenite = { workspace = true }
+futures = { workspace = true }
+friday-mcp = { path = "../mcp" }
