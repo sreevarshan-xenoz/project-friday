@@ -25,3 +25,4 @@ tokio = { version = "1", features = ["full", "test-util", "macros"] }
 tokio-tungstenite = { workspace = true }
 futures = { workspace = true }
 friday-mcp = { path = "../mcp" }
+friday-actions = { path = "../services/action-runtime" }

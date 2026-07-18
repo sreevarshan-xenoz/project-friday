@@ -102,6 +102,40 @@ impl AgentKernel {
         self.adapters.lock().await.insert(tool, adapter);
     }
 
+    /// Register a live MCP server as a first-class capability adapter (M8:
+    /// Execution Runtime Unification). The transport is connected, the server is
+    /// initialized, its tools are listed, and a [`crate::adapters::McpAdapter`]
+    /// is registered under the tool key `mcp:<server>` — identical to a native
+    /// adapter. After this call, an `exec.action` for `mcp:<server>.<tool>` is
+    /// dispatched through the unified `run_action` path with no MCP-specific
+    /// branching anywhere in the supervisor/planner/kernel.
+    ///
+    /// Returns the discovered tool names so the caller can also register them in
+    /// the planner's [`friday_planner::execution::capability_registry::CapabilityRegistry`].
+    pub async fn register_mcp_server(
+        &self,
+        server: &str,
+        transport: Box<dyn friday_mcp::transport::Transport>,
+    ) -> Result<Vec<String>, String> {
+        let mut client = friday_mcp::protocol::McpClient::new(transport);
+        client
+            .initialize()
+            .await
+            .map_err(|e| format!("mcp initialize failed for {server}: {e}"))?;
+        let tools = client
+            .list_tools()
+            .await
+            .map_err(|e| format!("mcp list_tools failed for {server}: {e}"))?;
+        let tool_names: Vec<String> = tools.iter().map(|t| t.name.clone()).collect();
+        let adapter: Box<dyn ActionAdapter> = Box::new(crate::adapters::McpAdapter::new(
+            server,
+            client,
+            tool_names.clone(),
+        ));
+        self.register_adapter(adapter).await;
+        Ok(tool_names)
+    }
+
     /// Access the audit engine (for tests/inspection).
     pub fn audit(&self) -> &AuditEngine {
         &self.audit
@@ -187,6 +221,7 @@ impl AgentKernel {
         vec![Self::result_event(
             &task_id,
             &plan_id,
+            &capability,
             &result,
             event.trace_id,
             execution_id,
@@ -355,6 +390,7 @@ impl AgentKernel {
     fn result_event(
         task_id: &str,
         plan_id: &str,
+        capability: &str,
         result: &ActionResult,
         trace: Uuid,
         execution_id: Uuid,
@@ -365,6 +401,7 @@ impl AgentKernel {
             json!({
                 "task_id": task_id,
                 "plan_id": plan_id,
+                "capability": capability,
                 "execution_id": execution_id.to_string(),
                 "success": result.success,
                 "output": result.output,

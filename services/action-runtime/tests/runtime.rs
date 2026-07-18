@@ -146,3 +146,98 @@ async fn terminal_action_runs_command() {
         .unwrap_or("");
     assert!(out.contains("friday-works"), "terminal output was: {out:?}");
 }
+
+/// M8: an MCP server is just another `ActionAdapter`. We stand up a hermetic
+/// fake MCP server, register it with the kernel under the tool key `mcp:fake`,
+/// and dispatch an `exec.action` for `mcp:fake.read_file` through the unified
+/// `run_action` path. The supervisor/planner/kernel never branch on
+/// `CapabilitySource::Mcp` - routing is purely by tool key, identical to a
+/// native adapter.
+#[tokio::test]
+async fn mcp_server_is_just_another_adapter() {
+    use friday_actions::kernel::ExecutionContext;
+    use friday_mcp::server::{FakeMcpServer, FakeTransport};
+
+    let (client_side, server_side) = FakeTransport::pair();
+    let server = FakeMcpServer::new().with_call_handler(|name, args| {
+        serde_json::json!({
+            "content": [ { "type": "text", "text": format!("read {name} -> {args}") } ],
+            "is_error": false,
+        })
+    });
+    tokio::spawn(server.serve(server_side));
+
+    let kernel = AgentKernel::new();
+    let tools = kernel
+        .register_mcp_server("fake", Box::new(client_side))
+        .await
+        .expect("mcp server registers as adapter");
+    assert!(
+        tools.iter().any(|t| t == "read_file"),
+        "discovered tools: {tools:?}"
+    );
+
+    let ctx = ExecutionContext::builder()
+        .execution_id(uuid::Uuid::new_v4())
+        .session_id(uuid::Uuid::new_v4())
+        .build();
+    let result = kernel
+        .run_action(
+            friday_actions::request::ActionRequest::new(
+                "mcp:fake",
+                "read_file",
+                serde_json::json!({ "path": "/etc/hosts" }),
+            ),
+            ctx,
+        )
+        .await;
+
+    assert!(result.success, "mcp call should succeed: {:?}", result.error);
+    let text = result
+        .output
+        .get("content")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("text"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("");
+    assert!(text.contains("read_file"), "unexpected output: {text}");
+}
+
+/// M8.3: cancellation is unified. A cancelled context makes `run_action` return
+/// a cancelled `ActionResult` for the MCP backend exactly as for native backends
+/// � the kernel's `tokio::select!` races the in-flight `execute` against the
+/// token, so no backend-specific cancellation code exists.
+#[tokio::test]
+async fn mcp_adapter_respects_cancellation() {
+    use friday_actions::kernel::ExecutionContext;
+    use friday_mcp::server::{FakeMcpServer, FakeTransport};
+
+    let (client_side, server_side) = FakeTransport::pair();
+    // Server that never answers tools/call, so the call stays in flight.
+    let server = FakeMcpServer::new();
+    tokio::spawn(server.serve(server_side));
+
+    let kernel = AgentKernel::new().with_timeout(std::time::Duration::from_secs(30));
+    kernel
+        .register_mcp_server("slow", Box::new(client_side))
+        .await
+        .expect("register");
+
+    let ctx = ExecutionContext::builder()
+        .execution_id(uuid::Uuid::new_v4())
+        .session_id(uuid::Uuid::new_v4())
+        .build();
+    // Cancel immediately before dispatching.
+    ctx.cancellation_token.cancel();
+
+    let result = kernel
+        .run_action(
+            friday_actions::request::ActionRequest::new("mcp:slow", "read_file", serde_json::json!({})),
+            ctx,
+        )
+        .await;
+
+    assert!(!result.success);
+    let err = result.error.clone().unwrap_or_default();
+    assert!(err.contains("cancelled"), "expected cancellation, got: {err}");
+}

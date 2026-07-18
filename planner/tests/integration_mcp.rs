@@ -9,116 +9,28 @@
 //!   -> TaskGraph(capability = "mcp:filesystem.read_file")
 //!   -> CapabilityRegistry.resolve -> ExecutionBinding{ adapter:"mcp:filesystem", action:"read_file" }
 //!   -> GoalSupervisor dispatches EXEC_ACTION
-//!   -> McpExecutor (thin shim) -> McpClient::call_tool("read_file")
+//!   -> AgentKernel (real action runtime) -> McpAdapter (just another ActionAdapter)
+//!   -> McpClient::call_tool("read_file")
 //!   -> Transport (FakeTransport) -> FakeMcpServer
 //!   -> EXEC_RESULT { capability:"mcp:filesystem.read_file", output:"Hello FRIDAY" }
 //!   -> GoalSupervisor -> VerificationEngine -> GOAL_COMPLETED
 //! ```
 //!
-//! The one piece production does not yet provide is an executor that routes an
-//! `mcp:` capability to an `McpClient` (neither AgentKernel nor GoalSupervisor
-//! special-cases MCP) — so this test supplies a thin `McpExecutor` plugin, the
-//! same shim the real integration will need. Everything else is the real stack.
+//! The point of M8: the supervisor and planner know *nothing* about MCP. The
+//! `AgentKernel` dispatches `exec.action` by tool key, and the `McpAdapter`
+//! (registered under `mcp:filesystem`) is indistinguishable from a native
+//! adapter. There is no `mcp:`-special-casing shim anywhere in this slice.
 
-use async_trait::async_trait;
-use tokio::sync::Mutex;
 use friday_core::event::Event;
-use friday_core::plugin::{Plugin, PluginMetadata};
 use friday_core::Friday;
 use friday_mcp::adapter::register_server_capabilities;
-use friday_mcp::protocol::McpClient;
+use friday_mcp::protocol::McpTool;
 use friday_mcp::server::{FakeMcpServer, FakeTransport};
 use friday_mcp::transport::Transport;
 use friday_planner::events;
 use friday_planner::planning::planners::backend::MockBackend;
 use friday_planner::register_engines_with_llm;
 use serde_json::json;
-
-/// Thin executor that answers `EXEC_ACTION` for `mcp:` capabilities by calling
-/// the real `McpClient` over the (fake) transport. This is the missing link in
-/// production: a plugin that maps `mcp:<server>.<tool>` -> `McpClient::call_tool`.
-struct McpExecutor {
-    meta: PluginMetadata,
-    client: Mutex<McpClient<FakeTransport>>,
-}
-
-impl McpExecutor {
-    fn new(client: McpClient<FakeTransport>) -> Self {
-        Self {
-            meta: PluginMetadata::builder("mcp-exec", "MCP Executor Shim")
-                .subscribes(&[events::EXEC_ACTION])
-                .emits(&[events::EXEC_RESULT])
-                .build(),
-            client: Mutex::new(client),
-        }
-    }
-}
-
-#[async_trait]
-impl Plugin for McpExecutor {
-    fn metadata(&self) -> &PluginMetadata {
-        &self.meta
-    }
-
-    async fn handle_event(&self, event: &Event) -> friday_core::Result<Vec<Event>> {
-        if event.kind != events::EXEC_ACTION {
-            return Ok(vec![]);
-        }
-        let task_id = event.payload.get("task_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let plan_id = event.payload.get("plan_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let capability = event.payload.get("capability").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let params = event.payload.get("params").cloned().unwrap_or(json!({}));
-
-        // Only handle MCP capabilities; let other executors handle the rest.
-        if !capability.starts_with("mcp:") {
-            return Ok(vec![]);
-        }
-        // mcp:<server>.<tool>
-        let rest = &capability["mcp:".len()..];
-        let (_, tool) = match rest.split_once('.') {
-            Some(pair) => pair,
-            None => {
-                return Ok(vec![events::event(
-                    events::EXEC_RESULT,
-                    "mcp-exec",
-                    json!({ "task_id": task_id, "plan_id": plan_id, "capability": capability, "success": false, "output": null, "error": "malformed mcp capability" }),
-                    event.trace_id,
-                )]);
-            }
-        };
-
-        let mut client = self.client.lock().await;
-        let result = client.call_tool(tool, params).await;
-        drop(client);
-
-        let (success, output, error) = match result {
-            Ok(r) => (
-                !r.is_error,
-                Some(json!({ "content": r.content })),
-                if r.is_error {
-                    Some("tool reported error".to_string())
-                } else {
-                    None
-                },
-            ),
-            Err(e) => (false, None, Some(format!("{e}"))),
-        };
-
-        Ok(vec![events::event(
-            events::EXEC_RESULT,
-            "mcp-exec",
-            json!({
-                "task_id": task_id,
-                "plan_id": plan_id,
-                "capability": capability,
-                "success": success,
-                "output": output,
-                "error": error,
-            }),
-            event.trace_id,
-        )])
-    }
-}
 
 /// Collected bus events for assertions.
 struct Run {
@@ -134,14 +46,17 @@ async fn run_mcp_goal(text: &str, plan_json: &str) -> Run {
         .expect("register planner stack");
 
     // Register the MCP capability into the *same* registry the supervisor resolves.
-    let tool = friday_mcp::protocol::McpTool {
+    let tool = McpTool {
         name: "read_file".to_string(),
         description: "Read a file from disk".to_string(),
         input_schema: json!({ "type": "object", "properties": { "path": { "type": "string" } } }),
     };
     register_server_capabilities("filesystem", std::slice::from_ref(&tool), &registry);
 
-    // Stand up the fake MCP server + a pre-initialized client (the shim's transport).
+    // Stand up the fake MCP server. The client-side transport is handed to the
+    // AgentKernel, which initializes + lists tools itself when registering the
+    // McpAdapter (M8: MCP is just another ActionAdapter, no pre-initialized
+    // client threaded through the test).
     let (client_side, server_side) = FakeTransport::pair();
     let server = FakeMcpServer::new().with_tools(vec![tool]).with_call_handler(|name, args| {
         json!({
@@ -150,11 +65,16 @@ async fn run_mcp_goal(text: &str, plan_json: &str) -> Run {
         })
     });
     tokio::spawn(async move { server.serve(server_side).await });
-    let mut client = McpClient::new(client_side);
-    client.initialize().await.expect("mcp handshake");
 
-    let exec = McpExecutor::new(client);
-    friday.register_plugin(Box::new(exec)).await.unwrap();
+    // M8: register the MCP server as a first-class ActionAdapter under
+    // `mcp:filesystem`. The real AgentKernel now routes `exec.action` for
+    // `mcp:filesystem.read_file` to it — no shim, no CapabilitySource branching.
+    let mut kernel = friday_actions::runtime::AgentKernel::new();
+    kernel
+        .register_mcp_server("filesystem", Box::new(client_side))
+        .await
+        .expect("mcp server registers as adapter");
+    friday.register_plugin(Box::new(kernel)).await.unwrap();
 
     let bus = friday.bus().clone();
     let mut rx = bus.subscribe();
@@ -238,20 +158,32 @@ async fn mcp_capability_executes_end_to_end() {
 async fn spawn_crashing_server() -> FakeTransport {
     let (client_side, mut server_side) = FakeTransport::pair();
     tokio::spawn(async move {
-        // Answer `initialize` (echo the client's id), then crash: drop the
-        // transport so any later request (e.g. tools/call) fails to get a
-        // response — simulating a server that dies after the handshake.
-        if let Ok(frame) = server_side.recv().await {
-            let id = serde_json::from_str::<serde_json::Value>(&frame)
-                .ok()
-                .and_then(|v| v.get("id").cloned())
-                .unwrap_or(serde_json::Value::Null);
-            let msg = serde_json::to_string(&serde_json::json!({
-                "jsonrpc": "2.0", "id": id,
-                "result": { "protocolVersion": "2024-11-05", "capabilities": {}, "serverInfo": {} }
-            }))
-            .unwrap();
-            let _ = server_side.send(&msg).await;
+        // Answer `initialize` (echo the client's id) and `tools/list`, so the
+        // kernel can register the adapter. Then crash: drop the transport so any
+        // later request (e.g. tools/call) fails to get a response — simulating a
+        // server that dies after the handshake.
+        while let Ok(frame) = server_side.recv().await {
+            let v: serde_json::Value = match serde_json::from_str(&frame) {
+                Ok(v) => v,
+                Err(_) => break,
+            };
+            let id = v.get("id").cloned().unwrap_or(serde_json::Value::Null);
+            let method = v.get("method").and_then(|m| m.as_str()).unwrap_or("");
+            let response = match method {
+                "initialize" => serde_json::json!({
+                    "jsonrpc": "2.0", "id": id,
+                    "result": { "protocolVersion": "2024-11-05", "capabilities": {}, "serverInfo": {} }
+                }),
+                "tools/list" => serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": [] } }),
+                _ => {
+                    // Anything else (e.g. tools/call): crash.
+                    break;
+                }
+            };
+            let msg = serde_json::to_string(&response).unwrap();
+            if server_side.send(&msg).await.is_err() {
+                break;
+            }
         }
         // Drop `server_side` -> connection closed.
     });
@@ -260,9 +192,10 @@ async fn spawn_crashing_server() -> FakeTransport {
 
 #[tokio::test]
 async fn mcp_server_disappears_mid_call_fails_cleanly() {
-    // Planner picks the capability; supervisor dispatches; the shim calls a server
-    // that has already gone away; the call must fail (not hang) and surface as an
-    // unsuccessful EXEC_RESULT.
+    // Planner picks the capability; supervisor dispatches; the real AgentKernel
+    // (via the McpAdapter) calls a server that has already gone away; the call
+    // must fail (not hang) and surface as an unsuccessful EXEC_RESULT. No shim,
+    // no CapabilitySource branching.
     let mut friday = Friday::new();
     let backend = Some(Box::new(MockBackend::new(
         json!({ "tasks": [ { "name": "Read", "capability": "mcp:fs.read_file", "params": {}, "depends_on_indices": [] } ] })
@@ -278,12 +211,12 @@ async fn mcp_server_disappears_mid_call_fails_cleanly() {
     register_server_capabilities("fs", std::slice::from_ref(&tool), &registry);
 
     let client_side = spawn_crashing_server().await;
-    let mut client = McpClient::new(client_side);
-    client.initialize().await.ok(); // handshake succeeds before the crash
-    friday
-        .register_plugin(Box::new(McpExecutor::new(client)))
+    let mut kernel = friday_actions::runtime::AgentKernel::new();
+    kernel
+        .register_mcp_server("fs", Box::new(client_side))
         .await
-        .unwrap();
+        .expect("mcp server registers before the crash");
+    friday.register_plugin(Box::new(kernel)).await.unwrap();
 
     let bus = friday.bus().clone();
     let mut rx = bus.subscribe();

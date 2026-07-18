@@ -12,6 +12,7 @@ description = "FRIDAY Action Runtime: dispatch/timeout/cancel/retry/telemetry + 
 friday-core = { path = "../../core" }
 friday-planner = { path = "../../planner" }
 friday-capabilities = { path = "../capabilities" }
+friday-mcp = { path = "../../mcp" }
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -14,11 +14,13 @@ use crate::request::{ActionRequest, ActionResult};
 
 pub mod filesystem;
 pub mod git;
+pub mod mcp;
 pub mod sim;
 pub mod terminal;
 
 pub use filesystem::FilesystemAdapter;
 pub use git::GitAdapter;
+pub use mcp::McpAdapter;
 pub use terminal::TerminalAdapter;
 
 /// A swappable capability. Implementors handle a normalized
@@ -36,11 +38,9 @@ pub trait ActionAdapter: Send + Sync {
 }
 
 /// Aggregate the capabilities advertised by every built-in service adapter.
-/// Consumed by the Capability Intelligence registry at startup.
+/// Consumed by the Capability Intelligence registry at startup. The canonical
+/// definitions live in `friday_capabilities::builtins` so the metadata is
+/// defined once and shared with the planner.
 pub fn all_capabilities() -> Vec<friday_capabilities::model::Capability> {
-    let mut caps = Vec::new();
-    caps.extend(filesystem::capabilities());
-    caps.extend(terminal::capabilities());
-    caps.extend(git::capabilities());
-    caps
+    friday_capabilities::builtins::all()
 }
