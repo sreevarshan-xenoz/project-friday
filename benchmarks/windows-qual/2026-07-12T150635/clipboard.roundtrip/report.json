@@ -1,0 +1,12 @@
+{
+  "action_ok": false,
+  "group": "clipboard",
+  "id": "clipboard.roundtrip",
+  "issues": [
+    "WIN-CLIPBOARD-ROUNDTRIP"
+  ],
+  "latency_ms": 0,
+  "note": "clipboard_roundtrip=false (got '')",
+  "passed": false,
+  "state_accuracy": false
+}

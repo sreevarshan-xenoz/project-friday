@@ -1,0 +1,11 @@
+{
+  "action_ok": true,
+  "fault": null,
+  "group": "streaming",
+  "id": "streaming.token_stream",
+  "issues": [],
+  "latency_ms": 0,
+  "note": "chunks=2, reassembled_len=27, saw_finish=true",
+  "passed": true,
+  "state_accuracy": true
+}

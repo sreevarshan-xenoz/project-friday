@@ -1,0 +1,88 @@
+{
+  "entries": {
+    "WIN-RESIZE-NOTEPAD": {
+      "scenario_id": "corpus resize.notepad (geometry)",
+      "count": 4,
+      "first_seen": "2026-07-13T11:35:29.168423800+00:00",
+      "last_seen": "2026-07-13T12:28:39.205877300+00:00",
+      "graduated": true
+    },
+    "WIN-FOCUS-NOTEPAD": {
+      "scenario_id": "corpus focus.notepad (focus)",
+      "count": 3,
+      "first_seen": "2026-07-13T11:35:29.168423800+00:00",
+      "last_seen": "2026-07-13T12:23:09.625374100+00:00",
+      "graduated": true
+    },
+    "WIN-LAUNCH-NOTEPAD": {
+      "scenario_id": "corpus launch.notepad (launch)",
+      "count": 16,
+      "first_seen": "2026-07-13T11:35:29.168423800+00:00",
+      "last_seen": "2026-07-13T12:03:35.481435600+00:00",
+      "graduated": true
+    },
+    "WIN-INPUT-TYPE": {
+      "scenario_id": "corpus input.type (input)",
+      "count": 3,
+      "first_seen": "2026-07-13T11:35:29.168423800+00:00",
+      "last_seen": "2026-07-13T12:23:09.625374100+00:00",
+      "graduated": true
+    },
+    "WIN-INJECTION-PROCESS_CRASH": {
+      "scenario_id": "corpus injection.process_crash (failure-injection)",
+      "count": 3,
+      "first_seen": "2026-07-13T11:35:29.168423800+00:00",
+      "last_seen": "2026-07-13T12:28:39.205877300+00:00",
+      "graduated": true
+    },
+    "WIN-INPUT-SCROLL": {
+      "scenario_id": "corpus input.scroll (input)",
+      "count": 3,
+      "first_seen": "2026-07-13T11:35:29.168423800+00:00",
+      "last_seen": "2026-07-13T12:23:09.625374100+00:00",
+      "graduated": true
+    },
+    "WIN-INPUT-CLICK": {
+      "scenario_id": "corpus input.click (input)",
+      "count": 4,
+      "first_seen": "2026-07-13T11:35:29.168423800+00:00",
+      "last_seen": "2026-07-13T12:28:39.205877300+00:00",
+      "graduated": true
+    },
+    "WIN-DISCOVERY-LIST": {
+      "scenario_id": "corpus discovery.list (discovery)",
+      "count": 2,
+      "first_seen": "2026-07-13T11:35:29.168423800+00:00",
+      "last_seen": "2026-07-13T11:50:50.698160500+00:00",
+      "graduated": true
+    },
+    "WIN-DISCOVERY-FIND_BY_TITLE": {
+      "scenario_id": "corpus discovery.find_by_title (discovery)",
+      "count": 4,
+      "first_seen": "2026-07-13T11:35:29.168423800+00:00",
+      "last_seen": "2026-07-13T12:28:39.205877300+00:00",
+      "graduated": true
+    },
+    "WIN-MOVE-NOTEPAD": {
+      "scenario_id": "corpus move.notepad (geometry)",
+      "count": 4,
+      "first_seen": "2026-07-13T11:35:29.168423800+00:00",
+      "last_seen": "2026-07-13T12:28:39.205877300+00:00",
+      "graduated": true
+    },
+    "WIN-CAPTURE-NOTEPAD": {
+      "scenario_id": "corpus capture.notepad (capture)",
+      "count": 3,
+      "first_seen": "2026-07-13T11:35:29.168423800+00:00",
+      "last_seen": "2026-07-13T12:23:09.625374100+00:00",
+      "graduated": true
+    },
+    "WIN-CLOSE-NOTEPAD": {
+      "scenario_id": "corpus close.notepad (lifecycle)",
+      "count": 3,
+      "first_seen": "2026-07-13T11:35:29.168423800+00:00",
+      "last_seen": "2026-07-13T12:23:09.625374100+00:00",
+      "graduated": true
+    }
+  }
+}

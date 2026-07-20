@@ -1,0 +1,10 @@
+{
+  "mode": "mock",
+  "timestamp": "2026-07-15T09:06:55.530792+00:00",
+  "friday_version": "0.1.0",
+  "provider_name": "omniroute",
+  "provider_base_url": "http://mock",
+  "model_id": "auto",
+  "os": "windows",
+  "configured_providers": []
+}

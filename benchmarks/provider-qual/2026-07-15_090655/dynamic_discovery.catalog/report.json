@@ -1,0 +1,11 @@
+{
+  "action_ok": true,
+  "fault": null,
+  "group": "dynamic_discovery",
+  "id": "dynamic_discovery.catalog",
+  "issues": [],
+  "latency_ms": 0,
+  "note": "models_discovered=1",
+  "passed": true,
+  "state_accuracy": true
+}

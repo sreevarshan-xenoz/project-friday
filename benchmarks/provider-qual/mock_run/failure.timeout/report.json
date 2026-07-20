@@ -1,0 +1,11 @@
+{
+  "action_ok": false,
+  "fault": "Timeout",
+  "group": "failure-injection",
+  "id": "failure.timeout",
+  "issues": [],
+  "latency_ms": 0,
+  "note": "circuit_open=true, health_dropped=true, last_err=All candidates failed. Last error: timeout: request timed out",
+  "passed": true,
+  "state_accuracy": true
+}

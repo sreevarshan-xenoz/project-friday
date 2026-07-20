@@ -1,0 +1,11 @@
+{
+  "action_ok": false,
+  "fault": "Http500",
+  "group": "failure-injection",
+  "id": "failure.http_500",
+  "issues": [],
+  "latency_ms": 0,
+  "note": "circuit_open=true, health_dropped=true, last_err=All candidates failed. Last error: Provider mock returned error status 500: internal",
+  "passed": true,
+  "state_accuracy": true
+}

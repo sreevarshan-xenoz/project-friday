@@ -1,0 +1,11 @@
+{
+  "action_ok": false,
+  "fault": "MalformedJson",
+  "group": "failure-injection",
+  "id": "failure.malformed_json",
+  "issues": [],
+  "latency_ms": 0,
+  "note": "circuit_open=true, health_dropped=true, last_err=All candidates failed. Last error: Failed to parse response JSON: unexpected end of body",
+  "passed": true,
+  "state_accuracy": true
+}

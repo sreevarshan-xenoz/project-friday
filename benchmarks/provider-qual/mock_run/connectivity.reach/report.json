@@ -1,0 +1,11 @@
+{
+  "action_ok": true,
+  "fault": null,
+  "group": "connectivity",
+  "id": "connectivity.reach",
+  "issues": [],
+  "latency_ms": 0,
+  "note": "reachable=true",
+  "passed": true,
+  "state_accuracy": true
+}
