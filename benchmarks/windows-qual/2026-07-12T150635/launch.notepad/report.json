@@ -1,0 +1,12 @@
+{
+  "action_ok": false,
+  "group": "launch",
+  "id": "launch.notepad",
+  "issues": [
+    "WIN-LAUNCH-NOTEPAD"
+  ],
+  "latency_ms": 0,
+  "note": "list_contains=false, foreground_matches=true",
+  "passed": false,
+  "state_accuracy": false
+}
