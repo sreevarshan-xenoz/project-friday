@@ -1,0 +1,14 @@
+[
+  {
+    "intent": "windows.clipboard.write",
+    "latency_ms": 3,
+    "ok": true,
+    "ts": "2026-07-13T11:51:08.705012100+00:00"
+  },
+  {
+    "intent": "windows.clipboard.read",
+    "latency_ms": 2,
+    "ok": true,
+    "ts": "2026-07-13T11:51:08.707210100+00:00"
+  }
+]

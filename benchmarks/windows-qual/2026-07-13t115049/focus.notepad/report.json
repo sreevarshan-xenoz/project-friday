@@ -1,0 +1,12 @@
+{
+  "action_ok": false,
+  "group": "focus",
+  "id": "focus.notepad",
+  "issues": [
+    "WIN-FOCUS-NOTEPAD"
+  ],
+  "latency_ms": 0,
+  "note": "setup failed",
+  "passed": false,
+  "state_accuracy": false
+}

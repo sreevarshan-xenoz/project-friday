@@ -1,0 +1,12 @@
+{
+  "action_ok": false,
+  "group": "capture",
+  "id": "capture.notepad",
+  "issues": [
+    "WIN-CAPTURE-NOTEPAD"
+  ],
+  "latency_ms": 0,
+  "note": "setup failed",
+  "passed": false,
+  "state_accuracy": false
+}

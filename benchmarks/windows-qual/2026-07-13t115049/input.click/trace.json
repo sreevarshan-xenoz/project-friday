@@ -1,0 +1,8 @@
+[
+  {
+    "intent": "windows.open",
+    "latency_ms": 2255,
+    "ok": false,
+    "ts": "2026-07-13T11:51:06.459054+00:00"
+  }
+]

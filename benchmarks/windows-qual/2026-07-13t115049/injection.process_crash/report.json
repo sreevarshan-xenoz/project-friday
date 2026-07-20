@@ -1,0 +1,12 @@
+{
+  "action_ok": false,
+  "group": "failure-injection",
+  "id": "injection.process_crash",
+  "issues": [
+    "WIN-INJECTION-PROCESS_CRASH"
+  ],
+  "latency_ms": 0,
+  "note": "setup failed",
+  "passed": false,
+  "state_accuracy": false
+}

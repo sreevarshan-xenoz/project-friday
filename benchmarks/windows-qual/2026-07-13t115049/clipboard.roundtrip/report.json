@@ -1,0 +1,10 @@
+{
+  "action_ok": true,
+  "group": "clipboard",
+  "id": "clipboard.roundtrip",
+  "issues": [],
+  "latency_ms": 3,
+  "note": "clipboard_roundtrip=true (got 'qual-clip')",
+  "passed": true,
+  "state_accuracy": true
+}
