@@ -254,6 +254,57 @@ impl AgentKernel {
                 }
             }
         }
+        // M10.2: Git-specific domain events. The adapter annotates metadata;
+        // the runtime owns event emission (adapters never publish events).
+        if result.metadata.contains_key("commit_hash") {
+            let mut payload = json!({
+                "commit_hash": result.metadata.get("commit_hash"),
+                "capability": capability,
+                "task_id": task_id,
+                "plan_id": plan_id,
+            });
+            if let Some(branch) = result.metadata.get("branch") {
+                payload["branch"] = branch.clone();
+            }
+            if let Some(files) = result.metadata.get("files_changed") {
+                payload["files_changed"] = files.clone();
+            }
+            events.push(events::event(
+                events::GIT_COMMIT_CREATED,
+                "action-runtime",
+                payload,
+                event.trace_id,
+            ));
+        }
+        if let Some(branch) = result.metadata.get("branch").and_then(|b| b.as_str()) {
+            // Only emit for branch-changing actions, not every git_branch call.
+            if capability.contains("git_checkout") || capability.contains("git_create_branch") {
+                events.push(events::event(
+                    events::GIT_BRANCH_CHANGED,
+                    "action-runtime",
+                    json!({
+                        "branch": branch,
+                        "capability": capability,
+                        "task_id": task_id,
+                        "plan_id": plan_id,
+                    }),
+                    event.trace_id,
+                ));
+            }
+        }
+        if let Some(files) = result.metadata.get("files_affected").and_then(|f| f.as_u64()) {
+            events.push(events::event(
+                events::GIT_DIFF_GENERATED,
+                "action-runtime",
+                json!({
+                    "files_affected": files,
+                    "capability": capability,
+                    "task_id": task_id,
+                    "plan_id": plan_id,
+                }),
+                event.trace_id,
+            ));
+        }
         events
     }
 

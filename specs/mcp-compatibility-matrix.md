@@ -21,7 +21,7 @@ hermetic fake servers.
 | Server            | Transport | Status      | Validated tools                                   | Notes |
 |-------------------|-----------|-------------|---------------------------------------------------|-------|
 | `@modelcontextprotocol/server-filesystem` (v? ) | stdio | ✅ Validated (M9) | `read_text_file`, `write_file`, `edit_file`, `create_directory`, `list_directory` | Real Node server via `npx`. Sandbox enforced by server; out-of-sandbox writes refused (asserted on disk). `read_file` deprecated. |
-| Git MCP (`@modelcontextprotocol/server-git`) | stdio | ⏳ Planned (M10) | `git_status`, `git_commit`, `git_diff` … | Next real server; validates repo-scoped operations through the same gate. |
+| `mcp-server-git` (Python, via `uvx`) | stdio | ✅ Validated (M10) | `git_status`, `git_add`, `git_commit`, `git_diff`, `git_diff_unstaged`, `git_log`, `git_branch`, `git_checkout`, `git_create_branch` | Real Python server via `uvx`. Full local workflow validated: init → add → commit → diff → log → branch. Git-specific metadata (`commit_hash`, `branch`, `files_affected`) annotated by adapter; `git.commit.created` / `git.branch.changed` / `git.diff.generated` events emitted by kernel. |
 | Memory MCP         | stdio     | ⏳ Planned   | — | Backs M12 memory/reflection. |
 | Fetch MCP          | stdio     | ⏳ Planned   | — | Web retrieval for planner grounding. |
 | SQLite MCP         | stdio     | ⏳ Planned   | — | Structured state / query backing. |
@@ -40,6 +40,8 @@ hermetic fake servers.
 - **M9** (done): real Filesystem MCP — connect, write/read/create/list,
   sandbox rejection, artifact tracking (`artifact.created`), unified permission
   gating.
-- **M10**: Git MCP — repo operations through the same unified runtime.
+- **M10** (done): Git MCP — real local workflow (init/add/commit/diff/log/branch),
+  Git-specific metadata extraction (`commit_hash`, `branch`, `files_affected`),
+  domain events (`git.commit.created`, `git.branch.changed`, `git.diff.generated`).
 - **M11**: workflow recorder/replay on top of validated servers.
 - **M12**: memory + reflection consuming `artifact.created` and exec events.

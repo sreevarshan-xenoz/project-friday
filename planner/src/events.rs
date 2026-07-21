@@ -24,6 +24,15 @@ pub const EXEC_RESULT: &str = "exec.result";
 /// `plan_id`. Reflection and memory consume this to track what work was actually
 /// produced, independent of which backend created it.
 pub const ARTIFACT_CREATED: &str = "artifact.created";
+/// Emitted by the runtime when a Git commit succeeds. Carries `commit_hash`,
+/// `branch`, `files_changed`, `capability`, `task_id`, `plan_id`.
+pub const GIT_COMMIT_CREATED: &str = "git.commit.created";
+/// Emitted when the active branch changes (checkout or create-branch).
+/// Carries `branch`, `capability`, `task_id`, `plan_id`.
+pub const GIT_BRANCH_CHANGED: &str = "git.branch.changed";
+/// Emitted when a diff is generated. Carries `diff_length`, `files_affected`,
+/// `capability`, `task_id`, `plan_id`.
+pub const GIT_DIFF_GENERATED: &str = "git.diff.generated";
 pub const VERIFICATION_STARTED: &str = "verification.started";
 pub const VERIFICATION_COMPLETED: &str = "verification.completed";
 pub const VERIFICATION_FAILED: &str = "verification.failed";

@@ -94,6 +94,13 @@ impl ActionAdapter for McpAdapter {
         } else {
             None
         };
+        // M10.2: record which Git action this is so we can annotate
+        // Git-specific metadata after a successful call.
+        let git_action = if self.server == "git" {
+            Some(req.action.clone())
+        } else {
+            None
+        };
         match client.call_tool(&req.action, req.parameters).await {
             Ok(result) => {
                 if result.is_error {
@@ -112,15 +119,134 @@ impl ActionAdapter for McpAdapter {
                     "source": "mcp",
                     "server": self.server,
                 }));
-                // Adapters never publish events; they only surface the path. The
-                // runtime emits `artifact.created` from this annotation.
+                // Adapters never publish events; they only surface metadata. The
+                // runtime emits domain-specific events from these annotations.
                 if let Some(path) = artifact_path {
                     out.metadata
                         .insert("artifact_paths".to_string(), json!([path]));
+                }
+                // M10.2: Git-specific metadata extraction. The response text
+                // from the MCP server is parsed to populate structured fields
+                // that the runtime emits as domain events.
+                if let Some(action) = git_action {
+                    let text = Self::response_text(&result);
+                    match action.as_str() {
+                        "git_commit" => {
+                            if let Some(hash) = Self::extract_hash(&text) {
+                                out.metadata.insert(
+                                    "commit_hash".to_string(),
+                                    json!(hash),
+                                );
+                            }
+                        }
+                        "git_branch" | "git_checkout" | "git_create_branch" => {
+                            let branch = Self::extract_branch(&text, &action);
+                            if !branch.is_empty() {
+                                out.metadata.insert(
+                                    "branch".to_string(),
+                                    json!(branch),
+                                );
+                            }
+                        }
+                        "git_diff_unstaged" | "git_diff_staged" | "git_diff" => {
+                            let files = Self::count_diff_files(&text);
+                            out.metadata.insert(
+                                "files_affected".to_string(),
+                                json!(files),
+                            );
+                        }
+                        _ => {}
+                    }
                 }
                 out
             }
             Err(e) => ActionResult::error(format!("mcp call failed: {e}")),
         }
+    }
+}
+
+/// Internal helpers for Git response parsing. These are intentionally simple
+/// string operations — the MCP server returns human-readable text, and we only
+/// need rough extraction for metadata.
+impl McpAdapter {
+    /// Concatenate all text content blocks from a tool result.
+    fn response_text(result: &friday_mcp::protocol::ToolCallResult) -> String {
+        result
+            .content
+            .iter()
+            .filter_map(|c| c.get("text").and_then(|t| t.as_str()))
+            .collect::<Vec<_>>()
+            .join("")
+    }
+
+    /// Extract a 7+ character hex SHA from commit output. The Git MCP server
+    /// returns text like "[abc1234] Initial commit" or just the hash.
+    fn extract_hash(text: &str) -> Option<String> {
+        // Look for bracketed hash first: "[abc1234] message"
+        if let Some(start) = text.find('[') {
+            if let Some(end) = text[start..].find(']') {
+                let hash = &text[start + 1..start + end];
+                if hash.len() >= 7 && hash.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Some(hash.to_string());
+                }
+            }
+        }
+        // Fallback: find any 7+ char hex word.
+        for word in text.split_whitespace() {
+            let clean: String = word.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+            if clean.len() >= 7 {
+                return Some(clean);
+            }
+        }
+        None
+    }
+
+    /// Extract the branch name from branch-related output. The server returns
+    /// text like "* master" or "Switched to branch 'main'".
+    fn extract_branch(text: &str, action: &str) -> String {
+        match action {
+            "git_checkout" => {
+                // "Switched to branch 'main'" or "Switched to a new branch 'feat'"
+                if let Some(start) = text.find('\'') {
+                    if let Some(end) = text[start + 1..].find('\'') {
+                        return text[start + 1..start + 1 + end].to_string();
+                    }
+                }
+                String::new()
+            }
+            "git_branch" => {
+                // "* master" or "  feature-branch" — find the line with "*".
+                for line in text.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with('*') {
+                        return trimmed.trim_start_matches('*').trim().to_string();
+                    }
+                }
+                // No asterisk found; return first non-empty line.
+                text.lines()
+                    .map(|l| l.trim())
+                    .find(|l| !l.is_empty())
+                    .unwrap_or("")
+                    .to_string()
+            }
+            "git_create_branch" => {
+                // "Created branch 'feat'" or just the branch name.
+                if let Some(start) = text.find('\'') {
+                    if let Some(end) = text[start + 1..].find('\'') {
+                        return text[start + 1..start + 1 + end].to_string();
+                    }
+                }
+                text.trim().to_string()
+            }
+            _ => String::new(),
+        }
+    }
+
+    /// Count the number of files affected in a diff by counting `diff --git`
+    /// headers.
+    fn count_diff_files(text: &str) -> usize {
+        text.lines()
+            .filter(|l| l.starts_with("diff --git"))
+            .count()
     }
 }

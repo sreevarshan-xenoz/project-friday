@@ -348,3 +348,104 @@ async fn mcp_write_emits_artifact_created() {
         "artifact path should match the written file"
     );
 }
+
+/// M10.2: Git metadata extraction. A successful MCP `git_commit` annotates the
+/// commit hash in metadata; the runtime emits `git.commit.created`.
+#[tokio::test]
+async fn mcp_git_commit_extracts_hash() {
+    use friday_mcp::protocol::McpTool;
+    use friday_mcp::server::{FakeMcpServer, FakeTransport};
+
+    let (client_side, server_side) = FakeTransport::pair();
+    let server = FakeMcpServer::new()
+        .with_tools(vec![
+            McpTool { name: "git_commit".into(), description: "commit".into(), input_schema: serde_json::json!({}) },
+            McpTool { name: "git_branch".into(), description: "branch".into(), input_schema: serde_json::json!({}) },
+        ])
+        .with_call_handler(|name, _args| match name {
+            "git_commit" => serde_json::json!({
+                "content": [{ "type": "text", "text": "[abc1234] Initial commit" }],
+                "is_error": false
+            }),
+            "git_branch" => serde_json::json!({
+                "content": [{ "type": "text", "text": "* main" }],
+                "is_error": false
+            }),
+            _ => serde_json::json!({
+                "content": [{ "type": "text", "text": format!("did {name}") }],
+                "is_error": false
+            }),
+        });
+    tokio::spawn(server.serve(server_side));
+
+    let kernel = AgentKernel::new();
+    kernel
+        .register_mcp_server("git", Box::new(client_side))
+        .await
+        .expect("register");
+
+    let ctx = friday_actions::kernel::ExecutionContext::builder()
+        .execution_id(uuid::Uuid::new_v4())
+        .session_id(uuid::Uuid::new_v4())
+        .build();
+    let result = kernel
+        .run_action(
+            friday_actions::request::ActionRequest::new(
+                "mcp:git",
+                "git_commit",
+                serde_json::json!({ "repo_path": "/tmp/repo", "message": "test" }),
+            ),
+            ctx,
+        )
+        .await;
+
+    assert!(result.success, "commit should succeed: {:?}", result.error);
+    let hash = result.metadata.get("commit_hash").and_then(|h| h.as_str());
+    assert_eq!(hash, Some("abc1234"), "should extract commit hash from response");
+}
+
+/// M10.2: Git diff metadata. A successful `git_diff_unstaged` annotates
+/// `files_affected` in metadata.
+#[tokio::test]
+async fn mcp_git_diff_counts_files() {
+    use friday_mcp::protocol::McpTool;
+    use friday_mcp::server::{FakeMcpServer, FakeTransport};
+
+    let (client_side, server_side) = FakeTransport::pair();
+    let server = FakeMcpServer::new()
+        .with_tools(vec![
+            McpTool { name: "git_diff_unstaged".into(), description: "diff".into(), input_schema: serde_json::json!({}) },
+        ])
+        .with_call_handler(|_name, _args| {
+            serde_json::json!({
+                "content": [{ "type": "text", "text": "diff --git a/a.rs b/a.rs\nindex 123..456\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\ndiff --git a/b.rs b/b.rs\nindex 789..abc\n--- a/b.rs\n+++ b/b.rs\n@@ -1 +1 @@\n-old\n+new" }],
+                "is_error": false
+            })
+        });
+    tokio::spawn(server.serve(server_side));
+
+    let kernel = AgentKernel::new();
+    kernel
+        .register_mcp_server("git", Box::new(client_side))
+        .await
+        .expect("register");
+
+    let ctx = friday_actions::kernel::ExecutionContext::builder()
+        .execution_id(uuid::Uuid::new_v4())
+        .session_id(uuid::Uuid::new_v4())
+        .build();
+    let result = kernel
+        .run_action(
+            friday_actions::request::ActionRequest::new(
+                "mcp:git",
+                "git_diff_unstaged",
+                serde_json::json!({ "repo_path": "/tmp/repo" }),
+            ),
+            ctx,
+        )
+        .await;
+
+    assert!(result.success, "diff should succeed: {:?}", result.error);
+    let files = result.metadata.get("files_affected").and_then(|f| f.as_u64());
+    assert_eq!(files, Some(2), "should count 2 diff files");
+}
