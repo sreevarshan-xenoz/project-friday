@@ -43,10 +43,10 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::execution::capability_registry::{CapabilityRegistry, Risk};
+use crate::execution::dispatcher;
 use crate::execution::lifecycle::{ExecutionBudget, GoalRuntime};
 use crate::execution::persistence::{GoalEvent, GoalStore};
 use crate::execution::reflection::{Reflector, ReflectionAction, RuleReflector};
-use crate::execution::scheduler;
 use crate::events;
 use crate::planning::{GoalState, TaskGraph, TaskState};
 
@@ -246,7 +246,7 @@ impl GoalSupervisor {
                         }),
                         rt.trace_id,
                     ));
-                    out.push(scheduler::dispatch_event(&task, rt.graph.plan_id, rt.trace_id));
+                    out.push(dispatcher::dispatch_event(&task, rt.graph.plan_id, "supervisor", rt.trace_id));
                     dispatched += 1;
                 }
             }
@@ -513,7 +513,7 @@ impl GoalSupervisor {
                         }),
                         rt.trace_id,
                     ));
-                    out.push(scheduler::dispatch_event(&task, rt.graph.plan_id, rt.trace_id));
+                    out.push(dispatcher::dispatch_event(&task, rt.graph.plan_id, "supervisor", rt.trace_id));
                 }
             }
             ReflectionAction::Split | ReflectionAction::Replan => {
@@ -604,7 +604,7 @@ impl GoalSupervisor {
                     }),
                     rt.trace_id,
                 ));
-                out.push(scheduler::dispatch_event(&task, rt.graph.plan_id, rt.trace_id));
+                out.push(dispatcher::dispatch_event(&task, rt.graph.plan_id, "supervisor", rt.trace_id));
             }
         }
         out.extend(self.fill_pool(rt));

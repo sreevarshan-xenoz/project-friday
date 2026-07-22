@@ -86,7 +86,7 @@ impl ExecutionEngine {
                     &intent,
                     event.trace_id,
                 ));
-                out.push(dispatcher::dispatch_event(task, plan_id, event.trace_id));
+                out.push(dispatcher::dispatch_event(task, plan_id, "execution", event.trace_id));
             }
         }
         out
@@ -133,7 +133,7 @@ impl ExecutionEngine {
                         &rt.graph.intent,
                         event.trace_id,
                     ));
-                    out.push(dispatcher::dispatch_event(task, plan_id, event.trace_id));
+                    out.push(dispatcher::dispatch_event(task, plan_id, "execution", event.trace_id));
                 }
             }
         } else {
@@ -177,7 +177,7 @@ impl ExecutionEngine {
                 &rt.graph.intent,
                 event.trace_id,
             ));
-            out.push(dispatcher::dispatch_event(task, plan_id, event.trace_id));
+            out.push(dispatcher::dispatch_event(task, plan_id, "execution", event.trace_id));
         }
         out
     }
