@@ -61,6 +61,27 @@ pub struct ExperienceEvidence {
     /// Reflections from similar past goals.
     /// From: ExperienceService::similar() → load reflections for each match
     pub reflections: Vec<ReflectionRecord>,
+
+    /// Reserved for future diagnostics and explainability.
+    /// Each item could carry: source, trust_score, retrieval_reason, timestamp.
+    /// Empty in initial implementation.
+    pub provenance: Vec<EvidenceProvenance>,
+}
+
+/// Provenance metadata for a single evidence item. Reserved for future use.
+/// Enables diagnostics: "where did this evidence come from?"
+pub struct EvidenceProvenance {
+    /// Which subsystem produced this evidence.
+    pub source: EvidenceSource,
+    /// Optional human-readable reason for inclusion.
+    pub reason: Option<String>,
+}
+
+pub enum EvidenceSource {
+    Retrieval,
+    Replay,
+    PatternMining,
+    Reflection,
 }
 
 /// A replay candidate with its applicability result.
@@ -124,20 +145,25 @@ pub trait ExperienceProvider {
 ```text
 Planner
     ▲
+    │ receives PlanningContext
     │
-PlanningContextBuilder
+PlanningContextBuilder (stateless, free function)
     │
-    ▼
+    ▼ queries
 ExperienceProvider (trait)
     ▲
+    │ implements
     │
-ExperienceService (impl)
+ExperienceService
 ```
 
-Builder depends on trait. Service implements trait. Planner sees only the
-finished `PlanningContext`.
+Builder is stateless. It queries the trait and produces a snapshot.
+Fresh assembly per planning session.
 
 ### Builder responsibilities (intentionally narrow)
+
+The builder is **stateless**. It takes a provider and produces a snapshot.
+No accumulated state, no configuration beyond the provider itself.
 
 The builder should:
 
@@ -158,23 +184,25 @@ Those are planner decisions.
 
 1. **ExperienceService** owns evidence retrieval. It implements `ExperienceProvider`.
    It never builds `PlanningContext`.
-2. **PlanningContextBuilder** owns assembly. It depends on `ExperienceProvider` (trait),
-   not the concrete service. It produces an immutable `PlanningContext`.
+2. **PlanningContextBuilder** is stateless. It depends on `ExperienceProvider` (trait),
+   queries it, and produces an immutable `PlanningContext`. Fresh assembly per session.
 3. **Planner** owns decisions. It receives `PlanningContext` and produces a `Plan`.
 4. **No one else** touches `PlanningContext`. It's a read-only snapshot.
 
 ```rust
-pub struct PlanningContextBuilder<P: ExperienceProvider> {
-    provider: P,
-    capability_registry: CapabilityRegistry,
-}
+/// Stateless builder. Assembles a PlanningContext from a provider and request.
+pub struct PlanningContextBuilder;
 
-impl<P: ExperienceProvider> PlanningContextBuilder<P> {
-    pub fn build(&self, goal: Goal, constraints: Vec<String>) -> PlanningContext {
-        let similar = self.provider.similar(&goal.title, 5);
-        let previous = self.provider.last_attempt(goal.id);
-        let workflows = self.provider.successful_workflows(&goal.title);
-        let suggestions = self.provider.suggestions();
+impl PlanningContextBuilder {
+    pub fn build(
+        provider: &dyn ExperienceProvider,
+        goal: Goal,
+        constraints: Vec<String>,
+    ) -> PlanningContext {
+        let similar = provider.similar(&goal.title, 5);
+        let previous = provider.last_attempt(goal.id);
+        let workflows = provider.successful_workflows(&goal.title);
+        let suggestions = provider.suggestions();
 
         let replay_candidates = suggestions.iter()
             .filter_map(|s| {
@@ -185,11 +213,11 @@ impl<P: ExperienceProvider> PlanningContextBuilder<P> {
         let reflection_goals: Vec<Uuid> = similar.iter()
             .filter_map(|m| m.outcome.as_ref().map(|o| o.goal_id))
             .collect();
-        let reflections = self.provider.load_reflections(&reflection_goals);
+        let reflections = provider.load_reflections(&reflection_goals);
 
         PlanningContext {
             goal,
-            capabilities: self.capability_registry.list(),
+            capabilities: vec![], // caller provides or we query registry separately
             constraints,
             evidence: ExperienceEvidence {
                 similar_experiences: similar,
@@ -198,6 +226,7 @@ impl<P: ExperienceProvider> PlanningContextBuilder<P> {
                 workflow_suggestions: suggestions,
                 replay_candidates,
                 reflections,
+                provenance: vec![],  // reserved for future diagnostics
             },
         }
     }
