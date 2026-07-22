@@ -19,6 +19,8 @@ This note answers three questions:
 ## 1. What belongs in PlanningContext
 
 ```rust
+/// Immutable snapshot of everything the planner needs.
+/// No setters. No mutation after construction.
 pub struct PlanningContext {
     /// The goal the planner must produce a plan for.
     pub goal: Goal,
@@ -29,8 +31,13 @@ pub struct PlanningContext {
     /// Policy, risk, budget constraints from the user or system.
     pub constraints: Vec<String>,
 
-    // ── Experience evidence ──────────────────────────────
+    /// All experience-derived evidence, grouped together.
+    pub evidence: ExperienceEvidence,
+}
 
+/// Experience-derived evidence. Separated from goal/constraints to make
+/// obvious which parts originate from the current request vs. history.
+pub struct ExperienceEvidence {
     /// Similar past goals with outcomes, trust, and reflection.
     /// From: ExperienceService::similar(&goal.title, N)
     pub similar_experiences: Vec<ExperienceMatch>,
@@ -71,12 +78,12 @@ pub struct ReplayCandidate {
 | `goal` | The task to plan for | Always needed |
 | `capabilities` | What tools/services exist | Feasibility check |
 | `constraints` | Policy/risk/budget limits | Safety boundaries |
-| `similar_experiences` | "What happened before?" | Learn from history |
-| `previous_outcome` | "Did this exact goal work?" | Decide to reuse or retry |
-| `successful_workflows` | "What workflow worked?" | Adopt proven workflow |
-| `workflow_suggestions` | "What patterns exist?" | Discover new workflows |
-| `replay_candidates` | "Can I replay this?" | Reuse with adaptation |
-| `reflections` | "What was learned?" | Avoid known mistakes |
+| `evidence.similar_experiences` | "What happened before?" | Learn from history |
+| `evidence.previous_outcome` | "Did this exact goal work?" | Decide to reuse or retry |
+| `evidence.successful_workflows` | "What workflow worked?" | Adopt proven workflow |
+| `evidence.workflow_suggestions` | "What patterns exist?" | Discover new workflows |
+| `evidence.replay_candidates` | "Can I replay this?" | Reuse with adaptation |
+| `evidence.reflections` | "What was learned?" | Avoid known mistakes |
 
 ## 2. What deliberately does NOT belong
 
@@ -97,45 +104,77 @@ was obtained. This protects the retrieval engine to evolve (TF-IDF → embedding
 
 ## 3. Which component owns each field
 
-```
-ExperienceService          PlanningContextBuilder        Planner
-─────────────────          ─────────────────────        ───────
-similar()          ──▸     similar_experiences    ──▸   decides
-last_attempt()     ──▸     previous_outcome       ──▸   decides
-successful_workflows() ─▸  successful_workflows   ──▸   decides
-suggestions()      ──▸     workflow_suggestions   ──▸   decides
-                           replay_candidates      ──▸   decides
-                           reflections            ──▸   decides
+### The trait boundary
 
-CapabilityRegistry         PlanningContextBuilder        Planner
-──────────────────         ─────────────────────        ───────
-list()              ──▸    capabilities           ──▸   decides
-
-User/System                PlanningContextBuilder        Planner
-──────────────             ─────────────────────        ───────
-constraints          ──▸   constraints            ──▸   decides
+```rust
+/// Abstraction over evidence retrieval. Builder depends on this, not
+/// the concrete ExperienceService. Enables unit testing with mocks and
+/// alternative evidence sources without changing the builder.
+pub trait ExperienceProvider {
+    fn similar(&self, goal_title: &str, max_results: usize) -> Vec<ExperienceMatch>;
+    fn last_attempt(&self, goal_id: Uuid) -> Option<ExperienceMatch>;
+    fn successful_workflows(&self, goal_title: &str) -> Vec<GoalRecord>;
+    fn suggestions(&self) -> Vec<WorkflowSuggestion>;
+    fn load_reflections(&self, goal_ids: &[Uuid]) -> Vec<ReflectionRecord>;
+}
 ```
+
+### Dependency graph
+
+```text
+Planner
+    ▲
+    │
+PlanningContextBuilder
+    │
+    ▼
+ExperienceProvider (trait)
+    ▲
+    │
+ExperienceService (impl)
+```
+
+Builder depends on trait. Service implements trait. Planner sees only the
+finished `PlanningContext`.
+
+### Builder responsibilities (intentionally narrow)
+
+The builder should:
+
+* query the provider
+* normalize results
+* filter obvious duplicates
+* package evidence
+
+The builder should **not**:
+
+* rank plans
+* choose workflows
+* discard valid evidence because it "looks bad"
+
+Those are planner decisions.
 
 ### Ownership rules
 
-1. **ExperienceService** owns evidence retrieval. It never builds `PlanningContext`.
-2. **PlanningContextBuilder** owns assembly. It calls ExperienceService, CapabilityRegistry,
-   and collects constraints. It produces an immutable `PlanningContext`.
+1. **ExperienceService** owns evidence retrieval. It implements `ExperienceProvider`.
+   It never builds `PlanningContext`.
+2. **PlanningContextBuilder** owns assembly. It depends on `ExperienceProvider` (trait),
+   not the concrete service. It produces an immutable `PlanningContext`.
 3. **Planner** owns decisions. It receives `PlanningContext` and produces a `Plan`.
-4. **No one else** touches `PlanningContext`. It's a read-only DTO.
+4. **No one else** touches `PlanningContext`. It's a read-only snapshot.
 
 ```rust
-pub struct PlanningContextBuilder {
-    experience: ExperienceService,
+pub struct PlanningContextBuilder<P: ExperienceProvider> {
+    provider: P,
     capability_registry: CapabilityRegistry,
 }
 
-impl PlanningContextBuilder {
+impl<P: ExperienceProvider> PlanningContextBuilder<P> {
     pub fn build(&self, goal: Goal, constraints: Vec<String>) -> PlanningContext {
-        let similar = self.experience.similar(&goal.title, 5);
-        let previous = self.experience.last_attempt(goal.id);
-        let workflows = self.experience.successful_workflows(&goal.title);
-        let suggestions = self.experience.suggestions();
+        let similar = self.provider.similar(&goal.title, 5);
+        let previous = self.provider.last_attempt(goal.id);
+        let workflows = self.provider.successful_workflows(&goal.title);
+        let suggestions = self.provider.suggestions();
 
         let replay_candidates = suggestions.iter()
             .filter_map(|s| {
@@ -143,20 +182,23 @@ impl PlanningContextBuilder {
             })
             .collect();
 
-        let reflections = similar.iter()
-            .filter_map(|m| m.reflection.clone())
+        let reflection_goals: Vec<Uuid> = similar.iter()
+            .filter_map(|m| m.outcome.as_ref().map(|o| o.goal_id))
             .collect();
+        let reflections = self.provider.load_reflections(&reflection_goals);
 
         PlanningContext {
             goal,
             capabilities: self.capability_registry.list(),
             constraints,
-            similar_experiences: similar,
-            previous_outcome: previous,
-            successful_workflows: workflows,
-            workflow_suggestions: suggestions,
-            replay_candidates,
-            reflections,
+            evidence: ExperienceEvidence {
+                similar_experiences: similar,
+                previous_outcome: previous,
+                successful_workflows: workflows,
+                workflow_suggestions: suggestions,
+                replay_candidates,
+                reflections,
+            },
         }
     }
 }
@@ -167,16 +209,17 @@ impl PlanningContextBuilder {
 ```
 ExperienceService  ──▸  PlanningContextBuilder  ──▸  PlanningContext  ──▸  Planner
       │                         │                         │
-      │ owns retrieval          │ owns assembly           │ owns decisions
-      │ never builds context    │ never decides           │ never queries indexes
+      │ implements              │ depends on              │ owns decisions
+      │ ExperienceProvider      │ ExperienceProvider      │ never queries indexes
+      │ never builds context    │ never decides           │
       │                         │                         │
       ▼                         ▼                         ▼
-  Indexes/DB              Immutable DTO              Plan (output)
+  Indexes/DB              Immutable snapshot          Plan (output)
 ```
 
-Two boundaries must never break:
+Three boundaries must never break:
 
-1. **Planner never queries ExperienceService directly.** Always through PlanningContext.
+1. **Planner never queries ExperienceProvider directly.** Always through PlanningContext.
    If the planner needs more evidence, the builder collects it. This keeps the
    planner stateless and the experience engine replaceable.
 
@@ -184,18 +227,26 @@ Two boundaries must never break:
    The builder assembles. This keeps retrieval concerns separate from assembly
    concerns.
 
+3. **Builder depends on trait, not concrete.** `PlanningContextBuilder<P: ExperienceProvider>`
+   enables unit testing with mocks and alternative evidence sources without
+   changing the builder or planner.
+
 ## Implementation order
 
-1. Define `PlanningContext` and `ReplayCandidate` types
-2. Implement `PlanningContextBuilder::build()`
-3. Update planner to accept `PlanningContext` instead of raw goal
-4. Verify ADR-0007, ADR-0008, ADR-0009 invariants still hold
-5. Dogfood: run scenarios with enriched context
+1. Define `ExperienceProvider` trait (mirrors existing `ExperienceService` API)
+2. Implement `ExperienceProvider` for `ExperienceService`
+3. Define `PlanningContext`, `ExperienceEvidence`, `ReplayCandidate` types
+4. Implement `PlanningContextBuilder<P: ExperienceProvider>::build()`
+5. Update planner to accept `PlanningContext` instead of raw goal
+6. Verify ADR-0007, ADR-0008, ADR-0009 invariants still hold
+7. Dogfood: run scenarios with enriched context
 
 ## Success criteria
 
 - Planner receives `PlanningContext` (not raw goal + manual queries)
-- ExperienceService API unchanged (builder consumes it)
+- Builder depends on `ExperienceProvider` trait (mockable, swappable)
+- `PlanningContext` is immutable (no setters, snapshot after construction)
+- ExperienceService API unchanged (builder consumes it through trait)
 - All 116+ tests still pass
 - Planner can ignore any field in `PlanningContext` without error
-- Retrieval engine can be swapped without planner changes
+- Retrieval engine can be swapped without planner or builder changes
