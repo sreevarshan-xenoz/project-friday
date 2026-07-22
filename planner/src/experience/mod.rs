@@ -149,8 +149,12 @@ pub enum MatchReason {
 /// without knowing how retrieval worked.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExperienceMatch {
-    /// How strongly this match applies (0.0–1.0).
-    pub confidence: f64,
+    /// How alike is this to the current query? (0.0–1.0)
+    pub similarity_score: f64,
+    /// How much should the planner trust this? (0.0–1.0)
+    pub trust_score: f64,
+    /// Decomposed trust factors (for tuning; planner may ignore).
+    pub trust_components: TrustComponents,
     /// Why this matched.
     pub match_reason: MatchReason,
     /// The goal this experience relates to.
@@ -167,4 +171,30 @@ pub struct ExperienceMatch {
     pub commit_hash: Option<String>,
     /// The goal title/intent for display.
     pub goal_title: String,
+}
+
+/// Decomposed trust factors. The planner receives `trust_score` (a single
+/// value), but these components are available for tuning and debugging.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrustComponents {
+    /// How similar was the goal? (from semantic index)
+    pub similarity: f64,
+    /// How recent was the execution? (0.0–1.0)
+    pub recency: f64,
+    /// How successful was the outcome? (0.0–1.0)
+    pub outcome_quality: f64,
+    /// How many times has this pattern been observed? (0.0–1.0, normalized)
+    pub repetition: f64,
+}
+
+impl TrustComponents {
+    /// Aggregate components into a single trust score.
+    /// Weights: similarity 30%, outcome 40%, recency 20%, repetition 10%.
+    pub fn aggregated(&self) -> f64 {
+        let score = self.similarity * 0.3
+            + self.outcome_quality * 0.4
+            + self.recency * 0.2
+            + self.repetition * 0.1;
+        score.clamp(0.0, 1.0)
+    }
 }

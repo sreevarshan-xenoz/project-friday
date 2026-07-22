@@ -1,4 +1,4 @@
-//! Experience Retrieval tests (M12.1).
+//! Experience Retrieval tests (M12.1 + refinements).
 //!
 //! Five success criteria:
 //! 1. Have I done something similar before?
@@ -69,8 +69,9 @@ fn similar_finds_goals_with_matching_titles() {
 
     let matches = svc.similar("write readme", 10);
     assert!(!matches.is_empty(), "should find at least one match");
-    // "write readme" should match itself with high confidence.
-    assert!(matches[0].confidence > 0.6, "self-match should have reasonable confidence, got {}", matches[0].confidence);
+    assert!(matches[0].similarity_score > 0.6, "self-match should have reasonable similarity, got {}", matches[0].similarity_score);
+    // trust_score should also be populated
+    assert!(matches[0].trust_score > 0.0, "trust_score should be non-zero");
 }
 
 #[test]
@@ -102,6 +103,7 @@ fn last_attempt_returns_most_recent_for_goal() {
     let last = svc.last_attempt(goal_id).expect("should have last attempt");
     assert_eq!(last.outcome, GoalOutcome::Success);
     assert_eq!(last.match_reason, MatchReason::RecentAttempt);
+    assert_eq!(last.similarity_score, 1.0, "recency match is exact");
 }
 
 #[test]
@@ -205,7 +207,7 @@ fn explain_previous_outcome_for_failed_goal() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn trust_score_high_for_recent_success() {
+fn trust_components_high_for_recent_success() {
     let (store, _dir) = temp_store();
     let goal_id = Uuid::new_v4();
 
@@ -214,12 +216,14 @@ fn trust_score_high_for_recent_success() {
     let mut svc = ExperienceService::new();
     svc.rebuild(&store.all_entries().unwrap(), &[], &[]);
 
-    let trust = svc.trust_score(goal_id);
-    assert!(trust > 0.85, "recent success should have high trust, got {trust}");
+    let tc = svc.trust_components(goal_id).expect("should have trust components");
+    assert!(tc.aggregated() > 0.5, "recent success should have high trust, got {}", tc.aggregated());
+    assert!(tc.outcome_quality > 0.8, "success outcome quality should be high");
+    assert!(tc.recency > 0.8, "recency should be high for just-now event");
 }
 
 #[test]
-fn trust_score_low_for_failure() {
+fn trust_components_low_for_failure() {
     let (store, _dir) = temp_store();
     let goal_id = Uuid::new_v4();
 
@@ -228,15 +232,34 @@ fn trust_score_low_for_failure() {
     let mut svc = ExperienceService::new();
     svc.rebuild(&store.all_entries().unwrap(), &[], &[]);
 
-    let trust = svc.trust_score(goal_id);
-    assert!(trust < 0.4, "failure should have low trust, got {trust}");
+    let tc = svc.trust_components(goal_id).expect("should have trust components");
+    assert!(tc.aggregated() < 0.35, "failure should have low trust, got {}", tc.aggregated());
+    assert!(tc.outcome_quality < 0.4, "failure outcome quality should be low");
 }
 
 #[test]
-fn trust_score_zero_for_unknown_goal() {
+fn trust_components_none_for_unknown_goal() {
     let svc = ExperienceService::new();
-    let trust = svc.trust_score(Uuid::new_v4());
-    assert_eq!(trust, 0.0);
+    assert!(svc.trust_components(Uuid::new_v4()).is_none());
+}
+
+// ---------------------------------------------------------------------------
+// TrustComponents aggregation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn trust_components_weighted_average() {
+    use friday_planner::experience::TrustComponents;
+
+    let tc = TrustComponents {
+        similarity: 0.8,
+        recency: 0.9,
+        outcome_quality: 0.7,
+        repetition: 0.5,
+    };
+    // 0.8*0.3 + 0.7*0.4 + 0.9*0.2 + 0.5*0.1 = 0.24 + 0.28 + 0.18 + 0.05 = 0.75
+    let score = tc.aggregated();
+    assert!((score - 0.75).abs() < 0.01, "expected ~0.75, got {score}");
 }
 
 // ---------------------------------------------------------------------------
@@ -281,7 +304,6 @@ fn indexer_semantic_similarity() {
 
     let results = indexer.similar("write readme", 10);
     assert!(!results.is_empty());
-    // "write readme" should match "write readme file" more closely.
     assert_eq!(results[0].0 .0, goal_a);
 }
 
