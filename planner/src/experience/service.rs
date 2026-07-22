@@ -13,6 +13,7 @@
 
 use super::indexer::ExperienceIndexer;
 use super::miner::PatternMiner;
+use super::provider::ExperienceProvider;
 use super::suggestion::{SuggestionEngine, SuggestionPolicy, WorkflowSuggestion};
 use super::{
     ExperienceMatch, GoalOutcome, MatchReason, Pattern, ReflectionRecord, TrustComponents,
@@ -255,5 +256,49 @@ impl ExperienceService {
 impl Default for ExperienceService {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl ExperienceProvider for ExperienceService {
+    fn similar(&self, goal_title: &str, max_results: usize) -> Vec<ExperienceMatch> {
+        self.indexer
+            .similar(goal_title, max_results)
+            .into_iter()
+            .map(|(key, score)| {
+                let record = self.indexer.get_record(key.0).unwrap();
+                MatchBuilder::build(record, MatchReason::SimilarGoal, score)
+            })
+            .collect()
+    }
+
+    fn last_attempt(&self, goal_id: uuid::Uuid) -> Option<ExperienceMatch> {
+        let record = self.indexer.last_attempt(goal_id)?;
+        Some(MatchBuilder::build(
+            record,
+            MatchReason::RecentAttempt,
+            1.0,
+        ))
+    }
+
+    fn successful_workflows(&self, goal_title: &str) -> Vec<super::indexer::GoalRecord> {
+        self.indexer
+            .all_records()
+            .into_iter()
+            .filter(|r| r.outcome == GoalOutcome::Success)
+            .filter(|r| ExperienceIndexer::text_similarity(goal_title, &r.title) > 0.1)
+            .cloned()
+            .collect()
+    }
+
+    fn suggestions(&self) -> Vec<WorkflowSuggestion> {
+        self.suggestion_engine.suggest(&self.patterns)
+    }
+
+    fn load_reflections(&self, goal_ids: &[uuid::Uuid]) -> Vec<ReflectionRecord> {
+        goal_ids
+            .iter()
+            .filter_map(|id| self.indexer.get_record(*id))
+            .flat_map(|r| r.reflections.clone())
+            .collect()
     }
 }

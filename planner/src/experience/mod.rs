@@ -20,6 +20,8 @@ pub mod miner;
 pub mod suggestion;
 pub mod replay;
 pub mod metrics;
+pub mod provider;
+pub mod context;
 
 pub use timeline::TimelineStore;
 pub use indexer::ExperienceIndexer;
@@ -28,6 +30,11 @@ pub use miner::{PatternMiner, Pattern};
 pub use suggestion::{SuggestionEngine, SuggestionPolicy, WorkflowSuggestion};
 pub use replay::{ApplicabilityChecker, ApplicabilityResult, ReplayEngine, WorkflowExecutionReport};
 pub use metrics::{ExperienceMetrics, MetricsSummary};
+pub use provider::ExperienceProvider;
+pub use context::{
+    PlanningContext, PlanningGoal, ExperienceEvidence, SuccessfulWorkflow, ReplayCandidate,
+    EvidenceProvenance, EvidenceSource, PlanningContextBuilder,
+};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
