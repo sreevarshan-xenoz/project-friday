@@ -111,9 +111,9 @@ impl PatternMiner {
                 .iter()
                 .filter(|e| {
                     !e.capability.is_empty()
-                        && e.event_kind.starts_with("exec.")
-                        || e.event_kind == "artifact.created"
-                        || e.event_kind.starts_with("git.")
+                        && (e.event_kind.starts_with("exec.")
+                            || e.event_kind == "artifact.created"
+                            || e.event_kind.starts_with("git."))
                 })
                 .map(|e| e.capability.clone())
                 .collect();
@@ -302,5 +302,48 @@ mod tests {
         assert_eq!(p.frequency, 3);
         // 2 out of 3 succeeded.
         assert!((p.success_rate - 2.0 / 3.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn mine_includes_artifact_and_git_event_kinds() {
+        let goal1 = Uuid::new_v4();
+        let goal2 = Uuid::new_v4();
+        let base = Utc::now();
+
+        // artifact.created and git.* events are included when they have
+        // non-empty capabilities. Events with empty capabilities are
+        // excluded (they don't represent semantic capabilities).
+        let entries = vec![
+            entry(goal1, "fs.write", "exec.action", base),
+            entry(goal1, "artifact.write", "artifact.created", base + chrono::Duration::seconds(1)),
+            entry(goal1, "git.commit", "git.commit", base + chrono::Duration::seconds(2)),
+            entry(goal1, "", "goal.completed", base + chrono::Duration::seconds(3)),
+            entry(goal2, "fs.write", "exec.action", base + chrono::Duration::seconds(10)),
+            entry(goal2, "artifact.write", "artifact.created", base + chrono::Duration::seconds(11)),
+            entry(goal2, "git.commit", "git.commit", base + chrono::Duration::seconds(12)),
+            entry(goal2, "", "goal.completed", base + chrono::Duration::seconds(13)),
+        ];
+
+        let miner = PatternMiner::new();
+        let patterns = miner.mine(&entries);
+
+        // Should find patterns that include artifact.created and git.* events.
+        let cap_sequence: Vec<String> = patterns
+            .iter()
+            .map(|p| p.capabilities.join(", "))
+            .collect();
+        assert!(
+            patterns.iter().any(|p| p.capabilities.contains(&"artifact.write".to_string())),
+            "should find artifact.write in patterns: {cap_sequence:?}"
+        );
+        assert!(
+            patterns.iter().any(|p| p.capabilities.contains(&"git.commit".to_string())),
+            "should find git.commit in patterns: {cap_sequence:?}"
+        );
+        // Empty-capability events (like goal.completed) should be excluded.
+        assert!(
+            !patterns.iter().any(|p| p.capabilities.contains(&"".to_string())),
+            "should not have empty capabilities in patterns"
+        );
     }
 }
