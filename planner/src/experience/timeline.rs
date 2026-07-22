@@ -14,11 +14,12 @@ use chrono::Utc;
 use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
 use uuid::Uuid;
 
-use super::{ReflectionRecord, TimelineEntry, Workflow, TIMELINE_VERSION};
+use super::{Pattern, ReflectionRecord, TimelineEntry, Workflow, TIMELINE_VERSION};
 
 const TIMELINE_TABLE: TableDefinition<&str, &str> = TableDefinition::new("timeline_entries");
 const WORKFLOW_TABLE: TableDefinition<&str, &str> = TableDefinition::new("workflows");
 const REFLECTION_TABLE: TableDefinition<&str, &str> = TableDefinition::new("reflections");
+const PATTERN_TABLE: TableDefinition<&str, &str> = TableDefinition::new("patterns");
 
 /// Durable, append-only timeline store. Implements ADR-0008 invariants:
 /// - Append-only (no updates, no deletes)
@@ -231,5 +232,64 @@ impl TimelineStore {
             records.push(r);
         }
         Ok(records)
+    }
+
+    // -- Patterns (mined from timeline, stored for fast lookup) --
+
+    /// Persist a mined pattern.
+    pub fn save_pattern(&self, pattern: &Pattern) -> anyhow::Result<()> {
+        let db = self.db.lock().expect("timeline store poisoned");
+        let txn = db
+            .begin_write()
+            .map_err(|e| anyhow::anyhow!("begin_write: {e}"))?;
+        {
+            let mut table = txn
+                .open_table(PATTERN_TABLE)
+                .map_err(|e| anyhow::anyhow!("open_table: {e}"))?;
+            let json = serde_json::to_string(pattern)?;
+            table
+                .insert(pattern.id.to_string().as_str(), json.as_str())
+                .map_err(|e| anyhow::anyhow!("insert: {e}"))?;
+        }
+        txn.commit()
+            .map_err(|e| anyhow::anyhow!("commit: {e}"))?;
+        Ok(())
+    }
+
+    /// Load all stored patterns.
+    pub fn load_patterns(&self) -> anyhow::Result<Vec<Pattern>> {
+        let db = self.db.lock().expect("timeline store poisoned");
+        let txn = db
+            .begin_read()
+            .map_err(|e| anyhow::anyhow!("begin_read: {e}"))?;
+        let table = txn
+            .open_table(PATTERN_TABLE)
+            .map_err(|e| anyhow::anyhow!("open_table: {e}"))?;
+        let mut patterns = Vec::new();
+        for kv in table
+            .iter()
+            .map_err(|e| anyhow::anyhow!("iter: {e}"))?
+        {
+            let (_k, v) = kv.map_err(|e| anyhow::anyhow!("kv: {e}"))?;
+            let p: Pattern = serde_json::from_str(v.value())?;
+            patterns.push(p);
+        }
+        Ok(patterns)
+    }
+
+    /// Clear all stored patterns (for re-mining).
+    pub fn clear_patterns(&self) -> anyhow::Result<()> {
+        let db = self.db.lock().expect("timeline store poisoned");
+        let txn = db
+            .begin_write()
+            .map_err(|e| anyhow::anyhow!("begin_write: {e}"))?;
+        {
+            let _table = txn
+                .delete_table(PATTERN_TABLE)
+                .map_err(|e| anyhow::anyhow!("delete_table: {e}"))?;
+        }
+        txn.commit()
+            .map_err(|e| anyhow::anyhow!("commit: {e}"))?;
+        Ok(())
     }
 }

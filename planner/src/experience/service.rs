@@ -12,8 +12,9 @@
 //! 5. How strongly should I trust this?      → `ExperienceMatch.trust_score`
 
 use super::indexer::ExperienceIndexer;
+use super::miner::PatternMiner;
 use super::{
-    ExperienceMatch, GoalOutcome, MatchReason, ReflectionRecord, TrustComponents,
+    ExperienceMatch, GoalOutcome, MatchReason, Pattern, ReflectionRecord, TrustComponents,
     TimelineEntry, Workflow,
 };
 
@@ -98,12 +99,16 @@ fn compute_trust(record: &super::indexer::GoalRecord, similarity: f64) -> TrustC
 /// chronological and semantic indexes, but the planner never sees this.
 pub struct ExperienceService {
     indexer: ExperienceIndexer,
+    miner: PatternMiner,
+    patterns: Vec<Pattern>,
 }
 
 impl ExperienceService {
     pub fn new() -> Self {
         Self {
             indexer: ExperienceIndexer::new(),
+            miner: PatternMiner::new(),
+            patterns: Vec::new(),
         }
     }
 
@@ -116,6 +121,7 @@ impl ExperienceService {
         reflections: &[ReflectionRecord],
     ) {
         self.indexer.build(entries, workflows, reflections);
+        self.patterns = self.miner.mine(entries);
     }
 
     /// #1 "Have I done something similar before?"
@@ -181,6 +187,42 @@ impl ExperienceService {
     /// Number of indexed goals.
     pub fn goal_count(&self) -> usize {
         self.indexer.goal_count()
+    }
+
+    // -- Pattern queries (M12.2) --
+
+    /// All mined patterns, sorted by frequency descending.
+    pub fn patterns(&self) -> &[Pattern] {
+        &self.patterns
+    }
+
+    /// Patterns that start with the given capability prefix.
+    pub fn patterns_starting_with(&self, capability: &str) -> Vec<&Pattern> {
+        self.patterns
+            .iter()
+            .filter(|p| p.capabilities.first().map(|s| s.as_str()) == Some(capability))
+            .collect()
+    }
+
+    /// Patterns that contain the given capability at any position.
+    pub fn patterns_containing(&self, capability: &str) -> Vec<&Pattern> {
+        self.patterns
+            .iter()
+            .filter(|p| p.capabilities.iter().any(|c| c == capability))
+            .collect()
+    }
+
+    /// Patterns with success rate above the given threshold.
+    pub fn reliable_patterns(&self, min_success_rate: f64) -> Vec<&Pattern> {
+        self.patterns
+            .iter()
+            .filter(|p| p.success_rate >= min_success_rate)
+            .collect()
+    }
+
+    /// Number of mined patterns.
+    pub fn pattern_count(&self) -> usize {
+        self.patterns.len()
     }
 }
 

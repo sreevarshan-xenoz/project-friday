@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use friday_planner::experience::indexer::ExperienceIndexer;
+use friday_planner::experience::miner::PatternMiner;
 use friday_planner::experience::service::ExperienceService;
 use friday_planner::experience::{GoalOutcome, MatchReason, ReflectionRecord, TIMELINE_VERSION};
 use friday_planner::experience::TimelineStore;
@@ -34,6 +35,30 @@ fn make_entry(
         version: TIMELINE_VERSION,
         id: Uuid::new_v4(),
         timestamp: chrono::Utc::now(),
+        goal_id,
+        plan_id,
+        execution_id: Uuid::new_v4(),
+        event_kind: event_kind.to_string(),
+        capability: capability.to_string(),
+        metadata,
+        parent: None,
+        tags: vec![],
+        annotations: HashMap::new(),
+    }
+}
+
+fn make_entry_at(
+    goal_id: Uuid,
+    plan_id: Uuid,
+    event_kind: &str,
+    capability: &str,
+    metadata: serde_json::Value,
+    timestamp: chrono::DateTime<chrono::Utc>,
+) -> friday_planner::experience::TimelineEntry {
+    friday_planner::experience::TimelineEntry {
+        version: TIMELINE_VERSION,
+        id: Uuid::new_v4(),
+        timestamp,
         goal_id,
         plan_id,
         execution_id: Uuid::new_v4(),
@@ -345,4 +370,141 @@ fn similar_match_extracts_commit_hash() {
     let matches = svc.similar("commit changes", 10);
     assert!(!matches.is_empty());
     assert_eq!(matches[0].commit_hash.as_deref(), Some("abc1234"));
+}
+
+// ---------------------------------------------------------------------------
+// M12.2: Pattern Mining
+// ---------------------------------------------------------------------------
+
+#[test]
+fn miner_finds_repeated_capability_sequences() {
+    let miner = PatternMiner::new();
+    let goal1 = Uuid::new_v4();
+    let goal2 = Uuid::new_v4();
+    let base = chrono::Utc::now();
+
+    let entries = vec![
+        make_entry_at(goal1, Uuid::new_v4(), "exec.action", "filesystem.write", serde_json::json!({}), base),
+        make_entry_at(goal1, Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), base + chrono::Duration::seconds(1)),
+        make_entry_at(goal1, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + chrono::Duration::seconds(2)),
+        make_entry_at(goal2, Uuid::new_v4(), "exec.action", "filesystem.write", serde_json::json!({}), base + chrono::Duration::seconds(10)),
+        make_entry_at(goal2, Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), base + chrono::Duration::seconds(11)),
+        make_entry_at(goal2, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + chrono::Duration::seconds(12)),
+    ];
+
+    let patterns = miner.mine(&entries);
+    assert!(!patterns.is_empty(), "should find at least one pattern");
+    let p = patterns.iter().find(|p| p.capabilities.len() == 2).unwrap();
+    assert_eq!(p.frequency, 2);
+    assert_eq!(p.success_rate, 1.0);
+}
+
+#[test]
+fn miner_ignores_single_occurrences() {
+    let miner = PatternMiner::new();
+    let goal1 = Uuid::new_v4();
+    let base = chrono::Utc::now();
+
+    let entries = vec![
+        make_entry_at(goal1, Uuid::new_v4(), "exec.action", "filesystem.write", serde_json::json!({}), base),
+        make_entry_at(goal1, Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), base + chrono::Duration::seconds(1)),
+        make_entry_at(goal1, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + chrono::Duration::seconds(2)),
+    ];
+
+    let patterns = miner.mine(&entries);
+    let two_gram = patterns.iter().find(|p| p.capabilities.len() == 2);
+    assert!(two_gram.is_none(), "single occurrence should be filtered");
+}
+
+#[test]
+fn miner_computes_success_rate() {
+    let miner = PatternMiner::new();
+    let goal1 = Uuid::new_v4();
+    let goal2 = Uuid::new_v4();
+    let goal3 = Uuid::new_v4();
+    let base = chrono::Utc::now();
+
+    let entries = vec![
+        make_entry_at(goal1, Uuid::new_v4(), "exec.action", "fs.write", serde_json::json!({}), base),
+        make_entry_at(goal1, Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), base + chrono::Duration::seconds(1)),
+        make_entry_at(goal1, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + chrono::Duration::seconds(2)),
+        make_entry_at(goal2, Uuid::new_v4(), "exec.action", "fs.write", serde_json::json!({}), base + chrono::Duration::seconds(10)),
+        make_entry_at(goal2, Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), base + chrono::Duration::seconds(11)),
+        make_entry_at(goal2, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + chrono::Duration::seconds(12)),
+        make_entry_at(goal3, Uuid::new_v4(), "exec.action", "fs.write", serde_json::json!({}), base + chrono::Duration::seconds(20)),
+        make_entry_at(goal3, Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), base + chrono::Duration::seconds(21)),
+    ];
+
+    let patterns = miner.mine(&entries);
+    let p = patterns.iter().find(|p| p.capabilities == vec!["fs.write", "git.commit"]).unwrap();
+    assert_eq!(p.frequency, 3);
+    assert!((p.success_rate - 2.0 / 3.0).abs() < 0.01);
+}
+
+// ---------------------------------------------------------------------------
+// M12.2: Service pattern queries
+// ---------------------------------------------------------------------------
+
+#[test]
+fn service_rebuild_mines_patterns() {
+    let (store, _dir) = temp_store();
+    let goal1 = Uuid::new_v4();
+    let goal2 = Uuid::new_v4();
+    let base = chrono::Utc::now();
+
+    store.append(make_entry_at(goal1, Uuid::new_v4(), "exec.action", "filesystem.write", serde_json::json!({}), base)).unwrap();
+    store.append(make_entry_at(goal1, Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), base + chrono::Duration::seconds(1))).unwrap();
+    store.append(make_entry_at(goal1, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + chrono::Duration::seconds(2))).unwrap();
+    store.append(make_entry_at(goal2, Uuid::new_v4(), "exec.action", "filesystem.write", serde_json::json!({}), base + chrono::Duration::seconds(10))).unwrap();
+    store.append(make_entry_at(goal2, Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), base + chrono::Duration::seconds(11))).unwrap();
+    store.append(make_entry_at(goal2, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + chrono::Duration::seconds(12))).unwrap();
+
+    let mut svc = ExperienceService::new();
+    svc.rebuild(&store.all_entries().unwrap(), &[], &[]);
+
+    assert!(svc.pattern_count() > 0, "should have mined patterns");
+}
+
+#[test]
+fn service_patterns_starting_with() {
+    let (store, _dir) = temp_store();
+    let goal1 = Uuid::new_v4();
+    let goal2 = Uuid::new_v4();
+    let base = chrono::Utc::now();
+
+    store.append(make_entry_at(goal1, Uuid::new_v4(), "exec.action", "filesystem.write", serde_json::json!({}), base)).unwrap();
+    store.append(make_entry_at(goal1, Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), base + chrono::Duration::seconds(1))).unwrap();
+    store.append(make_entry_at(goal1, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + chrono::Duration::seconds(2))).unwrap();
+    store.append(make_entry_at(goal2, Uuid::new_v4(), "exec.action", "filesystem.write", serde_json::json!({}), base + chrono::Duration::seconds(10))).unwrap();
+    store.append(make_entry_at(goal2, Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), base + chrono::Duration::seconds(11))).unwrap();
+    store.append(make_entry_at(goal2, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + chrono::Duration::seconds(12))).unwrap();
+
+    let mut svc = ExperienceService::new();
+    svc.rebuild(&store.all_entries().unwrap(), &[], &[]);
+
+    let starts_with_fs = svc.patterns_starting_with("filesystem.write");
+    assert!(!starts_with_fs.is_empty(), "should find patterns starting with filesystem.write");
+    assert!(starts_with_fs.iter().all(|p| p.capabilities[0] == "filesystem.write"));
+}
+
+#[test]
+fn service_reliable_patterns() {
+    let (store, _dir) = temp_store();
+    let goal1 = Uuid::new_v4();
+    let goal2 = Uuid::new_v4();
+    let base = chrono::Utc::now();
+
+    store.append(make_entry_at(goal1, Uuid::new_v4(), "exec.action", "fs.read", serde_json::json!({}), base)).unwrap();
+    store.append(make_entry_at(goal1, Uuid::new_v4(), "exec.action", "fs.write", serde_json::json!({}), base + chrono::Duration::seconds(1))).unwrap();
+    store.append(make_entry_at(goal1, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + chrono::Duration::seconds(2))).unwrap();
+    store.append(make_entry_at(goal2, Uuid::new_v4(), "exec.action", "fs.read", serde_json::json!({}), base + chrono::Duration::seconds(10))).unwrap();
+    store.append(make_entry_at(goal2, Uuid::new_v4(), "exec.action", "fs.write", serde_json::json!({}), base + chrono::Duration::seconds(11))).unwrap();
+    store.append(make_entry_at(goal2, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + chrono::Duration::seconds(12))).unwrap();
+
+    let mut svc = ExperienceService::new();
+    svc.rebuild(&store.all_entries().unwrap(), &[], &[]);
+
+    let reliable = svc.reliable_patterns(0.8);
+    assert!(!reliable.is_empty(), "should find reliable patterns");
+    assert!(reliable.iter().all(|p| p.success_rate >= 0.8));
 }

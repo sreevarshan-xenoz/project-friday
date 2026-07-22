@@ -16,10 +16,12 @@ pub mod recorder;
 pub mod reflection;
 pub mod indexer;
 pub mod service;
+pub mod miner;
 
 pub use timeline::TimelineStore;
 pub use indexer::ExperienceIndexer;
 pub use service::ExperienceService;
+pub use miner::{PatternMiner, Pattern};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
