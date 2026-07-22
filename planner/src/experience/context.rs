@@ -132,7 +132,7 @@ impl PlanningContextBuilder {
         );
         let replay_candidates = suggestions
             .iter()
-            .filter_map(|s| {
+            .map(|s| {
                 // Find the pattern that matches this suggestion's capabilities
                 // In a full impl, we'd look up by pattern_id. For now, build
                 // a minimal pattern from the suggestion.
@@ -157,11 +157,11 @@ impl PlanningContextBuilder {
                         0.0
                     }
                 };
-                Some(ReplayCandidate {
+                ReplayCandidate {
                     pattern,
                     applicability,
                     reuse_ratio,
-                })
+                }
             })
             .collect();
 
