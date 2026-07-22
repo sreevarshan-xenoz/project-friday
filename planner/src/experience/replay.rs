@@ -49,6 +49,18 @@ pub struct ApplicabilityResult {
     pub notes: Vec<String>,
 }
 
+impl Default for ApplicabilityResult {
+    fn default() -> Self {
+        Self {
+            applicable: true,
+            missing_capabilities: Vec::new(),
+            missing_artifacts: Vec::new(),
+            permission_requirements: Vec::new(),
+            notes: Vec::new(),
+        }
+    }
+}
+
 /// Checks whether a workflow is still applicable in the current environment.
 pub struct ApplicabilityChecker {
     /// Capabilities currently registered in the system.
