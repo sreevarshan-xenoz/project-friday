@@ -63,6 +63,18 @@ fn goal_store_path(friday: &Friday) -> PathBuf {
     PathBuf::from(&dir).join(format!("goals-{}.redb", Uuid::new_v4()))
 }
 
+fn timeline_store_path(friday: &Friday) -> PathBuf {
+    if let Some(v) = friday
+        .config()
+        .get("timeline_store_path")
+        .and_then(|v| v.as_str())
+    {
+        return PathBuf::from(v);
+    }
+    let dir = std::env::temp_dir().join("friday-timeline");
+    PathBuf::from(&dir).join(format!("timeline-{}.redb", Uuid::new_v4()))
+}
+
 /// Register all planner engines with a runtime. Order does not matter; they are
 /// wired together purely by the events they emit and consume.
 ///
@@ -95,13 +107,34 @@ pub async fn register_engines_with_llm(
     friday
         .register_plugin(Box::new(IntentEngine::new()))
         .await?;
-    let planning = planning_engine_with(
+    let mut planning = planning_engine_with(
         registry.clone(),
         backend,
         ExecutionBudget::default(),
         RiskPolicy::default(),
         WorkspaceContext::default(),
     );
+
+    // Wire the experience provider if the timeline store is available.
+    match crate::experience::TimelineStore::open(&timeline_store_path(friday)) {
+        Ok(timeline) => {
+            let entries = timeline.all_entries().unwrap_or_default();
+            let workflows = timeline.load_workflows().unwrap_or_default();
+            let reflections = timeline.load_reflections().unwrap_or_default();
+            let mut service = crate::experience::ExperienceService::new();
+            service.rebuild(&entries, &workflows, &reflections);
+            planning = planning.with_experience(Arc::new(service));
+            tracing::info!(
+                entries = entries.len(),
+                workflows = workflows.len(),
+                "experience provider wired"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "timeline store unavailable; experience disabled");
+        }
+    }
+
     friday.register_plugin(Box::new(planning)).await?;
     friday
         .register_plugin(Box::new(VerificationEngine::new()))
