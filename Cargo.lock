@@ -451,6 +451,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -490,6 +491,7 @@ dependencies = [
  "redb",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-tungstenite",
  "tracing",

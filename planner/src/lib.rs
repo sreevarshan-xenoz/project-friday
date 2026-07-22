@@ -18,6 +18,7 @@
 pub mod engines;
 pub mod events;
 pub mod execution;
+pub mod experience;
 pub mod intent;
 pub mod planning;
 pub mod verification;
