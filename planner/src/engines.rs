@@ -91,6 +91,8 @@ pub struct PlanningEngine {
     /// Max capabilities surfaced to the LLM planner via discovery (keeps prompts
     /// short). Ignored by the rule planner.
     discovery_limit: usize,
+    /// Optional experience provider for evidence-enriched planning.
+    experience: Option<Arc<dyn crate::experience::ExperienceProvider + Send + Sync>>,
 }
 
 impl PlanningEngine {
@@ -136,7 +138,17 @@ impl PlanningEngine {
             policy,
             workspace,
             discovery_limit,
+            experience: None,
         }
+    }
+
+    /// Set the experience provider for evidence-enriched planning.
+    pub fn with_experience(
+        mut self,
+        provider: Arc<dyn crate::experience::ExperienceProvider + Send + Sync>,
+    ) -> Self {
+        self.experience = Some(provider);
+        self
     }
 
     /// Default: rule-only planner, no LLM. Keeps `register_engines` deterministic
@@ -158,7 +170,7 @@ impl PlanningEngine {
     /// once registered.
     fn context(&self, intent: &Intent) -> PlanContext {
         let ranked = self.registry.search(&intent.raw, self.discovery_limit);
-        let capabilities = ranked
+        let capabilities: Vec<AvailableCapability> = ranked
             .into_iter()
             .map(|rc| AvailableCapability {
                 id: rc.spec.id,
@@ -167,13 +179,30 @@ impl PlanningEngine {
                 score: rc.score,
             })
             .collect();
+
+        // Build experience context if a provider is wired.
+        let experience = self.experience.as_ref().map(|provider| {
+            let cap_ids: Vec<String> = capabilities.iter().map(|c| c.id.clone()).collect();
+            crate::experience::context::ExperienceContextBuilder::build(
+                provider.as_ref(),
+                crate::experience::context::PlanningGoal {
+                    id: uuid::Uuid::new_v4(),
+                    title: intent.intent.clone(),
+                    description: intent.raw.clone(),
+                },
+                cap_ids.clone(),
+                vec![],
+                &cap_ids,
+            )
+        });
+
         PlanContext {
             intent_raw: intent.raw.clone(),
             capabilities,
             budget: self.budget,
             workspace: self.workspace.clone(),
             risk_policy: self.policy.clone(),
-            experience: None,
+            experience,
         }
     }
 }
