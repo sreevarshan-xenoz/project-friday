@@ -152,14 +152,59 @@ The loop never short-circuits.
 
 ### What the planner receives
 
+The planner receives an immutable `PlanningContext` assembled by a stateless
+`PlanningContextBuilder` from an `ExperienceProvider` trait:
+
 ```rust
-/// Enriched planning context with experience evidence.
+/// Immutable snapshot. No setters. No mutation after construction.
 pub struct PlanningContext {
-    pub goal: String,
-    pub evidence: Vec<ExperienceMatch>,   // from ExperienceService
-    pub capabilities: Vec<String>,        // available actions
-    pub constraints: Vec<String>,         // policy, risk, budget
+    pub goal: PlanningGoal,
+    pub capabilities: Vec<String>,
+    pub constraints: Vec<String>,
+    pub evidence: ExperienceEvidence,
 }
+
+pub struct ExperienceEvidence {
+    pub similar_experiences: Vec<ExperienceMatch>,
+    pub previous_outcome: Option<ExperienceMatch>,
+    pub successful_workflows: Vec<SuccessfulWorkflow>,
+    pub workflow_suggestions: Vec<WorkflowSuggestion>,
+    pub replay_candidates: Vec<ReplayCandidate>,
+    pub reflections: Vec<ReflectionRecord>,
+    pub provenance: Vec<EvidenceProvenance>,  // reserved for diagnostics
+}
+```
+
+The builder depends on a trait, not the concrete service:
+
+```rust
+pub trait ExperienceProvider {
+    fn similar(&self, goal_title: &str, max_results: usize) -> Vec<ExperienceMatch>;
+    fn last_attempt(&self, goal_id: Uuid) -> Option<ExperienceMatch>;
+    fn successful_workflows(&self, goal_title: &str) -> Vec<GoalRecord>;
+    fn suggestions(&self) -> Vec<WorkflowSuggestion>;
+    fn load_reflections(&self, goal_ids: &[Uuid]) -> Vec<ReflectionRecord>;
+}
+```
+
+This enables unit testing with mocks and alternative evidence sources without
+changing the builder or planner.
+
+The planner accesses evidence through a `PlanningEvidenceView` — a read-only
+advice layer with convenience methods:
+
+```rust
+pub fn evidence(&self) -> PlanningEvidenceView<'_>;
+
+// PlanningEvidenceView provides:
+//   has_previous_attempt()  → bool
+//   had_previous_success()  → bool
+//   had_previous_failure()  → bool
+//   previous_outcome_summary()  → Option<String>
+//   similar_count()  → usize
+//   suggestion_count()  → usize
+//   replay_candidate_count()  → usize
+//   reflection_count()  → usize
 ```
 
 The planner is free to ignore evidence. It may use `similar()` results,
@@ -211,7 +256,8 @@ across the boundary.
 
 ## Follow-ups
 
-- M12.2: Pattern mining (capability sequences → frequency/success/last-seen).
-- M12.3: Workflow suggestions (mined patterns → eligible suggestions).
-- M12.4: Replay-through-planner (applicability check → planner → execution).
-- Planner integration: enrich `PlanningContext` with `ExperienceMatch` evidence.
+- M12.2: Pattern mining (capability sequences → frequency/success/last-seen). ✅
+- M12.3: Workflow suggestions (mined patterns → eligible suggestions). ✅
+- M12.4: Replay-through-planner (applicability check → planner → execution). ✅
+- M13: Planning Context Enrichment (ExperienceProvider trait, immutable
+  PlanningContext, PlanningEvidenceView). ✅
