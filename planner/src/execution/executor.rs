@@ -93,7 +93,7 @@ impl ExecutionEngine {
     }
 
     fn on_result(&self, event: &Event) -> Vec<Event> {
-        let (task_id, plan_id) = match ids(event) {
+        let (task_id, plan_id) = match events::extract_ids(event) {
             Some(v) => v,
             None => return vec![],
         };
@@ -153,7 +153,7 @@ impl ExecutionEngine {
     }
 
     fn on_retry(&self, event: &Event) -> Vec<Event> {
-        let (task_id, plan_id) = match ids(event) {
+        let (task_id, plan_id) = match events::extract_ids(event) {
             Some(v) => v,
             None => return vec![],
         };
@@ -181,20 +181,6 @@ impl ExecutionEngine {
         }
         out
     }
-}
-
-fn ids(event: &Event) -> Option<(Uuid, Uuid)> {
-    let task_id = event
-        .payload
-        .get("task_id")
-        .and_then(|v| v.as_str())
-        .and_then(|s| Uuid::parse_str(s).ok())?;
-    let plan_id = event
-        .payload
-        .get("plan_id")
-        .and_then(|v| v.as_str())
-        .and_then(|s| Uuid::parse_str(s).ok())?;
-    Some((task_id, plan_id))
 }
 
 fn task_event(

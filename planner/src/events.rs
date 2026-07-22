@@ -68,3 +68,21 @@ pub const GOAL_CANCEL: &str = "goal.cancel";
 pub fn event(kind: &str, source: &str, payload: Value, trace: Uuid) -> Event {
     Event::new(kind, source, payload).with_trace(trace)
 }
+
+/// Extract `(task_id, plan_id)` from an event payload.
+///
+/// Returns `None` if either key is missing or not a valid UUID.
+/// Canonical order is `(task_id, plan_id)`.
+pub fn extract_ids(event: &Event) -> Option<(Uuid, Uuid)> {
+    let task_id = event
+        .payload
+        .get("task_id")
+        .and_then(|v| v.as_str())
+        .and_then(|s| Uuid::parse_str(s).ok())?;
+    let plan_id = event
+        .payload
+        .get("plan_id")
+        .and_then(|v| v.as_str())
+        .and_then(|s| Uuid::parse_str(s).ok())?;
+    Some((task_id, plan_id))
+}
