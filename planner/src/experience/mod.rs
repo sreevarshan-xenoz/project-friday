@@ -1,29 +1,45 @@
 //! Experience Layer: read-mostly architecture for execution history.
 //!
-//! This module implements the four invariants from ADR-0008:
+//! This module implements the five invariants from ADR-0008:
 //!
 //! 1. **Adapters annotate, kernel emits** — inherited from M9.3/M10.2.
 //! 2. **Experience never changes execution** — observe only, never mutate.
 //! 3. **Timeline is immutable** — append-only, no updates, no deletes.
 //! 4. **Experience stores semantics** — `filesystem.write`, not "mouse click."
+//! 5. **Reflection never edits history** — produces records, not mutations.
 //!
-//! The Timeline is the canonical source of truth. Recorder and Reflection are
-//! pure derivations that read the timeline and produce output.
+//! The Timeline is the canonical source of truth. Recorder, Reflection,
+//! Indexer, and Service are pure derivations over the timeline.
 
 pub mod timeline;
 pub mod recorder;
 pub mod reflection;
+pub mod indexer;
+pub mod service;
 
 pub use timeline::TimelineStore;
+pub use indexer::ExperienceIndexer;
+pub use service::ExperienceService;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use std::collections::HashMap;
+
+// ---------------------------------------------------------------------------
+// Timeline types
+// ---------------------------------------------------------------------------
+
+/// Schema version for forward-compatible evolution. Increment when the
+/// `TimelineEntry` format changes; old entries keep their version.
+pub const TIMELINE_VERSION: u32 = 1;
+
 /// One immutable fact in the execution timeline. Append-only — once created,
 /// never modified or deleted.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimelineEntry {
+    pub version: u32,
     pub id: Uuid,
     pub timestamp: DateTime<Utc>,
     pub goal_id: Uuid,
@@ -40,7 +56,19 @@ pub struct TimelineEntry {
     /// Links to the preceding entry in the same execution, forming a linked
     /// list. `None` for the first entry of a goal.
     pub parent: Option<Uuid>,
+    /// Free-form tags for future enrichment (e.g. `["readme", "docs"]`).
+    /// Empty by default; the indexer may populate these.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Opaque annotations for future components. Keys are component names,
+    /// values are arbitrary JSON. Empty by default.
+    #[serde(default)]
+    pub annotations: HashMap<String, serde_json::Value>,
 }
+
+// ---------------------------------------------------------------------------
+// Workflow types
+// ---------------------------------------------------------------------------
 
 /// A successful semantic workflow extracted by the Recorder from a completed
 /// goal's timeline entries.
@@ -55,6 +83,10 @@ pub struct Workflow {
     pub created_at: DateTime<Utc>,
     pub source_goal_id: Uuid,
 }
+
+// ---------------------------------------------------------------------------
+// Reflection types
+// ---------------------------------------------------------------------------
 
 /// A reflection insight derived from a timeline entry. Reflection never edits
 /// the timeline — it produces these records as separate artifacts.
@@ -82,4 +114,57 @@ pub enum ReflectionCategory {
     GitOperation,
     /// Informational observation.
     Observation,
+}
+
+// ---------------------------------------------------------------------------
+// Retrieval types (M12.1)
+// ---------------------------------------------------------------------------
+
+/// Outcome of a past goal attempt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GoalOutcome {
+    Success,
+    Failure,
+    PartiallyCompleted,
+    Cancelled,
+    Unknown,
+}
+
+/// Why an experience matched the current query.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MatchReason {
+    /// Same goal title or intent.
+    SameGoal,
+    /// Similar goal title (fuzzy match).
+    SimilarGoal,
+    /// Same workflow was used.
+    SameWorkflow,
+    /// Overlapping capability sequence.
+    SimilarCapabilities,
+    /// Most recent attempt at this goal.
+    RecentAttempt,
+}
+
+/// A structured match from the experience layer. The planner receives these
+/// without knowing how retrieval worked.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExperienceMatch {
+    /// How strongly this match applies (0.0–1.0).
+    pub confidence: f64,
+    /// Why this matched.
+    pub match_reason: MatchReason,
+    /// The goal this experience relates to.
+    pub goal_id: Uuid,
+    /// If a workflow was used, which one.
+    pub workflow_id: Option<Uuid>,
+    /// What happened.
+    pub outcome: GoalOutcome,
+    /// Reflections from this execution.
+    pub reflection: Vec<ReflectionRecord>,
+    /// Artifact paths produced.
+    pub artifacts: Vec<String>,
+    /// If a git commit was made, which hash.
+    pub commit_hash: Option<String>,
+    /// The goal title/intent for display.
+    pub goal_title: String,
 }

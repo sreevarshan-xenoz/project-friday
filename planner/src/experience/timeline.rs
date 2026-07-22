@@ -14,7 +14,7 @@ use chrono::Utc;
 use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
 use uuid::Uuid;
 
-use super::{ReflectionRecord, TimelineEntry, Workflow};
+use super::{ReflectionRecord, TimelineEntry, Workflow, TIMELINE_VERSION};
 
 const TIMELINE_TABLE: TableDefinition<&str, &str> = TableDefinition::new("timeline_entries");
 const WORKFLOW_TABLE: TableDefinition<&str, &str> = TableDefinition::new("workflows");
@@ -44,7 +44,7 @@ impl TimelineStore {
     // -- Timeline (append-only) --
 
     /// Append one entry to the timeline. Returns the entry's id.
-    pub fn append(&self, mut entry: TimelineEntry) -> anyhow::Result<Uuid> {
+    pub fn append(&self, entry: TimelineEntry) -> anyhow::Result<Uuid> {
         let id = entry.id;
         let db = self.db.lock().expect("timeline store poisoned");
         let txn = db
@@ -79,6 +79,7 @@ impl TimelineStore {
         parent: Option<Uuid>,
     ) -> anyhow::Result<TimelineEntry> {
         let entry = TimelineEntry {
+            version: TIMELINE_VERSION,
             id: Uuid::new_v4(),
             timestamp: Utc::now(),
             goal_id,
@@ -88,6 +89,8 @@ impl TimelineStore {
             capability: capability.to_string(),
             metadata,
             parent,
+            tags: Vec::new(),
+            annotations: std::collections::HashMap::new(),
         };
         self.append(entry.clone())?;
         Ok(entry)
