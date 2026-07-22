@@ -10,7 +10,7 @@
 use uuid::Uuid;
 
 use friday_planner::experience::{
-    ExperienceEvidence, ExperienceMatch, GoalOutcome, MatchReason, PlanningContext,
+    ExperienceEvidence, ExperienceMatch, GoalOutcome, MatchReason, ExperienceContext,
     PlanningGoal, TrustComponents,
 };
 use friday_planner::planning::planners::context::{
@@ -59,7 +59,7 @@ fn plan_context_with_outcome(outcome: GoalOutcome) -> PlanContext {
         goal_title: "test goal".to_string(),
     };
 
-    let planning_ctx = PlanningContext {
+    let planning_ctx = ExperienceContext {
         goal: PlanningGoal {
             id: Uuid::new_v4(),
             title: "test goal".to_string(),
@@ -138,7 +138,7 @@ fn previous_partial_completion_detected() {
 fn empty_evidence_identical_to_no_experience() {
     let no_experience = base_plan_context();
     let empty_evidence = PlanContext {
-        experience: Some(PlanningContext {
+        experience: Some(ExperienceContext {
             goal: PlanningGoal {
                 id: Uuid::new_v4(),
                 title: "test".to_string(),

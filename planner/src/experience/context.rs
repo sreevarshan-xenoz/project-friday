@@ -1,10 +1,10 @@
 //! Planning Context (M13).
 //!
-//! `PlanningContext` is the single value object the planner receives.
+//! `ExperienceContext` is the single value object the planner receives.
 //! Everything the planner needs to make a decision lives here.
 //! Nothing the planner doesn't need lives here.
 //!
-//! The context is assembled by `PlanningContextBuilder` from an
+//! The context is assembled by `ExperienceContextBuilder` from an
 //! `ExperienceProvider` and a planning request. It is immutable
 //! after construction — a snapshot of evidence for one planning session.
 
@@ -24,7 +24,7 @@ use super::{
 /// Immutable snapshot of everything the planner needs.
 /// No setters. No mutation after construction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlanningContext {
+pub struct ExperienceContext {
     /// The goal the planner must produce a plan for.
     pub goal: PlanningGoal,
     /// Available capabilities. Caller provides.
@@ -104,11 +104,11 @@ pub enum EvidenceSource {
 // Builder (stateless)
 // ---------------------------------------------------------------------------
 
-/// Stateless builder. Assembles a PlanningContext from a provider and request.
-pub struct PlanningContextBuilder;
+/// Stateless builder. Assembles an ExperienceContext from a provider and request.
+pub struct ExperienceContextBuilder;
 
-impl PlanningContextBuilder {
-    /// Build a PlanningContext from an experience provider and planning request.
+impl ExperienceContextBuilder {
+    /// Build an ExperienceContext from an experience provider and planning request.
     ///
     /// The builder queries the provider, normalizes results, filters duplicates,
     /// and packages evidence. It does NOT rank, choose, or discard evidence —
@@ -119,7 +119,7 @@ impl PlanningContextBuilder {
         capabilities: Vec<String>,
         constraints: Vec<String>,
         registered_capabilities: &[String],
-    ) -> PlanningContext {
+    ) -> ExperienceContext {
         let similar = provider.similar(&goal.title, 5);
         let previous = provider.last_attempt(goal.id);
         let workflows = provider.successful_workflows(&goal.title);
@@ -185,7 +185,7 @@ impl PlanningContextBuilder {
             })
             .collect();
 
-        PlanningContext {
+        ExperienceContext {
             goal,
             capabilities,
             constraints,

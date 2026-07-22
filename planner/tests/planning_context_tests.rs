@@ -1,12 +1,12 @@
 //! Planning Context tests (M13).
 //!
-//! Tests the PlanningContextBuilder with a mock ExperienceProvider.
+//! Tests the ExperienceContextBuilder with a mock ExperienceProvider.
 
 use chrono::Utc;
 use uuid::Uuid;
 
 use friday_planner::experience::{
-    EvidenceSource, ExperienceMatch, GoalOutcome, MatchReason, PlanningContextBuilder,
+    EvidenceSource, ExperienceMatch, GoalOutcome, MatchReason, ExperienceContextBuilder,
     PlanningGoal, ReflectionRecord, TrustComponents, WorkflowSuggestion,
 };
 use friday_planner::experience::provider::ExperienceProvider;
@@ -105,7 +105,7 @@ fn builder_with_empty_provider() {
         description: "Test description".to_string(),
     };
 
-    let ctx = PlanningContextBuilder::build(
+    let ctx = ExperienceContextBuilder::build(
         &provider,
         goal,
         vec!["mcp:filesystem.read".to_string()],
@@ -138,7 +138,7 @@ fn builder_with_similar_experiences() {
         description: "Support filesystem operations".to_string(),
     };
 
-    let ctx = PlanningContextBuilder::build(
+    let ctx = ExperienceContextBuilder::build(
         &provider,
         goal,
         vec![],
@@ -164,7 +164,7 @@ fn builder_with_previous_outcome() {
         description: "Support filesystem operations".to_string(),
     };
 
-    let ctx = PlanningContextBuilder::build(
+    let ctx = ExperienceContextBuilder::build(
         &provider,
         goal,
         vec![],
@@ -194,7 +194,7 @@ fn builder_collects_reflections_from_similar() {
         description: "Support filesystem operations".to_string(),
     };
 
-    let ctx = PlanningContextBuilder::build(
+    let ctx = ExperienceContextBuilder::build(
         &provider,
         goal,
         vec![],
@@ -241,7 +241,7 @@ fn builder_builds_replay_candidates() {
         "mcp:git.git_commit".to_string(),
     ];
 
-    let ctx = PlanningContextBuilder::build(
+    let ctx = ExperienceContextBuilder::build(
         &provider,
         goal,
         vec![],
@@ -290,7 +290,7 @@ fn builder_replay_candidate_with_missing_capabilities() {
         "mcp:git.git_commit".to_string(),
     ];
 
-    let ctx = PlanningContextBuilder::build(
+    let ctx = ExperienceContextBuilder::build(
         &provider,
         goal,
         vec![],
@@ -319,7 +319,7 @@ fn builder_context_is_immutable_snapshot() {
         description: "Test".to_string(),
     };
 
-    let ctx = PlanningContextBuilder::build(
+    let ctx = ExperienceContextBuilder::build(
         &provider,
         goal,
         vec!["cap1".to_string()],
@@ -343,7 +343,7 @@ fn builder_preserves_goal_and_constraints() {
         description: "Must be done carefully".to_string(),
     };
 
-    let ctx = PlanningContextBuilder::build(
+    let ctx = ExperienceContextBuilder::build(
         &provider,
         goal.clone(),
         vec!["mcp:filesystem.read".to_string(), "mcp:git.git_status".to_string()],
@@ -370,7 +370,7 @@ fn builder_serializes_and_deserializes() {
         description: "Test".to_string(),
     };
 
-    let ctx = PlanningContextBuilder::build(
+    let ctx = ExperienceContextBuilder::build(
         &provider,
         goal,
         vec![],
@@ -379,7 +379,7 @@ fn builder_serializes_and_deserializes() {
     );
 
     let json = serde_json::to_string(&ctx).unwrap();
-    let deserialized: friday_planner::experience::PlanningContext = serde_json::from_str(&json).unwrap();
+    let deserialized: friday_planner::experience::ExperienceContext = serde_json::from_str(&json).unwrap();
 
     assert_eq!(deserialized.goal.title, "Test");
     assert_eq!(deserialized.evidence.similar_experiences.len(), 1);

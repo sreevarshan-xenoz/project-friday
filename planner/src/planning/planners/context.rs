@@ -5,7 +5,7 @@
 
 use crate::execution::capability_registry::Risk;
 use crate::execution::lifecycle::ExecutionBudget;
-use crate::experience::{GoalOutcome, PlanningContext};
+use crate::experience::{GoalOutcome, ExperienceContext};
 
 /// A capability the planner is allowed to use, stripped to what the model needs:
 /// its canonical id, a human description, and its risk class.
@@ -60,7 +60,7 @@ pub struct PlanContext {
     /// Experience evidence from the Experience Layer. `None` when experience
     /// is unavailable or disabled. Planners may ignore this field entirely —
     /// it carries optional historical evidence, not requirements.
-    pub experience: Option<PlanningContext>,
+    pub experience: Option<ExperienceContext>,
 }
 
 impl PlanContext {
@@ -89,17 +89,17 @@ impl PlanContext {
 
 /// Read-only view into experience evidence. Provides convenience methods
 /// so the planner doesn't need to know the internal structure of
-/// `PlanningContext` or `ExperienceEvidence`.
+/// `ExperienceContext` or `ExperienceEvidence`.
 ///
 /// This view is advisory — it surfaces facts, never prescribes actions.
 /// The planner decides what to do with the information.
 #[derive(Debug, Clone)]
 pub struct PlanningEvidenceView<'a> {
-    inner: Option<&'a PlanningContext>,
+    inner: Option<&'a ExperienceContext>,
 }
 
 impl<'a> PlanningEvidenceView<'a> {
-    fn new(ctx: Option<&'a PlanningContext>) -> Self {
+    fn new(ctx: Option<&'a ExperienceContext>) -> Self {
         Self { inner: ctx }
     }
 

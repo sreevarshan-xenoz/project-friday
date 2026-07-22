@@ -32,8 +32,8 @@ pub use replay::{ApplicabilityChecker, ApplicabilityResult, ReplayEngine, Workfl
 pub use metrics::{ExperienceMetrics, MetricsSummary};
 pub use provider::ExperienceProvider;
 pub use context::{
-    PlanningContext, PlanningGoal, ExperienceEvidence, SuccessfulWorkflow, ReplayCandidate,
-    EvidenceProvenance, EvidenceSource, PlanningContextBuilder,
+    ExperienceContext, PlanningGoal, ExperienceEvidence, SuccessfulWorkflow, ReplayCandidate,
+    EvidenceProvenance, EvidenceSource, ExperienceContextBuilder,
 };
 
 use chrono::{DateTime, Utc};
