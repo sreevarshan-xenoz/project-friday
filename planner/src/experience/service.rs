@@ -146,7 +146,7 @@ impl ExperienceService {
             .similar(goal_title, max_results)
             .into_iter()
             .map(|(key, score)| {
-                let record = self.indexer.get_record(key.0).unwrap();
+                let record = self.indexer.get_record_by_key(key).unwrap();
                 MatchBuilder::build(record, MatchReason::SimilarGoal, score)
             })
             .collect()
@@ -265,7 +265,7 @@ impl ExperienceProvider for ExperienceService {
             .similar(goal_title, max_results)
             .into_iter()
             .map(|(key, score)| {
-                let record = self.indexer.get_record(key.0).unwrap();
+                let record = self.indexer.get_record_by_key(key).unwrap();
                 MatchBuilder::build(record, MatchReason::SimilarGoal, score)
             })
             .collect()

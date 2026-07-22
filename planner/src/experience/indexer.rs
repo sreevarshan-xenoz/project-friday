@@ -236,9 +236,16 @@ impl ExperienceIndexer {
         scored
     }
 
-    /// Get the chronological record for a goal.
+    /// Get the chronological record for a specific goal+plan key.
+    pub fn get_record_by_key(&self, key: GoalKey) -> Option<&GoalRecord> {
+        self.chronological.get(&key)
+    }
+
+    /// Get the chronological record for a goal (any plan).
+    /// When multiple plans exist for the same goal, returns the first match
+    /// (by BTreeMap key order). Prefer `get_record_by_key` when the caller
+    /// has the full GoalKey.
     pub fn get_record(&self, goal_id: uuid::Uuid) -> Option<&GoalRecord> {
-        // Search across all plan_ids for this goal_id.
         for (key, record) in &self.chronological {
             if key.0 == goal_id {
                 return Some(record);
