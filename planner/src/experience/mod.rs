@@ -17,11 +17,13 @@ pub mod reflection;
 pub mod indexer;
 pub mod service;
 pub mod miner;
+pub mod suggestion;
 
 pub use timeline::TimelineStore;
 pub use indexer::ExperienceIndexer;
 pub use service::ExperienceService;
 pub use miner::{PatternMiner, Pattern};
+pub use suggestion::{SuggestionEngine, SuggestionPolicy, WorkflowSuggestion};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

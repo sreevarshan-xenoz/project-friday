@@ -13,6 +13,7 @@
 
 use super::indexer::ExperienceIndexer;
 use super::miner::PatternMiner;
+use super::suggestion::{SuggestionEngine, SuggestionPolicy, WorkflowSuggestion};
 use super::{
     ExperienceMatch, GoalOutcome, MatchReason, Pattern, ReflectionRecord, TrustComponents,
     TimelineEntry, Workflow,
@@ -101,6 +102,7 @@ pub struct ExperienceService {
     indexer: ExperienceIndexer,
     miner: PatternMiner,
     patterns: Vec<Pattern>,
+    suggestion_engine: SuggestionEngine,
 }
 
 impl ExperienceService {
@@ -109,6 +111,17 @@ impl ExperienceService {
             indexer: ExperienceIndexer::new(),
             miner: PatternMiner::new(),
             patterns: Vec::new(),
+            suggestion_engine: SuggestionEngine::new(SuggestionPolicy::default()),
+        }
+    }
+
+    /// Create with a custom suggestion policy.
+    pub fn with_policy(policy: SuggestionPolicy) -> Self {
+        Self {
+            indexer: ExperienceIndexer::new(),
+            miner: PatternMiner::new(),
+            patterns: Vec::new(),
+            suggestion_engine: SuggestionEngine::new(policy),
         }
     }
 
@@ -223,6 +236,19 @@ impl ExperienceService {
     /// Number of mined patterns.
     pub fn pattern_count(&self) -> usize {
         self.patterns.len()
+    }
+
+    // -- Workflow Suggestions (M12.3) --
+
+    /// Generate workflow suggestions from mined patterns.
+    /// Returns suggestions sorted by confidence descending.
+    pub fn suggestions(&self) -> Vec<WorkflowSuggestion> {
+        self.suggestion_engine.suggest(&self.patterns)
+    }
+
+    /// Number of workflow suggestions.
+    pub fn suggestion_count(&self) -> usize {
+        self.suggestion_engine.suggest(&self.patterns).len()
     }
 }
 

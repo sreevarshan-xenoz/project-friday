@@ -14,6 +14,7 @@ use uuid::Uuid;
 use friday_planner::experience::indexer::ExperienceIndexer;
 use friday_planner::experience::miner::PatternMiner;
 use friday_planner::experience::service::ExperienceService;
+use friday_planner::experience::suggestion::{SuggestionEngine, SuggestionPolicy};
 use friday_planner::experience::{GoalOutcome, MatchReason, ReflectionRecord, TIMELINE_VERSION};
 use friday_planner::experience::TimelineStore;
 
@@ -507,4 +508,90 @@ fn service_reliable_patterns() {
     let reliable = svc.reliable_patterns(0.8);
     assert!(!reliable.is_empty(), "should find reliable patterns");
     assert!(reliable.iter().all(|p| p.success_rate >= 0.8));
+}
+
+// ---------------------------------------------------------------------------
+// M12.3: Workflow Suggestions
+// ---------------------------------------------------------------------------
+
+#[test]
+fn suggestion_engine_rejects_low_frequency() {
+    use friday_planner::experience::miner::Pattern;
+
+    let engine = SuggestionEngine::new(SuggestionPolicy::default());
+    let patterns = vec![Pattern {
+        id: Uuid::new_v4(),
+        capabilities: vec!["fs.write".into(), "git.commit".into()],
+        frequency: 2,
+        success_rate: 1.0,
+        last_seen: chrono::Utc::now(),
+        average_duration_secs: None,
+        source_goal_ids: vec![],
+    }];
+    let suggestions = engine.suggest(&patterns);
+    assert!(suggestions.is_empty(), "freq 2 < min 5");
+}
+
+#[test]
+fn suggestion_engine_accepts_strong_pattern() {
+    use friday_planner::experience::miner::Pattern;
+
+    let engine = SuggestionEngine::new(SuggestionPolicy::default());
+    let patterns = vec![Pattern {
+        id: Uuid::new_v4(),
+        capabilities: vec!["fs.write".into(), "git.commit".into()],
+        frequency: 10,
+        success_rate: 1.0,
+        last_seen: chrono::Utc::now(),
+        average_duration_secs: None,
+        source_goal_ids: vec![],
+    }];
+    let suggestions = engine.suggest(&patterns);
+    assert_eq!(suggestions.len(), 1);
+    assert!(suggestions[0].confidence > 0.5);
+    assert!(suggestions[0].reasons.iter().any(|r| r.contains("10 times")));
+    assert!(suggestions[0].reasons.iter().any(|r| r.contains("100%")));
+}
+
+#[test]
+fn service_suggestions_from_rebuild() {
+    let (store, _dir) = temp_store();
+    let base = chrono::Utc::now();
+
+    // Create 5 goals with the same successful sequence.
+    for i in 0..5 {
+        let goal = Uuid::new_v4();
+        let offset = chrono::Duration::seconds(i * 10);
+        store.append(make_entry_at(goal, Uuid::new_v4(), "exec.action", "fs.write", serde_json::json!({}), base + offset)).unwrap();
+        store.append(make_entry_at(goal, Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), base + offset + chrono::Duration::seconds(1))).unwrap();
+        store.append(make_entry_at(goal, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + offset + chrono::Duration::seconds(2))).unwrap();
+    }
+
+    let mut svc = ExperienceService::new();
+    svc.rebuild(&store.all_entries().unwrap(), &[], &[]);
+
+    let suggestions = svc.suggestions();
+    assert!(!suggestions.is_empty(), "should have suggestions from 5 repeated successes");
+    assert!(suggestions[0].reasons.iter().any(|r| r.contains("5 times")));
+}
+
+#[test]
+fn service_with_lenient_policy() {
+    let (store, _dir) = temp_store();
+    let base = chrono::Utc::now();
+
+    // Only 3 goals — too few for default policy, but OK for lenient.
+    for i in 0..3 {
+        let goal = Uuid::new_v4();
+        let offset = chrono::Duration::seconds(i * 10);
+        store.append(make_entry_at(goal, Uuid::new_v4(), "exec.action", "a", serde_json::json!({}), base + offset)).unwrap();
+        store.append(make_entry_at(goal, Uuid::new_v4(), "exec.action", "b", serde_json::json!({}), base + offset + chrono::Duration::seconds(1))).unwrap();
+        store.append(make_entry_at(goal, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + offset + chrono::Duration::seconds(2))).unwrap();
+    }
+
+    let mut svc = ExperienceService::with_policy(SuggestionPolicy::lenient());
+    svc.rebuild(&store.all_entries().unwrap(), &[], &[]);
+
+    let suggestions = svc.suggestions();
+    assert!(!suggestions.is_empty(), "lenient policy should accept freq 3");
 }
