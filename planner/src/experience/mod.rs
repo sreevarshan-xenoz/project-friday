@@ -19,6 +19,7 @@ pub mod service;
 pub mod miner;
 pub mod suggestion;
 pub mod replay;
+pub mod metrics;
 
 pub use timeline::TimelineStore;
 pub use indexer::ExperienceIndexer;
@@ -26,6 +27,7 @@ pub use service::ExperienceService;
 pub use miner::{PatternMiner, Pattern};
 pub use suggestion::{SuggestionEngine, SuggestionPolicy, WorkflowSuggestion};
 pub use replay::{ApplicabilityChecker, ApplicabilityResult, ReplayEngine, WorkflowExecutionReport};
+pub use metrics::{ExperienceMetrics, MetricsSummary};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
