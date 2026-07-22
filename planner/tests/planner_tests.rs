@@ -250,3 +250,106 @@ async fn llm_backed_pipeline_produces_and_runs_plan() {
     assert!(saw_plan, "an LLM-produced plan should be published");
     assert_eq!(completed, 2, "both tasks should run to completion via supervisor");
 }
+
+#[tokio::test]
+async fn llm_planner_handles_experience_context() {
+    use friday_planner::experience::{
+        context::{ExperienceContext, ExperienceEvidence, PlanningGoal, SuccessfulWorkflow},
+        ExperienceMatch, GoalOutcome, MatchReason, ReflectionCategory, ReflectionRecord,
+        TrustComponents,
+    };
+    use uuid::Uuid;
+
+    let plan_json = r#"{
+        "tasks": [
+            {"name": "Read file", "capability": "filesystem.read_file",
+             "params": {"path": "test.txt"}, "depends_on_indices": []}
+        ]
+    }"#;
+
+    let goal_id = Uuid::new_v4();
+    let experience = ExperienceContext {
+        goal: PlanningGoal {
+            id: goal_id,
+            title: "Read test file".into(),
+            description: "Read the test file".into(),
+        },
+        capabilities: vec!["filesystem.read_file".into()],
+        constraints: vec![],
+        evidence: ExperienceEvidence {
+            similar_experiences: vec![ExperienceMatch {
+                similarity_score: 0.85,
+                trust_score: 0.7,
+                trust_components: TrustComponents {
+                    similarity: 0.85,
+                    recency: 0.9,
+                    outcome_quality: 1.0,
+                    repetition: 0.5,
+                },
+                match_reason: MatchReason::SimilarGoal,
+                goal_id: Uuid::new_v4(),
+                workflow_id: None,
+                outcome: GoalOutcome::Success,
+                reflection: vec![ReflectionRecord {
+                    id: Uuid::new_v4(),
+                    timeline_entry_id: Uuid::new_v4(),
+                    insight: "File reads are safe and fast".into(),
+                    category: ReflectionCategory::Success,
+                    timestamp: chrono::Utc::now(),
+                }],
+                artifacts: vec![],
+                commit_hash: None,
+                goal_title: "Read config file".into(),
+            }],
+            previous_outcome: None,
+            successful_workflows: vec![SuccessfulWorkflow {
+                title: "Read then summarize".into(),
+                capabilities: vec!["filesystem.read_file".into()],
+                outcome: GoalOutcome::Success,
+            }],
+            workflow_suggestions: vec![],
+            replay_candidates: vec![],
+            reflections: vec![],
+            provenance: vec![],
+        },
+    };
+
+    let planner = LlmPlanner::new(
+        Box::new(MockBackend::new(plan_json)),
+        Arc::new(registry_with_natives()),
+        ExecutionBudget::default(),
+        RiskPolicy::default(),
+    );
+
+    let intent = parse("Read test file");
+    let ctx = friday_planner::planning::planners::context::PlanContext {
+        intent_raw: intent.raw.clone(),
+        capabilities: vec![],
+        budget: ExecutionBudget::default(),
+        workspace: WorkspaceContext::default(),
+        risk_policy: RiskPolicy::default(),
+        experience: Some(experience),
+    };
+
+    // Planner should produce a valid plan even with experience context present.
+    let graph = planner
+        .create_plan(&intent, &ctx)
+        .await
+        .expect("plan should validate with experience context");
+    assert_eq!(graph.tasks.len(), 1);
+
+    // Also verify that experience=None still works (graceful degradation).
+    let ctx_no_exp = friday_planner::planning::planners::context::PlanContext {
+        intent_raw: intent.raw.clone(),
+        capabilities: vec![],
+        budget: ExecutionBudget::default(),
+        workspace: WorkspaceContext::default(),
+        risk_policy: RiskPolicy::default(),
+        experience: None,
+    };
+    let graph2 = planner
+        .create_plan(&intent, &ctx_no_exp)
+        .await
+        .expect("plan should validate without experience");
+    assert_eq!(graph2.tasks.len(), 1);
+}
