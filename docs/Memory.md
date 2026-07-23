@@ -63,3 +63,20 @@ machine runs the `x86_64-pc-windows-gnu` Rust toolchain with no C compiler in
 is storage-agnostic, so a SQLite (or any other) backend can be dropped in later
 behind the same interface without touching callers.
 
+## Experience engine (procedural memory)
+
+In addition to the five `MemoryLayerKind` tiers, FRIDAY stores **execution
+experiences** — structured records of plan runs (`ExecutionExperience` /
+`ExperienceEngine` in `core/src/memory/experience.rs`). Each experience includes
+intent, plan id, success, predicted vs actual duration (timing drift), per-task
+outcomes, and resource forecast vs actual. Context Builder and future learning
+read this tier. Spec: `specs/experience.md`.
+
+## Status
+
+| Piece | State |
+| ----- | ----- |
+| Working / Session / Long-term / Vector | ✅ Implemented |
+| Experience engine | ✅ Implemented |
+| Knowledge Graph depth | 🚧 Kind reserved; full engine planned (M5.6) |
+

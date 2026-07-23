@@ -3,6 +3,13 @@
 This document is part of the frozen architecture. Changes require an explicit
 review and a version bump.
 
+> **Implementation:** `friday-planner` (`planner/`). Event names in code and
+> `specs/events.md` use `intent.created` / `verification.*` (and task lifecycle
+> events); some older prose below still says `intent.resolved` / `verify.*` —
+> treat `specs/events.md` as the wire vocabulary. Rule-based engines ship today;
+> model-driven planning plugs in via `friday-intelligence` behind the same bus
+> contracts.
+
 ## Principle
 
 Reasoning is separated from execution. The LLM decides **what** to do;

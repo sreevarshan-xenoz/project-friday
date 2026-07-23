@@ -18,10 +18,13 @@ capabilities.
 ## What FRIDAY is
 
 - A durable, event-driven runtime that routes work between swappable capabilities.
-- A memory system that remembers across sessions the way people do.
+- A memory system that remembers across sessions the way people do (including
+  procedural **experience** of past plans).
 - A permission layer that keeps autonomous action safe on a real machine.
-- A platform: voice, vision, browser, terminal, coding, and Windows automation
-  are all replaceable plugins.
+- A platform: terminal, filesystem, git, Windows automation, MCP tools, and
+  (planned) voice, vision, browser, and coding — all replaceable services.
+- A distributed control surface: phone clients talk a versioned **Mobile
+  Protocol** to a PC-hosted daemon; intelligence stays on the desktop.
 
 ## What FRIDAY is not
 
@@ -37,6 +40,7 @@ Reference dev machine: RTX 3060 6GB, Ryzen 7, 32GB RAM, 1TB SSD.
 
 ## Non-goals (for now)
 
-- Cloud-only hosting.
-- Mobile clients.
+- Cloud-only hosting (local-first remains the product default).
 - Replacing the OS; FRIDAY operates *within* Windows, it does not take it over.
+- Putting planner / kernel logic inside thin clients (Android is a console, not
+  a second brain).

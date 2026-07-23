@@ -65,12 +65,12 @@ is `specs/benchmark.md`. Run it with `CHAOS=1 cargo run -p friday-benchmark -- 6
 - Plans are a **DAG**; every task has an explicit lifecycle (`TaskState`).
 - End-to-end pipeline test against a `MockExecutor` (happy path + retry path).
 
-## M4 — Execution Plugins 🔶 (in progress)
+## M4 — Execution Plugins / Agent Kernel ✅ (browser still open as M6)
 
-Split into five sub-milestones, built strictly **generic-first** (the Action
-Runtime knows nothing about terminals/files; every plugin consumes a normalized
-`ActionRequest`/`ActionResult`, and every action funnels through the permission
-gate + audit engine before reaching an adapter).
+Split into sub-milestones, built strictly **generic-first** (the Action Runtime /
+AgentKernel knows nothing about terminals/files; every plugin consumes a
+normalized `ActionRequest`/`ActionResult`, and every action funnels through the
+permission gate + audit engine before reaching an adapter).
 
 - **M4.1 — Action Runtime** ✅ — `friday-actions` crate (`services/action-runtime`).
   Generic dispatcher subscribing to `exec.action`: it translates the planner's
@@ -129,7 +129,7 @@ and wired into the `AgentKernel`.
 > inheritance/merge, lifecycle transitions, resource acquire/release,
 > cancellation propagation, metrics recording).
 
-## M4.5 — Execution Plugins (three independent deliverables) 🔶
+## M4.5 — Execution Plugins (three independent deliverables)
 
 Built one at a time to validate the stable kernel before introducing
 OS-specific or browser complexity.
@@ -150,11 +150,12 @@ OS-specific or browser complexity.
   async + lifecycle-aware (maps onto the kernel `LifecycleManager`). A capability
   manifest is shipped (feeds M4.6). Design locked in `docs/WindowsBridge.md`;
   covered by cross-platform mock-host tests + a real-Notepad harness (skipped in
-  CI, opt-in via `FRIDAY_WINDOWS_HOST_TEST`).
-- **M4.5.3 — Browser Runtime** 🚧 — a **browser session manager**, not "Chrome
-  automation": `BrowserRuntime → Session → Tab → Page → DOM`. Actions like
-  `OpenTab`, `Navigate`, `Click`, `Fill`, `Scroll`, `WaitFor`, `Screenshot`,
-  `ExtractText`, `EvaluateScript`. Every action is session-aware.
+  CI, opt-in via `FRIDAY_WINDOWS_HOST_TEST`). Qualification evidence accumulates
+  under `benchmarks/windows-qual/` via `services/windows-qual`.
+- **M4.5.3 — Browser Runtime** ⏳ — deferred to **M6**. A **browser session
+  manager**, not "Chrome automation": `BrowserRuntime → Session → Tab → Page →
+  DOM`. Actions like `OpenTab`, `Navigate`, `Click`, `Fill`, `Scroll`,
+  `WaitFor`, `Screenshot`, `ExtractText`, `EvaluateScript`. Session-aware.
 
 ## M4.6 — Capability Intelligence ✅
 
@@ -220,7 +221,7 @@ and economics* of every service. Implemented in the `friday-capabilities` crate
 > trait is unchanged; "service" is the organizing term above it. The execution
 > runtime type is `AgentKernel` (`friday-actions`).
 
-## M4.7 — Plan Simulation Engine 🚧
+## M4.7 — Plan Simulation Engine ✅
 
 Not "Dry Run" — a whole **subsystem** that simulates an entire execution before it
 happens, like a CPU simulator for plans. Dry Run is only one feature of it. The
@@ -228,7 +229,7 @@ planner produces a `TaskGraph`; the engine virtualizes every action by asking ea
 capability *"what would happen?"* — the filesystem reports 143 files deleted, git
 3 commits, browser 4 tabs, windows "Notepad launched" — with **no side effects**.
 
-Implemented as a new crate `friday-simulation` (`services/simulation`) with:
+Implemented as crate `friday-simulation` (`services/simulation`) with:
 
 - **`simulator`** — walks the `TaskGraph`, calls each capability's `simulate`
   (virtual execution), accumulates `SimulatedEffect`s into a `SimulationReport`.
@@ -248,12 +249,16 @@ Capabilities must expose a `simulate` path; the `dry_run` flag gates providers t
 cannot simulate safely. `AgentKernel`'s `ExecutionContext` already carries the
 hooks to no-op side effects. Full spec: `specs/simulation.md`.
 
-## M4.8 — Workflow Recorder 🚧
+## M4.8 — Experience Engine (Procedural Memory) ✅
 
-Record successfully executed plans as reusable workflows. Built on the
-`CapabilityGraph` (which tasks map to which capabilities) so a recorded workflow
-is portable across providers — if Browser later beats Windows for `open_url`, the
-same workflow re-routes automatically.
+Successfully executed plans are stored as structured **execution experiences**
+(`ExecutionExperience` / `ExperienceEngine` in `friday-core`), including timing
+drift, per-task outcomes, and resource forecast vs actual. This is FRIDAY's
+procedural memory tier and feeds Context Builder + future learning.
+
+> **Workflow Recorder** (portable reusable workflows on `CapabilityGraph`) remains
+> a follow-on on top of experience data — not yet a separate shipped product
+> surface.
 
 ## M4.9 — Plan Optimizer 🚧
 
@@ -262,9 +267,9 @@ higher-ranked providers (`score = reliability*100 - latency*0.05 - cost`), respe
 `dependencies`/`resource_requirements`/`supports_parallel` for concurrency, and
 skip `Recovering`/`Disabled` providers (via `ServiceOrchestrator` health). Uses
 `CostEstimator` to choose the cheapest safe plan and to surface trade-offs to the
-user before execution. Mostly statistics once M4.7 exists: it reuses the
-simulator's `validator` + `optimizer` + `estimator` and adds learned weights from
-Simulation `report`s (M9).
+user before execution. First-pass optimizers already live inside
+`friday-simulation` (`optimizer`, `estimator`); learned weights from simulation
+`report`s and experience drift land with M9.
 
 > **Event envelope (deferred, non-breaking):** rather than retrofitting
 > `execution_id`/`trace_id` onto every frozen event type, future work wraps
@@ -273,23 +278,21 @@ Simulation `report`s (M9).
 > tracing, replay, and correlation. This is the preferred path over editing the
 > locked event types.
 
-## M4.10 — Context Builder 🚧
+## M4.10 — Context Builder ✅
 
-The missing architectural piece before M5. M5 must **not** be `User → LLM`. It is
-`User → Context Builder → LLM`. The Context Builder assembles everything the model
+M5 is **not** `User → LLM`. It is `User → Context Builder → LLM`. The Context
+Builder (`friday-context`, `services/context`) assembles everything the model
 needs and the **LLM never assembles context itself**:
 
 - relevant **memories** (`friday-core` memory),
 - available **capabilities** + ranked providers (`CapabilityRegistry`),
 - **active services** + their health (`ServiceOrchestrator`),
-- **current windows** (Windows bridge) and **open browser tabs**,
-- the **current project** (detected from cwd / git / recent files),
-- **execution history** (`AgentKernel` metrics + audit),
-- **recent failures** (`ServiceOrchestrator` telemetry),
-- **user preferences** (memory).
+- **experiences** (procedural memory),
+- **current project** / sessions / windows (as available),
+- **execution history** and preferences where wired.
 
-Produces an `LLMContext` handed to the Intelligence Layer. Full spec:
-`specs/context.md`. This is what makes M5 "intelligence" instead of "a prompt."
+Produces an `AgentContext` handed to the Intelligence Layer. Full spec:
+`specs/context.md`.
 
 ## Revised ordering (subsystems, not just milestones)
 
@@ -303,8 +306,10 @@ Produces an `LLMContext` handed to the Intelligence Layer. Full spec:
 ✅ M4.6.5 Service Orchestrator + Cost Estimator
 ✅ M4.7  Plan Simulation Engine
 ✅ M4.8  Experience Engine (Procedural Memory)
+🚧 M4.9  Plan Optimizer (first-pass in simulation; learned weights later)
 ✅ M4.10 Context Builder
 ✅ M5  Cognitive Engine (System 1/2 Router, Compiler, Response Interpreter)
+✅ MCP as ActionAdapter + Mobile protocol / Android console
 🚧 M5.5 Evaluation & Benchmarking Framework
 🚧 M5.6 Knowledge Graph
 🚧 M5.7 Reasoning Session
@@ -314,7 +319,7 @@ Produces an `LLMContext` handed to the Intelligence Layer. Full spec:
 ⏳ M9  Learning
 ⏳ M10 Autonomy
 
-# Alpha Qualification (current phase)
+# Alpha Qualification (current phase) — active work
 Alpha 1 → Qualification → Reliability → Dogfooding → Beta → Public Testing → v1.0
 ```
 
@@ -391,14 +396,34 @@ Stop thinking in "plugins"; think in **services** inside **subsystems**:
 This matches the architecture already built and scales to Windows / Android /
 Linux / cloud workers / remote machines.
 
-## M5 — Intelligence Layer ⏳
+## M5 — Intelligence Layer ✅
 
-- LLM provider abstraction (local via Ollama + cloud fallback).
-- Local/cloud model routing, structured output, tool selection, context
-  assembly.
-- Replaces the rule-based Intent classifier and Planning heuristics with
-  model-driven ones behind the same event contract, querying Capability
-  Intelligence instead of knowing plugins.
+Shipped as `friday-intelligence` (`services/intelligence`):
+
+- Provider abstraction (`Provider` / `ProviderV2`, OpenAI-compatible clients,
+  OmniRoute, mocks) with circuit breakers and `InferenceFabric`.
+- `IntelligenceRouter` (cognitive mode / System 1–2 style routing).
+- `PromptCompiler` + `ResponseInterpreter` for structured model I/O.
+- Planner backend hooks (`InferenceBackend`) so model-driven planning can sit
+  behind the same event contract and reason over Capability Intelligence.
+
+Local Ollama wiring, full specialist catalog (vision/speech), and production
+routing policies continue to expand; the **contracts** are in place.
+
+Also landed around this phase (see `specs/`):
+
+- **MCP** as a first-class `ActionAdapter` (ADR-0007 / M8 execution-runtime
+  unification in specs numbering).
+- **Mobile protocol** + Android console client (remote front door without voice).
+- **Provider qualification** harness (`services/provider-qual`).
+
+## M5.5 / M5.6 / M5.7 — Still open 🚧
+
+| Item | Spec | Notes |
+| ---- | ---- | ----- |
+| Evaluation & Benchmarking Framework | `specs/evaluation.md` | Distinct from QA `friday-benchmark` |
+| Knowledge Graph depth | `specs/knowledge_graph.md` | Layer kind reserved; engine not full |
+| Reasoning Session | `specs/reasoning_session.md` | Multi-turn cognitive session state |
 
 ## M6 — Browser Runtime ⏳
 
@@ -410,16 +435,17 @@ Thanks to M4.6 it only declares capabilities; the registry handles the rest.
 ## M7 — Vision ⏳
 
 - Screen understanding, OCR, UI automation, window discovery (consumes the
-  Windows bridge's `click`/`type`/`capture` intents).
+  Windows bridge's `click`/`type`/`capture` intents). See `docs/VisionSystem.md`.
 
 ## M8 — Voice ⏳
 
-- Wake word, VAD, streaming STT, streaming TTS, interruptions.
+- Wake word, VAD, streaming STT, streaming TTS, interruptions. See `docs/Voice.md`.
 
 ## M9 — Learning ⏳
 
 - Habit detection, preference extraction, workflow learning, knowledge-graph
-  updates.
+  updates; feed simulation accuracy and recovery confidence from stored
+  experiences.
 
 ## M10 — Autonomy ⏳
 

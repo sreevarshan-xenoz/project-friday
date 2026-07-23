@@ -1,8 +1,14 @@
 # Plugin SDK
 
-This is the contract every FRIDAY capability implements. If you are adding a
+This is the contract every FRIDAY **bus plugin** implements. If you are adding a
 capability, start here. The reference implementation is
 `core/examples/echo_plugin.rs`.
+
+> **Also see:** executable tools usually implement **`ActionAdapter`** in
+> `friday-actions` (filesystem, terminal, git, MCP, …) and are dispatched by the
+> AgentKernel after permission + audit — not only the `Plugin` trait. Capability
+> advertising uses manifests / `CapabilityRegistry` (`friday-capabilities`).
+> Specs: `specs/services.md`, `specs/kernel.md`, `specs/capabilities.md`.
 
 ## The trait
 

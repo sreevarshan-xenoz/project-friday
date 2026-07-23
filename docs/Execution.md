@@ -3,11 +3,20 @@
 This document is part of the frozen architecture. Changes require an explicit
 review and a version bump.
 
+> **Implementation note (non-breaking):** the planner's Execution Engine still
+> publishes `exec.action` onto the bus. The **AgentKernel**
+> (`friday-actions` / `services/action-runtime`) is the sole runtime that
+> turns those into `ActionRequest`s, runs the permission + audit gate, dispatches
+> `ActionAdapter`s (filesystem, terminal, git, windows, MCP, sim), and emits
+> normalized `exec.result`. See `specs/kernel.md` and ADR-0007 for the unified
+> runtime. Capability names in production prefer `windows.*` / `filesystem.*`
+> style; older `win.*` / `shell.*` examples below remain design vocabulary.
+
 ## Principle
 
-The Execution Engine chooses **which plugin** performs an action and lets the
-plugin decide **how**. The engine itself contains no Windows/terminal/browser
-logic.
+The Execution Engine chooses **which plugin / capability** performs an action and
+lets the adapter decide **how**. The engine itself contains no
+Windows/terminal/browser logic.
 
 ## Inputs / outputs
 

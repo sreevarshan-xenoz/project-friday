@@ -6,7 +6,14 @@ design constraint, not an afterthought.
 ## Permission layer
 
 Every action that touches the outside world flows through a permission gate
-before execution. The gate consults:
+before execution. **Implementation:** `PermissionEngine` inside the AgentKernel
+(`services/action-runtime`, `friday-actions`) is the sole authority —
+adapters never decide their own permissions. Decisions include `AllowOnce` /
+`AllowAlways` / `Deny` / `Sandbox`, plus a static always-deny list aligned with
+the forbidden actions below. Every dispatch also records an `AuditEntry`
+(who / what / when / trace / latency / result).
+
+The gate consults:
 
 1. A static policy of **forbidden** actions (never allowed).
 2. A per-session **allow-list** the user has approved.
@@ -49,5 +56,17 @@ any autonomous decision can be replayed and explained after the fact.
 
 ## Supply chain
 
-- Plugins are signed; unsigned plugins are rejected in release builds.
-- Dependencies are pinned and audited in CI.
+- Target: plugins are signed; unsigned plugins rejected in release builds
+  (enforcement lands with packaging / installer).
+- Dependencies are pinned (`Cargo.lock`) and audited in CI as the pipeline
+  hardens.
+
+## Status
+
+| Control | State |
+| ------- | ----- |
+| PermissionEngine + always-deny list | ✅ In AgentKernel |
+| Audit trail (in-memory ring) | ✅ |
+| Secrets not committed | ✅ Policy |
+| Plugin signing / constrained sandbox | ⏳ Packaging / hardening |
+
