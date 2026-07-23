@@ -422,11 +422,16 @@ impl InferenceFabric {
             }
 
             let matches = match mode {
-                RoutingMode::Fast => model.provider == "groq" || model.provider == "cerebras",
+                RoutingMode::Fast => {
+                    model.provider == "groq"
+                        || model.provider == "cerebras"
+                        || model.provider == "nvidia-nim"
+                }
                 RoutingMode::Quality => {
                     model.provider == "gemini"
                         || model.provider == "groq"
                         || model.provider == "cerebras"
+                        || model.provider == "nvidia-nim"
                 }
                 RoutingMode::Free => {
                     model.provider == "openrouter" || model.provider == "omniroute"
@@ -436,6 +441,7 @@ impl InferenceFabric {
                     model.provider == "ollama"
                         || model.provider == "openrouter"
                         || model.provider == "omniroute"
+                        || model.provider == "nvidia-nim"
                 }
             };
 
@@ -647,6 +653,26 @@ impl InferenceFabric {
                         ModelCapability::LongContext,
                     ],
                     max_context: 1_000_000,
+                });
+            }
+        }
+
+        // NVIDIA NIMs (Tier 2 — fast inference, OpenAI-compatible)
+        if let Ok(key) = std::env::var("NVIDIA_NIM_API_KEY") {
+            fabric.register_provider(Box::new(OpenAiProvider {
+                name: "nvidia-nim".to_string(),
+                base_url: "https://integrate.api.nvidia.com/v1".to_string(),
+                api_key: key,
+            }));
+            if !registry_loaded {
+                fabric.register_model(ModelInfo {
+                    id: "nvidia/llama-3.3-70b-instruct".to_string(),
+                    family: "llama-3.3-70b".to_string(),
+                    provider: "nvidia-nim".to_string(),
+                    latency_ms: 300,
+                    reliability: 1.0,
+                    capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
+                    max_context: 128000,
                 });
             }
         }
