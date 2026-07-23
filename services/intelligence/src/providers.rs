@@ -1,6 +1,11 @@
 use async_trait::async_trait;
+use futures::stream::unfold;
+use futures::Stream;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::collections::VecDeque;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -230,6 +235,110 @@ impl Provider for OpenAiProvider {
     }
 }
 
+/// OmniRoute provider — a self-hosted, OpenAI-compatible multi-provider gateway.
+///
+/// OmniRoute aggregates 236+ upstream providers (OpenAI, Anthropic, Gemini, Ollama,
+/// Groq, …) behind a single `/v1` endpoint and performs its OWN internal routing,
+/// fallback, and circuit breaking. FRIDAY treats it as ONE provider — exactly like
+/// Ollama or OpenRouter — so the Inference Fabric keeps ownership of top-level
+/// routing decisions. This is intentionally a thin adapter over the existing
+/// `Provider` trait; no trait changes, no streaming, no registry changes (Phase 1).
+pub struct OmniRouteProvider {
+    pub name: String,
+    pub base_url: String,
+    pub api_key: String,
+}
+
+impl OmniRouteProvider {
+    pub fn new(base_url: String, api_key: String) -> Self {
+        Self {
+            name: "omniroute".to_string(),
+            base_url,
+            api_key,
+        }
+    }
+}
+
+#[async_trait]
+impl Provider for OmniRouteProvider {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn complete(
+        &self,
+        model_id: &str,
+        prompt: &str,
+        _require_json: bool,
+    ) -> Result<String, String> {
+        let client = reqwest::Client::new();
+        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.api_key))
+                .map_err(|e| e.to_string())?,
+        );
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
+
+        let body = serde_json::json!({
+            "model": model_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        });
+
+        let res = client
+            .post(&url)
+            .headers(headers)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("HTTP request failed: {}", e))?;
+
+        if !res.status().is_success() {
+            let status = res.status();
+            let err_body = res.text().await.unwrap_or_default();
+            return Err(format!(
+                "Provider {} returned error status {}: {}",
+                self.name, status, err_body
+            ));
+        }
+
+        let json: serde_json::Value = res
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse response JSON: {}", e))?;
+
+        let content = json["choices"][0]["message"]["content"]
+            .as_str()
+            .ok_or_else(|| format!("Unexpected response structure: {:?}", json))?;
+
+        Ok(content.to_string())
+    }
+
+    async fn check_health(&self) -> bool {
+        let client = reqwest::Client::new();
+        let url = format!("{}/models", self.base_url.trim_end_matches('/'));
+        let res = client
+            .get(&url)
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", self.api_key),
+            )
+            .send()
+            .await;
+        res.is_ok() && res.unwrap().status().is_success()
+    }
+}
+
 /// Telemetry metrics for each request made through the Inference Fabric.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InferenceMetrics {
@@ -319,9 +428,15 @@ impl InferenceFabric {
                         || model.provider == "groq"
                         || model.provider == "cerebras"
                 }
-                RoutingMode::Free => model.provider == "openrouter",
+                RoutingMode::Free => {
+                    model.provider == "openrouter" || model.provider == "omniroute"
+                }
                 RoutingMode::Local => model.provider == "ollama",
-                RoutingMode::Hybrid => model.provider == "ollama" || model.provider == "openrouter",
+                RoutingMode::Hybrid => {
+                    model.provider == "ollama"
+                        || model.provider == "openrouter"
+                        || model.provider == "omniroute"
+                }
             };
 
             if matches {
@@ -558,6 +673,40 @@ impl InferenceFabric {
             });
         }
 
+        // OmniRoute (self-hosted multi-provider gateway; see Phase 1 integration notes)
+        // Enabled via OMNIROUTE_ENABLED=true or a provided OMNIROUTE_API_KEY.
+        // Base URL defaults to the local gateway; override with OMNIROUTE_BASE_URL.
+        {
+            let base_url = std::env::var("OMNIROUTE_BASE_URL")
+                .unwrap_or_else(|_| "http://localhost:20128/v1".to_string());
+            let enabled = std::env::var("OMNIROUTE_ENABLED")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false);
+            let api_key = std::env::var("OMNIROUTE_API_KEY").unwrap_or_default();
+
+            if enabled || !api_key.is_empty() {
+                fabric.register_provider(Box::new(OmniRouteProvider::new(base_url, api_key)));
+                if !registry_loaded {
+                    // OmniRoute itself performs provider/model routing, so we expose a
+                    // single "auto" candidate that lets it choose the best backend.
+                    fabric.register_model(ModelInfo {
+                        id: "auto".to_string(),
+                        family: "omniroute-auto".to_string(),
+                        provider: "omniroute".to_string(),
+                        latency_ms: 500,
+                        reliability: 1.0,
+                        capabilities: vec![
+                            ModelCapability::Json,
+                            ModelCapability::Tools,
+                            ModelCapability::LongContext,
+                        ],
+                        max_context: 200_000,
+                    });
+                }
+                tracing::info!("Registered OmniRoute provider (multi-provider gateway).");
+            }
+        }
+
         fabric.load_health();
         fabric
     }
@@ -698,5 +847,645 @@ impl ModelClient for InferenceFabric {
 impl Default for InferenceFabric {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn omniroute_provider_constructs_with_omniroute_identity() {
+        let p = OmniRouteProvider::new(
+            "http://localhost:20128/v1".to_string(),
+            "test-key".to_string(),
+        );
+        assert_eq!(p.name(), "omniroute");
+        assert_eq!(p.base_url, "http://localhost:20128/v1");
+        assert_eq!(p.api_key, "test-key");
+    }
+
+    #[test]
+    fn fabric_registers_omniroute_and_selects_it_in_free_mode() {
+        let mut fabric = InferenceFabric::new();
+        fabric.register_provider(Box::new(OmniRouteProvider::new(
+            "http://localhost:20128/v1".to_string(),
+            String::new(),
+        )));
+        fabric.register_model(ModelInfo {
+            id: "auto".to_string(),
+            family: "omniroute-auto".to_string(),
+            provider: "omniroute".to_string(),
+            latency_ms: 500,
+            reliability: 1.0,
+            capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
+            max_context: 200_000,
+        });
+
+        assert!(fabric.providers.contains_key("omniroute"));
+
+        let candidates = fabric.select_candidates(RoutingMode::Free);
+        assert!(
+            candidates.iter().any(|(m, _)| m.provider == "omniroute"),
+            "omniroute should be a Free-mode candidate"
+        );
+
+        let hybrid = fabric.select_candidates(RoutingMode::Hybrid);
+        assert!(
+            hybrid.iter().any(|(m, _)| m.provider == "omniroute"),
+            "omniroute should be a Hybrid-mode candidate"
+        );
+    }
+
+    #[test]
+    fn omniroute_is_excluded_from_local_mode() {
+        let mut fabric = InferenceFabric::new();
+        fabric.register_provider(Box::new(OmniRouteProvider::new(
+            "http://localhost:20128/v1".to_string(),
+            String::new(),
+        )));
+        fabric.register_model(ModelInfo {
+            id: "auto".to_string(),
+            family: "omniroute-auto".to_string(),
+            provider: "omniroute".to_string(),
+            latency_ms: 500,
+            reliability: 1.0,
+            capabilities: vec![ModelCapability::Local],
+            max_context: 200_000,
+        });
+
+        let candidates = fabric.select_candidates(RoutingMode::Local);
+        assert!(
+            !candidates.iter().any(|(m, _)| m.provider == "omniroute"),
+            "omniroute must not be selected in Local-only mode"
+        );
+    }
+
+    #[tokio::test]
+    async fn omniroute_health_check_is_graceful_when_unavailable() {
+        // No OmniRoute instance should be running on this port in CI; must not panic.
+        let p = OmniRouteProvider::new("http://localhost:19999/v1".to_string(), String::new());
+        assert!(!p.check_health().await);
+    }
+}
+
+// =============================================================================
+// M5.2 — Provider Capability Layer (ProviderV2)
+//
+// The provider stops being a bare `complete()` method and becomes a *capability*
+// description. The planner asks `provider.capabilities().tool_calling`, never
+// `provider.supports_tools()`. This is extensible: new abilities are data (a bool
+// in `ProviderCapabilities`), not new trait methods.
+//
+// V1 (`Provider`) is intentionally KEPT. `ProviderV2Adapter` wraps any V1 provider
+// so it instantly gains the V2 surface with conservative, inferred capabilities.
+// Native V2 providers (e.g. `OmniRouteProviderV2`) implement the full surface
+// (streaming, embeddings, dynamic model discovery). V1 is removed only once every
+// provider is migrated and green.
+// =============================================================================
+
+/// What a provider is able to do. Data, not methods — easy to serialize, compare,
+/// and feed into routing + qualification decisions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ProviderCapabilities {
+    pub completion: bool,
+    pub streaming: bool,
+    pub tool_calling: bool,
+    pub vision: bool,
+    pub embeddings: bool,
+    pub json_mode: bool,
+    pub long_context: bool,
+    pub local: bool,
+    pub session_affinity: bool,
+    /// Provider exposes a live model catalog (e.g. OpenAI `/v1/models`).
+    pub dynamic_models: bool,
+}
+
+/// Stable, human-readable identity of a provider instance.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderMetadata {
+    pub id: String,
+    pub display_name: String,
+    pub version: String,
+    pub endpoint: String,
+    pub vendor: String,
+    /// Higher is preferred when several providers are viable (Phase 4).
+    pub priority: u32,
+    /// "free" | "free-tier" | "paid" | "local".
+    pub cost_model: String,
+}
+
+/// A model discovered from a provider, richer than a bare id. Populates the
+/// registry so routing can pick by capability, not by string matching.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelDescriptor {
+    pub id: String,
+    pub context: usize,
+    pub supports_tools: bool,
+    pub supports_stream: bool,
+    pub supports_json: bool,
+    pub vision: bool,
+    pub pricing: Option<String>,
+}
+
+/// One incremental piece of a streamed completion. `Stream<CompletionChunk>` is the
+/// contract from day one — never `String` — so future UI can render tokens live.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompletionChunk {
+    pub delta: String,
+    pub finish_reason: Option<String>,
+}
+
+/// Result of an embeddings request. The Memory subsystem consumes vectors without
+/// knowing which provider produced them.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingResult {
+    pub model: String,
+    pub embeddings: Vec<Vec<f32>>,
+}
+
+/// Capability-driven provider interface (M5.2).
+#[async_trait]
+pub trait ProviderV2: Send + Sync {
+    fn metadata(&self) -> ProviderMetadata;
+    fn capabilities(&self) -> ProviderCapabilities;
+    async fn complete(
+        &self,
+        model_id: &str,
+        prompt: &str,
+        require_json: bool,
+    ) -> Result<String, String>;
+    async fn stream(
+        &self,
+        model_id: &str,
+        prompt: &str,
+        require_json: bool,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<CompletionChunk, String>> + Send>>, String>;
+    async fn list_models(&self) -> Result<Vec<ModelDescriptor>, String>;
+    async fn embeddings(&self, model_id: &str, texts: &[String])
+        -> Result<EmbeddingResult, String>;
+}
+
+/// Parse one SSE event block (`...data: {...}\n\n`) into a completion chunk.
+/// Returns `None` for events that carry no usable delta (e.g. empty role deltas),
+/// and surfaces `[DONE]` as a chunk with `finish_reason = "[DONE]"`.
+pub fn parse_sse_event(event: &str) -> Option<CompletionChunk> {
+    let mut delta = String::new();
+    let mut finish: Option<String> = None;
+    for line in event.lines() {
+        let line = line.trim_start_matches("data:").trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line == "[DONE]" {
+            return Some(CompletionChunk {
+                delta: String::new(),
+                finish_reason: Some("[DONE]".to_string()),
+            });
+        }
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
+            if let Some(d) = json["choices"][0]["delta"]["content"].as_str() {
+                delta.push_str(d);
+            }
+            if let Some(f) = json["choices"][0]["finish_reason"].as_str() {
+                finish = Some(f.to_string());
+            }
+        }
+    }
+    if delta.is_empty() && finish.is_none() {
+        return None;
+    }
+    Some(CompletionChunk {
+        delta,
+        finish_reason: finish,
+    })
+}
+
+/// Wraps a V1 `Provider` into the V2 surface. Capabilities are inferred
+/// conservatively: completion/json/long-context are assumed; streaming, embeddings,
+/// tool-calling and dynamic model listing are unavailable (the V1 trait cannot do
+/// them). This lets every existing provider become a V2 immediately.
+pub struct ProviderV2Adapter {
+    pub inner: Box<dyn Provider>,
+    pub metadata: ProviderMetadata,
+    pub capabilities: ProviderCapabilities,
+}
+
+impl ProviderV2Adapter {
+    pub fn from_provider(inner: Box<dyn Provider>, metadata: ProviderMetadata) -> Self {
+        let id = metadata.id.clone();
+        let capabilities = ProviderCapabilities {
+            completion: true,
+            streaming: false,
+            tool_calling: false,
+            vision: false,
+            embeddings: false,
+            json_mode: true,
+            long_context: true,
+            local: id == "ollama",
+            session_affinity: id == "omniroute",
+            dynamic_models: false,
+        };
+        Self {
+            inner,
+            metadata,
+            capabilities,
+        }
+    }
+}
+
+#[async_trait]
+impl ProviderV2 for ProviderV2Adapter {
+    fn metadata(&self) -> ProviderMetadata {
+        self.metadata.clone()
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        self.capabilities
+    }
+
+    async fn complete(
+        &self,
+        model_id: &str,
+        prompt: &str,
+        require_json: bool,
+    ) -> Result<String, String> {
+        self.inner.complete(model_id, prompt, require_json).await
+    }
+
+    async fn stream(
+        &self,
+        _model_id: &str,
+        _prompt: &str,
+        _require_json: bool,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<CompletionChunk, String>> + Send>>, String> {
+        Err(format!(
+            "provider {} does not support streaming (V1 adapter)",
+            self.metadata.id
+        ))
+    }
+
+    async fn list_models(&self) -> Result<Vec<ModelDescriptor>, String> {
+        Err(format!(
+            "provider {} does not support dynamic model listing (V1 adapter)",
+            self.metadata.id
+        ))
+    }
+
+    async fn embeddings(
+        &self,
+        _model_id: &str,
+        _texts: &[String],
+    ) -> Result<EmbeddingResult, String> {
+        Err(format!(
+            "provider {} does not support embeddings (V1 adapter)",
+            self.metadata.id
+        ))
+    }
+}
+
+/// Native V2 provider for OmniRoute — a self-hosted, OpenAI-compatible multi-provider
+/// gateway that supports streaming, embeddings, tool-calling, vision, and a live
+/// model catalog. This is the reference V2 implementation.
+pub struct OmniRouteProviderV2 {
+    inner: OmniRouteProvider,
+    session_id: Option<String>,
+    metadata: ProviderMetadata,
+}
+
+impl OmniRouteProviderV2 {
+    pub fn new(base_url: String, api_key: String, session_id: Option<String>) -> Self {
+        let metadata = ProviderMetadata {
+            id: "omniroute".to_string(),
+            display_name: "OmniRoute".to_string(),
+            version: "v2".to_string(),
+            endpoint: base_url.clone(),
+            vendor: "omniroute".to_string(),
+            priority: 100,
+            cost_model: "free-tier".to_string(),
+        };
+        Self {
+            inner: OmniRouteProvider::new(base_url, api_key),
+            session_id,
+            metadata,
+        }
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            completion: true,
+            streaming: true,
+            tool_calling: true,
+            vision: true,
+            embeddings: true,
+            json_mode: true,
+            long_context: true,
+            local: false,
+            session_affinity: true,
+            dynamic_models: true,
+        }
+    }
+}
+
+#[async_trait]
+impl ProviderV2 for OmniRouteProviderV2 {
+    fn metadata(&self) -> ProviderMetadata {
+        self.metadata.clone()
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        self.capabilities()
+    }
+
+    async fn complete(
+        &self,
+        model_id: &str,
+        prompt: &str,
+        require_json: bool,
+    ) -> Result<String, String> {
+        self.inner.complete(model_id, prompt, require_json).await
+    }
+
+    async fn stream(
+        &self,
+        model_id: &str,
+        prompt: &str,
+        _require_json: bool,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<CompletionChunk, String>> + Send>>, String> {
+        let client = reqwest::Client::new();
+        let url = format!(
+            "{}/chat/completions",
+            self.inner.base_url.trim_end_matches('/')
+        );
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.inner.api_key))
+                .map_err(|e| e.to_string())?,
+        );
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
+        if let Some(sid) = &self.session_id {
+            if let Ok(v) = reqwest::header::HeaderValue::from_str(sid) {
+                headers.insert(reqwest::header::HeaderName::from_static("x-session-id"), v);
+            }
+        }
+
+        let body = serde_json::json!({
+            "model": model_id,
+            "messages": [{ "role": "user", "content": prompt }],
+            "stream": true,
+        });
+
+        let resp = client
+            .post(&url)
+            .headers(headers)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("stream request failed: {}", e))?;
+
+        if !resp.status().is_success() {
+            return Err(format!(
+                "Provider omniroute returned error status {}",
+                resp.status()
+            ));
+        }
+
+        let byte_stream = resp.bytes_stream();
+        let s = unfold(
+            (byte_stream, String::new(), VecDeque::new()),
+            |state| async move {
+                let (mut byte_stream, mut buf, mut queue) = state;
+                loop {
+                    if let Some(ck) = queue.pop_front() {
+                        return Some((Ok(ck), (byte_stream, buf, queue)));
+                    }
+                    match byte_stream.next().await {
+                        Some(Ok(bytes)) => {
+                            buf.push_str(&String::from_utf8_lossy(&bytes));
+                            while let Some(idx) = buf.find("\n\n") {
+                                let event = buf[..idx].to_string();
+                                buf.drain(..idx + 2);
+                                if let Some(ck) = parse_sse_event(&event) {
+                                    let is_done = ck.finish_reason.as_deref() == Some("[DONE]");
+                                    if !ck.delta.is_empty() {
+                                        queue.push_back(CompletionChunk {
+                                            delta: ck.delta,
+                                            finish_reason: ck.finish_reason.clone(),
+                                        });
+                                    }
+                                    if is_done {
+                                        return queue
+                                            .pop_front()
+                                            .map(|ck| (Ok(ck), (byte_stream, buf, queue)));
+                                    }
+                                }
+                            }
+                        }
+                        Some(Err(e)) => {
+                            return Some((
+                                Err(format!("stream error: {}", e)),
+                                (byte_stream, String::new(), VecDeque::new()),
+                            ));
+                        }
+                        None => {
+                            if !buf.trim().is_empty() {
+                                if let Some(ck) = parse_sse_event(&buf) {
+                                    if !ck.delta.is_empty() {
+                                        queue.push_back(ck);
+                                    }
+                                }
+                                buf.clear();
+                                continue;
+                            }
+                            return None;
+                        }
+                    }
+                }
+            },
+        );
+        Ok(Box::pin(s))
+    }
+
+    async fn list_models(&self) -> Result<Vec<ModelDescriptor>, String> {
+        let client = reqwest::Client::new();
+        let url = format!("{}/models", self.inner.base_url.trim_end_matches('/'));
+        let res = client
+            .get(&url)
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", self.inner.api_key),
+            )
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !res.status().is_success() {
+            return Err(format!("list_models failed: {}", res.status()));
+        }
+        let json: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+        let data = json["data"]
+            .as_array()
+            .ok_or_else(|| "unexpected /models response shape".to_string())?;
+        let mut out = Vec::new();
+        for m in data {
+            let id = match m["id"].as_str() {
+                Some(i) => i.to_string(),
+                None => continue,
+            };
+            let context = m["context_length"].as_u64().unwrap_or(0) as usize;
+            out.push(ModelDescriptor {
+                id,
+                context,
+                supports_tools: true,
+                supports_stream: true,
+                supports_json: true,
+                vision: false,
+                pricing: m["pricing"].as_str().map(|s| s.to_string()),
+            });
+        }
+        Ok(out)
+    }
+
+    async fn embeddings(
+        &self,
+        model_id: &str,
+        texts: &[String],
+    ) -> Result<EmbeddingResult, String> {
+        let client = reqwest::Client::new();
+        let url = format!("{}/embeddings", self.inner.base_url.trim_end_matches('/'));
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.inner.api_key))
+                .map_err(|e| e.to_string())?,
+        );
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
+
+        let body = serde_json::json!({ "model": model_id, "input": texts });
+        let res = client
+            .post(&url)
+            .headers(headers)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !res.status().is_success() {
+            return Err(format!("embeddings failed: {}", res.status()));
+        }
+        let json: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+        let data = json["data"]
+            .as_array()
+            .ok_or_else(|| "unexpected embeddings response shape".to_string())?;
+        let mut embeddings = Vec::new();
+        for d in data {
+            let vec = d["embedding"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_f64().map(|f| f as f32))
+                        .collect::<Vec<f32>>()
+                })
+                .unwrap_or_default();
+            embeddings.push(vec);
+        }
+        Ok(EmbeddingResult {
+            model: model_id.to_string(),
+            embeddings,
+        })
+    }
+}
+
+#[cfg(test)]
+mod v2_tests {
+    use super::*;
+
+    fn v2_metadata(id: &str) -> ProviderMetadata {
+        ProviderMetadata {
+            id: id.to_string(),
+            display_name: id.to_string(),
+            version: "v1".to_string(),
+            endpoint: "http://localhost/v1".to_string(),
+            vendor: id.to_string(),
+            priority: 50,
+            cost_model: "free".to_string(),
+        }
+    }
+
+    #[test]
+    fn omniroute_v2_declares_full_capabilities() {
+        let p =
+            OmniRouteProviderV2::new("http://localhost:20128/v1".to_string(), String::new(), None);
+        let c = p.capabilities();
+        assert!(c.completion && c.streaming && c.embeddings && c.tool_calling);
+        assert!(c.dynamic_models && c.session_affinity && c.json_mode);
+        assert_eq!(p.metadata().id, "omniroute");
+    }
+
+    #[test]
+    fn v2_adapter_infers_conservative_capabilities() {
+        let v1 = OmniRouteProvider::new("http://localhost:20128/v1".to_string(), String::new());
+        let adapter = ProviderV2Adapter::from_provider(Box::new(v1), v2_metadata("omniroute"));
+        let c = adapter.capabilities();
+        assert!(c.completion && c.json_mode && c.long_context);
+        assert!(!c.streaming && !c.embeddings && !c.dynamic_models);
+        assert!(c.session_affinity); // omniroute keeps session affinity even via V1
+    }
+
+    #[test]
+    fn v2_adapter_marks_ollama_local() {
+        let v1 = OpenAiProvider {
+            name: "ollama".to_string(),
+            base_url: "http://localhost:11434/v1".to_string(),
+            api_key: "ollama".to_string(),
+        };
+        let adapter = ProviderV2Adapter::from_provider(Box::new(v1), v2_metadata("ollama"));
+        assert!(adapter.capabilities().local);
+        assert!(!adapter.capabilities().session_affinity);
+    }
+
+    #[test]
+    fn parse_sse_event_extracts_delta_and_finish() {
+        let ev =
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"},\"finish_reason\":null}]}\n\n";
+        let ck = parse_sse_event(ev).expect("should parse");
+        assert_eq!(ck.delta, "Hel");
+        assert!(ck.finish_reason.is_none());
+
+        let done = "data: [DONE]\n\n";
+        let ck2 = parse_sse_event(done).expect("should parse done");
+        assert_eq!(ck2.finish_reason.as_deref(), Some("[DONE]"));
+
+        let empty = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n";
+        assert!(parse_sse_event(empty).is_none());
+    }
+
+    #[tokio::test]
+    async fn omniroute_v2_stream_is_graceful_when_offline() {
+        let p =
+            OmniRouteProviderV2::new("http://localhost:19999/v1".to_string(), String::new(), None);
+        // send() fails synchronously inside stream(), so it returns Err (no panic).
+        assert!(p.stream("auto", "hi", false).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn omniroute_v2_list_models_graceful_when_offline() {
+        let p =
+            OmniRouteProviderV2::new("http://localhost:19999/v1".to_string(), String::new(), None);
+        assert!(p.list_models().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn omniroute_v2_embeddings_graceful_when_offline() {
+        let p =
+            OmniRouteProviderV2::new("http://localhost:19999/v1".to_string(), String::new(), None);
+        assert!(p.embeddings("auto", &["x".to_string()]).await.is_err());
     }
 }

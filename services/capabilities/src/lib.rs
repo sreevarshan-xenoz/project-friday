@@ -13,6 +13,7 @@
 //! - [`manifest`]
 //! - [`graph`]   — hierarchical `CapabilityGraph` for LLM traversal
 
+pub mod builtins;
 pub mod cost;
 pub mod graph;
 pub mod health;
@@ -22,12 +23,17 @@ pub mod orchestrator;
 pub mod ranking;
 pub mod registry;
 pub mod sim;
+pub mod spec;
 
 pub use cost::{CostEstimator, PlanCost};
 pub use graph::{CapabilityGraph, GraphNode};
 pub use health::{HealthProbe, Monitor};
 pub use manifest::ServiceManifest;
 pub use model::{Capability, Health, Platform};
+pub use spec::{
+    CapabilityHealth, CapabilitySource, CapabilitySpec, ExecutionBinding, Risk,
+};
+pub use builtins::{all as all_native_capabilities, filesystem, git, terminal};
 pub use orchestrator::{
     RecoveryPolicy, RecoveryStep, ServiceOrchestrator, ServiceProbe, ServiceState, ServiceStatus,
     StaticRecoveryPolicy, Telemetry,

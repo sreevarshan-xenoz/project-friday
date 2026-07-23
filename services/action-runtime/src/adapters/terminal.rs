@@ -166,13 +166,6 @@ impl ActionAdapter for TerminalAdapter {
 }
 
 /// Capability record published to the Capability Intelligence registry.
-pub fn capabilities() -> Vec<friday_capabilities::model::Capability> {
-    vec![
-        friday_capabilities::model::Capability::new("terminal", "Terminal Service", "Terminal")
-            .with_actions(&["run", "exec", "kill", "list_sessions"])
-            .with_description("Persistent shell session command execution")
-            .with_latency(50)
-            .with_reliability(0.99)
-            .with_dry_run(true),
-    ]
-}
+    pub fn capabilities() -> Vec<friday_capabilities::model::Capability> {
+        friday_capabilities::builtins::terminal()
+    }
