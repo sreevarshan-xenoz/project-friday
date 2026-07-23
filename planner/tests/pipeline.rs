@@ -123,17 +123,18 @@ async fn browser_search_happy_path() {
 
 #[tokio::test]
 async fn browser_search_retries_on_failure() {
-    // The final "verify page loaded" task fails; the verifier should retry and
-    // ultimately report failure rather than silently assuming success.
+    // The final "verify page loaded" task fails. Under M6 the supervisor owns
+    // retry/recovery (it emits `task.retrying` and re-dispatches); the verifier
+    // remains a pure outcome reporter and flags `verification.failed`.
     let (seen, _, task_failed) = run_pipeline("page.verify").await;
 
     assert!(
-        seen.contains(events::TASK_RETRY),
-        "expected a retry after task failure"
+        seen.contains(events::TASK_RETRYING),
+        "expected the supervisor to retry the failed task"
     );
     assert!(
         seen.contains(events::VERIFICATION_FAILED),
-        "expected verification.failed on exhausted retries"
+        "expected verification.failed reported by the verifier"
     );
     assert!(task_failed >= 1, "expected at least one task.failed");
 }

@@ -6,34 +6,65 @@ use uuid::Uuid;
 /// Lifecycle of a single task. Modelling this explicitly is what makes
 /// long-running automations debuggable: at any moment you can ask "what state
 /// is task X in?" and get a precise answer.
+///
+/// Tasks and goals have **separate** state machines (see [`GoalState`]); a goal
+/// can be `Paused` while a task is `Running`, and clients render the two
+/// independently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskState {
-    Queued,
-    Planning,
-    Waiting,
+    Pending,
+    Ready,
     Running,
+    Verifying,
     Completed,
     Failed,
     Retrying,
+    Blocked,
 }
 
 impl TaskState {
     pub fn as_str(&self) -> &'static str {
         match self {
-            TaskState::Queued => "queued",
-            TaskState::Planning => "planning",
-            TaskState::Waiting => "waiting",
+            TaskState::Pending => "pending",
+            TaskState::Ready => "ready",
             TaskState::Running => "running",
+            TaskState::Verifying => "verifying",
             TaskState::Completed => "completed",
             TaskState::Failed => "failed",
             TaskState::Retrying => "retrying",
+            TaskState::Blocked => "blocked",
         }
     }
 }
 
-/// One unit of work. `capability` is the event kind an executor plugin
-/// subscribes to (e.g. `browser.launch`); `depends_on` lists task ids that
-/// must complete before this one may run.
+/// Lifecycle of a whole goal. Kept distinct from [`TaskState`] so that
+/// goal-level orchestration (pause/resume/cancel) never collides with
+/// task-level progress.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GoalState {
+    Running,
+    Paused,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+impl GoalState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            GoalState::Running => "running",
+            GoalState::Paused => "paused",
+            GoalState::Completed => "completed",
+            GoalState::Failed => "failed",
+            GoalState::Cancelled => "cancelled",
+        }
+    }
+}
+
+/// One unit of work. `capability` is the canonical capability id an executor
+/// resolves through the [`crate::execution::CapabilityRegistry`]
+/// (e.g. `filesystem.write_file`); `depends_on` lists task ids that must
+/// complete before this one may run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
     pub id: Uuid,
@@ -42,6 +73,17 @@ pub struct Task {
     pub params: Value,
     pub depends_on: Vec<Uuid>,
     pub state: TaskState,
+    #[serde(default)]
+    pub progress: f32,
+    #[serde(default)]
+    pub output: Value,
+    #[serde(default)]
+    pub retries: u32,
+    /// If set, this task's output is published into the shared
+    /// [`crate::execution::GoalContext`] under this key on completion, so
+    /// downstream tasks can consume it (M6.3). Optional.
+    #[serde(default)]
+    pub produces: Option<String>,
 }
 
 /// A plan modelled as a **Directed Acyclic Graph**, not a flat list. Independent
@@ -77,7 +119,11 @@ impl TaskGraph {
             capability: capability.into(),
             params,
             depends_on: depends_on.to_vec(),
-            state: TaskState::Queued,
+            state: TaskState::Pending,
+            progress: 0.0,
+            output: Value::Null,
+            retries: 0,
+            produces: None,
         });
         id
     }
