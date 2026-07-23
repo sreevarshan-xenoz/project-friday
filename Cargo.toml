@@ -10,9 +10,12 @@ members = [
     "services/recovery",
     "services/context",
     "services/intelligence",
+    "services/provider-qual",
+    "services/mobile",
     "e2e",
     "plugins/windows",
-    "services/windows-qual"
+    "services/windows-qual",
+    "mcp"
 ]
 
 [workspace.package]
@@ -27,9 +30,17 @@ tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 async-trait = "0.1"
+futures = "0.3"
+async-stream = "0.1"
 thiserror = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.11", features = ["json", "stream"] }
+tokio-tungstenite = "0.24"
+http = "1"
+rand = "0.8"
+sha2 = "0.10"
+base64 = "0.22"
+sysinfo = "0.33"
