@@ -1,0 +1,11 @@
+{
+  "action_ok": true,
+  "group": "focus",
+  "id": "focus.notepad",
+  "issues": [],
+  "latency_ms": 2,
+  "launch_resolution": null,
+  "note": "foreground_matches=true",
+  "passed": true,
+  "state_accuracy": true
+}

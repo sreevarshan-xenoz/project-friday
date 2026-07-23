@@ -1,0 +1,13 @@
+{
+  "action_ok": false,
+  "group": "input",
+  "id": "input.click",
+  "issues": [
+    "WIN-INPUT-CLICK"
+  ],
+  "latency_ms": 0,
+  "launch_resolution": null,
+  "note": "input_op_success=false | host_error=Some(\"HostUnavailable\")",
+  "passed": false,
+  "state_accuracy": false
+}
