@@ -1,0 +1,11 @@
+{
+  "action_ok": true,
+  "group": "capture",
+  "id": "capture.notepad",
+  "issues": [],
+  "latency_ms": 45,
+  "launch_resolution": null,
+  "note": "capture_has_data=true",
+  "passed": true,
+  "state_accuracy": true
+}
