@@ -1,0 +1,20 @@
+[
+  {
+    "intent": "windows.open",
+    "latency_ms": 10541,
+    "ok": false,
+    "ts": "2026-07-13T12:02:05.345725900+00:00"
+  },
+  {
+    "intent": "windows.list",
+    "latency_ms": 15,
+    "ok": true,
+    "ts": "2026-07-13T12:02:05.361552600+00:00"
+  },
+  {
+    "intent": "windows.foreground",
+    "latency_ms": 0,
+    "ok": true,
+    "ts": "2026-07-13T12:02:05.362319400+00:00"
+  }
+]
