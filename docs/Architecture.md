@@ -53,10 +53,12 @@ a clear input event and output event.
 
 | Engine              | Consumes            | Produces             | Responsibility                                  |
 | ------------------- | ------------------- | -------------------- | ------------------------------------------------ |
-| **Intent Engine**   | `goal.raw`          | `intent.resolved`    | Understand what the user actually wants → structured goal. |
-| **Planning Engine** | `intent.resolved`   | `plan.created`       | Decompose the goal into ordered, executable steps. |
-| **Execution Engine**| `plan.created`      | `exec.action`, `exec.result` | Choose the correct plugin and perform the action. |
-| **Verification Engine** | `exec.result`   | `verify.passed` / `verify.failed` | Confirm success; retry or trigger a replan on failure. |
+| **Intent Engine**   | `goal.raw`          | `intent.created`     | Understand what the user actually wants → structured goal. |
+| **Planning Engine** | `intent.created`    | `plan.created`       | Decompose the goal into ordered, executable steps (DAG). |
+| **Execution Engine**| `plan.created`      | `exec.action`, task lifecycle | Route the step; AgentKernel performs the action. |
+| **Verification Engine** | task results   | `verification.*`     | Confirm success; retry or trigger a replan on failure. |
+
+> Wire vocabulary: `specs/events.md` / `planner/src/events.rs`.
 
 The engines are ordinary plugins on the bus — they are not special-cased in the
 core. Swapping or upgrading one (e.g. a better planner) never touches another.
@@ -145,3 +147,44 @@ the frozen architecture.
 
 The event vocabulary, `friday-core` API, and `friday-planner` API remain frozen;
 Capability Intelligence is an additive layer the planner consults.
+
+---
+
+## Addendum — Post-kernel subsystems (M4.7–M5, authorized extension)
+
+These layers sit **above** the frozen kernel contracts. Specs under `/specs`
+are authoritative; this section is the architecture index.
+
+```
+USER / Mobile client / (future Voice)
+        │
+ Context Builder          friday-context
+        │
+ Intelligence Layer       friday-intelligence  (LLM above kernel)
+        │
+ Planner (4 engines)      friday-planner
+        │
+ Simulation (optional)    friday-simulation
+        │
+ AgentKernel              friday-actions
+        │
+ Capability Intelligence  friday-capabilities
+        │
+ Services / adapters      filesystem · terminal · git · windows · MCP · …
+```
+
+| Subsystem | Crate | Role |
+| --------- | ----- | ---- |
+| Simulation | `friday-simulation` | Virtualize a `TaskGraph` before side effects |
+| Experience | `friday-core` (`ExperienceEngine`) | Procedural memory of past runs |
+| Context | `friday-context` | Builds `AgentContext`; LLM never retrieves itself |
+| Intelligence | `friday-intelligence` | Providers, router, compiler, interpreters |
+| MCP | `friday-mcp` + `McpAdapter` | External tools as ordinary capabilities |
+| Recovery | `friday-recovery` | Failure taxonomy + policies (shadow → active) |
+| Benchmark | `friday-benchmark` | Resilience metrics for qualification |
+| Mobile | `friday-mobile` | Versioned phone protocol (v1.0) |
+| Windows host | `windows-host` + `friday-windows` | C# host + Rust bridge |
+
+**Current product phase:** Alpha Qualification — prove reliability on real
+Windows and provider failure modes. See `docs/Roadmap.md` and
+`engineering/qualification.md`.

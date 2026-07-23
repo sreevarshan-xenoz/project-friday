@@ -48,6 +48,11 @@ impl Friday {
         self.memory.register_layer(layer);
     }
 
+    /// Shared, read-only configuration (cloned `Arc`).
+    pub fn config(&self) -> &Arc<HashMap<String, serde_json::Value>> {
+        &self.config
+    }
+
     /// Start the event router. This future resolves only when the bus closes.
     pub async fn run(&mut self) -> Result<()> {
         self.plugins.run().await

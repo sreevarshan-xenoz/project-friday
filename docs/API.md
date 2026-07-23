@@ -1,10 +1,31 @@
 # API
 
-The public API is the `friday-core` crate. Import it with:
+FRIDAY is a **Cargo workspace**. The foundational public API is `friday-core`;
+higher subsystems are separate crates that depend on it.
+
+| Crate | Path | Role |
+| ----- | ---- | ---- |
+| `friday-core` | `core/` | Event bus, plugins, memory, protocol, runtime |
+| `friday-planner` | `planner/` | Intent / planning / execution / verification engines |
+| `friday-actions` | `services/action-runtime/` | AgentKernel + adapters |
+| `friday-capabilities` | `services/capabilities/` | Registry, ranking, orchestrator, cost |
+| `friday-simulation` | `services/simulation/` | Plan simulation |
+| `friday-context` | `services/context/` | Context Builder |
+| `friday-intelligence` | `services/intelligence/` | LLM providers / router |
+| `friday-recovery` | `services/recovery/` | Recovery graph |
+| `friday-benchmark` | `services/benchmark/` | Resilience harness |
+| `friday-mobile` | `services/mobile/` | Mobile protocol daemon |
+| `friday-mcp` | `mcp/` | MCP client / transport / discovery |
+| `friday-windows` | `plugins/windows/` | Windows bridge client |
+
+Import core with:
 
 ```toml
 friday-core = { path = "../core" }
 ```
+
+Subsystem contracts and event vocabulary: **`specs/`** (especially
+`specs/events.md`, `specs/kernel.md`). This document covers the core surface.
 
 ## Runtime
 

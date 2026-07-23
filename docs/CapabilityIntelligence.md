@@ -1,9 +1,11 @@
 # Capability Intelligence (M4.6)
 
-> **Status:** Design locked. Implements the "Knowledge" subsystem: FRIDAY learns
+> **Status:** ✅ Implemented (`friday-capabilities` in `services/capabilities`).
+> Design locked. Implements the "Knowledge" subsystem: FRIDAY learns
 > **what it can do** and *how well*, so the planner reasons over capabilities and
 > providers instead of hardcoded plugin names. Supersedes the earlier
-> "Capability Registry" name. Companion to `docs/WindowsBridge.md`.
+> "Capability Registry" name. Companion to `docs/WindowsBridge.md` and
+> `specs/capabilities.md`.
 >
 > Terminology shift (authorized restructure): we now speak of **services** (a
 > filesystem service, a git service, a windows service, a future browser service)
