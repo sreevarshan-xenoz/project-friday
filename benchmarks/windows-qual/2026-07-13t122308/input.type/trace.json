@@ -1,0 +1,14 @@
+[
+  {
+    "intent": "windows.open",
+    "latency_ms": 9289,
+    "ok": true,
+    "ts": "2026-07-13T12:24:05.290757200+00:00"
+  },
+  {
+    "intent": "windows.type",
+    "latency_ms": 0,
+    "ok": false,
+    "ts": "2026-07-13T12:24:05.291618300+00:00"
+  }
+]

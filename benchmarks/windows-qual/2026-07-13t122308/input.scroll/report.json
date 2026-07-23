@@ -1,0 +1,13 @@
+{
+  "action_ok": false,
+  "group": "input",
+  "id": "input.scroll",
+  "issues": [
+    "WIN-INPUT-SCROLL"
+  ],
+  "latency_ms": 1,
+  "launch_resolution": null,
+  "note": "input_op_success=false | host_error=Some(\"InvalidHandle\")",
+  "passed": false,
+  "state_accuracy": false
+}
