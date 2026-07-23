@@ -1,0 +1,11 @@
+{
+  "action_ok": true,
+  "group": "lifecycle",
+  "id": "close.notepad",
+  "issues": [],
+  "latency_ms": 2,
+  "launch_resolution": "New Instance",
+  "note": "absent_from_list=true",
+  "passed": true,
+  "state_accuracy": true
+}

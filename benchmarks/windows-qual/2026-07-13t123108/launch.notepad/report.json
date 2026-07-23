@@ -1,0 +1,11 @@
+{
+  "action_ok": true,
+  "group": "launch",
+  "id": "launch.notepad",
+  "issues": [],
+  "latency_ms": 9388,
+  "launch_resolution": "New Instance",
+  "note": "list_contains=true, foreground_matches=true",
+  "passed": true,
+  "state_accuracy": true
+}
