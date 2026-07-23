@@ -1,0 +1,13 @@
+{
+  "mode": "real",
+  "timestamp": "2026-07-13T12:01:54.803978100+00:00",
+  "friday_version": "0.1.0",
+  "windows_host_version": "real (C# host)",
+  "windows_version": "10.0.26200",
+  "desktop_session": "1",
+  "dpi": "96",
+  "monitor_count": "1",
+  "elevation": "False",
+  "foreground_process": "13916\r\nexplorer",
+  "os": "windows"
+}
