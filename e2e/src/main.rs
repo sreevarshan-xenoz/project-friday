@@ -164,6 +164,7 @@ async fn run_diagnostics() {
             ok: true,
             error: None,
             output: serde_json::json!({}),
+            meta: None,
         }),
     ));
     let _windows = friday_windows::WindowsAdapter::new(windows_mock);

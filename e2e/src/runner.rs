@@ -63,6 +63,7 @@ pub async fn run_vertical_slice(
             ok: true,
             error: None,
             output: serde_json::json!({ "opened": true }),
+            meta: None,
         }
     })));
     kernel

@@ -1,7 +1,8 @@
 # Voice
 
 Voice is the most natural front door to FRIDAY, but per the roadmap it is a
-**plugin**, not a core feature. The core only knows `voice.*` event kinds.
+**plugin set**, not a core feature. The core only knows `voice.*` / `audio.*`
+event kinds.
 
 ## Pipeline (as events)
 
@@ -32,8 +33,10 @@ audio.capture
 - Cloud fallback only when local confidence is low.
 - All voice I/O is logged (per the logging requirement) but transcripts are
   treated as sensitive and excluded from non-local memory tiers unless approved.
+- The **Android console** and **mobile daemon** already provide a non-voice remote
+  front door; voice is an additional modality, not a prerequisite for control.
 
 ## Status
 
-Planned (Roadmap M5). The event kinds above are reserved so earlier milestones
-can emit compatible events.
+⏳ **Planned** — Roadmap **M8** (Voice).  
+Event kinds reserved so earlier milestones can emit compatible events.

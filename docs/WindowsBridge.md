@@ -1,8 +1,11 @@
 # Windows Bridge (M4.5.2) — Design
 
-> **Status:** Design locked. No implementation code exists yet. This document is
-> the contract; the code in `plugins/windows/` and `windows-host/` must conform
-> to it. It is intentionally frozen like `Architecture.md` / `Execution.md`.
+> **Status:** ✅ Design locked **and implemented**. This document is the
+> contract; code in `plugins/windows/` (`friday-windows`) and `windows-host/`
+> (C# / .NET 8) conforms to it. Qualification runs live under
+> `services/windows-qual` with evidence in `benchmarks/windows-qual/`.
+> Intentionally frozen like `Architecture.md` / `Execution.md` — changes need
+> review + version bump.
 
 ## 1. Principle
 

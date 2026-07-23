@@ -40,3 +40,12 @@ A subsystem is **Qualified** when its recovery coverage (resolved / attempts) is
 Qualification is narrowly about *recovery*. **Certification** (see
 `certification.md`) is the broader engineering sign-off for a whole capability and
 is a separate gate — and requires Qualification as a prerequisite.
+
+## Client Qualification
+
+The same evidence-first discipline now applies to **external clients** of the
+Mobile Protocol (`services/mobile`). A client is qualified only after it builds,
+installs, lints, and demonstrates end-to-end against the live daemon — not when
+its code is merely authored. Gates and the canonical **Demo 001** are in
+`specs/client-qualification.md`; the protocol itself is a versioned API documented
+in `clients/README.md`.
