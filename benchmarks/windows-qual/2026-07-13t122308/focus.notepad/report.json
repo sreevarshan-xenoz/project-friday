@@ -1,0 +1,13 @@
+{
+  "action_ok": false,
+  "group": "focus",
+  "id": "focus.notepad",
+  "issues": [
+    "WIN-FOCUS-NOTEPAD"
+  ],
+  "latency_ms": 1,
+  "launch_resolution": null,
+  "note": "foreground_matches=true | host_error=Some(\"WindowNotFound\")",
+  "passed": false,
+  "state_accuracy": true
+}

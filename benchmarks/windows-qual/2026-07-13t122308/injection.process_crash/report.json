@@ -1,0 +1,11 @@
+{
+  "action_ok": false,
+  "group": "failure-injection",
+  "id": "injection.process_crash",
+  "issues": [],
+  "latency_ms": 0,
+  "launch_resolution": null,
+  "note": "graceful_failure=true (action_ok=false) | host_error=Some(\"WindowNotFound\")",
+  "passed": true,
+  "state_accuracy": true
+}
