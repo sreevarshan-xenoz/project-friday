@@ -1,0 +1,13 @@
+{
+  "action_ok": true,
+  "group": "geometry",
+  "id": "move.notepad",
+  "issues": [
+    "WIN-MOVE-NOTEPAD"
+  ],
+  "latency_ms": 1,
+  "launch_resolution": null,
+  "note": "bounds_match=false",
+  "passed": false,
+  "state_accuracy": false
+}

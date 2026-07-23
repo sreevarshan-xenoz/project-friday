@@ -1,0 +1,13 @@
+{
+  "action_ok": true,
+  "group": "geometry",
+  "id": "resize.notepad",
+  "issues": [
+    "WIN-RESIZE-NOTEPAD"
+  ],
+  "latency_ms": 16,
+  "launch_resolution": null,
+  "note": "bounds_match=false",
+  "passed": false,
+  "state_accuracy": false
+}
