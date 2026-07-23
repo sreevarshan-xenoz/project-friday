@@ -1,0 +1,13 @@
+{
+  "action_ok": false,
+  "group": "input",
+  "id": "input.click",
+  "issues": [
+    "WIN-INPUT-CLICK"
+  ],
+  "latency_ms": 2,
+  "launch_resolution": "Existing Instance",
+  "note": "input_op_success=false | host_error=Some(\"Unknown:The given key was not present in the dictionary.\")",
+  "passed": false,
+  "state_accuracy": false
+}
