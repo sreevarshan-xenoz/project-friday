@@ -1,0 +1,13 @@
+{
+  "action_ok": false,
+  "group": "lifecycle",
+  "id": "close.notepad",
+  "issues": [
+    "WIN-CLOSE-NOTEPAD"
+  ],
+  "latency_ms": 0,
+  "launch_resolution": null,
+  "note": "absent_from_list=false | host_error=Some(\"WindowNotFound\")",
+  "passed": false,
+  "state_accuracy": false
+}
