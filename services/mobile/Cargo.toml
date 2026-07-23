@@ -1,0 +1,30 @@
+[package]
+name = "friday-mobile"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "FRIDAY Mobile Transport (M6.1): WebSocket gateway, QR-pair auth, event/command relay"
+
+[dependencies]
+friday-core = { path = "../../core" }
+friday-capabilities = { path = "../capabilities" }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+http = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+rand = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+sysinfo = { workspace = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util", "macros"] }
