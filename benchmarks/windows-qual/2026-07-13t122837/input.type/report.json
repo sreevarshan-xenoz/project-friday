@@ -1,0 +1,11 @@
+{
+  "action_ok": true,
+  "group": "input",
+  "id": "input.type",
+  "issues": [],
+  "latency_ms": 65,
+  "launch_resolution": null,
+  "note": "input_op_success=true",
+  "passed": true,
+  "state_accuracy": true
+}

@@ -1,0 +1,11 @@
+{
+  "action_ok": true,
+  "group": "input",
+  "id": "input.scroll",
+  "issues": [],
+  "latency_ms": 0,
+  "launch_resolution": null,
+  "note": "input_op_success=true",
+  "passed": true,
+  "state_accuracy": true
+}
