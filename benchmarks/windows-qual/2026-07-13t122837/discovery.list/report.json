@@ -1,0 +1,11 @@
+{
+  "action_ok": true,
+  "group": "discovery",
+  "id": "discovery.list",
+  "issues": [],
+  "latency_ms": 3,
+  "launch_resolution": null,
+  "note": "listed=true",
+  "passed": true,
+  "state_accuracy": true
+}

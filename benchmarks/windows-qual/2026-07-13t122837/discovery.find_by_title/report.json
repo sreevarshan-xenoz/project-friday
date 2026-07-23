@@ -1,0 +1,13 @@
+{
+  "action_ok": true,
+  "group": "discovery",
+  "id": "discovery.find_by_title",
+  "issues": [
+    "WIN-DISCOVERY-FIND_BY_TITLE"
+  ],
+  "latency_ms": 3,
+  "launch_resolution": null,
+  "note": "title_found=false",
+  "passed": false,
+  "state_accuracy": false
+}
