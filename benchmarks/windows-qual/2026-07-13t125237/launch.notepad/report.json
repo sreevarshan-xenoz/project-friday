@@ -1,0 +1,13 @@
+{
+  "action_ok": false,
+  "group": "launch",
+  "id": "launch.notepad",
+  "issues": [
+    "WIN-LAUNCH-NOTEPAD"
+  ],
+  "latency_ms": 9609,
+  "launch_resolution": null,
+  "note": "list_contains=false, foreground_matches=false | host_error=Some(\"WindowNotFound\")",
+  "passed": false,
+  "state_accuracy": false
+}
