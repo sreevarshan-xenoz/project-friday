@@ -1,0 +1,48 @@
+{
+  "id": "testing",
+  "name": "Testing",
+  "version": "1.0.0",
+  "description": "Run and manage tests across languages. Detects test frameworks, runs suites, and reports results.",
+  "author": "FRIDAY",
+  "category": "developer",
+  "icon": "✓",
+  "capabilities": [
+    "terminal.execute"
+  ],
+  "actions": [
+    "run tests",
+    "run specific test",
+    "run tests with coverage",
+    "run tests in watch mode",
+    "run failing tests only",
+    "compare test results",
+    "check test health"
+  ],
+  "permissions": [
+    "terminal.execute"
+  ],
+  "examples": [
+    {
+      "goal": "Run the tests",
+      "plan": [
+        "Detect project language and test framework",
+        "Run appropriate test command",
+        "Parse results (pass/fail/skip)",
+        "Report summary with failure details"
+      ]
+    },
+    {
+      "goal": "Run the failing tests",
+      "plan": [
+        "Run all tests to identify failures",
+        "Filter to failing tests only",
+        "Re-run just the failures",
+        "Report if any now pass"
+      ]
+    }
+  ],
+  "dependencies": [],
+  "platform": "Any",
+  "min_core_version": "0.1.0",
+  "enabled": true
+}
