@@ -11,6 +11,7 @@ description = "FRIDAY Release 0.1 End-to-End Harness, Developer Console, and Tra
 [dependencies]
 friday-core = { path = "../core" }
 friday-planner = { path = "../planner" }
+friday-mcp = { path = "../mcp" }
 friday-capabilities = { path = "../services/capabilities" }
 friday-simulation = { path = "../services/simulation" }
 friday-context = { path = "../services/context" }
@@ -22,4 +23,9 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { workspace = true }
+
+[dev-dependencies]
+async-trait = { workspace = true }
+dotenvy = "0.15"
