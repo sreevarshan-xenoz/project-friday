@@ -1,0 +1,22 @@
+.fr-bubble {
+  max-width: 85%;
+  padding: var(--fr-sp-3) var(--fr-sp-4);
+  border-radius: var(--fr-radius-lg);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.fr-bubble--user {
+  align-self: flex-end;
+  background: var(--fr-primary-dim);
+  color: var(--fr-text);
+  border-bottom-right-radius: var(--fr-sp-1);
+}
+
+.fr-bubble--friday {
+  align-self: flex-start;
+  background: var(--fr-surface-1);
+  color: var(--fr-text);
+  border-bottom-left-radius: var(--fr-sp-1);
+  border: 1px solid var(--fr-border);
+}

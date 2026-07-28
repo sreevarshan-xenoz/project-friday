@@ -1,0 +1,23 @@
+.fr-card {
+  background: var(--fr-surface);
+  border: 1px solid var(--fr-border);
+  border-radius: var(--fr-radius);
+  transition: border-color var(--fr-duration) var(--fr-ease),
+              box-shadow var(--fr-duration) var(--fr-ease);
+}
+
+.fr-card:hover {
+  border-color: var(--fr-border-glow);
+}
+
+.fr-card--glow {
+  box-shadow: var(--fr-glow);
+}
+
+.fr-card--glow:hover {
+  box-shadow: var(--fr-glow-strong);
+}
+
+.fr-card--sm { padding: var(--fr-sp-3); }
+.fr-card--md { padding: var(--fr-sp-4); }
+.fr-card--lg { padding: var(--fr-sp-6); }
