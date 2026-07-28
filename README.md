@@ -38,8 +38,10 @@ recovery, Windows-heavy tasks), not greenfield features.
 | MCP as first-class `ActionAdapter` | ✅ Done |
 | Mobile daemon + Android console client | ✅ Scaffolded / build-verified |
 | Benchmark + Recovery + Windows / Provider qual harnesses | ✅ In use |
+| Skill Engine (modular capabilities) | 🚧 Spec complete |
+| Desktop UI (React + TypeScript) | ✅ Foundation complete |
 | Browser Runtime | ⏳ Next major capability |
-| Vision / Voice / Desktop UI / Learning / Autonomy | Planned |
+| Vision / Voice / Learning / Autonomy | Planned |
 | Evaluation framework, Knowledge Graph depth, Reasoning Session | 🚧 Specced / partial |
 
 See [`docs/Roadmap.md`](docs/Roadmap.md) and [`specs/README.md`](specs/README.md)
@@ -63,7 +65,8 @@ FRIDAY/
 ├── e2e/             End-to-end test harness
 ├── benchmarks/      Qualification run evidence (Windows, provider, …)
 ├── artifacts/       Reproducible build outputs (e.g. Android APK)
-├── frontend/        React + Tauri desktop UI (planned)
+├── frontend/        React + TypeScript desktop UI (design system + components + screens)
+├── skills/          Skill Engine — modular, installable capability bundles
 ├── desktop/         Legacy path note — live host is windows-host/
 ├── memory/          Memory layer notes (impl lives in core/)
 ├── models/          Model registry notes (impl in services/intelligence)
