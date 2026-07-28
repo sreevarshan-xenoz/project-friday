@@ -1,0 +1,53 @@
+{
+  "id": "python",
+  "name": "Python",
+  "version": "1.0.0",
+  "description": "Python development. pip, pytest, venv, type checking, and script execution.",
+  "author": "FRIDAY",
+  "category": "developer",
+  "icon": "●",
+  "capabilities": [
+    "terminal.execute",
+    "filesystem.read",
+    "filesystem.write"
+  ],
+  "actions": [
+    "run python script",
+    "run python tests",
+    "install python package",
+    "create virtual environment",
+    "run type checker",
+    "format python code",
+    "check python version",
+    "run python linter",
+    "manage requirements.txt"
+  ],
+  "permissions": [
+    "terminal.execute",
+    "filesystem.write"
+  ],
+  "examples": [
+    {
+      "goal": "Run the tests",
+      "plan": [
+        "Detect pytest or unittest in project",
+        "Run pytest or python -m unittest",
+        "Parse test results",
+        "Report pass/fail count"
+      ]
+    },
+    {
+      "goal": "Install the dependencies",
+      "plan": [
+        "Detect requirements.txt or pyproject.toml",
+        "Create/activate venv if needed",
+        "Run pip install -r requirements.txt",
+        "Report installed packages"
+      ]
+    }
+  ],
+  "dependencies": [],
+  "platform": "Any",
+  "min_core_version": "0.1.0",
+  "enabled": true
+}

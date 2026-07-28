@@ -1,0 +1,21 @@
+[package]
+name = "friday-goal-execution"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "FRIDAY Goal Execution — Goal → Action → Outcome → Reflection loop"
+
+[dependencies]
+friday-cognitive = { path = "../cognitive" }
+friday-memory = { path = "../engines/memory" }
+friday-knowledge = { path = "../knowledge" }
+friday-reflection = { path = "../reflection" }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
