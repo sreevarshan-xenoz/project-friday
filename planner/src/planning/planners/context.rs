@@ -17,6 +17,8 @@ pub struct AvailableCapability {
     /// Discovery/ranking score (0..1) from `CapabilityRegistry::search`. Higher
     /// means more relevant to the current goal.
     pub score: f64,
+    /// JSON Schema describing the tool's expected input parameters.
+    pub schema: serde_json::Value,
 }
 
 /// Lightweight view of the workspace the plan will run in. Populated by the host
@@ -71,12 +73,18 @@ impl PlanContext {
         caps.sort_by(|a, b| a.id.cmp(&b.id));
         serde_json::json!(caps
             .iter()
-            .map(|c| serde_json::json!({
-                "id": c.id,
-                "description": c.description,
-                "risk": c.risk.as_str(),
-                "score": c.score,
-            }))
+            .map(|c| {
+                let mut obj = serde_json::json!({
+                    "id": c.id,
+                    "description": c.description,
+                    "risk": c.risk.as_str(),
+                    "score": c.score,
+                });
+                if !c.schema.is_null() && !c.schema.as_object().map_or(true, |o| o.is_empty()) {
+                    obj["params"] = c.schema.clone();
+                }
+                obj
+            })
             .collect::<Vec<_>>())
     }
 
