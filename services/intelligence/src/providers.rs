@@ -434,7 +434,9 @@ impl InferenceFabric {
                         || model.provider == "nvidia-nim"
                 }
                 RoutingMode::Free => {
-                    model.provider == "openrouter" || model.provider == "omniroute"
+                    model.provider == "openrouter"
+                        || model.provider == "omniroute"
+                        || model.provider == "gemini"
                 }
                 RoutingMode::Local => model.provider == "ollama",
                 RoutingMode::Hybrid => {
@@ -561,6 +563,7 @@ impl InferenceFabric {
         }
 
         // OpenRouter (Tier 1 Free Aggregator)
+        // Free models: 20 req/min, 50/day (1,000/day with $10+ credit history)
         if let Ok(key) = std::env::var("OPENROUTER_API_KEY") {
             fabric.register_provider(Box::new(OpenAiProvider {
                 name: "openrouter".to_string(),
@@ -568,11 +571,12 @@ impl InferenceFabric {
                 api_key: key,
             }));
             if !registry_loaded {
+                // Auto-router: picks best free model per request (most reliable)
                 fabric.register_model(ModelInfo {
-                    id: "google/gemini-2.5-flash".to_string(),
-                    family: "gemini-2.5-flash".to_string(),
+                    id: "openrouter/free".to_string(),
+                    family: "auto".to_string(),
                     provider: "openrouter".to_string(),
-                    latency_ms: 800,
+                    latency_ms: 2000,
                     reliability: 1.0,
                     capabilities: vec![
                         ModelCapability::Json,
@@ -581,14 +585,46 @@ impl InferenceFabric {
                     ],
                     max_context: 1_000_000,
                 });
+                // Coding-focused free model: 1M context
                 fabric.register_model(ModelInfo {
-                    id: "meta-llama/llama-3.3-70b-instruct:free".to_string(),
-                    family: "llama-3.3-70b".to_string(),
+                    id: "qwen/qwen3-coder:free".to_string(),
+                    family: "qwen3-coder".to_string(),
                     provider: "openrouter".to_string(),
-                    latency_ms: 1200,
+                    latency_ms: 3000,
                     reliability: 1.0,
-                    capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
-                    max_context: 131072,
+                    capabilities: vec![
+                        ModelCapability::Json,
+                        ModelCapability::Tools,
+                        ModelCapability::LongContext,
+                    ],
+                    max_context: 1_000_000,
+                });
+                // Most-used free model but may return empty under load: 1M context
+                fabric.register_model(ModelInfo {
+                    id: "nvidia/nemotron-3-ultra-550b-a55b:free".to_string(),
+                    family: "nemotron-3-ultra".to_string(),
+                    provider: "openrouter".to_string(),
+                    latency_ms: 4000,
+                    reliability: 0.8,
+                    capabilities: vec![
+                        ModelCapability::Json,
+                        ModelCapability::Tools,
+                        ModelCapability::LongContext,
+                    ],
+                    max_context: 1_000_000,
+                });
+                // Agentic coding free model: 262K context
+                fabric.register_model(ModelInfo {
+                    id: "poolside/laguna-m.1:free".to_string(),
+                    family: "laguna-m".to_string(),
+                    provider: "openrouter".to_string(),
+                    latency_ms: 5000,
+                    reliability: 1.0,
+                    capabilities: vec![
+                        ModelCapability::Json,
+                        ModelCapability::Tools,
+                    ],
+                    max_context: 262_144,
                 });
             }
         }
@@ -642,8 +678,8 @@ impl InferenceFabric {
             }));
             if !registry_loaded {
                 fabric.register_model(ModelInfo {
-                    id: "gemini-2.5-flash".to_string(),
-                    family: "gemini-2.5-flash".to_string(),
+                    id: "gemini-2.0-flash".to_string(),
+                    family: "gemini-2.0-flash".to_string(),
                     provider: "gemini".to_string(),
                     latency_ms: 600,
                     reliability: 1.0,
@@ -658,6 +694,7 @@ impl InferenceFabric {
         }
 
         // NVIDIA NIMs (Tier 2 — fast inference, OpenAI-compatible)
+        // Free tier: ~40 req/min, no credit card, credits never expire
         if let Ok(key) = std::env::var("NVIDIA_NIM_API_KEY") {
             fabric.register_provider(Box::new(OpenAiProvider {
                 name: "nvidia-nim".to_string(),
@@ -666,13 +703,13 @@ impl InferenceFabric {
             }));
             if !registry_loaded {
                 fabric.register_model(ModelInfo {
-                    id: "nvidia/llama-3.3-70b-instruct".to_string(),
-                    family: "llama-3.3-70b".to_string(),
+                    id: "nvidia/nemotron-3-super-120b-a12b".to_string(),
+                    family: "nemotron-3-super".to_string(),
                     provider: "nvidia-nim".to_string(),
-                    latency_ms: 300,
+                    latency_ms: 2000,
                     reliability: 1.0,
                     capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
-                    max_context: 128000,
+                    max_context: 131_072,
                 });
             }
         }
