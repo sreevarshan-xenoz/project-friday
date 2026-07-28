@@ -1,0 +1,107 @@
+.memory {
+  height: 100%;
+  padding: var(--fr-sp-6);
+  overflow-y: auto;
+}
+
+.memory-title {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--fr-text);
+  margin-bottom: var(--fr-sp-2);
+}
+
+.memory-subtitle {
+  font-size: 14px;
+  color: var(--fr-text-dim);
+  margin-bottom: var(--fr-sp-6);
+}
+
+.memory-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--fr-sp-3);
+  text-align: center;
+  color: var(--fr-text-muted);
+}
+
+.memory-empty-icon {
+  font-size: 32px;
+  color: var(--fr-primary);
+  opacity: 0.3;
+}
+
+.memory-empty-hint {
+  font-size: 13px;
+  max-width: 400px;
+  line-height: 1.6;
+}
+
+/* ── Timeline ──────────────────────────────────────── */
+.memory-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--fr-sp-6);
+}
+
+.memory-day {
+  display: flex;
+  flex-direction: column;
+  gap: var(--fr-sp-3);
+}
+
+.memory-day-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fr-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.memory-day-line {
+  height: 1px;
+  background: var(--fr-border);
+}
+
+.memory-day-events {
+  display: flex;
+  flex-direction: column;
+  gap: var(--fr-sp-2);
+}
+
+.memory-entry {
+  margin-left: var(--fr-sp-4);
+  border-left: 2px solid var(--fr-surface-3);
+}
+
+.memory-entry-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--fr-sp-1);
+}
+
+.memory-entry-topic {
+  font-family: var(--fr-font-mono);
+  font-size: 12px;
+  color: var(--fr-primary);
+}
+
+.memory-entry-time {
+  font-size: 11px;
+  color: var(--fr-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.memory-entry-summary {
+  font-size: 13px;
+  color: var(--fr-text);
+  line-height: 1.5;
+}
+
+.memory-entry-source {
+  font-size: 11px;
+  color: var(--fr-text-muted);
+  margin-top: var(--fr-sp-1);
+}
