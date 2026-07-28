@@ -31,6 +31,7 @@ fn base_plan_context() -> PlanContext {
             description: "Test action".to_string(),
             risk: Risk::Safe,
             score: 0.9,
+            schema: serde_json::json!({}),
         }],
         budget: ExecutionBudget::default(),
         workspace: WorkspaceContext::default(),
