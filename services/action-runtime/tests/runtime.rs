@@ -174,7 +174,7 @@ async fn mcp_server_is_just_another_adapter() {
         .await
         .expect("mcp server registers as adapter");
     assert!(
-        tools.iter().any(|t| t == "read_file"),
+        tools.iter().any(|t| t.name == "read_file"),
         "discovered tools: {tools:?}"
     );
 
