@@ -261,7 +261,9 @@ impl Planner for LlmPlanner {
             .complete(&prompt)
             .await
             .map_err(PlanError::Backend)?;
+        tracing::debug!(raw_len = raw.len(), "llm: raw response received");
         let json_str = Self::extract_json(&raw)?;
+        tracing::debug!(json_len = json_str.len(), "llm: extracted JSON plan");
         let plan: LlmPlan =
             serde_json::from_str(json_str).map_err(|e| PlanError::Parse(e.to_string()))?;
         if plan.tasks.is_empty() {

@@ -169,14 +169,17 @@ impl PlanningEngine {
     /// token cost, better accuracy) — and MCP/plugin tools appear automatically
     /// once registered.
     fn context(&self, intent: &Intent) -> PlanContext {
-        let ranked = self.registry.search(&intent.raw, self.discovery_limit);
+        let ranked = self.registry.search(&intent.raw, self.discovery_limit * 3);
         let capabilities: Vec<AvailableCapability> = ranked
             .into_iter()
+            .filter(|rc| rc.spec.id.starts_with("mcp:"))
+            .take(self.discovery_limit)
             .map(|rc| AvailableCapability {
                 id: rc.spec.id,
                 description: rc.spec.description,
                 risk: rc.spec.binding.risk,
                 score: rc.score,
+                schema: rc.spec.binding.schema,
             })
             .collect();
 
