@@ -1,0 +1,57 @@
+{
+  "id": "git",
+  "name": "Git",
+  "version": "1.0.0",
+  "description": "Version control with Git. Commit, push, pull, branch, diff, merge, and manage repositories.",
+  "author": "FRIDAY",
+  "category": "developer",
+  "icon": "⎇",
+  "capabilities": [
+    "git.status",
+    "git.commit",
+    "git.push",
+    "git.pull",
+    "git.diff",
+    "terminal.execute"
+  ],
+  "actions": [
+    "commit changes",
+    "push to remote",
+    "pull latest changes",
+    "check git status",
+    "view git diff",
+    "create a branch",
+    "merge branches",
+    "resolve merge conflicts",
+    "view git log",
+    "stash changes",
+    "revert a commit"
+  ],
+  "permissions": [
+    "git.commit",
+    "terminal.execute"
+  ],
+  "examples": [
+    {
+      "goal": "Commit the changes",
+      "plan": [
+        "Run git status and git diff",
+        "Stage changed files",
+        "Write descriptive commit message",
+        "Run git commit"
+      ]
+    },
+    {
+      "goal": "What changed since yesterday?",
+      "plan": [
+        "Run git log --since='yesterday' --oneline",
+        "Run git diff HEAD~5",
+        "Summarize changes by file"
+      ]
+    }
+  ],
+  "dependencies": [],
+  "platform": "Any",
+  "min_core_version": "0.1.0",
+  "enabled": true
+}

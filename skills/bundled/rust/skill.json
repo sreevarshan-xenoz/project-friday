@@ -1,0 +1,60 @@
+{
+  "id": "rust",
+  "name": "Rust",
+  "version": "1.0.0",
+  "description": "Rust development. Cargo builds, tests, clippy, fmt, and crate management.",
+  "author": "FRIDAY",
+  "category": "developer",
+  "icon": "◆",
+  "capabilities": [
+    "terminal.execute",
+    "filesystem.read",
+    "filesystem.write"
+  ],
+  "actions": [
+    "build rust project",
+    "run rust tests",
+    "run clippy lints",
+    "format rust code",
+    "add cargo dependency",
+    "check rust compilation",
+    "run rust benchmarks",
+    "update cargo lock",
+    "check rust documentation"
+  ],
+  "permissions": [
+    "terminal.execute",
+    "filesystem.write"
+  ],
+  "examples": [
+    {
+      "goal": "Build the project",
+      "plan": [
+        "Detect Cargo.toml in project root",
+        "Run cargo build",
+        "Report build status and any warnings"
+      ]
+    },
+    {
+      "goal": "Run the tests",
+      "plan": [
+        "Run cargo test",
+        "Parse test results",
+        "Report pass/fail count and any failures"
+      ]
+    },
+    {
+      "goal": "Fix clippy warnings",
+      "plan": [
+        "Run cargo clippy -- -D warnings",
+        "Read each warning location",
+        "Apply fixes",
+        "Re-run clippy to verify"
+      ]
+    }
+  ],
+  "dependencies": [],
+  "platform": "Any",
+  "min_core_version": "0.1.0",
+  "enabled": true
+}

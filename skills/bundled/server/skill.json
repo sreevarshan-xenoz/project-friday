@@ -1,0 +1,55 @@
+{
+  "id": "server",
+  "name": "Server Management",
+  "version": "1.0.0",
+  "description": "Manage remote Linux servers via SSH. Monitor health, deploy code, manage services, and troubleshoot issues.",
+  "author": "FRIDAY",
+  "category": "developer",
+  "icon": "▶",
+  "capabilities": [
+    "terminal.execute",
+    "filesystem.read",
+    "filesystem.write"
+  ],
+  "actions": [
+    "check server health",
+    "deploy to server",
+    "restart service on server",
+    "view server logs",
+    "check disk usage",
+    "check running processes",
+    "update server packages",
+    "manage systemd services",
+    "check network status",
+    "troubleshoot server issues"
+  ],
+  "permissions": [
+    "terminal.execute",
+    "filesystem.write"
+  ],
+  "examples": [
+    {
+      "goal": "Check if the server is healthy",
+      "plan": [
+        "SSH into the server",
+        "Run health check commands (uptime, disk, memory)",
+        "Check critical services (nginx, postgres, docker)",
+        "Report overall health status"
+      ]
+    },
+    {
+      "goal": "Deploy the latest code",
+      "plan": [
+        "SSH into server",
+        "Pull latest code from git",
+        "Run build/install commands",
+        "Restart affected services",
+        "Verify deployment succeeded"
+      ]
+    }
+  ],
+  "dependencies": ["developer"],
+  "platform": "Any",
+  "min_core_version": "0.1.0",
+  "enabled": true
+}

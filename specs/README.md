@@ -68,6 +68,16 @@ work this directory supersedes it.
 | Cognitive Engine    | `intelligence.md`   | `services/intelligence`              | ✅ M5    |
 | Inference fabric    | `inference_fabric.md` | `services/intelligence`            | ✅ M5    |
 | Mobile console      | `mobile-console.md` | `services/mobile` + `clients/android`| ✅       |
+| Skill Engine        | `skill-engine.md`   | `services/skills` + `skills/`       | 🚧 Spec  |
+| Tool Selection      | `tool-selection-engine.md` | `services/tool-selection`     | 🚧 Spec  |
+| Agent Runtime       | `agent-runtime.md`  | `services/agent-runtime`            | 🚧 Spec  |
+| Cognitive Runtime   | `cognitive-runtime.md` | `services/cognitive`             | 🚧 Spec  |
+| Knowledge Engine    | `knowledge-engine.md` | `services/knowledge`              | 🚧 Spec  |
+| Provider Engine     | `provider-engine.md` | `services/provider`                | 🚧 Spec  |
+| Reflection Engine   | `reflection-engine.md` | `services/reflection`            | 🚧 Spec  |
+| Evaluation Framework| `evaluation-framework.md` | `services/evaluation`          | 🚧 Spec  |
+| Architecture (Final)| `architecture-final.md` | (18-engine Adaptive Cognitive OS) | 🚧 Vision |
+| Intelligence OS     | `architecture-intelligence-os.md` | (superseded by architecture-final) | 📄 Archive |
 | Evaluation          | `evaluation.md`     | `services/evaluation` (planned)      | 🚧 M5.5  |
 | Knowledge Graph     | `knowledge_graph.md` | `friday-core` (interface only)      | 🚧 M5.6  |
 | Reasoning Session   | `reasoning_session.md`| `services/intelligence`             | 🚧 M5.7  |
