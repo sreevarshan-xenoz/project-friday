@@ -1,0 +1,16 @@
+[package]
+name = "friday-sensors"
+version = "0.1.0"
+edition = "2021"
+description = "Platform-neutral sensor infrastructure for FRIDAY"
+
+[dependencies]
+friday-cognitive = { path = "../cognitive" }
+async-trait = "0.1"
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

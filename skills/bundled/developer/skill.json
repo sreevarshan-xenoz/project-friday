@@ -1,0 +1,36 @@
+{
+  "id": "developer",
+  "name": "Developer",
+  "version": "1.0.0",
+  "description": "Meta-skill for code development. Aggregates git, rust, python, testing, and deployment skills. Install specific skills individually for lighter footprint.",
+  "author": "FRIDAY",
+  "category": "developer",
+  "icon": "▸",
+  "capabilities": [],
+  "actions": [
+    "write code",
+    "run tests",
+    "fix bugs",
+    "build project",
+    "commit changes",
+    "review code",
+    "explain code",
+    "refactor code",
+    "create new project"
+  ],
+  "permissions": [],
+  "examples": [
+    {
+      "goal": "Run the tests",
+      "plan": [
+        "Detect project type (Rust/Node/Python)",
+        "Delegate to language-specific skill",
+        "Report results"
+      ]
+    }
+  ],
+  "dependencies": ["git", "rust", "python", "testing"],
+  "platform": "Any",
+  "min_core_version": "0.1.0",
+  "enabled": true
+}

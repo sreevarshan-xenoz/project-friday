@@ -1,0 +1,62 @@
+{
+  "id": "docker",
+  "name": "Docker",
+  "version": "1.0.0",
+  "description": "Build, run, and manage Docker containers and images. Handles Docker Compose, logs, and container lifecycle.",
+  "author": "FRIDAY",
+  "category": "developer",
+  "icon": "◆",
+  "capabilities": [
+    "terminal.execute",
+    "filesystem.read",
+    "filesystem.write"
+  ],
+  "actions": [
+    "build docker image",
+    "run docker container",
+    "list docker containers",
+    "stop docker container",
+    "remove docker container",
+    "docker compose up",
+    "docker compose down",
+    "docker compose logs",
+    "view docker logs",
+    "prune docker images",
+    "check docker health"
+  ],
+  "permissions": [
+    "terminal.execute",
+    "filesystem.write"
+  ],
+  "examples": [
+    {
+      "goal": "Build the docker image",
+      "plan": [
+        "Detect Dockerfile in project root",
+        "Run docker build -t <project> .",
+        "Report build status and image size"
+      ]
+    },
+    {
+      "goal": "Run the tests in docker",
+      "plan": [
+        "Detect docker-compose.yml or Dockerfile",
+        "Run docker compose run --rm <service> test",
+        "Stream test output and report results"
+      ]
+    },
+    {
+      "goal": "Start the development environment",
+      "plan": [
+        "Detect docker-compose.yml",
+        "Run docker compose up -d",
+        "Wait for health checks to pass",
+        "Report running services and ports"
+      ]
+    }
+  ],
+  "dependencies": ["developer"],
+  "platform": "Any",
+  "min_core_version": "0.1.0",
+  "enabled": true
+}

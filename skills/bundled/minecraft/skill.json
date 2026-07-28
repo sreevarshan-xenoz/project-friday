@@ -1,0 +1,64 @@
+{
+  "id": "minecraft",
+  "name": "Minecraft Server",
+  "version": "1.0.0",
+  "description": "Manage Minecraft servers. Start/stop, send commands, monitor players, manage mods, and configure server settings.",
+  "author": "FRIDAY",
+  "category": "gaming",
+  "icon": "◼",
+  "capabilities": [
+    "terminal.execute",
+    "filesystem.read",
+    "filesystem.write"
+  ],
+  "actions": [
+    "start minecraft server",
+    "stop minecraft server",
+    "restart minecraft server",
+    "check server status",
+    "list online players",
+    "send server command",
+    "backup world",
+    "install mod",
+    "update server",
+    "check server logs",
+    "configure server properties"
+  ],
+  "permissions": [
+    "terminal.execute",
+    "filesystem.write"
+  ],
+  "examples": [
+    {
+      "goal": "Start the minecraft server",
+      "plan": [
+        "Check if server is already running",
+        "Navigate to server directory",
+        "Run start script or java command",
+        "Wait for 'Done' message in logs",
+        "Report server started with player count"
+      ]
+    },
+    {
+      "goal": "Who is online?",
+      "plan": [
+        "Send 'list' command via RCON or console",
+        "Parse player list from response",
+        "Report online players and count"
+      ]
+    },
+    {
+      "goal": "Backup the world",
+      "plan": [
+        "Stop server gracefully",
+        "Copy world directory to backup location",
+        "Restart server",
+        "Report backup location and size"
+      ]
+    }
+  ],
+  "dependencies": ["developer"],
+  "platform": "Any",
+  "min_core_version": "0.1.0",
+  "enabled": true
+}
