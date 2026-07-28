@@ -125,7 +125,7 @@ impl AgentKernel {
         &self,
         server: &str,
         transport: Box<dyn friday_mcp::transport::Transport>,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<friday_mcp::protocol::McpTool>, String> {
         let mut client = friday_mcp::protocol::McpClient::new(transport);
         client
             .initialize()
@@ -142,7 +142,7 @@ impl AgentKernel {
             tool_names.clone(),
         ));
         self.register_adapter(adapter).await;
-        Ok(tool_names)
+        Ok(tools)
     }
 
     /// Access the audit engine (for tests/inspection).

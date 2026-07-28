@@ -41,6 +41,22 @@ fn reg() -> Arc<CapabilityRegistry> {
         "push",
         Risk::High,
     ));
+    r.register(friday_mcp::adapter::tool_to_spec(
+        "filesystem",
+        &friday_mcp::protocol::McpTool {
+            name: "read_file".into(),
+            description: "Read a file".into(),
+            input_schema: serde_json::json!({}),
+        },
+    ));
+    r.register(friday_mcp::adapter::tool_to_spec(
+        "git",
+        &friday_mcp::protocol::McpTool {
+            name: "git_push".into(),
+            description: "Push commits".into(),
+            input_schema: serde_json::json!({}),
+        },
+    ));
     r
 }
 
