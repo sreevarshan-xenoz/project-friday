@@ -449,6 +449,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "friday-experience"
+version = "0.1.0"
+dependencies = [
+ "friday-plugin-runtime",
+]
+
+[[package]]
 name = "friday-goal-execution"
 version = "0.1.0"
 dependencies = [
@@ -586,6 +593,14 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "friday-plugin-runtime"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tracing",
 ]
 
 [[package]]
