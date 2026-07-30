@@ -1,7 +1,7 @@
 # Decision Intelligence Platform
 
-> **Status:** ✅ Phase 5D complete (Experience Engine crate created at `services/experience/`).
-> Phases 1, 5B, 5C, and 5D implemented. Phases 5E (Reputation), 5F (CostModel), 5G (PlannerFeedback),
+> **Status:** ✅ Phase 5E complete (Reputation Engine added to `services/experience/src/lib.rs`).
+> Phases 1, 5B, 5C, 5D, and 5E implemented. Phases 5F (CostModel), 5G (PlannerFeedback),
 > and 5H (Replanning) not yet started.
 > This document is the architectural contract for Sprint 5 (Experience & Reputation).
 
