@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use crate::catalog::CapabilityCatalog;
 use crate::contract::{
-    CapabilityRequest, CapabilityResult, CorrelationId, DecisionRecord, ExecutionPlan, PlanOutcome,
-    Plugin, PluginHealth, PluginStatus, ProviderProfile, RuntimeError, ScoringWeights,
-    SelectionRationale, TelemetryEvent,
+    Capability, CapabilityRequest, CapabilityResult, CorrelationId, DecisionRecord, ExecutionPlan,
+    PlanOutcome, Plugin, PluginHealth, PluginStatus, ProviderProfile, RuntimeError, ScoringWeights,
+    SelectionContext, SelectionRationale, TelemetryEvent,
 };
 use crate::utils::now_ms;
 use crate::health::HealthMonitor;
@@ -162,19 +162,33 @@ impl PluginRuntime {
         let context = request.context.clone();
         let parameters = request.parameters.clone();
 
-        let result = self.execute(&plan, request)?;
+        // ── Execute with fallback support ──────────────────────────
+        // The runtime never generates plans. It only executes plans
+        // that already exist in the immutable fallback chain.
+        // This preserves the invariant: only the planner creates plans.
 
-        if result.success {
+        let primary_result = self.execute(&plan, request)?;
+
+        let (final_result, executed_plan) = self.resolve_with_fallback(
+            &plan,
+            primary_result,
+            &capability,
+            &context,
+            &parameters,
+        );
+
+        // Emit telemetry for the final result
+        if final_result.success {
             self.telemetry.emit_event(
                 cid.clone(),
                 TelemetryEvent::PluginCompleted {
-                    plugin_id: plan.operator_id.clone(),
-                    duration_ms: result.telemetry.duration_ms(),
+                    plugin_id: executed_plan.operator_id.clone(),
+                    duration_ms: final_result.telemetry.duration_ms(),
                     success: true,
                 },
             );
         } else {
-            let error = result
+            let error = final_result
                 .metadata
                 .get("error")
                 .cloned()
@@ -182,20 +196,20 @@ impl PluginRuntime {
             self.telemetry.emit_event(
                 cid,
                 TelemetryEvent::PluginFailed {
-                    plugin_id: plan.operator_id.clone(),
+                    plugin_id: executed_plan.operator_id.clone(),
                     error,
-                    duration_ms: result.telemetry.duration_ms(),
+                    duration_ms: final_result.telemetry.duration_ms(),
                 },
             );
         }
 
-        // Every execution produces exactly one decision record.
-        // This ensures no execution is ever forgotten.
+        // Every execution produces exactly one decision record for the
+        // primary plan. Fallback attempts are also recorded (above).
         let outcome = PlanOutcome {
-            latency_ms: result.telemetry.duration_ms(),
+            latency_ms: final_result.telemetry.duration_ms(),
             cost: 0.0,
-            success: result.success,
-            error: result.metadata.get("error").cloned(),
+            success: final_result.success,
+            error: final_result.metadata.get("error").cloned(),
             completed_steps: 1,
             cancelled: false,
             timeout: false,
@@ -208,7 +222,7 @@ impl PluginRuntime {
             capability,
             context,
             parameters,
-            plan: plan.clone(),
+            plan: executed_plan.clone(),
             outcome,
             reflection: None,
         };
@@ -216,7 +230,7 @@ impl PluginRuntime {
         self.ledger.append(decision);
 
         let rationale = SelectionRationale {
-            capability: plan.capability,
+            capability: executed_plan.capability,
             candidates: plan.rationale.candidates,
             selected_plugin_id: plan.rationale.selected_operator_id,
             composite_score: plan.rationale.composite_score,
@@ -224,7 +238,7 @@ impl PluginRuntime {
             correlation_id: plan.rationale.correlation_id,
         };
 
-        Ok((result, rationale))
+        Ok((final_result, rationale))
     }
 
     /// Execute a capability on a specific resolved plugin.
@@ -292,6 +306,76 @@ impl PluginRuntime {
         self.health.record_execution(&plan.operator_id, &result.telemetry);
 
         Ok(result)
+    }
+
+    /// Try fallback plans when the primary execution fails.
+    ///
+    /// Iterates through the plan's immutable fallback chain, executing each
+    /// until one succeeds or the chain is exhausted. The runtime never
+    /// generates new plans — only existing plans from the chain are used.
+    ///
+    /// Each fallback attempt is recorded as a DecisionRecord in the ledger
+    /// (for failures; the caller records the final decision separately).
+    pub(crate) fn resolve_with_fallback(
+        &mut self,
+        plan: &ExecutionPlan,
+        primary_result: CapabilityResult,
+        capability: &Capability,
+        context: &SelectionContext,
+        parameters: &HashMap<String, String>,
+    ) -> (CapabilityResult, ExecutionPlan) {
+        if primary_result.success || plan.fallback_chain.is_empty() {
+            return (primary_result, plan.clone());
+        }
+
+        let mut final_result = primary_result;
+        let mut executed_plan = plan.clone();
+
+        for fallback in &plan.fallback_chain {
+            let fb_req = CapabilityRequest {
+                capability: capability.clone(),
+                parameters: parameters.clone(),
+                permissions: Vec::new(),
+                correlation_id: CorrelationId::new(),
+                context: context.clone(),
+            };
+
+            match self.execute(fallback, fb_req) {
+                Ok(fb_result) if fb_result.success => {
+                    final_result = fb_result;
+                    executed_plan = fallback.clone();
+                    break;
+                }
+                Ok(fb_result) => {
+                    // Fallback failed — record it and try next
+                    self.ledger.append(DecisionRecord {
+                        id: CorrelationId::new(),
+                        timestamp_ms: now_ms(),
+                        capability: capability.clone(),
+                        context: context.clone(),
+                        parameters: parameters.clone(),
+                        plan: fallback.clone(),
+                        outcome: PlanOutcome {
+                            latency_ms: fb_result.telemetry.duration_ms(),
+                            cost: 0.0,
+                            success: false,
+                            error: fb_result.metadata.get("error").cloned(),
+                            completed_steps: 0,
+                            cancelled: false,
+                            timeout: false,
+                            retries: 0,
+                        },
+                        reflection: None,
+                    });
+                }
+                Err(_) => {
+                    // Plugin unavailable — skip this fallback
+                    continue;
+                }
+            }
+        }
+
+        (final_result, executed_plan)
     }
 
     /// Check if a specific capability can be handled.
@@ -370,8 +454,9 @@ impl PluginRuntime {
 mod tests {
     use super::*;
     use crate::contract::{
-        Capability, CapabilityRequest, CapabilityResult, ExecutionTelemetry, Plugin,
-        PluginDescriptor, PluginHealth, PluginStatus, ProviderProfile, SelectionContext,
+        Capability, CapabilityRequest, CapabilityResult, ExecutionTelemetry,
+        PlanningRationale, Plugin, PluginDescriptor, PluginHealth, PluginStatus, ProviderProfile,
+        SelectionContext,
     };
     use std::collections::HashMap;
 
@@ -702,5 +787,198 @@ mod tests {
         }
 
         assert_eq!(runtime.ledger().len(), 5);
+    }
+
+    // ── Fallback tests ────────────────────────────────────────────
+
+    fn make_fallback_plan(
+        operator_id: &str,
+        fallbacks: Vec<ExecutionPlan>,
+    ) -> ExecutionPlan {
+        let cid = CorrelationId::new();
+        ExecutionPlan {
+            plan_id: cid.clone(),
+            version: 1,
+            capability: Capability::ReadFile,
+            operator_id: operator_id.into(),
+            estimated_latency_ms: 10,
+            estimated_cost: 0.1,
+            estimated_success_probability: 0.9,
+            estimated_risk: 0.1,
+            confidence: 0.9,
+            fallback_chain: fallbacks,
+            rationale: PlanningRationale {
+                candidates: vec![],
+                selected_operator_id: operator_id.into(),
+                composite_score: 0.9,
+                explanation: "test".into(),
+                correlation_id: cid,
+                evaluator_evidence: vec![],
+            },
+        }
+    }
+
+    fn fallback_runtime() -> PluginRuntime {
+        let mut runtime = PluginRuntime::new();
+        runtime.register(Box::new(MockPlugin::new(
+            "primary-fail",
+            vec![Capability::ReadFile],
+            false,
+        )));
+        runtime.register(Box::new(MockPlugin::new(
+            "fallback-ok",
+            vec![Capability::ReadFile],
+            true,
+        )));
+        runtime.register(Box::new(MockPlugin::new(
+            "fallback-also-fail",
+            vec![Capability::ReadFile],
+            false,
+        )));
+        runtime.initialize_all();
+        runtime.activate_all();
+        runtime
+    }
+
+    #[test]
+    fn fallback_primary_success_no_fallback_needed() {
+        let mut runtime = PluginRuntime::new();
+        runtime.register(Box::new(MockPlugin::new(
+            "always-ok",
+            vec![Capability::ReadFile],
+            true,
+        )));
+        runtime.initialize_all();
+        runtime.activate_all();
+
+        let plan = make_fallback_plan("always-ok", vec![]);
+        let req = CapabilityRequest::new(Capability::ReadFile);
+        let result = runtime.execute(&plan, req).unwrap();
+
+        let (final_result, _) = runtime.resolve_with_fallback(
+            &plan, result,
+            &Capability::ReadFile,
+            &SelectionContext::default(),
+            &HashMap::new(),
+        );
+
+        assert!(final_result.success);
+        assert_eq!(final_result.output, "executed read_file via always-ok");
+        assert_eq!(runtime.ledger().len(), 0);
+    }
+
+    #[test]
+    fn fallback_primary_fails_no_chain_returns_primary() {
+        let mut runtime = fallback_runtime();
+
+        let plan = make_fallback_plan("primary-fail", vec![]);
+        let req = CapabilityRequest::new(Capability::ReadFile);
+        let result = runtime.execute(&plan, req).unwrap();
+
+        let (final_result, executed) = runtime.resolve_with_fallback(
+            &plan, result,
+            &Capability::ReadFile,
+            &SelectionContext::default(),
+            &HashMap::new(),
+        );
+
+        assert!(!final_result.success);
+        assert_eq!(executed.operator_id, "primary-fail");
+        assert_eq!(runtime.ledger().len(), 0);
+    }
+
+    #[test]
+    fn fallback_succeeds_when_primary_fails() {
+        let mut runtime = fallback_runtime();
+
+        let fallback = make_fallback_plan("fallback-ok", vec![]);
+        let plan = make_fallback_plan("primary-fail", vec![fallback]);
+
+        let req = CapabilityRequest::new(Capability::ReadFile);
+        let result = runtime.execute(&plan, req).unwrap();
+
+        let (final_result, executed) = runtime.resolve_with_fallback(
+            &plan, result,
+            &Capability::ReadFile,
+            &SelectionContext::default(),
+            &HashMap::new(),
+        );
+
+        assert!(final_result.success);
+        assert_eq!(executed.operator_id, "fallback-ok");
+        assert_eq!(final_result.output, "executed read_file via fallback-ok");
+        assert_eq!(runtime.ledger().len(), 0);
+    }
+
+    #[test]
+    fn fallback_all_fail_returns_primary_result() {
+        let mut runtime = fallback_runtime();
+
+        let fb1 = make_fallback_plan("fallback-also-fail", vec![]);
+        let plan = make_fallback_plan("primary-fail", vec![fb1]);
+
+        let req = CapabilityRequest::new(Capability::ReadFile);
+        let result = runtime.execute(&plan, req).unwrap();
+
+        let (final_result, executed) = runtime.resolve_with_fallback(
+            &plan, result,
+            &Capability::ReadFile,
+            &SelectionContext::default(),
+            &HashMap::new(),
+        );
+
+        assert!(!final_result.success);
+        assert_eq!(executed.operator_id, "primary-fail");
+        // Failed fallback recorded in ledger
+        assert_eq!(runtime.ledger().len(), 1);
+    }
+
+    #[test]
+    fn fallback_returns_fast_on_first_success() {
+        let mut runtime = fallback_runtime();
+
+        // Primary fails, first fallback succeeds, second fallback never tried
+        let fb2 = make_fallback_plan("fallback-also-fail", vec![]);
+        let fb1 = make_fallback_plan("fallback-ok", vec![fb2]);
+        let plan = make_fallback_plan("primary-fail", vec![fb1]);
+
+        let req = CapabilityRequest::new(Capability::ReadFile);
+        let result = runtime.execute(&plan, req).unwrap();
+
+        let (final_result, executed) = runtime.resolve_with_fallback(
+            &plan, result,
+            &Capability::ReadFile,
+            &SelectionContext::default(),
+            &HashMap::new(),
+        );
+
+        assert!(final_result.success);
+        assert_eq!(executed.operator_id, "fallback-ok");
+        assert_eq!(runtime.ledger().len(), 0);
+    }
+
+    #[test]
+    fn fallback_records_failed_attempts_skips_successful() {
+        let mut runtime = fallback_runtime();
+
+        // Primary fails, first fallback fails (recorded), second succeeds (not recorded)
+        let fb_fail = make_fallback_plan("fallback-also-fail", vec![]);
+        let fb_ok = make_fallback_plan("fallback-ok", vec![]);
+        let plan = make_fallback_plan("primary-fail", vec![fb_fail, fb_ok]);
+
+        let req = CapabilityRequest::new(Capability::ReadFile);
+        let result = runtime.execute(&plan, req).unwrap();
+
+        let (final_result, executed) = runtime.resolve_with_fallback(
+            &plan, result,
+            &Capability::ReadFile,
+            &SelectionContext::default(),
+            &HashMap::new(),
+        );
+
+        assert!(final_result.success);
+        assert_eq!(executed.operator_id, "fallback-ok");
+        // Only the failed fallback (fb_fail) is recorded in ledger
+        assert_eq!(runtime.ledger().len(), 1);
     }
 }

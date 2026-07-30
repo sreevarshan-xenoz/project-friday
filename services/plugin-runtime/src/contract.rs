@@ -625,6 +625,64 @@ pub struct PlannerFeedback {
     pub timestamp_ms: u64,
 }
 
+impl PlannerFeedback {
+    /// Quantify the gap between prediction and reality.
+    ///
+    /// Pure comparison — no mutation, no stores, no learning.
+    ///
+    /// # Fields
+    ///
+    /// | Field                 | Derivation                                  |
+    /// |----------------------|---------------------------------------------|
+    /// | `latency_error_ms`   | estimated − actual                          |
+    /// | `cost_error`         | estimated − actual                          |
+    /// | `success_bias`       | estimated_success_probability − outcome     |
+    /// | `latency_adjustment` | raw error (CostModel decides how to apply)  |
+    /// | `cost_adjustment`    | raw error                                   |
+    /// | `success_adjustment` | raw bias                                    |
+    /// | `confidence_adjust`  | +0.1 on correct, −0.3 on surprise failure   |
+    /// | `trigger_update`     | true if error exceeds threshold             |
+    pub fn compare(plan: &ExecutionPlan, outcome: &PlanOutcome) -> Self {
+        let now = now_ms();
+        let success_actual = if outcome.success { 1.0 } else { 0.0 };
+
+        let latency_error_ms = plan.estimated_latency_ms as i64 - outcome.latency_ms as i64;
+        let cost_error = plan.estimated_cost - outcome.cost;
+        let success_bias = plan.estimated_success_probability - success_actual;
+
+        let latency_adjustment_ms = latency_error_ms as f64;
+        let cost_adjustment = cost_error;
+        let success_adjustment = success_bias;
+
+        let correct = outcome.success == (plan.estimated_success_probability >= 0.5);
+        let confidence_adjustment = if correct {
+            0.1
+        } else if plan.confidence > 0.7 {
+            -0.3
+        } else {
+            -0.1
+        };
+
+        let trigger_model_update = !correct
+            || latency_error_ms.unsigned_abs() > (plan.estimated_latency_ms / 2)
+            || cost_error.abs() > 1.0;
+
+        Self {
+            capability: plan.capability.clone(),
+            operator_id: plan.operator_id.clone(),
+            latency_error_ms,
+            cost_error,
+            success_bias,
+            latency_adjustment_ms,
+            cost_adjustment,
+            success_adjustment,
+            confidence_adjustment,
+            trigger_model_update,
+            timestamp_ms: now,
+        }
+    }
+}
+
 /// Key for looking up experience data.
 ///
 /// Designed for hierarchical decomposition. The key can gain new context
@@ -678,6 +736,161 @@ impl Default for Reputation {
             last_updated_ms: 0,
             decay_factor: 0.95,
         }
+    }
+}
+
+#[cfg(test)]
+mod planner_feedback_tests {
+    use super::*;
+
+    fn make_plan(
+        estimated_latency_ms: u64,
+        estimated_cost: f64,
+        estimated_success_probability: f64,
+        confidence: f64,
+    ) -> ExecutionPlan {
+        ExecutionPlan {
+            plan_id: CorrelationId::new(),
+            version: 1,
+            capability: Capability::ExecuteCommand,
+            operator_id: "op_test".into(),
+            estimated_latency_ms,
+            estimated_cost,
+            estimated_success_probability,
+            estimated_risk: 1.0 - estimated_success_probability,
+            confidence,
+            fallback_chain: vec![],
+            rationale: PlanningRationale {
+                candidates: vec![],
+                selected_operator_id: "op_test".into(),
+                composite_score: 0.8,
+                explanation: "test".into(),
+                correlation_id: CorrelationId::new(),
+                evaluator_evidence: vec![],
+            },
+        }
+    }
+
+    fn make_outcome(latency_ms: u64, cost: f64, success: bool) -> PlanOutcome {
+        PlanOutcome {
+            latency_ms,
+            cost,
+            success,
+            error: if success { None } else { Some("fail".into()) },
+            completed_steps: 1,
+            cancelled: !success,
+            timeout: false,
+            retries: 0,
+        }
+    }
+
+    #[test]
+    fn compare_latency_overestimate() {
+        let plan = make_plan(200, 0.5, 0.9, 0.8);
+        let outcome = make_outcome(50, 0.3, true);
+        let fb = PlannerFeedback::compare(&plan, &outcome);
+        assert_eq!(fb.latency_error_ms, 150);
+        assert_eq!(fb.latency_adjustment_ms, 150.0);
+    }
+
+    #[test]
+    fn compare_latency_underestimate() {
+        let plan = make_plan(50, 0.5, 0.9, 0.8);
+        let outcome = make_outcome(200, 0.7, true);
+        let fb = PlannerFeedback::compare(&plan, &outcome);
+        assert_eq!(fb.latency_error_ms, -150);
+        assert_eq!(fb.latency_adjustment_ms, -150.0);
+    }
+
+    #[test]
+    fn compare_cost_error() {
+        let plan = make_plan(100, 1.0, 0.9, 0.8);
+        let outcome = make_outcome(100, 0.4, true);
+        let fb = PlannerFeedback::compare(&plan, &outcome);
+        assert_eq!(fb.cost_error, 0.6);
+        assert_eq!(fb.cost_adjustment, 0.6);
+    }
+
+    #[test]
+    fn compare_success_bias_overconfident() {
+        let plan = make_plan(100, 0.5, 0.95, 0.9);
+        let outcome = make_outcome(100, 0.5, false);
+        let fb = PlannerFeedback::compare(&plan, &outcome);
+        assert!((fb.success_bias - 0.95).abs() < 1e-10); // 0.95 - 0.0
+        assert!((fb.success_adjustment - 0.95).abs() < 1e-10);
+    }
+
+    #[test]
+    fn compare_success_bias_underconfident() {
+        let plan = make_plan(100, 0.5, 0.3, 0.4);
+        let outcome = make_outcome(100, 0.5, true);
+        let fb = PlannerFeedback::compare(&plan, &outcome);
+        assert!((fb.success_bias - (-0.7)).abs() < 1e-10); // 0.3 - 1.0
+    }
+
+    #[test]
+    fn compare_confidence_adjustment_correct_prediction() {
+        let plan = make_plan(100, 0.5, 0.85, 0.9);
+        let outcome = make_outcome(100, 0.5, true);
+        let fb = PlannerFeedback::compare(&plan, &outcome);
+        assert!((fb.confidence_adjustment - 0.1).abs() < 1e-10);
+    }
+
+    #[test]
+    fn compare_confidence_adjustment_surprise_failure() {
+        let plan = make_plan(100, 0.5, 0.9, 0.8);
+        let outcome = make_outcome(100, 0.5, false);
+        let fb = PlannerFeedback::compare(&plan, &outcome);
+        assert!((fb.confidence_adjustment - (-0.3)).abs() < 1e-10);
+    }
+
+    #[test]
+    fn compare_confidence_adjustment_expected_failure() {
+        let plan = make_plan(100, 0.5, 0.2, 0.9);
+        let outcome = make_outcome(100, 0.5, false);
+        let fb = PlannerFeedback::compare(&plan, &outcome);
+        assert!((fb.confidence_adjustment - 0.1).abs() < 1e-10);
+    }
+
+    #[test]
+    fn compare_trigger_on_wrong_prediction() {
+        let plan = make_plan(100, 0.5, 0.9, 0.9);
+        let outcome = make_outcome(100, 0.5, false);
+        let fb = PlannerFeedback::compare(&plan, &outcome);
+        assert!(fb.trigger_model_update);
+    }
+
+    #[test]
+    fn compare_trigger_on_large_latency_error() {
+        let plan = make_plan(100, 0.5, 0.9, 0.9);
+        let outcome = make_outcome(10, 0.3, true);
+        let fb = PlannerFeedback::compare(&plan, &outcome);
+        assert!(fb.trigger_model_update);
+    }
+
+    #[test]
+    fn compare_no_trigger_on_accurate_prediction() {
+        let plan = make_plan(100, 0.5, 0.85, 0.9);
+        let outcome = make_outcome(95, 0.5, true);
+        let fb = PlannerFeedback::compare(&plan, &outcome);
+        assert!(!fb.trigger_model_update);
+    }
+
+    #[test]
+    fn compare_preserves_capability_and_operator() {
+        let plan = make_plan(100, 0.5, 0.9, 0.8);
+        let outcome = make_outcome(100, 0.5, true);
+        let fb = PlannerFeedback::compare(&plan, &outcome);
+        assert_eq!(fb.capability, Capability::ExecuteCommand);
+        assert_eq!(fb.operator_id, "op_test");
+    }
+
+    #[test]
+    fn compare_timestamp_is_set() {
+        let plan = make_plan(100, 0.5, 0.9, 0.8);
+        let outcome = make_outcome(100, 0.5, true);
+        let fb = PlannerFeedback::compare(&plan, &outcome);
+        assert!(fb.timestamp_ms > 0);
     }
 }
 

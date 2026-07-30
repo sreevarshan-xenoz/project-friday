@@ -76,7 +76,7 @@ impl IntoIterator for DecisionLedger {
 mod tests {
     use super::*;
     use crate::contract::{
-        Capability, ExecutionPlan, PlanOutcome, PlanningRationale, ScoredCandidate,
+        Capability, ExecutionPlan, PlanOutcome, PlanningRationale,
         SelectionContext, CorrelationId,
     };
     use std::collections::HashMap;
