@@ -33,6 +33,16 @@
 //! | Confidence       | *Certainty* (validated belief strength)           |
 //! | ConfidenceEngine | *Propagation* (reason under uncertainty)          |
 //! | TraceRecorder    | *Audit assembly* (events → CognitiveTrace)        |
+//! | WorkingMemory    | *Scratchpad* (what every engine reads first)      |
+//! | Belief           | *Stance* (current position + uncertainty + freshness) |
+//! | AttentionScore   | *Prioritization* (importance × urgency × novelty) |
+//! | CognitiveEpisode | *Experience* (full goal lifecycle record)          |
+//! | EpisodeStore     | *Episodic memory* (durable store with indexing)     |
+//! | ExperiencePattern| *Intermediate knowledge* (evidence-backed patterns)  |
+//! | SemanticMemory   | *Abstraction engine* (episodes → patterns → knowledge) |
+//! | AttentionManager | *Scheduler* (scoring, ranking, focus selection)        |
+//! | CognitiveBlackboard | *Cognitive state* (every engine reads/writes here) |
+//! | WorkspaceSnapshot  | *Summary* (point-in-time cognitive snapshot)        |
 //! | CognitiveTrace   | *Audit* (full decision trail)                     |
 //! | ExecutionContext | *State* (mission, environment, variables)        |
 //! | Goal Engine      | *How* to execute (Action → Tool → Outcome)        |
@@ -60,2754 +70,60 @@
 //! - Every action has a Risk level. Critical risk requires user approval.
 //! - Confidence is a first-class value: Goal, Action, WorldState, Plan, Verification all carry it.
 //! - ConfidenceEngine propagates confidence through rules (multiply, average, discount, cap, min).
+//! - WorkingMemory is the cognitive scratchpad. All engines read it first.
+//! - Beliefs are the system's stance: confidence + evidence + freshness. Knowledge derives from episodes; Beliefs capture current trust.
+//! - AttentionScore drives selective focus. Nothing is treated equally.
+//! - CognitiveEpisode captures the complete goal lifecycle: Goal → Planning → Simulation → Execution → Verification → Reflection.
+//! - Semantic Memory derives patterns from episodes, never invents knowledge independently.
+//! - ExperiencePattern accumulates evidence. Only when support/confidence thresholds are met does it become Knowledge or Policy.
+//! - Semantic Memory never writes knowledge directly — it produces evidence-backed patterns that meet promotion thresholds.
+//! - AttentionManager is the scheduler for cognition. Every object competes for attention; nothing is treated equally.
+//! - Attention scores decay over time (novelty), and deprioritized items are heavily penalized but never deleted.
+//! - CognitiveBlackboard is the cognitive state. Every engine reads from and writes to it. No engine talks directly to another.
+//! - Workspace changes broadcast so observers can react without direct coupling.
+
+
+pub mod confidence;
+pub use confidence::*;
+pub mod goal;
+pub use goal::*;
+pub mod executive;
+pub use executive::*;
+pub mod common;
+pub use common::*;
+pub mod world;
+pub use world::*;
+pub mod trace;
+pub use trace::*;
+pub mod planning;
+pub use planning::*;
+pub mod simulation;
+pub use simulation::*;
+pub mod verification;
+pub use verification::*;
+pub mod policy;
+pub use policy::*;
+pub mod learning;
+pub use learning::*;
+pub mod memory;
+pub use memory::*;
+pub mod experience;
+pub use experience::*;
+pub mod attention;
+pub use attention::*;
+pub mod workspace;
+pub use workspace::*;
+pub mod execution;
+pub use execution::*;
 
-use async_trait::async_trait;
-use friday_knowledge::{KnowledgeEngine, KnowledgeRecord};
-use friday_memory::Episode;
-use friday_reflection::{Insight, InsightKind, Outcome, OutcomeKind, ReflectionEngine};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::fmt;
-use std::ops;
-
-// ── Confidence ─────────────────────────────────────────────────────
-
-/// Confidence — a validated [0.0, 1.0] value that represents belief strength.
-///
-/// Unlike raw `f32`, Confidence:
-/// - Is always clamped to [0.0, 1.0]
-/// - Has semantic constructors (none, low, medium, high, certain)
-/// - Supports arithmetic (multiply, combine)
-/// - Is a first-class reasoning value throughout the runtime
-///
-/// ```text
-/// Confidence::none()   = 0.0   (no belief)
-/// Confidence::low()    = 0.25  (weak belief)
-/// Confidence::medium() = 0.5   (moderate belief)
-/// Confidence::high()   = 0.75  (strong belief)
-/// Confidence::certain() = 1.0  (absolute certainty)
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub struct Confidence(f32);
-
-impl Confidence {
-    /// No confidence at all.
-    pub fn none() -> Self {
-        Self(0.0)
-    }
-
-    /// Low confidence.
-    pub fn low() -> Self {
-        Self(0.25)
-    }
-
-    /// Medium confidence.
-    pub fn medium() -> Self {
-        Self(0.5)
-    }
-
-    /// High confidence.
-    pub fn high() -> Self {
-        Self(0.75)
-    }
-
-    /// Absolute certainty.
-    pub fn certain() -> Self {
-        Self(1.0)
-    }
-
-    /// Create from a raw f32, clamped to [0.0, 1.0].
-    pub fn from_raw(value: f32) -> Self {
-        Self(value.clamp(0.0, 1.0))
-    }
-
-    /// Create from a ratio (numerator / denominator).
-    pub fn from_ratio(numerator: u32, denominator: u32) -> Self {
-        if denominator == 0 {
-            Self(0.0)
-        } else {
-            Self((numerator as f32 / denominator as f32).clamp(0.0, 1.0))
-        }
-    }
-
-    /// Get the raw value.
-    pub fn value(&self) -> f32 {
-        self.0
-    }
-
-    /// Combine two confidences using independent evidence multiplication:
-    /// `P(A and B) = P(A) * P(B)`. Useful when two beliefs are independent.
-    pub fn and(self, other: Confidence) -> Confidence {
-        Confidence::from_raw(self.0 * other.0)
-    }
-
-    /// Combine two confidences using consensus averaging:
-    /// `(P(A) + P(B)) / 2`. Useful when two sources agree.
-    pub fn or(self, other: Confidence) -> Confidence {
-        Confidence::from_raw((self.0 + other.0) / 2.0)
-    }
-
-    /// Apply a discount factor (multiply by a value in [0.0, 1.0]).
-    pub fn discount(self, factor: f32) -> Confidence {
-        Confidence::from_raw(self.0 * factor.clamp(0.0, 1.0))
-    }
-
-    /// Classify into a semantic level.
-    pub fn level(&self) -> ConfidenceLevel {
-        if self.0 < 0.1 {
-            ConfidenceLevel::None
-        } else if self.0 < 0.35 {
-            ConfidenceLevel::Low
-        } else if self.0 < 0.65 {
-            ConfidenceLevel::Medium
-        } else if self.0 < 0.9 {
-            ConfidenceLevel::High
-        } else {
-            ConfidenceLevel::Certain
-        }
-    }
-
-    /// Whether this confidence meets a minimum threshold.
-    pub fn meets(&self, threshold: Confidence) -> bool {
-        self.0 >= threshold.0
-    }
-}
-
-impl Default for Confidence {
-    fn default() -> Self {
-        Self::none()
-    }
-}
-
-impl From<f32> for Confidence {
-    fn from(v: f32) -> Self {
-        Self::from_raw(v)
-    }
-}
-
-impl From<Confidence> for f32 {
-    fn from(c: Confidence) -> Self {
-        c.0
-    }
-}
-
-impl fmt::Display for Confidence {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:.0}%", self.0 * 100.0)
-    }
-}
-
-impl ops::Mul for Confidence {
-    type Output = Confidence;
-    fn mul(self, rhs: Confidence) -> Confidence {
-        self.and(rhs)
-    }
-}
-
-/// Semantic classification of confidence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub enum ConfidenceLevel {
-    None,
-    Low,
-    Medium,
-    High,
-    Certain,
-}
-
-// ── Goal ────────────────────────────────────────────────────────────
-
-/// A goal — what the user wants to achieve.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Goal {
-    pub id: String,
-    pub description: String,
-    pub context: Option<String>,
-    pub created_at_ms: u64,
-    /// Confidence that this goal is achievable.
-    pub confidence: Confidence,
-}
-
-impl Goal {
-    pub fn new(description: impl Into<String>) -> Self {
-        Self {
-            id: format!("goal_{}", uuid::Uuid::new_v4()),
-            description: description.into(),
-            context: None,
-            created_at_ms: chrono::Utc::now().timestamp_millis() as u64,
-            confidence: Confidence::medium(),
-        }
-    }
-
-    pub fn with_context(mut self, context: impl Into<String>) -> Self {
-        self.context = Some(context.into());
-        self
-    }
-
-    pub fn with_confidence(mut self, confidence: Confidence) -> Self {
-        self.confidence = confidence;
-        self
-    }
-}
-
-// ── Action ──────────────────────────────────────────────────────────
-
-/// An action — an executable operation produced by Planning.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Action {
-    pub id: String,
-    pub instruction: String,
-    pub capability: Capability,
-    pub parameters: serde_json::Value,
-    pub goal_id: String,
-    pub step: u32,
-    pub total_steps: u32,
-    /// Confidence that this action will succeed.
-    pub confidence: Confidence,
-}
-
-impl Action {
-    pub fn single(
-        instruction: impl Into<String>,
-        capability: Capability,
-        goal_id: impl Into<String>,
-    ) -> Self {
-        Self {
-            id: format!("action_{}", uuid::Uuid::new_v4()),
-            instruction: instruction.into(),
-            capability,
-            parameters: serde_json::json!({}),
-            goal_id: goal_id.into(),
-            step: 0,
-            total_steps: 1,
-            confidence: Confidence::medium(),
-        }
-    }
-
-    pub fn step(
-        instruction: impl Into<String>,
-        capability: Capability,
-        goal_id: impl Into<String>,
-        step: u32,
-        total_steps: u32,
-    ) -> Self {
-        Self {
-            id: format!("action_{}", uuid::Uuid::new_v4()),
-            instruction: instruction.into(),
-            capability,
-            parameters: serde_json::json!({}),
-            goal_id: goal_id.into(),
-            step,
-            total_steps,
-            confidence: Confidence::medium(),
-        }
-    }
-
-    pub fn with_parameters(mut self, params: serde_json::Value) -> Self {
-        self.parameters = params;
-        self
-    }
-
-    pub fn is_first(&self) -> bool {
-        self.step == 0
-    }
-
-    pub fn is_last(&self) -> bool {
-        self.step + 1 >= self.total_steps
-    }
-
-    pub fn is_multi_step(&self) -> bool {
-        self.total_steps > 1
-    }
-}
-
-// ── Capability ──────────────────────────────────────────────────────
-
-/// A capability — what a tool can do.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Capability {
-    ExecuteCommand,
-    ReadFile,
-    WriteFile,
-    DeleteFile,
-    ListDirectory,
-    OpenBrowser,
-    SearchWeb,
-    SearchMemory,
-    Custom(String),
-}
-
-impl std::fmt::Display for Capability {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ExecuteCommand => write!(f, "execute_command"),
-            Self::ReadFile => write!(f, "read_file"),
-            Self::WriteFile => write!(f, "write_file"),
-            Self::DeleteFile => write!(f, "delete_file"),
-            Self::ListDirectory => write!(f, "list_directory"),
-            Self::OpenBrowser => write!(f, "open_browser"),
-            Self::SearchWeb => write!(f, "search_web"),
-            Self::SearchMemory => write!(f, "search_memory"),
-            Self::Custom(s) => write!(f, "{}", s),
-        }
-    }
-}
-
-// ── Expectation ─────────────────────────────────────────────────────
-
-/// An expectation — what we believe will happen.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Expectation {
-    pub id: String,
-    pub description: String,
-    pub expect_success: bool,
-    pub expected_duration_ms: u64,
-    pub expected_properties: HashMap<String, serde_json::Value>,
-}
-
-impl Expectation {
-    pub fn success(description: impl Into<String>) -> Self {
-        Self {
-            id: format!("exp_{}", uuid::Uuid::new_v4()),
-            description: description.into(),
-            expect_success: true,
-            expected_duration_ms: 0,
-            expected_properties: HashMap::new(),
-        }
-    }
-
-    pub fn failure(description: impl Into<String>) -> Self {
-        Self {
-            id: format!("exp_{}", uuid::Uuid::new_v4()),
-            description: description.into(),
-            expect_success: false,
-            expected_duration_ms: 0,
-            expected_properties: HashMap::new(),
-        }
-    }
-
-    pub fn with_duration(mut self, ms: u64) -> Self {
-        self.expected_duration_ms = ms;
-        self
-    }
-}
-
-// ── World State ─────────────────────────────────────────────────────
-
-/// World state — a snapshot of the current environment.
-///
-/// ```text
-/// WorldState {
-///     working_directory,
-///     files,
-///     processes,
-///     environment,
-///     variables,
-///     available_tools,
-///     mission_progress,
-///     network_available,
-///     os,
-/// }
-/// ```
-///
-/// Planning reasons against WorldState instead of raw knowledge.
-/// This lets the planner ask: "Given what exists right now,
-/// what's the best plan?"
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct WorldState {
-    /// Current working directory.
-    pub working_directory: Option<String>,
-    /// Known files (path → metadata).
-    pub files: HashMap<String, FileMeta>,
-    /// Running processes.
-    pub processes: Vec<ProcessInfo>,
-    /// Environment variables.
-    pub environment: HashMap<String, String>,
-    /// Shared variables from previous executions.
-    pub variables: HashMap<String, serde_json::Value>,
-    /// Available tool capabilities.
-    pub available_tools: Vec<Capability>,
-    /// Mission progress (if in a mission).
-    pub mission_progress: Option<MissionProgress>,
-    /// Whether network is available.
-    pub network_available: bool,
-    /// Operating system.
-    pub os: String,
-    /// Confidence that this snapshot is accurate.
-    pub confidence: Confidence,
-}
-
-/// Metadata about a file.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileMeta {
-    pub path: String,
-    pub exists: bool,
-    pub size_bytes: Option<u64>,
-    pub is_directory: bool,
-    pub modified_at_ms: Option<u64>,
-}
-
-/// Information about a running process.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessInfo {
-    pub pid: u32,
-    pub name: String,
-    pub command: String,
-}
-
-/// Progress within a mission.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MissionProgress {
-    pub mission_id: String,
-    pub total_goals: usize,
-    pub completed_goals: usize,
-    pub current_goal_index: usize,
-}
-
-impl WorldState {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn with_working_directory(mut self, dir: impl Into<String>) -> Self {
-        self.working_directory = Some(dir.into());
-        self
-    }
-
-    pub fn with_file(mut self, path: impl Into<String>, meta: FileMeta) -> Self {
-        self.files.insert(path.into(), meta);
-        self
-    }
-
-    pub fn with_tool(mut self, cap: Capability) -> Self {
-        self.available_tools.push(cap);
-        self
-    }
-
-    pub fn with_variable(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
-        self.variables.insert(key.into(), value);
-        self
-    }
-
-    pub fn with_environment(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.environment.insert(key.into(), value.into());
-        self
-    }
-
-    pub fn with_network(mut self, available: bool) -> Self {
-        self.network_available = available;
-        self
-    }
-
-    pub fn with_confidence(mut self, confidence: Confidence) -> Self {
-        self.confidence = confidence;
-        self
-    }
-
-    pub fn with_mission_progress(mut self, progress: MissionProgress) -> Self {
-        self.mission_progress = Some(progress);
-        self
-    }
-
-    /// Check if a file exists in the world state.
-    pub fn file_exists(&self, path: &str) -> bool {
-        self.files
-            .get(path)
-            .map(|m| m.exists)
-            .unwrap_or(false)
-    }
-
-    /// Check if a tool capability is available.
-    pub fn has_tool(&self, cap: &Capability) -> bool {
-        self.available_tools.contains(cap)
-    }
-
-    /// Compute the difference between two world states.
-    pub fn diff(&self, other: &WorldState) -> WorldStateDiff {
-        let mut added_files = Vec::new();
-        let mut removed_files = Vec::new();
-        let mut modified_files = Vec::new();
-
-        for (path, meta) in &other.files {
-            match self.files.get(path) {
-                None => added_files.push(path.clone()),
-                Some(old) => {
-                    if old.size_bytes != meta.size_bytes
-                        || old.modified_at_ms != meta.modified_at_ms
-                        || old.exists != meta.exists
-                    {
-                        modified_files.push(path.clone());
-                    }
-                }
-            }
-        }
-
-        for path in self.files.keys() {
-            if !other.files.contains_key(path) {
-                removed_files.push(path.clone());
-            }
-        }
-
-        let mut added_vars = Vec::new();
-        let mut removed_vars = Vec::new();
-        let mut changed_vars = Vec::new();
-
-        for (key, val) in &other.variables {
-            match self.variables.get(key) {
-                None => added_vars.push(key.clone()),
-                Some(old) => {
-                    if old != val {
-                        changed_vars.push(key.clone());
-                    }
-                }
-            }
-        }
-
-        for key in self.variables.keys() {
-            if !other.variables.contains_key(key) {
-                removed_vars.push(key.clone());
-            }
-        }
-
-        WorldStateDiff {
-            added_files,
-            removed_files,
-            modified_files,
-            added_vars,
-            removed_vars,
-            changed_vars,
-            working_directory_changed: self.working_directory != other.working_directory,
-            network_changed: self.network_available != other.network_available,
-        }
-    }
-}
-
-/// A diff between two world states — what changed.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct WorldStateDiff {
-    pub added_files: Vec<String>,
-    pub removed_files: Vec<String>,
-    pub modified_files: Vec<String>,
-    pub added_vars: Vec<String>,
-    pub removed_vars: Vec<String>,
-    pub changed_vars: Vec<String>,
-    pub working_directory_changed: bool,
-    pub network_changed: bool,
-}
-
-impl WorldStateDiff {
-    pub fn is_empty(&self) -> bool {
-        self.added_files.is_empty()
-            && self.removed_files.is_empty()
-            && self.modified_files.is_empty()
-            && self.added_vars.is_empty()
-            && self.removed_vars.is_empty()
-            && self.changed_vars.is_empty()
-            && !self.working_directory_changed
-            && !self.network_changed
-    }
-}
-
-// ── Preconditions & Postconditions ──────────────────────────────────
-
-/// A precondition — what an action requires from the world state.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Precondition {
-    FileExists { path: String },
-    FileNotExists { path: String },
-    ToolAvailable { capability: Capability },
-    VariableEquals { key: String, value: serde_json::Value },
-    NetworkAvailable,
-    Custom(String),
-}
-
-impl Precondition {
-    pub fn check(&self, state: &WorldState) -> bool {
-        match self {
-            Precondition::FileExists { path } => state.file_exists(path),
-            Precondition::FileNotExists { path } => !state.file_exists(path),
-            Precondition::ToolAvailable { capability } => state.has_tool(capability),
-            Precondition::VariableEquals { key, value } => {
-                state.variables.get(key.as_str()) == Some(value)
-            }
-            Precondition::NetworkAvailable => state.network_available,
-            Precondition::Custom(_) => true,
-        }
-    }
-
-    pub fn describe(&self) -> String {
-        match self {
-            Precondition::FileExists { path } => format!("file exists: {}", path),
-            Precondition::FileNotExists { path } => format!("file not exists: {}", path),
-            Precondition::ToolAvailable { capability } => format!("tool available: {}", capability),
-            Precondition::VariableEquals { key, .. } => format!("variable {} equals expected", key),
-            Precondition::NetworkAvailable => "network available".into(),
-            Precondition::Custom(desc) => desc.clone(),
-        }
-    }
-}
-
-/// A postcondition — what an action promises to change.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Postcondition {
-    FileCreated { path: String },
-    FileDeleted { path: String },
-    FileModified { path: String },
-    VariableSet { key: String },
-    NetworkStateChanged,
-    Custom(String),
-}
-
-impl Postcondition {
-    pub fn describe(&self) -> String {
-        match self {
-            Postcondition::FileCreated { path } => format!("file created: {}", path),
-            Postcondition::FileDeleted { path } => format!("file deleted: {}", path),
-            Postcondition::FileModified { path } => format!("file modified: {}", path),
-            Postcondition::VariableSet { key } => format!("variable set: {}", key),
-            Postcondition::NetworkStateChanged => "network state changed".into(),
-            Postcondition::Custom(desc) => desc.clone(),
-        }
-    }
-}
-
-// ── State Transition ────────────────────────────────────────────────
-
-/// An immutable record of a world state change — the audit trail.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StateTransition {
-    pub id: String,
-    pub action_id: String,
-    pub goal_id: String,
-    pub before: WorldState,
-    pub after: WorldState,
-    pub diff: WorldStateDiff,
-    pub preconditions_met: bool,
-    pub preconditions_failed: Vec<String>,
-    pub occurred_at_ms: u64,
-}
-
-impl StateTransition {
-    pub fn new(
-        action_id: impl Into<String>,
-        goal_id: impl Into<String>,
-        before: WorldState,
-        after: WorldState,
-        preconditions: &[Precondition],
-    ) -> Self {
-        let diff = before.diff(&after);
-        let mut failed = Vec::new();
-        for pre in preconditions {
-            if !pre.check(&before) {
-                failed.push(pre.describe());
-            }
-        }
-        let met = failed.is_empty();
-
-        Self {
-            id: format!("trans_{}", uuid::Uuid::new_v4()),
-            action_id: action_id.into(),
-            goal_id: goal_id.into(),
-            before,
-            after,
-            diff,
-            preconditions_met: met,
-            preconditions_failed: failed,
-            occurred_at_ms: chrono::Utc::now().timestamp_millis() as u64,
-        }
-    }
-
-    pub fn is_clean(&self) -> bool {
-        self.preconditions_met && self.diff.is_empty()
-    }
-}
-
-// ── World Model ─────────────────────────────────────────────────────
-
-/// The World Model — owns the current world state, applies transitions,
-/// and maintains a full history of state changes.
-///
-/// ```text
-/// WorldModel
-///   state:    WorldState        (current snapshot)
-///   history:  Vec<StateTransition>  (immutable audit trail)
-/// ```
-///
-/// The World Model is the single source of truth for environment state.
-/// Actions declare preconditions; the model checks them before execution.
-/// After execution, postconditions are applied and a transition is recorded.
-pub struct WorldModel {
-    state: WorldState,
-    history: Vec<StateTransition>,
-}
-
-impl WorldModel {
-    pub fn new(initial: WorldState) -> Self {
-        Self {
-            state: initial,
-            history: Vec::new(),
-        }
-    }
-
-    /// Current world state snapshot.
-    pub fn state(&self) -> &WorldState {
-        &self.state
-    }
-
-    /// Full transition history (immutable audit trail).
-    pub fn history(&self) -> &[StateTransition] {
-        &self.history
-    }
-
-    /// Check if all preconditions are met for the current state.
-    pub fn check_preconditions(&self, preconditions: &[Precondition]) -> Vec<String> {
-        preconditions
-            .iter()
-            .filter(|p| !p.check(&self.state))
-            .map(|p| p.describe())
-            .collect()
-    }
-
-    /// Record a transition (after execution). Returns the transition.
-    pub fn record_transition(
-        &mut self,
-        action_id: impl Into<String>,
-        goal_id: impl Into<String>,
-        new_state: WorldState,
-        preconditions: &[Precondition],
-    ) -> StateTransition {
-        let before = self.state.clone();
-        let transition =
-            StateTransition::new(action_id, goal_id, before, new_state.clone(), preconditions);
-        self.state = new_state;
-        self.history.push(transition.clone());
-        transition
-    }
-
-    /// Apply postconditions by mutating the current state.
-    pub fn apply_postconditions(&mut self, postconditions: &[Postcondition]) {
-        for post in postconditions {
-            match post {
-                Postcondition::FileCreated { path } => {
-                    self.state.files.insert(
-                        path.clone(),
-                        FileMeta {
-                            path: path.clone(),
-                            exists: true,
-                            size_bytes: None,
-                            is_directory: false,
-                            modified_at_ms: Some(chrono::Utc::now().timestamp_millis() as u64),
-                        },
-                    );
-                }
-                Postcondition::FileDeleted { path } => {
-                    if let Some(meta) = self.state.files.get_mut(path) {
-                        meta.exists = false;
-                    }
-                }
-                Postcondition::FileModified { path } => {
-                    if let Some(meta) = self.state.files.get_mut(path) {
-                        meta.modified_at_ms =
-                            Some(chrono::Utc::now().timestamp_millis() as u64);
-                    }
-                }
-                Postcondition::VariableSet { key } => {
-                    self.state
-                        .variables
-                        .entry(key.clone())
-                        .or_insert_with(|| serde_json::json!(null));
-                }
-                Postcondition::NetworkStateChanged => {
-                    self.state.network_available = !self.state.network_available;
-                }
-                Postcondition::Custom(_) => {}
-            }
-        }
-    }
-
-    /// Set the working directory.
-    pub fn set_working_directory(&mut self, dir: impl Into<String>) {
-        self.state.working_directory = Some(dir.into());
-    }
-
-    /// Set a variable.
-    pub fn set_variable(&mut self, key: impl Into<String>, value: serde_json::Value) {
-        self.state.variables.insert(key.into(), value);
-    }
-}
-
-// ── Cognitive Trace ─────────────────────────────────────────────────
-
-/// The kind of a trace node.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TraceNodeKind {
-    Planning,
-    Evaluation,
-    Execution,
-    Verification,
-    Reflection,
-    Learning,
-    WorldStateChange,
-}
-
-/// A single node in a cognitive trace — an immutable record of one decision.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TraceNode {
-    pub id: String,
-    pub kind: TraceNodeKind,
-    pub parent_id: Option<String>,
-    pub input: serde_json::Value,
-    pub output: serde_json::Value,
-    pub world_state_snapshot: Option<WorldState>,
-    pub confidence: Option<f32>,
-    pub policies_used: Vec<String>,
-    pub started_at_ms: u64,
-    pub finished_at_ms: u64,
-}
-
-impl TraceNode {
-    pub fn new(
-        kind: TraceNodeKind,
-        input: serde_json::Value,
-        output: serde_json::Value,
-    ) -> Self {
-        let now = chrono::Utc::now().timestamp_millis() as u64;
-        Self {
-            id: format!("node_{}", uuid::Uuid::new_v4()),
-            kind,
-            parent_id: None,
-            input,
-            output,
-            world_state_snapshot: None,
-            confidence: None,
-            policies_used: Vec::new(),
-            started_at_ms: now,
-            finished_at_ms: now,
-        }
-    }
-
-    pub fn with_parent(mut self, parent_id: impl Into<String>) -> Self {
-        self.parent_id = Some(parent_id.into());
-        self
-    }
-
-    pub fn with_world_state(mut self, state: WorldState) -> Self {
-        self.world_state_snapshot = Some(state);
-        self
-    }
-
-    pub fn with_confidence(mut self, confidence: f32) -> Self {
-        self.confidence = Some(confidence.clamp(0.0, 1.0));
-        self
-    }
-
-    pub fn with_policies(mut self, policies: Vec<String>) -> Self {
-        self.policies_used = policies;
-        self
-    }
-
-    pub fn with_timing(mut self, started_at_ms: u64, finished_at_ms: u64) -> Self {
-        self.started_at_ms = started_at_ms;
-        self.finished_at_ms = finished_at_ms;
-        self
-    }
-
-    pub fn duration_ms(&self) -> u64 {
-        self.finished_at_ms.saturating_sub(self.started_at_ms)
-    }
-}
-
-/// A complete cognitive trace — the full audit trail for a goal execution.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CognitiveTrace {
-    pub goal_id: String,
-    pub nodes: Vec<TraceNode>,
-}
-
-impl CognitiveTrace {
-    pub fn new(goal_id: impl Into<String>) -> Self {
-        Self {
-            goal_id: goal_id.into(),
-            nodes: Vec::new(),
-        }
-    }
-
-    pub fn push(&mut self, node: TraceNode) {
-        self.nodes.push(node);
-    }
-
-    pub fn nodes_of_kind(&self, kind: &TraceNodeKind) -> Vec<&TraceNode> {
-        self.nodes.iter().filter(|n| n.kind == *kind).collect()
-    }
-
-    pub fn total_duration_ms(&self) -> u64 {
-        self.nodes.iter().map(|n| n.duration_ms()).sum()
-    }
-
-    /// Format the trace as a human-readable tree.
-    pub fn display(&self) -> String {
-        let mut lines = Vec::new();
-        lines.push(format!("Goal: {}", self.goal_id));
-        for (i, node) in self.nodes.iter().enumerate() {
-            let prefix = if i == self.nodes.len() - 1 {
-                "└── "
-            } else {
-                "├── "
-            };
-            let confidence_str = node
-                .confidence
-                .map(|c| format!(" [confidence: {:.2}]", c))
-                .unwrap_or_default();
-            let duration_str = format!(" ({}ms)", node.duration_ms());
-            lines.push(format!(
-                "{}{:?}{}{}",
-                prefix, node.kind, confidence_str, duration_str
-            ));
-        }
-        lines.join("\n")
-    }
-}
-
-// ── Risk Model ─────────────────────────────────────────────────────
-
-/// Risk level for an action.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub enum Risk {
-    Low,
-    Medium,
-    High,
-    Critical,
-}
-
-impl Risk {
-    pub fn requires_approval(&self) -> bool {
-        *self >= Risk::High
-    }
-}
-
-impl std::fmt::Display for Risk {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Risk::Low => write!(f, "low"),
-            Risk::Medium => write!(f, "medium"),
-            Risk::High => write!(f, "high"),
-            Risk::Critical => write!(f, "critical"),
-        }
-    }
-}
-
-/// Risk assessment for a single action.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ActionRisk {
-    pub action_id: String,
-    pub risk: Risk,
-    pub reason: String,
-}
-
-impl ActionRisk {
-    pub fn new(action_id: impl Into<String>, risk: Risk, reason: impl Into<String>) -> Self {
-        Self {
-            action_id: action_id.into(),
-            risk,
-            reason: reason.into(),
-        }
-    }
-}
-
-/// Assess risk for a capability.
-pub fn assess_risk(capability: &Capability) -> ActionRisk {
-    let (risk, reason) = match capability {
-        Capability::ReadFile | Capability::ListDirectory | Capability::SearchMemory => {
-            (Risk::Low, "read-only operation".into())
-        }
-        Capability::SearchWeb | Capability::OpenBrowser => {
-            (Risk::Low, "external query, no state change".into())
-        }
-        Capability::ExecuteCommand => {
-            (Risk::Medium, "command execution may have side effects".into())
-        }
-        Capability::WriteFile => {
-            (Risk::Medium, "modifies filesystem".into())
-        }
-        Capability::DeleteFile => {
-            (Risk::High, "destructive, irreversible".into())
-        }
-        Capability::Custom(name) => {
-            (Risk::Medium, format!("custom capability: {}", name))
-        }
-    };
-    ActionRisk::new("unknown", risk, reason)
-}
-
-// ── Simulation ─────────────────────────────────────────────────────
-
-/// The result of simulating a plan against a world state.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SimulationResult {
-    /// Whether the simulation completed without contradictions.
-    pub feasible: bool,
-    /// Projected world state after all actions complete.
-    pub projected_world: WorldState,
-    /// Overall confidence in the simulation [0.0, 1.0].
-    pub confidence: f32,
-    /// Per-action risk assessments.
-    pub risks: Vec<ActionRisk>,
-    /// Aggregate risk level (highest individual risk).
-    pub aggregate_risk: Risk,
-    /// Estimated cost (normalized 0.0–1.0).
-    pub expected_cost: f32,
-    /// Estimated duration in milliseconds.
-    pub expected_duration_ms: u64,
-    /// Preconditions that failed during simulation.
-    pub failed_preconditions: Vec<String>,
-    /// Postconditions expected to be met.
-    pub expected_postconditions: Vec<String>,
-    /// Per-step simulation traces.
-    pub step_results: Vec<StepResult>,
-}
-
-/// The result of simulating a single step.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StepResult {
-    pub step_index: usize,
-    pub action_id: String,
-    pub preconditions_met: bool,
-    pub failed_preconditions: Vec<String>,
-    pub projected_effects: Vec<String>,
-    pub risk: Risk,
-}
-
-/// A simulator — predicts plan outcomes without executing.
-///
-/// ```text
-/// Simulator trait:
-///   simulate(plan, world) -> SimulationResult
-///
-/// Never calls tools. Pure prediction.
-/// ```
-pub trait Simulator: Send + Sync {
-    /// Simulate a plan against a world state.
-    fn simulate(&self, plan: &Plan, world: &WorldState) -> SimulationResult;
-}
-
-/// Default simulator — uses preconditions/postconditions and capability risk.
-pub struct DefaultSimulator;
-
-impl DefaultSimulator {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl Default for DefaultSimulator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Simulator for DefaultSimulator {
-    fn simulate(&self, plan: &Plan, world: &WorldState) -> SimulationResult {
-        let projected = world.clone();
-        let mut all_risks = Vec::new();
-        let mut failed_preconditions = Vec::new();
-        let mut expected_postconditions = Vec::new();
-        let mut step_results = Vec::new();
-        let mut feasible = true;
-        let mut total_cost: f32 = 0.0;
-
-        for (i, action) in plan.actions.iter().enumerate() {
-            let risk = assess_risk(&action.capability);
-            all_risks.push(ActionRisk::new(&action.id, risk.risk, &risk.reason));
-            total_cost += match risk.risk {
-                Risk::Low => 0.1,
-                Risk::Medium => 0.3,
-                Risk::High => 0.7,
-                Risk::Critical => 1.0,
-            };
-
-            // Check if capability is available
-            if !projected.has_tool(&action.capability) {
-                let msg = format!("tool not available: {}", action.capability);
-                failed_preconditions.push(msg.clone());
-                feasible = false;
-                step_results.push(StepResult {
-                    step_index: i,
-                    action_id: action.id.clone(),
-                    preconditions_met: false,
-                    failed_preconditions: vec![msg],
-                    projected_effects: vec![],
-                    risk: risk.risk,
-                });
-                continue;
-            }
-
-            // Simulate the effect: infer what this action would produce
-            let effects = infer_effects(&action.capability, &action.instruction);
-            for effect in &effects {
-                expected_postconditions.push(effect.clone());
-            }
-
-            step_results.push(StepResult {
-                step_index: i,
-                action_id: action.id.clone(),
-                preconditions_met: true,
-                failed_preconditions: vec![],
-                projected_effects: effects,
-                risk: risk.risk,
-            });
-        }
-
-        let aggregate_risk = all_risks
-            .iter()
-            .map(|r| r.risk)
-            .max()
-            .unwrap_or(Risk::Low);
-
-        let confidence = if failed_preconditions.is_empty() {
-            0.9
-        } else {
-            0.3
-        };
-
-        let cost = if plan.actions.is_empty() {
-            0.0
-        } else {
-            (total_cost / plan.actions.len() as f32).clamp(0.0, 1.0)
-        };
-
-        SimulationResult {
-            feasible,
-            projected_world: projected,
-            confidence,
-            risks: all_risks,
-            aggregate_risk,
-            expected_cost: cost,
-            expected_duration_ms: plan.estimated_duration_ms,
-            failed_preconditions,
-            expected_postconditions,
-            step_results,
-        }
-    }
-}
-
-/// Infer the effects of an action based on its capability.
-fn infer_effects(capability: &Capability, instruction: &str) -> Vec<String> {
-    match capability {
-        Capability::ReadFile => vec![format!("read: {}", instruction)],
-        Capability::WriteFile => vec![format!("written: {}", instruction)],
-        Capability::DeleteFile => vec![format!("deleted: {}", instruction)],
-        Capability::ListDirectory => vec![format!("listed: {}", instruction)],
-        Capability::ExecuteCommand => vec![format!("executed: {}", instruction)],
-        Capability::OpenBrowser => vec![format!("opened: {}", instruction)],
-        Capability::SearchWeb => vec![format!("searched: {}", instruction)],
-        Capability::SearchMemory => vec![format!("queried memory: {}", instruction)],
-        Capability::Custom(name) => vec![format!("custom({}): {}", name, instruction)],
-    }
-}
-
-// ── Trace Recorder ─────────────────────────────────────────────────
-
-/// A trace event — emitted by engines, assembled by TraceRecorder.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TraceEvent {
-    PlanningStarted { goal_id: String },
-    PlanGenerated { goal_id: String, candidate_count: usize },
-    SimulationStarted { goal_id: String, plan_id: String },
-    SimulationFinished { goal_id: String, plan_id: String, feasible: bool, confidence: f32 },
-    EvaluationStarted { goal_id: String },
-    EvaluationFinished { goal_id: String, chosen_plan_id: String, score: f32 },
-    ExecutionStarted { goal_id: String, action_id: String },
-    ExecutionFinished { goal_id: String, action_id: String, success: bool },
-    VerificationStarted { goal_id: String, action_id: String },
-    VerificationFinished { goal_id: String, action_id: String, verified: bool },
-    ReflectionStarted { goal_id: String },
-    ReflectionFinished { goal_id: String, insight_count: usize },
-    WorldStateChanged { goal_id: String, transition_id: String },
-}
-
-/// A trace recorder — assembles a CognitiveTrace from emitted events.
-///
-/// ```text
-/// Engines emit TraceEvents
-///         │
-///         ▼
-/// TraceRecorder
-///         │
-///         ▼
-///   CognitiveTrace
-/// ```
-///
-/// This decouples tracing from execution logic.
-pub struct TraceRecorder {
-    trace: CognitiveTrace,
-    event_log: Vec<TraceEvent>,
-}
-
-impl TraceRecorder {
-    pub fn new(goal_id: impl Into<String>) -> Self {
-        Self {
-            trace: CognitiveTrace::new(goal_id),
-            event_log: Vec::new(),
-        }
-    }
-
-    /// Record a trace event and update the cognitive trace.
-    pub fn record(&mut self, event: TraceEvent) {
-        self.event_log.push(event.clone());
-
-        let node = match &event {
-            TraceEvent::PlanningStarted { .. } => {
-                TraceNode::new(TraceNodeKind::Planning, serde_json::json!({}), serde_json::json!({}))
-            }
-            TraceEvent::PlanGenerated { candidate_count, .. } => {
-                TraceNode::new(
-                    TraceNodeKind::Planning,
-                    serde_json::json!({}),
-                    serde_json::json!({ "candidate_count": candidate_count }),
-                )
-            }
-            TraceEvent::SimulationStarted { plan_id, .. } => {
-                TraceNode::new(
-                    TraceNodeKind::Execution,
-                    serde_json::json!({ "plan_id": plan_id }),
-                    serde_json::json!({}),
-                )
-            }
-            TraceEvent::SimulationFinished { feasible, confidence, .. } => {
-                TraceNode::new(
-                    TraceNodeKind::Execution,
-                    serde_json::json!({}),
-                    serde_json::json!({ "feasible": feasible, "confidence": confidence }),
-                ).with_confidence(*confidence)
-            }
-            TraceEvent::EvaluationFinished { score, .. } => {
-                TraceNode::new(
-                    TraceNodeKind::Evaluation,
-                    serde_json::json!({}),
-                    serde_json::json!({ "score": score }),
-                ).with_confidence(*score)
-            }
-            TraceEvent::ExecutionStarted { action_id, .. } => {
-                TraceNode::new(
-                    TraceNodeKind::Execution,
-                    serde_json::json!({ "action_id": action_id }),
-                    serde_json::json!({}),
-                )
-            }
-            TraceEvent::ExecutionFinished { success, .. } => {
-                TraceNode::new(
-                    TraceNodeKind::Execution,
-                    serde_json::json!({}),
-                    serde_json::json!({ "success": success }),
-                )
-            }
-            TraceEvent::VerificationFinished { verified, .. } => {
-                TraceNode::new(
-                    TraceNodeKind::Verification,
-                    serde_json::json!({}),
-                    serde_json::json!({ "verified": verified }),
-                )
-            }
-            TraceEvent::ReflectionFinished { insight_count, .. } => {
-                TraceNode::new(
-                    TraceNodeKind::Reflection,
-                    serde_json::json!({}),
-                    serde_json::json!({ "insight_count": insight_count }),
-                )
-            }
-            _ => {
-                TraceNode::new(TraceNodeKind::Planning, serde_json::json!({}), serde_json::json!({}))
-            }
-        };
-
-        self.trace.push(node);
-    }
-
-    /// Get the assembled cognitive trace.
-    pub fn trace(&self) -> &CognitiveTrace {
-        &self.trace
-    }
-
-    /// Consume the recorder and return the trace.
-    pub fn into_trace(self) -> CognitiveTrace {
-        self.trace
-    }
-
-    /// Get the raw event log.
-    pub fn events(&self) -> &[TraceEvent] {
-        &self.event_log
-    }
-}
-
-// ── Confidence Engine ──────────────────────────────────────────────
-
-/// A confidence propagation rule.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ConfidenceRule {
-    /// Multiply two sources (independent evidence).
-    Multiply { sources: Vec<String> },
-    /// Average multiple sources (consensus).
-    Average { sources: Vec<String> },
-    /// Apply a fixed discount to a source.
-    Discount { source: String, factor: f32 },
-    /// Cap at a maximum value.
-    Cap { source: String, max: Confidence },
-    /// Minimum of multiple sources.
-    Min { sources: Vec<String> },
-}
-
-/// A confidence engine — propagates confidence across the reasoning pipeline.
-///
-/// ```text
-/// Inputs:  named confidence values
-/// Rules:   propagation rules
-/// Outputs: computed confidence values
-/// ```
-///
-/// The ConfidenceEngine doesn't store beliefs. It computes how confidence
-/// propagates through the system given named inputs and rules.
-pub struct ConfidenceEngine {
-    rules: Vec<(String, ConfidenceRule)>,
-}
-
-impl ConfidenceEngine {
-    pub fn new() -> Self {
-        Self { rules: Vec::new() }
-    }
-
-    pub fn add_rule(mut self, name: impl Into<String>, rule: ConfidenceRule) -> Self {
-        self.rules.push((name.into(), rule));
-        self
-    }
-
-    /// Evaluate all rules against the given named confidence values.
-    pub fn evaluate(&self, inputs: &HashMap<String, Confidence>) -> HashMap<String, Confidence> {
-        let default_conf = Confidence::none();
-        let mut outputs = HashMap::new();
-
-        for (name, rule) in &self.rules {
-            let result = match rule {
-                ConfidenceRule::Multiply { sources } => {
-                    let mut acc = Confidence::certain();
-                    for src in sources {
-                        let val = inputs.get(src.as_str()).unwrap_or(&default_conf);
-                        acc = acc.and(*val);
-                    }
-                    acc
-                }
-                ConfidenceRule::Average { sources } => {
-                    if sources.is_empty() {
-                        Confidence::none()
-                    } else {
-                        let sum: f32 = sources
-                            .iter()
-                            .map(|s| inputs.get(s.as_str()).unwrap_or(&default_conf).value())
-                            .sum();
-                        Confidence::from_raw(sum / sources.len() as f32)
-                    }
-                }
-                ConfidenceRule::Discount { source, factor } => {
-                    let base = inputs.get(source.as_str()).unwrap_or(&default_conf);
-                    base.discount(*factor)
-                }
-                ConfidenceRule::Cap { source, max } => {
-                    let base = inputs.get(source.as_str()).unwrap_or(&default_conf);
-                    Confidence::from_raw(base.value().min(max.value()))
-                }
-                ConfidenceRule::Min { sources } => {
-                    let mut best = Confidence::certain();
-                    for s in sources {
-                        let val = inputs.get(s.as_str()).unwrap_or(&default_conf);
-                        if val.value() < best.value() {
-                            best = *val;
-                        }
-                    }
-                    if sources.is_empty() { Confidence::none() } else { best }
-                }
-            };
-            outputs.insert(name.clone(), result);
-        }
-
-        outputs
-    }
-}
-
-impl Default for ConfidenceEngine {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Execution context — state that flows with every Tool invocation.
-///
-/// ```text
-/// ExecutionContext {
-///     mission_id,
-///     goal_id,
-///     environment,
-///     variables,
-///     timeout,
-///     permissions,
-/// }
-/// ```
-///
-/// Every Tool receives this. It replaces passing many separate parameters.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ExecutionContext {
-    pub mission_id: Option<String>,
-    pub goal_id: String,
-    pub working_directory: Option<String>,
-    pub environment: HashMap<String, String>,
-    pub variables: HashMap<String, serde_json::Value>,
-    pub timeout_ms: Option<u64>,
-    pub permissions: Vec<String>,
-}
-
-impl ExecutionContext {
-    pub fn for_goal(goal_id: impl Into<String>) -> Self {
-        Self {
-            goal_id: goal_id.into(),
-            ..Default::default()
-        }
-    }
-
-    pub fn with_mission_id(mut self, mission_id: impl Into<String>) -> Self {
-        self.mission_id = Some(mission_id.into());
-        self
-    }
-
-    pub fn with_working_directory(mut self, dir: impl Into<String>) -> Self {
-        self.working_directory = Some(dir.into());
-        self
-    }
-
-    pub fn with_variable(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
-        self.variables.insert(key.into(), value);
-        self
-    }
-
-    pub fn with_timeout_ms(mut self, ms: u64) -> Self {
-        self.timeout_ms = Some(ms);
-        self
-    }
-
-    pub fn with_permissions(mut self, perms: Vec<String>) -> Self {
-        self.permissions = perms;
-        self
-    }
-
-    pub fn with_environment(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.environment.insert(key.into(), value.into());
-        self
-    }
-}
-
-// ── Tool ────────────────────────────────────────────────────────────
-
-/// A tool — a capability implementation.
-#[async_trait]
-pub trait Tool: Send + Sync {
-    fn name(&self) -> &str;
-    fn description(&self) -> &str;
-    fn capabilities(&self) -> Vec<Capability>;
-    async fn execute(&self, action: &Action, context: &ExecutionContext) -> ToolResult;
-}
-
-/// Result of a tool execution (raw, unverified).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolResult {
-    pub success: bool,
-    pub output: String,
-    pub error: Option<String>,
-    pub duration_ms: u64,
-    pub metadata: serde_json::Value,
-}
-
-impl ToolResult {
-    pub fn success(output: impl Into<String>) -> Self {
-        Self {
-            success: true,
-            output: output.into(),
-            error: None,
-            duration_ms: 0,
-            metadata: serde_json::json!({}),
-        }
-    }
-
-    pub fn error(message: impl Into<String>) -> Self {
-        Self {
-            success: false,
-            output: String::new(),
-            error: Some(message.into()),
-            duration_ms: 0,
-            metadata: serde_json::json!({}),
-        }
-    }
-
-    pub fn with_duration_ms(mut self, ms: u64) -> Self {
-        self.duration_ms = ms;
-        self
-    }
-}
-
-// ── Tool Registry ───────────────────────────────────────────────────
-
-/// A registry of swappable tools. Resolves Capability → Best Tool.
-pub struct ToolRegistry {
-    tools: Vec<Box<dyn Tool>>,
-}
-
-impl ToolRegistry {
-    pub fn new() -> Self {
-        Self { tools: Vec::new() }
-    }
-
-    pub fn register(&mut self, tool: Box<dyn Tool>) {
-        self.tools.push(tool);
-    }
-
-    pub fn resolve(&self, capability: &Capability) -> Option<&dyn Tool> {
-        self.tools
-            .iter()
-            .find(|t| t.capabilities().contains(capability))
-            .map(|t| t.as_ref())
-    }
-
-    pub fn get(&self, name: &str) -> Option<&dyn Tool> {
-        self.tools.iter().find(|t| t.name() == name).map(|t| t.as_ref())
-    }
-
-    pub fn list(&self) -> Vec<&str> {
-        self.tools.iter().map(|t| t.name()).collect()
-    }
-
-    pub fn capabilities(&self) -> Vec<Capability> {
-        let mut caps: std::collections::HashSet<Capability> = std::collections::HashSet::new();
-        for tool in &self.tools {
-            for cap in tool.capabilities() {
-                caps.insert(cap);
-            }
-        }
-        caps.into_iter().collect()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.tools.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        self.tools.len()
-    }
-}
-
-impl Default for ToolRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// ── Verification ────────────────────────────────────────────────────
-
-/// Verification — interprets tool output into a verified result.
-pub struct Verification {
-    verifiers: Vec<Box<dyn Verifier>>,
-}
-
-impl Verification {
-    pub fn new() -> Self {
-        Self {
-            verifiers: Vec::new(),
-        }
-    }
-
-    pub fn register(mut self, verifier: Box<dyn Verifier>) -> Self {
-        self.verifiers.push(verifier);
-        self
-    }
-
-    pub fn verify(&self, action: &Action, result: &ToolResult) -> VerifiedResult {
-        let mut checks = Vec::new();
-        let mut all_passed = true;
-
-        for verifier in &self.verifiers {
-            let check = verifier.verify(action, result);
-            if !check.passed {
-                all_passed = false;
-            }
-            checks.push(check);
-        }
-
-        let verified = if self.verifiers.is_empty() {
-            result.success
-        } else {
-            all_passed
-        };
-
-        let confidence = if checks.is_empty() {
-            Confidence::medium()
-        } else {
-            let passed = checks.iter().filter(|c| c.passed).count();
-            Confidence::from_ratio(passed as u32, checks.len() as u32)
-        };
-
-        VerifiedResult {
-            verified,
-            tool_success: result.success,
-            checks,
-            confidence,
-        }
-    }
-}
-
-impl Default for Verification {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// A single verification check.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Check {
-    pub name: String,
-    pub passed: bool,
-    pub detail: String,
-}
-
-/// The result of verification — tool output interpreted.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VerifiedResult {
-    pub verified: bool,
-    pub tool_success: bool,
-    pub checks: Vec<Check>,
-    /// Confidence in the verification result.
-    pub confidence: Confidence,
-}
-
-/// A verifier — checks one aspect of a tool result.
-#[async_trait]
-pub trait Verifier: Send + Sync {
-    fn name(&self) -> &str;
-    fn verify(&self, action: &Action, result: &ToolResult) -> Check;
-}
-
-// ── Policy ──────────────────────────────────────────────────────────
-
-/// A policy — an immutable, evidence-backed record that informs Planning.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Policy {
-    pub id: String,
-    pub kind: PolicyKind,
-    pub statement: String,
-    pub capability: Option<Capability>,
-    pub config: serde_json::Value,
-    pub confidence: f32,
-    pub support: u32,
-    pub created_from: Vec<String>,
-    pub expires_at: Option<u64>,
-    pub created_at_ms: u64,
-}
-
-impl Policy {
-    pub fn prefer_tool(
-        capability: Capability,
-        preferred_tool: impl Into<String>,
-        confidence: f32,
-        support: u32,
-    ) -> Self {
-        let tool_name = preferred_tool.into();
-        Self {
-            id: format!("policy_{}", uuid::Uuid::new_v4()),
-            kind: PolicyKind::PreferTool,
-            statement: format!("Prefer {} for {}", tool_name, capability),
-            capability: Some(capability),
-            config: serde_json::json!({ "preferred_tool": tool_name }),
-            confidence,
-            support,
-            created_from: Vec::new(),
-            expires_at: None,
-            created_at_ms: chrono::Utc::now().timestamp_millis() as u64,
-        }
-    }
-
-    pub fn retry(
-        capability: Capability,
-        max_retries: u32,
-        confidence: f32,
-        support: u32,
-    ) -> Self {
-        Self {
-            id: format!("policy_{}", uuid::Uuid::new_v4()),
-            kind: PolicyKind::Retry,
-            statement: format!("Retry {} up to {} times", capability, max_retries),
-            capability: Some(capability),
-            config: serde_json::json!({ "max_retries": max_retries }),
-            confidence,
-            support,
-            created_from: Vec::new(),
-            expires_at: None,
-            created_at_ms: chrono::Utc::now().timestamp_millis() as u64,
-        }
-    }
-
-    pub fn sequence(
-        from: Capability,
-        then: Capability,
-        confidence: f32,
-        support: u32,
-    ) -> Self {
-        Self {
-            id: format!("policy_{}", uuid::Uuid::new_v4()),
-            kind: PolicyKind::Sequence,
-            statement: format!("{} usually follows {}", then, from),
-            capability: Some(from),
-            config: serde_json::json!({ "then": then }),
-            confidence,
-            support,
-            created_from: Vec::new(),
-            expires_at: None,
-            created_at_ms: chrono::Utc::now().timestamp_millis() as u64,
-        }
-    }
-
-    pub fn is_expired(&self, now_ms: u64) -> bool {
-        match self.expires_at {
-            Some(exp) => now_ms > exp,
-            None => false,
-        }
-    }
-
-    pub fn with_created_from(mut self, insight_ids: Vec<String>) -> Self {
-        self.created_from = insight_ids;
-        self
-    }
-
-    pub fn with_expires_at(mut self, expires_at_ms: u64) -> Self {
-        self.expires_at = Some(expires_at_ms);
-        self
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum PolicyKind {
-    PreferTool,
-    Retry,
-    Sequence,
-    Skip,
-    Custom(String),
-}
-
-// ── Learning Engine ─────────────────────────────────────────────────
-
-/// Learning — consumes Insights, produces Policies.
-pub struct LearningEngine {
-    policies: Vec<Policy>,
-}
-
-impl LearningEngine {
-    pub fn new() -> Self {
-        Self {
-            policies: Vec::new(),
-        }
-    }
-
-    pub fn learn(&mut self, insights: &[Insight]) -> Vec<Policy> {
-        let mut new_policies = Vec::new();
-
-        for insight in insights {
-            if let Some(policy) = self.derive_policy(insight) {
-                new_policies.push(policy);
-            }
-        }
-
-        self.policies.extend(new_policies.clone());
-        new_policies
-    }
-
-    fn derive_policy(&self, insight: &Insight) -> Option<Policy> {
-        match insight.kind {
-            InsightKind::Lesson => {
-                Some(Policy::retry(
-                    Capability::ExecuteCommand,
-                    1,
-                    insight.confidence,
-                    1,
-                ).with_created_from(vec![insight.id.clone()]))
-            }
-            InsightKind::Reinforcement => None,
-            InsightKind::Warning => None,
-            InsightKind::Optimization => None,
-        }
-    }
-
-    pub fn policies(&self) -> &[Policy] {
-        &self.policies
-    }
-
-    pub fn policy_count(&self) -> usize {
-        self.policies.len()
-    }
-
-    pub fn policies_for(&self, capability: &Capability) -> Vec<&Policy> {
-        self.policies
-            .iter()
-            .filter(|p| p.capability.as_ref() == Some(capability))
-            .collect()
-    }
-
-    pub fn prune_expired(&mut self, now_ms: u64) {
-        self.policies.retain(|p| !p.is_expired(now_ms));
-    }
-}
-
-impl Default for LearningEngine {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// ── Plan ────────────────────────────────────────────────────────────
-
-/// A plan — a structured representation of how to achieve a goal.
-///
-/// ```text
-/// Plan {
-///     id,
-///     goal_id,
-///     strategy,
-///     actions,
-///     estimated_cost,
-///     estimated_duration_ms,
-///     confidence,
-///     prerequisites,
-/// }
-/// ```
-///
-/// A plan wraps actions with metadata that the evaluator can reason about.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Plan {
-    pub id: String,
-    pub goal_id: String,
-    /// Human-readable strategy description.
-    pub strategy: String,
-    /// The ordered actions in this plan.
-    pub actions: Vec<Action>,
-    /// Estimated cost (arbitrary units, lower = cheaper).
-    pub estimated_cost: f64,
-    /// Estimated duration in milliseconds.
-    pub estimated_duration_ms: u64,
-    /// Confidence that this plan will succeed [0.0, 1.0].
-    pub confidence: f32,
-    /// Prerequisites that must be true for this plan to work.
-    pub prerequisites: Vec<String>,
-    /// The source of this plan (which generator produced it).
-    pub source: PlanSource,
-}
-
-/// Where a plan came from.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum PlanSource {
-    /// Direct mapping from goal to actions (default).
-    Direct,
-    /// Generated from a sequencing policy.
-    PolicyDriven,
-    /// Generated from knowledge patterns.
-    KnowledgeBased,
-    /// Generated from simulation.
-    Simulated,
-    /// Custom source.
-    Custom(String),
-}
-
-impl Plan {
-    /// Create a plan from a single action (simplest case).
-    pub fn from_action(action: Action, strategy: impl Into<String>) -> Self {
-        let strategy = strategy.into();
-        Self {
-            id: format!("plan_{}", uuid::Uuid::new_v4()),
-            goal_id: action.goal_id.clone(),
-            strategy,
-            actions: vec![action],
-            estimated_cost: 1.0,
-            estimated_duration_ms: 1000,
-            confidence: 0.5,
-            prerequisites: Vec::new(),
-            source: PlanSource::Direct,
-        }
-    }
-
-    /// Create a plan from multiple actions.
-    pub fn from_actions(
-        actions: Vec<Action>,
-        strategy: impl Into<String>,
-        source: PlanSource,
-    ) -> Self {
-        let goal_id = actions.first().map(|a| a.goal_id.clone()).unwrap_or_default();
-        let strategy = strategy.into();
-        let cost = actions.len() as f64;
-        let duration = actions.len() as u64 * 1000;
-        Self {
-            id: format!("plan_{}", uuid::Uuid::new_v4()),
-            goal_id,
-            strategy,
-            actions,
-            estimated_cost: cost,
-            estimated_duration_ms: duration,
-            confidence: 0.5,
-            prerequisites: Vec::new(),
-            source,
-        }
-    }
-
-    pub fn with_confidence(mut self, confidence: f32) -> Self {
-        self.confidence = confidence;
-        self
-    }
-
-    pub fn with_cost(mut self, cost: f64) -> Self {
-        self.estimated_cost = cost;
-        self
-    }
-
-    pub fn with_duration_ms(mut self, ms: u64) -> Self {
-        self.estimated_duration_ms = ms;
-        self
-    }
-
-    pub fn with_prerequisites(mut self, prereqs: Vec<String>) -> Self {
-        self.prerequisites = prereqs;
-        self
-    }
-
-    /// Number of actions in this plan.
-    pub fn action_count(&self) -> usize {
-        self.actions.len()
-    }
-
-    /// Whether this plan has prerequisites.
-    pub fn has_prerequisites(&self) -> bool {
-        !self.prerequisites.is_empty()
-    }
-}
-
-// ── Planning Context ────────────────────────────────────────────────
-
-/// Planning context — the complete inputs to a planning decision.
-///
-/// ```text
-/// PlanningContext
-///   ├── Goal
-///   ├── Knowledge
-///   ├── Policies
-///   ├── WorldState
-///   └── Constraints
-/// ```
-///
-/// Planning is a deterministic transformation:
-///
-/// ```text
-/// PlanningContext → Planning → Vec<PlanCandidate>
-/// ```
-#[derive(Debug, Clone)]
-pub struct PlanningContext {
-    pub goal: Goal,
-    pub knowledge: Vec<KnowledgeRecord>,
-    pub policies: Vec<Policy>,
-    pub world_state: WorldState,
-    pub constraints: Constraints,
-}
-
-/// Constraints on planning.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Constraints {
-    pub max_actions: Option<u32>,
-    pub timeout_ms: Option<u64>,
-    pub required_permissions: Vec<String>,
-    pub excluded_capabilities: Vec<Capability>,
-}
-
-impl PlanningContext {
-    pub fn new(goal: Goal) -> Self {
-        Self {
-            goal,
-            knowledge: Vec::new(),
-            policies: Vec::new(),
-            world_state: WorldState::new(),
-            constraints: Constraints::default(),
-        }
-    }
-
-    pub fn with_knowledge(mut self, knowledge: Vec<KnowledgeRecord>) -> Self {
-        self.knowledge = knowledge;
-        self
-    }
-
-    pub fn with_policies(mut self, policies: Vec<Policy>) -> Self {
-        self.policies = policies;
-        self
-    }
-
-    pub fn with_world_state(mut self, world_state: WorldState) -> Self {
-        self.world_state = world_state;
-        self
-    }
-
-    pub fn with_constraints(mut self, constraints: Constraints) -> Self {
-        self.constraints = constraints;
-        self
-    }
-}
-
-// ── Plan Candidate ──────────────────────────────────────────────────
-
-/// A plan candidate — a plan with preliminary evaluation.
-///
-/// Generated by Planning, consumed by PlanEvaluator.
-#[derive(Debug, Clone)]
-pub struct PlanCandidate {
-    pub plan: Plan,
-    /// Preliminary score from the planner [0.0, 1.0].
-    pub preliminary_score: f32,
-}
-
-// ── Ranked Plan ─────────────────────────────────────────────────────
-
-/// A ranked plan — the output of PlanEvaluator.
-///
-/// ```text
-/// PlanEvaluator
-///   input:  Vec<PlanCandidate>
-///   output: RankedPlan
-/// ```
-#[derive(Debug, Clone)]
-pub struct RankedPlan {
-    /// The chosen plan.
-    pub plan: Plan,
-    /// Final evaluation score [0.0, 1.0].
-    pub score: f32,
-    /// All candidates that were considered, sorted by score descending.
-    pub all_candidates: Vec<PlanCandidate>,
-    /// Why this plan was chosen (human-readable).
-    pub rationale: String,
-}
-
-// ── Plan Evaluator ──────────────────────────────────────────────────
-
-/// Plan evaluator — scores and ranks candidate plans.
-///
-/// ```text
-/// Vec<PlanCandidate> → PlanEvaluator → RankedPlan
-/// ```
-///
-/// The evaluator considers:
-/// - Success probability (confidence)
-/// - Cost (lower is better)
-/// - Time (shorter is better)
-/// - Policy alignment
-/// - Prerequisites met
-/// - World state compatibility
-///
-/// The evaluator is deterministic: same candidates → same ranking.
-pub struct PlanEvaluator;
-
-impl PlanEvaluator {
-    pub fn new() -> Self {
-        Self
-    }
-
-    /// Evaluate and rank candidate plans. Returns the best plan.
-    ///
-    /// Panics if `candidates` is empty.
-    pub fn evaluate(&self, candidates: &[PlanCandidate], world: &WorldState) -> RankedPlan {
-        assert!(!candidates.is_empty(), "Cannot evaluate empty candidates");
-
-        let mut scored: Vec<(PlanCandidate, f32)> = candidates
-            .iter()
-            .map(|c| {
-                let score = self.score(c, world);
-                (c.clone(), score)
-            })
-            .collect();
-
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-        let best = scored.remove(0);
-        let rationale = self.explain(&best.0.plan, best.1, world);
-
-        let all_candidates: Vec<PlanCandidate> = scored
-            .into_iter()
-            .map(|(c, _)| c)
-            .collect();
-
-        RankedPlan {
-            plan: best.0.plan,
-            score: best.1,
-            all_candidates,
-            rationale,
-        }
-    }
-
-    /// Score a single candidate against the world state.
-    fn score(&self, candidate: &PlanCandidate, world: &WorldState) -> f32 {
-        let plan = &candidate.plan;
-
-        // Base score from plan confidence
-        let mut score = plan.confidence;
-
-        // Cost penalty: more actions = higher cost
-        let cost_factor = 1.0 / (1.0 + plan.actions.len() as f32 * 0.1);
-        score *= cost_factor;
-
-        // Prerequisite penalty: unmet prerequisites reduce score
-        let prereqs_met = plan
-            .prerequisites
-            .iter()
-            .all(|p| self.prerequisite_met(p, world));
-        if !prereqs_met {
-            score *= 0.3; // heavy penalty for unmet prerequisites
-        }
-
-        // World state bonus: if tools are available
-        let tools_available = plan.actions.iter().all(|a| world.has_tool(&a.capability));
-        if tools_available {
-            score *= 1.1; // slight bonus
-        } else {
-            score *= 0.5; // penalty for missing tools
-        }
-
-        // Clamp to [0.0, 1.0]
-        score.clamp(0.0, 1.0)
-    }
-
-    /// Check if a prerequisite is met in the world state.
-    fn prerequisite_met(&self, prereq: &str, world: &WorldState) -> bool {
-        // Simple prefix-based matching
-        if let Some(path) = prereq.strip_prefix("file_exists:") {
-            return world.file_exists(path);
-        }
-        if let Some(tool) = prereq.strip_prefix("has_tool:") {
-            // Parse capability from string
-            return world.available_tools.iter().any(|c| c.to_string() == tool);
-        }
-        // Default: assume met
-        true
-    }
-
-    /// Explain why a plan was chosen.
-    fn explain(&self, plan: &Plan, score: f32, world: &WorldState) -> String {
-        let tools_ok = plan
-            .actions
-            .iter()
-            .all(|a| world.has_tool(&a.capability));
-        let prereqs_ok = plan
-            .prerequisites
-            .iter()
-            .all(|p| self.prerequisite_met(p, world));
-
-        format!(
-            "Plan '{}' scored {:.2}. Actions: {}. Tools available: {}. Prerequisites met: {}. Source: {:?}.",
-            plan.strategy, score, plan.action_count(), tools_ok, prereqs_ok, plan.source
-        )
-    }
-}
-
-impl Default for PlanEvaluator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// ── Planning ────────────────────────────────────────────────────────
-
-/// Planning — generates candidate plans from a PlanningContext.
-///
-/// ```text
-/// PlanningContext → Planning → Vec<PlanCandidate>
-/// ```
-///
-/// Planning generates multiple hypotheses. PlanEvaluator chooses the best.
-/// Planning is declarative: it produces candidates, never executes.
-pub struct Planning {
-    #[allow(dead_code)]
-    knowledge_engine: KnowledgeEngine,
-}
-
-impl Planning {
-    pub fn new() -> Self {
-        Self {
-            knowledge_engine: KnowledgeEngine::new(),
-        }
-    }
-
-    /// Generate candidate plans from a planning context.
-    ///
-    /// This produces multiple candidates for the evaluator to rank.
-    pub fn think(&self, context: &PlanningContext) -> Vec<PlanCandidate> {
-        let mut candidates = Vec::new();
-
-        // Candidate 1: Direct plan (single action)
-        candidates.push(self.plan_direct(context));
-
-        // Candidate 2: Policy-driven plan (if sequencing policy exists)
-        if let Some(policy_candidate) = self.plan_from_policy(context) {
-            candidates.push(policy_candidate);
-        }
-
-        // Candidate 3: Knowledge-aware plan (if knowledge suggests a pattern)
-        if let Some(knowledge_candidate) = self.plan_from_knowledge(context) {
-            candidates.push(knowledge_candidate);
-        }
-
-        candidates
-    }
-
-    /// Simple single-action plan.
-    fn plan_direct(&self, context: &PlanningContext) -> PlanCandidate {
-        let capability = self.infer_capability(&context.goal.description, &context.knowledge);
-        let action = Action::single(&context.goal.description, capability, &context.goal.id);
-        let plan = Plan::from_action(action, "Direct action from goal description");
-        PlanCandidate {
-            preliminary_score: 0.5,
-            plan,
-        }
-    }
-
-    /// Plan driven by a sequencing policy.
-    fn plan_from_policy(&self, context: &PlanningContext) -> Option<PlanCandidate> {
-        let seq_policy = context.policies.iter().find(|p| p.kind == PolicyKind::Sequence)?;
-
-        let from_cap = seq_policy.capability.clone().unwrap_or(Capability::ExecuteCommand);
-        let then_cap: Capability = serde_json::from_value(
-            seq_policy.config.get("then").cloned().unwrap_or(serde_json::json!("execute_command")),
-        )
-        .unwrap_or(Capability::ExecuteCommand);
-
-        let seq_label = format!("Sequence: {} then {}", from_cap, then_cap);
-
-        let actions = vec![
-            Action::step(&context.goal.description, from_cap, &context.goal.id, 0, 2),
-            Action::step(&context.goal.description, then_cap, &context.goal.id, 1, 2),
-        ];
-
-        let mut plan = Plan::from_actions(
-            actions,
-            seq_label,
-            PlanSource::PolicyDriven,
-        );
-        plan.confidence = seq_policy.confidence;
-
-        Some(PlanCandidate {
-            preliminary_score: seq_policy.confidence,
-            plan,
-        })
-    }
-
-    /// Plan derived from knowledge patterns.
-    fn plan_from_knowledge(&self, context: &PlanningContext) -> Option<PlanCandidate> {
-        if context.knowledge.is_empty() {
-            return None;
-        }
-
-        // Find the most supported knowledge record
-        let best = context
-            .knowledge
-            .iter()
-            .max_by_key(|k| k.support)?;
-
-        if best.support < 2 {
-            return None; // need at least 2 observations
-        }
-
-        let capability = self.infer_capability(&best.label, &context.knowledge);
-        let action = Action::single(&best.label, capability, &context.goal.id);
-        let mut plan = Plan::from_action(action, format!("Based on knowledge: {}", best.label));
-        plan.source = PlanSource::KnowledgeBased;
-        plan.confidence = best.confidence;
-        plan.estimated_cost = 0.5; // knowledge-derived plans are cheaper
-
-        Some(PlanCandidate {
-            preliminary_score: best.confidence,
-            plan,
-        })
-    }
-
-    /// Legacy entry point: single plan (backward compatible).
-    pub fn plan(&self, context: &PlanningContext) -> Vec<Action> {
-        let candidates = self.think(context);
-        candidates
-            .into_iter()
-            .next()
-            .map(|c| c.plan.actions)
-            .unwrap_or_default()
-    }
-
-    fn infer_capability(&self, description: &str, _knowledge: &[KnowledgeRecord]) -> Capability {
-        let desc_lower = description.to_lowercase();
-        if desc_lower.contains("cargo")
-            || desc_lower.contains("build")
-            || desc_lower.contains("test")
-            || desc_lower.contains("run")
-        {
-            Capability::ExecuteCommand
-        } else if desc_lower.contains("read") || desc_lower.contains("open") {
-            Capability::ReadFile
-        } else if desc_lower.contains("write") || desc_lower.contains("create") {
-            Capability::WriteFile
-        } else if desc_lower.contains("list") || desc_lower.contains("ls") {
-            Capability::ListDirectory
-        } else if desc_lower.contains("delete") || desc_lower.contains("remove") {
-            Capability::DeleteFile
-        } else if desc_lower.contains("search") || desc_lower.contains("find") {
-            Capability::SearchWeb
-        } else {
-            Capability::ExecuteCommand
-        }
-    }
-}
-
-impl Default for Planning {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// ── Goal Engine ─────────────────────────────────────────────────────
-
-/// The Goal Engine — owns how an Action becomes an Outcome.
-///
-/// **Invariant**: Every execution produces exactly one Outcome.
-pub struct GoalEngine {
-    registry: ToolRegistry,
-    verification: Verification,
-    knowledge_engine: KnowledgeEngine,
-    reflection_engine: ReflectionEngine,
-}
-
-impl GoalEngine {
-    pub fn new() -> Self {
-        Self {
-            registry: ToolRegistry::new(),
-            verification: Verification::new(),
-            knowledge_engine: KnowledgeEngine::new(),
-            reflection_engine: ReflectionEngine::new(),
-        }
-    }
-
-    pub fn with_registry(mut self, registry: ToolRegistry) -> Self {
-        self.registry = registry;
-        self
-    }
-
-    pub fn with_verification(mut self, verification: Verification) -> Self {
-        self.verification = verification;
-        self
-    }
-
-    pub async fn execute(
-        &mut self,
-        goal: &Goal,
-        action: &Action,
-        expectation: &Expectation,
-        context: &ExecutionContext,
-    ) -> GoalReport {
-        let started_at = chrono::Utc::now().timestamp_millis() as u64;
-        let mut cognitive_trace = CognitiveTrace::new(&goal.id);
-
-        // Trace: Execution start
-        let exec_node = TraceNode::new(
-            TraceNodeKind::Execution,
-            serde_json::json!({
-                "action_id": action.id,
-                "instruction": action.instruction,
-                "capability": action.capability.to_string(),
-            }),
-            serde_json::json!({}),
-        ).with_timing(started_at, started_at);
-        cognitive_trace.push(exec_node);
-
-        let tool = self.registry.resolve(&action.capability);
-        let (tool_result, tool_name) = match tool {
-            Some(t) => {
-                let result = t.execute(action, context).await;
-                (result, t.name().to_string())
-            }
-            None => (
-                ToolResult::error(format!("no tool for capability: {}", action.capability)),
-                String::new(),
-            ),
-        };
-
-        let tool_finished = chrono::Utc::now().timestamp_millis() as u64;
-
-        // Trace: Verification
-        let verified = self.verification.verify(action, &tool_result);
-        let verify_node = TraceNode::new(
-            TraceNodeKind::Verification,
-            serde_json::json!({
-                "tool_success": verified.tool_success,
-                "checks": verified.checks.iter().map(|c| serde_json::json!({
-                    "name": c.name,
-                    "passed": c.passed,
-                })).collect::<Vec<_>>(),
-            }),
-            serde_json::json!({
-                "verified": verified.verified,
-            }),
-        ).with_timing(tool_finished, chrono::Utc::now().timestamp_millis() as u64);
-        cognitive_trace.push(verify_node);
-
-        // Trace: Reflection
-        let outcome = self.produce_outcome(goal, expectation, &verified, started_at);
-        let episodes = self.create_episodes(goal, action, &tool_name, expectation, &verified);
-        let insights = self.reflect(&episodes, &outcome);
-
-        let reflect_node = TraceNode::new(
-            TraceNodeKind::Reflection,
-            serde_json::json!({
-                "outcome_kind": format!("{:?}", outcome.kind),
-                "episodes": episodes.len(),
-            }),
-            serde_json::json!({
-                "insights": insights.len(),
-                "insight_kinds": insights.iter().map(|i| format!("{:?}", i.kind)).collect::<Vec<_>>(),
-            }),
-        ).with_timing(
-            chrono::Utc::now().timestamp_millis() as u64,
-            chrono::Utc::now().timestamp_millis() as u64,
-        );
-        cognitive_trace.push(reflect_node);
-
-        GoalReport {
-            goal: goal.clone(),
-            action: action.clone(),
-            expectation: expectation.clone(),
-            tool: tool_name,
-            verification: verified,
-            outcome,
-            insights,
-            episodes,
-            trace: Trace {
-                started_at_ms: started_at,
-                finished_at_ms: chrono::Utc::now().timestamp_millis() as u64,
-            },
-            cognitive_trace,
-        }
-    }
-
-    fn produce_outcome(
-        &self,
-        goal: &Goal,
-        expectation: &Expectation,
-        verified: &VerifiedResult,
-        started_at: u64,
-    ) -> Outcome {
-        let kind = if (verified.verified && expectation.expect_success)
-            || (!verified.verified && !expectation.expect_success)
-        {
-            OutcomeKind::TaskCompleted
-        } else if verified.verified && !expectation.expect_success {
-            OutcomeKind::UnexpectedSuccess
-        } else {
-            OutcomeKind::Error
-        };
-
-        let duration_ms = chrono::Utc::now().timestamp_millis() as u64 - started_at;
-
-        Outcome {
-            id: format!("outcome_{}", uuid::Uuid::new_v4()),
-            kind,
-            context: goal.description.clone(),
-            detail: serde_json::json!({
-                "expectation": expectation.description,
-                "expected_success": expectation.expect_success,
-                "tool_success": verified.tool_success,
-                "verified": verified.verified,
-                "checks": verified.checks,
-                "duration_ms": duration_ms,
-            }),
-            occurred_at_ms: chrono::Utc::now().timestamp_millis() as u64,
-        }
-    }
-
-    fn create_episodes(
-        &self,
-        goal: &Goal,
-        action: &Action,
-        tool_name: &str,
-        expectation: &Expectation,
-        verified: &VerifiedResult,
-    ) -> Vec<Episode> {
-        let mut episodes = Vec::new();
-
-        episodes.push(Episode::from_event(friday_cognitive::WorkspaceEvent::new(
-            friday_cognitive::workspace::Topic::GoalCreated,
-            serde_json::json!({
-                "goal_id": goal.id,
-                "description": goal.description,
-                "action_id": action.id,
-                "instruction": action.instruction,
-                "capability": action.capability.to_string(),
-            }),
-        )));
-
-        episodes.push(Episode::from_event(friday_cognitive::WorkspaceEvent::new(
-            friday_cognitive::workspace::Topic::ToolExecuted,
-            serde_json::json!({
-                "goal_id": goal.id,
-                "action_id": action.id,
-                "tool": tool_name,
-                "tool_success": verified.tool_success,
-                "verified": verified.verified,
-            }),
-        )));
-
-        episodes.push(Episode::from_event(friday_cognitive::WorkspaceEvent::new(
-            friday_cognitive::workspace::Topic::OutcomeObserved,
-            serde_json::json!({
-                "goal_id": goal.id,
-                "action_id": action.id,
-                "verified": verified.verified,
-                "expected_success": expectation.expect_success,
-            }),
-        )));
-
-        episodes
-    }
-
-    fn reflect(&mut self, episodes: &[Episode], outcome: &Outcome) -> Vec<Insight> {
-        let knowledge = self.knowledge_engine.analyze(episodes);
-
-        if knowledge.is_empty() {
-            let synthetic = KnowledgeRecord {
-                id: format!("k_goal_{}", outcome.id),
-                kind: friday_knowledge::KnowledgeKind::Workflow,
-                label: outcome.context.clone(),
-                description: format!("Goal execution: {}", outcome.context),
-                pattern: vec![outcome.context.clone()],
-                support: 1,
-                confidence: 1.0,
-                derived_at_ms: chrono::Utc::now().timestamp_millis() as u64,
-            };
-            return self.reflection_engine.reflect_all(&[synthetic], outcome);
-        }
-
-        self.reflection_engine.reflect_all(&knowledge, outcome)
-    }
-
-    pub fn registry(&self) -> &ToolRegistry {
-        &self.registry
-    }
-
-    pub fn reflection_engine(&self) -> &ReflectionEngine {
-        &self.reflection_engine
-    }
-}
-
-impl Default for GoalEngine {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// ── Goal Report ─────────────────────────────────────────────────────
-
-/// A complete audit of one goal execution.
-#[derive(Debug, Clone)]
-pub struct GoalReport {
-    pub goal: Goal,
-    pub action: Action,
-    pub expectation: Expectation,
-    pub tool: String,
-    pub verification: VerifiedResult,
-    pub outcome: Outcome,
-    pub insights: Vec<Insight>,
-    pub episodes: Vec<Episode>,
-    pub trace: Trace,
-    pub cognitive_trace: CognitiveTrace,
-}
-
-#[derive(Debug, Clone)]
-pub struct Trace {
-    pub started_at_ms: u64,
-    pub finished_at_ms: u64,
-}
-
-impl Trace {
-    pub fn duration_ms(&self) -> u64 {
-        self.finished_at_ms.saturating_sub(self.started_at_ms)
-    }
-}
-
-impl GoalReport {
-    pub fn success(&self) -> bool {
-        self.outcome.kind == OutcomeKind::TaskCompleted
-            || self.outcome.kind == OutcomeKind::MissionSucceeded
-    }
-
-    pub fn unexpected(&self) -> bool {
-        self.outcome.kind == OutcomeKind::UnexpectedSuccess
-            || self.outcome.kind == OutcomeKind::UnexpectedFailure
-    }
-}
-
-// ── Mission ─────────────────────────────────────────────────────────
-
-/// A mission — coordinates multiple goals toward a higher-level outcome.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Mission {
-    pub id: String,
-    pub description: String,
-    pub goal_descriptions: Vec<String>,
-    pub completed: HashMap<usize, Outcome>,
-    pub created_at_ms: u64,
-    pub status: MissionStatus,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MissionStatus {
-    Created,
-    Running,
-    Complete,
-    Aborted,
-}
-
-impl Mission {
-    pub fn new(description: impl Into<String>, goal_descriptions: Vec<String>) -> Self {
-        let complete = goal_descriptions.is_empty();
-        Self {
-            id: format!("mission_{}", uuid::Uuid::new_v4()),
-            description: description.into(),
-            goal_descriptions,
-            completed: HashMap::new(),
-            created_at_ms: chrono::Utc::now().timestamp_millis() as u64,
-            status: if complete { MissionStatus::Complete } else { MissionStatus::Created },
-        }
-    }
-
-    pub fn start(&mut self) {
-        self.status = MissionStatus::Running;
-    }
-
-    pub fn complete_goal(&mut self, goal_index: usize, outcome: Outcome) {
-        self.completed.insert(goal_index, outcome);
-        if self.completed.len() >= self.goal_descriptions.len() {
-            self.status = MissionStatus::Complete;
-        }
-    }
-
-    pub fn abort(&mut self) {
-        self.status = MissionStatus::Aborted;
-    }
-
-    pub fn next_goal(&self) -> Option<usize> {
-        (0..self.goal_descriptions.len()).find(|&i| !self.completed.contains_key(&i))
-    }
-
-    pub fn goal_at(&self, index: usize) -> Option<Goal> {
-        self.goal_descriptions.get(index).map(|desc| {
-            Goal::new(desc.as_str()).with_context(format!(
-                "Mission: {} (step {} of {})",
-                self.description,
-                index + 1,
-                self.goal_descriptions.len()
-            ))
-        })
-    }
-
-    pub fn total_goals(&self) -> usize {
-        self.goal_descriptions.len()
-    }
-
-    pub fn completed_goals(&self) -> usize {
-        self.completed.len()
-    }
-
-    pub fn is_complete(&self) -> bool {
-        self.status == MissionStatus::Complete
-    }
-}
-
-// ── Mock Tool ───────────────────────────────────────────────────────
-
-pub struct MockTool {
-    name: String,
-    capabilities: Vec<Capability>,
-    should_succeed: bool,
-    output: String,
-}
-
-impl MockTool {
-    pub fn success(name: impl Into<String>, output: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            capabilities: vec![Capability::ExecuteCommand],
-            should_succeed: true,
-            output: output.into(),
-        }
-    }
-
-    pub fn failure(name: impl Into<String>, error: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            capabilities: vec![Capability::ExecuteCommand],
-            should_succeed: false,
-            output: error.into(),
-        }
-    }
-
-    pub fn with_capabilities(mut self, caps: Vec<Capability>) -> Self {
-        self.capabilities = caps;
-        self
-    }
-}
-
-#[async_trait]
-impl Tool for MockTool {
-    fn name(&self) -> &str { &self.name }
-    fn description(&self) -> &str { "Mock tool for testing" }
-    fn capabilities(&self) -> Vec<Capability> { self.capabilities.clone() }
-
-    async fn execute(&self, _action: &Action, _context: &ExecutionContext) -> ToolResult {
-        if self.should_succeed {
-            ToolResult::success(&self.output)
-        } else {
-            ToolResult::error(&self.output)
-        }
-    }
-}
-
-// ── Mock Verifier ───────────────────────────────────────────────────
-
-pub struct MockVerifier {
-    name: String,
-    should_pass: bool,
-}
-
-impl MockVerifier {
-    pub fn pass(name: impl Into<String>) -> Self {
-        Self { name: name.into(), should_pass: true }
-    }
-
-    pub fn fail(name: impl Into<String>) -> Self {
-        Self { name: name.into(), should_pass: false }
-    }
-}
-
-impl Verifier for MockVerifier {
-    fn name(&self) -> &str { &self.name }
-
-    fn verify(&self, _action: &Action, _result: &ToolResult) -> Check {
-        Check {
-            name: self.name.clone(),
-            passed: self.should_pass,
-            detail: if self.should_pass { "check passed".into() } else { "check failed".into() },
-        }
-    }
-}
 
 // ── Tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use friday_reflection::{Insight, InsightKind, Outcome, OutcomeKind};
+    use std::collections::HashMap;
 
     // ── Goal ────────────────────────────────────────────────────
 
@@ -3817,5 +1133,1057 @@ mod tests {
         let outputs = engine.evaluate(&inputs);
         let result = outputs.get("result").unwrap();
         assert_eq!(result.value(), 0.0); // 0.75 * 0.0 = 0.0
+    }
+
+    // ── Belief ──────────────────────────────────────────────────
+
+    #[test]
+    fn belief_basic() {
+        let b = Belief::new("cargo builds on this machine", Confidence::high(), "observation");
+        assert_eq!(b.statement, "cargo builds on this machine");
+        assert_eq!(b.confidence, Confidence::high());
+        assert_eq!(b.source, "observation");
+    }
+
+    #[test]
+    fn belief_fresh_by_default() {
+        let b = Belief::new("x", Confidence::medium(), "test");
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+        assert!(b.is_fresh(now));
+        assert!(b.is_still_believed());
+        assert!(b.is_usable(now));
+    }
+
+    #[test]
+    fn belief_expired() {
+        let b = Belief::new("x", Confidence::medium(), "test")
+            .with_expiry_ms(100);
+        // 200ms in the future
+        assert!(!b.is_fresh(200));
+    }
+
+    #[test]
+    fn belief_below_floor() {
+        let b = Belief::new("x", Confidence::low(), "test")
+            .with_confidence_floor(Confidence::medium());
+        assert!(!b.is_still_believed());
+    }
+
+    #[test]
+    fn belief_verify_updates_confidence() {
+        let mut b = Belief::new("x", Confidence::medium(), "test");
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+        b.verify(Confidence::high(), now);
+        assert_eq!(b.confidence, Confidence::high());
+        assert_eq!(b.last_verified_ms, now);
+    }
+
+    #[test]
+    fn belief_with_evidence() {
+        let b = Belief::new("x", Confidence::medium(), "test")
+            .with_evidence("ep_123")
+            .with_evidence("ep_456");
+        assert_eq!(b.evidence.len(), 2);
+    }
+
+    // ── Attention Score ─────────────────────────────────────────
+
+    #[test]
+    fn attention_score_zero() {
+        let s = AttentionScore::zero();
+        assert_eq!(s.aggregate(), 0.0);
+    }
+
+    #[test]
+    fn attention_score_builder() {
+        let s = AttentionScore::builder()
+            .importance(0.8)
+            .urgency(0.5)
+            .novelty(0.3)
+            .risk(0.6)
+            .confidence(0.9)
+            .mission_priority(0.4)
+            .build();
+        let agg = s.aggregate();
+        assert!(agg > 0.5 && agg < 1.0, "aggregate should be reasonable, got {}", agg);
+    }
+
+    #[test]
+    fn attention_score_weighted() {
+        // All weight on importance → aggregate = 0.5 * 0.3 = 0.15
+        let s = AttentionScore { importance: 0.5, ..AttentionScore::zero() };
+        assert!((s.aggregate() - 0.15).abs() < 0.001);
+    }
+
+    // ── Working Memory ──────────────────────────────────────────
+
+    #[test]
+    fn working_memory_default() {
+        let wm = WorkingMemory::new();
+        assert_eq!(wm.focus, FocusTarget::Idle);
+        assert!(wm.active_goal.is_none());
+        assert!(wm.recent_events.is_empty());
+        assert!(wm.beliefs.is_empty());
+        assert_eq!(wm.context_window, 50);
+    }
+
+    #[test]
+    fn working_memory_events_ring_buffer() {
+        let mut wm = WorkingMemory::new().with_context_window(3);
+        for i in 0..5 {
+            wm.push_event(WorkspaceEventRef {
+                event_id: format!("e{}", i),
+                topic: "test".into(),
+                engine: "test".into(),
+                timestamp_ms: i,
+            });
+        }
+        assert_eq!(wm.recent_events().len(), 3);
+        // Oldest (e0, e1) dropped, retained e2, e3, e4
+        assert_eq!(wm.recent_events()[0].event_id, "e2");
+        assert_eq!(wm.recent_events()[2].event_id, "e4");
+    }
+
+    #[test]
+    fn working_memory_beliefs() {
+        let mut wm = WorkingMemory::new();
+        let idx = wm.add_belief(Belief::new("a", Confidence::high(), "test"));
+        assert_eq!(idx, 0);
+        wm.add_belief(Belief::new("b", Confidence::low(), "test"));
+        assert_eq!(wm.beliefs.len(), 2);
+    }
+
+    #[test]
+    fn working_memory_prune_stale_beliefs() {
+        let mut wm = WorkingMemory::new();
+        wm.add_belief(Belief::new("fresh", Confidence::high(), "test"));
+        wm.add_belief(Belief::new("stale", Confidence::high(), "test")
+            .with_expiry_ms(100));
+
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+        let removed = wm.prune_stale_beliefs(now + 200);
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0].statement, "stale");
+        assert_eq!(wm.beliefs.len(), 1);
+    }
+
+    #[test]
+    fn working_memory_active_beliefs() {
+        let mut wm = WorkingMemory::new();
+        wm.add_belief(Belief::new("a", Confidence::high(), "test"));
+        wm.add_belief(Belief::new("b", Confidence::low(), "test")
+            .with_confidence_floor(Confidence::medium()));
+
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+        let active = wm.active_beliefs(now);
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].statement, "a");
+    }
+
+    #[test]
+    fn working_memory_top_attended() {
+        let mut wm = WorkingMemory::new();
+        wm.set_attention("a", AttentionScore::builder().importance(0.9).build());
+        wm.set_attention("b", AttentionScore::builder().importance(0.3).build());
+        wm.set_attention("c", AttentionScore::builder().importance(0.7).build());
+
+        let top = wm.top_attended(2);
+        assert_eq!(top.len(), 2);
+        assert_eq!(top[0].0, "a");
+        assert_eq!(top[1].0, "c");
+    }
+
+    #[test]
+    fn working_memory_clear() {
+        let mut wm = WorkingMemory::new();
+        wm.set_goal(Goal::new("test"));
+        wm.add_belief(Belief::new("x", Confidence::medium(), "test"));
+        wm.set_attention("a", AttentionScore::zero());
+        wm.clear();
+        assert!(wm.active_goal.is_none());
+        assert!(wm.beliefs.is_empty());
+        assert!(wm.attention_scores.is_empty());
+        assert_eq!(wm.focus, FocusTarget::Idle);
+    }
+
+    #[test]
+    fn working_memory_focus_transitions() {
+        let mut wm = WorkingMemory::new();
+        assert_eq!(wm.focus, FocusTarget::Idle);
+
+        wm.set_focus(FocusTarget::Goal("g1".into()));
+        assert_eq!(wm.focus, FocusTarget::Goal("g1".into()));
+
+        wm.set_focus(FocusTarget::Executing("build".into()));
+        assert_eq!(wm.focus, FocusTarget::Executing("build".into()));
+
+        wm.set_focus(FocusTarget::Idle);
+        assert_eq!(wm.focus, FocusTarget::Idle);
+    }
+
+    // ── Cognitive Episode ───────────────────────────────────────
+
+    #[test]
+    fn episode_begin() {
+        let goal = Goal::new("build project");
+        let ep = CognitiveEpisode::begin(goal.clone());
+        assert_eq!(ep.goal.description, "build project");
+        assert_eq!(ep.outcome, EpisodeOutcome::InProgress);
+        assert!(!ep.is_complete());
+        assert!(ep.world_before.is_none());
+        assert!(ep.plan.is_none());
+    }
+
+    #[test]
+    fn episode_lifecycle() {
+        let goal = Goal::new("test");
+        let action = Action::single("echo", Capability::ExecuteCommand, &goal.id);
+        let plan = Plan::from_action(action, "test");
+
+        let ep = CognitiveEpisode::begin(goal)
+            .with_world_before(WorldState::new())
+            .with_plan(plan)
+            .with_execution_result(ToolResult::success("ok"))
+            .with_verification(VerifiedResult {
+                verified: true,
+                tool_success: true,
+                checks: vec![],
+                confidence: Confidence::high(),
+            })
+            .with_reflection("worked as expected")
+            .with_world_after(WorldState::new())
+            .with_tag("cargo")
+            .finish(EpisodeOutcome::Success);
+
+        assert!(ep.is_complete());
+        assert!(ep.succeeded());
+        assert!(!ep.failed());
+        assert!(ep.world_before.is_some());
+        assert!(ep.plan.is_some());
+        assert!(ep.execution_result.is_some());
+        assert!(ep.verification_result.is_some());
+        assert_eq!(ep.reflection.as_deref(), Some("worked as expected"));
+        assert!(ep.tags.contains(&"cargo".to_string()));
+    }
+
+    #[test]
+    fn episode_failure() {
+        let ep = CognitiveEpisode::begin(Goal::new("failing task"))
+            .finish(EpisodeOutcome::Failure);
+        assert!(ep.failed());
+        assert!(!ep.succeeded());
+    }
+
+    #[test]
+    fn episode_duration() {
+        let ep = CognitiveEpisode::begin(Goal::new("test"));
+        // Not finished → duration is 0
+        assert_eq!(ep.duration_ms(), 0);
+    }
+
+    #[test]
+    fn episode_trace_push() {
+        let mut ep = CognitiveEpisode::begin(Goal::new("test"));
+        ep.push_trace(TraceNode::new(TraceNodeKind::Planning, serde_json::json!({}), serde_json::json!({})));
+        assert_eq!(ep.trace.nodes.len(), 1);
+    }
+
+    #[test]
+    fn episode_outcome_display() {
+        assert_eq!(EpisodeOutcome::Success.to_string(), "success");
+        assert_eq!(EpisodeOutcome::UnexpectedFailure.to_string(), "unexpected_failure");
+        assert_eq!(EpisodeOutcome::Aborted.to_string(), "aborted");
+        assert_eq!(EpisodeOutcome::InProgress.to_string(), "in_progress");
+    }
+
+    // ── Episode Store ───────────────────────────────────────────
+
+    #[test]
+    fn episode_store_basic() {
+        let mut store = EpisodeStore::new();
+        assert_eq!(store.count(), 0);
+
+        store.store(CognitiveEpisode::begin(Goal::new("a")).finish(EpisodeOutcome::Success));
+        store.store(CognitiveEpisode::begin(Goal::new("b")).finish(EpisodeOutcome::Failure));
+        assert_eq!(store.count(), 2);
+    }
+
+    #[test]
+    fn episode_store_prunes_at_capacity() {
+        let mut store = EpisodeStore::with_capacity(3);
+        for i in 0..5 {
+            store.store(CognitiveEpisode::begin(Goal::new(format!("g{}", i))));
+        }
+        assert_eq!(store.count(), 3);
+    }
+
+    #[test]
+    fn episode_store_by_goal() {
+        let mut store = EpisodeStore::new();
+        let g1 = Goal::new("a");
+        let g1_id = g1.id.clone();
+        store.store(CognitiveEpisode::begin(g1));
+        store.store(CognitiveEpisode::begin(Goal::new("b")));
+        assert_eq!(store.by_goal(&g1_id).len(), 1);
+        assert_eq!(store.by_goal("nonexistent").len(), 0);
+    }
+
+    #[test]
+    fn episode_store_by_outcome() {
+        let mut store = EpisodeStore::new();
+        store.store(CognitiveEpisode::begin(Goal::new("a")).finish(EpisodeOutcome::Success));
+        store.store(CognitiveEpisode::begin(Goal::new("b")).finish(EpisodeOutcome::Failure));
+        store.store(CognitiveEpisode::begin(Goal::new("c")).finish(EpisodeOutcome::Success));
+        assert_eq!(store.successes().len(), 2);
+        assert_eq!(store.failures().len(), 1);
+    }
+
+    #[test]
+    fn episode_store_by_tag() {
+        let mut store = EpisodeStore::new();
+        store.store(CognitiveEpisode::begin(Goal::new("a")).with_tag("cargo"));
+        store.store(CognitiveEpisode::begin(Goal::new("b")).with_tag("git"));
+        store.store(CognitiveEpisode::begin(Goal::new("c")).with_tag("cargo"));
+        assert_eq!(store.by_tag("cargo").len(), 2);
+    }
+
+    #[test]
+    fn episode_store_success_rate() {
+        let mut store = EpisodeStore::new();
+        store.store(CognitiveEpisode::begin(Goal::new("a")).finish(EpisodeOutcome::Success));
+        store.store(CognitiveEpisode::begin(Goal::new("b")).finish(EpisodeOutcome::Success));
+        store.store(CognitiveEpisode::begin(Goal::new("c")).finish(EpisodeOutcome::Failure));
+        assert!((store.success_rate() - 0.666).abs() < 0.01);
+    }
+
+    #[test]
+    fn episode_store_empty_success_rate() {
+        let store = EpisodeStore::new();
+        assert_eq!(store.success_rate(), 0.0);
+    }
+
+    #[test]
+    fn episode_store_recent() {
+        let mut store = EpisodeStore::new();
+        for i in 0..5 {
+            store.store(CognitiveEpisode::begin(Goal::new(format!("g{}", i))));
+        }
+        let recent = store.recent(2);
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].goal.description, "g3");
+        assert_eq!(recent[1].goal.description, "g4");
+    }
+
+    #[test]
+    fn episode_store_get_by_id() {
+        let mut store = EpisodeStore::new();
+        let ep = CognitiveEpisode::begin(Goal::new("test"));
+        let id = ep.id.clone();
+        store.store(ep);
+        assert!(store.get(&id).is_some());
+        assert!(store.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn episode_store_clear() {
+        let mut store = EpisodeStore::new();
+        store.store(CognitiveEpisode::begin(Goal::new("a")));
+        store.clear();
+        assert_eq!(store.count(), 0);
+    }
+
+    // ── Experience Pattern ──────────────────────────────────────
+
+    #[test]
+    fn pattern_basic() {
+        let mut p = ExperiencePattern::new(PatternKind::RepeatedSuccess, "cargo builds succeed");
+        assert_eq!(p.support, 0);
+        assert_eq!(p.confidence, 0.0);
+        assert!(!p.promoted);
+
+        p.add_evidence("ep_1");
+        assert_eq!(p.support, 1);
+        assert!(p.confidence > 0.0);
+    }
+
+    #[test]
+    fn pattern_confidence_grows_with_support() {
+        let mut p = ExperiencePattern::new(PatternKind::RepeatedSuccess, "test");
+        p.add_evidence("ep_1");
+        let c1 = p.confidence;
+        p.add_evidence("ep_2");
+        let c2 = p.confidence;
+        p.add_evidence("ep_3");
+        let c3 = p.confidence;
+        assert!(c1 < c2);
+        assert!(c2 < c3);
+        assert!(c3 < 1.0);
+    }
+
+    #[test]
+    fn pattern_meets_threshold() {
+        let mut p = ExperiencePattern::new(PatternKind::RepeatedSuccess, "test");
+        assert!(!p.meets_threshold(3, 0.6));
+        p.add_evidence("ep_1");
+        p.add_evidence("ep_2");
+        p.add_evidence("ep_3");
+        // support=3, confidence = 1 - 1/(1+3) = 0.75
+        assert!(p.meets_threshold(3, 0.6));
+    }
+
+    #[test]
+    fn pattern_with_capability() {
+        let p = ExperiencePattern::new(PatternKind::RepeatedSuccess, "test")
+            .with_capability(Capability::ExecuteCommand);
+        assert_eq!(p.capability, Some(Capability::ExecuteCommand));
+    }
+
+    #[test]
+    fn pattern_kind_display() {
+        assert_eq!(PatternKind::RepeatedSuccess.to_string(), "repeated_success");
+        assert_eq!(PatternKind::Workflow.to_string(), "workflow");
+        assert_eq!(PatternKind::RiskObservation.to_string(), "risk_observation");
+    }
+
+    // ── Semantic Memory ─────────────────────────────────────────
+
+    #[test]
+    fn semantic_memory_processes_success_episodes() {
+        let mut store = EpisodeStore::new();
+
+        for _ in 0..4 {
+            store.store(
+                CognitiveEpisode::begin(Goal::new("cargo build"))
+                    .with_plan(Plan::from_action(
+                        Action::single("cargo build", Capability::ExecuteCommand, "g"),
+                        "build",
+                    ))
+                    .finish(EpisodeOutcome::Success)
+            );
+        }
+
+        let mut sem = SemanticMemory::new();
+        let result = sem.process_episodes(&store);
+        assert_eq!(result.episodes_processed, 4);
+        // 4 episodes → support=4, confidence=0.8 → above threshold → promoted
+        assert!(result.patterns_promoted > 0, "should have promoted patterns");
+    }
+
+    #[test]
+    fn semantic_memory_promotes_strong_patterns() {
+        let mut store = EpisodeStore::new();
+        // Create 5 identical success episodes (above default threshold of 3)
+        for _ in 0..5 {
+            store.store(
+                CognitiveEpisode::begin(Goal::new("cargo build"))
+                    .with_plan(Plan::from_action(
+                        Action::single("cargo build", Capability::ExecuteCommand, "g"),
+                        "build",
+                    ))
+                    .finish(EpisodeOutcome::Success)
+            );
+        }
+
+        let mut sem = SemanticMemory::with_thresholds(PromotionThresholds {
+            min_support: 3,
+            min_confidence: 0.6,
+        });
+        let result = sem.process_episodes(&store);
+        assert!(result.patterns_promoted > 0, "should promote patterns with 5 episodes");
+        assert!(result.policies_proposed > 0, "should propose policies");
+    }
+
+    #[test]
+    fn semantic_memory_deduplicates() {
+        let mut store = EpisodeStore::new();
+        store.store(
+            CognitiveEpisode::begin(Goal::new("test"))
+                .finish(EpisodeOutcome::Success)
+        );
+
+        let mut sem = SemanticMemory::new();
+        let r1 = sem.process_episodes(&store);
+        assert_eq!(r1.episodes_processed, 1);
+
+        // Process again — should skip the same episode.
+        let r2 = sem.process_episodes(&store);
+        assert_eq!(r2.episodes_processed, 0);
+    }
+
+    #[test]
+    fn semantic_memory_queries() {
+        let mut store = EpisodeStore::new();
+        for _ in 0..4 {
+            store.store(
+                CognitiveEpisode::begin(Goal::new("cargo build"))
+                    .with_plan(Plan::from_action(
+                        Action::single("cargo build", Capability::ExecuteCommand, "g"),
+                        "build",
+                    ))
+                    .finish(EpisodeOutcome::Success)
+            );
+        }
+
+        let mut sem = SemanticMemory::new();
+        sem.process_episodes(&store);
+
+        let cap_patterns = sem.patterns_for_capability(&Capability::ExecuteCommand);
+        assert!(!cap_patterns.is_empty());
+    }
+
+    #[test]
+    fn semantic_memory_failure_pattern() {
+        let mut store = EpisodeStore::new();
+        for _ in 0..4 {
+            store.store(
+                CognitiveEpisode::begin(Goal::new("read broken file"))
+                    .with_plan(Plan::from_action(
+                        Action::single("read file", Capability::ReadFile, "g"),
+                        "read",
+                    ))
+                    .finish(EpisodeOutcome::Failure)
+            );
+        }
+
+        let mut sem = SemanticMemory::new();
+        sem.process_episodes(&store);
+
+        let failure_patterns: Vec<_> = sem.patterns().iter()
+            .filter(|p| p.kind == PatternKind::RepeatedFailure)
+            .collect();
+        assert!(!failure_patterns.is_empty());
+    }
+
+    #[test]
+    fn semantic_memory_workflow_pattern() {
+        let mut store = EpisodeStore::new();
+        for _ in 0..4 {
+            let goal = Goal::new("build and test");
+            let a1 = Action::single("cargo build", Capability::ExecuteCommand, &goal.id);
+            let a2 = Action::single("cargo test", Capability::ExecuteCommand, &goal.id);
+            let plan = Plan::from_actions(vec![a1, a2], "build-test", PlanSource::Direct);
+            store.store(
+                CognitiveEpisode::begin(goal)
+                    .with_plan(plan)
+                    .finish(EpisodeOutcome::Success)
+            );
+        }
+
+        let mut sem = SemanticMemory::new();
+        sem.process_episodes(&store);
+
+        let wf_patterns: Vec<_> = sem.patterns().iter()
+            .filter(|p| p.kind == PatternKind::Workflow)
+            .collect();
+        assert!(!wf_patterns.is_empty());
+    }
+
+    // ── Attention Manager ───────────────────────────────────────
+
+    #[test]
+    fn attention_manager_add_and_count() {
+        let mut mgr = AttentionManager::new();
+        mgr.add(AttentionItem::new(
+            AttentionItemKind::Goal,
+            "build project",
+            AttentionScore::builder().importance(0.8).build(),
+        ));
+        assert_eq!(mgr.count(), 1);
+    }
+
+    #[test]
+    fn attention_manager_ranked_order() {
+        let mut mgr = AttentionManager::new();
+        mgr.add(AttentionItem::new(
+            AttentionItemKind::Goal,
+            "low priority",
+            AttentionScore::builder().importance(0.4).build(),
+        ));
+        mgr.add(AttentionItem::new(
+            AttentionItemKind::Goal,
+            "high priority",
+            AttentionScore::builder().importance(0.9).build(),
+        ));
+        mgr.add(AttentionItem::new(
+            AttentionItemKind::Goal,
+            "medium priority",
+            AttentionScore::builder().importance(0.6).build(),
+        ));
+
+        let ranked = mgr.ranked();
+        assert_eq!(ranked.len(), 3);
+        assert_eq!(ranked[0].description, "high priority");
+        assert_eq!(ranked[1].description, "medium priority");
+        assert_eq!(ranked[2].description, "low priority");
+    }
+
+    #[test]
+    fn attention_manager_focus_removes_item() {
+        let mut mgr = AttentionManager::new();
+        let item = AttentionItem::new(
+            AttentionItemKind::Goal,
+            "urgent task",
+            AttentionScore::builder().importance(0.9).urgency(0.8).build(),
+        );
+        mgr.add(item);
+
+        let focused = mgr.focus();
+        assert!(focused.is_some());
+        assert_eq!(focused.unwrap().description, "urgent task");
+        assert_eq!(mgr.count(), 0);
+    }
+
+    #[test]
+    fn attention_manager_focus_tracks_count() {
+        let mut mgr = AttentionManager::new();
+        mgr.add(AttentionItem::new(
+            AttentionItemKind::Goal,
+            "task",
+            AttentionScore::builder().importance(0.9).build(),
+        ));
+
+        let item = mgr.focus().unwrap();
+        assert_eq!(item.focus_count, 1);
+        assert!(mgr.was_recently_focused(&item.id));
+    }
+
+    #[test]
+    fn attention_manager_deprioritize() {
+        let mut mgr = AttentionManager::new();
+        let high = AttentionItem::new(
+            AttentionItemKind::Goal,
+            "deprioritized",
+            AttentionScore::builder().importance(0.9).build(),
+        );
+        let low = AttentionItem::new(
+            AttentionItemKind::Goal,
+            "normal",
+            AttentionScore::builder().importance(0.5).build(),
+        );
+        let high_id = high.id.clone();
+        mgr.add(high);
+        mgr.add(low);
+
+        mgr.deprioritize(&high_id);
+
+        let ranked = mgr.ranked();
+        // Normal (0.5 * 0.3 = 0.15) should rank higher than deprioritized (0.9 * 0.3 * 0.3 = 0.081)
+        assert_eq!(ranked[0].description, "normal");
+    }
+
+    #[test]
+    fn attention_manager_reprioritize() {
+        let mut mgr = AttentionManager::new();
+        let item = AttentionItem::new(
+            AttentionItemKind::Goal,
+            "task",
+            AttentionScore::builder().importance(0.9).build(),
+        );
+        let id = item.id.clone();
+        mgr.add(item);
+
+        mgr.deprioritize(&id);
+        assert!(mgr.ranked().is_empty() || mgr.ranked()[0].deprioritized);
+
+        mgr.reprioritize(&id);
+        assert_eq!(mgr.ranked().len(), 1);
+        assert!(!mgr.ranked()[0].deprioritized);
+    }
+
+    #[test]
+    fn attention_manager_remove() {
+        let mut mgr = AttentionManager::new();
+        let item = AttentionItem::new(
+            AttentionItemKind::Goal,
+            "removable",
+            AttentionScore::builder().importance(0.5).build(),
+        );
+        let id = item.id.clone();
+        mgr.add(item);
+        assert!(mgr.remove(&id));
+        assert_eq!(mgr.count(), 0);
+        assert!(!mgr.remove("nonexistent"));
+    }
+
+    #[test]
+    fn attention_manager_rescore() {
+        let mut mgr = AttentionManager::new();
+        let item = AttentionItem::new(
+            AttentionItemKind::Goal,
+            "rescored",
+            AttentionScore::builder().importance(0.3).build(),
+        );
+        let id = item.id.clone();
+        mgr.add(item);
+
+        let new_score = AttentionScore::builder().importance(0.9).build();
+        assert!(mgr.rescore(&id, new_score));
+        let ranked = mgr.ranked();
+        assert!((ranked[0].score.importance - 0.9).abs() < 0.001);
+    }
+
+    #[test]
+    fn attention_manager_by_kind() {
+        let mut mgr = AttentionManager::new();
+        mgr.add(AttentionItem::new(AttentionItemKind::Goal, "g1", AttentionScore::builder().importance(0.5).build()));
+        mgr.add(AttentionItem::new(AttentionItemKind::Belief, "b1", AttentionScore::builder().importance(0.5).build()));
+        mgr.add(AttentionItem::new(AttentionItemKind::Goal, "g2", AttentionScore::builder().importance(0.5).build()));
+
+        assert_eq!(mgr.by_kind(&AttentionItemKind::Goal).len(), 2);
+        assert_eq!(mgr.by_kind(&AttentionItemKind::Belief).len(), 1);
+    }
+
+    #[test]
+    fn attention_manager_clear() {
+        let mut mgr = AttentionManager::new();
+        mgr.add(AttentionItem::new(AttentionItemKind::Goal, "g1", AttentionScore::zero()));
+        mgr.add(AttentionItem::new(AttentionItemKind::Belief, "b1", AttentionScore::zero()));
+        mgr.clear();
+        assert_eq!(mgr.count(), 0);
+    }
+
+    #[test]
+    fn attention_manager_peek() {
+        let mut mgr = AttentionManager::new();
+        mgr.add(AttentionItem::new(
+            AttentionItemKind::Goal,
+            "visible",
+            AttentionScore::builder().importance(0.9).build(),
+        ));
+        let peeked = mgr.peek();
+        assert!(peeked.is_some());
+        assert_eq!(peeked.unwrap().description, "visible");
+        // Peek doesn't remove
+        assert_eq!(mgr.count(), 1);
+    }
+
+    #[test]
+    fn attention_manager_min_focus_score_filters() {
+        let config = AttentionConfig {
+            min_focus_score: 0.5,
+            ..Default::default()
+        };
+        let mut mgr = AttentionManager::with_config(config);
+        mgr.add(AttentionItem::new(
+            AttentionItemKind::Goal,
+            "below threshold",
+            AttentionScore::builder().importance(0.1).build(), // aggregate = 0.03
+        ));
+
+        let ranked = mgr.ranked();
+        assert!(ranked.is_empty(), "items below min_focus_score should be filtered");
+
+        let focused = mgr.focus();
+        assert!(focused.is_none(), "focus should return None for below-threshold items");
+    }
+
+    #[test]
+    fn attention_item_effective_score_deprioritized() {
+        let item = AttentionItem {
+            score: AttentionScore::builder().importance(0.8).build(),
+            deprioritized: true,
+            ..AttentionItem::new(AttentionItemKind::Goal, "test", AttentionScore::zero())
+        };
+        let base = AttentionScore::builder().importance(0.8).build().aggregate();
+        assert!((item.effective_score() - base * 0.3).abs() < 0.001);
+    }
+
+    #[test]
+    fn attention_item_kind_display() {
+        assert_eq!(AttentionItemKind::Goal.to_string(), "goal");
+        assert_eq!(AttentionItemKind::Belief.to_string(), "belief");
+        assert_eq!(AttentionItemKind::Custom("test".into()).to_string(), "test");
+    }
+
+    // ── Global Workspace ────────────────────────────────────────
+
+    #[test]
+    fn workspace_create() {
+        let ws = CognitiveBlackboard::new();
+        assert!(ws.get_active_goal().is_none());
+        assert!(ws.get_active_plan().is_none());
+        assert!(ws.get_attention().is_empty());
+        assert!(ws.get_beliefs().is_empty());
+    }
+
+    #[test]
+    fn workspace_set_active_goal() {
+        let ws = CognitiveBlackboard::new();
+        ws.set_active_goal(Goal::new("test goal"));
+        let goal = ws.get_active_goal();
+        assert_eq!(goal.unwrap().description, "test goal");
+    }
+
+    #[test]
+    fn workspace_clear_active_goal() {
+        let ws = CognitiveBlackboard::new();
+        ws.set_active_goal(Goal::new("test"));
+        assert!(ws.get_active_goal().is_some());
+        ws.clear_active_goal();
+        assert!(ws.get_active_goal().is_none());
+    }
+
+    #[test]
+    fn workspace_set_active_plan() {
+        let ws = CognitiveBlackboard::new();
+        let plan = Plan::from_action(Action::single("echo", Capability::ExecuteCommand, "g"), "test");
+        ws.set_active_plan(plan);
+        let p = ws.get_active_plan();
+        assert_eq!(p.unwrap().strategy, "test");
+    }
+
+    #[test]
+    fn workspace_attention() {
+        let ws = CognitiveBlackboard::new();
+        let items = vec![
+            AttentionItem::new(AttentionItemKind::Goal, "urgent", AttentionScore::builder().importance(0.9).build()),
+            AttentionItem::new(AttentionItemKind::Belief, "stale data", AttentionScore::builder().importance(0.3).build()),
+        ];
+        ws.set_attention(items);
+        assert_eq!(ws.get_attention().len(), 2);
+    }
+
+    #[test]
+    fn workspace_beliefs() {
+        let ws = CognitiveBlackboard::new();
+        ws.add_belief(Belief::new("server is available", Confidence::high(), "ping"));
+        ws.add_belief(Belief::new("disk is full", Confidence::low(), "df"));
+        assert_eq!(ws.get_beliefs().len(), 2);
+    }
+
+    #[test]
+    fn workspace_world_state() {
+        let ws = CognitiveBlackboard::new();
+        let state = WorldState::new().with_tool(Capability::ExecuteCommand);
+        ws.set_world_state(state);
+        let s = ws.get_world_state();
+        assert!(s.is_some());
+        assert!(s.unwrap().available_tools.contains(&Capability::ExecuteCommand));
+    }
+
+    #[test]
+    fn workspace_thoughts() {
+        let ws = CognitiveBlackboard::new();
+        ws.push_thought("plan the approach");
+        ws.push_thought("simulate the plan");
+        ws.push_thought("execute step 1");
+        assert_eq!(ws.get_thoughts().len(), 3);
+    }
+
+    #[test]
+    fn workspace_thoughts_ring_buffer() {
+        let ws = CognitiveBlackboard::new();
+        for i in 0..60 {
+            ws.push_thought(format!("thought {}", i));
+        }
+        assert_eq!(ws.get_thoughts().len(), 50);
+    }
+
+    #[test]
+    fn workspace_predictions() {
+        let ws = CognitiveBlackboard::new();
+        let sim = DefaultSimulator::new();
+        let world = WorldState::new().with_tool(Capability::ExecuteCommand);
+        let goal = Goal::new("test");
+        let action = Action::single("echo", Capability::ExecuteCommand, &goal.id);
+        let plan = Plan::from_action(action, "test");
+        let result = sim.simulate(&plan, &world);
+
+        ws.set_predictions(vec![result]);
+        assert_eq!(ws.get_predictions().len(), 1);
+    }
+
+    #[test]
+    fn workspace_hypotheses() {
+        let ws = CognitiveBlackboard::new();
+        let h = ExperiencePattern::new(PatternKind::RepeatedSuccess, "test pattern");
+        ws.set_hypotheses(vec![h]);
+        assert_eq!(ws.get_hypotheses().len(), 1);
+    }
+
+    #[test]
+    fn workspace_execution() {
+        let ws = CognitiveBlackboard::new();
+        ws.set_execution(ToolResult::success("ok"));
+        let r = ws.get_execution();
+        assert!(r.unwrap().success);
+
+        ws.clear_execution();
+        assert!(ws.get_execution().is_none());
+    }
+
+    #[test]
+    fn workspace_reflection() {
+        let ws = CognitiveBlackboard::new();
+        ws.set_reflection("goal completed successfully");
+        assert_eq!(ws.get_reflection().as_deref(), Some("goal completed successfully"));
+    }
+
+    #[test]
+    fn workspace_current_episode() {
+        let ws = CognitiveBlackboard::new();
+        let ep = CognitiveEpisode::begin(Goal::new("test")).finish(EpisodeOutcome::Success);
+        ws.set_current_episode(ep);
+        let e = ws.get_current_episode();
+        assert!(e.unwrap().succeeded());
+
+        ws.clear_current_episode();
+        assert!(ws.get_current_episode().is_none());
+    }
+
+    #[test]
+    fn workspace_current_trace() {
+        let ws = CognitiveBlackboard::new();
+        let mut trace = CognitiveTrace::new("g1");
+        trace.push(TraceNode::new(TraceNodeKind::Planning, serde_json::json!({}), serde_json::json!({})));
+        ws.set_current_trace(trace);
+        let t = ws.get_current_trace();
+        assert_eq!(t.unwrap().nodes.len(), 1);
+    }
+
+    #[test]
+    fn workspace_snapshot() {
+        let ws = CognitiveBlackboard::new();
+        ws.set_active_goal(Goal::new("snapshot test"));
+        ws.push_thought("thinking");
+        ws.add_belief(Belief::new("test", Confidence::medium(), "test"));
+
+        let snap = ws.snapshot();
+        assert_eq!(snap.active_goal.unwrap().description, "snapshot test");
+        assert_eq!(snap.thought_count, 1);
+        assert_eq!(snap.belief_count, 1);
+    }
+
+    #[tokio::test]
+    async fn workspace_change_notification() {
+        let ws = CognitiveBlackboard::new();
+        let mut rx = ws.subscribe();
+
+        ws.set_active_goal(Goal::new("notify test"));
+
+        let change = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            rx.recv(),
+        ).await;
+
+        assert!(change.is_ok(), "should receive a change notification");
+        let change = change.unwrap().unwrap();
+        assert_eq!(change.slot, "active_goal");
+    }
+
+    #[test]
+    fn workspace_clear_all() {
+        let ws = CognitiveBlackboard::new();
+        ws.set_active_goal(Goal::new("test"));
+        ws.add_belief(Belief::new("x", Confidence::medium(), "test"));
+        ws.set_attention(vec![
+            AttentionItem::new(AttentionItemKind::Goal, "g", AttentionScore::zero()),
+        ]);
+        ws.push_thought("think");
+        ws.set_execution(ToolResult::success("ok"));
+
+        ws.clear();
+        assert!(ws.get_active_goal().is_none());
+        assert!(ws.get_beliefs().is_empty());
+        assert!(ws.get_attention().is_empty());
+        assert!(ws.get_thoughts().is_empty());
+        assert!(ws.get_execution().is_none());
+    }
+
+    #[test]
+    fn workspace_change_struct() {
+        let c = WorkspaceChange::new("beliefs", "updated core beliefs");
+        assert_eq!(c.slot, "beliefs");
+        assert_eq!(c.description, "updated core beliefs");
+        assert!(c.timestamp_ms > 0);
+    }
+
+    // ── Executive ───────────────────────────────────────────────
+
+    #[test]
+    fn executive_creates_default() {
+        let exec = Executive::new();
+        assert_eq!(exec.phase(), ExecutivePhase::Idle);
+        assert_eq!(exec.cycle_count(), 0);
+    }
+
+    #[test]
+    fn executive_cycle_without_focus_idles() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let workspace = CognitiveBlackboard::new();
+
+        rt.block_on(async {
+            let mut exec = Executive::new();
+            let report = exec.cycle(&workspace).await;
+            assert!(report.phases_completed.contains(&ExecutivePhase::Idle));
+            assert!(!report.goal_created);
+            assert!(!report.plan_executed);
+        });
+    }
+
+    #[tokio::test]
+    async fn executive_cycle_with_goal_executes() {
+        let workspace = CognitiveBlackboard::new();
+
+        // Set up world state with the tool capability so simulator finds it feasible.
+        let mut world = WorldState::default();
+        world.available_tools.push(Capability::ExecuteCommand);
+        workspace.set_world_state(world);
+
+        let mut exec = Executive::new();
+        exec.register_tool(Box::new(MockTool::success("cargo", "build succeeded")));
+        exec.add_goal("cargo build", 0.9);
+
+        let report = exec.cycle(&workspace).await;
+        assert!(report.phases_completed.len() >= 7,
+            "should complete at least 7 phases, got {}: {:?}",
+            report.phases_completed.len(), report.phases_completed);
+        assert!(report.plan_executed);
+        assert!(report.episode_stored);
+
+        let ep = workspace.get_current_episode();
+        assert!(ep.is_some());
+        assert!(ep.unwrap().is_complete());
+
+        let thoughts = workspace.get_thoughts();
+        assert!(!thoughts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn executive_multiple_cycles() {
+        let workspace = CognitiveBlackboard::new();
+
+        let mut world = WorldState::default();
+        world.available_tools.push(Capability::ExecuteCommand);
+        workspace.set_world_state(world);
+
+        let mut exec = Executive::new();
+        exec.register_tool(Box::new(MockTool::success("echo", "ok")));
+
+        exec.add_goal("first task", 0.8);
+        let r1 = exec.cycle(&workspace).await;
+        assert!(r1.plan_executed);
+
+        let _r2 = exec.cycle(&workspace).await;
+        assert_eq!(exec.cycle_count(), 2);
+        assert!(exec.episode_store().count() >= 1);
+    }
+
+    #[test]
+    fn executive_add_goal_and_observation() {
+        let mut exec = Executive::new();
+        exec.add_goal("important task", 0.9);
+        exec.add_observation("something changed", 0.6);
+        assert_eq!(exec.attention_manager().count(), 2);
+    }
+
+    #[test]
+    fn executive_phase_display() {
+        assert_eq!(ExecutivePhase::Observe.to_string(), "observe");
+        assert_eq!(ExecutivePhase::Attend.to_string(), "attend");
+        assert_eq!(ExecutivePhase::Execute.to_string(), "execute");
+        assert_eq!(ExecutivePhase::Reflect.to_string(), "reflect");
+        assert_eq!(ExecutivePhase::Learn.to_string(), "learn");
+        assert_eq!(ExecutivePhase::Idle.to_string(), "idle");
     }
 }
