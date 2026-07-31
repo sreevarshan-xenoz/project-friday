@@ -7,6 +7,12 @@
 > `DecisionExplanation`), ✅ 6B (Decision Timeline — `DecisionTimeline` +
 > `TimelineBuilder`), ✅ 6C (Metrics — `MetricsEngine`), ✅ 6D (Replay Engine —
 > `ReplayEngine`). **Sprint 6 complete.**
+>
+> **Architecture frozen.** Rationale and alternatives for the key decisions are
+> recorded in the [Architecture Decision Records](adr/README.md)
+> (ADR-0001 core freeze, ADR-0002 learning layer, ADR-0003 observability
+> layer, ADR-0004 API stability). This document describes **what** the
+> architecture is; the ADRs describe **why** it became that way.
 
 ## Top Invariant
 
