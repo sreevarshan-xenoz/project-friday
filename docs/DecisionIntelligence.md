@@ -4,9 +4,9 @@
 > The architecture is feature-complete. Future work extends within these
 > boundaries rather than reshaping them.
 > **Sprint 6 (Observability & Explainability)**: ✅ 6A (Explainability — `Explainer` +
-> `DecisionExplanation`) and ✅ 6B (Decision Timeline — `DecisionTimeline` +
-> `TimelineBuilder`). ✅ 6C (Metrics & Observability — `MetricsEngine`).
-> 6D (Replay Engine) pending.
+> `DecisionExplanation`), ✅ 6B (Decision Timeline — `DecisionTimeline` +
+> `TimelineBuilder`), ✅ 6C (Metrics — `MetricsEngine`), ✅ 6D (Replay Engine —
+> `ReplayEngine`). **Sprint 6 complete.**
 
 ## Top Invariant
 
@@ -849,6 +849,30 @@ ReplayEngine   (Sprint 6D)
 
 ```
 TimelineBuilder → Vec<DecisionTimeline> → MetricsEngine → MetricsReport
+```
+
+### 6D — Replay Engine (✅ complete)
+
+- `ReplayEngine::replay(&DecisionTimeline, &ExperienceStore, &ReputationStore,
+  &CalibrationStore) -> ReplayReport` — answers **"what would happen now?"**
+  instead of reconstructing history from scratch. Builds on the existing read
+  models (Timeline, Explainer, CostModel); owns no state.
+- Ranks the historical plan's own candidates through today's `CostModel` and
+  compares against the historical selection.
+- `ReplayReport` emphasizes **differences**:
+  - `operator_changed` — historical vs today's top-ranked operator
+  - `original_prediction` / `replayed_prediction` / `best_prediction`
+  - `prediction_delta` — latency / cost / success / confidence deltas
+  - `reputation_delta` — current reliability vs historical snapshot
+  - `calibration_delta` — current |latency offset| vs historical snapshot
+  - `explanation_changed` + `explanation_delta` — added/removed
+    `ExplanationReason`s (recomputed via the Explainer)
+  - `counterfactual` — would the decision change, and what success does
+    today's model predict for the new top choice
+- `replay_timestamp_ms` marks when the replay ran.
+
+```
+DecisionTimeline → ReplayEngine → ReplayReport (differences only)
 ```
 
 > **Note on migration timing:** Renames happen incrementally across multiple

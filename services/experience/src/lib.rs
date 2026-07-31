@@ -1294,6 +1294,215 @@ impl MetricsEngine {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Sprint 6D: Replay Engine
+// ---------------------------------------------------------------------------
+
+/// How today's predictions differ from what was predicted historically.
+#[derive(Debug, Clone)]
+pub struct PredictionDelta {
+    /// Replayed latency minus historical estimate, in ms.
+    pub latency_delta_ms: i64,
+    /// Replayed cost minus historical estimate.
+    pub cost_delta: f64,
+    /// Replayed success probability minus historical estimate.
+    pub success_probability_delta: f64,
+    /// Replayed confidence minus historical confidence.
+    pub confidence_delta: f64,
+}
+
+/// What would happen if the decision were made again today.
+#[derive(Debug, Clone)]
+pub struct Counterfactual {
+    /// True when today's model would have selected a different operator.
+    pub would_change: bool,
+    /// Today's predicted success probability for the newly ranked top choice.
+    pub replayed_success_probability: f64,
+    /// Success probability that was predicted historically.
+    pub original_predicted_success: f64,
+    /// What actually happened.
+    pub original_actual_success: bool,
+}
+
+/// Result of replaying one historical decision against today's read models.
+///
+/// Emphasizes **differences**: the point is to explain how the system has
+/// evolved, not to re-derive history from scratch.
+#[derive(Debug, Clone)]
+pub struct ReplayReport {
+    pub correlation_id: CorrelationId,
+    pub capability: Capability,
+    pub replay_timestamp_ms: u64,
+    /// The operator that was selected historically.
+    pub original_operator_id: String,
+    /// The operator today's model would rank first.
+    pub replayed_operator_id: String,
+    /// True when today's top choice differs from the historical selection.
+    pub operator_changed: bool,
+    /// The prediction embedded in the historical plan.
+    pub original_prediction: CostEstimate,
+    /// Today's estimate for the historical operator.
+    pub replayed_prediction: CostEstimate,
+    /// Today's estimate for the newly ranked top choice.
+    pub best_prediction: CostEstimate,
+    /// `replayed_prediction − original_prediction`, per dimension.
+    pub prediction_delta: PredictionDelta,
+    /// Current reputation reliability minus the historical snapshot
+    /// (None unless both exist).
+    pub reputation_delta: Option<f64>,
+    /// Current calibration magnitude minus the historical snapshot
+    /// (None only when neither has any calibration).
+    pub calibration_delta: Option<f64>,
+    /// True when today's explanation reasons differ from the historical ones.
+    pub explanation_changed: bool,
+    /// Added (`+`) and removed (`−`) explanation reasons.
+    pub explanation_delta: Vec<String>,
+    /// The counterfactual decision under today's model.
+    pub counterfactual: Counterfactual,
+}
+
+/// Replays historical decisions against current read models.
+///
+/// Builds on the existing read models (Timeline, Explainer, CostModel)
+/// rather than recomputing pieces independently. Owns no state.
+pub struct ReplayEngine;
+
+impl ReplayEngine {
+    pub fn replay(
+        timeline: &DecisionTimeline,
+        experience_store: &ExperienceStore,
+        reputation_store: &ReputationStore,
+        calibration: &CalibrationStore,
+    ) -> ReplayReport {
+        let correlation_id = timeline.correlation_id.clone();
+        let capability = timeline.plan.capability.clone();
+        let original_operator_id = timeline.plan.operator_id.clone();
+
+        let candidate_ops: Vec<String> = if timeline.plan.rationale.candidates.is_empty() {
+            vec![original_operator_id.clone()]
+        } else {
+            timeline
+                .plan
+                .rationale
+                .candidates
+                .iter()
+                .map(|c| c.plugin_id.clone())
+                .collect()
+        };
+
+        let ranked = CostModel::rank(
+            &capability,
+            &candidate_ops,
+            experience_store,
+            reputation_store,
+            Some(calibration),
+        );
+        let best_prediction = ranked.first().cloned().unwrap_or_else(|| CostModel::estimate(
+            &capability,
+            &original_operator_id,
+            experience_store,
+            reputation_store,
+            Some(calibration),
+        ));
+        let replayed_operator_id = best_prediction.operator_id.clone();
+
+        let replayed_prediction = CostModel::estimate(
+            &capability,
+            &original_operator_id,
+            experience_store,
+            reputation_store,
+            Some(calibration),
+        );
+
+        let original_prediction = CostEstimate {
+            operator_id: original_operator_id.clone(),
+            estimated_latency_ms: timeline.plan.estimated_latency_ms,
+            estimated_cost: timeline.plan.estimated_cost,
+            estimated_success_probability: timeline.plan.estimated_success_probability,
+            estimated_risk: timeline.plan.estimated_risk,
+            confidence: timeline.plan.confidence,
+        };
+
+        let operator_changed = replayed_operator_id != original_operator_id;
+
+        let prediction_delta = PredictionDelta {
+            latency_delta_ms: replayed_prediction.estimated_latency_ms as i64
+                - original_prediction.estimated_latency_ms as i64,
+            cost_delta: replayed_prediction.estimated_cost - original_prediction.estimated_cost,
+            success_probability_delta: replayed_prediction.estimated_success_probability
+                - original_prediction.estimated_success_probability,
+            confidence_delta: replayed_prediction.confidence - original_prediction.confidence,
+        };
+
+        let snapshot_reliability = timeline.reputation.as_ref().map(|r| r.reliability);
+        let current_reliability = reputation_store
+            .get(original_operator_id.as_str())
+            .map(|r| r.reliability);
+        let reputation_delta = match (snapshot_reliability, current_reliability) {
+            (Some(old), Some(new)) => Some(new - old),
+            _ => None,
+        };
+
+        let key = ExperienceKey {
+            capability: capability.clone(),
+            operator_id: original_operator_id.clone(),
+        };
+        let current_offsets = calibration.get(&key);
+        let snapshot_magnitude = timeline.calibration.as_ref().map(|o| o.latency_offset.abs());
+        let current_magnitude = current_offsets.latency_offset.abs();
+        let calibration_delta = if current_offsets.is_zero() && timeline.calibration.is_none() {
+            None
+        } else {
+            Some(current_magnitude - snapshot_magnitude.unwrap_or(0.0))
+        };
+
+        let current_explanation =
+            Explainer::explain(&timeline.plan, experience_store, reputation_store, calibration);
+        let original_reasons = &timeline.explanation.reasons;
+        let current_reasons = &current_explanation.reasons;
+        let explanation_changed = original_reasons != current_reasons;
+        let mut explanation_delta: Vec<String> = current_reasons
+            .iter()
+            .filter(|r| !original_reasons.contains(r))
+            .map(|r| format!("+ {:?}", r))
+            .collect();
+        explanation_delta.extend(
+            original_reasons
+                .iter()
+                .filter(|r| !current_reasons.contains(r))
+                .map(|r| format!("- {:?}", r)),
+        );
+
+        let counterfactual = Counterfactual {
+            would_change: operator_changed,
+            replayed_success_probability: best_prediction.estimated_success_probability,
+            original_predicted_success: timeline.plan.estimated_success_probability,
+            original_actual_success: timeline.outcome.success,
+        };
+
+        ReplayReport {
+            correlation_id,
+            capability,
+            replay_timestamp_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            original_operator_id,
+            replayed_operator_id,
+            operator_changed,
+            original_prediction,
+            replayed_prediction,
+            best_prediction,
+            prediction_delta,
+            reputation_delta,
+            calibration_delta,
+            explanation_changed,
+            explanation_delta,
+            counterfactual,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2617,5 +2826,191 @@ mod tests {
         assert_eq!(report.fallback.decisions_with_fallback_chain, 1);
         assert_eq!(report.reputation.decisions, 1);
         assert_eq!(report.experience.decisions, 1);
+    }
+
+    // -- 6D: Replay Engine --------------------------------------------------
+
+    fn replay_setup() -> (DecisionLedger, CorrelationId) {
+        let plan = explain_plan();
+        let cid = plan.rationale.correlation_id.clone();
+        let record = DecisionRecord {
+            id: plan.plan_id.clone(),
+            timestamp_ms: 1000,
+            capability: Capability::ReadFile,
+            context: SelectionContext::default(),
+            parameters: HashMap::new(),
+            plan,
+            outcome: PlanOutcome {
+                latency_ms: 10,
+                cost: 0.1,
+                success: true,
+                error: None,
+                completed_steps: 1,
+                cancelled: false,
+                timeout: false,
+                retries: 0,
+            },
+            reflection: None,
+        };
+        let mut ledger = DecisionLedger::new();
+        ledger.append(record);
+        (ledger, cid)
+    }
+
+    fn replay_experience(op: &str, success_rate: f64, latency: f64) -> Experience {
+        Experience {
+            key: ExperienceKey {
+                capability: Capability::ReadFile,
+                operator_id: op.into(),
+            },
+            sample_size: 100,
+            success_rate,
+            success_count: (success_rate * 100.0) as u64,
+            failure_count: 100 - (success_rate * 100.0) as u64,
+            average_latency_ms: latency,
+            p50_latency_ms: latency as u64,
+            p95_latency_ms: latency as u64 + 10,
+            p99_latency_ms: latency as u64 + 20,
+            last_execution_ms: Some(500),
+            last_failure_ms: None,
+            last_failure_reason: None,
+            consecutive_successes: 5,
+            consecutive_failures: 0,
+            since_ms: 100,
+        }
+    }
+
+    fn replay_feedback(adjustment: f64) -> PlannerFeedback {
+        PlannerFeedback {
+            capability: Capability::ReadFile,
+            operator_id: "op_primary".into(),
+            latency_error_ms: 0,
+            cost_error: 0.0,
+            success_bias: 0.0,
+            latency_adjustment_ms: adjustment,
+            cost_adjustment: 0.0,
+            success_adjustment: 0.0,
+            confidence_adjustment: 0.0,
+            trigger_model_update: true,
+            timestamp_ms: 1000,
+        }
+    }
+
+    #[test]
+    fn replay_unchanged_when_model_identical() {
+        let (ledger, cid) = replay_setup();
+        let e = ExperienceStore::new();
+        let r = ReputationStore::new();
+        let c = CalibrationStore::new();
+        let timeline = TimelineBuilder::new(&ledger, &e, &r, &c).build(&cid).unwrap();
+        let report = ReplayEngine::replay(&timeline, &e, &r, &c);
+
+        assert_eq!(report.original_operator_id, "op_primary");
+        assert_eq!(report.replayed_operator_id, "op_primary");
+        assert!(!report.operator_changed);
+        assert!(!report.explanation_changed);
+        assert!(report.reputation_delta.is_none());
+        assert!(report.calibration_delta.is_none());
+        assert!(!report.counterfactual.would_change);
+        assert!(report.counterfactual.original_actual_success);
+    }
+
+    #[test]
+    fn replay_detects_operator_change() {
+        let (ledger, cid) = replay_setup();
+        let mut e = ExperienceStore::new();
+        e.insert(replay_experience("op_backup", 0.95, 8.0));
+        e.insert(replay_experience("op_primary", 0.2, 90.0));
+        let r = ReputationStore::new();
+        let c = CalibrationStore::new();
+        let timeline = TimelineBuilder::new(&ledger, &e, &r, &c).build(&cid).unwrap();
+        let report = ReplayEngine::replay(&timeline, &e, &r, &c);
+
+        assert!(report.operator_changed);
+        assert_eq!(report.replayed_operator_id, "op_backup");
+        assert_eq!(report.best_prediction.operator_id, "op_backup");
+        assert!(report.counterfactual.would_change);
+        assert!(report.counterfactual.replayed_success_probability > 0.5);
+    }
+
+    #[test]
+    fn replay_reports_prediction_deltas() {
+        let (ledger, cid) = replay_setup();
+        let mut e = ExperienceStore::new();
+        e.insert(replay_experience("op_primary", 0.2, 50.0));
+        let r = ReputationStore::new();
+        let c = CalibrationStore::new();
+        let timeline = TimelineBuilder::new(&ledger, &e, &r, &c).build(&cid).unwrap();
+        let report = ReplayEngine::replay(&timeline, &e, &r, &c);
+
+        assert_eq!(report.prediction_delta.latency_delta_ms, 40);
+        assert!(report.prediction_delta.success_probability_delta < 0.0);
+        assert!(report.prediction_delta.cost_delta.abs() < 1e-9);
+        assert_eq!(report.original_prediction.estimated_latency_ms, 10);
+        assert_eq!(report.replayed_prediction.estimated_latency_ms, 50);
+    }
+
+    #[test]
+    fn replay_reports_reputation_delta() {
+        let (ledger, cid) = replay_setup();
+        let e = ExperienceStore::new();
+        let mut r = ReputationStore::new();
+        r.insert(Reputation {
+            operator_id: "op_primary".into(),
+            reliability: 0.5,
+            confidence: 0.4,
+            total_observations: 20,
+            since_ms: 100,
+            last_updated_ms: 500,
+            decay_factor: 0.95,
+        });
+        let c = CalibrationStore::new();
+        let timeline = TimelineBuilder::new(&ledger, &e, &r, &c).build(&cid).unwrap();
+        r.insert(Reputation {
+            operator_id: "op_primary".into(),
+            reliability: 0.8,
+            confidence: 0.6,
+            total_observations: 30,
+            since_ms: 100,
+            last_updated_ms: 900,
+            decay_factor: 0.95,
+        });
+        let report = ReplayEngine::replay(&timeline, &e, &r, &c);
+
+        let delta = report.reputation_delta.expect("reputation delta present");
+        assert!((delta - 0.3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn replay_reports_calibration_delta() {
+        let (ledger, cid) = replay_setup();
+        let e = ExperienceStore::new();
+        let r = ReputationStore::new();
+        let mut c = CalibrationStore::new();
+        CostModel::apply_feedback(&replay_feedback(100.0), &mut c);
+        let timeline = TimelineBuilder::new(&ledger, &e, &r, &c).build(&cid).unwrap();
+        CostModel::apply_feedback(&replay_feedback(-50.0), &mut c);
+        let report = ReplayEngine::replay(&timeline, &e, &r, &c);
+
+        let delta = report.calibration_delta.expect("calibration delta present");
+        assert!((delta + 15.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn replay_detects_explanation_change() {
+        let (ledger, cid) = replay_setup();
+        let e = ExperienceStore::new();
+        let r = ReputationStore::new();
+        let mut c = CalibrationStore::new();
+        let timeline = TimelineBuilder::new(&ledger, &e, &r, &c).build(&cid).unwrap();
+        CostModel::apply_feedback(&replay_feedback(100.0), &mut c);
+        let report = ReplayEngine::replay(&timeline, &e, &r, &c);
+
+        assert!(report.explanation_changed);
+        assert!(report
+            .explanation_delta
+            .iter()
+            .any(|d| d.contains("CalibrationAdjustment")));
+        assert!(report.calibration_delta.is_some());
     }
 }
