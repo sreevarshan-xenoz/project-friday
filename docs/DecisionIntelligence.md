@@ -4,8 +4,8 @@
 > The architecture is feature-complete. Future work extends within these
 > boundaries rather than reshaping them.
 > **Sprint 6 (Observability & Explainability)**: ✅ 6A (Explainability — `Explainer` +
-> `DecisionExplanation`). 6B (Decision Timeline), 6C (Metrics & Observability),
-> 6D (Replay Engine) pending.
+> `DecisionExplanation`) and ✅ 6B (Decision Timeline — `DecisionTimeline` +
+> `TimelineBuilder`). 6C (Metrics & Observability), 6D (Replay Engine) pending.
 
 ## Top Invariant
 
@@ -777,6 +777,55 @@ pub(crate) struct ExperienceEngine     // batch aggregation
 | (did not exist)               | EvaluatorSignal       | Typed evaluator output                      |
 | (did not exist)               | CostEstimate          | Dimensional cost output from CostModel      |
 | (did not exist)               | ExperienceKey         | Hierarchical key for experience lookup      |
+
+## 10. Observability & Explainability (Sprint 6)
+
+Sprint 6 adds a second, orthogonal pipeline. The operational pipeline performs
+work; the observability pipeline explains it. They never interfere.
+
+```
+Plan → Predict → Execute → Record → Learn → Calibrate      (operational)
+       │        │         │        │        │
+       ▼        ▼         ▼        ▼        ▼
+Explainer ─▶ DecisionExplanation                          (read-only)
+     │
+TimelineBuilder ─▶ DecisionTimeline                       (reconstruction)
+     │
+Metrics        (Sprint 6C)
+     │
+ReplayEngine   (Sprint 6D)
+```
+
+### 6A — Explainability (✅ complete)
+
+- `DecisionExplanation` — which operator, why, why not the others. Pure read
+  over immutable artifacts. Owns no state, mutates nothing.
+- Composed factors, each mapping to one architectural layer:
+  `CandidateExplanation`, `ExperienceFactor`, `ReputationFactor`,
+  `CalibrationFactor`.
+- `ExplanationReason` — structured, machine-readable reasons
+  (`HighestCompositeScore`, `PolicyConstraint`, `HigherReliability`,
+  `BetterHistoricalLatency`, `CalibrationAdjustment`, `FallbackSelection`).
+  The human-readable `narrative` is a rendering of these reasons; localization
+  and filtering never parse free text.
+- Calibration is only surfaced when offsets are nonzero — a "Calibration: none"
+  line on every decision would be noise.
+
+### 6B — Decision Timeline (✅ complete)
+
+- `DecisionTimeline` — a point-in-time **snapshot** of one full decision:
+  `CorrelationId`, reconstructed `CapabilityRequest`, `ExecutionPlan`,
+  prediction `CostEstimate`, `PlanOutcome`, the immutable `DecisionRecord`,
+  `Experience`/`Reputation`/`Calibration` snapshots, derived `PlannerFeedback`,
+  and the `DecisionExplanation`.
+- Snapshots, not references: the timeline remains valid even if the live stores
+  change after reconstruction.
+- `TimelineBuilder` reads the `DecisionLedger`, `ExperienceStore`,
+  `ReputationStore`, `CalibrationStore`, and the `Explainer` — reconstruction
+  lives in one place.
+- `build(&CorrelationId)` matches the record whose plan carries that request id
+  (`plan.rationale.correlation_id`). `build_all()` reconstructs the whole ledger
+  in order. Unknown ids return `None`.
 
 > **Note on migration timing:** Renames happen incrementally across multiple
 > sprints, not all at once in Sprint 5. See the main roadmap for the rename

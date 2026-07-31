@@ -40,8 +40,9 @@
 use std::collections::HashMap;
 
 use friday_plugin_runtime::{
-    Capability, CorrelationId, CostEstimate, DecisionLedger, DecisionRecord, EvaluatorKind,
-    ExecutionPlan, Experience, ExperienceKey, PlannerFeedback, Reputation,
+    Capability, CapabilityRequest, CorrelationId, CostEstimate, DecisionLedger, DecisionRecord,
+    EvaluatorKind, ExecutionPlan, Experience, ExperienceKey, PlanOutcome, PlannerFeedback,
+    Reputation,
 };
 
 // ── Calibration ─────────────────────────────────────────────────────────────────
@@ -66,6 +67,14 @@ impl CalibrationOffsets {
             success_offset: 0.0,
             confidence_offset: 0.0,
         }
+    }
+
+    /// True when no calibration has been learned for this pair.
+    pub fn is_zero(&self) -> bool {
+        self.latency_offset == 0.0
+            && self.cost_offset == 0.0
+            && self.success_offset == 0.0
+            && self.confidence_offset == 0.0
     }
 }
 
@@ -676,6 +685,26 @@ pub struct CalibrationFactor {
     pub confidence_offset: f64,
 }
 
+/// Structured, machine-readable reason a plan was selected.
+///
+/// Kept separate from the human-readable narrative so explanations
+/// can be localized, filtered, and analyzed without parsing text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExplanationReason {
+    /// Chosen because it scored highest on the composite score.
+    HighestCompositeScore,
+    /// A policy rule constrained or favored this selection.
+    PolicyConstraint,
+    /// Historical per-capability reliability favored this operator.
+    HigherReliability,
+    /// Historical per-capability latency favored this operator.
+    BetterHistoricalLatency,
+    /// Calibration offsets adjusted the estimate for this operator.
+    CalibrationAdjustment,
+    /// This operator was chosen via a fallback chain.
+    FallbackSelection,
+}
+
 /// A structured explanation of why a plan was selected.
 ///
 /// Answers: which operator, why, why not the others, which policy
@@ -685,6 +714,7 @@ pub struct DecisionExplanation {
     pub plan_id: CorrelationId,
     pub capability: Capability,
     pub selected_operator_id: String,
+    pub reasons: Vec<ExplanationReason>,
     pub candidates: Vec<CandidateExplanation>,
     pub policy_factors: Vec<String>,
     pub experience_factor: Option<ExperienceFactor>,
@@ -780,6 +810,22 @@ impl Explainer {
             }
         };
 
+        let mut reasons = vec![ExplanationReason::HighestCompositeScore];
+        if !policy_factors.is_empty() {
+            reasons.push(ExplanationReason::PolicyConstraint);
+        }
+        if let Some(ef) = &experience_factor {
+            if ef.success_rate >= 0.5 {
+                reasons.push(ExplanationReason::HigherReliability);
+            }
+            if ef.average_latency_ms < 100.0 {
+                reasons.push(ExplanationReason::BetterHistoricalLatency);
+            }
+        }
+        if calibration_factor.is_some() {
+            reasons.push(ExplanationReason::CalibrationAdjustment);
+        }
+
         let mut narrative_parts = vec![format!(
             "Selected {} for {} (composite {:.3}).",
             plan.operator_id,
@@ -820,6 +866,7 @@ impl Explainer {
             plan_id: plan.plan_id.clone(),
             capability: plan.capability.clone(),
             selected_operator_id: plan.operator_id.clone(),
+            reasons,
             candidates,
             policy_factors,
             experience_factor,
@@ -827,6 +874,143 @@ impl Explainer {
             calibration_factor,
             narrative: narrative_parts.join(" "),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Sprint 6B: Decision Timeline
+// ---------------------------------------------------------------------------
+
+/// A point-in-time snapshot of one full decision: request, plan, prediction,
+/// outcome, and every derived read model.
+///
+/// The timeline owns its data — it stores snapshots, not references — so it
+/// remains valid even if the live stores change after reconstruction.
+#[derive(Debug, Clone)]
+pub struct DecisionTimeline {
+    /// The request that started the decision.
+    pub correlation_id: CorrelationId,
+    /// Reconstructed request that produced the plan.
+    pub request: CapabilityRequest,
+    /// The immutable plan that was executed.
+    pub plan: ExecutionPlan,
+    /// The prediction embedded in the plan.
+    pub prediction: CostEstimate,
+    /// The recorded outcome.
+    pub outcome: PlanOutcome,
+    /// The immutable ledger record for this decision.
+    pub record: DecisionRecord,
+    /// Experience snapshot for the (capability, operator) at build time.
+    pub experience: Option<Experience>,
+    /// Reputation snapshot for the operator at build time.
+    pub reputation: Option<Reputation>,
+    /// Feedback derived by comparing plan against outcome.
+    pub feedback: PlannerFeedback,
+    /// Calibration offsets for this capability/operator, if any.
+    pub calibration: Option<CalibrationOffsets>,
+    /// Structured explanation of why the plan was chosen.
+    pub explanation: DecisionExplanation,
+}
+
+/// Reconstructs `DecisionTimeline` snapshots from existing state.
+///
+/// Reads: the ledger, the three derived stores, and the `Explainer`.
+/// Owns no state of its own; reconstruction is a pure read model.
+pub struct TimelineBuilder<'a> {
+    ledger: &'a DecisionLedger,
+    experience: &'a ExperienceStore,
+    reputation: &'a ReputationStore,
+    calibration: &'a CalibrationStore,
+}
+
+impl<'a> TimelineBuilder<'a> {
+    pub fn new(
+        ledger: &'a DecisionLedger,
+        experience: &'a ExperienceStore,
+        reputation: &'a ReputationStore,
+        calibration: &'a CalibrationStore,
+    ) -> Self {
+        Self {
+            ledger,
+            experience,
+            reputation,
+            calibration,
+        }
+    }
+
+    /// Reconstruct the timeline for a request `CorrelationId`.
+    ///
+    /// Matches the ledger record whose plan carries that correlation id
+    /// (the request id flows into `plan.rationale.correlation_id` at plan
+    /// time). Returns `None` when no record exists for the id.
+    pub fn build(&self, correlation_id: &CorrelationId) -> Option<DecisionTimeline> {
+        let record = self.ledger.iter().find(|r| {
+            r.plan.rationale.correlation_id == *correlation_id
+                || r.plan.plan_id == *correlation_id
+        })?;
+
+        let request = CapabilityRequest {
+            capability: record.capability.clone(),
+            parameters: record.parameters.clone(),
+            permissions: Vec::new(),
+            correlation_id: correlation_id.clone(),
+            context: record.context.clone(),
+        };
+
+        let prediction = CostEstimate {
+            operator_id: record.plan.operator_id.clone(),
+            estimated_latency_ms: record.plan.estimated_latency_ms,
+            estimated_cost: record.plan.estimated_cost,
+            estimated_success_probability: record.plan.estimated_success_probability,
+            estimated_risk: record.plan.estimated_risk,
+            confidence: record.plan.confidence,
+        };
+
+        let key = ExperienceKey {
+            capability: record.capability.clone(),
+            operator_id: record.plan.operator_id.clone(),
+        };
+        let experience = self.experience.get(&key);
+        let reputation = self.reputation.get(record.plan.operator_id.as_str());
+        let offsets = self.calibration.get(&key);
+        let calibration = if offsets.is_zero() {
+            None
+        } else {
+            Some(offsets.clone())
+        };
+
+        let explanation = Explainer::explain(
+            &record.plan,
+            self.experience,
+            self.reputation,
+            self.calibration,
+        );
+
+        Some(DecisionTimeline {
+            correlation_id: correlation_id.clone(),
+            request,
+            plan: record.plan.clone(),
+            prediction,
+            outcome: record.outcome.clone(),
+            record: record.clone(),
+            experience: experience.cloned(),
+            reputation: reputation.cloned(),
+            feedback: PlannerFeedback::compare(&record.plan, &record.outcome),
+            calibration,
+            explanation,
+        })
+    }
+
+    /// Reconstruct timelines for every decision in the ledger, in order.
+    pub fn build_all(&self) -> Vec<DecisionTimeline> {
+        let ids: Vec<CorrelationId> = self
+            .ledger
+            .iter()
+            .map(|r| r.plan.rationale.correlation_id.clone())
+            .collect();
+        ids.iter()
+            .filter_map(|cid| self.build(cid))
+            .collect()
     }
 }
 
@@ -1658,5 +1842,250 @@ mod tests {
         let cf = exp.calibration_factor.unwrap();
         assert!(cf.latency_offset > 0.0);
         assert!(exp.narrative.contains("Calibration"));
+    }
+
+    // -- 6B: Decision Timeline ---------------------------------------------
+
+    fn timeline_feedback() -> PlannerFeedback {
+        PlannerFeedback {
+            capability: Capability::ReadFile,
+            operator_id: "op_alpha".into(),
+            latency_error_ms: 0,
+            cost_error: 0.0,
+            success_bias: 0.0,
+            latency_adjustment_ms: 30.0,
+            cost_adjustment: 0.0,
+            success_adjustment: 0.0,
+            confidence_adjustment: 0.0,
+            trigger_model_update: true,
+            timestamp_ms: 1000,
+        }
+    }
+
+    fn timeline_experience() -> Experience {
+        Experience {
+            key: ExperienceKey {
+                capability: Capability::ReadFile,
+                operator_id: "op_alpha".into(),
+            },
+            sample_size: 30,
+            success_rate: 0.9,
+            success_count: 27,
+            failure_count: 3,
+            average_latency_ms: 11.0,
+            p50_latency_ms: 10,
+            p95_latency_ms: 18,
+            p99_latency_ms: 22,
+            last_execution_ms: Some(500),
+            last_failure_ms: None,
+            last_failure_reason: None,
+            consecutive_successes: 9,
+            consecutive_failures: 0,
+            since_ms: 100,
+        }
+    }
+
+    fn timeline_reputation() -> Reputation {
+        Reputation {
+            operator_id: "op_alpha".into(),
+            reliability: 0.85,
+            confidence: 0.5,
+            total_observations: 30,
+            since_ms: 100,
+            last_updated_ms: 500,
+            decay_factor: 0.95,
+        }
+    }
+
+    #[test]
+    fn timeline_reconstructs_full_decision() {
+        let record = make_record(Capability::ReadFile, "op_alpha", true);
+        let cid = record.plan.rationale.correlation_id.clone();
+        let mut ledger = DecisionLedger::new();
+        ledger.append(record.clone());
+
+        let e = ExperienceStore::new();
+        let r = ReputationStore::new();
+        let c = CalibrationStore::new();
+        let builder = TimelineBuilder::new(&ledger, &e, &r, &c);
+        let timeline = builder.build(&cid).unwrap();
+
+        assert_eq!(timeline.correlation_id, cid);
+        assert_eq!(timeline.request.capability, record.capability);
+        assert_eq!(timeline.request.correlation_id, cid);
+        assert_eq!(timeline.plan.plan_id, record.plan.plan_id);
+        assert_eq!(timeline.prediction.operator_id, "op_alpha");
+        assert_eq!(timeline.prediction.estimated_latency_ms, 10);
+        assert_eq!(timeline.prediction.estimated_success_probability, 0.9);
+        assert!(timeline.outcome.success);
+        assert_eq!(timeline.feedback.operator_id, "op_alpha");
+        assert!(timeline.experience.is_none());
+        assert!(timeline.reputation.is_none());
+        assert!(timeline.calibration.is_none());
+        assert_eq!(timeline.explanation.selected_operator_id, "op_alpha");
+    }
+
+    #[test]
+    fn timeline_returns_none_for_unknown_correlation() {
+        let ledger = DecisionLedger::new();
+        let e = ExperienceStore::new();
+        let r = ReputationStore::new();
+        let c = CalibrationStore::new();
+        let builder = TimelineBuilder::new(&ledger, &e, &r, &c);
+        assert!(builder.build(&CorrelationId::new()).is_none());
+    }
+
+    #[test]
+    fn timeline_build_all_reconstructs_every_record() {
+        let mut ledger = DecisionLedger::new();
+        ledger.append(make_record(Capability::ReadFile, "op_a", true));
+        ledger.append(make_record(Capability::ReadFile, "op_b", false));
+        ledger.append(make_record(Capability::ListDirectory, "op_a", true));
+
+        let e = ExperienceStore::new();
+        let r = ReputationStore::new();
+        let c = CalibrationStore::new();
+        let builder = TimelineBuilder::new(&ledger, &e, &r, &c);
+        let timelines = builder.build_all();
+
+        assert_eq!(timelines.len(), 3);
+        assert_eq!(timelines[0].plan.operator_id, "op_a");
+        assert_eq!(timelines[1].plan.operator_id, "op_b");
+        assert_eq!(timelines[2].plan.operator_id, "op_a");
+        assert!(timelines[1].feedback.success_bias > 0.0);
+    }
+
+    #[test]
+    fn timeline_is_a_snapshot_that_survives_store_changes() {
+        let record = make_record(Capability::ReadFile, "op_alpha", false);
+        let cid = record.plan.rationale.correlation_id.clone();
+        let mut ledger = DecisionLedger::new();
+        ledger.append(record);
+
+        let mut e_store = ExperienceStore::new();
+        e_store.insert(timeline_experience());
+        let mut r_store = ReputationStore::new();
+        r_store.insert(timeline_reputation());
+        let mut cal = CalibrationStore::new();
+        CostModel::apply_feedback(&timeline_feedback(), &mut cal);
+
+        let (exp_snapshot, rep_snapshot, cal_snapshot) = {
+            let builder = TimelineBuilder::new(&ledger, &e_store, &r_store, &cal);
+            let timeline = builder.build(&cid).unwrap();
+            (
+                timeline.experience.clone().unwrap(),
+                timeline.reputation.clone().unwrap(),
+                timeline.calibration.clone().unwrap(),
+            )
+        };
+
+        e_store.insert(Experience {
+            key: ExperienceKey {
+                capability: Capability::ReadFile,
+                operator_id: "op_alpha".into(),
+            },
+            sample_size: 1,
+            success_rate: 0.0,
+            success_count: 0,
+            failure_count: 1,
+            average_latency_ms: 99.0,
+            p50_latency_ms: 99,
+            p95_latency_ms: 99,
+            p99_latency_ms: 99,
+            last_execution_ms: Some(600),
+            last_failure_ms: Some(600),
+            last_failure_reason: Some("timeout".into()),
+            consecutive_successes: 0,
+            consecutive_failures: 1,
+            since_ms: 100,
+        });
+        r_store.insert(Reputation {
+            operator_id: "op_alpha".into(),
+            reliability: 0.1,
+            confidence: 0.5,
+            total_observations: 1,
+            since_ms: 100,
+            last_updated_ms: 600,
+            decay_factor: 0.95,
+        });
+        CostModel::apply_feedback(&timeline_feedback(), &mut cal);
+
+        assert_eq!(exp_snapshot.success_rate, 0.9);
+        assert_eq!(exp_snapshot.average_latency_ms, 11.0);
+        assert_eq!(rep_snapshot.reliability, 0.85);
+        let stored_cal = cal_snapshot.latency_offset;
+
+        let builder2 = TimelineBuilder::new(&ledger, &e_store, &r_store, &cal);
+        let timeline2 = builder2.build(&cid).unwrap();
+        assert!(timeline2.experience.unwrap().success_rate < 0.5);
+        assert!(timeline2.reputation.unwrap().reliability < 0.5);
+        assert!(timeline2.calibration.unwrap().latency_offset > stored_cal);
+    }
+
+    #[test]
+    fn timeline_attaches_calibration_when_learned() {
+        let record = make_record(Capability::ReadFile, "op_alpha", true);
+        let cid = record.plan.rationale.correlation_id.clone();
+        let mut ledger = DecisionLedger::new();
+        ledger.append(record);
+
+        let mut cal = CalibrationStore::new();
+        CostModel::apply_feedback(&timeline_feedback(), &mut cal);
+
+        let e = ExperienceStore::new();
+        let r = ReputationStore::new();
+        let builder = TimelineBuilder::new(&ledger, &e, &r, &cal);
+        let timeline = builder.build(&cid).unwrap();
+
+        let cf = timeline.calibration.unwrap();
+        assert!(cf.latency_offset > 0.0);
+        assert!(timeline.explanation.calibration_factor.is_some());
+        assert!(timeline
+            .explanation
+            .reasons
+            .contains(&ExplanationReason::CalibrationAdjustment));
+    }
+
+    #[test]
+    fn timeline_explanation_contains_structured_reasons() {
+        let plan = explain_plan();
+        let cid = plan.rationale.correlation_id.clone();
+        let record = DecisionRecord {
+            id: plan.plan_id.clone(),
+            timestamp_ms: 1000,
+            capability: Capability::ReadFile,
+            context: SelectionContext::default(),
+            parameters: HashMap::new(),
+            plan,
+            outcome: PlanOutcome {
+                latency_ms: 10,
+                cost: 0.1,
+                success: true,
+                error: None,
+                completed_steps: 1,
+                cancelled: false,
+                timeout: false,
+                retries: 0,
+            },
+            reflection: None,
+        };
+        let mut ledger = DecisionLedger::new();
+        ledger.append(record);
+
+        let e = ExperienceStore::new();
+        let r = ReputationStore::new();
+        let c = CalibrationStore::new();
+        let builder = TimelineBuilder::new(&ledger, &e, &r, &c);
+        let timeline = builder.build(&cid).unwrap();
+
+        assert_eq!(timeline.explanation.candidates.len(), 2);
+        assert!(timeline
+            .explanation
+            .reasons
+            .contains(&ExplanationReason::HighestCompositeScore));
+        assert!(timeline
+            .explanation
+            .reasons
+            .contains(&ExplanationReason::PolicyConstraint));
     }
 }
