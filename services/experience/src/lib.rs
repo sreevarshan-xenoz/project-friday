@@ -40,8 +40,8 @@
 use std::collections::HashMap;
 
 use friday_plugin_runtime::{
-    Capability, CostEstimate, DecisionLedger, DecisionRecord, Experience, ExperienceKey,
-    PlannerFeedback, Reputation,
+    Capability, CorrelationId, CostEstimate, DecisionLedger, DecisionRecord, EvaluatorKind,
+    ExecutionPlan, Experience, ExperienceKey, PlannerFeedback, Reputation,
 };
 
 // ── Calibration ─────────────────────────────────────────────────────────────────
@@ -636,12 +636,206 @@ impl CostModel {
     }
 }
 
+// ── Explainability (Sprint 6A) ─────────────────────────────────────────────────
+
+/// Why a candidate was or wasn't selected.
+#[derive(Debug, Clone)]
+pub struct CandidateExplanation {
+    pub operator_id: String,
+    pub composite_score: f64,
+    pub policy_bonus: f64,
+    pub profile_match_score: f64,
+    pub context_fit_score: f64,
+    pub selected: bool,
+    pub rejection_reason: Option<String>,
+}
+
+/// What per-capability history contributed to the decision.
+#[derive(Debug, Clone)]
+pub struct ExperienceFactor {
+    pub sample_size: u64,
+    pub success_rate: f64,
+    pub average_latency_ms: f64,
+    pub last_failure_reason: Option<String>,
+}
+
+/// What cross-capability trust contributed to the decision.
+#[derive(Debug, Clone)]
+pub struct ReputationFactor {
+    pub reliability: f64,
+    pub confidence: f64,
+    pub total_observations: u64,
+}
+
+/// What calibration changed in the estimate.
+#[derive(Debug, Clone)]
+pub struct CalibrationFactor {
+    pub latency_offset: f64,
+    pub cost_offset: f64,
+    pub success_offset: f64,
+    pub confidence_offset: f64,
+}
+
+/// A structured explanation of why a plan was selected.
+///
+/// Answers: which operator, why, why not the others, which policy
+/// rules fired, and what experience/reputation/calibration contributed.
+#[derive(Debug, Clone)]
+pub struct DecisionExplanation {
+    pub plan_id: CorrelationId,
+    pub capability: Capability,
+    pub selected_operator_id: String,
+    pub candidates: Vec<CandidateExplanation>,
+    pub policy_factors: Vec<String>,
+    pub experience_factor: Option<ExperienceFactor>,
+    pub reputation_factor: Option<ReputationFactor>,
+    pub calibration_factor: Option<CalibrationFactor>,
+    pub narrative: String,
+}
+
+/// Produces structured explanations for planning decisions.
+///
+/// Reads the plan's rationale (evaluator evidence + scored candidates)
+/// and the current knowledge stores. Never mutates anything.
+pub struct Explainer;
+
+impl Explainer {
+    /// Explain why a plan selected its operator.
+    ///
+    /// Pure read — no mutation of any store.
+    pub fn explain(
+        plan: &ExecutionPlan,
+        experience_store: &ExperienceStore,
+        reputation_store: &ReputationStore,
+        calibration: &CalibrationStore,
+    ) -> DecisionExplanation {
+        let candidates: Vec<CandidateExplanation> = plan
+            .rationale
+            .candidates
+            .iter()
+            .map(|c| {
+                let selected = c.plugin_id == plan.operator_id;
+                let rejection_reason = if selected {
+                    None
+                } else {
+                    Some(format!(
+                        "composite score {:.3} vs selected {:.3}",
+                        c.weighted_score, plan.rationale.composite_score
+                    ))
+                };
+                CandidateExplanation {
+                    operator_id: c.plugin_id.clone(),
+                    composite_score: c.weighted_score,
+                    policy_bonus: c.policy_bonus,
+                    profile_match_score: c.profile_match_score,
+                    context_fit_score: c.context_fit_score,
+                    selected,
+                    rejection_reason,
+                }
+            })
+            .collect();
+
+        let policy_factors: Vec<String> = plan
+            .rationale
+            .evaluator_evidence
+            .iter()
+            .filter(|e| e.source == EvaluatorKind::Policy)
+            .map(|e| e.explanation.clone())
+            .collect();
+
+        let exp_key = ExperienceKey {
+            capability: plan.capability.clone(),
+            operator_id: plan.operator_id.clone(),
+        };
+        let experience_factor = experience_store.get(&exp_key).map(|e| ExperienceFactor {
+            sample_size: e.sample_size,
+            success_rate: e.success_rate,
+            average_latency_ms: e.average_latency_ms,
+            last_failure_reason: e.last_failure_reason.clone(),
+        });
+
+        let reputation_factor = reputation_store.get(&plan.operator_id).map(|r| {
+            ReputationFactor {
+                reliability: r.reliability,
+                confidence: r.confidence,
+                total_observations: r.total_observations,
+            }
+        });
+
+        let calibration_factor = {
+            let off = calibration.get(&exp_key);
+            if off.latency_offset != 0.0
+                || off.cost_offset != 0.0
+                || off.success_offset != 0.0
+                || off.confidence_offset != 0.0
+            {
+                Some(CalibrationFactor {
+                    latency_offset: off.latency_offset,
+                    cost_offset: off.cost_offset,
+                    success_offset: off.success_offset,
+                    confidence_offset: off.confidence_offset,
+                })
+            } else {
+                None
+            }
+        };
+
+        let mut narrative_parts = vec![format!(
+            "Selected {} for {} (composite {:.3}).",
+            plan.operator_id,
+            plan.capability.as_str(),
+            plan.rationale.composite_score
+        )];
+        let rejected: Vec<&str> = candidates
+            .iter()
+            .filter(|c| !c.selected)
+            .map(|c| c.operator_id.as_str())
+            .collect();
+        if !rejected.is_empty() {
+            narrative_parts.push(format!("Rejected: {}.", rejected.join(", ")));
+        }
+        if !policy_factors.is_empty() {
+            narrative_parts.push(format!("Policy: {}.", policy_factors.join("; ")));
+        }
+        if let Some(ef) = &experience_factor {
+            narrative_parts.push(format!(
+                "Experience: {} samples, {:.0}% success, {:.0}ms avg.",
+                ef.sample_size, ef.success_rate * 100.0, ef.average_latency_ms
+            ));
+        }
+        if let Some(rf) = &reputation_factor {
+            narrative_parts.push(format!(
+                "Reputation: {:.0}% reliable, {:.0}% confidence.",
+                rf.reliability * 100.0, rf.confidence * 100.0
+            ));
+        }
+        if let Some(cf) = &calibration_factor {
+            narrative_parts.push(format!(
+                "Calibration: latency {:.1}ms, success {:.3}.",
+                cf.latency_offset, cf.success_offset
+            ));
+        }
+
+        DecisionExplanation {
+            plan_id: plan.plan_id.clone(),
+            capability: plan.capability.clone(),
+            selected_operator_id: plan.operator_id.clone(),
+            candidates,
+            policy_factors,
+            experience_factor,
+            reputation_factor,
+            calibration_factor,
+            narrative: narrative_parts.join(" "),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use friday_plugin_runtime::{
-        Capability, CorrelationId, ExecutionPlan, PlanOutcome, PlanningRationale,
-        SelectionContext,
+        Capability, CorrelationId, EvaluatorKind, EvaluatorSignal, ExecutionPlan, PlanOutcome,
+        PlanningRationale, ScoredCandidate, SelectionContext,
     };
     use std::collections::HashMap;
 
@@ -1279,5 +1473,190 @@ mod tests {
             CostModel::invalidate(&cap, "op", &mut cal);
         }));
         assert!(result.is_err());
+    }
+
+    // ── Explainer tests ───────────────────────────────────────────
+
+    fn explain_plan() -> ExecutionPlan {
+        let cid = CorrelationId::new();
+        let candidates = vec![
+            ScoredCandidate {
+                plugin_id: "op_primary".into(),
+                plugin_name: "primary".into(),
+                reliability_score: 0.9,
+                availability_score: 0.9,
+                latency_penalty: 0.1,
+                cost_penalty: 0.1,
+                policy_bonus: 0.05,
+                profile_match_score: 0.8,
+                context_fit_score: 0.8,
+                weighted_score: 0.95,
+            },
+            ScoredCandidate {
+                plugin_id: "op_backup".into(),
+                plugin_name: "backup".into(),
+                reliability_score: 0.6,
+                availability_score: 0.6,
+                latency_penalty: 0.2,
+                cost_penalty: 0.2,
+                policy_bonus: 0.0,
+                profile_match_score: 0.5,
+                context_fit_score: 0.5,
+                weighted_score: 0.6,
+            },
+        ];
+        ExecutionPlan {
+            plan_id: cid.clone(),
+            version: 1,
+            capability: Capability::ReadFile,
+            operator_id: "op_primary".into(),
+            estimated_latency_ms: 10,
+            estimated_cost: 0.1,
+            estimated_success_probability: 0.9,
+            estimated_risk: 0.1,
+            confidence: 0.9,
+            fallback_chain: Vec::new(),
+            rationale: PlanningRationale {
+                candidates: candidates.clone(),
+                selected_operator_id: "op_primary".into(),
+                composite_score: 0.95,
+                explanation: "healthiest plugin".into(),
+                correlation_id: cid,
+                evaluator_evidence: vec![EvaluatorSignal {
+                    source: EvaluatorKind::Policy,
+                    score: 0.05,
+                    confidence: 1.0,
+                    explanation: "prefer_for ReadFile -> op_primary".into(),
+                }],
+            },
+        }
+    }
+
+    #[test]
+    fn explainer_identifies_selected_and_rejected() {
+        let plan = explain_plan();
+        let e_store = ExperienceStore::new();
+        let r_store = ReputationStore::new();
+        let cal = CalibrationStore::new();
+
+        let exp = Explainer::explain(&plan, &e_store, &r_store, &cal);
+
+        assert_eq!(exp.selected_operator_id, "op_primary");
+        assert_eq!(exp.capability, Capability::ReadFile);
+        assert_eq!(exp.candidates.len(), 2);
+        assert!(exp.candidates[0].selected);
+        assert!(!exp.candidates[1].selected);
+        assert!(exp.candidates[1].rejection_reason.is_some());
+        assert!(exp.candidates[0].rejection_reason.is_none());
+    }
+
+    #[test]
+    fn explainer_captures_policy_factors() {
+        let plan = explain_plan();
+        let e_store = ExperienceStore::new();
+        let r_store = ReputationStore::new();
+        let cal = CalibrationStore::new();
+
+        let exp = Explainer::explain(&plan, &e_store, &r_store, &cal);
+
+        assert_eq!(exp.policy_factors.len(), 1);
+        assert!(exp.policy_factors[0].contains("prefer_for"));
+    }
+
+    #[test]
+    fn explainer_no_experience_or_reputation_when_absent() {
+        let plan = explain_plan();
+        let e_store = ExperienceStore::new();
+        let r_store = ReputationStore::new();
+        let cal = CalibrationStore::new();
+
+        let exp = Explainer::explain(&plan, &e_store, &r_store, &cal);
+
+        assert!(exp.experience_factor.is_none());
+        assert!(exp.reputation_factor.is_none());
+        assert!(exp.calibration_factor.is_none());
+        assert!(exp.narrative.contains("Selected op_primary"));
+        assert!(exp.narrative.contains("Rejected: op_backup"));
+    }
+
+    #[test]
+    fn explainer_attaches_experience_and_reputation() {
+        let plan = explain_plan();
+        let mut e_store = ExperienceStore::new();
+        let mut r_store = ReputationStore::new();
+
+        e_store.insert(Experience {
+            key: ExperienceKey {
+                capability: Capability::ReadFile,
+                operator_id: "op_primary".into(),
+            },
+            sample_size: 50,
+            success_rate: 0.9,
+            success_count: 45,
+            failure_count: 5,
+            average_latency_ms: 12.0,
+            p50_latency_ms: 10,
+            p95_latency_ms: 20,
+            p99_latency_ms: 30,
+            last_execution_ms: Some(500),
+            last_failure_ms: None,
+            last_failure_reason: None,
+            consecutive_successes: 5,
+            consecutive_failures: 0,
+            since_ms: 100,
+        });
+        r_store.insert(Reputation {
+            operator_id: "op_primary".into(),
+            reliability: 0.85,
+            confidence: 0.5,
+            total_observations: 50,
+            since_ms: 100,
+            last_updated_ms: 500,
+            decay_factor: 0.95,
+        });
+
+        let cal = CalibrationStore::new();
+        let exp = Explainer::explain(&plan, &e_store, &r_store, &cal);
+
+        let ef = exp.experience_factor.unwrap();
+        assert_eq!(ef.sample_size, 50);
+        assert_eq!(ef.success_rate, 0.9);
+        assert_eq!(ef.average_latency_ms, 12.0);
+
+        let rf = exp.reputation_factor.unwrap();
+        assert_eq!(rf.reliability, 0.85);
+        assert_eq!(rf.confidence, 0.5);
+
+        assert!(exp.narrative.contains("50 samples"));
+        assert!(exp.narrative.contains("Reputation: 85%"));
+    }
+
+    #[test]
+    fn explainer_attaches_calibration_when_nonzero() {
+        let plan = explain_plan();
+        let e_store = ExperienceStore::new();
+        let r_store = ReputationStore::new();
+        let mut cal = CalibrationStore::new();
+
+        let feedback = PlannerFeedback {
+            capability: Capability::ReadFile,
+            operator_id: "op_primary".into(),
+            latency_error_ms: 0,
+            cost_error: 0.0,
+            success_bias: 0.0,
+            latency_adjustment_ms: 50.0,
+            cost_adjustment: 0.0,
+            success_adjustment: 0.0,
+            confidence_adjustment: 0.0,
+            trigger_model_update: true,
+            timestamp_ms: 1000,
+        };
+        CostModel::apply_feedback(&feedback, &mut cal);
+
+        let exp = Explainer::explain(&plan, &e_store, &r_store, &cal);
+
+        let cf = exp.calibration_factor.unwrap();
+        assert!(cf.latency_offset > 0.0);
+        assert!(exp.narrative.contains("Calibration"));
     }
 }

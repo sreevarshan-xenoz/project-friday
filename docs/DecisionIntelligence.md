@@ -1,11 +1,21 @@
 # Decision Intelligence Platform
 
-> **Status:** ✅ **Sprint 5 complete** — all phases 5A–5H implemented.
-> Phase 5F (CostModel), 5G (PlannerFeedback), and 5H (Calibration + Fallback)
-> each built and validated as separate milestones.
-> This document is the architectural contract for Sprint 5 (Experience & Reputation).
-> The architecture is now considered **feature-complete**. Future work extends
-> within these boundaries rather than reshaping them.
+> **Status:** ✅ **Sprint 5 FROZEN** — all phases 5A–5H implemented and validated.
+> The architecture is feature-complete. Future work extends within these
+> boundaries rather than reshaping them.
+> **Sprint 6 (Observability & Explainability)**: ✅ 6A (Explainability — `Explainer` +
+> `DecisionExplanation`). 6B (Decision Timeline), 6C (Metrics & Observability),
+> 6D (Replay Engine) pending.
+
+## Top Invariant
+
+> **History is immutable. Intelligence is derived.**
+
+- `DecisionRecord` never changes.
+- Experience is a deterministic projection of the ledger.
+- Reputation is a deterministic projection of experience.
+- Calibration influences only future estimates.
+- Predictions evolve, observations do not.
 
 ## 1. Purpose
 
