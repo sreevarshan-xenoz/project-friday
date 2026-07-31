@@ -1311,41 +1311,45 @@ pub struct PredictionDelta {
     pub confidence_delta: f64,
 }
 
-/// What would happen if the decision were made again today.
+/// The immutable record of what was decided and what actually happened.
 #[derive(Debug, Clone)]
-pub struct Counterfactual {
-    /// True when today's model would have selected a different operator.
-    pub would_change: bool,
-    /// Today's predicted success probability for the newly ranked top choice.
-    pub replayed_success_probability: f64,
-    /// Success probability that was predicted historically.
-    pub original_predicted_success: f64,
+pub struct HistoricalSnapshot {
+    /// The plan that was executed (immutable).
+    pub plan: ExecutionPlan,
+    /// The prediction embedded in that plan.
+    pub prediction: CostEstimate,
+    /// The explanation produced at decision time.
+    pub explanation: DecisionExplanation,
     /// What actually happened.
-    pub original_actual_success: bool,
+    pub outcome: PlanOutcome,
 }
 
-/// Result of replaying one historical decision against today's read models.
-///
-/// Emphasizes **differences**: the point is to explain how the system has
-/// evolved, not to re-derive history from scratch.
+/// Today's evaluation of the same decision against current read models.
 #[derive(Debug, Clone)]
-pub struct ReplayReport {
-    pub correlation_id: CorrelationId,
-    pub capability: Capability,
-    pub replay_timestamp_ms: u64,
-    /// The operator that was selected historically.
-    pub original_operator_id: String,
-    /// The operator today's model would rank first.
-    pub replayed_operator_id: String,
-    /// True when today's top choice differs from the historical selection.
+pub struct ReplayEvaluation {
+    /// The same immutable plan, re-evaluated.
+    pub plan: ExecutionPlan,
+    /// Today's estimate for the historically selected operator.
+    pub prediction: CostEstimate,
+    /// Today's explanation (same plan, current experience/reputation/calibration).
+    pub explanation: DecisionExplanation,
+    /// Today's full ranking of the historical candidates, best first.
+    pub ranked_candidates: Vec<CostEstimate>,
+}
+
+/// What changed between the historical decision and today's evaluation.
+///
+/// History itself never changes; these are the differences between two
+/// evaluations of the same decision.
+#[derive(Debug, Clone)]
+pub struct ReplayDifferences {
+    /// True when today's top-ranked candidate differs from the historical choice.
     pub operator_changed: bool,
-    /// The prediction embedded in the historical plan.
-    pub original_prediction: CostEstimate,
-    /// Today's estimate for the historical operator.
-    pub replayed_prediction: CostEstimate,
-    /// Today's estimate for the newly ranked top choice.
-    pub best_prediction: CostEstimate,
-    /// `replayed_prediction − original_prediction`, per dimension.
+    /// Regression signal: would the current model still make the same
+    /// decision? Equal to `!operator_changed`. Tracks whether learning is
+    /// improving decisions or destabilizing them.
+    pub decision_still_optimal: bool,
+    /// `replay.prediction − historical.prediction`, per dimension.
     pub prediction_delta: PredictionDelta,
     /// Current reputation reliability minus the historical snapshot
     /// (None unless both exist).
@@ -1353,15 +1357,26 @@ pub struct ReplayReport {
     /// Current calibration magnitude minus the historical snapshot
     /// (None only when neither has any calibration).
     pub calibration_delta: Option<f64>,
-    /// True when today's explanation reasons differ from the historical ones.
-    pub explanation_changed: bool,
     /// Added (`+`) and removed (`−`) explanation reasons.
     pub explanation_delta: Vec<String>,
-    /// The counterfactual decision under today's model.
-    pub counterfactual: Counterfactual,
 }
 
-/// Replays historical decisions against current read models.
+/// Result of evaluating one historical decision against current read models.
+///
+/// A self-contained comparison: immutable `historical` side, current `replay`
+/// side, and a `differences` section emphasizing how the system has evolved.
+/// History is never rewritten — replay is a read-only projection.
+#[derive(Debug, Clone)]
+pub struct ReplayReport {
+    pub correlation_id: CorrelationId,
+    pub capability: Capability,
+    pub historical: HistoricalSnapshot,
+    pub replay: ReplayEvaluation,
+    pub differences: ReplayDifferences,
+    pub replay_timestamp_ms: u64,
+}
+
+/// Evaluates historical decisions against the current state.
 ///
 /// Builds on the existing read models (Timeline, Explainer, CostModel)
 /// rather than recomputing pieces independently. Owns no state.
@@ -1397,13 +1412,19 @@ impl ReplayEngine {
             reputation_store,
             Some(calibration),
         );
-        let best_prediction = ranked.first().cloned().unwrap_or_else(|| CostModel::estimate(
-            &capability,
-            &original_operator_id,
-            experience_store,
-            reputation_store,
-            Some(calibration),
-        ));
+        let ranked_candidates = ranked.clone();
+        let best_prediction = ranked
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| {
+                CostModel::estimate(
+                    &capability,
+                    &original_operator_id,
+                    experience_store,
+                    reputation_store,
+                    Some(calibration),
+                )
+            });
         let replayed_operator_id = best_prediction.operator_id.clone();
 
         let replayed_prediction = CostModel::estimate(
@@ -1414,7 +1435,7 @@ impl ReplayEngine {
             Some(calibration),
         );
 
-        let original_prediction = CostEstimate {
+        let historical_prediction = CostEstimate {
             operator_id: original_operator_id.clone(),
             estimated_latency_ms: timeline.plan.estimated_latency_ms,
             estimated_cost: timeline.plan.estimated_cost,
@@ -1427,11 +1448,11 @@ impl ReplayEngine {
 
         let prediction_delta = PredictionDelta {
             latency_delta_ms: replayed_prediction.estimated_latency_ms as i64
-                - original_prediction.estimated_latency_ms as i64,
-            cost_delta: replayed_prediction.estimated_cost - original_prediction.estimated_cost,
+                - historical_prediction.estimated_latency_ms as i64,
+            cost_delta: replayed_prediction.estimated_cost - historical_prediction.estimated_cost,
             success_probability_delta: replayed_prediction.estimated_success_probability
-                - original_prediction.estimated_success_probability,
-            confidence_delta: replayed_prediction.confidence - original_prediction.confidence,
+                - historical_prediction.estimated_success_probability,
+            confidence_delta: replayed_prediction.confidence - historical_prediction.confidence,
         };
 
         let snapshot_reliability = timeline.reputation.as_ref().map(|r| r.reliability);
@@ -1460,7 +1481,6 @@ impl ReplayEngine {
             Explainer::explain(&timeline.plan, experience_store, reputation_store, calibration);
         let original_reasons = &timeline.explanation.reasons;
         let current_reasons = &current_explanation.reasons;
-        let explanation_changed = original_reasons != current_reasons;
         let mut explanation_delta: Vec<String> = current_reasons
             .iter()
             .filter(|r| !original_reasons.contains(r))
@@ -1473,32 +1493,33 @@ impl ReplayEngine {
                 .map(|r| format!("- {:?}", r)),
         );
 
-        let counterfactual = Counterfactual {
-            would_change: operator_changed,
-            replayed_success_probability: best_prediction.estimated_success_probability,
-            original_predicted_success: timeline.plan.estimated_success_probability,
-            original_actual_success: timeline.outcome.success,
-        };
-
         ReplayReport {
             correlation_id,
             capability,
+            historical: HistoricalSnapshot {
+                plan: timeline.plan.clone(),
+                prediction: historical_prediction,
+                explanation: timeline.explanation.clone(),
+                outcome: timeline.outcome.clone(),
+            },
+            replay: ReplayEvaluation {
+                plan: timeline.plan.clone(),
+                prediction: replayed_prediction,
+                explanation: current_explanation,
+                ranked_candidates,
+            },
+            differences: ReplayDifferences {
+                operator_changed,
+                decision_still_optimal: !operator_changed,
+                prediction_delta,
+                reputation_delta,
+                calibration_delta,
+                explanation_delta,
+            },
             replay_timestamp_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64,
-            original_operator_id,
-            replayed_operator_id,
-            operator_changed,
-            original_prediction,
-            replayed_prediction,
-            best_prediction,
-            prediction_delta,
-            reputation_delta,
-            calibration_delta,
-            explanation_changed,
-            explanation_delta,
-            counterfactual,
         }
     }
 }
@@ -2905,14 +2926,14 @@ mod tests {
         let timeline = TimelineBuilder::new(&ledger, &e, &r, &c).build(&cid).unwrap();
         let report = ReplayEngine::replay(&timeline, &e, &r, &c);
 
-        assert_eq!(report.original_operator_id, "op_primary");
-        assert_eq!(report.replayed_operator_id, "op_primary");
-        assert!(!report.operator_changed);
-        assert!(!report.explanation_changed);
-        assert!(report.reputation_delta.is_none());
-        assert!(report.calibration_delta.is_none());
-        assert!(!report.counterfactual.would_change);
-        assert!(report.counterfactual.original_actual_success);
+        assert_eq!(report.historical.plan.operator_id, "op_primary");
+        assert_eq!(report.replay.ranked_candidates[0].operator_id, "op_primary");
+        assert!(!report.differences.operator_changed);
+        assert!(report.differences.decision_still_optimal);
+        assert!(report.differences.explanation_delta.is_empty());
+        assert!(report.differences.reputation_delta.is_none());
+        assert!(report.differences.calibration_delta.is_none());
+        assert!(report.historical.outcome.success);
     }
 
     #[test]
@@ -2926,11 +2947,37 @@ mod tests {
         let timeline = TimelineBuilder::new(&ledger, &e, &r, &c).build(&cid).unwrap();
         let report = ReplayEngine::replay(&timeline, &e, &r, &c);
 
-        assert!(report.operator_changed);
-        assert_eq!(report.replayed_operator_id, "op_backup");
-        assert_eq!(report.best_prediction.operator_id, "op_backup");
-        assert!(report.counterfactual.would_change);
-        assert!(report.counterfactual.replayed_success_probability > 0.5);
+        assert!(report.differences.operator_changed);
+        assert!(!report.differences.decision_still_optimal);
+        assert_eq!(report.replay.ranked_candidates[0].operator_id, "op_backup");
+        assert!(report.replay.ranked_candidates[0].estimated_success_probability > 0.5);
+    }
+
+    #[test]
+    fn decision_still_optimal_reflects_operator_change() {
+        let (ledger, cid) = replay_setup();
+        let r = ReputationStore::new();
+        let c = CalibrationStore::new();
+
+        let mut unchanged = ExperienceStore::new();
+        unchanged.insert(replay_experience("op_primary", 0.95, 8.0));
+        let unchanged_timeline =
+            TimelineBuilder::new(&ledger, &unchanged, &r, &c).build(&cid).unwrap();
+        let report = ReplayEngine::replay(&unchanged_timeline, &unchanged, &r, &c);
+        assert!(!report.differences.operator_changed);
+        assert!(report.differences.decision_still_optimal);
+
+        let mut changed = ExperienceStore::new();
+        changed.insert(replay_experience("op_backup", 0.95, 8.0));
+        changed.insert(replay_experience("op_primary", 0.2, 90.0));
+        let changed_timeline = TimelineBuilder::new(&ledger, &changed, &r, &c).build(&cid).unwrap();
+        let report = ReplayEngine::replay(&changed_timeline, &changed, &r, &c);
+        assert!(report.differences.operator_changed);
+        assert!(!report.differences.decision_still_optimal);
+        assert_eq!(
+            report.differences.decision_still_optimal,
+            !report.differences.operator_changed
+        );
     }
 
     #[test]
@@ -2943,11 +2990,11 @@ mod tests {
         let timeline = TimelineBuilder::new(&ledger, &e, &r, &c).build(&cid).unwrap();
         let report = ReplayEngine::replay(&timeline, &e, &r, &c);
 
-        assert_eq!(report.prediction_delta.latency_delta_ms, 40);
-        assert!(report.prediction_delta.success_probability_delta < 0.0);
-        assert!(report.prediction_delta.cost_delta.abs() < 1e-9);
-        assert_eq!(report.original_prediction.estimated_latency_ms, 10);
-        assert_eq!(report.replayed_prediction.estimated_latency_ms, 50);
+        assert_eq!(report.differences.prediction_delta.latency_delta_ms, 40);
+        assert!(report.differences.prediction_delta.success_probability_delta < 0.0);
+        assert!(report.differences.prediction_delta.cost_delta.abs() < 1e-9);
+        assert_eq!(report.historical.prediction.estimated_latency_ms, 10);
+        assert_eq!(report.replay.prediction.estimated_latency_ms, 50);
     }
 
     #[test]
@@ -2977,7 +3024,10 @@ mod tests {
         });
         let report = ReplayEngine::replay(&timeline, &e, &r, &c);
 
-        let delta = report.reputation_delta.expect("reputation delta present");
+        let delta = report
+            .differences
+            .reputation_delta
+            .expect("reputation delta present");
         assert!((delta - 0.3).abs() < 1e-9);
     }
 
@@ -2992,7 +3042,10 @@ mod tests {
         CostModel::apply_feedback(&replay_feedback(-50.0), &mut c);
         let report = ReplayEngine::replay(&timeline, &e, &r, &c);
 
-        let delta = report.calibration_delta.expect("calibration delta present");
+        let delta = report
+            .differences
+            .calibration_delta
+            .expect("calibration delta present");
         assert!((delta + 15.0).abs() < 1e-6);
     }
 
@@ -3006,11 +3059,12 @@ mod tests {
         CostModel::apply_feedback(&replay_feedback(100.0), &mut c);
         let report = ReplayEngine::replay(&timeline, &e, &r, &c);
 
-        assert!(report.explanation_changed);
+        assert!(!report.differences.explanation_delta.is_empty());
         assert!(report
+            .differences
             .explanation_delta
             .iter()
             .any(|d| d.contains("CalibrationAdjustment")));
-        assert!(report.calibration_delta.is_some());
+        assert!(report.differences.calibration_delta.is_some());
     }
 }

@@ -859,20 +859,31 @@ TimelineBuilder → Vec<DecisionTimeline> → MetricsEngine → MetricsReport
   models (Timeline, Explainer, CostModel); owns no state.
 - Ranks the historical plan's own candidates through today's `CostModel` and
   compares against the historical selection.
-- `ReplayReport` emphasizes **differences**:
-  - `operator_changed` — historical vs today's top-ranked operator
-  - `original_prediction` / `replayed_prediction` / `best_prediction`
-  - `prediction_delta` — latency / cost / success / confidence deltas
-  - `reputation_delta` — current reliability vs historical snapshot
-  - `calibration_delta` — current |latency offset| vs historical snapshot
-  - `explanation_changed` + `explanation_delta` — added/removed
-    `ExplanationReason`s (recomputed via the Explainer)
-  - `counterfactual` — would the decision change, and what success does
-    today's model predict for the new top choice
+- `ReplayReport` is a **comparison between two evaluations** — never a rewrite
+  of history. It is structured as immutable `historical`, current `replay`,
+  and a `differences` section:
+  - `historical` — the immutable snapshot: `plan`, `prediction`,
+    `explanation`, `outcome`
+  - `replay` — today's evaluation of the same decision: `plan`,
+    `prediction` (today's estimate for the historical operator),
+    `explanation`, and `ranked_candidates` (today's full ranking)
+  - `differences`:
+    - `operator_changed` — historical vs today's top-ranked operator
+    - `decision_still_optimal` — regression signal, equal to
+      `!operator_changed`: would the current planner still make the same
+      decision? Enables measuring % historical decisions still optimal, how
+      often learning changes selection, and whether calibration improves or
+      destabilizes decisions
+    - `prediction_delta` — latency / cost / success / confidence deltas
+      between `replay.prediction` and `historical.prediction`
+    - `reputation_delta` — current reliability vs historical snapshot
+    - `calibration_delta` — current |latency offset| vs historical snapshot
+    - `explanation_delta` — added/removed `ExplanationReason`s (recomputed
+      via the Explainer)
 - `replay_timestamp_ms` marks when the replay ran.
 
 ```
-DecisionTimeline → ReplayEngine → ReplayReport (differences only)
+DecisionTimeline → ReplayEngine → ReplayReport (historical + replay + differences)
 ```
 
 > **Note on migration timing:** Renames happen incrementally across multiple
