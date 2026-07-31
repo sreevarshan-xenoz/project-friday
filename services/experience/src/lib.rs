@@ -36,6 +36,32 @@
 //!   is processed exactly once.
 //! - Reputation is derived exclusively from Experience.
 //! - No scheduling, no background threads, no async.
+//!
+//! ## Public API stability
+//!
+//! Every public type is annotated with an intended stability level. Consumers
+//! should depend on `stable` types freely; `experimental` types may change
+//! while the observability layer matures.
+//!
+//! | Level        | Meaning                                                            |
+//! | ------------ | ------------------------------------------------------------------ |
+//! | `stable`     | Safe to depend on; breaking changes require a documented migration. |
+//! | `experimental` | Intentionally public (integration surface) but still maturing;     |
+//! |              | breaking changes are expected without notice.                      |
+//!
+//! **Stable** (Sprint 5 learning core, frozen):
+//! `CalibrationOffsets`, `CalibrationStore`, `ExperienceStore`,
+//! `ExperienceEngine`, `ReputationStore`, `ReputationEngine`, `CostModel`
+//! (`invalidate` is not yet implemented).
+//!
+//! **Experimental** (Sprint 6 observability):
+//! `ExplanationEngine`, `DecisionExplanation`, `CandidateExplanation`,
+//! `ExperienceFactor`, `ReputationFactor`, `CalibrationFactor`,
+//! `ExplanationReason`, `DecisionTimeline`, `TimelineBuilder`,
+//! `PredictionAccuracy`, `CalibrationMetrics`, `FallbackMetrics`,
+//! `ReputationMetrics`, `ExperienceMetrics`, `MetricsReport`,
+//! `MetricsEngine`, `PredictionDelta`, `HistoricalSnapshot`,
+//! `ReplayEvaluation`, `ReplayDifferences`, `ReplayReport`, `ReplayEngine`.
 
 use std::collections::HashMap;
 

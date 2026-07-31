@@ -819,6 +819,24 @@ No internal helpers are exposed; everything `pub` is a deliberate read model
 or store. The crate has no consumers yet, so breaking changes are cheap — but
 the surface above is the intended stable boundary.
 
+Every public type carries an intended stability level (mirrored in the crate
+root docs of `services/experience/src/lib.rs`):
+
+| Level        | Meaning                                                            |
+| ------------ | ------------------------------------------------------------------ |
+| `stable`     | Safe to depend on; breaking changes require a documented migration. |
+| `experimental` | Intentionally public (integration surface) but still maturing;     |
+|              | breaking changes are expected without notice.                      |
+
+- **Stable** — the Sprint 5 learning core: `ExperienceStore`,
+  `ExperienceEngine`, `ReputationStore`, `ReputationEngine`,
+  `CalibrationStore`, `CalibrationOffsets`, `CostModel` (`invalidate` not yet
+  implemented).
+- **Experimental** — the Sprint 6 observability layer: `ExplanationEngine`,
+  `DecisionExplanation` + factors + `ExplanationReason`, `DecisionTimeline`,
+  `TimelineBuilder`, `MetricsEngine` + metric structs + `MetricsReport`,
+  `ReplayEngine` + `ReplayReport` + snapshot/difference types.
+
 ### Stability rules
 
 1. **Plugin authors** should only depend on Tier 1 types.
