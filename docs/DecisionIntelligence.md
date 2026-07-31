@@ -3,7 +3,7 @@
 > **Status:** ✅ **Sprint 5 FROZEN** — all phases 5A–5H implemented and validated.
 > The architecture is feature-complete. Future work extends within these
 > boundaries rather than reshaping them.
-> **Sprint 6 (Observability & Explainability)**: ✅ 6A (Explainability — `Explainer` +
+> **Sprint 6 (Observability & Explainability)**: ✅ 6A (Explainability — `ExplanationEngine` +
 > `DecisionExplanation`), ✅ 6B (Decision Timeline — `DecisionTimeline` +
 > `TimelineBuilder`), ✅ 6C (Metrics — `MetricsEngine`), ✅ 6D (Replay Engine —
 > `ReplayEngine`). **Sprint 6 complete.**
@@ -20,7 +20,7 @@
 
 ## 1. Purpose
 
-The Capability Planner (née CapabilityResolver) currently selects providers using
+The Capability Planner selects providers using
 a scored formula: `reliability*w_r + availability*w_a - latency*w_l - cost*w_c
 + policy*w_p + profile_match*w_m + context_fit*w_x`. This is a heuristic — it
 computes a single float, loses the dimensionality of the decision, and has no
@@ -41,6 +41,45 @@ estimates; it never computes statistics itself. `PlannerFeedback` adjusts the
 cost model, not the planner directly.
 
 ## 2. Architecture Overview
+
+The platform is organized into **three layers**. The operational pipeline
+performs work; the learning layer derives knowledge from the immutable record;
+the observability layer explains, measures, and re-evaluates decisions.
+Dependencies flow downward — learning never feeds back into the execution hot
+path, and observability never mutates anything.
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        EXECUTION LAYER                                 │
+│                                                                        │
+│   CapabilityRequest → CapabilityPlanner → CostModel.rank()             │
+│        → ExecutionPlan → PluginRuntime → PlanOutcome                   │
+│        → DecisionLedger (append-only, immutable)                       │
+│                                                                        │
+│   Answers: "What should we do, and what happened?"                     │
+├────────────────────────────────────────────────────────────────────────┤
+│                        LEARNING LAYER                                  │
+│                                                                        │
+│   DecisionLedger → ExperienceEngine → ExperienceStore                  │
+│        → ReputationEngine → ReputationStore                            │
+│        → PlannerFeedback → CalibrationStore                            │
+│                                                                        │
+│   Answers: "What did we learn?" — deterministic projections of the     │
+│   ledger; calibration adjusts future estimates only.                   │
+├────────────────────────────────────────────────────────────────────────┤
+│                       OBSERVABILITY LAYER                              │
+│                                                                        │
+│   TimelineBuilder → DecisionTimeline                                   │
+│        ├─ ExplanationEngine → DecisionExplanation   (why)              │
+│        ├─ MetricsEngine     → MetricsReport         (how good)         │
+│        └─ ReplayEngine      → ReplayReport          (still optimal?)   │
+│                                                                        │
+│   Answers: "Why? How good? Would we decide the same today?"            │
+│   Read-only — never part of the execution or learning path.            │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+### 2.1 Operational data flow
 
 ```
                 CapabilityRequest
@@ -155,7 +194,7 @@ pub struct ExecutionPlan {
 
 ### 3.2 PlanningRationale
 
-Replaces `SelectionRationale`. Captures **why** the planner chose this plan over
+Captures **why** the planner chose this plan over
 alternatives, with evidence from each evaluator.
 
 ```rust
@@ -403,7 +442,9 @@ pub struct PlannerFeedback {
 ### 3.7 CostModel
 
 Owns all estimation logic. The central prediction layer between evaluators and
-the planner.
+the planner. It is **stateless** — a pure function over the knowledge stores
+(`ExperienceStore`, `ReputationStore`, `CalibrationStore`). The stores own the
+aggregates; the model derives estimates from them.
 
 ```rust
 /// A cost estimate for a single operator on a capability.
@@ -416,31 +457,47 @@ pub struct CostEstimate {
     pub confidence: f64,
 }
 
-pub struct CostModel {
-    // Backed by ExperienceStore + ReputationStore internally.
-}
+/// Pure derivation over the knowledge stores; owns no state.
+pub struct CostModel;
 
 impl CostModel {
-    /// Produce a cost estimate for a given operator and capability.
-    pub fn estimate(&self, capability: &Capability, operator_id: &str) -> CostEstimate;
+    /// Produce a cost estimate for a given operator and capability,
+    /// blending Experience (sample-weighted) with Reputation and any
+    /// calibration offsets.
+    pub fn estimate(
+        capability: &Capability,
+        operator_id: &str,
+        experience_store: &ExperienceStore,
+        reputation_store: &ReputationStore,
+        calibration: Option<&CalibrationStore>,
+    ) -> CostEstimate;
 
-    /// Produce cost estimates for all candidates, ranked by expected utility.
-    pub fn rank(&self, capability: &Capability, candidates: &[String]) -> Vec<CostEstimate>;
+    /// Produce cost estimates for all candidates, ranked by success
+    /// probability (desc) then confidence.
+    pub fn rank(
+        capability: &Capability,
+        candidates: &[String],
+        experience_store: &ExperienceStore,
+        reputation_store: &ReputationStore,
+        calibration: Option<&CalibrationStore>,
+    ) -> Vec<CostEstimate>;
 
-    /// Incorporate feedback from an execution to improve future estimates.
-    pub fn apply_feedback(&mut self, feedback: PlannerFeedback);
+    /// Incorporate feedback from an execution by mutating the
+    /// `CalibrationStore` (the only mutable state in the layer).
+    pub fn apply_feedback(feedback: &PlannerFeedback, calibration: &mut CalibrationStore);
 
     /// Invalidate cached estimates for a (capability, operator) pair
-    /// when they have drifted significantly from reality.
-    pub fn invalidate(&mut self, capability: &Capability, operator_id: &str);
+    /// when they have drifted significantly from reality. (Not yet
+    /// implemented.)
+    pub fn invalidate(capability: &Capability, operator_id: &str);
 }
 ```
 
 **Rules:**
 - The `CapabilityPlanner` never computes statistics. It calls
-  `CostModel.estimate()` or `CostModel.rank()`.
-- The `CostModel` owns all statistical knowledge: EMA, percentiles, decay,
-  confidence intervals, and prediction adjustments.
+  `CostModel::estimate()` or `CostModel::rank()`.
+- The model owns the estimation formula (EMA weighting, decay, calibration
+  blending). The stores own the data; nothing else owns statistical logic.
 - `apply_feedback()` is asynchronous — never called on the hot path.
 - The cost model does **not** make decisions. It produces estimates. The
   planner combines estimates with policy, context, and strategy to choose a
@@ -466,12 +523,12 @@ impl CostModel {
                     │
                     ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│               friday-experience (NEW crate)                       │
+│               friday-experience crate                              │
 │                                                                    │
 │  ┌──────────────────┐  ┌──────────────────┐     ┌──────────────┐ │
-│  │  ExperienceEngine  │  │  ReputationStore  │     │  CostModel   │ │
-│  │  (aggregates       │  │  (time-decayed     │     │  (estimates  │ │
-│  │   DecisionRecords)  │  │   trust scores)    │     │   + adjust)  │ │
+│  │  ExperienceEngine │  │  ReputationEngine│     │ Calibration  │ │
+│  │  (aggregates      │  │  (derives trust)  │     │  Store       │ │
+│  │   DecisionRecords)│  │                   │     │  (offsets)   │ │
 │  └────────┬─────────┘  └────────┬─────────┘     └──────┬───────┘ │
 │           │                     │                      │         │
 │           └─────────┬──────────┘                      │         │
@@ -479,6 +536,9 @@ impl CostModel {
 │          ┌──────────────────┐                          │         │
 │          │  PlannerFeedback  │─────────────────────────┘         │
 │          └──────────────────┘                                    │
+│                                                                    │
+│  Read models: CostModel (stateless), ExplanationEngine,           │
+│               TimelineBuilder, MetricsEngine, ReplayEngine        │
 └──────────────────────────────────────────────────────────────────┘
                     │
                     │  CostModel.estimate()
@@ -492,8 +552,8 @@ impl CostModel {
 
 **Key boundary rules:**
 - `friday-plugin-runtime` owns the execution hot path and the decision ledger.
-- `friday-experience` (new crate) owns learning, aggregation, cost estimation,
-  and feedback.
+- `friday-experience` owns learning, aggregation, cost estimation, calibration,
+  and the observability read models (timeline, explanation, metrics, replay).
 - The runtime never depends on the experience crate. The experience crate
   depends on `DecisionRecord` (from the runtime crate).
 - `RuntimeHealth` stays in the runtime crate. It contains only live operational
@@ -731,18 +791,33 @@ pub struct PlanOutcome              // new in Sprint 5
 ### Tier 3: Internal (no stability guarantee, renamed or removed at any time)
 
 ```rust
-pub(crate) struct CapabilityPlanner     // was CapabilityResolver
+pub(crate) struct CapabilityPlanner
 pub(crate) struct CapabilityRegistry    // stable interface, internal impl
 pub(crate) struct CapabilityCatalog     // stable interface, internal impl
-pub(crate) struct RuntimeHealth         // was HealthMonitor
+pub(crate) struct RuntimeHealth
 pub(crate) mod evaluators              // all evaluators
 pub(crate) mod policy                  // all policy engines
-pub(crate) struct DecisionLedger       // was TelemetryStore
-pub(crate) struct CostModel            // estimation + feedback
-pub(crate) struct ExperienceStore      // aggregates
-pub(crate) struct ReputationStore      // decayed trust
-pub(crate) struct ExperienceEngine     // batch aggregation
 ```
+
+### friday-experience visibility
+
+The experience crate is the public learning + observability surface for
+integration authors (dashboards, monitoring, evaluations). Its types are
+therefore **public by design**, not `pub(crate)`:
+
+- **Knowledge stores** — `ExperienceStore`, `ReputationStore`,
+  `CalibrationStore` (callers read snapshots and apply feedback).
+- **Engines** — `ExperienceEngine`, `ReputationEngine` (learning),
+  `ExplanationEngine`, `MetricsEngine`, `ReplayEngine` (observability).
+- **Read-model types** — `CostEstimate`, `DecisionTimeline`,
+  `DecisionExplanation` + factor types + `ExplanationReason`,
+  `MetricsReport` + metric structs, `ReplayReport` + snapshot/difference
+  types.
+- **Stateless `CostModel`** — estimation entry point used by the planner.
+
+No internal helpers are exposed; everything `pub` is a deliberate read model
+or store. The crate has no consumers yet, so breaking changes are cheap — but
+the surface above is the intended stable boundary.
 
 ### Stability rules
 
@@ -754,7 +829,10 @@ pub(crate) struct ExperienceEngine     // batch aggregation
 
 ## Appendix: Terminology Migration
 
-| Current (Sprint 1-4)          | Sprint 5 Target       | Rationale                                  |
+The renames below are **complete**. This table exists to decode older
+references (issues, history, old code). New code uses the right-hand column.
+
+| Current (Sprint 1-4)          | Final                     | Rationale                                  |
 | ----------------------------- | --------------------- | ------------------------------------------- |
 | CapabilityResolver            | CapabilityPlanner     | It plans, not just resolves                 |
 | resolve_and_execute()         | plan_and_execute()    | Two-phase: plan then execute                |
@@ -784,17 +862,28 @@ pub(crate) struct ExperienceEngine     // batch aggregation
 Sprint 6 adds a second, orthogonal pipeline. The operational pipeline performs
 work; the observability pipeline explains it. They never interfere.
 
+**Naming convention:** read models that *compute* derived values are
+`*Engine` (`ExplanationEngine`, `MetricsEngine`, `ReplayEngine` — plus the
+learning-layer `ExperienceEngine`/`ReputationEngine`); a read model that
+*assembles* a composite snapshot is a `*Builder` (`TimelineBuilder`).
+
 ```
-Plan → Predict → Execute → Record → Learn → Calibrate      (operational)
-       │        │         │        │        │
-       ▼        ▼         ▼        ▼        ▼
-Explainer ─▶ DecisionExplanation                          (read-only)
-     │
-TimelineBuilder ─▶ DecisionTimeline                       (reconstruction)
-     │
-Metrics        (Sprint 6C)
-     │
-ReplayEngine   (Sprint 6D)
+          ┌─────────────────────── Execution Layer ───────────────────────┐
+          │   Plan → Predict → Execute → Record                           │
+          │        │            │            │                            │
+          └────────┼────────────┼────────────┼────────────────────────────┘
+                   ▼            ▼            ▼
+          ┌─────────────────────── Learning Layer ────────────────────────┐
+          │   Experience → Reputation → Calibrate (affects future only)   │
+          └───────────────────────────────────────────────────────────────┘
+                                 │
+                                 ▼
+          ┌────────────────────── Observability Layer (read-only) ─────────┐
+          │   TimelineBuilder → DecisionTimeline                          │
+          │        ├─ ExplanationEngine  → DecisionExplanation   (why)    │
+          │        ├─ MetricsEngine      → MetricsReport         (how)    │
+          │        └─ ReplayEngine       → ReplayReport    (still optimal?)│
+          └───────────────────────────────────────────────────────────────┘
 ```
 
 ### 6A — Explainability (✅ complete)
@@ -809,8 +898,10 @@ ReplayEngine   (Sprint 6D)
   `BetterHistoricalLatency`, `CalibrationAdjustment`, `FallbackSelection`).
   The human-readable `narrative` is a rendering of these reasons; localization
   and filtering never parse free text.
-- Calibration is only surfaced when offsets are nonzero — a "Calibration: none"
-  line on every decision would be noise.
+- `ExplanationEngine::explain(&ExecutionPlan, &ExperienceStore,
+  &ReputationStore, &CalibrationStore) -> DecisionExplanation`. Calibration is
+  only surfaced when offsets are nonzero — a "Calibration: none" line on every
+  decision would be noise.
 
 ### 6B — Decision Timeline (✅ complete)
 
@@ -822,7 +913,7 @@ ReplayEngine   (Sprint 6D)
 - Snapshots, not references: the timeline remains valid even if the live stores
   change after reconstruction.
 - `TimelineBuilder` reads the `DecisionLedger`, `ExperienceStore`,
-  `ReputationStore`, `CalibrationStore`, and the `Explainer` — reconstruction
+  `ReputationStore`, `CalibrationStore`, and the `ExplanationEngine` — reconstruction
   lives in one place.
 - `build(&CorrelationId)` matches the record whose plan carries that request id
   (`plan.rationale.correlation_id`). `build_all()` reconstructs the whole ledger
@@ -856,7 +947,7 @@ TimelineBuilder → Vec<DecisionTimeline> → MetricsEngine → MetricsReport
 - `ReplayEngine::replay(&DecisionTimeline, &ExperienceStore, &ReputationStore,
   &CalibrationStore) -> ReplayReport` — answers **"what would happen now?"**
   instead of reconstructing history from scratch. Builds on the existing read
-  models (Timeline, Explainer, CostModel); owns no state.
+  models (Timeline, ExplanationEngine, CostModel); owns no state.
 - Ranks the historical plan's own candidates through today's `CostModel` and
   compares against the historical selection.
 - `ReplayReport` is a **comparison between two evaluations** — never a rewrite
@@ -886,6 +977,3 @@ TimelineBuilder → Vec<DecisionTimeline> → MetricsEngine → MetricsReport
 DecisionTimeline → ReplayEngine → ReplayReport (historical + replay + differences)
 ```
 
-> **Note on migration timing:** Renames happen incrementally across multiple
-> sprints, not all at once in Sprint 5. See the main roadmap for the rename
-> schedule.

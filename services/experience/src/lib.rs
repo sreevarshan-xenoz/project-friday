@@ -727,9 +727,9 @@ pub struct DecisionExplanation {
 ///
 /// Reads the plan's rationale (evaluator evidence + scored candidates)
 /// and the current knowledge stores. Never mutates anything.
-pub struct Explainer;
+pub struct ExplanationEngine;
 
-impl Explainer {
+impl ExplanationEngine {
     /// Explain why a plan selected its operator.
     ///
     /// Pure read — no mutation of any store.
@@ -914,7 +914,7 @@ pub struct DecisionTimeline {
 
 /// Reconstructs `DecisionTimeline` snapshots from existing state.
 ///
-/// Reads: the ledger, the three derived stores, and the `Explainer`.
+/// Reads: the ledger, the three derived stores, and the `ExplanationEngine`.
 /// Owns no state of its own; reconstruction is a pure read model.
 pub struct TimelineBuilder<'a> {
     ledger: &'a DecisionLedger,
@@ -979,7 +979,7 @@ impl<'a> TimelineBuilder<'a> {
             Some(offsets.clone())
         };
 
-        let explanation = Explainer::explain(
+        let explanation = ExplanationEngine::explain(
             &record.plan,
             self.experience,
             self.reputation,
@@ -1378,7 +1378,7 @@ pub struct ReplayReport {
 
 /// Evaluates historical decisions against the current state.
 ///
-/// Builds on the existing read models (Timeline, Explainer, CostModel)
+/// Builds on the existing read models (Timeline, ExplanationEngine, CostModel)
 /// rather than recomputing pieces independently. Owns no state.
 pub struct ReplayEngine;
 
@@ -1478,7 +1478,7 @@ impl ReplayEngine {
         };
 
         let current_explanation =
-            Explainer::explain(&timeline.plan, experience_store, reputation_store, calibration);
+            ExplanationEngine::explain(&timeline.plan, experience_store, reputation_store, calibration);
         let original_reasons = &timeline.explanation.reasons;
         let current_reasons = &current_explanation.reasons;
         let mut explanation_delta: Vec<String> = current_reasons
@@ -2169,7 +2169,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ── Explainer tests ───────────────────────────────────────────
+    // ── ExplanationEngine tests ───────────────────────────────────────────
 
     fn explain_plan() -> ExecutionPlan {
         let cid = CorrelationId::new();
@@ -2233,7 +2233,7 @@ mod tests {
         let r_store = ReputationStore::new();
         let cal = CalibrationStore::new();
 
-        let exp = Explainer::explain(&plan, &e_store, &r_store, &cal);
+        let exp = ExplanationEngine::explain(&plan, &e_store, &r_store, &cal);
 
         assert_eq!(exp.selected_operator_id, "op_primary");
         assert_eq!(exp.capability, Capability::ReadFile);
@@ -2251,7 +2251,7 @@ mod tests {
         let r_store = ReputationStore::new();
         let cal = CalibrationStore::new();
 
-        let exp = Explainer::explain(&plan, &e_store, &r_store, &cal);
+        let exp = ExplanationEngine::explain(&plan, &e_store, &r_store, &cal);
 
         assert_eq!(exp.policy_factors.len(), 1);
         assert!(exp.policy_factors[0].contains("prefer_for"));
@@ -2264,7 +2264,7 @@ mod tests {
         let r_store = ReputationStore::new();
         let cal = CalibrationStore::new();
 
-        let exp = Explainer::explain(&plan, &e_store, &r_store, &cal);
+        let exp = ExplanationEngine::explain(&plan, &e_store, &r_store, &cal);
 
         assert!(exp.experience_factor.is_none());
         assert!(exp.reputation_factor.is_none());
@@ -2310,7 +2310,7 @@ mod tests {
         });
 
         let cal = CalibrationStore::new();
-        let exp = Explainer::explain(&plan, &e_store, &r_store, &cal);
+        let exp = ExplanationEngine::explain(&plan, &e_store, &r_store, &cal);
 
         let ef = exp.experience_factor.unwrap();
         assert_eq!(ef.sample_size, 50);
@@ -2347,7 +2347,7 @@ mod tests {
         };
         CostModel::apply_feedback(&feedback, &mut cal);
 
-        let exp = Explainer::explain(&plan, &e_store, &r_store, &cal);
+        let exp = ExplanationEngine::explain(&plan, &e_store, &r_store, &cal);
 
         let cf = exp.calibration_factor.unwrap();
         assert!(cf.latency_offset > 0.0);
