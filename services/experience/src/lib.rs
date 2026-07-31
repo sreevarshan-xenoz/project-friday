@@ -1014,6 +1014,286 @@ impl<'a> TimelineBuilder<'a> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Sprint 6C: Metrics & Observability
+// ---------------------------------------------------------------------------
+
+/// How well the CostModel predicted what actually happened.
+#[derive(Debug, Clone, Default)]
+pub struct PredictionAccuracy {
+    /// Number of decisions evaluated.
+    pub decisions: usize,
+    /// Decisions where predicted success matched observed success.
+    pub correct_predictions: usize,
+    /// `correct_predictions / decisions` (0.0 when no decisions).
+    pub accuracy: f64,
+    /// Mean |estimated_latency − observed_latency| in ms.
+    pub mean_latency_error_ms: f64,
+    /// Mean |estimated_cost − observed_cost|.
+    pub mean_cost_error: f64,
+    /// Mean (estimated_success − observed_success). Positive = overconfident.
+    pub mean_success_bias: f64,
+}
+
+/// Whether calibration is converging toward stability or oscillating.
+#[derive(Debug, Clone, Default)]
+pub struct CalibrationMetrics {
+    /// Decisions whose plan carried learned (nonzero) calibration offsets.
+    pub decisions_with_calibration: usize,
+    /// Mean absolute latency offset in ms.
+    pub mean_latency_offset: f64,
+    /// Mean absolute cost offset.
+    pub mean_cost_offset: f64,
+    /// Mean absolute success offset.
+    pub mean_success_offset: f64,
+    /// Mean absolute confidence offset.
+    pub mean_confidence_offset: f64,
+    /// True when calibration magnitude shrank between the first and second
+    /// half of the decisions (needs ≥ 2 calibrated decisions).
+    pub converging: bool,
+}
+
+/// Planner effectiveness measured from plan fallback chains and outcomes.
+#[derive(Debug, Clone, Default)]
+pub struct FallbackMetrics {
+    /// Number of decisions evaluated.
+    pub decisions: usize,
+    /// Decisions whose plan carried at least one fallback plan.
+    pub decisions_with_fallback_chain: usize,
+    /// Fraction of decisions that had a fallback safety net.
+    pub fallback_rate: f64,
+    /// Mean number of fallback plans attached per decision.
+    pub avg_fallback_depth: f64,
+    /// Decisions whose outcome failed.
+    pub failures: usize,
+    /// `failures / decisions` (0.0 when no decisions).
+    pub failure_rate: f64,
+}
+
+/// Long-term trust coverage across operators.
+#[derive(Debug, Clone, Default)]
+pub struct ReputationMetrics {
+    /// Number of decisions evaluated.
+    pub decisions: usize,
+    /// Decisions with a reputation snapshot at build time.
+    pub decisions_with_reputation: usize,
+    /// Fraction of decisions that had reputation data.
+    pub coverage: f64,
+    /// Mean reliability across decisions that had reputation.
+    pub avg_reliability: f64,
+    /// Mean confidence across decisions that had reputation.
+    pub avg_confidence: f64,
+    /// Total observations aggregated across all reputation snapshots.
+    pub total_observations: u64,
+    /// Distinct operators with reputation data.
+    pub distinct_operators: usize,
+}
+
+/// How much historical experience exists for the (capability, operator) space.
+#[derive(Debug, Clone, Default)]
+pub struct ExperienceMetrics {
+    /// Number of decisions evaluated.
+    pub decisions: usize,
+    /// Decisions with an experience snapshot at build time.
+    pub decisions_with_experience: usize,
+    /// Fraction of decisions that had historical experience.
+    pub coverage: f64,
+    /// Distinct (capability, operator) pairs with experience.
+    pub distinct_pairs: usize,
+    /// Total samples aggregated across all experience snapshots.
+    pub total_samples: u64,
+    /// Mean sample size across decisions that had experience.
+    pub avg_sample_size: f64,
+    /// Mean success rate across decisions that had experience.
+    pub avg_success_rate: f64,
+    /// Mean average latency (ms) across decisions that had experience.
+    pub avg_latency_ms: f64,
+}
+
+/// Aggregated metrics for a set of reconstructed decisions.
+#[derive(Debug, Clone)]
+pub struct MetricsReport {
+    pub decisions: usize,
+    pub prediction: PredictionAccuracy,
+    pub calibration: CalibrationMetrics,
+    pub fallback: FallbackMetrics,
+    pub reputation: ReputationMetrics,
+    pub experience: ExperienceMetrics,
+}
+
+/// Stateless metric derivation.
+///
+/// Owns no state and mutates nothing — it is a pure read model over
+/// `DecisionTimeline` snapshots. Metrics are derived, never stored.
+pub struct MetricsEngine;
+
+impl MetricsEngine {
+    pub fn prediction_accuracy(timelines: &[DecisionTimeline]) -> PredictionAccuracy {
+        let mut m = PredictionAccuracy {
+            decisions: timelines.len(),
+            ..Default::default()
+        };
+        if timelines.is_empty() {
+            return m;
+        }
+        let mut latency_error_total = 0.0;
+        let mut cost_error_total = 0.0;
+        let mut bias_total = 0.0;
+        for t in timelines {
+            let predicted_success = t.plan.estimated_success_probability >= 0.5;
+            if predicted_success == t.outcome.success {
+                m.correct_predictions += 1;
+            }
+            let latency_error =
+                (t.plan.estimated_latency_ms as i64 - t.outcome.latency_ms as i64).abs() as f64;
+            latency_error_total += latency_error;
+            cost_error_total += (t.plan.estimated_cost - t.outcome.cost).abs();
+            bias_total += t.plan.estimated_success_probability - (t.outcome.success as u8 as f64);
+        }
+        let n = timelines.len() as f64;
+        m.accuracy = m.correct_predictions as f64 / n;
+        m.mean_latency_error_ms = latency_error_total / n;
+        m.mean_cost_error = cost_error_total / n;
+        m.mean_success_bias = bias_total / n;
+        m
+    }
+
+    pub fn calibration(timelines: &[DecisionTimeline]) -> CalibrationMetrics {
+        let mut m = CalibrationMetrics::default();
+        let calibrated: Vec<&CalibrationOffsets> = timelines
+            .iter()
+            .filter_map(|t| t.calibration.as_ref())
+            .collect();
+        m.decisions_with_calibration = calibrated.len();
+        if calibrated.is_empty() {
+            return m;
+        }
+        let mut lat = 0.0;
+        let mut cost = 0.0;
+        let mut success = 0.0;
+        let mut conf = 0.0;
+        for o in &calibrated {
+            lat += o.latency_offset.abs();
+            cost += o.cost_offset.abs();
+            success += o.success_offset.abs();
+            conf += o.confidence_offset.abs();
+        }
+        let n = calibrated.len() as f64;
+        m.mean_latency_offset = lat / n;
+        m.mean_cost_offset = cost / n;
+        m.mean_success_offset = success / n;
+        m.mean_confidence_offset = conf / n;
+        if calibrated.len() >= 2 {
+            let mid = calibrated.len() / 2;
+            let first: f64 = calibrated[..mid]
+                .iter()
+                .map(|o| o.latency_offset.abs())
+                .sum::<f64>()
+                / mid as f64;
+            let second: f64 = calibrated[mid..]
+                .iter()
+                .map(|o| o.latency_offset.abs())
+                .sum::<f64>()
+                / (calibrated.len() - mid) as f64;
+            m.converging = second < first;
+        }
+        m
+    }
+
+    pub fn fallback(timelines: &[DecisionTimeline]) -> FallbackMetrics {
+        let mut m = FallbackMetrics {
+            decisions: timelines.len(),
+            ..Default::default()
+        };
+        if timelines.is_empty() {
+            return m;
+        }
+        let mut depth_total = 0.0;
+        for t in timelines {
+            if !t.plan.fallback_chain.is_empty() {
+                m.decisions_with_fallback_chain += 1;
+                depth_total += t.plan.fallback_chain.len() as f64;
+            }
+            if !t.outcome.success {
+                m.failures += 1;
+            }
+        }
+        let n = timelines.len() as f64;
+        m.fallback_rate = m.decisions_with_fallback_chain as f64 / n;
+        m.avg_fallback_depth = depth_total / n;
+        m.failure_rate = m.failures as f64 / n;
+        m
+    }
+
+    pub fn reputation(timelines: &[DecisionTimeline]) -> ReputationMetrics {
+        let mut m = ReputationMetrics {
+            decisions: timelines.len(),
+            ..Default::default()
+        };
+        let mut operators = std::collections::HashSet::new();
+        let mut reliability_total = 0.0;
+        let mut confidence_total = 0.0;
+        for t in timelines {
+            if let Some(r) = &t.reputation {
+                m.decisions_with_reputation += 1;
+                reliability_total += r.reliability;
+                confidence_total += r.confidence;
+                m.total_observations += r.total_observations;
+                operators.insert(r.operator_id.clone());
+            }
+        }
+        m.distinct_operators = operators.len();
+        if m.decisions_with_reputation > 0 {
+            let n = m.decisions_with_reputation as f64;
+            m.avg_reliability = reliability_total / n;
+            m.avg_confidence = confidence_total / n;
+            m.coverage = m.decisions_with_reputation as f64 / m.decisions as f64;
+        }
+        m
+    }
+
+    pub fn experience(timelines: &[DecisionTimeline]) -> ExperienceMetrics {
+        let mut m = ExperienceMetrics {
+            decisions: timelines.len(),
+            ..Default::default()
+        };
+        let mut keys = std::collections::HashSet::new();
+        let mut samples_total = 0.0;
+        let mut success_total = 0.0;
+        let mut latency_total = 0.0;
+        for t in timelines {
+            if let Some(e) = &t.experience {
+                m.decisions_with_experience += 1;
+                keys.insert(e.key.clone());
+                m.total_samples += e.sample_size;
+                samples_total += e.sample_size as f64;
+                success_total += e.success_rate;
+                latency_total += e.average_latency_ms;
+            }
+        }
+        m.distinct_pairs = keys.len();
+        if m.decisions_with_experience > 0 {
+            let n = m.decisions_with_experience as f64;
+            m.coverage = m.decisions_with_experience as f64 / m.decisions as f64;
+            m.avg_sample_size = samples_total / n;
+            m.avg_success_rate = success_total / n;
+            m.avg_latency_ms = latency_total / n;
+        }
+        m
+    }
+
+    pub fn summarize(timelines: &[DecisionTimeline]) -> MetricsReport {
+        MetricsReport {
+            decisions: timelines.len(),
+            prediction: Self::prediction_accuracy(timelines),
+            calibration: Self::calibration(timelines),
+            fallback: Self::fallback(timelines),
+            reputation: Self::reputation(timelines),
+            experience: Self::experience(timelines),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2087,5 +2367,255 @@ mod tests {
             .explanation
             .reasons
             .contains(&ExplanationReason::PolicyConstraint));
+    }
+
+    // -- 6C: Metrics --------------------------------------------------------
+
+    fn metrics_record(
+        op: &str,
+        estimated_success: f64,
+        actual_success: bool,
+        est_latency: u64,
+        actual_latency: u64,
+        fallbacks: usize,
+    ) -> DecisionRecord {
+        let cid = CorrelationId::new();
+        let mut fallback_chain = Vec::new();
+        for i in 0..fallbacks {
+            let fcid = CorrelationId::new();
+            fallback_chain.push(ExecutionPlan {
+                plan_id: fcid.clone(),
+                version: 1,
+                capability: Capability::ReadFile,
+                operator_id: format!("fb_{}", i),
+                estimated_latency_ms: est_latency,
+                estimated_cost: 0.1,
+                estimated_success_probability: estimated_success,
+                estimated_risk: 0.1,
+                confidence: 0.5,
+                fallback_chain: Vec::new(),
+                rationale: PlanningRationale {
+                    candidates: Vec::new(),
+                    selected_operator_id: format!("fb_{}", i),
+                    composite_score: 0.5,
+                    explanation: "fallback".into(),
+                    correlation_id: fcid,
+                    evaluator_evidence: Vec::new(),
+                },
+            });
+        }
+        DecisionRecord {
+            id: cid.clone(),
+            timestamp_ms: 1000,
+            capability: Capability::ReadFile,
+            context: SelectionContext::default(),
+            parameters: HashMap::new(),
+            plan: ExecutionPlan {
+                plan_id: cid.clone(),
+                version: 1,
+                capability: Capability::ReadFile,
+                operator_id: op.into(),
+                estimated_latency_ms: est_latency,
+                estimated_cost: 0.1,
+                estimated_success_probability: estimated_success,
+                estimated_risk: 0.1,
+                confidence: 0.9,
+                fallback_chain,
+                rationale: PlanningRationale {
+                    candidates: Vec::new(),
+                    selected_operator_id: op.into(),
+                    composite_score: 0.9,
+                    explanation: "selected".into(),
+                    correlation_id: cid,
+                    evaluator_evidence: Vec::new(),
+                },
+            },
+            outcome: PlanOutcome {
+                latency_ms: actual_latency,
+                cost: 0.1,
+                success: actual_success,
+                error: if actual_success {
+                    None
+                } else {
+                    Some("timeout".into())
+                },
+                completed_steps: if actual_success { 1 } else { 0 },
+                cancelled: false,
+                timeout: !actual_success,
+                retries: 0,
+            },
+            reflection: None,
+        }
+    }
+
+    fn metrics_timelines(records: Vec<DecisionRecord>) -> Vec<DecisionTimeline> {
+        let mut ledger = DecisionLedger::new();
+        for r in records {
+            ledger.append(r);
+        }
+        let e = ExperienceStore::new();
+        let r = ReputationStore::new();
+        let c = CalibrationStore::new();
+        TimelineBuilder::new(&ledger, &e, &r, &c).build_all()
+    }
+
+    #[test]
+    fn metrics_prediction_accuracy_matches_outcomes() {
+        let timelines = metrics_timelines(vec![
+            metrics_record("op_a", 0.9, true, 10, 10, 0),
+            metrics_record("op_a", 0.9, false, 10, 50, 0),
+            metrics_record("op_a", 0.2, false, 10, 10, 0),
+        ]);
+        let m = MetricsEngine::prediction_accuracy(&timelines);
+
+        assert_eq!(m.decisions, 3);
+        assert_eq!(m.correct_predictions, 2);
+        assert!((m.accuracy - 2.0 / 3.0).abs() < 1e-9);
+        assert!((m.mean_latency_error_ms - (0.0 + 40.0 + 0.0) / 3.0).abs() < 1e-9);
+        assert!(m.mean_success_bias > 0.0);
+    }
+
+    #[test]
+    fn metrics_empty_timelines_produce_zero_metrics() {
+        let timelines: Vec<DecisionTimeline> = Vec::new();
+        let report = MetricsEngine::summarize(&timelines);
+
+        assert_eq!(report.decisions, 0);
+        assert_eq!(report.prediction.accuracy, 0.0);
+        assert_eq!(report.calibration.decisions_with_calibration, 0);
+        assert!(!report.calibration.converging);
+        assert_eq!(report.fallback.fallback_rate, 0.0);
+        assert_eq!(report.reputation.coverage, 0.0);
+        assert_eq!(report.experience.coverage, 0.0);
+    }
+
+    #[test]
+    fn metrics_calibration_magnitude_and_convergence() {
+        let mut ledger = DecisionLedger::new();
+        let first = metrics_record("op_alpha", 0.9, true, 10, 10, 0);
+        let second = metrics_record("op_alpha", 0.9, true, 10, 10, 0);
+        let first_cid = first.plan.rationale.correlation_id.clone();
+        let second_cid = second.plan.rationale.correlation_id.clone();
+        ledger.append(first);
+        ledger.append(second);
+
+        let mut cal = CalibrationStore::new();
+        let feedback = |adj: f64| PlannerFeedback {
+            capability: Capability::ReadFile,
+            operator_id: "op_alpha".into(),
+            latency_error_ms: 0,
+            cost_error: 0.0,
+            success_bias: 0.0,
+            latency_adjustment_ms: adj,
+            cost_adjustment: 0.0,
+            success_adjustment: 0.0,
+            confidence_adjustment: 0.0,
+            trigger_model_update: true,
+            timestamp_ms: 1000,
+        };
+
+        CostModel::apply_feedback(&feedback(100.0), &mut cal);
+        let e = ExperienceStore::new();
+        let r = ReputationStore::new();
+        let builder = TimelineBuilder::new(&ledger, &e, &r, &cal);
+        let tl0 = builder.build(&first_cid).unwrap();
+
+        CostModel::apply_feedback(&feedback(-50.0), &mut cal);
+        let builder2 = TimelineBuilder::new(&ledger, &e, &r, &cal);
+        let tl1 = builder2.build(&second_cid).unwrap();
+
+        let m = MetricsEngine::calibration(&[tl0, tl1]);
+        assert_eq!(m.decisions_with_calibration, 2);
+        assert!(m.mean_latency_offset > 0.0);
+        assert!(m.converging);
+    }
+
+    #[test]
+    fn metrics_fallback_rate_counts_chains_and_failures() {
+        let timelines = metrics_timelines(vec![
+            metrics_record("op_a", 0.9, true, 10, 10, 2),
+            metrics_record("op_a", 0.9, false, 10, 10, 0),
+            metrics_record("op_a", 0.2, false, 10, 10, 1),
+        ]);
+        let m = MetricsEngine::fallback(&timelines);
+
+        assert_eq!(m.decisions, 3);
+        assert_eq!(m.decisions_with_fallback_chain, 2);
+        assert!((m.fallback_rate - 2.0 / 3.0).abs() < 1e-9);
+        assert!((m.avg_fallback_depth - 1.0).abs() < 1e-9);
+        assert_eq!(m.failures, 2);
+        assert!((m.failure_rate - 2.0 / 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn metrics_reputation_and_experience_coverage() {
+        let mut ledger = DecisionLedger::new();
+        ledger.append(metrics_record("op_alpha", 0.9, true, 10, 10, 0));
+        ledger.append(metrics_record("op_beta", 0.9, true, 10, 10, 0));
+
+        let mut e_store = ExperienceStore::new();
+        e_store.insert(Experience {
+            key: ExperienceKey {
+                capability: Capability::ReadFile,
+                operator_id: "op_alpha".into(),
+            },
+            sample_size: 40,
+            success_rate: 0.8,
+            success_count: 32,
+            failure_count: 8,
+            average_latency_ms: 12.0,
+            p50_latency_ms: 11,
+            p95_latency_ms: 20,
+            p99_latency_ms: 25,
+            last_execution_ms: Some(500),
+            last_failure_ms: Some(300),
+            last_failure_reason: Some("timeout".into()),
+            consecutive_successes: 4,
+            consecutive_failures: 1,
+            since_ms: 100,
+        });
+        let mut r_store = ReputationStore::new();
+        r_store.insert(Reputation {
+            operator_id: "op_alpha".into(),
+            reliability: 0.7,
+            confidence: 0.6,
+            total_observations: 40,
+            since_ms: 100,
+            last_updated_ms: 500,
+            decay_factor: 0.95,
+        });
+        let cal = CalibrationStore::new();
+        let timelines = TimelineBuilder::new(&ledger, &e_store, &r_store, &cal).build_all();
+
+        let exp = MetricsEngine::experience(&timelines);
+        assert_eq!(exp.decisions, 2);
+        assert_eq!(exp.decisions_with_experience, 1);
+        assert!((exp.coverage - 0.5).abs() < 1e-9);
+        assert_eq!(exp.distinct_pairs, 1);
+        assert_eq!(exp.total_samples, 40);
+        assert!((exp.avg_success_rate - 0.8).abs() < 1e-9);
+        assert!((exp.avg_latency_ms - 12.0).abs() < 1e-9);
+
+        let rep = MetricsEngine::reputation(&timelines);
+        assert_eq!(rep.decisions_with_reputation, 1);
+        assert!((rep.coverage - 0.5).abs() < 1e-9);
+        assert_eq!(rep.distinct_operators, 1);
+        assert_eq!(rep.total_observations, 40);
+        assert!((rep.avg_reliability - 0.7).abs() < 1e-9);
+        assert!((rep.avg_confidence - 0.6).abs() < 1e-9);
+    }
+
+    #[test]
+    fn metrics_summarize_builds_full_report() {
+        let timelines =
+            metrics_timelines(vec![metrics_record("op_a", 0.9, true, 10, 10, 1)]);
+        let report = MetricsEngine::summarize(&timelines);
+
+        assert_eq!(report.decisions, 1);
+        assert_eq!(report.prediction.accuracy, 1.0);
+        assert_eq!(report.fallback.decisions, 1);
+        assert_eq!(report.fallback.decisions_with_fallback_chain, 1);
+        assert_eq!(report.reputation.decisions, 1);
+        assert_eq!(report.experience.decisions, 1);
     }
 }

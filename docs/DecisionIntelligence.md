@@ -5,7 +5,8 @@
 > boundaries rather than reshaping them.
 > **Sprint 6 (Observability & Explainability)**: ✅ 6A (Explainability — `Explainer` +
 > `DecisionExplanation`) and ✅ 6B (Decision Timeline — `DecisionTimeline` +
-> `TimelineBuilder`). 6C (Metrics & Observability), 6D (Replay Engine) pending.
+> `TimelineBuilder`). ✅ 6C (Metrics & Observability — `MetricsEngine`).
+> 6D (Replay Engine) pending.
 
 ## Top Invariant
 
@@ -826,6 +827,29 @@ ReplayEngine   (Sprint 6D)
 - `build(&CorrelationId)` matches the record whose plan carries that request id
   (`plan.rationale.correlation_id`). `build_all()` reconstructs the whole ledger
   in order. Unknown ids return `None`.
+
+### 6C — Metrics & Observability (✅ complete)
+
+- `MetricsEngine` — a **stateless** derivation layer over
+  `&[DecisionTimeline]` from `build_all()`. Owns no state, mutates nothing;
+  metrics are derived, never stored.
+- `PredictionAccuracy` — success prediction accuracy, mean |latency error|,
+  mean |cost error|, mean success bias (positive = overconfident).
+- `CalibrationMetrics` — mean absolute offsets (latency/cost/success/
+  confidence) plus a **convergence** signal: magnitude shrank from the first
+  half of decisions to the second (≥ 2 calibrated decisions required).
+- `FallbackMetrics` — fraction of plans that carried a fallback chain,
+  average fallback depth, failure count and rate.
+- `ReputationMetrics` — coverage, avg reliability/confidence, total
+  observations, distinct operators.
+- `ExperienceMetrics` — coverage, distinct (capability, operator) pairs,
+  total samples, avg sample size / success rate / latency.
+- `MetricsEngine::summarize()` aggregates all five into a `MetricsReport`.
+  Empty input yields all-zero metrics (no panics).
+
+```
+TimelineBuilder → Vec<DecisionTimeline> → MetricsEngine → MetricsReport
+```
 
 > **Note on migration timing:** Renames happen incrementally across multiple
 > sprints, not all at once in Sprint 5. See the main roadmap for the rename
