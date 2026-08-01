@@ -68,29 +68,40 @@ Clients never import FRIDAY internals — only protocol DTOs.
 
 The `src/console/` module is the **FRIDAY Control Center** — the engineering
 UI that consumes the frozen Sprint 5/6 read models. It is deliberately UI-only:
-a mock data source stands in for the runtime until the real bridge lands.
+the screens know nothing about the planner, the runtime, the ledger, or the
+experience engines — only the read-model DTOs.
 
 ```
 src/console/
   types.ts         Shape-accurate TS mirrors of the frozen Rust contracts
-                   (contract.rs + experience/src/lib.rs)
+                   (contract.rs + experience/src/lib.rs) + the console DTOs
   mock.ts          Deterministic synthetic ledger + derived read models
                    (LCG-seeded, mirrors VP-004 + the real engines)
-  store.ts         Reactive store (getState/subscribe) + useConsole()
+  dataSource.ts    ConsoleDataSource interface + implementations
+                   ├── MockConsoleDataSource   (today)
+                   └── RuntimeConsoleDataSource (Week 2 bridge, not yet wired)
+  store.ts         Reactive controller + useConsole() (loads through the source)
   ui.tsx / ui.css  Console primitives (Panel, Stat, Bar, Chip, ScoreRow)
   format.ts        Formatting helpers
 ```
 
 Screens (in `screens/`, under the "Console" nav group):
 
-- **Dashboard**   mission header, pipeline stage timings, world state, recent decisions
+- **Dashboard**   mission header, live ten-phase Executive cycle
+                 (Observe · Attend · Plan · Simulate · Execute · Verify ·
+                 Reflect · Consolidate · Learn · Idle), world state, recent decisions
 - **Timeline**    full decision reconstruction: request → plan → prediction → outcome → feedback
 - **Explanation** reason chips, candidate scoring, experience/reputation/calibration factors
 - **Metrics**     the derived `MetricsReport` (accuracy, calibration, fallback, reputation, experience)
 - **Ledger**      raw immutable decision records
 
-Replacing `mock.ts` with a bridge (WebSocket/Tauri) later does not touch the
-screens — they only subscribe through `useConsole()`.
+The provider seam is `ConsoleDataSource` (getDashboard / getTimelines /
+getMetrics / getLedger, all async). React only ever sees that interface, so
+replacing the mock with the runtime bridge never touches a screen — you swap
+the provider, not the mock. `setConsoleSource()` in `store.ts` is the switch.
+
+The Executive panel mirrors the real ten-phase cycle from
+`services/goal-execution/src/executive.rs` (frozen Core 1.0).
 
 ## How to run
 
@@ -117,7 +128,11 @@ Next: Tauri integration, desktop animations polish, and wiring to the real
 `friday-mobile-daemon` for end-to-end testing.
 
 **Phase 1 Engineering Console (Week 1) done** — Dashboard, Timeline,
-Explanation, Metrics, Ledger screens consuming mocked read models. TypeScript
-compiles clean, Vite builds clean, oxlint clean. Next: connect the console to
-the real runtime (Week 2), then the Replay viewer (Week 3), then the memory
-explorer (Week 4).
+Explanation, Metrics, Ledger screens consuming mocked read models. Dashboard
+now shows the real ten-phase Executive cycle and a full World State. TypeScript
+compiles clean, Vite builds clean, oxlint clean.
+
+**Week 2 (in progress)** — `ConsoleDataSource` provider seam landed with
+`MockConsoleDataSource`; `RuntimeConsoleDataSource` stubbed. Next: the
+`ReadModelBridge` on the Rust side (WebSocket), then wire `RuntimeConsoleDataSource`
+to it. Then the Replay viewer (Week 3) and the memory explorer (Week 4).

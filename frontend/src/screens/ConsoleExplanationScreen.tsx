@@ -6,9 +6,9 @@ import { fmtMs, reasonLabel } from '../console/format';
 import './ConsoleExplanationScreen.css';
 
 export function ConsoleExplanationScreen() {
-  const { state } = useConsole();
-  const [selectedId, setSelectedId] = useState<string | null>(() => state.timelines[state.timelines.length - 1]?.correlation_id ?? null);
-  const t = state.timelines.find((x) => x.correlation_id === selectedId) ?? state.timelines[state.timelines.length - 1];
+  const { status, error, timelines } = useConsole();
+  const [selectedId, setSelectedId] = useState<string | null>(() => timelines[timelines.length - 1]?.correlation_id ?? null);
+  const t = timelines.find((x) => x.correlation_id === selectedId) ?? timelines[timelines.length - 1];
 
   return (
     <div className="con-screen">
@@ -19,9 +19,12 @@ export function ConsoleExplanationScreen() {
         </div>
       </header>
 
+      {status !== 'ready' ? (
+        <p className="con-empty">{status === 'error' ? error : 'Loading read models…'}</p>
+      ) : (
       <div className="con-split">
         <aside className="con-split-left">
-          <DecisionList timelines={state.timelines} selectedId={selectedId} onSelect={setSelectedId} />
+          <DecisionList timelines={timelines} selectedId={selectedId} onSelect={setSelectedId} />
         </aside>
 
         <div className="con-split-right">
@@ -101,6 +104,7 @@ export function ConsoleExplanationScreen() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

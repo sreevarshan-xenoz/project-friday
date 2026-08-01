@@ -4,9 +4,29 @@ import { fmtPct, fmtMs, fmtTime } from '../console/format';
 import './ConsoleDashboardScreen.css';
 
 export function ConsoleDashboardScreen() {
-  const { overview, state } = useConsole();
-  const last = state.timelines[state.timelines.length - 1];
-  const recent = state.timelines.slice(-6).reverse();
+  const snap = useConsole();
+
+  if (snap.status !== 'ready') {
+    return (
+      <div className="con-screen">
+        <header className="con-head">
+          <div>
+            <h2 className="con-title">FRIDAY</h2>
+            <p className="con-subtitle">Engineering Console · mission control</p>
+          </div>
+          <div className="con-head-right">
+            <Chip tone="default">{snap.status === 'error' ? 'error' : 'loading'}</Chip>
+          </div>
+        </header>
+        <p className="con-empty">
+          {snap.status === 'error' ? snap.error : 'Loading read models…'}
+        </p>
+      </div>
+    );
+  }
+
+  const { dashboard, source, count, timelines } = snap;
+  const last = timelines[timelines.length - 1];
 
   return (
     <div className="con-screen">
@@ -16,29 +36,29 @@ export function ConsoleDashboardScreen() {
           <p className="con-subtitle">Engineering Console · mission control</p>
         </div>
         <div className="con-head-right">
-          <Chip tone="primary">{overview.phase}</Chip>
-          <Chip tone="default">mock source · {state.count} decisions</Chip>
+          <Chip tone="primary">{dashboard.phase}</Chip>
+          <Chip tone="default">{source} source · {count} decisions</Chip>
         </div>
       </header>
 
       <section className="con-goal">
         <div className="con-goal-main">
           <span className="con-goal-label">Active goal</span>
-          <span className="con-goal-text">Adaptive Cognitive Operating System — self-host</span>
+          <span className="con-goal-text">{dashboard.mission}</span>
         </div>
         <div className="con-goal-progress">
-          <Bar value={0.68} tone="primary" label="68%" />
+          <Bar value={dashboard.goal_progress} tone="primary" label={fmtPct(dashboard.goal_progress, 0)} />
         </div>
       </section>
 
       <div className="con-grid con-grid--dash">
-        <Panel title="Pipeline">
+        <Panel title="Executive">
           <div className="con-stages">
-            {overview.stage_timings.map((s) => (
-              <div key={s.stage} className="con-stage">
-                <span className={`con-stage-dot con-stage-dot--${s.status}`} />
-                <span className="con-stage-name">{s.stage}</span>
-                <span className="con-stage-ms">{fmtMs(s.ms)}</span>
+            {dashboard.executive.map((p) => (
+              <div key={p.name} className="con-stage">
+                <span className={`con-stage-dot con-stage-dot--${p.status}`} />
+                <span className="con-stage-name">{p.name}</span>
+                <span className="con-stage-ms">{p.status === 'running' ? 'now' : ''}</span>
               </div>
             ))}
           </div>
@@ -46,12 +66,12 @@ export function ConsoleDashboardScreen() {
 
         <Panel title="World state">
           <div className="con-world">
-            <Stat label="Files" value={overview.world.files} />
-            <Stat label="Memories" value={overview.world.memories} />
-            <Stat label="Policies" value={overview.world.policies} />
-            <Stat label="Episodes" value={overview.world.episodes} />
-            <Stat label="Operators" value={overview.world.operators} />
-            <Stat label="Success" value={fmtPct(overview.world.success_rate)} tone={overview.world.success_rate >= 0.85 ? 'green' : 'amber'} />
+            <Stat label="Files" value={dashboard.world.files} />
+            <Stat label="Processes" value={dashboard.world.processes} />
+            <Stat label="Capabilities" value={dashboard.world.capabilities} />
+            <Stat label="Policies" value={dashboard.world.policies} />
+            <Stat label="Episodes" value={dashboard.world.episodes} />
+            <Stat label="Confidence" value={fmtPct(dashboard.world.confidence)} tone={dashboard.world.confidence >= 0.85 ? 'green' : 'amber'} />
           </div>
         </Panel>
 
@@ -73,7 +93,7 @@ export function ConsoleDashboardScreen() {
 
         <Panel title="Recent decisions">
           <div className="con-recent">
-            {recent.map((t) => (
+            {dashboard.recent.map((t) => (
               <div key={t.correlation_id} className="con-recent-row">
                 <span className="con-recent-cap">{t.plan.capability}</span>
                 <span className="con-recent-op">{t.plan.operator_id}</span>

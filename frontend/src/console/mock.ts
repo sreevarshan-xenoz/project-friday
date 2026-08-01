@@ -7,12 +7,15 @@
  * LCG approach: same seed => same data.
  *
  * A real bridge replaces this module later; the store and screens only consume
- * `ConsoleState`.
+ * the `ConsoleDataSource` interface.
  */
 
 import type {
   CalibrationOffsets,
   Capability,
+  ExecutivePhaseName,
+  ExecutivePhaseState,
+  WorldState,
   CapabilityRequest,
   CandidateExplanation,
   CostEstimate,
@@ -597,57 +600,32 @@ export function computeMetrics(timelines: DecisionTimeline[]): MetricsReport {
   };
 }
 
-export interface ConsoleState {
-  source: 'mock';
-  generated_at: number;
-  count: number;
-  timelines: DecisionTimeline[];
-  metrics: MetricsReport;
-  operators: OperatorProfile[];
-  capabilities: Capability[];
+/**
+ * A static snapshot of the current executive cycle: which of the ten phases
+ * (Observe, Attend, Plan, Simulate, Execute, Verify, Reflect, Consolidate,
+ * Learn, Idle) have finished, which is running, and which are still waiting.
+ */
+export function executiveCycle(finished: string[]): ExecutivePhaseState[] {
+  const order: ExecutivePhaseName[] = ['Observe', 'Attend', 'Plan', 'Simulate', 'Execute', 'Verify', 'Reflect', 'Consolidate', 'Learn', 'Idle'];
+  const running = order[finished.length] ?? 'Idle';
+  return order.map((name) => {
+    if (finished.includes(name)) return { name, status: 'done' };
+    if (name === running) return { name, status: 'running' };
+    return { name, status: 'waiting' };
+  });
 }
 
-export function generateConsoleState(count = 140, seed = 42): ConsoleState {
-  const timelines = generateLedger(count, seed);
+export function worldState(timelines: DecisionTimeline[]): WorldState {
+  const policies = new Set(timelines.flatMap((t) => t.explanation.policy_factors)).size;
+  const confidence = timelines.length
+    ? timelines.reduce((a, t) => a + t.prediction.confidence, 0) / timelines.length
+    : 0;
   return {
-    source: 'mock',
-    generated_at: Date.now(),
-    count,
-    timelines,
-    metrics: computeMetrics(timelines),
-    operators: OPERATORS,
-    capabilities: CAPABILITIES,
-  };
-}
-
-export interface Overview {
-  phase: string;
-  stage_timings: { stage: string; ms: number; status: 'done' | 'running' | 'waiting' | 'failed' }[];
-  world: { files: number; memories: number; policies: number; episodes: number; operators: number; success_rate: number };
-}
-
-export function deriveOverview(state: ConsoleState): Overview {
-  const last = state.timelines[state.timelines.length - 1];
-  const execMs = last?.outcome.latency_ms ?? 82;
-  const ok = state.timelines.filter((t) => t.outcome.success).length;
-  const policies = new Set(state.timelines.flatMap((t) => t.explanation.policy_factors)).size;
-  const memories = new Set(state.timelines.map((t) => `${t.plan.capability}\u0000${t.plan.operator_id}`)).size;
-  return {
-    phase: 'EXECUTING',
-    stage_timings: [
-      { stage: 'Planning', ms: 12, status: 'done' },
-      { stage: 'Prediction', ms: 4, status: 'done' },
-      { stage: 'Execution', ms: execMs, status: 'running' },
-      { stage: 'Verification', ms: 6, status: 'done' },
-      { stage: 'Learning', ms: 2, status: 'done' },
-    ],
-    world: {
-      files: 182,
-      memories,
-      policies,
-      episodes: state.count,
-      operators: state.operators.length,
-      success_rate: state.count ? ok / state.count : 0,
-    },
+    files: 182,
+    processes: 8,
+    capabilities: CAPABILITIES.length,
+    policies,
+    episodes: timelines.length,
+    confidence,
   };
 }

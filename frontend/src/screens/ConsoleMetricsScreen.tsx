@@ -4,8 +4,7 @@ import { fmtPct, fmtMs, fmtCost } from '../console/format';
 import './ConsoleMetricsScreen.css';
 
 export function ConsoleMetricsScreen() {
-  const { state } = useConsole();
-  const m = state.metrics;
+  const { status, error, metrics: m } = useConsole();
 
   return (
     <div className="con-screen">
@@ -17,6 +16,9 @@ export function ConsoleMetricsScreen() {
         <Chip tone="default">stateless derivation</Chip>
       </header>
 
+      {status !== 'ready' ? (
+        <p className="con-empty">{status === 'error' ? error : 'Loading read models…'}</p>
+      ) : (
       <div className="con-grid con-grid--metrics">
         <Panel title="Prediction accuracy">
           <div className="con-metric-stats">
@@ -72,6 +74,7 @@ export function ConsoleMetricsScreen() {
           </div>
         </Panel>
       </div>
+      )}
     </div>
   );
 }

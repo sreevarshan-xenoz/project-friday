@@ -4,18 +4,21 @@ import { fmtCost, fmtDateTime } from '../console/format';
 import './ConsoleLedgerScreen.css';
 
 export function ConsoleLedgerScreen() {
-  const { state } = useConsole();
+  const { status, error, source, count, ledger } = useConsole();
 
   return (
     <div className="con-screen">
       <header className="con-head">
         <div>
           <h2 className="con-title">Ledger</h2>
-          <p className="con-subtitle">Immutable, append-only decision history · {state.count} records</p>
+          <p className="con-subtitle">Immutable, append-only decision history · {count} records</p>
         </div>
-        <Chip tone="default">source: {state.source} · {new Date(state.generated_at).toLocaleTimeString([], { hour12: false })}</Chip>
+        <Chip tone="default">source: {source}</Chip>
       </header>
 
+      {status !== 'ready' ? (
+        <p className="con-empty">{status === 'error' ? error : 'Loading read models…'}</p>
+      ) : (
       <Panel title="Decision records">
         <div className="con-table-wrap">
           <table className="con-table">
@@ -35,27 +38,28 @@ export function ConsoleLedgerScreen() {
               </tr>
             </thead>
             <tbody>
-              {state.timelines.map((t, i) => (
-                <tr key={t.correlation_id}>
+              {ledger.map((r, i) => (
+                <tr key={r.id}>
                   <td className="con-table-idx">{i + 1}</td>
-                  <td className="con-table-mono">{t.correlation_id}</td>
-                  <td>{fmtDateTime(t.record.timestamp_ms)}</td>
-                  <td className="con-table-mono">{t.plan.capability}</td>
-                  <td>{t.plan.operator_id}</td>
-                  <td className="con-table-num">{t.prediction.estimated_latency_ms} ms</td>
-                  <td className="con-table-num">{t.outcome.latency_ms} ms</td>
-                  <td className="con-table-num">{fmtCost(t.prediction.estimated_cost)}</td>
-                  <td className="con-table-num">{fmtCost(t.outcome.cost)}</td>
+                  <td className="con-table-mono">{r.id}</td>
+                  <td>{fmtDateTime(r.timestamp_ms)}</td>
+                  <td className="con-table-mono">{r.capability}</td>
+                  <td>{r.plan.operator_id}</td>
+                  <td className="con-table-num">{r.plan.estimated_latency_ms} ms</td>
+                  <td className="con-table-num">{r.outcome.latency_ms} ms</td>
+                  <td className="con-table-num">{fmtCost(r.plan.estimated_cost)}</td>
+                  <td className="con-table-num">{fmtCost(r.outcome.cost)}</td>
                   <td>
-                    <Chip tone={t.outcome.success ? 'green' : 'red'}>{t.outcome.success ? 'success' : 'failed'}</Chip>
+                    <Chip tone={r.outcome.success ? 'green' : 'red'}>{r.outcome.success ? 'success' : 'failed'}</Chip>
                   </td>
-                  <td className="con-table-num">{t.outcome.retries}</td>
+                  <td className="con-table-num">{r.outcome.retries}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       </Panel>
+      )}
     </div>
   );
 }

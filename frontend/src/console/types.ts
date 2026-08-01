@@ -338,3 +338,63 @@ export interface ReplayReport {
   differences: ReplayDifferences;
   replay_timestamp_ms: number;
 }
+
+// ---------------------------------------------------------------------------
+// Engineering Console DTOs (the bridge contract)
+// ---------------------------------------------------------------------------
+
+/**
+ * The ten-phase executive cycle, mirroring
+ * `services/goal-execution/src/executive.rs`.
+ */
+export type ExecutivePhaseName =
+  | 'Observe'
+  | 'Attend'
+  | 'Plan'
+  | 'Simulate'
+  | 'Execute'
+  | 'Verify'
+  | 'Reflect'
+  | 'Consolidate'
+  | 'Learn'
+  | 'Idle';
+
+export type PhaseStatus = 'done' | 'running' | 'waiting' | 'failed';
+
+export interface ExecutivePhaseState {
+  name: ExecutivePhaseName;
+  status: PhaseStatus;
+}
+
+export interface WorldState {
+  files: number;
+  processes: number;
+  capabilities: number;
+  policies: number;
+  episodes: number;
+  confidence: number;
+}
+
+export interface DashboardDTO {
+  mission: string;
+  goal_progress: number;
+  phase: string;
+  executive: ExecutivePhaseState[];
+  world: WorldState;
+  recent: DecisionTimeline[];
+}
+
+/**
+ * The provider seam between the Engineering Console and FRIDAY.
+ *
+ * React only ever talks to read models through this interface. The mock
+ * implementation satisfies it today; a runtime implementation (WebSocket
+ * bridge / Tauri commands) satisfies it tomorrow. Screens never change.
+ */
+export interface ConsoleDataSource {
+  readonly kind: string;
+  getDashboard(): Promise<DashboardDTO>;
+  getTimelines(): Promise<DecisionTimeline[]>;
+  getMetrics(): Promise<MetricsReport>;
+  getLedger(): Promise<DecisionRecord[]>;
+}
