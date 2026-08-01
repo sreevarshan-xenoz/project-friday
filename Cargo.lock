@@ -356,6 +356,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "friday-bridge"
+version = "0.1.0"
+dependencies = [
+ "friday-experience",
+ "friday-plugin-runtime",
+ "futures",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "friday-capabilities"
 version = "0.1.0"
 dependencies = [

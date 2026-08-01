@@ -1,0 +1,20 @@
+[package]
+name = "friday-bridge"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "ReadModelBridge: read-only WebSocket bridge from frozen FRIDAY read models to the Engineering Console."
+
+[dependencies]
+friday-plugin-runtime = { path = "../plugin-runtime" }
+friday-experience = { path = "../experience" }
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

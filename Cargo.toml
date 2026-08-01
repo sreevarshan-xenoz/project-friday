@@ -20,7 +20,7 @@ members = [
     "plugins/windows",
     "services/windows-qual",
     "mcp"
-, "services/sensors", "services/knowledge", "services/reflection", "services/goal-execution", "services/plugin-runtime", "services/experience"]
+, "services/sensors", "services/knowledge", "services/reflection", "services/goal-execution", "services/plugin-runtime", "services/experience", "services/bridge"]
 
 [workspace.package]
 edition = "2021"
