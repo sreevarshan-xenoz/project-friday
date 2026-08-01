@@ -1,21 +1,28 @@
 /**
  * FRIDAY Engineering Console — reactive controller.
  *
- * The console subscribes to a `ConsoleDataSource` and merges streamed
- * `ConsoleDataFrame`s into a single snapshot. Today that source is the mock;
- * tomorrow it is the runtime bridge. Screens only subscribe via `useConsole`
- * and never care which provider is behind the interface.
+ * The console subscribes to a `ConsoleDataSource` and merges the typed
+ * `ConsoleFrame` stream into a single snapshot. Frames are event-sourced:
+ * hello announces the bridge, snapshot seeds the full read models, deltas
+ * merge changes, heartbeats carry round-trip latency, errors surface bridge
+ * problems. Sequence gaps are counted as dropped frames.
+ *
+ * Today the source is the mock; tomorrow it is the runtime bridge. Screens
+ * only subscribe via `useConsole` and never care which provider is behind the
+ * interface.
  */
 
 import { useSyncExternalStore } from 'react';
 import type {
-  ConsoleDataFrame,
   ConsoleDataSource,
+  ConsoleFrame,
   DashboardDTO,
   DecisionRecord,
   DecisionTimeline,
   MetricsReport,
   RuntimeStatus,
+  SnapshotFrame,
+  DeltaFrame,
 } from './types';
 import { MockConsoleDataSource } from './dataSource';
 
@@ -35,9 +42,13 @@ export interface ConsoleSnapshot {
 const EMPTY_RUNTIME: RuntimeStatus = {
   connected: false,
   bridge: '…',
-  latency_ms: null,
-  updates_per_sec: 0,
+  protocol: 0,
+  frames: 0,
+  dropped: 0,
+  fps: 0,
+  round_trip_ms: null,
   records: 0,
+  last_error: null,
 };
 
 const EMPTY: ConsoleSnapshot = {
@@ -72,19 +83,20 @@ let source: ConsoleDataSource = new MockConsoleDataSource();
 let unsubFromSource: (() => void) | null = null;
 
 const arrivals: number[] = [];
+let lastSeq: number | null = null;
+let dropped = 0;
 
 function notify(): void {
   listeners.forEach((l) => l());
 }
 
-function measuredUpdatesPerSec(): number {
+function measuredFps(): number {
   const now = Date.now();
   while (arrivals.length && now - arrivals[0] > 1000) arrivals.shift();
   return arrivals.length;
 }
 
-function publish(frame: ConsoleDataFrame): void {
-  arrivals.push(Date.now());
+function mergeSlices(frame: SnapshotFrame | DeltaFrame): void {
   const count = frame.ledger ? frame.ledger.length : snapshot.count;
   snapshot = {
     ...snapshot,
@@ -96,13 +108,66 @@ function publish(frame: ConsoleDataFrame): void {
     ledger: frame.ledger ?? snapshot.ledger,
     count,
     runtime: {
+      ...snapshot.runtime,
       connected: true,
-      bridge: source.kind,
-      latency_ms: frame.latency_ms ?? snapshot.runtime.latency_ms,
-      updates_per_sec: measuredUpdatesPerSec(),
+      round_trip_ms: frame.latency_ms ?? snapshot.runtime.round_trip_ms,
+      frames: lastSeq ?? snapshot.runtime.frames,
+      dropped,
+      fps: measuredFps(),
       records: count,
     },
   };
+}
+
+function publish(frame: ConsoleFrame): void {
+  arrivals.push(Date.now());
+  if (lastSeq != null && frame.sequence > lastSeq) {
+    dropped += frame.sequence - lastSeq - 1;
+  }
+  lastSeq = frame.sequence;
+
+  switch (frame.kind) {
+    case 'hello':
+      snapshot = {
+        ...snapshot,
+        runtime: {
+          ...snapshot.runtime,
+          connected: true,
+          bridge: frame.bridge,
+          protocol: frame.protocol,
+          last_error: null,
+        },
+      };
+      break;
+    case 'snapshot':
+    case 'delta':
+      mergeSlices(frame);
+      break;
+    case 'heartbeat':
+      snapshot = {
+        ...snapshot,
+        runtime: {
+          ...snapshot.runtime,
+          connected: true,
+          round_trip_ms: frame.latency_ms ?? snapshot.runtime.round_trip_ms,
+          frames: lastSeq ?? snapshot.runtime.frames,
+          dropped,
+          fps: measuredFps(),
+        },
+      };
+      break;
+    case 'error':
+      snapshot = {
+        ...snapshot,
+        runtime: {
+          ...snapshot.runtime,
+          connected: true,
+          frames: lastSeq ?? snapshot.runtime.frames,
+          last_error: frame.message,
+        },
+      };
+      break;
+  }
   notify();
 }
 
@@ -122,7 +187,14 @@ export async function setConsoleSource(next: ConsoleDataSource): Promise<void> {
   unsubFromSource?.();
   unsubFromSource = null;
   source = next;
-  snapshot = { ...EMPTY, status: 'loading', runtime: { ...EMPTY_RUNTIME, bridge: next.kind } };
+  arrivals.length = 0;
+  lastSeq = null;
+  dropped = 0;
+  snapshot = {
+    ...EMPTY,
+    status: 'loading',
+    runtime: { ...EMPTY_RUNTIME, bridge: next.kind },
+  };
   notify();
   try {
     unsubFromSource = source.subscribe(publish);

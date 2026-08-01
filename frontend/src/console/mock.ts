@@ -109,7 +109,7 @@ function contextFor(rng: Lcg): SelectionContext {
     urgency,
     budget,
     offline: rng.chance(0.15),
-    security_level: rng.chance(0.2) ? 'sensitive' : 'public',
+    security_level: rng.chance(0.2) ? 'medium' : 'low',
     user_preferences: {},
     preferred_providers: [],
   };

@@ -8,24 +8,33 @@
  *   ├── MockConsoleDataSource    (synthetic ledger + live simulated ticks)
  *   └── RuntimeConsoleDataSource (Week 2: ReadModelBridge -> WebSocket)
  *
- * The interface is streaming-capable: both providers publish `ConsoleDataFrame`
- * updates through the same `subscribe()` API. The mock advances the executive
- * cycle on a timer so the whole pipeline is visible before the bridge exists.
+ * Both providers publish the same typed `ConsoleFrame` protocol — hello,
+ * snapshot, delta, heartbeat, error — each carrying metadata (sequence,
+ * timestamp, source, protocol, bridge). The mock advances the executive cycle
+ * on a timer so the whole pipeline is visible before the bridge exists.
  *
  * Replace the provider, never the screens.
  */
-import type {
-  ConsoleDataFrame,
-  ConsoleDataSource,
-  DashboardDTO,
-  DecisionRecord,
-  DecisionTimeline,
-  ExecutivePhaseName,
-  MetricsReport,
+import {
+  CONSOLE_PROTOCOL_VERSION,
+  type ConsoleDataSource,
+  type ConsoleFrame,
+  type ConsoleFrameKind,
+  type DashboardDTO,
+  type DecisionRecord,
+  type DecisionTimeline,
+  type DeltaFrame,
+  type ExecutivePhaseName,
+  type HeartbeatFrame,
+  type MetricsReport,
+  type SnapshotFrame,
 } from './types';
 import { computeMetrics, executiveCycle, generateLedger, worldState } from './mock';
 
 const TICK_MS = 1200;
+const HEARTBEAT_EVERY = 3;
+const BRIDGE_ID = 'mock-friday';
+
 const PHASE_ORDER: ExecutivePhaseName[] = [
   'Observe',
   'Attend',
@@ -46,9 +55,11 @@ export class MockConsoleDataSource implements ConsoleDataSource {
   private readonly metrics: MetricsReport;
   private readonly ledger: DecisionRecord[];
 
-  private listeners = new Set<(frame: ConsoleDataFrame) => void>();
+  private listeners = new Set<(frame: ConsoleFrame) => void>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private progress = 0;
+  private tickCount = 0;
+  private seq = 0;
 
   constructor(count = 140, seed = 42) {
     this.timelines = generateLedger(count, seed);
@@ -57,7 +68,8 @@ export class MockConsoleDataSource implements ConsoleDataSource {
   }
 
   async connect(): Promise<void> {
-    this.publishFull();
+    this.emit(this.frame('hello'));
+    this.emit(this.snapshot());
     if (this.timer == null) {
       this.timer = setInterval(() => this.tick(), TICK_MS);
     }
@@ -71,7 +83,7 @@ export class MockConsoleDataSource implements ConsoleDataSource {
     this.listeners.clear();
   }
 
-  subscribe(listener: (frame: ConsoleDataFrame) => void): () => void {
+  subscribe(listener: (frame: ConsoleFrame) => void): () => void {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
@@ -94,23 +106,40 @@ export class MockConsoleDataSource implements ConsoleDataSource {
     return this.ledger;
   }
 
-  private publishFull(): void {
-    const frame: ConsoleDataFrame = {
+  private frame(kind: ConsoleFrameKind, extra: Record<string, unknown> = {}): ConsoleFrame {
+    this.seq += 1;
+    return {
+      kind,
+      sequence: this.seq,
+      timestamp: Date.now(),
+      source: this.kind,
+      protocol: CONSOLE_PROTOCOL_VERSION,
+      bridge: BRIDGE_ID,
+      ...extra,
+    } as ConsoleFrame;
+  }
+
+  private snapshot(): SnapshotFrame {
+    return this.frame('snapshot', {
       dashboard: this.buildDashboard(),
       timelines: this.timelines,
       metrics: this.metrics,
       ledger: this.ledger,
       latency_ms: this.simulatedLatency(8, 14),
-    };
-    this.listeners.forEach((l) => l(frame));
+    }) as SnapshotFrame;
   }
 
   private tick(): void {
     this.progress = (this.progress + 1) % (PHASE_ORDER.length + 1);
-    const frame: ConsoleDataFrame = {
-      dashboard: this.buildDashboard(),
-      latency_ms: this.simulatedLatency(6, 18),
-    };
+    this.tickCount += 1;
+    if (this.tickCount % HEARTBEAT_EVERY === 0) {
+      this.emit(this.frame('heartbeat', { latency_ms: this.simulatedLatency(5, 16) }) as HeartbeatFrame);
+      return;
+    }
+    this.emit(this.frame('delta', { dashboard: this.buildDashboard(), latency_ms: this.simulatedLatency(6, 18) }) as DeltaFrame);
+  }
+
+  private emit(frame: ConsoleFrame): void {
     this.listeners.forEach((l) => l(frame));
   }
 
@@ -147,7 +176,7 @@ export class RuntimeConsoleDataSource implements ConsoleDataSource {
 
   disconnect(): void {}
 
-  subscribe(): () => void {
+  subscribe(_listener: (frame: ConsoleFrame) => void): () => void {
     return () => {};
   }
 

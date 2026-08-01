@@ -13,7 +13,7 @@ export type CorrelationId = string;
 export type Capability = string;
 
 export type Urgency = 'low' | 'normal' | 'high' | 'critical';
-export type SecurityLevel = 'public' | 'sensitive' | 'secret';
+export type SecurityLevel = 'low' | 'medium' | 'high' | 'maximum';
 
 export interface SelectionContext {
   urgency: Urgency;
@@ -386,29 +386,82 @@ export interface DashboardDTO {
 
 /**
  * Live status of the data source — what the Dashboard's Runtime card shows.
- * `bridge` is the provider kind ('mock', and later 'runtime'); `latency_ms`
- * and `updates_per_sec` come from the streaming connection.
+ * `bridge` is the provider kind ('mock', and later 'runtime'); `frames` is the
+ * highest sequence seen; `dropped` is the count of skipped sequence numbers
+ * (lost frames); `fps` is the measured frame arrival rate; `round_trip_ms` is
+ * the provider-reported round-trip latency.
  */
 export interface RuntimeStatus {
   connected: boolean;
   bridge: string;
-  latency_ms: number | null;
-  updates_per_sec: number;
+  protocol: number;
+  frames: number;
+  dropped: number;
+  fps: number;
+  round_trip_ms: number | null;
   records: number;
+  last_error: string | null;
+}
+
+export type ConsoleFrameKind = 'hello' | 'snapshot' | 'delta' | 'heartbeat' | 'error';
+
+export const CONSOLE_PROTOCOL_VERSION = 1;
+
+/**
+ * Every frame carries metadata: `kind` (so consumers can switch without
+ * guessing), a monotonic `sequence`, the bridge clock `timestamp`, the
+ * `source`, and the bridge's `protocol` version + identity.
+ */
+export interface ConsoleFrameBase {
+  kind: ConsoleFrameKind;
+  sequence: number;
+  timestamp: number;
+  source: string;
+  protocol: number;
+  bridge: string;
+}
+
+/** Sent once on connect: announces the bridge + protocol version. */
+export interface HelloFrame extends ConsoleFrameBase {
+  kind: 'hello';
+}
+
+/** Full read-model snapshot, published right after hello and on demand. */
+export interface SnapshotFrame extends ConsoleFrameBase {
+  kind: 'snapshot';
+  dashboard: DashboardDTO;
+  timelines: DecisionTimeline[];
+  metrics: MetricsReport;
+  ledger: DecisionRecord[];
+  latency_ms: number | null;
 }
 
 /**
- * A unit of streaming data from the provider. Frames are additive: a delta
- * push may carry only the slices that changed (e.g. `{ ledger }` after an
- * append, or `{ dashboard }` after the executive phase advances).
+ * Additive delta: carries only the slices that changed (e.g. `{ ledger }`
+ * after an append, or `{ dashboard }` after the executive phase advances).
  */
-export interface ConsoleDataFrame {
+export interface DeltaFrame extends ConsoleFrameBase {
+  kind: 'delta';
   dashboard?: DashboardDTO;
   timelines?: DecisionTimeline[];
   metrics?: MetricsReport;
   ledger?: DecisionRecord[];
-  latency_ms?: number;
+  latency_ms?: number | null;
 }
+
+/** Liveness frame; `latency_ms` is the measured round-trip time. */
+export interface HeartbeatFrame extends ConsoleFrameBase {
+  kind: 'heartbeat';
+  latency_ms: number | null;
+}
+
+/** The bridge hit a problem; `message` explains it. Does not drop the stream. */
+export interface ErrorFrame extends ConsoleFrameBase {
+  kind: 'error';
+  message: string;
+}
+
+export type ConsoleFrame = HelloFrame | SnapshotFrame | DeltaFrame | HeartbeatFrame | ErrorFrame;
 
 /**
  * The provider seam between the Engineering Console and FRIDAY.
@@ -417,18 +470,19 @@ export interface ConsoleDataFrame {
  * implementation satisfies it today; a runtime implementation (WebSocket
  * bridge / Tauri commands) satisfies it tomorrow. Screens never change.
  *
- * Request/response (`get*`) and streaming (`connect`/`subscribe`/`disconnect`)
- * coexist: `connect()` publishes the initial full frame, subsequent pushes are
- * deltas — executive phase changes, ledger appends, metrics updates.
+ * Streaming is the primary path: `connect()` publishes hello + snapshot, then
+ * pushes typed `ConsoleFrame`s (deltas, heartbeats, errors). Consumers
+ * `switch(frame.kind)`. Request/response (`get*`) methods remain for one-shot
+ * reads.
  */
 export interface ConsoleDataSource {
   readonly kind: string;
-  /** Open the connection. Resolves after the initial full frame is published. */
+  /** Open the connection. Resolves after hello + the initial snapshot frame. */
   connect(): Promise<void>;
   /** Close the connection and drop subscribers. */
   disconnect(): void;
-  /** Subscribe to frame updates (initial + deltas). Returns an unsubscribe fn. */
-  subscribe(listener: (frame: ConsoleDataFrame) => void): () => void;
+  /** Subscribe to typed frames. Returns an unsubscribe fn. */
+  subscribe(listener: (frame: ConsoleFrame) => void): () => void;
   getDashboard(): Promise<DashboardDTO>;
   getTimelines(): Promise<DecisionTimeline[]>;
   getMetrics(): Promise<MetricsReport>;

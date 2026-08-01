@@ -82,9 +82,15 @@ export function ConsoleDashboardScreen() {
               v={<Chip tone={runtime.connected ? 'green' : 'red'}>{runtime.connected ? 'YES' : 'NO'}</Chip>}
             />
             <KeyVal k="Bridge" v={runtime.bridge} />
-            <KeyVal k="Latency" v={runtime.latency_ms == null ? '—' : `${runtime.latency_ms.toFixed(0)} ms`} />
-            <KeyVal k="Updates/sec" v={runtime.updates_per_sec.toFixed(1)} />
+            <KeyVal k="Protocol" v={`v${runtime.protocol}`} />
+            <KeyVal k="Frames" v={runtime.frames} />
+            <KeyVal k="Dropped" v={<Chip tone={runtime.dropped ? 'amber' : 'green'}>{runtime.dropped}</Chip>} />
+            <KeyVal k="Avg FPS" v={runtime.fps.toFixed(1)} />
+            <KeyVal k="Round trip" v={runtime.round_trip_ms == null ? '—' : `${runtime.round_trip_ms.toFixed(0)} ms`} />
             <KeyVal k="Records" v={runtime.records} />
+            {runtime.last_error && (
+              <KeyVal k="Error" v={<Chip tone="red">{runtime.last_error}</Chip>} />
+            )}
           </div>
         </Panel>
 
