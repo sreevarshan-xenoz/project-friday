@@ -75,13 +75,14 @@ experience engines — only the read-model DTOs.
 src/console/
   types.ts         Shape-accurate TS mirrors of the frozen Rust contracts
                    (contract.rs + experience/src/lib.rs) + the console DTOs
+                   (DashboardDTO, WorldState, RuntimeStatus, ConsoleDataFrame)
   mock.ts          Deterministic synthetic ledger + derived read models
                    (LCG-seeded, mirrors VP-004 + the real engines)
   dataSource.ts    ConsoleDataSource interface + implementations
-                   ├── MockConsoleDataSource   (today)
+                   ├── MockConsoleDataSource   (today — streams simulated ticks)
                    └── RuntimeConsoleDataSource (Week 2 bridge, not yet wired)
-  store.ts         Reactive controller + useConsole() (loads through the source)
-  ui.tsx / ui.css  Console primitives (Panel, Stat, Bar, Chip, ScoreRow)
+  store.ts         Reactive controller + useConsole() (subscribes + merges frames)
+  ui.tsx / ui.css  Console primitives (Panel, Stat, Bar, Chip, KeyVal, ScoreRow)
   format.ts        Formatting helpers
 ```
 
@@ -89,16 +90,22 @@ Screens (in `screens/`, under the "Console" nav group):
 
 - **Dashboard**   mission header, live ten-phase Executive cycle
                  (Observe · Attend · Plan · Simulate · Execute · Verify ·
-                 Reflect · Consolidate · Learn · Idle), world state, recent decisions
+                 Reflect · Consolidate · Learn · Idle), world state, Runtime
+                 card (connected / bridge / latency / updates-per-sec /
+                 records), recent decisions
 - **Timeline**    full decision reconstruction: request → plan → prediction → outcome → feedback
 - **Explanation** reason chips, candidate scoring, experience/reputation/calibration factors
 - **Metrics**     the derived `MetricsReport` (accuracy, calibration, fallback, reputation, experience)
 - **Ledger**      raw immutable decision records
 
-The provider seam is `ConsoleDataSource` (getDashboard / getTimelines /
-getMetrics / getLedger, all async). React only ever sees that interface, so
-replacing the mock with the runtime bridge never touches a screen — you swap
-the provider, not the mock. `setConsoleSource()` in `store.ts` is the switch.
+The provider seam is `ConsoleDataSource`. It is **streaming-capable**: besides
+the request/response `get*` methods, both providers expose `connect()` /
+`disconnect()` / `subscribe(listener)` and publish `ConsoleDataFrame`s — the
+initial frame is the full snapshot, later frames are deltas (executive phase
+advance, ledger append, metrics refresh). The controller merges frames into the
+`useConsole()` snapshot and tracks arrival rate + latency for the Runtime card.
+Replacing the mock with the runtime bridge never touches a screen — you swap
+the provider via `setConsoleSource()`, never the mock.
 
 The Executive panel mirrors the real ten-phase cycle from
 `services/goal-execution/src/executive.rs` (frozen Core 1.0).
@@ -133,6 +140,9 @@ now shows the real ten-phase Executive cycle and a full World State. TypeScript
 compiles clean, Vite builds clean, oxlint clean.
 
 **Week 2 (in progress)** — `ConsoleDataSource` provider seam landed with
-`MockConsoleDataSource`; `RuntimeConsoleDataSource` stubbed. Next: the
-`ReadModelBridge` on the Rust side (WebSocket), then wire `RuntimeConsoleDataSource`
-to it. Then the Replay viewer (Week 3) and the memory explorer (Week 4).
+`MockConsoleDataSource`; the interface is now **streaming-capable**
+(`connect`/`subscribe`/`disconnect` publishing `ConsoleDataFrame` deltas) and
+the Dashboard gained a **Runtime card** (connected / bridge / latency /
+updates-per-sec / records) fed by live mock ticks. Next: the `ReadModelBridge`
+on the Rust side (WebSocket), then wire `RuntimeConsoleDataSource` to it. Then
+the Replay viewer (Week 3) and the memory explorer (Week 4).

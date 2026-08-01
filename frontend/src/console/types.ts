@@ -385,14 +385,50 @@ export interface DashboardDTO {
 }
 
 /**
+ * Live status of the data source — what the Dashboard's Runtime card shows.
+ * `bridge` is the provider kind ('mock', and later 'runtime'); `latency_ms`
+ * and `updates_per_sec` come from the streaming connection.
+ */
+export interface RuntimeStatus {
+  connected: boolean;
+  bridge: string;
+  latency_ms: number | null;
+  updates_per_sec: number;
+  records: number;
+}
+
+/**
+ * A unit of streaming data from the provider. Frames are additive: a delta
+ * push may carry only the slices that changed (e.g. `{ ledger }` after an
+ * append, or `{ dashboard }` after the executive phase advances).
+ */
+export interface ConsoleDataFrame {
+  dashboard?: DashboardDTO;
+  timelines?: DecisionTimeline[];
+  metrics?: MetricsReport;
+  ledger?: DecisionRecord[];
+  latency_ms?: number;
+}
+
+/**
  * The provider seam between the Engineering Console and FRIDAY.
  *
  * React only ever talks to read models through this interface. The mock
  * implementation satisfies it today; a runtime implementation (WebSocket
  * bridge / Tauri commands) satisfies it tomorrow. Screens never change.
+ *
+ * Request/response (`get*`) and streaming (`connect`/`subscribe`/`disconnect`)
+ * coexist: `connect()` publishes the initial full frame, subsequent pushes are
+ * deltas — executive phase changes, ledger appends, metrics updates.
  */
 export interface ConsoleDataSource {
   readonly kind: string;
+  /** Open the connection. Resolves after the initial full frame is published. */
+  connect(): Promise<void>;
+  /** Close the connection and drop subscribers. */
+  disconnect(): void;
+  /** Subscribe to frame updates (initial + deltas). Returns an unsubscribe fn. */
+  subscribe(listener: (frame: ConsoleDataFrame) => void): () => void;
   getDashboard(): Promise<DashboardDTO>;
   getTimelines(): Promise<DecisionTimeline[]>;
   getMetrics(): Promise<MetricsReport>;

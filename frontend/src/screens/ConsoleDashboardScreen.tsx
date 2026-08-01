@@ -1,4 +1,4 @@
-import { Panel, Stat, Chip, Bar } from '../console/ui';
+import { Panel, Stat, Chip, Bar, KeyVal } from '../console/ui';
 import { useConsole } from '../console/store';
 import { fmtPct, fmtMs, fmtTime } from '../console/format';
 import './ConsoleDashboardScreen.css';
@@ -19,13 +19,13 @@ export function ConsoleDashboardScreen() {
           </div>
         </header>
         <p className="con-empty">
-          {snap.status === 'error' ? snap.error : 'Loading read models…'}
+          {snap.status === 'error' ? snap.error : 'Connecting to data source…'}
         </p>
       </div>
     );
   }
 
-  const { dashboard, source, count, timelines } = snap;
+  const { dashboard, runtime, count, timelines } = snap;
   const last = timelines[timelines.length - 1];
 
   return (
@@ -37,7 +37,7 @@ export function ConsoleDashboardScreen() {
         </div>
         <div className="con-head-right">
           <Chip tone="primary">{dashboard.phase}</Chip>
-          <Chip tone="default">{source} source · {count} decisions</Chip>
+          <Chip tone="default">{runtime.bridge} · {count} decisions</Chip>
         </div>
       </header>
 
@@ -72,6 +72,19 @@ export function ConsoleDashboardScreen() {
             <Stat label="Policies" value={dashboard.world.policies} />
             <Stat label="Episodes" value={dashboard.world.episodes} />
             <Stat label="Confidence" value={fmtPct(dashboard.world.confidence)} tone={dashboard.world.confidence >= 0.85 ? 'green' : 'amber'} />
+          </div>
+        </Panel>
+
+        <Panel title="Runtime">
+          <div className="con-runtime">
+            <KeyVal
+              k="Connected"
+              v={<Chip tone={runtime.connected ? 'green' : 'red'}>{runtime.connected ? 'YES' : 'NO'}</Chip>}
+            />
+            <KeyVal k="Bridge" v={runtime.bridge} />
+            <KeyVal k="Latency" v={runtime.latency_ms == null ? '—' : `${runtime.latency_ms.toFixed(0)} ms`} />
+            <KeyVal k="Updates/sec" v={runtime.updates_per_sec.toFixed(1)} />
+            <KeyVal k="Records" v={runtime.records} />
           </div>
         </Panel>
 

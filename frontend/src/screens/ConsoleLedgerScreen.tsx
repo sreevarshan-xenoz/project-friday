@@ -4,7 +4,7 @@ import { fmtCost, fmtDateTime } from '../console/format';
 import './ConsoleLedgerScreen.css';
 
 export function ConsoleLedgerScreen() {
-  const { status, error, source, count, ledger } = useConsole();
+  const { status, error, runtime, count, ledger } = useConsole();
 
   return (
     <div className="con-screen">
@@ -13,7 +13,7 @@ export function ConsoleLedgerScreen() {
           <h2 className="con-title">Ledger</h2>
           <p className="con-subtitle">Immutable, append-only decision history · {count} records</p>
         </div>
-        <Chip tone="default">source: {source}</Chip>
+        <Chip tone="default">bridge: {runtime.bridge}</Chip>
       </header>
 
       {status !== 'ready' ? (

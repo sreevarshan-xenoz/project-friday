@@ -1,21 +1,30 @@
 /**
  * FRIDAY Engineering Console — reactive controller.
  *
- * The console is backed by a `ConsoleDataSource`. Today that is the mock;
+ * The console subscribes to a `ConsoleDataSource` and merges streamed
+ * `ConsoleDataFrame`s into a single snapshot. Today that source is the mock;
  * tomorrow it is the runtime bridge. Screens only subscribe via `useConsole`
  * and never care which provider is behind the interface.
  */
 
 import { useSyncExternalStore } from 'react';
-import type { DashboardDTO, DecisionRecord, DecisionTimeline, MetricsReport } from './types';
-import { MockConsoleDataSource, type ConsoleDataSource } from './dataSource';
+import type {
+  ConsoleDataFrame,
+  ConsoleDataSource,
+  DashboardDTO,
+  DecisionRecord,
+  DecisionTimeline,
+  MetricsReport,
+  RuntimeStatus,
+} from './types';
+import { MockConsoleDataSource } from './dataSource';
 
 export type ConsoleStatus = 'loading' | 'ready' | 'error';
 
 export interface ConsoleSnapshot {
   status: ConsoleStatus;
   error: string | null;
-  source: string;
+  runtime: RuntimeStatus;
   count: number;
   dashboard: DashboardDTO;
   timelines: DecisionTimeline[];
@@ -23,10 +32,18 @@ export interface ConsoleSnapshot {
   ledger: DecisionRecord[];
 }
 
+const EMPTY_RUNTIME: RuntimeStatus = {
+  connected: false,
+  bridge: '…',
+  latency_ms: null,
+  updates_per_sec: 0,
+  records: 0,
+};
+
 const EMPTY: ConsoleSnapshot = {
   status: 'loading',
   error: null,
-  source: '…',
+  runtime: EMPTY_RUNTIME,
   count: 0,
   dashboard: {
     mission: '',
@@ -52,10 +69,41 @@ let snapshot: ConsoleSnapshot = EMPTY;
 const listeners = new Set<() => void>();
 
 let source: ConsoleDataSource = new MockConsoleDataSource();
-let loading = false;
+let unsubFromSource: (() => void) | null = null;
+
+const arrivals: number[] = [];
 
 function notify(): void {
   listeners.forEach((l) => l());
+}
+
+function measuredUpdatesPerSec(): number {
+  const now = Date.now();
+  while (arrivals.length && now - arrivals[0] > 1000) arrivals.shift();
+  return arrivals.length;
+}
+
+function publish(frame: ConsoleDataFrame): void {
+  arrivals.push(Date.now());
+  const count = frame.ledger ? frame.ledger.length : snapshot.count;
+  snapshot = {
+    ...snapshot,
+    status: 'ready',
+    error: null,
+    dashboard: frame.dashboard ?? snapshot.dashboard,
+    timelines: frame.timelines ?? snapshot.timelines,
+    metrics: frame.metrics ?? snapshot.metrics,
+    ledger: frame.ledger ?? snapshot.ledger,
+    count,
+    runtime: {
+      connected: true,
+      bridge: source.kind,
+      latency_ms: frame.latency_ms ?? snapshot.runtime.latency_ms,
+      updates_per_sec: measuredUpdatesPerSec(),
+      records: count,
+    },
+  };
+  notify();
 }
 
 export function getConsoleSnapshot(): ConsoleSnapshot {
@@ -64,45 +112,33 @@ export function getConsoleSnapshot(): ConsoleSnapshot {
 
 export function subscribeConsole(listener: () => void): () => void {
   listeners.add(listener);
-  return () => listeners.delete(listener);
+  return () => {
+    listeners.delete(listener);
+  };
 }
 
 /** Swap the provider behind the console (mock today, runtime bridge later). */
-export function setConsoleSource(next: ConsoleDataSource): void {
+export async function setConsoleSource(next: ConsoleDataSource): Promise<void> {
+  unsubFromSource?.();
+  unsubFromSource = null;
   source = next;
-  void loadConsole();
-}
-
-export async function loadConsole(): Promise<void> {
-  if (loading) return;
-  loading = true;
-  snapshot = { ...EMPTY, status: 'loading', source: source.kind };
+  snapshot = { ...EMPTY, status: 'loading', runtime: { ...EMPTY_RUNTIME, bridge: next.kind } };
   notify();
   try {
-    const [dashboard, timelines, metrics, ledger] = await Promise.all([
-      source.getDashboard(),
-      source.getTimelines(),
-      source.getMetrics(),
-      source.getLedger(),
-    ]);
-    snapshot = {
-      status: 'ready',
-      error: null,
-      source: source.kind,
-      count: ledger.length,
-      dashboard,
-      timelines,
-      metrics,
-      ledger,
-    };
+    unsubFromSource = source.subscribe(publish);
+    await source.connect();
   } catch (err) {
-    snapshot = { ...EMPTY, status: 'error', error: err instanceof Error ? err.message : String(err), source: source.kind };
+    snapshot = {
+      ...EMPTY,
+      status: 'error',
+      error: err instanceof Error ? err.message : String(err),
+      runtime: { ...EMPTY_RUNTIME, bridge: source.kind },
+    };
+    notify();
   }
-  loading = false;
-  notify();
 }
 
-void loadConsole();
+void setConsoleSource(new MockConsoleDataSource());
 
 export function useConsole(): ConsoleSnapshot {
   return useSyncExternalStore(subscribeConsole, getConsoleSnapshot);
