@@ -160,39 +160,162 @@ export class MockConsoleDataSource implements ConsoleDataSource {
 }
 
 /**
- * Week 2: connects to the real runtime through the ReadModelBridge. Until the
- * bridge exists this refuses to serve data instead of guessing.
+ * Week 2: connects to the real runtime through the ReadModelBridge over
+ * WebSocket. Each bridge text frame is a typed `ConsoleFrame` (hello,
+ * snapshot, delta, heartbeat, error); we forward them straight to subscribers
+ * and merge the payload slices locally so the one-shot `get*` reads work too.
+ * The bridge owns the protocol — this client never constructs read models.
  */
+const RUNTIME_BRIDGE_URL = 'ws://127.0.0.1:18433';
+
+interface LatestSlices {
+  dashboard: DashboardDTO | null;
+  timelines: DecisionTimeline[] | null;
+  metrics: MetricsReport | null;
+  ledger: DecisionRecord[] | null;
+  latency_ms: number | null;
+}
+
 export class RuntimeConsoleDataSource implements ConsoleDataSource {
   readonly kind = 'runtime';
 
-  private static notReady(): never {
-    throw new Error('RuntimeConsoleDataSource: the Week 2 ReadModelBridge is not connected yet.');
+  private readonly url: string;
+  private ws: WebSocket | null = null;
+  private listeners = new Set<(frame: ConsoleFrame) => void>();
+  private handshake: Promise<void> | null = null;
+  private clientSeq = 0;
+  private latest: LatestSlices = {
+    dashboard: null,
+    timelines: null,
+    metrics: null,
+    ledger: null,
+    latency_ms: null,
+  };
+
+  constructor(url: string = RUNTIME_BRIDGE_URL) {
+    this.url = url;
   }
 
   async connect(): Promise<void> {
-    return RuntimeConsoleDataSource.notReady();
+    if (this.ws != null) {
+      return this.handshake ?? Promise.resolve();
+    }
+    this.handshake = new Promise<void>((resolve, reject) => {
+      let resolved = false;
+      try {
+        const ws = new WebSocket(this.url);
+        this.ws = ws;
+        ws.onmessage = (msg) => {
+          let frame: ConsoleFrame;
+          try {
+            frame = JSON.parse(String(msg.data)) as ConsoleFrame;
+          } catch {
+            return;
+          }
+          this.merge(frame);
+          this.emit(frame);
+          if (!resolved && frame.kind === 'snapshot') {
+            resolved = true;
+            resolve();
+            this.handshake = null;
+          }
+        };
+        ws.onerror = () => {
+          if (!resolved) reject(new Error(`cannot reach the bridge at ${this.url}`));
+        };
+        ws.onclose = () => {
+          this.ws = null;
+          if (!resolved) {
+            resolved = true;
+            this.handshake = null;
+            reject(new Error(`bridge closed before the snapshot arrived (${this.url})`));
+          } else {
+            this.clientSeq += 1;
+            this.emit({
+              kind: 'error',
+              sequence: this.clientSeq,
+              timestamp: Date.now(),
+              source: this.kind,
+              protocol: CONSOLE_PROTOCOL_VERSION,
+              bridge: 'runtime',
+              message: 'bridge connection closed',
+            } as ConsoleFrame);
+          }
+        };
+      } catch (err) {
+        reject(err);
+      }
+    });
+    return this.handshake;
   }
 
-  disconnect(): void {}
+  disconnect(): void {
+    this.ws?.close();
+    this.ws = null;
+    this.listeners.clear();
+  }
 
-  subscribe(_listener: (frame: ConsoleFrame) => void): () => void {
-    return () => {};
+  subscribe(listener: (frame: ConsoleFrame) => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 
   async getDashboard(): Promise<DashboardDTO> {
-    return RuntimeConsoleDataSource.notReady();
+    return this.expect('dashboard');
   }
 
   async getTimelines(): Promise<DecisionTimeline[]> {
-    return RuntimeConsoleDataSource.notReady();
+    return this.expect('timelines');
   }
 
   async getMetrics(): Promise<MetricsReport> {
-    return RuntimeConsoleDataSource.notReady();
+    return this.expect('metrics');
   }
 
   async getLedger(): Promise<DecisionRecord[]> {
-    return RuntimeConsoleDataSource.notReady();
+    return this.expect('ledger');
+  }
+
+  private expect<K extends keyof LatestSlices>(slice: K): NonNullable<LatestSlices[K]> {
+    const value = this.latest[slice];
+    if (value == null) {
+      throw new Error(`RuntimeConsoleDataSource: no ${slice} yet — connect() first.`);
+    }
+    return value as NonNullable<LatestSlices[K]>;
+  }
+
+  private merge(frame: ConsoleFrame): void {
+    switch (frame.kind) {
+      case 'snapshot':
+        this.latest = {
+          dashboard: frame.dashboard,
+          timelines: frame.timelines,
+          metrics: frame.metrics,
+          ledger: frame.ledger,
+          latency_ms: frame.latency_ms,
+        };
+        break;
+      case 'delta':
+        this.latest = {
+          ...this.latest,
+          dashboard: frame.dashboard ?? this.latest.dashboard,
+          timelines: frame.timelines ?? this.latest.timelines,
+          metrics: frame.metrics ?? this.latest.metrics,
+          ledger: frame.ledger ?? this.latest.ledger,
+          latency_ms: frame.latency_ms ?? this.latest.latency_ms,
+        };
+        break;
+      case 'heartbeat':
+        this.latest = { ...this.latest, latency_ms: frame.latency_ms };
+        break;
+      default:
+        break;
+    }
+  }
+
+  private emit(frame: ConsoleFrame): void {
+    this.listeners.forEach((l) => l(frame));
   }
 }
