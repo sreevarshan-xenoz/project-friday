@@ -26,6 +26,8 @@ them requires a new ADR, not an ordinary implementation commit:
 6. The naming convention (`*Engine`, `*Builder`, `*Store`, `*Report`,
    `*Factor`, `*Timeline`).
 7. The ADR process itself.
+8. **The validation evidence gate** — no architectural changes without
+   evidence from the [Validation Program](../VALIDATION.md).
 
 New ADRs follow the format: **Context, Decision, Consequences, Alternatives
 considered**. Next number: 0005.
