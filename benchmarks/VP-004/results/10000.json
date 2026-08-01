@@ -1,0 +1,14 @@
+{
+  "n": 10000,
+  "ledger_append_us": 16890,
+  "ledger_append_per_record_us": 1.689,
+  "experience_update_us": 10315,
+  "reputation_update_us": 23,
+  "timeline_build_us": 113780,
+  "metrics_us": 8635,
+  "replay_sample_count": 100,
+  "replay_total_us": 1119,
+  "replay_per_timeline_us": 11.190,
+  "estimated_record_bytes": 592,
+  "estimated_ledger_bytes": 5920000
+}

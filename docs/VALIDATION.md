@@ -83,7 +83,7 @@ are filled in afterwards. A run that surprises us is a finding, not a failure.
 
 ### VP-004 — Scaling
 
-**Status:** proposed
+**Status:** first run complete (finding fixed)
 
 - **Goal:** Benchmark the *architecture*, not execution — how the read models
   behave as the ledger grows.
@@ -95,6 +95,15 @@ are filled in afterwards. A run that surprises us is a finding, not a failure.
 - **Metrics:** timeline build time, replay time, metrics generation, memory
   usage, ledger size, experience update speed.
 - **Expected Result:** linear growth curves with no super-linear surprises.
+- **Actual Result (run 1):** all read models linear with sub-linear per-record
+  cost (fixed overhead dominates at small n). One super-linear surprise found
+  and fixed: `TimelineBuilder::build_all()` was O(n²) — now O(n), no interface
+  change (evidence: `benchmarks/VP-004/README.md`, `benchmarks/VP-004/results/`).
+  49 tests pass, clippy clean.
+- **Decision:** accept linear-growth hypothesis; keep benchmark as regression
+  guard (rerun on any change to read models). Replays must remain sampled —
+  full replay of every timeline is the only legitimately super-linear
+  operation and is out of scope.
 
 ### VP-005 — Algorithm competitions
 
@@ -117,7 +126,7 @@ are filled in afterwards. A run that surprises us is a finding, not a failure.
 | VP-001 | Long-running cognition  | proposed  | —        | —           |
 | VP-002 | Prediction quality      | proposed  | —        | —           |
 | VP-003 | Replay correctness      | proposed  | —        | —           |
-| VP-004 | Scaling                 | proposed  | —        | —           |
+| VP-004 | Scaling                 | first run | 2026-08-01 | [results](../benchmarks/VP-004/README.md) |
 | VP-005 | Algorithm competitions  | proposed  | —        | —           |
 
 ## Evidence → ADR gate

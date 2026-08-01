@@ -974,7 +974,35 @@ impl<'a> TimelineBuilder<'a> {
             r.plan.rationale.correlation_id == *correlation_id
                 || r.plan.plan_id == *correlation_id
         })?;
+        Some(self.build_from_record(correlation_id, record))
+    }
 
+    /// Reconstruct timelines for every decision in the ledger, in order.
+    ///
+    /// Indexes the ledger once (O(n)) instead of searching it per record, so
+    /// reconstruction stays linear in ledger size.
+    pub fn build_all(&self) -> Vec<DecisionTimeline> {
+        let by_id: HashMap<CorrelationId, &DecisionRecord> = self
+            .ledger
+            .iter()
+            .map(|r| (r.plan.rationale.correlation_id.clone(), r))
+            .collect();
+        self.ledger
+            .iter()
+            .filter_map(|r| {
+                let cid = &r.plan.rationale.correlation_id;
+                by_id
+                    .get(cid)
+                    .map(|record| self.build_from_record(cid, record))
+            })
+            .collect()
+    }
+
+    fn build_from_record(
+        &self,
+        correlation_id: &CorrelationId,
+        record: &DecisionRecord,
+    ) -> DecisionTimeline {
         let request = CapabilityRequest {
             capability: record.capability.clone(),
             parameters: record.parameters.clone(),
@@ -1012,7 +1040,7 @@ impl<'a> TimelineBuilder<'a> {
             self.calibration,
         );
 
-        Some(DecisionTimeline {
+        DecisionTimeline {
             correlation_id: correlation_id.clone(),
             request,
             plan: record.plan.clone(),
@@ -1024,19 +1052,7 @@ impl<'a> TimelineBuilder<'a> {
             feedback: PlannerFeedback::compare(&record.plan, &record.outcome),
             calibration,
             explanation,
-        })
-    }
-
-    /// Reconstruct timelines for every decision in the ledger, in order.
-    pub fn build_all(&self) -> Vec<DecisionTimeline> {
-        let ids: Vec<CorrelationId> = self
-            .ledger
-            .iter()
-            .map(|r| r.plan.rationale.correlation_id.clone())
-            .collect();
-        ids.iter()
-            .filter_map(|cid| self.build(cid))
-            .collect()
+        }
     }
 }
 
