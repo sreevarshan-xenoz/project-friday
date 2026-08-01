@@ -7,16 +7,18 @@ interface CardProps extends MotionProps {
   className?: string;
   glow?: boolean;
   padding?: 'sm' | 'md' | 'lg';
+  onClick?: () => void;
 }
 
-export function Card({ children, className = '', glow = false, padding = 'md', ...motion }: CardProps) {
+export function Card({ children, className = '', glow = false, padding = 'md', onClick, ...rest }: CardProps) {
   return (
     <motion.div
       className={`fr-card fr-card--${padding} ${glow ? 'fr-card--glow' : ''} ${className}`}
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-      {...motion}
+      onClick={onClick}
+      {...rest}
     >
       {children}
     </motion.div>

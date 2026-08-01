@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Card, StatusPill, MetricBar, SectionLabel, Input, ResponseCard, ResponseLine } from '../components';
+import { Card, StatusPill, MetricBar, SectionLabel, Input, ResponseLine } from '../components';
 import { useFriday } from '../hooks/useFriday';
 import { useConnection, useEvents } from '../hooks/useProtocol';
 import { greeting } from '../tokens';

@@ -50,7 +50,7 @@ export class FridayClient {
 
   private onStateChange: StateHandler | null = null;
   private onEvent: EventHandler | null = null;
-  private onCommandResult: CommandResultHandler | null = null;
+  private commandResultHandler: CommandResultHandler | null = null;
   private eventListeners: Array<() => void> = [];
 
   constructor(url: string, token?: string) {
@@ -147,8 +147,8 @@ export class FridayClient {
   }
 
   onCommandResult(handler: CommandResultHandler): () => void {
-    this.onCommandResult = handler;
-    return () => { this.onCommandResult = null; };
+    this.commandResultHandler = handler;
+    return () => { this.commandResultHandler = null; };
   }
 
   private send(msg: ClientMessage) {
@@ -192,7 +192,7 @@ export class FridayClient {
       }
 
       case 'command_result':
-        this.onCommandResult?.(msg.id, msg.ok, msg.result);
+        this.commandResultHandler?.(msg.id, msg.ok, msg.result);
         break;
 
       case 'error':

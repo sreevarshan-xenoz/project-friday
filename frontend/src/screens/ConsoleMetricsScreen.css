@@ -1,0 +1,9 @@
+.con-grid--metrics {
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+
+.con-metric-stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--fr-sp-4) var(--fr-sp-3);
+}

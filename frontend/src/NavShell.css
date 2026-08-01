@@ -82,6 +82,15 @@
   flex-shrink: 0;
 }
 
+.nav-group-label {
+  padding: var(--fr-sp-4) var(--fr-sp-3) var(--fr-sp-1);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fr-text-muted);
+}
+
 .nav-footer {
   padding: var(--fr-sp-3);
   border-top: 1px solid var(--fr-border);

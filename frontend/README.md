@@ -64,6 +64,34 @@ The `protocol/` module mirrors `services/mobile/src/protocol.rs` and
 
 Clients never import FRIDAY internals — only protocol DTOs.
 
+## Engineering Console (Phase 1)
+
+The `src/console/` module is the **FRIDAY Control Center** — the engineering
+UI that consumes the frozen Sprint 5/6 read models. It is deliberately UI-only:
+a mock data source stands in for the runtime until the real bridge lands.
+
+```
+src/console/
+  types.ts         Shape-accurate TS mirrors of the frozen Rust contracts
+                   (contract.rs + experience/src/lib.rs)
+  mock.ts          Deterministic synthetic ledger + derived read models
+                   (LCG-seeded, mirrors VP-004 + the real engines)
+  store.ts         Reactive store (getState/subscribe) + useConsole()
+  ui.tsx / ui.css  Console primitives (Panel, Stat, Bar, Chip, ScoreRow)
+  format.ts        Formatting helpers
+```
+
+Screens (in `screens/`, under the "Console" nav group):
+
+- **Dashboard**   mission header, pipeline stage timings, world state, recent decisions
+- **Timeline**    full decision reconstruction: request → plan → prediction → outcome → feedback
+- **Explanation** reason chips, candidate scoring, experience/reputation/calibration factors
+- **Metrics**     the derived `MetricsReport` (accuracy, calibration, fallback, reputation, experience)
+- **Ledger**      raw immutable decision records
+
+Replacing `mock.ts` with a bridge (WebSocket/Tauri) later does not touch the
+screens — they only subscribe through `useConsole()`.
+
 ## How to run
 
 ```bash
@@ -87,3 +115,9 @@ protocol client, navigation shell. TypeScript compiles clean, Vite builds clean.
 
 Next: Tauri integration, desktop animations polish, and wiring to the real
 `friday-mobile-daemon` for end-to-end testing.
+
+**Phase 1 Engineering Console (Week 1) done** — Dashboard, Timeline,
+Explanation, Metrics, Ledger screens consuming mocked read models. TypeScript
+compiles clean, Vite builds clean, oxlint clean. Next: connect the console to
+the real runtime (Week 2), then the Replay viewer (Week 3), then the memory
+explorer (Week 4).

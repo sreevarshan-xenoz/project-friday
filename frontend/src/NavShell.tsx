@@ -7,20 +7,44 @@ import {
   MemoryScreen,
   TerminalScreen,
   SettingsScreen,
+  ConsoleDashboardScreen,
+  ConsoleTimelineScreen,
+  ConsoleExplanationScreen,
+  ConsoleMetricsScreen,
+  ConsoleLedgerScreen,
 } from './screens';
 import { useConnection } from './hooks/useProtocol';
 import { StatusPill } from './components';
 import './NavShell.css';
 
-type Screen = 'home' | 'assistant' | 'projects' | 'memory' | 'terminal' | 'settings';
+type Screen =
+  | 'home'
+  | 'assistant'
+  | 'projects'
+  | 'memory'
+  | 'terminal'
+  | 'settings'
+  | 'console-dashboard'
+  | 'console-timeline'
+  | 'console-explanation'
+  | 'console-metrics'
+  | 'console-ledger';
 
 const NAV_ITEMS: { id: Screen; label: string; icon: string }[] = [
-  { id: 'home', label: 'Home', icon: '◆' },
-  { id: 'assistant', label: 'Assistant', icon: '›' },
-  { id: 'projects', label: 'Projects', icon: '▶' },
-  { id: 'memory', label: 'Memory', icon: '●' },
-  { id: 'terminal', label: 'Terminal', icon: '▸' },
-  { id: 'settings', label: 'Settings', icon: '◎' },
+  { id: 'home', label: 'Home', icon: '⌂' },
+  { id: 'assistant', label: 'Assistant', icon: '◈' },
+  { id: 'projects', label: 'Projects', icon: '▤' },
+  { id: 'memory', label: 'Memory', icon: '❖' },
+  { id: 'terminal', label: 'Terminal', icon: '❯_' },
+  { id: 'settings', label: 'Settings', icon: '⚙' },
+];
+
+const CONSOLE_ITEMS: { id: Screen; label: string; icon: string }[] = [
+  { id: 'console-dashboard', label: 'Dashboard', icon: '◎' },
+  { id: 'console-timeline', label: 'Timeline', icon: '≋' },
+  { id: 'console-explanation', label: 'Explanation', icon: '◈' },
+  { id: 'console-metrics', label: 'Metrics', icon: '▥' },
+  { id: 'console-ledger', label: 'Ledger', icon: '▤' },
 ];
 
 export function NavShell() {
@@ -38,6 +62,19 @@ export function NavShell() {
 
         <div className="nav-items">
           {NAV_ITEMS.map((item) => (
+            <button
+              key={item.id}
+              className={`nav-item ${screen === item.id ? 'nav-item--active' : ''}`}
+              onClick={() => setScreen(item.id)}
+            >
+              <span className="nav-item-icon">{item.icon}</span>
+              <span className="nav-item-label">{item.label}</span>
+            </button>
+          ))}
+
+          <span className="nav-group-label">Console</span>
+
+          {CONSOLE_ITEMS.map((item) => (
             <button
               key={item.id}
               className={`nav-item ${screen === item.id ? 'nav-item--active' : ''}`}
@@ -75,6 +112,11 @@ export function NavShell() {
             {screen === 'memory' && <MemoryScreen />}
             {screen === 'terminal' && <TerminalScreen />}
             {screen === 'settings' && <SettingsScreen />}
+            {screen === 'console-dashboard' && <ConsoleDashboardScreen />}
+            {screen === 'console-timeline' && <ConsoleTimelineScreen />}
+            {screen === 'console-explanation' && <ConsoleExplanationScreen />}
+            {screen === 'console-metrics' && <ConsoleMetricsScreen />}
+            {screen === 'console-ledger' && <ConsoleLedgerScreen />}
           </motion.div>
         </AnimatePresence>
       </main>

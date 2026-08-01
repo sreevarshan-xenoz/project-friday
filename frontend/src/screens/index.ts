@@ -4,3 +4,8 @@ export { ProjectsScreen } from './ProjectsScreen';
 export { MemoryScreen } from './MemoryScreen';
 export { TerminalScreen } from './TerminalScreen';
 export { SettingsScreen } from './SettingsScreen';
+export { ConsoleDashboardScreen } from './ConsoleDashboardScreen';
+export { ConsoleTimelineScreen } from './ConsoleTimelineScreen';
+export { ConsoleExplanationScreen } from './ConsoleExplanationScreen';
+export { ConsoleMetricsScreen } from './ConsoleMetricsScreen';
+export { ConsoleLedgerScreen } from './ConsoleLedgerScreen';

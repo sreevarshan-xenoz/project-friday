@@ -1,4 +1,4 @@
-import { Card, SectionLabel } from '../components';
+import { Card } from '../components';
 import { useEvents } from '../hooks/useProtocol';
 import './MemoryScreen.css';
 
