@@ -75,12 +75,12 @@ experience engines — only the read-model DTOs.
 src/console/
   types.ts         Shape-accurate TS mirrors of the frozen Rust contracts
                    (contract.rs + experience/src/lib.rs) + the console DTOs
-                   (DashboardDTO, WorldState, RuntimeStatus, ConsoleDataFrame)
+                   (DashboardDTO, WorldState, RuntimeStatus, ConsoleFrame)
   mock.ts          Deterministic synthetic ledger + derived read models
                    (LCG-seeded, mirrors VP-004 + the real engines)
   dataSource.ts    ConsoleDataSource interface + implementations
-                   ├── MockConsoleDataSource   (today — streams simulated ticks)
-                   └── RuntimeConsoleDataSource (Week 2 bridge, not yet wired)
+                   ├── MockConsoleDataSource   (simulated ticks, bridge 'mock-friday')
+                   └── RuntimeConsoleDataSource (ReadModelBridge @ ws://127.0.0.1:18433)
   store.ts         Reactive controller + useConsole() (subscribes + merges frames)
   ui.tsx / ui.css  Console primitives (Panel, Stat, Bar, Chip, KeyVal, ScoreRow)
   format.ts        Formatting helpers
@@ -100,12 +100,21 @@ Screens (in `screens/`, under the "Console" nav group):
 
 The provider seam is `ConsoleDataSource`. It is **streaming-capable**: besides
 the request/response `get*` methods, both providers expose `connect()` /
-`disconnect()` / `subscribe(listener)` and publish `ConsoleDataFrame`s — the
-initial frame is the full snapshot, later frames are deltas (executive phase
-advance, ledger append, metrics refresh). The controller merges frames into the
-`useConsole()` snapshot and tracks arrival rate + latency for the Runtime card.
-Replacing the mock with the runtime bridge never touches a screen — you swap
-the provider via `setConsoleSource()`, never the mock.
+`disconnect()` / `subscribe(listener)` and publish typed `ConsoleFrame`s — a
+hello, then the full snapshot, then additive deltas (executive phase advance,
+ledger append, metrics refresh), heartbeats carrying measured round-trip
+latency, and error frames. The controller `switch(frame.kind)` merges frames
+into the `useConsole()` snapshot, detects dropped frames (sequence gaps), and
+tracks arrival rate + latency for the Runtime card. Replacing the mock with the
+runtime bridge never touches a screen — you swap the provider via
+`setConsoleSource()`, never the mock.
+
+`RuntimeConsoleDataSource` is wired to the Rust **ReadModelBridge**
+(`services/bridge`, `friday-bridge`) over `ws://127.0.0.1:18433`; run
+`cargo run -p friday-bridge` from the repo root to serve the console. The
+bridge serializes the frozen read models losslessly (serde_json
+`float_roundtrip`) into the same `ConsoleFrame` shapes, tagged by `kind` with
+`protocol: 1`.
 
 The Executive panel mirrors the real ten-phase cycle from
 `services/goal-execution/src/executive.rs` (frozen Core 1.0).
@@ -139,10 +148,14 @@ Explanation, Metrics, Ledger screens consuming mocked read models. Dashboard
 now shows the real ten-phase Executive cycle and a full World State. TypeScript
 compiles clean, Vite builds clean, oxlint clean.
 
-**Week 2 (in progress)** — `ConsoleDataSource` provider seam landed with
-`MockConsoleDataSource`; the interface is now **streaming-capable**
-(`connect`/`subscribe`/`disconnect` publishing `ConsoleDataFrame` deltas) and
+**Week 2 (done)** — `ConsoleDataSource` provider seam landed with
+`MockConsoleDataSource`; the interface is **streaming-capable**
+(`connect`/`subscribe`/`disconnect` publishing typed `ConsoleFrame`s) and
 the Dashboard gained a **Runtime card** (connected / bridge / latency /
-updates-per-sec / records) fed by live mock ticks. Next: the `ReadModelBridge`
-on the Rust side (WebSocket), then wire `RuntimeConsoleDataSource` to it. Then
-the Replay viewer (Week 3) and the memory explorer (Week 4).
+updates-per-sec / records) fed by live ticks. The Rust `ReadModelBridge`
+(`services/bridge`) serves the frozen read models over WebSocket at
+`ws://127.0.0.1:18433`, and `RuntimeConsoleDataSource` consumes it — verified
+end-to-end (hello → snapshot → deltas → heartbeat, contiguous sequences,
+140 records). Mock ↔ runtime is one `setConsoleSource()` call. Next: a source
+switch in the UI, then the Replay viewer (Week 3) and the memory explorer
+(Week 4).
