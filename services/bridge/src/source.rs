@@ -150,7 +150,7 @@ impl Lcg {
     pub fn new(seed: u64) -> Self {
         Self(seed)
     }
-    pub fn next(&mut self) -> u64 {
+    pub fn next_u64(&mut self) -> u64 {
         self.0 = self
             .0
             .wrapping_mul(6364136223846793005)
@@ -158,10 +158,10 @@ impl Lcg {
         self.0 >> 33
     }
     pub fn below(&mut self, max: u64) -> u64 {
-        self.next() % max
+        self.next_u64() % max
     }
     pub fn chance(&mut self, p: f64) -> bool {
-        (self.next() % 1000) as f64 / 1000.0 < p
+        (self.next_u64() % 1000) as f64 / 1000.0 < p
     }
 }
 

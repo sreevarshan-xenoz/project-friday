@@ -13,8 +13,13 @@ pub mod source;
 
 pub use connection::{ConnectionManager, DeltaPublisher, Heartbeat, SequenceCounter, SnapshotPublisher};
 pub use frame_serializer::{FrameError, FrameSerializer};
-pub use protocol::{Frame, PROTOCOL_VERSION};
-pub use server::{BridgeServer, DEFAULT_HEARTBEAT_MS, DEFAULT_TICK_MS};
+pub use protocol::{
+    CapabilitiesFrame, Capability, CapabilityName, CapabilitySet, ErrorCode, Frame, PROTOCOL_VERSION,
+    Severity,
+};
+pub use server::{
+    BridgeServer, DEFAULT_HEARTBEAT_MS, DEFAULT_NEGOTIATION_TIMEOUT_MS, DEFAULT_TICK_MS,
+};
 pub use source::{Clock, DemoRuntimeSource, RuntimeSource, Slice, SourceDelta, SourceSnapshot};
 
 /// Current wall-clock time in milliseconds since the Unix epoch.

@@ -25,10 +25,10 @@ use friday_experience::{
     ReputationMetrics,
 };
 use friday_plugin_runtime::{
-    Capability, CapabilityRequest, CostEstimate, DecisionRecord, EvaluatorKind, EvaluatorSignal,
-    ExecutionPlan, Experience as FrozenExperience, ExperienceKey, PlanOutcome, PlannerFeedback,
-    PlanningRationale, Reputation as FrozenReputation, ScoredCandidate, SelectionContext, Urgency,
-    SecurityLevel,
+    Capability as FrozenCapability, CapabilityRequest, CostEstimate, DecisionRecord, EvaluatorKind,
+    EvaluatorSignal, ExecutionPlan, Experience as FrozenExperience, ExperienceKey, PlanOutcome,
+    PlannerFeedback, PlanningRationale, Reputation as FrozenReputation, ScoredCandidate,
+    SelectionContext, Urgency, SecurityLevel,
 };
 use serde::{Deserialize, Serialize};
 
@@ -377,6 +377,163 @@ pub struct SourceSnapshotDto {
     pub ledger: Vec<DecisionRecordDto>,
 }
 
+// ---------------------------------------------------------------------------
+// Capability negotiation
+// ---------------------------------------------------------------------------
+
+/// Every capability the protocol can name. Unknown names are rejected during
+/// negotiation so a client can never silently enable something the server does
+/// not understand. Later phases add the transport capabilities (`gzip`,
+/// `zstd`, `binary`, `auth`) once they are implemented — the handshake is the
+/// feature gate, not a protocol version bump.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CapabilityName {
+    Delta,
+    Heartbeat,
+    Resync,
+    Errors,
+    Metrics,
+    Replay,
+    Gzip,
+    Zstd,
+    Binary,
+    Auth,
+}
+
+impl CapabilityName {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Delta => "delta",
+            Self::Heartbeat => "heartbeat",
+            Self::Resync => "resync",
+            Self::Errors => "errors",
+            Self::Metrics => "metrics",
+            Self::Replay => "replay",
+            Self::Gzip => "gzip",
+            Self::Zstd => "zstd",
+            Self::Binary => "binary",
+            Self::Auth => "auth",
+        }
+    }
+}
+
+/// A single advertised or negotiated capability.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Capability {
+    pub name: CapabilityName,
+    pub version: u32,
+    /// True when part of the `required` set; informational on the wire.
+    #[serde(default)]
+    pub required: bool,
+}
+
+/// What this bridge speaks and what a console may enable.
+///
+/// The server advertises this set in its `hello`; the console answers with a
+/// control message `{"type":"hello_response","capabilities":{name: bool}}`;
+/// the server acknowledges with a `capabilities` frame carrying the
+/// *negotiated* set. A console that never answers is served with only the
+/// required capabilities (old clients keep working).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilitySet {
+    pub protocol_version: u32,
+    #[serde(default)]
+    pub required: Vec<Capability>,
+    #[serde(default)]
+    pub optional: Vec<Capability>,
+}
+
+impl Default for CapabilitySet {
+    fn default() -> Self {
+        Self {
+            protocol_version: PROTOCOL_VERSION,
+            required: Vec::new(),
+            optional: Vec::new(),
+        }
+    }
+}
+
+impl CapabilitySet {
+    /// The set the demo bridge advertises. `delta`, `heartbeat`, `resync` and
+    /// `errors` are required — every protocol v1 console implicitly understands
+    /// them. `metrics` (the `bridge_stats` counter frames) is optional.
+    pub fn standard() -> Self {
+        let cap = |name: CapabilityName, required: bool| Capability {
+            name,
+            version: 1,
+            required,
+        };
+        Self {
+            protocol_version: PROTOCOL_VERSION,
+            required: vec![
+                cap(CapabilityName::Delta, true),
+                cap(CapabilityName::Heartbeat, true),
+                cap(CapabilityName::Resync, true),
+                cap(CapabilityName::Errors, true),
+            ],
+            optional: vec![cap(CapabilityName::Metrics, false)],
+        }
+    }
+
+    /// Resolve a console's selections against this advertised set. Only
+    /// `true` selections are considered; a name the bridge did not advertise
+    /// is rejected (the returned `Err` is that name) so negotiation can never
+    /// enable an unknown feature.
+    pub fn resolve(
+        &self,
+        selections: &HashMap<String, bool>,
+    ) -> Result<Vec<Capability>, String> {
+        let mut known: HashMap<&str, &Capability> = HashMap::new();
+        for cap in self.required.iter().chain(self.optional.iter()) {
+            known.insert(cap.name.as_str(), cap);
+        }
+        let mut enabled = Vec::new();
+        for (name, on) in selections {
+            if !*on {
+                continue;
+            }
+            match known.get(name.as_str()) {
+                Some(cap) => enabled.push((*cap).clone()),
+                None => return Err(name.clone()),
+            }
+        }
+        Ok(enabled)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Structured error taxonomy
+// ---------------------------------------------------------------------------
+
+/// Machine-readable error classification. Error frames carry a `code` so the
+/// console can react programmatically instead of parsing strings. Variants for
+/// `auth`/`compression` are forward-declared: the taxonomy is frozen now, the
+/// features arrive with later phases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCode {
+    UnsupportedVersion,
+    UnsupportedCapability,
+    AuthenticationFailed,
+    CompressionNegotiationFailed,
+    InvalidFrame,
+    InvalidSequence,
+    ResyncRequired,
+    RateLimited,
+    InternalBridgeError,
+}
+
+/// How bad a problem is; the console decides how loudly to surface it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Severity {
+    Info,
+    Warning,
+    Error,
+    Critical,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BridgeStatsDto {
     /// Consoles currently connected.
@@ -406,6 +563,10 @@ pub struct HelloFrame {
     /// Bridge-wide counters at connect time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bridge_stats: Option<BridgeStatsDto>,
+    /// The capability set the bridge advertises; the console answers with a
+    /// `hello_response` control message to negotiate optional features.
+    #[serde(default)]
+    pub capabilities: CapabilitySet,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -462,6 +623,32 @@ pub struct ErrorFrame {
     pub protocol: u32,
     pub bridge: String,
     pub message: String,
+    /// Machine-readable classification. Older clients ignore these fields and
+    /// only read `message`; newer clients react to `code`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<ErrorCode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub severity: Option<Severity>,
+    /// Can the client simply retry the same request?
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recoverable: Option<bool>,
+    /// What the client should do next, in machine-friendly words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_action: Option<String>,
+}
+
+/// The server's acknowledgement of a successful negotiation: `required` is
+/// unchanged, `optional` is the subset the console enabled. Sent right after
+/// the console's `hello_response`, before the snapshot.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CapabilitiesFrame {
+    pub sequence: u64,
+    pub timestamp: u64,
+    pub source: String,
+    pub protocol: u32,
+    pub bridge: String,
+    /// The negotiated set (required capabilities + enabled optional ones).
+    pub capabilities: CapabilitySet,
 }
 
 /// The console protocol: `kind` is the tag; metadata + payload follow.
@@ -472,6 +659,7 @@ pub enum Frame {
     Snapshot(SnapshotFrame),
     Delta(DeltaFrame),
     Heartbeat(HeartbeatFrame),
+    Capabilities(CapabilitiesFrame),
     Error(ErrorFrame),
 }
 
@@ -479,7 +667,7 @@ pub enum Frame {
 // Conversions from frozen types
 // ---------------------------------------------------------------------------
 
-fn capability_str(c: &Capability) -> String {
+fn capability_str(c: &FrozenCapability) -> String {
     c.as_str().to_string()
 }
 

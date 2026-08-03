@@ -28,6 +28,7 @@ fn hello_frame_matches_console_json_shape() {
         protocol: 1,
         bridge: "friday-bridge-demo".into(),
         bridge_stats: None,
+        capabilities: friday_bridge::CapabilitySet::standard(),
     });
     let json = FrameSerializer::to_json(&frame).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -39,6 +40,11 @@ fn hello_frame_matches_console_json_shape() {
     assert_eq!(value["bridge"], "friday-bridge-demo");
     assert_eq!(value.get("message"), None);
     assert_eq!(value.get("bridge_stats"), None, "stats omitted when None");
+    assert!(
+        value["capabilities"].is_object(),
+        "hello advertises capabilities: {value}"
+    );
+    assert_eq!(value["capabilities"]["protocol_version"], 1);
 }
 
 #[test]
@@ -78,6 +84,7 @@ fn frame_round_trips_through_json() {
             protocol: 1,
             bridge: "b".into(),
             bridge_stats: None,
+            capabilities: friday_bridge::CapabilitySet::standard(),
         }),
         Frame::Snapshot(friday_bridge::protocol::SnapshotFrame {
             sequence: 2,
@@ -143,6 +150,49 @@ fn from_json_rejects_missing_kind() {
     assert!(format!("{err}").contains("kind"), "got: {err}");
 }
 
+#[test]
+fn capability_resolve_enables_only_advertised_features() {
+    let set = friday_bridge::CapabilitySet::standard();
+    let mut selections = std::collections::HashMap::new();
+    selections.insert("metrics".to_string(), true);
+    selections.insert("gzip".to_string(), false); // off = ignored
+
+    let enabled = set.resolve(&selections).unwrap();
+    assert_eq!(enabled.len(), 1);
+    assert_eq!(enabled[0].name, friday_bridge::CapabilityName::Metrics);
+
+    selections.insert("gzip".to_string(), true); // on but not advertised
+    let err = set.resolve(&selections).unwrap_err();
+    assert_eq!(err, "gzip", "unknown names are rejected by name");
+}
+
+#[test]
+fn error_frame_carries_full_machine_readable_taxonomy() {
+    let frame = Frame::Error(friday_bridge::protocol::ErrorFrame {
+        sequence: 5,
+        timestamp: 1,
+        source: "mock".into(),
+        protocol: 1,
+        bridge: "b".into(),
+        message: "capability `gzip` is not advertised by this bridge".into(),
+        code: Some(friday_bridge::ErrorCode::UnsupportedCapability),
+        severity: Some(friday_bridge::Severity::Warning),
+        recoverable: Some(true),
+        recommended_action: Some("drop the unsupported capability and retry".into()),
+    });
+    let json = FrameSerializer::to_json(&frame).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(value["kind"], "error");
+    assert_eq!(value["code"], "unsupported_capability");
+    assert_eq!(value["severity"], "warning");
+    assert_eq!(value["recoverable"], true);
+    assert_eq!(value["recommended_action"], "drop the unsupported capability and retry");
+
+    let parsed = FrameSerializer::from_json(&json).unwrap();
+    assert_eq!(parsed, frame, "round-trip must be lossless");
+}
+
 // ---------------------------------------------------------------------------
 // Unit-ish: demo source
 // ---------------------------------------------------------------------------
@@ -203,7 +253,8 @@ async fn spawn_bridge() -> SocketAddr {
         Box::new(DemoRuntimeSource::new(42, 5)),
     )
     .with_tick_ms(25)
-    .with_heartbeat_ms(75);
+    .with_heartbeat_ms(75)
+    .with_negotiation_timeout_ms(150);
     tokio::spawn(async move {
         let _ = server.run().await;
     });
@@ -234,19 +285,17 @@ async fn live_client_sees_handshake_then_streams_with_contiguous_sequences() {
     let mut saw_heartbeat_with_rtt = false;
     let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
     while tokio::time::Instant::now() < deadline {
-        if let Some(Ok(msg)) = ws.next().await {
-            if let tokio_tungstenite::tungstenite::Message::Text(text) = msg {
-                let value: serde_json::Value = serde_json::from_str(&text).unwrap();
-                let kind = value["kind"].as_str().unwrap();
-                kinds.push(kind.to_string());
-                sequences.push(value["sequence"].as_u64().unwrap());
-                if kind == "heartbeat" {
-                    assert!(
-                        value["latency_ms"].is_number(),
-                        "round-trip latency must be measured, got {value}"
-                    );
-                    saw_heartbeat_with_rtt = true;
-                }
+        if let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) = ws.next().await {
+            let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+            let kind = value["kind"].as_str().unwrap();
+            kinds.push(kind.to_string());
+            sequences.push(value["sequence"].as_u64().unwrap());
+            if kind == "heartbeat" {
+                assert!(
+                    value["latency_ms"].is_number(),
+                    "round-trip latency must be measured, got {value}"
+                );
+                saw_heartbeat_with_rtt = true;
             }
         }
     }
@@ -316,6 +365,145 @@ async fn client_can_request_a_resync_snapshot() {
 }
 
 #[tokio::test]
+async fn hello_advertises_capabilities_and_negotiation_is_acked() {
+    let addr = spawn_bridge().await;
+    let url = format!("ws://{addr}");
+    let (mut ws, _resp) = connect_async(&url).await.unwrap();
+
+    let hello = next_frame(&mut ws).await;
+    assert_eq!(hello["kind"], "hello");
+    let caps = hello["capabilities"].clone();
+    let required: Vec<String> = caps["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap().to_string())
+        .collect();
+    assert!(required.contains(&"delta".to_string()));
+    assert!(required.contains(&"heartbeat".to_string()));
+    assert!(required.contains(&"resync".to_string()));
+    assert!(required.contains(&"errors".to_string()));
+
+    // The console enables the optional `metrics` capability.
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(
+        r#"{"type":"hello_response","capabilities":{"metrics":true}}"#.into(),
+    ))
+    .await
+    .unwrap();
+
+    // The server acknowledges with a `capabilities` frame *before* the snapshot.
+    let ack = next_frame(&mut ws).await;
+    assert_eq!(ack["kind"], "capabilities");
+    let negotiated: Vec<String> = ack["capabilities"]["optional"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap().to_string())
+        .collect();
+    assert!(negotiated.contains(&"metrics".to_string()));
+
+    let snapshot = next_frame(&mut ws).await;
+    assert_eq!(snapshot["kind"], "snapshot");
+    let _ = ws.close(None).await;
+}
+
+#[tokio::test]
+async fn unknown_capability_gets_a_structured_error_but_stays_connected() {
+    let addr = spawn_bridge().await;
+    let url = format!("ws://{addr}");
+    let (mut ws, _resp) = connect_async(&url).await.unwrap();
+
+    next_frame(&mut ws).await; // hello
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(
+        r#"{"type":"hello_response","capabilities":{"gzip":true}}"#.into(),
+    ))
+    .await
+    .unwrap();
+
+    let err = next_frame(&mut ws).await;
+    assert_eq!(err["kind"], "error");
+    assert_eq!(err["code"], "unsupported_capability");
+    assert_eq!(err["severity"], "warning");
+    assert_eq!(err["recoverable"], true);
+    assert!(
+        err["recommended_action"].as_str().unwrap().contains("retry"),
+        "guidance must be actionable: {err}"
+    );
+
+    // The connection survives the failed negotiation.
+    let snapshot = next_frame(&mut ws).await;
+    assert_eq!(snapshot["kind"], "snapshot");
+    let _ = ws.close(None).await;
+}
+
+#[tokio::test]
+async fn old_client_without_negotiation_still_streams() {
+    let addr = spawn_bridge().await;
+    let url = format!("ws://{addr}");
+    let (mut ws, _resp) = connect_async(&url).await.unwrap();
+
+    // No hello_response at all: the handshake must still complete.
+    let hello = next_frame(&mut ws).await;
+    assert_eq!(hello["kind"], "hello");
+    let snapshot = next_frame(&mut ws).await;
+    assert_eq!(snapshot["kind"], "snapshot");
+    assert_eq!(snapshot["timelines"].as_array().unwrap().len(), 5);
+
+    // And it must keep streaming (a delta or heartbeat arrives).
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
+    let mut saw_live = false;
+    while tokio::time::Instant::now() < deadline {
+        if let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) = ws.next().await {
+            let kind = serde_json::from_str::<serde_json::Value>(&text).unwrap();
+            if kind["kind"] == "delta" || kind["kind"] == "heartbeat" {
+                saw_live = true;
+                break;
+            }
+        }
+    }
+    assert!(saw_live, "a non-negotiating client must still receive live frames");
+    let _ = ws.close(None).await;
+}
+
+#[tokio::test]
+async fn client_sending_a_typed_frame_gets_a_structured_invalid_frame_error() {
+    let addr = spawn_bridge().await;
+    let url = format!("ws://{addr}");
+    let (mut ws, _resp) = connect_async(&url).await.unwrap();
+
+    next_frame(&mut ws).await; // hello
+    next_frame(&mut ws).await; // snapshot
+
+    // Clients may only send control messages; a typed frame is illegal.
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(
+        r#"{"kind":"delta","sequence":999,"timestamp":1,"source":"x","protocol":1,"bridge":"x"}"#
+            .into(),
+    ))
+    .await
+    .unwrap();
+
+    let err = next_frame(&mut ws).await;
+    assert_eq!(err["kind"], "error");
+    assert_eq!(err["code"], "invalid_frame");
+    assert_eq!(err["severity"], "warning");
+
+    // Still alive afterwards.
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
+    let mut saw_live = false;
+    while tokio::time::Instant::now() < deadline {
+        if let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) = ws.next().await {
+            let kind = serde_json::from_str::<serde_json::Value>(&text).unwrap();
+            if kind["kind"] == "delta" || kind["kind"] == "heartbeat" {
+                saw_live = true;
+                break;
+            }
+        }
+    }
+    assert!(saw_live, "the connection must survive a rejected typed frame");
+    let _ = ws.close(None).await;
+}
+
+#[tokio::test]
 async fn heartbeat_carries_bridge_wide_stats() {
     let addr = spawn_bridge().await;
     let url = format!("ws://{addr}");
@@ -327,19 +515,17 @@ async fn heartbeat_carries_bridge_wide_stats() {
     let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
     let mut stats: Option<serde_json::Value> = None;
     while tokio::time::Instant::now() < deadline {
-        if let Some(Ok(msg)) = ws.next().await {
-            if let tokio_tungstenite::tungstenite::Message::Text(text) = msg {
-                let value: serde_json::Value = serde_json::from_str(&text).unwrap();
-                if value["kind"] == "heartbeat" {
-                    let bs = value["bridge_stats"].clone();
-                    assert!(bs.is_object(), "heartbeat carries bridge_stats: {value}");
-                    assert!(bs["connections"].as_u64().unwrap() >= 1);
-                    assert!(bs["reconnects"].as_u64().unwrap() >= 1);
-                    assert!(bs["frames_sent"].as_u64().unwrap() > 0);
-                    assert!(bs["bytes_sent"].as_u64().unwrap() > 0);
-                    stats = Some(bs);
-                    break;
-                }
+        if let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) = ws.next().await {
+            let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+            if value["kind"] == "heartbeat" {
+                let bs = value["bridge_stats"].clone();
+                assert!(bs.is_object(), "heartbeat carries bridge_stats: {value}");
+                assert!(bs["connections"].as_u64().unwrap() >= 1);
+                assert!(bs["reconnects"].as_u64().unwrap() >= 1);
+                assert!(bs["frames_sent"].as_u64().unwrap() > 0);
+                assert!(bs["bytes_sent"].as_u64().unwrap() > 0);
+                stats = Some(bs);
+                break;
             }
         }
     }

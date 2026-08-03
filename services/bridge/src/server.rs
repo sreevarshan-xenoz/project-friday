@@ -14,16 +14,22 @@ use tokio::sync::Mutex;
 use tokio_tungstenite::accept_async;
 use tracing::{info, warn};
 
-use crate::connection::{handle_connection, ConnectionManager, DeltaPublisher, DEFAULT_BROADCAST_CAPACITY};
+use crate::connection::{
+    handle_connection, ConnectionManager, DeltaPublisher, DEFAULT_BROADCAST_CAPACITY,
+};
 use crate::frame_serializer::FrameSerializer;
 use crate::now_ms;
-use crate::protocol::Frame;
+use crate::protocol::{CapabilitySet, Frame};
 use crate::source::RuntimeSource;
 
 /// The executive-cycle cadence of the demo source (matches the frontend mock).
 pub const DEFAULT_TICK_MS: u64 = 1200;
 /// How often each connection publishes a heartbeat frame.
 pub const DEFAULT_HEARTBEAT_MS: u64 = 3600;
+/// How long a new connection waits for an optional capability negotiation
+/// before the snapshot is sent. Clients that answer immediately (the console
+/// does) never notice it; clients that do not negotiate wait this long once.
+pub const DEFAULT_NEGOTIATION_TIMEOUT_MS: u64 = 300;
 
 pub struct BridgeServer {
     addr: SocketAddr,
@@ -31,6 +37,8 @@ pub struct BridgeServer {
     tick_ms: u64,
     heartbeat_ms: u64,
     broadcast_capacity: usize,
+    capabilities: CapabilitySet,
+    negotiation_timeout: Duration,
 }
 
 impl BridgeServer {
@@ -41,6 +49,8 @@ impl BridgeServer {
             tick_ms: DEFAULT_TICK_MS,
             heartbeat_ms: DEFAULT_HEARTBEAT_MS,
             broadcast_capacity: DEFAULT_BROADCAST_CAPACITY,
+            capabilities: CapabilitySet::standard(),
+            negotiation_timeout: Duration::from_millis(DEFAULT_NEGOTIATION_TIMEOUT_MS),
         }
     }
 
@@ -65,11 +75,27 @@ impl BridgeServer {
         self
     }
 
+    /// Advertise a different capability set than the standard one. Only what
+    /// is advertised can ever be negotiated.
+    pub fn with_capabilities(mut self, capabilities: CapabilitySet) -> Self {
+        self.capabilities = capabilities;
+        self
+    }
+
+    /// Override the capability-negotiation window (tests use tiny values).
+    pub fn with_negotiation_timeout_ms(mut self, timeout_ms: u64) -> Self {
+        self.negotiation_timeout = Duration::from_millis(timeout_ms);
+        self
+    }
+
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
         let listener = TcpListener::bind(self.addr).await?;
         let local = listener.local_addr()?;
 
-        let manager = Arc::new(ConnectionManager::with_capacity(self.broadcast_capacity));
+        let manager = Arc::new(ConnectionManager::with_capabilities(
+            self.capabilities.clone(),
+            self.broadcast_capacity,
+        ));
 
         let (bridge_id, source_name) = {
             let src = self.source.lock().await;
@@ -89,11 +115,20 @@ impl BridgeServer {
             let (stream, peer) = listener.accept().await?;
             let source = self.source.clone();
             let heartbeat_ms = self.heartbeat_ms;
+            let negotiation_timeout = self.negotiation_timeout;
             let manager = manager.clone();
             tokio::spawn(async move {
                 match accept_async(stream).await {
                     Ok(ws) => {
-                        handle_connection(ws, peer, manager.clone(), source, heartbeat_ms).await;
+                        handle_connection(
+                            ws,
+                            peer,
+                            manager.clone(),
+                            source,
+                            heartbeat_ms,
+                            negotiation_timeout,
+                        )
+                        .await;
                     }
                     Err(e) => warn!(%peer, "websocket handshake failed: {e}"),
                 }
@@ -115,7 +150,7 @@ impl BridgeServer {
                 };
                 for delta in deltas {
                     let frame =
-                        DeltaPublisher::frame(&manager, &delta, &source_name, &bridge_id, now_ms());
+                        DeltaPublisher::frame(&delta, &source_name, &bridge_id, now_ms());
                     if let Ok(json) = FrameSerializer::to_json(&Frame::Delta(frame.clone())) {
                         manager.stats().set_delta_size(json.len());
                     }

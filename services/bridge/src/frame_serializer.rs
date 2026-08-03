@@ -83,6 +83,7 @@ fn frame_protocol(frame: &Frame) -> u32 {
         Frame::Snapshot(f) => f.protocol,
         Frame::Delta(f) => f.protocol,
         Frame::Heartbeat(f) => f.protocol,
+        Frame::Capabilities(f) => f.protocol,
         Frame::Error(f) => f.protocol,
     }
 }
