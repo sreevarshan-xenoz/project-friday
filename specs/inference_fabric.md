@@ -2,7 +2,7 @@
 
 **Status:** 🚧 Planned / Designing. **Spec-first:** authoritative contract for FRIDAY's Inference Fabric.
 
-The Inference Fabric abstracts LLM providers (e.g. Groq, OpenRouter, Gemini, Ollama) and maps them to logical model families. The cognitive layer requests a model family under a specific routing policy; the Inference Fabric decides which provider to query and handles automatic rate-limit/JSON-validation failovers.
+The Inference Fabric abstracts LLM providers (e.g. Groq, OpenRouter, Gemini, Ollama, OpenGateway/gitlawb) and maps them to logical model families. The cognitive layer requests a model family under a specific routing policy; the Inference Fabric decides which provider to query and handles automatic rate-limit/JSON-validation failovers.
 
 ```
                     Cognitive Engine

@@ -3,7 +3,7 @@
 //! Usage:
 //!   provider-qual                  # real mode: talks to the configured gateway
 //!   provider-qual --mock           # in-process mock, no gateway required
-//!   provider-qual --provider NAME  # omniroute (default) | ollama | openrouter | groq | cerebras | gemini
+//!   provider-qual --provider NAME  # omniroute (default) | ollama | openrouter | groq | cerebras | gemini | opengateway
 //!   provider-qual --out DIR        # evidence pack directory
 //!   provider-qual --scenario ID    # run only the scenario with this id
 //!   provider-qual --replay PATH    # re-run the scenario recorded in PATH
@@ -114,8 +114,16 @@ fn build_target(provider: &str, mock: bool) -> (Target, String, String) {
             "gemini-2.5-flash",
             RoutingMode::Quality,
         ),
+        "opengateway" => (
+            "opengateway",
+            std::env::var("OPENGATEWAY_BASE_URL")
+                .unwrap_or_else(|_| "https://opengateway.gitlawb.com/v1".to_string()),
+            std::env::var("OPENGATEWAY_API_KEY").unwrap_or_default(),
+            "auto",
+            RoutingMode::Free,
+        ),
         other => panic!(
-            "unknown provider: {other} (supported: omniroute, ollama, openrouter, groq, cerebras, gemini)"
+            "unknown provider: {other} (supported: omniroute, ollama, openrouter, groq, cerebras, gemini, opengateway)"
         ),
     };
 

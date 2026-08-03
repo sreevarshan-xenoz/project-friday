@@ -1,0 +1,13 @@
+{
+  "action_ok": false,
+  "fault": null,
+  "group": "completion",
+  "id": "completion.hello",
+  "issues": [
+    "PRV-COMPLETION_HELLO"
+  ],
+  "latency_ms": 588,
+  "note": "error: All candidates failed. Last error: Provider opengateway returned error status 429 Too Many Requests: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day-high-balance. \",\"type\":\"rate_limit_error\",\"code\":\"429\"}}",
+  "passed": false,
+  "state_accuracy": false
+}

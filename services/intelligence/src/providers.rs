@@ -437,6 +437,7 @@ impl InferenceFabric {
                     model.provider == "openrouter"
                         || model.provider == "omniroute"
                         || model.provider == "gemini"
+                        || model.provider == "opengateway"
                 }
                 RoutingMode::Local => model.provider == "ollama",
                 RoutingMode::Hybrid => {
@@ -444,6 +445,7 @@ impl InferenceFabric {
                         || model.provider == "openrouter"
                         || model.provider == "omniroute"
                         || model.provider == "nvidia-nim"
+                        || model.provider == "opengateway"
                 }
             };
 
@@ -770,6 +772,73 @@ impl InferenceFabric {
             }
         }
 
+        // OpenGateway (gitlawb.com) — OpenAI-compatible multi-provider gateway.
+        // NOTE: this is gitlawb's OpenGateway, NOT a GitLab service. Free models
+        // (verified against the live /v1/models catalog): nemotron-3-ultra,
+        // ling-3.0-flash, macaron-v1-tall, plus `auto` smart routing.
+        if let Ok(key) = std::env::var("OPENGATEWAY_API_KEY") {
+            let base_url = std::env::var("OPENGATEWAY_BASE_URL")
+                .unwrap_or_else(|_| "https://opengateway.gitlawb.com/v1".to_string());
+            fabric.register_provider(Box::new(OpenAiProvider {
+                name: "opengateway".to_string(),
+                base_url,
+                api_key: key,
+            }));
+            if !registry_loaded {
+                // Smart routing: the gateway picks the cheapest capable model and
+                // escalates on failure, so FRIDAY exposes it as one "auto" model.
+                fabric.register_model(ModelInfo {
+                    id: "auto".to_string(),
+                    family: "opengateway-auto".to_string(),
+                    provider: "opengateway".to_string(),
+                    latency_ms: 800,
+                    reliability: 1.0,
+                    capabilities: vec![
+                        ModelCapability::Json,
+                        ModelCapability::Tools,
+                        ModelCapability::LongContext,
+                    ],
+                    max_context: 200_000,
+                });
+                fabric.register_model(ModelInfo {
+                    id: "nvidia/nemotron-3-ultra-550b-a55b:free".to_string(),
+                    family: "nemotron-3-ultra".to_string(),
+                    provider: "opengateway".to_string(),
+                    latency_ms: 2500,
+                    reliability: 1.0,
+                    capabilities: vec![
+                        ModelCapability::Json,
+                        ModelCapability::Tools,
+                        ModelCapability::LongContext,
+                    ],
+                    max_context: 131_072,
+                });
+                fabric.register_model(ModelInfo {
+                    id: "inclusionai/ling-3.0-flash:free".to_string(),
+                    family: "ling-3.0-flash".to_string(),
+                    provider: "opengateway".to_string(),
+                    latency_ms: 2000,
+                    reliability: 1.0,
+                    capabilities: vec![
+                        ModelCapability::Json,
+                        ModelCapability::Tools,
+                        ModelCapability::LongContext,
+                    ],
+                    max_context: 262_144,
+                });
+                fabric.register_model(ModelInfo {
+                    id: "mindai/macaron-v1-tall".to_string(),
+                    family: "macaron-v1-tall".to_string(),
+                    provider: "opengateway".to_string(),
+                    latency_ms: 3000,
+                    reliability: 1.0,
+                    capabilities: vec![ModelCapability::Json, ModelCapability::LongContext],
+                    max_context: 262_144,
+                });
+            }
+            tracing::info!("Registered OpenGateway provider (gitlawb, OpenAI-compatible).");
+        }
+
         fabric.load_health();
         fabric
     }
@@ -989,6 +1058,45 @@ mod tests {
         // No OmniRoute instance should be running on this port in CI; must not panic.
         let p = OmniRouteProvider::new("http://localhost:19999/v1".to_string(), String::new());
         assert!(!p.check_health().await);
+    }
+
+    #[test]
+    fn opengateway_is_registered_and_selected_in_free_and_hybrid_modes() {
+        let mut fabric = InferenceFabric::new();
+        fabric.register_provider(Box::new(OpenAiProvider {
+            name: "opengateway".to_string(),
+            base_url: "https://opengateway.gitlawb.com/v1".to_string(),
+            api_key: String::new(),
+        }));
+        fabric.register_model(ModelInfo {
+            id: "auto".to_string(),
+            family: "opengateway-auto".to_string(),
+            provider: "opengateway".to_string(),
+            latency_ms: 800,
+            reliability: 1.0,
+            capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
+            max_context: 200_000,
+        });
+
+        assert!(fabric.providers.contains_key("opengateway"));
+
+        let free = fabric.select_candidates(RoutingMode::Free);
+        assert!(
+            free.iter().any(|(m, _)| m.provider == "opengateway"),
+            "opengateway should be a Free-mode candidate"
+        );
+
+        let hybrid = fabric.select_candidates(RoutingMode::Hybrid);
+        assert!(
+            hybrid.iter().any(|(m, _)| m.provider == "opengateway"),
+            "opengateway should be a Hybrid-mode candidate"
+        );
+
+        let local = fabric.select_candidates(RoutingMode::Local);
+        assert!(
+            !local.iter().any(|(m, _)| m.provider == "opengateway"),
+            "opengateway must not be selected in Local-only mode"
+        );
     }
 }
 

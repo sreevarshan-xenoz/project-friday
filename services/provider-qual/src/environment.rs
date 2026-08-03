@@ -35,6 +35,7 @@ pub fn capture(mode: Mode, provider_name: &str, base_url: &str, model_id: &str) 
         ("GROQ_API_KEY", "groq"),
         ("CEREBRAS_API_KEY", "cerebras"),
         ("GEMINI_API_KEY", "gemini"),
+        ("OPENGATEWAY_API_KEY", "opengateway"),
     ] {
         if std::env::var(key).is_ok() {
             configured.push(name.to_string());
@@ -42,6 +43,9 @@ pub fn capture(mode: Mode, provider_name: &str, base_url: &str, model_id: &str) 
     }
     if std::env::var("OMNIROUTE_BASE_URL").is_ok() {
         configured.push("omniroute(base_url)".to_string());
+    }
+    if std::env::var("OPENGATEWAY_BASE_URL").is_ok() {
+        configured.push("opengateway(base_url)".to_string());
     }
 
     Environment {

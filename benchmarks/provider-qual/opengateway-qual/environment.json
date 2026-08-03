@@ -1,0 +1,10 @@
+{
+  "mode": "real",
+  "timestamp": "2026-08-03T19:06:07.783897+00:00",
+  "friday_version": "0.1.0",
+  "provider_name": "opengateway",
+  "provider_base_url": "https://opengateway.gitlawb.com/v1",
+  "model_id": "auto",
+  "os": "windows",
+  "configured_providers": []
+}
