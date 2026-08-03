@@ -16,6 +16,8 @@
 //! ReputationEngine, TimelineBuilder, MetricsEngine) — the exact pipeline a
 //! real runtime bridge would run over a real ledger.
 
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
 use friday_experience::{
     CalibrationMetrics, CalibrationStore, ExperienceEngine, ExperienceMetrics, ExperienceStore,
     FallbackMetrics, MetricsEngine, MetricsReport, PredictionAccuracy, ReputationEngine,
@@ -72,6 +74,19 @@ pub trait RuntimeSource: Send + Sync {
     /// Advance the source by one tick and report what changed.
     /// Empty result = nothing changed this tick.
     fn tick(&mut self, now_ms: u64) -> Vec<SourceDelta>;
+}
+
+/// Emit a structured timing line for the Validation Harness analyzer
+/// (`validation/analyze.mjs` parses `bridge.log` for `TIMING` lines). Written
+/// to stderr, which the runner captures into `bridge.log`. Deliberately NOT on
+/// the wire protocol — the frozen frame format stays byte-identical. Format:
+/// `TIMING <name> <milliseconds> <epoch-ms>`.
+fn emit_timing(name: &str, elapsed: std::time::Duration) {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    eprintln!("TIMING {} {:.3} {}", name, elapsed.as_secs_f64() * 1000.0, ts);
 }
 
 /// Monotonic clock source for the bridge, injectable in tests.
@@ -377,6 +392,7 @@ impl DemoRuntimeSource {
 
     /// Rebuild the derived read models from the ledger (frozen engines only).
     fn regenerate(&mut self) {
+        let t = Instant::now();
         let mut experience = ExperienceStore::new();
         let mut reputation = ReputationStore::new();
         let calibration = CalibrationStore::new();
@@ -385,9 +401,17 @@ impl DemoRuntimeSource {
         let builder = TimelineBuilder::new(&self.ledger, &experience, &reputation, &calibration);
         self.timelines = builder.build_all();
         self.metrics = MetricsEngine::summarize(&self.timelines);
+        emit_timing("timeline_regeneration", t.elapsed());
     }
 
     fn dashboard(&self) -> DashboardDto {
+        let t = Instant::now();
+        let dto = self.dashboard_impl();
+        emit_timing("dashboard_generation", t.elapsed());
+        dto
+    }
+
+    fn dashboard_impl(&self) -> DashboardDto {
         let phase = PHASE_ORDER[self.phase_index];
         let executive: Vec<ExecutivePhaseStateDto> = PHASE_ORDER
             .iter()

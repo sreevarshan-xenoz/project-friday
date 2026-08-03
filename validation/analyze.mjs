@@ -11,6 +11,13 @@
 //               connection starts (1 = never reconnected), error frames.
 //   - Runtime:  ledger/episodes/decisions growth — expected, reported to
 //               separate data growth from engine accumulation.
+//   - Timings:  server-side read-model generation cost parsed from
+//               `bridge.log` (`TIMING` lines the bridge emits to stderr). This
+//               is the causal link for the RTT drift finding: if
+//               dashboard_generation / timeline_regeneration grow with
+//               history, per-frame CPU is O(retained history) and RTT is a
+//               downstream symptom. Deliberately NOT on the wire protocol —
+//               the frozen frame format stays byte-identical.
 //
 // VP-001 failure criteria are enforced (defaults below, overridable): a metric
 // over its threshold is reported loudly and fails the run. Writes `report.md`
@@ -187,6 +194,45 @@ function sizeTrend(key) {
 const deltaSize = sizeTrend('delta_size_bytes');
 const snapshotSize = sizeTrend('snapshot_size_bytes');
 
+// read-model generation timings from bridge.log (server-side, off the wire)
+// TIMING lines are `TIMING <name> <milliseconds> <epoch-ms>` on the bridge's
+// stderr, captured into bridge.log by the runner. Ordered by ts so drift is
+// time-ordered (first half vs second half), exactly like RTT.
+function readTimings() {
+  const logPath = join(dir, 'bridge.log');
+  if (!existsSync(logPath)) return {};
+  const text = readFileSync(logPath, 'utf8');
+  const out = {};
+  for (const m of text.matchAll(/^TIMING\s+(\S+)\s+([\d.]+)\s+(\d+)$/gm)) {
+    const name = m[1];
+    const ms = Number(m[2]);
+    const ts = Number(m[3]);
+    (out[name] ??= []).push([ts, ms]);
+  }
+  for (const name of Object.keys(out)) {
+    out[name].sort((a, b) => a[0] - b[0]);
+  }
+  return out;
+}
+const timings = readTimings();
+function timingStats(name) {
+  const points = timings[name];
+  if (!points || points.length === 0) return null;
+  const ordered = points.map((p) => p[1]);
+  const sorted = [...ordered].sort((a, b) => a - b);
+  const mean = ordered.reduce((a, b) => a + b, 0) / ordered.length;
+  const p95 = percentile(sorted, 95);
+  const mid = Math.floor(ordered.length / 2);
+  const firstHalf = ordered.slice(0, mid);
+  const secondHalf = ordered.slice(mid);
+  const f = firstHalf.reduce((a, b) => a + b, 0) / firstHalf.length;
+  const s = secondHalf.reduce((a, b) => a + b, 0) / secondHalf.length;
+  const driftPct = (Math.abs(s - f) / Math.max(f, 1e-9)) * 100;
+  return { count: points.length, meanMs: mean, p95Ms: p95, firstHalfMs: f, secondHalfMs: s, driftPct };
+}
+const dashboardGen = timingStats('dashboard_generation');
+const timelineRegen = timingStats('timeline_regeneration');
+
 // ---------------------------------------------------------------------------
 // failure criteria (VP-001)
 // ---------------------------------------------------------------------------
@@ -323,6 +369,16 @@ Verdict: ${rttVerdict().pass === true ? 'Stable' : rttVerdict().pass === false ?
 | Delta frame size | ${fmt(deltaSize.first / 1024)} KB → ${fmt(deltaSize.last / 1024)} KB | ${deltaSize.slopePerHr === null ? '—' : `${fmt(deltaSize.slopePerHr / 1024, 1)} KB/hr`} |
 | Snapshot size | ${fmt(snapshotSize.first / 1024)} KB → ${fmt(snapshotSize.last / 1024)} KB | — |
 
+## Read-model generation (bridge.log TIMING lines — causal link for RTT drift)
+
+| name | count | mean | p95 | 1st half | 2nd half | drift |
+| --- | --- | --- | --- | --- | --- | --- |
+| dashboard_generation | ${dashboardGen ? dashboardGen.count : '—'} | ${dashboardGen ? `${fmt(dashboardGen.meanMs, 3)} ms` : '—'} | ${dashboardGen ? `${fmt(dashboardGen.p95Ms, 3)} ms` : '—'} | ${dashboardGen ? `${fmt(dashboardGen.firstHalfMs, 3)} ms` : '—'} | ${dashboardGen ? `${fmt(dashboardGen.secondHalfMs, 3)} ms` : '—'} | ${dashboardGen ? `${fmt(dashboardGen.driftPct, 0)}%` : '—'} |
+| timeline_regeneration | ${timelineRegen ? timelineRegen.count : '—'} | ${timelineRegen ? `${fmt(timelineRegen.meanMs, 3)} ms` : '—'} | ${timelineRegen ? `${fmt(timelineRegen.p95Ms, 3)} ms` : '—'} | ${timelineRegen ? `${fmt(timelineRegen.firstHalfMs, 3)} ms` : '—'} | ${timelineRegen ? `${fmt(timelineRegen.secondHalfMs, 3)} ms` : '—'} | ${timelineRegen ? `${fmt(timelineRegen.driftPct, 0)}%` : '—'} |
+
+> If these rise with retained history, per-frame read-model CPU is O(history)
+> and RTT drift is the downstream symptom (Finding VP-001-2). Not a criterion.
+
 ## Failure criteria (VP-001)
 
 | Verdict | Criterion | Target | Observed |
@@ -347,6 +403,10 @@ writeFileSync(
         transport: { frames: framesReceived, bytes: bytesReceived, gaps, connection_starts: starts, errors_received: errorsReceived, resyncs_received: resyncsReceived, kbps },
         runtime_growth: { ledger: ledger, episodes, decisions, experience_samples: experienceSamples },
         wire_sizes: { delta: deltaSize, snapshot: snapshotSize },
+        timings: {
+          dashboard_generation: dashboardGen,
+          timeline_regeneration: timelineRegen,
+        },
       },
       criteria: criteria.map((c) => ({ name: c.name, target: c.target, observed: c.observed, label: c.label, pass: c.pass })),
       crashed,

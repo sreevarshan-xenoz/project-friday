@@ -83,6 +83,18 @@ Two report signals beyond the table:
   slices, so delta size grows with the ledger; the trend is evidence for later
   transport work (stages 3–4), not a failure.
 
+One causal section beyond the table:
+
+- **Read-model generation timings** — the bridge times `dashboard_generation`
+  and `timeline_regeneration` internally and writes `TIMING <name> <ms>
+  <epoch-ms>` lines to its stderr (captured into `bridge.log` by the runner;
+  deliberately **off the wire**, so the frozen frame format stays
+  byte-identical). The analyzer parses them and reports count / mean / p95 /
+  first-vs-second-half drift per name — the causal link for RTT drift: if
+  generation time grows with retained history, per-frame CPU is O(history).
+  Not a criterion. Instrumented in `git 0e6df06`+; runs launched before that
+  have no `TIMING` lines and the section shows `—`.
+
 ## Reuse
 
 Same runner + collector for later programs: change the data the Collector

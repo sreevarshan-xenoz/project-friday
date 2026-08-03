@@ -67,7 +67,12 @@ Evidence supports:
   and ends with a PASS/FAIL verdict against the VP-001 criteria (memory slope,
   RTT drift, frame loss, sequence gaps, reconnects, crashes).
 - **Metrics:** memory growth, ledger growth, calibration stability, replay
-  correctness, prediction drift, latency over time.
+  correctness, prediction drift, latency over time, and — from run-005 onward
+  — server-side read-model generation timings (`dashboard_generation_ms`,
+  `timeline_regeneration_ms`; bridge writes `TIMING` lines to `bridge.log`,
+  analyzer correlates them with the RTT curve as the causal link for
+  Finding VP-001-2). Instrument landed in git `0e6df06`+; **run-004 was
+  launched before it** and is therefore uninstrumented (no `TIMING` lines).
 - **Runs:** 2h ✅ baseline (run-002) → 8h ✅ (run-003) → 24h (run-004) → ADR
   decision (72h/1w only after the architecture question is resolved).
 - **Expected Result:** bounded growth; calibration converges and stays within

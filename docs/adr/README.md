@@ -12,6 +12,7 @@ explain **why** it became that way.
 | 0002 | Learning Layer                 | Accepted | `friday-plugin-runtime`, `friday-experience` |
 | 0003 | Observability Layer            | Accepted | `friday-experience` read models         |
 | 0004 | Public API Stability Tiers     | Accepted | `friday-experience` public surface      |
+| 0005 | Windowed Observability          | Proposed | `friday-experience` read models (pending VP-001 run-004) |
 
 ## Frozen architectural contracts
 
