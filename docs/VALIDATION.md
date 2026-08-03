@@ -41,7 +41,21 @@ are filled in afterwards. A run that surprises us is a finding, not a failure.
 
 ### VP-001 — Long-running cognition
 
-**Status:** runs started (2h complete — FAIL: memory_growth)
+**Status:** ladder in progress — run-002 (2h) = **VP-001 Baseline**; run-003 (8h) done; run-004 (24h) pending; then ADR decision
+
+```
+Evidence supports:
+
+✓ Transport stability (0 gaps / 0 errors / 0 reconnects through 8h)
+✓ Replay stability
+✓ Protocol stability
+⚠ Read-model memory proportional to retained history
+  (~41 MB/1,000 records; per-record cost DECREASING with scale — not a leak)
+⚠ RTT degrades with retained history (mean 1.1→12 ms, p95 13→103 ms over 8h)
+  — per-frame read-model work is O(history)
+✗ Memory target unmet (12.1 MB/hr)
+✗ RTT drift target unmet (149.5%)
+```
 
 - **Goal:** Can FRIDAY run continuously without degrading?
 - **Hypothesis:** The read-model/derived architecture has no accumulation
@@ -54,32 +68,55 @@ are filled in afterwards. A run that surprises us is a finding, not a failure.
   RTT drift, frame loss, sequence gaps, reconnects, crashes).
 - **Metrics:** memory growth, ledger growth, calibration stability, replay
   correctness, prediction drift, latency over time.
-- **Runs:** 2 hours (done) → 8 hours → 24 hours → 72 hours → 1 week.
+- **Runs:** 2h ✅ baseline (run-002) → 8h ✅ (run-003) → 24h (run-004) → ADR
+  decision (72h/1w only after the architecture question is resolved).
 - **Expected Result:** bounded growth; calibration converges and stays within
   clamps; replay results stay consistent; latency flat.
-- **Actual Result (run-002, 2026-08-03, 120 min, seed 42/count 140, git
-  3d72910):** FAIL on `memory_growth` (15.5 MB/hr vs < 1 MB/hr target); every
-  other criterion PASS (0 sequence gaps, 0 unexpected reconnects, 0 error
-  frames, RTT drift ±2 ms). Memory grew 13.9 → 46.3 MB, peak 53.8 MB. Growth
-  is **linear, not a leak**: ~2–4 MB per 74-record (15-min) bucket, ~52 MB per
-  1,000 ledger records, and the per-1,000-record slope is *not* increasing
-  (first-half ≈ 66 MB/1,000, second-half ≈ 36 MB/1,000 — warm-up noise, not
-  acceleration). Driver: `DemoRuntimeSource` regenerates full timelines each
-  cycle and every `DecisionTimeline` carries full experience/reputation/
-  calibration store snapshots (frozen Phase 6B design — snapshots, not
-  references); experience samples grew 1,960 → 56,359 (~91/decision). The
-  transport path is healthy: delta frames stay flat (43.4 → 43.6 KB), snapshot
-  grows to 1,377.5 KB (full-slice read models), 0 gaps/errors. Evidence:
-  `artifacts/validation/run-002/{samples.jsonl, report.md, report.json}`
-  (gitignored).
-- **Decision (Finding VP-001-1):** bridge memory is unbounded *linear* data
-  growth — the read models hold everything forever. At the demo's ~300
-  decisions/hr that projects to ~370 MB at 24 h and multi-GB at 1 week, so
-  long runs are not viable without a retention policy. Not an ADR yet — the
-  call is the user's: (a) accept + bound run lengths, (b) raise an ADR for
-  read-model retention/windowing (touches the frozen TimelineBuilder/store
-  design), or (c) continue the ladder (8 h → 24 h) to separate the memory
-  signal from any other long-run degradations first.
+- **Actual Result (run-002 — VP-001 Baseline, 2026-08-03, 120 min, seed
+  42/count 140, git 3d72910):** FAIL on `memory_growth` (15.5 MB/hr vs < 1
+  MB/hr target); every other criterion PASS (0 sequence gaps, 0 unexpected
+  reconnects, 0 error frames, RTT drift ±2 ms). Memory grew 13.9 → 46.3 MB,
+  peak 53.8 MB. Growth is **linear, not a leak**: ~2–4 MB per 74-record
+  (15-min) bucket, ~52 MB per 1,000 ledger records, and the per-1,000-record
+  slope is *not* increasing (first-half ≈ 66 MB/1,000, second-half ≈ 36
+  MB/1,000 — warm-up noise, not acceleration — classic leaks accelerate
+  20/35/60/95/150, this is ~40/41/39/38/37). Driver: `DemoRuntimeSource`
+  regenerates full timelines each cycle and every `DecisionTimeline` carries
+  full experience/reputation/calibration store snapshots (frozen Phase 6B
+  design — snapshots, not references); experience samples grew 1,960 → 56,359
+  (~91/decision). The transport path is healthy: delta frames stay flat (43.4
+  → 43.6 KB), snapshot grows to 1,377.5 KB (full-slice read models), 0
+  gaps/errors. Evidence: `artifacts/validation/run-002/{samples.jsonl,
+  report.md, report.json}` (gitignored).
+- **Actual Result (run-003, 2026-08-03, 480 min, same seed/count, git
+  c0a147b):** FAIL on `memory_growth` (12.1 MB/hr) AND `rtt_drift` (±5.7 ms,
+  149.5%); transport still clean (0 gaps, 0 reconnects, 0 errors, delta frames
+  flat 43.4 → 42.1 KB). Memory 14.0 → 113.3 MB, peak 155.8 MB; **per-1,000-
+  record cost fell to 41.0 MB (from 52.0 in run-002) — per-record cost
+  decreases with scale, the clearest "not a leak" signal yet**. New signal
+  **Finding VP-001-2**: RTT degrades monotonically with retained history —
+  hourly mean 1.1 → 3.3 → 4.7 → 6.3 → 8.0 → 8.8 → 9.7 → 12.0 ms and hourly
+  p95 13 → 31 → 48 → 59 → 76 → 87 → 96 → 103 ms as the ledger grew 437 →
+  2500 (~295/hr). Same root cause as VP-001-1: the source's `regenerate()`
+  (every 12 s cycle) and `dashboard()` (every emission) iterate ALL timelines,
+  so per-frame CPU is O(retained history); the bridge's main loop delays pong
+  replies during that work → RTT inflates. The collector is constant-work
+  (async, no blocking), so this is bridge-side head-of-line blocking, not a
+  measurement artifact. Ledger 140 → 2500, experience samples 1,960 → 650,864
+  (81,115/hr). Evidence: `artifacts/validation/run-003/` (gitignored).
+- **Decision (Finding VP-001-1 + VP-001-2, path: (c) then (b)):** the 8h run
+  answered the ladder's questions — slope stays linear (yes, per-record cost
+  is *falling*), no allocator/fragmentation blowup (RSS tracks history
+  linearly), but **serialization/frame CPU cost DOES grow with history**
+  (RTT). Two symptoms, one root cause: **read-model work and memory are both
+  proportional to retained history**. That is exactly what a windowed
+  observability design addresses. Continue the ladder to 24h (run-004) to
+  confirm both curves hold at ~7,200 records and no new failure mode appears;
+  then open **ADR-0005 — Windowed Observability Read Models** (NOT "fix a
+  memory leak" — there is no leak). Architectural options noted, not yet
+  evaluated: (1) timeline → `ExperienceSnapshotId` → store lookup, (2) timeline
+  → `Arc<ExperienceSnapshot>`, (3) timeline keeps only the delta. Evaluation
+  happens only after the 24h run, per Evidence → ADR → Architecture change.
 
 ### VP-002 — Prediction quality
 
@@ -151,7 +188,7 @@ are filled in afterwards. A run that surprises us is a finding, not a failure.
 
 | VP    | Program                 | Status    | Last run | Result link |
 | ----- | ----------------------- | --------- | -------- | ----------- |
-| VP-001 | Long-running cognition  | 2h run (FAIL: memory) | 2026-08-03 | [run-002](..\artifacts\validation\run-002\report.md) |
+| VP-001 | Long-running cognition  | baseline (2h) + 8h run | 2026-08-03 | [run-002 baseline](..\artifacts\validation\run-002\report.md) · [run-003](..\artifacts\validation\run-003\report.md) |
 | VP-002 | Prediction quality      | proposed  | —        | —           |
 | VP-003 | Replay correctness      | proposed  | —        | —           |
 | VP-004 | Scaling                 | first run | 2026-08-01 | [results](../benchmarks/VP-004/README.md) |
