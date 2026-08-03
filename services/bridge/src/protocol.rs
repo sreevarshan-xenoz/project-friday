@@ -378,12 +378,34 @@ pub struct SourceSnapshotDto {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BridgeStatsDto {
+    /// Consoles currently connected.
+    pub connections: u64,
+    /// Total connections accepted since the bridge started (reconnects = this
+    /// minus `connections`).
+    pub reconnects: u64,
+    /// Automatic (lagged) + client-requested resyncs served.
+    pub resyncs: u64,
+    /// Frames written to clients (server-wide).
+    pub frames_sent: u64,
+    /// Serialized bytes written to clients (server-wide).
+    pub bytes_sent: u64,
+    /// Wire size of the last snapshot frame sent.
+    pub snapshot_size_bytes: u64,
+    /// Wire size of the last delta frame sent.
+    pub delta_size_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HelloFrame {
     pub sequence: u64,
     pub timestamp: u64,
     pub source: String,
     pub protocol: u32,
     pub bridge: String,
+    /// Bridge-wide counters at connect time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bridge_stats: Option<BridgeStatsDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -427,6 +449,9 @@ pub struct HeartbeatFrame {
     pub protocol: u32,
     pub bridge: String,
     pub latency_ms: Option<u64>,
+    /// Bridge-wide counters, refreshed on every heartbeat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bridge_stats: Option<BridgeStatsDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -12,7 +12,7 @@ use std::time::Duration;
 use friday_bridge::{
     BridgeServer, DemoRuntimeSource, Frame, FrameSerializer, RuntimeSource, SourceDelta,
 };
-use futures::StreamExt;
+use futures::{SinkExt, StreamExt};
 use tokio_tungstenite::connect_async;
 
 // ---------------------------------------------------------------------------
@@ -27,6 +27,7 @@ fn hello_frame_matches_console_json_shape() {
         source: "mock".into(),
         protocol: 1,
         bridge: "friday-bridge-demo".into(),
+        bridge_stats: None,
     });
     let json = FrameSerializer::to_json(&frame).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -37,6 +38,7 @@ fn hello_frame_matches_console_json_shape() {
     assert_eq!(value["source"], "mock");
     assert_eq!(value["bridge"], "friday-bridge-demo");
     assert_eq!(value.get("message"), None);
+    assert_eq!(value.get("bridge_stats"), None, "stats omitted when None");
 }
 
 #[test]
@@ -75,6 +77,7 @@ fn frame_round_trips_through_json() {
             source: "mock".into(),
             protocol: 1,
             bridge: "b".into(),
+            bridge_stats: None,
         }),
         Frame::Snapshot(friday_bridge::protocol::SnapshotFrame {
             sequence: 2,
@@ -107,6 +110,15 @@ fn frame_round_trips_through_json() {
             protocol: 1,
             bridge: "b".into(),
             latency_ms: Some(9),
+            bridge_stats: Some(friday_bridge::protocol::BridgeStatsDto {
+                connections: 1,
+                reconnects: 1,
+                resyncs: 0,
+                frames_sent: 3,
+                bytes_sent: 1024,
+                snapshot_size_bytes: 900,
+                delta_size_bytes: 60,
+            }),
         }),
     ];
 
@@ -258,4 +270,115 @@ async fn next_frame(
             return serde_json::from_str(&text).unwrap();
         }
     }
+}
+
+async fn next_snapshot(
+    ws: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+) -> serde_json::Value {
+    loop {
+        let frame = next_frame(ws).await;
+        if frame["kind"] == "snapshot" {
+            return frame;
+        }
+    }
+}
+
+#[tokio::test]
+async fn client_can_request_a_resync_snapshot() {
+    let addr = spawn_bridge().await;
+    let url = format!("ws://{addr}");
+    let (mut ws, _resp) = connect_async(&url).await.unwrap();
+
+    let hello = next_frame(&mut ws).await;
+    assert_eq!(hello["kind"], "hello");
+    assert!(hello["bridge_stats"].is_object(), "hello carries bridge stats");
+    let snapshot1 = next_frame(&mut ws).await;
+    assert_eq!(snapshot1["kind"], "snapshot");
+
+    // A console that lost frames asks for a fresh snapshot mid-stream.
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(
+        r#"{"type":"resync"}"#.into(),
+    ))
+    .await
+    .unwrap();
+
+    let resync = next_snapshot(&mut ws).await;
+    assert!(
+        resync["sequence"].as_u64().unwrap() > snapshot1["sequence"].as_u64().unwrap(),
+        "resync continues the stream: {} -> {}",
+        snapshot1["sequence"],
+        resync["sequence"]
+    );
+    assert!(resync["ledger"].is_array(), "resync is a full snapshot");
+    let _ = ws.close(None).await;
+}
+
+#[tokio::test]
+async fn heartbeat_carries_bridge_wide_stats() {
+    let addr = spawn_bridge().await;
+    let url = format!("ws://{addr}");
+    let (mut ws, _resp) = connect_async(&url).await.unwrap();
+
+    next_frame(&mut ws).await; // hello
+    next_frame(&mut ws).await; // snapshot
+
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
+    let mut stats: Option<serde_json::Value> = None;
+    while tokio::time::Instant::now() < deadline {
+        if let Some(Ok(msg)) = ws.next().await {
+            if let tokio_tungstenite::tungstenite::Message::Text(text) = msg {
+                let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+                if value["kind"] == "heartbeat" {
+                    let bs = value["bridge_stats"].clone();
+                    assert!(bs.is_object(), "heartbeat carries bridge_stats: {value}");
+                    assert!(bs["connections"].as_u64().unwrap() >= 1);
+                    assert!(bs["reconnects"].as_u64().unwrap() >= 1);
+                    assert!(bs["frames_sent"].as_u64().unwrap() > 0);
+                    assert!(bs["bytes_sent"].as_u64().unwrap() > 0);
+                    stats = Some(bs);
+                    break;
+                }
+            }
+        }
+    }
+
+    let stats = stats.expect("expected a heartbeat with bridge_stats");
+    assert!(
+        stats["snapshot_size_bytes"].as_u64().unwrap() > 0,
+        "snapshot size measured: {stats}"
+    );
+    assert!(
+        stats["delta_size_bytes"].as_u64().unwrap() > 0,
+        "delta size measured: {stats}"
+    );
+    let _ = ws.close(None).await;
+}
+
+#[tokio::test]
+async fn reconnects_are_counted_and_active_connections_tracked() {
+    let addr = spawn_bridge().await;
+    let url = format!("ws://{addr}");
+
+    let (mut conn1, _resp) = connect_async(&url).await.unwrap();
+    let hello1 = next_frame(&mut conn1).await;
+    assert_eq!(hello1["bridge_stats"]["reconnects"], 1);
+    assert_eq!(hello1["bridge_stats"]["connections"], 1);
+    conn1.close(None).await.unwrap();
+
+    // Give the server a moment to observe the close.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let (mut conn2, _resp) = connect_async(&url).await.unwrap();
+    let hello2 = next_frame(&mut conn2).await;
+    assert_eq!(
+        hello2["bridge_stats"]["reconnects"], 2,
+        "second connect is a reconnect"
+    );
+    assert_eq!(
+        hello2["bridge_stats"]["connections"], 1,
+        "only conn2 is active after conn1 closed"
+    );
+    let _ = conn2.close(None).await;
 }
