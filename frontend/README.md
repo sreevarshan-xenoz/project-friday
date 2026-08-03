@@ -116,6 +116,14 @@ bridge serializes the frozen read models losslessly (serde_json
 `float_roundtrip`) into the same `ConsoleFrame` shapes, tagged by `kind` with
 `protocol: 1`.
 
+The client answers the bridge's `hello` with a capability handshake
+(`{"type":"hello_response","capabilities":{"metrics":true}}`) so it enables the
+optional `metrics` counter frames, then receives a `capabilities` ack before
+the snapshot. `error` frames carry the machine-readable taxonomy
+(`code`/`severity`/`recoverable`/`recommended_action`). The full protocol —
+state machine, per-state frame legality, negotiation flow, error codes — is
+frozen in `services/bridge/PROTOCOL.md`.
+
 Choose the provider at startup with `VITE_CONSOLE_BRIDGE`:
 
 ```bash
