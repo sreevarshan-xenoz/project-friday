@@ -17,6 +17,9 @@
  */
 import {
   CONSOLE_PROTOCOL_VERSION,
+  type BridgeCapability,
+  type CapabilityName,
+  type CapabilitySet,
   type ConsoleDataSource,
   type ConsoleFrame,
   type ConsoleFrameKind,
@@ -34,6 +37,29 @@ import { computeMetrics, executiveCycle, generateLedger, worldState } from './mo
 const TICK_MS = 1200;
 const HEARTBEAT_EVERY = 3;
 const BRIDGE_ID = 'mock-friday';
+
+/**
+ * Mirrors `CapabilitySet::standard()` on the bridge: `delta`, `heartbeat`,
+ * `resync` and `errors` are required (every protocol v1 console implicitly
+ * understands them); `metrics` (the `bridge_stats` counter frames) is optional.
+ */
+function standardCapabilitySet(): CapabilitySet {
+  const cap = (name: CapabilityName, required: boolean): BridgeCapability => ({
+    name,
+    version: 1,
+    required,
+  });
+  return {
+    protocol_version: CONSOLE_PROTOCOL_VERSION,
+    required: [
+      cap('delta', true),
+      cap('heartbeat', true),
+      cap('resync', true),
+      cap('errors', true),
+    ],
+    optional: [cap('metrics', false)],
+  };
+}
 
 const PHASE_ORDER: ExecutivePhaseName[] = [
   'Observe',
@@ -68,7 +94,7 @@ export class MockConsoleDataSource implements ConsoleDataSource {
   }
 
   async connect(): Promise<void> {
-    this.emit(this.frame('hello'));
+    this.emit(this.frame('hello', { capabilities: standardCapabilitySet() }));
     this.emit(this.snapshot());
     if (this.timer == null) {
       this.timer = setInterval(() => this.tick(), TICK_MS);
@@ -187,6 +213,7 @@ export class RuntimeConsoleDataSource implements ConsoleDataSource {
   private intentionallyClosed = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = 500;
+  private negotiated = false;
   private latest: LatestSlices = {
     dashboard: null,
     timelines: null,
@@ -204,6 +231,7 @@ export class RuntimeConsoleDataSource implements ConsoleDataSource {
       return this.handshake ?? Promise.resolve();
     }
     this.intentionallyClosed = false;
+    this.negotiated = false;
     this.handshake = new Promise<void>((resolve, reject) => {
       let resolved = false;
       try {
@@ -215,6 +243,14 @@ export class RuntimeConsoleDataSource implements ConsoleDataSource {
             frame = JSON.parse(String(msg.data)) as ConsoleFrame;
           } catch {
             return;
+          }
+          if (frame.kind === 'hello' && !this.negotiated) {
+            // Capability handshake (Bridge v2): answer hello with the subset
+            // we want. The server acks with a `capabilities` frame before the
+            // snapshot. `metrics` enables the `bridge_stats` counter frames
+            // the Runtime card reads; everything else is required anyway.
+            this.negotiated = true;
+            ws.send(JSON.stringify({ type: 'hello_response', capabilities: { metrics: true } }));
           }
           this.merge(frame);
           this.emit(frame);

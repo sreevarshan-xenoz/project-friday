@@ -229,6 +229,20 @@ function publish(frame: ConsoleFrame): void {
         },
       };
       break;
+    case 'capabilities':
+      // Negotiation ack — part of the sequence stream, carries no read-model
+      // slices. Count it for fps like any other frame.
+      snapshot = {
+        ...snapshot,
+        runtime: {
+          ...snapshot.runtime,
+          connected: true,
+          frames: lastSeq ?? snapshot.runtime.frames,
+          dropped,
+          fps: measuredFps(),
+        },
+      };
+      break;
   }
   notify();
 }

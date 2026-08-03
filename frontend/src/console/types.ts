@@ -432,9 +432,76 @@ export interface RuntimeStatus {
   last_error: string | null;
 }
 
-export type ConsoleFrameKind = 'hello' | 'snapshot' | 'delta' | 'heartbeat' | 'error';
+export type ConsoleFrameKind =
+  | 'hello'
+  | 'snapshot'
+  | 'delta'
+  | 'heartbeat'
+  | 'error'
+  | 'capabilities';
 
 export const CONSOLE_PROTOCOL_VERSION = 1;
+
+// ---------------------------------------------------------------------------
+// Capability handshake + structured error taxonomy (Bridge v2, Phases 1+2)
+// Mirrors `services/bridge/src/protocol.rs`.
+// ---------------------------------------------------------------------------
+
+/**
+ * Every capability the protocol can name. The bridge advertises a
+ * `CapabilitySet` in its hello; the console enables the subset it wants.
+ * `gzip`/`zstd`/`binary`/`auth` are forward-declared transport capabilities
+ * that arrive with later phases — the handshake is the feature gate.
+ */
+export type CapabilityName =
+  | 'delta'
+  | 'heartbeat'
+  | 'resync'
+  | 'errors'
+  | 'metrics'
+  | 'replay'
+  | 'gzip'
+  | 'zstd'
+  | 'binary'
+  | 'auth';
+
+/**
+ * A single advertised or negotiated capability. Named `BridgeCapability` to
+ * avoid colliding with the frozen read-model `Capability` (a string) that the
+ * planning DTOs use throughout.
+ */
+export interface BridgeCapability {
+  name: CapabilityName;
+  version: number;
+  /** True when part of the `required` set; informational on the wire. */
+  required: boolean;
+}
+
+/**
+ * What this bridge speaks and what a console may enable. The console answers
+ * hello with `{"type":"hello_response","capabilities":{name: bool}}`; the
+ * server acks with a `capabilities` frame carrying the negotiated set.
+ */
+export interface CapabilitySet {
+  protocol_version: number;
+  required: BridgeCapability[];
+  optional: BridgeCapability[];
+}
+
+/** Machine-readable error classification, mirrored from `ErrorCode`. */
+export type ProtocolErrorCode =
+  | 'unsupported_version'
+  | 'unsupported_capability'
+  | 'authentication_failed'
+  | 'compression_negotiation_failed'
+  | 'invalid_frame'
+  | 'invalid_sequence'
+  | 'resync_required'
+  | 'rate_limited'
+  | 'internal_bridge_error';
+
+/** How bad a problem is; the console decides how loudly to surface it. */
+export type ErrorSeverity = 'info' | 'warning' | 'error' | 'critical';
 
 /**
  * Every frame carries metadata: `kind` (so consumers can switch without
@@ -454,6 +521,8 @@ export interface ConsoleFrameBase {
 export interface HelloFrame extends ConsoleFrameBase {
   kind: 'hello';
   bridge_stats?: BridgeStats | null;
+  /** The capability set this bridge advertises (Bridge v2 handshake). */
+  capabilities?: CapabilitySet | null;
 }
 
 /** Full read-model snapshot, published right after hello and on demand. */
@@ -486,13 +555,40 @@ export interface HeartbeatFrame extends ConsoleFrameBase {
   bridge_stats?: BridgeStats | null;
 }
 
-/** The bridge hit a problem; `message` explains it. Does not drop the stream. */
+/**
+ * The bridge hit a problem; `message` explains it. `code`/`severity`/
+ * `recoverable`/`recommended_action` are the machine-readable taxonomy so the
+ * console can react programmatically instead of parsing strings. Does not
+ * drop the stream.
+ */
 export interface ErrorFrame extends ConsoleFrameBase {
   kind: 'error';
   message: string;
+  code?: ProtocolErrorCode | null;
+  severity?: ErrorSeverity | null;
+  /** Can the client simply retry the same request? */
+  recoverable?: boolean | null;
+  /** What the client should do next, in machine-friendly words. */
+  recommended_action?: string | null;
 }
 
-export type ConsoleFrame = HelloFrame | SnapshotFrame | DeltaFrame | HeartbeatFrame | ErrorFrame;
+/**
+ * The server's acknowledgement of a successful negotiation: `required` is
+ * unchanged, `optional` is the subset the console enabled. Sent right after
+ * the console's `hello_response`, before the snapshot.
+ */
+export interface CapabilitiesFrame extends ConsoleFrameBase {
+  kind: 'capabilities';
+  capabilities: CapabilitySet;
+}
+
+export type ConsoleFrame =
+  | HelloFrame
+  | SnapshotFrame
+  | DeltaFrame
+  | HeartbeatFrame
+  | ErrorFrame
+  | CapabilitiesFrame;
 
 /**
  * The provider seam between the Engineering Console and FRIDAY.
