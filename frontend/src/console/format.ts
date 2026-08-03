@@ -26,6 +26,12 @@ export function fmtSigned(v: number, digits = 1): string {
   return `${s}${v.toFixed(digits)}`;
 }
 
+export function fmtBytes(v: number): string {
+  if (v < 1024) return `${v} B`;
+  if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`;
+  return `${(v / (1024 * 1024)).toFixed(2)} MB`;
+}
+
 export function reasonLabel(r: ExplanationReason): string {
   switch (r) {
     case 'HighestCompositeScore':

@@ -184,6 +184,9 @@ export class RuntimeConsoleDataSource implements ConsoleDataSource {
   private listeners = new Set<(frame: ConsoleFrame) => void>();
   private handshake: Promise<void> | null = null;
   private clientSeq = 0;
+  private intentionallyClosed = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectDelay = 500;
   private latest: LatestSlices = {
     dashboard: null,
     timelines: null,
@@ -200,6 +203,7 @@ export class RuntimeConsoleDataSource implements ConsoleDataSource {
     if (this.ws != null) {
       return this.handshake ?? Promise.resolve();
     }
+    this.intentionallyClosed = false;
     this.handshake = new Promise<void>((resolve, reject) => {
       let resolved = false;
       try {
@@ -216,6 +220,7 @@ export class RuntimeConsoleDataSource implements ConsoleDataSource {
           this.emit(frame);
           if (!resolved && frame.kind === 'snapshot') {
             resolved = true;
+            this.reconnectDelay = 500; // healthy again, reset the backoff
             resolve();
             this.handshake = null;
           }
@@ -225,6 +230,9 @@ export class RuntimeConsoleDataSource implements ConsoleDataSource {
         };
         ws.onclose = () => {
           this.ws = null;
+          if (this.intentionallyClosed) {
+            return;
+          }
           if (!resolved) {
             resolved = true;
             this.handshake = null;
@@ -241,6 +249,7 @@ export class RuntimeConsoleDataSource implements ConsoleDataSource {
               message: 'bridge connection closed',
             } as ConsoleFrame);
           }
+          this.scheduleReconnect();
         };
       } catch (err) {
         reject(err);
@@ -249,7 +258,28 @@ export class RuntimeConsoleDataSource implements ConsoleDataSource {
     return this.handshake;
   }
 
+  /**
+   * Exponential backoff (500ms → 8s cap) so a dead bridge doesn't hammer the
+   * port but recovers the moment it returns. Each reconnect is a new hello →
+   * snapshot epoch; the store counts it as a reconnect, not a dropped frame.
+   */
+  private scheduleReconnect(): void {
+    if (this.intentionallyClosed) return;
+    if (this.reconnectTimer != null) return;
+    const delay = this.reconnectDelay;
+    this.reconnectDelay = Math.min(this.reconnectDelay * 2, 8000);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.connect().catch(() => {});
+    }, delay);
+  }
+
   disconnect(): void {
+    this.intentionallyClosed = true;
+    if (this.reconnectTimer != null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.ws?.close();
     this.ws = null;
     this.listeners.clear();

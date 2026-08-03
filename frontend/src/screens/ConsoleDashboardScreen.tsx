@@ -1,6 +1,6 @@
 import { Panel, Stat, Chip, Bar, KeyVal } from '../console/ui';
 import { useConsole } from '../console/store';
-import { fmtPct, fmtMs, fmtTime } from '../console/format';
+import { fmtPct, fmtMs, fmtTime, fmtBytes } from '../console/format';
 import './ConsoleDashboardScreen.css';
 
 export function ConsoleDashboardScreen() {
@@ -85,8 +85,13 @@ export function ConsoleDashboardScreen() {
             <KeyVal k="Protocol" v={`v${runtime.protocol}`} />
             <KeyVal k="Frames" v={runtime.frames} />
             <KeyVal k="Dropped" v={<Chip tone={runtime.dropped ? 'amber' : 'green'}>{runtime.dropped}</Chip>} />
+            <KeyVal k="Reconnects" v={runtime.reconnects} />
             <KeyVal k="Avg FPS" v={runtime.fps.toFixed(1)} />
             <KeyVal k="Round trip" v={runtime.round_trip_ms == null ? '—' : `${runtime.round_trip_ms.toFixed(0)} ms`} />
+            <KeyVal k="Avg RTT" v={runtime.avg_rtt_ms == null ? '—' : `${runtime.avg_rtt_ms.toFixed(1)} ms`} />
+            <KeyVal k="Peak RTT" v={runtime.peak_rtt_ms == null ? '—' : `${runtime.peak_rtt_ms.toFixed(0)} ms`} />
+            <KeyVal k="Snapshot" v={runtime.snapshot_bytes == null ? '—' : `${fmtBytes(runtime.snapshot_bytes)}`} />
+            <KeyVal k="Delta" v={runtime.delta_bytes == null ? '—' : `${fmtBytes(runtime.delta_bytes)}`} />
             <KeyVal k="Records" v={runtime.records} />
             {runtime.last_error && (
               <KeyVal k="Error" v={<Chip tone="red">{runtime.last_error}</Chip>} />

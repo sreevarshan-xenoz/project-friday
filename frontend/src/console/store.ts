@@ -14,6 +14,7 @@
 
 import { useSyncExternalStore } from 'react';
 import type {
+  BridgeStats,
   ConsoleDataSource,
   ConsoleFrame,
   DashboardDTO,
@@ -24,7 +25,7 @@ import type {
   SnapshotFrame,
   DeltaFrame,
 } from './types';
-import { MockConsoleDataSource } from './dataSource';
+import { MockConsoleDataSource, RuntimeConsoleDataSource } from './dataSource';
 
 export type ConsoleStatus = 'loading' | 'ready' | 'error';
 
@@ -45,8 +46,13 @@ const EMPTY_RUNTIME: RuntimeStatus = {
   protocol: 0,
   frames: 0,
   dropped: 0,
+  reconnects: 0,
   fps: 0,
   round_trip_ms: null,
+  avg_rtt_ms: null,
+  peak_rtt_ms: null,
+  snapshot_bytes: null,
+  delta_bytes: null,
   records: 0,
   last_error: null,
 };
@@ -83,8 +89,10 @@ let source: ConsoleDataSource = new MockConsoleDataSource();
 let unsubFromSource: (() => void) | null = null;
 
 const arrivals: number[] = [];
+const rtts: number[] = [];
 let lastSeq: number | null = null;
 let dropped = 0;
+let reconnects = 0;
 
 function notify(): void {
   listeners.forEach((l) => l());
@@ -94,6 +102,51 @@ function measuredFps(): number {
   const now = Date.now();
   while (arrivals.length && now - arrivals[0] > 1000) arrivals.shift();
   return arrivals.length;
+}
+
+function applyBridgeStats(stats: BridgeStats | null | undefined): void {
+  if (!stats) return;
+  snapshot = {
+    ...snapshot,
+    runtime: {
+      ...snapshot.runtime,
+      reconnects: stats.reconnects,
+      snapshot_bytes: stats.snapshot_size_bytes,
+      delta_bytes: stats.delta_size_bytes,
+    },
+  };
+}
+
+function observeRtt(rtt: number | null | undefined): void {
+  if (rtt == null) return;
+  rtts.push(rtt);
+  const sum = rtts.reduce((a, b) => a + b, 0);
+  snapshot = {
+    ...snapshot,
+    runtime: {
+      ...snapshot.runtime,
+      round_trip_ms: rtt,
+      avg_rtt_ms: sum / rtts.length,
+      peak_rtt_ms: Math.max(...rtts),
+    },
+  };
+}
+
+/**
+ * Strict sequence validation: every frame must continue the stream. A frame
+ * ahead of `lastSeq + 1` means `seq - lastSeq - 1` frames were lost; a frame
+ * at or behind `lastSeq` is an out-of-order or duplicate delivery and counts
+ * as one drop. A `hello` opens a new connection epoch, so it resets `lastSeq`
+ * (the first snapshot of a fresh connection is never a "gap") while keeping
+ * cumulative drop counts.
+ */
+function validateSequence(frame: ConsoleFrame): void {
+  if (lastSeq == null) return;
+  if (frame.sequence > lastSeq) {
+    dropped += frame.sequence - lastSeq - 1;
+  } else if (frame.sequence < lastSeq) {
+    dropped += 1;
+  }
 }
 
 function mergeSlices(frame: SnapshotFrame | DeltaFrame): void {
@@ -121,8 +174,14 @@ function mergeSlices(frame: SnapshotFrame | DeltaFrame): void {
 
 function publish(frame: ConsoleFrame): void {
   arrivals.push(Date.now());
-  if (lastSeq != null && frame.sequence > lastSeq) {
-    dropped += frame.sequence - lastSeq - 1;
+  if (frame.kind === 'hello') {
+    // New connection epoch: the sequence counter continues across
+    // connections, so the first frame of a fresh connection must not be
+    // mistaken for a gap. Count every hello after the first as a reconnect.
+    lastSeq = null;
+    reconnects += 1;
+  } else {
+    validateSequence(frame);
   }
   lastSeq = frame.sequence;
 
@@ -135,26 +194,29 @@ function publish(frame: ConsoleFrame): void {
           connected: true,
           bridge: frame.bridge,
           protocol: frame.protocol,
+          reconnects,
           last_error: null,
         },
       };
+      applyBridgeStats(frame.bridge_stats);
       break;
     case 'snapshot':
     case 'delta':
       mergeSlices(frame);
       break;
     case 'heartbeat':
+      observeRtt(frame.latency_ms);
       snapshot = {
         ...snapshot,
         runtime: {
           ...snapshot.runtime,
           connected: true,
-          round_trip_ms: frame.latency_ms ?? snapshot.runtime.round_trip_ms,
           frames: lastSeq ?? snapshot.runtime.frames,
           dropped,
           fps: measuredFps(),
         },
       };
+      applyBridgeStats(frame.bridge_stats);
       break;
     case 'error':
       snapshot = {
@@ -188,8 +250,10 @@ export async function setConsoleSource(next: ConsoleDataSource): Promise<void> {
   unsubFromSource = null;
   source = next;
   arrivals.length = 0;
+  rtts.length = 0;
   lastSeq = null;
   dropped = 0;
+  reconnects = 0;
   snapshot = {
     ...EMPTY,
     status: 'loading',
@@ -210,7 +274,21 @@ export async function setConsoleSource(next: ConsoleDataSource): Promise<void> {
   }
 }
 
-void setConsoleSource(new MockConsoleDataSource());
+/**
+ * The console defaults to the mock (works with no bridge running). Set
+ * `VITE_CONSOLE_BRIDGE=1` to drive the real ReadModelBridge instead:
+ *
+ *   $env:VITE_CONSOLE_BRIDGE = "1"
+ *   npm run dev
+ *
+ * Same interface, same frames — zero screen changes.
+ */
+const initialSource =
+  import.meta.env.VITE_CONSOLE_BRIDGE === '1'
+    ? new RuntimeConsoleDataSource()
+    : new MockConsoleDataSource();
+
+void setConsoleSource(initialSource);
 
 export function useConsole(): ConsoleSnapshot {
   return useSyncExternalStore(subscribeConsole, getConsoleSnapshot);

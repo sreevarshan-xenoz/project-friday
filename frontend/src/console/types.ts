@@ -385,11 +385,35 @@ export interface DashboardDTO {
 }
 
 /**
+ * Bridge-wide counters mirrored from `services/bridge/src/protocol.rs`
+ * (`BridgeStatsDto`). Carried on hello + every heartbeat so the Runtime card
+ * can show how the bridge itself is behaving (frames, bytes, resyncs).
+ */
+export interface BridgeStats {
+  /** Consoles currently connected. */
+  connections: number;
+  /** Total connections accepted since the bridge started. */
+  reconnects: number;
+  /** Automatic (lagged) + client-requested resyncs served. */
+  resyncs: number;
+  /** Frames written to clients (server-wide). */
+  frames_sent: number;
+  /** Serialized bytes written to clients (server-wide). */
+  bytes_sent: number;
+  /** Wire size of the last snapshot frame sent. */
+  snapshot_size_bytes: number;
+  /** Wire size of the last delta frame sent. */
+  delta_size_bytes: number;
+}
+
+/**
  * Live status of the data source — what the Dashboard's Runtime card shows.
  * `bridge` is the provider kind ('mock', and later 'runtime'); `frames` is the
- * highest sequence seen; `dropped` is the count of skipped sequence numbers
- * (lost frames); `fps` is the measured frame arrival rate; `round_trip_ms` is
- * the provider-reported round-trip latency.
+ * highest sequence seen; `dropped` is the count of sequence gaps (lost
+ * frames); `reconnects` counts hello frames after the first (a new connection
+ * epoch); `fps` is the measured frame arrival rate; `round_trip_ms` is the
+ * latest measured round-trip; `avg_rtt_ms`/`peak_rtt_ms` are over the session;
+ * `snapshot_bytes`/`delta_bytes` come from the bridge's own counters.
  */
 export interface RuntimeStatus {
   connected: boolean;
@@ -397,8 +421,13 @@ export interface RuntimeStatus {
   protocol: number;
   frames: number;
   dropped: number;
+  reconnects: number;
   fps: number;
   round_trip_ms: number | null;
+  avg_rtt_ms: number | null;
+  peak_rtt_ms: number | null;
+  snapshot_bytes: number | null;
+  delta_bytes: number | null;
   records: number;
   last_error: string | null;
 }
@@ -421,9 +450,10 @@ export interface ConsoleFrameBase {
   bridge: string;
 }
 
-/** Sent once on connect: announces the bridge + protocol version. */
+/** Sent once on connect: announces the bridge + protocol version + counters. */
 export interface HelloFrame extends ConsoleFrameBase {
   kind: 'hello';
+  bridge_stats?: BridgeStats | null;
 }
 
 /** Full read-model snapshot, published right after hello and on demand. */
@@ -453,6 +483,7 @@ export interface DeltaFrame extends ConsoleFrameBase {
 export interface HeartbeatFrame extends ConsoleFrameBase {
   kind: 'heartbeat';
   latency_ms: number | null;
+  bridge_stats?: BridgeStats | null;
 }
 
 /** The bridge hit a problem; `message` explains it. Does not drop the stream. */

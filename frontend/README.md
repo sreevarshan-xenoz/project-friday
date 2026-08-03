@@ -116,6 +116,20 @@ bridge serializes the frozen read models losslessly (serde_json
 `float_roundtrip`) into the same `ConsoleFrame` shapes, tagged by `kind` with
 `protocol: 1`.
 
+Choose the provider at startup with `VITE_CONSOLE_BRIDGE`:
+
+```bash
+npm run dev                                  # mock (default, no bridge needed)
+$env:VITE_CONSOLE_BRIDGE = "1"
+npm run dev                                  # real bridge @ ws://127.0.0.1:18433
+```
+
+Same interface, same frames — zero screen changes. `RuntimeConsoleDataSource`
+also **auto-reconnects** with exponential backoff (500 ms → 8 s cap, reset on a
+healthy snapshot; no retry after an explicit `disconnect()`), and each hello
+opens a new reconnect epoch in the store (sequence tracking resets, cumulative
+counters persist).
+
 The Executive panel mirrors the real ten-phase cycle from
 `services/goal-execution/src/executive.rs` (frozen Core 1.0).
 
@@ -156,6 +170,15 @@ updates-per-sec / records) fed by live ticks. The Rust `ReadModelBridge`
 (`services/bridge`) serves the frozen read models over WebSocket at
 `ws://127.0.0.1:18433`, and `RuntimeConsoleDataSource` consumes it — verified
 end-to-end (hello → snapshot → deltas → heartbeat, contiguous sequences,
-140 records). Mock ↔ runtime is one `setConsoleSource()` call. Next: a source
-switch in the UI, then the Replay viewer (Week 3) and the memory explorer
-(Week 4).
+140 records). Mock ↔ runtime is one `setConsoleSource()` call.
+
+**Bridge hardening (done)** — typed frame protocol v1 with bridge
+telemetry. Hello/heartbeat frames carry `bridge_stats` (connections,
+reconnects, resyncs, frames/bytes sent, snapshot/delta wire sizes); the store
+validates frame sequences strictly (gaps/out-of-order/dups counted as drops,
+reconnect epochs reset per hello); the Runtime card shows Reconnects, Avg/Peak
+RTT, snapshot and delta sizes; `RuntimeConsoleDataSource` auto-reconnects.
+Verified: bridge unit tests (11), E2E smoke (resync, stats, reconnect
+counting), reconnect smoke (bridge down → up), Runtime DS smoke (hello →
+snapshot, 140 records). Next: a source switch in the UI, then the Replay
+viewer (Week 3) and the memory explorer (Week 4).
