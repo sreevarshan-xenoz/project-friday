@@ -47,6 +47,11 @@ are filled in afterwards. A run that surprises us is a finding, not a failure.
 - **Hypothesis:** The read-model/derived architecture has no accumulation
   effects beyond the ledger itself.
 - **Method:** Continuous execution of mixed workloads for fixed durations.
+- **Instrument:** `validation/` — unattended runner + collector + analyzer
+  (`node validation/friday-validate.mjs --duration 8h --interval 5s`). It
+  starts the bridge + console client, appends a JSONL sample every interval,
+  and ends with a PASS/FAIL verdict against the VP-001 criteria (memory slope,
+  RTT drift, frame loss, sequence gaps, reconnects, crashes).
 - **Metrics:** memory growth, ledger growth, calibration stability, replay
   correctness, prediction drift, latency over time.
 - **Runs:** 24 hours → 72 hours → 1 week.

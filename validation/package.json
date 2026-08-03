@@ -1,0 +1,15 @@
+{
+  "name": "friday-validation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "VP-001 Validation Harness: runner + collector + analyzer for unattended soak runs of the FRIDAY ReadModelBridge.",
+  "bin": {
+    "friday-validate": "./friday-validate.mjs"
+  },
+  "scripts": {
+    "smoke": "node friday-validate.mjs --duration 75s --interval 5s --output artifacts/validation/smoke",
+    "validate": "node friday-validate.mjs",
+    "analyze": "node analyze.mjs"
+  }
+}
