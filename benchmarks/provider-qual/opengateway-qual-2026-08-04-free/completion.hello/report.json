@@ -1,0 +1,11 @@
+{
+  "action_ok": true,
+  "fault": null,
+  "group": "completion",
+  "id": "completion.hello",
+  "issues": [],
+  "latency_ms": 2713,
+  "note": "response_len=6",
+  "passed": true,
+  "state_accuracy": true
+}

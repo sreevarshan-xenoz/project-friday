@@ -1,0 +1,8 @@
+[
+  {
+    "intent": "provider.completion",
+    "latency_ms": 171,
+    "ok": false,
+    "ts": "2026-08-03T19:14:01.275183100+00:00"
+  }
+]

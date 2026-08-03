@@ -1,0 +1,11 @@
+{
+  "action_ok": true,
+  "fault": null,
+  "group": "long_context",
+  "id": "long_context.no_truncation",
+  "issues": [],
+  "latency_ms": 8646,
+  "note": "array_complete=true",
+  "passed": true,
+  "state_accuracy": true
+}

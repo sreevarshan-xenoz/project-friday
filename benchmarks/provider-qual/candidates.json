@@ -1,24 +1,24 @@
 {
   "entries": {
-    "PRV-LONG_CONTEXT_NO_TRUNCATION": {
-      "scenario_id": "corpus long_context.no_truncation (long_context)",
-      "count": 2,
+    "PRV-JSON_STRICT": {
+      "scenario_id": "corpus json.strict (json)",
+      "count": 3,
       "first_seen": "2026-08-03T19:05:31.887640+00:00",
-      "last_seen": "2026-08-03T19:06:07.784249200+00:00",
+      "last_seen": "2026-08-03T19:14:00.208614800+00:00",
       "graduated": true
     },
     "PRV-COMPLETION_HELLO": {
       "scenario_id": "corpus completion.hello (completion)",
-      "count": 2,
+      "count": 3,
       "first_seen": "2026-08-03T19:05:31.887640+00:00",
-      "last_seen": "2026-08-03T19:06:07.784249200+00:00",
+      "last_seen": "2026-08-03T19:14:00.208614800+00:00",
       "graduated": true
     },
-    "PRV-JSON_STRICT": {
-      "scenario_id": "corpus json.strict (json)",
-      "count": 2,
+    "PRV-LONG_CONTEXT_NO_TRUNCATION": {
+      "scenario_id": "corpus long_context.no_truncation (long_context)",
+      "count": 3,
       "first_seen": "2026-08-03T19:05:31.887640+00:00",
-      "last_seen": "2026-08-03T19:06:07.784249200+00:00",
+      "last_seen": "2026-08-03T19:14:00.208614800+00:00",
       "graduated": true
     }
   }

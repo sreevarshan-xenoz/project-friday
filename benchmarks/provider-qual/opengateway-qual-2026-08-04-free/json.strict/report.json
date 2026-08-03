@@ -1,0 +1,11 @@
+{
+  "action_ok": true,
+  "fault": null,
+  "group": "json",
+  "id": "json.strict",
+  "issues": [],
+  "latency_ms": 9153,
+  "note": "json_valid=true",
+  "passed": true,
+  "state_accuracy": true
+}

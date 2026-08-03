@@ -72,6 +72,7 @@ fn build_target(provider: &str, mock: bool) -> (Target, String, String) {
         );
     }
 
+    let ogw_model = std::env::var("OPENGATEWAY_MODEL").unwrap_or_else(|_| "auto".to_string());
     let (pname, base, key, mid, mode) = match provider {
         "omniroute" => {
             let base = std::env::var("OMNIROUTE_BASE_URL")
@@ -119,7 +120,7 @@ fn build_target(provider: &str, mock: bool) -> (Target, String, String) {
             std::env::var("OPENGATEWAY_BASE_URL")
                 .unwrap_or_else(|_| "https://opengateway.gitlawb.com/v1".to_string()),
             std::env::var("OPENGATEWAY_API_KEY").unwrap_or_default(),
-            "auto",
+            ogw_model.as_str(),
             RoutingMode::Free,
         ),
         other => panic!(
