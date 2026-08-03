@@ -41,7 +41,7 @@ are filled in afterwards. A run that surprises us is a finding, not a failure.
 
 ### VP-001 — Long-running cognition
 
-**Status:** proposed
+**Status:** runs started (2h complete — FAIL: memory_growth)
 
 - **Goal:** Can FRIDAY run continuously without degrading?
 - **Hypothesis:** The read-model/derived architecture has no accumulation
@@ -54,9 +54,32 @@ are filled in afterwards. A run that surprises us is a finding, not a failure.
   RTT drift, frame loss, sequence gaps, reconnects, crashes).
 - **Metrics:** memory growth, ledger growth, calibration stability, replay
   correctness, prediction drift, latency over time.
-- **Runs:** 24 hours → 72 hours → 1 week.
+- **Runs:** 2 hours (done) → 8 hours → 24 hours → 72 hours → 1 week.
 - **Expected Result:** bounded growth; calibration converges and stays within
   clamps; replay results stay consistent; latency flat.
+- **Actual Result (run-002, 2026-08-03, 120 min, seed 42/count 140, git
+  3d72910):** FAIL on `memory_growth` (15.5 MB/hr vs < 1 MB/hr target); every
+  other criterion PASS (0 sequence gaps, 0 unexpected reconnects, 0 error
+  frames, RTT drift ±2 ms). Memory grew 13.9 → 46.3 MB, peak 53.8 MB. Growth
+  is **linear, not a leak**: ~2–4 MB per 74-record (15-min) bucket, ~52 MB per
+  1,000 ledger records, and the per-1,000-record slope is *not* increasing
+  (first-half ≈ 66 MB/1,000, second-half ≈ 36 MB/1,000 — warm-up noise, not
+  acceleration). Driver: `DemoRuntimeSource` regenerates full timelines each
+  cycle and every `DecisionTimeline` carries full experience/reputation/
+  calibration store snapshots (frozen Phase 6B design — snapshots, not
+  references); experience samples grew 1,960 → 56,359 (~91/decision). The
+  transport path is healthy: delta frames stay flat (43.4 → 43.6 KB), snapshot
+  grows to 1,377.5 KB (full-slice read models), 0 gaps/errors. Evidence:
+  `artifacts/validation/run-002/{samples.jsonl, report.md, report.json}`
+  (gitignored).
+- **Decision (Finding VP-001-1):** bridge memory is unbounded *linear* data
+  growth — the read models hold everything forever. At the demo's ~300
+  decisions/hr that projects to ~370 MB at 24 h and multi-GB at 1 week, so
+  long runs are not viable without a retention policy. Not an ADR yet — the
+  call is the user's: (a) accept + bound run lengths, (b) raise an ADR for
+  read-model retention/windowing (touches the frozen TimelineBuilder/store
+  design), or (c) continue the ladder (8 h → 24 h) to separate the memory
+  signal from any other long-run degradations first.
 
 ### VP-002 — Prediction quality
 
@@ -128,7 +151,7 @@ are filled in afterwards. A run that surprises us is a finding, not a failure.
 
 | VP    | Program                 | Status    | Last run | Result link |
 | ----- | ----------------------- | --------- | -------- | ----------- |
-| VP-001 | Long-running cognition  | proposed  | —        | —           |
+| VP-001 | Long-running cognition  | 2h run (FAIL: memory) | 2026-08-03 | [run-002](..\artifacts\validation\run-002\report.md) |
 | VP-002 | Prediction quality      | proposed  | —        | —           |
 | VP-003 | Replay correctness      | proposed  | —        | —           |
 | VP-004 | Scaling                 | first run | 2026-08-01 | [results](../benchmarks/VP-004/README.md) |
