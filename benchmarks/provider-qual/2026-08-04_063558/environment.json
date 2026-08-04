@@ -1,0 +1,15 @@
+{
+  "mode": "real",
+  "timestamp": "2026-08-04T06:35:58.769760400+00:00",
+  "friday_version": "0.1.0",
+  "provider_name": "opengateway",
+  "provider_base_url": "https://opengateway.gitlawb.com/v1",
+  "model_id": "auto",
+  "os": "windows",
+  "configured_providers": [
+    "openrouter",
+    "gemini",
+    "opengateway",
+    "opengateway(base_url)"
+  ]
+}

@@ -423,27 +423,44 @@ pub struct CandidateConsideration {
     pub latency_ms: u64,
 }
 
-/// Audit trail of one routed completion: the capability requested, every
-/// candidate considered (with scores), the candidate chosen, the vendor model
-/// that actually served, and why they differed. Lets operators later answer
-/// "which provider/model answered, why, and does routing drift over time?"
-/// without changing the interface.
+/// One candidate failure during routing, in attempt order — the structured
+/// "why" behind `served != chosen` (or behind nothing serving).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CandidateFailure {
+    pub provider: String,
+    pub model: String,
+    pub error: String,
+}
+
+/// **FROZEN contract v1.** IMMUTABLE audit record of one routed completion.
+///
+/// Recorded once when routing finishes, then **never edited** — the same rule
+/// as `DecisionRecord` ("history is immutable; intelligence is derived").
+/// Every routing metric, qualification report, and future provider-reputation
+/// analytic DERIVES from this record; none of them write back to it. The
+/// human-readable failover summary in reports is derived from `failures`, never
+/// stored here. Changing this shape requires a new contract version (bump
+/// `version`) via ADR, not an ordinary implementation commit.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoutingDecision {
+    /// Contract version. Bumped only when the frozen shape changes (v1 = 1).
+    pub version: u32,
+    /// RFC 3339 instant the decision was recorded (routing start).
+    pub timestamp: String,
     /// The FRIDAY capability tier requested (`None` = mode-based routing, e.g.
     /// `RoutingMode::Free` over the whole catalog).
     pub requested_tier: Option<CapabilityTier>,
     /// The routing mode in effect (`Fast`/`Quality`/`Free`/`Local`/`Hybrid`).
     pub routing_mode: String,
-    /// Candidates considered, in the order routing attempted them.
+    /// Candidates considered, in the order routing attempted them, with the
+    /// two scores routing sorts by.
     pub candidates: Vec<CandidateConsideration>,
     /// The candidate selected to serve first (highest-ranked).
     pub chosen: Option<(String, String)>,
     /// The (provider, vendor model) that actually answered, if any.
     pub served: Option<(String, String)>,
-    /// Why `served` differs from `chosen` (e.g. chosen hit a quota 429), or the
-    /// failure summary when nothing served.
-    pub change_reason: Option<String>,
+    /// Per-candidate failures, in attempt order. Empty when `served == chosen`.
+    pub failures: Vec<CandidateFailure>,
 }
 
 /// Coordinates model selection, state tracking, and error recovery.
@@ -513,6 +530,32 @@ impl InferenceFabric {
             .and_then(|d| d.served.clone())
     }
 
+    /// Stamp a routing decision with the frozen contract (version + timestamp
+    /// at routing start) and record it. The record is immutable once recorded:
+    /// no caller ever edits a returned `RoutingDecision`.
+    pub fn record_decision(&self, decision: RoutingDecision) {
+        *self.last_decision.lock().unwrap() = Some(decision);
+    }
+
+    /// Build a v1 routing decision stamped with the recording instant.
+    fn start_decision(
+        &self,
+        requested_tier: Option<CapabilityTier>,
+        candidates: Vec<CandidateConsideration>,
+        chosen: Option<(String, String)>,
+    ) -> RoutingDecision {
+        RoutingDecision {
+            version: 1,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            requested_tier,
+            routing_mode: format!("{:?}", self.default_mode),
+            candidates,
+            chosen,
+            served: None,
+            failures: Vec::new(),
+        }
+    }
+
     /// Complete against a capability tier, resolving the vendor model ID
     /// internally. Returns an error if the provider or tier is unregistered.
     pub async fn complete_tier(
@@ -537,29 +580,30 @@ impl InferenceFabric {
             .get(provider)
             .copied()
             .unwrap_or(1.0);
-        let mut decision = RoutingDecision {
-            requested_tier: Some(tier),
-            routing_mode: format!("{:?}", self.default_mode),
-            candidates: vec![CandidateConsideration {
+        let mut decision = self.start_decision(
+            Some(tier),
+            vec![CandidateConsideration {
                 provider: provider.to_string(),
                 model: model.id.clone(),
                 reliability,
                 latency_ms: model.latency_ms,
             }],
-            chosen: Some((provider.to_string(), model.id.clone())),
-            served: None,
-            change_reason: None,
-        };
+            Some((provider.to_string(), model.id.clone())),
+        );
 
         match prov.complete(&model.id, prompt, require_json).await {
             Ok(response) => {
                 decision.served = Some((provider.to_string(), model.id.clone()));
-                *self.last_decision.lock().unwrap() = Some(decision);
+                self.record_decision(decision);
                 Ok(response)
             }
             Err(e) => {
-                decision.change_reason = Some(e.clone());
-                *self.last_decision.lock().unwrap() = Some(decision);
+                decision.failures.push(CandidateFailure {
+                    provider: provider.to_string(),
+                    model: model.id.clone(),
+                    error: e.clone(),
+                });
+                self.record_decision(decision);
                 Err(e)
             }
         }
@@ -1060,14 +1104,11 @@ impl ModelClient for InferenceFabric {
                 error: Some(err_msg.clone()),
             };
             self.log_metrics(&metrics);
-            *self.last_decision.lock().unwrap() = Some(RoutingDecision {
-                requested_tier: None,
-                routing_mode: format!("{:?}", self.default_mode),
-                candidates: Vec::new(),
-                chosen: None,
-                served: None,
-                change_reason: Some(err_msg.clone()),
-            });
+            self.record_decision(self.start_decision(
+                None,
+                Vec::new(),
+                None,
+            ));
             return Err(err_msg);
         }
 
@@ -1085,17 +1126,13 @@ impl ModelClient for InferenceFabric {
                 })
                 .collect()
         };
-        let mut decision = RoutingDecision {
-            requested_tier: None,
-            routing_mode: format!("{:?}", self.default_mode),
-            candidates: considerations,
-            chosen: candidates
+        let mut decision = self.start_decision(
+            None,
+            considerations,
+            candidates
                 .first()
                 .map(|(m, p)| (p.name().to_string(), m.id.clone())),
-            served: None,
-            change_reason: None,
-        };
-        let mut failures: Vec<String> = Vec::new();
+        );
 
         let mut last_error = String::new();
         let mut attempts = 0;
@@ -1125,14 +1162,7 @@ impl ModelClient for InferenceFabric {
                     // evidence packs show the real path (e.g. auto route quota
                     // → free-model fallback) rather than the declared target.
                     decision.served = Some((provider.name().to_string(), model.id.clone()));
-                    if decision.chosen.as_ref() != decision.served.as_ref() {
-                        decision.change_reason = Some(if failures.is_empty() {
-                            "candidate order changed".to_string()
-                        } else {
-                            failures.join(" | ")
-                        });
-                    }
-                    *self.last_decision.lock().unwrap() = Some(decision);
+                    self.record_decision(decision);
 
                     // Update reliability score
                     {
@@ -1193,7 +1223,11 @@ impl ModelClient for InferenceFabric {
                     }
 
                     self.persist_health();
-                    failures.push(format!("{}/{}: {}", provider.name(), model.id, err));
+                    decision.failures.push(CandidateFailure {
+                        provider: provider.name().to_string(),
+                        model: model.id.clone(),
+                        error: err.clone(),
+                    });
                     last_error = err;
                 }
             }
@@ -1201,12 +1235,10 @@ impl ModelClient for InferenceFabric {
 
         let latency_ms = start.elapsed().as_millis() as u64;
         let final_err = format!("All candidates failed. Last error: {}", last_error);
-        // Leave the audit trail with every failure so the run is debuggable.
+        // Leave the immutable audit trail with every failure so the run is
+        // debuggable — nothing served, but the why is fully recorded.
         decision.served = None;
-        if !failures.is_empty() {
-            decision.change_reason = Some(failures.join(" | "));
-        }
-        *self.last_decision.lock().unwrap() = Some(decision);
+        self.record_decision(decision);
         let metrics = InferenceMetrics {
             request_id: request_id.clone(),
             timestamp: chrono::Utc::now(),
@@ -1458,6 +1490,9 @@ mod tests {
         assert_eq!(text, "ok");
 
         let d = fabric.last_decision().expect("decision recorded");
+        // Frozen contract v1: versioned + timestamped.
+        assert_eq!(d.version, 1);
+        assert!(!d.timestamp.is_empty(), "decision must be timestamped");
         // Mode-based routing: no capability tier was requested; mode is Free.
         assert!(d.requested_tier.is_none());
         assert_eq!(d.routing_mode, "Free");
@@ -1475,11 +1510,14 @@ mod tests {
             d.served,
             Some(("opengateway".to_string(), "vend/beta:free".to_string()))
         );
-        // Why they differed: the chosen candidate was rate-limited.
-        let reason = d.change_reason.expect("failover reason recorded");
+        // Failure Reasons, structured: the chosen candidate was rate-limited.
+        assert_eq!(d.failures.len(), 1);
+        assert_eq!(d.failures[0].provider, "openrouter");
+        assert_eq!(d.failures[0].model, "vend/alpha:free");
         assert!(
-            reason.contains("openrouter/vend/alpha:free: 429"),
-            "unexpected reason: {reason}"
+            d.failures[0].error.contains("429"),
+            "unexpected error: {}",
+            d.failures[0].error
         );
         // The derived served helper agrees with the audit trail.
         assert_eq!(

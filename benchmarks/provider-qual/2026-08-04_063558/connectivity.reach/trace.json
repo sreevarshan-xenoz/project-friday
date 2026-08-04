@@ -1,0 +1,8 @@
+[
+  {
+    "intent": "provider.connectivity",
+    "latency_ms": 189,
+    "ok": true,
+    "ts": "2026-08-04T06:35:58.960214200+00:00"
+  }
+]

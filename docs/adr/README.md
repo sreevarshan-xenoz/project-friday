@@ -29,6 +29,9 @@ them requires a new ADR, not an ordinary implementation commit:
 7. The ADR process itself.
 8. **The validation evidence gate** — no architectural changes without
    evidence from the [Validation Program](../VALIDATION.md).
+9. **The immutable `RoutingDecision` routing-audit contract (v1)** — versioned,
+   timestamped, with structured `failures`; changing its shape requires a new
+   ADR and a version bump.
 
 New ADRs follow the format: **Context, Decision, Consequences, Alternatives
 considered**. Next number: 0005.

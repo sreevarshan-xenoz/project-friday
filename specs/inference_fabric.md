@@ -51,14 +51,33 @@ Every routed completion records why routing did what it did, so qualification
 evidence is auditable (which vendor model answered, and why it wasn't the
 chosen one):
 
+**FROZEN (v1) — `RoutingDecision` is immutable.** The shape is versioned with a
+`timestamp`; changing it requires a new ADR and a version bump, not an ordinary
+implementation commit. Mirrors the `DecisionRecord` rule: the audit trail is
+history and is never edited — everything downstream (analytics, future provider
+reputation) is a derived view over it.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `requested_tier` | `Option<CapabilityTier>` | Some for tier routing; None = mode-based |
+| `routing_mode` | `String` | Fast/Quality/Free/Local/Hybrid |
+| `candidates` | `Vec<CandidateConsideration>` | in routing order, with scores |
+| `chosen` | `Option<(String, String)>` | highest-ranked candidate (provider, model) |
+| `served` | `Option<(String, String)>` | what actually answered, if anything |
+| `failures` | `Vec<CandidateFailure>` | per-candidate errors, in attempt order; empty when served == chosen |
+| `timestamp` | `String` (RFC 3339) | when the decision was recorded |
+| `version` | `u32` | contract version; currently `1` |
+
 ```rust
 pub struct RoutingDecision {
-    pub requested_tier: Option<CapabilityTier>, // Some for tier routing; None = mode-based
-    pub routing_mode: String,                   // Fast/Quality/Free/Local/Hybrid
-    pub candidates: Vec<CandidateConsideration>,// in routing order, with scores
-    pub chosen: Option<(String, String)>,       // highest-ranked candidate (provider, model)
-    pub served: Option<(String, String)>,       // what actually answered, if anything
-    pub change_reason: Option<String>,          // why served != chosen (e.g. quota 429, reset)
+    pub requested_tier: Option<CapabilityTier>,
+    pub routing_mode: String,
+    pub candidates: Vec<CandidateConsideration>,
+    pub chosen: Option<(String, String)>,
+    pub served: Option<(String, String)>,
+    pub failures: Vec<CandidateFailure>,
+    pub timestamp: String, // RFC 3339
+    pub version: u32,
 }
 
 pub struct CandidateConsideration {
@@ -67,13 +86,20 @@ pub struct CandidateConsideration {
     pub reliability: f64, // provider reliability (primary sort key)
     pub latency_ms: u64,  // model latency (secondary sort key)
 }
+
+pub struct CandidateFailure {
+    pub provider: String,
+    pub model: String,
+    pub error: String, // e.g. quota 429, reset
+}
 ```
 
 `InferenceFabric::last_decision()` returns the most recent trail;
 `last_served()` derives the `(provider, model)` from it for backwards
 compatibility. Set on both success and failure (the failure trail keeps every
 candidate error so a run is debuggable). Qualification evidence persists it as
-`routing_decision` alongside `served_model`.
+`routing_decision` alongside `served_model`; the human-readable `change_reason`
+is derived from `failures` at serialization time, never stored.
 
 ## `Provider` Trait
 Pluggable adapter for communicating with an external API host:

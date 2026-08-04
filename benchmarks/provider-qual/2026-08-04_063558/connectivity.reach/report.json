@@ -1,0 +1,14 @@
+{
+  "action_ok": true,
+  "change_reason": null,
+  "fault": null,
+  "group": "connectivity",
+  "id": "connectivity.reach",
+  "issues": [],
+  "latency_ms": 189,
+  "note": "reachable=true",
+  "passed": true,
+  "routing_decision": null,
+  "served_model": null,
+  "state_accuracy": true
+}

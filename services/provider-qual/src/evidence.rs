@@ -137,6 +137,10 @@ pub fn write_outcome(dir: &Path, o: &Outcome) -> std::io::Result<()> {
         "fault": o.fault,
         "served_model": o.served_model,
         "routing_decision": o.routing_decision,
+        "change_reason": o
+            .routing_decision
+            .as_ref()
+            .map(derived_change_reason),
         "note": o.note,
         "issues": o.issues.iter().map(|i| i.id.clone()).collect::<Vec<_>>(),
     });
@@ -282,4 +286,17 @@ pub fn render(m: &Metrics) -> String {
         bar(overall),
         pct(overall),
     )
+}
+
+/// Derive the human-readable failover summary from the immutable audit trail.
+/// Nothing is stored on the decision itself — this is a view over `failures`.
+fn derived_change_reason(d: &friday_intelligence::RoutingDecision) -> String {
+    if d.failures.is_empty() {
+        return "candidate order changed".to_string();
+    }
+    d.failures
+        .iter()
+        .map(|f| format!("{}/{}: {}", f.provider, f.model, f.error))
+        .collect::<Vec<_>>()
+        .join(" | ")
 }

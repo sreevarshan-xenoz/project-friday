@@ -1,0 +1,36 @@
+{
+  "action_ok": true,
+  "change_reason": "candidate order changed",
+  "fault": null,
+  "group": "json",
+  "id": "json.strict",
+  "issues": [],
+  "latency_ms": 6582,
+  "note": "json_valid=true",
+  "passed": true,
+  "routing_decision": {
+    "candidates": [
+      {
+        "latency_ms": 3000,
+        "model": "mindai/macaron-v1-tall",
+        "provider": "opengateway",
+        "reliability": 1.0
+      }
+    ],
+    "chosen": [
+      "opengateway",
+      "mindai/macaron-v1-tall"
+    ],
+    "failures": [],
+    "requested_tier": null,
+    "routing_mode": "Free",
+    "served": [
+      "opengateway",
+      "mindai/macaron-v1-tall"
+    ],
+    "timestamp": "2026-08-04T06:36:35.034162600+00:00",
+    "version": 1
+  },
+  "served_model": "opengateway/mindai/macaron-v1-tall",
+  "state_accuracy": true
+}

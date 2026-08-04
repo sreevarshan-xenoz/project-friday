@@ -60,11 +60,19 @@ Contract:
    resolution layer beneath it and never leak vendor IDs upward.
 5. **Routing is auditable**: every routed completion records a `RoutingDecision`
    (`requested_tier`, `routing_mode`, candidates considered with reliability +
-   latency scores, `chosen`, `served`, and `change_reason`). Qualification
-   evidence persists it as `routing_decision` so a report answers "which
-   provider/model answered, and why it wasn't the chosen one" — quota 429 vs
-   vendor outage vs transient network reset vs capability missing are
-   distinguishable. See `specs/inference_fabric.md`.
+   latency scores, `chosen`, `served`, structured `failures`, `timestamp`, and
+   `version`). Qualification evidence persists it as `routing_decision` so a
+   report answers "which provider/model answered, and why it wasn't the chosen
+   one" — quota 429 vs vendor outage vs transient network reset vs capability
+   missing are distinguishable. See `specs/inference_fabric.md`.
+
+   **FROZEN (v1) — `RoutingDecision` is immutable.** The shape is stamped
+   versioned (v1) with a `timestamp`; changing the shape requires a new ADR and
+   a version bump, not an ordinary implementation commit. Mirrors the
+   `DecisionRecord` rule: the audit trail is history, so it is never edited —
+   everything downstream (analytics, future provider reputation) is a derived
+   view over it. The human-readable `change_reason` is derived at
+   serialization, never stored.
 
 ## 3. Provider Model
 
