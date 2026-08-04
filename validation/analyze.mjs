@@ -26,15 +26,19 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseFlags } from './lib/cli.mjs';
+import { observationCoverage, observationStatus, fmtDurationMs } from './lib/observation.mjs';
 
 const args = parseFlags(process.argv.slice(2));
 const dir = args._[0];
 
 const maxMemSlopeMbHr = args['max-mem-slope-mb-hr'] ? Number(args['max-mem-slope-mb-hr']) : 1.0;
 const maxRttDriftPct = args['max-rtt-drift-pct'] ? Number(args['max-rtt-drift-pct']) : 10.0;
+const coverageThreshold = args['coverage-threshold'] ? Number(args['coverage-threshold']) : 99;
 
 if (!dir) {
-  console.error('usage: node analyze.mjs <run-dir> [--max-mem-slope-mb-hr 1.0] [--max-rtt-drift-pct 10]');
+  console.error(
+    'usage: node analyze.mjs <run-dir> [--max-mem-slope-mb-hr 1.0] [--max-rtt-drift-pct 10] [--coverage-threshold 99]',
+  );
   process.exit(2);
 }
 
@@ -233,6 +237,15 @@ function timingStats(name) {
 const dashboardGen = timingStats('dashboard_generation');
 const timelineRegen = timingStats('timeline_regeneration');
 
+// observation coverage — the run as designed vs the run as actually observed.
+// A host sleep or collector stall is a hole in the observation, not a pass on
+// the metric; below threshold the run is INVALID regardless of the curves.
+const observation = observationCoverage(samples, {
+  expectedMs: manifest.duration_ms ?? elapsedMs,
+  intervalMs: manifest.interval_ms ?? Math.round(elapsedMs / Math.max(1, samples.length - 1)),
+});
+const observationStatusFlag = observationStatus(observation, coverageThreshold);
+
 // ---------------------------------------------------------------------------
 // failure criteria (VP-001)
 // ---------------------------------------------------------------------------
@@ -297,6 +310,15 @@ const criteria = [
     observed: crashed ? 1 : 0,
     pass: !crashed,
     label: crashed ? 'bridge exited early' : 'no crashes',
+  },
+  {
+    name: 'observation_coverage',
+    target: `>= ${coverageThreshold}%`,
+    observed: observation ? observation.coverage_percent : null,
+    pass: observationStatusFlag === 'VALID',
+    label: observation
+      ? `${observation.coverage_percent}% observed (${fmtDurationMs(observation.observed_duration_ms)} of ${fmtDurationMs(observation.expected_duration_ms)}; largest gap ${fmtDurationMs(observation.largest_gap_ms)})`
+      : 'no coverage computed',
   },
 ];
 
@@ -379,6 +401,20 @@ Verdict: ${rttVerdict().pass === true ? 'Stable' : rttVerdict().pass === false ?
 > If these rise with retained history, per-frame read-model CPU is O(history)
 > and RTT drift is the downstream symptom (Finding VP-001-2). Not a criterion.
 
+## Observation coverage
+
+| | |
+| --- | --- |
+| Status | ${observationStatusFlag} (threshold ≥ ${coverageThreshold}%) |
+| Expected duration | ${observation ? fmtDurationMs(observation.expected_duration_ms) : '—'} |
+| Observed duration | ${observation ? fmtDurationMs(observation.observed_duration_ms) : '—'} |
+| Coverage | ${observation ? `${observation.coverage_percent}%` : '—'} |
+| Largest gap | ${observation ? `${fmtDurationMs(observation.largest_gap_ms)} (${observation.gap_count} hole(s))` : '—'} |
+
+> A run below the coverage threshold is INVALID: it was not continuously
+> observed for its intended duration, so its metrics describe a partial
+> experiment. This is a harness/environment finding, not a FRIDAY verdict.
+
 ## Failure criteria (VP-001)
 
 | Verdict | Criterion | Target | Observed |
@@ -398,6 +434,9 @@ writeFileSync(
       metrics: {
         duration_ms: elapsedMs,
         samples: samples.length,
+        observation: observation
+          ? { ...observation, status: observationStatusFlag, threshold_percent: coverageThreshold }
+          : null,
         memory: { start_bytes: memFirst, end_bytes: memLast, peak_bytes: memPeak, slope_mb_per_hr: memSlopeMbHr, mb_per_1000_records: mbPer1000Records },
         rtt: { mean_ms: rttMean, p50_ms: rttP50, p95_ms: rttP95, max_ms: rttMax, drift_pct: rttDriftPct, drift_ms: rttDriftMs },
         transport: { frames: framesReceived, bytes: bytesReceived, gaps, connection_starts: starts, errors_received: errorsReceived, resyncs_received: resyncsReceived, kbps },

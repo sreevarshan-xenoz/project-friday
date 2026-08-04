@@ -45,6 +45,7 @@ const state = {
   socket: null,
   shuttingDown: false,
   reconnectAttempts: 0,
+  lastSampleTs: null,
 
   lastSequence: null,
   snapshotsReceived: 0,
@@ -156,6 +157,20 @@ async function emitSample() {
   const now = Date.now();
   const rtts = state.rttWindow;
   state.rttWindow = [];
+
+  // Watchdog: if this sample is far later than the interval, the observation
+  // has a hole (host sleep / frozen loop / dropped write). Log it so the run
+  // knows it became invalid — the manifest coverage block records the final
+  // verdict.
+  if (state.lastSampleTs !== null) {
+    const delta = now - state.lastSampleTs;
+    if (delta > intervalMs * 3) {
+      log(
+        `OBSERVATION GAP expected ${intervalMs / 1000}s actual ${(delta / 1000).toFixed(0)}s`,
+      );
+    }
+  }
+  state.lastSampleTs = now;
 
   let avg = null;
   let peak = null;

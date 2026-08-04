@@ -41,7 +41,7 @@ are filled in afterwards. A run that surprises us is a finding, not a failure.
 
 ### VP-001 — Long-running cognition
 
-**Status:** ladder in progress — run-002 (2h) = **VP-001 Baseline**; run-003 (8h) done; run-004 (24h) pending; then ADR decision
+**Status:** ladder in progress — run-002 (2h) = **VP-001 Baseline**; run-003 (8h) done; run-004 (24h) = **INCONCLUSIVE** (host sleep, 9.7h observation gap); run-005 (24h continuous) scheduled; then ADR decision
 
 ```
 Evidence supports:
@@ -73,8 +73,9 @@ Evidence supports:
   analyzer correlates them with the RTT curve as the causal link for
   Finding VP-001-2). Instrument landed in git `0e6df06`+; **run-004 was
   launched before it** and is therefore uninstrumented (no `TIMING` lines).
-- **Runs:** 2h ✅ baseline (run-002) → 8h ✅ (run-003) → 24h (run-004) → ADR
-  decision (72h/1w only after the architecture question is resolved).
+- **Runs:** 2h ✅ baseline (run-002) → 8h ✅ (run-003) → 24h **continuous**
+  observation (run-004: INCONCLUSIVE; run-005) → ADR decision (72h/1w only
+  after the architecture question is resolved).
 - **Expected Result:** bounded growth; calibration converges and stays within
   clamps; replay results stay consistent; latency flat.
 - **Actual Result (run-002 — VP-001 Baseline, 2026-08-03, 120 min, seed
@@ -109,19 +110,37 @@ Evidence supports:
   (async, no blocking), so this is bridge-side head-of-line blocking, not a
   measurement artifact. Ledger 140 → 2500, experience samples 1,960 → 650,864
   (81,115/hr). Evidence: `artifacts/validation/run-003/` (gitignored).
+- **Actual Result (run-004, 2026-08-03→04, 24h intended, seed 42/count 140):
+  INCONCLUSIVE — not a FRIDAY finding.** The host entered sleep state for
+  9h 41m (2026-08-03 19:35 → 2026-08-04 05:17 UTC) plus a 6.7 min hiccup
+  after wake, so the experiment lost observability for ~40% of its intended
+  duration. The bridge never crashed, disconnected, or produced a sequence
+  gap (`connection_starts=1`, `connection_errors=0`, `sequence_gaps=0` in
+  every observed sample) — the run clock stayed continuous and the collector
+  resumed on wake. Observed segments (h 0–1.9 and h 11.6–24) are continuous
+  and consistent with the hypothesis (linear RSS ~26.9 → ~67 MB; RTT tracks
+  records 0.8 → 5.4 ms), but the criterion was **24 hours of continuous
+  observation**, and ~14.3h observed is not the experiment that was designed.
+  Per the coverage gate this run is INVALID regardless of its curves.
+  Evidence: `artifacts/validation/run-004/` (gitignored). Mitigation for
+  run-005: sleep prevention for the run window + observation coverage and
+  watchdogs in the harness (`validation/`, instrumented this entry).
 - **Decision (Finding VP-001-1 + VP-001-2, path: (c) then (b)):** the 8h run
   answered the ladder's questions — slope stays linear (yes, per-record cost
   is *falling*), no allocator/fragmentation blowup (RSS tracks history
   linearly), but **serialization/frame CPU cost DOES grow with history**
   (RTT). Two symptoms, one root cause: **read-model work and memory are both
   proportional to retained history**. That is exactly what a windowed
-  observability design addresses. Continue the ladder to 24h (run-004) to
-  confirm both curves hold at ~7,200 records and no new failure mode appears;
-  then open **ADR-0005 — Windowed Observability Read Models** (NOT "fix a
-  memory leak" — there is no leak). Architectural options noted, not yet
-  evaluated: (1) timeline → `ExperienceSnapshotId` → store lookup, (2) timeline
-  → `Arc<ExperienceSnapshot>`, (3) timeline keeps only the delta. Evaluation
-  happens only after the 24h run, per Evidence → ADR → Architecture change.
+  observability design addresses. Continue the ladder to 24h **of continuous
+  observation** (run-004 was INCONCLUSIVE on the coverage gate; run-005 is the
+  deciding run) to confirm both curves hold at ~7,200 records and no new
+  failure mode appears; then open **ADR-0005 — Windowed Observability Read
+  Models** (NOT "fix a memory leak" — there is no leak). Architectural options
+  noted, not yet evaluated: (1) timeline → `ExperienceSnapshotId` → store
+  lookup, (2) timeline → `Arc<ExperienceSnapshot>`, (3) timeline keeps only
+  the delta. Evaluation happens only after the 24h run, per Evidence → ADR →
+  Architecture change. ADR-0005 stays **Proposed** until run-005 satisfies the
+  continuous-observation requirement.
 
 ### VP-002 — Prediction quality
 
@@ -193,7 +212,7 @@ Evidence supports:
 
 | VP    | Program                 | Status    | Last run | Result link |
 | ----- | ----------------------- | --------- | -------- | ----------- |
-| VP-001 | Long-running cognition  | baseline (2h) + 8h run | 2026-08-03 | [run-002 baseline](..\artifacts\validation\run-002\report.md) · [run-003](..\artifacts\validation\run-003\report.md) |
+| VP-001 | Long-running cognition  | baseline + 8h + 24h (INCONCLUSIVE, host sleep) | 2026-08-04 | [run-002 baseline](..\artifacts\validation\run-002\report.md) · [run-003](..\artifacts\validation\run-003\report.md) · [run-004](..\artifacts\validation\run-004\report.md) |
 | VP-002 | Prediction quality      | proposed  | —        | —           |
 | VP-003 | Replay correctness      | proposed  | —        | —           |
 | VP-004 | Scaling                 | first run | 2026-08-01 | [results](../benchmarks/VP-004/README.md) |

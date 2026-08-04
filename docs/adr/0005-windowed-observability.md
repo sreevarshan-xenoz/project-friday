@@ -1,6 +1,6 @@
 # ADR-0005: Windowed Observability Read Models (Proposal)
 
-**Status:** Proposed — pending VP-001 run-004 (24h) evidence
+**Status:** Proposed — pending VP-001 24h continuous-observation evidence (run-005)
 **Date:** 2026-08-03
 **Scope:** `friday-experience` read models (`DecisionTimeline`,
 `TimelineBuilder`, store snapshots); consuming projections in the
@@ -36,8 +36,8 @@ This is the first time the Validation Program has produced evidence
 contradicting the VP-001 hypothesis ("no accumulation effects beyond the
 ledger itself"). Per governance (frozen-contract #8), that evidence is the
 gate for an architectural change. The proposal is registered **now**, in
-Proposed status, and will be decided only after the 24-hour run confirms or
-refutes the curves.
+Proposed status, and will be decided only after a 24-hour run of continuous
+observation confirms or refutes the curves.
 
 ## Decision (Proposed — not yet made)
 
@@ -50,7 +50,8 @@ scale with how much history is retained. The decision is to make that scaling
 **bounded and explicit** rather than linear-unbounded.
 
 The proposal intentionally does not prescribe the mechanism. Candidate
-implementations (to be evaluated after the 24-hour run, not today):
+implementations (to be evaluated after the 24-hour continuous-observation
+run, not today):
 
 - **Retention window** — timelines/snapshots kept for a bounded horizon; older
   history compressed or dropped from derived models (the raw immutable ledger
@@ -103,7 +104,13 @@ against current knowledge.
 
 ## Gate
 
-Status flips from Proposed to Accepted/Rejected only after VP-001 run-004
-(24 h) confirms: continued linear RSS, continued RTT growth tracking history,
-no crashes/reconnects/sequence gaps. If run-004 contradicts the curve (RSS or
-RTT flattening), the proposal is revisited against the new evidence.
+Status flips from Proposed to Accepted/Rejected only after a VP-001 run of
+**24 hours of continuous observation** (run-004 was INCONCLUSIVE: the host
+slept 9h 41m mid-run, so coverage was ~40% short of the intended window —
+see `docs/VALIDATION.md`) confirms: continued linear RSS, continued RTT growth
+tracking history, no crashes/reconnects/sequence gaps. The harness now records
+an `observation` coverage block (expected/observed/coverage_percent/largest_gap)
+in every manifest and marks the run INVALID below a coverage threshold —
+**accepted only when observation coverage ≥ 99%**. If run-005 contradicts the
+curve (RSS or RTT flattening), the proposal is revisited against the new
+evidence.

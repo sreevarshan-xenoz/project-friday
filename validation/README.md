@@ -27,6 +27,13 @@ node validation/friday-validate.mjs --duration 8h --interval 5s --output artifac
 
 Short smoke (75 s) first, then scale up: 2 h → 8 h → 24 h → 72 h.
 
+> A run is judged on **hours of continuous observation**, not wall-clock hours.
+> If the host sleeps, the experiment does not — a 24 h run with a 10 h sleep is
+> ~14 h observed, and the manifest records it as **INVALID** (see
+> Observation coverage below). Prevent sleep for the duration of long runs:
+> `powercfg /change standby-timeout-ac 0` (and `/dc`) on Windows, equivalent
+> on POSIX. This is an experimental control, not an architectural change.
+
 | Option       | Default                        | Meaning |
 | ------------ | ------------------------------ | ------- |
 | `--duration` | `2h`                           | `90s`, `30m`, `8h`, `1d`, or bare seconds |
@@ -36,10 +43,12 @@ Short smoke (75 s) first, then scale up: 2 h → 8 h → 24 h → 72 h.
 | `--seed`     | `42`                           | bridge RNG seed (same seed ⇒ same ledger) |
 | `--count`    | `140`                          | initial ledger records |
 | `--bridge`   | `target/debug/friday-bridge`   | path to the bridge binary |
+| `--coverage-threshold` | `99`                  | min observation coverage (%) for a VALID run |
 | `--analyze`  | —                              | analyze an existing run directory |
 | `--no-analyze` | off                          | skip analysis after a run |
 
-Exit codes: `0` clean + analyzer PASS · `1` crash or analyzer FAIL · `2` usage error.
+Exit codes: `0` clean + analyzer PASS · `1` crash, analyzer FAIL, **or
+INVALID observation coverage** · `2` usage error.
 `Ctrl-C` stops cleanly and still analyzes what was captured.
 
 ## Output layout
@@ -48,8 +57,8 @@ Exit codes: `0` clean + analyzer PASS · `1` crash or analyzer FAIL · `2` usage
 artifacts/validation/run-001/
   samples.jsonl    append-only data, one JSON line per sample
   bridge.log       bridge stdout/stderr
-  collector.log    collector diagnostics
-  manifest.json    config + timings + exit codes + git commit
+  collector.log    collector diagnostics (OBSERVATION GAP lines from watchdog)
+  manifest.json    config + observation coverage + timings + exit codes + git commit
   report.md        human verdict (printed at end of the run)
   report.json      machine verdict (criteria + metrics)
 ```
@@ -58,6 +67,42 @@ Each sample captures `bridge` counters, `runtime` read-model counts,
 `process` RSS/CPU/handles, `network` RTT (raw samples kept for exact
 percentiles), and `transport` (frames/bytes, sequence gaps, connection
 starts/errors, error frames, per-kind counts).
+
+## Observation coverage
+
+The manifest records how much of the intended run was actually observed:
+
+```json
+"observation": {
+  "expected_duration_ms": 86400000,
+  "observed_duration_ms": 51500000,
+  "coverage_percent": 59.6,
+  "largest_gap_ms": 34890910,
+  "gap_count": 2,
+  "status": "INVALID",
+  "threshold_percent": 99
+}
+```
+
+- `observed_duration_ms` = span between the first and last sample minus every
+  inter-sample gap longer than 3× the interval. A 9 h sleep counts as ~15 s,
+  not 9 h.
+- `coverage_percent` = observed / intended, capped at 100.
+- `status` = **VALID** iff coverage ≥ `--coverage-threshold` (default 99),
+  else **INVALID** — the run is not the experiment that was designed.
+
+Two watchdogs detect holes while the run is live:
+
+- **Collector** — if a sample is emitted more than 3× the interval after the
+  previous one, it logs `OBSERVATION GAP expected 5s actual 34877s`.
+- **Runner** — every tick it checks the samples file's mtime; a stall is
+  logged and recorded in `observation_gaps_watchdog`. Host sleep freezes this
+  timer too, so the first tick after wake catches the hole; the manifest
+  coverage block is the authoritative record.
+
+A hole in the observation does **not** say FRIDAY failed — it says the
+experiment lost observability, so the metrics describe a partial run and the
+verdict is INVALID regardless of the curves.
 
 ## Failure criteria (VP-001)
 
@@ -71,8 +116,9 @@ Decided **before** the run; the analyzer prints each as PASS/FAIL/INFO.
 | Sequence gaps         | 0              |
 | Unexpected reconnects | 0              |
 | Process crashes       | 0              |
+| Observation coverage  | ≥ 99%          |
 
-Overrides: `--max-mem-slope-mb-hr 1.0 --max-rtt-drift-pct 10`.
+Overrides: `--max-mem-slope-mb-hr 1.0 --max-rtt-drift-pct 10 --coverage-threshold 99`.
 
 Two report signals beyond the table:
 
