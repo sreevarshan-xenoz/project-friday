@@ -1,0 +1,12 @@
+{
+  "action_ok": true,
+  "fault": null,
+  "group": "long_context",
+  "id": "long_context.no_truncation",
+  "issues": [],
+  "latency_ms": 5797,
+  "note": "array_complete=true",
+  "passed": true,
+  "served_model": "opengateway/inclusionai/ling-3.0-flash:free",
+  "state_accuracy": true
+}
