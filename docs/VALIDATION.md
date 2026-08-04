@@ -41,7 +41,7 @@ are filled in afterwards. A run that surprises us is a finding, not a failure.
 
 ### VP-001 — Long-running cognition
 
-**Status:** ladder in progress — run-002 (2h) = **VP-001 Baseline**; run-003 (8h) done; run-004 (24h) = **INCONCLUSIVE** (host sleep, 9.7h observation gap); run-005 (24h continuous) scheduled; then ADR decision
+**Status:** ladder in progress — run-002 (2h) = **VP-001 Baseline**; run-003 (8h) done; run-004 (24h) = **INCONCLUSIVE** (protocol evolved mid-run: host sleep, 9.7h observation gap); run-005 (24h continuous, **first protocol-compliant VP-001 execution**) scheduled; then ADR decision
 
 ```
 Evidence supports:
@@ -74,8 +74,9 @@ Evidence supports:
   Finding VP-001-2). Instrument landed in git `0e6df06`+; **run-004 was
   launched before it** and is therefore uninstrumented (no `TIMING` lines).
 - **Runs:** 2h ✅ baseline (run-002) → 8h ✅ (run-003) → 24h **continuous**
-  observation (run-004: INCONCLUSIVE; run-005) → ADR decision (72h/1w only
-  after the architecture question is resolved).
+  observation (run-004: INCONCLUSIVE; run-005: **first protocol-compliant
+  execution**) → ADR decision (72h/1w only after the architecture question is
+  resolved).
 - **Expected Result:** bounded growth; calibration converges and stays within
   clamps; replay results stay consistent; latency flat.
 - **Actual Result (run-002 — VP-001 Baseline, 2026-08-03, 120 min, seed
@@ -122,6 +123,15 @@ Evidence supports:
   records 0.8 → 5.4 ms), but the criterion was **24 hours of continuous
   observation**, and ~14.3h observed is not the experiment that was designed.
   Per the coverage gate this run is INVALID regardless of its curves.
+
+  **Reason for INCONCLUSIVE:** the validation protocol evolved during this
+  run. The observation-coverage criterion (and its watchdogs) was introduced
+  *after* run-004 exposed host-sleep blind spots — this run was not executed
+  under the protocol it would later be judged by. run-004 is therefore
+  archived as INCONCLUSIVE, not rejected for a defect: the experiment itself
+  revealed a weakness in the validation framework, and the framework was
+  improved before making any architectural decision.
+
   Evidence: `artifacts/validation/run-004/` (gitignored). Mitigation for
   run-005: sleep prevention for the run window + observation coverage and
   watchdogs in the harness (`validation/`, instrumented this entry).
