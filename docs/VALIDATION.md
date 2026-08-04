@@ -119,10 +119,12 @@ Evidence supports:
   gap (`connection_starts=1`, `connection_errors=0`, `sequence_gaps=0` in
   every observed sample) — the run clock stayed continuous and the collector
   resumed on wake. Observed segments (h 0–1.9 and h 11.6–24) are continuous
-  and consistent with the hypothesis (linear RSS ~26.9 → ~67 MB; RTT tracks
-  records 0.8 → 5.4 ms), but the criterion was **24 hours of continuous
-  observation**, and ~14.3h observed is not the experiment that was designed.
-  Per the coverage gate this run is INVALID regardless of its curves.
+  and consistent with the hypothesis (linear RSS 13.9 → 184.5 MB at 42.3
+  MB/1,000 records — matching run-003's 41.0; RTT mean 14.6 ms tracking the
+  ledger 140 → 4,150), but the criterion was **24 hours of continuous
+  observation**, and 14.2h observed (59.2% coverage) is not the experiment
+  that was designed. Per the coverage gate this run is INVALID regardless of
+  its curves.
 
   **Reason for INCONCLUSIVE:** the validation protocol evolved during this
   run. The observation-coverage criterion (and its watchdogs) was introduced
