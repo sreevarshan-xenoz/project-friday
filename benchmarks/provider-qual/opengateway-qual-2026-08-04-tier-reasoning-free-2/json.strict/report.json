@@ -1,0 +1,12 @@
+{
+  "action_ok": true,
+  "fault": null,
+  "group": "json",
+  "id": "json.strict",
+  "issues": [],
+  "latency_ms": 10073,
+  "note": "json_valid=true",
+  "passed": true,
+  "served_model": "opengateway/mindai/macaron-v1-tall",
+  "state_accuracy": true
+}

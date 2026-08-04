@@ -180,6 +180,7 @@ async fn test_inference_fabric_failover() {
         reliability: 1.0,
         capabilities: vec![],
         max_context: 2048,
+        tier: None,
     });
 
     // openrouter: succeeds, latency=500ms
@@ -197,6 +198,7 @@ async fn test_inference_fabric_failover() {
         reliability: 1.0,
         capabilities: vec![],
         max_context: 8192,
+        tier: None,
     });
 
     // First request: ollama (faster) is tried, fails, then openrouter (slower) succeeds
@@ -240,6 +242,7 @@ async fn test_inference_fabric_advanced_features() {
         reliability: 1.0,
         capabilities: vec![ModelCapability::Json, ModelCapability::Local],
         max_context: 2048,
+        tier: None,
     });
 
     // openrouter: succeeds, latency=500ms, requires Vision capability for capability testing
@@ -257,6 +260,7 @@ async fn test_inference_fabric_advanced_features() {
         reliability: 1.0,
         capabilities: vec![ModelCapability::Json, ModelCapability::Vision],
         max_context: 8192,
+        tier: None,
     });
 
     // 1. Test Capability-Based Routing:
@@ -321,6 +325,7 @@ async fn test_inference_fabric_persistence_and_telemetry() {
         reliability: 1.0,
         capabilities: vec![],
         max_context: 2048,
+        tier: None,
     });
 
     let res = fabric.complete("test metric log").await.unwrap();

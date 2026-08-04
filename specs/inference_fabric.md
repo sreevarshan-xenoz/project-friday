@@ -26,19 +26,24 @@ Governs how the fabric selects providers and models:
 - `HYBRID`: Attempts local Ollama first, falling back to free cloud providers on failure.
 
 ### `ModelInfo`
-Represents a model instance hosted by a specific provider:
+Represents a model instance hosted by a specific provider. `tier` is the FRIDAY
+capability descriptor (`CapabilityTier`) when the model has a stable logical role;
+callers resolve by tier and never hard-code vendor IDs:
 ```rust
 pub struct ModelInfo {
-    pub id: String,          // e.g., "llama-3.3-70b-versatile"
-    pub family: String,      // e.g., "llama-3.3-70b"
-    pub provider: String,    // e.g., "groq"
+    pub id: String,            // e.g., "llama-3.3-70b-versatile" (vendor wire ID)
+    pub family: String,        // e.g., "llama-3.3-70b" (logical name)
+    pub provider: String,      // e.g., "groq"
     pub latency_ms: u64,
     pub reliability: f64,
-    pub supports_json: bool,
-    pub supports_tools: bool,
+    pub capabilities: Vec<ModelCapability>, // Json, Tools, Vision, Local, LongContext
     pub max_context: usize,
+    pub tier: Option<CapabilityTier>,       // FRIDAY descriptor, e.g. ReasoningFree
 }
 ```
+`InferenceFabric::resolve_tier(provider, tier)` maps a FRIDAY descriptor to the
+concrete model; `complete_tier(...)` completes against it. Vendor renames are a
+provider-catalog change only.
 
 ## `Provider` Trait
 Pluggable adapter for communicating with an external API host:

@@ -8,6 +8,10 @@
 //!   provider-qual --scenario ID    # run only the scenario with this id
 //!   provider-qual --replay PATH    # re-run the scenario recorded in PATH
 //!
+//! OpenGateway targeting (optional):
+//!   OPENGATEWAY_TIER=reasoning-free|conversation-fast|long-context-free|auto  # FRIDAY capability descriptor
+//!   OPENGATEWAY_MODEL=mindai/macaron-v1-tall                                  # explicit vendor model ID
+//!
 //! Pipeline: connect -> complete -> verify -> report (Evidence Packs + benchmark-
 //! linked issues). No recovery, no provider evolution yet — just facts.
 //!
@@ -25,8 +29,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use friday_intelligence::{
-    InferenceFabric, ModelCapability, ModelInfo, OmniRouteProvider, OmniRouteProviderV2,
-    OpenAiProvider, Provider, ProviderV2, RoutingMode,
+    opengateway_models, CapabilityTier, InferenceFabric, ModelCapability, ModelInfo,
+    OmniRouteProvider, OmniRouteProviderV2, OpenAiProvider, Provider, ProviderV2, RoutingMode,
 };
 
 use candidates::{CandidateStore, GRADUATE_THRESHOLD};
@@ -48,6 +52,7 @@ fn model(provider: &str, id: &str) -> ModelInfo {
             ModelCapability::LongContext,
         ],
         max_context: 200_000,
+        tier: None,
     }
 }
 
@@ -150,18 +155,58 @@ fn build_target(provider: &str, mock: bool) -> (Target, String, String) {
 
     let mut fabric = InferenceFabric::new();
     fabric.register_provider(provider_box);
-    fabric.register_model(model(pname, mid));
+    let model_id = if pname == "opengateway" {
+        // Single source of truth: the tier-carrying catalog from the fabric.
+        for m in opengateway_models() {
+            fabric.register_model(m);
+        }
+        // Optional targeting by FRIDAY capability tier (OPENGATEWAY_TIER) or by
+        // explicit vendor model ID (OPENGATEWAY_MODEL). With no override the full
+        // catalog is exercised, so the fabric's failover path (auto-route 429 →
+        // free models) is part of the qualification.
+        let tier = std::env::var("OPENGATEWAY_TIER")
+            .ok()
+            .and_then(|s| CapabilityTier::from_tag(&s));
+        let explicit = std::env::var("OPENGATEWAY_MODEL").ok();
+        if let Some(tier) = tier {
+            let keep: Vec<ModelInfo> = fabric
+                .models
+                .iter()
+                .filter(|m| m.tier == Some(tier))
+                .cloned()
+                .collect();
+            fabric.models = keep;
+            fabric
+                .resolve_tier("opengateway", tier)
+                .map(|m| m.id.clone())
+                .unwrap_or_else(|| "auto".to_string())
+        } else if let Some(id) = explicit {
+            let keep: Vec<ModelInfo> = fabric
+                .models
+                .iter()
+                .filter(|m| m.id == id)
+                .cloned()
+                .collect();
+            fabric.models = keep;
+            id
+        } else {
+            "auto".to_string()
+        }
+    } else {
+        fabric.register_model(model(pname, mid));
+        mid.to_string()
+    };
     fabric.default_mode = mode;
 
     (
         Target {
             fabric,
             provider_name: pname.to_string(),
-            model_id: mid.to_string(),
+            model_id: model_id.clone(),
             v2,
         },
         base,
-        mid.to_string(),
+        model_id,
     )
 }
 

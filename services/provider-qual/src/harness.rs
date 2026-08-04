@@ -63,6 +63,9 @@ pub struct Outcome {
     pub fault: Option<String>,
     /// V2 capability fact observed by this scenario (tool_calling), if applicable.
     pub tool_calling: Option<bool>,
+    /// The (provider, vendor model id) that actually served the completion, when
+    /// the fabric's routing fell back through the catalog.
+    pub served_model: Option<String>,
 }
 
 fn now() -> String {
@@ -93,6 +96,14 @@ pub async fn run_scenario(target: &Target, scenario: &Scenario, _mode: Mode) -> 
         Verify::Streaming => run_streaming(target, scenario, trace).await,
         Verify::DynamicDiscovery => run_dynamic_discovery(target, scenario, trace).await,
     };
+
+    // Record which vendor model actually answered (failover may differ from the
+    // declared routing target, e.g. auto-route quota → free-model fallback).
+    if o.served_model.is_none() {
+        if let Some((provider, model)) = target.fabric.last_served() {
+            o.served_model = Some(format!("{provider}/{model}"));
+        }
+    }
 
     if !o.passed {
         let (expected, actual) = expected_actual(scenario, o.action_ok, o.state_accuracy);
@@ -129,6 +140,7 @@ async fn run_connectivity(target: &Target, scenario: &Scenario, mut trace: Vec<C
         note: format!("reachable={reachable}"),
         fault: None,
         tool_calling: None,
+    served_model: None,
     }
 }
 
@@ -164,6 +176,7 @@ async fn run_completion(target: &Target, scenario: &Scenario, mut trace: Vec<Cal
                 note: format!("response_len={}", text.len()),
                 fault: None,
                 tool_calling: None,
+            served_model: None,
             }
         }
         Err(e) => Outcome {
@@ -178,6 +191,7 @@ async fn run_completion(target: &Target, scenario: &Scenario, mut trace: Vec<Cal
             note: format!("error: {e}"),
             fault: None,
             tool_calling: None,
+        served_model: None,
         },
     }
 }
@@ -222,6 +236,7 @@ async fn run_json(target: &Target, scenario: &Scenario, mut trace: Vec<Call>) ->
                 note: format!("json_valid={ok}"),
                 fault: None,
                 tool_calling: None,
+            served_model: None,
             }
         }
         Err(e) => Outcome {
@@ -236,6 +251,7 @@ async fn run_json(target: &Target, scenario: &Scenario, mut trace: Vec<Call>) ->
             note: format!("error: {e}"),
             fault: None,
             tool_calling: None,
+        served_model: None,
         },
     }
 }
@@ -284,6 +300,7 @@ async fn run_long_context(target: &Target, scenario: &Scenario, mut trace: Vec<C
                 note: format!("array_complete={ok}"),
                 fault: None,
                 tool_calling: None,
+            served_model: None,
             }
         }
         Err(e) => Outcome {
@@ -298,6 +315,7 @@ async fn run_long_context(target: &Target, scenario: &Scenario, mut trace: Vec<C
             note: format!("error: {e}"),
             fault: None,
             tool_calling: None,
+        served_model: None,
         },
     }
 }
@@ -324,6 +342,7 @@ async fn run_failure(scenario: &Scenario, mut trace: Vec<Call>) -> Outcome {
         reliability: 1.0,
         capabilities: vec![ModelCapability::Json],
         max_context: 4096,
+        tier: None,
     });
     fabric.default_mode = RoutingMode::Free;
 
@@ -368,6 +387,7 @@ async fn run_failure(scenario: &Scenario, mut trace: Vec<Call>) -> Outcome {
         ),
         fault: Some(format!("{:?}", injection)),
         tool_calling: None,
+    served_model: None,
     }
 }
 
@@ -387,6 +407,7 @@ async fn run_streaming(target: &Target, scenario: &Scenario, mut trace: Vec<Call
         note,
         fault: None,
         tool_calling: None,
+    served_model: None,
     };
 
     let Some(v2) = &target.v2 else {
@@ -452,6 +473,7 @@ async fn run_streaming(target: &Target, scenario: &Scenario, mut trace: Vec<Call
         ),
         fault: None,
         tool_calling: Some(caps.tool_calling),
+    served_model: None,
     }
 }
 
@@ -475,6 +497,7 @@ async fn run_dynamic_discovery(
         note,
         fault: None,
         tool_calling: None,
+    served_model: None,
     };
 
     let Some(v2) = &target.v2 else {
@@ -513,6 +536,7 @@ async fn run_dynamic_discovery(
         note: format!("models_discovered={}", models.len()),
         fault: None,
         tool_calling: Some(caps.tool_calling),
+    served_model: None,
     }
 }
 

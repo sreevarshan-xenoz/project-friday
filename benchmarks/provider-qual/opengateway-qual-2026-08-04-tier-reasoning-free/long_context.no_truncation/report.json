@@ -1,0 +1,14 @@
+{
+  "action_ok": false,
+  "fault": null,
+  "group": "long_context",
+  "id": "long_context.no_truncation",
+  "issues": [
+    "PRV-LONG_CONTEXT_NO_TRUNCATION"
+  ],
+  "latency_ms": 194100,
+  "note": "error: All candidates failed. Last error: HTTP request failed: error sending request for url (https://opengateway.gitlawb.com/v1/chat/completions): connection error: An existing connection was forcibly closed by the remote host. (os error 10054)",
+  "passed": false,
+  "served_model": "opengateway/mindai/macaron-v1-tall",
+  "state_accuracy": false
+}

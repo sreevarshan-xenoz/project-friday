@@ -1,0 +1,12 @@
+{
+  "action_ok": true,
+  "fault": null,
+  "group": "long_context",
+  "id": "long_context.no_truncation",
+  "issues": [],
+  "latency_ms": 14208,
+  "note": "array_complete=true",
+  "passed": true,
+  "served_model": "opengateway/mindai/macaron-v1-tall",
+  "state_accuracy": true
+}

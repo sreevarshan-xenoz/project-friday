@@ -1,0 +1,12 @@
+{
+  "action_ok": true,
+  "fault": null,
+  "group": "completion",
+  "id": "completion.hello",
+  "issues": [],
+  "latency_ms": 1712,
+  "note": "response_len=4",
+  "passed": true,
+  "served_model": "opengateway/inclusionai/ling-3.0-flash:free",
+  "state_accuracy": true
+}

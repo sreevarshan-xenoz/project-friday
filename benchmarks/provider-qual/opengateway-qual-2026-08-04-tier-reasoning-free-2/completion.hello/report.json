@@ -1,0 +1,12 @@
+{
+  "action_ok": true,
+  "fault": null,
+  "group": "completion",
+  "id": "completion.hello",
+  "issues": [],
+  "latency_ms": 3882,
+  "note": "response_len=6",
+  "passed": true,
+  "served_model": "opengateway/mindai/macaron-v1-tall",
+  "state_accuracy": true
+}

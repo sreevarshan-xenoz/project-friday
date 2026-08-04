@@ -135,6 +135,7 @@ pub fn write_outcome(dir: &Path, o: &Outcome) -> std::io::Result<()> {
         "state_accuracy": o.state_accuracy,
         "passed": o.passed,
         "fault": o.fault,
+        "served_model": o.served_model,
         "note": o.note,
         "issues": o.issues.iter().map(|i| i.id.clone()).collect::<Vec<_>>(),
     });

@@ -49,6 +49,50 @@ pub enum ModelCapability {
     LongContext,
 }
 
+/// FRIDAY-level logical model descriptors — provider-agnostic capability tiers.
+/// Vendors map these to concrete model IDs internally (`ModelInfo.tier`), so a
+/// model rename or repricing on the provider side never reaches FRIDAY. Callers
+/// name capabilities ("Reasoning.Free"), never vendor model IDs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CapabilityTier {
+    /// Provider smart routing (`auto`): the gateway picks and escalates on failure.
+    Auto,
+    /// Deep reasoning on the free tier.
+    ReasoningFree,
+    /// Fast conversational / coding on the free tier.
+    ConversationFast,
+    /// Long-context on the free tier.
+    LongContextFree,
+    /// Vision on the free tier.
+    VisionFree,
+}
+
+impl CapabilityTier {
+    /// Stable wire/config tag, e.g. `reasoning-free`.
+    pub fn tag(&self) -> &'static str {
+        match self {
+            CapabilityTier::Auto => "auto",
+            CapabilityTier::ReasoningFree => "reasoning-free",
+            CapabilityTier::ConversationFast => "conversation-fast",
+            CapabilityTier::LongContextFree => "long-context-free",
+            CapabilityTier::VisionFree => "vision-free",
+        }
+    }
+
+    /// Parse a tag back into a tier. Returns `None` for unknown tags so callers
+    /// can fall back to explicit model IDs.
+    pub fn from_tag(s: &str) -> Option<Self> {
+        match s {
+            "auto" => Some(CapabilityTier::Auto),
+            "reasoning-free" => Some(CapabilityTier::ReasoningFree),
+            "conversation-fast" => Some(CapabilityTier::ConversationFast),
+            "long-context-free" => Some(CapabilityTier::LongContextFree),
+            "vision-free" => Some(CapabilityTier::VisionFree),
+            _ => None,
+        }
+    }
+}
+
 /// Represents metadata for a model hosted by a specific provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
@@ -59,6 +103,10 @@ pub struct ModelInfo {
     pub reliability: f64,
     pub capabilities: Vec<ModelCapability>,
     pub max_context: usize,
+    /// Stable FRIDAY capability tier, when assigned (see `CapabilityTier`).
+    /// Absent for models only reachable by vendor ID.
+    #[serde(default)]
+    pub tier: Option<CapabilityTier>,
 }
 
 /// Pluggable adapter for communicating with an external API host.
@@ -369,6 +417,10 @@ pub struct InferenceFabric {
     pub circuits: Arc<Mutex<HashMap<String, CircuitBreaker>>>,
     pub default_mode: RoutingMode,
     pub required_capabilities: Vec<ModelCapability>,
+    /// The (provider, model id) that served the last successful completion.
+    /// Lets qualification evidence record which vendor model actually answered
+    /// when routing fell back through the catalog.
+    pub last_served: Arc<Mutex<Option<(String, String)>>>,
 }
 
 impl InferenceFabric {
@@ -380,6 +432,7 @@ impl InferenceFabric {
             circuits: Arc::new(Mutex::new(HashMap::new())),
             default_mode: RoutingMode::Free,
             required_capabilities: Vec::new(),
+            last_served: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -397,6 +450,39 @@ impl InferenceFabric {
 
     pub fn register_model(&mut self, model: ModelInfo) {
         self.models.push(model);
+    }
+
+    /// Resolve a FRIDAY capability tier to the concrete registered model for a
+    /// provider. Callers name capabilities (`CapabilityTier`), never vendor IDs;
+    /// when the provider renames a model, only the catalog changes.
+    pub fn resolve_tier(&self, provider: &str, tier: CapabilityTier) -> Option<&ModelInfo> {
+        self.models
+            .iter()
+            .find(|m| m.provider == provider && m.tier == Some(tier))
+    }
+
+    /// The (provider, model id) that served the last successful completion.
+    pub fn last_served(&self) -> Option<(String, String)> {
+        self.last_served.lock().unwrap().clone()
+    }
+
+    /// Complete against a capability tier, resolving the vendor model ID
+    /// internally. Returns an error if the provider or tier is unregistered.
+    pub async fn complete_tier(
+        &self,
+        provider: &str,
+        tier: CapabilityTier,
+        prompt: &str,
+        require_json: bool,
+    ) -> Result<String, String> {
+        let model = self
+            .resolve_tier(provider, tier)
+            .ok_or_else(|| format!("no model registered for {provider} tier {}", tier.tag()))?;
+        let prov = self
+            .providers
+            .get(provider)
+            .ok_or_else(|| format!("provider {provider} not registered"))?;
+        prov.complete(&model.id, prompt, require_json).await
     }
 
     /// Selects and ranks provider-model candidates based on routing policy and capabilities.
@@ -586,6 +672,7 @@ impl InferenceFabric {
                         ModelCapability::LongContext,
                     ],
                     max_context: 1_000_000,
+                    tier: None,
                 });
                 // Coding-focused free model: 1M context
                 fabric.register_model(ModelInfo {
@@ -600,6 +687,7 @@ impl InferenceFabric {
                         ModelCapability::LongContext,
                     ],
                     max_context: 1_000_000,
+                    tier: None,
                 });
                 // Most-used free model but may return empty under load: 1M context
                 fabric.register_model(ModelInfo {
@@ -614,6 +702,7 @@ impl InferenceFabric {
                         ModelCapability::LongContext,
                     ],
                     max_context: 1_000_000,
+                    tier: None,
                 });
                 // Agentic coding free model: 262K context
                 fabric.register_model(ModelInfo {
@@ -627,6 +716,7 @@ impl InferenceFabric {
                         ModelCapability::Tools,
                     ],
                     max_context: 262_144,
+                    tier: None,
                 });
             }
         }
@@ -647,6 +737,7 @@ impl InferenceFabric {
                     reliability: 1.0,
                     capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
                     max_context: 128000,
+                    tier: None,
                 });
             }
         }
@@ -667,6 +758,7 @@ impl InferenceFabric {
                     reliability: 1.0,
                     capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
                     max_context: 128000,
+                    tier: None,
                 });
             }
         }
@@ -691,6 +783,7 @@ impl InferenceFabric {
                         ModelCapability::LongContext,
                     ],
                     max_context: 1_000_000,
+                    tier: None,
                 });
             }
         }
@@ -712,6 +805,7 @@ impl InferenceFabric {
                     reliability: 1.0,
                     capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
                     max_context: 131_072,
+                    tier: None,
                 });
             }
         }
@@ -735,6 +829,7 @@ impl InferenceFabric {
                     ModelCapability::Local,
                 ],
                 max_context: 32768,
+                tier: None,
             });
         }
 
@@ -766,6 +861,7 @@ impl InferenceFabric {
                             ModelCapability::LongContext,
                         ],
                         max_context: 200_000,
+                        tier: None,
                     });
                 }
                 tracing::info!("Registered OmniRoute provider (multi-provider gateway).");
@@ -785,56 +881,9 @@ impl InferenceFabric {
                 api_key: key,
             }));
             if !registry_loaded {
-                // Smart routing: the gateway picks the cheapest capable model and
-                // escalates on failure, so FRIDAY exposes it as one "auto" model.
-                fabric.register_model(ModelInfo {
-                    id: "auto".to_string(),
-                    family: "opengateway-auto".to_string(),
-                    provider: "opengateway".to_string(),
-                    latency_ms: 800,
-                    reliability: 1.0,
-                    capabilities: vec![
-                        ModelCapability::Json,
-                        ModelCapability::Tools,
-                        ModelCapability::LongContext,
-                    ],
-                    max_context: 200_000,
-                });
-                fabric.register_model(ModelInfo {
-                    id: "nvidia/nemotron-3-ultra-550b-a55b:free".to_string(),
-                    family: "nemotron-3-ultra".to_string(),
-                    provider: "opengateway".to_string(),
-                    latency_ms: 2500,
-                    reliability: 1.0,
-                    capabilities: vec![
-                        ModelCapability::Json,
-                        ModelCapability::Tools,
-                        ModelCapability::LongContext,
-                    ],
-                    max_context: 131_072,
-                });
-                fabric.register_model(ModelInfo {
-                    id: "inclusionai/ling-3.0-flash:free".to_string(),
-                    family: "ling-3.0-flash".to_string(),
-                    provider: "opengateway".to_string(),
-                    latency_ms: 2000,
-                    reliability: 1.0,
-                    capabilities: vec![
-                        ModelCapability::Json,
-                        ModelCapability::Tools,
-                        ModelCapability::LongContext,
-                    ],
-                    max_context: 262_144,
-                });
-                fabric.register_model(ModelInfo {
-                    id: "mindai/macaron-v1-tall".to_string(),
-                    family: "macaron-v1-tall".to_string(),
-                    provider: "opengateway".to_string(),
-                    latency_ms: 3000,
-                    reliability: 1.0,
-                    capabilities: vec![ModelCapability::Json, ModelCapability::LongContext],
-                    max_context: 262_144,
-                });
+                for m in opengateway_models() {
+                    fabric.register_model(m);
+                }
             }
             tracing::info!("Registered OpenGateway provider (gitlawb, OpenAI-compatible).");
         }
@@ -842,6 +891,70 @@ impl InferenceFabric {
         fabric.load_health();
         fabric
     }
+}
+
+/// OpenGateway (gitlawb) model catalog — single source of truth for the free
+/// tiers FRIDAY resolves. Tier → concrete model ID (verified against the live
+/// `/v1/models` catalog; `auto` is smart routing that escalates on failure):
+///   reasoning-free     → mindai/macaron-v1-tall (verified 200 + reasoning_content)
+///   long-context-free  → inclusionai/ling-3.0-flash:free (262K ctx)
+///   conversation-fast  → nvidia/nemotron-3-ultra-550b-a55b:free
+///   auto               → gateway smart routing (per-key daily free quota)
+pub fn opengateway_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "auto".to_string(),
+            family: "opengateway-auto".to_string(),
+            provider: "opengateway".to_string(),
+            latency_ms: 800,
+            reliability: 1.0,
+            capabilities: vec![
+                ModelCapability::Json,
+                ModelCapability::Tools,
+                ModelCapability::LongContext,
+            ],
+            max_context: 200_000,
+            tier: Some(CapabilityTier::Auto),
+        },
+        ModelInfo {
+            id: "nvidia/nemotron-3-ultra-550b-a55b:free".to_string(),
+            family: "nemotron-3-ultra".to_string(),
+            provider: "opengateway".to_string(),
+            latency_ms: 2500,
+            reliability: 1.0,
+            capabilities: vec![
+                ModelCapability::Json,
+                ModelCapability::Tools,
+                ModelCapability::LongContext,
+            ],
+            max_context: 131_072,
+            tier: Some(CapabilityTier::ConversationFast),
+        },
+        ModelInfo {
+            id: "inclusionai/ling-3.0-flash:free".to_string(),
+            family: "ling-3.0-flash".to_string(),
+            provider: "opengateway".to_string(),
+            latency_ms: 2000,
+            reliability: 1.0,
+            capabilities: vec![
+                ModelCapability::Json,
+                ModelCapability::Tools,
+                ModelCapability::LongContext,
+            ],
+            max_context: 262_144,
+            tier: Some(CapabilityTier::LongContextFree),
+        },
+        ModelInfo {
+            id: "mindai/macaron-v1-tall".to_string(),
+            family: "macaron-v1-tall".to_string(),
+            provider: "opengateway".to_string(),
+            latency_ms: 3000,
+            reliability: 1.0,
+            capabilities: vec![ModelCapability::Json, ModelCapability::LongContext],
+            max_context: 262_144,
+            tier: Some(CapabilityTier::ReasoningFree),
+        },
+    ]
 }
 
 #[async_trait]
@@ -893,6 +1006,14 @@ impl ModelClient for InferenceFabric {
                         model.id,
                         latency_ms
                     );
+
+                    // Record which vendor model actually served, so evidence
+                    // packs can show the real path (e.g. auto route quota → free
+                    // model fallback) rather than the declared routing target.
+                    *self.last_served.lock().unwrap() = Some((
+                        provider.name().to_string(),
+                        model.id.clone(),
+                    ));
 
                     // Update reliability score
                     {
@@ -1012,6 +1133,7 @@ mod tests {
             reliability: 1.0,
             capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
             max_context: 200_000,
+            tier: None,
         });
 
         assert!(fabric.providers.contains_key("omniroute"));
@@ -1044,6 +1166,7 @@ mod tests {
             reliability: 1.0,
             capabilities: vec![ModelCapability::Local],
             max_context: 200_000,
+            tier: None,
         });
 
         let candidates = fabric.select_candidates(RoutingMode::Local);
@@ -1076,6 +1199,7 @@ mod tests {
             reliability: 1.0,
             capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
             max_context: 200_000,
+            tier: None,
         });
 
         assert!(fabric.providers.contains_key("opengateway"));
@@ -1097,6 +1221,58 @@ mod tests {
             !local.iter().any(|(m, _)| m.provider == "opengateway"),
             "opengateway must not be selected in Local-only mode"
         );
+    }
+
+    #[test]
+    fn opengateway_capability_tiers_resolve_to_free_models() {
+        let mut fabric = InferenceFabric::new();
+        fabric.register_provider(Box::new(OpenAiProvider {
+            name: "opengateway".to_string(),
+            base_url: "https://opengateway.gitlawb.com/v1".to_string(),
+            api_key: String::new(),
+        }));
+        for m in opengateway_models() {
+            fabric.register_model(m);
+        }
+
+        // Callers name capabilities, never vendor model IDs.
+        assert_eq!(
+            fabric
+                .resolve_tier("opengateway", CapabilityTier::ReasoningFree)
+                .map(|m| m.id.as_str()),
+            Some("mindai/macaron-v1-tall")
+        );
+        assert_eq!(
+            fabric
+                .resolve_tier("opengateway", CapabilityTier::LongContextFree)
+                .map(|m| m.id.as_str()),
+            Some("inclusionai/ling-3.0-flash:free")
+        );
+        assert_eq!(
+            fabric
+                .resolve_tier("opengateway", CapabilityTier::ConversationFast)
+                .map(|m| m.id.as_str()),
+            Some("nvidia/nemotron-3-ultra-550b-a55b:free")
+        );
+        assert_eq!(
+            fabric
+                .resolve_tier("opengateway", CapabilityTier::Auto)
+                .map(|m| m.id.as_str()),
+            Some("auto")
+        );
+        assert!(
+            fabric
+                .resolve_tier("opengateway", CapabilityTier::VisionFree)
+                .is_none(),
+            "no vision tier is registered for opengateway"
+        );
+
+        // Tag round-trip is stable.
+        assert_eq!(
+            CapabilityTier::from_tag(CapabilityTier::ReasoningFree.tag()),
+            Some(CapabilityTier::ReasoningFree)
+        );
+        assert_eq!(CapabilityTier::from_tag("unknown-tier"), None);
     }
 }
 

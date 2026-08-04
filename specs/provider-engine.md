@@ -32,6 +32,33 @@ The Provider Engine says: "Use local Ollama for planning, cloud GPT for code rev
 
 They operate at different levels and should never be confused.
 
+## 3a. Capability Tiers (FRIDAY concepts, not vendor IDs)
+
+Provider configuration never hard-codes vendor model IDs at the call site. Every
+model that has a stable FRIDAY purpose is assigned a **`CapabilityTier`**; the
+provider maps tiers to concrete model IDs internally. If the vendor renames or
+reprices a model, only the provider catalog changes — FRIDAY never notices.
+
+Implemented in `services/intelligence` as `CapabilityTier` + `ModelInfo.tier`:
+
+```text
+Reasoning.Free      -> reasoning-free      -> e.g. mindai/macaron-v1-tall
+Conversation.Fast   -> conversation-fast   -> e.g. nvidia/nemotron-3-ultra-550b-a55b:free
+LongContext.Free    -> long-context-free   -> e.g. inclusionai/ling-3.0-flash:free
+Vision.Free         -> vision-free         -> (none registered yet)
+Auto                -> auto                -> provider smart routing
+```
+
+Contract:
+
+1. `InferenceFabric::resolve_tier(provider, tier) -> Option<&ModelInfo>` resolves
+   a FRIDAY descriptor to the concrete registered model.
+2. `InferenceFabric::complete_tier(provider, tier, prompt, require_json)` completes
+   against a tier, resolving the vendor ID internally.
+3. Qualification targets tiers (`OPENGATEWAY_TIER=reasoning-free`), never raw IDs.
+4. The planner (frozen) still asks for `Capability` sets; tiers are a provider-side
+   resolution layer beneath it and never leak vendor IDs upward.
+
 ## 3. Provider Model
 
 ```rust
