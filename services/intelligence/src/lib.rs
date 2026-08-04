@@ -11,6 +11,7 @@ pub use providers::{
     opengateway_models, CapabilityTier, CircuitBreaker, CircuitState, CompletionChunk,
     EmbeddingResult, InferenceFabric, MockModelClient, ModelCapability, ModelClient,
     ModelDescriptor, ModelInfo, OmniRouteProvider, OmniRouteProviderV2, OpenAiProvider, Provider,
-    ProviderCapabilities, ProviderMetadata, ProviderV2, ProviderV2Adapter, RoutingMode,
+    ProviderCapabilities, ProviderMetadata, ProviderV2, ProviderV2Adapter, RoutingDecision,
+    RoutingMode,
 };
 pub use router::{CognitiveMode, IntelligenceRouter};

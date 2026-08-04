@@ -409,6 +409,43 @@ pub struct PersistedProviderHealth {
     pub circuit_state: String, // "Closed", "Open", "HalfOpen"
 }
 
+/// One candidate a routing decision considered, with the two scores routing
+/// sorts by (provider reliability descending, then model latency ascending).
+/// Serialized into qualification evidence so routing is auditable, not just
+/// reportable by outcome.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CandidateConsideration {
+    pub provider: String,
+    pub model: String,
+    /// Provider reliability (0.0..=1.0) — the primary sort key.
+    pub reliability: f64,
+    /// Model latency ms — the secondary sort key.
+    pub latency_ms: u64,
+}
+
+/// Audit trail of one routed completion: the capability requested, every
+/// candidate considered (with scores), the candidate chosen, the vendor model
+/// that actually served, and why they differed. Lets operators later answer
+/// "which provider/model answered, why, and does routing drift over time?"
+/// without changing the interface.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoutingDecision {
+    /// The FRIDAY capability tier requested (`None` = mode-based routing, e.g.
+    /// `RoutingMode::Free` over the whole catalog).
+    pub requested_tier: Option<CapabilityTier>,
+    /// The routing mode in effect (`Fast`/`Quality`/`Free`/`Local`/`Hybrid`).
+    pub routing_mode: String,
+    /// Candidates considered, in the order routing attempted them.
+    pub candidates: Vec<CandidateConsideration>,
+    /// The candidate selected to serve first (highest-ranked).
+    pub chosen: Option<(String, String)>,
+    /// The (provider, vendor model) that actually answered, if any.
+    pub served: Option<(String, String)>,
+    /// Why `served` differs from `chosen` (e.g. chosen hit a quota 429), or the
+    /// failure summary when nothing served.
+    pub change_reason: Option<String>,
+}
+
 /// Coordinates model selection, state tracking, and error recovery.
 pub struct InferenceFabric {
     pub providers: HashMap<String, Box<dyn Provider>>,
@@ -417,10 +454,10 @@ pub struct InferenceFabric {
     pub circuits: Arc<Mutex<HashMap<String, CircuitBreaker>>>,
     pub default_mode: RoutingMode,
     pub required_capabilities: Vec<ModelCapability>,
-    /// The (provider, model id) that served the last successful completion.
-    /// Lets qualification evidence record which vendor model actually answered
-    /// when routing fell back through the catalog.
-    pub last_served: Arc<Mutex<Option<(String, String)>>>,
+    /// The routing decision that served the last completion. Lets qualification
+    /// evidence record which vendor model actually answered AND why (failover
+    /// through the catalog, e.g. auto-route quota → free-model fallback).
+    pub last_decision: Arc<Mutex<Option<RoutingDecision>>>,
 }
 
 impl InferenceFabric {
@@ -432,7 +469,7 @@ impl InferenceFabric {
             circuits: Arc::new(Mutex::new(HashMap::new())),
             default_mode: RoutingMode::Free,
             required_capabilities: Vec::new(),
-            last_served: Arc::new(Mutex::new(None)),
+            last_decision: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -461,9 +498,19 @@ impl InferenceFabric {
             .find(|m| m.provider == provider && m.tier == Some(tier))
     }
 
+    /// The last routing decision (full audit trail: candidates, chosen, served,
+    /// and why they differed). `None` before the first routed completion.
+    pub fn last_decision(&self) -> Option<RoutingDecision> {
+        self.last_decision.lock().unwrap().clone()
+    }
+
     /// The (provider, model id) that served the last successful completion.
     pub fn last_served(&self) -> Option<(String, String)> {
-        self.last_served.lock().unwrap().clone()
+        self.last_decision
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|d| d.served.clone())
     }
 
     /// Complete against a capability tier, resolving the vendor model ID
@@ -482,7 +529,40 @@ impl InferenceFabric {
             .providers
             .get(provider)
             .ok_or_else(|| format!("provider {provider} not registered"))?;
-        prov.complete(&model.id, prompt, require_json).await
+
+        let reliability = self
+            .health_scores
+            .lock()
+            .unwrap()
+            .get(provider)
+            .copied()
+            .unwrap_or(1.0);
+        let mut decision = RoutingDecision {
+            requested_tier: Some(tier),
+            routing_mode: format!("{:?}", self.default_mode),
+            candidates: vec![CandidateConsideration {
+                provider: provider.to_string(),
+                model: model.id.clone(),
+                reliability,
+                latency_ms: model.latency_ms,
+            }],
+            chosen: Some((provider.to_string(), model.id.clone())),
+            served: None,
+            change_reason: None,
+        };
+
+        match prov.complete(&model.id, prompt, require_json).await {
+            Ok(response) => {
+                decision.served = Some((provider.to_string(), model.id.clone()));
+                *self.last_decision.lock().unwrap() = Some(decision);
+                Ok(response)
+            }
+            Err(e) => {
+                decision.change_reason = Some(e.clone());
+                *self.last_decision.lock().unwrap() = Some(decision);
+                Err(e)
+            }
+        }
     }
 
     /// Selects and ranks provider-model candidates based on routing policy and capabilities.
@@ -980,8 +1060,42 @@ impl ModelClient for InferenceFabric {
                 error: Some(err_msg.clone()),
             };
             self.log_metrics(&metrics);
+            *self.last_decision.lock().unwrap() = Some(RoutingDecision {
+                requested_tier: None,
+                routing_mode: format!("{:?}", self.default_mode),
+                candidates: Vec::new(),
+                chosen: None,
+                served: None,
+                change_reason: Some(err_msg.clone()),
+            });
             return Err(err_msg);
         }
+
+        // Snapshot the full routing trail BEFORE attempting, so evidence shows
+        // every candidate considered (with its scores), not just the winner.
+        let considerations: Vec<CandidateConsideration> = {
+            let scores = self.health_scores.lock().unwrap();
+            candidates
+                .iter()
+                .map(|(m, p)| CandidateConsideration {
+                    provider: p.name().to_string(),
+                    model: m.id.clone(),
+                    reliability: scores.get(p.name()).copied().unwrap_or(1.0),
+                    latency_ms: m.latency_ms,
+                })
+                .collect()
+        };
+        let mut decision = RoutingDecision {
+            requested_tier: None,
+            routing_mode: format!("{:?}", self.default_mode),
+            candidates: considerations,
+            chosen: candidates
+                .first()
+                .map(|(m, p)| (p.name().to_string(), m.id.clone())),
+            served: None,
+            change_reason: None,
+        };
+        let mut failures: Vec<String> = Vec::new();
 
         let mut last_error = String::new();
         let mut attempts = 0;
@@ -1007,13 +1121,18 @@ impl ModelClient for InferenceFabric {
                         latency_ms
                     );
 
-                    // Record which vendor model actually served, so evidence
-                    // packs can show the real path (e.g. auto route quota → free
-                    // model fallback) rather than the declared routing target.
-                    *self.last_served.lock().unwrap() = Some((
-                        provider.name().to_string(),
-                        model.id.clone(),
-                    ));
+                    // Record which vendor model actually served AND why, so
+                    // evidence packs show the real path (e.g. auto route quota
+                    // → free-model fallback) rather than the declared target.
+                    decision.served = Some((provider.name().to_string(), model.id.clone()));
+                    if decision.chosen.as_ref() != decision.served.as_ref() {
+                        decision.change_reason = Some(if failures.is_empty() {
+                            "candidate order changed".to_string()
+                        } else {
+                            failures.join(" | ")
+                        });
+                    }
+                    *self.last_decision.lock().unwrap() = Some(decision);
 
                     // Update reliability score
                     {
@@ -1074,6 +1193,7 @@ impl ModelClient for InferenceFabric {
                     }
 
                     self.persist_health();
+                    failures.push(format!("{}/{}: {}", provider.name(), model.id, err));
                     last_error = err;
                 }
             }
@@ -1081,6 +1201,12 @@ impl ModelClient for InferenceFabric {
 
         let latency_ms = start.elapsed().as_millis() as u64;
         let final_err = format!("All candidates failed. Last error: {}", last_error);
+        // Leave the audit trail with every failure so the run is debuggable.
+        decision.served = None;
+        if !failures.is_empty() {
+            decision.change_reason = Some(failures.join(" | "));
+        }
+        *self.last_decision.lock().unwrap() = Some(decision);
         let metrics = InferenceMetrics {
             request_id: request_id.clone(),
             timestamp: chrono::Utc::now(),
@@ -1273,6 +1399,93 @@ mod tests {
             Some(CapabilityTier::ReasoningFree)
         );
         assert_eq!(CapabilityTier::from_tag("unknown-tier"), None);
+    }
+
+    /// Test-only provider whose `complete` either always fails or always succeeds.
+    struct ScriptedProvider {
+        name: &'static str,
+        fail: bool,
+    }
+
+    #[async_trait]
+    impl Provider for ScriptedProvider {
+        fn name(&self) -> &str {
+            self.name
+        }
+        async fn complete(
+            &self,
+            _model_id: &str,
+            _prompt: &str,
+            _require_json: bool,
+        ) -> Result<String, String> {
+            if self.fail {
+                Err("429 free-models-per-day-high-balance".to_string())
+            } else {
+                Ok("ok".to_string())
+            }
+        }
+        async fn check_health(&self) -> bool {
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn routing_decision_records_full_audit_trail_on_failover() {
+        let mut fabric = InferenceFabric::new();
+        fabric.default_mode = RoutingMode::Free;
+        fabric.register_provider(Box::new(ScriptedProvider {
+            name: "openrouter",
+            fail: true,
+        }));
+        fabric.register_provider(Box::new(ScriptedProvider {
+            name: "opengateway",
+            fail: false,
+        }));
+        let model = |id: &str, provider: &str, latency_ms: u64| ModelInfo {
+            id: id.to_string(),
+            family: id.to_string(),
+            provider: provider.to_string(),
+            latency_ms,
+            reliability: 1.0,
+            capabilities: vec![],
+            max_context: 4096,
+            tier: None,
+        };
+        fabric.register_model(model("vend/alpha:free", "openrouter", 5));
+        fabric.register_model(model("vend/beta:free", "opengateway", 10));
+
+        let text = fabric.complete("hi").await.expect("steady provider answers");
+        assert_eq!(text, "ok");
+
+        let d = fabric.last_decision().expect("decision recorded");
+        // Mode-based routing: no capability tier was requested; mode is Free.
+        assert!(d.requested_tier.is_none());
+        assert_eq!(d.routing_mode, "Free");
+        // Candidates in routing order (reliability equal → latency asc).
+        assert_eq!(d.candidates.len(), 2);
+        assert_eq!(d.candidates[0].model, "vend/alpha:free");
+        assert_eq!(d.candidates[1].model, "vend/beta:free");
+        assert_eq!(d.candidates[0].reliability, 1.0);
+        // Chosen was the top-ranked candidate; served was the one that answered.
+        assert_eq!(
+            d.chosen,
+            Some(("openrouter".to_string(), "vend/alpha:free".to_string()))
+        );
+        assert_eq!(
+            d.served,
+            Some(("opengateway".to_string(), "vend/beta:free".to_string()))
+        );
+        // Why they differed: the chosen candidate was rate-limited.
+        let reason = d.change_reason.expect("failover reason recorded");
+        assert!(
+            reason.contains("openrouter/vend/alpha:free: 429"),
+            "unexpected reason: {reason}"
+        );
+        // The derived served helper agrees with the audit trail.
+        assert_eq!(
+            fabric.last_served(),
+            Some(("opengateway".to_string(), "vend/beta:free".to_string()))
+        );
     }
 }
 

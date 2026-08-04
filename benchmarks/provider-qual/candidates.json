@@ -1,12 +1,5 @@
 {
   "entries": {
-    "PRV-LONG_CONTEXT_NO_TRUNCATION": {
-      "scenario_id": "corpus long_context.no_truncation (long_context)",
-      "count": 4,
-      "first_seen": "2026-08-03T19:05:31.887640+00:00",
-      "last_seen": "2026-08-03T19:32:32.942251200+00:00",
-      "graduated": true
-    },
     "PRV-JSON_STRICT": {
       "scenario_id": "corpus json.strict (json)",
       "count": 3,
@@ -19,6 +12,13 @@
       "count": 3,
       "first_seen": "2026-08-03T19:05:31.887640+00:00",
       "last_seen": "2026-08-03T19:14:00.208614800+00:00",
+      "graduated": true
+    },
+    "PRV-LONG_CONTEXT_NO_TRUNCATION": {
+      "scenario_id": "corpus long_context.no_truncation (long_context)",
+      "count": 4,
+      "first_seen": "2026-08-03T19:05:31.887640+00:00",
+      "last_seen": "2026-08-03T19:32:32.942251200+00:00",
       "graduated": true
     }
   }

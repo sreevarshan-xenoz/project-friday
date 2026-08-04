@@ -12,7 +12,8 @@ use chrono::Utc;
 use futures::StreamExt;
 
 use friday_intelligence::{
-    CircuitState, InferenceFabric, ModelCapability, ModelClient, ModelInfo, ProviderV2, RoutingMode,
+    CircuitState, InferenceFabric, ModelCapability, ModelClient, ModelInfo, ProviderV2, RoutingDecision,
+    RoutingMode,
 };
 
 use crate::corpus::{Scenario, Verify};
@@ -66,6 +67,10 @@ pub struct Outcome {
     /// The (provider, vendor model id) that actually served the completion, when
     /// the fabric's routing fell back through the catalog.
     pub served_model: Option<String>,
+    /// The full routing audit trail (requested tier, candidates considered with
+    /// scores, chosen, served, and why they differed) — so qualification reports
+    /// are auditable, not just reportable by outcome.
+    pub routing_decision: Option<RoutingDecision>,
 }
 
 fn now() -> String {
@@ -105,6 +110,12 @@ pub async fn run_scenario(target: &Target, scenario: &Scenario, _mode: Mode) -> 
         }
     }
 
+    // Attach the full routing audit trail so evidence shows why (failover, quota,
+    // transient reset) in addition to what (which vendor model) served.
+    if o.routing_decision.is_none() {
+        o.routing_decision = target.fabric.last_decision();
+    }
+
     if !o.passed {
         let (expected, actual) = expected_actual(scenario, o.action_ok, o.state_accuracy);
         o.issues
@@ -141,6 +152,7 @@ async fn run_connectivity(target: &Target, scenario: &Scenario, mut trace: Vec<C
         fault: None,
         tool_calling: None,
     served_model: None,
+    routing_decision: None,
     }
 }
 
@@ -177,6 +189,7 @@ async fn run_completion(target: &Target, scenario: &Scenario, mut trace: Vec<Cal
                 fault: None,
                 tool_calling: None,
             served_model: None,
+            routing_decision: None,
             }
         }
         Err(e) => Outcome {
@@ -192,6 +205,7 @@ async fn run_completion(target: &Target, scenario: &Scenario, mut trace: Vec<Cal
             fault: None,
             tool_calling: None,
         served_model: None,
+        routing_decision: None,
         },
     }
 }
@@ -237,6 +251,7 @@ async fn run_json(target: &Target, scenario: &Scenario, mut trace: Vec<Call>) ->
                 fault: None,
                 tool_calling: None,
             served_model: None,
+            routing_decision: None,
             }
         }
         Err(e) => Outcome {
@@ -252,6 +267,7 @@ async fn run_json(target: &Target, scenario: &Scenario, mut trace: Vec<Call>) ->
             fault: None,
             tool_calling: None,
         served_model: None,
+        routing_decision: None,
         },
     }
 }
@@ -301,6 +317,7 @@ async fn run_long_context(target: &Target, scenario: &Scenario, mut trace: Vec<C
                 fault: None,
                 tool_calling: None,
             served_model: None,
+            routing_decision: None,
             }
         }
         Err(e) => Outcome {
@@ -316,6 +333,7 @@ async fn run_long_context(target: &Target, scenario: &Scenario, mut trace: Vec<C
             fault: None,
             tool_calling: None,
         served_model: None,
+        routing_decision: None,
         },
     }
 }
@@ -388,6 +406,7 @@ async fn run_failure(scenario: &Scenario, mut trace: Vec<Call>) -> Outcome {
         fault: Some(format!("{:?}", injection)),
         tool_calling: None,
     served_model: None,
+    routing_decision: None,
     }
 }
 
@@ -408,6 +427,7 @@ async fn run_streaming(target: &Target, scenario: &Scenario, mut trace: Vec<Call
         fault: None,
         tool_calling: None,
     served_model: None,
+    routing_decision: None,
     };
 
     let Some(v2) = &target.v2 else {
@@ -474,6 +494,7 @@ async fn run_streaming(target: &Target, scenario: &Scenario, mut trace: Vec<Call
         fault: None,
         tool_calling: Some(caps.tool_calling),
     served_model: None,
+    routing_decision: None,
     }
 }
 
@@ -498,6 +519,7 @@ async fn run_dynamic_discovery(
         fault: None,
         tool_calling: None,
     served_model: None,
+    routing_decision: None,
     };
 
     let Some(v2) = &target.v2 else {
@@ -537,6 +559,7 @@ async fn run_dynamic_discovery(
         fault: None,
         tool_calling: Some(caps.tool_calling),
     served_model: None,
+    routing_decision: None,
     }
 }
 

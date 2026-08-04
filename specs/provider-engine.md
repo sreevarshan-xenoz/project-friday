@@ -58,6 +58,13 @@ Contract:
 3. Qualification targets tiers (`OPENGATEWAY_TIER=reasoning-free`), never raw IDs.
 4. The planner (frozen) still asks for `Capability` sets; tiers are a provider-side
    resolution layer beneath it and never leak vendor IDs upward.
+5. **Routing is auditable**: every routed completion records a `RoutingDecision`
+   (`requested_tier`, `routing_mode`, candidates considered with reliability +
+   latency scores, `chosen`, `served`, and `change_reason`). Qualification
+   evidence persists it as `routing_decision` so a report answers "which
+   provider/model answered, and why it wasn't the chosen one" — quota 429 vs
+   vendor outage vs transient network reset vs capability missing are
+   distinguishable. See `specs/inference_fabric.md`.
 
 ## 3. Provider Model
 

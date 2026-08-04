@@ -45,6 +45,36 @@ pub struct ModelInfo {
 concrete model; `complete_tier(...)` completes against it. Vendor renames are a
 provider-catalog change only.
 
+### Routing audit trail (`RoutingDecision`)
+
+Every routed completion records why routing did what it did, so qualification
+evidence is auditable (which vendor model answered, and why it wasn't the
+chosen one):
+
+```rust
+pub struct RoutingDecision {
+    pub requested_tier: Option<CapabilityTier>, // Some for tier routing; None = mode-based
+    pub routing_mode: String,                   // Fast/Quality/Free/Local/Hybrid
+    pub candidates: Vec<CandidateConsideration>,// in routing order, with scores
+    pub chosen: Option<(String, String)>,       // highest-ranked candidate (provider, model)
+    pub served: Option<(String, String)>,       // what actually answered, if anything
+    pub change_reason: Option<String>,          // why served != chosen (e.g. quota 429, reset)
+}
+
+pub struct CandidateConsideration {
+    pub provider: String,
+    pub model: String,
+    pub reliability: f64, // provider reliability (primary sort key)
+    pub latency_ms: u64,  // model latency (secondary sort key)
+}
+```
+
+`InferenceFabric::last_decision()` returns the most recent trail;
+`last_served()` derives the `(provider, model)` from it for backwards
+compatibility. Set on both success and failure (the failure trail keeps every
+candidate error so a run is debuggable). Qualification evidence persists it as
+`routing_decision` alongside `served_model`.
+
 ## `Provider` Trait
 Pluggable adapter for communicating with an external API host:
 ```rust

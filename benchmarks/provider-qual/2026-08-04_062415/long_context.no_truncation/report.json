@@ -1,0 +1,51 @@
+{
+  "action_ok": true,
+  "fault": null,
+  "group": "long_context",
+  "id": "long_context.no_truncation",
+  "issues": [],
+  "latency_ms": 5128,
+  "note": "array_complete=true",
+  "passed": true,
+  "routing_decision": {
+    "candidates": [
+      {
+        "latency_ms": 800,
+        "model": "auto",
+        "provider": "opengateway",
+        "reliability": 0.7999999999999999
+      },
+      {
+        "latency_ms": 2000,
+        "model": "inclusionai/ling-3.0-flash:free",
+        "provider": "opengateway",
+        "reliability": 0.7999999999999999
+      },
+      {
+        "latency_ms": 2500,
+        "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "provider": "opengateway",
+        "reliability": 0.7999999999999999
+      },
+      {
+        "latency_ms": 3000,
+        "model": "mindai/macaron-v1-tall",
+        "provider": "opengateway",
+        "reliability": 0.7999999999999999
+      }
+    ],
+    "change_reason": "opengateway/auto: Provider opengateway returned error status 429 Too Many Requests: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day-high-balance. \",\"type\":\"rate_limit_error\",\"code\":\"429\"}}",
+    "chosen": [
+      "opengateway",
+      "auto"
+    ],
+    "requested_tier": null,
+    "routing_mode": "Free",
+    "served": [
+      "opengateway",
+      "inclusionai/ling-3.0-flash:free"
+    ]
+  },
+  "served_model": "opengateway/inclusionai/ling-3.0-flash:free",
+  "state_accuracy": true
+}
