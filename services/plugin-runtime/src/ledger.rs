@@ -1,4 +1,4 @@
-use std::slice::Iter;
+use std::sync::Arc;
 
 use crate::contract::DecisionRecord;
 
@@ -14,9 +14,14 @@ use crate::contract::DecisionRecord;
 ///
 /// Every record is guaranteed to have a corresponding plan and outcome.
 /// No execution is ever forgotten.
+///
+/// Records are stored behind `Arc` so immutable read models (e.g. a
+/// `DecisionTimeline`'s point-in-time snapshot) can share the exact record
+/// allocation the ledger owns instead of deep-cloning it. The public API is
+/// unchanged; `get`/`iter` still hand out `&DecisionRecord`.
 #[derive(Debug)]
 pub struct DecisionLedger {
-    records: Vec<DecisionRecord>,
+    records: Vec<Arc<DecisionRecord>>,
 }
 
 impl DecisionLedger {
@@ -28,17 +33,28 @@ impl DecisionLedger {
 
     /// Append a decision record. This is the only way to add records.
     pub fn append(&mut self, record: DecisionRecord) {
+        self.records.push(Arc::new(record));
+    }
+
+    /// Append an already-shared record. Callers that keep their own `Arc` can
+    /// hand it to the ledger so both sides reference the same allocation.
+    pub fn append_shared(&mut self, record: Arc<DecisionRecord>) {
         self.records.push(record);
     }
 
     /// Get a record by index. Returns None if out of bounds.
     pub fn get(&self, index: usize) -> Option<&DecisionRecord> {
-        self.records.get(index)
+        self.records.get(index).map(|r| r.as_ref())
+    }
+
+    /// Get a shared handle to the record at `index`.
+    pub fn get_shared(&self, index: usize) -> Option<Arc<DecisionRecord>> {
+        self.records.get(index).cloned()
     }
 
     /// Iterate over all records.
-    pub fn iter(&self) -> Iter<'_, DecisionRecord> {
-        self.records.iter()
+    pub fn iter(&self) -> impl Iterator<Item = &DecisionRecord> {
+        self.records.iter().map(|r| r.as_ref())
     }
 
     /// Number of records in the ledger.
@@ -65,10 +81,29 @@ impl Default for DecisionLedger {
 
 impl IntoIterator for DecisionLedger {
     type Item = DecisionRecord;
-    type IntoIter = std::vec::IntoIter<DecisionRecord>;
+    type IntoIter = IntoIter;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.records.into_iter()
+        IntoIter {
+            inner: self.records.into_iter(),
+        }
+    }
+}
+
+/// Consuming iterator over a `DecisionLedger`. Yields owned records: when the
+/// last `Arc` reference is unique (the usual case for a consumed ledger) the
+/// record is moved out untouched; otherwise it is cloned.
+pub struct IntoIter {
+    inner: std::vec::IntoIter<Arc<DecisionRecord>>,
+}
+
+impl Iterator for IntoIter {
+    type Item = DecisionRecord;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner
+            .next()
+            .map(|r| Arc::try_unwrap(r).unwrap_or_else(|r| (*r).clone()))
     }
 }
 

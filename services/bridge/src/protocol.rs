@@ -1007,11 +1007,11 @@ impl From<&DecisionTimeline> for DecisionTimelineDto {
             plan: ExecutionPlanDto::from(&t.plan),
             prediction: CostEstimateDto::from(&t.prediction),
             outcome: PlanOutcomeDto::from(&t.outcome),
-            record: DecisionRecordDto::from(&t.record),
-            experience: t.experience.as_ref().map(ExperienceDto::from),
-            reputation: t.reputation.as_ref().map(ReputationDto::from),
+            record: DecisionRecordDto::from(t.record.as_ref()),
+            experience: t.experience.as_deref().map(ExperienceDto::from),
+            reputation: t.reputation.as_deref().map(ReputationDto::from),
             feedback: PlannerFeedbackDto::from(&t.feedback),
-            calibration: t.calibration.as_ref().map(CalibrationOffsetsDto::from),
+            calibration: t.calibration.as_deref().map(CalibrationOffsetsDto::from),
             explanation: DecisionExplanationDto::from(&t.explanation),
         }
     }

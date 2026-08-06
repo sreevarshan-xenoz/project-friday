@@ -62,14 +62,61 @@
 //! `ReputationMetrics`, `ExperienceMetrics`, `MetricsReport`,
 //! `MetricsEngine`, `PredictionDelta`, `HistoricalSnapshot`,
 //! `ReplayEvaluation`, `ReplayDifferences`, `ReplayReport`, `ReplayEngine`.
+//! **Experimental** (ADR-0005 implementation, mechanism C4+C6):
+//! `TimelineStore` (incremental point-in-time timelines), `RunningMetrics`
+//! (stateless-to-stateful mirror of `MetricsEngine`).
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use friday_plugin_runtime::{
     Capability, CapabilityRequest, CorrelationId, CostEstimate, DecisionLedger, DecisionRecord,
     EvaluatorKind, ExecutionPlan, Experience, ExperienceKey, PlanOutcome, PlannerFeedback,
     Reputation,
 };
+
+// ── Test-only allocation instrumentation ─────────────────────────────────────
+// Counts live allocations so the ADR-0005 hypothesis can be measured directly:
+// the incremental `TimelineStore` must allocate far less than the O(history)
+// `regenerate()` + `build_all()` + `summarize()` cycle it replaces.
+
+#[cfg(test)]
+mod test_allocator {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    pub static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
+    pub static ALLOCATED_BYTES: AtomicU64 = AtomicU64::new(0);
+
+    struct CountingAllocator;
+
+    unsafe impl GlobalAlloc for CountingAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+            ALLOCATED_BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
+            unsafe { System.alloc(layout) }
+        }
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            unsafe { System.dealloc(ptr, layout) }
+        }
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+            ALLOCATED_BYTES.fetch_add(new_size as u64, Ordering::Relaxed);
+            unsafe { System.realloc(ptr, layout, new_size) }
+        }
+    }
+
+    #[global_allocator]
+    static GLOBAL: CountingAllocator = CountingAllocator;
+
+    pub fn reset() {
+        ALLOCATIONS.store(0, Ordering::Relaxed);
+        ALLOCATED_BYTES.store(0, Ordering::Relaxed);
+    }
+    pub fn allocations() -> u64 {
+        ALLOCATIONS.load(Ordering::Relaxed)
+    }
+}
 
 // ── Calibration ─────────────────────────────────────────────────────────────────
 
@@ -133,6 +180,11 @@ impl CalibrationStore {
         self.offsets.get(key).cloned().unwrap_or_default()
     }
 
+    /// Get a shared calibration snapshot for a pair, if one has been learned.
+    pub fn get_shared(&self, key: &ExperienceKey) -> Option<Arc<CalibrationOffsets>> {
+        self.offsets.get(key).cloned().map(Arc::new)
+    }
+
     /// Apply feedback to adjust calibration offsets.
     ///
     /// Uses bounded learning rate and clamps to prevent oscillation.
@@ -190,8 +242,12 @@ impl Default for CalibrationStore {
 ///
 /// Owns history-derived knowledge. Insert-only from the engine's
 /// perspective — external consumers read via `get()` or `iter()`.
+///
+/// Entries are held behind `Arc` so point-in-time read models (`DecisionTimeline`
+/// snapshots) can share the exact value the store owns instead of cloning it.
+/// The public surface is unchanged: `get`/`iter` still hand out `&Experience`.
 pub struct ExperienceStore {
-    experiences: HashMap<ExperienceKey, Experience>,
+    experiences: HashMap<ExperienceKey, Arc<Experience>>,
 }
 
 impl ExperienceStore {
@@ -203,17 +259,23 @@ impl ExperienceStore {
 
     /// Insert or update an experience entry.
     pub fn insert(&mut self, experience: Experience) {
-        self.experiences.insert(experience.key.clone(), experience);
+        self.experiences
+            .insert(experience.key.clone(), Arc::new(experience));
     }
 
     /// Get experience for a specific key.
     pub fn get(&self, key: &ExperienceKey) -> Option<&Experience> {
-        self.experiences.get(key)
+        self.experiences.get(key).map(|e| e.as_ref())
+    }
+
+    /// Get a shared handle to the current experience for a key, if any.
+    pub fn get_shared(&self, key: &ExperienceKey) -> Option<Arc<Experience>> {
+        self.experiences.get(key).cloned()
     }
 
     /// Iterate over all stored experiences.
     pub fn iter(&self) -> impl Iterator<Item = &Experience> {
-        self.experiences.values()
+        self.experiences.values().map(|e| e.as_ref())
     }
 
     /// Number of distinct (capability, operator) entries.
@@ -290,44 +352,53 @@ impl Default for ExperienceEngine {
 ///   - success_rate (running proportion)
 ///   - average_latency_ms (running average)
 ///   - last_failure (if the record is a failure)
+///
+/// Reads the previous value through its `Arc` (no deep clone of the existing
+/// aggregate; only `last_failure_reason` is cloned) and replaces it with the
+/// updated aggregate. The replacement drops the store's handle; any point-in-time
+/// snapshot that still holds the old `Arc` keeps the old value.
 fn apply_record(record: &DecisionRecord, store: &mut ExperienceStore) {
     let key = ExperienceKey {
         capability: record.capability.clone(),
         operator_id: record.plan.operator_id.clone(),
     };
 
-    let existing = store.get(&key).cloned();
-    let exp = existing.unwrap_or_else(|| Experience {
-        key: key.clone(),
-        sample_size: 0,
-        success_rate: 0.0,
-        success_count: 0,
-        failure_count: 0,
-        average_latency_ms: 0.0,
-        p50_latency_ms: 0,
-        p95_latency_ms: 0,
-        p99_latency_ms: 0,
-        last_execution_ms: Some(record.timestamp_ms),
-        last_failure_ms: None,
-        last_failure_reason: None,
-        consecutive_successes: 0,
-        consecutive_failures: 0,
-        since_ms: record.timestamp_ms,
-    });
+    let existing = store.get_shared(&key);
+    let Some(exp) = existing.as_deref() else {
+        let success = record.outcome.success;
+        store.insert(Experience {
+            key,
+            sample_size: 1,
+            success_rate: if success { 1.0 } else { 0.0 },
+            success_count: if success { 1 } else { 0 },
+            failure_count: if success { 0 } else { 1 },
+            average_latency_ms: record.outcome.latency_ms as f64,
+            p50_latency_ms: 0,
+            p95_latency_ms: 0,
+            p99_latency_ms: 0,
+            last_execution_ms: Some(record.timestamp_ms),
+            last_failure_ms: if success { None } else { Some(record.timestamp_ms) },
+            last_failure_reason: if success {
+                None
+            } else {
+                record.outcome.error.clone()
+            },
+            consecutive_successes: if success { 1 } else { 0 },
+            consecutive_failures: if success { 0 } else { 1 },
+            since_ms: record.timestamp_ms,
+        });
+        return;
+    };
 
     let n = exp.sample_size;
     let new_n = n + 1;
     let success = record.outcome.success;
 
-    // Running averages
     let new_success_count = exp.success_count + if success { 1 } else { 0 };
     let new_failure_count = exp.failure_count + if success { 0 } else { 1 };
     let new_success_rate = new_success_count as f64 / new_n as f64;
-    let new_avg_latency = if n == 0 {
-        record.outcome.latency_ms as f64
-    } else {
-        (exp.average_latency_ms * n as f64 + record.outcome.latency_ms as f64) / new_n as f64
-    };
+    let new_avg_latency =
+        (exp.average_latency_ms * n as f64 + record.outcome.latency_ms as f64) / new_n as f64;
 
     let new_last_failure_ms = if success {
         exp.last_failure_ms
@@ -335,7 +406,7 @@ fn apply_record(record: &DecisionRecord, store: &mut ExperienceStore) {
         Some(record.timestamp_ms)
     };
     let new_last_failure_reason = if success {
-        exp.last_failure_reason
+        exp.last_failure_reason.clone()
     } else {
         record.outcome.error.clone()
     };
@@ -374,8 +445,11 @@ fn apply_record(record: &DecisionRecord, store: &mut ExperienceStore) {
 ///
 /// Keyed by operator_id. Only the ReputationEngine may mutate entries.
 /// External consumers read via `get()` or `iter()`.
+///
+/// Entries are held behind `Arc` so point-in-time read models (`DecisionTimeline`
+/// snapshots) can share the exact value the store owns instead of cloning it.
 pub struct ReputationStore {
-    reputations: HashMap<String, Reputation>,
+    reputations: HashMap<String, Arc<Reputation>>,
 }
 
 impl ReputationStore {
@@ -388,17 +462,22 @@ impl ReputationStore {
     /// Insert or update a reputation entry.
     pub fn insert(&mut self, reputation: Reputation) {
         self.reputations
-            .insert(reputation.operator_id.clone(), reputation);
+            .insert(reputation.operator_id.clone(), Arc::new(reputation));
     }
 
     /// Get reputation for a specific operator.
     pub fn get(&self, operator_id: &str) -> Option<&Reputation> {
-        self.reputations.get(operator_id)
+        self.reputations.get(operator_id).map(|r| r.as_ref())
+    }
+
+    /// Get a shared handle to the current reputation for an operator, if any.
+    pub fn get_shared(&self, operator_id: &str) -> Option<Arc<Reputation>> {
+        self.reputations.get(operator_id).cloned()
     }
 
     /// Iterate over all stored reputations.
     pub fn iter(&self) -> impl Iterator<Item = &Reputation> {
-        self.reputations.values()
+        self.reputations.values().map(|r| r.as_ref())
     }
 
     /// Number of operators with reputation data.
@@ -441,10 +520,7 @@ impl ReputationEngine {
     /// they provide. The engine reads from ExperienceStore and writes
     /// to ReputationStore — it does not consume the input store.
     pub fn update(experience_store: &ExperienceStore, reputation_store: &mut ReputationStore) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
+        let now = Self::now_ms();
 
         // Group experiences by operator_id
         let mut by_operator: HashMap<&str, Vec<&Experience>> = HashMap::new();
@@ -456,29 +532,64 @@ impl ReputationEngine {
         }
 
         for (operator_id, experiences) in &by_operator {
-            let total_observations: u64 = experiences.iter().map(|e| e.sample_size).sum();
-            let weighted_reliability: f64 = experiences
-                .iter()
-                .map(|e| e.success_rate * e.sample_size as f64)
-                .sum::<f64>()
-                / total_observations.max(1) as f64;
-            let since_ms = experiences
-                .iter()
-                .map(|e| e.since_ms)
-                .min()
-                .unwrap_or(now);
-
-            let reputation = Reputation {
-                operator_id: operator_id.to_string(),
-                reliability: weighted_reliability,
-                confidence: (total_observations as f64 / 100.0).min(1.0),
-                total_observations,
-                since_ms,
-                last_updated_ms: now,
-                decay_factor: 0.95,
-            };
-
+            let reputation = Self::reputation_for(operator_id, experiences, now);
             reputation_store.insert(reputation);
+        }
+    }
+
+    /// Recompute reputation for a single operator from its experience.
+    ///
+    /// Produces the same value `update()` would derive for that operator from
+    /// the same experience store (deterministic fields), but touches only the
+    /// one entry — O(experiences for that operator) instead of O(all). Used by
+    /// the incremental append path; `last_updated_ms` is wall-clock by design.
+    pub fn update_operator(
+        experience_store: &ExperienceStore,
+        reputation_store: &mut ReputationStore,
+        operator_id: &str,
+    ) {
+        let now = Self::now_ms();
+        let experiences: Vec<&Experience> = experience_store
+            .iter()
+            .filter(|e| e.key.operator_id.as_str() == operator_id)
+            .collect();
+        if experiences.is_empty() {
+            return;
+        }
+        let reputation = Self::reputation_for(operator_id, &experiences, now);
+        reputation_store.insert(reputation);
+    }
+
+    fn now_ms() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
+
+    /// Deterministic per-operator reputation derived from its experiences.
+    /// `now` only feeds `last_updated_ms` (wall-clock, non-deterministic).
+    fn reputation_for(operator_id: &str, experiences: &[&Experience], now: u64) -> Reputation {
+        let total_observations: u64 = experiences.iter().map(|e| e.sample_size).sum();
+        let weighted_reliability: f64 = experiences
+            .iter()
+            .map(|e| e.success_rate * e.sample_size as f64)
+            .sum::<f64>()
+            / total_observations.max(1) as f64;
+        let since_ms = experiences
+            .iter()
+            .map(|e| e.since_ms)
+            .min()
+            .unwrap_or(now);
+
+        Reputation {
+            operator_id: operator_id.to_string(),
+            reliability: weighted_reliability,
+            confidence: (total_observations as f64 / 100.0).min(1.0),
+            total_observations,
+            since_ms,
+            last_updated_ms: now,
+            decay_factor: 0.95,
         }
     }
 }
@@ -758,12 +869,37 @@ pub struct ExplanationEngine;
 impl ExplanationEngine {
     /// Explain why a plan selected its operator.
     ///
-    /// Pure read — no mutation of any store.
+    /// Pure read — no mutation of any store. Delegates to
+    /// [`Self::explain_from_values`] after resolving the live store values;
+    /// calibration is only surfaced once non-zero (the legacy behavior).
     pub fn explain(
         plan: &ExecutionPlan,
         experience_store: &ExperienceStore,
         reputation_store: &ReputationStore,
         calibration: &CalibrationStore,
+    ) -> DecisionExplanation {
+        let exp_key = ExperienceKey {
+            capability: plan.capability.clone(),
+            operator_id: plan.operator_id.clone(),
+        };
+        let experience = experience_store.get(&exp_key);
+        let reputation = reputation_store.get(&plan.operator_id);
+        let off = calibration.get(&exp_key);
+        let calibration = if off.is_zero() { None } else { Some(off) };
+        Self::explain_from_values(plan, experience, reputation, calibration.as_ref())
+    }
+
+    /// Explain from already-resolved snapshot values (no store lookup).
+    ///
+    /// The single source of explanation truth, shared by the store-based
+    /// [`Self::explain`] and the point-in-time `build_timeline`. Unlike the
+    /// store path, an existing calibration snapshot always produces a factor
+    /// (offset-zero snapshots are learned state, not absent state).
+    fn explain_from_values(
+        plan: &ExecutionPlan,
+        experience: Option<&Experience>,
+        reputation: Option<&Reputation>,
+        calibration: Option<&CalibrationOffsets>,
     ) -> DecisionExplanation {
         let candidates: Vec<CandidateExplanation> = plan
             .rationale
@@ -799,42 +935,25 @@ impl ExplanationEngine {
             .map(|e| e.explanation.clone())
             .collect();
 
-        let exp_key = ExperienceKey {
-            capability: plan.capability.clone(),
-            operator_id: plan.operator_id.clone(),
-        };
-        let experience_factor = experience_store.get(&exp_key).map(|e| ExperienceFactor {
+        let experience_factor = experience.map(|e| ExperienceFactor {
             sample_size: e.sample_size,
             success_rate: e.success_rate,
             average_latency_ms: e.average_latency_ms,
             last_failure_reason: e.last_failure_reason.clone(),
         });
 
-        let reputation_factor = reputation_store.get(&plan.operator_id).map(|r| {
-            ReputationFactor {
-                reliability: r.reliability,
-                confidence: r.confidence,
-                total_observations: r.total_observations,
-            }
+        let reputation_factor = reputation.map(|r| ReputationFactor {
+            reliability: r.reliability,
+            confidence: r.confidence,
+            total_observations: r.total_observations,
         });
 
-        let calibration_factor = {
-            let off = calibration.get(&exp_key);
-            if off.latency_offset != 0.0
-                || off.cost_offset != 0.0
-                || off.success_offset != 0.0
-                || off.confidence_offset != 0.0
-            {
-                Some(CalibrationFactor {
-                    latency_offset: off.latency_offset,
-                    cost_offset: off.cost_offset,
-                    success_offset: off.success_offset,
-                    confidence_offset: off.confidence_offset,
-                })
-            } else {
-                None
-            }
-        };
+        let calibration_factor = calibration.map(|off| CalibrationFactor {
+            latency_offset: off.latency_offset,
+            cost_offset: off.cost_offset,
+            success_offset: off.success_offset,
+            confidence_offset: off.confidence_offset,
+        });
 
         let mut reasons = vec![ExplanationReason::HighestCompositeScore];
         if !policy_factors.is_empty() {
@@ -912,6 +1031,13 @@ impl ExplanationEngine {
 ///
 /// The timeline owns its data — it stores snapshots, not references — so it
 /// remains valid even if the live stores change after reconstruction.
+///
+/// Snapshot fields are `Arc`-shared with their owners (the ledger for
+/// `record`, the stores for `experience`/`reputation`/`calibration`) so
+/// reconstruction never deep-clones a full decision. An immutable `Arc` *is*
+/// a point-in-time snapshot: when a store replaces an entry it creates a new
+/// value, and every timeline keeps its own version. Values are still owned by
+/// the timeline (the `Arc` pins the allocation), so ADR-0003 holds.
 #[derive(Debug, Clone)]
 pub struct DecisionTimeline {
     /// The request that started the decision.
@@ -924,18 +1050,76 @@ pub struct DecisionTimeline {
     pub prediction: CostEstimate,
     /// The recorded outcome.
     pub outcome: PlanOutcome,
-    /// The immutable ledger record for this decision.
-    pub record: DecisionRecord,
+    /// The immutable ledger record for this decision (shared with the ledger).
+    pub record: Arc<DecisionRecord>,
     /// Experience snapshot for the (capability, operator) at build time.
-    pub experience: Option<Experience>,
+    pub experience: Option<Arc<Experience>>,
     /// Reputation snapshot for the operator at build time.
-    pub reputation: Option<Reputation>,
+    pub reputation: Option<Arc<Reputation>>,
     /// Feedback derived by comparing plan against outcome.
     pub feedback: PlannerFeedback,
     /// Calibration offsets for this capability/operator, if any.
-    pub calibration: Option<CalibrationOffsets>,
+    pub calibration: Option<Arc<CalibrationOffsets>>,
     /// Structured explanation of why the plan was chosen.
     pub explanation: DecisionExplanation,
+}
+
+/// Build one `DecisionTimeline` snapshot from a record and the store values
+/// visible at build time. The single definition of a timeline, shared by the
+/// `TimelineBuilder` (replay/rebuild) and the incremental `TimelineStore`.
+fn build_timeline(
+    correlation_id: &CorrelationId,
+    record: Arc<DecisionRecord>,
+    experience: &ExperienceStore,
+    reputation: &ReputationStore,
+    calibration: &CalibrationStore,
+) -> DecisionTimeline {
+    let request = CapabilityRequest {
+        capability: record.capability.clone(),
+        parameters: record.parameters.clone(),
+        permissions: Vec::new(),
+        correlation_id: correlation_id.clone(),
+        context: record.context.clone(),
+    };
+
+    let prediction = CostEstimate {
+        operator_id: record.plan.operator_id.clone(),
+        estimated_latency_ms: record.plan.estimated_latency_ms,
+        estimated_cost: record.plan.estimated_cost,
+        estimated_success_probability: record.plan.estimated_success_probability,
+        estimated_risk: record.plan.estimated_risk,
+        confidence: record.plan.confidence,
+    };
+
+    let key = ExperienceKey {
+        capability: record.capability.clone(),
+        operator_id: record.plan.operator_id.clone(),
+    };
+    let experience = experience.get_shared(&key);
+    let reputation = reputation.get_shared(record.plan.operator_id.as_str());
+    let calibration = calibration.get_shared(&key);
+
+    let explanation = ExplanationEngine::explain_from_values(
+        &record.plan,
+        experience.as_deref(),
+        reputation.as_deref(),
+        calibration.as_deref(),
+    );
+    let feedback = PlannerFeedback::compare(&record.plan, &record.outcome);
+
+    DecisionTimeline {
+        correlation_id: correlation_id.clone(),
+        request,
+        plan: record.plan.clone(),
+        prediction,
+        outcome: record.outcome.clone(),
+        record,
+        experience,
+        reputation,
+        feedback,
+        calibration,
+        explanation,
+    }
 }
 
 /// Reconstructs `DecisionTimeline` snapshots from existing state.
@@ -970,89 +1154,67 @@ impl<'a> TimelineBuilder<'a> {
     /// (the request id flows into `plan.rationale.correlation_id` at plan
     /// time). Returns `None` when no record exists for the id.
     pub fn build(&self, correlation_id: &CorrelationId) -> Option<DecisionTimeline> {
-        let record = self.ledger.iter().find(|r| {
+        let index = self.ledger.iter().position(|r| {
             r.plan.rationale.correlation_id == *correlation_id
                 || r.plan.plan_id == *correlation_id
         })?;
-        Some(self.build_from_record(correlation_id, record))
+        let record = self.ledger.get_shared(index)?;
+        Some(build_timeline(
+            correlation_id,
+            record,
+            self.experience,
+            self.reputation,
+            self.calibration,
+        ))
     }
 
-    /// Reconstruct timelines for every decision in the ledger, in order.
-    ///
-    /// Indexes the ledger once (O(n)) instead of searching it per record, so
-    /// reconstruction stays linear in ledger size.
+    /// Reconstruct timelines for every decision in the ledger, in order,
+    /// projecting the **given** stores onto each record (final state for all
+    /// records — the pre-ADR-0005 `build_all` view).
     pub fn build_all(&self) -> Vec<DecisionTimeline> {
-        let by_id: HashMap<CorrelationId, &DecisionRecord> = self
-            .ledger
-            .iter()
-            .map(|r| (r.plan.rationale.correlation_id.clone(), r))
-            .collect();
-        self.ledger
-            .iter()
-            .filter_map(|r| {
-                let cid = &r.plan.rationale.correlation_id;
-                by_id
-                    .get(cid)
-                    .map(|record| self.build_from_record(cid, record))
+        (0..self.ledger.len())
+            .filter_map(|i| {
+                let record = self.ledger.get_shared(i)?;
+                let cid = record.plan.rationale.correlation_id.clone();
+                Some(build_timeline(
+                    &cid,
+                    record,
+                    self.experience,
+                    self.reputation,
+                    self.calibration,
+                ))
             })
             .collect()
     }
 
-    fn build_from_record(
-        &self,
-        correlation_id: &CorrelationId,
-        record: &DecisionRecord,
-    ) -> DecisionTimeline {
-        let request = CapabilityRequest {
-            capability: record.capability.clone(),
-            parameters: record.parameters.clone(),
-            permissions: Vec::new(),
-            correlation_id: correlation_id.clone(),
-            context: record.context.clone(),
-        };
-
-        let prediction = CostEstimate {
-            operator_id: record.plan.operator_id.clone(),
-            estimated_latency_ms: record.plan.estimated_latency_ms,
-            estimated_cost: record.plan.estimated_cost,
-            estimated_success_probability: record.plan.estimated_success_probability,
-            estimated_risk: record.plan.estimated_risk,
-            confidence: record.plan.confidence,
-        };
-
-        let key = ExperienceKey {
-            capability: record.capability.clone(),
-            operator_id: record.plan.operator_id.clone(),
-        };
-        let experience = self.experience.get(&key);
-        let reputation = self.reputation.get(record.plan.operator_id.as_str());
-        let offsets = self.calibration.get(&key);
-        let calibration = if offsets.is_zero() {
-            None
-        } else {
-            Some(offsets.clone())
-        };
-
-        let explanation = ExplanationEngine::explain(
-            &record.plan,
-            self.experience,
-            self.reputation,
-            self.calibration,
-        );
-
-        DecisionTimeline {
-            correlation_id: correlation_id.clone(),
-            request,
-            plan: record.plan.clone(),
-            prediction,
-            outcome: record.outcome.clone(),
-            record: record.clone(),
-            experience: experience.cloned(),
-            reputation: reputation.cloned(),
-            feedback: PlannerFeedback::compare(&record.plan, &record.outcome),
-            calibration,
-            explanation,
+    /// Reconstruct every timeline with **point-in-time** snapshot semantics:
+    /// replay the ledger through the engines one record at a time and snapshot
+    /// the stores after each, so timeline *i* shows the state as of decision
+    /// *i* (not the final state). This is the canonical reference the
+    /// incremental `TimelineStore` is validated against (`incremental ==
+    /// build_all_pti`). The given experience/reputation stores are not read —
+    /// they are projections of the ledger, and point-in-time requires their
+    /// temporal evolution. `calibration` is used as given.
+    pub fn build_all_pti(&self) -> Vec<DecisionTimeline> {
+        let mut experience = ExperienceStore::new();
+        let mut reputation = ReputationStore::new();
+        let mut timelines = Vec::with_capacity(self.ledger.len());
+        for i in 0..self.ledger.len() {
+            let Some(record) = self.ledger.get_shared(i) else {
+                continue;
+            };
+            apply_record(&record, &mut experience);
+            ReputationEngine::update(&experience, &mut reputation);
+            let cid = record.plan.rationale.correlation_id.clone();
+            timelines.push(build_timeline(
+                &cid,
+                record,
+                &experience,
+                &reputation,
+                self.calibration,
+            ));
         }
+        timelines
     }
 }
 
@@ -1204,7 +1366,7 @@ impl MetricsEngine {
         let mut m = CalibrationMetrics::default();
         let calibrated: Vec<&CalibrationOffsets> = timelines
             .iter()
-            .filter_map(|t| t.calibration.as_ref())
+            .filter_map(|t| t.calibration.as_deref())
             .collect();
         m.decisions_with_calibration = calibrated.len();
         if calibrated.is_empty() {
@@ -1332,6 +1494,368 @@ impl MetricsEngine {
             fallback: Self::fallback(timelines),
             reputation: Self::reputation(timelines),
             experience: Self::experience(timelines),
+        }
+    }
+}
+
+/// Stateless-to-stateful mirror of `MetricsEngine`: feeds one `DecisionTimeline`
+/// at a time and produces a `MetricsReport` identical to
+/// `MetricsEngine::summarize(all_timelines)`. Replaces the O(history) full scan
+/// with O(1) amortized per append.
+///
+/// Non-trivial fields:
+/// - `calibration.converging` needs the first-vs-second-half comparison over
+///   the *ordered* sequence of calibrated decisions, so the magnitudes are kept
+///   in a `Vec` (O(calibrated) per report — bounded by calibrated decisions,
+///   zero in the demo). A documented limitation, not a wire change.
+/// - `reputation.distinct_operators` / `experience.distinct_pairs` are tracked
+///   with sets, bounded by the key space.
+pub struct RunningMetrics {
+    decisions: usize,
+
+    correct_predictions: usize,
+    latency_error_total: f64,
+    cost_error_total: f64,
+    bias_total: f64,
+
+    decisions_with_calibration: usize,
+    calibration_latency_total: f64,
+    calibration_cost_total: f64,
+    calibration_success_total: f64,
+    calibration_confidence_total: f64,
+    calibration_magnitudes: Vec<f64>,
+
+    decisions_with_fallback_chain: usize,
+    fallback_depth_total: f64,
+    failures: usize,
+
+    decisions_with_reputation: usize,
+    reputation_reliability_total: f64,
+    reputation_confidence_total: f64,
+    reputation_observations_total: u64,
+    operators: std::collections::HashSet<String>,
+
+    decisions_with_experience: usize,
+    experience_samples_total: u64,
+    experience_samples_f64: f64,
+    experience_success_total: f64,
+    experience_latency_total: f64,
+    pairs: std::collections::HashSet<ExperienceKey>,
+}
+
+impl Default for RunningMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RunningMetrics {
+    pub fn new() -> Self {
+        Self {
+            decisions: 0,
+            correct_predictions: 0,
+            latency_error_total: 0.0,
+            cost_error_total: 0.0,
+            bias_total: 0.0,
+            decisions_with_calibration: 0,
+            calibration_latency_total: 0.0,
+            calibration_cost_total: 0.0,
+            calibration_success_total: 0.0,
+            calibration_confidence_total: 0.0,
+            calibration_magnitudes: Vec::new(),
+            decisions_with_fallback_chain: 0,
+            fallback_depth_total: 0.0,
+            failures: 0,
+            decisions_with_reputation: 0,
+            reputation_reliability_total: 0.0,
+            reputation_confidence_total: 0.0,
+            reputation_observations_total: 0,
+            operators: std::collections::HashSet::new(),
+            decisions_with_experience: 0,
+            experience_samples_total: 0,
+            experience_samples_f64: 0.0,
+            experience_success_total: 0.0,
+            experience_latency_total: 0.0,
+            pairs: std::collections::HashSet::new(),
+        }
+    }
+
+    /// Fold one timeline into the aggregates. Must be called in append order
+    /// for `calibration.converging` to match `MetricsEngine::calibration`.
+    pub fn record(&mut self, t: &DecisionTimeline) {
+        self.decisions += 1;
+
+        let predicted_success = t.plan.estimated_success_probability >= 0.5;
+        if predicted_success == t.outcome.success {
+            self.correct_predictions += 1;
+        }
+        let latency_error =
+            (t.plan.estimated_latency_ms as i64 - t.outcome.latency_ms as i64).abs() as f64;
+        self.latency_error_total += latency_error;
+        self.cost_error_total += (t.plan.estimated_cost - t.outcome.cost).abs();
+        self.bias_total += t.plan.estimated_success_probability - (t.outcome.success as u8 as f64);
+
+        if let Some(o) = t.calibration.as_deref() {
+            self.decisions_with_calibration += 1;
+            self.calibration_latency_total += o.latency_offset.abs();
+            self.calibration_cost_total += o.cost_offset.abs();
+            self.calibration_success_total += o.success_offset.abs();
+            self.calibration_confidence_total += o.confidence_offset.abs();
+            self.calibration_magnitudes.push(o.latency_offset.abs());
+        }
+
+        if !t.plan.fallback_chain.is_empty() {
+            self.decisions_with_fallback_chain += 1;
+            self.fallback_depth_total += t.plan.fallback_chain.len() as f64;
+        }
+        if !t.outcome.success {
+            self.failures += 1;
+        }
+
+        if let Some(r) = t.reputation.as_deref() {
+            self.decisions_with_reputation += 1;
+            self.reputation_reliability_total += r.reliability;
+            self.reputation_confidence_total += r.confidence;
+            self.reputation_observations_total += r.total_observations;
+            self.operators.insert(r.operator_id.clone());
+        }
+
+        if let Some(e) = t.experience.as_deref() {
+            self.decisions_with_experience += 1;
+            self.pairs.insert(e.key.clone());
+            self.experience_samples_total += e.sample_size;
+            self.experience_samples_f64 += e.sample_size as f64;
+            self.experience_success_total += e.success_rate;
+            self.experience_latency_total += e.average_latency_ms;
+        }
+    }
+
+    pub fn report(&self) -> MetricsReport {
+        let n = self.decisions as f64;
+
+        let prediction = PredictionAccuracy {
+            decisions: self.decisions,
+            correct_predictions: self.correct_predictions,
+            accuracy: if self.decisions == 0 {
+                0.0
+            } else {
+                self.correct_predictions as f64 / n
+            },
+            mean_latency_error_ms: if self.decisions == 0 {
+                0.0
+            } else {
+                self.latency_error_total / n
+            },
+            mean_cost_error: if self.decisions == 0 {
+                0.0
+            } else {
+                self.cost_error_total / n
+            },
+            mean_success_bias: if self.decisions == 0 {
+                0.0
+            } else {
+                self.bias_total / n
+            },
+        };
+
+        let c = self.decisions_with_calibration;
+        let cn = c as f64;
+        let mut converging = false;
+        if self.calibration_magnitudes.len() >= 2 {
+            let mid = self.calibration_magnitudes.len() / 2;
+            let first: f64 = self.calibration_magnitudes[..mid].iter().sum::<f64>() / mid as f64;
+            let second: f64 = self.calibration_magnitudes[mid..].iter().sum::<f64>()
+                / (self.calibration_magnitudes.len() - mid) as f64;
+            converging = second < first;
+        }
+        let calibration = CalibrationMetrics {
+            decisions_with_calibration: c,
+            mean_latency_offset: if c == 0 {
+                0.0
+            } else {
+                self.calibration_latency_total / cn
+            },
+            mean_cost_offset: if c == 0 {
+                0.0
+            } else {
+                self.calibration_cost_total / cn
+            },
+            mean_success_offset: if c == 0 {
+                0.0
+            } else {
+                self.calibration_success_total / cn
+            },
+            mean_confidence_offset: if c == 0 {
+                0.0
+            } else {
+                self.calibration_confidence_total / cn
+            },
+            converging,
+        };
+
+        let fallback = FallbackMetrics {
+            decisions: self.decisions,
+            decisions_with_fallback_chain: self.decisions_with_fallback_chain,
+            fallback_rate: if self.decisions == 0 {
+                0.0
+            } else {
+                self.decisions_with_fallback_chain as f64 / n
+            },
+            avg_fallback_depth: if self.decisions == 0 {
+                0.0
+            } else {
+                self.fallback_depth_total / n
+            },
+            failures: self.failures,
+            failure_rate: if self.decisions == 0 {
+                0.0
+            } else {
+                self.failures as f64 / n
+            },
+        };
+
+        let wr = self.decisions_with_reputation;
+        let wrn = wr as f64;
+        let reputation = ReputationMetrics {
+            decisions: self.decisions,
+            decisions_with_reputation: wr,
+            coverage: if self.decisions == 0 {
+                0.0
+            } else {
+                wr as f64 / n
+            },
+            avg_reliability: if wr == 0 {
+                0.0
+            } else {
+                self.reputation_reliability_total / wrn
+            },
+            avg_confidence: if wr == 0 {
+                0.0
+            } else {
+                self.reputation_confidence_total / wrn
+            },
+            total_observations: self.reputation_observations_total,
+            distinct_operators: self.operators.len(),
+        };
+
+        let we = self.decisions_with_experience;
+        let wen = we as f64;
+        let experience = ExperienceMetrics {
+            decisions: self.decisions,
+            decisions_with_experience: we,
+            coverage: if self.decisions == 0 {
+                0.0
+            } else {
+                we as f64 / n
+            },
+            distinct_pairs: self.pairs.len(),
+            total_samples: self.experience_samples_total,
+            avg_sample_size: if we == 0 {
+                0.0
+            } else {
+                self.experience_samples_f64 / wen
+            },
+            avg_success_rate: if we == 0 {
+                0.0
+            } else {
+                self.experience_success_total / wen
+            },
+            avg_latency_ms: if we == 0 {
+                0.0
+            } else {
+                self.experience_latency_total / wen
+            },
+        };
+
+        MetricsReport {
+            decisions: self.decisions,
+            prediction,
+            calibration,
+            fallback,
+            reputation,
+            experience,
+        }
+    }
+}
+
+/// Incremental point-in-time timeline store.
+///
+/// Holds the persistent experience/reputation stores and the running metric
+/// aggregates, and appends one timeline per decision — the O(1)-per-append
+/// replacement for the O(history) `regenerate()` + `build_all()` + `summarize()`
+/// cycle. Every timeline is a point-in-time snapshot (see `build_timeline`),
+/// Arc-shared with the ledger and the stores, and `metrics()` is exactly
+/// `MetricsEngine::summarize(timelines)`.
+pub struct TimelineStore {
+    experience: ExperienceStore,
+    reputation: ReputationStore,
+    calibration: CalibrationStore,
+    timelines: Vec<DecisionTimeline>,
+    metrics: RunningMetrics,
+    policy_count: u64,
+    confidence_sum: f64,
+}
+
+impl TimelineStore {
+    pub fn new(calibration: CalibrationStore) -> Self {
+        Self {
+            experience: ExperienceStore::new(),
+            reputation: ReputationStore::new(),
+            calibration,
+            timelines: Vec::new(),
+            metrics: RunningMetrics::new(),
+            policy_count: 0,
+            confidence_sum: 0.0,
+        }
+    }
+
+    /// Incorporate one decision: update the affected experience entry, recompute
+    /// the affected operator's reputation, build one point-in-time timeline, and
+    /// fold it into the running aggregates. `record` must already be shared with
+    /// the ledger so both sides reference the same allocation.
+    pub fn append(&mut self, record: Arc<DecisionRecord>) {
+        apply_record(&record, &mut self.experience);
+        ReputationEngine::update_operator(
+            &self.experience,
+            &mut self.reputation,
+            record.plan.operator_id.as_str(),
+        );
+        let cid = record.plan.rationale.correlation_id.clone();
+        let timeline = build_timeline(&cid, record, &self.experience, &self.reputation, &self.calibration);
+        self.policy_count += timeline.explanation.policy_factors.len() as u64;
+        self.confidence_sum += timeline.prediction.confidence;
+        self.metrics.record(&timeline);
+        self.timelines.push(timeline);
+    }
+
+    pub fn len(&self) -> usize {
+        self.timelines.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.timelines.is_empty()
+    }
+
+    pub fn timelines(&self) -> &[DecisionTimeline] {
+        &self.timelines
+    }
+
+    /// The full metrics report, exactly equal to `MetricsEngine::summarize(&self.timelines())`.
+    pub fn metrics_report(&self) -> MetricsReport {
+        self.metrics.report()
+    }
+
+    /// Total policy factors across all timelines (dashboard "policies" count).
+    pub fn policy_count(&self) -> u64 {
+        self.policy_count
+    }
+
+    /// Mean prediction confidence across all timelines (dashboard "confidence").
+    pub fn confidence_mean(&self) -> f64 {
+        if self.timelines.is_empty() {
+            0.0
+        } else {
+            self.confidence_sum / self.timelines.len() as f64
         }
     }
 }
@@ -1573,7 +2097,8 @@ mod tests {
         Capability, CorrelationId, EvaluatorKind, EvaluatorSignal, ExecutionPlan, PlanOutcome,
         PlanningRationale, ScoredCandidate, SelectionContext,
     };
-    use std::collections::HashMap;
+use std::collections::HashMap;
+use std::sync::Arc;
 
     fn make_record(cap: Capability, operator: &str, success: bool) -> DecisionRecord {
         let cid = CorrelationId::new();
@@ -2639,6 +3164,203 @@ mod tests {
             .explanation
             .reasons
             .contains(&ExplanationReason::PolicyConstraint));
+    }
+
+    #[test]
+    fn timeline_snapshots_reflect_state_at_decision_time() {
+        let mut ledger = DecisionLedger::new();
+        for _ in 0..30 {
+            ledger.append(make_record(Capability::ReadFile, "fs-native", true));
+        }
+
+        let e = ExperienceStore::new();
+        let r = ReputationStore::new();
+        let c = CalibrationStore::new();
+        let builder = TimelineBuilder::new(&ledger, &e, &r, &c);
+
+        let pti = builder.build_all_pti();
+        assert_eq!(pti.len(), 30);
+        assert_eq!(pti[9].experience.as_ref().unwrap().sample_size, 10);
+        assert_eq!(pti[19].experience.as_ref().unwrap().sample_size, 20);
+        assert_eq!(pti[29].experience.as_ref().unwrap().sample_size, 30);
+
+        let mut e_final = ExperienceStore::new();
+        let mut r_final = ReputationStore::new();
+        ExperienceEngine::new().update(&ledger, &mut e_final);
+        ReputationEngine::update(&e_final, &mut r_final);
+        let final_builder = TimelineBuilder::new(&ledger, &e_final, &r_final, &c);
+        let final_state = final_builder.build_all();
+        assert_eq!(final_state[9].experience.as_ref().unwrap().sample_size, 30);
+        assert_eq!(final_state[19].experience.as_ref().unwrap().sample_size, 30);
+        assert_eq!(final_state[29].experience.as_ref().unwrap().sample_size, 30);
+    }
+
+    #[test]
+    fn incremental_timeline_snapshots_match_point_in_time_rebuild() {
+        let mut ledger = DecisionLedger::new();
+        let mut shared = Vec::new();
+        for i in 0..40 {
+            let cap = if i % 2 == 0 {
+                Capability::ReadFile
+            } else {
+                Capability::WriteFile
+            };
+            let op = if i % 3 == 0 { "fs-native" } else { "shell" };
+            ledger.append(make_record(cap, op, i % 5 != 0));
+            shared.push(ledger.get_shared(i).unwrap());
+        }
+
+        let mut store = TimelineStore::new(CalibrationStore::new());
+        for r in &shared {
+            store.append(Arc::clone(r));
+        }
+
+        let e = ExperienceStore::new();
+        let r = ReputationStore::new();
+        let c = CalibrationStore::new();
+        let pti = TimelineBuilder::new(&ledger, &e, &r, &c).build_all_pti();
+
+        assert_eq!(store.len(), pti.len());
+        for (inc, ref_) in store.timelines().iter().zip(pti.iter()) {
+            assert_eq!(inc.correlation_id, ref_.correlation_id);
+            assert_eq!(inc.record.id, ref_.record.id);
+            assert_eq!(inc.plan.operator_id, ref_.plan.operator_id);
+            assert_eq!(inc.plan.confidence, ref_.plan.confidence);
+            assert_eq!(inc.outcome.success, ref_.outcome.success);
+            assert_eq!(
+                inc.experience.as_ref().map(|x| x.sample_size),
+                ref_.experience.as_ref().map(|x| x.sample_size)
+            );
+            assert_eq!(
+                inc.reputation.as_ref().map(|x| x.total_observations),
+                ref_.reputation.as_ref().map(|x| x.total_observations)
+            );
+        }
+    }
+
+    #[test]
+    fn running_metrics_matches_summarize() {
+        let mut store = TimelineStore::new(CalibrationStore::new());
+        let mut shared = Vec::new();
+        for i in 0..40 {
+            let cap = if i % 2 == 0 {
+                Capability::ReadFile
+            } else {
+                Capability::WriteFile
+            };
+            let op = if i % 3 == 0 { "fs-native" } else { "shell" };
+            let record = Arc::new(make_record(cap, op, i % 5 != 0));
+            shared.push(record);
+        }
+        for r in &shared {
+            store.append(Arc::clone(r));
+        }
+
+        let report = store.metrics_report();
+        let expected = MetricsEngine::summarize(store.timelines());
+
+        assert_eq!(report.decisions, expected.decisions);
+        assert_eq!(report.prediction.correct_predictions, expected.prediction.correct_predictions);
+        assert_eq!(report.prediction.decisions, expected.prediction.decisions);
+        assert!((report.prediction.accuracy - expected.prediction.accuracy).abs() < 1e-9);
+        assert!((report.prediction.mean_latency_error_ms - expected.prediction.mean_latency_error_ms).abs() < 1e-9);
+        assert!((report.prediction.mean_cost_error - expected.prediction.mean_cost_error).abs() < 1e-9);
+        assert!((report.prediction.mean_success_bias - expected.prediction.mean_success_bias).abs() < 1e-9);
+
+        assert_eq!(
+            report.calibration.decisions_with_calibration,
+            expected.calibration.decisions_with_calibration
+        );
+        assert_eq!(report.calibration.converging, expected.calibration.converging);
+
+        assert_eq!(report.fallback.decisions_with_fallback_chain, expected.fallback.decisions_with_fallback_chain);
+        assert_eq!(report.fallback.failures, expected.fallback.failures);
+        assert!((report.fallback.fallback_rate - expected.fallback.fallback_rate).abs() < 1e-9);
+        assert!((report.fallback.avg_fallback_depth - expected.fallback.avg_fallback_depth).abs() < 1e-9);
+        assert!((report.fallback.failure_rate - expected.fallback.failure_rate).abs() < 1e-9);
+
+        assert_eq!(report.reputation.decisions_with_reputation, expected.reputation.decisions_with_reputation);
+        assert_eq!(report.reputation.total_observations, expected.reputation.total_observations);
+        assert_eq!(report.reputation.distinct_operators, expected.reputation.distinct_operators);
+        assert!((report.reputation.coverage - expected.reputation.coverage).abs() < 1e-9);
+        assert!((report.reputation.avg_reliability - expected.reputation.avg_reliability).abs() < 1e-9);
+        assert!((report.reputation.avg_confidence - expected.reputation.avg_confidence).abs() < 1e-9);
+
+        assert_eq!(report.experience.decisions_with_experience, expected.experience.decisions_with_experience);
+        assert_eq!(report.experience.distinct_pairs, expected.experience.distinct_pairs);
+        assert_eq!(report.experience.total_samples, expected.experience.total_samples);
+        assert!((report.experience.coverage - expected.experience.coverage).abs() < 1e-9);
+        assert!((report.experience.avg_sample_size - expected.experience.avg_sample_size).abs() < 1e-9);
+        assert!((report.experience.avg_success_rate - expected.experience.avg_success_rate).abs() < 1e-9);
+        assert!((report.experience.avg_latency_ms - expected.experience.avg_latency_ms).abs() < 1e-9);
+    }
+
+    #[test]
+    #[ignore]
+    fn incremental_vs_full_rebuild_scaling() {
+        use std::time::Instant;
+
+        let caps = [
+            Capability::ReadFile,
+            Capability::WriteFile,
+            Capability::ListDirectory,
+            Capability::ExecuteCommand,
+        ];
+        let ops = ["fs-native", "shell", "code-reviewer"];
+
+        for n in [2000usize, 4000, 8000] {
+            let records: Vec<Arc<DecisionRecord>> = (0..n)
+                .map(|i| {
+                    Arc::new(make_record(
+                        caps[i % caps.len()].clone(),
+                        ops[i % ops.len()],
+                        i % 5 != 0,
+                    ))
+                })
+                .collect();
+
+            // Old demo flow (pre-ADR-0005): every cycle completion rebuilds the
+            // whole history — ExperienceEngine (fresh cursor => reprocesses all
+            // records), ReputationEngine::update (all operators), build_all
+            // (n full timelines), summarize (n full scans).
+            crate::test_allocator::reset();
+            let t0 = Instant::now();
+            let mut ledger = DecisionLedger::new();
+            let mut e = ExperienceStore::new();
+            let mut r = ReputationStore::new();
+            let c = CalibrationStore::new();
+            for rec in &records {
+                ledger.append((**rec).clone());
+                ExperienceEngine::new().update(&ledger, &mut e);
+                ReputationEngine::update(&e, &mut r);
+                let timelines = TimelineBuilder::new(&ledger, &e, &r, &c).build_all();
+                let _metrics = MetricsEngine::summarize(&timelines);
+            }
+            let rebuild_ms = t0.elapsed().as_secs_f64() * 1000.0;
+            let rebuild_allocations = crate::test_allocator::allocations();
+
+            // New flow (ADR-0005 C4+C6): one point-in-time snapshot per append.
+            crate::test_allocator::reset();
+            let t1 = Instant::now();
+            let mut store = TimelineStore::new(CalibrationStore::new());
+            for r in &records {
+                store.append(Arc::clone(r));
+            }
+            let report = store.metrics_report();
+            let incremental_ms = t1.elapsed().as_secs_f64() * 1000.0;
+            let incremental_allocations = crate::test_allocator::allocations();
+
+            assert_eq!(store.len(), n);
+            assert_eq!(report.decisions, n);
+
+            eprintln!(
+                "n={n:5}: per-append rebuild {rebuild_ms:9.1}ms / {rebuild_allocations:9} allocs | \
+                 incremental {incremental_ms:8.1}ms / {incremental_allocations:8} allocs | \
+                 time {:.1}x  allocs {:.1}x",
+                rebuild_ms / incremental_ms,
+                rebuild_allocations as f64 / incremental_allocations as f64
+            );
+        }
     }
 
     // -- 6C: Metrics --------------------------------------------------------

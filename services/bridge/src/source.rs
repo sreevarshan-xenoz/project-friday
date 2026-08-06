@@ -12,20 +12,19 @@
 //!
 //! `DemoRuntimeSource` stands in for a live runtime until the daemon surfaces
 //! its ledger through this same seam. It generates a synthetic ledger and
-//! derives every read model through the **frozen** engines (ExperienceEngine,
-//! ReputationEngine, TimelineBuilder, MetricsEngine) — the exact pipeline a
-//! real runtime bridge would run over a real ledger.
+//! feeds it through the incremental `TimelineStore` (ADR-0005 mechanism
+//! C4+C6) — `apply_record` + `ReputationEngine::update_operator` +
+//! `build_timeline` — the exact pipeline a real runtime bridge would run
+//! over a real ledger. One point-in-time snapshot per decision, no O(history)
+//! rebuild.
 
+use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use friday_experience::{
-    CalibrationMetrics, CalibrationStore, ExperienceEngine, ExperienceMetrics, ExperienceStore,
-    FallbackMetrics, MetricsEngine, MetricsReport, PredictionAccuracy, ReputationEngine,
-    ReputationMetrics, ReputationStore, TimelineBuilder,
-};
+use friday_experience::{CalibrationStore, TimelineStore};
 use friday_plugin_runtime::{
-    Capability, CorrelationId, DecisionLedger, DecisionRecord, ExecutionPlan, EvaluatorKind,
-    EvaluatorSignal, PlanOutcome, PlanningRationale, ScoredCandidate, SelectionContext,
+    Capability, CorrelationId, DecisionRecord, ExecutionPlan, EvaluatorKind, EvaluatorSignal,
+    PlanOutcome, PlanningRationale, ScoredCandidate, SelectionContext,
 };
 
 use crate::protocol::{
@@ -346,16 +345,15 @@ fn plan_shell(cid: &CorrelationId, capability: &Capability, op: &OpProfile, scor
 
 /// A synthetic FRIDAY runtime for end-to-end testing of the bridge.
 ///
-/// Generates a deterministic ledger and derives the read models through the
-/// frozen engines, exactly as a real runtime bridge would. Each tick advances
+/// Generates a deterministic ledger and feeds it through the incremental
+/// `TimelineStore`, exactly as a real runtime bridge would. Each tick advances
 /// the ten-phase executive by one step; when a full cycle completes, a new
-/// decision is appended to the ledger and the derived models are rebuilt.
+/// decision is appended to the store and one point-in-time snapshot is
+/// produced — no `regenerate()` rebuild of the history.
 pub struct DemoRuntimeSource {
     bridge_id: String,
     source_name: String,
-    ledger: DecisionLedger,
-    timelines: Vec<friday_experience::DecisionTimeline>,
-    metrics: MetricsReport,
+    store: TimelineStore,
     phase_index: usize,
     cycles_completed: u64,
     rng: Lcg,
@@ -365,43 +363,18 @@ impl DemoRuntimeSource {
     /// Seed the demo runtime with `count` synthetic decisions.
     pub fn new(seed: u64, count: u64) -> Self {
         let mut rng = Lcg::new(seed);
-        let mut ledger = DecisionLedger::new();
+        let mut store = TimelineStore::new(CalibrationStore::new());
         for seq in 0..count {
-            ledger.append(make_record(seq, &mut rng));
+            store.append(Arc::new(make_record(seq, &mut rng)));
         }
-        let mut source = Self {
+        Self {
             bridge_id: "friday-bridge-demo".into(),
             source_name: "mock".into(),
-            ledger,
-            timelines: Vec::new(),
-            metrics: MetricsReport {
-                decisions: 0,
-                prediction: PredictionAccuracy::default(),
-                calibration: CalibrationMetrics::default(),
-                fallback: FallbackMetrics::default(),
-                reputation: ReputationMetrics::default(),
-                experience: ExperienceMetrics::default(),
-            },
+            store,
             phase_index: 0,
             cycles_completed: 0,
             rng,
-        };
-        source.regenerate();
-        source
-    }
-
-    /// Rebuild the derived read models from the ledger (frozen engines only).
-    fn regenerate(&mut self) {
-        let t = Instant::now();
-        let mut experience = ExperienceStore::new();
-        let mut reputation = ReputationStore::new();
-        let calibration = CalibrationStore::new();
-        ExperienceEngine::new().update(&self.ledger, &mut experience);
-        ReputationEngine::update(&experience, &mut reputation);
-        let builder = TimelineBuilder::new(&self.ledger, &experience, &reputation, &calibration);
-        self.timelines = builder.build_all();
-        self.metrics = MetricsEngine::summarize(&self.timelines);
-        emit_timing("timeline_regeneration", t.elapsed());
+        }
     }
 
     fn dashboard(&self) -> DashboardDto {
@@ -428,23 +401,12 @@ impl DemoRuntimeSource {
             })
             .collect();
 
-        let policies = self
-            .timelines
-            .iter()
-            .flat_map(|t| t.explanation.policy_factors.iter().map(|_| 1))
-            .count() as u64;
-        let confidence = if self.timelines.is_empty() {
-            0.0
-        } else {
-            self.timelines
-                .iter()
-                .map(|t| t.prediction.confidence)
-                .sum::<f64>()
-                / self.timelines.len() as f64
-        };
+        let policies = self.store.policy_count();
+        let confidence = self.store.confidence_mean();
 
         let recent = self
-            .timelines
+            .store
+            .timelines()
             .iter()
             .rev()
             .take(6)
@@ -473,7 +435,7 @@ impl DemoRuntimeSource {
                 processes: 8,
                 capabilities: CAPABILITIES.len() as u64,
                 policies,
-                episodes: self.timelines.len() as u64,
+                episodes: self.store.len() as u64,
                 confidence,
             },
             recent,
@@ -481,14 +443,19 @@ impl DemoRuntimeSource {
     }
 
     fn ledger_dto(&self) -> Vec<DecisionRecordDto> {
-        self.timelines
+        self.store
+            .timelines()
             .iter()
-            .map(|t| DecisionRecordDto::from(&t.record))
+            .map(|t| DecisionRecordDto::from(t.record.as_ref()))
             .collect()
     }
 
     fn timelines_dto(&self) -> Vec<DecisionTimelineDto> {
-        self.timelines.iter().map(DecisionTimelineDto::from).collect()
+        self.store
+            .timelines()
+            .iter()
+            .map(DecisionTimelineDto::from)
+            .collect()
     }
 }
 
@@ -505,7 +472,7 @@ impl RuntimeSource for DemoRuntimeSource {
         SourceSnapshot {
             dashboard: self.dashboard(),
             timelines: self.timelines_dto(),
-            metrics: MetricsReportDto::from(&self.metrics),
+            metrics: MetricsReportDto::from(&self.store.metrics_report()),
             ledger: self.ledger_dto(),
         }
     }
@@ -515,9 +482,8 @@ impl RuntimeSource for DemoRuntimeSource {
         let new_record = self.phase_index == 0;
         if new_record {
             self.cycles_completed += 1;
-            let record = make_record(self.timelines.len() as u64, &mut self.rng);
-            self.ledger.append(record);
-            self.regenerate();
+            let record = make_record(self.store.len() as u64, &mut self.rng);
+            self.store.append(Arc::new(record));
         }
 
         let slices = vec![Slice::Dashboard];
@@ -536,7 +502,7 @@ impl RuntimeSource for DemoRuntimeSource {
                 Slice::Ledger,
             ];
             delta.timelines = Some(self.timelines_dto());
-            delta.metrics = Some(MetricsReportDto::from(&self.metrics));
+            delta.metrics = Some(MetricsReportDto::from(&self.store.metrics_report()));
             delta.ledger = Some(self.ledger_dto());
         }
         vec![delta]
