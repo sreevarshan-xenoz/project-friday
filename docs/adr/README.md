@@ -12,7 +12,8 @@ explain **why** it became that way.
 | 0002 | Learning Layer                 | Accepted | `friday-plugin-runtime`, `friday-experience` |
 | 0003 | Observability Layer            | Accepted | `friday-experience` read models         |
 | 0004 | Public API Stability Tiers     | Accepted | `friday-experience` public surface      |
-| 0005 | Windowed Observability          | Proposed | `friday-experience` read models (pending VP-001 run-004) |
+| 0005 | Windowed Observability          | Accepted | `friday-experience` read models (gate passed on VP-001 run-005) |
+| 0006 | Persistent Cognitive State      | Design   | conceptual API over trust/state stores; world-model read models |
 
 ## Frozen architectural contracts
 
@@ -34,7 +35,7 @@ them requires a new ADR, not an ordinary implementation commit:
    ADR and a version bump.
 
 New ADRs follow the format: **Context, Decision, Consequences, Alternatives
-considered**. Next number: 0005.
+considered**. Next number: 0007.
 
 ## How to add an ADR
 

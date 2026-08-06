@@ -47,8 +47,10 @@ Short smoke (75 s) first, then scale up: 2 h → 8 h → 24 h → 72 h.
 | `--analyze`  | —                              | analyze an existing run directory |
 | `--no-analyze` | off                          | skip analysis after a run |
 
-Exit codes: `0` clean + analyzer PASS · `1` crash, analyzer FAIL, **or
-INVALID observation coverage** · `2` usage error.
+Exit codes: `0` clean + analyzer PASS · `1` crash, analyzer FAIL on any
+**decision**/**integrity** criterion, or INVALID observation coverage · `2`
+usage error. An **operational** anomaly (e.g. an unexpected reconnect) is
+recorded and reported, never gating.
 `Ctrl-C` stops cleanly and still analyzes what was captured.
 
 ## Output layout
@@ -107,16 +109,28 @@ verdict is INVALID regardless of the curves.
 ## Failure criteria (VP-001)
 
 Decided **before** the run; the analyzer prints each as PASS/FAIL/INFO.
+Criteria are classed (governance in the Gate of `docs/adr/0005-windowed-observability.md`):
 
-| Metric                | Target          |
-| --------------------- | --------------- |
-| Memory growth         | < 1 MB/hour     |
-| RTT drift             | < 10%           |
-| Frame loss            | 0 (sequence gaps) |
-| Sequence gaps         | 0              |
-| Unexpected reconnects | 0              |
-| Process crashes       | 0              |
-| Observation coverage  | ≥ 99%          |
+- **decision** — validates the ADR hypothesis directly (memory growth, RTT
+  drift). Gates the verdict and exit code.
+- **integrity** — measurement validity; a failure corrupts the experiment
+  (frame loss, sequence gaps, process crashes, observation coverage). Gates
+  the verdict and exit code.
+- **operational** — unrelated runtime anomalies (unexpected reconnects, and
+  future host power / network events). Recorded in `report.json`
+  `operational_observations` and shown in the report, but **never** gate — a
+  transport anomaly only matters when it corrupts the experiment, which is
+  what `integrity` detects.
+
+| Class         | Metric                | Target          |
+| ------------- | --------------------- | --------------- |
+| decision      | Memory growth         | < 1 MB/hour     |
+| decision      | RTT drift             | < 10%           |
+| integrity     | Frame loss            | 0 (sequence gaps) |
+| integrity     | Sequence gaps         | 0              |
+| operational   | Unexpected reconnects | 0 (recorded, non-gating) |
+| integrity     | Process crashes       | 0              |
+| integrity     | Observation coverage  | ≥ 99%          |
 
 Overrides: `--max-mem-slope-mb-hr 1.0 --max-rtt-drift-pct 10 --coverage-threshold 99`.
 

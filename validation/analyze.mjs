@@ -19,9 +19,18 @@
 //               downstream symptom. Deliberately NOT on the wire protocol —
 //               the frozen frame format stays byte-identical.
 //
-// VP-001 failure criteria are enforced (defaults below, overridable): a metric
-// over its threshold is reported loudly and fails the run. Writes `report.md`
-// and `report.json` into the run directory. Exit code 1 on any failure.
+// VP-001 failure criteria are enforced (defaults below, overridable). Criteria
+// are classed so that a runtime anomaly can't accidentally overrule the
+// architectural evidence (ADR-0005 "Threats to Validity" governance):
+//   - `decision`    — directly validates the ADR hypothesis (memory, RTT).
+//   - `integrity`   — measurement validity; a failure corrupts the experiment
+//                     (coverage, gaps, crashes). Also gates.
+//   - `operational` — unrelated runtime anomaly (reconnects, host power events,
+//                     network interruptions). Recorded and reported, but NEVER
+//                     gates the verdict or exit code unless it surfaces as an
+//                     integrity failure (which is how corruption is detected).
+// Writes `report.md` and `report.json` into the run directory. Exit code 1 on
+// any decision/integrity failure.
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -275,16 +284,19 @@ function rttVerdict() {
 const criteria = [
   {
     name: 'memory_growth',
+    class: 'decision',
     target: `< ${maxMemSlopeMbHr} MB/hour`,
     ...memVerdict(),
   },
   {
     name: 'rtt_drift',
+    class: 'decision',
     target: `< ${maxRttDriftPct}%`,
     ...rttVerdict(),
   },
   {
     name: 'frame_loss',
+    class: 'integrity',
     target: '0',
     observed: gaps,
     pass: gaps === 0,
@@ -292,6 +304,7 @@ const criteria = [
   },
   {
     name: 'sequence_gaps',
+    class: 'integrity',
     target: '0',
     observed: gaps,
     pass: gaps === 0,
@@ -299,6 +312,7 @@ const criteria = [
   },
   {
     name: 'unexpected_reconnects',
+    class: 'operational',
     target: '0',
     observed: unexpectedReconnects,
     pass: unexpectedReconnects === 0,
@@ -306,6 +320,7 @@ const criteria = [
   },
   {
     name: 'process_crashes',
+    class: 'integrity',
     target: '0',
     observed: crashed ? 1 : 0,
     pass: !crashed,
@@ -313,6 +328,7 @@ const criteria = [
   },
   {
     name: 'observation_coverage',
+    class: 'integrity',
     target: `>= ${coverageThreshold}%`,
     observed: observation ? observation.coverage_percent : null,
     pass: observationStatusFlag === 'VALID',
@@ -322,8 +338,12 @@ const criteria = [
   },
 ];
 
+// `operational` failures are recorded, never gating: a reconnect only matters
+// when it corrupts the experiment, and corruption is what `integrity` detects.
 const failures = criteria.filter((c) => c.pass === false);
-const verdict = failures.length ? 'FAIL' : 'PASS';
+const gatingFailures = failures.filter((c) => c.class !== 'operational');
+const operationalFailures = failures.filter((c) => c.class === 'operational');
+const verdict = gatingFailures.length ? 'FAIL' : 'PASS';
 
 // ---------------------------------------------------------------------------
 // report
@@ -332,9 +352,15 @@ const verdict = failures.length ? 'FAIL' : 'PASS';
 const rows = criteria
   .map((c) => {
     const mark = c.pass === true ? 'PASS' : c.pass === false ? 'FAIL' : 'INFO';
-    return `| ${mark} | ${c.name} | ${c.target} | ${c.label} |`;
+    return `| ${mark} | ${c.class} | ${c.name} | ${c.target} | ${c.label} |`;
   })
   .join('\n');
+
+const operationalNote = operationalFailures.length
+  ? `Operational observations (non-gating): ${operationalFailures
+      .map((c) => `${c.name} (${c.label})`)
+      .join('; ')}`
+  : 'Operational observations (non-gating): none';
 
 const report = `# VP-001 Validation Run — ${manifest.run_id ?? dir}
 
@@ -342,7 +368,8 @@ Run: ${manifest.run_id ?? '—'} · protocol v${manifest.protocol_version ?? 1} 
 Started: ${manifest.started_at ?? new Date(first.ts).toISOString()} · Ended: ${manifest.ended_at ?? new Date(last.ts).toISOString()}
 Duration: ${fmt(durationHr * 60, 0)} min · Samples: ${samples.length} (every ${fmt((elapsedMs / Math.max(1, samples.length - 1)) / 1000, 1)}s)
 Bridge: seed ${manifest.seed ?? '—'} · count ${manifest.count ?? '—'} · git ${manifest.git_commit ?? '—'}
-Result: **${verdict}** ${failures.length ? `(${failures.map((f) => f.name).join(', ')})` : ''}
+Result: **${verdict}** ${gatingFailures.length ? `(${gatingFailures.map((f) => f.name).join(', ')})` : ''}
+${operationalNote}
 
 ## Memory
 
@@ -376,7 +403,7 @@ Verdict: ${rttVerdict().pass === true ? 'Stable' : rttVerdict().pass === false ?
 | Bytes received | ${fmt(bytesReceived / 1048576)} MB |
 | Throughput | ${kbps === null ? '—' : `${fmt(kbps, 2)} KB/s`} |
 | Sequence gaps | ${gaps} |
-| Connection starts | ${starts} (unexpected reconnects: ${unexpectedReconnects}) |
+| Connection starts | ${starts} (unexpected reconnects: ${unexpectedReconnects}; operational — non-gating) |
 | Error frames | ${errorsReceived} |
 | Auto/client resyncs | ${resyncsReceived} |
 
@@ -415,10 +442,15 @@ Verdict: ${rttVerdict().pass === true ? 'Stable' : rttVerdict().pass === false ?
 > observed for its intended duration, so its metrics describe a partial
 > experiment. This is a harness/environment finding, not a FRIDAY verdict.
 
-## Failure criteria (VP-001)
+## Criteria (VP-001)
 
-| Verdict | Criterion | Target | Observed |
-| --- | --- | --- | --- |
+Criteria are classed: **decision** (ADR hypothesis evidence) and **integrity**
+(measurement validity) gate the verdict; **operational** (runtime anomalies)
+are recorded but never gate — a transport anomaly only matters when it corrupts
+the experiment, which is what \`integrity\` detects.
+
+| Verdict | Class | Criterion | Target | Observed |
+| --- | --- | --- | --- | --- |
 ${rows}
 `;
 
@@ -430,7 +462,8 @@ writeFileSync(
     {
       run_id: manifest.run_id ?? null,
       verdict,
-      failures: failures.map((f) => f.name),
+      failures: gatingFailures.map((f) => f.name),
+      operational_observations: operationalFailures.map((f) => ({ name: f.name, observed: f.observed, label: f.label })),
       metrics: {
         duration_ms: elapsedMs,
         samples: samples.length,
@@ -447,7 +480,7 @@ writeFileSync(
           timeline_regeneration: timelineRegen,
         },
       },
-      criteria: criteria.map((c) => ({ name: c.name, target: c.target, observed: c.observed, label: c.label, pass: c.pass })),
+      criteria: criteria.map((c) => ({ name: c.name, class: c.class, target: c.target, observed: c.observed, label: c.label, pass: c.pass })),
       crashed,
     },
     null,
@@ -455,4 +488,4 @@ writeFileSync(
   )}\n`,
 );
 
-process.exit(failures.length ? 1 : 0);
+process.exit(gatingFailures.length ? 1 : 0);

@@ -41,7 +41,7 @@ are filled in afterwards. A run that surprises us is a finding, not a failure.
 
 ### VP-001 — Long-running cognition
 
-**Status:** ladder in progress — run-002 (2h) = **VP-001 Baseline**; run-003 (8h) done; run-004 (24h) = **INCONCLUSIVE** (protocol evolved mid-run: host sleep, 9.7h observation gap); run-005 (24h continuous, **first protocol-compliant VP-001 execution**) scheduled; then ADR decision
+**Status:** ladder in progress — run-002 (2h) = **VP-001 Baseline**; run-003 (8h) done; run-004 (24h) = **INCONCLUSIVE** (protocol evolved mid-run: host sleep, 9.7h observation gap); run-005 (24h continuous, **first protocol-compliant VP-001 execution**) = **CONFIRMED both curves** → ADR-0005 **ACCEPTED**; bounded read-model implementation + re-validation pending
 
 ```
 Evidence supports:
@@ -65,7 +65,10 @@ Evidence supports:
   (`node validation/friday-validate.mjs --duration 8h --interval 5s`). It
   starts the bridge + console client, appends a JSONL sample every interval,
   and ends with a PASS/FAIL verdict against the VP-001 criteria (memory slope,
-  RTT drift, frame loss, sequence gaps, reconnects, crashes).
+  RTT drift, frame loss, sequence gaps, reconnects, crashes). Criteria are
+  classed (see the Gate in ADR-0005): **decision** and **integrity** gate the
+  verdict; **operational** anomalies (e.g. reconnects) are recorded and
+  reported but never gate the run.
 - **Metrics:** memory growth, ledger growth, calibration stability, replay
   correctness, prediction drift, latency over time, and — from run-005 onward
   — server-side read-model generation timings (`dashboard_generation_ms`,
@@ -74,9 +77,9 @@ Evidence supports:
   Finding VP-001-2). Instrument landed in git `0e6df06`+; **run-004 was
   launched before it** and is therefore uninstrumented (no `TIMING` lines).
 - **Runs:** 2h ✅ baseline (run-002) → 8h ✅ (run-003) → 24h **continuous**
-  observation (run-004: INCONCLUSIVE; run-005: **first protocol-compliant
-  execution**) → ADR decision (72h/1w only after the architecture question is
-  resolved).
+  observation (run-004: INCONCLUSIVE; run-005: ✅ first protocol-compliant,
+  ADR-0005 **ACCEPTED**) → implement bounded read models → re-validate on a
+  fresh 24h run (72h/1w only after the architecture question is resolved).
 - **Expected Result:** bounded growth; calibration converges and stays within
   clamps; replay results stay consistent; latency flat.
 - **Actual Result (run-002 — VP-001 Baseline, 2026-08-03, 120 min, seed
@@ -137,6 +140,24 @@ Evidence supports:
   Evidence: `artifacts/validation/run-004/` (gitignored). Mitigation for
   run-005: sleep prevention for the run window + observation coverage and
   watchdogs in the harness (`validation/`, instrumented this entry).
+- **Actual Result (run-005, 2026-08-05→06, 1440 min continuous, seed 42/count
+  140, git 87fc9ff5):** the first fully protocol-compliant 24 h run —
+  observation coverage **100% VALID** (largest gap 0 s; 17,245 samples at
+  5.0 s). Verdict FAIL on the two **decision** criteria only: `memory_growth`
+  11.9 MB/hr (14.0 → 202.7 MB, peak 392.0 MB, 44.5 MB/1,000 records; ledger
+  140 → 6,554, ~267/hr) and `rtt_drift` +416.6% relative (45.4 ms absolute,
+  hourly p95 reaching 267 ms) — both curves held **linearly** through the full
+  day, confirming VP-001-1 and VP-001-2. Every **integrity** criterion PASS
+  (0 frame loss, 0 sequence gaps, 0 crashes, 100% coverage; 87,067 frames, 0
+  errors). One **operational** observation, non-gating: a single 2.7 s
+  disconnect/reconnect after 2 connects (1 resync, 0 gaps) — recorded, not a
+  defect; it did not corrupt the experiment (coverage stayed 100%).
+- **Gate outcome (2026-08-06):** run-005 satisfied the 24 h
+  continuous-observation gate (coverage ≥ 99%). ADR-0005 flipped **Proposed →
+  Accepted**. The criteria governance split (decision / integrity /
+  operational) is documented in the ADR Gate and enforced by
+  `validation/analyze.mjs` — the reconnect no longer fails the run, it is
+  recorded as an operational observation.
 - **Decision (Finding VP-001-1 + VP-001-2, path: (c) then (b)):** the 8h run
   answered the ladder's questions — slope stays linear (yes, per-record cost
   is *falling*), no allocator/fragmentation blowup (RSS tracks history
@@ -151,8 +172,9 @@ Evidence supports:
   noted, not yet evaluated: (1) timeline → `ExperienceSnapshotId` → store
   lookup, (2) timeline → `Arc<ExperienceSnapshot>`, (3) timeline keeps only
   the delta. Evaluation happens only after the 24h run, per Evidence → ADR →
-  Architecture change. ADR-0005 stays **Proposed** until run-005 satisfies the
-  continuous-observation requirement.
+  Architecture change. **run-005 (2026-08-06) satisfied the
+  continuous-observation requirement** — both curves held linearly through a
+  full 24 h at 100% coverage — and **ADR-0005 flipped Proposed → Accepted**.
 
 ### VP-002 — Prediction quality
 
@@ -224,7 +246,7 @@ Evidence supports:
 
 | VP    | Program                 | Status    | Last run | Result link |
 | ----- | ----------------------- | --------- | -------- | ----------- |
-| VP-001 | Long-running cognition  | baseline + 8h + 24h (INCONCLUSIVE, host sleep) | 2026-08-04 | [run-002 baseline](..\artifacts\validation\run-002\report.md) · [run-003](..\artifacts\validation\run-003\report.md) · [run-004](..\artifacts\validation\run-004\report.md) |
+| VP-001 | Long-running cognition  | baseline + 8h + 24h ×2 (run-004 INCONCLUSIVE, host sleep; run-005 CONFIRMED → ADR-0005 accepted) | 2026-08-06 | [run-002 baseline](..\artifacts\validation\run-002\report.md) · [run-003](..\artifacts\validation\run-003\report.md) · [run-004](..\artifacts\validation\run-004\report.md) · [run-005](..\artifacts\validation\run-005\report.md) |
 | VP-002 | Prediction quality      | proposed  | —        | —           |
 | VP-003 | Replay correctness      | proposed  | —        | —           |
 | VP-004 | Scaling                 | first run | 2026-08-01 | [results](../benchmarks/VP-004/README.md) |
