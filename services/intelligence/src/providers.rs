@@ -649,9 +649,9 @@ impl InferenceFabric {
                         || model.provider == "gemini"
                         || model.provider == "opengateway"
                 }
-                RoutingMode::Local => model.provider == "ollama",
+                RoutingMode::Local => model.capabilities.contains(&ModelCapability::Local),
                 RoutingMode::Hybrid => {
-                    model.provider == "ollama"
+                    model.capabilities.contains(&ModelCapability::Local)
                         || model.provider == "openrouter"
                         || model.provider == "omniroute"
                         || model.provider == "nvidia-nim"
@@ -955,6 +955,44 @@ impl InferenceFabric {
                 max_context: 32768,
                 tier: None,
             });
+        }
+
+        // llama.cpp (llama-server) — OpenAI-compatible local backend.
+        // Preferred local engine for low first-token latency (M8 voice roadmap).
+        // Registered when the server is running (LLAMACPP_ENABLED=true|1); the
+        // served GGUF is whatever `-m` loaded at startup, so the model id is a
+        // label only — override the default with LLAMACPP_MODEL.
+        {
+            let base_url = std::env::var("LLAMACPP_BASE_URL")
+                .unwrap_or_else(|_| "http://localhost:8080/v1".to_string());
+            let enabled = std::env::var("LLAMACPP_ENABLED")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false);
+            if enabled {
+                fabric.register_provider(Box::new(OpenAiProvider {
+                    name: "llamacpp".to_string(),
+                    base_url,
+                    api_key: "unused".to_string(),
+                }));
+                if !registry_loaded {
+                    fabric.register_model(ModelInfo {
+                        id: std::env::var("LLAMACPP_MODEL")
+                            .unwrap_or_else(|_| "gemma4:e4b".to_string()),
+                        family: "gemma4-e4b".to_string(),
+                        provider: "llamacpp".to_string(),
+                        latency_ms: 120,
+                        reliability: 1.0,
+                        capabilities: vec![
+                            ModelCapability::Json,
+                            ModelCapability::Tools,
+                            ModelCapability::Local,
+                        ],
+                        max_context: 32_768,
+                        tier: None,
+                    });
+                }
+                tracing::info!("Registered llama.cpp provider (OpenAI-compatible local backend).");
+            }
         }
 
         // OmniRoute (self-hosted multi-provider gateway; see Phase 1 integration notes)
@@ -1322,7 +1360,7 @@ mod tests {
             provider: "omniroute".to_string(),
             latency_ms: 500,
             reliability: 1.0,
-            capabilities: vec![ModelCapability::Local],
+            capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
             max_context: 200_000,
             tier: None,
         });
@@ -1331,6 +1369,62 @@ mod tests {
         assert!(
             !candidates.iter().any(|(m, _)| m.provider == "omniroute"),
             "omniroute must not be selected in Local-only mode"
+        );
+    }
+
+    #[test]
+    fn local_mode_routes_by_capability_not_provider_name() {
+        let mut fabric = InferenceFabric::new();
+
+        // llamacpp: local by capability, so eligible in Local and Hybrid modes.
+        fabric.register_provider(Box::new(OpenAiProvider {
+            name: "llamacpp".to_string(),
+            base_url: "http://localhost:8080/v1".to_string(),
+            api_key: "unused".to_string(),
+        }));
+        fabric.register_model(ModelInfo {
+            id: "gemma4:e4b".to_string(),
+            family: "gemma4-e4b".to_string(),
+            provider: "llamacpp".to_string(),
+            latency_ms: 120,
+            reliability: 1.0,
+            capabilities: vec![ModelCapability::Json, ModelCapability::Local],
+            max_context: 32_768,
+            tier: None,
+        });
+
+        // A model under the "ollama" provider name WITHOUT the Local capability
+        // must no longer be routed as local (kills the provider-name leak).
+        fabric.register_provider(Box::new(OpenAiProvider {
+            name: "ollama".to_string(),
+            base_url: "http://localhost:11434/v1".to_string(),
+            api_key: "ollama".to_string(),
+        }));
+        fabric.register_model(ModelInfo {
+            id: "remote:latest".to_string(),
+            family: "remote".to_string(),
+            provider: "ollama".to_string(),
+            latency_ms: 300,
+            reliability: 1.0,
+            capabilities: vec![ModelCapability::Json],
+            max_context: 8192,
+            tier: None,
+        });
+
+        let local = fabric.select_candidates(RoutingMode::Local);
+        assert!(
+            local.iter().any(|(m, _)| m.provider == "llamacpp"),
+            "llamacpp should be selected in Local mode by capability"
+        );
+        assert!(
+            !local.iter().any(|(m, _)| m.provider == "ollama"),
+            "provider-name 'ollama' must not imply local"
+        );
+
+        let hybrid = fabric.select_candidates(RoutingMode::Hybrid);
+        assert!(
+            hybrid.iter().any(|(m, _)| m.provider == "llamacpp"),
+            "llamacpp should be selected in Hybrid mode by capability"
         );
     }
 
@@ -1571,6 +1665,10 @@ pub struct ProviderMetadata {
     pub priority: u32,
     /// "free" | "free-tier" | "paid" | "local".
     pub cost_model: String,
+    /// Execution location of this provider instance. Set by the registering side
+    /// (registration knows the endpoint); consumers read it — never name-match.
+    #[serde(default)]
+    pub local: bool,
 }
 
 /// A model discovered from a provider, richer than a bare id. Populates the
@@ -1680,7 +1778,7 @@ impl ProviderV2Adapter {
             embeddings: false,
             json_mode: true,
             long_context: true,
-            local: id == "ollama",
+            local: metadata.local,
             session_affinity: id == "omniroute",
             dynamic_models: false,
         };
@@ -1761,6 +1859,7 @@ impl OmniRouteProviderV2 {
             vendor: "omniroute".to_string(),
             priority: 100,
             cost_model: "free-tier".to_string(),
+            local: false,
         };
         Self {
             inner: OmniRouteProvider::new(base_url, api_key),
@@ -2014,6 +2113,7 @@ mod v2_tests {
             vendor: id.to_string(),
             priority: 50,
             cost_model: "free".to_string(),
+            local: false,
         }
     }
 
@@ -2025,6 +2125,7 @@ mod v2_tests {
         assert!(c.completion && c.streaming && c.embeddings && c.tool_calling);
         assert!(c.dynamic_models && c.session_affinity && c.json_mode);
         assert_eq!(p.metadata().id, "omniroute");
+        assert!(!p.metadata().local, "omniroute is a gateway, not a local engine");
     }
 
     #[test]
@@ -2038,15 +2139,29 @@ mod v2_tests {
     }
 
     #[test]
-    fn v2_adapter_marks_ollama_local() {
+    fn v2_adapter_derives_local_from_metadata() {
+        // Locality comes from ProviderMetadata, never from the provider id.
+        let mut metadata = v2_metadata("llamacpp");
+        metadata.local = true;
         let v1 = OpenAiProvider {
-            name: "ollama".to_string(),
-            base_url: "http://localhost:11434/v1".to_string(),
-            api_key: "ollama".to_string(),
+            name: "llamacpp".to_string(),
+            base_url: "http://localhost:8080/v1".to_string(),
+            api_key: "unused".to_string(),
         };
-        let adapter = ProviderV2Adapter::from_provider(Box::new(v1), v2_metadata("ollama"));
+        let adapter = ProviderV2Adapter::from_provider(Box::new(v1), metadata);
         assert!(adapter.capabilities().local);
         assert!(!adapter.capabilities().session_affinity);
+
+        // A remote id with default metadata is not local.
+        let adapter = ProviderV2Adapter::from_provider(
+            Box::new(OpenAiProvider {
+                name: "ollama".to_string(),
+                base_url: "http://localhost:11434/v1".to_string(),
+                api_key: "ollama".to_string(),
+            }),
+            v2_metadata("ollama"),
+        );
+        assert!(!adapter.capabilities().local);
     }
 
     #[test]

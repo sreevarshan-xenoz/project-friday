@@ -157,7 +157,9 @@ impl friday_intelligence::Provider for TestProvider {
 
 #[tokio::test]
 async fn test_inference_fabric_failover() {
-    use friday_intelligence::{InferenceFabric, ModelClient, ModelInfo, RoutingMode};
+    use friday_intelligence::{
+        InferenceFabric, ModelCapability, ModelClient, ModelInfo, RoutingMode,
+    };
 
     let mut fabric = InferenceFabric::new();
     fabric.default_mode = RoutingMode::Hybrid;
@@ -178,7 +180,7 @@ async fn test_inference_fabric_failover() {
         provider: "ollama".to_string(),
         latency_ms: 100,
         reliability: 1.0,
-        capabilities: vec![],
+        capabilities: vec![ModelCapability::Local],
         max_context: 2048,
         tier: None,
     });

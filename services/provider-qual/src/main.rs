@@ -3,7 +3,7 @@
 //! Usage:
 //!   provider-qual                  # real mode: talks to the configured gateway
 //!   provider-qual --mock           # in-process mock, no gateway required
-//!   provider-qual --provider NAME  # omniroute (default) | ollama | openrouter | groq | cerebras | gemini | opengateway
+//!   provider-qual --provider NAME  # omniroute (default) | ollama | llamacpp | openrouter | groq | cerebras | gemini | opengateway
 //!   provider-qual --out DIR        # evidence pack directory
 //!   provider-qual --scenario ID    # run only the scenario with this id
 //!   provider-qual --replay PATH    # re-run the scenario recorded in PATH
@@ -40,17 +40,21 @@ use harness::{run_scenario, Mode, Target};
 use mock::MockProviderV2;
 
 fn model(provider: &str, id: &str) -> ModelInfo {
+    let mut capabilities = vec![
+        ModelCapability::Json,
+        ModelCapability::Tools,
+        ModelCapability::LongContext,
+    ];
+    if provider == "llamacpp" || provider == "ollama" {
+        capabilities.push(ModelCapability::Local);
+    }
     ModelInfo {
         id: id.to_string(),
         family: id.to_string(),
         provider: provider.to_string(),
         latency_ms: 500,
         reliability: 1.0,
-        capabilities: vec![
-            ModelCapability::Json,
-            ModelCapability::Tools,
-            ModelCapability::LongContext,
-        ],
+        capabilities,
         max_context: 200_000,
         tier: None,
     }
@@ -78,6 +82,8 @@ fn build_target(provider: &str, mock: bool) -> (Target, String, String) {
     }
 
     let ogw_model = std::env::var("OPENGATEWAY_MODEL").unwrap_or_else(|_| "auto".to_string());
+    let llamacpp_model =
+        std::env::var("LLAMACPP_MODEL").unwrap_or_else(|_| "gemma4:e4b".to_string());
     let (pname, base, key, mid, mode) = match provider {
         "omniroute" => {
             let base = std::env::var("OMNIROUTE_BASE_URL")
@@ -90,6 +96,14 @@ fn build_target(provider: &str, mock: bool) -> (Target, String, String) {
             "http://localhost:11434/v1".to_string(),
             "ollama".to_string(),
             "qwen2.5-coder:latest",
+            RoutingMode::Local,
+        ),
+        "llamacpp" => (
+            "llamacpp",
+            std::env::var("LLAMACPP_BASE_URL")
+                .unwrap_or_else(|_| "http://localhost:8080/v1".to_string()),
+            "unused".to_string(),
+            llamacpp_model.as_str(),
             RoutingMode::Local,
         ),
         "openrouter" => (
@@ -129,7 +143,7 @@ fn build_target(provider: &str, mock: bool) -> (Target, String, String) {
             RoutingMode::Free,
         ),
         other => panic!(
-            "unknown provider: {other} (supported: omniroute, ollama, openrouter, groq, cerebras, gemini, opengateway)"
+            "unknown provider: {other} (supported: omniroute, ollama, llamacpp, openrouter, groq, cerebras, gemini, opengateway)"
         ),
     };
 

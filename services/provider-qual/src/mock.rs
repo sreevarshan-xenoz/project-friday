@@ -150,6 +150,7 @@ impl MockProviderV2 {
             vendor: self.name.clone(),
             priority: 100,
             cost_model: "free".to_string(),
+            local: false,
         }
     }
 
