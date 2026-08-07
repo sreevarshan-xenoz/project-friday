@@ -2,6 +2,7 @@ pub mod compiler;
 pub mod parser;
 pub mod planner_backend;
 pub mod providers;
+pub mod qualification;
 pub mod router;
 
 pub use compiler::{ModelProvider, PromptAst, PromptCompiler};
@@ -13,5 +14,9 @@ pub use providers::{
     ModelDescriptor, ModelInfo, OmniRouteProvider, OmniRouteProviderV2, OpenAiProvider, Provider,
     ProviderCapabilities, ProviderMetadata, ProviderV2, ProviderV2Adapter, RoutingDecision,
     RoutingMode,
+};
+pub use qualification::{
+    routing_score, BenchmarkConfig, ProviderHealth, QualificationProfile,
+    QUALIFICATION_SCHEMA_VERSION,
 };
 pub use router::{CognitiveMode, IntelligenceRouter};

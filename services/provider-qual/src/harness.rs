@@ -71,6 +71,10 @@ pub struct Outcome {
     /// scores, chosen, served, and why they differed) — so qualification reports
     /// are auditable, not just reportable by outcome.
     pub routing_decision: Option<RoutingDecision>,
+    /// Mean time-to-first-token observed by this scenario (streaming only).
+    pub ttft_ms: Option<f64>,
+    /// Generation throughput observed by this scenario (streaming only).
+    pub tokens_per_second: Option<f64>,
 }
 
 fn now() -> String {
@@ -153,7 +157,9 @@ async fn run_connectivity(target: &Target, scenario: &Scenario, mut trace: Vec<C
         tool_calling: None,
     served_model: None,
     routing_decision: None,
-    }
+    ttft_ms: None,
+    tokens_per_second: None,
+}
 }
 
 async fn run_completion(target: &Target, scenario: &Scenario, mut trace: Vec<Call>) -> Outcome {
@@ -190,7 +196,9 @@ async fn run_completion(target: &Target, scenario: &Scenario, mut trace: Vec<Cal
                 tool_calling: None,
             served_model: None,
             routing_decision: None,
-            }
+            ttft_ms: None,
+            tokens_per_second: None,
+    }
         }
         Err(e) => Outcome {
             id: scenario.id.into(),
@@ -206,6 +214,8 @@ async fn run_completion(target: &Target, scenario: &Scenario, mut trace: Vec<Cal
             tool_calling: None,
         served_model: None,
         routing_decision: None,
+        ttft_ms: None,
+        tokens_per_second: None,
         },
     }
 }
@@ -252,7 +262,9 @@ async fn run_json(target: &Target, scenario: &Scenario, mut trace: Vec<Call>) ->
                 tool_calling: None,
             served_model: None,
             routing_decision: None,
-            }
+            ttft_ms: None,
+            tokens_per_second: None,
+    }
         }
         Err(e) => Outcome {
             id: scenario.id.into(),
@@ -268,6 +280,8 @@ async fn run_json(target: &Target, scenario: &Scenario, mut trace: Vec<Call>) ->
             tool_calling: None,
         served_model: None,
         routing_decision: None,
+        ttft_ms: None,
+        tokens_per_second: None,
         },
     }
 }
@@ -318,7 +332,9 @@ async fn run_long_context(target: &Target, scenario: &Scenario, mut trace: Vec<C
                 tool_calling: None,
             served_model: None,
             routing_decision: None,
-            }
+            ttft_ms: None,
+            tokens_per_second: None,
+    }
         }
         Err(e) => Outcome {
             id: scenario.id.into(),
@@ -334,6 +350,8 @@ async fn run_long_context(target: &Target, scenario: &Scenario, mut trace: Vec<C
             tool_calling: None,
         served_model: None,
         routing_decision: None,
+        ttft_ms: None,
+        tokens_per_second: None,
         },
     }
 }
@@ -407,7 +425,9 @@ async fn run_failure(scenario: &Scenario, mut trace: Vec<Call>) -> Outcome {
         tool_calling: None,
     served_model: None,
     routing_decision: None,
-    }
+    ttft_ms: None,
+    tokens_per_second: None,
+}
 }
 
 /// Streaming benchmark (M5.2): drive the V2 provider's `stream()` and reassemble
@@ -428,7 +448,9 @@ async fn run_streaming(target: &Target, scenario: &Scenario, mut trace: Vec<Call
         tool_calling: None,
     served_model: None,
     routing_decision: None,
-    };
+    ttft_ms: None,
+    tokens_per_second: None,
+};
 
     let Some(v2) = &target.v2 else {
         return fail("no V2 provider surface available".into(), trace);
@@ -458,9 +480,13 @@ async fn run_streaming(target: &Target, scenario: &Scenario, mut trace: Vec<Call
     let mut chunks: usize = 0;
     let mut reassembled = String::new();
     let mut saw_finish = false;
+    let mut ttft_ms: Option<f64> = None;
     while let Some(item) = stream.next().await {
         match item {
             Ok(ck) => {
+                if ttft_ms.is_none() {
+                    ttft_ms = Some(start.elapsed().as_secs_f64() * 1000.0);
+                }
                 chunks += 1;
                 reassembled.push_str(&ck.delta);
                 if ck.finish_reason.is_some() {
@@ -472,6 +498,14 @@ async fn run_streaming(target: &Target, scenario: &Scenario, mut trace: Vec<Call
     }
 
     let ok = chunks >= 1 && !reassembled.trim().is_empty() && saw_finish;
+    let elapsed_secs = latency as f64 / 1000.0;
+    // The stream API does not expose usage tokens; estimate throughput from
+    // reassembled characters (≈4 chars/token) rather than fabricate a number.
+    let tokens_per_second = if elapsed_secs > 0.0 {
+        Some(reassembled.chars().count() as f64 / 4.0 / elapsed_secs)
+    } else {
+        None
+    };
     trace.push(Call {
         intent: scenario.action.intent.to_string(),
         ok,
@@ -495,6 +529,8 @@ async fn run_streaming(target: &Target, scenario: &Scenario, mut trace: Vec<Call
         tool_calling: Some(caps.tool_calling),
     served_model: None,
     routing_decision: None,
+    ttft_ms,
+    tokens_per_second,
     }
 }
 
@@ -520,7 +556,9 @@ async fn run_dynamic_discovery(
         tool_calling: None,
     served_model: None,
     routing_decision: None,
-    };
+    ttft_ms: None,
+    tokens_per_second: None,
+};
 
     let Some(v2) = &target.v2 else {
         return fail("no V2 provider surface available".into(), trace);
@@ -560,7 +598,9 @@ async fn run_dynamic_discovery(
         tool_calling: Some(caps.tool_calling),
     served_model: None,
     routing_decision: None,
-    }
+    ttft_ms: None,
+    tokens_per_second: None,
+}
 }
 
 fn issue_for(scenario: &Scenario, note: &str, expected: &str, actual: &str) -> Issue {

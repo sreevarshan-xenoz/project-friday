@@ -9,6 +9,8 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use crate::qualification::{QualificationProfile, QUALIFICATION_SCHEMA_VERSION};
+
 /// Pluggable interface for calling large language models.
 /// Isolating this ensures we can swap backends (e.g. Gemini to OpenAI)
 /// without touching prompt compilers or response interpreters.
@@ -123,7 +125,7 @@ pub trait Provider: Send + Sync {
 }
 
 /// Circuit Breaker States
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CircuitState {
     Closed,
     Open,
@@ -475,6 +477,10 @@ pub struct InferenceFabric {
     /// evidence record which vendor model actually answered AND why (failover
     /// through the catalog, e.g. auto-route quota → free-model fallback).
     pub last_decision: Arc<Mutex<Option<RoutingDecision>>>,
+    /// Immutable qualification profiles (offline benchmark artifacts from
+    /// `provider-qual`), keyed `"provider/model"`. Loaded at startup via
+    /// `QUALIFICATION_DIR`; seed routing signals but do not change selection.
+    pub qualification_profiles: Arc<Mutex<HashMap<String, QualificationProfile>>>,
 }
 
 impl InferenceFabric {
@@ -487,6 +493,7 @@ impl InferenceFabric {
             default_mode: RoutingMode::Free,
             required_capabilities: Vec::new(),
             last_decision: Arc::new(Mutex::new(None)),
+            qualification_profiles: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -535,6 +542,60 @@ impl InferenceFabric {
     /// no caller ever edits a returned `RoutingDecision`.
     pub fn record_decision(&self, decision: RoutingDecision) {
         *self.last_decision.lock().unwrap() = Some(decision);
+    }
+
+    /// Register an immutable qualification profile for a provider/model pair.
+    /// Profiles are immutable once registered; re-qualification replaces the
+    /// profile wholesale (the schema version gates compatibility).
+    pub fn register_qualification_profile(&mut self, profile: QualificationProfile) {
+        let key = format!("{}/{}", profile.provider_id, profile.model_id);
+        self.qualification_profiles
+            .lock()
+            .unwrap()
+            .insert(key, profile);
+    }
+
+    /// Look up a registered qualification profile (clone; profiles are immutable).
+    pub fn qualification_profile(
+        &self,
+        provider_id: &str,
+        model_id: &str,
+    ) -> Option<QualificationProfile> {
+        self.qualification_profiles
+            .lock()
+            .unwrap()
+            .get(&format!("{provider_id}/{model_id}"))
+            .cloned()
+    }
+
+    /// Load every `qualification.json` under `dir` (recursively) and register
+    /// profiles whose schema version this build understands. Incompatible
+    /// versions are skipped with a warning, never guessed at.
+    pub fn load_qualification_profiles(&self, dir: &std::path::Path) -> std::io::Result<usize> {
+        let mut files = Vec::new();
+        collect_qual_files(dir, &mut files);
+        let mut loaded = 0;
+        for f in files {
+            let content = std::fs::read_to_string(&f)?;
+            match serde_json::from_str::<QualificationProfile>(&content) {
+                Ok(p) if p.is_compatible() => {
+                    let key = format!("{}/{}", p.provider_id, p.model_id);
+                    self.qualification_profiles.lock().unwrap().insert(key, p);
+                    loaded += 1;
+                }
+                Ok(p) => tracing::warn!(
+                    "skipping {}: schema version {} != {}",
+                    f.display(),
+                    p.schema_version,
+                    QUALIFICATION_SCHEMA_VERSION
+                ),
+                Err(e) => tracing::warn!(
+                    "skipping {}: not a valid qualification profile: {e}",
+                    f.display()
+                ),
+            }
+        }
+        Ok(loaded)
     }
 
     /// Build a v1 routing decision stamped with the recording instant.
@@ -1051,7 +1112,34 @@ impl InferenceFabric {
         }
 
         fabric.load_health();
+
+        // Qualification profiles: immutable offline benchmark artifacts that
+        // seed routing signals (see `qualification.rs`). Additive only — never
+        // changes selection or the audit trail.
+        if let Ok(dir) = std::env::var("QUALIFICATION_DIR") {
+            match fabric.load_qualification_profiles(std::path::Path::new(&dir)) {
+                Ok(n) => tracing::info!("Loaded {n} qualification profile(s) from {dir}"),
+                Err(e) => tracing::warn!("Failed to load qualification profiles from {dir}: {e}"),
+            }
+        }
+
         fabric
+    }
+}
+
+/// Recursively collect every `qualification.json` under `dir` (missing or
+/// unreadable directories contribute nothing).
+fn collect_qual_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_qual_files(&path, out);
+        } else if path.file_name().and_then(|n| n.to_str()) == Some("qualification.json") {
+            out.push(path);
+        }
     }
 }
 
@@ -1525,6 +1613,72 @@ mod tests {
             Some(CapabilityTier::ReasoningFree)
         );
         assert_eq!(CapabilityTier::from_tag("unknown-tier"), None);
+    }
+
+    /// `load_qualification_profiles` registers schema-compatible profiles and
+    /// skips incompatible ones instead of guessing.
+    #[test]
+    fn load_qualification_profiles_registers_compatible_and_skips_incompatible() {
+        let dir = std::env::temp_dir().join(format!("qual-load-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let profile = crate::qualification::QualificationProfile {
+            schema_version: crate::qualification::QUALIFICATION_SCHEMA_VERSION,
+            provider_id: "llamacpp".into(),
+            model_id: "gemma4:e4b".into(),
+            benchmark_config: crate::qualification::BenchmarkConfig {
+                prompt_set: "test".into(),
+                iterations: 1,
+                context_size: 8192,
+                temperature: 0.0,
+                gpu_layers: 0,
+                batch_size: 1,
+            },
+            generated_at_ms: 0,
+            ttft_ms: Some(100.0),
+            tokens_per_second: None,
+            json_accuracy: Some(0.9),
+            tool_accuracy: Some(1.0),
+            peak_ram_mb: None,
+            peak_vram_mb: None,
+            benchmark_duration_ms: 10,
+        };
+        std::fs::write(
+            dir.join("qualification.json"),
+            serde_json::to_string(&profile).unwrap(),
+        )
+        .unwrap();
+
+        // A future-schema profile must be skipped, not misread. It lives in its
+        // own evidence pack dir, like real harness output would.
+        let ollama_dir = dir.join("ollama");
+        std::fs::create_dir_all(&ollama_dir).unwrap();
+        let incompatible = serde_json::json!({
+            "schema_version": 999,
+            "provider_id": "ollama",
+            "model_id": "qwen2.5-coder:latest"
+        });
+        std::fs::write(
+            ollama_dir.join("qualification.json"),
+            serde_json::to_string(&incompatible).unwrap(),
+        )
+        .unwrap();
+
+        let fabric = InferenceFabric::new();
+        let loaded = fabric.load_qualification_profiles(&dir).unwrap();
+        assert_eq!(loaded, 1, "only the compatible profile is registered");
+
+        assert!(fabric
+            .qualification_profile("llamacpp", "gemma4:e4b")
+            .is_some());
+        assert!(
+            fabric
+                .qualification_profile("ollama", "qwen2.5-coder:latest")
+                .is_none(),
+            "incompatible schema version must not be registered"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Test-only provider whose `complete` either always fails or always succeeds.

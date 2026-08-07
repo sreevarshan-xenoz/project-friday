@@ -1,16 +1,20 @@
 //! Evidence Packs and metric aggregation for Provider Qualification.
 //!
 //! Every scenario produces `report.json`, `trace.json`, `metrics.json`, and
-//! (on failure) a benchmark-linked issue file. Aggregated metrics follow
-//! `specs/provider-qualification.md`. Tool support, streaming reliability, and
-//! dynamic discovery coverage are populated from the M5.2 Provider Capability
-//! Layer (ProviderV2) — they were `None` until the V2 surface existed.
+//! (on failure) a benchmark-linked issue file. Each run additionally writes an
+//! immutable `qualification.json` profile (raw measurements, no composite
+//! score). Aggregated metrics follow `specs/provider-qualification.md`. Tool
+//! support, streaming reliability, and dynamic discovery coverage are populated
+//! from the M5.2 Provider Capability Layer (ProviderV2) — they were `None` until
+//! the V2 surface existed.
 
 use std::fs;
 use std::path::Path;
 
 use serde::Serialize;
 use serde_json::json;
+
+use friday_intelligence::{BenchmarkConfig, QualificationProfile, QUALIFICATION_SCHEMA_VERSION};
 
 use crate::environment::Environment;
 use crate::harness::Outcome;
@@ -299,4 +303,66 @@ fn derived_change_reason(d: &friday_intelligence::RoutingDecision) -> String {
         .map(|f| format!("{}/{}: {}", f.provider, f.model, f.error))
         .collect::<Vec<_>>()
         .join(" | ")
+}
+
+/// Write the immutable `QualificationProfile` (`qualification.json`) for a run.
+///
+/// Raw measurements only — no composite score; the fabric derives `routing_score`
+/// at runtime, so scoring-weight changes never invalidate this artifact. Fields
+/// the harness cannot measure yet are `null`: TTFT / throughput come from the
+/// streaming scenario; host/accelerator memory sampling is not yet instrumented.
+pub fn write_qualification(
+    out_dir: &Path,
+    provider_id: &str,
+    model_id: &str,
+    outcomes: &[Outcome],
+    duration_ms: u64,
+) -> std::io::Result<()> {
+    let metrics = aggregate(outcomes);
+
+    let mean = |f: &dyn Fn(&Outcome) -> Option<f64>| -> Option<f64> {
+        let vals: Vec<f64> = outcomes.iter().filter_map(f).collect();
+        if vals.is_empty() {
+            None
+        } else {
+            Some(vals.iter().sum::<f64>() / vals.len() as f64)
+        }
+    };
+
+    let profile = QualificationProfile {
+        schema_version: QUALIFICATION_SCHEMA_VERSION,
+        provider_id: provider_id.to_string(),
+        model_id: model_id.to_string(),
+        benchmark_config: BenchmarkConfig {
+            prompt_set: "provider-qual-corpus-v1".to_string(),
+            iterations: outcomes.iter().map(|o| o.trace.len()).max().unwrap_or(1),
+            context_size: std::env::var("LLAMACPP_CTX")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(8192),
+            temperature: std::env::var("QUAL_TEMPERATURE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.0),
+            gpu_layers: std::env::var("QUAL_GPU_LAYERS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            batch_size: std::env::var("QUAL_BATCH_SIZE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1),
+        },
+        generated_at_ms: chrono::Utc::now().timestamp_millis() as u64,
+        ttft_ms: mean(&|o| o.ttft_ms),
+        tokens_per_second: mean(&|o| o.tokens_per_second),
+        json_accuracy: Some(metrics.json_correctness),
+        tool_accuracy: metrics.tool_support,
+        peak_ram_mb: None,
+        peak_vram_mb: None,
+        benchmark_duration_ms: duration_ms,
+    };
+
+    let json = serde_json::to_string_pretty(&profile)?;
+    fs::write(out_dir.join("qualification.json"), json)
 }

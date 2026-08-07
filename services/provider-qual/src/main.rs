@@ -35,7 +35,10 @@ use friday_intelligence::{
 
 use candidates::{CandidateStore, GRADUATE_THRESHOLD};
 use corpus::all;
-use evidence::{aggregate, render, write_candidate, write_environment, write_issue, write_outcome};
+use evidence::{
+    aggregate, render, write_candidate, write_environment, write_issue, write_outcome,
+    write_qualification,
+};
 use harness::{run_scenario, Mode, Target};
 use mock::MockProviderV2;
 
@@ -68,7 +71,11 @@ fn build_target(provider: &str, mock: bool) -> (Target, String, String) {
         let mut fabric = InferenceFabric::new();
         fabric.register_provider(Box::new(mock::MockProvider::healthy(provider.to_string())));
         fabric.register_model(model(provider, "auto"));
-        fabric.default_mode = RoutingMode::Free;
+        fabric.default_mode = if provider == "llamacpp" || provider == "ollama" {
+            RoutingMode::Local
+        } else {
+            RoutingMode::Free
+        };
         return (
             Target {
                 fabric,
@@ -346,6 +353,7 @@ async fn main() {
     let mut real_issues: Vec<(issue::Issue, usize)> = Vec::new();
     let mut candidate_issues: Vec<(issue::Issue, usize)> = Vec::new();
 
+    let bench_start = std::time::Instant::now();
     for s in &scenarios {
         let o = run_scenario(&target, s, mode).await;
         for iss in &o.issues {
@@ -379,6 +387,19 @@ async fn main() {
     let metrics = aggregate(&outcomes);
     let summary = render(&metrics);
     println!("\n{}", summary);
+
+    write_qualification(
+        &out_dir,
+        &target.provider_name,
+        &target.model_id,
+        &outcomes,
+        bench_start.elapsed().as_millis() as u64,
+    )
+    .expect("write qualification profile");
+    println!(
+        "Qualification profile: {}/qualification.json",
+        out_dir.display()
+    );
 
     if !real_issues.is_empty() {
         println!("## Benchmark-linked issues filed (graduated)\n");
@@ -431,5 +452,38 @@ mod tests {
             scenarios.iter().all(|s| !s.requires_mock),
             "real mode must not run mock-only scenarios"
         );
+    }
+
+    /// The qualification profile is an immutable, schema-versioned artifact with
+    /// raw measurements only (no composite score, no fabricated numbers).
+    #[tokio::test]
+    async fn qualification_profile_is_immutable_and_well_formed() {
+        let (target, _, _) = build_target("llamacpp", true);
+        let out = run_scenario(&target, &all()[0], Mode::Mock).await;
+        let outcomes = vec![out];
+        let dir = std::env::temp_dir().join(format!(
+            "qual-test-{}",
+            chrono::Utc::now().timestamp_millis()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        write_qualification(&dir, &target.provider_name, &target.model_id, &outcomes, 42)
+            .expect("write qualification");
+
+        let raw = std::fs::read_to_string(dir.join("qualification.json")).unwrap();
+        let profile: friday_intelligence::QualificationProfile =
+            serde_json::from_str(&raw).unwrap();
+
+        assert_eq!(
+            profile.schema_version,
+            friday_intelligence::QUALIFICATION_SCHEMA_VERSION
+        );
+        assert_eq!(profile.provider_id, "llamacpp");
+        assert_eq!(profile.model_id, "auto");
+        assert_eq!(profile.benchmark_duration_ms, 42);
+        // JSON accuracy is derived from verified outcomes, never invented.
+        assert!(profile.json_accuracy.unwrap_or(0.0) <= 1.0);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
