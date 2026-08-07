@@ -102,6 +102,59 @@ discipline, the default is **not** flipped until qualification evidence shows th
 local engine beats Ollama for the target workload. See
 `docs/mech/MECH-0001-*.md` for how routing-mode decisions are recorded and gated.
 
+## 3c. Qualification profiles vs runtime health
+
+Two layers, **never mixed**:
+
+| Layer | Struct | Who writes it | Lifecycle |
+|-------|--------|---------------|-----------|
+| Offline benchmark artifact | `QualificationProfile` | `provider-qual` (`qualification.json`) | Immutable; replaced wholesale on re-benchmark |
+| Runtime observations | `ProviderHealth` | `InferenceFabric` | Mutable; updated on every request |
+
+`QualificationProfile` is **raw measurements only — no composite `score`**. The
+fabric derives `routing_score()` at runtime from profile + health, so scoring
+weights can change without invalidating historical benchmark data. Fields the
+harness cannot measure yet are `null`, never invented.
+
+```rust
+pub struct QualificationProfile {
+    pub schema_version: u32,                 // QUALIFICATION_SCHEMA_VERSION = 1
+    pub provider_id: String,
+    pub model_id: String,
+    pub benchmark_config: BenchmarkConfig,   // prompt_set, iterations, ctx, temperature, gpu_layers, batch
+    pub generated_at_ms: u64,
+    pub ttft_ms: Option<f64>,
+    pub tokens_per_second: Option<f64>,
+    pub json_accuracy: Option<f64>,
+    pub tool_accuracy: Option<f64>,
+    pub peak_ram_mb: Option<u32>,
+    pub peak_vram_mb: Option<u32>,
+    pub benchmark_duration_ms: u64,
+}
+```
+
+Contract:
+
+1. `provider-qual` writes one `qualification.json` per run, next to the existing
+   evidence pack (`report.json`/`metrics.json`/`trace.json`). TTFT and throughput
+   are measured by the streaming scenario; host/accelerator memory sampling is not
+   yet instrumented and stays `null`.
+2. `InferenceFabric::load_qualification_profiles(dir)` recursively ingests every
+   `qualification.json` under `dir`, keyed `provider/model`. `QUALIFICATION_DIR`
+   points at the directory at startup (`default_from_env`); loading is additive and
+   never changes selection. Incompatible `schema_version` is skipped with a
+   warning, never guessed at.
+3. `routing_score(profile, health)` combines offline quality (50%), speed (30%),
+   and live health (20%) with missing measurements falling back to a neutral
+   midpoint. Weights are policy in the fabric, not data in the profile.
+4. `RoutingDecision` stays FROZEN v1 — profiles and health are runtime consults,
+   never audit-trail mutations.
+
+`ProviderHealth` (see `qualification.rs`): `availability`, moving TTFT / TPS,
+`success_rate`, `current_rate_limit`, `last_error`, `circuit_state`. It is the
+future replacement signal for the static per-provider `reliability`/`latency_ms`
+heuristics; wiring it into `select_candidates` is a later step, not this one.
+
 ## 3. Provider Model
 
 ```rust
