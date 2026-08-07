@@ -18,6 +18,7 @@
 //! Mock mode is unit testing. Real mode is qualification.
 
 mod candidates;
+mod chaos;
 mod corpus;
 mod environment;
 mod evidence;
@@ -281,6 +282,7 @@ fn filter_for_mode(
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mut mock = false;
+    let mut chaos = false;
     let mut provider = "omniroute".to_string();
     let mut out: Option<String> = None;
     let mut scenario_filter: Option<String> = None;
@@ -290,6 +292,7 @@ async fn main() {
     while i < args.len() {
         match args[i].as_str() {
             "--mock" => mock = true,
+            "--chaos" => chaos = true,
             "--provider" => {
                 if let Some(v) = args.get(i + 1) {
                     provider = v.clone();
@@ -317,6 +320,36 @@ async fn main() {
             other => eprintln!("ignoring unknown arg: {other}"),
         }
         i += 1;
+    }
+
+    if chaos {
+        println!("Chaos Laboratory (Phase 1: Provider Failures)\n");
+        let verdicts = chaos::run_all().await;
+        let mut passed = 0;
+        for v in &verdicts {
+            let mark = if v.passed { "PASS" } else { "FAIL" };
+            if v.passed {
+                passed += 1;
+            }
+            println!("  [{mark}] {:<32} {}", v.id, v.note);
+            if !v.passed {
+                for o in &v.observations {
+                    println!(
+                        "        req {} served={:?} elapsed_ms={} error={:?}\n\
+                         \x20         candidates={:?}\n\x20         rejected={:?}",
+                        o.request, o.served, o.elapsed_ms, o.error, o.candidates, o.failures
+                    );
+                }
+            }
+        }
+        println!(
+            "\n{passed}/{} scenarios met their pass criteria",
+            verdicts.len()
+        );
+        if passed != verdicts.len() {
+            std::process::exit(1);
+        }
+        return;
     }
 
     let stamp = chrono::Utc::now().format("%Y-%m-%d_%H%M%S").to_string();

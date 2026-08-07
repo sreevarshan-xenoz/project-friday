@@ -19,6 +19,10 @@ use futures::Stream;
 /// The fault a mock provider should exhibit. `Ok` is the only success mode; every
 /// other variant returns `Err` from `complete` (and reports unhealthy from
 /// `check_health`) so the Fabric is forced to react.
+///
+/// The later variants are the chaos laboratory's adversarial profiles (Phase 1:
+/// provider failures). They reuse the mock's `complete` surface so the chaos
+/// scenarios exercise the exact code path a real provider would hit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FaultMode {
     Ok,
@@ -27,6 +31,17 @@ pub enum FaultMode {
     Http500,
     Malformed,
     Disconnect,
+    /// Provider is down before any request reaches it (HTTP 503).
+    Unavailable,
+    /// Returns a truncated / malformed response body instead of an error.
+    Partial,
+    /// Very slow but ultimately successful (5s of simulated latency).
+    Slow,
+    /// Hangs indefinitely (30s of simulated latency, then errors). Only
+    /// terminates when the fabric's per-attempt deadline cancels it.
+    Hang,
+    /// Connection dies after the first streaming chunk (V2 `stream` only).
+    MidStream,
 }
 
 impl FaultMode {
@@ -50,6 +65,14 @@ pub struct MockProvider {
     /// satisfies the corpus's content verifiers (JSON object / array of 50), so
     /// `--mock` exercises the entire harness pipeline without a live gateway.
     pub prompt_aware: bool,
+    /// Call counter backing the stateful chaos profiles (`timeout_every` /
+    /// `rate_limit_every`). `None` counters are inert, so the qualification
+    /// mocks behave exactly as before.
+    pub calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// Chaos: fail with a timeout on every N-th call (intermittent timeouts).
+    pub timeout_every: Option<usize>,
+    /// Chaos: fail with HTTP 429 on every N-th call (rate-limit every N).
+    pub rate_limit_every: Option<usize>,
 }
 
 impl MockProvider {
@@ -59,6 +82,9 @@ impl MockProvider {
             fault,
             ok_response: "pong".to_string(),
             prompt_aware: false,
+            calls: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            timeout_every: None,
+            rate_limit_every: None,
         }
     }
 
@@ -68,6 +94,40 @@ impl MockProvider {
             fault: FaultMode::Ok,
             ok_response: "{\"name\":\"friday\",\"age\":1,\"tags\":[\"ai\",\"agent\"]}".to_string(),
             prompt_aware: true,
+            calls: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            timeout_every: None,
+            rate_limit_every: None,
+        }
+    }
+
+    /// Chaos: fail with a timeout on every N-th call.
+    pub fn with_timeout_every(mut self, n: usize) -> Self {
+        self.timeout_every = Some(n);
+        self
+    }
+
+    /// Chaos: fail with HTTP 429 on every N-th call.
+    pub fn with_rate_limit_every(mut self, n: usize) -> Self {
+        self.rate_limit_every = Some(n);
+        self
+    }
+
+    fn success_response(&self, prompt: &str) -> Result<String, String> {
+        if self.prompt_aware && prompt.contains("array of exactly 50") {
+            let arr: Vec<String> = (1..=50).map(|i| i.to_string()).collect();
+            Ok(format!("[{}]", arr.join(",")))
+        } else {
+            Ok(self.ok_response.clone())
+        }
+    }
+
+    fn partial_response(&self, prompt: &str) -> Result<String, String> {
+        if self.prompt_aware && prompt.contains("array of exactly 50") {
+            Ok("[1,2,3,".to_string())
+        } else if self.prompt_aware && prompt.contains("only a valid JSON object") {
+            Ok("{\"name\":\"fri".to_string())
+        } else {
+            Ok(self.ok_response[..(self.ok_response.len() / 2).max(1)].to_string())
         }
     }
 }
@@ -84,15 +144,19 @@ impl Provider for MockProvider {
         prompt: &str,
         _require_json: bool,
     ) -> Result<String, String> {
-        match self.fault {
-            FaultMode::Ok => {
-                if self.prompt_aware && prompt.contains("array of exactly 50") {
-                    let arr: Vec<String> = (1..=50).map(|i| i.to_string()).collect();
-                    Ok(format!("[{}]", arr.join(",")))
-                } else {
-                    Ok(self.ok_response.clone())
-                }
+        let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        if let Some(every) = self.timeout_every {
+            if call % every == 0 {
+                return Err("timeout: request timed out".into());
             }
+        }
+        if let Some(every) = self.rate_limit_every {
+            if call % every == 0 {
+                return Err("Provider mock returned error status 429: rate limited".into());
+            }
+        }
+        match self.fault {
+            FaultMode::Ok => self.success_response(prompt),
             FaultMode::Timeout => Err("timeout: request timed out".into()),
             FaultMode::Http429 => {
                 Err("Provider mock returned error status 429: rate limited".into())
@@ -102,11 +166,27 @@ impl Provider for MockProvider {
                 Err("Failed to parse response JSON: unexpected end of body".into())
             }
             FaultMode::Disconnect => Err("HTTP request failed: connection reset".into()),
+            FaultMode::Unavailable => {
+                Err("Provider mock returned error status 503: service unavailable".into())
+            }
+            FaultMode::Partial => self.partial_response(prompt),
+            FaultMode::Slow => {
+                tokio::time::sleep(std::time::Duration::from_millis(5000)).await;
+                self.success_response(prompt)
+            }
+            FaultMode::Hang => {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                Err("Provider mock hung then failed".into())
+            }
+            FaultMode::MidStream => Err("connection reset mid-stream".into()),
         }
     }
 
     async fn check_health(&self) -> bool {
-        self.fault == FaultMode::Ok
+        matches!(
+            self.fault,
+            FaultMode::Ok | FaultMode::Slow | FaultMode::Partial
+        )
     }
 }
 
@@ -123,10 +203,12 @@ pub struct MockProviderV2 {
 }
 
 impl MockProviderV2 {
-    pub fn healthy(name: String) -> Self {
+    /// Build a V2 mock in a given fault state — used by the chaos laboratory
+    /// (e.g. `MidStream`: dies after the first streaming chunk).
+    pub fn chaotic(name: String, fault: FaultMode) -> Self {
         Self {
             name,
-            fault: FaultMode::Ok,
+            fault,
             ok_response: "the agent reasons then acts".to_string(),
             models: vec![ModelDescriptor {
                 id: "mock-auto".to_string(),
@@ -139,6 +221,10 @@ impl MockProviderV2 {
             }],
             embedding_dim: 4,
         }
+    }
+
+    pub fn healthy(name: String) -> Self {
+        Self::chaotic(name, FaultMode::Ok)
     }
 
     fn metadata(&self) -> ProviderMetadata {
@@ -203,6 +289,19 @@ impl ProviderV2 for MockProviderV2 {
         _prompt: &str,
         _require_json: bool,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<CompletionChunk, String>> + Send>>, String> {
+        if self.fault == FaultMode::MidStream {
+            // Chaos: dies after the first chunk — one delta, then a hard error
+            // with no `finish_reason`. The consumer must surface this instead
+            // of silently accepting a truncated completion.
+            let chunks = vec![
+                Ok(CompletionChunk {
+                    delta: "par".to_string(),
+                    finish_reason: None,
+                }),
+                Err("connection reset mid-stream".to_string()),
+            ];
+            return Ok(Box::pin(stream::iter(chunks)));
+        }
         if self.fault != FaultMode::Ok {
             return Err("mock v2 provider failed to stream".into());
         }

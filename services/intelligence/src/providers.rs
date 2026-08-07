@@ -481,6 +481,12 @@ pub struct InferenceFabric {
     /// `provider-qual`), keyed `"provider/model"`. Loaded at startup via
     /// `QUALIFICATION_DIR`; seed routing signals but do not change selection.
     pub qualification_profiles: Arc<Mutex<HashMap<String, QualificationProfile>>>,
+    /// Per-attempt deadline for a single provider call. `None` = wait forever
+    /// (the pre-chaos behavior); `Some(d)` bounds one candidate's call so a
+    /// hung or pathologically slow provider fails over instead of stalling the
+    /// request. Surfaced as a defect by the chaos laboratory (Phase 1: hangs,
+    /// extreme latency) and confirmed to be a robustness knob, not a new layer.
+    pub request_timeout: Option<std::time::Duration>,
 }
 
 impl InferenceFabric {
@@ -494,6 +500,7 @@ impl InferenceFabric {
             required_capabilities: Vec::new(),
             last_decision: Arc::new(Mutex::new(None)),
             qualification_profiles: Arc::new(Mutex::new(HashMap::new())),
+            request_timeout: None,
         }
     }
 
@@ -652,7 +659,12 @@ impl InferenceFabric {
             Some((provider.to_string(), model.id.clone())),
         );
 
-        match prov.complete(&model.id, prompt, require_json).await {
+        match run_attempt(
+            self.request_timeout,
+            prov.complete(&model.id, prompt, require_json),
+        )
+        .await
+        {
             Ok(response) => {
                 decision.served = Some((provider.to_string(), model.id.clone()));
                 self.record_decision(decision);
@@ -1207,6 +1219,23 @@ pub fn opengateway_models() -> Vec<ModelInfo> {
     ]
 }
 
+/// Run one provider attempt under an optional deadline. Bounds a single
+/// candidate call so a hung or pathologically slow provider fails over (chaos
+/// laboratory Phase 1: hangs forever, extremely slow) instead of stalling the
+/// whole request. `None` preserves the pre-chaos wait-forever behavior.
+async fn run_attempt(
+    deadline: Option<std::time::Duration>,
+    fut: impl std::future::Future<Output = Result<String, String>>,
+) -> Result<String, String> {
+    match deadline {
+        Some(d) => match tokio::time::timeout(d, fut).await {
+            Ok(res) => res,
+            Err(_) => Err(format!("request timed out after {:?}", d)),
+        },
+        None => fut.await,
+    }
+}
+
 #[async_trait]
 impl ModelClient for InferenceFabric {
     async fn complete(&self, prompt: &str) -> Result<String, String> {
@@ -1273,7 +1302,12 @@ impl ModelClient for InferenceFabric {
             );
 
             attempts += 1;
-            match provider.complete(&model.id, prompt, false).await {
+            match run_attempt(
+                self.request_timeout,
+                provider.complete(&model.id, prompt, false),
+            )
+            .await
+            {
                 Ok(response) => {
                     let latency_ms = start.elapsed().as_millis() as u64;
                     tracing::info!(
