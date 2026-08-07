@@ -150,16 +150,41 @@ Contract:
 4. `RoutingDecision` stays FROZEN v1 — profiles and health are runtime consults,
    never audit-trail mutations.
 
-### Ownership — one writer per source of truth
+### Ownership + lifetime — one writer per source of truth
 
-Three sources of truth exist; each has exactly one owner and must never drift
-into another owner's lane:
+Three sources of truth exist; each has exactly one owner and one lifetime, and
+must never drift into another owner's lane:
 
-| Source of truth | Owner | Written by | Never written by |
-|-----------------|-------|------------|------------------|
-| **Capabilities** | the registering side (fabric/`model()`/catalog) | manual declaration or discovery | the benchmark harness; the runtime's scoring path |
-| **`QualificationProfile`** | `provider-qual` | `write_qualification` only | the runtime — the fabric only *reads* (`load_qualification_profiles`) |
-| **`ProviderHealth`** | `InferenceFabric` | the fabric's request path | `provider-qual` — the harness produces measurements, never health state |
+| Source of truth | Owner | Lifetime | Answers |
+|-----------------|-------|----------|---------|
+| **Capabilities** | the registering side (fabric/`model()`/catalog) | months — until the model/provider changes | "Can I edit this?" → yes, at registration only |
+| **`QualificationProfile`** | `provider-qual` | until the next qualification run replaces it | "Should this survive restart?" → yes, it is a file artifact |
+| **`ProviderHealth`** | `InferenceFabric` | runtime + persisted snapshots (fabric-owned) | "Who regenerates this?" → the fabric, from live observations |
+
+| Source of truth | Written by | Never written by |
+|-----------------|------------|------------------|
+| **Capabilities** | manual declaration or discovery | the benchmark harness; the runtime's scoring path |
+| **`QualificationProfile`** | `write_qualification` only | the runtime — the fabric only *reads* (`load_qualification_profiles`) |
+| **`ProviderHealth`** | the fabric's request path | `provider-qual` — the harness produces measurements, never health state |
+
+### Authoritative update paths
+
+Every state has exactly one authority for each lifecycle operation, so a future
+contributor can never accidentally write health from the harness or qualification
+data from runtime code:
+
+```text
+QualificationProfile   ProviderHealth
+
+Create  -> provider-qual        Create  -> Fabric
+Update  -> provider-qual        Update  -> Fabric
+Delete  -> provider-qual        Persist -> Fabric
+                                Reset   -> Fabric
+```
+
+Capabilities have a single path as well: **registration** (declare or discover),
+and replacement happens only by re-registering — there is no runtime mutation of
+a registered capability set.
 
 Two consequences are enforced here so the layers cannot overlap later:
 
@@ -187,11 +212,27 @@ trait RoutingPolicy {
 }
 ```
 
-Candidate policies (LowLatency, Cheapest, HighestQuality, OfflineOnly, Efficient,
-Experimental) are the natural evolution of constraint-based routing (a later
-step) — the fabric selects a policy, the policy scores candidates, the fabric
-schedules. Do not build this before the constraint-based-routing step; until
-then `routing_score()` is the single seeded default.
+Guardrail — **the planner expresses constraints, not policies.** The default
+routing policy solves an optimization problem over requirements; it does not
+pre-pick a policy per request:
+
+```rust
+struct RequestRequirements {
+    reasoning: Requirement,   // None | Preferred | Required | High
+    latency_ms: Option<u32>,  // bound
+    offline: Preference,      // Preferred | Required
+    budget: Budget,           // Free | Bounded
+    tools: Requirement,
+}
+```
+
+One `RoutingPolicy` (the seeded default, solving over `RequestRequirements`) is
+the right shape for nearly all requests. Additional policies only earn a place
+when they embody a genuinely different *optimization philosophy* (e.g. an
+energy-efficiency objective), not merely a different user request — otherwise you
+end up with dozens of near-identical strategies. Do not build any of this before
+the constraint-based-routing step; until then `routing_score()` is the single
+seeded default.
 
 `ProviderHealth` (see `qualification.rs`): `availability`, moving TTFT / TPS,
 `success_rate`, `current_rate_limit`, `last_error`, `circuit_state`. It is the
