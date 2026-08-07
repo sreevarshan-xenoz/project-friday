@@ -35,8 +35,26 @@ audio.capture
   treated as sensitive and excluded from non-local memory tiers unless approved.
 - The **Android console** and **mobile daemon** already provide a non-voice remote
   front door; voice is an additional modality, not a prerequisite for control.
+- **Semantic Turn Detection (design note, pending execution-model ADR):** VAD is
+  responsible only for speech activity + interruption; it has no opinion on
+  sentence completeness. After streaming STT, a **Semantic Turn Detector**
+  decides whether the user has finished expressing the thought before
+  `voice.transcript` → `conv.turn` is emitted. This prevents false triggers on
+  mid-utterance pauses ("Can you… …open VS Code"). `conv.turn` remains the
+  canonical completed-utterance boundary — **no new event kind** is introduced.
+- **Barge-in (design note, pending execution-model ADR):** interrupting TTS is
+  one instance of a **generic cancellation contract**, not a voice-specific
+  mechanism. Every long-running action is a `Task { id, owner, priority, state,
+  cancellation_token }`; `voice.speak` / `audio.play`, `browser.navigate`,
+  `terminal.execute`, `vision.scan`, `download.file` are all cancellable the
+  same way. Barge-in flow: VAD detects speech → cancel active `voice.speak`
+  task → re-arm capture → Semantic Turn Detection → `conv.turn`. A bespoke
+  `audio.stop` is intentionally not defined here — it would duplicate the
+  generic mechanism other organs will also need.
 
 ## Status
 
 ⏳ **Planned** — Roadmap **M8** (Voice).  
 Event kinds reserved so earlier milestones can emit compatible events.
+Semantic Turn Detection and barge-in are captured as design notes; interruption
+ships via the generic task-cancellation execution model, not a voice-only path.

@@ -1,11 +1,11 @@
 # MECH-0001: Snapshot Mechanism Evaluation
 
-**Status:** Selected — Phase 3 (prototype) complete: equivalence gate green, benchmark recorded; Phase 4 (re-validation) pending
+**Status:** Selected — Phase 3 complete (equivalence gate green, benchmark recorded); Phase 4 re-validation (run-006) executed and **decision criteria unmet** (memory 9.8 MB/hr, RTT +394%); read-model half validated by timings; alternatives evaluation in progress
 **Date:** 2026-08-06
 **Relates to:** [ADR-0005](../adr/0005-windowed-observability.md) (Accepted) — Windowed Observability Read Models
 **Scope:** `friday-experience` read models (`DecisionTimeline`, `TimelineBuilder`, `TimelineStore`), bridge `DemoRuntimeSource` (incremental store; `regenerate` removed)
 **Governance:** engineering record, not an ADR. Preserves *why* a particular mechanism was chosen so ADR-0005 stays about the architectural decision. If a better mechanism is found later, this record is revisited — the ADR's decision (observability cost must be bounded) is not reopened.
-**Lifecycle:** **Draft** → evaluating candidates / prototype pending → **Selected** → mechanism chosen and implemented → **Superseded** → replaced by a later mechanism. MECH-0001 is currently **Selected** (prototype + equivalence + benchmarks done; Phase 4 re-validation tracked as ADR-0005 validation, not as this mechanism's lifecycle).
+**Lifecycle:** **Draft** → evaluating candidates / prototype pending → **Selected** → mechanism chosen and implemented → **Superseded** → replaced by a later mechanism. MECH-0001 is currently **Selected** (prototype + equivalence + benchmarks done; Phase 4 re-validation run-006 executed — decision criteria unmet, read-model half validated; alternatives evaluation in progress).
 
 ## Context — evidence recap
 
@@ -174,6 +174,27 @@ Gate: proceed to full migration only if a 2 h soak shows the RSS curve flat and 
 
 After migration, re-run VP-001 with the **same** protocol as run-005: 24 h continuous, seed 42 / count 140, interval 5 s, coverage ≥ 99%, same thresholds, same analyzer, same governance. Decision criteria (memory growth < 1 MB/hr, RTT drift < 10%) must PASS. INV-001 (reconnect) and timing capture are tracked independently and do not gate this run.
 
+### run-006 result (2026-08-06→07, git ac0069f) — FAIL on the two decision criteria
+
+Facts in the VP-001 ledger (`docs/VALIDATION.md`) and raw evidence in `artifacts/validation/run-006/`. Comparison with the old path (run-005):
+
+| Criterion | run-005 (old path) | run-006 (C4+C6) | Target |
+| --- | --- | --- | --- |
+| memory_growth | 11.9 MB/hr | **9.8 MB/hr** | < 1 MB/hr |
+| per 1,000 records | 44.5 MB | **36.5 MB** | — |
+| rtt_drift | +416.6% (45.4 ms) | **+394.4% (43.0 ms)** | < 10% |
+| observation coverage | 100% | **100%** (0 gaps, 0 crashes, 0 reconnects) | ≥ 99% |
+
+**What the mechanism validated (the read-model half):** `dashboard_generation` stayed flat and tiny all day — mean 0.184 ms, p95 0.501 ms, first half 0.175 ms → second half 0.193 ms (+10.7%); `timeline_regeneration` produced no lines (the per-cycle full rebuild is gone). The O(history) per-frame read-model CPU behind Finding VP-001-2 is eliminated. This is the benchmark's O(1)-per-append prediction confirmed at the system level over 24 h.
+
+**Analysis — why the two decision criteria still fail:**
+
+- **RTT (+394%) is now wire emission, not read-model cost.** Read-model generation is ~0.2 ms, yet RTT still drifts ~400%; the residual is the full replacement lists (timelines + ledger) serialized and written on every delta in the same `tokio::select!` loop that answers pings — 87,594 frames / 216 GB / 2,441.7 KB/s across the day. This confirms the scope-boundary prediction: after C6 flattens read-model work, the RTT residual is protocol-level. Fix = a separate **wire-emission ADR** (append-only delta semantics, or a writer task decoupled from the pong path) — out of this read-model mechanism's reach.
+- **Memory (9.8 MB/hr) — C4's documented con materialized.** C4 removes *cloning* cost but the ADR-0003 point-in-time constraint means every decision creates a **new** experience/reputation value and the timeline's `Arc` keeps the old version alive; each version embeds the accumulated sample history (experience samples 1,050 → 2,271,254). Per-1,000-record cost fell 44.5 → 36.5 MB (~18%) — real, but not the order-of-magnitude change the 1 MB/hr target requires. The residual is inherent to retained full-snapshot history per timeline, not an implementation defect (equivalence holds; ~32 allocs/record constant).
+- **Assumptions confirmed vs falsified:** CONFIRMED C6 flattens per-frame read-model CPU; CONFIRMED the RTT residual is wire emission (scope-boundary finding). FALSIFIED — for the *acceptance bar* — that C4 alone bounds RSS below the decision criterion.
+- **Classification:** the memory residual is **architectural** (ADR-0003 "snapshots, not references" × per-decision value divergence), addressed by the remaining candidates **C5 delta-only projections**, **C2 retention window**, or **C3 `ExperienceSnapshotId → store`** behind ADR-0006's versioned persistent layer. The RTT residual is **transport architecture** (wire emission), addressed by the future wire-emission ADR. Neither is an implementation bug (equivalence green, constant allocs/record) nor environmental (integrity 100%, deterministic seed 42).
+- **Gate status:** the MECH-0001 gate ("RSS flat on a soak") is **NOT met** — the implementation is not frozen/tagged as the ADR-0005 solution. C4+C6 remain **Selected** as the read-model fix (a strict improvement; the read-model half is proven), but the remaining cost drivers are outside this mechanism, so alternatives evaluation (memory) and the wire-emission ADR (RTT) are the next steps. **ADR-0005 is not updated**: its decision threshold (both criteria PASS on a protocol-identical 24 h run) has not been reached, and the final mechanism choice is not yet made.
+
 ## Log
 
 - 2026-08-06 — Phase 1 criteria frozen; Phase 2 evaluation written; Phase 3 prototype pending.
@@ -181,3 +202,4 @@ After migration, re-run VP-001 with the **same** protocol as run-005: 24 h conti
 - 2026-08-06 — Adopted point-in-time snapshot semantics as canonical (final-state replay = artifact of the previous full-regeneration algorithm, intentionally removed); equivalence gate redefined as `incremental == build_all_pti()` with explicit semantic equality (must-match vs `last_updated_ms` may-differ); regression test `timeline_snapshots_reflect_state_at_decision_time` added to the prototype plan.
 - 2026-08-06 — Prototype complete: `DecisionTimeline` Arc-snapshot fields, `ReputationEngine::update_operator`, `TimelineStore` + `RunningMetrics`, `build_all_pti()`, `DemoRuntimeSource` switched to the incremental store (`regenerate` removed), wire-DTO Arc handling + `bridge/tests/equivalence.rs`, Arc-shared `DecisionLedger`. Equivalence gate green across all suites.
 - 2026-08-06 — Scaling benchmark recorded (release, counting allocator): old per-append rebuild O(n²) vs incremental O(n); at n=8,000 the incremental path is ~4,000x faster and ~3,500x fewer allocations. Benchmark measures the real old flow (per-append full regeneration), not a single cold rebuild. Mechanism promoted to **Selected**; Phase 4 re-validation tracked as ADR-0005 validation.
+- 2026-08-07 — Phase 4 re-validation **run-006** (24 h continuous, 100% coverage, git ac0069f): FAIL on both decision criteria (memory 9.8 MB/hr, RTT +394.4%). Read-model half validated: `dashboard_generation` flat (0.184 ms mean, +10.7% drift), `timeline_regeneration` absent. Analysis: RTT residual = wire emission (scope-boundary prediction confirmed); memory residual = retained point-in-time snapshots (C4 con, ~18% per-record improvement only). MECH-0001 gate ("RSS flat") NOT met → not frozen/tagged; ADR-0005 not updated (decision threshold unreached). Next: evaluate C5/C2/C3 for memory + separate wire-emission ADR for RTT.

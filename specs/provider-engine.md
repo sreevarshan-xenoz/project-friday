@@ -74,6 +74,34 @@ Contract:
    view over it. The human-readable `change_reason` is derived at
    serialization, never stored.
 
+## 3b. Local routing by capability, not provider name
+
+**Implemented in `services/intelligence`.** Local routing never depends on the provider
+*name*. `RoutingMode::Local` selects a model iff its `ModelInfo`
+advertises `ModelCapability::Local`; `RoutingMode::Hybrid` adds that same
+capability alongside the cloud providers. A provider named `"ollama"` whose model
+does not carry the `Local` capability is **not** a local candidate, and a provider
+named anything else that *does* carry it is. `ProviderV2Adapter` derives `local`
+from `ProviderMetadata.local` — an execution-location flag set by the registering
+side (registration knows the endpoint); the adapter never name-matches provider IDs.
+
+### llama.cpp (llama-server)
+
+Registered behind the same env-gated pattern as OmniRoute — the backend is local
+to this machine and may not be running:
+
+- `LLAMACPP_ENABLED=true|1` registers the provider (OpenAI-compatible `/v1`).
+- `LLAMACPP_BASE_URL` defaults to `http://localhost:8080/v1` (llama-server default).
+- `LLAMACPP_MODEL` labels the served GGUF; defaults to `gemma4:e4b`. The id is a
+  label only — llama-server serves whatever `-m` loaded at startup.
+- Default model capability set: `Json`, `Tools`, `Local`.
+
+Qualification: `cargo run -p friday-provider-qual -- --provider llamacpp` targets
+`RoutingMode::Local` against the default endpoint. Per the ADR-0005 one-variable
+discipline, the default is **not** flipped until qualification evidence shows the
+local engine beats Ollama for the target workload. See
+`docs/mech/MECH-0001-*.md` for how routing-mode decisions are recorded and gated.
+
 ## 3. Provider Model
 
 ```rust

@@ -440,6 +440,11 @@ Thanks to M4.6 it only declares capabilities; the registry handles the rest.
 ## M8 — Voice ⏳
 
 - Wake word, VAD, streaming STT, streaming TTS, interruptions. See `docs/Voice.md`.
+- Design notes in `docs/Voice.md`: **Semantic Turn Detection** (VAD = activity
+  only; a detector confirms conversational completion before `conv.turn`),
+  and barge-in via the **generic task-cancellation execution model**
+  (`Task { id, owner, priority, state, cancellation_token }`) — no voice-only
+  `audio.stop`.
 
 ## M9 — Learning ⏳
 

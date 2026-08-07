@@ -41,7 +41,7 @@ are filled in afterwards. A run that surprises us is a finding, not a failure.
 
 ### VP-001 — Long-running cognition
 
-**Status:** ladder in progress — run-002 (2h) = **VP-001 Baseline**; run-003 (8h) done; run-004 (24h) = **INCONCLUSIVE** (protocol evolved mid-run: host sleep, 9.7h observation gap); run-005 (24h continuous, **first protocol-compliant VP-001 execution**) = **CONFIRMED both curves** → ADR-0005 **ACCEPTED**; bounded read-model implementation + re-validation pending
+**Status:** ladder in progress — run-002 (2h) = **VP-001 Baseline**; run-003 (8h) done; run-004 (24h) = **INCONCLUSIVE** (host sleep, 9.7h observation gap); run-005 (24h continuous, **first protocol-compliant VP-001 execution**) = **CONFIRMED both curves** → ADR-0005 **ACCEPTED**; bounded read-model mechanism implemented (MECH-0001 C4+C6); **run-006 (re-validation) = FAIL on both decision criteria** (memory 9.8 MB/hr, RTT +394%), all integrity PASS at 100% coverage — alternatives under evaluation
 
 ```
 Evidence supports:
@@ -158,6 +158,23 @@ Evidence supports:
   operational) is documented in the ADR Gate and enforced by
   `validation/analyze.mjs` — the reconnect no longer fails the run, it is
   recorded as an operational observation.
+- **Actual Result (run-006, 2026-08-06→07, 1440 min continuous, seed 42/count
+  140, git ac0069f1158):** re-validation after the bounded read-model
+  mechanism (MECH-0001 C4 `Arc`-shared snapshots + C6 incremental
+  `TimelineStore`; `regenerate` removed). Observation coverage **100% VALID**
+  (largest gap 0 s; 17,245 samples at 5.0 s). Transport: 87,594 frames,
+  216.0 GB received (2,441.7 KB/s), 0 sequence gaps, 1 connection start, 0
+  unexpected reconnects, 0 error frames, 0 resyncs. Verdict FAIL on the two
+  **decision** criteria only: `memory_growth` 9.8 MB/hr (14.4 → 246.6 MB, peak
+  370.8 MB, 36.5 MB/1,000 records; ledger 140 → 6,597, ~269/hr; experience
+  samples 1,050 → 2,271,254, ~94,596/hr) and `rtt_drift` +394.4% relative
+  (43.0 ms absolute; mean 32.4 ms, p50 0 ms, p95 264 ms, max 1,801 ms). Every
+  **integrity** criterion PASS (0 frame loss, 0 sequence gaps, 0 crashes, 100%
+  coverage). Read-model generation timings: `dashboard_generation` 64,580
+  samples, mean 0.184 ms, p95 0.501 ms, first half 0.175 ms → second half
+  0.193 ms (+10.7% drift); `timeline_regeneration` absent (no `TIMING` lines —
+  no per-cycle rebuild). Operational observations: none. Evidence:
+  `artifacts/validation/run-006/` (gitignored). Analysis in MECH-0001 Phase 4.
 - **Decision (Finding VP-001-1 + VP-001-2, path: (c) then (b)):** the 8h run
   answered the ladder's questions — slope stays linear (yes, per-record cost
   is *falling*), no allocator/fragmentation blowup (RSS tracks history
@@ -246,7 +263,7 @@ Evidence supports:
 
 | VP    | Program                 | Status    | Last run | Result link |
 | ----- | ----------------------- | --------- | -------- | ----------- |
-| VP-001 | Long-running cognition  | baseline + 8h + 24h ×2 (run-004 INCONCLUSIVE, host sleep; run-005 CONFIRMED → ADR-0005 accepted) | 2026-08-06 | [run-002 baseline](..\artifacts\validation\run-002\report.md) · [run-003](..\artifacts\validation\run-003\report.md) · [run-004](..\artifacts\validation\run-004\report.md) · [run-005](..\artifacts\validation\run-005\report.md) |
+| VP-001 | Long-running cognition  | baseline + 8h + 24h ×3 (run-004 INCONCLUSIVE, host sleep; run-005 CONFIRMED → ADR-0005 accepted; run-006 FAIL on decision criteria, integrity clean) | 2026-08-07 | [run-002 baseline](..\artifacts\validation\run-002\report.md) · [run-003](..\artifacts\validation\run-003\report.md) · [run-004](..\artifacts\validation\run-004\report.md) · [run-005](..\artifacts\validation\run-005\report.md) · [run-006](..\artifacts\validation\run-006\report.md) |
 | VP-002 | Prediction quality      | proposed  | —        | —           |
 | VP-003 | Replay correctness      | proposed  | —        | —           |
 | VP-004 | Scaling                 | first run | 2026-08-01 | [results](../benchmarks/VP-004/README.md) |
