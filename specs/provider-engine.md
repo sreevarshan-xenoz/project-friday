@@ -150,6 +150,49 @@ Contract:
 4. `RoutingDecision` stays FROZEN v1 — profiles and health are runtime consults,
    never audit-trail mutations.
 
+### Ownership — one writer per source of truth
+
+Three sources of truth exist; each has exactly one owner and must never drift
+into another owner's lane:
+
+| Source of truth | Owner | Written by | Never written by |
+|-----------------|-------|------------|------------------|
+| **Capabilities** | the registering side (fabric/`model()`/catalog) | manual declaration or discovery | the benchmark harness; the runtime's scoring path |
+| **`QualificationProfile`** | `provider-qual` | `write_qualification` only | the runtime — the fabric only *reads* (`load_qualification_profiles`) |
+| **`ProviderHealth`** | `InferenceFabric` | the fabric's request path | `provider-qual` — the harness produces measurements, never health state |
+
+Two consequences are enforced here so the layers cannot overlap later:
+
+- **One health representation.** The fabric today persists health as the scalar
+  `health_scores` map plus `PersistedProviderHealth` (`providers.rs`). Step 2
+  (runtime health metrics) must fold **both** into the single fabric-owned
+  `ProviderHealth` struct — never keep three parallel health shapes.
+- **Profiles are never re-scored in place.** A `QualificationProfile` is written
+  once and read many times. Re-weighting routing is a fabric-side policy change,
+  not a profile edit.
+
+### Future: `RoutingPolicy` (strategy, not formula)
+
+`routing_score()` is a placeholder for a strategy so FRIDAY can swap objectives
+without touching the fabric:
+
+```rust
+trait RoutingPolicy {
+    fn score(
+        &self,
+        qualification: &QualificationProfile,
+        health: &ProviderHealth,
+        request: &RequestRequirements,
+    ) -> f64;
+}
+```
+
+Candidate policies (LowLatency, Cheapest, HighestQuality, OfflineOnly, Efficient,
+Experimental) are the natural evolution of constraint-based routing (a later
+step) — the fabric selects a policy, the policy scores candidates, the fabric
+schedules. Do not build this before the constraint-based-routing step; until
+then `routing_score()` is the single seeded default.
+
 `ProviderHealth` (see `qualification.rs`): `availability`, moving TTFT / TPS,
 `success_rate`, `current_rate_limit`, `last_error`, `circuit_state`. It is the
 future replacement signal for the static per-provider `reliability`/`latency_ms`
