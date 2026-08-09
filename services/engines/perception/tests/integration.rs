@@ -30,8 +30,12 @@ async fn perception_engine_feeds_workspace_through_runtime() {
                 let screen = ws.get("sensor.screen");
                 let timer = ws.get("sensor.timer");
 
-                let has_any = mouse.is_some() || keyboard.is_some() || screen.is_some() || timer.is_some();
-                assert!(has_any, "Expected at least one sensor event in workspace after Perception");
+                let has_any =
+                    mouse.is_some() || keyboard.is_some() || screen.is_some() || timer.is_some();
+                assert!(
+                    has_any,
+                    "Expected at least one sensor event in workspace after Perception"
+                );
 
                 friday_cognitive::handler::PhaseResult::Ok
             })
@@ -60,11 +64,21 @@ async fn perception_engine_feeds_workspace_through_runtime() {
     );
 
     // Verify sensor events are present.
-    let sensor_events: Vec<_> = history.iter().filter(|e| e.topic.starts_with("sensor.")).collect();
-    assert_eq!(sensor_events.len(), 5, "Expected 5 sensor events (one per tick)");
+    let sensor_events: Vec<_> = history
+        .iter()
+        .filter(|e| e.topic.starts_with("sensor."))
+        .collect();
+    assert_eq!(
+        sensor_events.len(),
+        5,
+        "Expected 5 sensor events (one per tick)"
+    );
 
     // Verify tick completion events are present.
-    let tick_events: Vec<_> = history.iter().filter(|e| e.topic == friday_cognitive::Topic::TickCompleted).collect();
+    let tick_events: Vec<_> = history
+        .iter()
+        .filter(|e| e.topic == friday_cognitive::Topic::TickCompleted)
+        .collect();
     assert_eq!(tick_events.len(), 5, "Expected 5 tick completion events");
 }
 
@@ -86,7 +100,10 @@ async fn runtime_metrics_reflect_perception_execution() {
     // 10 ticks × 1 handler (Perception on Observe only) = 10 total handler executions.
     assert_eq!(metrics.total_phases_executed, 10);
     // Observe phase should have 10 executions (one per tick, from Perception).
-    assert_eq!(metrics.phase_counts.get(&CognitivePhase::Observe), Some(&10));
+    assert_eq!(
+        metrics.phase_counts.get(&CognitivePhase::Observe),
+        Some(&10)
+    );
     // No errors.
     assert_eq!(metrics.errors, 0);
 }
