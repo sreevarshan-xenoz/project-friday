@@ -31,14 +31,10 @@ impl LearningEngine {
 
     fn derive_policy(&self, insight: &Insight) -> Option<Policy> {
         match insight.kind {
-            InsightKind::Lesson => {
-                Some(Policy::retry(
-                    Capability::ExecuteCommand,
-                    1,
-                    insight.confidence,
-                    1,
-                ).with_created_from(vec![insight.id.clone()]))
-            }
+            InsightKind::Lesson => Some(
+                Policy::retry(Capability::ExecuteCommand, 1, insight.confidence, 1)
+                    .with_created_from(vec![insight.id.clone()]),
+            ),
             InsightKind::Reinforcement => None,
             InsightKind::Warning => None,
             InsightKind::Optimization => None,
