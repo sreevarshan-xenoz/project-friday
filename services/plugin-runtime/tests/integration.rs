@@ -3,7 +3,7 @@ use std::fs;
 use std::io::Write;
 
 use friday_plugin_runtime::{
-    Capability, CapabilityCatalog, CapabilityRegistry, CapabilityRequest, CapabilityPlanner,
+    Capability, CapabilityCatalog, CapabilityPlanner, CapabilityRegistry, CapabilityRequest,
     CorrelationId, DefaultPolicyEngine, FilesystemPlugin, HealthMonitor, Plugin, PluginRuntime,
     ScoringWeights, SelectionContext,
 };
@@ -117,7 +117,9 @@ fn resolver_uses_registry_health_and_catalog_together() {
     // No health data yet — resolver falls back
     let cid = CorrelationId::from_string("test");
     let ctx = SelectionContext::default();
-    let (resolved, rationale) = planner.resolve(&Capability::ReadFile, &[], &cid, &ctx).unwrap();
+    let (resolved, rationale) = planner
+        .resolve(&Capability::ReadFile, &[], &cid, &ctx)
+        .unwrap();
     assert_eq!(resolved.plugin_id, "filesystem");
     assert!((resolved.confidence - 0.3).abs() < 0.01);
     assert!(resolved.rationale.contains("not yet healthy"));
@@ -216,7 +218,11 @@ fn runtime_with_custom_policy_blocks_plugins() {
     let req = CapabilityRequest::new(Capability::ReadFile)
         .with_parameter("path", path.to_string_lossy().to_string());
     let (result, rationale) = runtime.plan_and_execute(req).unwrap();
-    assert!(result.success, "read should succeed: {:?}", result.metadata.get("error"));
+    assert!(
+        result.success,
+        "read should succeed: {:?}",
+        result.metadata.get("error")
+    );
     assert!(rationale.explanation.contains("blocked by policy"));
     let _ = fs::remove_file(&path);
 }
