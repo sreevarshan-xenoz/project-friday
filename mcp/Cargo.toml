@@ -12,6 +12,7 @@ description = "FRIDAY MCP (Model Context Protocol) integration: transport, proto
 friday-core = { path = "../core" }
 friday-capabilities = { path = "../services/capabilities" }
 friday-planner = { path = "../planner" }
+friday-context = { path = "../services/context" }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
