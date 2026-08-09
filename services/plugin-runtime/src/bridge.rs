@@ -53,18 +53,29 @@ impl CognitiveBridge {
     /// Translate a telemetry envelope into observations.
     pub fn translate(&self, envelope: &TelemetryEnvelope) -> Vec<RuntimeObservation> {
         match &envelope.event {
-            TelemetryEvent::ProviderResolved { plugin_id, confidence, .. } => {
+            TelemetryEvent::ProviderResolved {
+                plugin_id,
+                confidence,
+                ..
+            } => {
                 vec![RuntimeObservation {
                     kind: ObservationKind::ProviderChosen,
                     correlation_id: envelope.correlation_id.clone(),
-                    summary: format!("resolved to {} with confidence {:.2}", plugin_id, confidence),
+                    summary: format!(
+                        "resolved to {} with confidence {:.2}",
+                        plugin_id, confidence
+                    ),
                     detail: map_of![
                         "plugin_id" => plugin_id.clone(),
                         "confidence" => format!("{:.3}", confidence)
                     ],
                 }]
             }
-            TelemetryEvent::PluginCompleted { plugin_id, duration_ms, success } => {
+            TelemetryEvent::PluginCompleted {
+                plugin_id,
+                duration_ms,
+                success,
+            } => {
                 let kind = if *success {
                     ObservationKind::CapabilityExecuted
                 } else {
@@ -73,7 +84,10 @@ impl CognitiveBridge {
                 vec![RuntimeObservation {
                     kind,
                     correlation_id: envelope.correlation_id.clone(),
-                    summary: format!("{} completed in {}ms (success: {})", plugin_id, duration_ms, success),
+                    summary: format!(
+                        "{} completed in {}ms (success: {})",
+                        plugin_id, duration_ms, success
+                    ),
                     detail: map_of![
                         "plugin_id" => plugin_id.clone(),
                         "duration_ms" => duration_ms.to_string(),
@@ -81,7 +95,9 @@ impl CognitiveBridge {
                     ],
                 }]
             }
-            TelemetryEvent::PluginFailed { plugin_id, error, .. } => {
+            TelemetryEvent::PluginFailed {
+                plugin_id, error, ..
+            } => {
                 vec![RuntimeObservation {
                     kind: ObservationKind::CapabilityFailed,
                     correlation_id: envelope.correlation_id.clone(),
@@ -92,11 +108,20 @@ impl CognitiveBridge {
                     ],
                 }]
             }
-            TelemetryEvent::PolicyEvaluated { capability, candidates_before, candidates_after } => {
+            TelemetryEvent::PolicyEvaluated {
+                capability,
+                candidates_before,
+                candidates_after,
+            } => {
                 vec![RuntimeObservation {
                     kind: ObservationKind::PolicyApplied,
                     correlation_id: envelope.correlation_id.clone(),
-                    summary: format!("policy filtered {} → {} candidates for {}", candidates_before, candidates_after, capability.as_str()),
+                    summary: format!(
+                        "policy filtered {} → {} candidates for {}",
+                        candidates_before,
+                        candidates_after,
+                        capability.as_str()
+                    ),
                     detail: map_of![
                         "capability" => capability.as_str().to_string(),
                         "before" => candidates_before.to_string(),
@@ -104,7 +129,9 @@ impl CognitiveBridge {
                     ],
                 }]
             }
-            TelemetryEvent::RetryAttempted { plugin_id, attempt, .. } => {
+            TelemetryEvent::RetryAttempted {
+                plugin_id, attempt, ..
+            } => {
                 vec![RuntimeObservation {
                     kind: ObservationKind::RetryHappened,
                     correlation_id: envelope.correlation_id.clone(),
@@ -115,7 +142,11 @@ impl CognitiveBridge {
                     ],
                 }]
             }
-            TelemetryEvent::HealthChanged { plugin_id, old_status, new_status } => {
+            TelemetryEvent::HealthChanged {
+                plugin_id,
+                old_status,
+                new_status,
+            } => {
                 let kind = if *new_status == crate::contract::PluginStatus::Failed {
                     ObservationKind::HealthDegraded
                 } else {
@@ -177,11 +208,14 @@ mod tests {
     fn bridge_translates_provider_resolved() {
         let bridge = CognitiveBridge::new();
         let cid = CorrelationId::new();
-        let env = TelemetryEnvelope::new(cid.clone(), TelemetryEvent::ProviderResolved {
-            plugin_id: "fs".into(),
-            confidence: 0.95,
-            candidate_count: 2,
-        });
+        let env = TelemetryEnvelope::new(
+            cid.clone(),
+            TelemetryEvent::ProviderResolved {
+                plugin_id: "fs".into(),
+                confidence: 0.95,
+                candidate_count: 2,
+            },
+        );
         let obs = bridge.translate(&env);
         assert_eq!(obs.len(), 1);
         assert_eq!(obs[0].kind, ObservationKind::ProviderChosen);
@@ -192,11 +226,14 @@ mod tests {
     fn bridge_translates_policy_evaluated() {
         let bridge = CognitiveBridge::new();
         let cid = CorrelationId::new();
-        let env = TelemetryEnvelope::new(cid, TelemetryEvent::PolicyEvaluated {
-            capability: Capability::ReadFile,
-            candidates_before: 3,
-            candidates_after: 1,
-        });
+        let env = TelemetryEnvelope::new(
+            cid,
+            TelemetryEvent::PolicyEvaluated {
+                capability: Capability::ReadFile,
+                candidates_before: 3,
+                candidates_after: 1,
+            },
+        );
         let obs = bridge.translate(&env);
         assert_eq!(obs.len(), 1);
         assert_eq!(obs[0].kind, ObservationKind::PolicyApplied);
@@ -206,11 +243,14 @@ mod tests {
     fn bridge_translates_health_changed() {
         let bridge = CognitiveBridge::new();
         let cid = CorrelationId::new();
-        let env = TelemetryEnvelope::new(cid, TelemetryEvent::HealthChanged {
-            plugin_id: "fs".into(),
-            old_status: PluginStatus::Healthy,
-            new_status: PluginStatus::Failed,
-        });
+        let env = TelemetryEnvelope::new(
+            cid,
+            TelemetryEvent::HealthChanged {
+                plugin_id: "fs".into(),
+                old_status: PluginStatus::Healthy,
+                new_status: PluginStatus::Failed,
+            },
+        );
         let obs = bridge.translate(&env);
         assert_eq!(obs.len(), 1);
         assert_eq!(obs[0].kind, ObservationKind::HealthDegraded);
