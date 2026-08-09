@@ -81,7 +81,10 @@ async fn call_unknown_tool_marks_error() {
         .call_tool("nonexistent_tool", json!({}))
         .await
         .expect("call_tool returns a result, not a transport error");
-    assert!(res.is_error, "unknown tool must be flagged as an error result");
+    assert!(
+        res.is_error,
+        "unknown tool must be flagged as an error result"
+    );
 }
 
 #[tokio::test]
@@ -94,7 +97,10 @@ async fn protocol_reports_server_rpc_errors() {
     let mut client = McpClient::new(client_side);
     client.initialize().await.unwrap();
     // `ping` is not implemented by the fake -> RPC error surfaced as McpError.
-    let err = client.request_unchecked("ping", json!({})).await.unwrap_err();
+    let err = client
+        .request_unchecked("ping", json!({}))
+        .await
+        .unwrap_err();
     assert!(format!("{err}").contains("method not found"));
 }
 
@@ -136,7 +142,13 @@ async fn initialize_drains_post_handshake_notifications() {
     tokio::spawn(async move { server.serve(server_side).await });
 
     let mut client = McpClient::new(client_side);
-    client.initialize().await.expect("initialize ok despite notification");
-    let tools = client.list_tools().await.expect("list_tools ok after notification");
+    client
+        .initialize()
+        .await
+        .expect("initialize ok despite notification");
+    let tools = client
+        .list_tools()
+        .await
+        .expect("list_tools ok after notification");
     assert!(!tools.is_empty(), "tools listed after notification drained");
 }
