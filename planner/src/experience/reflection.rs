@@ -13,8 +13,8 @@
 use chrono::Utc;
 use uuid::Uuid;
 
-use super::{ReflectionCategory, ReflectionRecord, TimelineEntry};
 use super::timeline::TimelineStore;
+use super::{ReflectionCategory, ReflectionRecord, TimelineEntry};
 
 /// Analyze a single timeline entry and produce a reflection record.
 pub fn reflect_on_entry(entry: &TimelineEntry) -> Option<ReflectionRecord> {
@@ -53,10 +53,7 @@ fn reflect_on_result(entry: &TimelineEntry) -> Option<ReflectionRecord> {
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let error = entry
-        .metadata
-        .get("error")
-        .and_then(|v| v.as_str());
+    let error = entry.metadata.get("error").and_then(|v| v.as_str());
 
     let category = if success {
         ReflectionCategory::Success
@@ -70,13 +67,14 @@ fn reflect_on_result(entry: &TimelineEntry) -> Option<ReflectionRecord> {
         format!(
             "Action '{}' succeeded via {}",
             entry.capability,
-            entry.metadata.get("source").and_then(|v| v.as_str()).unwrap_or("unknown"),
+            entry
+                .metadata
+                .get("source")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown"),
         )
     } else if let Some(err) = error {
-        format!(
-            "Action '{}' failed: {}",
-            entry.capability, err,
-        )
+        format!("Action '{}' failed: {}", entry.capability, err,)
     } else {
         format!("Action '{}' failed with unknown error", entry.capability)
     };
