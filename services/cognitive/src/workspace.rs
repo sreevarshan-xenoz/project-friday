@@ -56,7 +56,9 @@ impl<'de> serde::Deserialize<'de> for Topic {
             {
                 // Try PascalCase enum variant first, then fall back to snake_case string.
                 Ok(match value {
-                    "WindowFocusChanged" | "sensor.window.focus_changed" => Topic::WindowFocusChanged,
+                    "WindowFocusChanged" | "sensor.window.focus_changed" => {
+                        Topic::WindowFocusChanged
+                    }
                     "WindowCurrent" | "sensor.window.current" => Topic::WindowCurrent,
                     "ClipboardChanged" | "sensor.clipboard.changed" => Topic::ClipboardChanged,
                     "CpuUsage" | "sensor.cpu.usage" => Topic::CpuUsage,
@@ -308,7 +310,12 @@ impl<'de> serde::Deserialize<'de> for Priority {
                     "Normal" | "normal" => Priority::Normal,
                     "High" | "high" => Priority::High,
                     "Critical" | "critical" => Priority::Critical,
-                    other => return Err(de::Error::unknown_variant(other, &["low", "normal", "high", "critical"])),
+                    other => {
+                        return Err(de::Error::unknown_variant(
+                            other,
+                            &["low", "normal", "high", "critical"],
+                        ))
+                    }
                 })
             }
         }
@@ -388,7 +395,14 @@ impl WorkspaceEvent {
     ) -> Self {
         Self {
             schema_version: EVENT_SCHEMA_VERSION,
-            id, timestamp_ms, tick_id, topic, source, correlation_id, priority, payload
+            id,
+            timestamp_ms,
+            tick_id,
+            topic,
+            source,
+            correlation_id,
+            priority,
+            payload,
         }
     }
 
@@ -480,14 +494,11 @@ impl GlobalWorkspace {
         id
     }
 
-    pub fn publish_from(
-        &self,
-        topic: Topic,
-        source: EngineId,
-        payload: serde_json::Value,
-    ) -> Uuid {
+    pub fn publish_from(&self, topic: Topic, source: EngineId, payload: serde_json::Value) -> Uuid {
         let tick_id = self.inner.read().unwrap().current_tick_id;
-        let event = WorkspaceEvent::new(topic, payload).source(source).tick_id(tick_id);
+        let event = WorkspaceEvent::new(topic, payload)
+            .source(source)
+            .tick_id(tick_id);
         let id = event.id;
         self.publish_event(event);
         id
@@ -515,7 +526,12 @@ impl GlobalWorkspace {
 
     pub fn get_latest(&self, prefix: &str) -> Option<WorkspaceEvent> {
         let inner = self.inner.read().unwrap();
-        inner.history.iter().rev().find(|e| e.topic.starts_with(prefix)).cloned()
+        inner
+            .history
+            .iter()
+            .rev()
+            .find(|e| e.topic.starts_with(prefix))
+            .cloned()
     }
 
     pub fn snapshot(&self) -> HashMap<String, WorkspaceEvent> {
@@ -525,19 +541,30 @@ impl GlobalWorkspace {
     pub fn history(&self, topic_prefix: Option<&str>) -> Vec<WorkspaceEvent> {
         let inner = self.inner.read().unwrap();
         match topic_prefix {
-            Some(prefix) => inner.history.iter().filter(|e| e.topic.starts_with(prefix)).cloned().collect(),
+            Some(prefix) => inner
+                .history
+                .iter()
+                .filter(|e| e.topic.starts_with(prefix))
+                .cloned()
+                .collect(),
             None => inner.history.clone(),
         }
     }
 
     pub fn register_subscriber(&self, topic_prefix: &str, subscriber: &str) {
         let mut inner = self.inner.write().unwrap();
-        inner.subscriptions.entry(topic_prefix.to_string()).or_default().push(subscriber.to_string());
+        inner
+            .subscriptions
+            .entry(topic_prefix.to_string())
+            .or_default()
+            .push(subscriber.to_string());
     }
 
     pub fn subscribers_for(&self, topic: &str) -> Vec<String> {
         let inner = self.inner.read().unwrap();
-        inner.subscriptions.iter()
+        inner
+            .subscriptions
+            .iter()
             .filter(|(prefix, _)| topic.starts_with(prefix.as_str()))
             .flat_map(|(_, subs)| subs.clone())
             .collect()
@@ -698,7 +725,10 @@ mod tests {
     fn engine_id_from_str() {
         assert_eq!(EngineId::from("perception"), EngineId::Perception);
         assert_eq!(EngineId::from("memory"), EngineId::Memory);
-        assert_eq!(EngineId::from("unknown"), EngineId::Custom("unknown".into()));
+        assert_eq!(
+            EngineId::from("unknown"),
+            EngineId::Custom("unknown".into())
+        );
     }
 
     #[test]
@@ -712,7 +742,10 @@ mod tests {
         // Simulate an event written before schema_version existed.
         let old_json = r#"{"id":"00000000-0000-0000-0000-000000000001","timestamp_ms":1000,"tick_id":"00000000-0000-0000-0000-000000000002","topic":"tick.completed","source":"runtime","correlation_id":null,"priority":"normal","payload":{"tick":1}}"#;
         let event: WorkspaceEvent = serde_json::from_str(old_json).unwrap();
-        assert_eq!(event.schema_version, 1, "Old events default to schema_version 1");
+        assert_eq!(
+            event.schema_version, 1,
+            "Old events default to schema_version 1"
+        );
         assert_eq!(event.id, uuid::Uuid::from_u128(1));
     }
 }
