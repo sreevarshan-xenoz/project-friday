@@ -1,0 +1,36 @@
+{
+  "action_ok": true,
+  "change_reason": "candidate order changed",
+  "fault": null,
+  "group": "json",
+  "id": "json.strict",
+  "issues": [],
+  "latency_ms": 3214,
+  "note": "json_valid=true",
+  "passed": true,
+  "routing_decision": {
+    "candidates": [
+      {
+        "latency_ms": 500,
+        "model": "gemma4:e4b",
+        "provider": "llamacpp",
+        "reliability": 1.0
+      }
+    ],
+    "chosen": [
+      "llamacpp",
+      "gemma4:e4b"
+    ],
+    "failures": [],
+    "requested_tier": null,
+    "routing_mode": "Local",
+    "served": [
+      "llamacpp",
+      "gemma4:e4b"
+    ],
+    "timestamp": "2026-08-07T16:31:46.485533200+00:00",
+    "version": 1
+  },
+  "served_model": "llamacpp/gemma4:e4b",
+  "state_accuracy": true
+}
