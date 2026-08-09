@@ -13,10 +13,15 @@ friday-core = { path = "../../core" }
 friday-planner = { path = "../../planner" }
 friday-capabilities = { path = "../capabilities" }
 friday-mcp = { path = "../../mcp" }
+friday-skills = { path = "../skills" }
+friday-agent-runtime = { path = "../agent-runtime" }
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 tracing.workspace = true
+reqwest = { workspace = true }
+chromiumoxide = "0.7"
+futures = { workspace = true }
 tokio = { version = "1", features = ["full"] }
