@@ -96,7 +96,11 @@ mod tests {
             name: "Filesystem Plugin".into(),
             version: "1.0.0".into(),
             author: "FRIDAY".into(),
-            capabilities: vec![Capability::ReadFile, Capability::WriteFile, Capability::ListDirectory],
+            capabilities: vec![
+                Capability::ReadFile,
+                Capability::WriteFile,
+                Capability::ListDirectory,
+            ],
             permissions: vec!["fs.read".into(), "fs.write".into()],
             profile: ProviderProfile::default_for("filesystem"),
         }
