@@ -28,7 +28,7 @@ use crate::frame_serializer::FrameSerializer;
 use crate::now_ms;
 use crate::protocol::{
     BridgeStatsDto, CapabilitiesFrame, Capability, CapabilitySet, DeltaFrame, ErrorCode,
-    ErrorFrame, Frame, HelloFrame, HeartbeatFrame, PROTOCOL_VERSION, Severity, SnapshotFrame,
+    ErrorFrame, Frame, HeartbeatFrame, HelloFrame, Severity, SnapshotFrame, PROTOCOL_VERSION,
 };
 use crate::source::{RuntimeSource, SourceDelta, SourceSnapshot};
 
@@ -96,7 +96,8 @@ impl BridgeStats {
 
     /// Wire size of the last snapshot frame actually sent.
     pub fn set_snapshot_size(&self, bytes: usize) {
-        self.snapshot_size_bytes.store(bytes as u64, Ordering::Relaxed);
+        self.snapshot_size_bytes
+            .store(bytes as u64, Ordering::Relaxed);
     }
 
     /// Wire size of the last delta frame published.
@@ -471,7 +472,8 @@ async fn send_negotiation_ack(
 /// here is locked in before the snapshot is sent.
 async fn negotiate(
     sink: &mut (impl SinkExt<Message> + Unpin),
-    incoming: &mut (impl StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin),
+    incoming: &mut (impl StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>>
+              + Unpin),
     manager: &ConnectionManager,
     advertised: &CapabilitySet,
     source: &str,
@@ -568,7 +570,9 @@ pub async fn handle_connection(
     negotiation_timeout: Duration,
 ) {
     let stats = manager.stats();
-    let _active = ActiveConnectionGuard { stats: stats.clone() };
+    let _active = ActiveConnectionGuard {
+        stats: stats.clone(),
+    };
     stats.connect();
 
     let (mut sink, mut incoming) = ws.split();
@@ -592,7 +596,15 @@ pub async fn handle_connection(
         bridge_stats: Some(stats.snapshot()),
         capabilities: advertised.clone(),
     };
-    if !send_frame(&mut sink, &manager, Frame::Hello(hello), &source_name, &bridge_id).await {
+    if !send_frame(
+        &mut sink,
+        &manager,
+        Frame::Hello(hello),
+        &source_name,
+        &bridge_id,
+    )
+    .await
+    {
         return;
     }
 
@@ -613,7 +625,13 @@ pub async fn handle_connection(
 
     let snapshot = {
         let src = source.lock().await;
-        SnapshotPublisher::snapshot(&manager, &src.snapshot(), &source_name, &bridge_id, now_ms())
+        SnapshotPublisher::snapshot(
+            &manager,
+            &src.snapshot().await,
+            &source_name,
+            &bridge_id,
+            now_ms(),
+        )
     };
     {
         let text = encode(&Frame::Snapshot(snapshot), &source_name, &bridge_id);
@@ -646,7 +664,7 @@ pub async fn handle_connection(
                     warn!(%peer, skipped, "fell behind on broadcasts; resyncing with a fresh snapshot");
                     let snap = {
                         let src = source.lock().await;
-                        SnapshotPublisher::snapshot(&manager, &src.snapshot(), &source_name, &bridge_id, now_ms())
+                        SnapshotPublisher::snapshot(&manager, &src.snapshot().await, &source_name, &bridge_id, now_ms())
                     };
                     let text = encode(&Frame::Snapshot(snap), &source_name, &bridge_id);
                     stats.set_snapshot_size(text.len());
@@ -728,7 +746,7 @@ pub async fn handle_connection(
                         info!(%peer, "console requested a resync snapshot");
                         let snap = {
                             let src = source.lock().await;
-                            SnapshotPublisher::snapshot(&manager, &src.snapshot(), &source_name, &bridge_id, now_ms())
+                            SnapshotPublisher::snapshot(&manager, &src.snapshot().await, &source_name, &bridge_id, now_ms())
                         };
                         let text = encode(&Frame::Snapshot(snap), &source_name, &bridge_id);
                         stats.set_snapshot_size(text.len());
