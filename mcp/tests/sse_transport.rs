@@ -69,7 +69,10 @@ async fn handle_conn(sock: tokio::net::TcpStream, sse_tx: Arc<broadcast::Sender<
         while let Ok(frame) = sse_rx.recv().await {
             // Chunked encoding: <hex len>\r\n<data>\r\n
             let chunk = format!("data: {frame}\n\n");
-            if write_chunk(&mut write_half, chunk.as_bytes()).await.is_err() {
+            if write_chunk(&mut write_half, chunk.as_bytes())
+                .await
+                .is_err()
+            {
                 break;
             }
         }
@@ -90,9 +93,15 @@ async fn handle_conn(sock: tokio::net::TcpStream, sse_tx: Arc<broadcast::Sender<
                 "jsonrpc": "2.0", "id": rid,
                 "result": { "protocolVersion": "2024-11-05", "capabilities": {}, "serverInfo": {} }
             }),
-            "tools/list" => serde_json::json!({ "jsonrpc": "2.0", "id": rid, "result": { "tools": [] } }),
-            "tools/call" => serde_json::json!({ "jsonrpc": "2.0", "id": rid, "result": { "content": [ { "type": "text", "text": "pong" } ] } }),
-            _ => serde_json::json!({ "jsonrpc": "2.0", "id": rid, "error": { "code": -32601, "message": "x" } }),
+            "tools/list" => {
+                serde_json::json!({ "jsonrpc": "2.0", "id": rid, "result": { "tools": [] } })
+            }
+            "tools/call" => {
+                serde_json::json!({ "jsonrpc": "2.0", "id": rid, "result": { "content": [ { "type": "text", "text": "pong" } ] } })
+            }
+            _ => {
+                serde_json::json!({ "jsonrpc": "2.0", "id": rid, "error": { "code": -32601, "message": "x" } })
+            }
         };
         let _ = sse_tx.send(serde_json::to_string(&response).unwrap());
         // 202 Accepted: response delivered via SSE stream, not the POST body.
