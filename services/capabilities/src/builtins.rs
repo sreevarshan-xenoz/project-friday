@@ -56,11 +56,52 @@ pub fn git() -> Vec<Capability> {
         .with_dry_run(true)]
 }
 
-/// All built-in native service capabilities (filesystem + terminal + git).
+/// Native web service capabilities (read-only HTTP: search + fetch/extract).
+/// The interactive browser verbs (`open`, `click`, `type`, ...) are *not*
+/// native capabilities — they arrive later with a browser runtime and are
+/// soft-declared by the bundled `web` skill until then.
+pub fn web() -> Vec<Capability> {
+    vec![Capability::new("web", "Web Service", "Web")
+        .with_actions(&["search", "fetch"])
+        .with_description("Read-only web search and page fetch/extract over HTTP")
+        .with_latency(800)
+        .with_reliability(0.92)
+        .with_dry_run(true)]
+}
+
+/// Native documentation service capabilities: search + read local docs
+/// (READMEs, ADRs, specs, source comments) without a browser.
+pub fn docs() -> Vec<Capability> {
+    vec![Capability::new("docs", "Documentation Service", "Docs")
+        .with_actions(&["search", "read"])
+        .with_description("Search and read local documentation files")
+        .with_latency(20)
+        .with_reliability(0.999)
+        .with_dry_run(true)]
+}
+
+/// Native code-intelligence service capabilities: understand the current
+/// repository (structure, file counts, symbol/name matches).
+pub fn codeintel() -> Vec<Capability> {
+    vec![
+        Capability::new("codeintel", "Code Intelligence Service", "Dev")
+            .with_actions(&["understand"])
+            .with_description("Understand a repository: structure, file counts, and query matches")
+            .with_latency(50)
+            .with_reliability(0.99)
+            .with_dry_run(true),
+    ]
+}
+
+/// All built-in native service capabilities (filesystem + terminal + git +
+/// web + docs + codeintel).
 pub fn all() -> Vec<Capability> {
     let mut caps = Vec::new();
     caps.extend(filesystem());
     caps.extend(terminal());
     caps.extend(git());
+    caps.extend(web());
+    caps.extend(docs());
+    caps.extend(codeintel());
     caps
 }
