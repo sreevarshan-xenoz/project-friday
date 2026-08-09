@@ -60,8 +60,7 @@ impl Sensor for WindowsFocusSensor {
 
 fn get_foreground_window() -> (String, u32) {
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW,
-        GetWindowThreadProcessId,
+        GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
     };
 
     unsafe {
