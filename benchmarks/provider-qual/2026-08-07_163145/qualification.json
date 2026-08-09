@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "provider_id": "llamacpp",
+  "model_id": "gemma4:e4b",
+  "benchmark_config": {
+    "prompt_set": "provider-qual-corpus-v1",
+    "iterations": 1,
+    "context_size": 8192,
+    "temperature": 0.0,
+    "gpu_layers": 0,
+    "batch_size": 1
+  },
+  "generated_at_ms": 1786120354125,
+  "ttft_ms": null,
+  "tokens_per_second": null,
+  "json_accuracy": 1.0,
+  "tool_accuracy": null,
+  "peak_ram_mb": null,
+  "peak_vram_mb": null,
+  "benchmark_duration_ms": 48806
+}
