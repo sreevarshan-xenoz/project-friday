@@ -69,7 +69,9 @@ impl CapabilityRegistry {
         let mut bguard = self.bindings.write().expect("capability registry poisoned");
         let mut hguard = self.health.write().expect("capability registry poisoned");
         for s in specs {
-            hguard.entry(s.id.clone()).or_insert(CapabilityHealth::Healthy);
+            hguard
+                .entry(s.id.clone())
+                .or_insert(CapabilityHealth::Healthy);
             bguard.insert(s.id.clone(), s);
         }
     }
@@ -103,6 +105,17 @@ impl CapabilityRegistry {
             .expect("capability registry poisoned")
             .get(capability)
             .map(|s| s.binding.clone())
+    }
+
+    /// The full capability spec for an id, or `None` if unknown. Used by the
+    /// planner to surface a capability even when discovery ranking did not
+    /// include it (skill-first capability scoping).
+    pub fn spec(&self, capability: &str) -> Option<CapabilitySpec> {
+        self.bindings
+            .read()
+            .expect("capability registry poisoned")
+            .get(capability)
+            .cloned()
     }
 
     /// The risk classification for a capability (defaults to [`Risk::Safe`] if
@@ -195,7 +208,9 @@ fn score_capability(goal_lower: &str, goal_tokens: &[&str], spec: &CapabilitySpe
     // Direct substring hits on the capability id are a strong signal.
     let id_lower = spec.id.to_lowercase();
     let substring_boost = if goal_lower.contains(&id_lower)
-        || id_lower.split('.').any(|part| goal_lower.contains(part) && part.len() >= 3)
+        || id_lower
+            .split('.')
+            .any(|part| goal_lower.contains(part) && part.len() >= 3)
     {
         0.3
     } else {
