@@ -3,7 +3,7 @@
 //! Usage:
 //!   provider-qual                  # real mode: talks to the configured gateway
 //!   provider-qual --mock           # in-process mock, no gateway required
-//!   provider-qual --provider NAME  # omniroute (default) | ollama | llamacpp | openrouter | groq | cerebras | gemini | opengateway
+//!   provider-qual --provider NAME  # omniroute (default) | ollama | llamacpp | openrouter | groq | cerebras | gemini | opengateway | sambanova | github-models | siliconflow | zhipu
 //!   provider-qual --out DIR        # evidence pack directory
 //!   provider-qual --scenario ID    # run only the scenario with this id
 //!   provider-qual --replay PATH    # re-run the scenario recorded in PATH
@@ -19,6 +19,7 @@
 
 mod candidates;
 mod chaos;
+mod chaos2;
 mod corpus;
 mod environment;
 mod evidence;
@@ -150,8 +151,40 @@ fn build_target(provider: &str, mock: bool) -> (Target, String, String) {
             ogw_model.as_str(),
             RoutingMode::Free,
         ),
+        "sambanova" => (
+            "sambanova",
+            std::env::var("SAMBA_BASE_URL")
+                .unwrap_or_else(|_| "https://api.sambanova.ai/v1".to_string()),
+            std::env::var("SAMBA_API_KEY").unwrap_or_default(),
+            "Meta-Llama-3.3-70B-Instruct",
+            RoutingMode::Free,
+        ),
+        "github-models" => (
+            "github-models",
+            std::env::var("GITHUB_MODELS_BASE_URL")
+                .unwrap_or_else(|_| "https://models.github.ai/inference".to_string()),
+            std::env::var("GITHUB_TOKEN")
+                .or_else(|_| std::env::var("GITHUB_MODELS_KEY"))
+                .unwrap_or_default(),
+            "gpt-4o",
+            RoutingMode::Free,
+        ),
+        "siliconflow" => (
+            "siliconflow",
+            "https://api.siliconflow.cn/v1".to_string(),
+            std::env::var("SILICONFLOW_API_KEY").unwrap_or_default(),
+            "Qwen/Qwen3-8B",
+            RoutingMode::Free,
+        ),
+        "zhipu" => (
+            "zhipu",
+            "https://open.bigmodel.cn/api/paas/v4".to_string(),
+            std::env::var("ZHIPU_API_KEY").unwrap_or_default(),
+            "glm-4.7-flash",
+            RoutingMode::Free,
+        ),
         other => panic!(
-            "unknown provider: {other} (supported: omniroute, ollama, llamacpp, openrouter, groq, cerebras, gemini, opengateway)"
+            "unknown provider: {other} (supported: omniroute, ollama, llamacpp, openrouter, groq, cerebras, gemini, opengateway, sambanova, github-models, siliconflow, zhipu)"
         ),
     };
 
@@ -323,8 +356,9 @@ async fn main() {
     }
 
     if chaos {
-        println!("Chaos Laboratory (Phase 1: Provider Failures)\n");
-        let verdicts = chaos::run_all().await;
+        println!("Chaos Laboratory (Phase 1: Provider Failures + Phase 2: Health Persistence)\n");
+        let mut verdicts = chaos::run_all().await;
+        verdicts.extend(chaos2::run_all().await);
         let mut passed = 0;
         for v in &verdicts {
             let mark = if v.passed { "PASS" } else { "FAIL" };
