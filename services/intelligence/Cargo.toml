@@ -13,6 +13,7 @@ friday-core = { path = "../../core" }
 friday-planner = { path = "../../planner" }
 friday-context = { path = "../context" }
 friday-capabilities = { path = "../capabilities" }
+friday-investigation = { path = "../investigation" }
 async-trait = { workspace = true }
 futures = { workspace = true }
 async-stream = { workspace = true }
