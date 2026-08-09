@@ -17,7 +17,9 @@ use friday_mcp::transport::stdio_transport_for;
 use friday_mcp::transport::Transport;
 
 fn real_mcp_enabled() -> bool {
-    std::env::var("FRIDAY_REAL_MCP").map(|v| v == "1").unwrap_or(false)
+    std::env::var("FRIDAY_REAL_MCP")
+        .map(|v| v == "1")
+        .unwrap_or(false)
 }
 
 /// Spawn the real Git MCP server bound to `repo_path`, returning a connected
@@ -46,8 +48,8 @@ async fn spawn_real_git_client(repo_path: &std::path::Path) -> McpClient<Box<dyn
             ],
         )
     };
-    let (transport, _child) = stdio_transport_for(command, &args)
-        .expect("spawn real git MCP server via uvx");
+    let (transport, _child) =
+        stdio_transport_for(command, &args).expect("spawn real git MCP server via uvx");
 
     let mut client = McpClient::new(transport);
     let info = client
@@ -70,7 +72,8 @@ fn text_of(result: &friday_mcp::protocol::ToolCallResult) -> String {
 
 /// Create a fresh temporary directory with a Git repository initialized.
 fn temp_repo() -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("friday-real-git-{}", uuid::Uuid::new_v4().simple()));
+    let dir =
+        std::env::temp_dir().join(format!("friday-real-git-{}", uuid::Uuid::new_v4().simple()));
     std::fs::create_dir_all(&dir).unwrap();
     // `git init` the directory so the MCP server can operate on it.
     std::process::Command::new("git")
@@ -135,10 +138,7 @@ async fn real_git_server_full_workflow() {
 
     // 2. git_status — should show the untracked file.
     let r = client
-        .call_tool(
-            "git_status",
-            serde_json::json!({ "repo_path": repo_s }),
-        )
+        .call_tool("git_status", serde_json::json!({ "repo_path": repo_s }))
         .await
         .expect("git_status call");
     assert!(!r.is_error, "git_status error: {}", text_of(&r));
@@ -225,7 +225,9 @@ async fn real_git_server_full_workflow() {
     // The server may return with asterisk, whitespace, or JSON formatting.
     let branches_lower = branches.to_lowercase();
     assert!(
-        branches_lower.contains("master") || branches_lower.contains("main") || branches_lower.contains("head"),
+        branches_lower.contains("master")
+            || branches_lower.contains("main")
+            || branches_lower.contains("head"),
         "should show default branch: {branches}"
     );
 
@@ -284,10 +286,13 @@ async fn real_git_server_commit_returns_hash() {
     assert!(!r.is_error, "git_commit error: {}", text_of(&r));
     let text = text_of(&r);
     // The response text should contain a 7+ char hex SHA.
-    let has_hash = text.split_whitespace().any(|w| {
-        w.len() >= 7 && w.chars().all(|c| c.is_ascii_hexdigit())
-    });
-    assert!(has_hash, "commit response should contain a hex hash: {text}");
+    let has_hash = text
+        .split_whitespace()
+        .any(|w| w.len() >= 7 && w.chars().all(|c| c.is_ascii_hexdigit()));
+    assert!(
+        has_hash,
+        "commit response should contain a hex hash: {text}"
+    );
 
     std::fs::remove_dir_all(&repo).ok();
 }
