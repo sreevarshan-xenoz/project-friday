@@ -32,10 +32,7 @@ pub struct McpServerConfig {
 #[derive(Debug, Clone)]
 pub enum McpTransportConfig {
     /// Local subprocess speaking JSON-RPC over stdio (newline-delimited).
-    Stdio {
-        command: String,
-        args: Vec<String>,
-    },
+    Stdio { command: String, args: Vec<String> },
     /// Remote server reached over WebSocket (PR4). One JSON-RPC message per text
     /// frame.
     Remote { url: String },
@@ -205,7 +202,10 @@ pub async fn register_stdio_server(
     let transport = build_transport(config).await?;
     match discover_and_register(&config.name, transport, registry).await {
         Ok(tools) => {
-            let ids = tools.iter().map(|t| capability_id(&config.name, &t.name)).collect();
+            let ids = tools
+                .iter()
+                .map(|t| capability_id(&config.name, &t.name))
+                .collect();
             tracing::info!(server = %config.name, count = tools.len(), "registered MCP capabilities");
             Some(ids)
         }
