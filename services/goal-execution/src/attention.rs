@@ -155,7 +155,9 @@ impl AttentionManager {
     pub fn add(&mut self, item: AttentionItem) {
         // Prune if at capacity (drop lowest scored unprioritized).
         if self.items.len() >= self.config.max_items {
-            if let Some(idx) = self.items.iter()
+            if let Some(idx) = self
+                .items
+                .iter()
                 .filter(|i| !i.deprioritized)
                 .enumerate()
                 .min_by_key(|(_, i)| (i.effective_score() * 1000.0) as i64)
@@ -221,11 +223,14 @@ impl AttentionManager {
     /// Select the highest-priority item for focus.
     /// Records the focus event and returns the item.
     pub fn focus(&mut self) -> Option<AttentionItem> {
-        let idx = self.items.iter()
+        let idx = self
+            .items
+            .iter()
             .enumerate()
             .filter(|(_, i)| i.effective_score() >= self.config.min_focus_score)
             .max_by(|a, b| {
-                a.1.effective_score().partial_cmp(&b.1.effective_score())
+                a.1.effective_score()
+                    .partial_cmp(&b.1.effective_score())
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
             .map(|(idx, _)| idx)?;
@@ -244,21 +249,26 @@ impl AttentionManager {
 
     /// Peek at the top item without removing it.
     pub fn peek(&self) -> Option<&AttentionItem> {
-        self.items.iter()
+        self.items
+            .iter()
             .filter(|i| i.effective_score() >= self.config.min_focus_score)
             .max_by(|a, b| {
-                a.effective_score().partial_cmp(&b.effective_score())
+                a.effective_score()
+                    .partial_cmp(&b.effective_score())
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
     }
 
     /// All items ranked by effective score (descending).
     pub fn ranked(&self) -> Vec<&AttentionItem> {
-        let mut items: Vec<_> = self.items.iter()
+        let mut items: Vec<_> = self
+            .items
+            .iter()
             .filter(|i| i.effective_score() >= self.config.min_focus_score)
             .collect();
         items.sort_by(|a, b| {
-            b.effective_score().partial_cmp(&a.effective_score())
+            b.effective_score()
+                .partial_cmp(&a.effective_score())
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         items
