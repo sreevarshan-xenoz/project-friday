@@ -1,12 +1,13 @@
 use crate::attention::AttentionItem;
 use crate::experience::ExperiencePattern;
-use crate::memory::{Belief, CognitiveEpisode};
-use crate::trace::CognitiveTrace;
 use crate::goal::Goal;
+use crate::memory::{Belief, CognitiveEpisode};
 use crate::planning::Plan;
 use crate::simulation::SimulationResult;
+use crate::trace::CognitiveTrace;
 use crate::verification::ToolResult;
 use crate::world::WorldState;
+use friday_investigation::InvestigationPlan;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast;
@@ -86,6 +87,11 @@ pub struct CognitiveBlackboard {
     current_episode: RwLock<Option<CognitiveEpisode>>,
     /// Current cognitive trace.
     current_trace: RwLock<Option<CognitiveTrace>>,
+    /// The evidence-gate outcome (M7) for the most recent focused goal: what
+    /// the executive decided it needed to know before planning. Observers
+    /// (e.g. the ReadModelBridge) read this to render the live
+    /// `InvestigationGraph` — the real decision, not a re-derivation.
+    investigation: RwLock<Option<InvestigationSnapshot>>,
     /// Change broadcast channel.
     notifier: Arc<broadcast::Sender<WorkspaceChange>>,
 }
@@ -107,6 +113,7 @@ impl CognitiveBlackboard {
             reflection: RwLock::new(None),
             current_episode: RwLock::new(None),
             current_trace: RwLock::new(None),
+            investigation: RwLock::new(None),
             notifier: Arc::new(tx),
         })
     }
@@ -210,7 +217,11 @@ impl CognitiveBlackboard {
 
     pub fn set_world_state(&self, state: WorldState) {
         if let Ok(mut w) = self.world_state.write() {
-            let desc = format!("world_state: {} files, {} tools", state.files.len(), state.available_tools.len());
+            let desc = format!(
+                "world_state: {} files, {} tools",
+                state.files.len(),
+                state.available_tools.len()
+            );
             *w = Some(state);
             drop(w);
             self.notify("world_state", desc);
@@ -258,7 +269,10 @@ impl CognitiveBlackboard {
     }
 
     pub fn get_predictions(&self) -> Vec<SimulationResult> {
-        self.predictions.read().ok().map_or(Vec::new(), |r| r.clone())
+        self.predictions
+            .read()
+            .ok()
+            .map_or(Vec::new(), |r| r.clone())
     }
 
     // ── Hypotheses ──────────────────────────────────────────────
@@ -273,14 +287,21 @@ impl CognitiveBlackboard {
     }
 
     pub fn get_hypotheses(&self) -> Vec<ExperiencePattern> {
-        self.hypotheses.read().ok().map_or(Vec::new(), |r| r.clone())
+        self.hypotheses
+            .read()
+            .ok()
+            .map_or(Vec::new(), |r| r.clone())
     }
 
     // ── Execution ───────────────────────────────────────────────
 
     pub fn set_execution(&self, result: ToolResult) {
         if let Ok(mut w) = self.execution.write() {
-            let desc = if result.success { "execution succeeded" } else { "execution failed" };
+            let desc = if result.success {
+                "execution succeeded"
+            } else {
+                "execution failed"
+            };
             *w = Some(result);
             drop(w);
             self.notify("execution", desc);
@@ -318,7 +339,10 @@ impl CognitiveBlackboard {
 
     pub fn set_current_episode(&self, episode: CognitiveEpisode) {
         if let Ok(mut w) = self.current_episode.write() {
-            let desc = format!("episode: {} ({})", episode.goal.description, episode.outcome);
+            let desc = format!(
+                "episode: {} ({})",
+                episode.goal.description, episode.outcome
+            );
             *w = Some(episode);
             drop(w);
             self.notify("current_episode", desc);
@@ -360,6 +384,33 @@ impl CognitiveBlackboard {
         }
     }
 
+    // ── Investigation (M7 evidence gate) ────────────────────────
+
+    /// Record the evidence-gate outcome for the goal the executive just
+    /// focused: the goal text and the information plan that gated planning
+    /// (channels + confidence). Written by the executive's investigate phase,
+    /// read by the bridge (live `InvestigationGraph`) and any observer.
+    pub fn set_investigation(&self, goal: String, plan: InvestigationPlan) {
+        if let Ok(mut w) = self.investigation.write() {
+            let desc = format!("investigation: {} requirement(s)", plan.requirements.len());
+            *w = Some(InvestigationSnapshot { goal, plan });
+            drop(w);
+            self.notify("investigation", desc);
+        }
+    }
+
+    pub fn get_investigation(&self) -> Option<InvestigationSnapshot> {
+        self.investigation.read().ok().and_then(|r| r.clone())
+    }
+
+    pub fn clear_investigation(&self) {
+        if let Ok(mut w) = self.investigation.write() {
+            *w = None;
+            drop(w);
+            self.notify("investigation", "cleared");
+        }
+    }
+
     // ── Snapshot ────────────────────────────────────────────────
 
     /// Snapshot of the entire current cognitive state.
@@ -390,15 +441,40 @@ impl CognitiveBlackboard {
         self.clear_current_trace();
         self.clear_thoughts();
 
-        if let Ok(mut w) = self.attention.write() { w.clear(); }
-        if let Ok(mut w) = self.beliefs.write() { w.clear(); }
-        if let Ok(mut w) = self.world_state.write() { *w = None; }
-        if let Ok(mut w) = self.predictions.write() { w.clear(); }
-        if let Ok(mut w) = self.hypotheses.write() { w.clear(); }
-        if let Ok(mut w) = self.reflection.write() { *w = None; }
+        if let Ok(mut w) = self.attention.write() {
+            w.clear();
+        }
+        if let Ok(mut w) = self.beliefs.write() {
+            w.clear();
+        }
+        if let Ok(mut w) = self.world_state.write() {
+            *w = None;
+        }
+        if let Ok(mut w) = self.predictions.write() {
+            w.clear();
+        }
+        if let Ok(mut w) = self.hypotheses.write() {
+            w.clear();
+        }
+        if let Ok(mut w) = self.reflection.write() {
+            *w = None;
+        }
+        self.clear_investigation();
 
         self.notify("workspace", "all state cleared");
     }
+}
+
+/// The evidence-gate outcome (M7): which goal the executive investigated and
+/// what it decided it needs to know before planning. The bridge converts this
+/// into the live `InvestigationGraph` on the console — the same plan that
+/// gated planning, never a parallel derivation.
+#[derive(Debug, Clone)]
+pub struct InvestigationSnapshot {
+    /// The goal the executive actually focused on.
+    pub goal: String,
+    /// The information plan (channels + confidence) that gated planning.
+    pub plan: InvestigationPlan,
 }
 
 /// A summary snapshot of the workspace at a point in time.
