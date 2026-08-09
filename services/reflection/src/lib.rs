@@ -121,7 +121,9 @@ impl ReflectionEngine {
     /// Classify an outcome into an insight kind.
     fn classify_outcome(&self, outcome: &Outcome) -> InsightKind {
         match outcome.kind {
-            OutcomeKind::MissionSucceeded | OutcomeKind::TaskCompleted => InsightKind::Reinforcement,
+            OutcomeKind::MissionSucceeded | OutcomeKind::TaskCompleted => {
+                InsightKind::Reinforcement
+            }
             OutcomeKind::MissionFailed | OutcomeKind::TaskAbandoned => InsightKind::Lesson,
             OutcomeKind::Error => InsightKind::Lesson,
             OutcomeKind::UnexpectedSuccess => InsightKind::Optimization,
@@ -130,7 +132,12 @@ impl ReflectionEngine {
     }
 
     /// Derive a human-readable insight statement.
-    fn derive_statement(&self, knowledge: &KnowledgeRecord, outcome: &Outcome, kind: InsightKind) -> String {
+    fn derive_statement(
+        &self,
+        knowledge: &KnowledgeRecord,
+        outcome: &Outcome,
+        kind: InsightKind,
+    ) -> String {
         let apps: Vec<&str> = knowledge
             .pattern
             .iter()
@@ -156,7 +163,9 @@ impl ReflectionEngine {
             InsightKind::Lesson => {
                 format!(
                     "Mission '{}' failed. Observed pattern: {}. Confidence: {:.0}%.",
-                    outcome.context, pattern_desc, knowledge.confidence * 100.0
+                    outcome.context,
+                    pattern_desc,
+                    knowledge.confidence * 100.0
                 )
             }
             InsightKind::Warning => {
@@ -175,7 +184,12 @@ impl ReflectionEngine {
     }
 
     /// Compute insight confidence based on knowledge confidence, outcome severity, and insight kind.
-    fn compute_confidence(&self, knowledge: &KnowledgeRecord, outcome: &Outcome, kind: InsightKind) -> f32 {
+    fn compute_confidence(
+        &self,
+        knowledge: &KnowledgeRecord,
+        outcome: &Outcome,
+        kind: InsightKind,
+    ) -> f32 {
         let base = knowledge.confidence;
         let severity = match kind {
             InsightKind::Lesson => match outcome.kind {
@@ -224,7 +238,12 @@ mod tests {
     use super::*;
     use friday_knowledge::KnowledgeKind;
 
-    fn test_knowledge(label: &str, pattern: Vec<&str>, support: u32, confidence: f32) -> KnowledgeRecord {
+    fn test_knowledge(
+        label: &str,
+        pattern: Vec<&str>,
+        support: u32,
+        confidence: f32,
+    ) -> KnowledgeRecord {
         KnowledgeRecord {
             id: format!("k_{}", label.replace(' ', "_")),
             kind: KnowledgeKind::Workflow,
@@ -306,8 +325,11 @@ mod tests {
         for kind in kinds {
             let outcome = test_outcome(kind, "test");
             let insight = engine.reflect(&k, &outcome).unwrap();
-            assert!(insight.confidence >= 0.0 && insight.confidence <= 1.0,
-                "Confidence {} should be in [0.0, 1.0]", insight.confidence);
+            assert!(
+                insight.confidence >= 0.0 && insight.confidence <= 1.0,
+                "Confidence {} should be in [0.0, 1.0]",
+                insight.confidence
+            );
         }
     }
 
