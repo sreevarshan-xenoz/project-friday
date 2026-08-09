@@ -7,7 +7,6 @@ use friday_planner::execution::capability_registry::CapabilityRegistry;
 use friday_planner::execution::lifecycle::ExecutionBudget;
 use friday_planner::intent::parse;
 use friday_planner::planning::planners::backend::{MockBackend, PlanError};
-use friday_planner::register_engines_with_llm;
 use friday_planner::planning::planners::context::{RiskPolicy, WorkspaceContext};
 use friday_planner::planning::planners::llm::LlmPlanner;
 use friday_planner::planning::planners::router::PlannerRouter;
@@ -15,6 +14,7 @@ use friday_planner::planning::planners::rule::RulePlanner;
 use friday_planner::planning::planners::validation::validate_task_graph;
 use friday_planner::planning::planners::Planner;
 use friday_planner::planning::TaskGraph;
+use friday_planner::register_engines_with_llm;
 
 fn registry_with_natives() -> CapabilityRegistry {
     let reg = CapabilityRegistry::new();
@@ -35,14 +35,23 @@ fn router_picks_rule_for_trivial_intent() {
     );
     // browser.search is a known deterministic type -> rule.
     let intent = parse("Open Chrome and search Tesla");
-    assert_eq!(router.kind_for(&intent), friday_planner::planning::planners::PlannerKind::Rule);
+    assert_eq!(
+        router.kind_for(&intent),
+        friday_planner::planning::planners::PlannerKind::Rule
+    );
 
     // unknown / complex -> llm.
     let complex = parse("Refactor this Rust workspace to use async traits");
-    assert_eq!(router.kind_for(&complex), friday_planner::planning::planners::PlannerKind::Llm);
+    assert_eq!(
+        router.kind_for(&complex),
+        friday_planner::planning::planners::PlannerKind::Llm
+    );
 
     let unknown = parse("Do something clever with my files");
-    assert_eq!(router.kind_for(&unknown), friday_planner::planning::planners::PlannerKind::Llm);
+    assert_eq!(
+        router.kind_for(&unknown),
+        friday_planner::planning::planners::PlannerKind::Llm
+    );
 }
 
 #[test]
@@ -50,7 +59,10 @@ fn router_falls_back_to_rule_when_no_llm() {
     let router = PlannerRouter::rule_only(Arc::new(RulePlanner::new()));
     let complex = parse("Deploy to Docker");
     // No LLM wired -> must use rule (never strand the goal).
-    assert_eq!(router.kind_for(&complex), friday_planner::planning::planners::PlannerKind::Rule);
+    assert_eq!(
+        router.kind_for(&complex),
+        friday_planner::planning::planners::PlannerKind::Rule
+    );
     assert!(!router.has_llm());
 }
 
@@ -82,8 +94,13 @@ async fn llm_planner_produces_validated_graph() {
         workspace: WorkspaceContext::default(),
         risk_policy: RiskPolicy::default(),
         experience: None,
+        skills: None,
+        investigation: None,
     };
-    let graph = planner.create_plan(&intent, &ctx).await.expect("plan should validate");
+    let graph = planner
+        .create_plan(&intent, &ctx)
+        .await
+        .expect("plan should validate");
     assert_eq!(graph.tasks.len(), 2);
     // Dependency resolved: task 2 depends on task 1.
     assert_eq!(graph.tasks[1].depends_on.len(), 1);
@@ -91,8 +108,13 @@ async fn llm_planner_produces_validated_graph() {
     // produces published by task 2.
     assert_eq!(graph.tasks[1].produces.as_deref(), Some("summary"));
     // Re-validate independently to be sure.
-    validate_task_graph(&graph, &reg, &ExecutionBudget::default(), &RiskPolicy::default())
-        .expect("graph passes validation");
+    validate_task_graph(
+        &graph,
+        &reg,
+        &ExecutionBudget::default(),
+        &RiskPolicy::default(),
+    )
+    .expect("graph passes validation");
 }
 
 #[tokio::test]
@@ -116,6 +138,8 @@ async fn llm_planner_rejects_unknown_capability() {
         workspace: WorkspaceContext::default(),
         risk_policy: RiskPolicy::default(),
         experience: None,
+        skills: None,
+        investigation: None,
     };
     let err = planner.create_plan(&intent, &ctx).await.unwrap_err();
     match err {
@@ -137,8 +161,13 @@ fn validation_detects_cycles_and_budget() {
     if let Some(t) = g.task_mut(a) {
         t.depends_on = vec![b]; // cycle a -> b -> a
     }
-    let err = validate_task_graph(&g, &reg, &ExecutionBudget::default(), &RiskPolicy::default())
-        .unwrap_err();
+    let err = validate_task_graph(
+        &g,
+        &reg,
+        &ExecutionBudget::default(),
+        &RiskPolicy::default(),
+    )
+    .unwrap_err();
     match err {
         PlanError::Validation(issues) => assert!(
             issues.iter().any(|i| i.contains("cycle")),
@@ -150,7 +179,12 @@ fn validation_detects_cycles_and_budget() {
     // Budget: too many tasks.
     let mut g2 = TaskGraph::new("big");
     for i in 0..5 {
-        g2.add_task(format!("t{i}"), "filesystem.read_file", serde_json::json!({}), &[]);
+        g2.add_task(
+            format!("t{i}"),
+            "filesystem.read_file",
+            serde_json::json!({}),
+            &[],
+        );
     }
     let mut budget = ExecutionBudget::default();
     budget.max_steps = Some(2);
@@ -183,9 +217,23 @@ impl Plugin for MockExecutor {
         &self.meta
     }
     async fn handle_event(&self, event: &Event) -> friday_core::Result<Vec<Event>> {
-        let task_id = event.payload.get("task_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let plan_id = event.payload.get("plan_id").and_then(|v| v.as_str()).unwrap_or("");
-        let capability = event.payload.get("capability").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let task_id = event
+            .payload
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let plan_id = event
+            .payload
+            .get("plan_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let capability = event
+            .payload
+            .get("capability")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         Ok(vec![events::event(
             events::EXEC_RESULT,
             "mock",
@@ -230,15 +278,26 @@ async fn llm_backed_pipeline_produces_and_runs_plan() {
     .await
     .unwrap();
 
-    let handle = tokio::spawn(async move { friday.run_with_timeout(std::time::Duration::from_secs(3)).await });
+    let handle = tokio::spawn(async move {
+        friday
+            .run_with_timeout(std::time::Duration::from_secs(3))
+            .await
+    });
     let mut saw_plan = false;
     let mut completed = 0usize;
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
     while tokio::time::Instant::now() < deadline {
-        if let Ok(Ok(ev)) = tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await {
+        if let Ok(Ok(ev)) =
+            tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await
+        {
             if ev.kind == events::PLAN_CREATED {
                 saw_plan = true;
-                let tasks = ev.payload.get("tasks").and_then(|t| t.as_array()).map(|a| a.len()).unwrap_or(0);
+                let tasks = ev
+                    .payload
+                    .get("tasks")
+                    .and_then(|t| t.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
                 assert_eq!(tasks, 2, "LLM plan should have 2 tasks");
             }
             if ev.kind == events::TASK_COMPLETED {
@@ -248,7 +307,10 @@ async fn llm_backed_pipeline_produces_and_runs_plan() {
     }
     handle.await.unwrap().unwrap();
     assert!(saw_plan, "an LLM-produced plan should be published");
-    assert_eq!(completed, 2, "both tasks should run to completion via supervisor");
+    assert_eq!(
+        completed, 2,
+        "both tasks should run to completion via supervisor"
+    );
 }
 
 #[tokio::test]
@@ -329,6 +391,8 @@ async fn llm_planner_handles_experience_context() {
         workspace: WorkspaceContext::default(),
         risk_policy: RiskPolicy::default(),
         experience: Some(experience),
+        skills: None,
+        investigation: None,
     };
 
     // Planner should produce a valid plan even with experience context present.
@@ -346,6 +410,8 @@ async fn llm_planner_handles_experience_context() {
         workspace: WorkspaceContext::default(),
         risk_policy: RiskPolicy::default(),
         experience: None,
+        skills: None,
+        investigation: None,
     };
     let graph2 = planner
         .create_plan(&intent, &ctx_no_exp)
