@@ -5,6 +5,7 @@ export { MemoryScreen } from './MemoryScreen';
 export { TerminalScreen } from './TerminalScreen';
 export { SettingsScreen } from './SettingsScreen';
 export { ConsoleDashboardScreen } from './ConsoleDashboardScreen';
+export { ExecutionGraphScreen as ConsoleExecutionGraphScreen } from './ExecutionGraphScreen';
 export { ConsoleTimelineScreen } from './ConsoleTimelineScreen';
 export { ConsoleExplanationScreen } from './ConsoleExplanationScreen';
 export { ConsoleMetricsScreen } from './ConsoleMetricsScreen';
