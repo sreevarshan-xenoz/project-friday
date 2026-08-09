@@ -8,10 +8,10 @@
 //! cargo test -p friday-e2e --test live_task -- --nocapture
 //! ```
 
-use friday_intelligence::ModelClient;
-use friday_planner::planning::planners::backend::{MockBackend, ReasoningBackend};
-use friday_planner::events::GOAL_RAW;
 use friday_core::event::Event;
+use friday_intelligence::ModelClient;
+use friday_planner::events::GOAL_RAW;
+use friday_planner::planning::planners::backend::{MockBackend, ReasoningBackend};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -35,16 +35,17 @@ impl<C: friday_intelligence::ModelClient + Send + Sync> ReasoningBackend for Inf
 #[tokio::test]
 async fn live_task_execution() {
     let _ = dotenvy::dotenv().ok();
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .try_init();
+    let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
 
     let mut friday = friday_core::Friday::new();
 
     // Try live LLM; fall back to mock if no provider is reachable.
     let fabric = friday_intelligence::InferenceFabric::default_from_env();
     let provider_count = fabric.providers.len();
-    println!("[BOOT] InferenceFabric loaded with {} providers", provider_count);
+    println!(
+        "[BOOT] InferenceFabric loaded with {} providers",
+        provider_count
+    );
 
     let live_backend: Option<Box<dyn ReasoningBackend>> = if provider_count > 0 {
         match fabric.complete("Reply with OK").await {
@@ -113,9 +114,28 @@ async fn live_task_execution() {
         None => Box::new(MockBackend::new(mock_plan.to_string())),
     };
 
-    let registry = friday_planner::register_engines_with_llm(&mut friday, Some(backend))
-        .await
-        .expect("register engines");
+    // Register the planner stack with the Skill Engine wired in: bundled
+    // skills load against the live capability registry and the supervisor
+    // gates skill-covered capabilities via SkillPolicy (readonly-safe or
+    // user-approved); MCP capabilities no skill declares keep the default
+    // allow-all behavior.
+    let bundled_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../skills/bundled");
+    let (registry, skills) = friday_context::register_engines_with_skills(
+        &mut friday,
+        Some(backend),
+        &[(bundled_dir, friday_context::SkillSource::Builtin)],
+    )
+    .await
+    .expect("register engines with skills");
+    if let Some(w) = &skills {
+        println!(
+            "[SKILLS] loaded {} bundled skills (all loaded: {})",
+            w.registry.all().len(),
+            w.all_loaded()
+        );
+    } else {
+        println!("[SKILLS] skill engine unavailable; allow-all policy active");
+    }
 
     // Start real MCP servers scoped to the workspace
     let kernel = friday_actions::runtime::AgentKernel::new();
@@ -135,7 +155,11 @@ async fn live_task_execution() {
             match kernel.register_mcp_server("filesystem", transport).await {
                 Ok(tools) => {
                     println!("[MCP] filesystem: {} tools", tools.len());
-                    friday_mcp::adapter::register_server_capabilities("filesystem", &tools, &registry);
+                    friday_mcp::adapter::register_server_capabilities(
+                        "filesystem",
+                        &tools,
+                        &registry,
+                    );
                 }
                 Err(e) => println!("[MCP] filesystem failed: {e}"),
             }
@@ -152,15 +176,13 @@ async fn live_task_execution() {
             workspace.display().to_string(),
         ],
     ) {
-        Ok((transport, _child)) => {
-            match kernel.register_mcp_server("git", transport).await {
-                Ok(tools) => {
-                    println!("[MCP] git: {} tools", tools.len());
-                    friday_mcp::adapter::register_server_capabilities("git", &tools, &registry);
-                }
-                Err(e) => println!("[MCP] git failed: {e}"),
+        Ok((transport, _child)) => match kernel.register_mcp_server("git", transport).await {
+            Ok(tools) => {
+                println!("[MCP] git: {} tools", tools.len());
+                friday_mcp::adapter::register_server_capabilities("git", &tools, &registry);
             }
-        }
+            Err(e) => println!("[MCP] git failed: {e}"),
+        },
         Err(e) => println!("[MCP] git spawn failed: {e}"),
     }
 
