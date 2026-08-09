@@ -202,9 +202,8 @@ impl CalibrationStore {
             + lr * feedback.latency_adjustment_ms.clamp(-100.0, 100.0))
         .clamp(-500.0, 500.0);
 
-        offsets.cost_offset = (offsets.cost_offset
-            + lr * feedback.cost_adjustment.clamp(-0.5, 0.5))
-        .clamp(-1.0, 1.0);
+        offsets.cost_offset =
+            (offsets.cost_offset + lr * feedback.cost_adjustment.clamp(-0.5, 0.5)).clamp(-1.0, 1.0);
 
         offsets.success_offset = (offsets.success_offset
             + lr * feedback.success_adjustment.clamp(-0.5, 0.5))
@@ -377,7 +376,11 @@ fn apply_record(record: &DecisionRecord, store: &mut ExperienceStore) {
             p95_latency_ms: 0,
             p99_latency_ms: 0,
             last_execution_ms: Some(record.timestamp_ms),
-            last_failure_ms: if success { None } else { Some(record.timestamp_ms) },
+            last_failure_ms: if success {
+                None
+            } else {
+                Some(record.timestamp_ms)
+            },
             last_failure_reason: if success {
                 None
             } else {
@@ -576,11 +579,7 @@ impl ReputationEngine {
             .map(|e| e.success_rate * e.sample_size as f64)
             .sum::<f64>()
             / total_observations.max(1) as f64;
-        let since_ms = experiences
-            .iter()
-            .map(|e| e.since_ms)
-            .min()
-            .unwrap_or(now);
+        let since_ms = experiences.iter().map(|e| e.since_ms).min().unwrap_or(now);
 
         Reputation {
             operator_id: operator_id.to_string(),
@@ -644,9 +643,7 @@ impl CostModel {
         let has_any_data = sample_size > 0 || reputation.is_some();
 
         // Base latency: prefer experience data, fall back to default
-        let base_latency_ms = experience
-            .map(|e| e.average_latency_ms)
-            .unwrap_or(100.0);
+        let base_latency_ms = experience.map(|e| e.average_latency_ms).unwrap_or(100.0);
 
         // Base cost: no cost tracking yet, use default
         let base_cost = 0.1;
@@ -657,9 +654,7 @@ impl CostModel {
         } else {
             0.0
         };
-        let rep_weight = reputation
-            .map(|r| r.confidence * 0.5)
-            .unwrap_or(0.0);
+        let rep_weight = reputation.map(|r| r.confidence * 0.5).unwrap_or(0.0);
         let total_weight = exp_weight + rep_weight;
 
         let base_success_probability = if total_weight > 0.0 {
@@ -679,9 +674,7 @@ impl CostModel {
             let exp_conf = experience
                 .map(|e| (e.sample_size as f64 / 100.0).min(1.0) * 0.6)
                 .unwrap_or(0.0);
-            let rep_conf = reputation
-                .map(|r| r.confidence * 0.4)
-                .unwrap_or(0.0);
+            let rep_conf = reputation.map(|r| r.confidence * 0.4).unwrap_or(0.0);
             (exp_conf + rep_conf).min(1.0)
         } else {
             0.0
@@ -762,10 +755,7 @@ impl CostModel {
     /// Updates per (Capability, Operator) calibration offsets using a
     /// bounded learning rate. Calibration is the **learning** layer —
     /// it mutates offsets in the CalibrationStore, never decision history.
-    pub fn apply_feedback(
-        feedback: &PlannerFeedback,
-        calibration: &mut CalibrationStore,
-    ) {
+    pub fn apply_feedback(feedback: &PlannerFeedback, calibration: &mut CalibrationStore) {
         calibration.apply_feedback(feedback);
     }
 
@@ -991,13 +981,16 @@ impl ExplanationEngine {
         if let Some(ef) = &experience_factor {
             narrative_parts.push(format!(
                 "Experience: {} samples, {:.0}% success, {:.0}ms avg.",
-                ef.sample_size, ef.success_rate * 100.0, ef.average_latency_ms
+                ef.sample_size,
+                ef.success_rate * 100.0,
+                ef.average_latency_ms
             ));
         }
         if let Some(rf) = &reputation_factor {
             narrative_parts.push(format!(
                 "Reputation: {:.0}% reliable, {:.0}% confidence.",
-                rf.reliability * 100.0, rf.confidence * 100.0
+                rf.reliability * 100.0,
+                rf.confidence * 100.0
             ));
         }
         if let Some(cf) = &calibration_factor {
@@ -1155,8 +1148,7 @@ impl<'a> TimelineBuilder<'a> {
     /// time). Returns `None` when no record exists for the id.
     pub fn build(&self, correlation_id: &CorrelationId) -> Option<DecisionTimeline> {
         let index = self.ledger.iter().position(|r| {
-            r.plan.rationale.correlation_id == *correlation_id
-                || r.plan.plan_id == *correlation_id
+            r.plan.rationale.correlation_id == *correlation_id || r.plan.plan_id == *correlation_id
         })?;
         let record = self.ledger.get_shared(index)?;
         Some(build_timeline(
@@ -1821,7 +1813,13 @@ impl TimelineStore {
             record.plan.operator_id.as_str(),
         );
         let cid = record.plan.rationale.correlation_id.clone();
-        let timeline = build_timeline(&cid, record, &self.experience, &self.reputation, &self.calibration);
+        let timeline = build_timeline(
+            &cid,
+            record,
+            &self.experience,
+            &self.reputation,
+            &self.calibration,
+        );
         self.policy_count += timeline.explanation.policy_factors.len() as u64;
         self.confidence_sum += timeline.prediction.confidence;
         self.metrics.record(&timeline);
@@ -1979,18 +1977,15 @@ impl ReplayEngine {
             Some(calibration),
         );
         let ranked_candidates = ranked.clone();
-        let best_prediction = ranked
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| {
-                CostModel::estimate(
-                    &capability,
-                    &original_operator_id,
-                    experience_store,
-                    reputation_store,
-                    Some(calibration),
-                )
-            });
+        let best_prediction = ranked.into_iter().next().unwrap_or_else(|| {
+            CostModel::estimate(
+                &capability,
+                &original_operator_id,
+                experience_store,
+                reputation_store,
+                Some(calibration),
+            )
+        });
         let replayed_operator_id = best_prediction.operator_id.clone();
 
         let replayed_prediction = CostModel::estimate(
@@ -2035,7 +2030,10 @@ impl ReplayEngine {
             operator_id: original_operator_id.clone(),
         };
         let current_offsets = calibration.get(&key);
-        let snapshot_magnitude = timeline.calibration.as_ref().map(|o| o.latency_offset.abs());
+        let snapshot_magnitude = timeline
+            .calibration
+            .as_ref()
+            .map(|o| o.latency_offset.abs());
         let current_magnitude = current_offsets.latency_offset.abs();
         let calibration_delta = if current_offsets.is_zero() && timeline.calibration.is_none() {
             None
@@ -2043,8 +2041,12 @@ impl ReplayEngine {
             Some(current_magnitude - snapshot_magnitude.unwrap_or(0.0))
         };
 
-        let current_explanation =
-            ExplanationEngine::explain(&timeline.plan, experience_store, reputation_store, calibration);
+        let current_explanation = ExplanationEngine::explain(
+            &timeline.plan,
+            experience_store,
+            reputation_store,
+            calibration,
+        );
         let original_reasons = &timeline.explanation.reasons;
         let current_reasons = &current_explanation.reasons;
         let mut explanation_delta: Vec<String> = current_reasons
@@ -2097,8 +2099,8 @@ mod tests {
         Capability, CorrelationId, EvaluatorKind, EvaluatorSignal, ExecutionPlan, PlanOutcome,
         PlanningRationale, ScoredCandidate, SelectionContext,
     };
-use std::collections::HashMap;
-use std::sync::Arc;
+    use std::collections::HashMap;
+    use std::sync::Arc;
 
     fn make_record(cap: Capability, operator: &str, success: bool) -> DecisionRecord {
         let cid = CorrelationId::new();
@@ -2136,7 +2138,11 @@ use std::sync::Arc;
                 latency_ms: 10,
                 cost: 0.1,
                 success,
-                error: if success { None } else { Some("timeout".into()) },
+                error: if success {
+                    None
+                } else {
+                    Some("timeout".into())
+                },
                 completed_steps: if success { 1 } else { 0 },
                 cancelled: false,
                 timeout: !success,
@@ -2146,7 +2152,12 @@ use std::sync::Arc;
         }
     }
 
-    fn experience_for(operator: &str, sample_size: u64, success_rate: f64, since_ms: u64) -> Experience {
+    fn experience_for(
+        operator: &str,
+        sample_size: u64,
+        success_rate: f64,
+        since_ms: u64,
+    ) -> Experience {
         Experience {
             key: ExperienceKey {
                 capability: Capability::ReadFile,
@@ -2715,8 +2726,16 @@ use std::sync::Arc;
             operator_id: "op_test".into(),
         };
         let off = cal.get(&key);
-        assert!(off.latency_offset <= 500.0, "latency offset clamped: {}", off.latency_offset);
-        assert!(off.cost_offset <= 1.0, "cost offset clamped: {}", off.cost_offset);
+        assert!(
+            off.latency_offset <= 500.0,
+            "latency offset clamped: {}",
+            off.latency_offset
+        );
+        assert!(
+            off.cost_offset <= 1.0,
+            "cost offset clamped: {}",
+            off.cost_offset
+        );
     }
 
     #[test]
@@ -3260,39 +3279,89 @@ use std::sync::Arc;
         let expected = MetricsEngine::summarize(store.timelines());
 
         assert_eq!(report.decisions, expected.decisions);
-        assert_eq!(report.prediction.correct_predictions, expected.prediction.correct_predictions);
+        assert_eq!(
+            report.prediction.correct_predictions,
+            expected.prediction.correct_predictions
+        );
         assert_eq!(report.prediction.decisions, expected.prediction.decisions);
         assert!((report.prediction.accuracy - expected.prediction.accuracy).abs() < 1e-9);
-        assert!((report.prediction.mean_latency_error_ms - expected.prediction.mean_latency_error_ms).abs() < 1e-9);
-        assert!((report.prediction.mean_cost_error - expected.prediction.mean_cost_error).abs() < 1e-9);
-        assert!((report.prediction.mean_success_bias - expected.prediction.mean_success_bias).abs() < 1e-9);
+        assert!(
+            (report.prediction.mean_latency_error_ms - expected.prediction.mean_latency_error_ms)
+                .abs()
+                < 1e-9
+        );
+        assert!(
+            (report.prediction.mean_cost_error - expected.prediction.mean_cost_error).abs() < 1e-9
+        );
+        assert!(
+            (report.prediction.mean_success_bias - expected.prediction.mean_success_bias).abs()
+                < 1e-9
+        );
 
         assert_eq!(
             report.calibration.decisions_with_calibration,
             expected.calibration.decisions_with_calibration
         );
-        assert_eq!(report.calibration.converging, expected.calibration.converging);
+        assert_eq!(
+            report.calibration.converging,
+            expected.calibration.converging
+        );
 
-        assert_eq!(report.fallback.decisions_with_fallback_chain, expected.fallback.decisions_with_fallback_chain);
+        assert_eq!(
+            report.fallback.decisions_with_fallback_chain,
+            expected.fallback.decisions_with_fallback_chain
+        );
         assert_eq!(report.fallback.failures, expected.fallback.failures);
         assert!((report.fallback.fallback_rate - expected.fallback.fallback_rate).abs() < 1e-9);
-        assert!((report.fallback.avg_fallback_depth - expected.fallback.avg_fallback_depth).abs() < 1e-9);
+        assert!(
+            (report.fallback.avg_fallback_depth - expected.fallback.avg_fallback_depth).abs()
+                < 1e-9
+        );
         assert!((report.fallback.failure_rate - expected.fallback.failure_rate).abs() < 1e-9);
 
-        assert_eq!(report.reputation.decisions_with_reputation, expected.reputation.decisions_with_reputation);
-        assert_eq!(report.reputation.total_observations, expected.reputation.total_observations);
-        assert_eq!(report.reputation.distinct_operators, expected.reputation.distinct_operators);
+        assert_eq!(
+            report.reputation.decisions_with_reputation,
+            expected.reputation.decisions_with_reputation
+        );
+        assert_eq!(
+            report.reputation.total_observations,
+            expected.reputation.total_observations
+        );
+        assert_eq!(
+            report.reputation.distinct_operators,
+            expected.reputation.distinct_operators
+        );
         assert!((report.reputation.coverage - expected.reputation.coverage).abs() < 1e-9);
-        assert!((report.reputation.avg_reliability - expected.reputation.avg_reliability).abs() < 1e-9);
-        assert!((report.reputation.avg_confidence - expected.reputation.avg_confidence).abs() < 1e-9);
+        assert!(
+            (report.reputation.avg_reliability - expected.reputation.avg_reliability).abs() < 1e-9
+        );
+        assert!(
+            (report.reputation.avg_confidence - expected.reputation.avg_confidence).abs() < 1e-9
+        );
 
-        assert_eq!(report.experience.decisions_with_experience, expected.experience.decisions_with_experience);
-        assert_eq!(report.experience.distinct_pairs, expected.experience.distinct_pairs);
-        assert_eq!(report.experience.total_samples, expected.experience.total_samples);
+        assert_eq!(
+            report.experience.decisions_with_experience,
+            expected.experience.decisions_with_experience
+        );
+        assert_eq!(
+            report.experience.distinct_pairs,
+            expected.experience.distinct_pairs
+        );
+        assert_eq!(
+            report.experience.total_samples,
+            expected.experience.total_samples
+        );
         assert!((report.experience.coverage - expected.experience.coverage).abs() < 1e-9);
-        assert!((report.experience.avg_sample_size - expected.experience.avg_sample_size).abs() < 1e-9);
-        assert!((report.experience.avg_success_rate - expected.experience.avg_success_rate).abs() < 1e-9);
-        assert!((report.experience.avg_latency_ms - expected.experience.avg_latency_ms).abs() < 1e-9);
+        assert!(
+            (report.experience.avg_sample_size - expected.experience.avg_sample_size).abs() < 1e-9
+        );
+        assert!(
+            (report.experience.avg_success_rate - expected.experience.avg_success_rate).abs()
+                < 1e-9
+        );
+        assert!(
+            (report.experience.avg_latency_ms - expected.experience.avg_latency_ms).abs() < 1e-9
+        );
     }
 
     #[test]
@@ -3601,8 +3670,7 @@ use std::sync::Arc;
 
     #[test]
     fn metrics_summarize_builds_full_report() {
-        let timelines =
-            metrics_timelines(vec![metrics_record("op_a", 0.9, true, 10, 10, 1)]);
+        let timelines = metrics_timelines(vec![metrics_record("op_a", 0.9, true, 10, 10, 1)]);
         let report = MetricsEngine::summarize(&timelines);
 
         assert_eq!(report.decisions, 1);
@@ -3687,7 +3755,9 @@ use std::sync::Arc;
         let e = ExperienceStore::new();
         let r = ReputationStore::new();
         let c = CalibrationStore::new();
-        let timeline = TimelineBuilder::new(&ledger, &e, &r, &c).build(&cid).unwrap();
+        let timeline = TimelineBuilder::new(&ledger, &e, &r, &c)
+            .build(&cid)
+            .unwrap();
         let report = ReplayEngine::replay(&timeline, &e, &r, &c);
 
         assert_eq!(report.historical.plan.operator_id, "op_primary");
@@ -3708,7 +3778,9 @@ use std::sync::Arc;
         e.insert(replay_experience("op_primary", 0.2, 90.0));
         let r = ReputationStore::new();
         let c = CalibrationStore::new();
-        let timeline = TimelineBuilder::new(&ledger, &e, &r, &c).build(&cid).unwrap();
+        let timeline = TimelineBuilder::new(&ledger, &e, &r, &c)
+            .build(&cid)
+            .unwrap();
         let report = ReplayEngine::replay(&timeline, &e, &r, &c);
 
         assert!(report.differences.operator_changed);
@@ -3725,8 +3797,9 @@ use std::sync::Arc;
 
         let mut unchanged = ExperienceStore::new();
         unchanged.insert(replay_experience("op_primary", 0.95, 8.0));
-        let unchanged_timeline =
-            TimelineBuilder::new(&ledger, &unchanged, &r, &c).build(&cid).unwrap();
+        let unchanged_timeline = TimelineBuilder::new(&ledger, &unchanged, &r, &c)
+            .build(&cid)
+            .unwrap();
         let report = ReplayEngine::replay(&unchanged_timeline, &unchanged, &r, &c);
         assert!(!report.differences.operator_changed);
         assert!(report.differences.decision_still_optimal);
@@ -3734,7 +3807,9 @@ use std::sync::Arc;
         let mut changed = ExperienceStore::new();
         changed.insert(replay_experience("op_backup", 0.95, 8.0));
         changed.insert(replay_experience("op_primary", 0.2, 90.0));
-        let changed_timeline = TimelineBuilder::new(&ledger, &changed, &r, &c).build(&cid).unwrap();
+        let changed_timeline = TimelineBuilder::new(&ledger, &changed, &r, &c)
+            .build(&cid)
+            .unwrap();
         let report = ReplayEngine::replay(&changed_timeline, &changed, &r, &c);
         assert!(report.differences.operator_changed);
         assert!(!report.differences.decision_still_optimal);
@@ -3751,11 +3826,19 @@ use std::sync::Arc;
         e.insert(replay_experience("op_primary", 0.2, 50.0));
         let r = ReputationStore::new();
         let c = CalibrationStore::new();
-        let timeline = TimelineBuilder::new(&ledger, &e, &r, &c).build(&cid).unwrap();
+        let timeline = TimelineBuilder::new(&ledger, &e, &r, &c)
+            .build(&cid)
+            .unwrap();
         let report = ReplayEngine::replay(&timeline, &e, &r, &c);
 
         assert_eq!(report.differences.prediction_delta.latency_delta_ms, 40);
-        assert!(report.differences.prediction_delta.success_probability_delta < 0.0);
+        assert!(
+            report
+                .differences
+                .prediction_delta
+                .success_probability_delta
+                < 0.0
+        );
         assert!(report.differences.prediction_delta.cost_delta.abs() < 1e-9);
         assert_eq!(report.historical.prediction.estimated_latency_ms, 10);
         assert_eq!(report.replay.prediction.estimated_latency_ms, 50);
@@ -3776,7 +3859,9 @@ use std::sync::Arc;
             decay_factor: 0.95,
         });
         let c = CalibrationStore::new();
-        let timeline = TimelineBuilder::new(&ledger, &e, &r, &c).build(&cid).unwrap();
+        let timeline = TimelineBuilder::new(&ledger, &e, &r, &c)
+            .build(&cid)
+            .unwrap();
         r.insert(Reputation {
             operator_id: "op_primary".into(),
             reliability: 0.8,
@@ -3802,7 +3887,9 @@ use std::sync::Arc;
         let r = ReputationStore::new();
         let mut c = CalibrationStore::new();
         CostModel::apply_feedback(&replay_feedback(100.0), &mut c);
-        let timeline = TimelineBuilder::new(&ledger, &e, &r, &c).build(&cid).unwrap();
+        let timeline = TimelineBuilder::new(&ledger, &e, &r, &c)
+            .build(&cid)
+            .unwrap();
         CostModel::apply_feedback(&replay_feedback(-50.0), &mut c);
         let report = ReplayEngine::replay(&timeline, &e, &r, &c);
 
@@ -3819,7 +3906,9 @@ use std::sync::Arc;
         let e = ExperienceStore::new();
         let r = ReputationStore::new();
         let mut c = CalibrationStore::new();
-        let timeline = TimelineBuilder::new(&ledger, &e, &r, &c).build(&cid).unwrap();
+        let timeline = TimelineBuilder::new(&ledger, &e, &r, &c)
+            .build(&cid)
+            .unwrap();
         CostModel::apply_feedback(&replay_feedback(100.0), &mut c);
         let report = ReplayEngine::replay(&timeline, &e, &r, &c);
 
