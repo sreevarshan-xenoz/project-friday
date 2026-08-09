@@ -9,16 +9,16 @@
 
 use uuid::Uuid;
 
+use friday_planner::experience::recorder::record_workflow;
+use friday_planner::experience::reflection::reflect_on_goal;
 use friday_planner::experience::replay::{
     ApplicabilityChecker, ReplayEngine, WorkflowExecutionReport,
 };
-use friday_planner::experience::recorder::record_workflow;
-use friday_planner::experience::reflection::reflect_on_goal;
 use friday_planner::experience::service::ExperienceService;
+use friday_planner::experience::TimelineStore;
 use friday_planner::experience::{
     ExperienceMetrics, GoalOutcome, Pattern, Workflow, TIMELINE_VERSION,
 };
-use friday_planner::experience::TimelineStore;
 
 fn temp_store() -> (TimelineStore, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
@@ -33,28 +33,127 @@ fn record_readme_update(store: &TimelineStore, goal_name: &str) -> Uuid {
     let plan_id = Uuid::new_v4();
     let exec_id = Uuid::new_v4();
 
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:filesystem.read_file",
-        serde_json::json!({"title": goal_name, "path": "README.md"}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:filesystem.read_file",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "artifact.created", "mcp:filesystem.write_file",
-        serde_json::json!({"path": "README.md"}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:filesystem.write_file",
-        serde_json::json!({}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:filesystem.write_file",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:git.git_add",
-        serde_json::json!({}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:git.git_add",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:git.git_commit",
-        serde_json::json!({}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:git.git_commit",
-        serde_json::json!({"success": true, "commit_hash": "abc1234"}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "git.commit.created", "mcp:git.git_commit",
-        serde_json::json!({"commit_hash": "abc1234", "branch": "main"}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "goal.completed", "",
-        serde_json::json!({"outcome": "success"}), None).unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:filesystem.read_file",
+            serde_json::json!({"title": goal_name, "path": "README.md"}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:filesystem.read_file",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "artifact.created",
+            "mcp:filesystem.write_file",
+            serde_json::json!({"path": "README.md"}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:filesystem.write_file",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:filesystem.write_file",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:git.git_add",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:git.git_add",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:git.git_commit",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:git.git_commit",
+            serde_json::json!({"success": true, "commit_hash": "abc1234"}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "git.commit.created",
+            "mcp:git.git_commit",
+            serde_json::json!({"commit_hash": "abc1234", "branch": "main"}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "goal.completed",
+            "",
+            serde_json::json!({"outcome": "success"}),
+            None,
+        )
+        .unwrap();
     goal_id
 }
 
@@ -64,20 +163,83 @@ fn record_write_commit(store: &TimelineStore, goal_name: &str) -> Uuid {
     let plan_id = Uuid::new_v4();
     let exec_id = Uuid::new_v4();
 
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:filesystem.write_file",
-        serde_json::json!({"title": goal_name}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:filesystem.write_file",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:git.git_add",
-        serde_json::json!({}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:git.git_add",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:git.git_commit",
-        serde_json::json!({}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:git.git_commit",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "goal.completed", "",
-        serde_json::json!({"outcome": "success"}), None).unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:filesystem.write_file",
+            serde_json::json!({"title": goal_name}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:filesystem.write_file",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:git.git_add",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:git.git_add",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:git.git_commit",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:git.git_commit",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "goal.completed",
+            "",
+            serde_json::json!({"outcome": "success"}),
+            None,
+        )
+        .unwrap();
     goal_id
 }
 
@@ -87,20 +249,83 @@ fn record_write_push(store: &TimelineStore, goal_name: &str) -> Uuid {
     let plan_id = Uuid::new_v4();
     let exec_id = Uuid::new_v4();
 
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:filesystem.write_file",
-        serde_json::json!({"title": goal_name}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:filesystem.write_file",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:git.git_add",
-        serde_json::json!({}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:git.git_add",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:git.git_push",
-        serde_json::json!({}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:git.git_push",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "goal.completed", "",
-        serde_json::json!({"outcome": "success"}), None).unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:filesystem.write_file",
+            serde_json::json!({"title": goal_name}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:filesystem.write_file",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:git.git_add",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:git.git_add",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:git.git_push",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:git.git_push",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "goal.completed",
+            "",
+            serde_json::json!({"outcome": "success"}),
+            None,
+        )
+        .unwrap();
     goal_id
 }
 
@@ -138,7 +363,11 @@ fn scenario_1_record_and_retrieve_readme_update() {
     assert!(!matches.is_empty(), "should find similar goals");
     // TF-IDF similarity is diluted by capability terms in the goal vector,
     // so we accept any positive similarity as evidence of a match.
-    assert!(matches[0].similarity_score > 0.0, "similarity should be positive, got {}", matches[0].similarity_score);
+    assert!(
+        matches[0].similarity_score > 0.0,
+        "similarity should be positive, got {}",
+        matches[0].similarity_score
+    );
     assert!(matches[0].trust_score > 0.0, "trust should be non-zero");
 
     // Query 2: successful workflows.
@@ -166,7 +395,10 @@ fn scenario_1_record_and_retrieve_readme_update() {
 
     let summary = metrics.summary();
     assert_eq!(summary.total_queries, 1);
-    assert!(summary.useful_match_rate > 0.0, "should have useful matches");
+    assert!(
+        summary.useful_match_rate > 0.0,
+        "should have useful matches"
+    );
 }
 
 // ===========================================================================
@@ -188,19 +420,31 @@ fn scenario_2_pattern_mining_from_repeated_workflows() {
 
     // Patterns should exist.
     let patterns = svc.patterns();
-    assert!(!patterns.is_empty(), "should mine patterns from repeated workflows");
+    assert!(
+        !patterns.is_empty(),
+        "should mine patterns from repeated workflows"
+    );
 
     // The write → git.add → git.commit sequence should appear.
     let write_commit_patterns: Vec<&Pattern> = patterns
         .iter()
-        .filter(|p| p.capabilities.contains(&"mcp:filesystem.write_file".to_string())
-            && p.capabilities.contains(&"mcp:git.git_commit".to_string()))
+        .filter(|p| {
+            p.capabilities
+                .contains(&"mcp:filesystem.write_file".to_string())
+                && p.capabilities.contains(&"mcp:git.git_commit".to_string())
+        })
         .collect();
-    assert!(!write_commit_patterns.is_empty(), "should find write+commit pattern");
+    assert!(
+        !write_commit_patterns.is_empty(),
+        "should find write+commit pattern"
+    );
 
     let p = write_commit_patterns[0];
     assert_eq!(p.frequency, 6, "frequency should be 6, got {}", p.frequency);
-    assert!((p.success_rate - 1.0).abs() < 0.01, "success rate should be 1.0");
+    assert!(
+        (p.success_rate - 1.0).abs() < 0.01,
+        "success rate should be 1.0"
+    );
 
     // Reliable patterns should return it.
     let reliable = svc.reliable_patterns(0.9);
@@ -209,7 +453,10 @@ fn scenario_2_pattern_mining_from_repeated_workflows() {
     // Suggestions should be generated.
     let suggestions = svc.suggestions();
     assert!(!suggestions.is_empty(), "should generate suggestions");
-    assert!(!suggestions[0].reasons.is_empty(), "suggestions should have reasons");
+    assert!(
+        !suggestions[0].reasons.is_empty(),
+        "suggestions should have reasons"
+    );
 
     // Metrics.
     let mut metrics = ExperienceMetrics::new();
@@ -255,7 +502,9 @@ fn scenario_3_replay_adapts_workflow() {
     // "git_add" was in original but not final → skipped.
     assert_eq!(report.reused_steps.len(), 2);
     assert_eq!(report.adapted_steps.len(), 1);
-    assert!(report.skipped_steps.contains(&"mcp:git.git_add".to_string()));
+    assert!(report
+        .skipped_steps
+        .contains(&"mcp:git.git_add".to_string()));
     assert!(report.new_steps.is_empty());
 
     // Reuse ratio: kept (2 reused + 1 adapted) / original (4) = 0.75.
@@ -292,13 +541,13 @@ fn scenario_4_applicability_blocks_replay() {
     };
 
     // Only filesystem is registered.
-    let checker = ApplicabilityChecker::new(
-        vec!["mcp:filesystem.write_file".into()],
-        vec![],
-    );
+    let checker = ApplicabilityChecker::new(vec!["mcp:filesystem.write_file".into()], vec![]);
 
     let result = checker.check_workflow(&workflow);
-    assert!(!result.applicable, "should be blocked when git capability is missing");
+    assert!(
+        !result.applicable,
+        "should be blocked when git capability is missing"
+    );
     assert_eq!(result.missing_capabilities, vec!["mcp:git.git_commit"]);
     assert!(!result.notes.is_empty());
 
@@ -331,24 +580,78 @@ fn scenario_5_full_loop_experience_informs_planner() {
     // 1 failed goal.
     {
         let gid = Uuid::new_v4();
-        store.record(gid, Uuid::new_v4(), Uuid::new_v4(), "exec.action", "mcp:filesystem.write_file",
-            serde_json::json!({"title": "Failed write"}), None).unwrap();
-        store.record(gid, Uuid::new_v4(), Uuid::new_v4(), "exec.result", "mcp:filesystem.write_file",
-            serde_json::json!({"success": false, "error": "permission denied"}), None).unwrap();
-        store.record(gid, Uuid::new_v4(), Uuid::new_v4(), "goal.failed", "",
-            serde_json::json!({"outcome": "failure"}), None).unwrap();
+        store
+            .record(
+                gid,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                "exec.action",
+                "mcp:filesystem.write_file",
+                serde_json::json!({"title": "Failed write"}),
+                None,
+            )
+            .unwrap();
+        store
+            .record(
+                gid,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                "exec.result",
+                "mcp:filesystem.write_file",
+                serde_json::json!({"success": false, "error": "permission denied"}),
+                None,
+            )
+            .unwrap();
+        store
+            .record(
+                gid,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                "goal.failed",
+                "",
+                serde_json::json!({"outcome": "failure"}),
+                None,
+            )
+            .unwrap();
         goal_ids.push(gid);
     }
 
     // 1 partial goal.
     {
         let gid = Uuid::new_v4();
-        store.record(gid, Uuid::new_v4(), Uuid::new_v4(), "exec.action", "mcp:filesystem.write_file",
-            serde_json::json!({"title": "Partial goal"}), None).unwrap();
-        store.record(gid, Uuid::new_v4(), Uuid::new_v4(), "exec.result", "mcp:filesystem.write_file",
-            serde_json::json!({"success": true}), None).unwrap();
-        store.record(gid, Uuid::new_v4(), Uuid::new_v4(), "goal.partial", "",
-            serde_json::json!({"outcome": "partially_completed"}), None).unwrap();
+        store
+            .record(
+                gid,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                "exec.action",
+                "mcp:filesystem.write_file",
+                serde_json::json!({"title": "Partial goal"}),
+                None,
+            )
+            .unwrap();
+        store
+            .record(
+                gid,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                "exec.result",
+                "mcp:filesystem.write_file",
+                serde_json::json!({"success": true}),
+                None,
+            )
+            .unwrap();
+        store
+            .record(
+                gid,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                "goal.partial",
+                "",
+                serde_json::json!({"outcome": "partially_completed"}),
+                None,
+            )
+            .unwrap();
         goal_ids.push(gid);
     }
 
@@ -399,10 +702,16 @@ fn scenario_5_full_loop_experience_informs_planner() {
     // None of the matches should contain prescriptive language.
     for m in &similar {
         let goal_title_lower = m.goal_title.to_lowercase();
-        assert!(!goal_title_lower.contains("you should"),
-            "evidence should not be prescriptive: {}", m.goal_title);
-        assert!(!goal_title_lower.contains("must do"),
-            "evidence should not be prescriptive: {}", m.goal_title);
+        assert!(
+            !goal_title_lower.contains("you should"),
+            "evidence should not be prescriptive: {}",
+            m.goal_title
+        );
+        assert!(
+            !goal_title_lower.contains("must do"),
+            "evidence should not be prescriptive: {}",
+            m.goal_title
+        );
     }
 
     // Metrics: full loop.
@@ -489,7 +798,11 @@ fn scenario_7_retrieval_disagreement() {
     let matches = svc.similar("Publish release", 10);
 
     // Should return multiple matches.
-    assert!(matches.len() >= 2, "should return at least 2 matches, got {}", matches.len());
+    assert!(
+        matches.len() >= 2,
+        "should return at least 2 matches, got {}",
+        matches.len()
+    );
 
     // Similarity scores should differ (different goal titles).
     let scores: Vec<f64> = matches.iter().map(|m| m.similarity_score).collect();
@@ -501,12 +814,18 @@ fn scenario_7_retrieval_disagreement() {
 
     // Trust scores should also differ (different outcomes/timings).
     let trust_scores: Vec<f64> = matches.iter().map(|m| m.trust_score).collect();
-    let max_trust = trust_scores.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let max_trust = trust_scores
+        .iter()
+        .cloned()
+        .fold(f64::NEG_INFINITY, f64::max);
     assert!(max_trust > 0.0, "should have positive trust");
 
     // Key ADR-0009 assertion: both matches are presented to the planner.
     // The planner receives evidence, not a single "best" decision.
-    assert!(matches.len() >= 2, "planner should see multiple pieces of evidence");
+    assert!(
+        matches.len() >= 2,
+        "planner should see multiple pieces of evidence"
+    );
 
     // Metrics: both queries should be counted.
     let mut metrics = ExperienceMetrics::new();
@@ -526,12 +845,39 @@ fn scenario_8_sparse_history_graceful_degradation() {
 
     // Only one goal in history.
     let goal_id = Uuid::new_v4();
-    store.record(goal_id, Uuid::new_v4(), Uuid::new_v4(), "exec.action", "mcp:filesystem.write_file",
-        serde_json::json!({"title": "Only goal"}), None).unwrap();
-    store.record(goal_id, Uuid::new_v4(), Uuid::new_v4(), "exec.result", "mcp:filesystem.write_file",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, Uuid::new_v4(), Uuid::new_v4(), "goal.completed", "",
-        serde_json::json!({"outcome": "success"}), None).unwrap();
+    store
+        .record(
+            goal_id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "exec.action",
+            "mcp:filesystem.write_file",
+            serde_json::json!({"title": "Only goal"}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "exec.result",
+            "mcp:filesystem.write_file",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "goal.completed",
+            "",
+            serde_json::json!({"outcome": "success"}),
+            None,
+        )
+        .unwrap();
 
     let mut svc = ExperienceService::new();
     svc.rebuild(&store.all_entries().unwrap(), &[], &[]);
@@ -541,28 +887,37 @@ fn scenario_8_sparse_history_graceful_degradation() {
     // May or may not return matches — both are valid.
     // If it returns matches, they should have low similarity.
     for m in &matches {
-        assert!(m.similarity_score < 0.8,
+        assert!(
+            m.similarity_score < 0.8,
             "sparse history should produce low similarity for unrelated queries, got {}",
-            m.similarity_score);
+            m.similarity_score
+        );
     }
 
     // No suggestions from a single goal (frequency threshold not met).
     let suggestions = svc.suggestions();
-    assert!(suggestions.is_empty(),
-        "should not generate suggestions from a single goal");
+    assert!(
+        suggestions.is_empty(),
+        "should not generate suggestions from a single goal"
+    );
 
     // No reliable patterns.
     let reliable = svc.reliable_patterns(0.9);
-    assert!(reliable.is_empty(),
-        "should not have reliable patterns from a single goal");
+    assert!(
+        reliable.is_empty(),
+        "should not have reliable patterns from a single goal"
+    );
 
     // Trust should reflect limited history.
     let trust = svc.trust_components(goal_id);
     assert!(trust.is_some());
     let tc = trust.unwrap();
     // Repetition should be low (only 1 entry observed).
-    assert!(tc.repetition < 0.2,
-        "repetition should be low for a single observation, got {}", tc.repetition);
+    assert!(
+        tc.repetition < 0.2,
+        "repetition should be low for a single observation, got {}",
+        tc.repetition
+    );
 
     // The system degrades gracefully: no crashes, no panics, no errors.
     // The planner receives sparse evidence and must generate a fresh plan.
@@ -590,8 +945,17 @@ fn invariant_timeline_append_only() {
 
     // Append 100 entries.
     for i in 0..100 {
-        store.record(goal_id, Uuid::new_v4(), Uuid::new_v4(), "exec.action",
-            &format!("cap.{i}"), serde_json::json!({"seq": i}), None).unwrap();
+        store
+            .record(
+                goal_id,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                "exec.action",
+                &format!("cap.{i}"),
+                serde_json::json!({"seq": i}),
+                None,
+            )
+            .unwrap();
     }
 
     // All 100 present.
@@ -610,8 +974,17 @@ fn invariant_reflection_never_edits_history() {
     let (store, _dir) = temp_store();
     let goal_id = Uuid::new_v4();
 
-    let entry = store.record(goal_id, Uuid::new_v4(), Uuid::new_v4(), "exec.result",
-        "filesystem.write", serde_json::json!({"success": true, "source": "mcp"}), None).unwrap();
+    let entry = store
+        .record(
+            goal_id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "exec.result",
+            "filesystem.write",
+            serde_json::json!({"success": true, "source": "mcp"}),
+            None,
+        )
+        .unwrap();
 
     let original_capability = entry.capability.clone();
     let original_event_kind = entry.event_kind.clone();
@@ -667,10 +1040,28 @@ fn invariant_experience_stores_semantics() {
     let goal_id = Uuid::new_v4();
 
     // Record capabilities using semantic identifiers.
-    store.record(goal_id, Uuid::new_v4(), Uuid::new_v4(), "exec.action",
-        "filesystem.write", serde_json::json!({}), None).unwrap();
-    store.record(goal_id, Uuid::new_v4(), Uuid::new_v4(), "exec.action",
-        "git.commit", serde_json::json!({}), None).unwrap();
+    store
+        .record(
+            goal_id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "exec.action",
+            "filesystem.write",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "exec.action",
+            "git.commit",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
 
     let entries = store.entries_for_goal(goal_id).unwrap();
 
@@ -680,11 +1071,20 @@ fn invariant_experience_stores_semantics() {
 
     // No raw UI events anywhere.
     for entry in &entries {
-        assert!(!entry.capability.contains("click"),
-            "should not store raw UI events: {}", entry.capability);
-        assert!(!entry.capability.contains("key_press"),
-            "should not store raw UI events: {}", entry.capability);
-        assert!(!entry.capability.contains("mouse"),
-            "should not store raw UI events: {}", entry.capability);
+        assert!(
+            !entry.capability.contains("click"),
+            "should not store raw UI events: {}",
+            entry.capability
+        );
+        assert!(
+            !entry.capability.contains("key_press"),
+            "should not store raw UI events: {}",
+            entry.capability
+        );
+        assert!(
+            !entry.capability.contains("mouse"),
+            "should not store raw UI events: {}",
+            entry.capability
+        );
     }
 }
