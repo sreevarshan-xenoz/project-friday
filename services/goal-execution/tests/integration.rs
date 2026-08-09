@@ -46,8 +46,7 @@ async fn full_pipeline_with_learning() {
 async fn verification_catches_false_success() {
     let mut reg = ToolRegistry::new();
     reg.register(Box::new(MockTool::success("download", "content")));
-    let verification = Verification::new()
-        .register(Box::new(MockVerifier::fail("checksum")));
+    let verification = Verification::new().register(Box::new(MockVerifier::fail("checksum")));
     let mut engine = GoalEngine::new()
         .with_registry(reg)
         .with_verification(verification);
@@ -110,23 +109,24 @@ fn learning_failure_produces_policy() {
 /// Planning with sequencing policy produces multi-step actions via deliberative pipeline.
 #[test]
 fn planning_with_sequence_policy() {
-    let policy = Policy::sequence(
-        Capability::ExecuteCommand,
-        Capability::ReadFile,
-        0.7,
-        10,
-    );
+    let policy = Policy::sequence(Capability::ExecuteCommand, Capability::ReadFile, 0.7, 10);
     let planning = Planning::new();
     let evaluator = PlanEvaluator::new();
     let goal = Goal::new("build project");
     let ctx = PlanningContext::new(goal).with_policies(vec![policy]);
     let candidates = planning.think(&ctx);
-    assert!(candidates.len() >= 2, "expected at least direct + policy-driven candidates");
+    assert!(
+        candidates.len() >= 2,
+        "expected at least direct + policy-driven candidates"
+    );
 
     let world = friday_goal_execution::WorldState::default();
     let ranked = evaluator.evaluate(&candidates, &world);
     let actions = &ranked.plan.actions;
-    assert!(actions.len() >= 2, "ranked plan should have at least 2 actions from policy-driven candidate");
+    assert!(
+        actions.len() >= 2,
+        "ranked plan should have at least 2 actions from policy-driven candidate"
+    );
 }
 
 /// Goal with context is preserved through the full pipeline.
@@ -208,9 +208,15 @@ async fn execution_context_flows_to_tool() {
 
     #[async_trait::async_trait]
     impl friday_goal_execution::Tool for ContextCapture {
-        fn name(&self) -> &str { "capture" }
-        fn description(&self) -> &str { "Captures context" }
-        fn capabilities(&self) -> Vec<Capability> { vec![Capability::ExecuteCommand] }
+        fn name(&self) -> &str {
+            "capture"
+        }
+        fn description(&self) -> &str {
+            "Captures context"
+        }
+        fn capabilities(&self) -> Vec<Capability> {
+            vec![Capability::ExecuteCommand]
+        }
         async fn execute(
             &self,
             _action: &Action,
@@ -244,20 +250,18 @@ async fn execution_context_flows_to_tool() {
 /// WorldModel checks preconditions before execution and records transitions after.
 #[test]
 fn world_model_precondition_check_and_transition() {
-    let model = WorldModel::new(
-        WorldState::new().with_tool(Capability::ReadFile),
-    );
+    let model = WorldModel::new(WorldState::new().with_tool(Capability::ReadFile));
 
     // Precondition passes
-    let failed = model.check_preconditions(&[
-        Precondition::ToolAvailable { capability: Capability::ReadFile },
-    ]);
+    let failed = model.check_preconditions(&[Precondition::ToolAvailable {
+        capability: Capability::ReadFile,
+    }]);
     assert!(failed.is_empty());
 
     // Precondition fails
-    let failed = model.check_preconditions(&[
-        Precondition::ToolAvailable { capability: Capability::WriteFile },
-    ]);
+    let failed = model.check_preconditions(&[Precondition::ToolAvailable {
+        capability: Capability::WriteFile,
+    }]);
     assert_eq!(failed.len(), 1);
 }
 
