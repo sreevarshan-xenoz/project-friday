@@ -11,16 +11,20 @@ pub mod protocol;
 pub mod server;
 pub mod source;
 
-pub use connection::{ConnectionManager, DeltaPublisher, Heartbeat, SequenceCounter, SnapshotPublisher};
+pub use connection::{
+    ConnectionManager, DeltaPublisher, Heartbeat, SequenceCounter, SnapshotPublisher,
+};
 pub use frame_serializer::{FrameError, FrameSerializer};
 pub use protocol::{
-    CapabilitiesFrame, Capability, CapabilityName, CapabilitySet, ErrorCode, Frame, PROTOCOL_VERSION,
-    Severity,
+    CapabilitiesFrame, Capability, CapabilityName, CapabilitySet, ErrorCode, Frame, Severity,
+    PROTOCOL_VERSION,
 };
 pub use server::{
     BridgeServer, DEFAULT_HEARTBEAT_MS, DEFAULT_NEGOTIATION_TIMEOUT_MS, DEFAULT_TICK_MS,
 };
-pub use source::{Clock, DemoRuntimeSource, RuntimeSource, Slice, SourceDelta, SourceSnapshot};
+pub use source::{
+    demo_goals, Clock, DemoRuntimeSource, RuntimeSource, Slice, SourceDelta, SourceSnapshot,
+};
 
 /// Current wall-clock time in milliseconds since the Unix epoch.
 pub fn now_ms() -> u64 {
