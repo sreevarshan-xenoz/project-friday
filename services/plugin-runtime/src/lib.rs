@@ -54,9 +54,9 @@ pub mod contract;
 pub mod filesystem;
 pub mod health;
 pub mod ledger;
+pub mod planner;
 pub mod policy;
 pub mod registry;
-pub mod planner;
 pub mod runtime;
 pub mod telemetry;
 
@@ -66,11 +66,11 @@ pub use contract::*;
 pub use filesystem::FilesystemPlugin;
 pub use health::HealthMonitor;
 pub use ledger::DecisionLedger;
+pub use planner::CapabilityPlanner;
 pub use policy::{
     DefaultPolicyEngine, LayeredPolicyEngine, OrganizationPolicy, PolicyEngine, ResourcePolicy,
     RuleBasedPolicyEngine, SecurityPolicy, UserPolicy,
 };
 pub use registry::CapabilityRegistry;
-pub use planner::CapabilityPlanner;
 pub use runtime::PluginRuntime;
 pub use telemetry::{TelemetryCollector, TelemetryObserver, TelemetryStore};
