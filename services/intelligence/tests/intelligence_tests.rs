@@ -42,6 +42,8 @@ fn test_prompt_compiler_formats() {
         current_project: "/src".to_string(),
         active_sessions: vec![],
         active_windows: vec![],
+        skills: vec![],
+        active_skill: None,
     };
 
     let ast = PromptCompiler::compile_ast(&context);
