@@ -82,7 +82,6 @@
 //! - CognitiveBlackboard is the cognitive state. Every engine reads from and writes to it. No engine talks directly to another.
 //! - Workspace changes broadcast so observers can react without direct coupling.
 
-
 pub mod confidence;
 pub use confidence::*;
 pub mod goal;
@@ -115,7 +114,10 @@ pub mod workspace;
 pub use workspace::*;
 pub mod execution;
 pub use execution::*;
-
+pub mod evidence;
+pub use evidence::*;
+pub mod workflow;
+pub use workflow::*;
 
 // ── Tests ───────────────────────────────────────────────────────────
 
@@ -190,14 +192,16 @@ mod tests {
 
     #[test]
     fn world_state_file_exists() {
-        let world = WorldState::new()
-            .with_file("/tmp/test.txt", FileMeta {
+        let world = WorldState::new().with_file(
+            "/tmp/test.txt",
+            FileMeta {
                 path: "/tmp/test.txt".into(),
                 exists: true,
                 size_bytes: Some(100),
                 is_directory: false,
                 modified_at_ms: None,
-            });
+            },
+        );
 
         assert!(world.file_exists("/tmp/test.txt"));
         assert!(!world.file_exists("/tmp/missing.txt"));
@@ -272,12 +276,17 @@ mod tests {
         let mut reg = ToolRegistry::new();
         reg.register(Box::new(MockTool::success("terminal", "ok")));
         reg.register(Box::new(
-            MockTool::success("filesystem", "ok")
-                .with_capabilities(vec![Capability::ReadFile]),
+            MockTool::success("filesystem", "ok").with_capabilities(vec![Capability::ReadFile]),
         ));
 
-        assert_eq!(reg.resolve(&Capability::ExecuteCommand).unwrap().name(), "terminal");
-        assert_eq!(reg.resolve(&Capability::ReadFile).unwrap().name(), "filesystem");
+        assert_eq!(
+            reg.resolve(&Capability::ExecuteCommand).unwrap().name(),
+            "terminal"
+        );
+        assert_eq!(
+            reg.resolve(&Capability::ReadFile).unwrap().name(),
+            "filesystem"
+        );
         assert!(reg.resolve(&Capability::DeleteFile).is_none());
     }
 
@@ -294,8 +303,7 @@ mod tests {
 
     #[test]
     fn verification_failing_verifier() {
-        let verification = Verification::new()
-            .register(Box::new(MockVerifier::fail("checksum")));
+        let verification = Verification::new().register(Box::new(MockVerifier::fail("checksum")));
         let action = Action::single("download", Capability::ExecuteCommand, "g1");
         let result = ToolResult::success("content");
         let verified = verification.verify(&action, &result);
@@ -363,7 +371,9 @@ mod tests {
 
         let policy_id = engine.policies()[0].id.clone();
         engine.policies.iter_mut().for_each(|p| {
-            if p.id == policy_id { p.expires_at = Some(100); }
+            if p.id == policy_id {
+                p.expires_at = Some(100);
+            }
         });
 
         engine.prune_expired(50);
@@ -377,8 +387,7 @@ mod tests {
     #[test]
     fn evaluator_prefers_higher_confidence() {
         let evaluator = PlanEvaluator::new();
-        let world = WorldState::new()
-            .with_tool(Capability::ExecuteCommand);
+        let world = WorldState::new().with_tool(Capability::ExecuteCommand);
 
         let goal = Goal::new("cargo build");
         let action = Action::single("cargo build", Capability::ExecuteCommand, &goal.id);
@@ -412,12 +421,19 @@ mod tests {
         let plan_no_prereq = Plan::from_action(
             Action::single("cargo build", Capability::ExecuteCommand, &goal.id),
             "No prerequisites",
-        ).with_confidence(0.7);
+        )
+        .with_confidence(0.7);
 
         let ranked = evaluator.evaluate(
             &[
-                PlanCandidate { plan: plan_with_prereq, preliminary_score: 0.9 },
-                PlanCandidate { plan: plan_no_prereq, preliminary_score: 0.7 },
+                PlanCandidate {
+                    plan: plan_with_prereq,
+                    preliminary_score: 0.9,
+                },
+                PlanCandidate {
+                    plan: plan_no_prereq,
+                    preliminary_score: 0.7,
+                },
             ],
             &world,
         );
@@ -436,7 +452,10 @@ mod tests {
 
         let plan = Plan::from_action(action, "Read without tool").with_confidence(0.9);
         let ranked = evaluator.evaluate(
-            &[PlanCandidate { plan, preliminary_score: 0.9 }],
+            &[PlanCandidate {
+                plan,
+                preliminary_score: 0.9,
+            }],
             &world,
         );
 
@@ -472,12 +491,7 @@ mod tests {
     fn think_with_policy_generates_more_candidates() {
         let planning = Planning::new();
         let goal = Goal::new("cargo build");
-        let policy = Policy::sequence(
-            Capability::ExecuteCommand,
-            Capability::ReadFile,
-            0.8,
-            5,
-        );
+        let policy = Policy::sequence(Capability::ExecuteCommand, Capability::ReadFile, 0.8, 5);
         let ctx = PlanningContext::new(goal).with_policies(vec![policy]);
         let candidates = planning.think(&ctx);
 
@@ -508,8 +522,7 @@ mod tests {
         let mut learning = LearningEngine::new();
 
         let goal = Goal::new("cargo build");
-        let world = WorldState::new()
-            .with_tool(Capability::ExecuteCommand);
+        let world = WorldState::new().with_tool(Capability::ExecuteCommand);
 
         // 1. Think: generate candidates
         let ctx = PlanningContext::new(goal.clone()).with_world_state(world.clone());
@@ -524,7 +537,9 @@ mod tests {
         // 3. Execute
         let exp = Expectation::success("build will succeed");
         let exec_ctx = ExecutionContext::for_goal(&goal.id);
-        let report = engine.execute(&goal, &ranked.plan.actions[0], &exp, &exec_ctx).await;
+        let report = engine
+            .execute(&goal, &ranked.plan.actions[0], &exp, &exec_ctx)
+            .await;
         assert!(report.success());
 
         // 4. Learn
@@ -562,7 +577,13 @@ mod tests {
         let a = WorldState::new();
         let b = WorldState::new().with_file(
             "new.txt",
-            FileMeta { path: "new.txt".into(), exists: true, size_bytes: Some(100), is_directory: false, modified_at_ms: None },
+            FileMeta {
+                path: "new.txt".into(),
+                exists: true,
+                size_bytes: Some(100),
+                is_directory: false,
+                modified_at_ms: None,
+            },
         );
         let diff = a.diff(&b);
         assert_eq!(diff.added_files, vec!["new.txt".to_string()]);
@@ -573,11 +594,23 @@ mod tests {
     fn diff_detects_modified_file() {
         let a = WorldState::new().with_file(
             "f.txt",
-            FileMeta { path: "f.txt".into(), exists: true, size_bytes: Some(10), is_directory: false, modified_at_ms: None },
+            FileMeta {
+                path: "f.txt".into(),
+                exists: true,
+                size_bytes: Some(10),
+                is_directory: false,
+                modified_at_ms: None,
+            },
         );
         let b = WorldState::new().with_file(
             "f.txt",
-            FileMeta { path: "f.txt".into(), exists: true, size_bytes: Some(20), is_directory: false, modified_at_ms: None },
+            FileMeta {
+                path: "f.txt".into(),
+                exists: true,
+                size_bytes: Some(20),
+                is_directory: false,
+                modified_at_ms: None,
+            },
         );
         let diff = a.diff(&b);
         assert_eq!(diff.modified_files, vec!["f.txt".to_string()]);
@@ -604,35 +637,64 @@ mod tests {
     fn precondition_file_exists_passes() {
         let state = WorldState::new().with_file(
             "x.txt",
-            FileMeta { path: "x.txt".into(), exists: true, size_bytes: None, is_directory: false, modified_at_ms: None },
+            FileMeta {
+                path: "x.txt".into(),
+                exists: true,
+                size_bytes: None,
+                is_directory: false,
+                modified_at_ms: None,
+            },
         );
-        assert!(Precondition::FileExists { path: "x.txt".into() }.check(&state));
+        assert!(Precondition::FileExists {
+            path: "x.txt".into()
+        }
+        .check(&state));
     }
 
     #[test]
     fn precondition_file_exists_fails() {
         let state = WorldState::new();
-        assert!(!Precondition::FileExists { path: "x.txt".into() }.check(&state));
+        assert!(!Precondition::FileExists {
+            path: "x.txt".into()
+        }
+        .check(&state));
     }
 
     #[test]
     fn precondition_file_not_exists_passes() {
         let state = WorldState::new();
-        assert!(Precondition::FileNotExists { path: "x.txt".into() }.check(&state));
+        assert!(Precondition::FileNotExists {
+            path: "x.txt".into()
+        }
+        .check(&state));
     }
 
     #[test]
     fn precondition_tool_available() {
         let state = WorldState::new().with_tool(Capability::ReadFile);
-        assert!(Precondition::ToolAvailable { capability: Capability::ReadFile }.check(&state));
-        assert!(!Precondition::ToolAvailable { capability: Capability::WriteFile }.check(&state));
+        assert!(Precondition::ToolAvailable {
+            capability: Capability::ReadFile
+        }
+        .check(&state));
+        assert!(!Precondition::ToolAvailable {
+            capability: Capability::WriteFile
+        }
+        .check(&state));
     }
 
     #[test]
     fn precondition_variable_equals() {
         let state = WorldState::new().with_variable("mode", serde_json::json!("fast"));
-        assert!(Precondition::VariableEquals { key: "mode".into(), value: serde_json::json!("fast") }.check(&state));
-        assert!(!Precondition::VariableEquals { key: "mode".into(), value: serde_json::json!("slow") }.check(&state));
+        assert!(Precondition::VariableEquals {
+            key: "mode".into(),
+            value: serde_json::json!("fast")
+        }
+        .check(&state));
+        assert!(!Precondition::VariableEquals {
+            key: "mode".into(),
+            value: serde_json::json!("slow")
+        }
+        .check(&state));
     }
 
     #[test]
@@ -645,9 +707,13 @@ mod tests {
 
     #[test]
     fn precondition_describe() {
-        let p = Precondition::FileExists { path: "a.txt".into() };
+        let p = Precondition::FileExists {
+            path: "a.txt".into(),
+        };
         assert_eq!(p.describe(), "file exists: a.txt");
-        let p = Precondition::ToolAvailable { capability: Capability::ExecuteCommand };
+        let p = Precondition::ToolAvailable {
+            capability: Capability::ExecuteCommand,
+        };
         assert_eq!(p.describe(), "tool available: execute_command");
     }
 
@@ -655,9 +721,13 @@ mod tests {
 
     #[test]
     fn postcondition_describe() {
-        let p = Postcondition::FileCreated { path: "out.txt".into() };
+        let p = Postcondition::FileCreated {
+            path: "out.txt".into(),
+        };
         assert_eq!(p.describe(), "file created: out.txt");
-        let p = Postcondition::VariableSet { key: "result".into() };
+        let p = Postcondition::VariableSet {
+            key: "result".into(),
+        };
         assert_eq!(p.describe(), "variable set: result");
     }
 
@@ -668,7 +738,13 @@ mod tests {
         let before = WorldState::new();
         let after = WorldState::new().with_file(
             "new.txt",
-            FileMeta { path: "new.txt".into(), exists: true, size_bytes: None, is_directory: false, modified_at_ms: None },
+            FileMeta {
+                path: "new.txt".into(),
+                exists: true,
+                size_bytes: None,
+                is_directory: false,
+                modified_at_ms: None,
+            },
         );
         let t = StateTransition::new("a1", "g1", before, after, &[]);
         assert!(!t.diff.is_empty());
@@ -681,8 +757,12 @@ mod tests {
         let before = WorldState::new();
         let after = WorldState::new();
         let preconditions = vec![
-            Precondition::FileExists { path: "missing.txt".into() },
-            Precondition::ToolAvailable { capability: Capability::ReadFile },
+            Precondition::FileExists {
+                path: "missing.txt".into(),
+            },
+            Precondition::ToolAvailable {
+                capability: Capability::ReadFile,
+            },
         ];
         let t = StateTransition::new("a1", "g1", before, after, &preconditions);
         assert!(!t.preconditions_met);
@@ -695,8 +775,12 @@ mod tests {
     fn world_model_check_preconditions() {
         let model = WorldModel::new(WorldState::new().with_tool(Capability::ReadFile));
         let failed = model.check_preconditions(&[
-            Precondition::ToolAvailable { capability: Capability::ReadFile },
-            Precondition::ToolAvailable { capability: Capability::WriteFile },
+            Precondition::ToolAvailable {
+                capability: Capability::ReadFile,
+            },
+            Precondition::ToolAvailable {
+                capability: Capability::WriteFile,
+            },
         ]);
         assert_eq!(failed.len(), 1);
         assert!(failed[0].contains("write_file"));
@@ -709,14 +793,19 @@ mod tests {
         let t = model.record_transition("a1", "g1", new_state, &[]);
         assert_eq!(model.history().len(), 1);
         assert_eq!(t.action_id, "a1");
-        assert_eq!(model.state().variables.get("step"), Some(&serde_json::json!(1)));
+        assert_eq!(
+            model.state().variables.get("step"),
+            Some(&serde_json::json!(1))
+        );
     }
 
     #[test]
     fn world_model_apply_postconditions() {
         let mut model = WorldModel::new(WorldState::new());
         model.apply_postconditions(&[
-            Postcondition::FileCreated { path: "output.txt".into() },
+            Postcondition::FileCreated {
+                path: "output.txt".into(),
+            },
             Postcondition::VariableSet { key: "done".into() },
         ]);
         assert!(model.state().file_exists("output.txt"));
@@ -729,44 +818,79 @@ mod tests {
         model.set_working_directory("/tmp");
         assert_eq!(model.state().working_directory.as_deref(), Some("/tmp"));
         model.set_variable("x", serde_json::json!(42));
-        assert_eq!(model.state().variables.get("x"), Some(&serde_json::json!(42)));
+        assert_eq!(
+            model.state().variables.get("x"),
+            Some(&serde_json::json!(42))
+        );
     }
 
     // ── Cognitive Trace ─────────────────────────────────────────
 
     #[test]
     fn trace_node_basic() {
-        let node = TraceNode::new(TraceNodeKind::Planning, serde_json::json!("input"), serde_json::json!("output"));
+        let node = TraceNode::new(
+            TraceNodeKind::Planning,
+            serde_json::json!("input"),
+            serde_json::json!("output"),
+        );
         assert_eq!(node.kind, TraceNodeKind::Planning);
         assert!(node.parent_id.is_none());
     }
 
     #[test]
     fn trace_node_with_parent_and_confidence() {
-        let parent = TraceNode::new(TraceNodeKind::Planning, serde_json::json!({}), serde_json::json!({}));
-        let child = TraceNode::new(TraceNodeKind::Evaluation, serde_json::json!({}), serde_json::json!({}))
-            .with_parent(&parent.id)
-            .with_confidence(0.85);
+        let parent = TraceNode::new(
+            TraceNodeKind::Planning,
+            serde_json::json!({}),
+            serde_json::json!({}),
+        );
+        let child = TraceNode::new(
+            TraceNodeKind::Evaluation,
+            serde_json::json!({}),
+            serde_json::json!({}),
+        )
+        .with_parent(&parent.id)
+        .with_confidence(0.85);
         assert_eq!(child.parent_id.as_deref(), Some(parent.id.as_str()));
         assert_eq!(child.confidence, Some(0.85));
     }
 
     #[test]
     fn trace_node_confidence_clamped() {
-        let node = TraceNode::new(TraceNodeKind::Execution, serde_json::json!({}), serde_json::json!({}))
-            .with_confidence(1.5);
+        let node = TraceNode::new(
+            TraceNodeKind::Execution,
+            serde_json::json!({}),
+            serde_json::json!({}),
+        )
+        .with_confidence(1.5);
         assert_eq!(node.confidence, Some(1.0));
-        let node = TraceNode::new(TraceNodeKind::Execution, serde_json::json!({}), serde_json::json!({}))
-            .with_confidence(-0.5);
+        let node = TraceNode::new(
+            TraceNodeKind::Execution,
+            serde_json::json!({}),
+            serde_json::json!({}),
+        )
+        .with_confidence(-0.5);
         assert_eq!(node.confidence, Some(0.0));
     }
 
     #[test]
     fn cognitive_trace_nodes_of_kind() {
         let mut trace = CognitiveTrace::new("g1");
-        trace.push(TraceNode::new(TraceNodeKind::Planning, serde_json::json!({}), serde_json::json!({})));
-        trace.push(TraceNode::new(TraceNodeKind::Execution, serde_json::json!({}), serde_json::json!({})));
-        trace.push(TraceNode::new(TraceNodeKind::Planning, serde_json::json!({}), serde_json::json!({})));
+        trace.push(TraceNode::new(
+            TraceNodeKind::Planning,
+            serde_json::json!({}),
+            serde_json::json!({}),
+        ));
+        trace.push(TraceNode::new(
+            TraceNodeKind::Execution,
+            serde_json::json!({}),
+            serde_json::json!({}),
+        ));
+        trace.push(TraceNode::new(
+            TraceNodeKind::Planning,
+            serde_json::json!({}),
+            serde_json::json!({}),
+        ));
         assert_eq!(trace.nodes_of_kind(&TraceNodeKind::Planning).len(), 2);
         assert_eq!(trace.nodes_of_kind(&TraceNodeKind::Execution).len(), 1);
     }
@@ -774,8 +898,19 @@ mod tests {
     #[test]
     fn cognitive_trace_display() {
         let mut trace = CognitiveTrace::new("g1");
-        trace.push(TraceNode::new(TraceNodeKind::Planning, serde_json::json!({}), serde_json::json!({})).with_confidence(0.7));
-        trace.push(TraceNode::new(TraceNodeKind::Evaluation, serde_json::json!({}), serde_json::json!({})));
+        trace.push(
+            TraceNode::new(
+                TraceNodeKind::Planning,
+                serde_json::json!({}),
+                serde_json::json!({}),
+            )
+            .with_confidence(0.7),
+        );
+        trace.push(TraceNode::new(
+            TraceNodeKind::Evaluation,
+            serde_json::json!({}),
+            serde_json::json!({}),
+        ));
         let display = trace.display();
         assert!(display.contains("Goal: g1"));
         assert!(display.contains("Planning"));
@@ -798,7 +933,10 @@ mod tests {
 
         let trace = &report.cognitive_trace;
         assert_eq!(trace.goal_id, goal.id);
-        assert!(trace.nodes.len() >= 3, "trace should have execution, verification, reflection nodes");
+        assert!(
+            trace.nodes.len() >= 3,
+            "trace should have execution, verification, reflection nodes"
+        );
 
         let kinds: Vec<_> = trace.nodes.iter().map(|n| n.kind.clone()).collect();
         assert!(kinds.contains(&TraceNodeKind::Execution));
@@ -926,10 +1064,22 @@ mod tests {
     #[test]
     fn trace_recorder_assembles_trace() {
         let mut recorder = TraceRecorder::new("g1");
-        recorder.record(TraceEvent::PlanningStarted { goal_id: "g1".into() });
-        recorder.record(TraceEvent::PlanGenerated { goal_id: "g1".into(), candidate_count: 3 });
-        recorder.record(TraceEvent::ExecutionStarted { goal_id: "g1".into(), action_id: "a1".into() });
-        recorder.record(TraceEvent::ExecutionFinished { goal_id: "g1".into(), action_id: "a1".into(), success: true });
+        recorder.record(TraceEvent::PlanningStarted {
+            goal_id: "g1".into(),
+        });
+        recorder.record(TraceEvent::PlanGenerated {
+            goal_id: "g1".into(),
+            candidate_count: 3,
+        });
+        recorder.record(TraceEvent::ExecutionStarted {
+            goal_id: "g1".into(),
+            action_id: "a1".into(),
+        });
+        recorder.record(TraceEvent::ExecutionFinished {
+            goal_id: "g1".into(),
+            action_id: "a1".into(),
+            success: true,
+        });
 
         let trace = recorder.trace();
         assert_eq!(trace.goal_id, "g1");
@@ -939,18 +1089,46 @@ mod tests {
     #[test]
     fn trace_recorder_event_log() {
         let mut recorder = TraceRecorder::new("g1");
-        recorder.record(TraceEvent::PlanningStarted { goal_id: "g1".into() });
-        recorder.record(TraceEvent::SimulationFinished { goal_id: "g1".into(), plan_id: "p1".into(), feasible: true, confidence: 0.9 });
+        recorder.record(TraceEvent::PlanningStarted {
+            goal_id: "g1".into(),
+        });
+        recorder.record(TraceEvent::SimulationFinished {
+            goal_id: "g1".into(),
+            plan_id: "p1".into(),
+            feasible: true,
+            confidence: 0.9,
+        });
         assert_eq!(recorder.events().len(), 2);
     }
 
     #[test]
     fn trace_recorder_into_trace() {
         let mut recorder = TraceRecorder::new("g1");
-        recorder.record(TraceEvent::PlanningStarted { goal_id: "g1".into() });
+        recorder.record(TraceEvent::PlanningStarted {
+            goal_id: "g1".into(),
+        });
         let trace = recorder.into_trace();
         assert_eq!(trace.goal_id, "g1");
         assert_eq!(trace.nodes.len(), 1);
+    }
+
+    #[test]
+    fn trace_recorder_records_investigation() {
+        let mut recorder = TraceRecorder::new("g1");
+        recorder.record(TraceEvent::InvestigationFinished {
+            goal_id: "g1".into(),
+            requirement_count: 2,
+            channels: vec!["web".into(), "git".into()],
+            confidence: 0.85,
+            self_contained: false,
+        });
+        let trace = recorder.trace();
+        assert_eq!(trace.nodes_of_kind(&TraceNodeKind::Investigation).len(), 1);
+        let node = &trace.nodes[0];
+        assert_eq!(node.kind, TraceNodeKind::Investigation);
+        assert_eq!(node.output["requirement_count"], serde_json::json!(2));
+        assert_eq!(node.output["channels"], serde_json::json!(["web", "git"]));
+        assert_eq!(node.confidence, Some(0.85));
     }
 
     // ── Confidence ──────────────────────────────────────────────
@@ -980,7 +1158,7 @@ mod tests {
 
     #[test]
     fn confidence_and_multiply() {
-        let a = Confidence::high();   // 0.75
+        let a = Confidence::high(); // 0.75
         let b = Confidence::medium(); // 0.5
         let result = a.and(b);
         assert!((result.value() - 0.375).abs() < 0.001);
@@ -988,8 +1166,8 @@ mod tests {
 
     #[test]
     fn confidence_or_average() {
-        let a = Confidence::high();   // 0.75
-        let b = Confidence::low();    // 0.25
+        let a = Confidence::high(); // 0.75
+        let b = Confidence::low(); // 0.25
         let result = a.or(b);
         assert!((result.value() - 0.5).abs() < 0.001);
     }
@@ -1042,13 +1220,15 @@ mod tests {
 
     #[test]
     fn confidence_engine_multiply() {
-        let engine = ConfidenceEngine::new()
-            .add_rule("combined", ConfidenceRule::Multiply {
+        let engine = ConfidenceEngine::new().add_rule(
+            "combined",
+            ConfidenceRule::Multiply {
                 sources: vec!["a".into(), "b".into()],
-            });
+            },
+        );
 
         let mut inputs = HashMap::new();
-        inputs.insert("a".into(), Confidence::high());   // 0.75
+        inputs.insert("a".into(), Confidence::high()); // 0.75
         inputs.insert("b".into(), Confidence::medium()); // 0.5
 
         let outputs = engine.evaluate(&inputs);
@@ -1058,14 +1238,16 @@ mod tests {
 
     #[test]
     fn confidence_engine_average() {
-        let engine = ConfidenceEngine::new()
-            .add_rule("avg", ConfidenceRule::Average {
+        let engine = ConfidenceEngine::new().add_rule(
+            "avg",
+            ConfidenceRule::Average {
                 sources: vec!["a".into(), "b".into()],
-            });
+            },
+        );
 
         let mut inputs = HashMap::new();
-        inputs.insert("a".into(), Confidence::high());   // 0.75
-        inputs.insert("b".into(), Confidence::low());    // 0.25
+        inputs.insert("a".into(), Confidence::high()); // 0.75
+        inputs.insert("b".into(), Confidence::low()); // 0.25
 
         let outputs = engine.evaluate(&inputs);
         let avg = outputs.get("avg").unwrap();
@@ -1074,11 +1256,13 @@ mod tests {
 
     #[test]
     fn confidence_engine_discount() {
-        let engine = ConfidenceEngine::new()
-            .add_rule("discounted", ConfidenceRule::Discount {
+        let engine = ConfidenceEngine::new().add_rule(
+            "discounted",
+            ConfidenceRule::Discount {
                 source: "a".into(),
                 factor: 0.5,
-            });
+            },
+        );
 
         let mut inputs = HashMap::new();
         inputs.insert("a".into(), Confidence::high()); // 0.75
@@ -1090,11 +1274,13 @@ mod tests {
 
     #[test]
     fn confidence_engine_cap() {
-        let engine = ConfidenceEngine::new()
-            .add_rule("capped", ConfidenceRule::Cap {
+        let engine = ConfidenceEngine::new().add_rule(
+            "capped",
+            ConfidenceRule::Cap {
                 source: "a".into(),
                 max: Confidence::medium(),
-            });
+            },
+        );
 
         let mut inputs = HashMap::new();
         inputs.insert("a".into(), Confidence::certain()); // 1.0
@@ -1106,14 +1292,16 @@ mod tests {
 
     #[test]
     fn confidence_engine_min() {
-        let engine = ConfidenceEngine::new()
-            .add_rule("min_val", ConfidenceRule::Min {
+        let engine = ConfidenceEngine::new().add_rule(
+            "min_val",
+            ConfidenceRule::Min {
                 sources: vec!["a".into(), "b".into()],
-            });
+            },
+        );
 
         let mut inputs = HashMap::new();
         inputs.insert("a".into(), Confidence::high()); // 0.75
-        inputs.insert("b".into(), Confidence::low());  // 0.25
+        inputs.insert("b".into(), Confidence::low()); // 0.25
 
         let outputs = engine.evaluate(&inputs);
         let min_val = outputs.get("min_val").unwrap();
@@ -1122,10 +1310,12 @@ mod tests {
 
     #[test]
     fn confidence_engine_missing_input_defaults_to_none() {
-        let engine = ConfidenceEngine::new()
-            .add_rule("result", ConfidenceRule::Multiply {
+        let engine = ConfidenceEngine::new().add_rule(
+            "result",
+            ConfidenceRule::Multiply {
                 sources: vec!["a".into(), "missing".into()],
-            });
+            },
+        );
 
         let mut inputs = HashMap::new();
         inputs.insert("a".into(), Confidence::high());
@@ -1139,7 +1329,11 @@ mod tests {
 
     #[test]
     fn belief_basic() {
-        let b = Belief::new("cargo builds on this machine", Confidence::high(), "observation");
+        let b = Belief::new(
+            "cargo builds on this machine",
+            Confidence::high(),
+            "observation",
+        );
         assert_eq!(b.statement, "cargo builds on this machine");
         assert_eq!(b.confidence, Confidence::high());
         assert_eq!(b.source, "observation");
@@ -1156,16 +1350,15 @@ mod tests {
 
     #[test]
     fn belief_expired() {
-        let b = Belief::new("x", Confidence::medium(), "test")
-            .with_expiry_ms(100);
+        let b = Belief::new("x", Confidence::medium(), "test").with_expiry_ms(100);
         // 200ms in the future
         assert!(!b.is_fresh(200));
     }
 
     #[test]
     fn belief_below_floor() {
-        let b = Belief::new("x", Confidence::low(), "test")
-            .with_confidence_floor(Confidence::medium());
+        let b =
+            Belief::new("x", Confidence::low(), "test").with_confidence_floor(Confidence::medium());
         assert!(!b.is_still_believed());
     }
 
@@ -1205,13 +1398,20 @@ mod tests {
             .mission_priority(0.4)
             .build();
         let agg = s.aggregate();
-        assert!(agg > 0.5 && agg < 1.0, "aggregate should be reasonable, got {}", agg);
+        assert!(
+            agg > 0.5 && agg < 1.0,
+            "aggregate should be reasonable, got {}",
+            agg
+        );
     }
 
     #[test]
     fn attention_score_weighted() {
         // All weight on importance → aggregate = 0.5 * 0.3 = 0.15
-        let s = AttentionScore { importance: 0.5, ..AttentionScore::zero() };
+        let s = AttentionScore {
+            importance: 0.5,
+            ..AttentionScore::zero()
+        };
         assert!((s.aggregate() - 0.15).abs() < 0.001);
     }
 
@@ -1257,8 +1457,7 @@ mod tests {
     fn working_memory_prune_stale_beliefs() {
         let mut wm = WorkingMemory::new();
         wm.add_belief(Belief::new("fresh", Confidence::high(), "test"));
-        wm.add_belief(Belief::new("stale", Confidence::high(), "test")
-            .with_expiry_ms(100));
+        wm.add_belief(Belief::new("stale", Confidence::high(), "test").with_expiry_ms(100));
 
         let now = chrono::Utc::now().timestamp_millis() as u64;
         let removed = wm.prune_stale_beliefs(now + 200);
@@ -1271,8 +1470,9 @@ mod tests {
     fn working_memory_active_beliefs() {
         let mut wm = WorkingMemory::new();
         wm.add_belief(Belief::new("a", Confidence::high(), "test"));
-        wm.add_belief(Belief::new("b", Confidence::low(), "test")
-            .with_confidence_floor(Confidence::medium()));
+        wm.add_belief(
+            Belief::new("b", Confidence::low(), "test").with_confidence_floor(Confidence::medium()),
+        );
 
         let now = chrono::Utc::now().timestamp_millis() as u64;
         let active = wm.active_beliefs(now);
@@ -1368,8 +1568,7 @@ mod tests {
 
     #[test]
     fn episode_failure() {
-        let ep = CognitiveEpisode::begin(Goal::new("failing task"))
-            .finish(EpisodeOutcome::Failure);
+        let ep = CognitiveEpisode::begin(Goal::new("failing task")).finish(EpisodeOutcome::Failure);
         assert!(ep.failed());
         assert!(!ep.succeeded());
     }
@@ -1384,14 +1583,21 @@ mod tests {
     #[test]
     fn episode_trace_push() {
         let mut ep = CognitiveEpisode::begin(Goal::new("test"));
-        ep.push_trace(TraceNode::new(TraceNodeKind::Planning, serde_json::json!({}), serde_json::json!({})));
+        ep.push_trace(TraceNode::new(
+            TraceNodeKind::Planning,
+            serde_json::json!({}),
+            serde_json::json!({}),
+        ));
         assert_eq!(ep.trace.nodes.len(), 1);
     }
 
     #[test]
     fn episode_outcome_display() {
         assert_eq!(EpisodeOutcome::Success.to_string(), "success");
-        assert_eq!(EpisodeOutcome::UnexpectedFailure.to_string(), "unexpected_failure");
+        assert_eq!(
+            EpisodeOutcome::UnexpectedFailure.to_string(),
+            "unexpected_failure"
+        );
         assert_eq!(EpisodeOutcome::Aborted.to_string(), "aborted");
         assert_eq!(EpisodeOutcome::InProgress.to_string(), "in_progress");
     }
@@ -1558,7 +1764,7 @@ mod tests {
                         Action::single("cargo build", Capability::ExecuteCommand, "g"),
                         "build",
                     ))
-                    .finish(EpisodeOutcome::Success)
+                    .finish(EpisodeOutcome::Success),
             );
         }
 
@@ -1566,7 +1772,10 @@ mod tests {
         let result = sem.process_episodes(&store);
         assert_eq!(result.episodes_processed, 4);
         // 4 episodes → support=4, confidence=0.8 → above threshold → promoted
-        assert!(result.patterns_promoted > 0, "should have promoted patterns");
+        assert!(
+            result.patterns_promoted > 0,
+            "should have promoted patterns"
+        );
     }
 
     #[test]
@@ -1580,7 +1789,7 @@ mod tests {
                         Action::single("cargo build", Capability::ExecuteCommand, "g"),
                         "build",
                     ))
-                    .finish(EpisodeOutcome::Success)
+                    .finish(EpisodeOutcome::Success),
             );
         }
 
@@ -1589,17 +1798,17 @@ mod tests {
             min_confidence: 0.6,
         });
         let result = sem.process_episodes(&store);
-        assert!(result.patterns_promoted > 0, "should promote patterns with 5 episodes");
+        assert!(
+            result.patterns_promoted > 0,
+            "should promote patterns with 5 episodes"
+        );
         assert!(result.policies_proposed > 0, "should propose policies");
     }
 
     #[test]
     fn semantic_memory_deduplicates() {
         let mut store = EpisodeStore::new();
-        store.store(
-            CognitiveEpisode::begin(Goal::new("test"))
-                .finish(EpisodeOutcome::Success)
-        );
+        store.store(CognitiveEpisode::begin(Goal::new("test")).finish(EpisodeOutcome::Success));
 
         let mut sem = SemanticMemory::new();
         let r1 = sem.process_episodes(&store);
@@ -1620,7 +1829,7 @@ mod tests {
                         Action::single("cargo build", Capability::ExecuteCommand, "g"),
                         "build",
                     ))
-                    .finish(EpisodeOutcome::Success)
+                    .finish(EpisodeOutcome::Success),
             );
         }
 
@@ -1641,14 +1850,16 @@ mod tests {
                         Action::single("read file", Capability::ReadFile, "g"),
                         "read",
                     ))
-                    .finish(EpisodeOutcome::Failure)
+                    .finish(EpisodeOutcome::Failure),
             );
         }
 
         let mut sem = SemanticMemory::new();
         sem.process_episodes(&store);
 
-        let failure_patterns: Vec<_> = sem.patterns().iter()
+        let failure_patterns: Vec<_> = sem
+            .patterns()
+            .iter()
             .filter(|p| p.kind == PatternKind::RepeatedFailure)
             .collect();
         assert!(!failure_patterns.is_empty());
@@ -1665,14 +1876,16 @@ mod tests {
             store.store(
                 CognitiveEpisode::begin(goal)
                     .with_plan(plan)
-                    .finish(EpisodeOutcome::Success)
+                    .finish(EpisodeOutcome::Success),
             );
         }
 
         let mut sem = SemanticMemory::new();
         sem.process_episodes(&store);
 
-        let wf_patterns: Vec<_> = sem.patterns().iter()
+        let wf_patterns: Vec<_> = sem
+            .patterns()
+            .iter()
             .filter(|p| p.kind == PatternKind::Workflow)
             .collect();
         assert!(!wf_patterns.is_empty());
@@ -1723,7 +1936,10 @@ mod tests {
         let item = AttentionItem::new(
             AttentionItemKind::Goal,
             "urgent task",
-            AttentionScore::builder().importance(0.9).urgency(0.8).build(),
+            AttentionScore::builder()
+                .importance(0.9)
+                .urgency(0.8)
+                .build(),
         );
         mgr.add(item);
 
@@ -1825,9 +2041,21 @@ mod tests {
     #[test]
     fn attention_manager_by_kind() {
         let mut mgr = AttentionManager::new();
-        mgr.add(AttentionItem::new(AttentionItemKind::Goal, "g1", AttentionScore::builder().importance(0.5).build()));
-        mgr.add(AttentionItem::new(AttentionItemKind::Belief, "b1", AttentionScore::builder().importance(0.5).build()));
-        mgr.add(AttentionItem::new(AttentionItemKind::Goal, "g2", AttentionScore::builder().importance(0.5).build()));
+        mgr.add(AttentionItem::new(
+            AttentionItemKind::Goal,
+            "g1",
+            AttentionScore::builder().importance(0.5).build(),
+        ));
+        mgr.add(AttentionItem::new(
+            AttentionItemKind::Belief,
+            "b1",
+            AttentionScore::builder().importance(0.5).build(),
+        ));
+        mgr.add(AttentionItem::new(
+            AttentionItemKind::Goal,
+            "g2",
+            AttentionScore::builder().importance(0.5).build(),
+        ));
 
         assert_eq!(mgr.by_kind(&AttentionItemKind::Goal).len(), 2);
         assert_eq!(mgr.by_kind(&AttentionItemKind::Belief).len(), 1);
@@ -1836,8 +2064,16 @@ mod tests {
     #[test]
     fn attention_manager_clear() {
         let mut mgr = AttentionManager::new();
-        mgr.add(AttentionItem::new(AttentionItemKind::Goal, "g1", AttentionScore::zero()));
-        mgr.add(AttentionItem::new(AttentionItemKind::Belief, "b1", AttentionScore::zero()));
+        mgr.add(AttentionItem::new(
+            AttentionItemKind::Goal,
+            "g1",
+            AttentionScore::zero(),
+        ));
+        mgr.add(AttentionItem::new(
+            AttentionItemKind::Belief,
+            "b1",
+            AttentionScore::zero(),
+        ));
         mgr.clear();
         assert_eq!(mgr.count(), 0);
     }
@@ -1871,10 +2107,16 @@ mod tests {
         ));
 
         let ranked = mgr.ranked();
-        assert!(ranked.is_empty(), "items below min_focus_score should be filtered");
+        assert!(
+            ranked.is_empty(),
+            "items below min_focus_score should be filtered"
+        );
 
         let focused = mgr.focus();
-        assert!(focused.is_none(), "focus should return None for below-threshold items");
+        assert!(
+            focused.is_none(),
+            "focus should return None for below-threshold items"
+        );
     }
 
     #[test]
@@ -1884,7 +2126,10 @@ mod tests {
             deprioritized: true,
             ..AttentionItem::new(AttentionItemKind::Goal, "test", AttentionScore::zero())
         };
-        let base = AttentionScore::builder().importance(0.8).build().aggregate();
+        let base = AttentionScore::builder()
+            .importance(0.8)
+            .build()
+            .aggregate();
         assert!((item.effective_score() - base * 0.3).abs() < 0.001);
     }
 
@@ -1926,7 +2171,10 @@ mod tests {
     #[test]
     fn workspace_set_active_plan() {
         let ws = CognitiveBlackboard::new();
-        let plan = Plan::from_action(Action::single("echo", Capability::ExecuteCommand, "g"), "test");
+        let plan = Plan::from_action(
+            Action::single("echo", Capability::ExecuteCommand, "g"),
+            "test",
+        );
         ws.set_active_plan(plan);
         let p = ws.get_active_plan();
         assert_eq!(p.unwrap().strategy, "test");
@@ -1936,8 +2184,16 @@ mod tests {
     fn workspace_attention() {
         let ws = CognitiveBlackboard::new();
         let items = vec![
-            AttentionItem::new(AttentionItemKind::Goal, "urgent", AttentionScore::builder().importance(0.9).build()),
-            AttentionItem::new(AttentionItemKind::Belief, "stale data", AttentionScore::builder().importance(0.3).build()),
+            AttentionItem::new(
+                AttentionItemKind::Goal,
+                "urgent",
+                AttentionScore::builder().importance(0.9).build(),
+            ),
+            AttentionItem::new(
+                AttentionItemKind::Belief,
+                "stale data",
+                AttentionScore::builder().importance(0.3).build(),
+            ),
         ];
         ws.set_attention(items);
         assert_eq!(ws.get_attention().len(), 2);
@@ -1946,7 +2202,11 @@ mod tests {
     #[test]
     fn workspace_beliefs() {
         let ws = CognitiveBlackboard::new();
-        ws.add_belief(Belief::new("server is available", Confidence::high(), "ping"));
+        ws.add_belief(Belief::new(
+            "server is available",
+            Confidence::high(),
+            "ping",
+        ));
         ws.add_belief(Belief::new("disk is full", Confidence::low(), "df"));
         assert_eq!(ws.get_beliefs().len(), 2);
     }
@@ -1958,7 +2218,10 @@ mod tests {
         ws.set_world_state(state);
         let s = ws.get_world_state();
         assert!(s.is_some());
-        assert!(s.unwrap().available_tools.contains(&Capability::ExecuteCommand));
+        assert!(s
+            .unwrap()
+            .available_tools
+            .contains(&Capability::ExecuteCommand));
     }
 
     #[test]
@@ -2016,7 +2279,10 @@ mod tests {
     fn workspace_reflection() {
         let ws = CognitiveBlackboard::new();
         ws.set_reflection("goal completed successfully");
-        assert_eq!(ws.get_reflection().as_deref(), Some("goal completed successfully"));
+        assert_eq!(
+            ws.get_reflection().as_deref(),
+            Some("goal completed successfully")
+        );
     }
 
     #[test]
@@ -2035,7 +2301,11 @@ mod tests {
     fn workspace_current_trace() {
         let ws = CognitiveBlackboard::new();
         let mut trace = CognitiveTrace::new("g1");
-        trace.push(TraceNode::new(TraceNodeKind::Planning, serde_json::json!({}), serde_json::json!({})));
+        trace.push(TraceNode::new(
+            TraceNodeKind::Planning,
+            serde_json::json!({}),
+            serde_json::json!({}),
+        ));
         ws.set_current_trace(trace);
         let t = ws.get_current_trace();
         assert_eq!(t.unwrap().nodes.len(), 1);
@@ -2061,10 +2331,7 @@ mod tests {
 
         ws.set_active_goal(Goal::new("notify test"));
 
-        let change = tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            rx.recv(),
-        ).await;
+        let change = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv()).await;
 
         assert!(change.is_ok(), "should receive a change notification");
         let change = change.unwrap().unwrap();
@@ -2076,9 +2343,11 @@ mod tests {
         let ws = CognitiveBlackboard::new();
         ws.set_active_goal(Goal::new("test"));
         ws.add_belief(Belief::new("x", Confidence::medium(), "test"));
-        ws.set_attention(vec![
-            AttentionItem::new(AttentionItemKind::Goal, "g", AttentionScore::zero()),
-        ]);
+        ws.set_attention(vec![AttentionItem::new(
+            AttentionItemKind::Goal,
+            "g",
+            AttentionScore::zero(),
+        )]);
         ws.push_thought("think");
         ws.set_execution(ToolResult::success("ok"));
 
@@ -2135,9 +2404,12 @@ mod tests {
         exec.add_goal("cargo build", 0.9);
 
         let report = exec.cycle(&workspace).await;
-        assert!(report.phases_completed.len() >= 7,
+        assert!(
+            report.phases_completed.len() >= 7,
             "should complete at least 7 phases, got {}: {:?}",
-            report.phases_completed.len(), report.phases_completed);
+            report.phases_completed.len(),
+            report.phases_completed
+        );
         assert!(report.plan_executed);
         assert!(report.episode_stored);
 
@@ -2181,8 +2453,13 @@ mod tests {
     fn executive_phase_display() {
         assert_eq!(ExecutivePhase::Observe.to_string(), "observe");
         assert_eq!(ExecutivePhase::Attend.to_string(), "attend");
+        assert_eq!(ExecutivePhase::Investigate.to_string(), "investigate");
+        assert_eq!(ExecutivePhase::Plan.to_string(), "plan");
+        assert_eq!(ExecutivePhase::Simulate.to_string(), "simulate");
         assert_eq!(ExecutivePhase::Execute.to_string(), "execute");
+        assert_eq!(ExecutivePhase::Verify.to_string(), "verify");
         assert_eq!(ExecutivePhase::Reflect.to_string(), "reflect");
+        assert_eq!(ExecutivePhase::Consolidate.to_string(), "consolidate");
         assert_eq!(ExecutivePhase::Learn.to_string(), "learn");
         assert_eq!(ExecutivePhase::Idle.to_string(), "idle");
     }
