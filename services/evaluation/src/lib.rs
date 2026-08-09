@@ -212,7 +212,12 @@ impl MetricCollector {
     }
 
     pub fn average(&self, name: &str) -> Option<f64> {
-        let values: Vec<f64> = self.readings.iter().filter(|r| r.name == name).map(|r| r.value).collect();
+        let values: Vec<f64> = self
+            .readings
+            .iter()
+            .filter(|r| r.name == name)
+            .map(|r| r.value)
+            .collect();
         if values.is_empty() {
             None
         } else {
@@ -221,7 +226,11 @@ impl MetricCollector {
     }
 
     pub fn sum(&self, name: &str) -> f64 {
-        self.readings.iter().filter(|r| r.name == name).map(|r| r.value).sum()
+        self.readings
+            .iter()
+            .filter(|r| r.name == name)
+            .map(|r| r.value)
+            .sum()
     }
 
     pub fn count(&self, name: &str) -> usize {
