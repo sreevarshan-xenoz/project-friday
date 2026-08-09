@@ -6,7 +6,9 @@
 //! the LLM prompt builder depend on this being correct and predictable, so these
 //! are treated as contract tests.
 
-use friday_planner::execution::capability_registry::{CapabilityRegistry, CapabilitySource, CapabilitySpec, Risk};
+use friday_planner::execution::capability_registry::{
+    CapabilityRegistry, CapabilitySource, CapabilitySpec, Risk,
+};
 
 fn spec(id: &str, name: &str, desc: &str, risk: Risk) -> CapabilitySpec {
     CapabilitySpec::native(id, name, desc, "adapter", "action", risk)
@@ -16,9 +18,24 @@ fn spec(id: &str, name: &str, desc: &str, risk: Risk) -> CapabilitySpec {
 fn ranks_most_relevant_first() {
     let reg = CapabilityRegistry::new();
     // "git push" is highly relevant to a "push code" goal.
-    reg.register(spec("git.push", "Push", "Push commits to remote", Risk::High));
-    reg.register(spec("filesystem.read_file", "Read", "Read a file", Risk::Safe));
-    reg.register(spec("terminal.run", "Run", "Run a shell command", Risk::Medium));
+    reg.register(spec(
+        "git.push",
+        "Push",
+        "Push commits to remote",
+        Risk::High,
+    ));
+    reg.register(spec(
+        "filesystem.read_file",
+        "Read",
+        "Read a file",
+        Risk::Safe,
+    ));
+    reg.register(spec(
+        "terminal.run",
+        "Run",
+        "Run a shell command",
+        Risk::Medium,
+    ));
 
     let results = reg.search("push my code to the remote", 10);
     assert!(!results.is_empty(), "should surface something");
@@ -26,7 +43,10 @@ fn ranks_most_relevant_first() {
     assert_eq!(results[0].spec.id, "git.push");
     // Scores must be non-increasing.
     for w in results.windows(2) {
-        assert!(w[0].score >= w[1].score, "results must be sorted desc by score");
+        assert!(
+            w[0].score >= w[1].score,
+            "results must be sorted desc by score"
+        );
     }
 }
 
@@ -54,8 +74,18 @@ fn risk_penalty_lowers_high_risk_capabilities() {
     // Two caps with *identical* textual relevance (same name/description, goal
     // matches both equally) but different risk. The only thing that can reorder
     // them is the risk penalty.
-    reg.register(spec("cap.safe", "Backup", "backup the database", Risk::Safe));
-    reg.register(spec("cap.high", "Backup", "backup the database", Risk::High));
+    reg.register(spec(
+        "cap.safe",
+        "Backup",
+        "backup the database",
+        Risk::Safe,
+    ));
+    reg.register(spec(
+        "cap.high",
+        "Backup",
+        "backup the database",
+        Risk::High,
+    ));
 
     let results = reg.search("backup the database", 10);
     // Safe must outrank the high-risk twin because text relevance is identical.
@@ -67,9 +97,20 @@ fn risk_penalty_lowers_high_risk_capabilities() {
 
     // The high-risk twin's score must equal the safe score minus the documented
     // 0.35 penalty (both have relevance 1.0, no substring boost).
-    let safe = results.iter().find(|r| r.spec.id == "cap.safe").unwrap().score;
-    let high = results.iter().find(|r| r.spec.id == "cap.high").unwrap().score;
-    assert!((high - (safe - 0.35)).abs() < 1e-9, "high-risk score should carry the 0.35 penalty");
+    let safe = results
+        .iter()
+        .find(|r| r.spec.id == "cap.safe")
+        .unwrap()
+        .score;
+    let high = results
+        .iter()
+        .find(|r| r.spec.id == "cap.high")
+        .unwrap()
+        .score;
+    assert!(
+        (high - (safe - 0.35)).abs() < 1e-9,
+        "high-risk score should carry the 0.35 penalty"
+    );
 }
 
 #[test]
@@ -99,7 +140,10 @@ fn unknown_or_empty_goal_still_returns_something_or_empty() {
     let results = reg.search("make me a sandwich with pickles", 2);
     assert!(results.len() <= 2);
     for r in &results {
-        assert!(reg.resolve(&r.spec.id).is_some(), "every result must be a real registered cap");
+        assert!(
+            reg.resolve(&r.spec.id).is_some(),
+            "every result must be a real registered cap"
+        );
     }
 
     // An empty registry returns nothing.
@@ -111,7 +155,12 @@ fn unknown_or_empty_goal_still_returns_something_or_empty() {
 fn mcp_capabilities_appear_automatically() {
     // Discovery must not special-case native vs MCP — same `register` call.
     let reg = CapabilityRegistry::new();
-    let mut mcp = spec("mcp:vscode.open_file", "Open", "open a file in vscode", Risk::Safe);
+    let mut mcp = spec(
+        "mcp:vscode.open_file",
+        "Open",
+        "open a file in vscode",
+        Risk::Safe,
+    );
     mcp.source = CapabilitySource::Mcp("vscode".into());
     reg.register(mcp);
     reg.register(spec("fs.read", "Read", "read file", Risk::Safe));
