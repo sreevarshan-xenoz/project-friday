@@ -11,30 +11,32 @@
 //! The Timeline is the canonical source of truth. Recorder, Reflection,
 //! Indexer, and Service are pure derivations over the timeline.
 
-pub mod timeline;
+pub mod context;
+pub mod indexer;
+pub mod metrics;
+pub mod miner;
+pub mod provider;
 pub mod recorder;
 pub mod reflection;
-pub mod indexer;
-pub mod service;
-pub mod miner;
-pub mod suggestion;
 pub mod replay;
-pub mod metrics;
-pub mod provider;
-pub mod context;
+pub mod service;
+pub mod suggestion;
+pub mod timeline;
 
-pub use timeline::TimelineStore;
-pub use indexer::ExperienceIndexer;
-pub use service::ExperienceService;
-pub use miner::{PatternMiner, Pattern};
-pub use suggestion::{SuggestionEngine, SuggestionPolicy, WorkflowSuggestion};
-pub use replay::{ApplicabilityChecker, ApplicabilityResult, ReplayEngine, WorkflowExecutionReport};
-pub use metrics::{ExperienceMetrics, MetricsSummary};
-pub use provider::ExperienceProvider;
 pub use context::{
-    ExperienceContext, PlanningGoal, ExperienceEvidence, SuccessfulWorkflow, ReplayCandidate,
-    EvidenceProvenance, EvidenceSource, ExperienceContextBuilder,
+    EvidenceProvenance, EvidenceSource, ExperienceContext, ExperienceContextBuilder,
+    ExperienceEvidence, PlanningGoal, ReplayCandidate, SuccessfulWorkflow,
 };
+pub use indexer::ExperienceIndexer;
+pub use metrics::{ExperienceMetrics, MetricsSummary};
+pub use miner::{Pattern, PatternMiner};
+pub use provider::ExperienceProvider;
+pub use replay::{
+    ApplicabilityChecker, ApplicabilityResult, ReplayEngine, WorkflowExecutionReport,
+};
+pub use service::ExperienceService;
+pub use suggestion::{SuggestionEngine, SuggestionPolicy, WorkflowSuggestion};
+pub use timeline::TimelineStore;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
