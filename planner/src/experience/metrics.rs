@@ -12,8 +12,8 @@
 //! Metrics are read-only observations. They flow into the M12.5 report,
 //! not into planning decisions.
 
-use super::{ExperienceMatch, Pattern, WorkflowSuggestion};
 use super::replay::WorkflowExecutionReport;
+use super::{ExperienceMatch, Pattern, WorkflowSuggestion};
 
 /// Accumulated session-level metrics from experience pipeline execution.
 ///
@@ -130,11 +130,9 @@ impl ExperienceMetrics {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::{
-        GoalOutcome, MatchReason, TrustComponents, ExperienceMatch,
-    };
     use super::super::replay::WorkflowExecutionReport;
+    use super::super::{ExperienceMatch, GoalOutcome, MatchReason, TrustComponents};
+    use super::*;
     use uuid::Uuid;
 
     fn make_match(trust: f64) -> ExperienceMatch {
@@ -158,7 +156,12 @@ mod tests {
         }
     }
 
-    fn make_report(reused: usize, adapted: usize, skipped: usize, new: usize) -> WorkflowExecutionReport {
+    fn make_report(
+        reused: usize,
+        adapted: usize,
+        skipped: usize,
+        new: usize,
+    ) -> WorkflowExecutionReport {
         WorkflowExecutionReport {
             workflow_id: None,
             pattern_id: None,
