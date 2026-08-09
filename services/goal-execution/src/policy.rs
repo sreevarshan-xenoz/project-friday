@@ -40,12 +40,7 @@ impl Policy {
         }
     }
 
-    pub fn retry(
-        capability: Capability,
-        max_retries: u32,
-        confidence: f32,
-        support: u32,
-    ) -> Self {
+    pub fn retry(capability: Capability, max_retries: u32, confidence: f32, support: u32) -> Self {
         Self {
             id: format!("policy_{}", uuid::Uuid::new_v4()),
             kind: PolicyKind::Retry,
@@ -60,12 +55,7 @@ impl Policy {
         }
     }
 
-    pub fn sequence(
-        from: Capability,
-        then: Capability,
-        confidence: f32,
-        support: u32,
-    ) -> Self {
+    pub fn sequence(from: Capability, then: Capability, confidence: f32, support: u32) -> Self {
         Self {
             id: format!("policy_{}", uuid::Uuid::new_v4()),
             kind: PolicyKind::Sequence,
