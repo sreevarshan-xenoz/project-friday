@@ -136,7 +136,12 @@ impl BridgeServer {
         }
     }
 
-    fn spawn_driver(&self, manager: Arc<ConnectionManager>, bridge_id: String, source_name: String) {
+    fn spawn_driver(
+        &self,
+        manager: Arc<ConnectionManager>,
+        bridge_id: String,
+        source_name: String,
+    ) {
         let source = self.source.clone();
         let tick = Duration::from_millis(self.tick_ms);
         tokio::spawn(async move {
@@ -146,11 +151,10 @@ impl BridgeServer {
                 interval.tick().await;
                 let deltas = {
                     let mut src = source.lock().await;
-                    src.tick(now_ms())
+                    src.tick(now_ms()).await
                 };
                 for delta in deltas {
-                    let frame =
-                        DeltaPublisher::frame(&delta, &source_name, &bridge_id, now_ms());
+                    let frame = DeltaPublisher::frame(&delta, &source_name, &bridge_id, now_ms());
                     if let Ok(json) = FrameSerializer::to_json(&Frame::Delta(frame.clone())) {
                         manager.stats().set_delta_size(json.len());
                     }
