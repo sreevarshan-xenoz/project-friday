@@ -84,9 +84,9 @@ It is purely data — no prompts, no instructions, no personality.
   "category": "developer",
   "icon": "docker",
   "capabilities": [
-    "terminal.execute",
-    "filesystem.read",
-    "filesystem.write"
+    "terminal.exec",
+    "filesystem.read_file",
+    "filesystem.write_file"
   ],
   "actions": [
     "build docker image",
@@ -97,11 +97,15 @@ It is purely data — no prompts, no instructions, no personality.
     "docker compose down",
     "view docker logs"
   ],
-  "permissions": ["terminal.execute", "filesystem.write"],
+  "permissions": ["terminal.exec", "filesystem.write_file"],
   "dependencies": [],
   "platform": "Any",
   "min_core_version": "0.1.0",
-  "enabled": true
+  "enabled": true,
+  "memory": {
+    "reads": ["docker.last_image"],
+    "writes": ["docker.last_image"]
+  }
 }
 ```
 
@@ -132,6 +136,7 @@ pub struct Skill {
 | `platform` | Target platform (`Windows`, `Any`, etc.) |
 | `min_core_version` | Minimum FRIDAY version required |
 | `enabled` | Whether this skill is active |
+| `memory` (§14) | Declared memory keys: `reads` (keyed recall) + `writes` (persisted facts) |
 
 ### 3.4 What skills do NOT contain
 
@@ -260,6 +265,44 @@ Relevant skills:
 The Context Builder decides how to present this information. The skill
 just provides the data.
 
+### 6.1 Plan-time view (PlanContext)
+
+The same `SkillContext` also reaches the **LLM planner's prompt** — the
+plan-time view, distinct from the Context Builder's run-time view. The boot
+path (`friday_context::register_engines_with_skills` →
+`friday_planner::register_engines_with_policy`) hands the loaded
+`SkillRegistry` to the planning engine as a `SkillContextSource`; every
+`PlanContext` then carries the skills ranked against the goal
+(`PlanContext.skills: Option<SkillContext>`), and `LlmPlanner::build_prompt`
+renders them as a `RELEVANT SKILLS` section between the goal and the
+capability list:
+
+```
+GOAL: "build the docker image"
+
+RELEVANT SKILLS (ranked for this goal; active_skill is the recommended
+skill — plan through it when it fits, using the capabilities it declares):
+{
+  "relevant_skills": [{ "id": "docker", "version": "1.0.0", ... }],
+  "active_skill": "docker"
+}
+
+AVAILABLE CAPABILITIES ...
+```
+
+Design rules: the section is pure data (no prompts, no scores — rank is
+encoded by ordering), advisory like experience evidence (a broken skill setup
+yields `None`, never a stranded goal), the rule planner ignores it entirely,
+and the ranking pass runs **only for LLM-routed goals** (a rule-planned goal
+never pays for a skill ranking it will ignore). Trust surface: skill manifest
+text (name/description/actions) reaches the planning model — JSON-escaped but
+still readable, the same trust class as capability descriptions; since skills
+are third-party-installable via Skill Forge, a skill author controls text the
+planner will read (documented, not fixed — consistent with the house pattern).
+Proven by `llm_planner_prompt_includes_ranked_bundled_skills` in
+`services/context/tests/skill_runtime.rs`, which records the actual prompt
+handed to the model and asserts the bundled `git` skill is ranked in it.
+
 ## 7. Permission model
 
 Skills declare `permissions` — the capabilities they need user approval for.
@@ -359,20 +402,78 @@ offline — remote registry is optional enhancement.
 
 ## 12. Acceptance criteria
 
-- [ ] `friday-skills` builds clean (clippy/fmt/tests)
-- [ ] `SkillManifest` parses from `skill.json` files
-- [ ] `SkillLoader` discovers skills from bundled + user directories
-- [ ] Validation catches: duplicate IDs, missing capabilities, platform mismatch
-- [ ] `SkillRegistry` supports enable/disable/deregister at runtime
-- [ ] `SkillContext` integrates with `ContextBuilder` (skill data appears in AgentContext)
-- [ ] Permission gating works: skill permissions → user approval → planner access
-- [ ] Topological sort handles skill dependencies correctly
-- [ ] At least 3 built-in skills ship with manifests
-- [ ] Adding a new skill requires only a `skill.json` + optional service code — no core changes
-- [ ] Skills contain NO prompts, NO instructions, NO personality
-- [ ] Tests prove: load → enable → context → permission flow
+- [x] `friday-skills` builds clean (clippy/fmt/tests)
+- [x] `SkillManifest` parses from `skill.json` files
+- [x] `SkillLoader` discovers skills from bundled + user directories
+- [x] Validation catches: duplicate IDs, missing capabilities, platform mismatch
+- [x] `SkillRegistry` supports enable/disable/deregister at runtime
+- [x] `SkillContext` integrates with `ContextBuilder` (skill data appears in AgentContext)
+- [x] Permission gating works: skill permissions → user approval → planner access
+- [x] Topological sort handles skill dependencies correctly
+- [x] At least 3 built-in skills ship with manifests (8: git, docker, rust, python, testing, server, minecraft, developer)
+- [x] Adding a new skill requires only a `skill.json` + optional service code — no core changes
+- [x] Skills contain NO prompts, NO instructions, NO personality
+- [x] Tests prove: load → enable → context → permission flow
+- [x] **Runtime wiring** (2026-08-08): `friday_context::register_engines_with_skills` boots the planner stack with the skill-aware `SkillPolicyAuthority` as the supervisor policy, and `SkillRegistry::context_for` emits an auditable per-goal ranking trace (`skill ranking: candidate skills scored against goal`). Proven by `services/context/tests/skill_runtime.rs` against the real native registry: 8/8 bundled manifests load/resolve/qualify, medium-risk skill-covered capabilities pause until approval then resume to completion, uncovered capabilities defer to allow-all, High-risk capabilities pause even when approved, and `with_skills` surfaces bundled skills in `AgentContext`.
+- [x] **M5 battle-tested** (2026-08-08): skill health view (`SkillHealth`), live capability re-resolution (`reconcile`), deterministic chosen-skill selection (`select_for` + `[Skill Decision]` trace), and the adversarial behavior suite — all in `services/context/tests/skill_runtime.rs` (11 tests) + `friday-skills` (38 unit + 6 integration).
+- [x] **M7 Skill Forge CLI** (2026-08-08): `friday create-skill / validate / publish` in `services/skill-forge` (binary `friday`); templates scaffold canonical manifests; `validate` qualifies against the real native registry; `publish` installs into `~/.friday/skills` and refuses broken or overwriting installs. 7 integration tests + a live CLI smoke run.
+- [x] **M8 memory-aware skills** (2026-08-08): `SkillManifest.memory` (`reads`/`writes`) + gated per-skill `SkillMemory` handle (`friday_skills::memory`), `SkillEngineWiring::with_memory/memory_for`, `friday_context::CoreMemorySource` over the real `MemoryEngine` (LongTerm store / LongTerm+Session search). Proven end-to-end: the bundled `git` skill stores + reads back `git.last_workspace` through a real redb-backed engine, and undeclared keys are rejected at the gate.
+- [x] **Plan-time skill view** (2026-08-08): `PlanContext.skills: Option<SkillContext>` populated by the planning engine's skill source (`PlanningEngine::with_skill_context`); the LLM planner's prompt renders a `RELEVANT SKILLS` section (ranked summaries + `active_skill`) between the goal and the capability list (§6.1). The policy factory in `register_engines_with_policy` now returns a `PolicyBinding { policy, skills }` so the same loaded registry feeds both the supervisor's permission policy and the planner's context. Proven by the recording-backend e2e test (`llm_planner_prompt_includes_ranked_bundled_skills`) asserting the actual model prompt carries the ranked `git` skill.
 
-## 13. What this unlocks
+## 13. Skill Forge (M7)
+
+Skill Forge turns FRIDAY into a platform: third parties create, validate, and
+publish skills without touching the core. The CLI lives in
+`services/skill-forge` (crate `friday-skill-forge`, binary **`friday`**); the
+command logic is a library so it is testable without spawning the binary.
+
+### 13.1 Commands
+
+| Command | Behavior |
+|---------|----------|
+| `friday create-skill <id> [--template git|docker|minecraft|server|python|generic] [--dir <path>]` | Scaffolds `<dir>/<id>/skill.json` + `README.md` from a template. Templates use **canonical** capability ids, so a fresh skill validates on the first run. `id` must be a slug (`a-z 0-9 - _`). |
+| `friday validate [<path>]` | Loads every skill under `<path>` (default `.`) with the real loader, resolves against the **native registry** (`friday_planner::execution::native_caps`), runs `qualify()` per skill, and prints a per-check report. Exit 1 on any load failure or failed check (or when **no skills** are found — validating nothing is not a green pass). Limitation: `validate` only knows native capabilities today, so a skill targeting a future MCP/plugin capability (`mcp:*`, `browser.*`) soft-declares it and shows a failed `capabilities` check; a runtime-provided extra-capability list is future work. |
+| `friday publish <id-or-path> [--dest <path>] [--force]` | Validates first (a broken skill is **never** installed), then copies the skill into `~/.friday/skills/<id>/` (HOME/USERPROFILE aware; `--dest` overrides). Refuses to overwrite without `--force`. |
+| `friday help` / `friday version` | Usage / version. |
+
+### 13.2 Packaging
+
+A published skill is the same directory structure the loader already reads
+(`<id>/skill.json`, optionally `README.md`, `examples/`, ...), so publishing
+is just a validated copy — no new on-disk format, no registry server. A
+remote marketplace (§10) can later publish to a server instead; the local
+flow stays offline.
+
+## 14. Memory-aware skills (M8)
+
+Skills stay pure data, but they may *declare* deterministic memory instead of
+asking the model to "remember":
+
+```json
+"memory": { "reads": ["minecraft.server_state"], "writes": ["minecraft.server_state"] }
+```
+
+At runtime each loaded skill can be handed a **gated** handle
+(`friday_skills::memory::SkillMemory`) over an abstract
+`SkillMemorySource` (`search` / `read` / `store`):
+
+| Operation | Allowed for | Notes |
+|-----------|-------------|-------|
+| `search(query, limit)` | scoped to keys in `memory.reads` | free-text recall across LongTerm + Session, filtered to declared read keys — a skill can only ever retrieve content under keys it declared (no cross-skill exfiltration by searching) |
+| `read(key)` | keys declared in `memory.reads` | deterministic keyed recall; `Ok(None)` = never stored |
+| `store(key, value)` | keys declared in `memory.writes` | durable LongTerm persistence; disabled skills are denied everything |
+
+Enforcement lives in the gate (never in the store): a skill cannot read or
+write a key it did not declare, cannot search beyond its declared read keys,
+and a disabled skill is permission-inert. The gate reads the skill's **live**
+registry state per operation — disabling a skill mid-session revokes an
+already-issued handle. The real store is wired at the integration point:
+`friday_context::CoreMemorySource` wraps the runtime `MemoryEngine`, and
+`SkillEngineWiring::with_memory(source)` + `SkillEngineWiring::memory_for(id)`
+expose the handles. Proven live: the bundled `git` skill stored and read back
+`git.last_workspace` through a redb-backed `MemoryEngine`.
+
+## 15. What this unlocks
 
 - **User extensibility**: drop in a `skill.json` to teach FRIDAY something new
 - **Community marketplace**: share skills across users (future)
@@ -384,3 +485,44 @@ offline — remote registry is optional enhancement.
 - **Portability**: skills work across LLM providers (no provider-specific prompts)
 
 The brain stays clean. Skills are the interchangeable organs.
+
+---
+
+# §15 Agent scoping & the self-development skills
+
+## 15.1 `SkillRegistry::subset` — per-agent allowed skills
+
+The Agent Runtime gives each worker an **allowed-skills scope**. A worker
+physically cannot reach a skill outside its scope:
+
+```rust
+let scoped: SkillRegistry = registry.subset(&["git"]); // + git's dependency closure
+```
+
+- Empty allowed list = every loaded skill.
+- Dependency closure rides along (a skill whose dependency is out of scope is
+  dropped — it would be unselectable anyway).
+- Enabled/disabled state is preserved from the source registry.
+- The subset is a point-in-time snapshot per worker — workers never mutate the
+  shared registry.
+
+`select_for` + `SkillPolicy` over the subset make the scoping structural: an
+agent scoped to `[git]` gets git's capabilities, no others, even if the goal
+mentions documentation.
+
+## 15.2 Bundled self-development skills
+
+The "what does FRIDAY need to build the next version of itself" shortlist is
+now bundled (`skills/bundled/`), all readonly (safe capabilities auto-approve):
+
+| Skill | Capabilities | Notes |
+|-------|--------------|-------|
+| `git` | `git.*`, `terminal.exec` | already bundled |
+| `web` | `web.search`, `web.fetch` + **soft-declared** `web.open/click/type/scroll/extract/screenshot` | HTTP read-only v1; browser verbs bind when a browser runtime arrives |
+| `docs` | `docs.search`, `docs.read` | search/read local docs (READMEs, ADRs, specs) |
+| `codeintel` | `codeintel.understand` | repo structure/counts/query matches |
+
+The soft-declared browser verbs exercise the M5 soft-declaration mechanism for
+real: the `web` skill is selectable today (its read-only verbs resolve) and
+automatically gains the browser verbs the moment a future adapter registers
+them.
