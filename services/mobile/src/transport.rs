@@ -592,10 +592,8 @@ mod tests {
                         saw_telemetry = payload.get("memory_total_mb").is_some();
                     } else if topic == "tasks" {
                         // plan.goal is bridged under the "tasks" topic.
-                        saw_goal = payload
-                            .get("goal")
-                            .and_then(|v| v.as_str())
-                            == Some("Run cargo test");
+                        saw_goal =
+                            payload.get("goal").and_then(|v| v.as_str()) == Some("Run cargo test");
                     }
                 }
                 ServerMessage::CommandResult { id, ok, .. } if id == "g1" => {
