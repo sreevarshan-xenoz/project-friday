@@ -8,9 +8,9 @@
 
 use uuid::Uuid;
 
-use friday_planner::experience::TimelineStore;
 use friday_planner::experience::recorder::{extract_workflow, record_workflow};
 use friday_planner::experience::reflection::reflect_on_goal;
+use friday_planner::experience::TimelineStore;
 
 fn temp_store() -> (TimelineStore, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
@@ -28,13 +28,37 @@ fn timeline_append_only() {
 
     // Append three entries.
     let e1 = store
-        .record(goal_id, plan_id, exec_id, "exec.action", "filesystem.write", serde_json::json!({"path": "/tmp/a"}), None)
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "filesystem.write",
+            serde_json::json!({"path": "/tmp/a"}),
+            None,
+        )
         .unwrap();
     let e2 = store
-        .record(goal_id, plan_id, exec_id, "exec.result", "filesystem.write", serde_json::json!({"success": true}), Some(e1.id))
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "filesystem.write",
+            serde_json::json!({"success": true}),
+            Some(e1.id),
+        )
         .unwrap();
     store
-        .record(goal_id, plan_id, exec_id, "artifact.created", "filesystem.write", serde_json::json!({"path": "/tmp/a"}), Some(e2.id))
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "artifact.created",
+            "filesystem.write",
+            serde_json::json!({"path": "/tmp/a"}),
+            Some(e2.id),
+        )
         .unwrap();
 
     // All three are retrievable in order.
@@ -58,7 +82,15 @@ fn timeline_stores_semantics() {
     let goal_id = Uuid::new_v4();
 
     let entry = store
-        .record(goal_id, Uuid::new_v4(), Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({"message": "test"}), None)
+        .record(
+            goal_id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "exec.action",
+            "git.commit",
+            serde_json::json!({"message": "test"}),
+            None,
+        )
         .unwrap();
 
     // The capability is the semantic identifier, not a raw UI event.
@@ -77,18 +109,76 @@ fn recorder_extracts_workflow() {
     let exec_id = Uuid::new_v4();
 
     // Simulate a successful goal: write → commit.
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:filesystem.write_file", serde_json::json!({}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:filesystem.write_file", serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:git.git_commit", serde_json::json!({}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:git.git_commit", serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "goal.completed", "", serde_json::json!({}), None).unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:filesystem.write_file",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:filesystem.write_file",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:git.git_commit",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:git.git_commit",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
 
-    let workflow = extract_workflow(&store, goal_id, "test-goal").unwrap().unwrap();
+    let workflow = extract_workflow(&store, goal_id, "test-goal")
+        .unwrap()
+        .unwrap();
 
     // Actions are the short form (after the colon).
-    assert_eq!(workflow.actions, vec!["filesystem.write_file", "git.git_commit"]);
+    assert_eq!(
+        workflow.actions,
+        vec!["filesystem.write_file", "git.git_commit"]
+    );
     // Capabilities are the full form.
-    assert_eq!(workflow.capabilities, vec!["mcp:filesystem.write_file", "mcp:git.git_commit"]);
+    assert_eq!(
+        workflow.capabilities,
+        vec!["mcp:filesystem.write_file", "mcp:git.git_commit"]
+    );
     assert_eq!(workflow.source_goal_id, goal_id);
     assert!(workflow.name.contains("test-goal"));
 }
@@ -99,10 +189,50 @@ fn recorder_deduplicates_consecutive() {
     let goal_id = Uuid::new_v4();
 
     // Two consecutive identical capabilities should be deduplicated.
-    store.record(goal_id, Uuid::new_v4(), Uuid::new_v4(), "exec.action", "filesystem.write", serde_json::json!({}), None).unwrap();
-    store.record(goal_id, Uuid::new_v4(), Uuid::new_v4(), "exec.result", "filesystem.write", serde_json::json!({}), None).unwrap();
-    store.record(goal_id, Uuid::new_v4(), Uuid::new_v4(), "exec.action", "filesystem.write", serde_json::json!({}), None).unwrap();
-    store.record(goal_id, Uuid::new_v4(), Uuid::new_v4(), "exec.result", "filesystem.write", serde_json::json!({}), None).unwrap();
+    store
+        .record(
+            goal_id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "exec.action",
+            "filesystem.write",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "exec.result",
+            "filesystem.write",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "exec.action",
+            "filesystem.write",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "exec.result",
+            "filesystem.write",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
 
     let workflow = extract_workflow(&store, goal_id, "dupes").unwrap().unwrap();
     assert_eq!(workflow.actions, vec!["filesystem.write"]);
@@ -113,10 +243,32 @@ fn recorder_persists_workflow() {
     let (store, _dir) = temp_store();
     let goal_id = Uuid::new_v4();
 
-    store.record(goal_id, Uuid::new_v4(), Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), None).unwrap();
-    store.record(goal_id, Uuid::new_v4(), Uuid::new_v4(), "exec.result", "git.commit", serde_json::json!({}), None).unwrap();
+    store
+        .record(
+            goal_id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "exec.action",
+            "git.commit",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "exec.result",
+            "git.commit",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
 
-    let workflow = record_workflow(&store, goal_id, "persist-test").unwrap().unwrap();
+    let workflow = record_workflow(&store, goal_id, "persist-test")
+        .unwrap()
+        .unwrap();
 
     // Reload from disk.
     let loaded = store.load_workflows().unwrap();
@@ -133,7 +285,15 @@ fn reflection_produces_records_not_edits() {
     let exec_id = Uuid::new_v4();
 
     let entry = store
-        .record(goal_id, plan_id, exec_id, "exec.result", "filesystem.write", serde_json::json!({"success": true, "source": "mcp"}), None)
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "filesystem.write",
+            serde_json::json!({"success": true, "source": "mcp"}),
+            None,
+        )
         .unwrap();
 
     // Run reflection.
@@ -159,15 +319,65 @@ fn reflection_categorizes_outcomes() {
     let goal_id = Uuid::new_v4();
 
     // Success.
-    store.record(goal_id, Uuid::new_v4(), Uuid::new_v4(), "exec.result", "fs.write", serde_json::json!({"success": true, "source": "mcp"}), None).unwrap();
+    store
+        .record(
+            goal_id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "exec.result",
+            "fs.write",
+            serde_json::json!({"success": true, "source": "mcp"}),
+            None,
+        )
+        .unwrap();
     // Failure.
-    store.record(goal_id, Uuid::new_v4(), Uuid::new_v4(), "exec.result", "fs.write", serde_json::json!({"success": false, "error": "file not found"}), None).unwrap();
+    store
+        .record(
+            goal_id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "exec.result",
+            "fs.write",
+            serde_json::json!({"success": false, "error": "file not found"}),
+            None,
+        )
+        .unwrap();
     // Permission denied.
-    store.record(goal_id, Uuid::new_v4(), Uuid::new_v4(), "exec.result", "fs.write", serde_json::json!({"success": false, "error": "permission denied by policy"}), None).unwrap();
+    store
+        .record(
+            goal_id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "exec.result",
+            "fs.write",
+            serde_json::json!({"success": false, "error": "permission denied by policy"}),
+            None,
+        )
+        .unwrap();
     // Artifact.
-    store.record(goal_id, Uuid::new_v4(), Uuid::new_v4(), "artifact.created", "fs.write", serde_json::json!({"path": "/tmp/x"}), None).unwrap();
+    store
+        .record(
+            goal_id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "artifact.created",
+            "fs.write",
+            serde_json::json!({"path": "/tmp/x"}),
+            None,
+        )
+        .unwrap();
     // Git commit.
-    store.record(goal_id, Uuid::new_v4(), Uuid::new_v4(), "git.commit.created", "git.commit", serde_json::json!({"commit_hash": "abc1234"}), None).unwrap();
+    store
+        .record(
+            goal_id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "git.commit.created",
+            "git.commit",
+            serde_json::json!({"commit_hash": "abc1234"}),
+            None,
+        )
+        .unwrap();
 
     let records = reflect_on_goal(&store, goal_id).unwrap();
     assert_eq!(records.len(), 5);
@@ -186,7 +396,17 @@ fn empty_goal_produces_no_workflow() {
     let goal_id = Uuid::new_v4();
 
     // Only goal.completed, no actions.
-    store.record(goal_id, Uuid::new_v4(), Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), None).unwrap();
+    store
+        .record(
+            goal_id,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
 
     let workflow = extract_workflow(&store, goal_id, "empty").unwrap();
     assert!(workflow.is_none());
@@ -196,9 +416,39 @@ fn empty_goal_produces_no_workflow() {
 fn all_entries_returns_everything() {
     let (store, _dir) = temp_store();
 
-    store.record(Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), "exec.action", "a", serde_json::json!({}), None).unwrap();
-    store.record(Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), "exec.action", "b", serde_json::json!({}), None).unwrap();
-    store.record(Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), "exec.action", "c", serde_json::json!({}), None).unwrap();
+    store
+        .record(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "exec.action",
+            "a",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "exec.action",
+            "b",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "exec.action",
+            "c",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
 
     let all = store.all_entries().unwrap();
     assert_eq!(all.len(), 3);
