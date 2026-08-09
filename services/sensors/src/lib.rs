@@ -39,7 +39,9 @@ impl Default for SensorLoop {
 
 impl SensorLoop {
     pub fn new() -> Self {
-        Self { sensors: Vec::new() }
+        Self {
+            sensors: Vec::new(),
+        }
     }
 
     pub fn add(&mut self, sensor: Box<dyn Sensor>) {
@@ -48,7 +50,10 @@ impl SensorLoop {
 
     /// Poll all sensors and publish events to the workspace.
     /// Returns total events published this cycle.
-    pub async fn poll_all(&mut self, workspace: &friday_cognitive::workspace::GlobalWorkspace) -> usize {
+    pub async fn poll_all(
+        &mut self,
+        workspace: &friday_cognitive::workspace::GlobalWorkspace,
+    ) -> usize {
         let mut total = 0;
         for sensor in &mut self.sensors {
             let events = sensor.poll().await;
@@ -133,12 +138,14 @@ mod tests {
 
     #[tokio::test]
     async fn sensor_loop_polls_all_sensors() {
-        let events_a = vec![
-            WorkspaceEvent::new(Topic::WindowFocusChanged, serde_json::json!({"from": "a"})),
-        ];
-        let events_b = vec![
-            WorkspaceEvent::new(Topic::Mouse, serde_json::json!({"from": "b"})),
-        ];
+        let events_a = vec![WorkspaceEvent::new(
+            Topic::WindowFocusChanged,
+            serde_json::json!({"from": "a"}),
+        )];
+        let events_b = vec![WorkspaceEvent::new(
+            Topic::Mouse,
+            serde_json::json!({"from": "b"}),
+        )];
 
         let mut loop_ = SensorLoop::new();
         loop_.add(Box::new(MockSensor::new("sensor_a", events_a)));
