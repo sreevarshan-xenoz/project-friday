@@ -4,6 +4,7 @@ use crate::Goal;
 use crate::Policy;
 use crate::PolicyKind;
 use crate::WorldState;
+use friday_investigation::{InvestigationChannel, InvestigationResult};
 use friday_knowledge::{KnowledgeEngine, KnowledgeRecord};
 use serde::{Deserialize, Serialize};
 
@@ -56,6 +57,9 @@ pub enum PlanSource {
     KnowledgeBased,
     /// Generated from simulation.
     Simulated,
+    /// Generated from an investigation plan: evidence gathering precedes
+    /// execution (M7 — the planner consumes the Investigation Engine).
+    Investigation,
     /// Custom source.
     Custom(String),
 }
@@ -83,7 +87,10 @@ impl Plan {
         strategy: impl Into<String>,
         source: PlanSource,
     ) -> Self {
-        let goal_id = actions.first().map(|a| a.goal_id.clone()).unwrap_or_default();
+        let goal_id = actions
+            .first()
+            .map(|a| a.goal_id.clone())
+            .unwrap_or_default();
         let strategy = strategy.into();
         let cost = actions.len() as f64;
         let duration = actions.len() as u64 * 1000;
@@ -141,7 +148,8 @@ impl Plan {
 ///   ├── Knowledge
 ///   ├── Policies
 ///   ├── WorldState
-///   └── Constraints
+///   ├── Constraints
+///   └── Investigation (M7: what the goal requires knowing first)
 /// ```
 ///
 /// Planning is a deterministic transformation:
@@ -156,6 +164,12 @@ pub struct PlanningContext {
     pub policies: Vec<Policy>,
     pub world_state: WorldState,
     pub constraints: Constraints,
+    /// What this goal requires knowing before execution, produced by the
+    /// Investigation Engine. Always present (never an `Option`): the outcome
+    /// is either [`InvestigationResult::Complete`] (empty plan = the goal is
+    /// self-contained), [`InvestigationResult::Skipped`], or
+    /// [`InvestigationResult::Failed`] — the pipeline stays explicit.
+    pub investigation: InvestigationResult,
 }
 
 /// Constraints on planning.
@@ -175,6 +189,7 @@ impl PlanningContext {
             policies: Vec::new(),
             world_state: WorldState::new(),
             constraints: Constraints::default(),
+            investigation: InvestigationResult::Skipped,
         }
     }
 
@@ -195,6 +210,14 @@ impl PlanningContext {
 
     pub fn with_constraints(mut self, constraints: Constraints) -> Self {
         self.constraints = constraints;
+        self
+    }
+
+    /// Attach the Investigation Engine's outcome for this goal (M7 seam).
+    /// Accepts either an [`InvestigationResult`] or a plain
+    /// [`InvestigationPlan`] (which becomes [`InvestigationResult::Complete`]).
+    pub fn with_investigation(mut self, investigation: impl Into<InvestigationResult>) -> Self {
+        self.investigation = investigation.into();
         self
     }
 }
@@ -275,10 +298,7 @@ impl PlanEvaluator {
         let best = scored.remove(0);
         let rationale = self.explain(&best.0.plan, best.1, world);
 
-        let all_candidates: Vec<PlanCandidate> = scored
-            .into_iter()
-            .map(|(c, _)| c)
-            .collect();
+        let all_candidates: Vec<PlanCandidate> = scored.into_iter().map(|(c, _)| c).collect();
 
         RankedPlan {
             plan: best.0.plan,
@@ -336,10 +356,7 @@ impl PlanEvaluator {
 
     /// Explain why a plan was chosen.
     fn explain(&self, plan: &Plan, score: f32, world: &WorldState) -> String {
-        let tools_ok = plan
-            .actions
-            .iter()
-            .all(|a| world.has_tool(&a.capability));
+        let tools_ok = plan.actions.iter().all(|a| world.has_tool(&a.capability));
         let prereqs_ok = plan
             .prerequisites
             .iter()
@@ -399,6 +416,12 @@ impl Planning {
             candidates.push(knowledge_candidate);
         }
 
+        // Candidate 4: Investigation-driven plan (M7) — when the goal requires
+        // information first, evidence gathering precedes execution.
+        if let Some(investigation_candidate) = self.plan_from_investigation(context) {
+            candidates.push(investigation_candidate);
+        }
+
         candidates
     }
 
@@ -415,11 +438,21 @@ impl Planning {
 
     /// Plan driven by a sequencing policy.
     fn plan_from_policy(&self, context: &PlanningContext) -> Option<PlanCandidate> {
-        let seq_policy = context.policies.iter().find(|p| p.kind == PolicyKind::Sequence)?;
+        let seq_policy = context
+            .policies
+            .iter()
+            .find(|p| p.kind == PolicyKind::Sequence)?;
 
-        let from_cap = seq_policy.capability.clone().unwrap_or(Capability::ExecuteCommand);
+        let from_cap = seq_policy
+            .capability
+            .clone()
+            .unwrap_or(Capability::ExecuteCommand);
         let then_cap: Capability = serde_json::from_value(
-            seq_policy.config.get("then").cloned().unwrap_or(serde_json::json!("execute_command")),
+            seq_policy
+                .config
+                .get("then")
+                .cloned()
+                .unwrap_or(serde_json::json!("execute_command")),
         )
         .unwrap_or(Capability::ExecuteCommand);
 
@@ -430,11 +463,7 @@ impl Planning {
             Action::step(&context.goal.description, then_cap, &context.goal.id, 1, 2),
         ];
 
-        let mut plan = Plan::from_actions(
-            actions,
-            seq_label,
-            PlanSource::PolicyDriven,
-        );
+        let mut plan = Plan::from_actions(actions, seq_label, PlanSource::PolicyDriven);
         plan.confidence = seq_policy.confidence;
 
         Some(PlanCandidate {
@@ -450,10 +479,7 @@ impl Planning {
         }
 
         // Find the most supported knowledge record
-        let best = context
-            .knowledge
-            .iter()
-            .max_by_key(|k| k.support)?;
+        let best = context.knowledge.iter().max_by_key(|k| k.support)?;
 
         if best.support < 2 {
             return None; // need at least 2 observations
@@ -472,12 +498,104 @@ impl Planning {
         })
     }
 
+    /// Plan that gathers the required evidence before executing — the M7 seam:
+    /// the planner consumes the Investigation Engine's plan, so a goal that
+    /// needs information becomes `investigate → execute` rather than a blind
+    /// direct action.
+    ///
+    /// Each required channel becomes one evidence-gathering action carrying the
+    /// real skill capability id in its instruction (`web.search`, `git.status`,
+    /// …) mapped to the closest built-in [`Capability`] for the runtime, and a
+    /// final action executes the goal itself. Confidence = mean evidence
+    /// strength, so strong requirements win evaluation over the direct plan
+    /// while weak ones fold into it (the planner's judgment: not every hint
+    /// warrants a separate evidence phase).
+    fn plan_from_investigation(&self, context: &PlanningContext) -> Option<PlanCandidate> {
+        let InvestigationResult::Complete(investigation) = &context.investigation else {
+            // Skipped or Failed — no evidence candidate. The goal's own plan
+            // stands; a failed investigation is never a failed goal.
+            return None;
+        };
+        if !investigation.needs_investigation() {
+            return None;
+        }
+
+        let requirements = &investigation.requirements;
+        let total = requirements.len();
+        let goal_id = &context.goal.id;
+
+        let mut actions = Vec::with_capacity(total + 1);
+        for (i, req) in requirements.iter().enumerate() {
+            // The first suggested capability id is the honest audit trail
+            // (e.g. `git.status`); the Capability enum is the runtime model.
+            let cap_id = req.channel.suggested_capabilities()[0];
+            // The query the evidence tool should gather: the goal itself.
+            // (e.g. `web.search` needs to know what to search for).
+            actions.push(
+                Action::step(
+                    format!("gather evidence: {} ({})", req.channel.label(), cap_id),
+                    Self::capability_for_channel(req.channel),
+                    goal_id,
+                    i as u32,
+                    (total + 1) as u32,
+                )
+                .with_parameters(serde_json::json!({ "query": context.goal.description })),
+            );
+        }
+        actions.push(Action::step(
+            &context.goal.description,
+            self.infer_capability(&context.goal.description, &context.knowledge),
+            goal_id,
+            total as u32,
+            (total + 1) as u32,
+        ));
+
+        let labels = requirements
+            .iter()
+            .map(|r| format!("{} ({:.2})", r.channel.label(), r.confidence))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let evidence = requirements.iter().map(|r| r.confidence).sum::<f32>() / total as f32;
+
+        let plan = Plan::from_actions(
+            actions,
+            format!("Evidence-gated execution: {labels}"),
+            PlanSource::Investigation,
+        )
+        .with_confidence(evidence);
+
+        Some(PlanCandidate {
+            preliminary_score: evidence,
+            plan,
+        })
+    }
+
+    /// The evidence action's capability IS the real skill capability id
+    /// (`git.status`, `web.search`, …) carried as a [`Capability::Custom`]. An
+    /// evidence action is *not* an arbitrary `execute_command`, so it must not
+    /// collapse into a built-in capability where a git-backed tool would
+    /// hijack every command action in the registry. The id is the same one the
+    /// instruction carries, so the audit trail and the registry key agree.
+    fn capability_for_channel(channel: InvestigationChannel) -> Capability {
+        Capability::Custom(channel.suggested_capabilities()[0].to_string())
+    }
+
     /// Legacy entry point: single plan (backward compatible).
+    ///
+    /// Returns the best candidate's actions by the planner's own preliminary
+    /// judgment — so when the Investigation Engine produced strong evidence
+    /// requirements, the evidence-gated plan (`PlanSource::Investigation`)
+    /// wins here too, instead of the blind direct action. Weak requirements
+    /// still fold back into the direct plan.
     pub fn plan(&self, context: &PlanningContext) -> Vec<Action> {
         let candidates = self.think(context);
         candidates
             .into_iter()
-            .next()
+            .max_by(|a, b| {
+                a.preliminary_score
+                    .partial_cmp(&b.preliminary_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .map(|c| c.plan.actions)
             .unwrap_or_default()
     }
@@ -509,5 +627,223 @@ impl Planning {
 impl Default for Planning {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use friday_investigation::{InformationRequirement, InvestigationPlan};
+
+    /// Deterministic investigation plan helper: channel → confidence.
+    fn plan_with_requirements(reqs: Vec<(InvestigationChannel, f32)>) -> InvestigationPlan {
+        InvestigationPlan {
+            requirements: reqs
+                .into_iter()
+                .map(|(channel, confidence)| InformationRequirement {
+                    channel,
+                    rationale: channel.label().to_string(),
+                    confidence,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn investigation_candidate_generated_when_goal_requires_evidence() {
+        let planning = Planning::new();
+        let ctx = PlanningContext::new(Goal::new("Search the web for a guide")).with_investigation(
+            plan_with_requirements(vec![(InvestigationChannel::Web, 0.9)]),
+        );
+        let candidates = planning.think(&ctx);
+        assert!(candidates
+            .iter()
+            .any(|c| c.plan.source == PlanSource::Investigation));
+    }
+
+    #[test]
+    fn no_investigation_candidate_when_nothing_required() {
+        let planning = Planning::new();
+        let ctx = PlanningContext::new(Goal::new("open notepad"))
+            .with_investigation(InvestigationPlan::default());
+        let candidates = planning.think(&ctx);
+        assert!(!candidates
+            .iter()
+            .any(|c| c.plan.source == PlanSource::Investigation));
+    }
+
+    #[test]
+    fn strong_evidence_wins_evaluation_over_direct_plan() {
+        let planning = Planning::new();
+        let evaluator = PlanEvaluator::new();
+        let world = WorldState::new()
+            .with_tool(Capability::SearchWeb)
+            .with_tool(Capability::ExecuteCommand)
+            .with_tool(Capability::Custom("web.search".into()))
+            .with_tool(Capability::Custom("git.status".into()));
+        let ctx = PlanningContext::new(Goal::new("Search the web and check the git repo"))
+            .with_world_state(world.clone())
+            .with_investigation(plan_with_requirements(vec![
+                (InvestigationChannel::Web, 0.9),
+                (InvestigationChannel::Git, 0.8),
+            ]));
+
+        let candidates = planning.think(&ctx);
+        let ranked = evaluator.evaluate(&candidates, &world);
+        assert_eq!(ranked.plan.source, PlanSource::Investigation);
+        assert!(
+            ranked.plan.strategy.contains("web"),
+            "{}",
+            ranked.plan.strategy
+        );
+        assert!(
+            ranked.plan.strategy.contains("git"),
+            "{}",
+            ranked.plan.strategy
+        );
+    }
+
+    #[test]
+    fn weak_evidence_folds_into_direct_plan() {
+        let planning = Planning::new();
+        let evaluator = PlanEvaluator::new();
+        let world = WorldState::new()
+            .with_tool(Capability::ReadFile)
+            .with_tool(Capability::ListDirectory)
+            .with_tool(Capability::ExecuteCommand);
+        let ctx = PlanningContext::new(Goal::new("Show me the file"))
+            .with_world_state(world.clone())
+            // A lone 0.4 signal: offered as a candidate, but the planner's
+            // judgment folds it into the direct plan.
+            .with_investigation(plan_with_requirements(vec![(
+                InvestigationChannel::Filesystem,
+                0.4,
+            )]));
+
+        let candidates = planning.think(&ctx);
+        assert!(candidates
+            .iter()
+            .any(|c| c.plan.source == PlanSource::Investigation));
+        let ranked = evaluator.evaluate(&candidates, &world);
+        assert_eq!(ranked.plan.source, PlanSource::Direct);
+    }
+
+    #[test]
+    fn investigation_plan_orders_evidence_before_execution() {
+        let planning = Planning::new();
+        let ctx = PlanningContext::new(Goal::new("Check git status of the workspace repository"))
+            .with_investigation(plan_with_requirements(vec![
+                (InvestigationChannel::Git, 0.8),
+                (InvestigationChannel::CodeIntel, 0.7),
+            ]));
+        let candidates = planning.think(&ctx);
+        let plan = candidates
+            .iter()
+            .find(|c| c.plan.source == PlanSource::Investigation)
+            .expect("investigation plan")
+            .plan
+            .clone();
+
+        assert_eq!(plan.actions.len(), 3, "2 evidence + 1 execute");
+        // Evidence actions carry the real skill capability ids.
+        assert!(
+            plan.actions[0].instruction.contains("git.status"),
+            "{}",
+            plan.actions[0].instruction
+        );
+        assert!(
+            plan.actions[1].instruction.contains("codeintel.understand"),
+            "{}",
+            plan.actions[1].instruction
+        );
+        assert_eq!(
+            plan.actions[0].capability,
+            Capability::Custom("git.status".into()),
+            "evidence capability is the real skill id"
+        );
+        assert_eq!(
+            plan.actions[1].capability,
+            Capability::Custom("codeintel.understand".into())
+        );
+        // The goal itself executes last.
+        assert_eq!(
+            plan.actions[2].instruction,
+            "Check git status of the workspace repository"
+        );
+        assert!(plan.actions[0].is_first());
+        assert!(plan.actions[2].is_last());
+        assert!(plan.actions[0].is_multi_step());
+    }
+
+    #[test]
+    fn context_round_trips_investigation_plan() {
+        let plan = plan_with_requirements(vec![(InvestigationChannel::Memory, 0.6)]);
+        let ctx = PlanningContext::new(Goal::new("remember the preference"))
+            .with_investigation(plan.clone());
+        assert_eq!(ctx.investigation, InvestigationResult::Complete(plan));
+    }
+
+    #[test]
+    fn skipped_and_failed_investigations_produce_no_evidence_candidate() {
+        let planning = Planning::new();
+
+        let skipped = PlanningContext::new(Goal::new("Search the web for a guide"))
+            .with_investigation(InvestigationResult::Skipped);
+        let candidates = planning.think(&skipped);
+        assert!(!candidates
+            .iter()
+            .any(|c| c.plan.source == PlanSource::Investigation));
+
+        let failed = PlanningContext::new(Goal::new("Search the web for a guide"))
+            .with_investigation(InvestigationResult::Failed {
+                reason: "strategy unavailable".into(),
+            });
+        let candidates = planning.think(&failed);
+        assert!(!candidates
+            .iter()
+            .any(|c| c.plan.source == PlanSource::Investigation));
+        // The direct plan still stands for the goal.
+        assert_eq!(planning.plan(&failed).len(), 1);
+    }
+
+    #[test]
+    fn legacy_plan_consumes_the_investigation_plan() {
+        let planning = Planning::new();
+        // Strong evidence → the evidence-gated plan wins the legacy entry point
+        // too, so `plan()` never produces a blind direct action.
+        let strong =
+            PlanningContext::new(Goal::new("Search the web for a guide")).with_investigation(
+                plan_with_requirements(vec![(InvestigationChannel::Web, 0.9)]),
+            );
+        let actions = planning.plan(&strong);
+        assert_eq!(actions.len(), 2, "evidence + execute actions");
+        assert!(
+            actions[0].instruction.contains("web.search"),
+            "first action gathers evidence: {}",
+            actions[0].instruction
+        );
+
+        // Weak evidence folds back into the direct plan (planner's judgment).
+        let weak = PlanningContext::new(Goal::new("Show me the file")).with_investigation(
+            plan_with_requirements(vec![(InvestigationChannel::Filesystem, 0.4)]),
+        );
+        let actions = planning.plan(&weak);
+        assert_eq!(actions.len(), 1);
+    }
+
+    /// `plan()` now returns the planner's best candidate, not the first — a
+    /// high-confidence sequencing policy also wins the legacy entry point.
+    /// Locks in the intended semantics so a future caller isn't surprised.
+    #[test]
+    fn legacy_plan_prefers_high_confidence_policy_candidate() {
+        let planning = Planning::new();
+        let policy = Policy::sequence(Capability::ExecuteCommand, Capability::ReadFile, 0.8, 5);
+        let ctx = PlanningContext::new(Goal::new("build project")).with_policies(vec![policy]);
+        let actions = planning.plan(&ctx);
+        assert_eq!(actions.len(), 2, "policy plan (2 actions) wins over direct");
+        assert!(
+            actions[0].capability == Capability::ExecuteCommand
+                && actions[1].capability == Capability::ReadFile
+        );
     }
 }
