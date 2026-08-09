@@ -1,0 +1,22 @@
+[package]
+name = "friday-skill-forge"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "FRIDAY Skill Forge (M7): create, validate, and publish skills via the `friday` CLI"
+
+[dependencies]
+friday-skills = { path = "../skills" }
+friday-planner = { path = "../../planner" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+uuid = { workspace = true }
+
+[[bin]]
+name = "friday"
+path = "src/main.rs"
