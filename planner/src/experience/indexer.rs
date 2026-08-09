@@ -138,18 +138,15 @@ impl ExperienceIndexer {
         // Group entries by goal_key.
         for entry in entries {
             let key = (entry.goal_id, entry.plan_id);
-            let record = self
-                .chronological
-                .entry(key)
-                .or_insert_with(|| GoalRecord {
-                    goal_id: key,
-                    title: extract_title(&entry.metadata),
-                    entries: Vec::new(),
-                    workflows: Vec::new(),
-                    reflections: Vec::new(),
-                    outcome: GoalOutcome::Unknown,
-                    last_activity: entry.timestamp,
-                });
+            let record = self.chronological.entry(key).or_insert_with(|| GoalRecord {
+                goal_id: key,
+                title: extract_title(&entry.metadata),
+                entries: Vec::new(),
+                workflows: Vec::new(),
+                reflections: Vec::new(),
+                outcome: GoalOutcome::Unknown,
+                last_activity: entry.timestamp,
+            });
             record.entries.push(entry.clone());
             if entry.timestamp > record.last_activity {
                 record.last_activity = entry.timestamp;
@@ -198,10 +195,7 @@ impl ExperienceIndexer {
             }
             let vector = GoalVector::from_text(&text);
             for term in vector.terms.keys() {
-                self.inverted
-                    .entry(term.clone())
-                    .or_default()
-                    .insert(*key);
+                self.inverted.entry(term.clone()).or_default().insert(*key);
             }
             self.semantic.insert(*key, vector);
         }
@@ -311,10 +305,7 @@ fn derive_outcome(entries: &[TimelineEntry]) -> GoalOutcome {
     let has_completed = entries.iter().any(|e| e.event_kind == "goal.completed");
     let has_failure = entries.iter().any(|e| {
         e.event_kind == "exec.result"
-            && e.metadata
-                .get("success")
-                .and_then(|v| v.as_bool())
-                == Some(false)
+            && e.metadata.get("success").and_then(|v| v.as_bool()) == Some(false)
     });
     let has_permission_denied = entries.iter().any(|e| {
         e.event_kind == "exec.result"
@@ -326,10 +317,7 @@ fn derive_outcome(entries: &[TimelineEntry]) -> GoalOutcome {
     });
     let has_success = entries.iter().any(|e| {
         e.event_kind == "exec.result"
-            && e.metadata
-                .get("success")
-                .and_then(|v| v.as_bool())
-                == Some(true)
+            && e.metadata.get("success").and_then(|v| v.as_bool()) == Some(true)
     });
 
     if has_completed {
