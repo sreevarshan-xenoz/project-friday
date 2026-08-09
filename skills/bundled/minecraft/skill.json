@@ -7,9 +7,9 @@
   "category": "gaming",
   "icon": "◼",
   "capabilities": [
-    "terminal.execute",
-    "filesystem.read",
-    "filesystem.write"
+    "terminal.exec",
+    "filesystem.read_file",
+    "filesystem.write_file"
   ],
   "actions": [
     "start minecraft server",
@@ -25,8 +25,8 @@
     "configure server properties"
   ],
   "permissions": [
-    "terminal.execute",
-    "filesystem.write"
+    "terminal.exec",
+    "filesystem.write_file"
   ],
   "examples": [
     {
