@@ -13,6 +13,11 @@ members = [
     "services/benchmark",
     "services/recovery",
     "services/context",
+    "services/skills",
+    "services/persona",
+    "services/investigation",
+    "services/agent-runtime",
+    "services/skill-forge",
     "services/intelligence",
     "services/provider-qual",
     "services/mobile",
@@ -20,7 +25,7 @@ members = [
     "plugins/windows",
     "services/windows-qual",
     "mcp"
-, "services/sensors", "services/knowledge", "services/reflection", "services/goal-execution", "services/plugin-runtime", "services/experience", "services/bridge"]
+, "services/sensors", "services/knowledge", "services/reflection",    "services/goal-execution", "services/plugin-runtime", "services/experience", "services/project-cognition", "services/bridge"]
 
 [workspace.package]
 edition = "2021"
