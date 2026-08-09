@@ -7,10 +7,8 @@
 //! - Alternative evidence sources (cached, hybrid, remote)
 //! - Swapping retrieval engines without touching the builder or planner
 
-use crate::experience::{
-    ExperienceMatch, ReflectionRecord, WorkflowSuggestion,
-};
 use crate::experience::indexer::GoalRecord;
+use crate::experience::{ExperienceMatch, ReflectionRecord, WorkflowSuggestion};
 use uuid::Uuid;
 
 /// Abstraction over evidence retrieval. The builder depends on this,
