@@ -9,15 +9,15 @@
 
 use uuid::Uuid;
 
+use friday_planner::execution::capability_registry::Risk;
+use friday_planner::execution::lifecycle::ExecutionBudget;
 use friday_planner::experience::{
-    ExperienceEvidence, ExperienceMatch, GoalOutcome, MatchReason, ExperienceContext,
-    PlanningGoal, TrustComponents,
+    ExperienceContext, ExperienceEvidence, ExperienceMatch, GoalOutcome, MatchReason, PlanningGoal,
+    TrustComponents,
 };
 use friday_planner::planning::planners::context::{
     AvailableCapability, PlanContext, RiskPolicy, WorkspaceContext,
 };
-use friday_planner::execution::capability_registry::Risk;
-use friday_planner::execution::lifecycle::ExecutionBudget;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -32,11 +32,14 @@ fn base_plan_context() -> PlanContext {
             risk: Risk::Safe,
             score: 0.9,
             schema: serde_json::json!({}),
+            preferred: false,
         }],
         budget: ExecutionBudget::default(),
         workspace: WorkspaceContext::default(),
         risk_policy: RiskPolicy::default(),
         experience: None,
+        skills: None,
+        investigation: None,
     }
 }
 
@@ -113,7 +116,10 @@ fn previous_success_detected() {
     assert!(view.had_previous_success());
     assert!(!view.had_previous_failure());
     assert!(view.previous_outcome_summary().is_some());
-    assert!(view.previous_outcome_summary().unwrap().contains("succeeded"));
+    assert!(view
+        .previous_outcome_summary()
+        .unwrap()
+        .contains("succeeded"));
 }
 
 #[test]
@@ -132,7 +138,10 @@ fn previous_partial_completion_detected() {
     let ctx = plan_context_with_outcome(GoalOutcome::PartiallyCompleted);
     let view = ctx.evidence();
     assert!(view.had_previous_failure()); // partially completed counts as failure
-    assert!(view.previous_outcome_summary().unwrap().contains("partially completed"));
+    assert!(view
+        .previous_outcome_summary()
+        .unwrap()
+        .contains("partially completed"));
 }
 
 #[test]
@@ -164,10 +173,22 @@ fn empty_evidence_identical_to_no_experience() {
     let view_empty = empty_evidence.evidence();
 
     // Both should report no evidence
-    assert_eq!(view_none.has_previous_attempt(), view_empty.has_previous_attempt());
-    assert_eq!(view_none.had_previous_success(), view_empty.had_previous_success());
-    assert_eq!(view_none.had_previous_failure(), view_empty.had_previous_failure());
-    assert_eq!(view_none.previous_outcome_summary(), view_empty.previous_outcome_summary());
+    assert_eq!(
+        view_none.has_previous_attempt(),
+        view_empty.has_previous_attempt()
+    );
+    assert_eq!(
+        view_none.had_previous_success(),
+        view_empty.had_previous_success()
+    );
+    assert_eq!(
+        view_none.had_previous_failure(),
+        view_empty.had_previous_failure()
+    );
+    assert_eq!(
+        view_none.previous_outcome_summary(),
+        view_empty.previous_outcome_summary()
+    );
     assert_eq!(view_none.similar_count(), view_empty.similar_count());
     assert_eq!(view_none.suggestion_count(), view_empty.suggestion_count());
 }
