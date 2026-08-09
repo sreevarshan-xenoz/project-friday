@@ -344,12 +344,15 @@ export interface ReplayReport {
 // ---------------------------------------------------------------------------
 
 /**
- * The ten-phase executive cycle, mirroring
- * `services/goal-execution/src/executive.rs`.
+ * The eleven-phase executive cycle, mirroring
+ * `services/goal-execution/src/executive.rs`. `Investigate` is the M7
+ * evidence gate: the cycle enters it for focused goals that must know
+ * something before planning.
  */
 export type ExecutivePhaseName =
   | 'Observe'
   | 'Attend'
+  | 'Investigate'
   | 'Plan'
   | 'Simulate'
   | 'Execute'
@@ -375,6 +378,39 @@ export interface WorldState {
   confidence: number;
 }
 
+/**
+ * An information channel a goal may require before execution — the
+ * lowercase label of `InvestigationChannel` (services/investigation).
+ */
+export type InvestigationChannel =
+  | 'web'
+  | 'docs'
+  | 'codeintel'
+  | 'memory'
+  | 'git'
+  | 'filesystem';
+
+/** One evidence branch: the channel, the auditable "why", and its strength. */
+export interface InformationRequirement {
+  channel: InvestigationChannel;
+  /** Which keyword(s) triggered the requirement. */
+  rationale: string;
+  /** Evidence strength (0..1). */
+  confidence: number;
+}
+
+/**
+ * The "watch FRIDAY think" view: goal → evidence branches → phases.
+ * Mirrors `friday_investigation::InvestigationGraph` (carried by the bridge
+ * in `DashboardDto.graph`).
+ */
+export interface InvestigationGraphDTO {
+  goal: string;
+  requirements: InformationRequirement[];
+  /** e.g. `['plan', 'execute']` or `['investigate', 'plan', 'execute']`. */
+  phases: string[];
+}
+
 export interface DashboardDTO {
   mission: string;
   goal_progress: number;
@@ -382,6 +418,8 @@ export interface DashboardDTO {
   executive: ExecutivePhaseState[];
   world: WorldState;
   recent: DecisionTimeline[];
+  /** The live investigation trace for the current goal (null while loading). */
+  graph: InvestigationGraphDTO | null;
 }
 
 /**
