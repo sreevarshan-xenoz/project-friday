@@ -27,6 +27,9 @@ import type {
   Experience,
   ExperienceKey,
   ExperienceMetrics,
+  InformationRequirement,
+  InvestigationChannel,
+  InvestigationGraphDTO,
   MetricsReport,
   PlannerFeedback,
   PlanOutcome,
@@ -600,13 +603,129 @@ export function computeMetrics(timelines: DecisionTimeline[]): MetricsReport {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Investigation graph (live trace) — mirrors the Rust heuristic strategy
+// (`services/investigation/src/heuristic.rs`) so the mock, the bridge, and the
+// real engine agree on the same goal → branches → phases mapping.
+// ---------------------------------------------------------------------------
+
+interface Keyword {
+  kw: string;
+  weight: number;
+}
+
+const CHANNEL_TABLES: Record<InvestigationChannel, Keyword[]> = {
+  web: [
+    { kw: 'search the web', weight: 0.9 },
+    { kw: 'search online', weight: 0.9 },
+    { kw: 'the internet', weight: 0.8 },
+    { kw: 'look up', weight: 0.7 },
+    { kw: 'research', weight: 0.7 },
+    { kw: 'find out', weight: 0.6 },
+    { kw: 'explain', weight: 0.5 },
+    { kw: 'latest', weight: 0.5 },
+    { kw: 'online', weight: 0.5 },
+    { kw: 'what is', weight: 0.4 },
+  ],
+  docs: [
+    { kw: 'documentation', weight: 0.9 },
+    { kw: 'read the docs', weight: 0.9 },
+    { kw: 'api reference', weight: 0.8 },
+    { kw: 'docs', weight: 0.6 },
+    { kw: 'guide', weight: 0.5 },
+    { kw: 'how does', weight: 0.5 },
+  ],
+  codeintel: [
+    { kw: 'in this repository', weight: 0.9 },
+    { kw: 'this repo', weight: 0.9 },
+    { kw: 'codebase', weight: 0.8 },
+    { kw: 'project structure', weight: 0.8 },
+    { kw: 'source files', weight: 0.7 },
+    { kw: 'the repository', weight: 0.7 },
+    { kw: 'what files', weight: 0.6 },
+    { kw: 'workspace', weight: 0.4 },
+  ],
+  memory: [
+    { kw: 'remember', weight: 0.9 },
+    { kw: 'do you recall', weight: 0.9 },
+    { kw: 'my preference', weight: 0.8 },
+    { kw: 'previously', weight: 0.6 },
+    { kw: 'last time', weight: 0.6 },
+    { kw: 'what did i', weight: 0.6 },
+    { kw: 'earlier', weight: 0.4 },
+  ],
+  git: [
+    { kw: 'repo status', weight: 0.9 },
+    { kw: 'modified files', weight: 0.8 },
+    { kw: 'git', weight: 0.8 },
+    { kw: 'commit', weight: 0.7 },
+    { kw: 'branches', weight: 0.7 },
+    { kw: 'changed', weight: 0.4 },
+    { kw: 'pull', weight: 0.4 },
+    { kw: 'push', weight: 0.4 },
+  ],
+  filesystem: [
+    { kw: 'list the files', weight: 0.8 },
+    { kw: 'read the file', weight: 0.8 },
+    { kw: 'open the file', weight: 0.7 },
+    { kw: 'directory', weight: 0.6 },
+    { kw: 'folder', weight: 0.6 },
+    { kw: 'file', weight: 0.4 },
+    { kw: 'path', weight: 0.4 },
+  ],
+};
+
 /**
- * A static snapshot of the current executive cycle: which of the ten phases
- * (Observe, Attend, Plan, Simulate, Execute, Verify, Reflect, Consolidate,
- * Learn, Idle) have finished, which is running, and which are still waiting.
+ * Word-boundary match — `file` must not fire inside `profile`, like Rust.
+ * Note: boundaries are ASCII-only (`[^a-z0-9]`) while Rust's
+ * `char::is_alphanumeric` is Unicode-aware. All demo goals are ASCII, so the
+ * two agree today; keep non-ASCII goals out of `DEMO_GOALS` to stay in sync.
+ */
+function containsWord(hay: string, needle: string): boolean {
+  return new RegExp(`(^|[^a-z0-9])${needle}([^a-z0-9]|$)`, 'i').test(hay);
+}
+
+function scoreChannel(goal: string, kws: Keyword[]): { score: number; hits: string[] } {
+  let total = 0;
+  const hits: string[] = [];
+  for (const { kw, weight } of kws) {
+    const hit = kw.includes(' ') ? goal.includes(kw) : containsWord(goal, kw);
+    if (hit) {
+      total += weight;
+      hits.push(kw);
+    }
+  }
+  return { score: Math.min(1, total), hits };
+}
+
+/**
+ * The "watch FRIDAY think" graph for a goal, mirroring
+ * `HeuristicInvestigationStrategy` (min confidence 0.25, per-channel sums
+ * capped at 1.0, requirements highest-confidence first, tie-break on the
+ * stable channel order). A self-contained goal gets `plan → execute`.
+ */
+export function investigationGraph(goal: string): InvestigationGraphDTO {
+  const lower = goal.toLowerCase();
+  const requirements: InformationRequirement[] = [];
+  for (const [channel, kws] of Object.entries(CHANNEL_TABLES) as [InvestigationChannel, Keyword[]][]) {
+    const { score, hits } = scoreChannel(lower, kws);
+    if (score >= 0.25) {
+      requirements.push({ channel, rationale: hits.join(', '), confidence: score });
+    }
+  }
+  requirements.sort((a, b) => b.confidence - a.confidence);
+  const phases = requirements.length > 0 ? ['investigate', 'plan', 'execute'] : ['plan', 'execute'];
+  return { goal, requirements, phases };
+}
+
+/**
+ * A static snapshot of the current executive cycle: which of the eleven
+ * phases (Observe, Attend, Investigate, Plan, Simulate, Execute, Verify,
+ * Reflect, Consolidate, Learn, Idle) have finished, which is running, and
+ * which are still waiting. `Investigate` is the M7 evidence gate.
  */
 export function executiveCycle(finished: string[]): ExecutivePhaseState[] {
-  const order: ExecutivePhaseName[] = ['Observe', 'Attend', 'Plan', 'Simulate', 'Execute', 'Verify', 'Reflect', 'Consolidate', 'Learn', 'Idle'];
+  const order: ExecutivePhaseName[] = ['Observe', 'Attend', 'Investigate', 'Plan', 'Simulate', 'Execute', 'Verify', 'Reflect', 'Consolidate', 'Learn', 'Idle'];
   const running = order[finished.length] ?? 'Idle';
   return order.map((name) => {
     if (finished.includes(name)) return { name, status: 'done' };
