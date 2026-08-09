@@ -24,7 +24,7 @@ pub mod planning;
 pub mod verification;
 
 pub use engines::{
-    IntentEngine, PlanningEngine, PlanningTelemetry, count_validation_issues, planning_engine_with,
+    count_validation_issues, planning_engine_with, IntentEngine, PlanningEngine, PlanningTelemetry,
 };
 pub use events::{
     EXEC_ACTION, EXEC_RESULT, GOAL_RAW, INTENT_CREATED, PLAN_CREATED, TASK_COMPLETED, TASK_FAILED,
@@ -41,10 +41,12 @@ use uuid::Uuid;
 use friday_core::Friday;
 use friday_core::Result;
 
+use crate::execution::lifecycle::ExecutionBudget;
 use crate::execution::{CapabilityRegistry, GoalStore, GoalSupervisor, PolicyAuthority};
 use crate::planning::planners::backend::ReasoningBackend;
 use crate::planning::planners::context::{RiskPolicy, WorkspaceContext};
-use crate::execution::lifecycle::ExecutionBudget;
+use friday_investigation::InvestigationEngine;
+use friday_skills::SkillContextSource;
 
 /// Resolve the goal-store path from config (`goal_store_path`) or default to a
 /// per-instance temporary database. The default is unique per `Friday` instance
@@ -101,8 +103,74 @@ pub async fn register_engines_with_llm(
     friday: &mut Friday,
     backend: Option<Box<dyn ReasoningBackend>>,
 ) -> Result<Arc<CapabilityRegistry>> {
+    register_engines_with_policy(friday, backend, |_| PolicyBinding {
+        policy: Arc::new(AllowAllPolicy),
+        skills: None,
+        investigation: None,
+    })
+    .await
+}
+
+/// Everything the policy factory hands back to the boot path: the supervisor's
+/// [`PolicyAuthority`] plus — optionally — a skill source whose ranked skills
+/// enrich every `PlanContext` the LLM planner sees. The policy factory runs
+/// once, against the freshly built [`CapabilityRegistry`], so both the policy
+/// and the skill context are constructed from the *same* registry the planner
+/// and supervisor resolve against.
+pub struct PolicyBinding {
+    /// The supervisor's permission authority (skill-aware or allow-all).
+    pub policy: Arc<dyn PolicyAuthority>,
+    /// Skill source wired into the planning engine. `None` disables the
+    /// skill-aware `PlanContext` enrichment (rule planner is unaffected).
+    pub skills: Option<Arc<dyn SkillContextSource>>,
+    /// Investigation engine wired into the planning engine. When present,
+    /// every LLM-routed goal's `PlanContext` carries the channels it requires
+    /// evidence from — the EVIDENCE REQUIRED section in the LLM planner's
+    /// prompt. `None` disables the enrichment (rule planner is unaffected).
+    pub investigation: Option<InvestigationEngine>,
+}
+
+/// Like [`register_engines_with_llm`] but the supervisor's [`PolicyAuthority`]
+/// (and an optional skill context source) is provided by `policy`, a factory
+/// invoked with the freshly built [`CapabilityRegistry`] (so the policy can be
+/// constructed from the *same* registry the planner and supervisor resolve
+/// against — e.g. a skill-aware policy that gates on resolved capabilities).
+///
+/// The factory returns a [`PolicyBinding`]; its `skills` field is attached to
+/// the planning engine so every goal's `PlanContext` carries the skills ranked
+/// against it (see [`PlanningEngine::with_skill_context`]).
+///
+/// **Ordering:** the factory runs **once, up front** — before any plugin is
+/// registered — and its returned `policy` is reused for the supervisor. It
+/// always runs, even when a later boot step (e.g. the goal store) fails;
+/// callers must not rely on lazy invocation.
+///
+/// **API note:** the closure's return type is [`PolicyBinding`], not a bare
+/// `Arc<dyn PolicyAuthority>` — hosts that want only policy return
+/// `skills: None`.
+///
+/// This is the hook for swapping the default allow-all policy without
+/// changing the shared boot path: every caller of
+/// [`register_engines_with_llm`] keeps working, and hosts that want policy
+/// (skill approvals, workspace rules) build it from the returned registry.
+pub async fn register_engines_with_policy<F>(
+    friday: &mut Friday,
+    backend: Option<Box<dyn ReasoningBackend>>,
+    policy: F,
+) -> Result<Arc<CapabilityRegistry>>
+where
+    F: FnOnce(Arc<CapabilityRegistry>) -> PolicyBinding + Send,
+{
     let registry = Arc::new(CapabilityRegistry::new());
     crate::execution::native_caps::register_native_builtins(&registry);
+
+    // Run the policy factory up front: it needs the registry, and the skill
+    // source it hands back must reach the planning engine before registration.
+    let PolicyBinding {
+        policy,
+        skills,
+        investigation,
+    } = policy(registry.clone());
 
     friday
         .register_plugin(Box::new(IntentEngine::new()))
@@ -114,6 +182,12 @@ pub async fn register_engines_with_llm(
         RiskPolicy::default(),
         WorkspaceContext::default(),
     );
+    if let Some(skills) = skills {
+        planning = planning.with_skill_context(skills);
+    }
+    if let Some(investigation) = investigation {
+        planning = planning.with_investigation_engine(investigation);
+    }
 
     // Wire the experience provider if the timeline store is available.
     match crate::experience::TimelineStore::open(&timeline_store_path(friday)) {
@@ -139,12 +213,13 @@ pub async fn register_engines_with_llm(
     friday
         .register_plugin(Box::new(VerificationEngine::new()))
         .await?;
-    let store = GoalStore::open(&goal_store_path(friday))
-        .map_err(|e| friday_core::FridayError::Plugin("supervisor".to_string(), format!("goal store: {e}")))?;
+    let store = GoalStore::open(&goal_store_path(friday)).map_err(|e| {
+        friday_core::FridayError::Plugin("supervisor".to_string(), format!("goal store: {e}"))
+    })?;
     friday
         .register_plugin(Box::new(GoalSupervisor::new(
             registry.clone(),
-            Arc::new(AllowAllPolicy),
+            policy,
             Arc::new(store),
         )))
         .await?;
@@ -159,10 +234,15 @@ pub async fn register_supervisor(
     registry: Arc<CapabilityRegistry>,
     policy: Arc<dyn PolicyAuthority>,
 ) -> Result<()> {
-    let store = GoalStore::open(&goal_store_path(friday))
-        .map_err(|e| friday_core::FridayError::Plugin("supervisor".to_string(), format!("goal store: {e}")))?;
+    let store = GoalStore::open(&goal_store_path(friday)).map_err(|e| {
+        friday_core::FridayError::Plugin("supervisor".to_string(), format!("goal store: {e}"))
+    })?;
     friday
-        .register_plugin(Box::new(GoalSupervisor::new(registry, policy, Arc::new(store))))
+        .register_plugin(Box::new(GoalSupervisor::new(
+            registry,
+            policy,
+            Arc::new(store),
+        )))
         .await?;
     Ok(())
 }
