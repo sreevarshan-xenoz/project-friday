@@ -32,7 +32,7 @@ import {
   type MetricsReport,
   type SnapshotFrame,
 } from './types';
-import { computeMetrics, executiveCycle, generateLedger, worldState } from './mock';
+import { computeMetrics, executiveCycle, generateLedger, investigationGraph, worldState } from './mock';
 
 const TICK_MS = 1200;
 const HEARTBEAT_EVERY = 3;
@@ -64,6 +64,7 @@ function standardCapabilitySet(): CapabilitySet {
 const PHASE_ORDER: ExecutivePhaseName[] = [
   'Observe',
   'Attend',
+  'Investigate',
   'Plan',
   'Simulate',
   'Execute',
@@ -72,6 +73,19 @@ const PHASE_ORDER: ExecutivePhaseName[] = [
   'Consolidate',
   'Learn',
   'Idle',
+];
+
+/**
+ * Demo goals the live investigation trace cycles through, one per executive
+ * cycle — mirroring `DEMO_GOALS` in `services/bridge/src/source.rs`. Each
+ * exercises a different graph shape: web+docs, git+codeintel+filesystem, a
+ * memory recall, and a self-contained goal (`plan → execute` only).
+ */
+const DEMO_GOALS: string[] = [
+  'Search the web for the latest Rust async docs',
+  'Check the git status of the workspace repository and show changed files',
+  'Do you remember what I asked about yesterday?',
+  'Open notepad and start writing a note',
 ];
 
 export class MockConsoleDataSource implements ConsoleDataSource {
@@ -86,6 +100,7 @@ export class MockConsoleDataSource implements ConsoleDataSource {
   private progress = 0;
   private tickCount = 0;
   private seq = 0;
+  private goalIndex = 0;
 
   constructor(count = 140, seed = 42) {
     this.timelines = generateLedger(count, seed);
@@ -157,6 +172,11 @@ export class MockConsoleDataSource implements ConsoleDataSource {
 
   private tick(): void {
     this.progress = (this.progress + 1) % (PHASE_ORDER.length + 1);
+    if (this.progress === 0) {
+      // A full executive cycle completed — the investigation trace advances
+      // to the next demo goal, exactly like the bridge's demo source.
+      this.goalIndex = (this.goalIndex + 1) % DEMO_GOALS.length;
+    }
     this.tickCount += 1;
     if (this.tickCount % HEARTBEAT_EVERY === 0) {
       this.emit(this.frame('heartbeat', { latency_ms: this.simulatedLatency(5, 16) }) as HeartbeatFrame);
@@ -177,6 +197,7 @@ export class MockConsoleDataSource implements ConsoleDataSource {
       executive: executiveCycle(PHASE_ORDER.slice(0, this.progress)),
       world: worldState(this.timelines),
       recent: this.timelines.slice(-6).reverse(),
+      graph: investigationGraph(DEMO_GOALS[this.goalIndex]),
     };
   }
 
