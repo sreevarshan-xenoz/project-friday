@@ -23,7 +23,7 @@ use friday_bridge::connection::ErrorSpec;
 use friday_bridge::protocol::HelloFrame;
 use friday_bridge::{
     ConnectionManager, DeltaPublisher, DemoRuntimeSource, ErrorCode, Frame, FrameSerializer,
-    Heartbeat, PROTOCOL_VERSION, RuntimeSource, Severity, SnapshotPublisher,
+    Heartbeat, RuntimeSource, Severity, SnapshotPublisher, PROTOCOL_VERSION,
 };
 
 /// Fixed wire timestamp so fixtures are byte-reproducible across runs.
@@ -40,13 +40,13 @@ fn out_dir() -> PathBuf {
 }
 
 fn write_fixture(name: &str, frame: &Frame) {
-    let json = FrameSerializer::to_json(frame)
-        .unwrap_or_else(|e| panic!("serialize {name}: {e}"));
+    let json = FrameSerializer::to_json(frame).unwrap_or_else(|e| panic!("serialize {name}: {e}"));
     fs::write(out_dir().join(format!("{name}.json")), format!("{json}\n"))
         .unwrap_or_else(|e| panic!("write {name}: {e}"));
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     fs::create_dir_all(out_dir()).expect("create protocol-tests/v1");
     let manager = ConnectionManager::new();
     let source_name = SOURCE.to_string();
@@ -78,7 +78,7 @@ fn main() {
     let mut source = DemoRuntimeSource::new(42, 5);
     let snap = SnapshotPublisher::snapshot(
         &manager,
-        &source.snapshot(),
+        &source.snapshot().await,
         &source_name,
         &bridge_id,
         FIXED_TS,
@@ -86,7 +86,7 @@ fn main() {
     write_fixture("snapshot", &Frame::Snapshot(snap));
 
     // delta — the first tick (the executive phase advances the dashboard).
-    let delta = source.tick(FIXED_TS);
+    let delta = source.tick(FIXED_TS).await;
     let delta = DeltaPublisher::frame(&delta[0], &source_name, &bridge_id, FIXED_TS);
     write_fixture("delta", &Frame::Delta(delta));
 
@@ -122,8 +122,5 @@ fn main() {
     )
     .expect("write control-resync");
 
-    println!(
-        "wrote 8 protocol fixtures to {}",
-        out_dir().display()
-    );
+    println!("wrote 8 protocol fixtures to {}", out_dir().display());
 }
