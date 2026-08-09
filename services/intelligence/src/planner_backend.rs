@@ -16,6 +16,7 @@ use friday_planner::planning::planners::ReasoningBackend as PlannerBackend;
 use friday_planner::register_engines_with_llm;
 
 use crate::providers::{InferenceFabric, ModelClient};
+use crate::qualification::RequestRequirements;
 
 /// Thin adapter over [`InferenceFabric`] satisfying the planner's
 /// `ReasoningBackend` contract.
@@ -32,6 +33,27 @@ impl InferenceBackend {
     /// Ollama) and wrap it as a planner backend.
     pub fn from_env() -> Self {
         Self::new(Arc::new(InferenceFabric::default_from_env()))
+    }
+
+    /// Complete with a Model Budget — a [`RequestRequirements`] constraint set
+    /// instead of the default mode-based routing. This is the planner-facing
+    /// surface for "private code stays local", "free-only", or "needs vision":
+    /// the caller names requirements, never providers.
+    ///
+    /// ```ignore
+    /// use friday_intelligence::{InferenceBackend, ModelCapability, RequestRequirements};
+    ///
+    /// let backend = InferenceBackend::from_env();
+    /// // An agent that prefers local execution for private source code:
+    /// let req = RequestRequirements::from_capabilities(&[ModelCapability::Local]);
+    /// let text = backend.complete_with(&req, "summarize this diff").await?;
+    /// ```
+    pub async fn complete_with(
+        &self,
+        req: &RequestRequirements,
+        prompt: &str,
+    ) -> Result<String, String> {
+        self.fabric.complete_with(req, prompt).await
     }
 }
 
@@ -52,8 +74,9 @@ impl PlannerBackend for InferenceBackend {
 /// planner, so this is always safe to call.
 pub async fn register_with_fabric(
     friday: &mut Friday,
-) -> friday_core::Result<std::sync::Arc<friday_planner::execution::capability_registry::CapabilityRegistry>>
-{
+) -> friday_core::Result<
+    std::sync::Arc<friday_planner::execution::capability_registry::CapabilityRegistry>,
+> {
     let backend: Box<dyn PlannerBackend> = Box::new(InferenceBackend::from_env());
     register_engines_with_llm(friday, Some(backend)).await
 }
