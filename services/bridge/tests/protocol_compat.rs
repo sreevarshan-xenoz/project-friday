@@ -36,8 +36,7 @@ fn v1_dir() -> PathBuf {
 
 fn fixture(name: &str) -> String {
     let path = v1_dir().join(format!("{name}.json"));
-    let raw = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read fixture {name}: {e}"));
+    let raw = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read fixture {name}: {e}"));
     raw.trim_end().to_string()
 }
 
@@ -83,7 +82,10 @@ fn control_messages_match_the_frozen_client_shapes() {
         serde_json::from_str(&fixture("control-hello-response")).unwrap();
     assert_eq!(hello_response["type"], "hello_response");
     let caps = &hello_response["capabilities"];
-    assert!(caps.is_object(), "hello_response selects capabilities by name");
+    assert!(
+        caps.is_object(),
+        "hello_response selects capabilities by name"
+    );
     assert_eq!(
         caps["metrics"], true,
         "the console fixture enables the optional `metrics` capability"
@@ -100,7 +102,10 @@ fn error_fixture_carries_the_full_machine_readable_taxonomy() {
     let Frame::Error(err) = frame else {
         panic!("error fixture must parse as an Error frame");
     };
-    assert_eq!(err.code, Some(friday_bridge::ErrorCode::UnsupportedCapability));
+    assert_eq!(
+        err.code,
+        Some(friday_bridge::ErrorCode::UnsupportedCapability)
+    );
     assert_eq!(err.severity, Some(friday_bridge::Severity::Warning));
     assert_eq!(err.recoverable, Some(true));
     assert!(err.recommended_action.is_some());
