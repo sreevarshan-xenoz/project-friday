@@ -102,6 +102,33 @@ discipline, the default is **not** flipped until qualification evidence shows th
 local engine beats Ollama for the target workload. See
 `docs/mech/MECH-0001-*.md` for how routing-mode decisions are recorded and gated.
 
+### Free-tier cloud catalog (env-gated, additive)
+
+Four more OpenAI-compatible free providers are registered behind the same
+env-gated `OpenAiProvider` pattern. All are **additive data** — `RoutingDecision`
+stays frozen v1; only the Free/Hybrid allowlists and the model catalogs change.
+
+| Provider | Env keys | Base URL | Free models | Modes | Hosting note |
+|----------|----------|----------|-------------|-------|--------------|
+| **SambaNova** | `SAMBA_API_KEY` (+ `SAMBA_BASE_URL`) | `api.sambanova.ai/v1` | `Meta-Llama-3.3-70B-Instruct`, `DeepSeek-V3.1`, `gpt-oss-120b` | Free, Hybrid | US-hosted, ~20 RPM / 20 RPD / 200K TPD, no card |
+| **GitHub Models** | `GITHUB_MODELS_KEY`, or `GITHUB_MODELS_ENABLED=true` + `GITHUB_TOKEN` (+ `GITHUB_MODELS_BASE_URL`) | `models.github.ai/inference` | `gpt-4o`, `o4-mini`, `Llama-3.3-70B-Instruct`, `DeepSeek-R1` | Free, Hybrid | US-hosted; only free tier with frontier proprietary models; PAT auth. **Opt-in gate:** a bare `GITHUB_TOKEN` (set by default in CI) never registers the provider — explicit `GITHUB_MODELS_KEY` or `GITHUB_MODELS_ENABLED` required |
+| **SiliconFlow** | `SILICONFLOW_API_KEY` | `api.siliconflow.cn/v1` | `Qwen/Qwen3-8B`, `DeepSeek-R1-Distill-Qwen-7B` | **Free only** | **CN-hosted** — never a silent failover target |
+| **Zhipu GLM** | `ZHIPU_API_KEY` | `open.bigmodel.cn/api/paas/v4` | `glm-4.7-flash` | **Free only** | **CN-hosted** — never a silent failover target |
+
+**Privacy stance:** SiliconFlow and Zhipu are deliberately **Free-mode-only** —
+the fabric's stance is "local or Western-hosted for private code", so a China-
+hosted endpoint can never be a Hybrid/Quality failover for private repos. They
+are opt-in (key present → registered → Free candidate) and absent otherwise.
+Note the boundary precisely: `Free` is the fabric's default mode, so setting a
+SiliconFlow/Zhipu key does put those providers in the default **Free** candidate
+pool — the stance prevents them from being silent *failover* targets in
+Hybrid/Quality, not from explicit Free-mode selection. SambaNova and GitHub
+Models join `RoutingMode::Hybrid` because they are Western-hosted free tiers
+with strong models (including vision on `gpt-4o`).
+
+Qualification: `cargo run -p friday-provider-qual -- --provider sambanova` (and
+`github-models`, `siliconflow`, `zhipu`) targets `RoutingMode::Free` for each.
+
 ## 3c. Qualification profiles vs runtime health
 
 Two layers, **never mixed**:
@@ -196,43 +223,58 @@ Two consequences are enforced here so the layers cannot overlap later:
   once and read many times. Re-weighting routing is a fabric-side policy change,
   not a profile edit.
 
-### Future: `RoutingPolicy` (strategy, not formula)
+### Constraint-based routing — implemented (the Model Budget)
 
-`routing_score()` is a placeholder for a strategy so FRIDAY can swap objectives
-without touching the fabric:
+`RequestRequirements` is now **real code** (`qualification.rs`) and the fabric
+routes within it: `InferenceFabric::select_for(&req)` applies the hard filters
+(budget, privacy, required capabilities, latency bound) and ranks the survivors
+by the requirement-aware `routing_score`; `InferenceFabric::complete_with(req,
+prompt)` runs that path through the same attempt loop / immutable audit trail as
+`complete`, and `InferenceBackend::complete_with` exposes it to the planner.
+
+Guardrail enforced by construction — **the planner expresses constraints, never
+provider names.** `RequestRequirements::from_capabilities(&[ModelCapability::…])`
+converts a routing *preference* list into requirements (`Local` raises privacy,
+`Vision`/`LongContext`/`Tools` become preferred) for any caller holding this
+crate's capability vocabulary (e.g. the planner's `InferenceBackend`). Note:
+`friday-agent-runtime`'s self-contained `ModelCapability` (adds `Coding`/
+`Reasoning`/`Fast`) has no intelligence dependency, so `AgentSpec`'s
+`preferred_models` remains a **reserved contract** — a future LLM-using driver
+maps it through this bridge; nothing does today.
 
 ```rust
-trait RoutingPolicy {
-    fn score(
-        &self,
-        qualification: &QualificationProfile,
-        health: &ProviderHealth,
-        request: &RequestRequirements,
-    ) -> f64;
-}
-```
-
-Guardrail — **the planner expresses constraints, not policies.** The default
-routing policy solves an optimization problem over requirements; it does not
-pre-pick a policy per request:
-
-```rust
-struct RequestRequirements {
-    reasoning: Requirement,   // None | Preferred | Required | High
-    latency_ms: Option<u32>,  // bound
-    offline: Preference,      // Preferred | Required
-    budget: Budget,           // Free | Bounded
+pub struct RequestRequirements {
+    reasoning: Requirement,        // None | Preferred | Required
+    latency_ms: Option<u32>,       // hard bound (ms); slower candidates excluded
+    privacy: Preference,           // Any | Preferred | Required (local-only)
+    budget: Budget,                // Free | Bounded
+    vision: Requirement,           // Preferred boosts; Required filters
+    long_context: Requirement,
     tools: Requirement,
 }
 ```
 
-One `RoutingPolicy` (the seeded default, solving over `RequestRequirements`) is
-the right shape for nearly all requests. Additional policies only earn a place
-when they embody a genuinely different *optimization philosophy* (e.g. an
-energy-efficiency objective), not merely a different user request — otherwise you
-end up with dozens of near-identical strategies. Do not build any of this before
-the constraint-based-routing step; until then `routing_score()` is the single
-seeded default.
+Defaults encode the **free-first policy**: `budget = Free`, `privacy = Any`, no
+hard capability requirements — so `RequestRequirements::default()` is the same
+free-first cascade `complete` already runs, and existing callers see no change.
+`routing_score` is requirement-adjusted at runtime (`privacy` is the dominant
+lever: private code stays local even when a remote free model is faster), and
+scoring weights stay policy-side, never in profile files.
+
+Still **parked** — the `RoutingPolicy` trait itself:
+
+```rust
+trait RoutingPolicy {
+    fn score(&self, …) -> f64;
+}
+```
+
+One seeded default policy solving over `RequestRequirements` remains the right
+shape for nearly all requests. Additional policies only earn a place when they
+embody a genuinely different *optimization philosophy* (e.g. an energy
+objective), not merely a different user request — otherwise you end up with
+dozens of near-identical strategies. Do not build the trait until that evidence
+arrives; `routing_score` is the single seeded default.
 
 `ProviderHealth` (see `qualification.rs`): `availability`, moving TTFT / TPS,
 `success_rate`, `current_rate_limit`, `last_error`, `circuit_state`. It is the
