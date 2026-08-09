@@ -166,6 +166,6 @@ impl ActionAdapter for TerminalAdapter {
 }
 
 /// Capability record published to the Capability Intelligence registry.
-    pub fn capabilities() -> Vec<friday_capabilities::model::Capability> {
-        friday_capabilities::builtins::terminal()
-    }
+pub fn capabilities() -> Vec<friday_capabilities::model::Capability> {
+    friday_capabilities::builtins::terminal()
+}
