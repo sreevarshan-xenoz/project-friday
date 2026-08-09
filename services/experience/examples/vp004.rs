@@ -15,13 +15,13 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use friday_plugin_runtime::{
-    Capability, CorrelationId, DecisionLedger, DecisionRecord, ExecutionPlan, EvaluatorKind,
-    EvaluatorSignal, PlanOutcome, PlanningRationale, ScoredCandidate, SelectionContext,
-};
 use friday_experience::{
-    CalibrationStore, ExperienceEngine, ExperienceStore, MetricsEngine, ReputationEngine,
-    ReputationStore, ReplayEngine, TimelineBuilder,
+    CalibrationStore, ExperienceEngine, ExperienceStore, MetricsEngine, ReplayEngine,
+    ReputationEngine, ReputationStore, TimelineBuilder,
+};
+use friday_plugin_runtime::{
+    Capability, CorrelationId, DecisionLedger, DecisionRecord, EvaluatorKind, EvaluatorSignal,
+    ExecutionPlan, PlanOutcome, PlanningRationale, ScoredCandidate, SelectionContext,
 };
 
 const SIZES: [usize; 5] = [10, 100, 1_000, 10_000, 100_000];
@@ -39,7 +39,10 @@ struct Lcg(u64);
 
 impl Lcg {
     fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         self.0 >> 33
     }
 }
@@ -98,7 +101,11 @@ fn make_record(seq: usize, rng: &mut Lcg) -> DecisionRecord {
             latency_ms: latency,
             cost,
             success,
-            error: if success { None } else { Some("timeout".into()) },
+            error: if success {
+                None
+            } else {
+                Some("timeout".into())
+            },
             completed_steps: if success { 1 } else { 0 },
             cancelled: false,
             timeout: !success,
@@ -176,8 +183,7 @@ fn run_size(n: usize, rng: &mut Lcg) -> Measurements {
 }
 
 fn results_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../benchmarks/VP-004/results")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../benchmarks/VP-004/results")
 }
 
 fn json_of(m: &Measurements) -> String {
@@ -248,7 +254,8 @@ fn main() {
     println!("Scaling check (large/small per-record costs, ~1.0 means linear):");
     println!(
         "  append:    {:.3}",
-        (large.ledger_append_us as f64 / large.n as f64) / (small.ledger_append_us as f64 / small.n as f64)
+        (large.ledger_append_us as f64 / large.n as f64)
+            / (small.ledger_append_us as f64 / small.n as f64)
     );
     println!(
         "  timeline:  {:.3}",
