@@ -8,14 +8,12 @@
 
 use uuid::Uuid;
 
-use friday_planner::experience::replay::{ApplicabilityChecker, ReplayEngine};
 use friday_planner::experience::recorder::record_workflow;
 use friday_planner::experience::reflection::reflect_on_goal;
+use friday_planner::experience::replay::{ApplicabilityChecker, ReplayEngine};
 use friday_planner::experience::service::ExperienceService;
-use friday_planner::experience::{
-    ExperienceMetrics, GoalOutcome,
-};
 use friday_planner::experience::TimelineStore;
+use friday_planner::experience::{ExperienceMetrics, GoalOutcome};
 
 fn temp_store() -> (TimelineStore, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
@@ -31,34 +29,160 @@ fn record_mcp_integration(store: &TimelineStore, name: &str) -> Uuid {
     let plan_id = Uuid::new_v4();
     let exec_id = Uuid::new_v4();
 
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:transport.setup",
-        serde_json::json!({"title": name}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:transport.setup",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:protocol.handshake",
-        serde_json::json!({}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:protocol.handshake",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:adapter.register",
-        serde_json::json!({}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:adapter.register",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.action", "filesystem.write",
-        serde_json::json!({"path": "tests/integration.rs"}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "filesystem.write",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "artifact.created", "filesystem.write",
-        serde_json::json!({"path": "tests/integration.rs"}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:git.git_add",
-        serde_json::json!({}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:git.git_add",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:git.git_commit",
-        serde_json::json!({}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:git.git_commit",
-        serde_json::json!({"success": true, "commit_hash": format!("abc{i:04x}", i = rand())}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "goal.completed", "",
-        serde_json::json!({"outcome": "success"}), None).unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:transport.setup",
+            serde_json::json!({"title": name}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:transport.setup",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:protocol.handshake",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:protocol.handshake",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:adapter.register",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:adapter.register",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "filesystem.write",
+            serde_json::json!({"path": "tests/integration.rs"}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "filesystem.write",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "artifact.created",
+            "filesystem.write",
+            serde_json::json!({"path": "tests/integration.rs"}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:git.git_add",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:git.git_add",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:git.git_commit",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:git.git_commit",
+            serde_json::json!({"success": true, "commit_hash": format!("abc{i:04x}", i = rand())}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "goal.completed",
+            "",
+            serde_json::json!({"outcome": "success"}),
+            None,
+        )
+        .unwrap();
     goal_id
 }
 
@@ -69,24 +193,105 @@ fn record_clippy_fix(store: &TimelineStore, name: &str) -> Uuid {
     let plan_id = Uuid::new_v4();
     let exec_id = Uuid::new_v4();
 
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:filesystem.read_file",
-        serde_json::json!({"title": name, "path": "src/lib.rs"}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:filesystem.read_file",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:filesystem.write_file",
-        serde_json::json!({}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:filesystem.write_file",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:git.git_add",
-        serde_json::json!({}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:git.git_add",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:git.git_commit",
-        serde_json::json!({}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:git.git_commit",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "goal.completed", "",
-        serde_json::json!({"outcome": "success"}), None).unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:filesystem.read_file",
+            serde_json::json!({"title": name, "path": "src/lib.rs"}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:filesystem.read_file",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:filesystem.write_file",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:filesystem.write_file",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:git.git_add",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:git.git_add",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:git.git_commit",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:git.git_commit",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "goal.completed",
+            "",
+            serde_json::json!({"outcome": "success"}),
+            None,
+        )
+        .unwrap();
     goal_id
 }
 
@@ -97,31 +302,115 @@ fn record_adr_update(store: &TimelineStore, name: &str) -> Uuid {
     let plan_id = Uuid::new_v4();
     let exec_id = Uuid::new_v4();
 
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:filesystem.read_file",
-        serde_json::json!({"title": name, "path": "specs/adr/ADR-0010.md"}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:filesystem.read_file",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:filesystem.write_file",
-        serde_json::json!({}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:filesystem.write_file",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:git.git_add",
-        serde_json::json!({}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:git.git_add",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.action", "mcp:git.git_commit",
-        serde_json::json!({}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "exec.result", "mcp:git.git_commit",
-        serde_json::json!({"success": true}), None).unwrap();
-    store.record(goal_id, plan_id, exec_id, "goal.completed", "",
-        serde_json::json!({"outcome": "success"}), None).unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:filesystem.read_file",
+            serde_json::json!({"title": name, "path": "specs/adr/ADR-0010.md"}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:filesystem.read_file",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:filesystem.write_file",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:filesystem.write_file",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:git.git_add",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:git.git_add",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.action",
+            "mcp:git.git_commit",
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "exec.result",
+            "mcp:git.git_commit",
+            serde_json::json!({"success": true}),
+            None,
+        )
+        .unwrap();
+    store
+        .record(
+            goal_id,
+            plan_id,
+            exec_id,
+            "goal.completed",
+            "",
+            serde_json::json!({"outcome": "success"}),
+            None,
+        )
+        .unwrap();
     goal_id
 }
 
 /// Simple pseudo-random for commit hashes (no external dependency).
 fn rand() -> u32 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .subsec_nanos();
     nanos ^ (nanos >> 16)
 }
 
@@ -176,24 +465,41 @@ fn dogfood_1_simulate_realistic_development_history() {
 
     // Mine patterns.
     let patterns = svc.patterns();
-    assert!(!patterns.is_empty(), "should find patterns from repeated workflows");
+    assert!(
+        !patterns.is_empty(),
+        "should find patterns from repeated workflows"
+    );
 
     // The read→write→add→commit pattern should appear (clippy fixes + ADR updates).
-    let rwac_patterns: Vec<_> = patterns.iter()
-        .filter(|p| p.capabilities.contains(&"mcp:filesystem.read_file".to_string())
-            && p.capabilities.contains(&"mcp:git.git_commit".to_string()))
+    let rwac_patterns: Vec<_> = patterns
+        .iter()
+        .filter(|p| {
+            p.capabilities
+                .contains(&"mcp:filesystem.read_file".to_string())
+                && p.capabilities.contains(&"mcp:git.git_commit".to_string())
+        })
         .collect();
-    assert!(!rwac_patterns.is_empty(), "should find read-write-add-commit pattern");
+    assert!(
+        !rwac_patterns.is_empty(),
+        "should find read-write-add-commit pattern"
+    );
 
     // The transport→handshake→adapter→write→add→commit pattern should appear (MCP integrations).
-    let mcp_patterns: Vec<_> = patterns.iter()
+    let mcp_patterns: Vec<_> = patterns
+        .iter()
         .filter(|p| p.capabilities.contains(&"mcp:transport.setup".to_string()))
         .collect();
-    assert!(!mcp_patterns.is_empty(), "should find MCP integration pattern");
+    assert!(
+        !mcp_patterns.is_empty(),
+        "should find MCP integration pattern"
+    );
 
     // Suggestions should be generated.
     let suggestions = svc.suggestions();
-    assert!(!suggestions.is_empty(), "should generate suggestions from patterns");
+    assert!(
+        !suggestions.is_empty(),
+        "should generate suggestions from patterns"
+    );
 
     // Metrics.
     let mut metrics = ExperienceMetrics::new();
@@ -208,7 +514,10 @@ fn dogfood_1_simulate_realistic_development_history() {
     println!("Patterns mined: {}", summary.patterns_mined);
     println!("Suggestions generated: {}", summary.suggestions_generated);
     for s in &suggestions {
-        println!("  Suggestion: {:?} (confidence: {:.2})", s.capabilities, s.confidence);
+        println!(
+            "  Suggestion: {:?} (confidence: {:.2})",
+            s.capabilities, s.confidence
+        );
         println!("    Reasons: {:?}", s.reasons);
     }
 }
@@ -238,8 +547,10 @@ fn dogfood_2_query_for_new_task() {
     println!("Query: 'Add a new feature'");
     println!("Matches: {}", matches.len());
     for m in &matches {
-        println!("  Title: '{}' (similarity: {:.3}, trust: {:.3})",
-            m.goal_title, m.similarity_score, m.trust_score);
+        println!(
+            "  Title: '{}' (similarity: {:.3}, trust: {:.3})",
+            m.goal_title, m.similarity_score, m.trust_score
+        );
     }
 
     // Query 2: "Fix a warning" — should find clippy fix patterns.
@@ -247,8 +558,10 @@ fn dogfood_2_query_for_new_task() {
     println!("\nQuery: 'Fix a warning'");
     println!("Matches: {}", matches.len());
     for m in &matches {
-        println!("  Title: '{}' (similarity: {:.3}, trust: {:.3})",
-            m.goal_title, m.similarity_score, m.trust_score);
+        println!(
+            "  Title: '{}' (similarity: {:.3}, trust: {:.3})",
+            m.goal_title, m.similarity_score, m.trust_score
+        );
     }
 
     // Query 3: "Write documentation" — should find ADR patterns if they exist.
@@ -257,8 +570,10 @@ fn dogfood_2_query_for_new_task() {
     println!("\nQuery: 'Write documentation'");
     println!("Matches: {}", matches.len());
     for m in &matches {
-        println!("  Title: '{}' (similarity: {:.3}, trust: {:.3})",
-            m.goal_title, m.similarity_score, m.trust_score);
+        println!(
+            "  Title: '{}' (similarity: {:.3}, trust: {:.3})",
+            m.goal_title, m.similarity_score, m.trust_score
+        );
     }
 }
 
@@ -296,7 +611,11 @@ fn dogfood_3_replay_value_for_repeated_workflows() {
     println!("  New: {}", report.new_steps.len());
     println!("  Reuse ratio: {:.2}", report.reuse_ratio());
 
-    assert_eq!(report.reuse_ratio(), 1.0, "exact reuse should have ratio 1.0");
+    assert_eq!(
+        report.reuse_ratio(),
+        1.0,
+        "exact reuse should have ratio 1.0"
+    );
     assert!(report.adapted_steps.is_empty());
     assert!(report.skipped_steps.is_empty());
     assert!(report.new_steps.is_empty());
@@ -326,8 +645,13 @@ fn dogfood_3_replay_value_for_repeated_workflows() {
     println!("  New: {}", report.new_steps.len());
     println!("  Reuse ratio: {:.2}", report.reuse_ratio());
 
-    assert!(report.reuse_ratio() > 0.5, "adapted workflow should still have high reuse");
-    assert!(report.skipped_steps.contains(&"mcp:protocol.handshake".to_string()));
+    assert!(
+        report.reuse_ratio() > 0.5,
+        "adapted workflow should still have high reuse"
+    );
+    assert!(report
+        .skipped_steps
+        .contains(&"mcp:protocol.handshake".to_string()));
     assert!(report.new_steps.contains(&"mcp:git.git_push".to_string()));
 }
 
@@ -343,7 +667,14 @@ fn dogfood_4_applicability_for_mcp_integration() {
     let workflow = Workflow {
         id: Uuid::new_v4(),
         name: "mcp:integration".into(),
-        actions: vec!["transport".into(), "handshake".into(), "adapter".into(), "write".into(), "add".into(), "commit".into()],
+        actions: vec![
+            "transport".into(),
+            "handshake".into(),
+            "adapter".into(),
+            "write".into(),
+            "add".into(),
+            "commit".into(),
+        ],
         capabilities: vec![
             "mcp:transport.setup".into(),
             "mcp:protocol.handshake".into(),
@@ -372,7 +703,10 @@ fn dogfood_4_applicability_for_mcp_integration() {
     assert!(result.applicable, "all capabilities registered");
 
     println!("=== Dogfood 4: Applicability Check ===");
-    println!("All capabilities registered: applicable={}", result.applicable);
+    println!(
+        "All capabilities registered: applicable={}",
+        result.applicable
+    );
 
     // Only filesystem and git registered (no MCP transport).
     let checker = ApplicabilityChecker::new(
@@ -422,13 +756,25 @@ fn dogfood_5_trust_for_repeated_success() {
         println!("    Trust components:");
         println!("      similarity: {:.3}", m.trust_components.similarity);
         println!("      recency: {:.3}", m.trust_components.recency);
-        println!("      outcome_quality: {:.3}", m.trust_components.outcome_quality);
+        println!(
+            "      outcome_quality: {:.3}",
+            m.trust_components.outcome_quality
+        );
         println!("      repetition: {:.3}", m.trust_components.repetition);
     }
 
     // Trust should be high for repeated successful tasks.
     let top_match = &matches[0];
-    assert!(top_match.trust_score > 0.5, "repeated success should have high trust");
-    assert!(top_match.trust_components.repetition > 0.3, "repetition should be significant");
-    assert!(top_match.trust_components.outcome_quality > 0.8, "success should have high outcome quality");
+    assert!(
+        top_match.trust_score > 0.5,
+        "repeated success should have high trust"
+    );
+    assert!(
+        top_match.trust_components.repetition > 0.3,
+        "repetition should be significant"
+    );
+    assert!(
+        top_match.trust_components.outcome_quality > 0.8,
+        "success should have high outcome quality"
+    );
 }
