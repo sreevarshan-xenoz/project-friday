@@ -262,3 +262,143 @@ pub struct RuntimeMetrics {
 - **Safety:** budget and timeout prevent runaway execution
 - **Self-healing:** error → knowledge → fix → retry
 - **Observability:** every action is checkpointed and trackable
+
+---
+
+# Part II — Agent Spawning & Orchestration (sub-agents)
+
+**Status:** 🚀 Implemented (crate `friday-agent-runtime`, driver `SkillAgentDriver` in `friday-actions`).
+
+Part I above is the execution lifecycle of *actions*. Part II is the
+**sub-agent orchestration** layer: worker agents run scoped, bounded missions
+and report back to the planner. One architectural rule governs everything:
+
+> **The planner is the orchestrator. The model is only the planner's reasoning
+> engine — it never owns the architecture.**
+
+The `SkillAgentDriver` plans a worker's goal through the skill engine
+(scoped to the agent's allowed skills), not through an LLM — deterministic,
+reproducible, and model-agnostic. Replacing Gemma with Qwen/Llama/DeepSeek
+changes nothing at this layer.
+
+## II.1 Layering
+
+```text
+Planner (orchestrator)
+    │  spawn(AgentSpec, driver)
+    ▼
+AgentRuntime ──▶ AgentHandle (mailbox: state + result + cancel)
+    │
+    ▼
+worker task ── driver (SkillAgentDriver: scoped skill plan → kernel) ──▶ result
+    │
+    ▼
+await_all ──▶ merge ──▶ MergedReport ──▶ planner decides what becomes permanent
+```
+
+| Component | Owns |
+|-----------|------|
+| **Planner** | Decides *whether* to fan out (Decomposer evidence), spawns, merges |
+| **AgentRuntime** | Lifecycle, cancellation, deadlines, budgets, bounded concurrency, mailbox |
+| **AgentDriver** | What one worker does (scoped skill selection + execution) |
+| **SkillAgentDriver** | Plans via skill engine restricted to `allowed_skills`; executes via AgentKernel |
+
+## II.2 AgentSpec — constraints, never provider names
+
+```rust
+struct AgentSpec {
+    id: String,
+    goal: String,
+    allowed_skills: Vec<String>,        // empty = all; worker physically cannot see the rest
+    preferred_models: Vec<ModelCapability>, // routing constraints (Local, Coding, Vision, ...)
+    memory_scope: Vec<String>,          // private-memory keys; empty = none
+    time_limit_ms: u64,                 // 0 = runtime default (60 s)
+    max_steps: u32,                     // step budget; 0 = unlimited
+    params: Map<String, Value>,         // per-capability JSON params
+    cwd: Option<PathBuf>,
+}
+```
+
+`preferred_models` is a routing *constraint*, not a provider selection — the
+fabric still decides which provider serves each worker, exactly like every
+other request.
+
+## II.3 Lifecycle & mailbox
+
+```text
+Pending → Running → Succeeded | Failed | Cancelled | TimedOut | BudgetExhausted
+```
+
+- **Spawner** — `spawn(spec, driver) -> AgentHandle`; bounded by a semaphore
+  (`max_concurrency`, default 4). `spawn_many` starts a batch; queued workers
+  wait in `Pending` until a slot frees.
+- **Mailbox** — the handle exposes a watch channel for live state and a one-shot
+  for the final `AgentResult`; `await_result` consumes it.
+- **Hard timeout** — every worker's run is wrapped in `timeout_at(deadline)`;
+  a hung driver is killed as `TimedOut`, it can never block the pool.
+- **Cancellation** — `handle.cancel()` flips a shared token; the driver
+  observes it via `ctx.check()` between steps.
+- **Budget** — `BudgetTracker` limits steps/cost; the driver calls
+  `ctx.record_step()` per capability and stops at `BudgetExhausted`.
+
+## II.4 Scoped skill execution (SkillAgentDriver)
+
+1. `SkillRegistry::subset(allowed_skills)` builds a registry containing only
+   the allowed skills (plus their dependency closure).
+2. `select_for(goal)` picks the best usable skill **within that scope** —
+   deterministic, no LLM.
+3. Each resolved capability of the chosen skill is gated: high-risk
+   capabilities are skipped (mirroring the supervisor's gate), then the
+   scoped `SkillPolicy` must auto-approve (readonly skill, safe capability) or
+   be session-approved.
+4. Approved capabilities execute through the same `AgentKernel.run_action`
+   path as everything else (permission, timeout, retries, audit).
+5. Steps are recorded as an audit trail; the worker returns `Succeeded` only
+   if at least one capability executed.
+
+**Allowed-skills isolation is structural, not advisory:** a worker scoped to
+`[git]` cannot reach `docs` even if the goal is about documentation (proven by
+`services/action-runtime/tests/agent_driver.rs`).
+
+## II.5 Evidence-based scheduling
+
+Workers are spawned because the planner has **evidence**, not because a prompt
+said "think step by step":
+
+```rust
+trait Decomposer { fn decompose(&self, goal: &str, candidate_skills: usize) -> DecomposeHint; }
+// DecomposeHint { estimated_subtasks, independent }
+// HeuristicDecomposer: conjunctive goals / numbered items / multi-domain goals → fan-out
+```
+
+A goal that does not decompose stays a single worker.
+
+## II.6 Private memory
+
+Workers never write into FRIDAY's global long-term memory. The shipped
+`SkillAgentDriver` gives workers **no memory access at all** (the strictest
+isolation); `AgentSpec::memory_scope` is a **reserved contract** for when a
+private, ephemeral in-memory memory source lands behind the `SkillMemorySource`
+seam — the planner alone promotes what becomes permanent (the returned
+`AgentResult` is the only channel out). Likewise `preferred_models` is a
+**reserved routing constraint** (the deterministic skill driver does not
+route models; the LLM-planning driver will feed it into the fabric).
+
+## II.7 Merge
+
+`MergedReport` folds worker results into `{ agents, succeeded, failed,
+cancelled, total_steps, total_duration_ms }` plus per-worker summary lines the
+planner (or a human) can read directly.
+
+## II.8 Acceptance criteria (Part II)
+
+- [x] `friday-agent-runtime` builds clean (clippy/fmt/tests)
+- [x] Spawn → mailbox lifecycle with observable states (Pending/Running/terminal)
+- [x] Cancellation stops a running worker (`Cancelled`)
+- [x] Hard timeout kills a hung worker (`TimedOut`)
+- [x] Budget exhaustion stops a worker at its step cap (`BudgetExhausted`)
+- [x] Bounded concurrency never exceeds `max_concurrency`
+- [x] Scoped selection: out-of-scope skills are unreachable
+- [x] Readonly auto-approval and approval-gated execution through the real kernel
+- [x] Result merge aggregates a fan-out
+- [x] Decomposer gives evidence-based fan-out decisions
