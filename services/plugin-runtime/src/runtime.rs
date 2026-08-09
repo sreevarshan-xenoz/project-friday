@@ -6,13 +6,13 @@ use crate::contract::{
     PlanOutcome, Plugin, PluginHealth, PluginStatus, ProviderProfile, RuntimeError, ScoringWeights,
     SelectionContext, SelectionRationale, TelemetryEvent,
 };
-use crate::utils::now_ms;
 use crate::health::HealthMonitor;
 use crate::ledger::DecisionLedger;
+use crate::planner::CapabilityPlanner;
 use crate::policy::{DefaultPolicyEngine, PolicyEngine};
 use crate::registry::CapabilityRegistry;
-use crate::planner::CapabilityPlanner;
 use crate::telemetry::{TelemetryCollector, TelemetryObserver};
+use crate::utils::now_ms;
 
 /// Plugin Runtime — owns lifecycle, invocation routing, health collection,
 /// capability catalog, policy enforcement, provider profiles, and execution telemetry.
@@ -169,13 +169,8 @@ impl PluginRuntime {
 
         let primary_result = self.execute(&plan, request)?;
 
-        let (final_result, executed_plan) = self.resolve_with_fallback(
-            &plan,
-            primary_result,
-            &capability,
-            &context,
-            &parameters,
-        );
+        let (final_result, executed_plan) =
+            self.resolve_with_fallback(&plan, primary_result, &capability, &context, &parameters);
 
         // Emit telemetry for the final result
         if final_result.success {
@@ -247,9 +242,10 @@ impl PluginRuntime {
         resolved: &crate::contract::ResolvedCapability,
         request: CapabilityRequest,
     ) -> Result<CapabilityResult, RuntimeError> {
-        let plugin = self.plugins.get(&resolved.plugin_id).ok_or_else(|| {
-            RuntimeError::PluginNotFound(resolved.plugin_id.clone())
-        })?;
+        let plugin = self
+            .plugins
+            .get(&resolved.plugin_id)
+            .ok_or_else(|| RuntimeError::PluginNotFound(resolved.plugin_id.clone()))?;
 
         let h = plugin.health();
         if h.status != PluginStatus::Healthy
@@ -268,7 +264,8 @@ impl PluginRuntime {
         );
 
         let result = plugin.execute(request);
-        self.health.record_execution(&resolved.plugin_id, &result.telemetry);
+        self.health
+            .record_execution(&resolved.plugin_id, &result.telemetry);
 
         Ok(result)
     }
@@ -282,9 +279,10 @@ impl PluginRuntime {
         plan: &ExecutionPlan,
         request: CapabilityRequest,
     ) -> Result<CapabilityResult, RuntimeError> {
-        let plugin = self.plugins.get(&plan.operator_id).ok_or_else(|| {
-            RuntimeError::PluginNotFound(plan.operator_id.clone())
-        })?;
+        let plugin = self
+            .plugins
+            .get(&plan.operator_id)
+            .ok_or_else(|| RuntimeError::PluginNotFound(plan.operator_id.clone()))?;
 
         let h = plugin.health();
         if h.status != PluginStatus::Healthy
@@ -303,7 +301,8 @@ impl PluginRuntime {
         );
 
         let result = plugin.execute(request);
-        self.health.record_execution(&plan.operator_id, &result.telemetry);
+        self.health
+            .record_execution(&plan.operator_id, &result.telemetry);
 
         Ok(result)
     }
@@ -454,9 +453,8 @@ impl PluginRuntime {
 mod tests {
     use super::*;
     use crate::contract::{
-        Capability, CapabilityRequest, CapabilityResult, ExecutionTelemetry,
-        PlanningRationale, Plugin, PluginDescriptor, PluginHealth, PluginStatus, ProviderProfile,
-        SelectionContext,
+        Capability, CapabilityRequest, CapabilityResult, ExecutionTelemetry, PlanningRationale,
+        Plugin, PluginDescriptor, PluginHealth, PluginStatus, ProviderProfile, SelectionContext,
     };
     use std::collections::HashMap;
 
@@ -577,8 +575,7 @@ mod tests {
     #[test]
     fn runtime_returns_error_for_unregistered_capability() {
         let mut runtime = PluginRuntime::new();
-        let result =
-            runtime.plan_and_execute(CapabilityRequest::new(Capability::OpenBrowser));
+        let result = runtime.plan_and_execute(CapabilityRequest::new(Capability::OpenBrowser));
         match result {
             Err(RuntimeError::NoProviderFound(_)) => {}
             _ => panic!("expected NoProviderFound"),
@@ -692,15 +689,13 @@ mod tests {
         runtime.activate_all();
 
         let ctx = SelectionContext::urgent();
-        let req = CapabilityRequest::new(Capability::ReadFile)
-            .with_context(ctx);
+        let req = CapabilityRequest::new(Capability::ReadFile).with_context(ctx);
         let (result, _) = runtime.plan_and_execute(req).unwrap();
         assert!(result.success);
 
         // Context should also work for offline mode
         let ctx = SelectionContext::offline();
-        let req = CapabilityRequest::new(Capability::ReadFile)
-            .with_context(ctx);
+        let req = CapabilityRequest::new(Capability::ReadFile).with_context(ctx);
         let (result, _) = runtime.plan_and_execute(req).unwrap();
         assert!(result.success);
     }
@@ -791,10 +786,7 @@ mod tests {
 
     // ── Fallback tests ────────────────────────────────────────────
 
-    fn make_fallback_plan(
-        operator_id: &str,
-        fallbacks: Vec<ExecutionPlan>,
-    ) -> ExecutionPlan {
+    fn make_fallback_plan(operator_id: &str, fallbacks: Vec<ExecutionPlan>) -> ExecutionPlan {
         let cid = CorrelationId::new();
         ExecutionPlan {
             plan_id: cid.clone(),
@@ -856,7 +848,8 @@ mod tests {
         let result = runtime.execute(&plan, req).unwrap();
 
         let (final_result, _) = runtime.resolve_with_fallback(
-            &plan, result,
+            &plan,
+            result,
             &Capability::ReadFile,
             &SelectionContext::default(),
             &HashMap::new(),
@@ -876,7 +869,8 @@ mod tests {
         let result = runtime.execute(&plan, req).unwrap();
 
         let (final_result, executed) = runtime.resolve_with_fallback(
-            &plan, result,
+            &plan,
+            result,
             &Capability::ReadFile,
             &SelectionContext::default(),
             &HashMap::new(),
@@ -898,7 +892,8 @@ mod tests {
         let result = runtime.execute(&plan, req).unwrap();
 
         let (final_result, executed) = runtime.resolve_with_fallback(
-            &plan, result,
+            &plan,
+            result,
             &Capability::ReadFile,
             &SelectionContext::default(),
             &HashMap::new(),
@@ -921,7 +916,8 @@ mod tests {
         let result = runtime.execute(&plan, req).unwrap();
 
         let (final_result, executed) = runtime.resolve_with_fallback(
-            &plan, result,
+            &plan,
+            result,
             &Capability::ReadFile,
             &SelectionContext::default(),
             &HashMap::new(),
@@ -946,7 +942,8 @@ mod tests {
         let result = runtime.execute(&plan, req).unwrap();
 
         let (final_result, executed) = runtime.resolve_with_fallback(
-            &plan, result,
+            &plan,
+            result,
             &Capability::ReadFile,
             &SelectionContext::default(),
             &HashMap::new(),
@@ -970,7 +967,8 @@ mod tests {
         let result = runtime.execute(&plan, req).unwrap();
 
         let (final_result, executed) = runtime.resolve_with_fallback(
-            &plan, result,
+            &plan,
+            result,
             &Capability::ReadFile,
             &SelectionContext::default(),
             &HashMap::new(),
