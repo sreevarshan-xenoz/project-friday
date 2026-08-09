@@ -24,11 +24,12 @@ use friday_experience::{
     FallbackMetrics, MetricsReport, PredictionAccuracy, ReputationFactor as FrozenReputationFactor,
     ReputationMetrics,
 };
+use friday_investigation::InvestigationGraph;
 use friday_plugin_runtime::{
     Capability as FrozenCapability, CapabilityRequest, CostEstimate, DecisionRecord, EvaluatorKind,
     EvaluatorSignal, ExecutionPlan, Experience as FrozenExperience, ExperienceKey, PlanOutcome,
     PlannerFeedback, PlanningRationale, Reputation as FrozenReputation, ScoredCandidate,
-    SelectionContext, Urgency, SecurityLevel,
+    SecurityLevel, SelectionContext, Urgency,
 };
 use serde::{Deserialize, Serialize};
 
@@ -335,7 +336,7 @@ pub struct MetricsReportDto {
     pub experience: ExperienceMetricsDto,
 }
 
-/// The ten-phase executive cycle, mirroring
+/// The eleven-phase executive cycle, mirroring
 /// `services/goal-execution/src/executive.rs`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExecutivePhaseStateDto {
@@ -353,6 +354,47 @@ pub struct WorldStateDto {
     pub confidence: f64,
 }
 
+/// One information requirement of the current goal — the auditable "why"
+/// behind an evidence branch, mirroring `services/investigation`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InformationRequirementDto {
+    /// Lowercase channel label: `web`, `docs`, `codeintel`, `memory`, `git`,
+    /// or `filesystem`.
+    pub channel: String,
+    /// Which keyword(s) triggered the requirement.
+    pub rationale: String,
+    /// Evidence strength (`0.0..=1.0`).
+    pub confidence: f32,
+}
+
+/// The "watch FRIDAY think" view for the current goal — what it needs to
+/// know before acting, and the phase chain that follows. Mirrors
+/// `friday_investigation::InvestigationGraph`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InvestigationGraphDto {
+    pub goal: String,
+    pub requirements: Vec<InformationRequirementDto>,
+    pub phases: Vec<String>,
+}
+
+impl From<&InvestigationGraph> for InvestigationGraphDto {
+    fn from(g: &InvestigationGraph) -> Self {
+        Self {
+            goal: g.goal.clone(),
+            requirements: g
+                .requirements
+                .iter()
+                .map(|r| InformationRequirementDto {
+                    channel: r.channel.label().to_string(),
+                    rationale: r.rationale.clone(),
+                    confidence: r.confidence,
+                })
+                .collect(),
+            phases: g.phases.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DashboardDto {
     pub mission: String,
@@ -361,6 +403,10 @@ pub struct DashboardDto {
     pub executive: Vec<ExecutivePhaseStateDto>,
     pub world: WorldStateDto,
     pub recent: Vec<DecisionTimelineDto>,
+    /// The investigation trace for the current goal: what FRIDAY decided it
+    /// needs to know before acting, and the phase chain that follows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph: Option<InvestigationGraphDto>,
 }
 
 // ---------------------------------------------------------------------------
@@ -480,10 +526,7 @@ impl CapabilitySet {
     /// `true` selections are considered; a name the bridge did not advertise
     /// is rejected (the returned `Err` is that name) so negotiation can never
     /// enable an unknown feature.
-    pub fn resolve(
-        &self,
-        selections: &HashMap<String, bool>,
-    ) -> Result<Vec<Capability>, String> {
+    pub fn resolve(&self, selections: &HashMap<String, bool>) -> Result<Vec<Capability>, String> {
         let mut known: HashMap<&str, &Capability> = HashMap::new();
         for cap in self.required.iter().chain(self.optional.iter()) {
             known.insert(cap.name.as_str(), cap);
@@ -784,7 +827,11 @@ impl From<&PlanningRationale> for PlanningRationaleDto {
             composite_score: r.composite_score,
             explanation: r.explanation.clone(),
             correlation_id: r.correlation_id.0.clone(),
-            evaluator_evidence: r.evaluator_evidence.iter().map(EvaluatorSignalDto::from).collect(),
+            evaluator_evidence: r
+                .evaluator_evidence
+                .iter()
+                .map(EvaluatorSignalDto::from)
+                .collect(),
         }
     }
 }
@@ -801,7 +848,11 @@ impl From<&ExecutionPlan> for ExecutionPlanDto {
             estimated_success_probability: p.estimated_success_probability,
             estimated_risk: p.estimated_risk,
             confidence: p.confidence,
-            fallback_chain: p.fallback_chain.iter().map(ExecutionPlanDto::from).collect(),
+            fallback_chain: p
+                .fallback_chain
+                .iter()
+                .map(ExecutionPlanDto::from)
+                .collect(),
             rationale: PlanningRationaleDto::from(&p.rationale),
         }
     }
@@ -988,12 +1039,23 @@ impl From<&DecisionExplanation> for DecisionExplanationDto {
             plan_id: e.plan_id.0.clone(),
             capability: capability_str(&e.capability),
             selected_operator_id: e.selected_operator_id.clone(),
-            reasons: e.reasons.iter().map(|r| reason_str(r).to_string()).collect(),
-            candidates: e.candidates.iter().map(CandidateExplanationDto::from).collect(),
+            reasons: e
+                .reasons
+                .iter()
+                .map(|r| reason_str(r).to_string())
+                .collect(),
+            candidates: e
+                .candidates
+                .iter()
+                .map(CandidateExplanationDto::from)
+                .collect(),
             policy_factors: e.policy_factors.clone(),
             experience_factor: e.experience_factor.as_ref().map(ExperienceFactorDto::from),
             reputation_factor: e.reputation_factor.as_ref().map(ReputationFactorDto::from),
-            calibration_factor: e.calibration_factor.as_ref().map(CalibrationFactorDto::from),
+            calibration_factor: e
+                .calibration_factor
+                .as_ref()
+                .map(CalibrationFactorDto::from),
             narrative: e.narrative.clone(),
         }
     }
