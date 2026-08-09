@@ -17,6 +17,6 @@ pub use executor::ExecutionEngine;
 pub use lifecycle::{ContextEntry, ExecutionBudget, GoalContext, GoalRuntime};
 pub use persistence::{GoalEvent, GoalStore};
 pub use plugin_selector::resolve;
-pub use reflection::{Reflector, ReflectionAction, RuleReflector};
+pub use reflection::{ReflectionAction, Reflector, RuleReflector};
 pub use scheduler::schedule_batch;
 pub use supervisor::{GoalSupervisor, PolicyAuthority};
