@@ -9,7 +9,10 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::qualification::{QualificationProfile, QUALIFICATION_SCHEMA_VERSION};
+use crate::qualification::{
+    routing_score, Budget, CandidateView, Preference, ProviderHealth, QualificationProfile,
+    RequestRequirements, Requirement, QUALIFICATION_SCHEMA_VERSION,
+};
 
 /// Pluggable interface for calling large language models.
 /// Isolating this ensures we can swap backends (e.g. Gemini to OpenAI)
@@ -402,6 +405,22 @@ pub struct InferenceMetrics {
     pub error: Option<String>,
 }
 
+/// A provider health transition recorded for the observation week (Phase 1
+/// finding 1.3). Mirrors the `[Provider Health]` trace line as JSON Lines so
+/// demotion/degradation/recovery can be analyzed after the fact.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthChangeEvent {
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub provider: String,
+    pub health_before: f64,
+    pub health_after: f64,
+    /// Coarse failure bucket: `timeout`, `rate_limit`, `auth`, `unavailable`,
+    /// `server_error`, `error`, `success`, or `cooldown_elapsed`.
+    pub reason: String,
+    /// Action taken: `recovered`, `degraded`, `demoted`, `probing`, `none`.
+    pub decision: String,
+}
+
 /// Representation of health state persisted locally.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedProviderHealth {
@@ -487,6 +506,10 @@ pub struct InferenceFabric {
     /// request. Surfaced as a defect by the chaos laboratory (Phase 1: hangs,
     /// extreme latency) and confirmed to be a robustness knob, not a new layer.
     pub request_timeout: Option<std::time::Duration>,
+    /// Where provider health (scores + circuit state) persists. Defaults to
+    /// `.fabric/provider_health.json` (cwd-relative). Chaos laboratory Phase 2
+    /// scenarios point this at a controlled file so corruption is injectable.
+    pub health_state_path: std::path::PathBuf,
 }
 
 impl InferenceFabric {
@@ -501,6 +524,7 @@ impl InferenceFabric {
             last_decision: Arc::new(Mutex::new(None)),
             qualification_profiles: Arc::new(Mutex::new(HashMap::new())),
             request_timeout: None,
+            health_state_path: std::path::PathBuf::from(".fabric/provider_health.json"),
         }
     }
 
@@ -686,6 +710,7 @@ impl InferenceFabric {
     pub fn select_candidates(&self, mode: RoutingMode) -> Vec<(ModelInfo, &dyn Provider)> {
         let mut candidates = Vec::new();
         let mut circuit_guard = self.circuits.lock().unwrap();
+        let mut probe_entered = None;
 
         for model in &self.models {
             // Check capability match
@@ -699,8 +724,12 @@ impl InferenceFabric {
 
             // Check circuit breaker status
             if let Some(cb) = circuit_guard.get_mut(&model.provider) {
+                let state_before = cb.state;
                 if !cb.allow_request() {
                     continue;
+                }
+                if state_before != cb.state && cb.state == CircuitState::HalfOpen {
+                    probe_entered = Some(model.provider.clone());
                 }
             }
 
@@ -716,12 +745,7 @@ impl InferenceFabric {
                         || model.provider == "cerebras"
                         || model.provider == "nvidia-nim"
                 }
-                RoutingMode::Free => {
-                    model.provider == "openrouter"
-                        || model.provider == "omniroute"
-                        || model.provider == "gemini"
-                        || model.provider == "opengateway"
-                }
+                RoutingMode::Free => is_free_provider(&model.provider),
                 RoutingMode::Local => model.capabilities.contains(&ModelCapability::Local),
                 RoutingMode::Hybrid => {
                     model.capabilities.contains(&ModelCapability::Local)
@@ -729,6 +753,8 @@ impl InferenceFabric {
                         || model.provider == "omniroute"
                         || model.provider == "nvidia-nim"
                         || model.provider == "opengateway"
+                        || model.provider == "sambanova"
+                        || model.provider == "github-models"
                 }
             };
 
@@ -737,6 +763,19 @@ impl InferenceFabric {
                     candidates.push((model.clone(), prov.as_ref()));
                 }
             }
+        }
+
+        drop(circuit_guard);
+
+        if let Some(provider) = probe_entered {
+            let health = self
+                .health_scores
+                .lock()
+                .unwrap()
+                .get(&provider)
+                .copied()
+                .unwrap_or(1.0);
+            self.log_health_change(&provider, health, health, "cooldown_elapsed", "probing");
         }
 
         let scores = self.health_scores.clone();
@@ -760,7 +799,194 @@ impl InferenceFabric {
         candidates
     }
 
+    /// Whether a model is eligible under the free budget: a free-tier provider
+    /// or a local model (running local costs nothing).
+    fn free_eligible(model: &ModelInfo) -> bool {
+        is_free_provider(&model.provider) || model.capabilities.contains(&ModelCapability::Local)
+    }
+
+    /// Whether `model` can serve `req` at all. Hard filters only: budget
+    /// (free-tier allowlist + local), privacy (required ⇒ local capability),
+    /// required capabilities, and the latency bound. Scoring happens after.
+    fn requirements_met(req: &RequestRequirements, model: &ModelInfo) -> bool {
+        if req.budget == Budget::Free && !Self::free_eligible(model) {
+            return false;
+        }
+        if req.privacy == Preference::Required
+            && !model.capabilities.contains(&ModelCapability::Local)
+        {
+            return false;
+        }
+        if req.vision == Requirement::Required
+            && !model.capabilities.contains(&ModelCapability::Vision)
+        {
+            return false;
+        }
+        if req.long_context == Requirement::Required
+            && !model.capabilities.contains(&ModelCapability::LongContext)
+        {
+            return false;
+        }
+        if req.tools == Requirement::Required
+            && !model.capabilities.contains(&ModelCapability::Tools)
+        {
+            return false;
+        }
+        if let Some(bound) = req.latency_ms {
+            if model.latency_ms > u64::from(bound) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Select and rank candidates for a requirement-driven request (the Model
+    /// Budget path). Hard requirements filter first; the survivors are ranked
+    /// by the requirement-aware [`routing_score`]. Unlike mode-based
+    /// [`InferenceFabric::select_candidates`], local-capability models are
+    /// always eligible (the free-first cascade starts local).
+    pub fn select_for(&self, req: &RequestRequirements) -> Vec<(ModelInfo, &dyn Provider)> {
+        let mut candidates = Vec::new();
+        let mut circuit_guard = self.circuits.lock().unwrap();
+        let mut probe_entered = None;
+
+        for model in &self.models {
+            if !Self::requirements_met(req, model) {
+                continue;
+            }
+            // The fabric-global capability gate applies to every selection
+            // path — select_candidates and select_for must agree on what is
+            // routable, or a caller setting `required_capabilities` would get
+            // different candidate sets depending on the entry point.
+            let has_global_caps = self
+                .required_capabilities
+                .iter()
+                .all(|cap| model.capabilities.contains(cap));
+            if !has_global_caps {
+                continue;
+            }
+            if let Some(cb) = circuit_guard.get_mut(&model.provider) {
+                let state_before = cb.state;
+                if !cb.allow_request() {
+                    continue;
+                }
+                if state_before != cb.state && cb.state == CircuitState::HalfOpen {
+                    probe_entered = Some(model.provider.clone());
+                }
+            }
+            if let Some(prov) = self.providers.get(&model.provider) {
+                candidates.push((model.clone(), prov.as_ref()));
+            }
+        }
+        drop(circuit_guard);
+
+        if let Some(provider) = probe_entered {
+            let health = self
+                .health_scores
+                .lock()
+                .unwrap()
+                .get(&provider)
+                .copied()
+                .unwrap_or(1.0);
+            self.log_health_change(&provider, health, health, "cooldown_elapsed", "probing");
+        }
+
+        candidates.sort_by(|a, b| {
+            let sa = self.score_for(req, &a.0, a.1.name());
+            let sb = self.score_for(req, &b.0, b.1.name());
+            sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        candidates
+    }
+
+    /// Requirement-aware routing score for one candidate: offline benchmark
+    /// evidence + runtime health + requirement adjustments. Missing profiles
+    /// fall back to a neutral midpoint (see [`routing_score`]).
+    fn score_for(&self, req: &RequestRequirements, model: &ModelInfo, provider: &str) -> f64 {
+        let reliability = self
+            .health_scores
+            .lock()
+            .unwrap()
+            .get(provider)
+            .copied()
+            .unwrap_or(1.0);
+        let circuit = self
+            .circuits
+            .lock()
+            .unwrap()
+            .get(provider)
+            .map(|c| c.state)
+            .unwrap_or(CircuitState::Closed);
+        let health = ProviderHealth {
+            success_rate: reliability,
+            availability: if circuit == CircuitState::Closed {
+                1.0
+            } else {
+                0.0
+            },
+            circuit_state: circuit,
+            ..ProviderHealth::default()
+        };
+        let profile = self.qualification_profile(provider, &model.id);
+        let view = CandidateView {
+            provider: provider.to_string(),
+            local: model.capabilities.contains(&ModelCapability::Local),
+            vision: model.capabilities.contains(&ModelCapability::Vision),
+            long_context: model.capabilities.contains(&ModelCapability::LongContext),
+            tools: model.capabilities.contains(&ModelCapability::Tools),
+            latency_ms: model.latency_ms,
+        };
+        routing_score(profile.as_ref(), &health, req, &view)
+    }
+
+    /// Emits a structured health-change event so provider health transitions
+    /// are observable (chaos laboratory Phase 1 finding 1.3: transient failures
+    /// permanently demote a provider). We log BEFORE changing the scoring
+    /// algorithm, so there is telemetry to justify any hysteresis later.
+    fn log_health_change(
+        &self,
+        provider: &str,
+        before: f64,
+        after: f64,
+        reason: &str,
+        decision: &str,
+    ) {
+        tracing::info!(
+            "[Provider Health] Provider: {} / Health: {:.2} → {:.2} / Reason: {} / Decision: {}",
+            provider,
+            before,
+            after,
+            reason,
+            decision
+        );
+
+        let event = HealthChangeEvent {
+            timestamp: chrono::Utc::now(),
+            provider: provider.to_string(),
+            health_before: before,
+            health_after: after,
+            reason: reason.to_string(),
+            decision: decision.to_string(),
+        };
+        let _ = std::fs::create_dir_all(".fabric");
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(".fabric/health-changes.jsonl")
+        {
+            use std::io::Write;
+            if let Ok(line) = serde_json::to_string(&event) {
+                let _ = writeln!(file, "{}", line);
+            }
+        }
+    }
+
     /// Persists health scores and circuit states to a local file.
+    ///
+    /// Written atomically (temp file + rename) so a crash mid-write cannot
+    /// destroy the previous health snapshot (chaos laboratory Phase 2:
+    /// partially written file / crash during persistence).
     pub fn persist_health(&self) {
         let scores = self.health_scores.lock().unwrap();
         let circuits = self.circuits.lock().unwrap();
@@ -785,32 +1011,73 @@ impl InferenceFabric {
             });
         }
 
-        let _ = std::fs::create_dir_all(".fabric");
-        if let Ok(file) = std::fs::File::create(".fabric/provider_health.json") {
-            let _ = serde_json::to_writer_pretty(file, &persisted);
+        let path = self.health_state_path.clone();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let tmp = temp_sibling(&path);
+        let written = std::fs::File::create(&tmp)
+            .and_then(|file| serde_json::to_writer_pretty(file, &persisted).map_err(Into::into))
+            .and_then(|()| std::fs::rename(&tmp, &path));
+        if written.is_err() {
+            let _ = std::fs::remove_file(&tmp);
         }
     }
 
-    /// Loads health scores and circuit states from local file if exists.
+    /// Loads health scores and circuit states from the health-state file, if it
+    /// exists. Tolerates every corruption Phase 2 injects: a missing, empty,
+    /// truncated, corrupt, older-schema, or partially-written file falls back to
+    /// the default health (1.0 / circuit Closed) with a warning; impossible
+    /// values (NaN or out-of-range reliability) are sanitized, never loaded
+    /// verbatim, so they cannot poison scoring.
     pub fn load_health(&self) {
-        if let Ok(file) = std::fs::File::open(".fabric/provider_health.json") {
-            if let Ok(persisted) = serde_json::from_reader::<_, Vec<PersistedProviderHealth>>(file)
-            {
-                let mut scores = self.health_scores.lock().unwrap();
-                let mut circuits = self.circuits.lock().unwrap();
-                for p in persisted {
-                    scores.insert(p.name.clone(), p.reliability);
-                    if let Some(cb) = circuits.get_mut(&p.name) {
-                        cb.failures = p.consecutive_failures;
-                        cb.state = match p.circuit_state.as_str() {
-                            "Open" => CircuitState::Open,
-                            "HalfOpen" => CircuitState::HalfOpen,
-                            _ => CircuitState::Closed,
-                        };
-                        if cb.state == CircuitState::Open {
-                            cb.last_failure = Some(Instant::now());
-                        }
-                    }
+        let path = self.health_state_path.clone();
+        let file = match std::fs::File::open(&path) {
+            Ok(f) => f,
+            Err(e) => {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    tracing::warn!(
+                        "[Provider Health] could not open {}: {e}; falling back to default health",
+                        path.display()
+                    );
+                }
+                return;
+            }
+        };
+
+        let persisted = match serde_json::from_reader::<_, Vec<PersistedProviderHealth>>(file) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(
+                    "[Provider Health] {} is unreadable ({e}); falling back to default health",
+                    path.display()
+                );
+                return;
+            }
+        };
+
+        let mut scores = self.health_scores.lock().unwrap();
+        let mut circuits = self.circuits.lock().unwrap();
+        for p in persisted {
+            let reliability = sanitize_reliability(p.reliability);
+            if !p.reliability.is_finite() || !(0.0..=1.0).contains(&p.reliability) {
+                tracing::warn!(
+                    "[Provider Health] provider {} persisted impossible reliability {:?}; \
+                     sanitized to {reliability}",
+                    p.name,
+                    p.reliability
+                );
+            }
+            scores.insert(p.name.clone(), reliability);
+            if let Some(cb) = circuits.get_mut(&p.name) {
+                cb.failures = p.consecutive_failures;
+                cb.state = match p.circuit_state.as_str() {
+                    "Open" => CircuitState::Open,
+                    "HalfOpen" => CircuitState::HalfOpen,
+                    _ => CircuitState::Closed,
+                };
+                if cb.state == CircuitState::Open {
+                    cb.last_failure = Some(Instant::now());
                 }
             }
         }
@@ -908,10 +1175,7 @@ impl InferenceFabric {
                     provider: "openrouter".to_string(),
                     latency_ms: 5000,
                     reliability: 1.0,
-                    capabilities: vec![
-                        ModelCapability::Json,
-                        ModelCapability::Tools,
-                    ],
+                    capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
                     max_context: 262_144,
                     tier: None,
                 });
@@ -1123,6 +1387,97 @@ impl InferenceFabric {
             tracing::info!("Registered OpenGateway provider (gitlawb, OpenAI-compatible).");
         }
 
+        // SambaNova Cloud (free tier) — OpenAI-compatible, US-hosted, no card.
+        // Free tier: 20 req/min, 20 req/day, 200K tokens/day; solid open models
+        // (Llama-3.3-70B, DeepSeek-V3.1, gpt-oss-120b). Base URL overridable
+        // via SAMBA_BASE_URL (in case the hosting moves post-acquisition).
+        if let Ok(key) = std::env::var("SAMBA_API_KEY") {
+            let base_url = std::env::var("SAMBA_BASE_URL")
+                .unwrap_or_else(|_| "https://api.sambanova.ai/v1".to_string());
+            fabric.register_provider(Box::new(OpenAiProvider {
+                name: "sambanova".to_string(),
+                base_url,
+                api_key: key,
+            }));
+            if !registry_loaded {
+                for m in sambanova_models() {
+                    fabric.register_model(m);
+                }
+            }
+            tracing::info!("Registered SambaNova provider (free tier).");
+        }
+
+        // GitHub Models (free tier) — OpenAI-compatible, US-hosted. Free frontier
+        // proprietary models (gpt-4o, o4-mini) + open models, no separate billing.
+        // Free tier: 10-15 req/min, 50-150 req/day depending on model. Base URL
+        // overridable via GITHUB_MODELS_BASE_URL.
+        //
+        // Opt-in gate: GITHUB_TOKEN is set by default in GitHub Actions and many
+        // CI systems, so a bare token must NOT auto-register this provider (that
+        // would silently add a cloud candidate to every CI run). Register only
+        // with an explicit GITHUB_MODELS_KEY, or with GITHUB_MODELS_ENABLED=true
+        // plus the generic GITHUB_TOKEN.
+        {
+            let key = github_models_key(
+                std::env::var("GITHUB_MODELS_KEY").ok().as_deref(),
+                std::env::var("GITHUB_MODELS_ENABLED")
+                    .map(|v| v == "true" || v == "1")
+                    .unwrap_or(false),
+                std::env::var("GITHUB_TOKEN").ok().as_deref(),
+            );
+            if let Some(key) = key {
+                let base_url = std::env::var("GITHUB_MODELS_BASE_URL")
+                    .unwrap_or_else(|_| "https://models.github.ai/inference".to_string());
+                fabric.register_provider(Box::new(OpenAiProvider {
+                    name: "github-models".to_string(),
+                    base_url,
+                    api_key: key,
+                }));
+                if !registry_loaded {
+                    for m in github_models() {
+                        fabric.register_model(m);
+                    }
+                }
+                tracing::info!("Registered GitHub Models provider (free tier).");
+            }
+        }
+
+        // SiliconFlow (free models) — OpenAI-compatible, CHINA-hosted. Strong
+        // free open models (Qwen3-8B, DeepSeek-R1-Distill). ~30 req/min free.
+        // Deliberately Free-mode-only (never Hybrid/Quality): the fabric's
+        // privacy stance is "local or Western-hosted for private code", so this
+        // provider is opt-in and never a silent failover target.
+        if let Ok(key) = std::env::var("SILICONFLOW_API_KEY") {
+            fabric.register_provider(Box::new(OpenAiProvider {
+                name: "siliconflow".to_string(),
+                base_url: "https://api.siliconflow.cn/v1".to_string(),
+                api_key: key,
+            }));
+            if !registry_loaded {
+                for m in siliconflow_models() {
+                    fabric.register_model(m);
+                }
+            }
+            tracing::info!("Registered SiliconFlow provider (free models, CN-hosted).");
+        }
+
+        // Zhipu GLM (BigModel) — OpenAI-compatible, CHINA-hosted. Free tier:
+        // GLM-4.7-Flash (strong free coding model), ~1 concurrent request. Same
+        // privacy stance as SiliconFlow: Free-mode-only, opt-in.
+        if let Ok(key) = std::env::var("ZHIPU_API_KEY") {
+            fabric.register_provider(Box::new(OpenAiProvider {
+                name: "zhipu".to_string(),
+                base_url: "https://open.bigmodel.cn/api/paas/v4".to_string(),
+                api_key: key,
+            }));
+            if !registry_loaded {
+                for m in zhipu_models() {
+                    fabric.register_model(m);
+                }
+            }
+            tracing::info!("Registered Zhipu GLM provider (free tier, CN-hosted).");
+        }
+
         fabric.load_health();
 
         // Qualification profiles: immutable offline benchmark artifacts that
@@ -1136,6 +1491,20 @@ impl InferenceFabric {
         }
 
         fabric
+    }
+}
+
+/// The Inference Fabric is the model client for the Investigation Engine's
+/// LLM-backed strategy. The strategy stays model-agnostic (it only knows
+/// [`friday_investigation::LlmStrategyClient`]); this impl wires the real
+/// routing fabric in: free-first requirement-driven routing with failover
+/// across the catalog, and the strategy's heuristic catches any residual
+/// routing failure — so an unreachable model still produces a plan.
+#[async_trait]
+impl friday_investigation::LlmStrategyClient for InferenceFabric {
+    async fn complete(&self, prompt: &str) -> Result<String, String> {
+        self.complete_with(&RequestRequirements::default(), prompt)
+            .await
     }
 }
 
@@ -1153,6 +1522,29 @@ fn collect_qual_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) 
             out.push(path);
         }
     }
+}
+
+/// Single source of truth for the free-tier provider allowlist — the only
+/// place that enumerates free providers. Both the mode-based Free arm of
+/// [`InferenceFabric::select_candidates`] and the budget filter
+/// [`InferenceFabric::free_eligible`] consult it, so adding the next free
+/// provider updates exactly one list. Local-capability models are additionally
+/// free (`free_eligible` adds that); a provider is free when its entire tier is
+/// free (OpenRouter/Gemini/OpenGateway/OmniRoute/SambaNova/GitHub Models) or
+/// when it is a free-models-only CN-hosted tier (SiliconFlow/Zhipu — which stay
+/// Free-mode-only by the privacy stance, never silent Hybrid failovers).
+fn is_free_provider(name: &str) -> bool {
+    matches!(
+        name,
+        "openrouter"
+            | "omniroute"
+            | "gemini"
+            | "opengateway"
+            | "sambanova"
+            | "github-models"
+            | "siliconflow"
+            | "zhipu"
+    )
 }
 
 /// OpenGateway (gitlawb) model catalog — single source of truth for the free
@@ -1219,6 +1611,167 @@ pub fn opengateway_models() -> Vec<ModelInfo> {
     ]
 }
 
+/// SambaNova Cloud free-tier catalog — verified OpenAI-compatible endpoints,
+/// US-hosted, no credit card. Free tier: 20 req/min, 20 req/day, 200K
+/// tokens/day. All three entries are strong open models that also speak tool
+/// calling and JSON mode.
+pub fn sambanova_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "Meta-Llama-3.3-70B-Instruct".to_string(),
+            family: "llama-3.3-70b".to_string(),
+            provider: "sambanova".to_string(),
+            latency_ms: 900,
+            reliability: 1.0,
+            capabilities: vec![
+                ModelCapability::Json,
+                ModelCapability::Tools,
+                ModelCapability::LongContext,
+            ],
+            max_context: 131_072,
+            tier: None,
+        },
+        ModelInfo {
+            id: "DeepSeek-V3.1".to_string(),
+            family: "deepseek-v3.1".to_string(),
+            provider: "sambanova".to_string(),
+            latency_ms: 1200,
+            reliability: 1.0,
+            capabilities: vec![
+                ModelCapability::Json,
+                ModelCapability::Tools,
+                ModelCapability::LongContext,
+            ],
+            max_context: 131_072,
+            tier: None,
+        },
+        ModelInfo {
+            id: "gpt-oss-120b".to_string(),
+            family: "gpt-oss-120b".to_string(),
+            provider: "sambanova".to_string(),
+            latency_ms: 1100,
+            reliability: 1.0,
+            capabilities: vec![
+                ModelCapability::Json,
+                ModelCapability::Tools,
+                ModelCapability::LongContext,
+            ],
+            max_context: 131_072,
+            tier: None,
+        },
+    ]
+}
+
+/// GitHub Models free-tier catalog — the only free tier offering frontier
+/// proprietary models (gpt-4o, o4-mini) via a plain GitHub PAT. Free tier:
+/// 10-15 req/min, 50-150 req/day (model-dependent). Base endpoint
+/// `https://models.github.ai/inference`, OpenAI-compatible.
+pub fn github_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "gpt-4o".to_string(),
+            family: "gpt-4o".to_string(),
+            provider: "github-models".to_string(),
+            latency_ms: 1500,
+            reliability: 1.0,
+            capabilities: vec![
+                ModelCapability::Json,
+                ModelCapability::Tools,
+                ModelCapability::Vision,
+                ModelCapability::LongContext,
+            ],
+            max_context: 128_000,
+            tier: None,
+        },
+        ModelInfo {
+            id: "o4-mini".to_string(),
+            family: "o4-mini".to_string(),
+            provider: "github-models".to_string(),
+            latency_ms: 1200,
+            reliability: 1.0,
+            capabilities: vec![
+                ModelCapability::Json,
+                ModelCapability::Tools,
+                ModelCapability::LongContext,
+            ],
+            max_context: 200_000,
+            tier: None,
+        },
+        ModelInfo {
+            id: "Llama-3.3-70B-Instruct".to_string(),
+            family: "llama-3.3-70b".to_string(),
+            provider: "github-models".to_string(),
+            latency_ms: 1000,
+            reliability: 1.0,
+            capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
+            max_context: 128_000,
+            tier: None,
+        },
+        ModelInfo {
+            id: "DeepSeek-R1".to_string(),
+            family: "deepseek-r1".to_string(),
+            provider: "github-models".to_string(),
+            latency_ms: 2500,
+            reliability: 1.0,
+            capabilities: vec![
+                ModelCapability::Json,
+                ModelCapability::Tools,
+                ModelCapability::LongContext,
+            ],
+            max_context: 64_000,
+            tier: None,
+        },
+    ]
+}
+
+/// SiliconFlow free-model catalog — strong open models, ~30 req/min free.
+/// CN-hosted; the fabric deliberately keeps this provider Free-mode-only so it
+/// is never a silent failover target for private code (see `select_candidates`).
+pub fn siliconflow_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "Qwen/Qwen3-8B".to_string(),
+            family: "qwen3-8b".to_string(),
+            provider: "siliconflow".to_string(),
+            latency_ms: 800,
+            reliability: 1.0,
+            capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
+            max_context: 32_768,
+            tier: None,
+        },
+        ModelInfo {
+            id: "DeepSeek-R1-Distill-Qwen-7B".to_string(),
+            family: "deepseek-r1-distill-qwen-7b".to_string(),
+            provider: "siliconflow".to_string(),
+            latency_ms: 1000,
+            reliability: 1.0,
+            capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
+            max_context: 32_768,
+            tier: None,
+        },
+    ]
+}
+
+/// Zhipu GLM (BigModel) free-tier catalog — GLM-4.7-Flash is a strong free
+/// coding/chat model (~1 concurrent request). CN-hosted; Free-mode-only for the
+/// same privacy reason as SiliconFlow.
+pub fn zhipu_models() -> Vec<ModelInfo> {
+    vec![ModelInfo {
+        id: "glm-4.7-flash".to_string(),
+        family: "glm-4.7-flash".to_string(),
+        provider: "zhipu".to_string(),
+        latency_ms: 900,
+        reliability: 1.0,
+        capabilities: vec![
+            ModelCapability::Json,
+            ModelCapability::Tools,
+            ModelCapability::LongContext,
+        ],
+        max_context: 128_000,
+        tier: None,
+    }]
+}
+
 /// Run one provider attempt under an optional deadline. Bounds a single
 /// candidate call so a hung or pathologically slow provider fails over (chaos
 /// laboratory Phase 1: hangs forever, extremely slow) instead of stalling the
@@ -1236,20 +1789,116 @@ async fn run_attempt(
     }
 }
 
-#[async_trait]
-impl ModelClient for InferenceFabric {
-    async fn complete(&self, prompt: &str) -> Result<String, String> {
+/// Collapse a provider error string into a coarse reason bucket for the
+/// health-change telemetry log (e.g. `timeout`, `rate_limit`, `auth`,
+/// `unavailable`, `server_error`, or `error`).
+fn classify_failure_reason(err: &str) -> &str {
+    let lower = err.to_lowercase();
+    if lower.contains("timed out") || lower.contains("timeout") {
+        "timeout"
+    } else if lower.contains("429") || lower.contains("rate limit") || lower.contains("quota") {
+        "rate_limit"
+    } else if lower.contains("401")
+        || lower.contains("403")
+        || lower.contains("unauthorized")
+        || lower.contains("auth")
+    {
+        "auth"
+    } else if lower.contains("503") || lower.contains("unavailable") {
+        "unavailable"
+    } else if lower.contains("500")
+        || lower.contains("502")
+        || lower.contains("504")
+        || lower.contains("server")
+    {
+        "server_error"
+    } else {
+        "error"
+    }
+}
+
+/// Sibling path for an atomic persistence write: `<path>.tmp`. A crash after
+/// writing the temp (but before rename) leaves the real file untouched; stale
+/// temps are simply overwritten on the next persist.
+fn temp_sibling(path: &std::path::Path) -> std::path::PathBuf {
+    let mut os = path.as_os_str().to_owned();
+    os.push(".tmp");
+    std::path::PathBuf::from(os)
+}
+
+/// Clamp a persisted reliability into the valid `0.0..=1.0` range. Non-finite
+/// (NaN/±inf) values are unclampable and rejected by the caller via `None`.
+fn sanitize_reliability(r: f64) -> f64 {
+    if r.is_finite() {
+        r.clamp(0.0, 1.0)
+    } else {
+        1.0
+    }
+}
+
+/// Opt-in gate for GitHub Models. `GITHUB_TOKEN` is set by default in GitHub
+/// Actions and many CI systems, so a bare token must NEVER auto-register the
+/// provider — that would silently add a cloud candidate to every CI run. An
+/// explicit `GITHUB_MODELS_KEY` always wins; the generic token is used only
+/// when `GITHUB_MODELS_ENABLED=true|1`.
+fn github_models_key(
+    explicit_key: Option<&str>,
+    enabled: bool,
+    generic_token: Option<&str>,
+) -> Option<String> {
+    match explicit_key {
+        Some(k) => Some(k.to_string()),
+        None if enabled => generic_token.map(|t| t.to_string()),
+        None => None,
+    }
+}
+
+impl InferenceFabric {
+    /// Requirement-driven completion — the **Model Budget** path. Callers
+    /// express [`RequestRequirements`]; the fabric filters and ranks within
+    /// them (free-first cascade: local models first when privacy prefers it,
+    /// then vision/long-context/tool matches, then quality/speed/health).
+    /// Backward-compatible: [`ModelClient::complete`] keeps the mode-based
+    /// selection path unchanged; this is the opt-in constraint surface.
+    ///
+    /// Audit-trail note: the frozen [`RoutingDecision`] v1 contract has no
+    /// "requirements" field, so a requirement-driven decision records
+    /// `routing_mode` as the fabric's default mode (e.g. `Free`) exactly like
+    /// a mode-based one — the trail cannot distinguish a Model Budget request
+    /// by shape. Selection is still fully auditable (candidates, chosen,
+    /// served, failures); only the mode label is shared.
+    pub async fn complete_with(
+        &self,
+        req: &RequestRequirements,
+        prompt: &str,
+    ) -> Result<String, String> {
         let request_id = uuid::Uuid::new_v4().to_string();
         tracing::info!(
-            "[Inference Request {}] Starting completion routing...",
-            request_id
+            "[Inference Request {}] Starting requirement-driven routing (privacy={:?}, budget={:?}, latency={:?})",
+            request_id,
+            req.privacy,
+            req.budget,
+            req.latency_ms
         );
+        let candidates = self.select_for(req);
+        self.complete_candidates(&request_id, candidates, prompt)
+            .await
+    }
 
-        let candidates = self.select_candidates(self.default_mode);
+    /// The shared attempt loop: iterate candidates in rank order, attempt each
+    /// under the per-attempt deadline, record the immutable audit trail, and
+    /// update health/circuits/metrics. Used by both the mode-based
+    /// [`ModelClient::complete`] and the requirement-driven `complete_with`.
+    async fn complete_candidates(
+        &self,
+        request_id: &str,
+        candidates: Vec<(ModelInfo, &dyn Provider)>,
+        prompt: &str,
+    ) -> Result<String, String> {
         if candidates.is_empty() {
-            let err_msg = "No active providers configured for this routing mode.".to_string();
+            let err_msg = "No eligible providers for this request.".to_string();
             let metrics = InferenceMetrics {
-                request_id: request_id.clone(),
+                request_id: request_id.to_string(),
                 timestamp: chrono::Utc::now(),
                 provider: "none".to_string(),
                 model: "none".to_string(),
@@ -1259,11 +1908,7 @@ impl ModelClient for InferenceFabric {
                 error: Some(err_msg.clone()),
             };
             self.log_metrics(&metrics);
-            self.record_decision(self.start_decision(
-                None,
-                Vec::new(),
-                None,
-            ));
+            self.record_decision(self.start_decision(None, Vec::new(), None));
             return Err(err_msg);
         }
 
@@ -1327,8 +1972,22 @@ impl ModelClient for InferenceFabric {
                     // Update reliability score
                     {
                         let mut guard = self.health_scores.lock().unwrap();
-                        if let Some(score) = guard.get_mut(provider.name()) {
+                        let (before, after) = if let Some(score) = guard.get_mut(provider.name()) {
+                            let before = *score;
                             *score = (*score + 0.1).min(1.0);
+                            (before, *score)
+                        } else {
+                            (0.0, 0.0)
+                        };
+                        drop(guard);
+                        if (after - before).abs() > f64::EPSILON {
+                            self.log_health_change(
+                                provider.name(),
+                                before,
+                                after,
+                                "success",
+                                "recovered",
+                            );
                         }
                     }
 
@@ -1344,7 +2003,7 @@ impl ModelClient for InferenceFabric {
 
                     // Log metrics
                     let metrics = InferenceMetrics {
-                        request_id: request_id.clone(),
+                        request_id: request_id.to_string(),
                         timestamp: chrono::Utc::now(),
                         provider: provider.name().to_string(),
                         model: model.id.clone(),
@@ -1367,19 +2026,43 @@ impl ModelClient for InferenceFabric {
                     );
 
                     // Degrade reliability rating
-                    {
+                    let (health_before, health_after) = {
                         let mut guard = self.health_scores.lock().unwrap();
-                        if let Some(score) = guard.get_mut(provider.name()) {
+                        let (before, after) = if let Some(score) = guard.get_mut(provider.name()) {
+                            let before = *score;
                             *score = (*score - 0.2).max(0.0);
-                        }
-                    }
+                            (before, *score)
+                        } else {
+                            (0.0, 0.0)
+                        };
+                        drop(guard);
+                        (before, after)
+                    };
 
                     // Trip circuit failure
-                    {
+                    let circuit_opened = {
                         let mut cb_guard = self.circuits.lock().unwrap();
                         if let Some(cb) = cb_guard.get_mut(provider.name()) {
+                            let state_before = cb.state;
                             cb.record_failure();
+                            state_before != cb.state && cb.state == CircuitState::Open
+                        } else {
+                            false
                         }
+                    };
+
+                    if (health_after - health_before).abs() > f64::EPSILON {
+                        self.log_health_change(
+                            provider.name(),
+                            health_before,
+                            health_after,
+                            classify_failure_reason(&err),
+                            if circuit_opened {
+                                "demoted"
+                            } else {
+                                "degraded"
+                            },
+                        );
                     }
 
                     self.persist_health();
@@ -1400,7 +2083,7 @@ impl ModelClient for InferenceFabric {
         decision.served = None;
         self.record_decision(decision);
         let metrics = InferenceMetrics {
-            request_id: request_id.clone(),
+            request_id: request_id.to_string(),
             timestamp: chrono::Utc::now(),
             provider: "all".to_string(),
             model: "none".to_string(),
@@ -1412,6 +2095,20 @@ impl ModelClient for InferenceFabric {
         self.log_metrics(&metrics);
 
         Err(final_err)
+    }
+}
+
+#[async_trait]
+impl ModelClient for InferenceFabric {
+    async fn complete(&self, prompt: &str) -> Result<String, String> {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        tracing::info!(
+            "[Inference Request {}] Starting completion routing...",
+            request_id
+        );
+        let candidates = self.select_candidates(self.default_mode);
+        self.complete_candidates(&request_id, candidates, prompt)
+            .await
     }
 }
 
@@ -1768,7 +2465,10 @@ mod tests {
         fabric.register_model(model("vend/alpha:free", "openrouter", 5));
         fabric.register_model(model("vend/beta:free", "opengateway", 10));
 
-        let text = fabric.complete("hi").await.expect("steady provider answers");
+        let text = fabric
+            .complete("hi")
+            .await
+            .expect("steady provider answers");
         assert_eq!(text, "ok");
 
         let d = fabric.last_decision().expect("decision recorded");
@@ -1806,6 +2506,496 @@ mod tests {
             fabric.last_served(),
             Some(("opengateway".to_string(), "vend/beta:free".to_string()))
         );
+    }
+
+    /// Build a fabric with one provider registered under `name` and its catalog
+    /// models loaded — mirrors what `default_from_env` does for real env keys.
+    fn provider_fabric(name: &str, base: &str, models: Vec<ModelInfo>) -> InferenceFabric {
+        let mut fabric = InferenceFabric::new();
+        fabric.register_provider(Box::new(OpenAiProvider {
+            name: name.to_string(),
+            base_url: base.to_string(),
+            api_key: String::new(),
+        }));
+        for m in models {
+            fabric.register_model(m);
+        }
+        fabric
+    }
+
+    #[test]
+    fn sambanova_models_are_selected_in_free_and_hybrid_but_not_local() {
+        let fabric = provider_fabric(
+            "sambanova",
+            "https://api.sambanova.ai/v1",
+            sambanova_models(),
+        );
+        assert!(fabric.providers.contains_key("sambanova"));
+
+        let free = fabric.select_candidates(RoutingMode::Free);
+        assert!(
+            free.iter().any(|(m, _)| m.provider == "sambanova"),
+            "sambanova should be a Free-mode candidate"
+        );
+
+        let hybrid = fabric.select_candidates(RoutingMode::Hybrid);
+        assert!(
+            hybrid.iter().any(|(m, _)| m.provider == "sambanova"),
+            "sambanova should be a Hybrid-mode candidate"
+        );
+
+        let local = fabric.select_candidates(RoutingMode::Local);
+        assert!(
+            !local.iter().any(|(m, _)| m.provider == "sambanova"),
+            "sambanova must not be selected in Local-only mode"
+        );
+    }
+
+    #[test]
+    fn github_models_are_selected_in_free_and_hybrid_but_not_local() {
+        let fabric = provider_fabric(
+            "github-models",
+            "https://models.github.ai/inference",
+            github_models(),
+        );
+        assert!(fabric.providers.contains_key("github-models"));
+
+        let free = fabric.select_candidates(RoutingMode::Free);
+        assert!(
+            free.iter().any(|(m, _)| m.provider == "github-models"),
+            "github-models should be a Free-mode candidate"
+        );
+
+        let hybrid = fabric.select_candidates(RoutingMode::Hybrid);
+        assert!(
+            hybrid.iter().any(|(m, _)| m.provider == "github-models"),
+            "github-models should be a Hybrid-mode candidate"
+        );
+
+        let local = fabric.select_candidates(RoutingMode::Local);
+        assert!(
+            !local.iter().any(|(m, _)| m.provider == "github-models"),
+            "github-models must not be selected in Local-only mode"
+        );
+    }
+
+    /// The CN-hosted free providers (SiliconFlow, Zhipu) are deliberate
+    /// Free-mode-ONLY: they must never appear as Hybrid or Local candidates so
+    /// private code never silently fails over to a China-hosted endpoint.
+    #[test]
+    fn siliconflow_and_zhipu_are_free_only_by_privacy_stance() {
+        let fabric = provider_fabric(
+            "siliconflow",
+            "https://api.siliconflow.cn/v1",
+            siliconflow_models(),
+        );
+        assert!(fabric.providers.contains_key("siliconflow"));
+        let free = fabric.select_candidates(RoutingMode::Free);
+        assert!(
+            free.iter().any(|(m, _)| m.provider == "siliconflow"),
+            "siliconflow should be a Free-mode candidate"
+        );
+        let hybrid = fabric.select_candidates(RoutingMode::Hybrid);
+        assert!(
+            !hybrid.iter().any(|(m, _)| m.provider == "siliconflow"),
+            "siliconflow must NOT be a Hybrid candidate (CN-hosted privacy stance)"
+        );
+
+        let fabric = provider_fabric(
+            "zhipu",
+            "https://open.bigmodel.cn/api/paas/v4",
+            zhipu_models(),
+        );
+        assert!(fabric.providers.contains_key("zhipu"));
+        let free = fabric.select_candidates(RoutingMode::Free);
+        assert!(
+            free.iter().any(|(m, _)| m.provider == "zhipu"),
+            "zhipu should be a Free-mode candidate"
+        );
+        let hybrid = fabric.select_candidates(RoutingMode::Hybrid);
+        assert!(
+            !hybrid.iter().any(|(m, _)| m.provider == "zhipu"),
+            "zhipu must NOT be a Hybrid candidate (CN-hosted privacy stance)"
+        );
+    }
+
+    #[test]
+    fn new_free_catalogs_carry_tool_capabilities() {
+        for m in sambanova_models()
+            .into_iter()
+            .chain(github_models())
+            .chain(siliconflow_models())
+            .chain(zhipu_models())
+        {
+            assert!(
+                m.capabilities.contains(&ModelCapability::Json)
+                    && m.capabilities.contains(&ModelCapability::Tools),
+                "{} ({}): free providers must advertise Json+Tools",
+                m.provider,
+                m.id
+            );
+        }
+    }
+
+    /// A bare GITHUB_TOKEN (set by default in GitHub Actions) must never
+    /// auto-register the GitHub Models provider — CI safety. An explicit
+    /// GITHUB_MODELS_KEY or GITHUB_MODELS_ENABLED=true is required.
+    #[test]
+    fn github_models_requires_explicit_opt_in_for_generic_token() {
+        // Bare token, no enable flag → NOT registered (the CI footgun case).
+        assert_eq!(github_models_key(None, false, Some("ci-token")), None);
+        // Token + explicit enable flag → registered.
+        assert_eq!(
+            github_models_key(None, true, Some("pat")),
+            Some("pat".to_string())
+        );
+        // Explicit key always wins, even alongside a stray CI token.
+        assert_eq!(
+            github_models_key(Some("models-key"), false, Some("ci-token")),
+            Some("models-key".to_string())
+        );
+        // Nothing configured → nothing registered.
+        assert_eq!(github_models_key(None, false, None), None);
+    }
+
+    /// Build a `ModelInfo` for budget-routing tests: provider + latency + caps.
+    fn mi(id: &str, provider: &str, latency_ms: u64, caps: &[ModelCapability]) -> ModelInfo {
+        ModelInfo {
+            id: id.to_string(),
+            family: id.to_string(),
+            provider: provider.to_string(),
+            latency_ms,
+            reliability: 1.0,
+            capabilities: caps.to_vec(),
+            max_context: 4096,
+            tier: None,
+        }
+    }
+
+    /// A fabric with three providers: a free cloud tier (openrouter), a paid
+    /// tier (groq), and a local model (ollama, Local capability).
+    fn budget_fabric() -> InferenceFabric {
+        let mut fabric = InferenceFabric::new();
+        for name in ["openrouter", "groq", "ollama"] {
+            fabric.register_provider(Box::new(OpenAiProvider {
+                name: name.to_string(),
+                base_url: "http://localhost/v1".to_string(),
+                api_key: String::new(),
+            }));
+        }
+        fabric.register_model(mi(
+            "openrouter/free",
+            "openrouter",
+            2000,
+            &[ModelCapability::Tools],
+        ));
+        fabric.register_model(mi("llama-3.3-70b", "groq", 200, &[ModelCapability::Tools]));
+        fabric.register_model(mi(
+            "qwen2.5-coder",
+            "ollama",
+            1000,
+            &[ModelCapability::Tools, ModelCapability::Local],
+        ));
+        fabric
+    }
+
+    #[test]
+    fn select_for_free_budget_excludes_paid_providers() {
+        let fabric = budget_fabric();
+        let req = RequestRequirements::default(); // budget = Free
+        let picks = fabric.select_for(&req);
+        let providers: Vec<&str> = picks.iter().map(|(m, _)| m.provider.as_str()).collect();
+        assert!(
+            providers.contains(&"openrouter"),
+            "free cloud eligible: {providers:?}"
+        );
+        assert!(
+            providers.contains(&"ollama"),
+            "local model is free: {providers:?}"
+        );
+        assert!(
+            !providers.contains(&"groq"),
+            "paid provider must be excluded under budget=Free: {providers:?}"
+        );
+    }
+
+    #[test]
+    fn select_for_bounded_budget_opens_paid_providers() {
+        let fabric = budget_fabric();
+        let req = RequestRequirements {
+            budget: Budget::Bounded,
+            ..RequestRequirements::default()
+        };
+        let picks = fabric.select_for(&req);
+        let providers: Vec<&str> = picks.iter().map(|(m, _)| m.provider.as_str()).collect();
+        assert!(
+            providers.contains(&"groq"),
+            "bounded budget admits paid: {providers:?}"
+        );
+    }
+
+    #[test]
+    fn select_for_privacy_required_excludes_remote_models() {
+        let fabric = budget_fabric();
+        let req = RequestRequirements {
+            budget: Budget::Bounded,
+            privacy: Preference::Required,
+            ..RequestRequirements::default()
+        };
+        let picks = fabric.select_for(&req);
+        let providers: Vec<&str> = picks.iter().map(|(m, _)| m.provider.as_str()).collect();
+        assert_eq!(
+            picks.len(),
+            1,
+            "only the local model survives: {providers:?}"
+        );
+        assert_eq!(picks[0].0.provider, "ollama");
+    }
+
+    #[test]
+    fn select_for_latency_bound_excludes_slow_candidates() {
+        let fabric = budget_fabric();
+        let req = RequestRequirements {
+            budget: Budget::Bounded,
+            latency_ms: Some(500),
+            ..RequestRequirements::default()
+        };
+        let picks = fabric.select_for(&req);
+        let providers: Vec<&str> = picks.iter().map(|(m, _)| m.provider.as_str()).collect();
+        assert_eq!(
+            picks.len(),
+            1,
+            "only groq (200ms) is under 500ms: {providers:?}"
+        );
+        assert_eq!(picks[0].0.provider, "groq");
+    }
+
+    #[test]
+    fn select_for_required_vision_excludes_non_vision_models() {
+        let mut fabric = budget_fabric();
+        fabric.register_model(mi(
+            "gpt-4o",
+            "github-models",
+            1500,
+            &[
+                ModelCapability::Tools,
+                ModelCapability::Vision,
+                ModelCapability::LongContext,
+            ],
+        ));
+        fabric.register_provider(Box::new(OpenAiProvider {
+            name: "github-models".to_string(),
+            base_url: "http://localhost/v1".to_string(),
+            api_key: String::new(),
+        }));
+        let req = RequestRequirements {
+            budget: Budget::Bounded,
+            vision: Requirement::Required,
+            ..RequestRequirements::default()
+        };
+        let picks = fabric.select_for(&req);
+        let providers: Vec<&str> = picks.iter().map(|(m, _)| m.provider.as_str()).collect();
+        assert_eq!(
+            picks.len(),
+            1,
+            "only the vision model survives: {providers:?}"
+        );
+        assert_eq!(picks[0].0.provider, "github-models");
+    }
+
+    #[test]
+    fn select_for_honors_fabric_global_required_capabilities() {
+        // The fabric-global capability gate must apply on BOTH selection paths:
+        // select_candidates filters by it, so select_for must too, or a caller
+        // setting `required_capabilities` gets different sets per entry point.
+        let mut fabric = budget_fabric();
+        fabric.register_provider(Box::new(OpenAiProvider {
+            name: "github-models".to_string(),
+            base_url: "http://localhost/v1".to_string(),
+            api_key: String::new(),
+        }));
+        fabric.register_model(mi(
+            "gpt-4o",
+            "github-models",
+            1500,
+            &[ModelCapability::Vision],
+        ));
+        fabric.required_capabilities = vec![ModelCapability::Vision];
+
+        let picks = fabric.select_for(&RequestRequirements::default());
+        let providers: Vec<&str> = picks.iter().map(|(m, _)| m.provider.as_str()).collect();
+        assert_eq!(
+            providers,
+            vec!["github-models"],
+            "global gate must apply to select_for: {providers:?}"
+        );
+    }
+
+    #[test]
+    fn select_for_privacy_preferred_ranks_local_above_remote() {
+        let fabric = budget_fabric();
+        let req = RequestRequirements {
+            privacy: Preference::Preferred,
+            ..RequestRequirements::default()
+        };
+        let picks = fabric.select_for(&req);
+        let providers: Vec<&str> = picks.iter().map(|(m, _)| m.provider.as_str()).collect();
+        assert_eq!(
+            picks.len(),
+            2,
+            "free budget keeps openrouter + local: {providers:?}"
+        );
+        assert_eq!(
+            picks[0].0.provider, "ollama",
+            "privacy=Preferred must rank the local model first: {providers:?}"
+        );
+        assert_eq!(picks[1].0.provider, "openrouter");
+    }
+
+    #[tokio::test]
+    async fn complete_with_falls_back_within_requirements() {
+        let mut fabric = InferenceFabric::new();
+        fabric.register_provider(Box::new(ScriptedProvider {
+            name: "openrouter",
+            fail: true,
+        }));
+        fabric.register_provider(Box::new(ScriptedProvider {
+            name: "opengateway",
+            fail: false,
+        }));
+        fabric.register_model(mi(
+            "openrouter/free",
+            "openrouter",
+            2000,
+            &[ModelCapability::Tools],
+        ));
+        fabric.register_model(mi(
+            "opengateway/free",
+            "opengateway",
+            2100,
+            &[ModelCapability::Tools],
+        ));
+
+        // Both candidates meet the requirements (free budget + tools preferred);
+        // the higher-ranked one (openrouter) fails with 429 → opengateway serves.
+        let req = RequestRequirements::default();
+        let text = fabric
+            .complete_with(&req, "hi")
+            .await
+            .expect("fallback serves");
+        assert_eq!(text, "ok");
+
+        let d = fabric.last_decision().expect("decision recorded");
+        assert_eq!(d.candidates.len(), 2);
+        assert_eq!(d.failures.len(), 1);
+        assert_eq!(d.failures[0].provider, "openrouter");
+        assert_eq!(
+            d.served,
+            Some(("opengateway".to_string(), "opengateway/free".to_string()))
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_with_errors_when_no_eligible_candidates() {
+        // Only a paid provider is registered; the default free budget excludes it.
+        let mut fabric = InferenceFabric::new();
+        fabric.register_provider(Box::new(ScriptedProvider {
+            name: "groq",
+            fail: false,
+        }));
+        fabric.register_model(mi("llama-3.3-70b", "groq", 200, &[ModelCapability::Tools]));
+
+        let err = fabric
+            .complete_with(&RequestRequirements::default(), "hi")
+            .await
+            .expect_err("no free candidate → honest error");
+        assert!(
+            err.contains("No eligible providers"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// The fabric is the model client for the Investigation Engine's LLM
+    /// strategy: the strategy prompt routes through free-first requirements
+    /// routing, and the model's JSON answer becomes the plan. The fabric is
+    /// shared behind an `Arc` (the natural daemon ownership) via the blanket
+    /// `LlmStrategyClient for Arc<T>` passthrough, and the mock answers with a
+    /// channel the heuristic could NOT produce for this goal (memory, not
+    /// git) — so the assertion structurally discriminates the LLM path from
+    /// a silent heuristic fallback.
+    #[tokio::test]
+    async fn fabric_serves_the_llm_strategy_end_to_end() {
+        use friday_investigation::{InvestigationChannel, InvestigationEngine};
+
+        struct JsonProvider;
+        #[async_trait]
+        impl Provider for JsonProvider {
+            fn name(&self) -> &str {
+                "openrouter"
+            }
+            async fn complete(
+                &self,
+                _model_id: &str,
+                _prompt: &str,
+                _require_json: bool,
+            ) -> Result<String, String> {
+                Ok(r#"{"requirements":[{"channel":"memory","rationale":"recall prior work","confidence":0.8}]}"#
+                    .to_string())
+            }
+            async fn check_health(&self) -> bool {
+                true
+            }
+        }
+
+        let mut fabric = InferenceFabric::new();
+        fabric.register_provider(Box::new(JsonProvider));
+        fabric.register_model(mi(
+            "openrouter/free",
+            "openrouter",
+            2000,
+            &[ModelCapability::Tools],
+        ));
+
+        let engine = InvestigationEngine::llm(Box::new(Arc::new(fabric)));
+        let plan = engine.investigate("Show me the repo status").await;
+        // The heuristic would return git for this goal — memory proves the
+        // model's answer (not the fallback) drove the plan.
+        assert_eq!(plan.channels(), vec![InvestigationChannel::Memory]);
+        assert_eq!(plan.requirements[0].confidence, 0.8);
+    }
+
+    /// Same end-to-end, but the fabric fails to route (no eligible candidate):
+    /// the strategy's heuristic fallback still produces a plan — a failed
+    /// model is never a failed investigation.
+    #[tokio::test]
+    async fn llm_strategy_falls_back_when_the_fabric_cannot_route() {
+        use friday_investigation::{InvestigationChannel, InvestigationEngine};
+
+        // Only a paid provider is registered; the default free budget excludes it.
+        let mut fabric = InferenceFabric::new();
+        fabric.register_provider(Box::new(ScriptedProvider {
+            name: "groq",
+            fail: true,
+        }));
+        fabric.register_model(mi("llama-3.3-70b", "groq", 200, &[ModelCapability::Tools]));
+
+        let engine = InvestigationEngine::llm(Box::new(fabric));
+        let plan = engine
+            .investigate("Search the web for the latest Rust async docs")
+            .await;
+        assert!(
+            plan.channels().contains(&InvestigationChannel::Web),
+            "heuristic fallback: {plan:?}"
+        );
+    }
+
+    #[test]
+    fn from_capabilities_raises_privacy_for_local_preference() {
+        use crate::providers::ModelCapability as C;
+        let req = RequestRequirements::from_capabilities(&[C::Local, C::Vision]);
+        assert_eq!(req.privacy, Preference::Preferred);
+        assert_eq!(req.vision, Requirement::Preferred);
+        assert_eq!(req.budget, Budget::Free);
     }
 }
 
@@ -2313,7 +3503,10 @@ mod v2_tests {
         assert!(c.completion && c.streaming && c.embeddings && c.tool_calling);
         assert!(c.dynamic_models && c.session_affinity && c.json_mode);
         assert_eq!(p.metadata().id, "omniroute");
-        assert!(!p.metadata().local, "omniroute is a gateway, not a local engine");
+        assert!(
+            !p.metadata().local,
+            "omniroute is a gateway, not a local engine"
+        );
     }
 
     #[test]
