@@ -78,16 +78,26 @@ async fn run_mcp_goal(text: &str, plan_json: &str) -> Run {
 
     let bus = friday.bus().clone();
     let mut rx = bus.subscribe();
-    bus.publish(Event::new(events::GOAL_RAW, "user", json!({ "text": text })))
-        .await
-        .unwrap();
+    bus.publish(Event::new(
+        events::GOAL_RAW,
+        "user",
+        json!({ "text": text }),
+    ))
+    .await
+    .unwrap();
 
-    let handle = tokio::spawn(async move { friday.run_with_timeout(std::time::Duration::from_secs(12)).await });
+    let handle = tokio::spawn(async move {
+        friday
+            .run_with_timeout(std::time::Duration::from_secs(12))
+            .await
+    });
 
     let mut collected = Vec::new();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
     while tokio::time::Instant::now() < deadline {
-        if let Ok(Ok(ev)) = tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await {
+        if let Ok(Ok(ev)) =
+            tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await
+        {
             collected.push(ev);
         }
     }
@@ -127,14 +137,23 @@ async fn mcp_capability_executes_end_to_end() {
 
     // The whole slice fired: planning, execution dispatch, MCP call, verification.
     assert!(saw(&run, events::PLAN_CREATED), "planner produced a plan");
-    assert!(saw(&run, events::EXEC_ACTION), "supervisor dispatched an action");
+    assert!(
+        saw(&run, events::EXEC_ACTION),
+        "supervisor dispatched an action"
+    );
     assert!(saw(&run, events::TASK_COMPLETED), "task completed");
-    assert!(saw(&run, events::GOAL_COMPLETED), "goal completed end-to-end");
+    assert!(
+        saw(&run, events::GOAL_COMPLETED),
+        "goal completed end-to-end"
+    );
 
     // The MCP capability was actually executed by the shim against the fake server.
     let result = exec_result_for(&run, "mcp:filesystem.read_file")
         .expect("EXEC_RESULT for the mcp capability");
-    assert_eq!(result.payload.get("success").and_then(|s| s.as_bool()), Some(true));
+    assert_eq!(
+        result.payload.get("success").and_then(|s| s.as_bool()),
+        Some(true)
+    );
     let output = result.payload.get("output").expect("output present");
     let text = output
         .get("content")
@@ -174,7 +193,9 @@ async fn spawn_crashing_server() -> FakeTransport {
                     "jsonrpc": "2.0", "id": id,
                     "result": { "protocolVersion": "2024-11-05", "capabilities": {}, "serverInfo": {} }
                 }),
-                "tools/list" => serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": [] } }),
+                "tools/list" => {
+                    serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": [] } })
+                }
                 _ => {
                     // Anything else (e.g. tools/call): crash.
                     break;
@@ -201,7 +222,9 @@ async fn mcp_server_disappears_mid_call_fails_cleanly() {
         json!({ "tasks": [ { "name": "Read", "capability": "mcp:fs.read_file", "params": {}, "depends_on_indices": [] } ] })
             .to_string(),
     )) as Box<_>);
-    let registry = register_engines_with_llm(&mut friday, backend).await.unwrap();
+    let registry = register_engines_with_llm(&mut friday, backend)
+        .await
+        .unwrap();
 
     let tool = friday_mcp::protocol::McpTool {
         name: "read_file".to_string(),
@@ -220,15 +243,25 @@ async fn mcp_server_disappears_mid_call_fails_cleanly() {
 
     let bus = friday.bus().clone();
     let mut rx = bus.subscribe();
-    bus.publish(Event::new(events::GOAL_RAW, "user", json!({ "text": "read" })))
-        .await
-        .unwrap();
-    let handle = tokio::spawn(async move { friday.run_with_timeout(std::time::Duration::from_secs(10)).await });
+    bus.publish(Event::new(
+        events::GOAL_RAW,
+        "user",
+        json!({ "text": "read" }),
+    ))
+    .await
+    .unwrap();
+    let handle = tokio::spawn(async move {
+        friday
+            .run_with_timeout(std::time::Duration::from_secs(10))
+            .await
+    });
 
     let mut collected = Vec::new();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
     while tokio::time::Instant::now() < deadline {
-        if let Ok(Ok(ev)) = tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await {
+        if let Ok(Ok(ev)) =
+            tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await
+        {
             collected.push(ev);
         }
     }
@@ -237,7 +270,10 @@ async fn mcp_server_disappears_mid_call_fails_cleanly() {
     // The failed call is reported (not silently dropped, not hung).
     let result = collected
         .iter()
-        .find(|e| e.kind == events::EXEC_RESULT && e.payload.get("capability").and_then(|c| c.as_str()) == Some("mcp:fs.read_file"))
+        .find(|e| {
+            e.kind == events::EXEC_RESULT
+                && e.payload.get("capability").and_then(|c| c.as_str()) == Some("mcp:fs.read_file")
+        })
         .expect("EXEC_RESULT for the crashed server");
     assert_eq!(
         result.payload.get("success").and_then(|s| s.as_bool()),
@@ -253,14 +289,16 @@ async fn mcp_health_recovers_via_probe() {
     // Healthy, and the registry (hence planner search) must reflect it. A single
     // persistent in-process MCP WebSocket server is used so "up" is reliable
     // across probe cycles; the factory returns `None` to simulate the outage.
+    use friday_capabilities::spec::CapabilityHealth;
     use friday_mcp::discovery::start_health_probe;
     use friday_mcp::protocol::McpTool;
-    use friday_capabilities::spec::CapabilityHealth;
     use futures::{SinkExt, StreamExt};
     use tokio::net::TcpListener;
     use tokio_tungstenite::{accept_async, tungstenite::Message};
 
-    let registry = std::sync::Arc::new(friday_planner::execution::capability_registry::CapabilityRegistry::new());
+    let registry = std::sync::Arc::new(
+        friday_planner::execution::capability_registry::CapabilityRegistry::new(),
+    );
     let id = "mcp:fs.read_file".to_string();
     registry.register(friday_mcp::adapter::tool_to_spec(
         "fs",
@@ -299,10 +337,16 @@ async fn mcp_health_recovers_via_probe() {
                             "jsonrpc": "2.0", "id": rid,
                             "result": { "protocolVersion": "2024-11-05", "capabilities": {}, "serverInfo": {} }
                         }),
-                        "tools/list" => serde_json::json!({ "jsonrpc": "2.0", "id": rid, "result": { "tools": [] } }),
-                        _ => serde_json::json!({ "jsonrpc": "2.0", "id": rid, "error": { "code": -32601, "message": "x" } }),
+                        "tools/list" => {
+                            serde_json::json!({ "jsonrpc": "2.0", "id": rid, "result": { "tools": [] } })
+                        }
+                        _ => {
+                            serde_json::json!({ "jsonrpc": "2.0", "id": rid, "error": { "code": -32601, "message": "x" } })
+                        }
                     };
-                    let _ = ws.send(Message::Text(serde_json::to_string(&response).unwrap())).await;
+                    let _ = ws
+                        .send(Message::Text(serde_json::to_string(&response).unwrap()))
+                        .await;
                 }
             });
         }
@@ -322,7 +366,9 @@ async fn mcp_health_recovers_via_probe() {
                 if s.load(std::sync::atomic::Ordering::SeqCst) == 1 {
                     return None;
                 }
-                friday_mcp::transport_ws::websocket_transport_for(&url).await.ok()
+                friday_mcp::transport_ws::websocket_transport_for(&url)
+                    .await
+                    .ok()
             }
         },
         vec![id.clone()],
@@ -373,7 +419,9 @@ async fn mcp_high_risk_tool_requires_approval() {
         json!({ "tasks": [ { "name": "Delete", "capability": "mcp:fs.delete_dir", "params": {}, "depends_on_indices": [] } ] })
             .to_string(),
     )) as Box<_>);
-    let registry = register_engines_with_llm(&mut friday, backend).await.unwrap();
+    let registry = register_engines_with_llm(&mut friday, backend)
+        .await
+        .unwrap();
 
     let spec = CapabilitySpec {
         id: "mcp:fs.delete_dir".to_string(),
@@ -393,15 +441,25 @@ async fn mcp_high_risk_tool_requires_approval() {
     // No executor needed: a High-risk task must pause before any dispatch.
     let bus = friday.bus().clone();
     let mut rx = bus.subscribe();
-    bus.publish(Event::new(events::GOAL_RAW, "user", json!({ "text": "delete dir" })))
-        .await
-        .unwrap();
-    let handle = tokio::spawn(async move { friday.run_with_timeout(std::time::Duration::from_secs(10)).await });
+    bus.publish(Event::new(
+        events::GOAL_RAW,
+        "user",
+        json!({ "text": "delete dir" }),
+    ))
+    .await
+    .unwrap();
+    let handle = tokio::spawn(async move {
+        friday
+            .run_with_timeout(std::time::Duration::from_secs(10))
+            .await
+    });
 
     let mut collected = Vec::new();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
     while tokio::time::Instant::now() < deadline {
-        if let Ok(Ok(ev)) = tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await {
+        if let Ok(Ok(ev)) =
+            tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await
+        {
             collected.push(ev);
         }
     }
@@ -409,7 +467,9 @@ async fn mcp_high_risk_tool_requires_approval() {
 
     // Supervisor must pause (require approval) and must NOT dispatch the action.
     assert!(
-        collected.iter().any(|e| e.kind == events::PERMISSION_PAUSED || e.kind == events::GOAL_PAUSED),
+        collected
+            .iter()
+            .any(|e| e.kind == events::PERMISSION_PAUSED || e.kind == events::GOAL_PAUSED),
         "high-risk MCP capability should pause for approval"
     );
     assert!(
