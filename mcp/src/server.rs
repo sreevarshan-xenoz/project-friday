@@ -51,7 +51,10 @@ impl Transport for FakeTransport {
     }
 
     async fn recv(&mut self) -> Result<String, String> {
-        self.inbound.recv().await.ok_or_else(|| "channel closed".to_string())
+        self.inbound
+            .recv()
+            .await
+            .ok_or_else(|| "channel closed".to_string())
     }
 
     async fn try_recv(&mut self) -> Result<String, String> {
