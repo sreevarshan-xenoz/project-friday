@@ -149,7 +149,10 @@ pub async fn sse_transport_for(base_url: &str) -> Result<Box<dyn Transport>, Str
         .await
         .map_err(|e| format!("sse GET to {sse_url} failed: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("sse GET to {sse_url} returned status {}", resp.status()));
+        return Err(format!(
+            "sse GET to {sse_url} returned status {}",
+            resp.status()
+        ));
     }
 
     // Bridge the streaming response body into a tokio pipe that the transport
