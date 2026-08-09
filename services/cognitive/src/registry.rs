@@ -32,10 +32,7 @@ impl PhaseRegistry {
 
     /// Get all handlers for a given phase.
     pub fn handlers_for(&self, phase: CognitivePhase) -> Vec<Arc<dyn PhaseHandler>> {
-        self.handlers
-            .get(&phase)
-            .cloned()
-            .unwrap_or_default()
+        self.handlers.get(&phase).cloned().unwrap_or_default()
     }
 
     /// Total number of registered handlers (counting each phase separately).
