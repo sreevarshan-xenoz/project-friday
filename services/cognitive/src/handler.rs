@@ -1,8 +1,8 @@
 use crate::phase::CognitivePhase;
 use crate::workspace::GlobalWorkspace;
 use async_trait::async_trait;
-use std::pin::Pin;
 use std::future::Future;
+use std::pin::Pin;
 
 /// The result of a phase handler executing.
 #[derive(Debug, Clone)]
@@ -55,11 +55,7 @@ pub struct FnHandler {
 }
 
 impl FnHandler {
-    pub fn new<F>(
-        name: impl Into<String>,
-        phases: Vec<CognitivePhase>,
-        func: F,
-    ) -> Self
+    pub fn new<F>(name: impl Into<String>, phases: Vec<CognitivePhase>, func: F) -> Self
     where
         F: Fn(CognitivePhase, GlobalWorkspace, u64) -> BoxFuture + Send + Sync + 'static,
     {
