@@ -473,3 +473,20 @@ them): `kernel`, `events`, `capabilities`, `planner`, `services`, `ipc`, `memory
 `simulation` (M4.7), `context` (M4.10), `intelligence` (M5). `docs/` remains as
 design history; `/specs` supersedes it for new work. The LLM sits **above** the
 kernel (fed by the Context Builder), exactly as shown in `specs/README.md`.
+
+## Skill Engine track (separate from the architecture M-numbers above)
+
+The architecture milestones above (M5 Intelligence, M6 Browser, M7 Vision,
+M8 Voice, M9 Learning) are the **subsystem track**. The Skill Engine runs its
+own milestone sequence, defined in `specs/skill-engine.md` and implemented in
+`services/skills` + `services/skill-forge`:
+
+| Milestone | Status | What it delivers |
+|-----------|--------|------------------|
+| M5 Skill Engine | ✅ | Loader, registry, context, permission policy (pure-data skills) |
+| M6 Skill Qualification | ✅ | Qualification pipeline + behavior suite: health view, live re-resolution, decision trace, adversarial tests |
+| M7 Skill Forge | ✅ | `friday create-skill / validate / publish` CLI (platform turn) |
+| M8 Memory-aware skills | ✅ | `SkillManifest.memory` + gated `SkillMemory` handles over the runtime `MemoryEngine` |
+| M8b Agent Runtime | ✅ | Sub-agent orchestration: spawn/lifecycle/mailbox/cancellation/timeout/budget/scheduling/merge (`services/agent-runtime`) |
+| M8c Web + Docs + CodeIntel skills | ✅ | Read-only `web`/`docs`/`codeintel` bundled skills + adapters (`web.search/fetch`, `docs.search/read`, `codeintel.understand`); browser verbs soft-declared until a browser runtime |
+| M9 Autonomous skills | ⏳ | Skills that install/configure themselves — deliberately NOT started until the above is battle-tested |
