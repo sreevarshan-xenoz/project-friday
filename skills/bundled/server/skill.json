@@ -7,9 +7,9 @@
   "category": "developer",
   "icon": "▶",
   "capabilities": [
-    "terminal.execute",
-    "filesystem.read",
-    "filesystem.write"
+    "terminal.exec",
+    "filesystem.read_file",
+    "filesystem.write_file"
   ],
   "actions": [
     "check server health",
@@ -24,8 +24,8 @@
     "troubleshoot server issues"
   ],
   "permissions": [
-    "terminal.execute",
-    "filesystem.write"
+    "terminal.exec",
+    "filesystem.write_file"
   ],
   "examples": [
     {
