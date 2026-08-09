@@ -9,14 +9,20 @@
 //! Windows — those concerns live entirely in [`adapters`]. See `docs/Execution.md`.
 
 pub mod adapters;
+pub mod agent_driver;
 pub mod audit;
 pub mod kernel;
 pub mod permission;
 pub mod request;
 pub mod runtime;
 
+pub use agent_driver::SkillAgentDriver;
+
 pub use adapters::sim::sim_registry;
-pub use adapters::{ActionAdapter, FilesystemAdapter, GitAdapter, TerminalAdapter};
+pub use adapters::{
+    browser_capability_specs, register_browser_capabilities, ActionAdapter, BrowserAdapter,
+    CodeIntelAdapter, DocsAdapter, FilesystemAdapter, GitAdapter, TerminalAdapter, WebAdapter,
+};
 pub use audit::{AuditEngine, AuditEntry};
 pub use kernel::{
     CancellationToken, ExecutionContext, ExecutionContextBuilder, Kernel, LifecycleError,
