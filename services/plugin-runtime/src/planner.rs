@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::catalog::CapabilityCatalog;
 use crate::contract::{
-    Capability, CorrelationId, ExecutionPlan, PluginHealth, PlanningRationale, ProviderProfile,
+    Capability, CorrelationId, ExecutionPlan, PlanningRationale, PluginHealth, ProviderProfile,
     ResolvedCapability, RuntimeError, ScoredCandidate, ScoringWeights, SelectionContext,
     SelectionRationale, Urgency,
 };
@@ -69,13 +69,20 @@ impl<'a> CapabilityPlanner<'a> {
 
         if allowed.is_empty() {
             let first = &candidate_ids[0];
-            let name = self.registry.descriptor(first).map(|d| d.name.as_str()).unwrap_or(first);
+            let name = self
+                .registry
+                .descriptor(first)
+                .map(|d| d.name.as_str())
+                .unwrap_or(first);
             let rationale = SelectionRationale {
                 capability: capability.clone(),
                 candidates: Vec::new(),
                 selected_plugin_id: first.to_string(),
                 composite_score: 0.0,
-                explanation: format!("all candidates blocked by policy — falling back to {}", name),
+                explanation: format!(
+                    "all candidates blocked by policy — falling back to {}",
+                    name
+                ),
                 correlation_id: correlation_id.clone(),
             };
             return Ok((
@@ -101,7 +108,10 @@ impl<'a> CapabilityPlanner<'a> {
             let first_id = &allowed[0];
             let desc = self.registry.descriptor(first_id);
             let name = desc.map(|d| d.name.as_str()).unwrap_or(first_id);
-            let explanation = format!("{} is registered but not yet healthy — selected as only provider", name);
+            let explanation = format!(
+                "{} is registered but not yet healthy — selected as only provider",
+                name
+            );
             let fallback = ResolvedCapability {
                 plugin_id: first_id.to_string(),
                 capability: capability.clone(),
@@ -132,7 +142,8 @@ impl<'a> CapabilityPlanner<'a> {
                 let availability_score = h.availability;
 
                 let latency_penalty = if h.average_latency_ms > 0.0 {
-                    (h.average_latency_ms / (h.average_latency_ms + expected_latency as f64)).min(1.0)
+                    (h.average_latency_ms / (h.average_latency_ms + expected_latency as f64))
+                        .min(1.0)
                 } else {
                     0.0
                 };
@@ -147,8 +158,7 @@ impl<'a> CapabilityPlanner<'a> {
 
                 let context_fit_score = compute_context_fit(profile, context);
 
-                let weighted =
-                    self.weights.reliability * reliability_score
+                let weighted = self.weights.reliability * reliability_score
                     + self.weights.availability * availability_score
                     - self.weights.latency * latency_penalty
                     - self.weights.cost * cost_penalty
@@ -158,7 +168,8 @@ impl<'a> CapabilityPlanner<'a> {
 
                 ScoredCandidate {
                     plugin_id: h.plugin_id.clone(),
-                    plugin_name: self.registry
+                    plugin_name: self
+                        .registry
                         .descriptor(&h.plugin_id)
                         .map(|d| d.name.clone())
                         .unwrap_or_else(|| h.plugin_id.clone()),
@@ -174,7 +185,11 @@ impl<'a> CapabilityPlanner<'a> {
             })
             .collect();
 
-        scored.sort_by(|a, b| b.weighted_score.partial_cmp(&a.weighted_score).unwrap_or(std::cmp::Ordering::Equal));
+        scored.sort_by(|a, b| {
+            b.weighted_score
+                .partial_cmp(&a.weighted_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         let best = &scored[0];
         let candidates = scored.clone();
@@ -186,7 +201,8 @@ impl<'a> CapabilityPlanner<'a> {
                 best.plugin_name, best.reliability_score, best.profile_match_score, best.context_fit_score, best.weighted_score
             )
         } else {
-            let reasons: Vec<String> = candidates.iter()
+            let reasons: Vec<String> = candidates
+                .iter()
                 .filter(|c| c.plugin_id != best.plugin_id)
                 .map(|c| format!("{} (score {:.3})", c.plugin_name, c.weighted_score))
                 .collect();
@@ -236,7 +252,8 @@ impl<'a> CapabilityPlanner<'a> {
         correlation_id: &CorrelationId,
         context: &SelectionContext,
     ) -> Result<ExecutionPlan, RuntimeError> {
-        let (resolved, rationale) = self.resolve(capability, plugin_health, correlation_id, context)?;
+        let (resolved, rationale) =
+            self.resolve(capability, plugin_health, correlation_id, context)?;
 
         let cap_descriptor = self.catalog.get(capability);
         let expected_latency = cap_descriptor.map(|d| d.expected_latency_ms).unwrap_or(100);
@@ -273,7 +290,11 @@ impl<'a> CapabilityPlanner<'a> {
 ///
 /// A streaming plugin gets a boost for streaming-like capabilities.
 /// A deterministic plugin gets a boost for idempotent operations.
-fn compute_profile_match(profile: Option<&ProviderProfile>, capability: &Capability, _context: &SelectionContext) -> f64 {
+fn compute_profile_match(
+    profile: Option<&ProviderProfile>,
+    capability: &Capability,
+    _context: &SelectionContext,
+) -> f64 {
     let Some(profile) = profile else {
         return 0.0;
     };
@@ -379,7 +400,8 @@ fn compute_context_fit(profile: Option<&ProviderProfile>, context: &SelectionCon
     // Context tags match
     if !context.user_preferences.is_empty() {
         for (key, val) in &context.user_preferences {
-            if profile.preferred_contexts.contains(key) || profile.preferred_contexts.contains(val) {
+            if profile.preferred_contexts.contains(key) || profile.preferred_contexts.contains(val)
+            {
                 score += 0.1;
             }
         }
@@ -396,10 +418,10 @@ fn compute_context_fit(profile: Option<&ProviderProfile>, context: &SelectionCon
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::CapabilityCatalog;
     use crate::contract::{PluginDescriptor, PluginStatus};
     use crate::policy::DefaultPolicyEngine;
     use crate::registry::CapabilityRegistry;
-    use crate::catalog::CapabilityCatalog;
 
     fn cid() -> CorrelationId {
         CorrelationId::from_string("test-resolver")
@@ -462,17 +484,23 @@ mod tests {
 
     fn make_profiles() -> HashMap<String, ProviderProfile> {
         let mut map = HashMap::new();
-        map.insert("fs-native".into(), ProviderProfile::default_for("fs-native"));
-        map.insert("fs-remote".into(), ProviderProfile {
-            plugin_id: "fs-remote".into(),
-            deterministic: true,
-            offline_capable: false,
-            streaming: false,
-            has_side_effects: false,
-            requires_network: true,
-            max_concurrency: 2,
-            preferred_contexts: vec!["remote".into()],
-        });
+        map.insert(
+            "fs-native".into(),
+            ProviderProfile::default_for("fs-native"),
+        );
+        map.insert(
+            "fs-remote".into(),
+            ProviderProfile {
+                plugin_id: "fs-remote".into(),
+                deterministic: true,
+                offline_capable: false,
+                streaming: false,
+                has_side_effects: false,
+                requires_network: true,
+                max_concurrency: 2,
+                preferred_contexts: vec!["remote".into()],
+            },
+        );
         map
     }
 
@@ -489,9 +517,15 @@ mod tests {
         let fs_remote = healthy("fs-remote", 0.85, 120.0);
         let health = vec![&fs_native, &fs_remote];
 
-        let (resolved, rationale) = resolver.resolve(&Capability::ReadFile, &health, &cid(), &default_ctx()).unwrap();
+        let (resolved, rationale) = resolver
+            .resolve(&Capability::ReadFile, &health, &cid(), &default_ctx())
+            .unwrap();
         assert_eq!(resolved.plugin_id, "fs-native");
-        assert!(resolved.confidence > 0.4, "confidence was {}", resolved.confidence);
+        assert!(
+            resolved.confidence > 0.4,
+            "confidence was {}",
+            resolved.confidence
+        );
         assert!(resolved.rationale.contains("Native Filesystem"));
 
         // Verify rationale structure
@@ -510,7 +544,9 @@ mod tests {
         let profiles = empty_profiles();
         let resolver = CapabilityPlanner::new(&reg, &catalog, &policy, &weights, &profiles);
 
-        let (resolved, _) = resolver.resolve(&Capability::ReadFile, &[], &cid(), &default_ctx()).unwrap();
+        let (resolved, _) = resolver
+            .resolve(&Capability::ReadFile, &[], &cid(), &default_ctx())
+            .unwrap();
         assert_eq!(resolved.plugin_id, "fs-native");
         assert!((resolved.confidence - 0.3).abs() < 0.01);
         assert!(resolved.rationale.contains("not yet healthy"));
@@ -546,7 +582,9 @@ mod tests {
         let fs_remote = healthy("fs-remote", 0.85, 120.0);
         let health = vec![&fs_native, &fs_remote];
 
-        let (_, rationale) = resolver.resolve(&Capability::ReadFile, &health, &cid(), &default_ctx()).unwrap();
+        let (_, rationale) = resolver
+            .resolve(&Capability::ReadFile, &health, &cid(), &default_ctx())
+            .unwrap();
 
         // Each candidate should have new score components
         for candidate in &rationale.candidates {
@@ -554,7 +592,9 @@ mod tests {
             assert!(candidate.weighted_score > 0.0 || candidate.weighted_score <= 0.0);
         }
 
-        let best_weighted = rationale.candidates.iter()
+        let best_weighted = rationale
+            .candidates
+            .iter()
             .map(|c| c.weighted_score)
             .max_by(|a, b| a.partial_cmp(b).unwrap());
         assert!(best_weighted.is_some());
@@ -566,8 +606,7 @@ mod tests {
 
         let reg = make_registry();
         let catalog = CapabilityCatalog::with_defaults();
-        let policy = RuleBasedPolicyEngine::new()
-            .prefer("fs-native", 0.5);
+        let policy = RuleBasedPolicyEngine::new().prefer("fs-native", 0.5);
         let weights = ScoringWeights::default();
         let profiles = make_profiles();
         let resolver = CapabilityPlanner::new(&reg, &catalog, &policy, &weights, &profiles);
@@ -576,12 +615,17 @@ mod tests {
         let fs_remote = healthy("fs-remote", 0.99, 5.0); // identical health
         let health = vec![&fs_native, &fs_remote];
 
-        let (resolved, rationale) = resolver.resolve(&Capability::ReadFile, &health, &cid(), &default_ctx()).unwrap();
+        let (resolved, rationale) = resolver
+            .resolve(&Capability::ReadFile, &health, &cid(), &default_ctx())
+            .unwrap();
         assert_eq!(resolved.plugin_id, "fs-native");
 
         // Policy bonus should be reflected in rationale
-        let native_candidate = rationale.candidates.iter()
-            .find(|c| c.plugin_id == "fs-native").unwrap();
+        let native_candidate = rationale
+            .candidates
+            .iter()
+            .find(|c| c.plugin_id == "fs-native")
+            .unwrap();
         assert!((native_candidate.policy_bonus - 0.3).abs() < 0.01);
     }
 
@@ -599,41 +643,55 @@ mod tests {
         let health = vec![&fs_native, &fs_remote];
 
         let offline_ctx = SelectionContext::offline();
-        let (resolved, rationale) = resolver.resolve(&Capability::ReadFile, &health, &cid(), &offline_ctx).unwrap();
+        let (resolved, rationale) = resolver
+            .resolve(&Capability::ReadFile, &health, &cid(), &offline_ctx)
+            .unwrap();
 
         // fs-native is offline-capable, fs-remote requires network
         assert_eq!(resolved.plugin_id, "fs-native");
 
-        let native_candidate = rationale.candidates.iter()
-            .find(|c| c.plugin_id == "fs-native").unwrap();
-        let remote_candidate = rationale.candidates.iter()
-            .find(|c| c.plugin_id == "fs-remote").unwrap();
+        let native_candidate = rationale
+            .candidates
+            .iter()
+            .find(|c| c.plugin_id == "fs-native")
+            .unwrap();
+        let remote_candidate = rationale
+            .candidates
+            .iter()
+            .find(|c| c.plugin_id == "fs-remote")
+            .unwrap();
         assert!(native_candidate.context_fit_score > remote_candidate.context_fit_score);
     }
 
     #[test]
     fn resolve_prefers_deterministic_for_critical_urgency() {
         let mut profiles = HashMap::new();
-        profiles.insert("det-fs".into(), ProviderProfile {
-            plugin_id: "det-fs".into(),
-            deterministic: true,
-            offline_capable: true,
-            streaming: false,
-            has_side_effects: false,
-            requires_network: false,
-            max_concurrency: 4,
-            preferred_contexts: vec![],
-        });
-        profiles.insert("non-det-fs".into(), ProviderProfile {
-            plugin_id: "non-det-fs".into(),
-            deterministic: false,
-            offline_capable: true,
-            streaming: true,
-            has_side_effects: true,
-            requires_network: true,
-            max_concurrency: 1,
-            preferred_contexts: vec![],
-        });
+        profiles.insert(
+            "det-fs".into(),
+            ProviderProfile {
+                plugin_id: "det-fs".into(),
+                deterministic: true,
+                offline_capable: true,
+                streaming: false,
+                has_side_effects: false,
+                requires_network: false,
+                max_concurrency: 4,
+                preferred_contexts: vec![],
+            },
+        );
+        profiles.insert(
+            "non-det-fs".into(),
+            ProviderProfile {
+                plugin_id: "non-det-fs".into(),
+                deterministic: false,
+                offline_capable: true,
+                streaming: true,
+                has_side_effects: true,
+                requires_network: true,
+                max_concurrency: 1,
+                preferred_contexts: vec![],
+            },
+        );
 
         let mut reg = CapabilityRegistry::new();
         reg.register(PluginDescriptor {
@@ -665,13 +723,21 @@ mod tests {
         let health = vec![&det, &non_det];
 
         let critical_ctx = SelectionContext::urgent();
-        let (resolved, rationale) = resolver.resolve(&Capability::ReadFile, &health, &cid(), &critical_ctx).unwrap();
+        let (resolved, rationale) = resolver
+            .resolve(&Capability::ReadFile, &health, &cid(), &critical_ctx)
+            .unwrap();
         assert_eq!(resolved.plugin_id, "det-fs");
 
-        let det_candidate = rationale.candidates.iter()
-            .find(|c| c.plugin_id == "det-fs").unwrap();
-        let non_det_candidate = rationale.candidates.iter()
-            .find(|c| c.plugin_id == "non-det-fs").unwrap();
+        let det_candidate = rationale
+            .candidates
+            .iter()
+            .find(|c| c.plugin_id == "det-fs")
+            .unwrap();
+        let non_det_candidate = rationale
+            .candidates
+            .iter()
+            .find(|c| c.plugin_id == "non-det-fs")
+            .unwrap();
         assert!(det_candidate.context_fit_score > non_det_candidate.context_fit_score);
     }
 
@@ -679,7 +745,11 @@ mod tests {
     fn profile_match_biases_toward_offline_for_filesystem() {
         let profile = ProviderProfile::default_for("local-fs");
         let score = compute_profile_match(Some(&profile), &Capability::ReadFile, &default_ctx());
-        assert!(score > 0.5, "local filesystem should get strong profile match, got {}", score);
+        assert!(
+            score > 0.5,
+            "local filesystem should get strong profile match, got {}",
+            score
+        );
     }
 
     #[test]
@@ -696,6 +766,10 @@ mod tests {
         };
         let ctx = SelectionContext::offline();
         let score = compute_context_fit(Some(&profile), &ctx);
-        assert!(score < 0.0, "network-required provider should be penalized in offline mode, got {}", score);
+        assert!(
+            score < 0.0,
+            "network-required provider should be penalized in offline mode, got {}",
+            score
+        );
     }
 }
