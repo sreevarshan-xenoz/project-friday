@@ -15,8 +15,8 @@ use friday_planner::experience::indexer::ExperienceIndexer;
 use friday_planner::experience::miner::PatternMiner;
 use friday_planner::experience::service::ExperienceService;
 use friday_planner::experience::suggestion::{SuggestionEngine, SuggestionPolicy};
-use friday_planner::experience::{GoalOutcome, MatchReason, ReflectionRecord, TIMELINE_VERSION};
 use friday_planner::experience::TimelineStore;
+use friday_planner::experience::{GoalOutcome, MatchReason, ReflectionRecord, TIMELINE_VERSION};
 
 fn temp_store() -> (TimelineStore, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
@@ -82,22 +82,69 @@ fn similar_finds_goals_with_matching_titles() {
     let goal_a = Uuid::new_v4();
     let plan_a = Uuid::new_v4();
 
-    store.append(make_entry(goal_a, plan_a, "exec.action", "filesystem.write", serde_json::json!({"title": "write readme"}))).unwrap();
-    store.append(make_entry(goal_a, plan_a, "exec.result", "filesystem.write", serde_json::json!({"success": true}))).unwrap();
-    store.append(make_entry(goal_a, plan_a, "goal.completed", "", serde_json::json!({}))).unwrap();
+    store
+        .append(make_entry(
+            goal_a,
+            plan_a,
+            "exec.action",
+            "filesystem.write",
+            serde_json::json!({"title": "write readme"}),
+        ))
+        .unwrap();
+    store
+        .append(make_entry(
+            goal_a,
+            plan_a,
+            "exec.result",
+            "filesystem.write",
+            serde_json::json!({"success": true}),
+        ))
+        .unwrap();
+    store
+        .append(make_entry(
+            goal_a,
+            plan_a,
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+        ))
+        .unwrap();
 
     let goal_b = Uuid::new_v4();
-    store.append(make_entry(goal_b, Uuid::new_v4(), "exec.action", "filesystem.write", serde_json::json!({"title": "write documentation"}))).unwrap();
-    store.append(make_entry(goal_b, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}))).unwrap();
+    store
+        .append(make_entry(
+            goal_b,
+            Uuid::new_v4(),
+            "exec.action",
+            "filesystem.write",
+            serde_json::json!({"title": "write documentation"}),
+        ))
+        .unwrap();
+    store
+        .append(make_entry(
+            goal_b,
+            Uuid::new_v4(),
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+        ))
+        .unwrap();
 
     let mut svc = ExperienceService::new();
     svc.rebuild(&store.all_entries().unwrap(), &[], &[]);
 
     let matches = svc.similar("write readme", 10);
     assert!(!matches.is_empty(), "should find at least one match");
-    assert!(matches[0].similarity_score > 0.6, "self-match should have reasonable similarity, got {}", matches[0].similarity_score);
+    assert!(
+        matches[0].similarity_score > 0.6,
+        "self-match should have reasonable similarity, got {}",
+        matches[0].similarity_score
+    );
     // trust_score should also be populated
-    assert!(matches[0].trust_score > 0.0, "trust_score should be non-zero");
+    assert!(
+        matches[0].trust_score > 0.0,
+        "trust_score should be non-zero"
+    );
 }
 
 #[test]
@@ -118,10 +165,26 @@ fn last_attempt_returns_most_recent_for_goal() {
     let goal_id = Uuid::new_v4();
 
     // First attempt: failed.
-    store.append(make_entry(goal_id, Uuid::new_v4(), "exec.result", "fs.write", serde_json::json!({"success": false, "error": "disk full"}))).unwrap();
+    store
+        .append(make_entry(
+            goal_id,
+            Uuid::new_v4(),
+            "exec.result",
+            "fs.write",
+            serde_json::json!({"success": false, "error": "disk full"}),
+        ))
+        .unwrap();
 
     // Second attempt: succeeded.
-    store.append(make_entry(goal_id, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}))).unwrap();
+    store
+        .append(make_entry(
+            goal_id,
+            Uuid::new_v4(),
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+        ))
+        .unwrap();
 
     let mut svc = ExperienceService::new();
     svc.rebuild(&store.all_entries().unwrap(), &[], &[]);
@@ -149,15 +212,55 @@ fn successful_workflows_filters_by_outcome_and_similarity() {
     // Goal A: filesystem workflow, succeeded.
     let goal_a = Uuid::new_v4();
     let plan_a = Uuid::new_v4();
-    store.append(make_entry(goal_a, plan_a, "exec.action", "filesystem.write", serde_json::json!({"title": "write readme"}))).unwrap();
-    store.append(make_entry(goal_a, plan_a, "exec.result", "filesystem.write", serde_json::json!({"success": true}))).unwrap();
-    store.append(make_entry(goal_a, plan_a, "goal.completed", "", serde_json::json!({}))).unwrap();
+    store
+        .append(make_entry(
+            goal_a,
+            plan_a,
+            "exec.action",
+            "filesystem.write",
+            serde_json::json!({"title": "write readme"}),
+        ))
+        .unwrap();
+    store
+        .append(make_entry(
+            goal_a,
+            plan_a,
+            "exec.result",
+            "filesystem.write",
+            serde_json::json!({"success": true}),
+        ))
+        .unwrap();
+    store
+        .append(make_entry(
+            goal_a,
+            plan_a,
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+        ))
+        .unwrap();
 
     // Goal B: git workflow, failed.
     let goal_b = Uuid::new_v4();
     let plan_b = Uuid::new_v4();
-    store.append(make_entry(goal_b, plan_b, "exec.action", "git.commit", serde_json::json!({"title": "commit code"}))).unwrap();
-    store.append(make_entry(goal_b, plan_b, "exec.result", "git.commit", serde_json::json!({"success": false, "error": "conflict"}))).unwrap();
+    store
+        .append(make_entry(
+            goal_b,
+            plan_b,
+            "exec.action",
+            "git.commit",
+            serde_json::json!({"title": "commit code"}),
+        ))
+        .unwrap();
+    store
+        .append(make_entry(
+            goal_b,
+            plan_b,
+            "exec.result",
+            "git.commit",
+            serde_json::json!({"success": false, "error": "conflict"}),
+        ))
+        .unwrap();
 
     let mut svc = ExperienceService::new();
     svc.rebuild(&store.all_entries().unwrap(), &[], &[]);
@@ -177,8 +280,24 @@ fn explain_previous_outcome_returns_reflections() {
     let goal_id = Uuid::new_v4();
     let plan_id = Uuid::new_v4();
 
-    let entry_id = store.append(make_entry(goal_id, plan_id, "exec.result", "filesystem.write", serde_json::json!({"success": true, "source": "mcp"}))).unwrap();
-    store.append(make_entry(goal_id, plan_id, "goal.completed", "", serde_json::json!({}))).unwrap();
+    let entry_id = store
+        .append(make_entry(
+            goal_id,
+            plan_id,
+            "exec.result",
+            "filesystem.write",
+            serde_json::json!({"success": true, "source": "mcp"}),
+        ))
+        .unwrap();
+    store
+        .append(make_entry(
+            goal_id,
+            plan_id,
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+        ))
+        .unwrap();
 
     let reflection = ReflectionRecord {
         id: Uuid::new_v4(),
@@ -206,7 +325,15 @@ fn explain_previous_outcome_for_failed_goal() {
     let goal_id = Uuid::new_v4();
     let plan_id = Uuid::new_v4();
 
-    let entry_id = store.append(make_entry(goal_id, plan_id, "exec.result", "fs.write", serde_json::json!({"success": false, "error": "permission denied by policy"}))).unwrap();
+    let entry_id = store
+        .append(make_entry(
+            goal_id,
+            plan_id,
+            "exec.result",
+            "fs.write",
+            serde_json::json!({"success": false, "error": "permission denied by policy"}),
+        ))
+        .unwrap();
 
     let reflection = ReflectionRecord {
         id: Uuid::new_v4(),
@@ -225,7 +352,10 @@ fn explain_previous_outcome_for_failed_goal() {
         .expect("should have explanation");
     assert_eq!(outcome, GoalOutcome::Failure);
     assert!(!reflections.is_empty());
-    assert_eq!(reflections[0].category, friday_planner::experience::ReflectionCategory::PermissionDenied);
+    assert_eq!(
+        reflections[0].category,
+        friday_planner::experience::ReflectionCategory::PermissionDenied
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -237,15 +367,35 @@ fn trust_components_high_for_recent_success() {
     let (store, _dir) = temp_store();
     let goal_id = Uuid::new_v4();
 
-    store.append(make_entry(goal_id, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}))).unwrap();
+    store
+        .append(make_entry(
+            goal_id,
+            Uuid::new_v4(),
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+        ))
+        .unwrap();
 
     let mut svc = ExperienceService::new();
     svc.rebuild(&store.all_entries().unwrap(), &[], &[]);
 
-    let tc = svc.trust_components(goal_id).expect("should have trust components");
-    assert!(tc.aggregated() > 0.5, "recent success should have high trust, got {}", tc.aggregated());
-    assert!(tc.outcome_quality > 0.8, "success outcome quality should be high");
-    assert!(tc.recency > 0.8, "recency should be high for just-now event");
+    let tc = svc
+        .trust_components(goal_id)
+        .expect("should have trust components");
+    assert!(
+        tc.aggregated() > 0.5,
+        "recent success should have high trust, got {}",
+        tc.aggregated()
+    );
+    assert!(
+        tc.outcome_quality > 0.8,
+        "success outcome quality should be high"
+    );
+    assert!(
+        tc.recency > 0.8,
+        "recency should be high for just-now event"
+    );
 }
 
 #[test]
@@ -253,14 +403,31 @@ fn trust_components_low_for_failure() {
     let (store, _dir) = temp_store();
     let goal_id = Uuid::new_v4();
 
-    store.append(make_entry(goal_id, Uuid::new_v4(), "exec.result", "fs.write", serde_json::json!({"success": false, "error": "not found"}))).unwrap();
+    store
+        .append(make_entry(
+            goal_id,
+            Uuid::new_v4(),
+            "exec.result",
+            "fs.write",
+            serde_json::json!({"success": false, "error": "not found"}),
+        ))
+        .unwrap();
 
     let mut svc = ExperienceService::new();
     svc.rebuild(&store.all_entries().unwrap(), &[], &[]);
 
-    let tc = svc.trust_components(goal_id).expect("should have trust components");
-    assert!(tc.aggregated() < 0.35, "failure should have low trust, got {}", tc.aggregated());
-    assert!(tc.outcome_quality < 0.4, "failure outcome quality should be low");
+    let tc = svc
+        .trust_components(goal_id)
+        .expect("should have trust components");
+    assert!(
+        tc.aggregated() < 0.35,
+        "failure should have low trust, got {}",
+        tc.aggregated()
+    );
+    assert!(
+        tc.outcome_quality < 0.4,
+        "failure outcome quality should be low"
+    );
 }
 
 #[test]
@@ -299,9 +466,27 @@ fn indexer_rebuild_from_timeline() {
     let plan_id = Uuid::new_v4();
 
     let entries = vec![
-        make_entry(goal_id, plan_id, "exec.action", "filesystem.write", serde_json::json!({"title": "write readme"})),
-        make_entry(goal_id, plan_id, "exec.result", "filesystem.write", serde_json::json!({"success": true})),
-        make_entry(goal_id, plan_id, "goal.completed", "", serde_json::json!({})),
+        make_entry(
+            goal_id,
+            plan_id,
+            "exec.action",
+            "filesystem.write",
+            serde_json::json!({"title": "write readme"}),
+        ),
+        make_entry(
+            goal_id,
+            plan_id,
+            "exec.result",
+            "filesystem.write",
+            serde_json::json!({"success": true}),
+        ),
+        make_entry(
+            goal_id,
+            plan_id,
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+        ),
     ];
 
     indexer.build(&entries, &[], &[]);
@@ -320,10 +505,34 @@ fn indexer_semantic_similarity() {
     let goal_b = Uuid::new_v4();
 
     let entries = vec![
-        make_entry(goal_a, Uuid::new_v4(), "exec.action", "filesystem.write", serde_json::json!({"title": "write readme file"})),
-        make_entry(goal_a, Uuid::new_v4(), "goal.completed", "", serde_json::json!({})),
-        make_entry(goal_b, Uuid::new_v4(), "exec.action", "filesystem.read", serde_json::json!({"title": "read config file"})),
-        make_entry(goal_b, Uuid::new_v4(), "goal.completed", "", serde_json::json!({})),
+        make_entry(
+            goal_a,
+            Uuid::new_v4(),
+            "exec.action",
+            "filesystem.write",
+            serde_json::json!({"title": "write readme file"}),
+        ),
+        make_entry(
+            goal_a,
+            Uuid::new_v4(),
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+        ),
+        make_entry(
+            goal_b,
+            Uuid::new_v4(),
+            "exec.action",
+            "filesystem.read",
+            serde_json::json!({"title": "read config file"}),
+        ),
+        make_entry(
+            goal_b,
+            Uuid::new_v4(),
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+        ),
     ];
 
     indexer.build(&entries, &[], &[]);
@@ -343,9 +552,33 @@ fn similar_match_extracts_artifacts() {
     let goal_id = Uuid::new_v4();
     let plan_id = Uuid::new_v4();
 
-    store.append(make_entry(goal_id, plan_id, "exec.action", "filesystem.write", serde_json::json!({"title": "write docs"}))).unwrap();
-    store.append(make_entry(goal_id, plan_id, "artifact.created", "filesystem.write", serde_json::json!({"path": "/tmp/docs.md"}))).unwrap();
-    store.append(make_entry(goal_id, plan_id, "goal.completed", "", serde_json::json!({}))).unwrap();
+    store
+        .append(make_entry(
+            goal_id,
+            plan_id,
+            "exec.action",
+            "filesystem.write",
+            serde_json::json!({"title": "write docs"}),
+        ))
+        .unwrap();
+    store
+        .append(make_entry(
+            goal_id,
+            plan_id,
+            "artifact.created",
+            "filesystem.write",
+            serde_json::json!({"path": "/tmp/docs.md"}),
+        ))
+        .unwrap();
+    store
+        .append(make_entry(
+            goal_id,
+            plan_id,
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+        ))
+        .unwrap();
 
     let mut svc = ExperienceService::new();
     svc.rebuild(&store.all_entries().unwrap(), &[], &[]);
@@ -361,9 +594,33 @@ fn similar_match_extracts_commit_hash() {
     let goal_id = Uuid::new_v4();
     let plan_id = Uuid::new_v4();
 
-    store.append(make_entry(goal_id, plan_id, "exec.action", "git.commit", serde_json::json!({"title": "commit changes"}))).unwrap();
-    store.append(make_entry(goal_id, plan_id, "git.commit.created", "git.commit", serde_json::json!({"commit_hash": "abc1234"}))).unwrap();
-    store.append(make_entry(goal_id, plan_id, "goal.completed", "", serde_json::json!({}))).unwrap();
+    store
+        .append(make_entry(
+            goal_id,
+            plan_id,
+            "exec.action",
+            "git.commit",
+            serde_json::json!({"title": "commit changes"}),
+        ))
+        .unwrap();
+    store
+        .append(make_entry(
+            goal_id,
+            plan_id,
+            "git.commit.created",
+            "git.commit",
+            serde_json::json!({"commit_hash": "abc1234"}),
+        ))
+        .unwrap();
+    store
+        .append(make_entry(
+            goal_id,
+            plan_id,
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+        ))
+        .unwrap();
 
     let mut svc = ExperienceService::new();
     svc.rebuild(&store.all_entries().unwrap(), &[], &[]);
@@ -385,12 +642,54 @@ fn miner_finds_repeated_capability_sequences() {
     let base = chrono::Utc::now();
 
     let entries = vec![
-        make_entry_at(goal1, Uuid::new_v4(), "exec.action", "filesystem.write", serde_json::json!({}), base),
-        make_entry_at(goal1, Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), base + chrono::Duration::seconds(1)),
-        make_entry_at(goal1, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + chrono::Duration::seconds(2)),
-        make_entry_at(goal2, Uuid::new_v4(), "exec.action", "filesystem.write", serde_json::json!({}), base + chrono::Duration::seconds(10)),
-        make_entry_at(goal2, Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), base + chrono::Duration::seconds(11)),
-        make_entry_at(goal2, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + chrono::Duration::seconds(12)),
+        make_entry_at(
+            goal1,
+            Uuid::new_v4(),
+            "exec.action",
+            "filesystem.write",
+            serde_json::json!({}),
+            base,
+        ),
+        make_entry_at(
+            goal1,
+            Uuid::new_v4(),
+            "exec.action",
+            "git.commit",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(1),
+        ),
+        make_entry_at(
+            goal1,
+            Uuid::new_v4(),
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(2),
+        ),
+        make_entry_at(
+            goal2,
+            Uuid::new_v4(),
+            "exec.action",
+            "filesystem.write",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(10),
+        ),
+        make_entry_at(
+            goal2,
+            Uuid::new_v4(),
+            "exec.action",
+            "git.commit",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(11),
+        ),
+        make_entry_at(
+            goal2,
+            Uuid::new_v4(),
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(12),
+        ),
     ];
 
     let patterns = miner.mine(&entries);
@@ -407,9 +706,30 @@ fn miner_ignores_single_occurrences() {
     let base = chrono::Utc::now();
 
     let entries = vec![
-        make_entry_at(goal1, Uuid::new_v4(), "exec.action", "filesystem.write", serde_json::json!({}), base),
-        make_entry_at(goal1, Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), base + chrono::Duration::seconds(1)),
-        make_entry_at(goal1, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + chrono::Duration::seconds(2)),
+        make_entry_at(
+            goal1,
+            Uuid::new_v4(),
+            "exec.action",
+            "filesystem.write",
+            serde_json::json!({}),
+            base,
+        ),
+        make_entry_at(
+            goal1,
+            Uuid::new_v4(),
+            "exec.action",
+            "git.commit",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(1),
+        ),
+        make_entry_at(
+            goal1,
+            Uuid::new_v4(),
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(2),
+        ),
     ];
 
     let patterns = miner.mine(&entries);
@@ -426,18 +746,77 @@ fn miner_computes_success_rate() {
     let base = chrono::Utc::now();
 
     let entries = vec![
-        make_entry_at(goal1, Uuid::new_v4(), "exec.action", "fs.write", serde_json::json!({}), base),
-        make_entry_at(goal1, Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), base + chrono::Duration::seconds(1)),
-        make_entry_at(goal1, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + chrono::Duration::seconds(2)),
-        make_entry_at(goal2, Uuid::new_v4(), "exec.action", "fs.write", serde_json::json!({}), base + chrono::Duration::seconds(10)),
-        make_entry_at(goal2, Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), base + chrono::Duration::seconds(11)),
-        make_entry_at(goal2, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + chrono::Duration::seconds(12)),
-        make_entry_at(goal3, Uuid::new_v4(), "exec.action", "fs.write", serde_json::json!({}), base + chrono::Duration::seconds(20)),
-        make_entry_at(goal3, Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), base + chrono::Duration::seconds(21)),
+        make_entry_at(
+            goal1,
+            Uuid::new_v4(),
+            "exec.action",
+            "fs.write",
+            serde_json::json!({}),
+            base,
+        ),
+        make_entry_at(
+            goal1,
+            Uuid::new_v4(),
+            "exec.action",
+            "git.commit",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(1),
+        ),
+        make_entry_at(
+            goal1,
+            Uuid::new_v4(),
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(2),
+        ),
+        make_entry_at(
+            goal2,
+            Uuid::new_v4(),
+            "exec.action",
+            "fs.write",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(10),
+        ),
+        make_entry_at(
+            goal2,
+            Uuid::new_v4(),
+            "exec.action",
+            "git.commit",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(11),
+        ),
+        make_entry_at(
+            goal2,
+            Uuid::new_v4(),
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(12),
+        ),
+        make_entry_at(
+            goal3,
+            Uuid::new_v4(),
+            "exec.action",
+            "fs.write",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(20),
+        ),
+        make_entry_at(
+            goal3,
+            Uuid::new_v4(),
+            "exec.action",
+            "git.commit",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(21),
+        ),
     ];
 
     let patterns = miner.mine(&entries);
-    let p = patterns.iter().find(|p| p.capabilities == vec!["fs.write", "git.commit"]).unwrap();
+    let p = patterns
+        .iter()
+        .find(|p| p.capabilities == vec!["fs.write", "git.commit"])
+        .unwrap();
     assert_eq!(p.frequency, 3);
     assert!((p.success_rate - 2.0 / 3.0).abs() < 0.01);
 }
@@ -453,12 +832,66 @@ fn service_rebuild_mines_patterns() {
     let goal2 = Uuid::new_v4();
     let base = chrono::Utc::now();
 
-    store.append(make_entry_at(goal1, Uuid::new_v4(), "exec.action", "filesystem.write", serde_json::json!({}), base)).unwrap();
-    store.append(make_entry_at(goal1, Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), base + chrono::Duration::seconds(1))).unwrap();
-    store.append(make_entry_at(goal1, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + chrono::Duration::seconds(2))).unwrap();
-    store.append(make_entry_at(goal2, Uuid::new_v4(), "exec.action", "filesystem.write", serde_json::json!({}), base + chrono::Duration::seconds(10))).unwrap();
-    store.append(make_entry_at(goal2, Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), base + chrono::Duration::seconds(11))).unwrap();
-    store.append(make_entry_at(goal2, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + chrono::Duration::seconds(12))).unwrap();
+    store
+        .append(make_entry_at(
+            goal1,
+            Uuid::new_v4(),
+            "exec.action",
+            "filesystem.write",
+            serde_json::json!({}),
+            base,
+        ))
+        .unwrap();
+    store
+        .append(make_entry_at(
+            goal1,
+            Uuid::new_v4(),
+            "exec.action",
+            "git.commit",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(1),
+        ))
+        .unwrap();
+    store
+        .append(make_entry_at(
+            goal1,
+            Uuid::new_v4(),
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(2),
+        ))
+        .unwrap();
+    store
+        .append(make_entry_at(
+            goal2,
+            Uuid::new_v4(),
+            "exec.action",
+            "filesystem.write",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(10),
+        ))
+        .unwrap();
+    store
+        .append(make_entry_at(
+            goal2,
+            Uuid::new_v4(),
+            "exec.action",
+            "git.commit",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(11),
+        ))
+        .unwrap();
+    store
+        .append(make_entry_at(
+            goal2,
+            Uuid::new_v4(),
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(12),
+        ))
+        .unwrap();
 
     let mut svc = ExperienceService::new();
     svc.rebuild(&store.all_entries().unwrap(), &[], &[]);
@@ -473,19 +906,78 @@ fn service_patterns_starting_with() {
     let goal2 = Uuid::new_v4();
     let base = chrono::Utc::now();
 
-    store.append(make_entry_at(goal1, Uuid::new_v4(), "exec.action", "filesystem.write", serde_json::json!({}), base)).unwrap();
-    store.append(make_entry_at(goal1, Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), base + chrono::Duration::seconds(1))).unwrap();
-    store.append(make_entry_at(goal1, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + chrono::Duration::seconds(2))).unwrap();
-    store.append(make_entry_at(goal2, Uuid::new_v4(), "exec.action", "filesystem.write", serde_json::json!({}), base + chrono::Duration::seconds(10))).unwrap();
-    store.append(make_entry_at(goal2, Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), base + chrono::Duration::seconds(11))).unwrap();
-    store.append(make_entry_at(goal2, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + chrono::Duration::seconds(12))).unwrap();
+    store
+        .append(make_entry_at(
+            goal1,
+            Uuid::new_v4(),
+            "exec.action",
+            "filesystem.write",
+            serde_json::json!({}),
+            base,
+        ))
+        .unwrap();
+    store
+        .append(make_entry_at(
+            goal1,
+            Uuid::new_v4(),
+            "exec.action",
+            "git.commit",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(1),
+        ))
+        .unwrap();
+    store
+        .append(make_entry_at(
+            goal1,
+            Uuid::new_v4(),
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(2),
+        ))
+        .unwrap();
+    store
+        .append(make_entry_at(
+            goal2,
+            Uuid::new_v4(),
+            "exec.action",
+            "filesystem.write",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(10),
+        ))
+        .unwrap();
+    store
+        .append(make_entry_at(
+            goal2,
+            Uuid::new_v4(),
+            "exec.action",
+            "git.commit",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(11),
+        ))
+        .unwrap();
+    store
+        .append(make_entry_at(
+            goal2,
+            Uuid::new_v4(),
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(12),
+        ))
+        .unwrap();
 
     let mut svc = ExperienceService::new();
     svc.rebuild(&store.all_entries().unwrap(), &[], &[]);
 
     let starts_with_fs = svc.patterns_starting_with("filesystem.write");
-    assert!(!starts_with_fs.is_empty(), "should find patterns starting with filesystem.write");
-    assert!(starts_with_fs.iter().all(|p| p.capabilities[0] == "filesystem.write"));
+    assert!(
+        !starts_with_fs.is_empty(),
+        "should find patterns starting with filesystem.write"
+    );
+    assert!(starts_with_fs
+        .iter()
+        .all(|p| p.capabilities[0] == "filesystem.write"));
 }
 
 #[test]
@@ -495,12 +987,66 @@ fn service_reliable_patterns() {
     let goal2 = Uuid::new_v4();
     let base = chrono::Utc::now();
 
-    store.append(make_entry_at(goal1, Uuid::new_v4(), "exec.action", "fs.read", serde_json::json!({}), base)).unwrap();
-    store.append(make_entry_at(goal1, Uuid::new_v4(), "exec.action", "fs.write", serde_json::json!({}), base + chrono::Duration::seconds(1))).unwrap();
-    store.append(make_entry_at(goal1, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + chrono::Duration::seconds(2))).unwrap();
-    store.append(make_entry_at(goal2, Uuid::new_v4(), "exec.action", "fs.read", serde_json::json!({}), base + chrono::Duration::seconds(10))).unwrap();
-    store.append(make_entry_at(goal2, Uuid::new_v4(), "exec.action", "fs.write", serde_json::json!({}), base + chrono::Duration::seconds(11))).unwrap();
-    store.append(make_entry_at(goal2, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + chrono::Duration::seconds(12))).unwrap();
+    store
+        .append(make_entry_at(
+            goal1,
+            Uuid::new_v4(),
+            "exec.action",
+            "fs.read",
+            serde_json::json!({}),
+            base,
+        ))
+        .unwrap();
+    store
+        .append(make_entry_at(
+            goal1,
+            Uuid::new_v4(),
+            "exec.action",
+            "fs.write",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(1),
+        ))
+        .unwrap();
+    store
+        .append(make_entry_at(
+            goal1,
+            Uuid::new_v4(),
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(2),
+        ))
+        .unwrap();
+    store
+        .append(make_entry_at(
+            goal2,
+            Uuid::new_v4(),
+            "exec.action",
+            "fs.read",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(10),
+        ))
+        .unwrap();
+    store
+        .append(make_entry_at(
+            goal2,
+            Uuid::new_v4(),
+            "exec.action",
+            "fs.write",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(11),
+        ))
+        .unwrap();
+    store
+        .append(make_entry_at(
+            goal2,
+            Uuid::new_v4(),
+            "goal.completed",
+            "",
+            serde_json::json!({}),
+            base + chrono::Duration::seconds(12),
+        ))
+        .unwrap();
 
     let mut svc = ExperienceService::new();
     svc.rebuild(&store.all_entries().unwrap(), &[], &[]);
@@ -549,7 +1095,10 @@ fn suggestion_engine_accepts_strong_pattern() {
     let suggestions = engine.suggest(&patterns);
     assert_eq!(suggestions.len(), 1);
     assert!(suggestions[0].confidence > 0.5);
-    assert!(suggestions[0].reasons.iter().any(|r| r.contains("10 times")));
+    assert!(suggestions[0]
+        .reasons
+        .iter()
+        .any(|r| r.contains("10 times")));
     assert!(suggestions[0].reasons.iter().any(|r| r.contains("100%")));
 }
 
@@ -562,16 +1111,46 @@ fn service_suggestions_from_rebuild() {
     for i in 0..5 {
         let goal = Uuid::new_v4();
         let offset = chrono::Duration::seconds(i * 10);
-        store.append(make_entry_at(goal, Uuid::new_v4(), "exec.action", "fs.write", serde_json::json!({}), base + offset)).unwrap();
-        store.append(make_entry_at(goal, Uuid::new_v4(), "exec.action", "git.commit", serde_json::json!({}), base + offset + chrono::Duration::seconds(1))).unwrap();
-        store.append(make_entry_at(goal, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + offset + chrono::Duration::seconds(2))).unwrap();
+        store
+            .append(make_entry_at(
+                goal,
+                Uuid::new_v4(),
+                "exec.action",
+                "fs.write",
+                serde_json::json!({}),
+                base + offset,
+            ))
+            .unwrap();
+        store
+            .append(make_entry_at(
+                goal,
+                Uuid::new_v4(),
+                "exec.action",
+                "git.commit",
+                serde_json::json!({}),
+                base + offset + chrono::Duration::seconds(1),
+            ))
+            .unwrap();
+        store
+            .append(make_entry_at(
+                goal,
+                Uuid::new_v4(),
+                "goal.completed",
+                "",
+                serde_json::json!({}),
+                base + offset + chrono::Duration::seconds(2),
+            ))
+            .unwrap();
     }
 
     let mut svc = ExperienceService::new();
     svc.rebuild(&store.all_entries().unwrap(), &[], &[]);
 
     let suggestions = svc.suggestions();
-    assert!(!suggestions.is_empty(), "should have suggestions from 5 repeated successes");
+    assert!(
+        !suggestions.is_empty(),
+        "should have suggestions from 5 repeated successes"
+    );
     assert!(suggestions[0].reasons.iter().any(|r| r.contains("5 times")));
 }
 
@@ -584,14 +1163,44 @@ fn service_with_lenient_policy() {
     for i in 0..3 {
         let goal = Uuid::new_v4();
         let offset = chrono::Duration::seconds(i * 10);
-        store.append(make_entry_at(goal, Uuid::new_v4(), "exec.action", "a", serde_json::json!({}), base + offset)).unwrap();
-        store.append(make_entry_at(goal, Uuid::new_v4(), "exec.action", "b", serde_json::json!({}), base + offset + chrono::Duration::seconds(1))).unwrap();
-        store.append(make_entry_at(goal, Uuid::new_v4(), "goal.completed", "", serde_json::json!({}), base + offset + chrono::Duration::seconds(2))).unwrap();
+        store
+            .append(make_entry_at(
+                goal,
+                Uuid::new_v4(),
+                "exec.action",
+                "a",
+                serde_json::json!({}),
+                base + offset,
+            ))
+            .unwrap();
+        store
+            .append(make_entry_at(
+                goal,
+                Uuid::new_v4(),
+                "exec.action",
+                "b",
+                serde_json::json!({}),
+                base + offset + chrono::Duration::seconds(1),
+            ))
+            .unwrap();
+        store
+            .append(make_entry_at(
+                goal,
+                Uuid::new_v4(),
+                "goal.completed",
+                "",
+                serde_json::json!({}),
+                base + offset + chrono::Duration::seconds(2),
+            ))
+            .unwrap();
     }
 
     let mut svc = ExperienceService::with_policy(SuggestionPolicy::lenient());
     svc.rebuild(&store.all_entries().unwrap(), &[], &[]);
 
     let suggestions = svc.suggestions();
-    assert!(!suggestions.is_empty(), "lenient policy should accept freq 3");
+    assert!(
+        !suggestions.is_empty(),
+        "lenient policy should accept freq 3"
+    );
 }
