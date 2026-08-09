@@ -5,11 +5,11 @@
 use chrono::Utc;
 use uuid::Uuid;
 
+use friday_planner::experience::provider::ExperienceProvider;
 use friday_planner::experience::{
-    EvidenceSource, ExperienceMatch, GoalOutcome, MatchReason, ExperienceContextBuilder,
+    EvidenceSource, ExperienceContextBuilder, ExperienceMatch, GoalOutcome, MatchReason,
     PlanningGoal, ReflectionRecord, TrustComponents, WorkflowSuggestion,
 };
-use friday_planner::experience::provider::ExperienceProvider;
 
 // ---------------------------------------------------------------------------
 // Mock provider
@@ -44,7 +44,10 @@ impl ExperienceProvider for MockProvider {
         self.last_attempt_result.clone()
     }
 
-    fn successful_workflows(&self, _goal_title: &str) -> Vec<friday_planner::experience::indexer::GoalRecord> {
+    fn successful_workflows(
+        &self,
+        _goal_title: &str,
+    ) -> Vec<friday_planner::experience::indexer::GoalRecord> {
         self.successful_workflows_result.clone()
     }
 
@@ -138,17 +141,17 @@ fn builder_with_similar_experiences() {
         description: "Support filesystem operations".to_string(),
     };
 
-    let ctx = ExperienceContextBuilder::build(
-        &provider,
-        goal,
-        vec![],
-        vec![],
-        &[],
-    );
+    let ctx = ExperienceContextBuilder::build(&provider, goal, vec![], vec![], &[]);
 
     assert_eq!(ctx.evidence.similar_experiences.len(), 2);
-    assert_eq!(ctx.evidence.similar_experiences[0].goal_title, "Add MCP support");
-    assert_eq!(ctx.evidence.similar_experiences[1].goal_title, "Add Git support");
+    assert_eq!(
+        ctx.evidence.similar_experiences[0].goal_title,
+        "Add MCP support"
+    );
+    assert_eq!(
+        ctx.evidence.similar_experiences[1].goal_title,
+        "Add Git support"
+    );
 }
 
 #[test]
@@ -164,13 +167,7 @@ fn builder_with_previous_outcome() {
         description: "Support filesystem operations".to_string(),
     };
 
-    let ctx = ExperienceContextBuilder::build(
-        &provider,
-        goal,
-        vec![],
-        vec![],
-        &[],
-    );
+    let ctx = ExperienceContextBuilder::build(&provider, goal, vec![], vec![], &[]);
 
     assert!(ctx.evidence.previous_outcome.is_some());
     let prev = ctx.evidence.previous_outcome.unwrap();
@@ -194,13 +191,7 @@ fn builder_collects_reflections_from_similar() {
         description: "Support filesystem operations".to_string(),
     };
 
-    let ctx = ExperienceContextBuilder::build(
-        &provider,
-        goal,
-        vec![],
-        vec![],
-        &[],
-    );
+    let ctx = ExperienceContextBuilder::build(&provider, goal, vec![], vec![], &[]);
 
     assert_eq!(ctx.evidence.reflections.len(), 1);
     assert_eq!(
@@ -241,13 +232,7 @@ fn builder_builds_replay_candidates() {
         "mcp:git.git_commit".to_string(),
     ];
 
-    let ctx = ExperienceContextBuilder::build(
-        &provider,
-        goal,
-        vec![],
-        vec![],
-        &registered,
-    );
+    let ctx = ExperienceContextBuilder::build(&provider, goal, vec![], vec![], &registered);
 
     assert_eq!(ctx.evidence.replay_candidates.len(), 1);
     let candidate = &ctx.evidence.replay_candidates[0];
@@ -290,13 +275,7 @@ fn builder_replay_candidate_with_missing_capabilities() {
         "mcp:git.git_commit".to_string(),
     ];
 
-    let ctx = ExperienceContextBuilder::build(
-        &provider,
-        goal,
-        vec![],
-        vec![],
-        &registered,
-    );
+    let ctx = ExperienceContextBuilder::build(&provider, goal, vec![], vec![], &registered);
 
     assert_eq!(ctx.evidence.replay_candidates.len(), 1);
     let candidate = &ctx.evidence.replay_candidates[0];
@@ -329,7 +308,10 @@ fn builder_context_is_immutable_snapshot() {
 
     // Verify immutable: can clone but original is unchanged
     let ctx2 = ctx.clone();
-    assert_eq!(ctx.evidence.similar_experiences.len(), ctx2.evidence.similar_experiences.len());
+    assert_eq!(
+        ctx.evidence.similar_experiences.len(),
+        ctx2.evidence.similar_experiences.len()
+    );
     assert_eq!(ctx.capabilities, ctx2.capabilities);
     assert_eq!(ctx.constraints, ctx2.constraints);
 }
@@ -346,7 +328,10 @@ fn builder_preserves_goal_and_constraints() {
     let ctx = ExperienceContextBuilder::build(
         &provider,
         goal.clone(),
-        vec!["mcp:filesystem.read".to_string(), "mcp:git.git_status".to_string()],
+        vec![
+            "mcp:filesystem.read".to_string(),
+            "mcp:git.git_status".to_string(),
+        ],
         vec!["no-risk".to_string(), "budget:100".to_string()],
         &[],
     );
@@ -370,16 +355,11 @@ fn builder_serializes_and_deserializes() {
         description: "Test".to_string(),
     };
 
-    let ctx = ExperienceContextBuilder::build(
-        &provider,
-        goal,
-        vec![],
-        vec![],
-        &[],
-    );
+    let ctx = ExperienceContextBuilder::build(&provider, goal, vec![], vec![], &[]);
 
     let json = serde_json::to_string(&ctx).unwrap();
-    let deserialized: friday_planner::experience::ExperienceContext = serde_json::from_str(&json).unwrap();
+    let deserialized: friday_planner::experience::ExperienceContext =
+        serde_json::from_str(&json).unwrap();
 
     assert_eq!(deserialized.goal.title, "Test");
     assert_eq!(deserialized.evidence.similar_experiences.len(), 1);
