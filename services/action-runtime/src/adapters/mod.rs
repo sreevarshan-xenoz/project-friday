@@ -12,16 +12,24 @@ use async_trait::async_trait;
 
 use crate::request::{ActionRequest, ActionResult};
 
+pub mod browser;
+pub mod codeintel;
+pub mod docs;
 pub mod filesystem;
 pub mod git;
 pub mod mcp;
 pub mod sim;
 pub mod terminal;
+pub mod web;
 
+pub use browser::{browser_capability_specs, register_browser_capabilities, BrowserAdapter};
+pub use codeintel::CodeIntelAdapter;
+pub use docs::DocsAdapter;
 pub use filesystem::FilesystemAdapter;
 pub use git::GitAdapter;
 pub use mcp::McpAdapter;
 pub use terminal::TerminalAdapter;
+pub use web::WebAdapter;
 
 /// A swappable capability. Implementors handle a normalized
 /// [`ActionRequest`] and return a normalized [`ActionResult`].
