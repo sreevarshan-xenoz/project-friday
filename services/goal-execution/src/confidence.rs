@@ -7,44 +7,95 @@ use std::ops;
 pub struct Confidence(f32);
 
 impl Confidence {
-    pub fn none() -> Self { Self(0.0) }
-    pub fn low() -> Self { Self(0.25) }
-    pub fn medium() -> Self { Self(0.5) }
-    pub fn high() -> Self { Self(0.75) }
-    pub fn certain() -> Self { Self(1.0) }
-    pub fn from_raw(value: f32) -> Self { Self(value.clamp(0.0, 1.0)) }
+    pub fn none() -> Self {
+        Self(0.0)
+    }
+    pub fn low() -> Self {
+        Self(0.25)
+    }
+    pub fn medium() -> Self {
+        Self(0.5)
+    }
+    pub fn high() -> Self {
+        Self(0.75)
+    }
+    pub fn certain() -> Self {
+        Self(1.0)
+    }
+    pub fn from_raw(value: f32) -> Self {
+        Self(value.clamp(0.0, 1.0))
+    }
     pub fn from_ratio(numerator: u32, denominator: u32) -> Self {
-        if denominator == 0 { Self(0.0) }
-        else { Self((numerator as f32 / denominator as f32).clamp(0.0, 1.0)) }
+        if denominator == 0 {
+            Self(0.0)
+        } else {
+            Self((numerator as f32 / denominator as f32).clamp(0.0, 1.0))
+        }
     }
-    pub fn value(&self) -> f32 { self.0 }
-    pub fn and(self, other: Confidence) -> Confidence { Confidence::from_raw(self.0 * other.0) }
-    pub fn or(self, other: Confidence) -> Confidence { Confidence::from_raw((self.0 + other.0) / 2.0) }
-    pub fn discount(self, factor: f32) -> Confidence { Confidence::from_raw(self.0 * factor.clamp(0.0, 1.0)) }
+    pub fn value(&self) -> f32 {
+        self.0
+    }
+    pub fn and(self, other: Confidence) -> Confidence {
+        Confidence::from_raw(self.0 * other.0)
+    }
+    pub fn or(self, other: Confidence) -> Confidence {
+        Confidence::from_raw((self.0 + other.0) / 2.0)
+    }
+    pub fn discount(self, factor: f32) -> Confidence {
+        Confidence::from_raw(self.0 * factor.clamp(0.0, 1.0))
+    }
     pub fn level(&self) -> ConfidenceLevel {
-        if self.0 < 0.1 { ConfidenceLevel::None }
-        else if self.0 < 0.35 { ConfidenceLevel::Low }
-        else if self.0 < 0.65 { ConfidenceLevel::Medium }
-        else if self.0 < 0.9 { ConfidenceLevel::High }
-        else { ConfidenceLevel::Certain }
+        if self.0 < 0.1 {
+            ConfidenceLevel::None
+        } else if self.0 < 0.35 {
+            ConfidenceLevel::Low
+        } else if self.0 < 0.65 {
+            ConfidenceLevel::Medium
+        } else if self.0 < 0.9 {
+            ConfidenceLevel::High
+        } else {
+            ConfidenceLevel::Certain
+        }
     }
-    pub fn meets(&self, threshold: Confidence) -> bool { self.0 >= threshold.0 }
+    pub fn meets(&self, threshold: Confidence) -> bool {
+        self.0 >= threshold.0
+    }
 }
 
-impl Default for Confidence { fn default() -> Self { Self::none() } }
-impl From<f32> for Confidence { fn from(v: f32) -> Self { Self::from_raw(v) } }
-impl From<Confidence> for f32 { fn from(c: Confidence) -> Self { c.0 } }
+impl Default for Confidence {
+    fn default() -> Self {
+        Self::none()
+    }
+}
+impl From<f32> for Confidence {
+    fn from(v: f32) -> Self {
+        Self::from_raw(v)
+    }
+}
+impl From<Confidence> for f32 {
+    fn from(c: Confidence) -> Self {
+        c.0
+    }
+}
 impl fmt::Display for Confidence {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{:.0}%", self.0 * 100.0) }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:.0}%", self.0 * 100.0)
+    }
 }
 impl ops::Mul for Confidence {
     type Output = Confidence;
-    fn mul(self, rhs: Confidence) -> Confidence { self.and(rhs) }
+    fn mul(self, rhs: Confidence) -> Confidence {
+        self.and(rhs)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum ConfidenceLevel {
-    None, Low, Medium, High, Certain,
+    None,
+    Low,
+    Medium,
+    High,
+    Certain,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,7 +112,9 @@ pub struct ConfidenceEngine {
 }
 
 impl ConfidenceEngine {
-    pub fn new() -> Self { Self { rules: Vec::new() } }
+    pub fn new() -> Self {
+        Self { rules: Vec::new() }
+    }
     pub fn add_rule(mut self, name: impl Into<String>, rule: ConfidenceRule) -> Self {
         self.rules.push((name.into(), rule));
         self
@@ -80,9 +133,11 @@ impl ConfidenceEngine {
                     acc
                 }
                 ConfidenceRule::Average { sources } => {
-                    if sources.is_empty() { Confidence::none() }
-                    else {
-                        let sum: f32 = sources.iter()
+                    if sources.is_empty() {
+                        Confidence::none()
+                    } else {
+                        let sum: f32 = sources
+                            .iter()
                             .map(|s| inputs.get(s.as_str()).unwrap_or(&default_conf).value())
                             .sum();
                         Confidence::from_raw(sum / sources.len() as f32)
@@ -100,9 +155,15 @@ impl ConfidenceEngine {
                     let mut best = Confidence::certain();
                     for s in sources {
                         let val = inputs.get(s.as_str()).unwrap_or(&default_conf);
-                        if val.value() < best.value() { best = *val; }
+                        if val.value() < best.value() {
+                            best = *val;
+                        }
                     }
-                    if sources.is_empty() { Confidence::none() } else { best }
+                    if sources.is_empty() {
+                        Confidence::none()
+                    } else {
+                        best
+                    }
                 }
             };
             outputs.insert(name.clone(), result);
@@ -111,7 +172,11 @@ impl ConfidenceEngine {
     }
 }
 
-impl Default for ConfidenceEngine { fn default() -> Self { Self::new() } }
+impl Default for ConfidenceEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -192,8 +257,12 @@ mod tests {
 
     #[test]
     fn confidence_engine_multiply() {
-        let engine = ConfidenceEngine::new()
-            .add_rule("op", ConfidenceRule::Multiply { sources: vec!["a".into()] });
+        let engine = ConfidenceEngine::new().add_rule(
+            "op",
+            ConfidenceRule::Multiply {
+                sources: vec!["a".into()],
+            },
+        );
         let mut inputs = HashMap::new();
         inputs.insert("a".into(), Confidence::high());
         let outputs = engine.evaluate(&inputs);
@@ -202,8 +271,12 @@ mod tests {
 
     #[test]
     fn confidence_engine_average() {
-        let engine = ConfidenceEngine::new()
-            .add_rule("op", ConfidenceRule::Average { sources: vec!["a".into(), "b".into()] });
+        let engine = ConfidenceEngine::new().add_rule(
+            "op",
+            ConfidenceRule::Average {
+                sources: vec!["a".into(), "b".into()],
+            },
+        );
         let mut inputs = HashMap::new();
         inputs.insert("a".into(), Confidence::high());
         inputs.insert("b".into(), Confidence::medium());
@@ -213,8 +286,13 @@ mod tests {
 
     #[test]
     fn confidence_engine_discount() {
-        let engine = ConfidenceEngine::new()
-            .add_rule("op", ConfidenceRule::Discount { source: "a".into(), factor: 0.5 });
+        let engine = ConfidenceEngine::new().add_rule(
+            "op",
+            ConfidenceRule::Discount {
+                source: "a".into(),
+                factor: 0.5,
+            },
+        );
         let mut inputs = HashMap::new();
         inputs.insert("a".into(), Confidence::from_raw(0.5));
         let outputs = engine.evaluate(&inputs);
@@ -223,8 +301,13 @@ mod tests {
 
     #[test]
     fn confidence_engine_cap() {
-        let engine = ConfidenceEngine::new()
-            .add_rule("op", ConfidenceRule::Cap { source: "a".into(), max: Confidence::from_raw(0.3) });
+        let engine = ConfidenceEngine::new().add_rule(
+            "op",
+            ConfidenceRule::Cap {
+                source: "a".into(),
+                max: Confidence::from_raw(0.3),
+            },
+        );
         let mut inputs = HashMap::new();
         inputs.insert("a".into(), Confidence::high());
         let outputs = engine.evaluate(&inputs);
@@ -233,8 +316,12 @@ mod tests {
 
     #[test]
     fn confidence_engine_min() {
-        let engine = ConfidenceEngine::new()
-            .add_rule("op", ConfidenceRule::Min { sources: vec!["a".into(), "b".into()] });
+        let engine = ConfidenceEngine::new().add_rule(
+            "op",
+            ConfidenceRule::Min {
+                sources: vec!["a".into(), "b".into()],
+            },
+        );
         let mut inputs = HashMap::new();
         inputs.insert("a".into(), Confidence::high());
         inputs.insert("b".into(), Confidence::low());
@@ -244,8 +331,12 @@ mod tests {
 
     #[test]
     fn confidence_engine_missing_input_defaults_to_none() {
-        let engine = ConfidenceEngine::new()
-            .add_rule("op", ConfidenceRule::Multiply { sources: vec!["missing".into()] });
+        let engine = ConfidenceEngine::new().add_rule(
+            "op",
+            ConfidenceRule::Multiply {
+                sources: vec!["missing".into()],
+            },
+        );
         let mut inputs = HashMap::new();
         inputs.insert("a".into(), Confidence::high());
         let outputs = engine.evaluate(&inputs);
