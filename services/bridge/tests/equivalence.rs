@@ -13,7 +13,9 @@
 use std::sync::Arc;
 
 use friday_bridge::protocol::DecisionTimelineDto;
-use friday_experience::{CalibrationStore, ExperienceStore, ReputationStore, TimelineBuilder, TimelineStore};
+use friday_experience::{
+    CalibrationStore, ExperienceStore, ReputationStore, TimelineBuilder, TimelineStore,
+};
 use friday_plugin_runtime::{
     Capability, CorrelationId, DecisionLedger, DecisionRecord, ExecutionPlan, PlanOutcome,
     PlanningRationale, SelectionContext,
@@ -51,7 +53,11 @@ fn make_record(cap: Capability, operator: &str, success: bool) -> DecisionRecord
             latency_ms: 10,
             cost: 0.1,
             success,
-            error: if success { None } else { Some("timeout".into()) },
+            error: if success {
+                None
+            } else {
+                Some("timeout".into())
+            },
             completed_steps: if success { 1 } else { 0 },
             cancelled: false,
             timeout: !success,
