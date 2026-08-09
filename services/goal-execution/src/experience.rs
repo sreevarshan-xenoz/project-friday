@@ -1,7 +1,7 @@
 use crate::common::Capability;
+use crate::memory::{CognitiveEpisode, EpisodeOutcome, EpisodeStore};
 use crate::policy::Policy;
 use crate::policy::PolicyKind;
-use crate::memory::{EpisodeStore, CognitiveEpisode, EpisodeOutcome};
 use serde::{Deserialize, Serialize};
 
 // ── Experience Pattern ────────────────────────────────────────────
@@ -200,8 +200,17 @@ impl SemanticMemory {
 
         // Check which patterns meet promotion thresholds.
         // Collect indices first to avoid borrow issues.
-        let to_promote: Vec<usize> = self.patterns.iter().enumerate()
-            .filter(|(_, p)| !p.promoted && p.meets_threshold(self.thresholds.min_support, self.thresholds.min_confidence))
+        let to_promote: Vec<usize> = self
+            .patterns
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| {
+                !p.promoted
+                    && p.meets_threshold(
+                        self.thresholds.min_support,
+                        self.thresholds.min_confidence,
+                    )
+            })
             .map(|(i, _)| i)
             .collect();
 
@@ -235,22 +244,18 @@ impl SemanticMemory {
             _ => return, // InProgress/Aborted don't generate patterns.
         };
 
-        let cap = episode.plan.as_ref().and_then(|p| {
-            p.actions.first().map(|a| a.capability.clone())
-        });
+        let cap = episode
+            .plan
+            .as_ref()
+            .and_then(|p| p.actions.first().map(|a| a.capability.clone()));
 
-        let desc = format!(
-            "{}: {}",
-            kind,
-            episode.goal.description
-        );
+        let desc = format!("{}: {}", kind, episode.goal.description);
 
         // Find existing matching pattern or create new one.
-        let existing = self.patterns.iter_mut().find(|p| {
-            p.kind == kind
-                && p.capability == cap
-                && !p.promoted
-        });
+        let existing = self
+            .patterns
+            .iter_mut()
+            .find(|p| p.kind == kind && p.capability == cap && !p.promoted);
 
         match existing {
             Some(pattern) => {
@@ -272,9 +277,10 @@ impl SemanticMemory {
                     plan.actions.len(),
                     episode.goal.description
                 );
-                let existing_workflow = self.patterns.iter_mut().find(|p| {
-                    p.kind == PatternKind::Workflow && !p.promoted
-                });
+                let existing_workflow = self
+                    .patterns
+                    .iter_mut()
+                    .find(|p| p.kind == PatternKind::Workflow && !p.promoted);
 
                 match existing_workflow {
                     Some(wf) => {
@@ -332,20 +338,18 @@ impl SemanticMemory {
                     created_at_ms: chrono::Utc::now().timestamp_millis() as u64,
                 })
             }
-            PatternKind::Workflow => {
-                Some(Policy {
-                    id: format!("policy_{}", uuid::Uuid::new_v4()),
-                    kind: PolicyKind::Sequence,
-                    statement: pattern.description.clone(),
-                    capability: None,
-                    config: serde_json::json!({ "steps": pattern.support }),
-                    confidence: pattern.confidence,
-                    support: pattern.support,
-                    created_from: pattern.episode_ids.clone(),
-                    expires_at: None,
-                    created_at_ms: chrono::Utc::now().timestamp_millis() as u64,
-                })
-            }
+            PatternKind::Workflow => Some(Policy {
+                id: format!("policy_{}", uuid::Uuid::new_v4()),
+                kind: PolicyKind::Sequence,
+                statement: pattern.description.clone(),
+                capability: None,
+                config: serde_json::json!({ "steps": pattern.support }),
+                confidence: pattern.confidence,
+                support: pattern.support,
+                created_from: pattern.episode_ids.clone(),
+                expires_at: None,
+                created_at_ms: chrono::Utc::now().timestamp_millis() as u64,
+            }),
             _ => None,
         }
     }
@@ -378,7 +382,8 @@ impl SemanticMemory {
 
     /// Patterns for a specific capability.
     pub fn patterns_for_capability(&self, cap: &Capability) -> Vec<&ExperiencePattern> {
-        self.patterns.iter()
+        self.patterns
+            .iter()
             .filter(|p| p.capability.as_ref() == Some(cap))
             .collect()
     }
