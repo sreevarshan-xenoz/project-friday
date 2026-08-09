@@ -16,8 +16,8 @@ use super::miner::PatternMiner;
 use super::provider::ExperienceProvider;
 use super::suggestion::{SuggestionEngine, SuggestionPolicy, WorkflowSuggestion};
 use super::{
-    ExperienceMatch, GoalOutcome, MatchReason, Pattern, ReflectionRecord, TrustComponents,
-    TimelineEntry, Workflow,
+    ExperienceMatch, GoalOutcome, MatchReason, Pattern, ReflectionRecord, TimelineEntry,
+    TrustComponents, Workflow,
 };
 
 /// Answer builder: constructs a structured `ExperienceMatch` from an indexer
@@ -273,11 +273,7 @@ impl ExperienceProvider for ExperienceService {
 
     fn last_attempt(&self, goal_id: uuid::Uuid) -> Option<ExperienceMatch> {
         let record = self.indexer.last_attempt(goal_id)?;
-        Some(MatchBuilder::build(
-            record,
-            MatchReason::RecentAttempt,
-            1.0,
-        ))
+        Some(MatchBuilder::build(record, MatchReason::RecentAttempt, 1.0))
     }
 
     fn successful_workflows(&self, goal_title: &str) -> Vec<super::indexer::GoalRecord> {
