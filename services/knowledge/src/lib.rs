@@ -127,7 +127,11 @@ impl PatternDetector {
         }
 
         // Sort by confidence (most observed first).
-        knowledge.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+        knowledge.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         knowledge
     }
 
@@ -149,11 +153,19 @@ impl PatternDetector {
         for app in &apps {
             *counts.entry(app).or_insert(0) += 1;
         }
-        let primary = counts.iter().max_by_key(|(_, c)| *c).map(|(app, _)| *app).unwrap_or("Unknown");
+        let primary = counts
+            .iter()
+            .max_by_key(|(_, c)| *c)
+            .map(|(app, _)| *app)
+            .unwrap_or("Unknown");
 
         // If multiple apps, create a compound label.
         if apps.len() > 1 {
-            let unique_apps: Vec<&str> = apps.into_iter().collect::<std::collections::HashSet<_>>().into_iter().collect();
+            let unique_apps: Vec<&str> = apps
+                .into_iter()
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
             if unique_apps.len() <= 3 {
                 format!("{} Workflow", unique_apps.join(" + "))
             } else {
@@ -177,10 +189,7 @@ impl PatternDetector {
         }
 
         let sequence = apps.join(" → ");
-        format!(
-            "Observed {} times: {}",
-            count, sequence
-        )
+        format!("Observed {} times: {}", count, sequence)
     }
 }
 
@@ -219,7 +228,8 @@ impl KnowledgeEngine {
         let new_knowledge = self.detector.detect(episodes);
 
         // Filter out knowledge we already have (by pattern).
-        let existing_patterns: Vec<Vec<String>> = self.records.iter().map(|r| r.pattern.clone()).collect();
+        let existing_patterns: Vec<Vec<String>> =
+            self.records.iter().map(|r| r.pattern.clone()).collect();
         let fresh: Vec<KnowledgeRecord> = new_knowledge
             .into_iter()
             .filter(|k| !existing_patterns.contains(&k.pattern))
@@ -262,11 +272,15 @@ mod tests {
     #[test]
     fn payload_key_extracts_app_name() {
         assert_eq!(
-            PatternDetector::payload_key(&serde_json::json!({"title": "main.rs — Visual Studio Code"})),
+            PatternDetector::payload_key(
+                &serde_json::json!({"title": "main.rs — Visual Studio Code"})
+            ),
             "Visual Studio Code"
         );
         assert_eq!(
-            PatternDetector::payload_key(&serde_json::json!({"title": "Budget.xlsx — Microsoft Excel"})),
+            PatternDetector::payload_key(
+                &serde_json::json!({"title": "Budget.xlsx — Microsoft Excel"})
+            ),
             "Microsoft Excel"
         );
         assert_eq!(
@@ -290,9 +304,14 @@ mod tests {
         let knowledge = detector.detect(&episodes);
 
         assert!(!knowledge.is_empty(), "Should detect at least one pattern");
-        assert!(knowledge[0].support >= 5, "Pattern should appear at least 5 times");
-        assert!(knowledge[0].confidence > 0.0 && knowledge[0].confidence <= 1.0,
-            "Confidence should be in (0.0, 1.0]");
+        assert!(
+            knowledge[0].support >= 5,
+            "Pattern should appear at least 5 times"
+        );
+        assert!(
+            knowledge[0].confidence > 0.0 && knowledge[0].confidence <= 1.0,
+            "Confidence should be in (0.0, 1.0]"
+        );
     }
 
     #[test]
@@ -327,12 +346,24 @@ mod tests {
         let mut engine = KnowledgeEngine::new();
         let knowledge = engine.analyze(&episodes);
 
-        assert!(!knowledge.is_empty(), "Should derive knowledge from 40 workflow iterations");
+        assert!(
+            !knowledge.is_empty(),
+            "Should derive knowledge from 40 workflow iterations"
+        );
 
         let dev_workflow = &knowledge[0];
-        assert!(dev_workflow.support >= 30, "Dev workflow should have high support");
-        assert!(dev_workflow.confidence > 0.0, "Dev workflow should have positive confidence");
-        assert!(dev_workflow.label.contains("Visual Studio Code"), "Should mention VS Code");
+        assert!(
+            dev_workflow.support >= 30,
+            "Dev workflow should have high support"
+        );
+        assert!(
+            dev_workflow.confidence > 0.0,
+            "Dev workflow should have positive confidence"
+        );
+        assert!(
+            dev_workflow.label.contains("Visual Studio Code"),
+            "Should mention VS Code"
+        );
     }
 
     #[test]
