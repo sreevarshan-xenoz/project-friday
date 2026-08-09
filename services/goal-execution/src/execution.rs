@@ -1,12 +1,14 @@
+use crate::common::{Action, Capability, ExecutionContext, Expectation, Trace};
 use crate::goal::Goal;
-use crate::common::{Action, Capability, Expectation, ExecutionContext, Trace};
-use crate::verification::{Verification, Tool, ToolResult, ToolRegistry, Verifier, VerifiedResult, Check};
-use crate::trace::{TraceNode, TraceNodeKind, CognitiveTrace};
+use crate::trace::{CognitiveTrace, TraceNode, TraceNodeKind};
+use crate::verification::{
+    Check, ExecutionState, Tool, ToolRegistry, ToolResult, Verification, VerifiedResult, Verifier,
+};
 use async_trait::async_trait;
 use friday_knowledge::KnowledgeEngine;
-use friday_reflection::{Outcome, OutcomeKind, Insight, ReflectionEngine};
-use friday_memory::Episode;
 use friday_knowledge::KnowledgeRecord;
+use friday_memory::Episode;
+use friday_reflection::{Insight, Outcome, OutcomeKind, ReflectionEngine};
 
 // ── Goal Engine ─────────────────────────────────────────────────────
 
@@ -50,18 +52,11 @@ impl GoalEngine {
         let started_at = chrono::Utc::now().timestamp_millis() as u64;
         let mut cognitive_trace = CognitiveTrace::new(&goal.id);
 
-        // Trace: Execution start
-        let exec_node = TraceNode::new(
-            TraceNodeKind::Execution,
-            serde_json::json!({
-                "action_id": action.id,
-                "instruction": action.instruction,
-                "capability": action.capability.to_string(),
-            }),
-            serde_json::json!({}),
-        ).with_timing(started_at, started_at);
-        cognitive_trace.push(exec_node);
-
+        // The evidence lifecycle (OMH "Evidence Before Claims"): the action is
+        // Prepared, the tool produces raw output (Observed), and only
+        // verification may move it to Verified — or to Failed. The trace
+        // records the full transition so the audit trail can answer "what did
+        // FRIDAY *know* at each step?" not just "what did she do?".
         let tool = self.registry.resolve(&action.capability);
         let (tool_result, tool_name) = match tool {
             Some(t) => {
@@ -76,8 +71,27 @@ impl GoalEngine {
 
         let tool_finished = chrono::Utc::now().timestamp_millis() as u64;
 
-        // Trace: Verification
+        // Trace: Execution — prepared → observed (raw tool output, not yet
+        // interpreted; a failed tool is still an observation).
+        let exec_node = TraceNode::new(
+            TraceNodeKind::Execution,
+            serde_json::json!({
+                "action_id": action.id,
+                "instruction": action.instruction,
+                "capability": action.capability.to_string(),
+                "state": ExecutionState::Prepared.label(),
+            }),
+            serde_json::json!({
+                "state": ExecutionState::Observed.label(),
+                "tool_success": tool_result.success,
+            }),
+        )
+        .with_timing(started_at, tool_finished);
+        cognitive_trace.push(exec_node);
+
+        // Trace: Verification — observed → verified | failed.
         let verified = self.verification.verify(action, &tool_result);
+        let execution_state = ExecutionState::from_verified(&verified);
         let verify_node = TraceNode::new(
             TraceNodeKind::Verification,
             serde_json::json!({
@@ -87,10 +101,14 @@ impl GoalEngine {
                     "passed": c.passed,
                 })).collect::<Vec<_>>(),
             }),
-            serde_json::json!({
-                "verified": verified.verified,
-            }),
-        ).with_timing(tool_finished, chrono::Utc::now().timestamp_millis() as u64);
+            serde_json::json!(
+                {
+                    "verified": verified.verified,
+                    "state": execution_state.label(),
+                }
+            ),
+        )
+        .with_timing(tool_finished, chrono::Utc::now().timestamp_millis() as u64);
         cognitive_trace.push(verify_node);
 
         // Trace: Reflection
@@ -127,6 +145,7 @@ impl GoalEngine {
                 started_at_ms: started_at,
                 finished_at_ms: chrono::Utc::now().timestamp_millis() as u64,
             },
+            execution_state,
             cognitive_trace,
         }
     }
@@ -149,6 +168,7 @@ impl GoalEngine {
         };
 
         let duration_ms = chrono::Utc::now().timestamp_millis() as u64 - started_at;
+        let execution_state = ExecutionState::from_verified(verified);
 
         Outcome {
             id: format!("outcome_{}", uuid::Uuid::new_v4()),
@@ -159,6 +179,7 @@ impl GoalEngine {
                 "expected_success": expectation.expect_success,
                 "tool_success": verified.tool_success,
                 "verified": verified.verified,
+                "execution_state": execution_state.label(),
                 "checks": verified.checks,
                 "duration_ms": duration_ms,
             }),
@@ -260,10 +281,17 @@ pub struct GoalReport {
     pub insights: Vec<Insight>,
     pub episodes: Vec<Episode>,
     pub trace: Trace,
+    /// The final epistemic state of the execution (OMH "Evidence Before
+    /// Claims"): `Verified` only when observed output passed verification.
+    pub execution_state: ExecutionState,
     pub cognitive_trace: CognitiveTrace,
 }
 
 impl GoalReport {
+    /// Outcome-based completion: `true` when the goal finished as expected
+    /// (including expected-failure goals). This is *not* an epistemic claim —
+    /// for that, check `execution_state == ExecutionState::Verified`, which
+    /// requires observed output to have passed verification first.
     pub fn success(&self) -> bool {
         self.outcome.kind == OutcomeKind::TaskCompleted
             || self.outcome.kind == OutcomeKind::MissionSucceeded
@@ -311,9 +339,15 @@ impl MockTool {
 
 #[async_trait]
 impl Tool for MockTool {
-    fn name(&self) -> &str { &self.name }
-    fn description(&self) -> &str { "Mock tool for testing" }
-    fn capabilities(&self) -> Vec<Capability> { self.capabilities.clone() }
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn description(&self) -> &str {
+        "Mock tool for testing"
+    }
+    fn capabilities(&self) -> Vec<Capability> {
+        self.capabilities.clone()
+    }
 
     async fn execute(&self, _action: &Action, _context: &ExecutionContext) -> ToolResult {
         if self.should_succeed {
@@ -333,22 +367,277 @@ pub struct MockVerifier {
 
 impl MockVerifier {
     pub fn pass(name: impl Into<String>) -> Self {
-        Self { name: name.into(), should_pass: true }
+        Self {
+            name: name.into(),
+            should_pass: true,
+        }
     }
 
     pub fn fail(name: impl Into<String>) -> Self {
-        Self { name: name.into(), should_pass: false }
+        Self {
+            name: name.into(),
+            should_pass: false,
+        }
     }
 }
 
 impl Verifier for MockVerifier {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
     fn verify(&self, _action: &Action, _result: &ToolResult) -> Check {
         Check {
             name: self.name.clone(),
             passed: self.should_pass,
-            detail: if self.should_pass { "check passed".into() } else { "check failed".into() },
+            detail: if self.should_pass {
+                "check passed".into()
+            } else {
+                "check failed".into()
+            },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Expectation, Goal, GoalEngine, MockTool, MockVerifier, ToolRegistry};
+
+    // ── ExecutionState machine ─────────────────────────────────────
+
+    #[test]
+    fn state_machine_transitions_are_legal() {
+        use ExecutionState::*;
+        assert_eq!(Prepared.next_allowed(), &[Observed, Cancelled]);
+        assert_eq!(Observed.next_allowed(), &[Verified, Failed]);
+        assert!(Verified.next_allowed().is_empty());
+        assert!(Failed.next_allowed().is_empty());
+        assert!(Cancelled.next_allowed().is_empty());
+    }
+
+    #[test]
+    fn only_verified_failed_cancelled_are_terminal() {
+        use ExecutionState::*;
+        assert!(!Prepared.is_terminal());
+        assert!(!Observed.is_terminal());
+        assert!(Verified.is_terminal());
+        assert!(Failed.is_terminal());
+        assert!(Cancelled.is_terminal());
+    }
+
+    #[test]
+    fn labels_match_the_wire_vocabulary() {
+        use ExecutionState::*;
+        assert_eq!(Prepared.label(), "prepared");
+        assert_eq!(Observed.label(), "observed");
+        assert_eq!(Verified.label(), "verified");
+        assert_eq!(Failed.label(), "failed");
+        assert_eq!(Cancelled.label(), "cancelled");
+    }
+
+    #[test]
+    fn state_round_trips_json() {
+        for s in [
+            ExecutionState::Prepared,
+            ExecutionState::Observed,
+            ExecutionState::Verified,
+            ExecutionState::Failed,
+            ExecutionState::Cancelled,
+        ] {
+            let json = serde_json::to_string(&s).unwrap();
+            let back: ExecutionState = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, s);
+            // The enum's own serialization must agree with the label
+            // vocabulary the trace and outcome audit trail use.
+            assert_eq!(json, serde_json::json!(s.label()).to_string());
+        }
+    }
+
+    #[test]
+    fn from_verified_is_the_single_derivation_rule() {
+        use crate::verification::VerifiedResult;
+        let success = VerifiedResult {
+            verified: true,
+            tool_success: true,
+            checks: Vec::new(),
+            confidence: crate::confidence::Confidence::high(),
+        };
+        assert_eq!(
+            ExecutionState::from_verified(&success),
+            ExecutionState::Verified
+        );
+
+        // Tool ran but output failed verification.
+        let unverified = VerifiedResult {
+            verified: false,
+            tool_success: true,
+            checks: Vec::new(),
+            confidence: crate::confidence::Confidence::medium(),
+        };
+        assert_eq!(
+            ExecutionState::from_verified(&unverified),
+            ExecutionState::Failed
+        );
+
+        // Tool itself failed — never Verified even without checks.
+        let tool_error = VerifiedResult {
+            verified: false,
+            tool_success: false,
+            checks: Vec::new(),
+            confidence: crate::confidence::Confidence::low(),
+        };
+        assert_eq!(
+            ExecutionState::from_verified(&tool_error),
+            ExecutionState::Failed
+        );
+    }
+
+    // ── Evidence lifecycle through the GoalEngine ───────────────────
+
+    async fn run_goal(registry: ToolRegistry, verification: Verification) -> GoalReport {
+        let mut engine = GoalEngine::new()
+            .with_registry(registry)
+            .with_verification(verification);
+        let goal = Goal::new("cargo build");
+        let action = Action::single("cargo build", Capability::ExecuteCommand, &goal.id);
+        let exp = Expectation::success("build will succeed");
+        let ctx = ExecutionContext::for_goal(&goal.id);
+        engine.execute(&goal, &action, &exp, &ctx).await
+    }
+
+    #[tokio::test]
+    async fn success_advances_prepared_observed_verified() {
+        let mut reg = ToolRegistry::new();
+        reg.register(Box::new(MockTool::success("cargo", "Build complete")));
+        let report = run_goal(reg, Verification::new()).await;
+
+        // Final epistemic state: verified — and only now is success claimed.
+        assert_eq!(report.execution_state, ExecutionState::Verified);
+        assert_eq!(
+            report.outcome.detail["execution_state"],
+            serde_json::json!("verified")
+        );
+        assert!(report.success());
+
+        // The trace records the full transition: prepared → observed on the
+        // Execution node, verified on the Verification node.
+        let exec = report
+            .cognitive_trace
+            .nodes_of_kind(&TraceNodeKind::Execution)
+            .first()
+            .copied()
+            .expect("execution node");
+        assert_eq!(exec.input["state"], serde_json::json!("prepared"));
+        assert_eq!(exec.output["state"], serde_json::json!("observed"));
+        assert_eq!(exec.output["tool_success"], serde_json::json!(true));
+
+        let verify = report
+            .cognitive_trace
+            .nodes_of_kind(&TraceNodeKind::Verification)
+            .first()
+            .copied()
+            .expect("verification node");
+        assert_eq!(verify.output["state"], serde_json::json!("verified"));
+    }
+
+    #[tokio::test]
+    async fn failed_tool_never_reaches_verified() {
+        let mut reg = ToolRegistry::new();
+        reg.register(Box::new(MockTool::failure("cargo", "linker error")));
+        let report = run_goal(reg, Verification::new()).await;
+
+        assert_eq!(report.execution_state, ExecutionState::Failed);
+        assert!(!report.success());
+        assert_eq!(
+            report.outcome.detail["execution_state"],
+            serde_json::json!("failed")
+        );
+
+        let exec = report
+            .cognitive_trace
+            .nodes_of_kind(&TraceNodeKind::Execution)
+            .first()
+            .copied()
+            .expect("execution node");
+        assert_eq!(exec.input["state"], serde_json::json!("prepared"));
+        assert_eq!(exec.output["state"], serde_json::json!("observed"));
+        assert_eq!(exec.output["tool_success"], serde_json::json!(false));
+        assert_eq!(
+            report
+                .cognitive_trace
+                .nodes_of_kind(&TraceNodeKind::Verification)
+                .first()
+                .copied()
+                .expect("verification node")
+                .output["state"],
+            serde_json::json!("failed")
+        );
+    }
+
+    #[tokio::test]
+    async fn verification_failure_blocks_success_despite_observed_tool_output() {
+        // The tool genuinely succeeded (Observed), but the verification gate
+        // fails — FRIDAY must not claim success on unverified output.
+        let mut reg = ToolRegistry::new();
+        reg.register(Box::new(MockTool::success("cargo", "Build complete")));
+        let verification = Verification::new().register(Box::new(MockVerifier::fail("checksum")));
+        let report = run_goal(reg, verification).await;
+
+        assert_eq!(report.verification.tool_success, true);
+        assert_eq!(report.verification.verified, false);
+        assert_eq!(report.execution_state, ExecutionState::Failed);
+        assert!(!report.success());
+        assert_eq!(
+            report
+                .cognitive_trace
+                .nodes_of_kind(&TraceNodeKind::Verification)
+                .first()
+                .copied()
+                .expect("verification node")
+                .output["state"],
+            serde_json::json!("failed")
+        );
+    }
+
+    #[tokio::test]
+    async fn expected_failure_completes_but_is_not_epistemically_verified() {
+        // Documented exemption: an expected-failure goal finishes "as
+        // expected" (TaskCompleted → success() == true) while the evidence
+        // lifecycle stays Failed — the two axes are outcome vs epistemic.
+        let mut reg = ToolRegistry::new();
+        reg.register(Box::new(MockTool::failure("cargo", "intentional error")));
+        let mut engine = GoalEngine::new().with_registry(reg);
+        let goal = Goal::new("expected failure");
+        let action = Action::single("fail on purpose", Capability::ExecuteCommand, &goal.id);
+        let exp = Expectation::failure("expected to fail");
+        let ctx = ExecutionContext::for_goal(&goal.id);
+        let report = engine.execute(&goal, &action, &exp, &ctx).await;
+
+        assert_eq!(
+            report.outcome.kind,
+            friday_reflection::OutcomeKind::TaskCompleted
+        );
+        assert!(report.success());
+        assert_eq!(report.execution_state, ExecutionState::Failed);
+        assert!(!report.verification.verified);
+    }
+
+    #[tokio::test]
+    async fn missing_tool_is_an_observed_failure_not_a_verified_claim() {
+        // No tool registered: the action is Prepared, produces an observed
+        // error output, and ends Failed — never Verified.
+        let report = run_goal(ToolRegistry::new(), Verification::new()).await;
+
+        assert_eq!(report.execution_state, ExecutionState::Failed);
+        assert!(!report.success());
+        let exec = report
+            .cognitive_trace
+            .nodes_of_kind(&TraceNodeKind::Execution)
+            .first()
+            .copied()
+            .expect("execution node");
+        assert_eq!(exec.input["state"], serde_json::json!("prepared"));
+        assert_eq!(exec.output["state"], serde_json::json!("observed"));
     }
 }
