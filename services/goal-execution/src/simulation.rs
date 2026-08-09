@@ -124,11 +124,7 @@ impl Simulator for DefaultSimulator {
             });
         }
 
-        let aggregate_risk = all_risks
-            .iter()
-            .map(|r| r.risk)
-            .max()
-            .unwrap_or(Risk::Low);
+        let aggregate_risk = all_risks.iter().map(|r| r.risk).max().unwrap_or(Risk::Low);
 
         let confidence = if failed_preconditions.is_empty() {
             0.9
