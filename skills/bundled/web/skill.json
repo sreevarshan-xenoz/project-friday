@@ -1,0 +1,57 @@
+{
+  "id": "web",
+  "name": "Web",
+  "version": "1.0.0",
+  "description": "Read-only web research: search the web and fetch/extract page text. Browser automation verbs are soft-declared until a browser runtime arrives.",
+  "author": "FRIDAY",
+  "category": "research",
+  "icon": "🌐",
+  "capabilities": [
+    "web.search",
+    "web.fetch",
+    "web.open",
+    "web.click",
+    "web.type",
+    "web.scroll",
+    "web.extract",
+    "web.screenshot"
+  ],
+  "actions": [
+    "search the web",
+    "search for information online",
+    "fetch a web page",
+    "read a web page",
+    "extract text from a url",
+    "open a website",
+    "browse the web",
+    "find documentation online"
+  ],
+  "permissions": [],
+  "readonly": true,
+  "memory": {
+    "reads": ["web.last_url"],
+    "writes": ["web.last_url"]
+  },
+  "examples": [
+    {
+      "goal": "Find the Rust documentation for async",
+      "plan": [
+        "Search the web for 'Rust async documentation'",
+        "Fetch the top result and extract the page text",
+        "Summarize the key points"
+      ]
+    },
+    {
+      "goal": "Read the pricing page for a service",
+      "plan": [
+        "Fetch the pricing page URL",
+        "Extract the readable text",
+        "Summarize the plans and prices"
+      ]
+    }
+  ],
+  "dependencies": [],
+  "platform": "Any",
+  "min_core_version": "0.1.0",
+  "enabled": true
+}
