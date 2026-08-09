@@ -1,0 +1,45 @@
+{
+  "id": "codeintel",
+  "name": "Code Intelligence",
+  "version": "1.0.0",
+  "description": "Understand the current repository: file counts, structure, top-level layout, and file-name matches — without reading the whole tree.",
+  "author": "FRIDAY",
+  "category": "developer",
+  "icon": "🔍",
+  "capabilities": [
+    "codeintel.understand"
+  ],
+  "actions": [
+    "understand this repository",
+    "understand the codebase",
+    "explore the project structure",
+    "what files are in this project",
+    "find files in the repository",
+    "get an overview of the code",
+    "analyze the repo layout"
+  ],
+  "permissions": [],
+  "readonly": true,
+  "examples": [
+    {
+      "goal": "What is the structure of this repository?",
+      "plan": [
+        "Understand the repository at the workspace root",
+        "Read the top-level directory and extension breakdown",
+        "Summarize what the project is built from"
+      ]
+    },
+    {
+      "goal": "Find all test files in this project",
+      "plan": [
+        "Understand the repository querying for 'test'",
+        "Collect the matching file paths",
+        "Summarize the test layout"
+      ]
+    }
+  ],
+  "dependencies": [],
+  "platform": "Any",
+  "min_core_version": "0.1.0",
+  "enabled": true
+}
