@@ -17,6 +17,7 @@ friday-simulation = { path = "../services/simulation" }
 friday-context = { path = "../services/context" }
 friday-intelligence = { path = "../services/intelligence" }
 friday-actions = { path = "../services/action-runtime" }
+friday-agent-runtime = { path = "../services/agent-runtime" }
 friday-windows = { path = "../plugins/windows" }
 serde = { workspace = true }
 serde_json = { workspace = true }
