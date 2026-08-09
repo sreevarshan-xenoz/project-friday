@@ -8,6 +8,7 @@ import {
   TerminalScreen,
   SettingsScreen,
   ConsoleDashboardScreen,
+  ConsoleExecutionGraphScreen,
   ConsoleTimelineScreen,
   ConsoleExplanationScreen,
   ConsoleMetricsScreen,
@@ -25,6 +26,7 @@ type Screen =
   | 'terminal'
   | 'settings'
   | 'console-dashboard'
+  | 'console-execution-graph'
   | 'console-timeline'
   | 'console-explanation'
   | 'console-metrics'
@@ -41,6 +43,7 @@ const NAV_ITEMS: { id: Screen; label: string; icon: string }[] = [
 
 const CONSOLE_ITEMS: { id: Screen; label: string; icon: string }[] = [
   { id: 'console-dashboard', label: 'Dashboard', icon: '◎' },
+  { id: 'console-execution-graph', label: 'Execution Graph', icon: '⌬' },
   { id: 'console-timeline', label: 'Timeline', icon: '≋' },
   { id: 'console-explanation', label: 'Explanation', icon: '◈' },
   { id: 'console-metrics', label: 'Metrics', icon: '▥' },
@@ -113,6 +116,7 @@ export function NavShell() {
             {screen === 'terminal' && <TerminalScreen />}
             {screen === 'settings' && <SettingsScreen />}
             {screen === 'console-dashboard' && <ConsoleDashboardScreen />}
+            {screen === 'console-execution-graph' && <ConsoleExecutionGraphScreen />}
             {screen === 'console-timeline' && <ConsoleTimelineScreen />}
             {screen === 'console-explanation' && <ConsoleExplanationScreen />}
             {screen === 'console-metrics' && <ConsoleMetricsScreen />}
