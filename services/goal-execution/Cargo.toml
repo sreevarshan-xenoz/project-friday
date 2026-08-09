@@ -8,7 +8,9 @@ repository.workspace = true
 description = "FRIDAY Goal Execution — Goal → Action → Outcome → Reflection loop"
 
 [dependencies]
+friday-actions = { path = "../action-runtime" }
 friday-cognitive = { path = "../cognitive" }
+friday-investigation = { path = "../investigation" }
 friday-memory = { path = "../engines/memory" }
 friday-knowledge = { path = "../knowledge" }
 friday-reflection = { path = "../reflection" }
