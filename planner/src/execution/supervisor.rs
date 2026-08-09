@@ -42,12 +42,12 @@ use friday_core::plugin::{Plugin, PluginMetadata};
 use serde_json::json;
 use uuid::Uuid;
 
+use crate::events;
 use crate::execution::capability_registry::{CapabilityRegistry, Risk};
 use crate::execution::dispatcher;
 use crate::execution::lifecycle::{ExecutionBudget, GoalRuntime};
 use crate::execution::persistence::{GoalEvent, GoalStore};
-use crate::execution::reflection::{Reflector, ReflectionAction, RuleReflector};
-use crate::events;
+use crate::execution::reflection::{ReflectionAction, Reflector, RuleReflector};
 use crate::planning::{GoalState, TaskGraph, TaskState};
 
 /// Policy authority for execution. The supervisor consults it for medium-risk
@@ -86,7 +86,9 @@ impl GoalSupervisor {
         pool_size: usize,
     ) -> Self {
         let meta = PluginMetadata::builder("supervisor", "Goal Supervisor")
-            .description("Owns goal lifecycle, scheduling, risk gating, reflection, and persistence")
+            .description(
+                "Owns goal lifecycle, scheduling, risk gating, reflection, and persistence",
+            )
             .subscribes(&[
                 events::PLAN_CREATED,
                 events::EXEC_RESULT,
@@ -153,17 +155,22 @@ impl GoalSupervisor {
         };
         let mut goals = self.goals.lock().expect("goal map poisoned");
         // Find or create the goal runtime for this trace.
-        let goal_id = if let Some((id, _)) = goals.iter().find(|(_, g)| g.trace_id == event.trace_id)
-        {
-            *id
-        } else {
-            let id = Uuid::new_v4();
-            goals.insert(
-                id,
-                GoalRuntime::new(id, event.trace_id, graph.intent.clone(), ExecutionBudget::default()),
-            );
-            id
-        };
+        let goal_id =
+            if let Some((id, _)) = goals.iter().find(|(_, g)| g.trace_id == event.trace_id) {
+                *id
+            } else {
+                let id = Uuid::new_v4();
+                goals.insert(
+                    id,
+                    GoalRuntime::new(
+                        id,
+                        event.trace_id,
+                        graph.intent.clone(),
+                        ExecutionBudget::default(),
+                    ),
+                );
+                id
+            };
         let rt = goals.get_mut(&goal_id).expect("goal just inserted");
         rt.set_plan(graph);
         self.store
@@ -208,9 +215,8 @@ impl GoalSupervisor {
                 }
                 Risk::Safe | Risk::Medium => {
                     let binding = self.registry.resolve(&cap);
-                    let (tool, action) = binding
-                        .map(|b| (b.adapter, b.action))
-                        .unwrap_or_else(|| {
+                    let (tool, action) =
+                        binding.map(|b| (b.adapter, b.action)).unwrap_or_else(|| {
                             let mut parts = cap.splitn(2, '.');
                             (
                                 parts.next().unwrap_or(&cap).to_string(),
@@ -246,7 +252,12 @@ impl GoalSupervisor {
                         }),
                         rt.trace_id,
                     ));
-                    out.push(dispatcher::dispatch_event(&task, rt.graph.plan_id, "supervisor", rt.trace_id));
+                    out.push(dispatcher::dispatch_event(
+                        &task,
+                        rt.graph.plan_id,
+                        "supervisor",
+                        rt.trace_id,
+                    ));
                     dispatched += 1;
                 }
             }
@@ -311,11 +322,7 @@ impl GoalSupervisor {
             .get("error")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let output = event
-            .payload
-            .get("output")
-            .cloned()
-            .unwrap_or(json!(null));
+        let output = event.payload.get("output").cloned().unwrap_or(json!(null));
 
         let mut goals = self.goals.lock().expect("goal map poisoned");
         let goal_id = match goals
@@ -335,11 +342,7 @@ impl GoalSupervisor {
         // exec result so clients can render live output (no architecture change
         // needed downstream).
         let mut out = Vec::new();
-        if let Some(chunks) = event
-            .payload
-            .get("stream")
-            .and_then(|v| v.as_array())
-        {
+        if let Some(chunks) = event.payload.get("stream").and_then(|v| v.as_array()) {
             for chunk in chunks {
                 if let Some(line) = chunk.as_str() {
                     out.push(events::event(
@@ -356,11 +359,7 @@ impl GoalSupervisor {
                 }
             }
         }
-        if let Some(p) = event
-            .payload
-            .get("progress")
-            .and_then(|v| v.as_f64())
-        {
+        if let Some(p) = event.payload.get("progress").and_then(|v| v.as_f64()) {
             out.push(events::event(
                 events::TASK_PROGRESS,
                 "supervisor",
@@ -379,11 +378,7 @@ impl GoalSupervisor {
             // M6.3: publish the task's output into the shared goal context under
             // the key declared by `Task.produces`, so downstream tasks can reuse
             // it instead of recomputing (e.g. cargo metadata → workspace_root).
-            if let Some(key) = rt
-                .graph
-                .task(task_id)
-                .and_then(|t| t.produces.clone())
-            {
+            if let Some(key) = rt.graph.task(task_id).and_then(|t| t.produces.clone()) {
                 let key_clone = key.clone();
                 rt.context.publish(key_clone, task_id, output.clone());
                 self.store
@@ -420,7 +415,9 @@ impl GoalSupervisor {
 
             if rt.is_complete() {
                 rt.transition(GoalState::Completed);
-                self.store.append(&GoalEvent::GoalCompleted { goal_id }).ok();
+                self.store
+                    .append(&GoalEvent::GoalCompleted { goal_id })
+                    .ok();
                 self.store.snapshot(rt).ok();
                 out.push(events::event(
                     events::GOAL_COMPLETED,
@@ -513,7 +510,12 @@ impl GoalSupervisor {
                         }),
                         rt.trace_id,
                     ));
-                    out.push(dispatcher::dispatch_event(&task, rt.graph.plan_id, "supervisor", rt.trace_id));
+                    out.push(dispatcher::dispatch_event(
+                        &task,
+                        rt.graph.plan_id,
+                        "supervisor",
+                        rt.trace_id,
+                    ));
                 }
             }
             ReflectionAction::Split | ReflectionAction::Replan => {
@@ -604,7 +606,12 @@ impl GoalSupervisor {
                     }),
                     rt.trace_id,
                 ));
-                out.push(dispatcher::dispatch_event(&task, rt.graph.plan_id, "supervisor", rt.trace_id));
+                out.push(dispatcher::dispatch_event(
+                    &task,
+                    rt.graph.plan_id,
+                    "supervisor",
+                    rt.trace_id,
+                ));
             }
         }
         out.extend(self.fill_pool(rt));
@@ -627,7 +634,9 @@ impl GoalSupervisor {
             None => return vec![],
         };
         rt.transition(GoalState::Cancelled);
-        self.store.append(&GoalEvent::GoalCancelled { goal_id }).ok();
+        self.store
+            .append(&GoalEvent::GoalCancelled { goal_id })
+            .ok();
         self.store.snapshot(rt).ok();
         vec![events::event(
             events::GOAL_CANCELLED,
