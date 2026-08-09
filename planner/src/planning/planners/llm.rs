@@ -19,6 +19,7 @@ use crate::planning::planners::planner_trait::Planner;
 use crate::planning::planners::router::PlannerKind;
 use crate::planning::planners::validation::validate_task_graph;
 use crate::planning::TaskGraph;
+use friday_investigation::InvestigationResult;
 
 /// One task as the model is asked to emit it. Dependencies are by *index* into
 /// the `tasks` array (stable across serialization); the planner maps them to
@@ -75,6 +76,69 @@ impl LlmPlanner {
         }
     }
 
+    /// Format the skill-aware context for the prompt. Returns an empty string
+    /// when no skill source was wired or nothing ranked, keeping the prompt
+    /// clean. Renders the pure-data [`SkillContext`](friday_skills::SkillContext)
+    /// (no prompts, no scores — ranks are encoded by ordering) and marks the
+    /// recommended skill so the model plans *through* the skill when it fits.
+    ///
+    /// **Trust surface:** skill manifest text (name/description/actions) reaches
+    /// the planning model, JSON-escaped but still readable — the same trust
+    /// class as capability descriptions, and skills are third-party-installable
+    /// via Skill Forge. A skill author controls text the planner will read;
+    /// documented, not fixed (consistent with the house pattern).
+    fn format_skills(ctx: &PlanContext) -> String {
+        let skills = match &ctx.skills {
+            Some(s) if !s.relevant_skills.is_empty() => s,
+            _ => return String::new(),
+        };
+        let json = serde_json::to_string_pretty(skills).unwrap_or_else(|_| "{}".to_string());
+        format!(
+            "\nRELEVANT SKILLS (ranked for this goal; `active_skill` is the \
+             recommended skill — plan through it when it fits, using the \
+             capabilities it declares):\n{json}\n"
+        )
+    }
+
+    /// Format the investigation outcome for the prompt. Returns an empty
+    /// string when no investigation seam was wired, investigation was
+    /// skipped/failed, or the goal is self-contained — keeping the prompt
+    /// clean. Renders the pure-data [`InvestigationResult`] (channels with
+    /// rationale + confidence, no prompts) so the model knows which evidence
+    /// channels to consult before executing when the goal genuinely needs
+    /// them.
+    ///
+    /// **Trust surface:** the rationale text (from the heuristic's keyword
+    /// scan or the LLM strategy's output) reaches the planning model,
+    /// JSON-escaped but still readable — the same trust class as capability
+    /// descriptions. The rationale is derived, not user-supplied.
+    fn format_investigation(ctx: &PlanContext) -> String {
+        let plan = match &ctx.investigation {
+            Some(InvestigationResult::Complete(plan)) => plan,
+            _ => return String::new(), // None / Skipped / Failed — no evidence section
+        };
+        if !plan.needs_investigation() {
+            return String::new();
+        }
+        let rows: Vec<String> = plan
+            .requirements
+            .iter()
+            .map(|r| {
+                format!(
+                    "- {} ({:.2}): {}",
+                    r.channel.label(),
+                    r.confidence,
+                    r.rationale
+                )
+            })
+            .collect();
+        format!(
+            "\nEVIDENCE REQUIRED (consult these channels before executing; \
+             confidence = evidence strength):\n{}\n",
+            rows.join("\n")
+        )
+    }
+
     /// Format experience evidence for the prompt. Returns an empty string
     /// when no experience is available, keeping the prompt clean.
     fn format_experience(ctx: &PlanContext) -> String {
@@ -97,9 +161,7 @@ impl LlmPlanner {
                 .successful_workflows
                 .iter()
                 .filter(|w| w.outcome == GoalOutcome::Success)
-                .map(|w| {
-                    format!("  - [{}]", w.capabilities.join(", "))
-                })
+                .map(|w| format!("  - [{}]", w.capabilities.join(", ")))
                 .collect();
             if !workflows.is_empty() {
                 sections.push("Successful past workflows:".into());
@@ -147,6 +209,8 @@ impl LlmPlanner {
             "git_branch": ctx.workspace.git_branch,
             "project_kind": ctx.workspace.project_kind,
         });
+        let skills = Self::format_skills(ctx);
+        let investigation = Self::format_investigation(ctx);
         let experience = Self::format_experience(ctx);
         format!(
             "You are the planning module of FRIDAY, an autonomous execution agent.\n\
@@ -154,6 +218,8 @@ impl LlmPlanner {
              Each task MUST use a capability from the provided list. Dependencies are by \
              zero-based index into the tasks array.\n\n\
              GOAL:\n{goal}\n\n\
+             {skills}\
+             {investigation}\
              {experience}\
              AVAILABLE CAPABILITIES (canonical id, description, risk):\n{caps}\n\n\
              EXECUTION BUDGET:\n{budget}\n\n\
@@ -164,6 +230,8 @@ impl LlmPlanner {
              \"depends_on_indices\": [int], \"produces\": str? }}\n  ],\n  \
              \"artifacts\": [str],\n  \"estimated_cost\": float\n}}\n",
             goal = intent.raw,
+            skills = skills,
+            investigation = investigation,
             experience = experience,
             caps = caps,
             budget = budget,
@@ -274,5 +342,149 @@ impl Planner for LlmPlanner {
         let graph = self.build_graph(&plan);
         validate_task_graph(&graph, &self.registry, &self.budget, &self.policy)?;
         Ok(graph)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::intent::parse;
+    use crate::planning::planners::backend::MockBackend;
+    use crate::planning::planners::context::WorkspaceContext;
+    use friday_investigation::{InformationRequirement, InvestigationChannel, InvestigationPlan};
+    use friday_skills::{SkillContext, SkillSummary};
+
+    fn planner() -> LlmPlanner {
+        LlmPlanner::new(
+            Box::new(MockBackend::new("{}")),
+            Arc::new(CapabilityRegistry::new()),
+            ExecutionBudget::default(),
+            RiskPolicy::default(),
+        )
+    }
+
+    fn ctx_with_skills() -> PlanContext {
+        PlanContext {
+            intent_raw: "summarize the repo".to_string(),
+            capabilities: vec![],
+            budget: ExecutionBudget::default(),
+            workspace: WorkspaceContext::default(),
+            risk_policy: RiskPolicy::default(),
+            experience: None,
+            skills: Some(SkillContext {
+                relevant_skills: vec![SkillSummary {
+                    id: "git".to_string(),
+                    name: "Git".to_string(),
+                    version: "1.0.0".to_string(),
+                    description: "inspect repositories".to_string(),
+                    category: "developer".to_string(),
+                    actions: vec!["show status".to_string()],
+                    capabilities: vec!["git.status".to_string()],
+                    permission_hints: vec!["git.status".to_string()],
+                    readonly: true,
+                }],
+                active_skill: Some("git".to_string()),
+            }),
+            investigation: None,
+        }
+    }
+
+    fn ctx_with_investigation() -> PlanContext {
+        let mut ctx = ctx_with_skills();
+        ctx.investigation = Some(InvestigationResult::Complete(InvestigationPlan {
+            requirements: vec![
+                InformationRequirement {
+                    channel: InvestigationChannel::Web,
+                    rationale: "goal mentions 'search the web'".into(),
+                    confidence: 0.9,
+                },
+                InformationRequirement {
+                    channel: InvestigationChannel::Git,
+                    rationale: "goal mentions 'git'".into(),
+                    confidence: 0.8,
+                },
+            ],
+        }));
+        ctx
+    }
+
+    #[test]
+    fn prompt_renders_relevant_skills_section() {
+        let prompt = planner().build_prompt(&parse("summarize the repo"), &ctx_with_skills());
+        assert!(prompt.contains("RELEVANT SKILLS"));
+        assert!(prompt.contains("\"git\""));
+        assert!(prompt.contains("active_skill"));
+        // Skills land before the capability list (plan through the skill).
+        assert!(
+            prompt.find("RELEVANT SKILLS").unwrap()
+                < prompt.find("AVAILABLE CAPABILITIES").unwrap()
+        );
+    }
+
+    #[test]
+    fn prompt_renders_evidence_required_section() {
+        let prompt = planner().build_prompt(
+            &parse("search the web and check git"),
+            &ctx_with_investigation(),
+        );
+        assert!(prompt.contains("EVIDENCE REQUIRED"));
+        assert!(prompt.contains("web (0.90)"));
+        assert!(prompt.contains("git (0.80)"));
+        assert!(prompt.contains("goal mentions 'search the web'"));
+        // Evidence lands between the skill ranking and the capability list.
+        assert!(
+            prompt.find("EVIDENCE REQUIRED").unwrap() > prompt.find("RELEVANT SKILLS").unwrap()
+        );
+        assert!(
+            prompt.find("EVIDENCE REQUIRED").unwrap()
+                < prompt.find("AVAILABLE CAPABILITIES").unwrap()
+        );
+    }
+
+    #[test]
+    fn prompt_omits_evidence_section_when_absent() {
+        let ctx = ctx_with_skills(); // investigation: None
+        let prompt = planner().build_prompt(&parse("summarize the repo"), &ctx);
+        assert!(!prompt.contains("EVIDENCE REQUIRED"));
+    }
+
+    #[test]
+    fn prompt_omits_evidence_section_when_self_contained() {
+        // An empty plan = goal is self-contained — nothing to consult.
+        let mut ctx = ctx_with_skills();
+        ctx.investigation = Some(InvestigationResult::Complete(InvestigationPlan::default()));
+        let prompt = planner().build_prompt(&parse("open notepad"), &ctx);
+        assert!(!prompt.contains("EVIDENCE REQUIRED"));
+    }
+
+    #[test]
+    fn prompt_omits_evidence_section_when_skipped_or_failed() {
+        for result in [
+            InvestigationResult::Skipped,
+            InvestigationResult::Failed {
+                reason: "strategy unavailable".into(),
+            },
+        ] {
+            let mut ctx = ctx_with_skills();
+            ctx.investigation = Some(result);
+            let prompt = planner().build_prompt(&parse("summarize the repo"), &ctx);
+            assert!(!prompt.contains("EVIDENCE REQUIRED"));
+        }
+    }
+
+    #[test]
+    fn prompt_omits_skills_section_when_absent() {
+        let mut ctx = ctx_with_skills();
+        ctx.skills = None;
+        let prompt = planner().build_prompt(&parse("summarize the repo"), &ctx);
+        assert!(!prompt.contains("RELEVANT SKILLS"));
+    }
+
+    #[test]
+    fn prompt_omits_skills_section_when_nothing_ranked() {
+        let mut ctx = ctx_with_skills();
+        ctx.skills = Some(SkillContext::default());
+        let prompt = planner().build_prompt(&parse("summarize the repo"), &ctx);
+        assert!(!prompt.contains("RELEVANT SKILLS"));
     }
 }
