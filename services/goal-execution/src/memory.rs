@@ -1,8 +1,8 @@
 use crate::confidence::Confidence;
 use crate::goal::Goal;
+use crate::planning::Plan;
 use crate::trace::{CognitiveTrace, TraceNode};
 use crate::verification::{ToolResult, VerifiedResult};
-use crate::planning::Plan;
 use crate::world::WorldState;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -153,12 +153,30 @@ pub struct AttentionScoreBuilder {
 }
 
 impl AttentionScoreBuilder {
-    pub fn importance(mut self, v: f32) -> Self { self.importance = v; self }
-    pub fn urgency(mut self, v: f32) -> Self { self.urgency = v; self }
-    pub fn novelty(mut self, v: f32) -> Self { self.novelty = v; self }
-    pub fn risk(mut self, v: f32) -> Self { self.risk = v; self }
-    pub fn confidence(mut self, v: f32) -> Self { self.confidence = v; self }
-    pub fn mission_priority(mut self, v: f32) -> Self { self.mission_priority = v; self }
+    pub fn importance(mut self, v: f32) -> Self {
+        self.importance = v;
+        self
+    }
+    pub fn urgency(mut self, v: f32) -> Self {
+        self.urgency = v;
+        self
+    }
+    pub fn novelty(mut self, v: f32) -> Self {
+        self.novelty = v;
+        self
+    }
+    pub fn risk(mut self, v: f32) -> Self {
+        self.risk = v;
+        self
+    }
+    pub fn confidence(mut self, v: f32) -> Self {
+        self.confidence = v;
+        self
+    }
+    pub fn mission_priority(mut self, v: f32) -> Self {
+        self.mission_priority = v;
+        self
+    }
 
     pub fn build(self) -> AttentionScore {
         AttentionScore {
@@ -236,7 +254,9 @@ pub enum FocusTarget {
 }
 
 impl Default for FocusTarget {
-    fn default() -> Self { Self::Idle }
+    fn default() -> Self {
+        Self::Idle
+    }
 }
 
 impl Default for WorkingMemory {
@@ -325,7 +345,10 @@ impl WorkingMemory {
 
     /// Get all beliefs that are currently usable.
     pub fn active_beliefs(&self, now_ms: u64) -> Vec<&Belief> {
-        self.beliefs.iter().filter(|b| b.is_usable(now_ms)).collect()
+        self.beliefs
+            .iter()
+            .filter(|b| b.is_usable(now_ms))
+            .collect()
     }
 
     // ── Attention ───────────────────────────────────────────────
@@ -340,10 +363,16 @@ impl WorkingMemory {
 
     /// Get top N most attended items, sorted by aggregate score descending.
     pub fn top_attended(&self, n: usize) -> Vec<(&str, &AttentionScore)> {
-        let mut scores: Vec<_> = self.attention_scores.iter()
+        let mut scores: Vec<_> = self
+            .attention_scores
+            .iter()
             .map(|(k, v)| (k.as_str(), v))
             .collect();
-        scores.sort_by(|a, b| b.1.aggregate().partial_cmp(&a.1.aggregate()).unwrap_or(std::cmp::Ordering::Equal));
+        scores.sort_by(|a, b| {
+            b.1.aggregate()
+                .partial_cmp(&a.1.aggregate())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         scores.into_iter().take(n).collect()
     }
 
@@ -518,17 +547,24 @@ impl CognitiveEpisode {
 
     /// Duration in milliseconds (0 if not finished).
     pub fn duration_ms(&self) -> u64 {
-        self.finished_ms.map_or(0, |f| f.saturating_sub(self.started_ms))
+        self.finished_ms
+            .map_or(0, |f| f.saturating_sub(self.started_ms))
     }
 
     /// Did the episode succeed?
     pub fn succeeded(&self) -> bool {
-        matches!(self.outcome, EpisodeOutcome::Success | EpisodeOutcome::UnexpectedSuccess)
+        matches!(
+            self.outcome,
+            EpisodeOutcome::Success | EpisodeOutcome::UnexpectedSuccess
+        )
     }
 
     /// Did the episode fail?
     pub fn failed(&self) -> bool {
-        matches!(self.outcome, EpisodeOutcome::Failure | EpisodeOutcome::UnexpectedFailure)
+        matches!(
+            self.outcome,
+            EpisodeOutcome::Failure | EpisodeOutcome::UnexpectedFailure
+        )
     }
 
     /// Get the cognitive trace.
@@ -594,22 +630,32 @@ impl EpisodeStore {
 
     /// Episodes for a specific goal.
     pub fn by_goal(&self, goal_id: &str) -> Vec<&CognitiveEpisode> {
-        self.episodes.iter().filter(|ep| ep.goal.id == goal_id).collect()
+        self.episodes
+            .iter()
+            .filter(|ep| ep.goal.id == goal_id)
+            .collect()
     }
 
     /// Episodes with a specific outcome.
     pub fn by_outcome(&self, outcome: &EpisodeOutcome) -> Vec<&CognitiveEpisode> {
-        self.episodes.iter().filter(|ep| ep.outcome == *outcome).collect()
+        self.episodes
+            .iter()
+            .filter(|ep| ep.outcome == *outcome)
+            .collect()
     }
 
     /// Episodes containing a specific tag.
     pub fn by_tag(&self, tag: &str) -> Vec<&CognitiveEpisode> {
-        self.episodes.iter().filter(|ep| ep.tags.contains(&tag.to_string())).collect()
+        self.episodes
+            .iter()
+            .filter(|ep| ep.tags.contains(&tag.to_string()))
+            .collect()
     }
 
     /// Episodes within a time range (inclusive).
     pub fn by_time_range(&self, from_ms: u64, to_ms: u64) -> Vec<&CognitiveEpisode> {
-        self.episodes.iter()
+        self.episodes
+            .iter()
             .filter(|ep| ep.started_ms >= from_ms && ep.started_ms <= to_ms)
             .collect()
     }
@@ -635,9 +681,7 @@ impl EpisodeStore {
 
     /// Average duration of completed episodes.
     pub fn avg_duration_ms(&self) -> f64 {
-        let completed: Vec<_> = self.episodes.iter()
-            .filter(|ep| ep.is_complete())
-            .collect();
+        let completed: Vec<_> = self.episodes.iter().filter(|ep| ep.is_complete()).collect();
         if completed.is_empty() {
             return 0.0;
         }
