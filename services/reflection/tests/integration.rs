@@ -1,7 +1,7 @@
-use friday_knowledge::{KnowledgeEngine, PatternDetector};
-use friday_reflection::{InsightKind, Outcome, OutcomeKind, ReflectionEngine};
-use friday_memory::Episode;
 use friday_cognitive::workspace::Topic;
+use friday_knowledge::{KnowledgeEngine, PatternDetector};
+use friday_memory::Episode;
+use friday_reflection::{InsightKind, Outcome, OutcomeKind, ReflectionEngine};
 
 /// Full pipeline: Episodes → Knowledge → Reflection → Insight.
 #[test]
@@ -26,11 +26,12 @@ fn knowledge_to_reflection_to_insight() {
     assert_eq!(episodes.len(), 160);
 
     // ── Phase 2: Derive knowledge from episodes ────────────────────
-    let mut knowledge_engine = KnowledgeEngine::with_detector(
-        PatternDetector::new(3, 5),
-    );
+    let mut knowledge_engine = KnowledgeEngine::with_detector(PatternDetector::new(3, 5));
     let knowledge = knowledge_engine.analyze(&episodes);
-    assert!(!knowledge.is_empty(), "Should derive knowledge from 40 workflow iterations");
+    assert!(
+        !knowledge.is_empty(),
+        "Should derive knowledge from 40 workflow iterations"
+    );
 
     let dev_workflow = &knowledge[0];
     assert!(dev_workflow.support >= 30);
@@ -99,9 +100,16 @@ fn all_outcomes_produce_insights() {
             occurred_at_ms: 1000,
         };
         let insights = reflection_engine.reflect_all(&knowledge, &outcome);
-        assert!(!insights.is_empty(), "Outcome {:?} should produce an insight", outcome_kind);
-        assert_eq!(insights[0].kind, *expected_insight_kind,
-            "Outcome {:?} should produce {:?}", outcome_kind, expected_insight_kind);
+        assert!(
+            !insights.is_empty(),
+            "Outcome {:?} should produce an insight",
+            outcome_kind
+        );
+        assert_eq!(
+            insights[0].kind, *expected_insight_kind,
+            "Outcome {:?} should produce {:?}",
+            outcome_kind, expected_insight_kind
+        );
     }
 }
 
