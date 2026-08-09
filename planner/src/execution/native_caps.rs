@@ -49,15 +49,20 @@ fn native_risk(adapter: &str, action: &str) -> Risk {
         ("terminal", "list_sessions") | ("terminal", "kill") => Risk::Medium,
         ("terminal", "run") | ("terminal", "exec") => Risk::High,
 
+        // Web: read-only HTTP reads (search + fetch/extract). Safe.
+        ("web", "search") | ("web", "fetch") => Risk::Safe,
+
+        // Docs / code intelligence: read-only local inspection. Safe.
+        ("docs", "search") | ("docs", "read") => Risk::Safe,
+        ("codeintel", "understand") => Risk::Safe,
+
         _ => Risk::Safe,
     }
 }
 
 /// Convert one grouped native [`friday_capabilities::model::Capability`] into
 /// per-action [`CapabilitySpec`]s for the M6 registry.
-pub fn from_native_capability(
-    cap: &friday_capabilities::model::Capability,
-) -> Vec<CapabilitySpec> {
+pub fn from_native_capability(cap: &friday_capabilities::model::Capability) -> Vec<CapabilitySpec> {
     cap.actions
         .iter()
         .map(|action| {
@@ -95,11 +100,15 @@ mod tests {
         let reg = CapabilityRegistry::new();
         register_native_builtins(&reg);
         let known = reg.known();
-        // 8 fs + 4 terminal + 11 git = 23 actions from the canonical builtins.
-        assert_eq!(known.len(), 23, "unexpected native capability count");
+        // 8 fs + 4 terminal + 11 git + 2 web + 2 docs + 1 codeintel = 28
+        // actions from the canonical builtins.
+        assert_eq!(known.len(), 28, "unexpected native capability count");
         assert!(known.contains(&"filesystem.write_file".to_string()));
         assert!(known.contains(&"git.push".to_string()));
         assert!(known.contains(&"terminal.exec".to_string()));
+        assert!(known.contains(&"web.search".to_string()));
+        assert!(known.contains(&"docs.read".to_string()));
+        assert!(known.contains(&"codeintel.understand".to_string()));
     }
 
     #[test]
@@ -127,4 +136,3 @@ mod tests {
         assert_eq!(b.action, "push");
     }
 }
-
