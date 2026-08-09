@@ -208,12 +208,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    fn entry(
-        goal_id: Uuid,
-        cap: &str,
-        event_kind: &str,
-        ts: DateTime<Utc>,
-    ) -> TimelineEntry {
+    fn entry(goal_id: Uuid, cap: &str, event_kind: &str, ts: DateTime<Utc>) -> TimelineEntry {
         TimelineEntry {
             version: 1,
             id: Uuid::new_v4(),
@@ -238,11 +233,36 @@ mod tests {
 
         let entries = vec![
             entry(goal1, "filesystem.write", "exec.action", base),
-            entry(goal1, "git.commit", "exec.action", base + chrono::Duration::seconds(1)),
-            entry(goal1, "", "goal.completed", base + chrono::Duration::seconds(2)),
-            entry(goal2, "filesystem.write", "exec.action", base + chrono::Duration::seconds(10)),
-            entry(goal2, "git.commit", "exec.action", base + chrono::Duration::seconds(11)),
-            entry(goal2, "", "goal.completed", base + chrono::Duration::seconds(12)),
+            entry(
+                goal1,
+                "git.commit",
+                "exec.action",
+                base + chrono::Duration::seconds(1),
+            ),
+            entry(
+                goal1,
+                "",
+                "goal.completed",
+                base + chrono::Duration::seconds(2),
+            ),
+            entry(
+                goal2,
+                "filesystem.write",
+                "exec.action",
+                base + chrono::Duration::seconds(10),
+            ),
+            entry(
+                goal2,
+                "git.commit",
+                "exec.action",
+                base + chrono::Duration::seconds(11),
+            ),
+            entry(
+                goal2,
+                "",
+                "goal.completed",
+                base + chrono::Duration::seconds(12),
+            ),
         ];
 
         let miner = PatternMiner::new();
@@ -262,8 +282,18 @@ mod tests {
 
         let entries = vec![
             entry(goal1, "filesystem.write", "exec.action", base),
-            entry(goal1, "git.commit", "exec.action", base + chrono::Duration::seconds(1)),
-            entry(goal1, "", "goal.completed", base + chrono::Duration::seconds(2)),
+            entry(
+                goal1,
+                "git.commit",
+                "exec.action",
+                base + chrono::Duration::seconds(1),
+            ),
+            entry(
+                goal1,
+                "",
+                "goal.completed",
+                base + chrono::Duration::seconds(2),
+            ),
         ];
 
         let miner = PatternMiner::new();
@@ -284,21 +314,59 @@ mod tests {
         let entries = vec![
             // Goal 1: write → commit → completed (success)
             entry(goal1, "fs.write", "exec.action", base),
-            entry(goal1, "git.commit", "exec.action", base + chrono::Duration::seconds(1)),
-            entry(goal1, "", "goal.completed", base + chrono::Duration::seconds(2)),
+            entry(
+                goal1,
+                "git.commit",
+                "exec.action",
+                base + chrono::Duration::seconds(1),
+            ),
+            entry(
+                goal1,
+                "",
+                "goal.completed",
+                base + chrono::Duration::seconds(2),
+            ),
             // Goal 2: write → commit → completed (success)
-            entry(goal2, "fs.write", "exec.action", base + chrono::Duration::seconds(10)),
-            entry(goal2, "git.commit", "exec.action", base + chrono::Duration::seconds(11)),
-            entry(goal2, "", "goal.completed", base + chrono::Duration::seconds(12)),
+            entry(
+                goal2,
+                "fs.write",
+                "exec.action",
+                base + chrono::Duration::seconds(10),
+            ),
+            entry(
+                goal2,
+                "git.commit",
+                "exec.action",
+                base + chrono::Duration::seconds(11),
+            ),
+            entry(
+                goal2,
+                "",
+                "goal.completed",
+                base + chrono::Duration::seconds(12),
+            ),
             // Goal 3: write → commit (failure, no goal.completed)
-            entry(goal3, "fs.write", "exec.action", base + chrono::Duration::seconds(20)),
-            entry(goal3, "git.commit", "exec.action", base + chrono::Duration::seconds(21)),
+            entry(
+                goal3,
+                "fs.write",
+                "exec.action",
+                base + chrono::Duration::seconds(20),
+            ),
+            entry(
+                goal3,
+                "git.commit",
+                "exec.action",
+                base + chrono::Duration::seconds(21),
+            ),
         ];
 
         let miner = PatternMiner::new();
         let patterns = miner.mine(&entries);
 
-        let p = patterns.iter().find(|p| p.capabilities == vec!["fs.write", "git.commit"]).unwrap();
+        let p = patterns
+            .iter()
+            .find(|p| p.capabilities == vec!["fs.write", "git.commit"])
+            .unwrap();
         assert_eq!(p.frequency, 3);
         // 2 out of 3 succeeded.
         assert!((p.success_rate - 2.0 / 3.0).abs() < 0.01);
@@ -315,34 +383,73 @@ mod tests {
         // excluded (they don't represent semantic capabilities).
         let entries = vec![
             entry(goal1, "fs.write", "exec.action", base),
-            entry(goal1, "artifact.write", "artifact.created", base + chrono::Duration::seconds(1)),
-            entry(goal1, "git.commit", "git.commit", base + chrono::Duration::seconds(2)),
-            entry(goal1, "", "goal.completed", base + chrono::Duration::seconds(3)),
-            entry(goal2, "fs.write", "exec.action", base + chrono::Duration::seconds(10)),
-            entry(goal2, "artifact.write", "artifact.created", base + chrono::Duration::seconds(11)),
-            entry(goal2, "git.commit", "git.commit", base + chrono::Duration::seconds(12)),
-            entry(goal2, "", "goal.completed", base + chrono::Duration::seconds(13)),
+            entry(
+                goal1,
+                "artifact.write",
+                "artifact.created",
+                base + chrono::Duration::seconds(1),
+            ),
+            entry(
+                goal1,
+                "git.commit",
+                "git.commit",
+                base + chrono::Duration::seconds(2),
+            ),
+            entry(
+                goal1,
+                "",
+                "goal.completed",
+                base + chrono::Duration::seconds(3),
+            ),
+            entry(
+                goal2,
+                "fs.write",
+                "exec.action",
+                base + chrono::Duration::seconds(10),
+            ),
+            entry(
+                goal2,
+                "artifact.write",
+                "artifact.created",
+                base + chrono::Duration::seconds(11),
+            ),
+            entry(
+                goal2,
+                "git.commit",
+                "git.commit",
+                base + chrono::Duration::seconds(12),
+            ),
+            entry(
+                goal2,
+                "",
+                "goal.completed",
+                base + chrono::Duration::seconds(13),
+            ),
         ];
 
         let miner = PatternMiner::new();
         let patterns = miner.mine(&entries);
 
         // Should find patterns that include artifact.created and git.* events.
-        let cap_sequence: Vec<String> = patterns
-            .iter()
-            .map(|p| p.capabilities.join(", "))
-            .collect();
+        let cap_sequence: Vec<String> =
+            patterns.iter().map(|p| p.capabilities.join(", ")).collect();
         assert!(
-            patterns.iter().any(|p| p.capabilities.contains(&"artifact.write".to_string())),
+            patterns
+                .iter()
+                .any(|p| p.capabilities.contains(&"artifact.write".to_string())),
             "should find artifact.write in patterns: {cap_sequence:?}"
         );
         assert!(
-            patterns.iter().any(|p| p.capabilities.contains(&"git.commit".to_string())),
+            patterns
+                .iter()
+                .any(|p| p.capabilities.contains(&"git.commit".to_string())),
             "should find git.commit in patterns: {cap_sequence:?}"
         );
         // Empty-capability events (like goal.completed) should be excluded.
         assert!(
-            !patterns.iter().any(|p| p.capabilities.contains(&"".to_string())),
+            !patterns
+                .iter()
+                .any(|p| p.capabilities.contains(&"".to_string())),
             "should not have empty capabilities in patterns"
         );
     }
