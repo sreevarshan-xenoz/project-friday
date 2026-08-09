@@ -1,0 +1,46 @@
+{
+  "id": "docs",
+  "name": "Documentation",
+  "version": "1.0.0",
+  "description": "Search and read local documentation: READMEs, ADRs, specs, and doc files — the self-hosted knowledge the project already ships.",
+  "author": "FRIDAY",
+  "category": "docs",
+  "icon": "📚",
+  "capabilities": [
+    "docs.search",
+    "docs.read"
+  ],
+  "actions": [
+    "find documentation",
+    "search the docs",
+    "read a readme",
+    "read a spec",
+    "read an architecture document",
+    "find the documentation for",
+    "look up local docs"
+  ],
+  "permissions": [],
+  "readonly": true,
+  "examples": [
+    {
+      "goal": "What does the agent runtime spec say?",
+      "plan": [
+        "Search the docs for 'agent runtime'",
+        "Read the top matching spec file",
+        "Summarize the key sections"
+      ]
+    },
+    {
+      "goal": "How is the skill engine qualified?",
+      "plan": [
+        "Search the docs and READMEs for 'qualification'",
+        "Read the matching documents",
+        "Summarize the qualification steps"
+      ]
+    }
+  ],
+  "dependencies": [],
+  "platform": "Any",
+  "min_core_version": "0.1.0",
+  "enabled": true
+}
