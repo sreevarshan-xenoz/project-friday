@@ -200,6 +200,6 @@ impl FilesystemAdapter {
 }
 
 /// Capability record published to the Capability Intelligence registry.
-    pub fn capabilities() -> Vec<friday_capabilities::model::Capability> {
-        friday_capabilities::builtins::filesystem()
-    }
+pub fn capabilities() -> Vec<friday_capabilities::model::Capability> {
+    friday_capabilities::builtins::filesystem()
+}
