@@ -71,7 +71,7 @@ impl PlannerRouter {
             None => return false,
         };
         let _ = llm; // presence already checked
-        // Deterministic, well-known intent types are cheap to plan by rule.
+                     // Deterministic, well-known intent types are cheap to plan by rule.
         let trivial = matches!(
             IntentType::classify(&intent.raw),
             IntentType::BrowserSearch | IntentType::OpenApp | IntentType::RoutineMorning
