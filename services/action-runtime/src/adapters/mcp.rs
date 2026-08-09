@@ -133,27 +133,19 @@ impl ActionAdapter for McpAdapter {
                     match action.as_str() {
                         "git_commit" => {
                             if let Some(hash) = Self::extract_hash(&text) {
-                                out.metadata.insert(
-                                    "commit_hash".to_string(),
-                                    json!(hash),
-                                );
+                                out.metadata.insert("commit_hash".to_string(), json!(hash));
                             }
                         }
                         "git_branch" | "git_checkout" | "git_create_branch" => {
                             let branch = Self::extract_branch(&text, &action);
                             if !branch.is_empty() {
-                                out.metadata.insert(
-                                    "branch".to_string(),
-                                    json!(branch),
-                                );
+                                out.metadata.insert("branch".to_string(), json!(branch));
                             }
                         }
                         "git_diff_unstaged" | "git_diff_staged" | "git_diff" => {
                             let files = Self::count_diff_files(&text);
-                            out.metadata.insert(
-                                "files_affected".to_string(),
-                                json!(files),
-                            );
+                            out.metadata
+                                .insert("files_affected".to_string(), json!(files));
                         }
                         _ => {}
                     }
@@ -245,8 +237,6 @@ impl McpAdapter {
     /// Count the number of files affected in a diff by counting `diff --git`
     /// headers.
     fn count_diff_files(text: &str) -> usize {
-        text.lines()
-            .filter(|l| l.starts_with("diff --git"))
-            .count()
+        text.lines().filter(|l| l.starts_with("diff --git")).count()
     }
 }
