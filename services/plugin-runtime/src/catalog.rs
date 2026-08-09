@@ -27,30 +27,94 @@ impl CapabilityCatalog {
     /// Create a catalog pre-populated with all standard capability descriptors.
     pub fn with_defaults() -> Self {
         let mut c = Self::new();
-        c.register(descriptor(Capability::ReadFile, "1.0.0", CapabilityCategory::Filesystem,
-            "Read the contents of a file from the local filesystem", vec!["fs.read"],
-            0.05, 5, SafetyLevel::Safe, vec!["read", "local"]));
-        c.register(descriptor(Capability::WriteFile, "1.0.0", CapabilityCategory::Filesystem,
-            "Write content to a file on the local filesystem", vec!["fs.write"],
-            0.10, 10, SafetyLevel::Moderate, vec!["write", "local"]));
-        c.register(descriptor(Capability::DeleteFile, "1.0.0", CapabilityCategory::Filesystem,
-            "Delete a file from the local filesystem", vec!["fs.write"],
-            0.15, 15, SafetyLevel::Sensitive, vec!["write", "delete", "local"]));
-        c.register(descriptor(Capability::ListDirectory, "1.0.0", CapabilityCategory::Filesystem,
-            "List the contents of a directory", vec!["fs.read"],
-            0.05, 5, SafetyLevel::Safe, vec!["read", "local"]));
-        c.register(descriptor(Capability::ExecuteCommand, "1.0.0", CapabilityCategory::System,
-            "Execute a shell command or program", vec!["system.exec"],
-            0.30, 50, SafetyLevel::Critical, vec!["run", "system"]));
-        c.register(descriptor(Capability::OpenBrowser, "1.0.0", CapabilityCategory::Browser,
-            "Open a web browser to a specified URL", vec!["network"],
-            0.10, 200, SafetyLevel::Moderate, vec!["network", "ui"]));
-        c.register(descriptor(Capability::SearchWeb, "1.0.0", CapabilityCategory::Browser,
-            "Search the web for information", vec!["network"],
-            0.15, 500, SafetyLevel::Safe, vec!["network", "search"]));
-        c.register(descriptor(Capability::SearchMemory, "1.0.0", CapabilityCategory::Knowledge,
-            "Search the cognitive memory for past experiences", vec!["memory.read"],
-            0.05, 2, SafetyLevel::Safe, vec!["memory", "search"]));
+        c.register(descriptor(
+            Capability::ReadFile,
+            "1.0.0",
+            CapabilityCategory::Filesystem,
+            "Read the contents of a file from the local filesystem",
+            vec!["fs.read"],
+            0.05,
+            5,
+            SafetyLevel::Safe,
+            vec!["read", "local"],
+        ));
+        c.register(descriptor(
+            Capability::WriteFile,
+            "1.0.0",
+            CapabilityCategory::Filesystem,
+            "Write content to a file on the local filesystem",
+            vec!["fs.write"],
+            0.10,
+            10,
+            SafetyLevel::Moderate,
+            vec!["write", "local"],
+        ));
+        c.register(descriptor(
+            Capability::DeleteFile,
+            "1.0.0",
+            CapabilityCategory::Filesystem,
+            "Delete a file from the local filesystem",
+            vec!["fs.write"],
+            0.15,
+            15,
+            SafetyLevel::Sensitive,
+            vec!["write", "delete", "local"],
+        ));
+        c.register(descriptor(
+            Capability::ListDirectory,
+            "1.0.0",
+            CapabilityCategory::Filesystem,
+            "List the contents of a directory",
+            vec!["fs.read"],
+            0.05,
+            5,
+            SafetyLevel::Safe,
+            vec!["read", "local"],
+        ));
+        c.register(descriptor(
+            Capability::ExecuteCommand,
+            "1.0.0",
+            CapabilityCategory::System,
+            "Execute a shell command or program",
+            vec!["system.exec"],
+            0.30,
+            50,
+            SafetyLevel::Critical,
+            vec!["run", "system"],
+        ));
+        c.register(descriptor(
+            Capability::OpenBrowser,
+            "1.0.0",
+            CapabilityCategory::Browser,
+            "Open a web browser to a specified URL",
+            vec!["network"],
+            0.10,
+            200,
+            SafetyLevel::Moderate,
+            vec!["network", "ui"],
+        ));
+        c.register(descriptor(
+            Capability::SearchWeb,
+            "1.0.0",
+            CapabilityCategory::Browser,
+            "Search the web for information",
+            vec!["network"],
+            0.15,
+            500,
+            SafetyLevel::Safe,
+            vec!["network", "search"],
+        ));
+        c.register(descriptor(
+            Capability::SearchMemory,
+            "1.0.0",
+            CapabilityCategory::Knowledge,
+            "Search the cognitive memory for past experiences",
+            vec!["memory.read"],
+            0.05,
+            2,
+            SafetyLevel::Safe,
+            vec!["memory", "search"],
+        ));
         c
     }
 
@@ -115,7 +179,6 @@ fn descriptor(
 }
 
 #[allow(clippy::too_many_arguments)]
-
 #[cfg(test)]
 mod tests {
     use super::*;
