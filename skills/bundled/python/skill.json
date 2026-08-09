@@ -7,9 +7,9 @@
   "category": "developer",
   "icon": "●",
   "capabilities": [
-    "terminal.execute",
-    "filesystem.read",
-    "filesystem.write"
+    "terminal.exec",
+    "filesystem.read_file",
+    "filesystem.write_file"
   ],
   "actions": [
     "run python script",
@@ -23,8 +23,8 @@
     "manage requirements.txt"
   ],
   "permissions": [
-    "terminal.execute",
-    "filesystem.write"
+    "terminal.exec",
+    "filesystem.write_file"
   ],
   "examples": [
     {
