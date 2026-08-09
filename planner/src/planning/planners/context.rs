@@ -5,7 +5,9 @@
 
 use crate::execution::capability_registry::Risk;
 use crate::execution::lifecycle::ExecutionBudget;
-use crate::experience::{GoalOutcome, ExperienceContext};
+use crate::experience::{ExperienceContext, GoalOutcome};
+use friday_investigation::InvestigationResult;
+use friday_skills::SkillContext;
 
 /// A capability the planner is allowed to use, stripped to what the model needs:
 /// its canonical id, a human description, and its risk class.
@@ -19,6 +21,10 @@ pub struct AvailableCapability {
     pub score: f64,
     /// JSON Schema describing the tool's expected input parameters.
     pub schema: serde_json::Value,
+    /// True when this capability is declared by the skill the planner chose
+    /// for the goal (skill-first scoping): these lead the offered list so the
+    /// model plans *through* the chosen skill.
+    pub preferred: bool,
 }
 
 /// Lightweight view of the workspace the plan will run in. Populated by the host
@@ -63,6 +69,17 @@ pub struct PlanContext {
     /// is unavailable or disabled. Planners may ignore this field entirely —
     /// it carries optional historical evidence, not requirements.
     pub experience: Option<ExperienceContext>,
+    /// Skill-aware context from the Skill Engine: skills ranked against the
+    /// goal plus the deterministic best usable skill. `None` when no skill
+    /// source is wired. Advisory like experience — the planner plans through
+    /// skills when present but must keep working without them.
+    pub skills: Option<SkillContext>,
+    /// Investigation outcome from the Investigation Engine: the channels this
+    /// goal requires evidence from before execution, with rationale and
+    /// confidence. `None` when no investigation seam is wired. Advisory like
+    /// experience and skills — the planner folds weak evidence into the
+    /// direct plan and keeps working without a seam.
+    pub investigation: Option<InvestigationResult>,
 }
 
 impl PlanContext {
@@ -80,7 +97,10 @@ impl PlanContext {
                     "risk": c.risk.as_str(),
                     "score": c.score,
                 });
-                if !c.schema.is_null() && !c.schema.as_object().map_or(true, |o| o.is_empty()) {
+                if c.preferred {
+                    obj["preferred"] = serde_json::json!(true);
+                }
+                if !c.schema.is_null() && !c.schema.as_object().is_none_or(|o| o.is_empty()) {
                     obj["params"] = c.schema.clone();
                 }
                 obj
@@ -135,7 +155,12 @@ impl<'a> PlanningEvidenceView<'a> {
     pub fn had_previous_failure(&self) -> bool {
         self.inner
             .and_then(|ctx| ctx.evidence.previous_outcome.as_ref())
-            .map(|m| matches!(m.outcome, GoalOutcome::Failure | GoalOutcome::PartiallyCompleted))
+            .map(|m| {
+                matches!(
+                    m.outcome,
+                    GoalOutcome::Failure | GoalOutcome::PartiallyCompleted
+                )
+            })
             .unwrap_or(false)
     }
 
