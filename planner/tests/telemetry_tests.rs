@@ -12,16 +12,16 @@ use std::sync::Arc;
 
 use friday_core::event::Event;
 use friday_core::plugin::Plugin;
+use friday_planner::engines::{PlanningEngine, PlanningTelemetry};
+use friday_planner::events;
 use friday_planner::execution::capability_registry::{CapabilityRegistry, CapabilitySpec, Risk};
 use friday_planner::execution::lifecycle::ExecutionBudget;
-use friday_planner::events;
 use friday_planner::intent::Intent;
 use friday_planner::planning::planners::backend::{MockBackend, PlanError};
 use friday_planner::planning::planners::context::{RiskPolicy, WorkspaceContext};
 use friday_planner::planning::planners::llm::LlmPlanner;
 use friday_planner::planning::planners::router::PlannerRouter;
 use friday_planner::planning::planners::rule::RulePlanner;
-use friday_planner::engines::{PlanningEngine, PlanningTelemetry};
 
 fn reg() -> Arc<CapabilityRegistry> {
     let r = Arc::new(CapabilityRegistry::new());
@@ -96,7 +96,10 @@ async fn telemetry_emitted_with_rule_planner_fields() {
     assert_eq!(t.planner, "Rule", "rule-routed intent reports Rule planner");
     assert!(t.success, "rule plan should succeed");
     assert_eq!(t.validation_failures, 0);
-    assert!(!t.fell_back_to_rule, "no fallback when rule planner is used directly");
+    assert!(
+        !t.fell_back_to_rule,
+        "no fallback when rule planner is used directly"
+    );
     assert_eq!(t.task_count, t.task_count); // sanity
     assert!(t.planning_ms < 10_000, "planning should be fast for rule");
     // capabilities_offered reflects discovery (top-N of registry).
@@ -122,7 +125,10 @@ async fn telemetry_marks_llm_planner_and_duration() {
         WorkspaceContext::default(),
     );
     // Route to LLM with a complex intent.
-    let intent = Intent::new("generic", "refactor this rust workspace to use async traits");
+    let intent = Intent::new(
+        "generic",
+        "refactor this rust workspace to use async traits",
+    );
     let events = engine.handle_event(&intent_event(&intent)).await.unwrap();
     let tel = events
         .iter()
