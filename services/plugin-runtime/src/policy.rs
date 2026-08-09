@@ -153,8 +153,7 @@ impl ResourcePolicy {
     }
 
     pub fn with_provider_cost(mut self, provider_id: &str, cost: f64) -> Self {
-        self.provider_costs
-            .insert(provider_id.to_string(), cost);
+        self.provider_costs.insert(provider_id.to_string(), cost);
         self
     }
 }
@@ -428,8 +427,8 @@ mod tests {
 
     #[test]
     fn security_policy_bonus_for_secure_providers() {
-        let policy = SecurityPolicy::new()
-            .with_provider_permissions("secure-fs", vec!["security.high"]);
+        let policy =
+            SecurityPolicy::new().with_provider_permissions("secure-fs", vec!["security.high"]);
         assert!((policy.score_bonus("secure-fs", &Capability::ReadFile) - 0.1).abs() < 0.01);
         assert!((policy.score_bonus("normal-fs", &Capability::ReadFile) - 0.0).abs() < 0.01);
     }
@@ -480,8 +479,7 @@ mod tests {
 
     #[test]
     fn rule_based_allow_only() {
-        let policy = RuleBasedPolicyEngine::new()
-            .allow_only(vec!["preferred-fs".into()]);
+        let policy = RuleBasedPolicyEngine::new().allow_only(vec!["preferred-fs".into()]);
         let ids = vec!["preferred-fs".into(), "other-fs".into()];
         let filtered = policy.filter_providers(&Capability::ReadFile, &ids);
         assert_eq!(filtered.len(), 1);
@@ -490,8 +488,7 @@ mod tests {
 
     #[test]
     fn rule_based_preference_bonus() {
-        let policy = RuleBasedPolicyEngine::new()
-            .prefer("fast-fs", 0.2);
+        let policy = RuleBasedPolicyEngine::new().prefer("fast-fs", 0.2);
         assert!((policy.score_bonus("fast-fs", &Capability::ReadFile) - 0.3).abs() < 0.01);
         assert!((policy.score_bonus("slow-fs", &Capability::ReadFile) - 0.0).abs() < 0.01);
     }
