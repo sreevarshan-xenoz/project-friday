@@ -10,9 +10,7 @@ use std::sync::Arc;
 use friday_core::event::Event;
 use friday_core::plugin::Plugin;
 use friday_planner::events;
-use friday_planner::execution::capability_registry::{
-    CapabilityRegistry, CapabilitySpec, Risk,
-};
+use friday_planner::execution::capability_registry::{CapabilityRegistry, CapabilitySpec, Risk};
 use friday_planner::execution::persistence::GoalStore;
 use friday_planner::execution::reflection::RuleReflector;
 use friday_planner::execution::supervisor::{GoalSupervisor, PolicyAuthority};
@@ -112,12 +110,19 @@ async fn autonomous_goal_completes_without_human_input() {
     let goal_id = events_out
         .iter()
         .find(|e| e.kind == events::GOAL_STARTED)
-        .and_then(|e| e.payload["goal_id"].as_str().and_then(|s| Uuid::parse_str(s).ok()))
+        .and_then(|e| {
+            e.payload["goal_id"]
+                .as_str()
+                .and_then(|s| Uuid::parse_str(s).ok())
+        })
         .unwrap();
     let plan_id = g.plan_id;
 
     // Complete task a.
-    let mut more = sup.handle_event(&result_event(plan_id, a, true, trace)).await.unwrap();
+    let mut more = sup
+        .handle_event(&result_event(plan_id, a, true, trace))
+        .await
+        .unwrap();
     events_out.append(&mut more);
     // Completing a should start b.
     let started_b = events_out
@@ -126,11 +131,12 @@ async fn autonomous_goal_completes_without_human_input() {
     assert!(started_b, "task b should start after a completes");
 
     // Complete task b -> goal completed.
-    let more = sup.handle_event(&result_event(plan_id, b, true, trace)).await.unwrap();
+    let more = sup
+        .handle_event(&result_event(plan_id, b, true, trace))
+        .await
+        .unwrap();
     events_out.extend(more);
-    let completed = events_out
-        .iter()
-        .any(|e| e.kind == events::GOAL_COMPLETED);
+    let completed = events_out.iter().any(|e| e.kind == events::GOAL_COMPLETED);
     assert!(completed, "goal should complete autonomously");
 
     // Persistence: snapshot should exist and replay to a Completed goal.
@@ -151,9 +157,7 @@ async fn high_risk_task_pauses_then_resumes() {
     let d = g.add_task("danger", "test.danger", json!({}), &[]);
 
     let mut out = sup.handle_event(&plan_event(&g, trace)).await.unwrap();
-    let paused = out
-        .iter()
-        .any(|e| e.kind == events::GOAL_PAUSED)
+    let paused = out.iter().any(|e| e.kind == events::GOAL_PAUSED)
         && out.iter().any(|e| e.kind == events::PERMISSION_PAUSED);
     assert!(paused, "high-risk task must pause the goal");
 
@@ -167,11 +171,18 @@ async fn high_risk_task_pauses_then_resumes() {
     let goal_id = out
         .iter()
         .find(|e| e.kind == events::GOAL_PAUSED)
-        .and_then(|e| e.payload["goal_id"].as_str().and_then(|s| Uuid::parse_str(s).ok()))
+        .and_then(|e| {
+            e.payload["goal_id"]
+                .as_str()
+                .and_then(|s| Uuid::parse_str(s).ok())
+        })
         .unwrap();
 
     // Resume -> the danger task should now start and dispatch.
-    let mut more = sup.handle_event(&resume_event(goal_id, trace)).await.unwrap();
+    let mut more = sup
+        .handle_event(&resume_event(goal_id, trace))
+        .await
+        .unwrap();
     out.append(&mut more);
     let started = out
         .iter()
@@ -212,16 +223,18 @@ async fn shared_context_publishes_produced_output() {
         .handle_event(&result_event(g.plan_id, a, true, trace))
         .await
         .unwrap();
-    let published = more
-        .iter()
-        .any(|e| e.kind == events::GOAL_COMPLETED);
+    let published = more.iter().any(|e| e.kind == events::GOAL_COMPLETED);
     assert!(published, "goal should complete");
 
     // Snapshot must carry the published context value.
     let goal_id = more
         .iter()
         .find(|e| e.kind == events::GOAL_COMPLETED)
-        .and_then(|e| e.payload["goal_id"].as_str().and_then(|s| Uuid::parse_str(s).ok()))
+        .and_then(|e| {
+            e.payload["goal_id"]
+                .as_str()
+                .and_then(|s| Uuid::parse_str(s).ok())
+        })
         .unwrap();
     let rt: GoalRuntime = store.load(goal_id).unwrap().unwrap();
     assert_eq!(rt.context.len(), 1, "one artifact published");
