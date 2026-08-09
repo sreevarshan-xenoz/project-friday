@@ -232,6 +232,6 @@ fn run_git(cwd: &Path, args: &[impl AsRef<OsStr>]) -> ActionResult {
 }
 
 /// Capability record published to the Capability Intelligence registry.
-    pub fn capabilities() -> Vec<friday_capabilities::model::Capability> {
-        friday_capabilities::builtins::git()
-    }
+pub fn capabilities() -> Vec<friday_capabilities::model::Capability> {
+    friday_capabilities::builtins::git()
+}
