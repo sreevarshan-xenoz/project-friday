@@ -69,11 +69,11 @@ fn delta_frame_omits_unchanged_slices() {
     assert_eq!(value.get("ledger"), None);
 }
 
-#[test]
-fn frame_round_trips_through_json() {
+#[tokio::test]
+async fn frame_round_trips_through_json() {
     let mut source = DemoRuntimeSource::new(42, 8);
-    let snapshot = source.snapshot();
-    let mut deltas = source.tick(1);
+    let snapshot = source.snapshot().await;
+    let mut deltas = source.tick(1).await;
     let delta = deltas.pop().unwrap();
 
     let frames = vec![
@@ -138,7 +138,8 @@ fn frame_round_trips_through_json() {
 
 #[test]
 fn from_json_rejects_unknown_protocol_version() {
-    let bad = r#"{"kind":"hello","sequence":1,"timestamp":1,"source":"mock","protocol":99,"bridge":"b"}"#;
+    let bad =
+        r#"{"kind":"hello","sequence":1,"timestamp":1,"source":"mock","protocol":99,"bridge":"b"}"#;
     let err = FrameSerializer::from_json(bad).unwrap_err();
     assert!(format!("{err}").contains("protocol"), "got: {err}");
 }
@@ -187,7 +188,10 @@ fn error_frame_carries_full_machine_readable_taxonomy() {
     assert_eq!(value["code"], "unsupported_capability");
     assert_eq!(value["severity"], "warning");
     assert_eq!(value["recoverable"], true);
-    assert_eq!(value["recommended_action"], "drop the unsupported capability and retry");
+    assert_eq!(
+        value["recommended_action"],
+        "drop the unsupported capability and retry"
+    );
 
     let parsed = FrameSerializer::from_json(&json).unwrap();
     assert_eq!(parsed, frame, "round-trip must be lossless");
@@ -197,46 +201,113 @@ fn error_frame_carries_full_machine_readable_taxonomy() {
 // Unit-ish: demo source
 // ---------------------------------------------------------------------------
 
-#[test]
-fn demo_source_seeds_read_models_through_frozen_engines() {
+#[tokio::test]
+async fn demo_source_seeds_read_models_through_frozen_engines() {
     let source = DemoRuntimeSource::new(42, 140);
     assert_eq!(source.bridge_id(), "friday-bridge-demo");
     assert_eq!(source.source_name(), "mock");
 
-    let snap = source.snapshot();
+    let snap = source.snapshot().await;
     assert_eq!(snap.timelines.len(), 140, "one timeline per seeded record");
     assert_eq!(snap.ledger.len(), 140);
     assert_eq!(snap.metrics.decisions, 140);
-    assert_eq!(snap.dashboard.executive.len(), 10, "ten-phase executive");
+    assert_eq!(snap.dashboard.executive.len(), 11, "eleven-phase executive");
 
     // Determinism: same seed => same metrics.
-    let again = DemoRuntimeSource::new(42, 140).snapshot();
+    let again = DemoRuntimeSource::new(42, 140).snapshot().await;
     assert_eq!(snap.metrics, again.metrics);
 }
 
-#[test]
-fn demo_source_tick_advances_executive_and_appends_on_cycle_completion() {
+#[tokio::test]
+async fn demo_source_tick_advances_executive_and_appends_on_cycle_completion() {
     let mut source = DemoRuntimeSource::new(42, 5);
 
-    // First nine ticks advance the executive without touching the ledger.
-    for _ in 0..9 {
-        let deltas = source.tick(1);
+    // First ten ticks advance the executive without touching the ledger.
+    for _ in 0..10 {
+        let deltas = source.tick(1).await;
         assert_eq!(deltas.len(), 1, "one delta per tick");
         let d: &SourceDelta = &deltas[0];
         assert_eq!(d.slices, vec![friday_bridge::Slice::Dashboard]);
         assert!(d.dashboard.is_some());
-        assert!(d.ledger.is_none(), "ledger untouched until a cycle completes");
+        assert!(
+            d.ledger.is_none(),
+            "ledger untouched until a cycle completes"
+        );
     }
 
-    // Tenth tick completes a cycle: a record is appended and every slice
+    // Eleventh tick completes a cycle: a record is appended and every slice
     // follows along.
-    let deltas = source.tick(1);
+    let deltas = source.tick(1).await;
     let d = &deltas[0];
     assert_eq!(d.slices.len(), 4);
     assert!(d.timelines.is_some());
     assert!(d.metrics.is_some());
     assert!(d.ledger.is_some());
     assert_eq!(d.ledger.as_ref().unwrap().len(), 6);
+}
+
+#[tokio::test]
+async fn demo_source_graph_comes_from_the_real_executive_runtime() {
+    // The dashboard's InvestigationGraph is the goal-execution Executive's own
+    // evidence-gate outcome — the first demo goal genuinely runs through the
+    // runtime (investigate → plan → …) and its branches appear on the graph.
+    let source = DemoRuntimeSource::new(42, 5);
+    let snap = source.snapshot().await;
+    let graph = snap.dashboard.graph.expect("snapshot carries the graph");
+
+    assert_eq!(
+        graph.goal,
+        friday_bridge::demo_goals()[0],
+        "graph reflects the goal the runtime processed"
+    );
+    let channels: Vec<&str> = graph
+        .requirements
+        .iter()
+        .map(|r| r.channel.as_str())
+        .collect();
+    assert!(
+        channels.contains(&"web"),
+        "web evidence branch from the executive's investigation: {channels:?}"
+    );
+    assert!(
+        graph.phases.iter().any(|p| p == "investigate"),
+        "evidence goal carries the investigate phase: {:?}",
+        graph.phases
+    );
+
+    // A full cycle later the runtime advances to the next goal and its graph
+    // follows — the trace reflects the Executive, not a static demo cycle.
+    let mut source = source;
+    for _ in 0..11 {
+        source.tick(1).await;
+    }
+    let snap = source.snapshot().await;
+    let graph = snap.dashboard.graph.expect("graph follows the runtime");
+    assert_eq!(graph.goal, friday_bridge::demo_goals()[1]);
+}
+
+#[tokio::test]
+async fn demo_source_self_contained_goal_has_no_investigate_phase() {
+    // Three full cycles advance to goal index 3 ("Open notepad…"). The
+    // Executive's investigation of a self-contained goal yields no branches
+    // and a `plan → execute` chain — the runtime's real judgment.
+    let mut source = DemoRuntimeSource::new(42, 5);
+    source.snapshot().await; // runs goal 0
+    for _ in 0..33 {
+        source.tick(1).await; // wraps three times → goals 1, 2, 3
+    }
+    let snap = source.snapshot().await;
+    let graph = snap.dashboard.graph.expect("graph follows the runtime");
+
+    assert_eq!(graph.goal, friday_bridge::demo_goals()[3]);
+    assert!(
+        graph.requirements.is_empty(),
+        "self-contained goal has no evidence branches"
+    );
+    assert_eq!(
+        graph.phases,
+        vec!["plan".to_string(), "execute".to_string()]
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -248,13 +319,10 @@ async fn spawn_bridge() -> SocketAddr {
     let addr = listener.local_addr().unwrap();
     drop(listener);
 
-    let server = BridgeServer::new(
-        addr,
-        Box::new(DemoRuntimeSource::new(42, 5)),
-    )
-    .with_tick_ms(25)
-    .with_heartbeat_ms(75)
-    .with_negotiation_timeout_ms(150);
+    let server = BridgeServer::new(addr, Box::new(DemoRuntimeSource::new(42, 5)))
+        .with_tick_ms(25)
+        .with_heartbeat_ms(75)
+        .with_negotiation_timeout_ms(150);
     tokio::spawn(async move {
         let _ = server.run().await;
     });
@@ -301,9 +369,16 @@ async fn live_client_sees_handshake_then_streams_with_contiguous_sequences() {
     }
 
     assert!(saw_heartbeat_with_rtt, "expected a measured heartbeat");
-    assert!(kinds.contains(&"delta".to_string()), "expected deltas: {kinds:?}");
+    assert!(
+        kinds.contains(&"delta".to_string()),
+        "expected deltas: {kinds:?}"
+    );
     for pair in sequences.windows(2) {
-        assert_eq!(pair[1], pair[0] + 1, "sequences must be contiguous: {sequences:?}");
+        assert_eq!(
+            pair[1],
+            pair[0] + 1,
+            "sequences must be contiguous: {sequences:?}"
+        );
     }
     let _ = ws.close(None).await;
 }
@@ -342,7 +417,10 @@ async fn client_can_request_a_resync_snapshot() {
 
     let hello = next_frame(&mut ws).await;
     assert_eq!(hello["kind"], "hello");
-    assert!(hello["bridge_stats"].is_object(), "hello carries bridge stats");
+    assert!(
+        hello["bridge_stats"].is_object(),
+        "hello carries bridge stats"
+    );
     let snapshot1 = next_frame(&mut ws).await;
     assert_eq!(snapshot1["kind"], "snapshot");
 
@@ -426,7 +504,10 @@ async fn unknown_capability_gets_a_structured_error_but_stays_connected() {
     assert_eq!(err["severity"], "warning");
     assert_eq!(err["recoverable"], true);
     assert!(
-        err["recommended_action"].as_str().unwrap().contains("retry"),
+        err["recommended_action"]
+            .as_str()
+            .unwrap()
+            .contains("retry"),
         "guidance must be actionable: {err}"
     );
 
@@ -461,7 +542,10 @@ async fn old_client_without_negotiation_still_streams() {
             }
         }
     }
-    assert!(saw_live, "a non-negotiating client must still receive live frames");
+    assert!(
+        saw_live,
+        "a non-negotiating client must still receive live frames"
+    );
     let _ = ws.close(None).await;
 }
 
@@ -482,8 +566,20 @@ async fn client_sending_a_typed_frame_gets_a_structured_invalid_frame_error() {
     .await
     .unwrap();
 
-    let err = next_frame(&mut ws).await;
-    assert_eq!(err["kind"], "error");
+    // The error must arrive promptly, but a live broadcast delta can legally
+    // interleave first — drain until the structured error shows up.
+    let err = {
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
+        let mut err = None;
+        while tokio::time::Instant::now() < deadline {
+            let frame = next_frame(&mut ws).await;
+            if frame["kind"] == "error" {
+                err = Some(frame);
+                break;
+            }
+        }
+        err.expect("structured error for a typed frame")
+    };
     assert_eq!(err["code"], "invalid_frame");
     assert_eq!(err["severity"], "warning");
 
@@ -499,7 +595,10 @@ async fn client_sending_a_typed_frame_gets_a_structured_invalid_frame_error() {
             }
         }
     }
-    assert!(saw_live, "the connection must survive a rejected typed frame");
+    assert!(
+        saw_live,
+        "the connection must survive a rejected typed frame"
+    );
     let _ = ws.close(None).await;
 }
 
