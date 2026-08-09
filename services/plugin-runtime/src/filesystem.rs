@@ -2,7 +2,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use crate::contract::{Capability, CapabilityRequest, CapabilityResult, CorrelationId, ExecutionTelemetry, Plugin, PluginDescriptor, PluginHealth, PluginStatus, ProviderProfile};
+use crate::contract::{
+    Capability, CapabilityRequest, CapabilityResult, CorrelationId, ExecutionTelemetry, Plugin,
+    PluginDescriptor, PluginHealth, PluginStatus, ProviderProfile,
+};
 use crate::utils;
 
 /// Filesystem Plugin — reads, writes, and lists the local filesystem.
@@ -64,7 +67,10 @@ impl Plugin for FilesystemPlugin {
             Capability::ListDirectory => self.execute_list(request, started_at_ms, cid),
             other => {
                 let mut metadata = HashMap::new();
-                metadata.insert("error".into(), format!("unsupported capability: {}", other.as_str()));
+                metadata.insert(
+                    "error".into(),
+                    format!("unsupported capability: {}", other.as_str()),
+                );
                 CapabilityResult {
                     success: false,
                     output: String::new(),
@@ -100,7 +106,12 @@ impl Plugin for FilesystemPlugin {
 }
 
 impl FilesystemPlugin {
-    fn execute_read(&self, request: CapabilityRequest, started_at_ms: u64, cid: CorrelationId) -> CapabilityResult {
+    fn execute_read(
+        &self,
+        request: CapabilityRequest,
+        started_at_ms: u64,
+        cid: CorrelationId,
+    ) -> CapabilityResult {
         let path = request.parameter("path").cloned().unwrap_or_default();
         let mut metadata = HashMap::new();
 
@@ -161,7 +172,12 @@ impl FilesystemPlugin {
         }
     }
 
-    fn execute_write(&self, request: CapabilityRequest, started_at_ms: u64, cid: CorrelationId) -> CapabilityResult {
+    fn execute_write(
+        &self,
+        request: CapabilityRequest,
+        started_at_ms: u64,
+        cid: CorrelationId,
+    ) -> CapabilityResult {
         let path = request.parameter("path").cloned().unwrap_or_default();
         let content = request.parameter("content").cloned().unwrap_or_default();
         let mut metadata = HashMap::new();
@@ -227,8 +243,16 @@ impl FilesystemPlugin {
         }
     }
 
-    fn execute_list(&self, request: CapabilityRequest, started_at_ms: u64, cid: CorrelationId) -> CapabilityResult {
-        let path = request.parameter("path").cloned().unwrap_or_else(|| ".".into());
+    fn execute_list(
+        &self,
+        request: CapabilityRequest,
+        started_at_ms: u64,
+        cid: CorrelationId,
+    ) -> CapabilityResult {
+        let path = request
+            .parameter("path")
+            .cloned()
+            .unwrap_or_else(|| ".".into());
         let mut metadata = HashMap::new();
 
         metadata.insert("path".into(), path.clone());
@@ -247,7 +271,10 @@ impl FilesystemPlugin {
                         let size = if is_dir {
                             String::new()
                         } else {
-                            e.metadata().ok().map(|m| m.len().to_string()).unwrap_or_default()
+                            e.metadata()
+                                .ok()
+                                .map(|m| m.len().to_string())
+                                .unwrap_or_default()
                         };
                         let kind = if is_dir { "dir" } else { "file" };
                         if size.is_empty() {
@@ -381,6 +408,10 @@ mod tests {
         let request = CapabilityRequest::new(Capability::OpenBrowser);
         let result = plugin.execute(request);
         assert!(!result.success);
-        assert!(result.metadata.get("error").unwrap().contains("unsupported"));
+        assert!(result
+            .metadata
+            .get("error")
+            .unwrap()
+            .contains("unsupported"));
     }
 }
