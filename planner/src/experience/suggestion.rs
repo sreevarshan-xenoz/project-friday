@@ -128,10 +128,7 @@ impl SuggestionEngine {
 
         // Success rate check.
         if pattern.success_rate >= self.policy.min_success_rate {
-            reasons.push(format!(
-                "success rate {:.0}%",
-                pattern.success_rate * 100.0
-            ));
+            reasons.push(format!("success rate {:.0}%", pattern.success_rate * 100.0));
         } else {
             passed = false;
         }
@@ -159,7 +156,8 @@ impl SuggestionEngine {
         // Compute confidence: weighted combination of frequency, success, recency.
         let freq_score = (pattern.frequency as f64 / 20.0).min(1.0);
         let success_score = pattern.success_rate;
-        let recency_score = 1.0 - (age.num_seconds() as f64 / self.policy.max_age.num_seconds() as f64).min(1.0);
+        let recency_score =
+            1.0 - (age.num_seconds() as f64 / self.policy.max_age.num_seconds() as f64).min(1.0);
 
         let confidence = freq_score * 0.3 + success_score * 0.5 + recency_score * 0.2;
 
@@ -187,12 +185,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    fn pattern(
-        caps: Vec<&str>,
-        freq: u32,
-        success_rate: f64,
-        days_ago: i64,
-    ) -> Pattern {
+    fn pattern(caps: Vec<&str>, freq: u32, success_rate: f64, days_ago: i64) -> Pattern {
         Pattern {
             id: uuid::Uuid::new_v4(),
             capabilities: caps.into_iter().map(String::from).collect(),
@@ -207,9 +200,7 @@ mod tests {
     #[test]
     fn suggests_pattern_meeting_all_thresholds() {
         let engine = SuggestionEngine::new(SuggestionPolicy::default());
-        let patterns = vec![
-            pattern(vec!["fs.write", "git.commit"], 10, 1.0, 1),
-        ];
+        let patterns = vec![pattern(vec!["fs.write", "git.commit"], 10, 1.0, 1)];
         let suggestions = engine.suggest(&patterns);
         assert_eq!(suggestions.len(), 1);
         assert!(suggestions[0].confidence > 0.5);
@@ -250,9 +241,7 @@ mod tests {
     fn strict_policy_is_more_conservative() {
         let lenient = SuggestionEngine::new(SuggestionPolicy::lenient());
         let strict = SuggestionEngine::new(SuggestionPolicy::strict());
-        let patterns = vec![
-            pattern(vec!["fs.write", "git.commit"], 7, 0.92, 20),
-        ];
+        let patterns = vec![pattern(vec!["fs.write", "git.commit"], 7, 0.92, 20)];
         assert_eq!(lenient.suggest(&patterns).len(), 1);
         assert!(strict.suggest(&patterns).is_empty());
     }
@@ -260,9 +249,7 @@ mod tests {
     #[test]
     fn explanation_lists_all_reasons() {
         let engine = SuggestionEngine::new(SuggestionPolicy::default());
-        let patterns = vec![
-            pattern(vec!["fs.write", "git.commit"], 14, 1.0, 0),
-        ];
+        let patterns = vec![pattern(vec!["fs.write", "git.commit"], 14, 1.0, 0)];
         let suggestions = engine.suggest(&patterns);
         let reasons = &suggestions[0].reasons;
         assert!(reasons.iter().any(|r| r.contains("14 times")));
