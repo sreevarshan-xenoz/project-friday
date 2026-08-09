@@ -133,8 +133,8 @@ impl GoalStore {
                     .map_err(|e| anyhow::anyhow!("goal store mkdir {parent:?}: {e}"))?;
             }
         }
-        let db = Database::create(path)
-            .map_err(|e| anyhow::anyhow!("goal store open failed: {e}"))?;
+        let db =
+            Database::create(path).map_err(|e| anyhow::anyhow!("goal store open failed: {e}"))?;
         Ok(Self { db: Mutex::new(db) })
     }
 
@@ -155,8 +155,7 @@ impl GoalStore {
                 .insert(key.as_str(), json.as_str())
                 .map_err(|e| anyhow::anyhow!("insert: {e}"))?;
         }
-        txn.commit()
-            .map_err(|e| anyhow::anyhow!("commit: {e}"))?;
+        txn.commit().map_err(|e| anyhow::anyhow!("commit: {e}"))?;
         Ok(())
     }
 
@@ -175,8 +174,7 @@ impl GoalStore {
                 .insert(rt.goal_id.to_string().as_str(), json.as_str())
                 .map_err(|e| anyhow::anyhow!("insert: {e}"))?;
         }
-        txn.commit()
-            .map_err(|e| anyhow::anyhow!("commit: {e}"))?;
+        txn.commit().map_err(|e| anyhow::anyhow!("commit: {e}"))?;
         Ok(())
     }
 
@@ -212,10 +210,7 @@ impl GoalStore {
             .open_table(LOG_TABLE)
             .map_err(|e| anyhow::anyhow!("open_table: {e}"))?;
         let mut rt: Option<GoalRuntime> = None;
-        for kv in table
-            .iter()
-            .map_err(|e| anyhow::anyhow!("iter: {e}"))?
-        {
+        for kv in table.iter().map_err(|e| anyhow::anyhow!("iter: {e}"))? {
             let (_k, v) = kv.map_err(|e| anyhow::anyhow!("kv: {e}"))?;
             let ev: GoalEvent = serde_json::from_str(v.value())?;
             if ev.goal_id() != goal_id {
@@ -236,7 +231,12 @@ fn apply_event(rt: &mut Option<GoalRuntime>, ev: &GoalEvent) {
             trace_id,
             intent,
         } => {
-            *rt = Some(GoalRuntime::new(*goal_id, *trace_id, intent.clone(), Default::default()));
+            *rt = Some(GoalRuntime::new(
+                *goal_id,
+                *trace_id,
+                intent.clone(),
+                Default::default(),
+            ));
         }
         GoalEvent::PlanSet { plan_id, .. } => {
             // Plan payload is captured separately during live operation; on
@@ -271,7 +271,9 @@ fn apply_event(rt: &mut Option<GoalRuntime>, ev: &GoalEvent) {
                 rt.mark_failed(*task_id);
             }
         }
-        GoalEvent::TaskRetried { task_id, attempt, .. } => {
+        GoalEvent::TaskRetried {
+            task_id, attempt, ..
+        } => {
             if let Some(rt) = rt {
                 let _ = rt.inc_retries(*task_id);
                 let _ = attempt;
