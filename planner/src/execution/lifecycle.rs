@@ -140,7 +140,12 @@ impl GoalContext {
 }
 
 impl GoalRuntime {
-    pub fn new(goal_id: Uuid, trace_id: Uuid, intent: impl Into<String>, budget: ExecutionBudget) -> Self {
+    pub fn new(
+        goal_id: Uuid,
+        trace_id: Uuid,
+        intent: impl Into<String>,
+        budget: ExecutionBudget,
+    ) -> Self {
         Self {
             goal_id,
             trace_id,
@@ -232,7 +237,10 @@ impl GoalRuntime {
 
     /// True when every task in the graph has completed.
     pub fn is_complete(&self) -> bool {
-        self.graph.tasks.iter().all(|t| self.completed.contains(&t.id))
+        self.graph
+            .tasks
+            .iter()
+            .all(|t| self.completed.contains(&t.id))
             || self.graph.tasks.is_empty()
     }
 
