@@ -111,11 +111,10 @@ impl Iterator for IntoIter {
 mod tests {
     use super::*;
     use crate::contract::{
-        Capability, ExecutionPlan, PlanOutcome, PlanningRationale,
-        SelectionContext, CorrelationId,
+        Capability, CorrelationId, ExecutionPlan, PlanOutcome, PlanningRationale, SelectionContext,
     };
-    use std::collections::HashMap;
     use crate::utils::now_ms;
+    use std::collections::HashMap;
 
     fn sample_record() -> DecisionRecord {
         let cid = CorrelationId::new();
