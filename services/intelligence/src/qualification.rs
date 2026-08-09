@@ -103,24 +103,159 @@ impl Default for ProviderHealth {
     }
 }
 
+/// How strongly a request needs a model capability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Requirement {
+    /// Not needed — no effect on selection.
+    #[default]
+    None,
+    /// Nice to have — matching candidates get a score boost.
+    Preferred,
+    /// Hard requirement — non-matching candidates are excluded by the fabric.
+    Required,
+}
+
+/// How strongly a request needs local execution (privacy).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Preference {
+    /// Location-agnostic.
+    #[default]
+    Any,
+    /// Prefer a local model when one is available.
+    Preferred,
+    /// Must run locally — remote candidates are excluded by the fabric.
+    Required,
+}
+
+/// Cost budget for a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Budget {
+    /// Free-tier providers and local models only.
+    #[default]
+    Free,
+    /// Paid/bounded spend allowed — every registered provider is eligible.
+    Bounded,
+}
+
+/// The planner-facing constraint set — a "Model Budget". Callers express what
+/// a request needs (cost, latency, privacy, quality); the fabric routes within
+/// those constraints. Defaults encode the **free-first policy**: local models
+/// preferred, free-tier budget, no hard capability requirements.
+///
+/// `RequestRequirements` is constraints, never provider names — the planner
+/// says "vision, prefer local, free", never "use gpt-4o". Swapping a provider
+/// or re-weighting scoring never changes this contract.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RequestRequirements {
+    /// Reasoning depth demanded by the task.
+    pub reasoning: Requirement,
+    /// Hard latency bound in milliseconds. Slower candidates are excluded.
+    pub latency_ms: Option<u32>,
+    /// Local-execution / privacy preference.
+    pub privacy: Preference,
+    /// Cost budget.
+    pub budget: Budget,
+    pub vision: Requirement,
+    pub long_context: Requirement,
+    /// Tool-calling requirement (the planner needs tool calling, so this is
+    /// usually at least `Preferred`).
+    pub tools: Requirement,
+}
+
+impl RequestRequirements {
+    /// Convert a capability preference list into routing requirements. `Local`
+    /// raises the privacy preference; `Vision`/`LongContext`/`Tools` become
+    /// preferred. The bridge takes *this crate's* capability vocabulary — a
+    /// caller holding intelligence's `ModelCapability` (e.g. the planner's
+    /// `InferenceBackend`) can turn preferences into constraints directly.
+    /// Note: `friday-agent-runtime`'s self-contained `ModelCapability` (which
+    /// adds `Coding`/`Reasoning`/`Fast`) has no intelligence dependency, so
+    /// `AgentSpec.preferred_models` remains a reserved contract until an
+    /// LLM-using driver maps it through this bridge.
+    pub fn from_capabilities(caps: &[crate::providers::ModelCapability]) -> Self {
+        use crate::providers::ModelCapability as C;
+        let mut req = Self::default();
+        for c in caps {
+            match c {
+                C::Local => req.privacy = Preference::Preferred,
+                C::Vision => req.vision = Requirement::Preferred,
+                C::LongContext => req.long_context = Requirement::Preferred,
+                C::Tools => req.tools = Requirement::Preferred,
+                C::Json => {}
+            }
+        }
+        req
+    }
+}
+
+/// Capability/latency facts about one routing candidate, extracted from its
+/// `ModelInfo` so [`routing_score`] can apply requirement adjustments without
+/// depending on the fabric's provider types.
+#[derive(Debug, Clone)]
+pub struct CandidateView {
+    pub provider: String,
+    pub local: bool,
+    pub vision: bool,
+    pub long_context: bool,
+    pub tools: bool,
+    pub latency_ms: u64,
+}
+
 /// Combine an immutable qualification profile with current runtime health into a
-/// single routing score (0.0..=1.0).
+/// single routing score (0.0..=1.0), then adjust for the request's
+/// requirements.
 ///
 /// Weights are policy and live HERE, never in the profile file, so re-weighting
 /// never invalidates historical benchmark data. Missing measurements fall back
-/// to a neutral midpoint rather than biasing the score.
-pub fn routing_score(profile: &QualificationProfile, health: &ProviderHealth) -> f64 {
-    let quality = profile.json_accuracy.unwrap_or(0.5);
+/// to a neutral midpoint rather than biasing the score. A missing profile
+/// (`None`) also falls back to the midpoint — candidates without qualification
+/// evidence are scored neutrally, never invented.
+///
+/// Requirement adjustments implement the free-first policy: privacy is the
+/// dominant lever (private code stays local even when a remote free model is
+/// faster), then capability matches add smaller boosts.
+pub fn routing_score(
+    profile: Option<&QualificationProfile>,
+    health: &ProviderHealth,
+    request: &RequestRequirements,
+    view: &CandidateView,
+) -> f64 {
+    let quality = profile
+        .map(|p| p.json_accuracy.unwrap_or(0.5))
+        .unwrap_or(0.5);
     let speed = speed_component(profile, health);
     let live = (health.success_rate * 0.5 + health.availability * 0.5).clamp(0.0, 1.0);
-    (quality * 0.5) + (speed * 0.3) + (live * 0.2)
+    let mut score = (quality * 0.5) + (speed * 0.3) + (live * 0.2);
+
+    match request.privacy {
+        Preference::Any => {}
+        Preference::Preferred => score += if view.local { 0.25 } else { -0.15 },
+        Preference::Required => score += if view.local { 0.40 } else { -0.40 },
+    }
+    if request.vision == Requirement::Preferred && view.vision {
+        score += 0.10;
+    }
+    if request.long_context == Requirement::Preferred && view.long_context {
+        score += 0.10;
+    }
+    if request.tools == Requirement::Preferred && view.tools {
+        score += 0.10;
+    }
+    if request.reasoning == Requirement::Preferred || request.reasoning == Requirement::Required {
+        // Reasoning-heavy tasks weight measured quality harder.
+        score += 0.05 * quality;
+    }
+
+    score.clamp(0.0, 1.0)
 }
 
-fn speed_component(profile: &QualificationProfile, health: &ProviderHealth) -> f64 {
-    let ttft = health.moving_ttft_ms.or(profile.ttft_ms);
+fn speed_component(profile: Option<&QualificationProfile>, health: &ProviderHealth) -> f64 {
+    let ttft = health
+        .moving_ttft_ms
+        .or_else(|| profile.and_then(|p| p.ttft_ms));
     let tps = health
         .moving_tokens_per_second
-        .or(profile.tokens_per_second);
+        .or_else(|| profile.and_then(|p| p.tokens_per_second));
     let mut s = 0.5;
     if let Some(t) = ttft {
         s += 0.25 * (1.0 - (t / 5000.0).clamp(0.0, 1.0));
@@ -159,6 +294,25 @@ mod tests {
         }
     }
 
+    fn view() -> CandidateView {
+        CandidateView {
+            provider: "llamacpp".into(),
+            local: true,
+            vision: false,
+            long_context: true,
+            tools: true,
+            latency_ms: 120,
+        }
+    }
+
+    /// A remote (non-local) view, otherwise identical to `view()`.
+    fn remote_view() -> CandidateView {
+        CandidateView {
+            local: false,
+            ..view()
+        }
+    }
+
     #[test]
     fn schema_version_is_1() {
         assert_eq!(QUALIFICATION_SCHEMA_VERSION, 1);
@@ -170,9 +324,9 @@ mod tests {
         let h = ProviderHealth::default();
         let mut p = profile();
         p.json_accuracy = Some(1.0);
-        let good = routing_score(&p, &h);
+        let good = routing_score(Some(&p), &h, &RequestRequirements::default(), &view());
         p.json_accuracy = Some(0.0);
-        let bad = routing_score(&p, &h);
+        let bad = routing_score(Some(&p), &h, &RequestRequirements::default(), &view());
         assert!(good > bad);
     }
 
@@ -183,8 +337,18 @@ mod tests {
             availability: 1.0,
             ..ProviderHealth::default()
         };
-        let good = routing_score(&profile(), &h);
-        let bad = routing_score(&profile(), &ProviderHealth::default());
+        let good = routing_score(
+            Some(&profile()),
+            &h,
+            &RequestRequirements::default(),
+            &view(),
+        );
+        let bad = routing_score(
+            Some(&profile()),
+            &ProviderHealth::default(),
+            &RequestRequirements::default(),
+            &view(),
+        );
         assert!(good > bad);
     }
 
@@ -194,9 +358,80 @@ mod tests {
         p.json_accuracy = None;
         p.ttft_ms = None;
         p.tokens_per_second = None;
-        let s = routing_score(&p, &ProviderHealth::default());
+        let s = routing_score(
+            Some(&p),
+            &ProviderHealth::default(),
+            &RequestRequirements::default(),
+            &view(),
+        );
         assert!(s.is_finite());
         assert!((0.0..=1.0).contains(&s));
+    }
+
+    #[test]
+    fn privacy_preferred_boosts_local_over_remote() {
+        let h = ProviderHealth::default();
+        let req = RequestRequirements {
+            privacy: Preference::Preferred,
+            ..RequestRequirements::default()
+        };
+        let local = routing_score(Some(&profile()), &h, &req, &view());
+        let remote = routing_score(Some(&profile()), &h, &req, &remote_view());
+        assert!(
+            local > remote,
+            "privacy=Preferred must rank local above remote (local {local} vs remote {remote})"
+        );
+    }
+
+    #[test]
+    fn privacy_required_strongly_prefers_local() {
+        let h = ProviderHealth::default();
+        let req = RequestRequirements {
+            privacy: Preference::Required,
+            ..RequestRequirements::default()
+        };
+        let local = routing_score(Some(&profile()), &h, &req, &view());
+        let remote = routing_score(Some(&profile()), &h, &req, &remote_view());
+        assert!(local - remote > 0.7);
+    }
+
+    #[test]
+    fn preferred_capability_matches_boost_score() {
+        let h = ProviderHealth::default();
+        let req = RequestRequirements {
+            vision: Requirement::Preferred,
+            ..RequestRequirements::default()
+        };
+        let mut with_vision = view();
+        with_vision.vision = true;
+        let scored_with = routing_score(Some(&profile()), &h, &req, &with_vision);
+        let scored_without = routing_score(Some(&profile()), &h, &req, &view());
+        assert!(scored_with > scored_without);
+    }
+
+    #[test]
+    fn default_requirements_are_free_first_and_agnostic() {
+        let req = RequestRequirements::default();
+        assert_eq!(req.budget, Budget::Free);
+        assert_eq!(req.privacy, Preference::Any);
+        assert_eq!(req.vision, Requirement::None);
+        assert_eq!(req.latency_ms, None);
+    }
+
+    #[test]
+    fn from_capabilities_maps_agent_preferences() {
+        use crate::providers::ModelCapability;
+        let req = RequestRequirements::from_capabilities(&[
+            ModelCapability::Local,
+            ModelCapability::Vision,
+            ModelCapability::Tools,
+            ModelCapability::LongContext,
+        ]);
+        assert_eq!(req.privacy, Preference::Preferred);
+        assert_eq!(req.vision, Requirement::Preferred);
+        assert_eq!(req.tools, Requirement::Preferred);
+        assert_eq!(req.long_context, Requirement::Preferred);
+        assert_eq!(req.budget, Budget::Free);
     }
 
     #[test]
