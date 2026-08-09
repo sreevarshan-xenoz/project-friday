@@ -22,7 +22,9 @@ use friday_mcp::transport::Transport;
 /// Resolve the real server command once. Returns `None` (skips the test) when
 /// `FRIDAY_REAL_MCP` is not set, so the suite is a no-op in hermetic CI.
 fn real_mcp_enabled() -> bool {
-    std::env::var("FRIDAY_REAL_MCP").map(|v| v == "1").unwrap_or(false)
+    std::env::var("FRIDAY_REAL_MCP")
+        .map(|v| v == "1")
+        .unwrap_or(false)
 }
 
 /// Spawn the real filesystem server bound to `root`, returning a connected
@@ -53,8 +55,8 @@ async fn spawn_real_fs_client(root: &std::path::Path) -> McpClient<Box<dyn Trans
             ],
         )
     };
-    let (transport, _child) = stdio_transport_for(command, &args)
-        .expect("spawn real filesystem MCP server");
+    let (transport, _child) =
+        stdio_transport_for(command, &args).expect("spawn real filesystem MCP server");
 
     let mut client = McpClient::new(transport);
     let info = client
@@ -81,18 +83,31 @@ async fn real_filesystem_server_connect_initialize_discover() {
         eprintln!("skipping real MCP test (set FRIDAY_REAL_MCP=1 to enable)");
         return;
     }
-    let root = std::env::temp_dir().join(format!("friday-real-fs-{}", uuid::Uuid::new_v4().simple()));
+    let root =
+        std::env::temp_dir().join(format!("friday-real-fs-{}", uuid::Uuid::new_v4().simple()));
     std::fs::create_dir_all(&root).unwrap();
 
     let mut client = spawn_real_fs_client(&root).await;
-    let tools = client.list_tools().await.expect("list_tools on real server");
+    let tools = client
+        .list_tools()
+        .await
+        .expect("list_tools on real server");
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
 
     // Real tool schemas from the secure-filesystem-server.
     assert!(names.iter().any(|n| *n == "write_file"), "tools: {names:?}");
-    assert!(names.iter().any(|n| *n == "read_text_file"), "tools: {names:?}");
-    assert!(names.iter().any(|n| *n == "create_directory"), "tools: {names:?}");
-    assert!(names.iter().any(|n| *n == "list_directory"), "tools: {names:?}");
+    assert!(
+        names.iter().any(|n| *n == "read_text_file"),
+        "tools: {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| *n == "create_directory"),
+        "tools: {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| *n == "list_directory"),
+        "tools: {names:?}"
+    );
 }
 
 #[tokio::test]
@@ -101,7 +116,8 @@ async fn real_filesystem_server_write_read_create_list() {
         eprintln!("skipping real MCP test (set FRIDAY_REAL_MCP=1 to enable)");
         return;
     }
-    let root = std::env::temp_dir().join(format!("friday-real-fs-{}", uuid::Uuid::new_v4().simple()));
+    let root =
+        std::env::temp_dir().join(format!("friday-real-fs-{}", uuid::Uuid::new_v4().simple()));
     std::fs::create_dir_all(&root).unwrap();
 
     let mut client = spawn_real_fs_client(&root).await;
@@ -123,16 +139,26 @@ async fn real_filesystem_server_write_read_create_list() {
 
     // read_text_file -> returns the content back through MCP.
     let r = client
-        .call_tool("read_text_file", serde_json::json!({ "path": report.to_string_lossy() }))
+        .call_tool(
+            "read_text_file",
+            serde_json::json!({ "path": report.to_string_lossy() }),
+        )
         .await
         .expect("read_text_file");
     assert!(!r.is_error, "read_text_file error: {}", text_of(&r));
-    assert!(text_of(&r).contains("Hello FRIDAY"), "read back: {}", text_of(&r));
+    assert!(
+        text_of(&r).contains("Hello FRIDAY"),
+        "read back: {}",
+        text_of(&r)
+    );
 
     // create_directory -> real directory on disk.
     let sub = root.join("sub");
     let r = client
-        .call_tool("create_directory", serde_json::json!({ "path": sub.to_string_lossy() }))
+        .call_tool(
+            "create_directory",
+            serde_json::json!({ "path": sub.to_string_lossy() }),
+        )
         .await
         .expect("create_directory");
     assert!(!r.is_error, "create_directory error: {}", text_of(&r));
@@ -140,13 +166,22 @@ async fn real_filesystem_server_write_read_create_list() {
 
     // list_directory -> reflects the real artifacts.
     let r = client
-        .call_tool("list_directory", serde_json::json!({ "path": root.to_string_lossy() }))
+        .call_tool(
+            "list_directory",
+            serde_json::json!({ "path": root.to_string_lossy() }),
+        )
         .await
         .expect("list_directory");
     assert!(!r.is_error, "list_directory error: {}", text_of(&r));
     let listing = text_of(&r);
-    assert!(listing.contains("report.md"), "listing should show report.md: {listing}");
-    assert!(listing.contains("sub"), "listing should show sub: {listing}");
+    assert!(
+        listing.contains("report.md"),
+        "listing should show report.md: {listing}"
+    );
+    assert!(
+        listing.contains("sub"),
+        "listing should show sub: {listing}"
+    );
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -157,7 +192,8 @@ async fn real_filesystem_server_rejects_out_of_sandbox_path() {
         eprintln!("skipping real MCP test (set FRIDAY_REAL_MCP=1 to enable)");
         return;
     }
-    let root = std::env::temp_dir().join(format!("friday-real-fs-{}", uuid::Uuid::new_v4().simple()));
+    let root =
+        std::env::temp_dir().join(format!("friday-real-fs-{}", uuid::Uuid::new_v4().simple()));
     std::fs::create_dir_all(&root).unwrap();
 
     let mut client = spawn_real_fs_client(&root).await;
@@ -165,7 +201,8 @@ async fn real_filesystem_server_rejects_out_of_sandbox_path() {
     // A path outside the allowed directory must be rejected by the server. The
     // secure-filesystem-server reports the violation as a tool error; we assert
     // on the observable outcome — no file is created outside the sandbox.
-    let outside = std::env::temp_dir().join(format!("friday-outside-{}", uuid::Uuid::new_v4().simple()));
+    let outside =
+        std::env::temp_dir().join(format!("friday-outside-{}", uuid::Uuid::new_v4().simple()));
     let r = client
         .call_tool(
             "write_file",
@@ -179,7 +216,10 @@ async fn real_filesystem_server_rejects_out_of_sandbox_path() {
         || text.contains("allowed")
         || text.contains("Access")
         || text.contains("not allowed");
-    assert!(rejected, "server should reject out-of-sandbox write; got: {text}");
+    assert!(
+        rejected,
+        "server should reject out-of-sandbox write; got: {text}"
+    );
     // The meaningful property: the file was NOT written outside the sandbox.
     assert!(!outside.exists(), "out-of-sandbox file must not be created");
 
