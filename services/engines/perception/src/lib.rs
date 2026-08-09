@@ -1,7 +1,7 @@
+use async_trait::async_trait;
 use friday_cognitive::handler::{PhaseHandler, PhaseResult};
 use friday_cognitive::phase::CognitivePhase;
 use friday_cognitive::workspace::{EngineId, GlobalWorkspace, Topic};
-use async_trait::async_trait;
 use rand::{Rng, SeedableRng};
 
 /// Perception Engine
@@ -140,9 +140,7 @@ mod tests {
         let engine = PerceptionEngine::with_seed(42);
         let workspace = GlobalWorkspace::new();
 
-        let result = engine
-            .execute(CognitivePhase::Observe, &workspace, 1)
-            .await;
+        let result = engine.execute(CognitivePhase::Observe, &workspace, 1).await;
 
         match result {
             PhaseResult::Published { topics } => {
@@ -162,8 +160,9 @@ mod tests {
             let engine = PerceptionEngine::with_seed(seed);
             let workspace = GlobalWorkspace::new();
 
-            if let PhaseResult::Published { topics } =
-                engine.execute(CognitivePhase::Observe, &workspace, seed).await
+            if let PhaseResult::Published { topics } = engine
+                .execute(CognitivePhase::Observe, &workspace, seed)
+                .await
             {
                 for t in topics {
                     seen_topics.insert(t);
