@@ -65,7 +65,8 @@ impl EventRecorder {
         let mut files = self.list_date_files()?;
         files.reverse();
 
-        let events = files.first()
+        let events = files
+            .first()
             .map(|f| self.read_file(f))
             .transpose()?
             .unwrap_or_default();
@@ -96,11 +97,7 @@ impl EventRecorder {
         let mut files: Vec<PathBuf> = std::fs::read_dir(&self.base_path)?
             .filter_map(|entry| entry.ok())
             .map(|entry| entry.path())
-            .filter(|path| {
-                path.extension()
-                    .map(|ext| ext == "jsonl")
-                    .unwrap_or(false)
-            })
+            .filter(|path| path.extension().map(|ext| ext == "jsonl").unwrap_or(false))
             .collect();
         files.sort();
         Ok(files)
@@ -141,7 +138,10 @@ mod tests {
         let recent = recorder.read_recent(3).unwrap();
         assert_eq!(recent.len(), 3);
         let timestamps: Vec<u64> = recent.iter().map(|e| e.timestamp_ms).collect();
-        assert_eq!(timestamps, vec![1690000000002, 1690000000003, 1690000000004]);
+        assert_eq!(
+            timestamps,
+            vec![1690000000002, 1690000000003, 1690000000004]
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
