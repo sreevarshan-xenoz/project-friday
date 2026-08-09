@@ -11,6 +11,8 @@ description = "FRIDAY Planner: intent, planning, execution, and verification eng
 [dependencies]
 friday-core = { path = "../core" }
 friday-capabilities = { path = "../services/capabilities" }
+friday-skills = { path = "../services/skills" }
+friday-investigation = { path = "../services/investigation" }
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
