@@ -12,8 +12,8 @@ use chrono::Utc;
 use futures::StreamExt;
 
 use friday_intelligence::{
-    CircuitState, InferenceFabric, ModelCapability, ModelClient, ModelInfo, ProviderV2, RoutingDecision,
-    RoutingMode,
+    CircuitState, InferenceFabric, ModelCapability, ModelClient, ModelInfo, ProviderV2,
+    RoutingDecision, RoutingMode,
 };
 
 use crate::corpus::{Scenario, Verify};
@@ -155,11 +155,11 @@ async fn run_connectivity(target: &Target, scenario: &Scenario, mut trace: Vec<C
         note: format!("reachable={reachable}"),
         fault: None,
         tool_calling: None,
-    served_model: None,
-    routing_decision: None,
-    ttft_ms: None,
-    tokens_per_second: None,
-}
+        served_model: None,
+        routing_decision: None,
+        ttft_ms: None,
+        tokens_per_second: None,
+    }
 }
 
 async fn run_completion(target: &Target, scenario: &Scenario, mut trace: Vec<Call>) -> Outcome {
@@ -194,11 +194,11 @@ async fn run_completion(target: &Target, scenario: &Scenario, mut trace: Vec<Cal
                 note: format!("response_len={}", text.len()),
                 fault: None,
                 tool_calling: None,
-            served_model: None,
-            routing_decision: None,
-            ttft_ms: None,
-            tokens_per_second: None,
-    }
+                served_model: None,
+                routing_decision: None,
+                ttft_ms: None,
+                tokens_per_second: None,
+            }
         }
         Err(e) => Outcome {
             id: scenario.id.into(),
@@ -212,10 +212,10 @@ async fn run_completion(target: &Target, scenario: &Scenario, mut trace: Vec<Cal
             note: format!("error: {e}"),
             fault: None,
             tool_calling: None,
-        served_model: None,
-        routing_decision: None,
-        ttft_ms: None,
-        tokens_per_second: None,
+            served_model: None,
+            routing_decision: None,
+            ttft_ms: None,
+            tokens_per_second: None,
         },
     }
 }
@@ -260,11 +260,11 @@ async fn run_json(target: &Target, scenario: &Scenario, mut trace: Vec<Call>) ->
                 note: format!("json_valid={ok}"),
                 fault: None,
                 tool_calling: None,
-            served_model: None,
-            routing_decision: None,
-            ttft_ms: None,
-            tokens_per_second: None,
-    }
+                served_model: None,
+                routing_decision: None,
+                ttft_ms: None,
+                tokens_per_second: None,
+            }
         }
         Err(e) => Outcome {
             id: scenario.id.into(),
@@ -278,10 +278,10 @@ async fn run_json(target: &Target, scenario: &Scenario, mut trace: Vec<Call>) ->
             note: format!("error: {e}"),
             fault: None,
             tool_calling: None,
-        served_model: None,
-        routing_decision: None,
-        ttft_ms: None,
-        tokens_per_second: None,
+            served_model: None,
+            routing_decision: None,
+            ttft_ms: None,
+            tokens_per_second: None,
         },
     }
 }
@@ -330,11 +330,11 @@ async fn run_long_context(target: &Target, scenario: &Scenario, mut trace: Vec<C
                 note: format!("array_complete={ok}"),
                 fault: None,
                 tool_calling: None,
-            served_model: None,
-            routing_decision: None,
-            ttft_ms: None,
-            tokens_per_second: None,
-    }
+                served_model: None,
+                routing_decision: None,
+                ttft_ms: None,
+                tokens_per_second: None,
+            }
         }
         Err(e) => Outcome {
             id: scenario.id.into(),
@@ -348,10 +348,10 @@ async fn run_long_context(target: &Target, scenario: &Scenario, mut trace: Vec<C
             note: format!("error: {e}"),
             fault: None,
             tool_calling: None,
-        served_model: None,
-        routing_decision: None,
-        ttft_ms: None,
-        tokens_per_second: None,
+            served_model: None,
+            routing_decision: None,
+            ttft_ms: None,
+            tokens_per_second: None,
         },
     }
 }
@@ -423,11 +423,11 @@ async fn run_failure(scenario: &Scenario, mut trace: Vec<Call>) -> Outcome {
         ),
         fault: Some(format!("{:?}", injection)),
         tool_calling: None,
-    served_model: None,
-    routing_decision: None,
-    ttft_ms: None,
-    tokens_per_second: None,
-}
+        served_model: None,
+        routing_decision: None,
+        ttft_ms: None,
+        tokens_per_second: None,
+    }
 }
 
 /// Streaming benchmark (M5.2): drive the V2 provider's `stream()` and reassemble
@@ -446,11 +446,11 @@ async fn run_streaming(target: &Target, scenario: &Scenario, mut trace: Vec<Call
         note,
         fault: None,
         tool_calling: None,
-    served_model: None,
-    routing_decision: None,
-    ttft_ms: None,
-    tokens_per_second: None,
-};
+        served_model: None,
+        routing_decision: None,
+        ttft_ms: None,
+        tokens_per_second: None,
+    };
 
     let Some(v2) = &target.v2 else {
         return fail("no V2 provider surface available".into(), trace);
@@ -527,10 +527,10 @@ async fn run_streaming(target: &Target, scenario: &Scenario, mut trace: Vec<Call
         ),
         fault: None,
         tool_calling: Some(caps.tool_calling),
-    served_model: None,
-    routing_decision: None,
-    ttft_ms,
-    tokens_per_second,
+        served_model: None,
+        routing_decision: None,
+        ttft_ms,
+        tokens_per_second,
     }
 }
 
@@ -554,11 +554,11 @@ async fn run_dynamic_discovery(
         note,
         fault: None,
         tool_calling: None,
-    served_model: None,
-    routing_decision: None,
-    ttft_ms: None,
-    tokens_per_second: None,
-};
+        served_model: None,
+        routing_decision: None,
+        ttft_ms: None,
+        tokens_per_second: None,
+    };
 
     let Some(v2) = &target.v2 else {
         return fail("no V2 provider surface available".into(), trace);
@@ -596,11 +596,11 @@ async fn run_dynamic_discovery(
         note: format!("models_discovered={}", models.len()),
         fault: None,
         tool_calling: Some(caps.tool_calling),
-    served_model: None,
-    routing_decision: None,
-    ttft_ms: None,
-    tokens_per_second: None,
-}
+        served_model: None,
+        routing_decision: None,
+        ttft_ms: None,
+        tokens_per_second: None,
+    }
 }
 
 fn issue_for(scenario: &Scenario, note: &str, expected: &str, actual: &str) -> Issue {
