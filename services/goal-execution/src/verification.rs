@@ -75,7 +75,10 @@ impl ToolRegistry {
     }
 
     pub fn get(&self, name: &str) -> Option<&dyn Tool> {
-        self.tools.iter().find(|t| t.name() == name).map(|t| t.as_ref())
+        self.tools
+            .iter()
+            .find(|t| t.name() == name)
+            .map(|t| t.as_ref())
     }
 
     pub fn list(&self) -> Vec<&str> {
@@ -182,6 +185,79 @@ pub struct VerifiedResult {
     pub checks: Vec<Check>,
     /// Confidence in the verification result.
     pub confidence: Confidence,
+}
+
+/// The **epistemic** state of an execution (OMH "Evidence Before Claims"):
+/// FRIDAY may only *claim* an outcome it has observed and verified.
+///
+/// ```text
+/// Prepared ──► Observed ──► Verified
+///      │           │
+///      │           └──► Failed       (tool error or verification failure)
+///      └──► Cancelled                (never dispatched — action-runtime layer)
+/// ```
+///
+/// Deliberately distinct from action-runtime's `LifecycleState`
+/// (`Created/Running/Cancelled/Completed/Archived`): that is the **process**
+/// lifecycle — what the scheduler did. `ExecutionState` is the **evidence**
+/// lifecycle — what FRIDAY knows. One axis never implies the other: a
+/// completed process can still be unverified, and a verified claim always
+/// required an observed tool result first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecutionState {
+    /// The action was intended (planned) but not yet dispatched.
+    Prepared,
+    /// A tool ran and produced raw output — observed, not yet interpreted.
+    Observed,
+    /// The observed output passed verification — success may be claimed only
+    /// from this state.
+    Verified,
+    /// The action failed: tool error, no tool, or verification failure.
+    Failed,
+    /// Reserved for the action-runtime interrupt/resume layer: the action was
+    /// cancelled before completing. The GoalEngine never produces this today.
+    Cancelled,
+}
+
+impl ExecutionState {
+    /// States a transition *from* `self` may legally target.
+    pub fn next_allowed(&self) -> &'static [ExecutionState] {
+        match self {
+            Self::Prepared => &[Self::Observed, Self::Cancelled],
+            Self::Observed => &[Self::Verified, Self::Failed],
+            Self::Verified | Self::Failed | Self::Cancelled => &[],
+        }
+    }
+
+    /// `true` once no further transition is legal.
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Self::Verified | Self::Failed | Self::Cancelled)
+    }
+
+    /// Wire label used in the cognitive trace and outcome audit trail.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Prepared => "prepared",
+            Self::Observed => "observed",
+            Self::Verified => "verified",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    /// The single place the evidence lifecycle is derived from a verification
+    /// result. `Verified` requires *both* raw tool success and every
+    /// verification check passing — a failed tool, a missing tool, or a
+    /// verification failure all land on `Failed`. Every caller must use this
+    /// so the rule cannot drift between sites.
+    pub fn from_verified(verified: &VerifiedResult) -> Self {
+        if verified.verified && verified.tool_success {
+            Self::Verified
+        } else {
+            Self::Failed
+        }
+    }
 }
 
 /// A verifier — checks one aspect of a tool result.
