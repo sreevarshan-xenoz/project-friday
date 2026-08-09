@@ -143,9 +143,7 @@ impl Transport for WebSocketTransport {
 /// Connect to an MCP server over WebSocket at `url` (e.g.
 /// `ws://localhost:3000/mcp`). Returns a boxed [`Transport`] ready for an
 /// [`crate::protocol::McpClient`].
-pub async fn websocket_transport_for(
-    url: &str,
-) -> Result<Box<dyn Transport>, String> {
+pub async fn websocket_transport_for(url: &str) -> Result<Box<dyn Transport>, String> {
     use tokio_tungstenite::connect_async;
     let (ws, _resp) = connect_async(url)
         .await
