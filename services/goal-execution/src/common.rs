@@ -201,18 +201,13 @@ pub fn assess_risk(capability: &Capability) -> ActionRisk {
         Capability::SearchWeb | Capability::OpenBrowser => {
             (Risk::Low, "external query, no state change".into())
         }
-        Capability::ExecuteCommand => {
-            (Risk::Medium, "command execution may have side effects".into())
-        }
-        Capability::WriteFile => {
-            (Risk::Medium, "modifies filesystem".into())
-        }
-        Capability::DeleteFile => {
-            (Risk::High, "destructive, irreversible".into())
-        }
-        Capability::Custom(name) => {
-            (Risk::Medium, format!("custom capability: {}", name))
-        }
+        Capability::ExecuteCommand => (
+            Risk::Medium,
+            "command execution may have side effects".into(),
+        ),
+        Capability::WriteFile => (Risk::Medium, "modifies filesystem".into()),
+        Capability::DeleteFile => (Risk::High, "destructive, irreversible".into()),
+        Capability::Custom(name) => (Risk::Medium, format!("custom capability: {}", name)),
     };
     ActionRisk::new("unknown", risk, reason)
 }
@@ -247,7 +242,11 @@ impl Mission {
             goal_descriptions,
             completed: HashMap::new(),
             created_at_ms: chrono::Utc::now().timestamp_millis() as u64,
-            status: if complete { MissionStatus::Complete } else { MissionStatus::Created },
+            status: if complete {
+                MissionStatus::Complete
+            } else {
+                MissionStatus::Created
+            },
         }
     }
 
