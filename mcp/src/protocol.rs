@@ -204,11 +204,7 @@ impl<T: Transport> McpClient<T> {
         // hanging the caller (and the supervisor) forever.
         let read = async {
             loop {
-                let frame = self
-                    .transport
-                    .recv()
-                    .await
-                    .map_err(McpError::Transport)?;
+                let frame = self.transport.recv().await.map_err(McpError::Transport)?;
                 let resp: JsonRpcResponse =
                     serde_json::from_str(&frame).map_err(|e| McpError::Json(e.to_string()))?;
                 if resp.id != id {
