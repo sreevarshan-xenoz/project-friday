@@ -44,12 +44,18 @@ impl TelemetryStore {
 
     /// All events for a given correlation ID.
     pub fn for_correlation(&self, id: &CorrelationId) -> Vec<&TelemetryEnvelope> {
-        self.events.iter().filter(|e| e.correlation_id == *id).collect()
+        self.events
+            .iter()
+            .filter(|e| e.correlation_id == *id)
+            .collect()
     }
 
     /// All events of a given variant.
     pub fn of_type(&self, kind: &str) -> Vec<&TelemetryEnvelope> {
-        self.events.iter().filter(|e| e.event.variant_name() == kind).collect()
+        self.events
+            .iter()
+            .filter(|e| e.event.variant_name() == kind)
+            .collect()
     }
 
     /// Number of stored events.
@@ -187,9 +193,18 @@ mod tests {
         let mut store = TelemetryStore::new();
         let cid_a = CorrelationId::from_string("a");
         let cid_b = CorrelationId::from_string("b");
-        store.push(TelemetryEnvelope::new(cid_a.clone(), TelemetryEvent::RuntimeWarning("a1".into())));
-        store.push(TelemetryEnvelope::new(cid_b.clone(), TelemetryEvent::RuntimeWarning("b1".into())));
-        store.push(TelemetryEnvelope::new(cid_a.clone(), TelemetryEvent::RuntimeWarning("a2".into())));
+        store.push(TelemetryEnvelope::new(
+            cid_a.clone(),
+            TelemetryEvent::RuntimeWarning("a1".into()),
+        ));
+        store.push(TelemetryEnvelope::new(
+            cid_b.clone(),
+            TelemetryEvent::RuntimeWarning("b1".into()),
+        ));
+        store.push(TelemetryEnvelope::new(
+            cid_a.clone(),
+            TelemetryEvent::RuntimeWarning("a2".into()),
+        ));
 
         assert_eq!(store.for_correlation(&cid_a).len(), 2);
         assert_eq!(store.for_correlation(&cid_b).len(), 1);
@@ -199,7 +214,10 @@ mod tests {
     fn of_type_filters_by_variant() {
         let mut collector = TelemetryCollector::new();
         let cid = CorrelationId::new();
-        collector.emit_event(cid.clone(), TelemetryEvent::CapabilityRequested(Capability::ReadFile));
+        collector.emit_event(
+            cid.clone(),
+            TelemetryEvent::CapabilityRequested(Capability::ReadFile),
+        );
         collector.emit_event(cid.clone(), TelemetryEvent::RuntimeWarning("hello".into()));
         assert_eq!(collector.store().of_type("capability.requested").len(), 1);
         assert_eq!(collector.store().of_type("runtime.warning").len(), 1);
@@ -209,9 +227,16 @@ mod tests {
     fn variant_name_matches_event_kind() {
         let e = TelemetryEvent::CapabilityRequested(Capability::ReadFile);
         assert_eq!(e.variant_name(), "capability.requested");
-        let e = TelemetryEvent::ProviderResolved { plugin_id: "p".into(), confidence: 0.9, candidate_count: 3 };
+        let e = TelemetryEvent::ProviderResolved {
+            plugin_id: "p".into(),
+            confidence: 0.9,
+            candidate_count: 3,
+        };
         assert_eq!(e.variant_name(), "provider.resolved");
-        let e = TelemetryEvent::PluginInvoked { plugin_id: "p".into(), capability: Capability::ReadFile };
+        let e = TelemetryEvent::PluginInvoked {
+            plugin_id: "p".into(),
+            capability: Capability::ReadFile,
+        };
         assert_eq!(e.variant_name(), "plugin.invoked");
     }
 
@@ -233,7 +258,10 @@ mod tests {
         collector.add_observer(Box::new(CountingObserver(c)));
         let cid = CorrelationId::new();
         collector.emit_event(cid.clone(), TelemetryEvent::RuntimeWarning("test".into()));
-        collector.emit_event(cid, TelemetryEvent::CapabilityRequested(Capability::ReadFile));
+        collector.emit_event(
+            cid,
+            TelemetryEvent::CapabilityRequested(Capability::ReadFile),
+        );
         assert_eq!(counter.load(Ordering::SeqCst), 2);
     }
 
