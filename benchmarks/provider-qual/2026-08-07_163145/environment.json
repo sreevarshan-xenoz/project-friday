@@ -1,0 +1,10 @@
+{
+  "mode": "real",
+  "timestamp": "2026-08-07T16:31:45.318020300+00:00",
+  "friday_version": "0.1.0",
+  "provider_name": "llamacpp",
+  "provider_base_url": "http://localhost:8080/v1",
+  "model_id": "gemma4:e4b",
+  "os": "windows",
+  "configured_providers": []
+}
