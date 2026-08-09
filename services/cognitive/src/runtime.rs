@@ -103,9 +103,7 @@ impl CognitiveRuntime {
             let phase_start = Instant::now();
 
             for handler in &handlers {
-                let result = handler
-                    .execute(phase, &self.workspace, tick_number)
-                    .await;
+                let result = handler.execute(phase, &self.workspace, tick_number).await;
 
                 match result {
                     PhaseResult::Ok => {
@@ -151,11 +149,7 @@ impl CognitiveRuntime {
                 }
 
                 self.metrics.total_phases_executed += 1;
-                *self
-                    .metrics
-                    .phase_counts
-                    .entry(phase)
-                    .or_insert(0) += 1;
+                *self.metrics.phase_counts.entry(phase).or_insert(0) += 1;
             }
 
             let phase_duration = phase_start.elapsed();
