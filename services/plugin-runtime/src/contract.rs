@@ -411,10 +411,14 @@ impl std::fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::PluginNotFound(id) => write!(f, "plugin not found: {}", id),
-            Self::CapabilityNotSupported(cap) => write!(f, "capability not supported: {}", cap.as_str()),
+            Self::CapabilityNotSupported(cap) => {
+                write!(f, "capability not supported: {}", cap.as_str())
+            }
             Self::ExecutionFailed(msg) => write!(f, "execution failed: {}", msg),
             Self::PluginNotReady(id) => write!(f, "plugin not ready: {}", id),
-            Self::NoProviderFound(cap) => write!(f, "no provider found for capability: {}", cap.as_str()),
+            Self::NoProviderFound(cap) => {
+                write!(f, "no provider found for capability: {}", cap.as_str())
+            }
         }
     }
 }
