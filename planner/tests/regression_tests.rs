@@ -95,7 +95,9 @@ async fn run_goal(text: &str, plan_json: Option<&str>, fails: HashMap<String, u3
     friday_core::init_telemetry();
     let mut friday = Friday::new();
     let backend = plan_json.map(|p| Box::new(MockBackend::new(p)) as Box<_>);
-    register_engines_with_llm(&mut friday, backend).await.unwrap();
+    register_engines_with_llm(&mut friday, backend)
+        .await
+        .unwrap();
 
     let exec = MockExecutor {
         meta: PluginMetadata::builder("mock", "Mock Executor")
@@ -116,8 +118,11 @@ async fn run_goal(text: &str, plan_json: Option<&str>, fails: HashMap<String, u3
     .await
     .unwrap();
 
-    let handle =
-        tokio::spawn(async move { friday.run_with_timeout(std::time::Duration::from_secs(12)).await });
+    let handle = tokio::spawn(async move {
+        friday
+            .run_with_timeout(std::time::Duration::from_secs(12))
+            .await
+    });
 
     let mut collected: Vec<Event> = Vec::new();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
@@ -173,10 +178,7 @@ async fn rust_workspace_analyze_and_check() {
         task_completed(&run, "filesystem.read_file"),
         "analyze step completes"
     );
-    assert!(
-        task_completed(&run, "git.status"),
-        "status step completes"
-    );
+    assert!(task_completed(&run, "git.status"), "status step completes");
     assert!(
         saw(&run, events::GOAL_COMPLETED),
         "the workspace goal completes end to end"
@@ -206,10 +208,7 @@ async fn compilation_failure_retries_then_recovers() {
         saw(&run, events::TASK_RETRYING),
         "supervisor must retry after failure"
     );
-    assert!(
-        task_completed(&run, "git.commit"),
-        "retry succeeds"
-    );
+    assert!(task_completed(&run, "git.commit"), "retry succeeds");
     assert!(
         saw(&run, events::GOAL_COMPLETED),
         "goal recovers and completes"
@@ -231,12 +230,9 @@ async fn high_risk_git_push_pauses_then_resumes() {
     let mut friday = {
         friday_core::init_telemetry();
         let mut f = Friday::new();
-        register_engines_with_llm(
-            &mut f,
-            Some(Box::new(MockBackend::new(plan))),
-        )
-        .await
-        .unwrap();
+        register_engines_with_llm(&mut f, Some(Box::new(MockBackend::new(plan))))
+            .await
+            .unwrap();
         let exec = MockExecutor {
             meta: PluginMetadata::builder("mock", "Mock Executor")
                 .subscribes(&[events::EXEC_ACTION])
@@ -258,8 +254,11 @@ async fn high_risk_git_push_pauses_then_resumes() {
     .await
     .unwrap();
 
-    let handle =
-        tokio::spawn(async move { friday.run_with_timeout(std::time::Duration::from_secs(12)).await });
+    let handle = tokio::spawn(async move {
+        friday
+            .run_with_timeout(std::time::Duration::from_secs(12))
+            .await
+    });
 
     // Wait for the pause and capture the goal id.
     let mut goal_id: Option<Uuid> = None;
@@ -305,7 +304,10 @@ async fn high_risk_git_push_pauses_then_resumes() {
         }
     }
     let _ = handle.await.unwrap();
-    assert!(completed, "goal completes after resuming the high-risk task");
+    assert!(
+        completed,
+        "goal completes after resuming the high-risk task"
+    );
 }
 
 #[tokio::test]
@@ -404,8 +406,11 @@ async fn cancellation_stops_workers_and_persists() {
     .await
     .unwrap();
 
-    let handle =
-        tokio::spawn(async move { friday.run_with_timeout(std::time::Duration::from_secs(12)).await });
+    let handle = tokio::spawn(async move {
+        friday
+            .run_with_timeout(std::time::Duration::from_secs(12))
+            .await
+    });
 
     // Capture goal id once started.
     let mut goal_id: Option<Uuid> = None;
