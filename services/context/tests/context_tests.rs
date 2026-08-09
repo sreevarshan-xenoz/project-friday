@@ -2,6 +2,7 @@ use friday_capabilities::model::Capability;
 use friday_capabilities::registry::CapabilityRegistry;
 use friday_context::ContextBuilder;
 use friday_core::memory::{MemoryEngine, MemoryEntry, MemoryLayerKind};
+use friday_skills::{CapabilityStatus, Skill, SkillManifest, SkillRegistry, SkillSource};
 use std::sync::Arc;
 
 #[tokio::test]
@@ -56,6 +57,64 @@ async fn test_context_builder_retrieval_and_pruning() {
     // Verify memories retrieved
     assert!(!context.relevant_memories.is_empty());
     assert_eq!(context.relevant_memories[0].key, "note");
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[tokio::test]
+async fn test_context_builder_includes_relevant_skills() {
+    let reg = Arc::new(CapabilityRegistry::new());
+    reg.register(
+        "terminal",
+        Capability::new("terminal.execute", "Execute", "Terminal")
+            .with_latency(10)
+            .with_reliability(0.99),
+    );
+
+    let temp_dir = std::env::temp_dir().join(format!("context-test-{}", uuid::Uuid::new_v4()));
+    let memory = Arc::new(MemoryEngine::default_layers(&temp_dir).unwrap());
+
+    // A Skill Registry holding one docker skill.
+    let skills = SkillRegistry::new();
+    let manifest: SkillManifest = serde_json::from_str(
+        r#"{
+            "id": "docker",
+            "name": "Docker",
+            "version": "1.0.0",
+            "description": "Build and run containers",
+            "category": "developer",
+            "capabilities": ["terminal.execute", "filesystem.read"],
+            "actions": ["build docker image", "docker compose up"],
+            "permissions": ["terminal.execute"]
+        }"#,
+    )
+    .unwrap();
+    skills
+        .register(Skill {
+            manifest,
+            source: SkillSource::Builtin,
+            loaded_at: chrono::Utc::now(),
+            enabled: true,
+            capabilities: vec![
+                CapabilityStatus::Resolved("terminal.execute".to_string()),
+                CapabilityStatus::SoftDeclared("filesystem.read".to_string()),
+            ],
+        })
+        .unwrap();
+
+    let builder = ContextBuilder::new(
+        reg.clone(),
+        None,
+        memory.clone(),
+        temp_dir.join("experience.redb"),
+    )
+    .with_skills(Arc::new(skills));
+
+    let context = builder.build("build the docker image").await.unwrap();
+
+    assert!(!context.skills.is_empty());
+    assert_eq!(context.skills[0].id, "docker");
+    assert_eq!(context.skills[0].permission_hints, vec!["terminal.execute"]);
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
