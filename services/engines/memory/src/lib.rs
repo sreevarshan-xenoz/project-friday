@@ -1,9 +1,9 @@
+use async_trait::async_trait;
 use friday_cognitive::handler::{PhaseHandler, PhaseResult};
 use friday_cognitive::phase::CognitivePhase;
 use friday_cognitive::recorder::EventRecorder;
 use friday_cognitive::workspace::{EngineId, GlobalWorkspace, Topic};
 use friday_cognitive::WorkspaceEvent;
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
@@ -127,7 +127,8 @@ impl MemoryWatcher {
     /// Replay events from a recorder and produce episodes.
     /// This is the deterministic path: JSONL → episodes.
     pub fn replay_from_recorder(recorder: &EventRecorder) -> Result<Vec<Episode>, String> {
-        let events = recorder.read_recent(10_000)
+        let events = recorder
+            .read_recent(10_000)
             .map_err(|e| format!("Failed to read events: {}", e))?;
 
         let mut watcher = MemoryWatcher::new();
@@ -280,10 +281,7 @@ mod tests {
     use super::*;
 
     fn test_event(topic: &str) -> WorkspaceEvent {
-        WorkspaceEvent::new(
-            Topic::parse(topic),
-            serde_json::json!({"test": true}),
-        )
+        WorkspaceEvent::new(Topic::parse(topic), serde_json::json!({"test": true}))
     }
 
     #[test]
@@ -324,10 +322,7 @@ mod tests {
         let mut watcher = MemoryWatcher::with_capacity(3);
 
         for i in 0..5 {
-            let event = WorkspaceEvent::new(
-                Topic::WindowFocusChanged,
-                serde_json::json!({"i": i}),
-            );
+            let event = WorkspaceEvent::new(Topic::WindowFocusChanged, serde_json::json!({"i": i}));
             watcher.observe_event(event);
         }
 
@@ -408,7 +403,11 @@ mod tests {
         }
 
         let w = watcher.lock().unwrap();
-        assert_eq!(w.episode_count(), 2, "Watcher should have created 2 episodes");
+        assert_eq!(
+            w.episode_count(),
+            2,
+            "Watcher should have created 2 episodes"
+        );
     }
 
     #[tokio::test]
@@ -416,9 +415,7 @@ mod tests {
         let engine = MemoryEngine::new();
         let workspace = GlobalWorkspace::new();
 
-        let result = engine
-            .execute(CognitivePhase::Learn, &workspace, 1)
-            .await;
+        let result = engine.execute(CognitivePhase::Learn, &workspace, 1).await;
 
         match result {
             PhaseResult::Published { topics } => {
