@@ -62,8 +62,7 @@ impl TimelineStore {
                 .insert(key.as_str(), json.as_str())
                 .map_err(|e| anyhow::anyhow!("insert: {e}"))?;
         }
-        txn.commit()
-            .map_err(|e| anyhow::anyhow!("commit: {e}"))?;
+        txn.commit().map_err(|e| anyhow::anyhow!("commit: {e}"))?;
         Ok(id)
     }
 
@@ -108,10 +107,7 @@ impl TimelineStore {
             .map_err(|e| anyhow::anyhow!("open_table: {e}"))?;
         let goal_prefix = format!("{}-", goal_id);
         let mut entries = Vec::new();
-        for kv in table
-            .iter()
-            .map_err(|e| anyhow::anyhow!("iter: {e}"))?
-        {
+        for kv in table.iter().map_err(|e| anyhow::anyhow!("iter: {e}"))? {
             let (k, v) = kv.map_err(|e| anyhow::anyhow!("kv: {e}"))?;
             if k.value().starts_with(&goal_prefix) {
                 let entry: TimelineEntry = serde_json::from_str(v.value())?;
@@ -131,10 +127,7 @@ impl TimelineStore {
             .open_table(TIMELINE_TABLE)
             .map_err(|e| anyhow::anyhow!("open_table: {e}"))?;
         let mut entries = Vec::new();
-        for kv in table
-            .iter()
-            .map_err(|e| anyhow::anyhow!("iter: {e}"))?
-        {
+        for kv in table.iter().map_err(|e| anyhow::anyhow!("iter: {e}"))? {
             let (_k, v) = kv.map_err(|e| anyhow::anyhow!("kv: {e}"))?;
             let entry: TimelineEntry = serde_json::from_str(v.value())?;
             entries.push(entry);
@@ -164,8 +157,7 @@ impl TimelineStore {
                 .insert(workflow.id.to_string().as_str(), json.as_str())
                 .map_err(|e| anyhow::anyhow!("insert: {e}"))?;
         }
-        txn.commit()
-            .map_err(|e| anyhow::anyhow!("commit: {e}"))?;
+        txn.commit().map_err(|e| anyhow::anyhow!("commit: {e}"))?;
         Ok(())
     }
 
@@ -179,10 +171,7 @@ impl TimelineStore {
             .open_table(WORKFLOW_TABLE)
             .map_err(|e| anyhow::anyhow!("open_table: {e}"))?;
         let mut workflows = Vec::new();
-        for kv in table
-            .iter()
-            .map_err(|e| anyhow::anyhow!("iter: {e}"))?
-        {
+        for kv in table.iter().map_err(|e| anyhow::anyhow!("iter: {e}"))? {
             let (_k, v) = kv.map_err(|e| anyhow::anyhow!("kv: {e}"))?;
             let w: Workflow = serde_json::from_str(v.value())?;
             workflows.push(w);
@@ -208,8 +197,7 @@ impl TimelineStore {
                 .insert(record.id.to_string().as_str(), json.as_str())
                 .map_err(|e| anyhow::anyhow!("insert: {e}"))?;
         }
-        txn.commit()
-            .map_err(|e| anyhow::anyhow!("commit: {e}"))?;
+        txn.commit().map_err(|e| anyhow::anyhow!("commit: {e}"))?;
         Ok(())
     }
 
@@ -223,10 +211,7 @@ impl TimelineStore {
             .open_table(REFLECTION_TABLE)
             .map_err(|e| anyhow::anyhow!("open_table: {e}"))?;
         let mut records = Vec::new();
-        for kv in table
-            .iter()
-            .map_err(|e| anyhow::anyhow!("iter: {e}"))?
-        {
+        for kv in table.iter().map_err(|e| anyhow::anyhow!("iter: {e}"))? {
             let (_k, v) = kv.map_err(|e| anyhow::anyhow!("kv: {e}"))?;
             let r: ReflectionRecord = serde_json::from_str(v.value())?;
             records.push(r);
@@ -251,8 +236,7 @@ impl TimelineStore {
                 .insert(pattern.id.to_string().as_str(), json.as_str())
                 .map_err(|e| anyhow::anyhow!("insert: {e}"))?;
         }
-        txn.commit()
-            .map_err(|e| anyhow::anyhow!("commit: {e}"))?;
+        txn.commit().map_err(|e| anyhow::anyhow!("commit: {e}"))?;
         Ok(())
     }
 
@@ -266,10 +250,7 @@ impl TimelineStore {
             .open_table(PATTERN_TABLE)
             .map_err(|e| anyhow::anyhow!("open_table: {e}"))?;
         let mut patterns = Vec::new();
-        for kv in table
-            .iter()
-            .map_err(|e| anyhow::anyhow!("iter: {e}"))?
-        {
+        for kv in table.iter().map_err(|e| anyhow::anyhow!("iter: {e}"))? {
             let (_k, v) = kv.map_err(|e| anyhow::anyhow!("kv: {e}"))?;
             let p: Pattern = serde_json::from_str(v.value())?;
             patterns.push(p);
@@ -288,8 +269,7 @@ impl TimelineStore {
                 .delete_table(PATTERN_TABLE)
                 .map_err(|e| anyhow::anyhow!("delete_table: {e}"))?;
         }
-        txn.commit()
-            .map_err(|e| anyhow::anyhow!("commit: {e}"))?;
+        txn.commit().map_err(|e| anyhow::anyhow!("commit: {e}"))?;
         Ok(())
     }
 }
