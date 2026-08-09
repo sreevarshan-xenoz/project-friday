@@ -77,5 +77,10 @@ fn main() {
     }
 
     eprintln!();
-    eprintln!("{} events shown (of {} total, filtered by {:?})", count, events.len(), topic_filter);
+    eprintln!(
+        "{} events shown (of {} total, filtered by {:?})",
+        count,
+        events.len(),
+        topic_filter
+    );
 }
