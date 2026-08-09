@@ -46,7 +46,11 @@ pub const DEFAULT_MAX_RETRIES: u32 = 2;
 /// metrics, sessions, resources).
 pub struct AgentKernel {
     meta: PluginMetadata,
-    adapters: tokio::sync::Mutex<HashMap<String, Box<dyn ActionAdapter>>>,
+    /// Adapters by tool name. Multiple adapters may share a tool (e.g. the
+    /// HTTP `web` adapter and the browser `web` adapter); dispatch picks the
+    /// adapter whose [`ActionAdapter::actions`] contains the requested action
+    /// (falling back to the first for a descriptive unknown-action error).
+    adapters: tokio::sync::Mutex<HashMap<String, Vec<Box<dyn ActionAdapter>>>>,
     permission: PermissionEngine,
     audit: AuditEngine,
     kernel: Kernel,
@@ -104,11 +108,18 @@ impl AgentKernel {
         self
     }
 
-    /// Register a capability adapter under its `tool()` name.
+    /// Register a capability adapter under its `tool()` name. Multiple
+    /// adapters may share a tool; dispatch routes by action name.
     pub async fn register_adapter(&self, adapter: Box<dyn ActionAdapter>) {
         let tool = adapter.tool().to_string();
-        tracing::info!(tool = %tool, "registering action adapter");
-        self.adapters.lock().await.insert(tool, adapter);
+        let actions = adapter.actions().join(",");
+        tracing::info!(tool = %tool, actions = %actions, "registering action adapter");
+        self.adapters
+            .lock()
+            .await
+            .entry(tool)
+            .or_default()
+            .push(adapter);
     }
 
     /// Register a live MCP server as a first-class capability adapter (M8:
@@ -237,7 +248,11 @@ impl AgentKernel {
         )];
         // M9.3: an adapter may annotate created artifacts; emit one
         // `artifact.created` per path so reflection/memory can track real output.
-        if let Some(paths) = result.metadata.get("artifact_paths").and_then(|p| p.as_array()) {
+        if let Some(paths) = result
+            .metadata
+            .get("artifact_paths")
+            .and_then(|p| p.as_array())
+        {
             for path in paths {
                 if let Some(p) = path.as_str() {
                     events.push(events::event(
@@ -292,7 +307,11 @@ impl AgentKernel {
                 ));
             }
         }
-        if let Some(files) = result.metadata.get("files_affected").and_then(|f| f.as_u64()) {
+        if let Some(files) = result
+            .metadata
+            .get("files_affected")
+            .and_then(|f| f.as_u64())
+        {
             events.push(events::event(
                 events::GIT_DIFF_GENERATED,
                 "action-runtime",
@@ -343,7 +362,19 @@ impl AgentKernel {
         let start = std::time::Instant::now();
         let adapters = self.adapters.lock().await;
         let adapter = match adapters.get(&req.tool) {
-            Some(a) => a,
+            Some(chain) => {
+                // Action-routed chain: prefer the adapter that declares this
+                // action, else the first (which returns a descriptive
+                // unknown-action error, preserving prior behavior).
+                chain
+                    .iter()
+                    .find(|a| a.actions().iter().any(|act| *act == req.action))
+                    .unwrap_or_else(|| {
+                        chain
+                            .first()
+                            .expect("registered adapter chain is non-empty")
+                    })
+            }
             None => {
                 let latency = start.elapsed().as_millis();
                 self.audit.record(self.make_audit(
