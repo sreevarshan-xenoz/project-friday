@@ -10,12 +10,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use friday_context::{register_engines_with_skills, SkillDir, SkillEngineWiring};
 use friday_core::Friday;
 use friday_planner::execution::capability_registry::CapabilityRegistry;
-use friday_planner::register_engines_with_llm;
 
 use crate::discovery::{
-    register_configured_servers, start_probe_for_server, RegisteredServer, McpServerConfig,
+    register_configured_servers, start_probe_for_server, McpServerConfig, RegisteredServer,
 };
 
 /// Wire the full planner stack (optionally with an LLM backend) and then
@@ -28,12 +28,17 @@ pub async fn register_with_mcp(
     friday: &mut Friday,
     llm_backend: Option<Box<dyn friday_planner::planning::planners::backend::ReasoningBackend>>,
     servers: &[McpServerConfig],
-) -> anyhow::Result<(Arc<CapabilityRegistry>, Vec<RegisteredServer>)> {
-    let registry = register_engines_with_llm(friday, llm_backend)
+    skill_dirs: &[SkillDir],
+) -> anyhow::Result<(
+    Arc<CapabilityRegistry>,
+    Vec<RegisteredServer>,
+    Option<SkillEngineWiring>,
+)> {
+    let (registry, skills) = register_engines_with_skills(friday, llm_backend, skill_dirs)
         .await
         .map_err(|e| anyhow::anyhow!("planner registration failed: {e}"))?;
     let registered = register_configured_servers(&registry, servers).await;
-    Ok((registry, registered))
+    Ok((registry, registered, skills))
 }
 
 /// Like [`register_with_mcp`] but also starts a health probe per registered
@@ -45,12 +50,15 @@ pub async fn register_with_mcp_and_probes(
     llm_backend: Option<Box<dyn friday_planner::planning::planners::backend::ReasoningBackend>>,
     servers: &[McpServerConfig],
     probe_interval: Duration,
+    skill_dirs: &[SkillDir],
 ) -> anyhow::Result<(
     Arc<CapabilityRegistry>,
     Vec<RegisteredServer>,
     Vec<tokio::task::JoinHandle<()>>,
+    Option<SkillEngineWiring>,
 )> {
-    let (registry, registered) = register_with_mcp(friday, llm_backend, servers).await?;
+    let (registry, registered, skills) =
+        register_with_mcp(friday, llm_backend, servers, skill_dirs).await?;
     let mut probes = Vec::new();
     for reg in &registered {
         // Match the config to start its probe (config carries transport details).
@@ -64,5 +72,5 @@ pub async fn register_with_mcp_and_probes(
             probes.push(handle);
         }
     }
-    Ok((registry, registered, probes))
+    Ok((registry, registered, probes, skills))
 }
