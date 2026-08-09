@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use friday_cognitive::handler::PhaseHandler;
 use friday_cognitive::phase::CognitivePhase;
 use friday_cognitive::recorder::EventRecorder;
@@ -5,15 +6,18 @@ use friday_cognitive::registry::PhaseRegistry;
 use friday_cognitive::runtime::{CognitiveRuntime, RuntimeConfig};
 use friday_cognitive::workspace::{EngineId, GlobalWorkspace, Topic};
 use friday_cognitive::WorkspaceEvent;
-use async_trait::async_trait;
 use std::sync::Arc;
 
 struct TestHandler;
 
 #[async_trait]
 impl PhaseHandler for TestHandler {
-    fn name(&self) -> &str { "test_handler" }
-    fn phases(&self) -> Vec<CognitivePhase> { vec![CognitivePhase::Observe] }
+    fn name(&self) -> &str {
+        "test_handler"
+    }
+    fn phases(&self) -> Vec<CognitivePhase> {
+        vec![CognitivePhase::Observe]
+    }
     async fn execute(
         &self,
         _phase: CognitivePhase,
@@ -57,12 +61,14 @@ async fn runtime_events_recorded_to_jsonl() {
     // Should have: 5 sensor.window.focus_changed + 5 cognitive.tick.completed = 10.
     assert_eq!(events.len(), 10, "Expected 10 events in JSONL");
 
-    let focus_events: Vec<_> = events.iter()
+    let focus_events: Vec<_> = events
+        .iter()
         .filter(|e| e.topic == Topic::WindowFocusChanged)
         .collect();
     assert_eq!(focus_events.len(), 5, "Expected 5 focus_changed events");
 
-    let tick_events: Vec<_> = events.iter()
+    let tick_events: Vec<_> = events
+        .iter()
         .filter(|e| e.topic == Topic::TickCompleted)
         .collect();
     assert_eq!(tick_events.len(), 5, "Expected 5 tick.completed events");
@@ -83,8 +89,16 @@ async fn jsonl_format_is_valid() {
     let dir = std::env::temp_dir().join(format!("friday_jsonl_test_{}", uuid::Uuid::new_v4()));
     let workspace = GlobalWorkspace::with_recorder(&dir).unwrap();
 
-    workspace.publish_from(Topic::Mouse, EngineId::Perception, serde_json::json!({"x": 1}));
-    workspace.publish_from(Topic::TickCompleted, EngineId::Runtime, serde_json::json!({"tick": 1}));
+    workspace.publish_from(
+        Topic::Mouse,
+        EngineId::Perception,
+        serde_json::json!({"x": 1}),
+    );
+    workspace.publish_from(
+        Topic::TickCompleted,
+        EngineId::Runtime,
+        serde_json::json!({"tick": 1}),
+    );
 
     // Read the raw JSONL file.
     let today = chrono::Utc::now().date_naive();
