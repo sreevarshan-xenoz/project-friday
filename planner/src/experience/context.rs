@@ -13,9 +13,7 @@ use uuid::Uuid;
 
 use super::provider::ExperienceProvider;
 use super::replay::{ApplicabilityChecker, ApplicabilityResult};
-use super::{
-    ExperienceMatch, GoalOutcome, Pattern, ReflectionRecord, WorkflowSuggestion,
-};
+use super::{ExperienceMatch, GoalOutcome, Pattern, ReflectionRecord, WorkflowSuggestion};
 
 // ---------------------------------------------------------------------------
 // Core types
@@ -166,10 +164,8 @@ impl ExperienceContextBuilder {
             .collect();
 
         // Collect reflections from similar experiences
-        let reflections: Vec<ReflectionRecord> = similar
-            .iter()
-            .flat_map(|m| m.reflection.clone())
-            .collect();
+        let reflections: Vec<ReflectionRecord> =
+            similar.iter().flat_map(|m| m.reflection.clone()).collect();
 
         // Simplify successful workflows for the planner
         let successful_workflows: Vec<SuccessfulWorkflow> = workflows
