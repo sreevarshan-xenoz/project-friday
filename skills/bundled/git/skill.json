@@ -12,7 +12,7 @@
     "git.push",
     "git.pull",
     "git.diff",
-    "terminal.execute"
+    "terminal.exec"
   ],
   "actions": [
     "commit changes",
@@ -29,8 +29,12 @@
   ],
   "permissions": [
     "git.commit",
-    "terminal.execute"
+    "terminal.exec"
   ],
+  "memory": {
+    "reads": ["git.last_workspace"],
+    "writes": ["git.last_workspace"]
+  },
   "examples": [
     {
       "goal": "Commit the changes",
