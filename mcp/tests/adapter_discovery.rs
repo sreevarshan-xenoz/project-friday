@@ -39,11 +39,14 @@ fn tool_to_spec_carries_mcp_provenance_and_risk() {
     assert_eq!(spec.binding.adapter, "mcp:filesystem");
     assert_eq!(spec.binding.action, "read_file");
 
-    let write = tool_to_spec("filesystem", &McpTool {
-        name: "write_file".into(),
-        description: "Write".into(),
-        input_schema: serde_json::json!({}),
-    });
+    let write = tool_to_spec(
+        "filesystem",
+        &McpTool {
+            name: "write_file".into(),
+            description: "Write".into(),
+            input_schema: serde_json::json!({}),
+        },
+    );
     assert_eq!(write.binding.risk, friday_capabilities::spec::Risk::Medium);
 }
 
@@ -57,7 +60,9 @@ fn register_server_capabilities_populates_registry() {
     assert!(reg.resolve("mcp:filesystem.write_file").is_some());
     // Discovery surfaces them like any native capability.
     let ranked = reg.search("read a file from filesystem", 10);
-    assert!(ranked.iter().any(|r| r.spec.id == "mcp:filesystem.read_file"));
+    assert!(ranked
+        .iter()
+        .any(|r| r.spec.id == "mcp:filesystem.read_file"));
 }
 
 #[tokio::test]
@@ -83,11 +88,14 @@ async fn discover_and_register_via_fake_server() {
 fn capability_id_format_matches_source_tag() {
     assert_eq!(capability_id("vscode", "open"), "mcp:vscode.open");
     // The id prefix aligns with the CapabilitySource::Mcp tag.
-    let spec = tool_to_spec("vscode", &McpTool {
-        name: "open".into(),
-        description: "".into(),
-        input_schema: serde_json::json!({}),
-    });
+    let spec = tool_to_spec(
+        "vscode",
+        &McpTool {
+            name: "open".into(),
+            description: "".into(),
+            input_schema: serde_json::json!({}),
+        },
+    );
     assert_eq!(spec.source.tag(), "mcp:vscode");
 }
 
@@ -148,10 +156,14 @@ async fn register_configured_servers_returns_ids_for_supervision() {
                         .collect();
                     serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": list } })
                 }
-                _ => serde_json::json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": "method not found" } }),
+                _ => {
+                    serde_json::json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": "method not found" } })
+                }
             };
             let _ = ws
-                .send(Message::Text(serde_json::to_string(&response).unwrap().into()))
+                .send(Message::Text(
+                    serde_json::to_string(&response).unwrap().into(),
+                ))
                 .await;
         }
     });
