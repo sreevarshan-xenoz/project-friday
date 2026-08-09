@@ -112,7 +112,11 @@ async fn websocket_call_tool() {
     let text = res
         .content
         .iter()
-        .find_map(|c| c.get("text").and_then(|t| t.as_str()).map(|s| s.to_string()))
+        .find_map(|c| {
+            c.get("text")
+                .and_then(|t| t.as_str())
+                .map(|s| s.to_string())
+        })
         .expect("content text");
     assert_eq!(text, "ws-ok");
 }
