@@ -25,18 +25,20 @@ impl HealthMonitor {
 
     /// Register a new plugin for health tracking.
     pub fn register(&mut self, plugin_id: &str) {
-        self.metrics.entry(plugin_id.to_string()).or_insert_with(|| PluginHealth {
-            plugin_id: plugin_id.to_string(),
-            status: PluginStatus::Installed,
-            availability: 1.0,
-            reliability: 1.0,
-            average_latency_ms: 0.0,
-            success_rate: 1.0,
-            total_executions: 0,
-            failure_count: 0,
-            last_error: None,
-            last_execution_ms: None,
-        });
+        self.metrics
+            .entry(plugin_id.to_string())
+            .or_insert_with(|| PluginHealth {
+                plugin_id: plugin_id.to_string(),
+                status: PluginStatus::Installed,
+                availability: 1.0,
+                reliability: 1.0,
+                average_latency_ms: 0.0,
+                success_rate: 1.0,
+                total_executions: 0,
+                failure_count: 0,
+                last_error: None,
+                last_execution_ms: None,
+            });
     }
 
     /// Mark a plugin as initialized and healthy.
