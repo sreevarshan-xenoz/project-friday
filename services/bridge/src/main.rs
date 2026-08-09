@@ -24,9 +24,7 @@ fn parse_args() -> (SocketAddr, u64, u64) {
             "--seed" => seed = args.next().and_then(|s| s.parse().ok()).unwrap_or(seed),
             "--count" => count = args.next().and_then(|s| s.parse().ok()).unwrap_or(count),
             "--help" | "-h" => {
-                println!(
-                    "friday-bridge [--listen 127.0.0.1:18433] [--seed 42] [--count 140]"
-                );
+                println!("friday-bridge [--listen 127.0.0.1:18433] [--seed 42] [--count 140]");
                 std::process::exit(0);
             }
             other => {
