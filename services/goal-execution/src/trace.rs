@@ -7,6 +7,9 @@ use super::WorldState;
 /// The kind of a trace node.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TraceNodeKind {
+    /// The Investigation Engine's decision: what the goal required knowing
+    /// before execution (channels, evidence confidence, self-contained?).
+    Investigation,
     Planning,
     Evaluation,
     Execution,
@@ -32,11 +35,7 @@ pub struct TraceNode {
 }
 
 impl TraceNode {
-    pub fn new(
-        kind: TraceNodeKind,
-        input: serde_json::Value,
-        output: serde_json::Value,
-    ) -> Self {
+    pub fn new(kind: TraceNodeKind, input: serde_json::Value, output: serde_json::Value) -> Self {
         let now = chrono::Utc::now().timestamp_millis() as u64;
         Self {
             id: format!("node_{}", uuid::Uuid::new_v4()),
@@ -139,19 +138,71 @@ impl CognitiveTrace {
 /// A trace event — emitted by engines, assembled by TraceRecorder.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TraceEvent {
-    PlanningStarted { goal_id: String },
-    PlanGenerated { goal_id: String, candidate_count: usize },
-    SimulationStarted { goal_id: String, plan_id: String },
-    SimulationFinished { goal_id: String, plan_id: String, feasible: bool, confidence: f32 },
-    EvaluationStarted { goal_id: String },
-    EvaluationFinished { goal_id: String, chosen_plan_id: String, score: f32 },
-    ExecutionStarted { goal_id: String, action_id: String },
-    ExecutionFinished { goal_id: String, action_id: String, success: bool },
-    VerificationStarted { goal_id: String, action_id: String },
-    VerificationFinished { goal_id: String, action_id: String, verified: bool },
-    ReflectionStarted { goal_id: String },
-    ReflectionFinished { goal_id: String, insight_count: usize },
-    WorldStateChanged { goal_id: String, transition_id: String },
+    /// Investigation finished — what the goal required knowing first.
+    InvestigationFinished {
+        goal_id: String,
+        requirement_count: usize,
+        /// Channel labels in evidence order (strongest first).
+        channels: Vec<String>,
+        /// Mean evidence confidence across the requirements.
+        confidence: f32,
+        /// True when the goal needs no evidence gathering.
+        self_contained: bool,
+    },
+    PlanningStarted {
+        goal_id: String,
+    },
+    PlanGenerated {
+        goal_id: String,
+        candidate_count: usize,
+    },
+    SimulationStarted {
+        goal_id: String,
+        plan_id: String,
+    },
+    SimulationFinished {
+        goal_id: String,
+        plan_id: String,
+        feasible: bool,
+        confidence: f32,
+    },
+    EvaluationStarted {
+        goal_id: String,
+    },
+    EvaluationFinished {
+        goal_id: String,
+        chosen_plan_id: String,
+        score: f32,
+    },
+    ExecutionStarted {
+        goal_id: String,
+        action_id: String,
+    },
+    ExecutionFinished {
+        goal_id: String,
+        action_id: String,
+        success: bool,
+    },
+    VerificationStarted {
+        goal_id: String,
+        action_id: String,
+    },
+    VerificationFinished {
+        goal_id: String,
+        action_id: String,
+        verified: bool,
+    },
+    ReflectionStarted {
+        goal_id: String,
+    },
+    ReflectionFinished {
+        goal_id: String,
+        insight_count: usize,
+    },
+    WorldStateChanged {
+        goal_id: String,
+        transition_id: String,
+    },
 }
 
 /// A trace recorder — assembles a CognitiveTrace from emitted events.
@@ -185,68 +236,80 @@ impl TraceRecorder {
         self.event_log.push(event.clone());
 
         let node = match &event {
-            TraceEvent::PlanningStarted { .. } => {
-                TraceNode::new(TraceNodeKind::Planning, serde_json::json!({}), serde_json::json!({}))
-            }
-            TraceEvent::PlanGenerated { candidate_count, .. } => {
-                TraceNode::new(
-                    TraceNodeKind::Planning,
-                    serde_json::json!({}),
-                    serde_json::json!({ "candidate_count": candidate_count }),
-                )
-            }
-            TraceEvent::SimulationStarted { plan_id, .. } => {
-                TraceNode::new(
-                    TraceNodeKind::Execution,
-                    serde_json::json!({ "plan_id": plan_id }),
-                    serde_json::json!({}),
-                )
-            }
-            TraceEvent::SimulationFinished { feasible, confidence, .. } => {
-                TraceNode::new(
-                    TraceNodeKind::Execution,
-                    serde_json::json!({}),
-                    serde_json::json!({ "feasible": feasible, "confidence": confidence }),
-                ).with_confidence(*confidence)
-            }
-            TraceEvent::EvaluationFinished { score, .. } => {
-                TraceNode::new(
-                    TraceNodeKind::Evaluation,
-                    serde_json::json!({}),
-                    serde_json::json!({ "score": score }),
-                ).with_confidence(*score)
-            }
-            TraceEvent::ExecutionStarted { action_id, .. } => {
-                TraceNode::new(
-                    TraceNodeKind::Execution,
-                    serde_json::json!({ "action_id": action_id }),
-                    serde_json::json!({}),
-                )
-            }
-            TraceEvent::ExecutionFinished { success, .. } => {
-                TraceNode::new(
-                    TraceNodeKind::Execution,
-                    serde_json::json!({}),
-                    serde_json::json!({ "success": success }),
-                )
-            }
-            TraceEvent::VerificationFinished { verified, .. } => {
-                TraceNode::new(
-                    TraceNodeKind::Verification,
-                    serde_json::json!({}),
-                    serde_json::json!({ "verified": verified }),
-                )
-            }
-            TraceEvent::ReflectionFinished { insight_count, .. } => {
-                TraceNode::new(
-                    TraceNodeKind::Reflection,
-                    serde_json::json!({}),
-                    serde_json::json!({ "insight_count": insight_count }),
-                )
-            }
-            _ => {
-                TraceNode::new(TraceNodeKind::Planning, serde_json::json!({}), serde_json::json!({}))
-            }
+            TraceEvent::InvestigationFinished {
+                requirement_count,
+                channels,
+                confidence,
+                self_contained,
+                ..
+            } => TraceNode::new(
+                TraceNodeKind::Investigation,
+                serde_json::json!({ "self_contained": self_contained }),
+                serde_json::json!({
+                    "requirement_count": requirement_count,
+                    "channels": channels,
+                    "confidence": confidence,
+                }),
+            )
+            .with_confidence(*confidence),
+            TraceEvent::PlanningStarted { .. } => TraceNode::new(
+                TraceNodeKind::Planning,
+                serde_json::json!({}),
+                serde_json::json!({}),
+            ),
+            TraceEvent::PlanGenerated {
+                candidate_count, ..
+            } => TraceNode::new(
+                TraceNodeKind::Planning,
+                serde_json::json!({}),
+                serde_json::json!({ "candidate_count": candidate_count }),
+            ),
+            TraceEvent::SimulationStarted { plan_id, .. } => TraceNode::new(
+                TraceNodeKind::Execution,
+                serde_json::json!({ "plan_id": plan_id }),
+                serde_json::json!({}),
+            ),
+            TraceEvent::SimulationFinished {
+                feasible,
+                confidence,
+                ..
+            } => TraceNode::new(
+                TraceNodeKind::Execution,
+                serde_json::json!({}),
+                serde_json::json!({ "feasible": feasible, "confidence": confidence }),
+            )
+            .with_confidence(*confidence),
+            TraceEvent::EvaluationFinished { score, .. } => TraceNode::new(
+                TraceNodeKind::Evaluation,
+                serde_json::json!({}),
+                serde_json::json!({ "score": score }),
+            )
+            .with_confidence(*score),
+            TraceEvent::ExecutionStarted { action_id, .. } => TraceNode::new(
+                TraceNodeKind::Execution,
+                serde_json::json!({ "action_id": action_id }),
+                serde_json::json!({}),
+            ),
+            TraceEvent::ExecutionFinished { success, .. } => TraceNode::new(
+                TraceNodeKind::Execution,
+                serde_json::json!({}),
+                serde_json::json!({ "success": success }),
+            ),
+            TraceEvent::VerificationFinished { verified, .. } => TraceNode::new(
+                TraceNodeKind::Verification,
+                serde_json::json!({}),
+                serde_json::json!({ "verified": verified }),
+            ),
+            TraceEvent::ReflectionFinished { insight_count, .. } => TraceNode::new(
+                TraceNodeKind::Reflection,
+                serde_json::json!({}),
+                serde_json::json!({ "insight_count": insight_count }),
+            ),
+            _ => TraceNode::new(
+                TraceNodeKind::Planning,
+                serde_json::json!({}),
+                serde_json::json!({}),
+            ),
         };
 
         self.trace.push(node);
