@@ -122,10 +122,7 @@ impl WorldState {
 
     /// Check if a file exists in the world state.
     pub fn file_exists(&self, path: &str) -> bool {
-        self.files
-            .get(path)
-            .map(|m| m.exists)
-            .unwrap_or(false)
+        self.files.get(path).map(|m| m.exists).unwrap_or(false)
     }
 
     /// Check if a tool capability is available.
@@ -224,10 +221,19 @@ impl WorldStateDiff {
 /// A precondition — what an action requires from the world state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Precondition {
-    FileExists { path: String },
-    FileNotExists { path: String },
-    ToolAvailable { capability: Capability },
-    VariableEquals { key: String, value: serde_json::Value },
+    FileExists {
+        path: String,
+    },
+    FileNotExists {
+        path: String,
+    },
+    ToolAvailable {
+        capability: Capability,
+    },
+    VariableEquals {
+        key: String,
+        value: serde_json::Value,
+    },
     NetworkAvailable,
     Custom(String),
 }
@@ -418,8 +424,7 @@ impl WorldModel {
                 }
                 Postcondition::FileModified { path } => {
                     if let Some(meta) = self.state.files.get_mut(path) {
-                        meta.modified_at_ms =
-                            Some(chrono::Utc::now().timestamp_millis() as u64);
+                        meta.modified_at_ms = Some(chrono::Utc::now().timestamp_millis() as u64);
                     }
                 }
                 Postcondition::VariableSet { key } => {
