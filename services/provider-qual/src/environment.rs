@@ -36,8 +36,13 @@ pub fn capture(mode: Mode, provider_name: &str, base_url: &str, model_id: &str) 
         ("CEREBRAS_API_KEY", "cerebras"),
         ("GEMINI_API_KEY", "gemini"),
         ("OPENGATEWAY_API_KEY", "opengateway"),
+        ("SAMBA_API_KEY", "sambanova"),
+        ("GITHUB_TOKEN", "github-models"),
+        ("GITHUB_MODELS_KEY", "github-models"),
+        ("SILICONFLOW_API_KEY", "siliconflow"),
+        ("ZHIPU_API_KEY", "zhipu"),
     ] {
-        if std::env::var(key).is_ok() {
+        if std::env::var(key).is_ok() && !configured.contains(&name.to_string()) {
             configured.push(name.to_string());
         }
     }
@@ -46,6 +51,12 @@ pub fn capture(mode: Mode, provider_name: &str, base_url: &str, model_id: &str) 
     }
     if std::env::var("OPENGATEWAY_BASE_URL").is_ok() {
         configured.push("opengateway(base_url)".to_string());
+    }
+    if std::env::var("SAMBA_BASE_URL").is_ok() {
+        configured.push("sambanova(base_url)".to_string());
+    }
+    if std::env::var("GITHUB_MODELS_BASE_URL").is_ok() {
+        configured.push("github-models(base_url)".to_string());
     }
 
     Environment {
