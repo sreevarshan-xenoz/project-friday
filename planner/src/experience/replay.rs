@@ -281,14 +281,20 @@ mod tests {
     #[test]
     fn applicability_passes_when_capabilities_exist() {
         let checker = ApplicabilityChecker::new(
-            vec!["mcp:filesystem.write_file".into(), "mcp:git.git_commit".into()],
+            vec![
+                "mcp:filesystem.write_file".into(),
+                "mcp:git.git_commit".into(),
+            ],
             vec![],
         );
         let workflow = Workflow {
             id: Uuid::new_v4(),
             name: "test".into(),
             actions: vec!["write_file".into(), "git_commit".into()],
-            capabilities: vec!["mcp:filesystem.write_file".into(), "mcp:git.git_commit".into()],
+            capabilities: vec![
+                "mcp:filesystem.write_file".into(),
+                "mcp:git.git_commit".into(),
+            ],
             created_at: Utc::now(),
             source_goal_id: Uuid::new_v4(),
         };
@@ -299,15 +305,15 @@ mod tests {
 
     #[test]
     fn applicability_fails_when_capability_missing() {
-        let checker = ApplicabilityChecker::new(
-            vec!["mcp:filesystem.write_file".into()],
-            vec![],
-        );
+        let checker = ApplicabilityChecker::new(vec!["mcp:filesystem.write_file".into()], vec![]);
         let workflow = Workflow {
             id: Uuid::new_v4(),
             name: "test".into(),
             actions: vec!["write_file".into(), "git_commit".into()],
-            capabilities: vec!["mcp:filesystem.write_file".into(), "mcp:git.git_commit".into()],
+            capabilities: vec![
+                "mcp:filesystem.write_file".into(),
+                "mcp:git.git_commit".into(),
+            ],
             created_at: Utc::now(),
             source_goal_id: Uuid::new_v4(),
         };
