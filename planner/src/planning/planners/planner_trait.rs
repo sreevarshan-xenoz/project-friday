@@ -21,11 +21,8 @@ pub trait Planner: Send + Sync {
 
     /// Produce a validated plan. May use a reasoning backend; must surface
     /// backend/parse/validation failures as [`PlanError`].
-    async fn create_plan(
-        &self,
-        intent: &Intent,
-        ctx: &PlanContext,
-    ) -> Result<TaskGraph, PlanError>;
+    async fn create_plan(&self, intent: &Intent, ctx: &PlanContext)
+        -> Result<TaskGraph, PlanError>;
 }
 
 /// Convenience constructor for the default bounded budget used by planners when
