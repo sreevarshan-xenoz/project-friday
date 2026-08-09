@@ -12,8 +12,8 @@
 use chrono::Utc;
 use uuid::Uuid;
 
-use super::{TimelineEntry, Workflow};
 use super::timeline::TimelineStore;
+use super::{TimelineEntry, Workflow};
 
 /// Extract a semantic workflow from a completed goal's timeline entries.
 ///
