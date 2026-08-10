@@ -1,10 +1,14 @@
-//! Documentation capability adapter: search + read local docs.
+//! Documentation capability adapter: search + read local docs, parse documents.
 //!
 //! `docs.search` walks a root directory and matches the query against file
 //! names and leading content of doc-shaped files (`.md`, `.txt`, READMEs,
-//! `.rs`). `docs.read` returns a bounded read of one file. Both are read-only
-//! and classified `Risk::Safe` — this is the \"find local documentation\" muscle
-//! behind the `docs` skill (self-hosted knowledge: READMEs, ADRs, specs).
+//! `.rs`). `docs.read` returns a bounded read of one file. `docs.parse`
+//! normalizes a document (Word, PowerPoint, Excel, OpenDocument, RTF, EPUB,
+//! CSV, PDF via the `anydoc` backend; Markdown/text passthrough) into the
+//! FRIDAY [`Document`](crate::adapters::document::Document) contract. All
+//! three are read-only and classified `Risk::Safe` — this is the "find and
+//! read local documentation" muscle behind the `docs` skill (self-hosted
+//! knowledge: READMEs, ADRs, specs, office files).
 //!
 //! **Trust note:** `root`/`path` are host-supplied params (the planner/spec
 //! decides what to read) and are used verbatim — the adapter has no sandbox.
@@ -15,7 +19,9 @@
 use async_trait::async_trait;
 use serde_json::json;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
+use crate::adapters::document::parse_document;
 use crate::adapters::ActionAdapter;
 use crate::request::{ActionRequest, ActionResult};
 
@@ -66,7 +72,7 @@ impl DocsAdapter {
     }
 
     fn all_actions() -> &'static [&'static str] {
-        &["search", "read"]
+        &["search", "read", "parse"]
     }
 
     fn search(&self, req: &ActionRequest) -> ActionResult {
@@ -158,6 +164,19 @@ impl DocsAdapter {
             Err(e) => ActionResult::error(format!("read failed: {e}")),
         }
     }
+    fn parse(&self, req: &ActionRequest) -> ActionResult {
+        let path = match req.param_str("path") {
+            Ok(p) => p,
+            Err(e) => return ActionResult::error(e),
+        };
+        let started = Instant::now();
+        match parse_document(Path::new(&path)) {
+            Ok(doc) => {
+                ActionResult::success(json!(doc)).with_latency_ms(started.elapsed().as_millis())
+            }
+            Err(e) => ActionResult::error(e),
+        }
+    }
 }
 
 /// Depth-first walk over a directory tree, skipping `SKIP_DIRS`. `visit` may
@@ -212,6 +231,7 @@ impl ActionAdapter for DocsAdapter {
         match req.action.as_str() {
             "search" => self.search(&req),
             "read" => self.read(&req),
+            "parse" => self.parse(&req),
             other => ActionResult::error(format!("unknown docs action: {other}")),
         }
     }
@@ -295,6 +315,67 @@ mod tests {
         let dir_req = ActionRequest::new("docs", "read", json!({ "path": root.to_string_lossy() }));
         let res = adapter.execute(dir_req).await;
         assert!(!res.success);
+    }
+
+    #[tokio::test]
+    async fn parse_returns_normalized_document() {
+        let dir = temp_tree();
+        let root = dir.path();
+        let path = root.join("spec.docx");
+        std::fs::write(&path, minimal_docx(&["FRIDAY supports DOCX parsing."])).unwrap();
+
+        let adapter = DocsAdapter::new();
+        let req = ActionRequest::new("docs", "parse", json!({ "path": path.to_string_lossy() }));
+        let res = adapter.execute(req).await;
+        assert!(res.success, "parse failed: {:?}", res.error);
+        assert!(
+            res.output["markdown"]
+                .as_str()
+                .unwrap()
+                .contains("FRIDAY supports DOCX parsing."),
+            "output: {}",
+            res.output
+        );
+        assert_eq!(res.output["metadata"]["parser"], "anydoc");
+        assert_eq!(res.output["metadata"]["format"], "docx");
+        assert!(res.output["id"].as_str().is_some());
+        assert!(res.metadata.contains_key("latency_ms"));
+    }
+
+    #[tokio::test]
+    async fn parse_rejects_unsupported_extension() {
+        let dir = temp_tree();
+        let root = dir.path();
+        let path = root.join("mystery.xyz");
+        std::fs::write(&path, b"nope").unwrap();
+
+        let adapter = DocsAdapter::new();
+        let req = ActionRequest::new("docs", "parse", json!({ "path": path.to_string_lossy() }));
+        let res = adapter.execute(req).await;
+        assert!(!res.success);
+        assert!(res.error.unwrap().contains("unsupported document format"));
+    }
+
+    fn minimal_docx(paragraphs: &[&str]) -> Vec<u8> {
+        use std::io::Write;
+        let mut buf = std::io::Cursor::new(Vec::new());
+        {
+            let mut zip = zip::ZipWriter::new(&mut buf);
+            let opts = zip::write::SimpleFileOptions::default();
+            zip.start_file("word/document.xml", opts).unwrap();
+            let body: String = paragraphs
+                .iter()
+                .map(|p| format!("<w:p><w:r><w:t>{}</w:t></w:r></w:p>", p))
+                .collect();
+            let xml = format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+<w:body>{body}</w:body></w:document>"
+            );
+            zip.write_all(xml.as_bytes()).unwrap();
+            zip.finish().unwrap();
+        }
+        buf.into_inner()
     }
 }
 
