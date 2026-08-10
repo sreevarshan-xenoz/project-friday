@@ -69,12 +69,14 @@ pub fn web() -> Vec<Capability> {
         .with_dry_run(true)]
 }
 
-/// Native documentation service capabilities: search + read local docs
-/// (READMEs, ADRs, specs, source comments) without a browser.
+/// Native documentation service capabilities: search, read and parse local docs
+/// (READMEs, ADRs, specs, source comments, office files) without a browser.
 pub fn docs() -> Vec<Capability> {
     vec![Capability::new("docs", "Documentation Service", "Docs")
-        .with_actions(&["search", "read"])
-        .with_description("Search and read local documentation files")
+        .with_actions(&["search", "read", "parse"])
+        .with_description(
+            "Search, read and parse local documentation (Markdown, Word, PDF, spreadsheets)",
+        )
         .with_latency(20)
         .with_reliability(0.999)
         .with_dry_run(true)]
