@@ -75,6 +75,16 @@
   background: var(--fr-primary-dim);
 }
 
+/* The primary surface (Chat) — a step above the system items. */
+.nav-item--primary {
+  font-weight: 600;
+}
+
+.nav-item--primary .nav-item-icon {
+  color: var(--fr-primary);
+  filter: drop-shadow(0 0 6px rgba(91, 200, 255, 0.45));
+}
+
 .nav-item-icon {
   font-size: 16px;
   width: 20px;
