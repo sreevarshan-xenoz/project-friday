@@ -23,15 +23,24 @@
 //! routes precisely to the real adapter and never hijacks a built-in
 //! capability (a `git.status` evidence action is *not* an arbitrary
 //! `execute_command`, and a real terminal tool keeps serving command goals).
+//!
+//! The same seam serves the **Browser Organ**: `gather evidence: external
+//! (webagent.ask)` routes to the `webagent` adapter and runs against the
+//! dedicated logged-in browser profile — research goals can ask ChatGPT / Grok
+//! / Gemini through the browser, no API keys (see `specs/browser-organ.md`).
+//! The planner's evidence actions always carry `{"query": <goal>}`; the
+//! webagent adapter treats that as the message and defaults the site to
+//! `FRIDAY_WEBAGENT_SITE` (else `https://chatgpt.com`).
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use friday_actions::{ActionAdapter, ActionRequest};
+use serde::{Deserialize, Serialize};
 
 use crate::common::{Action, Capability, ExecutionContext};
-use crate::verification::{Tool, ToolRegistry, ToolResult};
+use crate::verification::{ExecutionState, Tool, ToolRegistry, ToolResult};
 
 /// Extract `(tool, verb)` from an evidence action instruction.
 ///
@@ -158,20 +167,106 @@ impl Tool for AdapterTool {
     }
 }
 
+/// Whether an action is an evidence action (`gather evidence: … (<cap_id>)`).
+///
+/// Two independent conditions must both hold: the instruction carries the
+/// `gather evidence: … (<cap_id>)` shape **and** the capability is a
+/// `Capability::Custom` id. The planner emits exactly this combination for
+/// every required channel, while the goal's own final action carries an
+/// inferred *built-in* capability — so a goal description that happens to
+/// contain `(word.word)` can never be misclassified as evidence.
+pub fn is_evidence_action(action: &Action) -> bool {
+    parse_evidence_id(&action.instruction).is_some()
+        && matches!(action.capability, Capability::Custom(_))
+}
+
+/// One evidence action's epistemic lifecycle record: the Prepared → Observed
+/// → Verified | Failed trail for a single `gather evidence:` action, as driven
+/// by the `GoalEngine`. Every evidence action in an evidence-gated plan gets
+/// its own record — the audit can answer "did *this* channel's evidence
+/// verify?" per channel, not just for the plan as a whole.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvidenceActionRecord {
+    /// Position in the plan (0-based).
+    pub step: usize,
+    /// The full instruction, e.g. `gather evidence: git (git.status)`.
+    pub instruction: String,
+    /// The real skill capability id, e.g. `git.status`.
+    pub capability: String,
+    /// The capability prefix / adapter routing key (the tool part of
+    /// `<tool>.<verb>`), e.g. `git`, `web` — not the `InvestigationChannel`
+    /// label, though they coincide for every channel today.
+    pub channel: String,
+    /// The final epistemic state of this evidence action.
+    pub execution_state: ExecutionState,
+    pub verified: bool,
+    pub tool_success: bool,
+    pub duration_ms: u64,
+}
+
+/// The evidence trail of one evidence-gated execution: every evidence action
+/// in the plan carrying its own Prepared → Observed → Verified | Failed
+/// lifecycle. Published by the executive to the workspace so observers (the
+/// bridge's live trace) can render each channel's epistemic state.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EvidenceTrail {
+    /// The goal whose evidence-gated plan produced this trail.
+    pub goal: String,
+    /// One record per evidence action, in plan order.
+    pub records: Vec<EvidenceActionRecord>,
+}
+
+impl EvidenceTrail {
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.records.len()
+    }
+
+    /// `true` when every evidence action ended `Verified` (success may be
+    /// claimed only through the evidence lifecycle).
+    pub fn all_verified(&self) -> bool {
+        !self.records.is_empty()
+            && self
+                .records
+                .iter()
+                .all(|r| r.execution_state == ExecutionState::Verified)
+    }
+
+    pub fn verified_count(&self) -> usize {
+        self.records
+            .iter()
+            .filter(|r| r.execution_state == ExecutionState::Verified)
+            .count()
+    }
+}
+
 /// Register one [`AdapterTool`] per adapter into a [`ToolRegistry`].
 ///
+/// This is the production wiring seam for evidence channels: the bridge and
+/// the daemon both construct their adapter set here. The WebAgent adapter
+/// (`webagent.ask/send/read` — the External channel's logged-in sites) belongs
+/// in the same list as git and web.
+///
 /// ```rust
-/// use friday_actions::{GitAdapter, WebAdapter};
+/// use friday_actions::{GitAdapter, WebAdapter, WebAgentAdapter};
 /// use friday_goal_execution::{register_evidence_adapters, ToolRegistry};
 /// use std::sync::Arc;
 ///
 /// let mut registry = ToolRegistry::new();
 /// register_evidence_adapters(
 ///     &mut registry,
-///     &[Arc::new(GitAdapter::new()), Arc::new(WebAdapter::new())],
+///     &[
+///         Arc::new(GitAdapter::new()),
+///         Arc::new(WebAdapter::new()),
+///         Arc::new(WebAgentAdapter::new()),
+///     ],
 /// );
 /// assert!(registry.get("evidence:git").is_some());
 /// assert!(registry.get("evidence:web").is_some());
+/// assert!(registry.get("evidence:webagent").is_some());
 /// ```
 pub fn register_evidence_adapters(
     registry: &mut ToolRegistry,
@@ -190,6 +285,66 @@ mod tests {
     use friday_investigation::{InformationRequirement, InvestigationChannel, InvestigationPlan};
     use serde_json::json;
     use std::process::Command;
+
+    // ── Evidence trail helpers ───────────────────────────────────────
+
+    #[test]
+    fn is_evidence_action_detects_gather_evidence_shape() {
+        let evidence = Action::single(
+            "gather evidence: git (git.status)",
+            Capability::Custom("git.status".into()),
+            "g1",
+        );
+        assert!(is_evidence_action(&evidence));
+
+        let goal_action = Action::single("run cargo test", Capability::ExecuteCommand, "g1");
+        assert!(!is_evidence_action(&goal_action));
+        assert!(!is_evidence_action(&Action::single(
+            "gather evidence: git (no-dot)",
+            Capability::Custom("git.status".into()),
+            "g1"
+        )));
+        // The instruction shape alone is not enough: a goal description that
+        // happens to contain `(word.word)` with a *built-in* capability must
+        // not be misclassified as evidence.
+        assert!(!is_evidence_action(&Action::single(
+            "Check (docs.rs) for details",
+            Capability::ExecuteCommand,
+            "g1"
+        )));
+    }
+
+    #[test]
+    fn evidence_trail_counts_verified_and_gates() {
+        let record = |state: ExecutionState| EvidenceActionRecord {
+            step: 0,
+            instruction: "gather evidence: git (git.status)".into(),
+            capability: "git.status".into(),
+            channel: "git".into(),
+            execution_state: state,
+            verified: state == ExecutionState::Verified,
+            tool_success: state == ExecutionState::Verified,
+            duration_ms: 5,
+        };
+
+        let empty = EvidenceTrail::default();
+        assert!(empty.is_empty());
+        assert!(!empty.all_verified(), "empty trail is never all-verified");
+
+        let mut trail = EvidenceTrail {
+            goal: "g1".into(),
+            records: vec![record(ExecutionState::Verified)],
+        };
+        assert!(!trail.is_empty());
+        assert_eq!(trail.len(), 1);
+        assert!(trail.all_verified());
+        assert_eq!(trail.verified_count(), 1);
+
+        // A single failed evidence action breaks the gate.
+        trail.records.push(record(ExecutionState::Failed));
+        assert!(!trail.all_verified());
+        assert_eq!(trail.verified_count(), 1);
+    }
 
     // ── Instruction parsing ──────────────────────────────────────────
 
@@ -295,6 +450,61 @@ mod tests {
         );
     }
 
+    // ── WebAgent evidence: gather evidence: external (webagent.ask) ────
+
+    /// Live browser integration (`FRIDAY_BROWSER_TEST=1`): an evidence action
+    /// for the External channel runs the Browser Organ end-to-end — open →
+    /// type → submit → read — against a local echo page, using exactly the
+    /// planner's parameter contract (`{"query": <goal>}`) and no explicit
+    /// site.
+    #[tokio::test]
+    async fn webagent_evidence_runs_real_browser_roundtrip() {
+        if std::env::var("FRIDAY_BROWSER_TEST")
+            .map(|v| v != "1")
+            .unwrap_or(true)
+        {
+            eprintln!(
+                "skipping webagent evidence integration (set FRIDAY_BROWSER_TEST=1 to enable)"
+            );
+            return;
+        }
+        let html = r#"<!doctype html><html><head><title>Echo</title></head>
+            <body><textarea id="in"></textarea>
+            <article id="out">initial</article>
+            <script>
+              document.getElementById('in').addEventListener('keydown', function (e) {
+                if (e.key === 'Enter') {
+                  document.getElementById('out').textContent = this.value;
+                }
+              });
+            </script></body></html>"#;
+        let base = serve_html_loop(html).await;
+
+        let tool = AdapterTool::for_evidence(Arc::new(
+            friday_actions::WebAgentAdapter::new()
+                .with_profile(std::env::temp_dir().join("friday-webagent-evidence-test"))
+                .with_default_site(base),
+        ));
+        let action = Action::single(
+            "gather evidence: external (webagent.ask)",
+            Capability::Custom("webagent.ask".into()),
+            "g1",
+        )
+        .with_parameters(json!({ "query": "Hello evidence" }));
+        let ctx = ExecutionContext::for_goal("g1");
+        let result = tool.execute(&action, &ctx).await;
+        assert!(
+            result.success,
+            "webagent evidence failed: {:?}",
+            result.error
+        );
+        assert!(
+            result.output.contains("Hello evidence"),
+            "output: {}",
+            result.output
+        );
+    }
+
     // ── Full stack: evidence-gated plan runs the real git adapter ────
 
     #[tokio::test]
@@ -378,6 +588,35 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .subsec_nanos() as u64
+    }
+
+    /// Serve one canned HTML page on an ephemeral **loop** server — every
+    /// request gets the same body. The browser organ fetches the page and may
+    /// make follow-up requests (e.g. `/favicon.ico`), so the server must not
+    /// exit after the first connection.
+    async fn serve_html_loop(html: &'static str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let _ = sock.read(&mut buf).await;
+                    let body = html.as_bytes();
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = sock.write_all(head.as_bytes()).await;
+                    let _ = sock.write_all(body).await;
+                });
+            }
+        });
+        format!("http://{addr}/")
     }
 
     /// Serve one canned HTML response on an ephemeral local port; returns the
