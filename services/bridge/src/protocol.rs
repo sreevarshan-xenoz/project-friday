@@ -395,6 +395,39 @@ impl From<&InvestigationGraph> for InvestigationGraphDto {
     }
 }
 
+/// One evidence action's lifecycle record — the Prepared → Observed →
+/// Verified | Failed trail of a single evidence channel. Mirrors
+/// `friday_goal_execution::evidence::EvidenceActionRecord`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EvidenceActionDto {
+    /// The evidence channel (`web`, `docs`, `git`, `memory`, `filesystem`,
+    /// `codeintel`).
+    pub channel: String,
+    /// The capability id (e.g. `web.search`).
+    pub capability: String,
+    /// The evidence lifecycle state: `prepared` | `observed` | `verified` |
+    /// `failed` (mirrors `ExecutionState::label`).
+    pub execution_state: String,
+    /// Whether verification passed.
+    pub verified: bool,
+    /// Whether the tool itself succeeded.
+    pub tool_success: bool,
+    /// Execution duration in milliseconds.
+    pub duration_ms: u64,
+}
+
+/// The evidence trail of the current goal — every evidence action with its
+/// own lifecycle record (mirrors `friday_goal_execution::EvidenceTrail`).
+/// This is the Execute-phase segment of the cognitive trace, summarized per
+/// channel so the console can render the evidence lifecycle live.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EvidenceTrailDto {
+    /// The goal whose execution produced this trail.
+    pub goal: String,
+    /// One lifecycle record per evidence action, in execution order.
+    pub records: Vec<EvidenceActionDto>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DashboardDto {
     pub mission: String,
@@ -407,6 +440,12 @@ pub struct DashboardDto {
     /// needs to know before acting, and the phase chain that follows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub graph: Option<InvestigationGraphDto>,
+    /// The evidence lifecycle of the current goal's execution: every evidence
+    /// action with its own Prepared → Observed → Verified | Failed state.
+    /// None before execution and for direct-plan goals that gather no
+    /// evidence. Mirrors `friday_goal_execution::EvidenceTrail`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<EvidenceTrailDto>,
 }
 
 // ---------------------------------------------------------------------------
