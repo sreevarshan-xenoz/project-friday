@@ -17,6 +17,10 @@ pub enum InvestigationChannel {
     Git,
     /// Local files and directories.
     Filesystem,
+    /// External reasoning through a **logged-in website** (the Browser Organ,
+    /// `specs/browser-organ.md`): ask ChatGPT / Grok / Gemini via the browser
+    /// — no API keys, the dedicated profile is the credential boundary.
+    External,
 }
 
 impl InvestigationChannel {
@@ -29,6 +33,7 @@ impl InvestigationChannel {
             Self::Memory => "memory",
             Self::Git => "git",
             Self::Filesystem => "filesystem",
+            Self::External => "external",
         }
     }
 
@@ -43,6 +48,7 @@ impl InvestigationChannel {
             Self::Memory => &["memory.recall"],
             Self::Git => &["git.status", "git.log"],
             Self::Filesystem => &["filesystem.list_directory", "filesystem.read_file"],
+            Self::External => &["webagent.ask", "webagent.send"],
         }
     }
 
@@ -55,6 +61,7 @@ impl InvestigationChannel {
             Self::Memory => 3,
             Self::Git => 4,
             Self::Filesystem => 5,
+            Self::External => 6,
         }
     }
 
@@ -71,6 +78,7 @@ impl InvestigationChannel {
             "memory" => Some(Self::Memory),
             "git" => Some(Self::Git),
             "filesystem" | "file-system" => Some(Self::Filesystem),
+            "external" | "webagent" | "chatgpt" | "grok" => Some(Self::External),
             _ => None,
         }
     }
@@ -89,9 +97,27 @@ mod tests {
             InvestigationChannel::Memory,
             InvestigationChannel::Git,
             InvestigationChannel::Filesystem,
+            InvestigationChannel::External,
         ] {
             assert!(!c.suggested_capabilities().is_empty(), "{}", c.label());
             assert!(!c.label().is_empty());
+        }
+    }
+
+    #[test]
+    fn external_maps_to_webagent_capabilities() {
+        assert_eq!(
+            InvestigationChannel::External.suggested_capabilities(),
+            &["webagent.ask", "webagent.send"]
+        );
+        assert_eq!(InvestigationChannel::External.label(), "external");
+        // The model may say "chatgpt" or "grok" — tolerant label parsing.
+        for label in ["external", "webagent", "chatgpt", "grok"] {
+            assert_eq!(
+                InvestigationChannel::from_label(label),
+                Some(InvestigationChannel::External),
+                "label: {label}"
+            );
         }
     }
 
