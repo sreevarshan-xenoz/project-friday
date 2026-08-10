@@ -3,6 +3,9 @@ import { motion } from 'framer-motion';
 import { useConsole } from '../console/store';
 import { Chip } from '../console/ui';
 import type {
+  EvidenceAction,
+  EvidenceState,
+  EvidenceTrailDTO,
   ExecutivePhaseState,
   InformationRequirement,
   InvestigationChannel,
@@ -20,6 +23,23 @@ const CHANNEL_META: Record<InvestigationChannel, { icon: string; label: string }
   git: { icon: '⛃', label: 'Git' },
   filesystem: { icon: '▣', label: 'Filesystem' },
 };
+
+/** Evidence lifecycle glyphs + labels (mirrors `ExecutionState::label`). */
+const EVIDENCE_META: Record<EvidenceState, { glyph: string; label: string }> = {
+  prepared: { glyph: '◌', label: 'prepared' },
+  observed: { glyph: '◉', label: 'observed' },
+  verified: { glyph: '✓', label: 'verified' },
+  failed: { glyph: '✕', label: 'failed' },
+  cancelled: { glyph: '∅', label: 'cancelled' },
+};
+
+/**
+ * Crash-proof meta lookup: the wire carries `execution_state` as a free
+ * string, so an unknown/future state must never throw in the render.
+ */
+function evidenceMeta(state: EvidenceState): { glyph: string; label: string } {
+  return EVIDENCE_META[state] ?? { glyph: '—', label: state };
+}
 
 /** The eleven-phase executive cycle (mirrors `services/goal-execution`). */
 const EXEC_ORDER: string[] = [
@@ -67,12 +87,21 @@ function LiveBadge({ connected, fps }: { connected: boolean; fps: number }) {
   );
 }
 
-function BranchCard({ req, index }: { req: InformationRequirement; index: number }) {
+function BranchCard({
+  req,
+  index,
+  record,
+}: {
+  req: InformationRequirement;
+  index: number;
+  record?: EvidenceAction | null;
+}) {
   const meta = CHANNEL_META[req.channel];
   const pct = Math.round(req.confidence * 100);
+  const state = record ? evidenceMeta(record.execution_state) : null;
   return (
     <motion.div
-      className={`con-graph-branch con-graph-branch--${req.channel}`}
+      className={`con-graph-branch con-graph-branch--${req.channel}${record ? ` con-graph-branch--ev-${record.execution_state}` : ''}`}
       initial={{ opacity: 0, y: 14, scale: 0.96 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ delay: 0.3 + index * 0.14, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
@@ -80,7 +109,17 @@ function BranchCard({ req, index }: { req: InformationRequirement; index: number
       <div className="con-graph-branch-head">
         <span className="con-graph-branch-icon">{meta.icon}</span>
         <span className="con-graph-branch-name">{meta.label}</span>
-        <span className="con-graph-branch-pct">{pct}%</span>
+        {state ? (
+          <span
+            className={`con-graph-ev-badge con-graph-ev-badge--${record!.execution_state}`}
+            title={`${record!.capability} · ${state.label}`}
+          >
+            {state.glyph}
+            {state.label}
+          </span>
+        ) : (
+          <span className="con-graph-branch-pct">{pct}%</span>
+        )}
       </div>
       <div className="con-graph-bar">
         <motion.div
@@ -91,6 +130,53 @@ function BranchCard({ req, index }: { req: InformationRequirement; index: number
         />
       </div>
       <div className="con-graph-branch-rationale">matched · {req.rationale}</div>
+    </motion.div>
+  );
+}
+
+/**
+ * The evidence lifecycle rail: every evidence action of the current goal with
+ * its own Prepared → Observed → Verified | Failed state — the Execute-phase
+ * segment of the cognitive trace, live from the runtime.
+ */
+function EvidenceLifecycle({ trail, verifiedCount }: { trail: EvidenceTrailDTO; verifiedCount: number }) {
+  return (
+    <motion.div
+      className="con-graph-evidence"
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.35, duration: 0.4 }}
+    >
+      <div className="con-graph-evidence-head">
+        <span className="con-graph-evidence-title">Evidence lifecycle</span>
+        <span className="con-graph-evidence-sub">Prepared → Observed → Verified · per channel</span>
+        <span className={`con-graph-evidence-summary${verifiedCount === trail.records.length ? ' con-graph-evidence-summary--all' : ''}`}>
+          {verifiedCount}/{trail.records.length} verified
+        </span>
+      </div>
+      <div className="con-graph-evidence-list">
+        {trail.records.map((r, i) => {
+          const meta = evidenceMeta(r.execution_state);
+          const ch = CHANNEL_META[r.channel as InvestigationChannel];
+          return (
+            <motion.div
+              key={r.capability}
+              className={`con-graph-evidence-row con-graph-evidence-row--${r.execution_state}`}
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: 0.45 + i * 0.08, duration: 0.3 }}
+            >
+              <span className="con-graph-evidence-icon">{ch?.icon ?? '◎'}</span>
+              <span className="con-graph-evidence-cap">{r.capability}</span>
+              <span className="con-graph-evidence-state">
+                <span className="con-graph-evidence-dot" />
+                {meta.label}
+              </span>
+              <span className="con-graph-evidence-dur">{r.duration_ms}ms</span>
+            </motion.div>
+          );
+        })}
+      </div>
     </motion.div>
   );
 }
@@ -166,9 +252,11 @@ export function ExecutionGraphScreen() {
           {/* Evidence branches */}
           {graph.requirements.length > 0 ? (
             <div className="con-graph-branches">
-              {graph.requirements.map((req, i) => (
-                <BranchCard key={req.channel} req={req} index={i} />
-              ))}
+              {graph.requirements.map((req, i) => {
+                const record =
+                  dashboard.evidence?.records.find((r) => r.channel === req.channel) ?? null;
+                return <BranchCard key={req.channel} req={req} index={i} record={record} />;
+              })}
             </div>
           ) : (
             <motion.div
@@ -182,6 +270,16 @@ export function ExecutionGraphScreen() {
             </motion.div>
           )}
 
+          {/* Evidence lifecycle — the Execute-phase segment of the trace */}
+          {dashboard.evidence && dashboard.evidence.records.length > 0 && (
+            <EvidenceLifecycle
+              trail={dashboard.evidence}
+              verifiedCount={
+                dashboard.evidence.records.filter((r) => r.execution_state === 'verified').length
+              }
+            />
+          )}
+
           <div className="con-graph-link" />
 
           {/* Phase chain */}
@@ -192,6 +290,22 @@ export function ExecutionGraphScreen() {
             <Chip tone="default">
               {graph.requirements.length} evidence branch{graph.requirements.length === 1 ? '' : 'es'}
             </Chip>
+            {dashboard.evidence && dashboard.evidence.records.length > 0 && (
+              <Chip
+                tone={
+                  dashboard.evidence.records.every((r) => r.execution_state === 'verified')
+                    ? 'green'
+                    : 'default'
+                }
+              >
+                evidence{' '}
+                {
+                  dashboard.evidence.records.filter((r) => r.execution_state === 'verified')
+                    .length
+                }
+                /{dashboard.evidence.records.length} verified
+              </Chip>
+            )}
           </div>
         </motion.div>
       )}
