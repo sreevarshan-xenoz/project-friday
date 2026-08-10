@@ -1,4 +1,5 @@
 use crate::attention::AttentionItem;
+use crate::evidence::EvidenceTrail;
 use crate::experience::ExperiencePattern;
 use crate::goal::Goal;
 use crate::memory::{Belief, CognitiveEpisode};
@@ -92,6 +93,10 @@ pub struct CognitiveBlackboard {
     /// (e.g. the ReadModelBridge) read this to render the live
     /// `InvestigationGraph` — the real decision, not a re-derivation.
     investigation: RwLock<Option<InvestigationSnapshot>>,
+    /// The evidence trail of the most recent evidence-gated execution: every
+    /// evidence action's Prepared → Observed → Verified | Failed lifecycle,
+    /// published by the executive's Execute phase.
+    evidence_trail: RwLock<Option<EvidenceTrail>>,
     /// Change broadcast channel.
     notifier: Arc<broadcast::Sender<WorkspaceChange>>,
 }
@@ -114,6 +119,7 @@ impl CognitiveBlackboard {
             current_episode: RwLock::new(None),
             current_trace: RwLock::new(None),
             investigation: RwLock::new(None),
+            evidence_trail: RwLock::new(None),
             notifier: Arc::new(tx),
         })
     }
@@ -411,6 +417,33 @@ impl CognitiveBlackboard {
         }
     }
 
+    // ── Evidence Trail (M7 per-evidence-action lifecycle) ────────
+
+    /// Record the evidence trail of the most recent evidence-gated execution:
+    /// every evidence action's Prepared → Observed → Verified | Failed
+    /// lifecycle. Written by the executive's Execute phase, read by observers
+    /// (bridge live trace) and audits.
+    pub fn set_evidence_trail(&self, trail: EvidenceTrail) {
+        if let Ok(mut w) = self.evidence_trail.write() {
+            let desc = format!("evidence trail: {} action(s)", trail.records.len());
+            *w = Some(trail);
+            drop(w);
+            self.notify("evidence_trail", desc);
+        }
+    }
+
+    pub fn get_evidence_trail(&self) -> Option<EvidenceTrail> {
+        self.evidence_trail.read().ok().and_then(|r| r.clone())
+    }
+
+    pub fn clear_evidence_trail(&self) {
+        if let Ok(mut w) = self.evidence_trail.write() {
+            *w = None;
+            drop(w);
+            self.notify("evidence_trail", "cleared");
+        }
+    }
+
     // ── Snapshot ────────────────────────────────────────────────
 
     /// Snapshot of the entire current cognitive state.
@@ -460,6 +493,7 @@ impl CognitiveBlackboard {
             *w = None;
         }
         self.clear_investigation();
+        self.clear_evidence_trail();
 
         self.notify("workspace", "all state cleared");
     }
