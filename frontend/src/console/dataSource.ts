@@ -32,7 +32,14 @@ import {
   type MetricsReport,
   type SnapshotFrame,
 } from './types';
-import { computeMetrics, executiveCycle, generateLedger, investigationGraph, worldState } from './mock';
+import {
+  computeMetrics,
+  evidenceTrail,
+  executiveCycle,
+  generateLedger,
+  investigationGraph,
+  worldState,
+} from './mock';
 
 const TICK_MS = 1200;
 const HEARTBEAT_EVERY = 3;
@@ -198,6 +205,7 @@ export class MockConsoleDataSource implements ConsoleDataSource {
       world: worldState(this.timelines),
       recent: this.timelines.slice(-6).reverse(),
       graph: investigationGraph(DEMO_GOALS[this.goalIndex]),
+      evidence: evidenceTrail(DEMO_GOALS[this.goalIndex], this.progress),
     };
   }
 
