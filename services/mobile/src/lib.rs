@@ -11,6 +11,7 @@ pub mod auth;
 pub mod bridge;
 pub mod commands;
 pub mod error;
+pub mod goal_runner;
 pub mod probe;
 pub mod protocol;
 pub mod session;
@@ -20,6 +21,7 @@ pub use auth::{sign_pairing, AuthError, AuthRegistry, PairingChallenge};
 pub use bridge::{translate, BusBridge};
 pub use commands::{method, CommandGateway};
 pub use error::MobileError;
+pub use goal_runner::GoalRunner;
 pub use probe::{SystemProbe, SystemSample};
 pub use protocol::{
     ClientInfo, ClientMessage, Health, ServerMessage, ServiceStatus, SystemHealth, Telemetry,
