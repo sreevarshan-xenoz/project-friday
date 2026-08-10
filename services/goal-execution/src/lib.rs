@@ -127,6 +127,10 @@ pub use admission::*;
 pub mod web_evidence;
 
 pub use web_evidence::*;
+
+pub mod verifiers;
+
+pub use verifiers::*;
 // ── Tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]

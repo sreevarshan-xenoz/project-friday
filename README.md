@@ -71,8 +71,8 @@ Statuses are updated as commits land — this table is the tracker.
 | 2 | Agent-Reach resolver (binding resolver + health-gated fallback) | 🟢 DONE |
 | 3 | `web.search` resolver wiring (normalized `Evidence[]`) | 🟢 DONE |
 | 4 | `web.fetch` resolver wiring (normalized fetch `Evidence[]`) | 🟢 DONE |
-| 5 | **Real local Code/Test Verifier** (`ConcreteVerifier`, before Sonar) | 🔴 **NEXT** |
-| 6 | **Evidence pipeline: Web + Docs → Verify → Memory** | 🟡 |
+| 5 | **Real local Code/Test Verifier** (`ConcreteVerifier`, before Sonar) | 🟢 DONE |
+| 6 | **Evidence pipeline: Web + Docs → Verify → Memory** | 🟡 **NEXT** |
 | 7 | **Agent Director / bounded subagents** | 🔴 |
 | 8 | **Parallel durable workflows + agent journaling** | 🟡 |
 | 9 | **Causal World Model** (entities → causes → effects → simulation) | 🟡 |
@@ -90,10 +90,12 @@ Statuses are updated as commits land — this table is the tracker.
 | 21 | World-model visualization / DrawDB | last |
 
 **Where we are:** **Gate 1 (Information Organ) is complete** — AnyDoc · Web
-Search · Web Fetch · Evidence · Memory are all wired. The next unit of work is
-**#5 — the real local Code/Test Verifier**, the first step into **Gate 2
-(Trustworthy Executor)**: the point where FRIDAY stops merely gaining
-capabilities and starts gaining **trustworthy execution**.
+Search · Web Fetch · Evidence · Memory are all wired — and **#5, the real local
+Code/Test Verifier, is done**: FRIDAY now interprets observed output instead of
+trusting it (`CodeTestVerifier` → real command run → inspectable `checks[]` →
+`VerifiedResult`; a failed check is `Failed`, never `Verified`). That is the
+first concrete step into **Gate 2 (Trustworthy Executor)**. Next unit of work:
+**#6 — the Evidence pipeline** (Web + Docs → Verify → Memory).
 
 ### Milestone gates
 

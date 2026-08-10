@@ -64,7 +64,7 @@ PERCEIVE → UNDERSTAND → DEFINE DESIRED STATE → PLAN → DELEGATE → EXECU
 | **Skills**                     | 🟢/🟡 Implemented–Partial | Real manifests/runtime; learning/compounding incomplete |
 | **Web resolver**                | 🟢 Wired | BindingResolver → health-gated provider fallback (`services/capabilities/src/resolver.rs:31`); `web.search` **and** `web.fetch` routed end-to-end through the evidence seam — resolver → Action Runtime → normalized `Evidence[]` (`services/goal-execution/src/web_evidence.rs:129`; acceptance: search fallback at `web_evidence.rs:736`, fetch fallback at `web_evidence.rs:806`). The whole Web organ is wired |
 | **Durable execution**          | 🟡 Partial | Checkpoint/resume exists; no full crash-safe agent journaling |
-| **Verification**               | 🟡 Partial | Real verification framework; weak/mock concrete verifiers |
+| **Verification**               | 🟢 Implemented | Real framework **+ first concrete verifier**: `CodeTestVerifier` — workspace + command → real exit code/stdout/stderr → inspectable `checks[]` → `VerifiedResult` (`services/goal-execution/src/verifiers.rs:61,226,274`); FAILED-marker-blocks-false-success acceptance (`verifiers.rs:416`). Sonar/security/evidence verifiers remain additive behind the same seam |
 | **World model**                | 🟡 Partial | Real type exists; far from a causal world model |
 | **Cognitive planner**          | 🟡 Partial | Real planner; not yet the world-model-driven cognitive planner |
 | **Reflection**                 | 🟡 Partial | Real machinery; no closed self-improvement loop |
@@ -150,6 +150,26 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
 - **Acceptance:** a skill can only execute within its declared permission scope;
   readonly skills never mutate state.
 
+#### Verification — 🟢 (real framework + first concrete verifier)
+- **What exists:** `Verification` registry of `Box<dyn Verifier>`,
+  `VerifiedResult { verified, tool_success, checks, confidence }`, execution
+  lifecycle `Prepared → Observed → Verified|Failed`
+  (`services/goal-execution/src/verification.rs:116,182,265`); planner verifier/
+  result/retry; **first concrete (non-mock) verifier shipped**: `CodeTestVerifier`
+  — real command run in a workspace with captured stdout/stderr/exit code
+  (`services/goal-execution/src/verifiers.rs:61,226`), inspectable `checks[]`
+  (`command_run_checks`, `verifiers.rs:94`) over both live runs and observed
+  `ToolResult`s (`verify_command`, `to_verification`, `verifiers.rs:274,288`);
+  10 tests green incl. "FAILED marker blocks false success" (`verifiers.rs:416`).
+- **Remaining (additive, behind the same seam):** Sonar → Security → Evidence
+  verifiers slot into the frozen `Verifier` trait; `NEW VerificationSystem` is
+  forbidden by Rule 1.
+- **Inspired by:** SonarQube CLI, PR-Agent, OMH evidence-before-claims.
+- **Plugs into:** frozen `Verifier` trait + `ExecutionState` lifecycle.
+- **Acceptance:** a real verifier runs on observed output and produces a
+  `VerifiedResult` whose `checks` are inspectable; a failed check is recorded
+  `Failed`, never `Verified`.
+
 ### 3.2 Partial (🟡)
 
 #### Durable execution — 🟡 (framework real, not crash-complete)
@@ -166,22 +186,6 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
 - **Plugs into:** `Workflow` trait + `WorkflowStore` seam (frozen).
 - **Acceptance:** a simulated crash mid-run + `resume()` from a stored checkpoint
   reproduces exactly the evidence trail, with no re-execution of verified steps.
-
-#### Verification — 🟡 (framework real, verifiers weak)
-- **What exists:** `Verification` registry of `Box<dyn Verifier>`,
-  `VerifiedResult { verified, tool_success, checks, confidence }`, execution
-  lifecycle `Prepared → Observed → Verified|Failed`
-  (`services/goal-execution/src/verification.rs:116,182,265`); planner verifier/
-  result/retry; shipped verifiers are mock/structural (`MockVerifier`).
-- **Missing capability (build BEHIND the seam, not a new system):** concrete
-  verifiers — code/test verifier first, then Sonar/security, then evidence
-  verification. The `Verifier` seam is the answer; `NEW VerificationSystem` is
-  forbidden by Rule 1.
-- **Inspired by:** SonarQube CLI, PR-Agent, OMH evidence-before-claims.
-- **Plugs into:** frozen `Verifier` trait + `ExecutionState` lifecycle.
-- **Acceptance:** a real verifier runs on observed output and produces a
-  `VerifiedResult` whose `checks` are inspectable; a failed check is recorded
-  `Failed`, never `Verified`.
 
 #### World model — 🟡 (real type, not causal)
 - **What exists:** `WorldModel` with `WorldState` snapshot + immutable
@@ -296,7 +300,7 @@ capability as an equal-priority feature.
 | -------- | ---------------------------------------- | -------------------------------------------------------------------- | ----------------------------- |
 | **P0**   | **AnyDoc `docs.parse`**                  | Cleanest existing-seam integration — **DONE (2026-08-10)**           | AnyDoc                        |
 | **P0**   | **Rust-native Web Resolver**             | Web resolver wired end-to-end (`web.search` + `web.fetch`) — **DONE (2026-08-10)** | Agent-Reach                   |
-| **P1**   | **Concrete Verification Gate**           | Verifier framework exists, shipped implementations are weak/mock     | SonarQube + existing verifier |
+| **P1**   | **Concrete Verification Gate**           | **Local code/test verifier DONE (2026-08-10)**; Sonar/security/evidence verifiers remain additive behind the same seam | SonarQube + existing verifier |
 | **P1**   | **Evidence/Research pipeline hardening** | Connect web + docs + verification into one trustworthy research path | Agent-Reach + AnyDoc          |
 | **P1**   | **Agent Director / Subagents**           | Actual recursive/child-agent mechanism is missing                    | Prime Agent + Multica         |
 | **P2**   | **Parallel durable workflows**           | Checkpoint/resume already exists, parallel execution is missing      | DeepZero + OpenMontage        |
