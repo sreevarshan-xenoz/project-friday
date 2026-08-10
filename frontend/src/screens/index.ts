@@ -3,6 +3,7 @@ export { ChatScreen } from './ChatScreen';
 export { ProjectsScreen } from './ProjectsScreen';
 export { MemoryScreen } from './MemoryScreen';
 export { TerminalScreen } from './TerminalScreen';
+export { ProvidersScreen } from './ProvidersScreen';
 export { SettingsScreen } from './SettingsScreen';
 export { ConsoleDashboardScreen } from './ConsoleDashboardScreen';
 export { ExecutionGraphScreen as ConsoleExecutionGraphScreen } from './ExecutionGraphScreen';
