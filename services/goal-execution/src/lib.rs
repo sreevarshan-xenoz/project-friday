@@ -116,8 +116,12 @@ pub mod execution;
 pub use execution::*;
 pub mod evidence;
 pub use evidence::*;
+pub mod result;
+pub use result::*;
 pub mod workflow;
 pub use workflow::*;
+pub mod admission;
+pub use admission::*;
 
 // ── Tests ───────────────────────────────────────────────────────────
 
@@ -821,6 +825,112 @@ mod tests {
         assert_eq!(
             model.state().variables.get("x"),
             Some(&serde_json::json!(42))
+        );
+    }
+
+    // ── World Model Knowledge Graph (synthesis Phase 4) ─────────
+
+    #[test]
+    fn world_model_carries_seeded_ontology() {
+        let model = WorldModel::new(WorldState::new());
+        let g = model.knowledge();
+        // M5.6 seed facts are pre-loaded on every WorldModel.
+        assert_eq!(
+            g.find_missing_preconditions("git.commit", &[]),
+            vec!["GitRepository"]
+        );
+        assert_eq!(
+            g.find_missing_preconditions("web.search", &[]),
+            vec!["Network"]
+        );
+        assert_eq!(
+            g.find_missing_preconditions("browser.click", &[]),
+            vec!["BrowserSession"]
+        );
+    }
+
+    #[test]
+    fn world_model_finds_missing_prerequisites_from_state() {
+        // No repo, no network → both preconditions missing.
+        let model = WorldModel::new(WorldState::new());
+        assert_eq!(
+            model.find_missing_capability_prerequisites("git.commit"),
+            vec!["GitRepository"]
+        );
+        assert_eq!(
+            model.find_missing_capability_prerequisites("web.search"),
+            vec!["Network"]
+        );
+    }
+
+    #[test]
+    fn world_model_state_satisfies_graph_preconditions() {
+        // A known .git directory ⇒ GitRepository present.
+        let repo_state = WorldState::new().with_file(
+            ".git",
+            FileMeta {
+                path: ".git".into(),
+                exists: true,
+                size_bytes: None,
+                is_directory: true,
+                modified_at_ms: None,
+            },
+        );
+        let model = WorldModel::new(repo_state);
+        assert!(
+            model
+                .find_missing_capability_prerequisites("git.commit")
+                .is_empty(),
+            "repository present in state ⇒ no missing preconditions"
+        );
+
+        // Network available ⇒ web.search satisfiable.
+        let net_model = WorldModel::new(WorldState::new().with_network(true));
+        assert!(net_model
+            .find_missing_capability_prerequisites("web.search")
+            .is_empty());
+    }
+
+    #[test]
+    fn world_model_planner_can_prepend_prerequisite_steps() {
+        // The M5.6 flow: missing prerequisite → find the capability that
+        // creates the entity → that is the step to prepend.
+        let model = WorldModel::new(WorldState::new());
+        let missing = model.find_missing_capability_prerequisites("git.commit");
+        assert_eq!(missing, vec!["GitRepository"]);
+
+        let mut creators = model.knowledge().creating_capabilities("GitRepository");
+        creators.sort();
+        assert_eq!(
+            creators,
+            vec!["git.clone", "git.init"],
+            "planner appends git.init/git.clone before git.commit"
+        );
+    }
+
+    #[test]
+    fn world_model_knowledge_mut_asserts_and_remembers() {
+        let mut model = WorldModel::new(WorldState::new());
+        let g = model.knowledge_mut();
+        let before = g.count();
+        let id = g.remember("minecraft.server", "Creates", "MinecraftWorld");
+        assert!(g.query(None, None, Some("MinecraftWorld")).len() == 1);
+        // Repeat strengthens — the same fact, higher confidence.
+        g.remember("minecraft.server", "Creates", "MinecraftWorld");
+        assert!(g.query(None, None, None).len() == before + 1);
+        let triples = g.query(None, None, Some("MinecraftWorld"));
+        assert_eq!(triples[0].id, id);
+        assert!(triples[0].confidence > 0.5);
+    }
+
+    #[test]
+    fn world_model_knowledge_replaceable() {
+        let custom = friday_knowledge::KnowledgeGraph::empty();
+        let model = WorldModel::new(WorldState::new()).with_knowledge(custom);
+        assert_eq!(
+            model.knowledge().count(),
+            0,
+            "custom graph replaces the seed"
         );
     }
 
@@ -2427,10 +2537,17 @@ mod tests {
 
         let mut world = WorldState::default();
         world.available_tools.push(Capability::ExecuteCommand);
+        // Unclassified goals route to the safe recall default (never the
+        // shell) — advertise it so the plan is feasible and executes.
+        world.available_tools.push(Capability::SearchMemory);
         workspace.set_world_state(world);
 
         let mut exec = Executive::new();
         exec.register_tool(Box::new(MockTool::success("echo", "ok")));
+        exec.register_tool(Box::new(
+            MockTool::success("recall", "recalled")
+                .with_capabilities(vec![Capability::SearchMemory]),
+        ));
 
         exec.add_goal("first task", 0.8);
         let r1 = exec.cycle(&workspace).await;
