@@ -15,21 +15,44 @@ use crate::request::{ActionRequest, ActionResult};
 pub mod browser;
 pub mod codeintel;
 pub mod docs;
+pub mod document;
 pub mod filesystem;
 pub mod git;
 pub mod mcp;
+pub mod provider;
+pub mod reasoning;
 pub mod sim;
+pub mod telemetry;
 pub mod terminal;
 pub mod web;
+pub mod webagent;
 
 pub use browser::{browser_capability_specs, register_browser_capabilities, BrowserAdapter};
 pub use codeintel::CodeIntelAdapter;
 pub use docs::DocsAdapter;
+pub use document::{
+    parse_document, Document, DocumentAsset, DocumentId, DocumentMetadata, DocumentSource,
+};
 pub use filesystem::FilesystemAdapter;
 pub use git::GitAdapter;
 pub use mcp::McpAdapter;
+pub use provider::{
+    ExpertProfile, ProviderCapabilities, ProviderCapability, ProviderEntry, ProviderId,
+    ProviderRegistry, Transport,
+};
+pub use reasoning::{
+    reasoning_capability_specs, register_reasoning_capabilities, BrowserReasoningProvider,
+    ConfidenceTier, ConsultResult, ExpertRouter, LatencyTier, ReasoningAdapter, ReasoningProvider,
+    ReasoningRequest, RoutingPolicy,
+};
+pub use telemetry::{MeasuredOutcome, ProviderStats, ProviderTelemetry};
 pub use terminal::TerminalAdapter;
 pub use web::WebAdapter;
+pub use webagent::{
+    agent_for_site, register_webagent_capabilities, webagent_capability_specs, ChatGPTAdapter,
+    ClaudeAdapter, GeminiAdapter, GenericWebAgent, GrokAdapter, PerplexityAdapter, WebAgent,
+    WebAgentAdapter, WebAgentResponse,
+};
 
 /// A swappable capability. Implementors handle a normalized
 /// [`ActionRequest`] and return a normalized [`ActionResult`].
