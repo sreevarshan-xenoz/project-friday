@@ -12,6 +12,7 @@
     "web.open",
     "web.click",
     "web.type",
+    "web.submit",
     "web.scroll",
     "web.extract",
     "web.screenshot"
