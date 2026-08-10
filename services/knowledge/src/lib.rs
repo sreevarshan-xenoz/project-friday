@@ -1,8 +1,18 @@
+pub mod graph;
+
+pub use graph::{JsonKnowledgeGraphStore, KnowledgeError, KnowledgeGraph, KnowledgeTriple};
+
 use friday_memory::Episode;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // ── Knowledge Types ─────────────────────────────────────────────────
+//
+// NOTE: `KnowledgeGraph` (graph.rs) is the structured relationship layer
+// (subject–predicate–object triples). `KnowledgeRecord` below is the *flat*
+// pattern layer derived by `PatternDetector`. They are complementary: patterns
+// say "this workflow recurs"; the graph says "git.commit requires a
+// GitRepository".
 
 /// A derived knowledge record — a pattern recognized from observations.
 ///
