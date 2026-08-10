@@ -411,6 +411,50 @@ export interface InvestigationGraphDTO {
   phases: string[];
 }
 
+/**
+ * The evidence lifecycle state of one evidence action, mirroring
+ * `friday_goal_execution::ExecutionState::label`: `prepared` → `observed` →
+ * `verified` | `failed` (`cancelled` for never-dispatched actions). Success
+ * may only be claimed at `verified`.
+ */
+export type EvidenceState =
+  | 'prepared'
+  | 'observed'
+  | 'verified'
+  | 'failed'
+  | 'cancelled';
+
+/**
+ * One evidence action's lifecycle record — the Execute-phase segment of the
+ * cognitive trace, summarized per channel. Mirrors
+ * `friday_goal_execution::evidence::EvidenceActionRecord` (carried by the
+ * bridge in `DashboardDto.evidence`).
+ */
+export interface EvidenceAction {
+  /** The evidence channel (`web`, `docs`, `git`, `memory`, `filesystem`, `codeintel`). */
+  channel: string;
+  /** The capability id (e.g. `web.search`). */
+  capability: string;
+  /** The evidence lifecycle state. */
+  execution_state: EvidenceState;
+  /** Whether verification passed. */
+  verified: boolean;
+  /** Whether the tool itself succeeded. */
+  tool_success: boolean;
+  /** Execution duration in milliseconds. */
+  duration_ms: number;
+}
+
+/**
+ * The evidence trail of the current goal — every evidence action with its
+ * own Prepared → Observed → Verified | Failed lifecycle. Mirrors
+ * `friday_goal_execution::EvidenceTrail`.
+ */
+export interface EvidenceTrailDTO {
+  goal: string;
+  records: EvidenceAction[];
+}
+
 export interface DashboardDTO {
   mission: string;
   goal_progress: number;
@@ -420,6 +464,11 @@ export interface DashboardDTO {
   recent: DecisionTimeline[];
   /** The live investigation trace for the current goal (null while loading). */
   graph: InvestigationGraphDTO | null;
+  /**
+   * The evidence lifecycle of the current goal's execution (null before
+   * execution / for direct-plan goals that gather no evidence).
+   */
+  evidence: EvidenceTrailDTO | null;
 }
 
 /**
