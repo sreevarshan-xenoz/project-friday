@@ -70,6 +70,7 @@ const EMPTY: ConsoleSnapshot = {
     world: { files: 0, processes: 0, capabilities: 0, policies: 0, episodes: 0, confidence: 0 },
     recent: [],
     graph: null,
+    evidence: null,
   },
   timelines: [],
   metrics: {
