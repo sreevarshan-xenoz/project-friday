@@ -35,6 +35,8 @@ impl FilesystemAdapter {
             "copy",
             "move",
             "list_directory",
+            "tree",
+            "search",
         ]
     }
 }
@@ -59,6 +61,8 @@ impl ActionAdapter for FilesystemAdapter {
             "copy" => self.copy(&req),
             "move" => self.move_file(&req),
             "list_directory" => self.list_directory(&req),
+            "tree" => self.tree(&req),
+            "search" => self.search(&req),
             other => ActionResult::error(format!("unknown filesystem action: {other}")),
         };
         result
@@ -196,6 +200,229 @@ impl FilesystemAdapter {
             }));
         }
         ActionResult::success(json!({ "path": path, "entries": items }))
+    }
+
+    /// Recursive directory structure (`tree`). Returns a nested tree of
+    /// entries so "show me the whole project structure" produces the actual
+    /// hierarchy rather than a flat one-level listing. Bounded by
+    /// `max_depth` (default 6) and `max_entries` (default 5000) so an
+    /// unbounded walk can never hang or flood the reply.
+    fn tree(&self, req: &ActionRequest) -> ActionResult {
+        let path = match req.param_str("path") {
+            Ok(p) => p,
+            Err(e) => return ActionResult::error(e),
+        };
+        let max_depth = req
+            .parameters
+            .get("max_depth")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(6) as usize;
+        let max_entries = req
+            .parameters
+            .get("max_entries")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5000) as usize;
+        let mut budget = max_entries;
+        let mut tree = Vec::new();
+        if let Err(e) = Self::walk_tree(Path::new(&path), 0, max_depth, &mut tree, &mut budget) {
+            return ActionResult::error(e);
+        }
+        ActionResult::success(json!({
+            "path": path,
+            "count": tree.len(),
+            "tree": tree,
+        }))
+    }
+
+    fn walk_tree(
+        dir: &Path,
+        depth: usize,
+        max_depth: usize,
+        out: &mut Vec<serde_json::Value>,
+        budget: &mut usize,
+    ) -> Result<(), String> {
+        if *budget == 0 || depth > max_depth {
+            return Ok(());
+        }
+        let rd = std::fs::read_dir(dir).map_err(|e| format!("read_dir failed: {e}"))?;
+        for entry in rd.flatten() {
+            if *budget == 0 {
+                break;
+            }
+            *budget -= 1;
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            let display = path.to_string_lossy().to_string();
+            if path.is_dir() {
+                let mut children = Vec::new();
+                let mut item = json!({ "name": name, "path": display, "is_dir": true });
+                if let Err(e) = Self::walk_tree(&path, depth + 1, max_depth, &mut children, budget)
+                {
+                    item["error"] = json!(e);
+                }
+                item["children"] = json!(children);
+                out.push(item);
+            } else {
+                out.push(json!({ "name": name, "path": display, "is_dir": false }));
+            }
+        }
+        Ok(())
+    }
+
+    /// Recursive search (`search`). Collects entries whose names match every
+    /// whitespace-separated `query` term (case-insensitive substring), and/or
+    /// the extension `ext` (matched case-insensitively against the suffix).
+    /// When `content` is set, only *files* whose contents contain that string
+    /// (case-insensitive) match — "find the Rust files containing `Foo`"
+    /// searches symbols and prose, not just filenames. Directories never match
+    /// a content query. The walk is bounded: `max_entries` caps the total
+    /// entries visited (default 10000) so a huge tree can never hang the
+    /// search. When the cap is hit the matches found so far are returned with
+    /// `truncated: true`.
+    fn search(&self, req: &ActionRequest) -> ActionResult {
+        let path = match req.param_str("path") {
+            Ok(p) => p,
+            Err(e) => return ActionResult::error(e),
+        };
+        let query = req
+            .parameters
+            .get("query")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let ext = req
+            .parameters
+            .get("ext")
+            .and_then(|v| v.as_str())
+            .map(|e| e.to_lowercase());
+        let content = req
+            .parameters
+            .get("content")
+            .and_then(|v| v.as_str())
+            .map(|c| c.to_lowercase());
+        let max_depth = req
+            .parameters
+            .get("max_depth")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(12) as usize;
+        let max_entries = req
+            .parameters
+            .get("max_entries")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(10_000) as usize;
+        let terms: Vec<&str> = query.split_whitespace().collect();
+        let mut matches = Vec::new();
+        let mut budget = max_entries;
+        let mut walk_err: Option<String> = None;
+        Self::walk_search(
+            Path::new(&path),
+            0,
+            max_depth,
+            &terms,
+            ext.as_deref(),
+            content.as_deref(),
+            &mut matches,
+            &mut budget,
+            &mut walk_err,
+        );
+        let truncated = budget == 0;
+        let mut resp = json!({
+            "path": path,
+            "query": query,
+            "matches": matches,
+            "truncated": truncated,
+        });
+        if let Some(c) = content {
+            resp["content"] = json!(c);
+        }
+        if let Some(e) = walk_err {
+            if matches.is_empty() {
+                return ActionResult::error(e);
+            }
+            resp["note"] = json!(e);
+        }
+        ActionResult::success(resp)
+    }
+
+    /// Read-size cap for a `content` search term — a matching search never
+    /// slurps a multi-gigabyte binary.
+    const MAX_CONTENT_BYTES: u64 = 8 * 1024 * 1024;
+
+    /// Whether `path` (a regular file under the cap) contains `needle`, read as
+    /// UTF-8 text. Non-text or unreadable files never match.
+    fn file_contains(path: &Path, needle: &str) -> bool {
+        let Ok(meta) = std::fs::metadata(path) else {
+            return false;
+        };
+        if !meta.is_file() || meta.len() > Self::MAX_CONTENT_BYTES {
+            return false;
+        }
+        let Ok(bytes) = std::fs::read(path) else {
+            return false;
+        };
+        match std::str::from_utf8(&bytes) {
+            Ok(text) => text.to_lowercase().contains(needle),
+            Err(_) => false,
+        }
+    }
+
+    fn walk_search(
+        dir: &Path,
+        depth: usize,
+        max_depth: usize,
+        terms: &[&str],
+        ext: Option<&str>,
+        content: Option<&str>,
+        matches: &mut Vec<serde_json::Value>,
+        budget: &mut usize,
+        walk_err: &mut Option<String>,
+    ) {
+        if depth > max_depth {
+            return;
+        }
+        let rd = match std::fs::read_dir(dir) {
+            Ok(rd) => rd,
+            Err(e) => {
+                *walk_err = Some(format!("read_dir failed: {e}"));
+                return;
+            }
+        };
+        for entry in rd.flatten() {
+            if *budget == 0 {
+                return;
+            }
+            *budget -= 1;
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            let lower = name.to_lowercase();
+            let ext_ok = ext.map_or(true, |e| lower.ends_with(&format!(".{e}")));
+            let terms_ok =
+                terms.is_empty() || terms.iter().all(|t| !t.is_empty() && lower.contains(&**t));
+            let content_ok = match content {
+                Some(needle) => path.is_file() && Self::file_contains(&path, needle),
+                None => true,
+            };
+            if ext_ok && terms_ok && content_ok {
+                matches.push(json!({
+                    "name": name,
+                    "path": path.to_string_lossy().to_string(),
+                    "is_dir": path.is_dir(),
+                }));
+            }
+            if path.is_dir() {
+                Self::walk_search(
+                    &path,
+                    depth + 1,
+                    max_depth,
+                    terms,
+                    ext,
+                    content,
+                    matches,
+                    budget,
+                    walk_err,
+                );
+            }
+        }
     }
 }
 
