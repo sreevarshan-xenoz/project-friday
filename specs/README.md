@@ -67,19 +67,24 @@ work this directory supersedes it.
 | Context Builder     | `context.md`        | `services/context`                   | ✅ M4.10 |
 | Cognitive Engine    | `intelligence.md`   | `services/intelligence`              | ✅ M5    |
 | Inference fabric    | `inference_fabric.md` | `services/intelligence`            | ✅ M5    |
-| Mobile console      | `mobile-console.md` | `services/mobile` + `clients/android`| ✅       |
-| Skill Engine        | `skill-engine.md`   | `services/skills` + `skills/`       | 🚧 Spec  |
+| Mobile console      | `mobile-console.md` | `services/mobile` + `clients/android` + web portal | ✅ Live |
+| Skill Engine        | `skill-engine.md`   | `services/skills` + `skills/`       | ✅ M5    |
+| Investigation Engine| `investigation-engine.md` | `services/investigation`        | ✅       |
+| Persona Engine      | `persona-engine.md` | `services/persona`                  | ✅ Built (not yet wired) |
+| Project Cognition   | `project-cognition.md` | `services/project-cognition`     | ✅       |
+| Goal Execution      | `m6-execution-engine.md` | `services/goal-execution`      | ✅       |
+| Agent Runtime       | `agent-runtime.md`  | `services/agent-runtime`            | ✅       |
 | Tool Selection      | `tool-selection-engine.md` | `services/tool-selection`     | 🚧 Spec  |
-| Agent Runtime       | `agent-runtime.md`  | `services/agent-runtime`            | 🚧 Spec  |
-| Cognitive Runtime   | `cognitive-runtime.md` | `services/cognitive`             | 🚧 Spec  |
-| Knowledge Engine    | `knowledge-engine.md` | `services/knowledge`              | 🚧 Spec  |
-| Provider Engine     | `provider-engine.md` | `services/provider`                | 🚧 Spec  |
-| Reflection Engine   | `reflection-engine.md` | `services/reflection`            | 🚧 Spec  |
-| Evaluation Framework| `evaluation-framework.md` | `services/evaluation`          | 🚧 Spec  |
+| Cognitive Runtime   | `cognitive-runtime.md` | `services/cognitive`             | 🟡 Early |
+| Knowledge Engine    | `knowledge-engine.md` | `services/knowledge`              | ✅ Graph + World Model; engine depth early |
+| Provider Engine     | `provider-engine.md` | `services/intelligence` (fabric) + `provider-qual` | 🟡 Active |
+| Reflection Engine   | `reflection-engine.md` | `services/reflection`            | 🟡 Early |
+| Evaluation Framework| `evaluation-framework.md` | `services/evaluation`          | 🟡 Early |
+| FRIDAY 2.0 synthesis| `friday-2-0-synthesis.md` | phases across services        | 🟢 Active |
 | Architecture (Final)| `architecture-final.md` | (18-engine Adaptive Cognitive OS) | 🚧 Vision |
 | Intelligence OS     | `architecture-intelligence-os.md` | (superseded by architecture-final) | 📄 Archive |
 | Evaluation          | `evaluation.md`     | `services/evaluation` (planned)      | 🚧 M5.5  |
-| Knowledge Graph     | `knowledge_graph.md` | `friday-core` (interface only)      | 🚧 M5.6  |
+| Knowledge Graph     | `knowledge_graph.md` | `services/knowledge`                | ✅       |
 | Reasoning Session   | `reasoning_session.md`| `services/intelligence`             | 🚧 M5.7  |
 | Benchmark (QA)      | `benchmark.md`        | `services/benchmark`                 | ✅ QA    |
 | Recovery            | `recovery.md`         | `services/recovery`                  | ✅ QA (shadow) |
@@ -88,8 +93,12 @@ work this directory supersedes it.
 | Client Qualification| `client-qualification.md` | `clients/*`                      | 🟡 Active |
 | Integration Qualification| `integration-qualification.md` | multi-crate               | 🟡 Active |
 
-**Current phase:** Alpha Qualification (reliability, not architecture expansion).
-See `docs/Roadmap.md` and `engineering/qualification.md`.
+**Current phase:** Alpha Qualification + **FRIDAY 2.0 synthesis** — Phases 1a
+(evidence lifecycle), 1b (memory admission), 2 (durable workflows), 3
+(investigation) and 4 (world model) are shipped; Phase 5 (proactive /
+active-inference) stays spec-only until the earlier phases are proven.
+See `docs/Roadmap.md`, `specs/friday-2-0-synthesis.md` and
+`engineering/qualification.md`.
 
 ## Architecture Decision Records
 
