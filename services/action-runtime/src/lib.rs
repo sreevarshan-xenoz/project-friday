@@ -20,8 +20,15 @@ pub use agent_driver::SkillAgentDriver;
 
 pub use adapters::sim::sim_registry;
 pub use adapters::{
-    browser_capability_specs, register_browser_capabilities, ActionAdapter, BrowserAdapter,
-    CodeIntelAdapter, DocsAdapter, FilesystemAdapter, GitAdapter, TerminalAdapter, WebAdapter,
+    agent_for_site, browser_capability_specs, reasoning_capability_specs,
+    register_browser_capabilities, register_reasoning_capabilities, register_webagent_capabilities,
+    webagent_capability_specs, ActionAdapter, BrowserAdapter, BrowserReasoningProvider,
+    ChatGPTAdapter, ClaudeAdapter, CodeIntelAdapter, ConsultResult, DocsAdapter, Document,
+    DocumentAsset, DocumentId, DocumentMetadata, DocumentSource, ExpertProfile, ExpertRouter,
+    FilesystemAdapter, GeminiAdapter, GenericWebAgent, GitAdapter, GrokAdapter, MeasuredOutcome,
+    PerplexityAdapter, ProviderCapabilities, ProviderCapability, ProviderEntry, ProviderId,
+    ProviderRegistry, ProviderStats, ProviderTelemetry, ReasoningAdapter, ReasoningProvider,
+    TerminalAdapter, Transport, WebAdapter, WebAgent, WebAgentAdapter, WebAgentResponse,
 };
 pub use audit::{AuditEngine, AuditEntry};
 pub use kernel::{
