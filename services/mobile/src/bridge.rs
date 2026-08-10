@@ -64,10 +64,14 @@ impl BusBridge {
             tracing::info!("mobile bus-bridge subscribed");
             while let Ok(ev) = rx.recv().await {
                 let msg = translate(&ev);
-                if self.outbound.send(msg).is_err() {
-                    // No connected clients; harmless.
-                    break;
-                }
+                // `broadcast::send` errors when zero clients are connected — a
+                // normal state between connections, NOT a bridge failure. The
+                // bridge must outlive every client: ignore the error and keep
+                // forwarding (a connected client's subscription picks up from
+                // here). Previously this `break` killed the bridge on the first
+                // send with no receivers (e.g. the probe's 2s telemetry tick
+                // before anyone connects), silently freezing the event stream.
+                let _ = self.outbound.send(msg);
             }
         });
     }
