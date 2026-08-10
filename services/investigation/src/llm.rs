@@ -69,6 +69,8 @@ impl LlmInvestigationStrategy {
              - memory    : recall of prior conversations, user preferences, history\n\
              - git       : repository status, history, branches, working tree\n\
              - filesystem: local files and directories\n\
+             - external  : external reasoning through a logged-in website (ask ChatGPT / Grok / \
+                           Gemini via the browser — no API keys)\n\
              \n\
              Respond with ONLY a JSON object, no prose:\n\
              {{\"requirements\":[{{\"channel\":\"git\",\"rationale\":\"goal mentions repo status\",\"confidence\":0.9}}]}}\n\
