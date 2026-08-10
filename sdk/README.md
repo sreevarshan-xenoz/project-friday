@@ -13,6 +13,13 @@ Cross-language SDK and the canonical protocol schema.
   between `plugins/windows` and `windows-host`.
 - **MCP:** JSON-RPC client/transports in `friday-mcp`.
 
+## Developer surface
+
+- **Skill manifests** — skills are pure-data `skill.json` bundles (see
+  `skills/README.md`); the canonical schema lives in `services/skills`.
+- **Skill Forge CLI** (`services/skill-forge`) — `create-skill` / `validate` /
+  `publish` for third-party skill authors (M7).
+
 ## Planned for this directory
 
 - Published JSON event / protocol schemas exported for non-Rust languages.
