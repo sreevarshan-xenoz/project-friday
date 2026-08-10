@@ -32,8 +32,10 @@ pub const DEFAULT_SEARCH_ENDPOINT: &str = "https://html.duckduckgo.com/html/";
 /// its own per-attempt timeout).
 pub const MAX_FETCH_CHARS: usize = 200_000;
 
+#[derive(Clone)]
 pub struct WebAdapter {
     client: reqwest::Client,
+    default_endpoint: String,
 }
 
 impl Default for WebAdapter {
@@ -44,12 +46,21 @@ impl Default for WebAdapter {
 
 impl WebAdapter {
     pub fn new() -> Self {
+        Self::with_endpoint(DEFAULT_SEARCH_ENDPOINT.to_string())
+    }
+
+    /// Build an adapter whose search uses `default_endpoint` unless a request
+    /// overrides it with its own `endpoint` parameter. The daemon uses this to
+    /// point both the dedicated search tool and the evidence seam at a local
+    /// mock server in hermetic end-to-end tests.
+    pub fn with_endpoint(default_endpoint: impl Into<String>) -> Self {
         Self {
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
                 .user_agent(concat!("friday-web/", env!("CARGO_PKG_VERSION")))
                 .build()
                 .expect("reqwest client build"),
+            default_endpoint: default_endpoint.into(),
         }
     }
 
@@ -66,7 +77,7 @@ impl WebAdapter {
             .parameters
             .get("endpoint")
             .and_then(|v| v.as_str())
-            .unwrap_or(DEFAULT_SEARCH_ENDPOINT)
+            .unwrap_or(&self.default_endpoint)
             .to_string();
         let limit = req
             .parameters
