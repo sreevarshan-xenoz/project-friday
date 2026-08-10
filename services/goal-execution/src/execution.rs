@@ -147,6 +147,7 @@ impl GoalEngine {
             },
             execution_state,
             cognitive_trace,
+            execution_result: Some(tool_result),
         }
     }
 
@@ -285,6 +286,11 @@ pub struct GoalReport {
     /// Claims"): `Verified` only when observed output passed verification.
     pub execution_state: ExecutionState,
     pub cognitive_trace: CognitiveTrace,
+    /// The raw result the executing tool produced (Observed). Previously the
+    /// engine dropped this after building the outcome — the canonical
+    /// [`crate::GoalResult`] on the report is sourced from here, never from
+    /// the goal description or phase metadata.
+    pub execution_result: Option<ToolResult>,
 }
 
 impl GoalReport {
@@ -300,6 +306,17 @@ impl GoalReport {
     pub fn unexpected(&self) -> bool {
         self.outcome.kind == OutcomeKind::UnexpectedSuccess
             || self.outcome.kind == OutcomeKind::UnexpectedFailure
+    }
+
+    /// The raw output the executing tool produced. The primary source is the
+    /// captured [`ToolResult`]; the outcome context (goal description) is only
+    /// a defensive fallback for a report built without a raw result.
+    pub fn execution_output(&self) -> String {
+        self.execution_result
+            .as_ref()
+            .map(|r| r.output.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| self.outcome.context.clone())
     }
 }
 
@@ -504,6 +521,28 @@ mod tests {
         let exp = Expectation::success("build will succeed");
         let ctx = ExecutionContext::for_goal(&goal.id);
         engine.execute(&goal, &action, &exp, &ctx).await
+    }
+
+    #[tokio::test]
+    async fn execution_output_is_the_raw_tool_output_not_the_goal_description() {
+        // The engine must keep the raw tool result (Observed) so the executive
+        // can propagate the ACTUAL output — the goal description is not the
+        // answer, and neither is any phase/evidence metadata.
+        let mut reg = ToolRegistry::new();
+        reg.register(Box::new(MockTool::success("cargo", "Build complete")));
+        let report = run_goal(reg, Verification::new()).await;
+
+        let raw = report
+            .execution_result
+            .as_ref()
+            .expect("raw tool result captured");
+        assert_eq!(raw.output, "Build complete");
+        assert_eq!(report.execution_output(), "Build complete");
+        assert_ne!(
+            report.execution_output(),
+            report.outcome.context,
+            "the output must be the tool's answer, not the goal text"
+        );
     }
 
     #[tokio::test]
