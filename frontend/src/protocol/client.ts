@@ -32,6 +32,19 @@ export type CommandResultHandler = (id: string, ok: boolean, result: unknown) =>
 
 let nextCmdId = 1;
 
+/** Shape guard for the system probe's `telemetry.system` payload. */
+function isTelemetrySample(value: unknown): value is TelemetrySample {
+  const o = value as Record<string, unknown> | null;
+  return (
+    !!o &&
+    typeof o.cpu_percent === 'number' &&
+    typeof o.memory_used_mb === 'number' &&
+    typeof o.memory_total_mb === 'number' &&
+    typeof o.disk_used_mb === 'number' &&
+    typeof o.disk_total_mb === 'number'
+  );
+}
+
 export class FridayClient {
   private ws: WebSocket | null = null;
   private url: string;
@@ -185,6 +198,19 @@ export class FridayClient {
         break;
 
       case 'event': {
+        // The system probe publishes host telemetry as a `telemetry.system`
+        // event every 2s. It is a dashboard sample, not a conversation event:
+        // surface it as the Resources-card sample only — never into the
+        // chat/terminal event feed (that flooded a card every two seconds).
+        // Shape-guarded: a payload drift on the topic must degrade to "no
+        // sample", never render `undefined` percentages.
+        if (msg.topic === 'telemetry.system') {
+          if (isTelemetrySample(msg.payload)) {
+            this._state.telemetry = msg.payload;
+            this.emitState();
+          }
+          break;
+        }
         const id = `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         const parsed = parseEvent(msg.topic, msg.payload);
         this.onEvent?.({ id, topic: msg.topic, parsed, timestamp: Date.now() });
