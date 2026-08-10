@@ -34,6 +34,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use friday_actions::adapters::web::DEFAULT_SEARCH_ENDPOINT;
 use friday_actions::{
     ActionAdapter, ActionRequest, CodeIntelAdapter, DocsAdapter, FilesystemAdapter, GitAdapter,
     TerminalAdapter, WebAdapter, WebAgentAdapter,
@@ -41,7 +42,7 @@ use friday_actions::{
 use friday_core::event::{Event, EventBus};
 use friday_goal_execution::{
     Action, AdapterTool, Capability, CognitiveBlackboard, ExecutionContext, Executive,
-    ExecutiveReport, GoalResult, Tool, ToolResult, WorldState,
+    ExecutiveReport, GoalResult, ResolvingWebTool, Tool, ToolResult, WebSearchProvider, WorldState,
 };
 use friday_intelligence::InferenceFabric;
 use friday_investigation::InvestigationEngine;
@@ -545,6 +546,19 @@ impl GoalRunner {
         executive.register_tool(Box::new(WebSearchCapabilityTool {
             adapter: web_adapter.clone(),
         }));
+        // web.search EVIDENCE actions route through the binding resolver
+        // (health-gated provider fallback) instead of a single hardwired
+        // adapter — registered ahead of the plain evidence adapters so
+        // `web.search` resolves here, while `web.fetch` stays on the plain
+        // `AdapterTool` until the fetch wiring pass. The same configured
+        // endpoint keeps the hermetic test path intact.
+        let search_endpoint = web_endpoint
+            .clone()
+            .unwrap_or_else(|| DEFAULT_SEARCH_ENDPOINT.to_string());
+        executive.register_tool(Box::new(ResolvingWebTool::for_web_search(
+            Arc::new(web_adapter.clone()),
+            vec![WebSearchProvider::new("duckduckgo", search_endpoint)],
+        )));
         // Real evidence adapters — the same seam the bridge/daemon use
         // (`AdapterTool::for_evidence`), so evidence actions run real tools.
         let evidence_adapters: Vec<Arc<dyn ActionAdapter>> = vec![

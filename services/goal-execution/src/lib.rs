@@ -121,8 +121,12 @@ pub use result::*;
 pub mod workflow;
 pub use workflow::*;
 pub mod admission;
+
 pub use admission::*;
 
+pub mod web_evidence;
+
+pub use web_evidence::*;
 // ── Tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]

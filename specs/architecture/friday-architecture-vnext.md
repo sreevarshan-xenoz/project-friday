@@ -62,6 +62,7 @@ PERCEIVE → UNDERSTAND → DEFINE DESIRED STATE → PLAN → DELEGATE → EXECU
 | **Security / permissions**     | 🟢 Implemented | Permission, audit, MCP gating, HITL |
 | **HITL**                       | 🟢 Implemented | Approval/interrupt paths exist |
 | **Skills**                     | 🟢/🟡 Implemented–Partial | Real manifests/runtime; learning/compounding incomplete |
+| **Web resolver (web.search)**  | 🟢 Wired | BindingResolver → health-gated provider fallback (`services/capabilities/src/resolver.rs:31`); `web.search` routed end-to-end through the evidence seam — resolver → Action Runtime → normalized `Evidence[]` (`services/goal-execution/src/web_evidence.rs:95`; acceptance: healthy + fallback tests at `web_evidence.rs:425,467`); `web.fetch` still direct (A.2c) |
 | **Durable execution**          | 🟡 Partial | Checkpoint/resume exists; no full crash-safe agent journaling |
 | **Verification**               | 🟡 Partial | Real verification framework; weak/mock concrete verifiers |
 | **World model**                | 🟡 Partial | Real type exists; far from a causal world model |
@@ -294,7 +295,7 @@ capability as an equal-priority feature.
 | Priority | Work                                     | Why now                                                              | Source/project                |
 | -------- | ---------------------------------------- | -------------------------------------------------------------------- | ----------------------------- |
 | **P0**   | **AnyDoc `docs.parse`**                  | Cleanest existing-seam integration — **DONE (2026-08-10)**           | AnyDoc                        |
-| **P0**   | **Rust-native Web Resolver**             | Gives FRIDAY reliable external information access                    | Agent-Reach                   |
+| **P0**   | **Rust-native Web Resolver**             | web.search wired through the resolver — **DONE (2026-08-10)**; `web.fetch` wiring still pending | Agent-Reach                   |
 | **P1**   | **Concrete Verification Gate**           | Verifier framework exists, shipped implementations are weak/mock     | SonarQube + existing verifier |
 | **P1**   | **Evidence/Research pipeline hardening** | Connect web + docs + verification into one trustworthy research path | Agent-Reach + AnyDoc          |
 | **P1**   | **Agent Director / Subagents**           | Actual recursive/child-agent mechanism is missing                    | Prime Agent + Multica         |
