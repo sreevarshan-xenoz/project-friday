@@ -53,7 +53,7 @@ fn native_risk(adapter: &str, action: &str) -> Risk {
         ("web", "search") | ("web", "fetch") => Risk::Safe,
 
         // Docs / code intelligence: read-only local inspection. Safe.
-        ("docs", "search") | ("docs", "read") => Risk::Safe,
+        ("docs", "search") | ("docs", "read") | ("docs", "parse") => Risk::Safe,
         ("codeintel", "understand") => Risk::Safe,
 
         _ => Risk::Safe,
@@ -100,14 +100,15 @@ mod tests {
         let reg = CapabilityRegistry::new();
         register_native_builtins(&reg);
         let known = reg.known();
-        // 8 fs + 4 terminal + 11 git + 2 web + 2 docs + 1 codeintel = 28
+        // 8 fs + 4 terminal + 11 git + 2 web + 3 docs + 1 codeintel = 29
         // actions from the canonical builtins.
-        assert_eq!(known.len(), 28, "unexpected native capability count");
+        assert_eq!(known.len(), 29, "unexpected native capability count");
         assert!(known.contains(&"filesystem.write_file".to_string()));
         assert!(known.contains(&"git.push".to_string()));
         assert!(known.contains(&"terminal.exec".to_string()));
         assert!(known.contains(&"web.search".to_string()));
         assert!(known.contains(&"docs.read".to_string()));
+        assert!(known.contains(&"docs.parse".to_string()));
         assert!(known.contains(&"codeintel.understand".to_string()));
     }
 
