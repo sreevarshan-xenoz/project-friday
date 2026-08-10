@@ -22,6 +22,7 @@ pub mod model;
 pub mod orchestrator;
 pub mod ranking;
 pub mod registry;
+pub mod resolver;
 pub mod sim;
 pub mod spec;
 
@@ -37,6 +38,7 @@ pub use orchestrator::{
 };
 pub use ranking::score;
 pub use registry::CapabilityRegistry;
+pub use resolver::{BindingResolver, CandidateBinding, Resolved, ResolvedOutcome};
 pub use sim::{
     Precondition, Prediction, ResourceForecast, RollbackPlan, SideEffect, SimRequest, SimResult,
     Simulatable, StepEstimate, WindowInfo, WorldState,
