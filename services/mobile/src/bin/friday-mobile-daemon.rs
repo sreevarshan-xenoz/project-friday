@@ -14,13 +14,22 @@
 //!
 //! Run: `cargo run -p friday-mobile --bin friday-mobile-daemon`
 //! (or set `FRIDAY_MOBILE_ADDR`, default `0.0.0.0:18432`).
+//!
+//! The assistant loop runs **model-backed**: `GoalRunner::with_fabric` injects
+//! an [`InferenceFabric`] built from the environment (Ollama is always
+//! registered; OpenRouter/Groq/Gemini/OmniRoute/… register when their env
+//! vars are set), so the model decides what evidence a goal needs before
+//! planning — the heuristic catches any model failure (never a failed goal).
 
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
 
 use friday_core::runtime::Friday;
+use friday_intelligence::InferenceFabric;
 use tokio::sync::broadcast;
 
-use friday_mobile::{BusBridge, CommandGateway, SystemProbe, WsServer};
+use friday_mobile::{BusBridge, CommandGateway, GoalRunner, SystemProbe, WsServer};
 
 #[tokio::main]
 async fn main() {
@@ -36,7 +45,20 @@ async fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or_else(|| "0.0.0.0:18432".parse().unwrap());
 
-    let server = WsServer::new(addr);
+    // QR-pairing is ON by default (the phone-facing protocol contract). Local
+    // development on the desktop portal can opt out:
+    //   FRIDAY_MOBILE_AUTH=off cargo run -p friday-mobile --bin friday-mobile-daemon
+    let require_auth = std::env::var("FRIDAY_MOBILE_AUTH")
+        .map(|v| {
+            !matches!(
+                v.to_ascii_lowercase().as_str(),
+                "off" | "0" | "false" | "no"
+            )
+        })
+        .unwrap_or(true);
+
+    let server = WsServer::new(addr).with_require_auth(require_auth);
+    tracing::info!("mobile daemon auth required: {require_auth}");
     let outbound: broadcast::Sender<_> = server.broadcast_tx();
     let sessions = server.sessions();
     let mut ingress = server.subscribe_commands();
@@ -47,6 +69,26 @@ async fn main() {
     // Real host telemetry onto the bus.
     let probe = SystemProbe::new(bus.clone());
     tokio::spawn(async move { probe.run().await });
+
+    // The assistant loop: consume `plan.goal` (published by the command
+    // gateway when the portal sends `planner.goal`) and run each goal through
+    // the real goal-execution Executive with real evidence adapters, then
+    // publish goal.started / goal.completed | goal.failed back to the bus so
+    // the portal chat responds. Model-backed investigation: the fabric derives
+    // the evidence requirements, the heuristic catches any model failure.
+    let mut fabric = InferenceFabric::default_from_env();
+    // Chaos-lab finding: the fabric had no per-request deadline — a hung
+    // model (e.g. a local Ollama that accepts TCP but never answers) would
+    // stall the chat forever. Bound one provider attempt; the strategy's
+    // heuristic then answers deterministically.
+    fabric.request_timeout = Some(Duration::from_secs(15));
+    let fabric = Arc::new(fabric);
+    tracing::info!(
+        "[Investigation] fabric: {} providers / {} models registered",
+        fabric.providers.len(),
+        fabric.models.len()
+    );
+    GoalRunner::with_fabric(bus.clone(), fabric).start();
 
     // Translate phone commands → real bus events, and return results.
     let gateway = CommandGateway::new(bus.clone(), sessions.clone());
