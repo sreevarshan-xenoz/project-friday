@@ -9,7 +9,7 @@ FRIDAY internals (no TaskGraph, RecoveryGraph, provider routing, or AgentKernel)
 > warnings). Built with Gradle 8.2 + JDK 17 + SDK `platform-34`/`build-tools
 > 34.0.0`. The only remaining gate is the on-device **Demo 001** (real J7). The
 > Rust `friday-mobile` side it talks to **is** built, clippy-clean, and
-> test-verified (17 tests).
+> test-verified (19 tests).
 
 ## Stack
 - Kotlin + Jetpack Compose (Material 3)
