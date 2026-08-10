@@ -22,8 +22,8 @@ work.
 | 1 | AnyDoc `docs.parse` | 🟢 DONE | Docs adapter parses real documents; constitution P0 row DONE (2026-08-10) |
 | 2 | Agent-Reach resolver | 🟢 DONE | `BindingResolver` with health-gated fallback + structured `ResolvedOutcome` — `c337e7e`, `820ec5d` |
 | 3 | `web.search` resolver wiring | 🟢 DONE | `ResolvingWebTool`: resolver → Action Runtime → normalized `Evidence[]`; healthy + fallback acceptance tests; constitution 🟢 — `318127a` |
-| 4 | `web.fetch` resolver wiring | 🔴 **NEXT** | resolver-backed fetch tool + fallback tests + normalized fetch evidence; then the constitution's Web resolver row is fully 🟢 |
-| 5 | Real local Code/Test Verifier | 🟡 | `CodeTestVerifier`: workspace + command + expected result → real execution → stdout/stderr/exit code → `checks[]` → `VerifiedResult`. First concrete verifier — **not** Sonar (no external service/configuration yet) |
+| 4 | `web.fetch` resolver wiring | 🟢 DONE | Resolver-backed fetch tool (`ResolvingWebTool::for_web`/`for_web_fetch`) with fallback tests + normalized fetch evidence; Web resolver row fully 🟢 in the constitution |
+| 5 | Real local Code/Test Verifier | 🔴 **NEXT** | `CodeTestVerifier`: workspace + command + expected result → real execution → stdout/stderr/exit code → `checks[]` → `VerifiedResult`. First concrete verifier — **not** Sonar (no external service/configuration yet) |
 | 6 | Evidence pipeline hardening | 🟡 | Web + Docs evidence blended and verified into one trustworthy research path (AnyDoc + Web → `Evidence[]` → Verification → Memory) |
 | 7 | Agent Director / bounded subagents | 🔴 | One parent safely creates bounded children and collects **verified** results. First topology: Director → Researcher / Analyst / Verifier. No persistent workforce yet |
 | 8 | Parallel durable workflows + agent journaling | 🟡 | Enhancement on existing `WorkflowCheckpoint`/`WorkflowStore`/`resume()`: parallel stages + agent journaling + idempotency + mid-agent recovery. After #7 — know the execution topology before making it durable |
@@ -44,7 +44,7 @@ work.
 ## Milestone gates
 
 1. 🟢 Gate 1 — **Information Organ**: AnyDoc · Web Search · Web Fetch · Evidence ·
-   Memory — *almost there*.
+   Memory — ✅ **complete (2026-08-10)**.
 2. 🟢 Gate 2 — **Trustworthy Executor**: Planning · Execution · Verification ·
    Permissions · Audit · Durability — *the next serious milestone*.
 3. 🟢 Gate 3 — **Multi-Agent FRIDAY**: Agent Director · Subagents · Parallel
@@ -57,7 +57,8 @@ work.
 7. 🟢 Gate 7 — **Autonomous FRIDAY**: Observe → Reason → Decide → Act → Verify →
    Learn → Repeat.
 
-**Current position: between Gate 1 and Gate 2.**
+**Current position: Gate 1 complete — next is Gate 2 (Trustworthy Executor),
+starting with #5 the local Code/Test Verifier.**
 
 ## Why this order (the corrections vs. the flat P0–P5 table)
 
@@ -101,3 +102,7 @@ work.
   Sonar; Agent Director before durable parallelism; skill compounding gated on
   verification; Walrus and DrawDB moved last. Statuses 1–3 🟢 DONE; #4 `web.fetch`
   wiring marked **NEXT**.
+- **2026-08-10** — Item #4 `web.fetch` resolver wiring 🟢 DONE (`ResolvingWebTool`
+  serves both verbs; fallback + healthy acceptance tests; adapter extracts page
+  titles). **Gate 1 (Information Organ) is complete.** Next: #5 the local
+  Code/Test Verifier.

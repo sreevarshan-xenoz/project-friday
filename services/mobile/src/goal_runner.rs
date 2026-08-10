@@ -42,7 +42,8 @@ use friday_actions::{
 use friday_core::event::{Event, EventBus};
 use friday_goal_execution::{
     Action, AdapterTool, Capability, CognitiveBlackboard, ExecutionContext, Executive,
-    ExecutiveReport, GoalResult, ResolvingWebTool, Tool, ToolResult, WebSearchProvider, WorldState,
+    ExecutiveReport, GoalResult, ResolvingWebTool, Tool, ToolResult, WebFetchProvider,
+    WebSearchProvider, WorldState,
 };
 use friday_intelligence::InferenceFabric;
 use friday_investigation::InvestigationEngine;
@@ -546,24 +547,28 @@ impl GoalRunner {
         executive.register_tool(Box::new(WebSearchCapabilityTool {
             adapter: web_adapter.clone(),
         }));
-        // web.search EVIDENCE actions route through the binding resolver
-        // (health-gated provider fallback) instead of a single hardwired
-        // adapter — registered ahead of the plain evidence adapters so
-        // `web.search` resolves here, while `web.fetch` stays on the plain
-        // `AdapterTool` until the fetch wiring pass. The same configured
-        // endpoint keeps the hermetic test path intact.
+        // web EVIDENCE actions (web.search + web.fetch) route through the
+        // binding resolver (health-gated provider fallback) instead of a
+        // single hardwired adapter — registered ahead of the plain evidence
+        // adapters so both verbs resolve here. Search: the configured endpoint
+        // (or the default) as the `duckduckgo` provider. Fetch: the `direct`
+        // provider (plain HTTP GET; gateway prefixes like `https://r.jina.ai/`
+        // can be added as providers later). The same configured endpoint keeps
+        // the hermetic test path intact.
         let search_endpoint = web_endpoint
             .clone()
             .unwrap_or_else(|| DEFAULT_SEARCH_ENDPOINT.to_string());
-        executive.register_tool(Box::new(ResolvingWebTool::for_web_search(
+        executive.register_tool(Box::new(ResolvingWebTool::for_web(
             Arc::new(web_adapter.clone()),
             vec![WebSearchProvider::new("duckduckgo", search_endpoint)],
+            vec![WebFetchProvider::new("direct", "")],
         )));
         // Real evidence adapters — the same seam the bridge/daemon use
         // (`AdapterTool::for_evidence`), so evidence actions run real tools.
+        // The web adapter is deliberately NOT in this list: the resolver-backed
+        // tool above is now the web evidence tool for both verbs.
         let evidence_adapters: Vec<Arc<dyn ActionAdapter>> = vec![
             Arc::new(GitAdapter::new()),
-            Arc::new(web_adapter),
             Arc::new(FilesystemAdapter::new()),
             Arc::new(DocsAdapter::new()),
             Arc::new(CodeIntelAdapter::new()),

@@ -70,8 +70,8 @@ Statuses are updated as commits land — this table is the tracker.
 | 1 | AnyDoc `docs.parse` | 🟢 DONE |
 | 2 | Agent-Reach resolver (binding resolver + health-gated fallback) | 🟢 DONE |
 | 3 | `web.search` resolver wiring (normalized `Evidence[]`) | 🟢 DONE |
-| 4 | **`web.fetch` resolver wiring** | 🔴 **NEXT** |
-| 5 | **Real local Code/Test Verifier** (`ConcreteVerifier`, before Sonar) | 🟡 |
+| 4 | `web.fetch` resolver wiring (normalized fetch `Evidence[]`) | 🟢 DONE |
+| 5 | **Real local Code/Test Verifier** (`ConcreteVerifier`, before Sonar) | 🔴 **NEXT** |
 | 6 | **Evidence pipeline: Web + Docs → Verify → Memory** | 🟡 |
 | 7 | **Agent Director / bounded subagents** | 🔴 |
 | 8 | **Parallel durable workflows + agent journaling** | 🟡 |
@@ -89,16 +89,17 @@ Statuses are updated as commits land — this table is the tracker.
 | 20 | Walrus Memory backend (optional — 5th `MemoryLayer` backend) | optional |
 | 21 | World-model visualization / DrawDB | last |
 
-**Where we are:** between **Gate 1 (Information Organ)** and **Gate 2
-(Trustworthy Executor)**. The next unit of work is `web.fetch` resolver wiring and
-its tests, then the first real verifier — the point where FRIDAY stops merely
-gaining capabilities and starts gaining **trustworthy execution**.
+**Where we are:** **Gate 1 (Information Organ) is complete** — AnyDoc · Web
+Search · Web Fetch · Evidence · Memory are all wired. The next unit of work is
+**#5 — the real local Code/Test Verifier**, the first step into **Gate 2
+(Trustworthy Executor)**: the point where FRIDAY stops merely gaining
+capabilities and starts gaining **trustworthy execution**.
 
 ### Milestone gates
 
 | Gate | Name | Contents |
 | ---- | ---- | -------- |
-| 🟢 1 | Information Organ | AnyDoc · Web Search · Web Fetch · Evidence · Memory — *almost there* |
+| 🟢 1 | Information Organ | AnyDoc · Web Search · Web Fetch · Evidence · Memory — ✅ complete |
 | 🟢 2 | Trustworthy Executor | Planning · Execution · Verification · Permissions · Audit · Durability — *next serious milestone* |
 | 🟢 3 | Multi-Agent FRIDAY | Agent Director · Subagents · Parallel workflows · Recovery |
 | 🟢 4 | World-Aware FRIDAY | World Model · Intent · Gap Analysis · Causal Planning |

@@ -122,11 +122,13 @@ impl WebAdapter {
             Ok(b) => b,
             Err(e) => return ActionResult::error(e),
         };
+        let title = extract_title(&body);
         let text = strip_html(&body);
         let truncated: String = text.chars().take(max_chars).collect();
         let is_truncated = truncated.len() < text.len();
         ActionResult::success(json!({
             "url": url,
+            "title": title,
             "text": truncated,
             "chars": truncated.len(),
             "truncated": is_truncated,
@@ -207,6 +209,40 @@ fn parse_search_results(html: &str, limit: usize) -> Vec<serde_json::Value> {
         }
     }
     hits
+}
+
+/// Extract the `<title>…</title>` inner text (tags stripped, whitespace
+/// collapsed, entities decoded). Empty when absent — never an error. Lets the
+/// normalized fetch evidence carry a real page title instead of an empty one.
+///
+/// Searches **ASCII-case-insensitively over the original bytes** — `to_lowercase`
+/// is deliberately avoided because Unicode lowercasing can change byte length
+/// (`İ` → 3 bytes, `ẞ` → 2), which would make a byte offset computed on the
+/// lowercased copy invalid for slicing the original. `<title>`/`</title>` are
+/// pure ASCII, and `<` (0x3C) can never be a UTF-8 continuation byte, so a
+/// match position is always on a char boundary.
+pub fn extract_title(html: &str) -> String {
+    let bytes = html.as_bytes();
+    let needle = b"<title>";
+    let mut pos = 0;
+    while pos + needle.len() <= bytes.len() {
+        if bytes[pos..pos + needle.len()].eq_ignore_ascii_case(needle) {
+            break;
+        }
+        pos += 1;
+    }
+    if pos + needle.len() > bytes.len() {
+        return String::new();
+    }
+    let after = &html[pos + needle.len()..];
+    let Some(close) = after
+        .as_bytes()
+        .windows(b"</title>".len())
+        .position(|w| w.eq_ignore_ascii_case(b"</title>"))
+    else {
+        return String::new();
+    };
+    strip_html(&after[..close]).trim().to_string()
 }
 
 /// Strip scripts/styles and tags, decode the common entities, and collapse
@@ -332,6 +368,34 @@ mod tests {
     fn percent_encodes_queries() {
         assert_eq!(urlencode("a b&c=d"), "a%20b%26c%3Dd");
         assert_eq!(urlencode("rust docs"), "rust%20docs");
+    }
+
+    #[test]
+    fn extracts_page_title() {
+        assert_eq!(
+            extract_title("<html><head><title>  The Rust Book </title></head></html>"),
+            "The Rust Book"
+        );
+        // Entities are decoded and whitespace collapsed inside the title.
+        assert_eq!(
+            extract_title("<html><head><title>Rust &amp; Async</title></head></html>"),
+            "Rust & Async"
+        );
+        // Missing or malformed titles are empty, never an error.
+        assert_eq!(extract_title("<html><body>no title</body></html>"), "");
+        assert_eq!(extract_title("<html><head><title>unterminated"), "");
+
+        // Non-ASCII text before the title — whose Unicode lowercasing changes
+        // byte length — must not panic or corrupt the byte offset.
+        assert_eq!(
+            extract_title(
+                "<meta name=\"author\" content=\"İstanbul\"><title>Ünïcode Title</title>"
+            ),
+            "Ünïcode Title"
+        );
+
+        // Mixed-case tags are matched case-insensitively.
+        assert_eq!(extract_title("<HTML><HEAD><TITLE>Mixed Case</TITLE></HEAD></HTML>"), "Mixed Case");
     }
 
     #[test]

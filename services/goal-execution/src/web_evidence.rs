@@ -1,18 +1,18 @@
-//! Resolver-backed `web.search` evidence — the wiring half of Phase A.2.
+//! Resolver-backed web evidence — the wiring half of Phase A.2.
 //!
 //! The [`ResolvingWebTool`] sits where the planner's evidence seam already is
-//! (the same `Tool` the `AdapterTool` uses) but routes `web.search` through a
-//! [`BindingResolver`](friday_capabilities::BindingResolver) instead of a
-//! single hardwired adapter:
+//! (the same `Tool` the `AdapterTool` uses) but routes `web.search` and
+//! `web.fetch` through a [`BindingResolver`](friday_capabilities::BindingResolver)
+//! instead of a single hardwired adapter:
 //!
 //! ```text
 //! Planner
-//!   ↓  "gather evidence: web (web.search)"
+//!   ↓  "gather evidence: web (web.search | web.fetch)"
 //! ToolRegistry → ResolvingWebTool
 //!   ↓
 //! BindingResolver (CandidateBinding: health + policy)
 //!   ↓
-//! Action Runtime (WebAdapter → search endpoint)
+//! Action Runtime (WebAdapter → search endpoint | page fetch)
 //!   ↓
 //! normalized Evidence[]
 //! ```
@@ -21,13 +21,15 @@
 //! The resolver returns the *winning provider's* raw adapter output; this tool
 //! normalizes it into [`WebEvidence`] — `source`, `title`, `url`, `content`,
 //! `retrieved_at`, `confidence` — so the cognitive layer blends and verifies
-//! evidence, not `DuckDuckGoResponse`/`JinaResponse` shapes. Whatever scraper
-//! happened to win is metadata (`source`), not architecture.
+//! evidence, not `DuckDuckGoResponse`/`JinaResponse`/`FirecrawlResponse`
+//! shapes. Whatever scraper happened to win is metadata (`source`), not
+//! architecture.
 //!
-//! A.2b wires `web.search` only. `web.fetch` deliberately stays on the plain
-//! evidence adapter (see the A.2b guardrail) until the fetch adapter is wired
-//! through the same resolver in a later pass — this tool refuses any
-//! non-`web.search` instruction honestly rather than pretending to serve it.
+//! A.2b wired `web.search`; A.2c wires `web.fetch` through the same resolver.
+//! A search-only tool (see [`ResolvingWebTool::for_web_search`]) refuses a
+//! fetch instruction honestly; the combined tool
+//! ([`ResolvingWebTool::for_web`]) serves both verbs with the same
+//! health-gated fallback.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -48,9 +50,10 @@ use crate::verification::{Tool, ToolResult};
 /// [`ExecutionContext`]'s timeout and permissions into the dispatch closure —
 /// which, per the resolver's frozen contract, only ever receives
 /// `(&CandidateBinding, &Value)`. They are stripped before the adapter sees
-/// the parameters, so the adapter's contract (`query`, `endpoint`, `limit`)
-/// stays clean. Mirrors what [`AdapterTool`](crate::AdapterTool) forwards onto
-/// its `ActionRequest` so the resolver path loses none of the context.
+/// the parameters, so the adapter's contract (`query`, `endpoint`, `limit`,
+/// `url`) stays clean. Mirrors what [`AdapterTool`](crate::AdapterTool)
+/// forwards onto its `ActionRequest` so the resolver path loses none of the
+/// context.
 const RESERVED_TIMEOUT_MS: &str = "__timeout_ms";
 const RESERVED_PERMISSIONS: &str = "__permissions";
 
@@ -75,12 +78,43 @@ impl WebSearchProvider {
     }
 }
 
+/// One provider configuration for `web.fetch`. Providers differ in *how* the
+/// target page is fetched: the `url_prefix` is prepended to the target URL to
+/// form the URL the adapter GETs. Empty prefix = direct fetch (the plain HTTP
+/// path); a gateway template such as `https://r.jina.ai/` routes the fetch
+/// through a reader service. The resolver owns which provider is healthy and
+/// therefore selected.
+///
+/// **Gateway encoding note:** the prefix is concatenated raw. For the direct
+/// provider (empty prefix) the composed URL is the target itself, so nothing
+/// is lost. When configuring a query-bearing gateway (`…/fetch?url=`), the
+/// embedded target URL is *not* percent-encoded — a target containing `&` or
+/// `#` would be misinterpreted by the gateway. Encode the embedded URL before
+/// configuring such providers.
+#[derive(Debug, Clone)]
+pub struct WebFetchProvider {
+    pub name: String,
+    /// Prefix prepended to the target URL (a gateway template); empty = direct.
+    pub url_prefix: String,
+    pub health: CapabilityHealth,
+}
+
+impl WebFetchProvider {
+    pub fn new(name: impl Into<String>, url_prefix: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            url_prefix: url_prefix.into(),
+            health: CapabilityHealth::Healthy,
+        }
+    }
+}
+
 /// Normalized web evidence — the only shape the cognitive layer ever sees.
 /// Provider identity survives only as `source`; there are no provider-specific
 /// response structs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebEvidence {
-    /// Provider that produced this hit (e.g. `duckduckgo`).
+    /// Provider that produced this hit (e.g. `duckduckgo`, `direct`).
     pub source: String,
     pub title: String,
     pub url: String,
@@ -90,8 +124,8 @@ pub struct WebEvidence {
     pub confidence: f64,
 }
 
-/// Resolver-backed web search tool, registered for `web.search` in the
-/// evidence [`ToolRegistry`](crate::ToolRegistry).
+/// Resolver-backed web evidence tool, registered for `web.search` / `web.fetch`
+/// in the evidence [`ToolRegistry`](crate::ToolRegistry).
 pub struct ResolvingWebTool {
     name: String,
     resolver: BindingResolver,
@@ -100,15 +134,67 @@ pub struct ResolvingWebTool {
 }
 
 impl ResolvingWebTool {
-    /// Build a `web.search` tool over a real action-runtime adapter and the
-    /// given providers. Providers are registered in order (first healthy wins;
-    /// health can be updated live via [`ResolvingWebTool::set_health`]).
+    /// Build a `web.search`-only tool over a real action-runtime adapter and
+    /// the given providers (A.2b shape). Providers are registered in order
+    /// (first healthy wins; health can be updated live via
+    /// [`ResolvingWebTool::set_health`]).
     pub fn for_web_search(
         adapter: Arc<dyn ActionAdapter>,
         providers: Vec<WebSearchProvider>,
     ) -> Self {
+        Self::new(
+            adapter,
+            providers,
+            Vec::new(),
+            vec![Capability::Custom("web.search".into())],
+        )
+    }
+
+    /// Build a `web.fetch`-only tool (A.2c shape).
+    pub fn for_web_fetch(
+        adapter: Arc<dyn ActionAdapter>,
+        providers: Vec<WebFetchProvider>,
+    ) -> Self {
+        Self::new(
+            adapter,
+            Vec::new(),
+            providers,
+            vec![Capability::Custom("web.fetch".into())],
+        )
+    }
+
+    /// The production shape: one tool serving both `web.search` and
+    /// `web.fetch` with the same health-gated fallback. Registered as
+    /// `evidence:web` and advertising both verbs, it replaces the plain
+    /// adapter tool for the web evidence channel entirely.
+    pub fn for_web(
+        adapter: Arc<dyn ActionAdapter>,
+        search: Vec<WebSearchProvider>,
+        fetch: Vec<WebFetchProvider>,
+    ) -> Self {
+        Self::new(
+            adapter,
+            search,
+            fetch,
+            vec![
+                Capability::Custom("web.search".into()),
+                Capability::Custom("web.fetch".into()),
+            ],
+        )
+    }
+
+    /// Shared constructor: registers one candidate per provider under its
+    /// capability (`web.search` / `web.fetch`), builds a dispatch that routes
+    /// on the binding's action verb, and advertises exactly the capabilities
+    /// passed in.
+    fn new(
+        adapter: Arc<dyn ActionAdapter>,
+        search: Vec<WebSearchProvider>,
+        fetch: Vec<WebFetchProvider>,
+        capabilities: Vec<Capability>,
+    ) -> Self {
         let resolver = BindingResolver::new();
-        for p in &providers {
+        for p in &search {
             resolver.register_with_health(
                 "web.search",
                 &p.name,
@@ -122,17 +208,34 @@ impl ResolvingWebTool {
                 p.health,
             );
         }
+        for p in &fetch {
+            resolver.register_with_health(
+                "web.fetch",
+                &p.name,
+                ExecutionBinding {
+                    adapter: adapter.tool().to_string(),
+                    action: "fetch".to_string(),
+                    schema: json!({ "url": "string" }),
+                    permissions: Vec::new(),
+                    risk: Risk::Safe,
+                },
+                p.health,
+            );
+        }
 
-        let endpoints: HashMap<String, String> = providers
-            .into_iter()
+        let search_endpoints: HashMap<String, String> = search
+            .iter()
             .map(|p| (p.name.clone(), p.endpoint.clone()))
             .collect();
-        let dispatch: friday_capabilities::Dispatch =
-            Arc::new(move |candidate: &friday_capabilities::CandidateBinding, params: &serde_json::Value| {
+        let fetch_prefixes: HashMap<String, String> = fetch
+            .iter()
+            .map(|p| (p.name.clone(), p.url_prefix.clone()))
+            .collect();
+        let dispatch: friday_capabilities::Dispatch = Arc::new(
+            move |candidate: &friday_capabilities::CandidateBinding, params: &serde_json::Value| {
                 let adapter = adapter.clone();
                 let adapter_name = candidate.binding.adapter.clone();
-                let action = candidate.binding.action.clone();
-                let endpoint = endpoints.get(&candidate.provider).cloned();
+                let verb = candidate.binding.action.clone();
                 // Reserved context keys injected by `execute` (see the const
                 // docs above). Read them out, strip them, and forward onto the
                 // ActionRequest exactly as `AdapterTool::route` does.
@@ -151,11 +254,31 @@ impl ResolvingWebTool {
                     map.remove(RESERVED_TIMEOUT_MS);
                     map.remove(RESERVED_PERMISSIONS);
                 }
-                if let Some(e) = endpoint {
-                    parameters["endpoint"] = json!(e);
+                // Provider-specific parameter shaping, keyed on the binding's
+                // verb: search injects the provider's endpoint; fetch composes
+                // the provider's URL prefix with the target URL.
+                match verb.as_str() {
+                    "search" => {
+                        if let Some(e) = search_endpoints.get(&candidate.provider) {
+                            parameters["endpoint"] = json!(e);
+                        }
+                    }
+                    "fetch" => {
+                        if let Some(prefix) = fetch_prefixes.get(&candidate.provider) {
+                            if let Some(url) = parameters.get("url").and_then(|v| v.as_str()) {
+                                parameters["url"] = json!(format!("{prefix}{url}"));
+                            }
+                        }
+                    }
+                    other => {
+                        let other = other.to_string();
+                        return Box::pin(async move {
+                            Err(format!("web resolver cannot dispatch action {other}"))
+                        });
+                    }
                 }
                 Box::pin(async move {
-                    let mut req = ActionRequest::new(adapter_name, action, parameters);
+                    let mut req = ActionRequest::new(adapter_name, verb, parameters);
                     if let Some(ms) = timeout_ms {
                         req.timeout = Some(std::time::Duration::from_millis(ms));
                     }
@@ -169,26 +292,46 @@ impl ResolvingWebTool {
                             .unwrap_or_else(|| "web adapter returned no error".to_string()))
                     }
                 })
-            });
+            },
+        );
 
         Self {
             name: "evidence:web".to_string(),
             resolver,
             dispatch,
-            capabilities: vec![Capability::Custom("web.search".into())],
+            capabilities,
         }
     }
 
-    /// Live health update, forwarded to the resolver — an orchestrator / health
-    /// Monitor can mark a provider offline without rebuilding the tool.
+    /// Live health update for the `web.search` candidates — an orchestrator /
+    /// health Monitor can mark a provider offline without rebuilding the tool.
     pub fn set_health(&self, provider: &str, health: CapabilityHealth) {
         self.resolver.set_health("web.search", provider, health);
+    }
+
+    /// Live health update for any capability this tool serves (`web.search` /
+    /// `web.fetch`).
+    pub fn set_health_for(&self, capability: &str, provider: &str, health: CapabilityHealth) {
+        self.resolver.set_health(capability, provider, health);
     }
 
     /// Providers currently registered for `web.search` (any health) — for
     /// discovery and audit.
     pub fn providers(&self) -> Vec<String> {
         self.resolver.providers("web.search")
+    }
+
+    /// The verbs this tool actually serves, e.g. `"web.search, web.fetch"` —
+    /// used for honest refusal messages.
+    fn served_list(&self) -> String {
+        self.capabilities
+            .iter()
+            .filter_map(|c| match c {
+                Capability::Custom(id) => Some(id.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 
@@ -199,7 +342,7 @@ impl Tool for ResolvingWebTool {
     }
 
     fn description(&self) -> &str {
-        "Resolver-backed web search evidence (web.search) with health-gated \
+        "Resolver-backed web evidence (web.search / web.fetch) with health-gated \
          provider fallback; returns normalized Evidence[]"
     }
 
@@ -214,10 +357,18 @@ impl Tool for ResolvingWebTool {
                 self.name, action.instruction
             ));
         };
-        if tool != "web" || verb != "search" {
+        // Refuse anything the tool does not actually serve — both the channel
+        // (`web`) and the verb it advertises in `capabilities`. A search-only
+        // tool refuses web.fetch; the combined tool serves both.
+        let capability = format!("web.{verb}");
+        let serves = self.capabilities.iter().any(|c| {
+            matches!(c, Capability::Custom(id) if id.as_str() == capability.as_str())
+        });
+        if tool != "web" || !serves {
             return ToolResult::error(format!(
-                "{} only serves web.search, not {tool}.{verb}",
-                self.name
+                "{} only serves {}, not {tool}.{verb}",
+                self.name,
+                self.served_list()
             ));
         }
 
@@ -235,7 +386,7 @@ impl Tool for ResolvingWebTool {
         let started = Instant::now();
         let outcome = self
             .resolver
-            .execute("web.search", &parameters, &self.dispatch)
+            .execute(&capability, &parameters, &self.dispatch)
             .await;
         let duration_ms = started.elapsed().as_millis() as u64;
 
@@ -252,7 +403,11 @@ impl Tool for ResolvingWebTool {
             };
         }
 
-        let evidence = normalize_search_evidence(&outcome);
+        let evidence = if verb == "search" {
+            normalize_search_evidence(&outcome)
+        } else {
+            normalize_fetch_evidence(&outcome)
+        };
         let output = serde_json::to_string_pretty(&evidence)
             .unwrap_or_else(|_| json!([]).to_string());
         ToolResult {
@@ -271,9 +426,9 @@ impl Tool for ResolvingWebTool {
     }
 }
 
-/// Normalize a successful resolver outcome into [`WebEvidence`] — the single
-/// provider-agnostic evidence shape. `content` is populated when the provider
-/// supplies it; search hits carry title/url only.
+/// Normalize a successful `web.search` resolver outcome into [`WebEvidence`] —
+/// the single provider-agnostic evidence shape. `content` is populated when
+/// the provider supplies it; search hits carry title/url only.
 pub fn normalize_search_evidence(outcome: &friday_capabilities::ResolvedOutcome) -> serde_json::Value {
     let query = outcome
         .output
@@ -298,6 +453,48 @@ pub fn normalize_search_evidence(outcome: &friday_capabilities::ResolvedOutcome)
         })
         .collect();
     json!({ "query": query, "evidence": evidence })
+}
+
+/// Normalize a successful `web.fetch` resolver outcome into one [`WebEvidence`]
+/// entry (the fetched page) plus fetch metadata — the provider-agnostic shape
+/// for page evidence. Only `url`, `chars`, `truncated`, and `evidence[]`
+/// escape; raw adapter keys (`text`, `title` source noise, …) never do.
+pub fn normalize_fetch_evidence(
+    outcome: &friday_capabilities::ResolvedOutcome,
+) -> serde_json::Value {
+    let url = outcome
+        .output
+        .get("url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let title = outcome
+        .output
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let content = outcome
+        .output
+        .get("text")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let chars = outcome.output.get("chars").cloned().unwrap_or(json!(0));
+    let truncated = outcome
+        .output
+        .get("truncated")
+        .cloned()
+        .unwrap_or(json!(false));
+    let evidence = vec![WebEvidence {
+        source: outcome.provider.clone(),
+        title,
+        url: url.clone(),
+        content,
+        retrieved_at: Utc::now(),
+        confidence: 1.0,
+    }];
+    json!({ "url": url, "chars": chars, "truncated": truncated, "evidence": evidence })
 }
 
 #[cfg(test)]
@@ -351,6 +548,10 @@ mod tests {
         <a href="https://docs.rs/tokio/latest/tokio/">Tokio documentation</a>
     </body></html>"#;
 
+    const FETCH_HTML: &str = r#"<html><head><title>Rust Async Book</title></head><body>
+        <p>This page explains async in Rust with tokio.</p>
+    </body></html>"#;
+
     fn evidence_action() -> Action {
         Action::single(
             "gather evidence: web (web.search)",
@@ -358,6 +559,15 @@ mod tests {
             "g1",
         )
         .with_parameters(json!({ "query": "rust async" }))
+    }
+
+    fn fetch_action(url: &str) -> Action {
+        Action::single(
+            "gather evidence: web (web.fetch)",
+            Capability::Custom("web.fetch".into()),
+            "g1",
+        )
+        .with_parameters(json!({ "url": url }))
     }
 
     fn parsed_output(result: &ToolResult) -> Value {
@@ -419,6 +629,65 @@ mod tests {
         assert_eq!(evidence[1]["url"], "https://docs.rs/tokio");
     }
 
+    #[test]
+    fn normalize_fetch_evidence_emits_provider_agnostic_shape() {
+        let outcome = friday_capabilities::ResolvedOutcome {
+            success: true,
+            capability: "web.fetch".into(),
+            provider: "direct".into(),
+            attempted: vec!["direct".into()],
+            output: json!({
+                "url": "https://example.com/page",
+                "title": "Example Page",
+                "text": "Some readable content.",
+                "chars": 21,
+                "truncated": false,
+                // Provider-specific noise must never reach the cognitive layer.
+                "response_id": "y-456",
+                "provider_specific": { "crawl_depth": 3 },
+            }),
+            error: None,
+        };
+
+        let v = normalize_fetch_evidence(&outcome);
+        let obj = v.as_object().expect("normalized object");
+        // Only the fetch contract keys escape: url + chars + truncated +
+        // evidence[] (the page itself). `text`/provider noise never do.
+        let mut keys: Vec<&String> = obj.keys().collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec![
+                &"chars".to_string(),
+                &"evidence".to_string(),
+                &"truncated".to_string(),
+                &"url".to_string(),
+            ],
+            "provider shape must not leak: {obj:?}"
+        );
+        assert_eq!(obj["url"], "https://example.com/page");
+        assert_eq!(obj["chars"], 21);
+        assert_eq!(obj["truncated"], false);
+        let evidence = obj["evidence"].as_array().expect("evidence array");
+        assert_eq!(evidence.len(), 1);
+        let hit = evidence[0].as_object().expect("evidence hit object");
+        for key in [
+            "source",
+            "title",
+            "url",
+            "content",
+            "retrieved_at",
+            "confidence",
+        ] {
+            assert!(hit.contains_key(key), "evidence carries {key}: {hit:?}");
+        }
+        assert_eq!(hit["source"], "direct", "provider survives as source only");
+        assert_eq!(hit["title"], "Example Page");
+        assert_eq!(hit["url"], "https://example.com/page");
+        assert_eq!(hit["content"], "Some readable content.");
+        assert_eq!(hit["confidence"], 1.0);
+    }
+
     // ── Acceptance 1: web.search → resolver → healthy provider → Evidence ──
 
     #[tokio::test]
@@ -456,7 +725,7 @@ mod tests {
         );
     }
 
-    // ── Acceptance 2: primary fails → resolver → fallback → Evidence ──
+    // ── Acceptance 2: search primary fails → resolver → fallback → Evidence ──
     //
     // The test that turns the resolver from a routing library into an actual
     // FRIDAY capability: the healthy primary's endpoint refuses connections,
@@ -497,6 +766,80 @@ mod tests {
         );
     }
 
+    // ── Acceptance 3: web.fetch → resolver → healthy provider → Evidence ──
+
+    #[tokio::test]
+    async fn web_fetch_resolves_through_healthy_provider_to_normalized_evidence() {
+        let base = serve_html(FETCH_HTML).await;
+        let tool = ResolvingWebTool::for_web_fetch(
+            Arc::new(WebAdapter::new()),
+            vec![WebFetchProvider::new("direct", "")],
+        );
+        let url = format!("{base}article");
+
+        let result = tool.execute(&fetch_action(&url), &ExecutionContext::for_goal("g1")).await;
+        assert!(result.success, "end-to-end web.fetch failed: {:?}", result.error);
+
+        let output = parsed_output(&result);
+        assert_eq!(output["url"], url);
+        assert_eq!(output["truncated"], false);
+        let evidence = output["evidence"].as_array().expect("evidence array");
+        assert_eq!(evidence.len(), 1, "one fetched page: {output:?}");
+        assert_eq!(evidence[0]["source"], "direct");
+        assert_eq!(evidence[0]["title"], "Rust Async Book");
+        assert_eq!(evidence[0]["url"], url);
+        let content = evidence[0]["content"].as_str().expect("content");
+        assert!(content.contains("async in Rust"), "content: {content}");
+        assert!(evidence[0]["retrieved_at"].is_string());
+        assert_eq!(evidence[0]["confidence"], 1.0);
+        assert!(
+            output.get("text").is_none(),
+            "raw adapter shape must not leak: {output:?}"
+        );
+        assert_eq!(result.metadata["provider"], "direct");
+        assert_eq!(result.metadata["attempted"], json!(["direct"]));
+    }
+
+    // ── Acceptance 4: fetch primary fails → resolver → fallback → Evidence ──
+
+    #[tokio::test]
+    async fn web_fetch_falls_back_when_primary_provider_fails() {
+        let base = serve_html(FETCH_HTML).await;
+        let url = format!("{base}article");
+        let tool = ResolvingWebTool::for_web_fetch(
+            Arc::new(WebAdapter::new()),
+            vec![
+                // A gateway provider whose prefix points at a dead host: the
+                // composed URL is dead/fetch?url=<target> → connection refused,
+                // so the resolver must fall back to the direct provider.
+                WebFetchProvider::new("gateway", format!("{}/fetch?url=", dead_endpoint())),
+                WebFetchProvider::new("direct", ""),
+            ],
+        );
+
+        let result = tool.execute(&fetch_action(&url), &ExecutionContext::for_goal("g1")).await;
+        assert!(
+            result.success,
+            "fallback must rescue the failed primary: {:?}",
+            result.error
+        );
+
+        let output = parsed_output(&result);
+        let evidence = output["evidence"].as_array().expect("evidence array");
+        assert_eq!(evidence[0]["source"], "direct", "the winning provider is the fallback");
+        assert_eq!(evidence[0]["title"], "Rust Async Book");
+        assert_eq!(
+            evidence[0]["url"], url,
+            "the fallback fetched the original target, not the gateway prefix"
+        );
+        assert_eq!(result.metadata["provider"], "direct");
+        assert_eq!(
+            result.metadata["attempted"],
+            json!(["gateway", "direct"]),
+            "the full failure trail is recorded"
+        );
+    }
+
     // ── Health-gated fallback is live, not just registration-time ──
 
     #[tokio::test]
@@ -521,6 +864,29 @@ mod tests {
         let output = parsed_output(&result);
         assert_eq!(
             output["evidence"][0]["source"], "backup",
+            "offline primary is bypassed after the live health update"
+        );
+        assert_eq!(result.metadata["provider"], "backup");
+    }
+
+    #[tokio::test]
+    async fn fetch_live_health_update_reroutes_selection() {
+        let base = serve_html(FETCH_HTML).await;
+        let url = format!("{base}article");
+        let tool = ResolvingWebTool::for_web_fetch(
+            Arc::new(WebAdapter::new()),
+            vec![
+                WebFetchProvider::new("primary", format!("{}/fetch?url=", dead_endpoint())),
+                WebFetchProvider::new("backup", ""),
+            ],
+        );
+
+        // Same live seam as search, addressed per capability.
+        tool.set_health_for("web.fetch", "primary", CapabilityHealth::Offline);
+        let result = tool.execute(&fetch_action(&url), &ExecutionContext::for_goal("g1")).await;
+        assert!(result.success, "health-updated fetch fallback failed: {:?}", result.error);
+        assert_eq!(
+            parsed_output(&result)["evidence"][0]["source"], "backup",
             "offline primary is bypassed after the live health update"
         );
         assert_eq!(result.metadata["provider"], "backup");
@@ -552,6 +918,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fetch_all_providers_failing_is_a_structured_capability_error() {
+        let tool = ResolvingWebTool::for_web_fetch(
+            Arc::new(WebAdapter::new()),
+            vec![
+                WebFetchProvider::new("gateway", format!("{}/fetch?url=", dead_endpoint())),
+                WebFetchProvider::new("gateway2", format!("{}/fetch?url=", dead_endpoint())),
+            ],
+        );
+
+        let result = tool
+            .execute(
+                &fetch_action("https://example.com/x"),
+                &ExecutionContext::for_goal("g1"),
+            )
+            .await;
+        assert!(!result.success);
+        let err = result.error.expect("structured error");
+        assert!(err.contains("web.fetch unavailable"), "err: {err}");
+        assert_eq!(
+            result.metadata["attempted"],
+            json!(["gateway", "gateway2"]),
+            "the failed trail is still observable"
+        );
+    }
+
+    #[tokio::test]
     async fn no_providers_is_a_clean_capability_error() {
         let tool = ResolvingWebTool::for_web_search(Arc::new(WebAdapter::new()), vec![]);
         let result = tool.execute(&evidence_action(), &ExecutionContext::for_goal("g1")).await;
@@ -565,10 +957,10 @@ mod tests {
         );
     }
 
-    // ── A.2b scope: this tool serves web.search ONLY ──────────────
+    // ── Honest refusal: a tool serves exactly what it advertises ──
 
     #[tokio::test]
-    async fn refuses_non_web_search_instructions_honestly() {
+    async fn search_only_tool_refuses_fetch_and_other_channels_honestly() {
         let tool = ResolvingWebTool::for_web_search(
             Arc::new(WebAdapter::new()),
             vec![WebSearchProvider::new("duckduckgo", dead_endpoint())],
@@ -585,8 +977,8 @@ mod tests {
         assert!(!r.success);
         assert!(r.error.unwrap().contains("only serves web.search"));
 
-        // web.fetch is deliberately NOT wired through the resolver in A.2b —
-        // the tool must say so rather than pretend to serve it.
+        // A search-only tool refuses web.fetch honestly (the combined tool
+        // serves it — see below).
         let fetch = Action::single(
             "gather evidence: web (web.fetch)",
             Capability::Custom("web.fetch".into()),
@@ -604,6 +996,65 @@ mod tests {
         .await;
         assert!(!r.success);
         assert!(r.error.unwrap().contains("not an evidence action"));
+    }
+
+    #[tokio::test]
+    async fn combined_tool_serves_both_verbs_and_refuses_others() {
+        let tool = ResolvingWebTool::for_web(
+            Arc::new(WebAdapter::new()),
+            vec![WebSearchProvider::new("duckduckgo", dead_endpoint())],
+            vec![WebFetchProvider::new("direct", "")],
+        );
+        let caps = tool.capabilities();
+        assert!(caps.contains(&Capability::Custom("web.search".into())));
+        assert!(caps.contains(&Capability::Custom("web.fetch".into())));
+
+        let ctx = ExecutionContext::for_goal("g1");
+        // A verb the tool does not serve is refused with the served list.
+        let unknown = Action::single(
+            "gather evidence: web (web.unknown)",
+            Capability::Custom("web.unknown".into()),
+            "g1",
+        );
+        let r = tool.execute(&unknown, &ctx).await;
+        assert!(!r.success);
+        assert!(
+            r.error.unwrap().contains("only serves web.search, web.fetch"),
+            "refusal names the served verbs"
+        );
+
+        // A different channel is refused, not misrouted.
+        let git = Action::single(
+            "gather evidence: git (git.status)",
+            Capability::Custom("git.status".into()),
+            "g1",
+        );
+        let r = tool.execute(&git, &ctx).await;
+        assert!(!r.success);
+        assert!(r.error.unwrap().contains("only serves web.search, web.fetch"));
+    }
+
+    #[tokio::test]
+    async fn combined_tool_dispatches_fetch_through_the_resolver() {
+        let base = serve_html(FETCH_HTML).await;
+        let url = format!("{base}article");
+        let tool = ResolvingWebTool::for_web(
+            Arc::new(WebAdapter::new()),
+            vec![WebSearchProvider::new("duckduckgo", dead_endpoint())],
+            vec![WebFetchProvider::new("direct", "")],
+        );
+        let ctx = ExecutionContext::for_goal("g1");
+
+        // Search through the combined tool uses its own (dead) provider.
+        let search = tool.execute(&evidence_action(), &ctx).await;
+        assert!(!search.success, "dead search provider must fail honestly");
+
+        // Fetch through the combined tool resolves via its own candidate list
+        // — capabilities and dispatch stay consistent on the production shape.
+        let fetch = tool.execute(&fetch_action(&url), &ctx).await;
+        assert!(fetch.success, "combined-tool fetch failed: {:?}", fetch.error);
+        assert_eq!(parsed_output(&fetch)["evidence"][0]["source"], "direct");
+        assert_eq!(fetch.metadata["provider"], "direct");
     }
 
     // ── Context fidelity: timeout + permissions reach the ActionRequest ──
