@@ -1,5 +1,6 @@
 use crate::common::Capability;
 use crate::confidence::Confidence;
+use friday_knowledge::KnowledgeGraph;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -342,20 +343,26 @@ impl StateTransition {
 // ── World Model ─────────────────────────────────────────────────────
 
 /// The World Model — owns the current world state, applies transitions,
-/// and maintains a full history of state changes.
+/// maintains a full history of state changes, and carries the **knowledge
+/// graph** as its relationship layer (synthesis Phase 4).
 ///
 /// ```text
 /// WorldModel
-///   state:    WorldState        (current snapshot)
-///   history:  Vec<StateTransition>  (immutable audit trail)
+///   state:     WorldState        (current snapshot)
+///   history:   Vec<StateTransition>  (immutable audit trail)
+///   knowledge: KnowledgeGraph    (semantic facts: Requires / Creates edges)
 /// ```
 ///
 /// The World Model is the single source of truth for environment state.
 /// Actions declare preconditions; the model checks them before execution.
 /// After execution, postconditions are applied and a transition is recorded.
+/// The seeded knowledge graph lets the planner ask "what must exist before
+/// `git.commit` runs?" against the state (M5.6 planner integration).
 pub struct WorldModel {
     state: WorldState,
     history: Vec<StateTransition>,
+    /// Semantic relationship layer (seeded with the M5.6 ontology).
+    knowledge: KnowledgeGraph,
 }
 
 impl WorldModel {
@@ -363,6 +370,7 @@ impl WorldModel {
         Self {
             state: initial,
             history: Vec::new(),
+            knowledge: KnowledgeGraph::new(),
         }
     }
 
@@ -374,6 +382,58 @@ impl WorldModel {
     /// Full transition history (immutable audit trail).
     pub fn history(&self) -> &[StateTransition] {
         &self.history
+    }
+
+    /// The knowledge graph — semantic facts (Requires / Creates edges).
+    pub fn knowledge(&self) -> &KnowledgeGraph {
+        &self.knowledge
+    }
+
+    /// Mutable access to the knowledge graph (assert / remember / improve).
+    pub fn knowledge_mut(&mut self) -> &mut KnowledgeGraph {
+        &mut self.knowledge
+    }
+
+    /// Replace the knowledge graph (custom graphs / tests).
+    pub fn with_knowledge(mut self, knowledge: KnowledgeGraph) -> Self {
+        self.knowledge = knowledge;
+        self
+    }
+
+    /// The planner-facing gate (M5.6): what does `capability` require that the
+    /// current world state cannot provide? Entities are derived from the state
+    /// (known file/dir paths, available tools, network) and checked against the
+    /// graph's `Requires` edges. Empty = preconditions satisfied.
+    ///
+    /// **Id convention:** `capability` must be a **capability-registry dot-id**
+    /// (`git.commit`, `web.search`) — the graph's id-space — NOT the
+    /// `Capability` enum's snake_case (`execute_command`). An unmodeled
+    /// capability returns empty without claiming anything: check
+    /// `knowledge().has_preconditions(capability)` to distinguish "satisfied"
+    /// from "not modeled".
+    ///
+    /// ```text
+    /// model.find_missing_capability_prerequisites("git.commit")
+    ///     → ["GitRepository"]        (no .git anywhere in the state)
+    /// model.find_missing_capability_prerequisites("git.commit")
+    ///     → []                        (.git known to exist)
+    /// ```
+    pub fn find_missing_capability_prerequisites(&self, capability: &str) -> Vec<String> {
+        let mut active: Vec<String> = Vec::new();
+        active.extend(self.state.files.keys().cloned());
+        if self.state.network_available {
+            active.push("Network".into());
+        }
+        if self
+            .state
+            .files
+            .keys()
+            .any(|p| p == ".git" || p.starts_with(".git/") || p.ends_with("/.git"))
+        {
+            active.push("GitRepository".into());
+        }
+        let refs: Vec<&str> = active.iter().map(|s| s.as_str()).collect();
+        self.knowledge.find_missing_preconditions(capability, &refs)
     }
 
     /// Check if all preconditions are met for the current state.
