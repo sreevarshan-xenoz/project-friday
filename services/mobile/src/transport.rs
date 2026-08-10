@@ -36,6 +36,7 @@ pub struct Command {
 /// The mobile WebSocket gateway.
 pub struct WsServer {
     addr: SocketAddr,
+    require_auth: bool,
     auth: Arc<AuthRegistry>,
     outbound: broadcast::Sender<ServerMessage>,
     commands: broadcast::Sender<Command>,
@@ -48,11 +49,22 @@ impl WsServer {
         let (commands, _) = broadcast::channel(256);
         Self {
             addr,
+            // Default: QR-pairing required (the phone-facing protocol contract).
+            // Local development can opt out via `with_require_auth(false)`.
+            require_auth: true,
             auth: Arc::new(AuthRegistry::new()),
             outbound,
             commands,
             sessions: SessionRegistry::new(),
         }
+    }
+
+    /// Configure whether the handshake demands QR-pairing. `false` = open mode
+    /// for local development (the `welcome` advertises `requires_auth: false`
+    /// and unauthenticated clients go straight to the relay phase).
+    pub fn with_require_auth(mut self, require_auth: bool) -> Self {
+        self.require_auth = require_auth;
+        self
     }
 
     /// The live session registry (so the daemon can inspect connected devices).
@@ -101,8 +113,11 @@ impl WsServer {
             let outbound = self.outbound.clone();
             let commands = self.commands.clone();
             let sessions = self.sessions.clone();
+            let require_auth = self.require_auth;
             tokio::spawn(async move {
-                if let Err(e) = handle_conn(sock, auth, outbound, commands, sessions).await {
+                if let Err(e) =
+                    handle_conn(sock, auth, require_auth, outbound, commands, sessions).await
+                {
                     tracing::debug!("conn {peer} ended: {e}");
                 }
             });
@@ -115,6 +130,7 @@ type WsStream = WebSocketStream<TcpStream>;
 async fn handle_conn(
     sock: TcpStream,
     auth: Arc<AuthRegistry>,
+    require_auth: bool,
     outbound: broadcast::Sender<ServerMessage>,
     commands: broadcast::Sender<Command>,
     sessions: Arc<SessionRegistry>,
@@ -127,13 +143,20 @@ async fn handle_conn(
         &mut ws,
         ServerMessage::Welcome {
             session_id: session_id.clone(),
-            requires_auth: true,
+            requires_auth: require_auth,
             protocol: crate::protocol::PROTOCOL_VERSION.to_string(),
         },
     )
     .await?;
 
-    let mut authed = false;
+    // Open mode (local dev): the client is trusted from the welcome — it goes
+    // straight to the relay phase (and its session is marked authenticated so
+    // downstream gates treat it like any paired phone). Pairing mode: handshake
+    // until authenticated.
+    let mut authed = !require_auth;
+    if authed {
+        sessions.update(&session_id, |s| s.authenticated = true);
+    }
     let mut topics: HashSet<String> = HashSet::new();
 
     // --- handshake phase: read until authenticated ---
@@ -149,14 +172,7 @@ async fn handle_conn(
         match msg {
             Message::Text(t) => match protocol::decode(&t) {
                 Ok(ClientMessage::Hello { client, token, .. }) => {
-                    sessions.update(&session_id, |s| {
-                        s.device = client.device.clone();
-                        s.model = client.model;
-                        s.app_version = client.app_version;
-                        if !client.device.is_empty() {
-                            s.phone_id = client.device.clone();
-                        }
-                    });
+                    record_device(&sessions, &session_id, &client);
                     if let Some(tok) = token {
                         if auth.validate_token(&tok) {
                             authed = true;
@@ -330,11 +346,12 @@ async fn handle_client_text(
             sessions.update(session_id, |s| s.subscribed_events = subs);
         }
         Ok(ClientMessage::Ping) => send(ws, ServerMessage::Pong).await?,
-        Ok(
-            ClientMessage::Hello { .. }
-            | ClientMessage::AuthResponse { .. }
-            | ClientMessage::CommandAck { .. },
-        ) => {
+        Ok(ClientMessage::Hello { client, .. }) => {
+            // Open-mode sessions skip the handshake loop, so the hello arrives
+            // here — capture device metadata just like the pairing path does.
+            record_device(sessions, session_id, &client);
+        }
+        Ok(ClientMessage::AuthResponse { .. } | ClientMessage::CommandAck { .. }) => {
             // no-op post-auth
         }
         Err(e) => {
@@ -355,6 +372,22 @@ async fn send(ws: &mut WsStream, msg: ServerMessage) -> Result<(), crate::error:
     let text = protocol::encode(&msg).map_err(crate::error::MobileError::Json)?;
     ws.send(Message::Text(text)).await?;
     Ok(())
+}
+
+/// Record the device identity a client announced in its `Hello`.
+fn record_device(
+    sessions: &Arc<SessionRegistry>,
+    session_id: &str,
+    client: &crate::protocol::ClientInfo,
+) {
+    sessions.update(session_id, |s| {
+        s.device = client.device.clone();
+        s.model = client.model.clone();
+        s.app_version = client.app_version.clone();
+        if !client.device.is_empty() {
+            s.phone_id = client.device.clone();
+        }
+    });
 }
 
 #[cfg(test)]
@@ -461,6 +494,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn open_mode_skips_pairing_and_delivers_commands() {
+        let addr: SocketAddr = "127.0.0.1:18131".parse().unwrap();
+        let server = WsServer::new(addr).with_require_auth(false);
+        let mut cmd_rx = server.subscribe_commands();
+        let outbound = server.broadcast_tx();
+        tokio::spawn(async move {
+            server.run().await.unwrap();
+        });
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        let (mut client, _resp) = tokio_tungstenite::connect_async("ws://127.0.0.1:18131")
+            .await
+            .unwrap();
+
+        // Welcome advertises open mode — no pairing step.
+        let welcome = recv_server_msg(&mut client).await;
+        match welcome {
+            ServerMessage::Welcome { requires_auth, .. } => assert!(!requires_auth),
+            _ => panic!("expected welcome"),
+        }
+
+        // A command is delivered WITHOUT any auth_response.
+        let cmd = ClientMessage::Command {
+            id: "c-open".into(),
+            method: "task.run".into(),
+            params: serde_json::json!({}),
+        };
+        client
+            .send(Message::Text(serde_json::to_string(&cmd).unwrap()))
+            .await
+            .unwrap();
+        let received = cmd_rx.recv().await.unwrap();
+        assert_eq!(received.method, "task.run");
+
+        // Broadcasts reach the open client.
+        outbound
+            .send(ServerMessage::Event {
+                topic: "notifications".into(),
+                payload: serde_json::json!({}),
+            })
+            .unwrap();
+        let evt = recv_server_msg(&mut client).await;
+        assert!(matches!(evt, ServerMessage::Event { .. }));
+
+        client.close(None).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn unauthenticated_command_is_ignored() {
         let addr: SocketAddr = "127.0.0.1:18129".parse().unwrap();
         let server = WsServer::new(addr);
@@ -489,6 +570,61 @@ mod tests {
             .await
             .is_err();
         assert!(timed_out, "unauthenticated command must not be delivered");
+        client.close(None).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn bus_bridge_survives_publish_with_zero_clients() {
+        // Regression: the bus-bridge used to `break` (die) when its first
+        // `outbound.send` errored — and tokio broadcast errors when ZERO
+        // clients are connected, which the probe's 2s telemetry tick reliably
+        // hit before anyone connected. The bridge must outlive that; a client
+        // connecting later still receives the live stream.
+        use crate::bridge::BusBridge;
+        use friday_core::event::{Event, EventBus};
+
+        let addr: SocketAddr = "127.0.0.1:18132".parse().unwrap();
+        let bus = EventBus::new();
+        let server = WsServer::new(addr).with_require_auth(false);
+        let outbound = server.broadcast_tx();
+        // Bridge starts BEFORE any client exists.
+        BusBridge::new(bus.clone(), outbound.clone()).start();
+
+        tokio::spawn(async move {
+            server.run().await.unwrap();
+        });
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        // Publish with zero connected clients — send errors; bridge must live.
+        bus.publish(Event::new(
+            "telemetry.system",
+            "system-probe",
+            serde_json::json!({}),
+        ))
+        .await
+        .unwrap();
+
+        let (mut client, _resp) = tokio_tungstenite::connect_async("ws://127.0.0.1:18132")
+            .await
+            .unwrap();
+        let _welcome = recv_server_msg(&mut client).await;
+
+        // A subsequent publish reaches the client — proof the bridge survived.
+        bus.publish(Event::new(
+            "telemetry.system",
+            "system-probe",
+            serde_json::json!({ "cpu_percent": 7 }),
+        ))
+        .await
+        .unwrap();
+        let evt = recv_server_msg(&mut client).await;
+        match evt {
+            ServerMessage::Event { topic, payload } => {
+                assert_eq!(topic, "telemetry.system");
+                assert_eq!(payload["cpu_percent"], 7);
+            }
+            _ => panic!("expected forwarded event, got {evt:?}"),
+        }
         client.close(None).await.unwrap();
     }
 
