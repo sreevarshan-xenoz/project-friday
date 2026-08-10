@@ -11,7 +11,8 @@ Notes and ownership for FRIDAY's layered memory system.
 | Long-term | `LongTerm` | Embedded **redb** |
 | Vector | `Vector` | In-memory cosine search over stored embeddings |
 | Experience (procedural) | — | `ExperienceEngine` / `ExecutionExperience` (`core/src/memory/experience.rs`) |
-| Knowledge Graph | `KnowledgeGraph` | Interface reserved; full graph engine still planned (M5.6) |
+| Knowledge Graph | `KnowledgeGraph` | `friday-knowledge` (`services/knowledge`) — graph + World Model wiring |
+| Admission control | — | `friday-goal-execution` `admission.rs` — importance / novelty / reliability / sensitivity gates before an episode enters memory |
 
 Register layers with `Friday::register_memory_layer`. Convenience:
 `MemoryEngine::default_layers`.
@@ -19,6 +20,9 @@ Register layers with `Friday::register_memory_layer`. Convenience:
 ## Status
 
 ✅ M2 memory backends + M4.8 experience engine shipped.  
-🚧 Knowledge-graph depth remains open (`specs/knowledge_graph.md`).
+✅ Knowledge Graph + World Model shipped (`friday-knowledge`, synthesis Phase 4).  
+✅ Memory admission controller shipped (synthesis Phase 1b).  
+🚧 Consolidation depth, decay, and retrieval scoring remain open
+(`specs/knowledge_graph.md`, `specs/friday-2-0-synthesis.md`).
 
 See `docs/Memory.md` and `specs/memory.md` / `specs/experience.md`.
