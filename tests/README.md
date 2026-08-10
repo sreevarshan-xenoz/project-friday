@@ -12,10 +12,15 @@ to the crates they cover** (Rust convention).
 | AgentKernel / adapters / kernel | `services/action-runtime/tests/` |
 | Capabilities / orchestrator | `services/capabilities/tests/` |
 | Simulation | `services/simulation/tests/` |
+| Skill Engine | `services/skills/tests/` + `services/skill-forge/tests/` |
+| Goal Execution (evidence, workflows, admission, executive) | `services/goal-execution/tests/` |
+| Investigation / Agent Runtime / Persona / Knowledge / Project Cognition | `services/*/tests/` |
+| Mobile protocol / transport / auth | `services/mobile/` (in-crate tests) |
+| ReadModelBridge | `services/bridge/tests/` |
 | Context / intelligence / recovery | `services/*/tests/` |
 | MCP transports | `mcp/tests/` |
 | Windows bridge | `plugins/windows/tests/` |
-| End-to-end harness | `e2e/` (`friday-e2e`) |
+| End-to-end harness (incl. live local-model + skill-planning suites) | `e2e/` (`friday-e2e`) |
 | Qualification evidence (not unit tests) | `benchmarks/` |
 
 ```powershell
