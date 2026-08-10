@@ -77,6 +77,21 @@ const FILESYSTEM: &[Keyword] = &[
     ("path", 0.4),
 ];
 
+/// External reasoning through a logged-in website (Browser Organ): explicit
+/// model names and "ask …" phrases so a research goal routes to `webagent.ask`
+/// instead of a plain web search. Specific phrases weigh high; a bare
+/// "assistant" never fires.
+const EXTERNAL: &[Keyword] = &[
+    ("ask chatgpt", 0.95),
+    ("ask grok", 0.95),
+    ("ask the ai", 0.9),
+    ("ask an ai", 0.9),
+    ("ask a website", 0.85),
+    ("chatgpt", 0.8),
+    ("grok", 0.8),
+    ("logged-in", 0.8),
+];
+
 /// The default strategy: keyword tables + confidence threshold.
 #[derive(Debug, Clone)]
 pub struct HeuristicInvestigationStrategy {
@@ -122,6 +137,7 @@ impl HeuristicInvestigationStrategy {
             (InvestigationChannel::Memory, MEMORY),
             (InvestigationChannel::Git, GIT),
             (InvestigationChannel::Filesystem, FILESYSTEM),
+            (InvestigationChannel::External, EXTERNAL),
         ];
 
         for (channel, keywords) in tables {
@@ -235,6 +251,26 @@ mod tests {
             .investigate("Do you remember what I asked about yesterday?")
             .await;
         assert!(plan.channels().contains(&InvestigationChannel::Memory));
+    }
+
+    #[tokio::test]
+    async fn external_reasoning_goal_detected() {
+        let strategy = HeuristicInvestigationStrategy::default();
+        let plan = strategy
+            .investigate("Ask ChatGPT what it thinks about this architecture")
+            .await;
+        assert!(
+            plan.channels().contains(&InvestigationChannel::External),
+            "{plan:?}"
+        );
+        // A generic research goal still routes to web, not external.
+        let plan = strategy
+            .investigate("Search the web for async Rust docs")
+            .await;
+        assert!(
+            !plan.channels().contains(&InvestigationChannel::External),
+            "{plan:?}"
+        );
     }
 
     #[tokio::test]
