@@ -72,8 +72,8 @@ Statuses are updated as commits land — this table is the tracker.
 | 3 | `web.search` resolver wiring (normalized `Evidence[]`) | 🟢 DONE |
 | 4 | `web.fetch` resolver wiring (normalized fetch `Evidence[]`) | 🟢 DONE |
 | 5 | **Real local Code/Test Verifier** (`ConcreteVerifier`, before Sonar) | 🟢 DONE |
-| 6 | **Evidence pipeline: Web + Docs → Verify → Memory** | 🟡 **NEXT** |
-| 7 | **Agent Director / bounded subagents** | 🔴 |
+| 6 | **Evidence pipeline: Web + Docs → Verify → Memory** | 🟢 DONE |
+| 7 | **Agent Director / bounded subagents** | 🔴 **NEXT** |
 | 8 | **Parallel durable workflows + agent journaling** | 🟡 |
 | 9 | **Causal World Model** (entities → causes → effects → simulation) | 🟡 |
 | 10 | **LifeOS current→ideal/gap layer** | 🔴 |
@@ -90,12 +90,17 @@ Statuses are updated as commits land — this table is the tracker.
 | 21 | World-model visualization / DrawDB | last |
 
 **Where we are:** **Gate 1 (Information Organ) is complete** — AnyDoc · Web
-Search · Web Fetch · Evidence · Memory are all wired — and **#5, the real local
-Code/Test Verifier, is done**: FRIDAY now interprets observed output instead of
-trusting it (`CodeTestVerifier` → real command run → inspectable `checks[]` →
-`VerifiedResult`; a failed check is `Failed`, never `Verified`). That is the
-first concrete step into **Gate 2 (Trustworthy Executor)**. Next unit of work:
-**#6 — the Evidence pipeline** (Web + Docs → Verify → Memory).
+Search · Web Fetch · Evidence · Memory are all wired — and **#5/#6, the real
+local Code/Test Verifier and the Evidence pipeline, are done**: FRIDAY now
+interprets observed output instead of trusting it (`CodeTestVerifier` → real
+command run → inspectable `checks[]`; a failed check is `Failed`, never
+`Verified`), and the two organs blend into one verified research body — AnyDoc
++ Web → unified `Evidence[]` → `EvidenceVerifier` → episodic memory
+(`evidence_pipeline.rs`). That closes the core of **Gate 2 (Trustworthy
+Executor)** — Planning · Execution · **Verification** · Permissions · Audit ·
+Durability are all real. Next unit of work: **#7 — the Agent Director**
+(bounded subagents with verified results), the first step into **Gate 3
+(Multi-Agent FRIDAY)**.
 
 ### Milestone gates
 

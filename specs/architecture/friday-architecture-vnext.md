@@ -161,9 +161,14 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
   (`command_run_checks`, `verifiers.rs:94`) over both live runs and observed
   `ToolResult`s (`verify_command`, `to_verification`, `verifiers.rs:274,288`);
   10 tests green incl. "FAILED marker blocks false success" (`verifiers.rs:416`).
-- **Remaining (additive, behind the same seam):** Sonar → Security → Evidence
-  verifiers slot into the frozen `Verifier` trait; `NEW VerificationSystem` is
-  forbidden by Rule 1.
+- **Remaining (additive, behind the same seam):** Sonar → Security verifiers
+  slot into the frozen `Verifier` trait; `NEW VerificationSystem` is forbidden
+  by Rule 1. **The Evidence verifier has landed**: `EvidenceVerifier`
+  (well-formed/confidence/substance checks) gates the blended research body
+  (`services/goal-execution/src/evidence_pipeline.rs:388`), and the executive
+  blends Web + Docs evidence into one verified body that rides into episodic
+  memory (`evidence_pipeline.rs:138,449`; acceptance at
+  `executive.rs:1639`).
 - **Inspired by:** SonarQube CLI, PR-Agent, OMH evidence-before-claims.
 - **Plugs into:** frozen `Verifier` trait + `ExecutionState` lifecycle.
 - **Acceptance:** a real verifier runs on observed output and produces a
@@ -301,7 +306,7 @@ capability as an equal-priority feature.
 | **P0**   | **AnyDoc `docs.parse`**                  | Cleanest existing-seam integration — **DONE (2026-08-10)**           | AnyDoc                        |
 | **P0**   | **Rust-native Web Resolver**             | Web resolver wired end-to-end (`web.search` + `web.fetch`) — **DONE (2026-08-10)** | Agent-Reach                   |
 | **P1**   | **Concrete Verification Gate**           | **Local code/test verifier DONE (2026-08-10)**; Sonar/security/evidence verifiers remain additive behind the same seam | SonarQube + existing verifier |
-| **P1**   | **Evidence/Research pipeline hardening** | Connect web + docs + verification into one trustworthy research path | Agent-Reach + AnyDoc          |
+| **P1**   | **Evidence/Research pipeline hardening** | **DONE (2026-08-10)** — AnyDoc + Web → unified `Evidence[]` → verification → episodic memory (`services/goal-execution/src/evidence_pipeline.rs`); remaining evidence hardening is additive | Agent-Reach + AnyDoc          |
 | **P1**   | **Agent Director / Subagents**           | Actual recursive/child-agent mechanism is missing                    | Prime Agent + Multica         |
 | **P2**   | **Parallel durable workflows**           | Checkpoint/resume already exists, parallel execution is missing      | DeepZero + OpenMontage        |
 | **P2**   | **Real World Model**                     | Current `WorldModel` is too minimal for ACOS planning                | ACOS architecture             |

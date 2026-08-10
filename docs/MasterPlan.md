@@ -24,8 +24,8 @@ work.
 | 3 | `web.search` resolver wiring | 🟢 DONE | `ResolvingWebTool`: resolver → Action Runtime → normalized `Evidence[]`; healthy + fallback acceptance tests; constitution 🟢 — `318127a` |
 | 4 | `web.fetch` resolver wiring | 🟢 DONE | Resolver-backed fetch tool (`ResolvingWebTool::for_web`/`for_web_fetch`) with fallback tests + normalized fetch evidence; Web resolver row fully 🟢 in the constitution |
 | 5 | Real local Code/Test Verifier | 🟢 DONE | `CodeTestVerifier`: workspace + command → real execution → stdout/stderr/exit code → `checks[]` → `VerifiedResult` (`services/goal-execution/src/verifiers.rs`). First concrete verifier, **not** Sonar — plus `OutputContains`/`OutputExcludes`/`ToolSuccess` sub-verifiers; 10 tests green |
-| 6 | Evidence pipeline hardening | 🟡 **NEXT** | Web + Docs evidence blended and verified into one trustworthy research path (AnyDoc + Web → `Evidence[]` → Verification → Memory) |
-| 7 | Agent Director / bounded subagents | 🔴 | One parent safely creates bounded children and collects **verified** results. First topology: Director → Researcher / Analyst / Verifier. No persistent workforce yet |
+| 6 | Evidence pipeline hardening | 🟢 DONE | AnyDoc + Web → unified `Evidence[]` → Verification → Memory. `EvidenceSet` blends both organs (dedupe + cross-channel corroboration), `EvidenceVerifier` gates the body behind the frozen `Verifier` seam, the executive publishes the verified body and consolidates it through the admission gate (`services/goal-execution/src/evidence_pipeline.rs`) |
+| 7 | Agent Director / bounded subagents | 🔴 **NEXT** | One parent safely creates bounded children and collects **verified** results. First topology: Director → Researcher / Analyst / Verifier. No persistent workforce yet |
 | 8 | Parallel durable workflows + agent journaling | 🟡 | Enhancement on existing `WorkflowCheckpoint`/`WorkflowStore`/`resume()`: parallel stages + agent journaling + idempotency + mid-agent recovery. After #7 — know the execution topology before making it durable |
 | 9 | Causal World Model | 🟡 | `WorldModel` gains causal edges + action effects + simulation (Entity → State → Relation → Cause → Action → Effect → Simulation). Not DrawDB |
 | 10 | LifeOS current→ideal/gap layer | 🔴 | Current State → Desired State → Gap → Objective → Plan (feeds the planner) |
@@ -57,10 +57,12 @@ work.
 7. 🟢 Gate 7 — **Autonomous FRIDAY**: Observe → Reason → Decide → Act → Verify →
    Learn → Repeat.
 
-**Current position: Gate 1 complete; #5 (real local Code/Test Verifier) is done
-— FRIDAY now interprets observed output instead of trusting it. Next: #6 the
-Evidence pipeline (Web + Docs → Verify → Memory), continuing into Gate 2
-(Trustworthy Executor).**
+**Current position: Gate 1 complete; #5 (real local Code/Test Verifier) and #6
+(the Evidence pipeline — AnyDoc + Web → `Evidence[]` → verification → memory)
+are done. Gate 2 (Trustworthy Executor) is substantially real: Planning ·
+Execution · Verification · Permissions · Audit · Durability are all wired. Next:
+#7 the Agent Director (bounded subagents with verified results), first step
+into Gate 3 (Multi-Agent FRIDAY).**
 
 ## Why this order (the corrections vs. the flat P0–P5 table)
 
@@ -116,3 +118,14 @@ Evidence pipeline (Web + Docs → Verify → Memory), continuing into Gate 2
   inspectable and a failed check is `Failed`, never `Verified` (incl. the
   FAILED-marker-blocks-false-success acceptance). Constitution §2/§3
   Verification → 🟢. Next: #6 the Evidence pipeline.
+- **2026-08-10** — Item #6 Evidence pipeline hardening 🟢 DONE
+  (`services/goal-execution/src/evidence_pipeline.rs`): the trustworthy
+  research path is real — AnyDoc + Web → unified channel-agnostic `Evidence[]`
+  (`EvidenceSet` blends with dedupe + cross-channel corroboration) →
+  `EvidenceVerifier` (well-formed/confidence/substance, behind the frozen
+  `Verifier` seam) → `evidence_episode` rides the **verified** body into
+  episodic memory through the existing admission gate. The executive publishes
+  `report.evidence` for evidence-gated plans (acceptance:
+  `evidence_pipeline_blends_web_and_docs_into_verified_memory`,
+  `executive.rs`). Constitution P1 evidence row → DONE. Next: #7 the Agent
+  Director.

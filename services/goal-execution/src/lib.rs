@@ -131,6 +131,10 @@ pub use web_evidence::*;
 pub mod verifiers;
 
 pub use verifiers::*;
+
+pub mod evidence_pipeline;
+
+pub use evidence_pipeline::*;
 // ── Tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]

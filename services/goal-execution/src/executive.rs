@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::evidence::{is_evidence_action, parse_evidence_id, EvidenceActionRecord, EvidenceTrail};
+use crate::evidence_pipeline::{evidence_episode, EvidenceBody, EvidenceSet, EvidenceVerifier};
 use crate::simulation::{DefaultSimulator, Simulator};
 use crate::Action;
 use crate::AdmissionSignal;
@@ -114,6 +115,11 @@ pub struct ExecutiveReport {
     /// Verified | Failed record per evidence action. Empty for plans with no
     /// evidence actions.
     pub evidence_trail: EvidenceTrail,
+    /// The blended, verified research body of an evidence-gated plan
+    /// (MasterPlan #6): every evidence action's normalized output merged into
+    /// one `Evidence[]` and verified behind the `Verifier` seam. `None` for
+    /// plans with no evidence actions or nothing parseable.
+    pub evidence: Option<EvidenceBody>,
     /// The goal's canonical result — the actual output the executed plan
     /// produced (Text/Tool/…), or an explicit Empty state when the execution
     /// produced nothing. Sourced from the raw tool output in the Execute
@@ -174,6 +180,9 @@ pub struct Executive {
     simulator: DefaultSimulator,
     goal_engine: GoalEngine,
     verification: Verification,
+    /// Evidence verification (MasterPlan #6): the concrete `EvidenceVerifier`
+    /// that gates the blended research body behind the frozen `Verifier` seam.
+    evidence_verification: EvidenceVerifier,
     reflection_engine: ReflectionEngine,
     semantic_memory: SemanticMemory,
     episode_store: EpisodeStore,
@@ -386,6 +395,9 @@ impl Executive {
                         merged_nodes.extend(t.nodes.iter().cloned());
                     }
                     let mut main_report: Option<GoalReport> = None;
+                    // Raw outputs of every evidence action (MasterPlan #6):
+                    // blended into one `Evidence[]` and verified below.
+                    let mut evidence_outputs: Vec<String> = Vec::new();
 
                     for (step, action) in p.actions.iter().enumerate() {
                         workspace
@@ -412,6 +424,16 @@ impl Executive {
                                 tool_success: gr.verification.tool_success,
                                 duration_ms: gr.trace.duration_ms(),
                             });
+                            // Keep the observed output for the blended body —
+                            // only a genuinely succeeded tool's raw output;
+                            // `execution_output()` would fall back to the goal
+                            // description for a failed tool, and the goal text
+                            // is not evidence.
+                            if gr.verification.tool_success {
+                                if let Some(tr) = &gr.execution_result {
+                                    evidence_outputs.push(tr.output.clone());
+                                }
+                            }
                         } else {
                             // The goal's own action — the main execution result.
                             main_report = Some(gr);
@@ -420,6 +442,46 @@ impl Executive {
 
                     report.evidence_trail = evidence_trail.clone();
                     workspace.set_evidence_trail(evidence_trail);
+
+                    // Evidence pipeline (MasterPlan #6): blend every evidence
+                    // action's observed output into one research body and
+                    // verify it behind the frozen `Verifier` seam — AnyDoc +
+                    // Web → Evidence[] → Verification. The verified body
+                    // rides the episode into episodic memory (Consolidate).
+                    if !evidence_outputs.is_empty() {
+                        let set = EvidenceSet::from_outputs(&g.description, &evidence_outputs);
+                        if !set.is_empty() {
+                            let action = Action::single(
+                                "verify research evidence",
+                                Capability::Custom("evidence.verify".into()),
+                                &g.id,
+                            );
+                            let body = serde_json::to_string(&set.items)
+                                .unwrap_or_else(|_| "[]".to_string());
+                            let result = ToolResult::success(body);
+                            let verified =
+                                self.evidence_verification.verify(&action, &result);
+                            report.evidence = Some(EvidenceBody { set, verified });
+                            workspace.push_thought(format!(
+                                "executive: blended {} evidence items across {} (verified={})",
+                                report
+                                    .evidence
+                                    .as_ref()
+                                    .map(|b| b.set.len())
+                                    .unwrap_or(0),
+                                report
+                                    .evidence
+                                    .as_ref()
+                                    .map(|b| b.set.channels().join(", "))
+                                    .unwrap_or_default(),
+                                report
+                                    .evidence
+                                    .as_ref()
+                                    .map(|b| b.verified.verified)
+                                    .unwrap_or(false)
+                            ));
+                        }
+                    }
 
                     if let Some(gr) = &main_report {
                         // The canonical result is the raw output the tool
@@ -585,27 +647,47 @@ impl Executive {
 
         let world_before = workspace.get_world_state().unwrap_or_default();
         let world_after = workspace.get_world_state().unwrap_or_default();
-        let ver = goal_report.as_ref().map(|gr| &gr.verification);
-        let episode = CognitiveEpisode::begin(goal)
-            .with_world_before(world_before)
-            .with_plan(plan.clone().unwrap_or(Plan::from_action(
-                Action::single("no-op", Capability::ExecuteCommand, "default"),
-                "fallback",
-            )))
-            .with_execution_result(ToolResult::success("completed"))
-            .with_verification(VerifiedResult {
-                verified: ver.is_some_and(|v| v.verified),
-                tool_success: ver.is_some_and(|v| v.tool_success),
-                checks: ver.map_or(vec![], |v| v.checks.clone()),
-                confidence: ver.map_or(Confidence::low(), |v| v.confidence),
-            })
-            .with_reflection(workspace.get_reflection().unwrap_or_default())
-            .with_world_after(world_after)
-            .finish(if goal_report.as_ref().is_some_and(|gr| gr.success()) {
-                EpisodeOutcome::Success
-            } else {
-                EpisodeOutcome::Failure
-            });
+        // MasterPlan #6: an evidence-gated plan with a blended research body
+        // consolidates the EVIDENCE — its execution result is the blended
+        // Evidence[], its verification is the evidence verification, tagged
+        // `research`. The admission gate below still decides what enters
+        // episodic memory. Plans without evidence keep the generic episode.
+        let episode = match &report.evidence {
+            Some(body) if !body.set.is_empty() => evidence_episode(goal, &body.set, &body.verified)
+                // Preserve the same surfaces the generic path carries — the
+                // plan and reflection are part of the episodic record and feed
+                // the admission sensitivity scan.
+                .with_plan(plan.clone().unwrap_or(Plan::from_action(
+                    Action::single("no-op", Capability::ExecuteCommand, "default"),
+                    "fallback",
+                )))
+                .with_reflection(workspace.get_reflection().unwrap_or_default())
+                .with_world_before(world_before)
+                .with_world_after(world_after),
+            _ => {
+                let ver = goal_report.as_ref().map(|gr| &gr.verification);
+                CognitiveEpisode::begin(goal)
+                    .with_world_before(world_before)
+                    .with_plan(plan.clone().unwrap_or(Plan::from_action(
+                        Action::single("no-op", Capability::ExecuteCommand, "default"),
+                        "fallback",
+                    )))
+                    .with_execution_result(ToolResult::success("completed"))
+                    .with_verification(VerifiedResult {
+                        verified: ver.is_some_and(|v| v.verified),
+                        tool_success: ver.is_some_and(|v| v.tool_success),
+                        checks: ver.map_or(vec![], |v| v.checks.clone()),
+                        confidence: ver.map_or(Confidence::low(), |v| v.confidence),
+                    })
+                    .with_reflection(workspace.get_reflection().unwrap_or_default())
+                    .with_world_after(world_after)
+                    .finish(if goal_report.as_ref().is_some_and(|gr| gr.success()) {
+                        EpisodeOutcome::Success
+                    } else {
+                        EpisodeOutcome::Failure
+                    })
+            }
+        };
 
         // Phase 1b admission gate: nothing enters episodic memory without
         // clearing importance / novelty / reliability / evidence (and no
@@ -850,6 +932,7 @@ impl Default for Executive {
                 .with_registry(ToolRegistry::new())
                 .with_verification(Verification::new()),
             verification: Verification::new(),
+            evidence_verification: EvidenceVerifier::new(),
             reflection_engine: ReflectionEngine::new(),
             semantic_memory: SemanticMemory::new(),
             episode_store: EpisodeStore::new(),
@@ -1498,6 +1581,144 @@ mod tests {
             report.plan_executed,
             "the evidence action executed — thoughts: {:?}",
             workspace.get_thoughts()
+        );
+    }
+
+    // ── Evidence pipeline (MasterPlan #6): Web + Docs → Verify → Memory ──
+
+    fn web_evidence_json() -> String {
+        serde_json::json!({
+            "query": "rust async docs",
+            "evidence": [
+                {
+                    "source": "duckduckgo",
+                    "title": "The Rust Book",
+                    "url": "https://doc.rust-lang.org/book/",
+                    "content": "Learn async Rust with the official book. This page is long enough to count as substance for the pipeline.",
+                    "retrieved_at": "2026-08-10T00:00:00Z",
+                    "confidence": 1.0,
+                },
+            ],
+        })
+        .to_string()
+    }
+
+    fn docs_evidence_json() -> String {
+        serde_json::json!({
+            "id": "d1",
+            "source": "/repo/spec.md",
+            "title": "spec",
+            "mime_type": "text/markdown",
+            "markdown": "# FRIDAY\nA trustworthy research pipeline with real content across the document body.",
+            "metadata": {
+                "filename": "spec.md",
+                "size_bytes": 90,
+                "format": "md",
+                "parser": "passthrough",
+                "chars": 70,
+                "paragraphs": 2,
+                "parsed_at_ms": 1_700_000_000_000u64,
+            },
+            "assets": [],
+        })
+        .to_string()
+    }
+
+    fn register_research_tools(executive: &mut Executive) {
+        executive.register_tool(Box::new(
+            MockTool::success("web", web_evidence_json()).with_capabilities(vec![
+                Capability::SearchWeb,
+                Capability::Custom("web.search".into()),
+            ]),
+        ));
+        executive.register_tool(Box::new(
+            MockTool::success("docs", docs_evidence_json()).with_capabilities(vec![
+                Capability::ReadFile,
+                Capability::Custom("docs.search".into()),
+            ]),
+        ));
+        executive.register_tool(Box::new(
+            MockTool::success("terminal", "ok").with_capabilities(vec![Capability::ExecuteCommand]),
+        ));
+    }
+
+    fn research_world() -> WorldState {
+        WorldState::new()
+            .with_tool(Capability::SearchWeb)
+            .with_tool(Capability::ReadFile)
+            .with_tool(Capability::ExecuteCommand)
+            .with_tool(Capability::Custom("web.search".into()))
+            .with_tool(Capability::Custom("docs.search".into()))
+    }
+
+    #[tokio::test]
+    async fn evidence_pipeline_blends_web_and_docs_into_verified_memory() {
+        // The MasterPlan #6 acceptance: AnyDoc + Web → Evidence[] →
+        // Verification → Memory. Both organs run as evidence actions; the
+        // executive blends their outputs into one body, verifies it behind the
+        // seam, and the verified episode enters episodic memory.
+        let workspace = CognitiveBlackboard::new();
+        let mut executive = Executive::new();
+        register_research_tools(&mut executive);
+        workspace.set_world_state(research_world());
+
+        executive.add_observation("Search the web for the latest Rust async docs", 0.9);
+        let report = executive.cycle(&workspace).await;
+
+        // Every evidence action ran verified (as before).
+        assert!(report.evidence_trail.all_verified(), "{trail:?}", trail = report.evidence_trail);
+        // The blended body carries BOTH organs, channel-labeled.
+        let body = report.evidence.expect("evidence body published");
+        assert_eq!(body.set.len(), 2, "web + docs blended: {:?}", body.set);
+        assert_eq!(body.set.channels(), vec!["web", "docs"]);
+        assert!(body.verified.verified, "checks: {:?}", body.verified.checks);
+        // Verified evidence reached episodic memory through the admission gate.
+        assert!(report.episode_stored, "verified evidence must be admitted");
+        let stored = executive.episode_store().recent(1);
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].outcome, crate::EpisodeOutcome::Success);
+        assert!(
+            stored[0].tags.contains(&"research".to_string()),
+            "evidence episode is tagged research: {:?}",
+            stored[0].tags
+        );
+    }
+
+    #[tokio::test]
+    async fn unparseable_evidence_yields_no_blended_evidence_body() {
+        // An evidence tool that returns garbage (not parseable evidence) is
+        // recorded in the trail as tool-success but the blended body is empty
+        // → no evidence body is published (nothing to verify or persist as
+        // research evidence).
+        let workspace = CognitiveBlackboard::new();
+        let mut executive = Executive::new();
+        executive.register_tool(Box::new(
+            MockTool::success("web", "search results").with_capabilities(vec![
+                Capability::SearchWeb,
+                Capability::Custom("web.search".into()),
+            ]),
+        ));
+        executive.register_tool(Box::new(
+            MockTool::success("docs", "docs content").with_capabilities(vec![
+                Capability::ReadFile,
+                Capability::Custom("docs.search".into()),
+            ]),
+        ));
+        executive.register_tool(Box::new(
+            MockTool::success("terminal", "ok").with_capabilities(vec![Capability::ExecuteCommand]),
+        ));
+        workspace.set_world_state(research_world());
+
+        executive.add_observation("Search the web for the latest Rust async docs", 0.9);
+        let report = executive.cycle(&workspace).await;
+
+        assert!(
+            report.evidence.is_none(),
+            "garbage evidence output yields no evidence body"
+        );
+        assert!(
+            report.evidence_trail.all_verified(),
+            "tool-level success still verified (nothing to gate)"
         );
     }
 
