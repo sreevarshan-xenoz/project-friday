@@ -22,9 +22,10 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
+use friday_actions::WebAgentAdapter;
 use friday_experience::{CalibrationStore, TimelineStore};
 use friday_goal_execution::{
-    Capability as GoalCapability, CognitiveBlackboard, Executive, MockTool, WorldState,
+    AdapterTool, Capability as GoalCapability, CognitiveBlackboard, Executive, MockTool, WorldState,
 };
 use friday_investigation::InvestigationGraph;
 use friday_plugin_runtime::{
@@ -33,8 +34,8 @@ use friday_plugin_runtime::{
 };
 
 use crate::protocol::{
-    DashboardDto, DecisionRecordDto, DecisionTimelineDto, ExecutivePhaseStateDto,
-    InvestigationGraphDto, MetricsReportDto, WorldStateDto,
+    DashboardDto, DecisionRecordDto, DecisionTimelineDto, EvidenceActionDto, EvidenceTrailDto,
+    ExecutivePhaseStateDto, InvestigationGraphDto, MetricsReportDto, WorldStateDto,
 };
 
 /// Which slices a `SourceDelta` touches. Used by tests and instrumentation;
@@ -471,7 +472,10 @@ fn plan_shell(
 /// A FRIDAY runtime stand-in for the bridge: a synthetic decision ledger (the
 /// read models a daemon would surface) plus a **real goal-execution
 /// `Executive`** that genuinely processes each goal — investigate → plan →
-/// execute → verify → reflect → consolidate → learn — through mock tools.
+/// execute → verify → reflect → consolidate → learn — through real adapters
+/// where they exist (the External channel is backed by the actual
+/// `WebAgentAdapter`, profile/site from `FRIDAY_BROWSER_PROFILE` /
+/// `FRIDAY_WEBAGENT_SITE`) and mocks for the remaining channels.
 ///
 /// The dashboard's live `InvestigationGraph` is read back from the Executive's
 /// own workspace after each cycle: the exact plan that gated planning, never a
@@ -567,6 +571,29 @@ impl DemoRuntimeSource {
             MockTool::success("terminal", "ok")
                 .with_capabilities(vec![GoalCapability::ExecuteCommand]),
         ));
+        // The External channel routes through the WebAgent layer
+        // (`webagent.ask/send/read` — logged-in sites via the Browser Organ).
+        // The REAL Browser Organ adapter backs it (same `AdapterTool` seam as
+        // `register_evidence_adapters`): `FRIDAY_BROWSER_PROFILE` selects the
+        // dedicated logged-in profile (default `~/.friday/browser/`) and
+        // `FRIDAY_WEBAGENT_SITE` the default site (else `https://chatgpt.com`).
+        // Research goals that need another intelligence ("ask ChatGPT…") execute
+        // the logged-in site through the browser — no API keys. Registered but
+        // inert in the demo: none of the demo goals trigger the External channel,
+        // so no browser launches during bridge runs/tests. If a demo goal ever
+        // mentions "ask chatgpt/grok", a real Chrome would open here.
+        executive.register_tool(Box::new(AdapterTool::for_evidence(Arc::new(
+            WebAgentAdapter::new(),
+        ))));
+        // "FRIDAY chooses the expert": `reasoning.consult` asks the
+        // best-suited external intelligence by capability profile (browser /
+        // API / local transports are interchangeable). Mock in the demo so a
+        // consult evidence action resolves end-to-end; a real deployment
+        // registers a ReasoningAdapter with its provider router.
+        executive.register_tool(Box::new(
+            MockTool::success("reasoning", "expert reply")
+                .with_capabilities(vec![GoalCapability::Custom("reasoning.consult".into())]),
+        ));
         // Advertise the same surface to the evaluator/simulator so evidence
         // plans are judged feasible and actually execute.
         workspace.set_world_state(
@@ -581,7 +608,11 @@ impl DemoRuntimeSource {
                 .with_tool(GoalCapability::Custom("git.status".into()))
                 .with_tool(GoalCapability::Custom("codeintel.understand".into()))
                 .with_tool(GoalCapability::Custom("memory.recall".into()))
-                .with_tool(GoalCapability::Custom("filesystem.list_directory".into())),
+                .with_tool(GoalCapability::Custom("filesystem.list_directory".into()))
+                .with_tool(GoalCapability::Custom("webagent.ask".into()))
+                .with_tool(GoalCapability::Custom("webagent.send".into()))
+                .with_tool(GoalCapability::Custom("webagent.read".into()))
+                .with_tool(GoalCapability::Custom("reasoning.consult".into())),
         );
 
         Self {
@@ -644,6 +675,36 @@ impl DemoRuntimeSource {
             InvestigationGraphDto::from(&g)
         });
 
+        // The evidence lifecycle is the Execute-phase segment of the cognitive
+        // trace, read back from the Executive's own workspace: every evidence
+        // action with its recorded Prepared → Observed → Verified | Failed
+        // state. None for direct-plan goals that gather no evidence (the
+        // workspace slot is cleared at the start of every Execute phase).
+        //
+        // Note on live feel: the demo runs each executive cycle atomically, so
+        // this carries the cycle's *final* recorded states (the mock console
+        // animates prepared → observed → verified by phase instead — both are
+        // truthful to their source). A real runtime that streams the Executive
+        // per-phase would emit intermediate states here too.
+        let evidence = self
+            .workspace
+            .get_evidence_trail()
+            .map(|trail| EvidenceTrailDto {
+                goal: trail.goal.clone(),
+                records: trail
+                    .records
+                    .iter()
+                    .map(|r| EvidenceActionDto {
+                        channel: r.channel.clone(),
+                        capability: r.capability.clone(),
+                        execution_state: r.execution_state.label().to_string(),
+                        verified: r.verified,
+                        tool_success: r.tool_success,
+                        duration_ms: r.duration_ms,
+                    })
+                    .collect(),
+            });
+
         DashboardDto {
             mission: "Mission K-731 · Plan and execute the next objective safely".into(),
             goal_progress: 0.1 + (self.cycles_completed % 10) as f64 * 0.09,
@@ -672,6 +733,7 @@ impl DemoRuntimeSource {
             },
             recent,
             graph,
+            evidence,
         }
     }
 
