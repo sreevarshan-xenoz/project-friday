@@ -57,13 +57,19 @@ pub struct ResolvedOutcome {
     pub error: Option<String>,
 }
 
-/// The dispatch seam: execute one binding against `params`, returning the
+/// The dispatch seam: execute one candidate against `params`, returning the
 /// normalized output or a string error. Plain function, not a trait — the
-/// action runtime wires its adapters here.
-pub type Dispatch =
-    Arc<dyn Fn(&ExecutionBinding, &serde_json::Value) -> BoxFuture<'static, Result<serde_json::Value, String>>
+/// action runtime wires its adapters here. The full [`CandidateBinding`] is
+/// passed so a provider-aware dispatch can route on provider identity (e.g.
+/// pick the provider's endpoint or credential set).
+pub type Dispatch = Arc<
+    dyn Fn(
+            &CandidateBinding,
+            &serde_json::Value,
+        ) -> BoxFuture<'static, Result<serde_json::Value, String>>
         + Send
-        + Sync>;
+        + Sync,
+>;
 
 /// Thread-safe resolver over candidate bindings keyed by canonical capability
 /// id. Registration is `Healthy` by default; probes/orchestration write live
@@ -184,7 +190,7 @@ impl BindingResolver {
 
         for candidate in resolved.ready {
             attempted.push(candidate.provider.clone());
-            match dispatch(&candidate.binding, params).await {
+            match dispatch(&candidate, params).await {
                 Ok(output) => {
                     return ResolvedOutcome {
                         success: true,
@@ -274,21 +280,23 @@ mod tests {
     }
 
     fn fake_ok() -> Dispatch {
-        Arc::new(|binding, params| {
-            let adapter = binding.adapter.clone();
+        Arc::new(|candidate, params| {
+            let provider = candidate.provider.clone();
             let params = params.clone();
             Box::pin(async move {
                 Ok(serde_json::json!({
-                    "provider": adapter,
+                    "provider": provider,
                     "echo": params,
                 }))
             })
         })
     }
 
-    fn fake_result(results: HashMap<&'static str, Result<serde_json::Value, &'static str>>) -> Dispatch {
-        Arc::new(move |binding, _| {
-            let key = binding.adapter.clone();
+    fn fake_result(
+        results: HashMap<&'static str, Result<serde_json::Value, &'static str>>,
+    ) -> Dispatch {
+        Arc::new(move |candidate, _| {
+            let key = candidate.provider.clone();
             let outcome = results.get(key.as_str()).cloned();
             Box::pin(async move {
                 match outcome {
@@ -326,7 +334,7 @@ mod tests {
         assert!(out.success, "out: {out:?}");
         assert_eq!(out.provider, "duckduckgo", "healthy primary wins");
         assert_eq!(out.attempted, vec!["duckduckgo"]);
-        assert_eq!(out.output["provider"], "web");
+        assert_eq!(out.output["provider"], "duckduckgo");
     }
 
     #[tokio::test]

@@ -38,7 +38,7 @@ pub use orchestrator::{
 };
 pub use ranking::score;
 pub use registry::CapabilityRegistry;
-pub use resolver::{BindingResolver, CandidateBinding, Resolved, ResolvedOutcome};
+pub use resolver::{BindingResolver, CandidateBinding, Dispatch, Resolved, ResolvedOutcome};
 pub use sim::{
     Precondition, Prediction, ResourceForecast, RollbackPlan, SideEffect, SimRequest, SimResult,
     Simulatable, StepEstimate, WindowInfo, WorldState,
