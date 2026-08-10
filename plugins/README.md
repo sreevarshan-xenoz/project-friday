@@ -21,14 +21,19 @@ These are `ActionAdapter`s under `services/action-runtime`, registered with the
 | Filesystem | `FilesystemAdapter` | ✅ |
 | Terminal | `TerminalAdapter` | ✅ |
 | Git | `GitAdapter` | ✅ |
+| Web (HTTP fetch + search) | `WebAdapter` | ✅ |
+| Docs | `DocsAdapter` | ✅ |
+| Code Intelligence | `CodeIntelAdapter` | ✅ |
+| Browser (CDP headless Chrome) | `BrowserAdapter` | ✅ (e2e-wired) |
 | MCP tools | `McpAdapter` | ✅ |
 | Simulation | `SimAdapter` | ✅ |
 
 ## Planned (not yet crates here)
 
-Voice, Vision, Browser runtime, Coding, Discord, Spotify, Steam, OBS, VSCode,
-and other third-party integrations. Event kinds may already be reserved in
-`docs/Modules.md` / `docs/Voice.md` / `docs/VisionSystem.md`.
+Voice, Vision, Discord, Spotify, Steam, OBS, VSCode, and other third-party
+integrations. Event kinds may already be reserved in `docs/Modules.md` /
+`docs/Voice.md` / `docs/VisionSystem.md`. (A Browser runtime now exists as the
+`BrowserAdapter` above; deeper browser-organs remain open.)
 
 ## Adding a plugin
 
