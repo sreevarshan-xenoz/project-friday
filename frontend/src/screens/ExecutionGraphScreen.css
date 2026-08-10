@@ -286,6 +286,164 @@
   100% { opacity: 0; transform: scale(1.12); }
 }
 
+/* Per-branch evidence state badge (prepared/observed/verified/failed) */
+.con-graph-ev-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--fr-radius-pill);
+  border: 1px solid var(--fr-border);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fr-text-muted);
+  white-space: nowrap;
+}
+
+.con-graph-ev-badge--prepared { color: var(--fr-text-muted); }
+.con-graph-ev-badge--observed {
+  color: var(--fr-primary);
+  border-color: var(--fr-primary);
+  background: var(--fr-primary-dim);
+  animation: con-graph-ev-flicker 1.2s ease-in-out infinite;
+}
+.con-graph-ev-badge--verified {
+  color: var(--fr-green);
+  border-color: var(--fr-green-dim);
+  background: var(--fr-green-dim);
+}
+.con-graph-ev-badge--failed {
+  color: var(--fr-red);
+  border-color: var(--fr-red-dim);
+  background: var(--fr-red-dim);
+}
+.con-graph-ev-badge--cancelled {
+  color: var(--fr-text-muted);
+  text-decoration: line-through;
+}
+
+.con-graph-branch--ev-verified { border-top-color: var(--fr-green); }
+.con-graph-branch--ev-failed { border-top-color: var(--fr-red); }
+
+@keyframes con-graph-ev-flicker {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(91, 200, 255, 0.35); }
+  50% { box-shadow: 0 0 0 4px rgba(91, 200, 255, 0); }
+}
+
+/* Evidence lifecycle rail — the Execute-phase segment of the cognitive trace */
+.con-graph-evidence {
+  display: flex;
+  flex-direction: column;
+  gap: var(--fr-sp-3);
+  width: 100%;
+  padding: var(--fr-sp-4) var(--fr-sp-5);
+  background: var(--fr-surface-1);
+  border: 1px solid var(--fr-border);
+  border-radius: var(--fr-radius-lg);
+}
+
+.con-graph-evidence-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--fr-sp-3);
+  flex-wrap: wrap;
+}
+
+.con-graph-evidence-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fr-text);
+}
+
+.con-graph-evidence-sub {
+  flex: 1;
+  font-size: 11px;
+  color: var(--fr-text-muted);
+}
+
+.con-graph-evidence-summary {
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--fr-text-dim);
+}
+
+.con-graph-evidence-summary--all {
+  color: var(--fr-green);
+}
+
+.con-graph-evidence-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--fr-sp-2);
+}
+
+.con-graph-evidence-row {
+  display: flex;
+  align-items: center;
+  gap: var(--fr-sp-3);
+  padding: var(--fr-sp-2) var(--fr-sp-3);
+  border-radius: var(--fr-radius);
+  border: 1px solid var(--fr-border);
+  background: var(--fr-surface-2);
+  font-size: 12px;
+}
+
+.con-graph-evidence-icon {
+  font-size: 13px;
+  color: var(--fr-text-dim);
+}
+
+.con-graph-evidence-cap {
+  flex: 1;
+  font-family: var(--fr-font-mono);
+  font-size: 11px;
+  color: var(--fr-text);
+}
+
+.con-graph-evidence-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-size: 10px;
+  color: var(--fr-text-dim);
+}
+
+.con-graph-evidence-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fr-text-muted);
+}
+
+.con-graph-evidence-row--observed .con-graph-evidence-state { color: var(--fr-primary); }
+.con-graph-evidence-row--observed .con-graph-evidence-dot {
+  background: var(--fr-primary);
+  animation: con-graph-ev-flicker 1.2s ease-in-out infinite;
+}
+.con-graph-evidence-row--verified .con-graph-evidence-state { color: var(--fr-green); }
+.con-graph-evidence-row--verified .con-graph-evidence-dot { background: var(--fr-green); }
+.con-graph-evidence-row--failed .con-graph-evidence-state { color: var(--fr-red); }
+.con-graph-evidence-row--failed .con-graph-evidence-dot { background: var(--fr-red); }
+.con-graph-evidence-row--cancelled .con-graph-evidence-state {
+  color: var(--fr-text-muted);
+  text-decoration: line-through;
+}
+.con-graph-evidence-row--cancelled .con-graph-evidence-dot { background: var(--fr-text-muted); }
+
+.con-graph-evidence-dur {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fr-text-muted);
+}
+
 .con-graph-foot {
   display: flex;
   gap: var(--fr-sp-2);
