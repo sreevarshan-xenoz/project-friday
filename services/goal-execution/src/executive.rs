@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 
+use crate::evidence::{is_evidence_action, parse_evidence_id, EvidenceActionRecord, EvidenceTrail};
 use crate::simulation::{DefaultSimulator, Simulator};
 use crate::Action;
+use crate::AdmissionSignal;
+use crate::AdmissionVerdict;
 use crate::AttentionItem;
 use crate::AttentionItemKind;
 use crate::AttentionManager;
@@ -18,8 +21,12 @@ use crate::Expectation;
 use crate::FocusTarget;
 use crate::Goal;
 use crate::GoalEngine;
+use crate::GoalReport;
+use crate::GoalResult;
+use crate::MemoryAdmissionController;
 use crate::Plan;
 use crate::PlanEvaluator;
+use crate::PlanSource;
 use crate::Planning;
 use crate::PlanningContext;
 use crate::RankedPlan;
@@ -96,6 +103,23 @@ pub struct ExecutiveReport {
     pub patterns_promoted: usize,
     pub duration_ms: u64,
     pub error: Option<String>,
+    /// The memory admission gate (Phase 1b): what the Consolidate phase decided
+    /// for the episode — Store / Reject(reason) / Pending(reason). None when
+    /// the cycle never reached consolidation.
+    pub admission_verdict: Option<AdmissionVerdict>,
+    /// The five admission signals (importance/novelty/reliability/sensitivity/
+    /// evidence) that produced the verdict — the *why*, recorded for audit.
+    pub admission_signal: Option<AdmissionSignal>,
+    /// The evidence trail of the executed plan (M7): one Prepared → Observed →
+    /// Verified | Failed record per evidence action. Empty for plans with no
+    /// evidence actions.
+    pub evidence_trail: EvidenceTrail,
+    /// The goal's canonical result — the actual output the executed plan
+    /// produced (Text/Tool/…), or an explicit Empty state when the execution
+    /// produced nothing. Sourced from the raw tool output in the Execute
+    /// phase, never reconstructed from phase/evidence metadata. `None` only
+    /// when the cycle never executed a plan (those goals publish `failed`).
+    pub result: Option<GoalResult>,
 }
 
 /// The Executive — orchestrates the cognitive cycle.
@@ -153,6 +177,10 @@ pub struct Executive {
     reflection_engine: ReflectionEngine,
     semantic_memory: SemanticMemory,
     episode_store: EpisodeStore,
+    /// The gate between experience and episodic memory (Phase 1b): every
+    /// episode must clear importance/novelty/reliability/evidence gates to be
+    /// stored; sensitive episodes are held for human confirmation.
+    admission: MemoryAdmissionController,
     attention_manager: AttentionManager,
     /// Tick counter.
     cycle_count: u64,
@@ -333,11 +361,102 @@ impl Executive {
         self.phase = ExecutivePhase::Execute;
         report.phases_completed.push(ExecutivePhase::Execute);
 
+        // A fresh cycle never inherits a previous cycle's evidence trail: only
+        // the evidence-gated path below publishes one, so a direct-plan cycle
+        // (or a self-contained goal) leaves the workspace slot empty.
+        workspace.clear_evidence_trail();
+
         let goal_report = if let (Some(g), Some(ref p)) = (Some(&goal), &plan) {
             if let Some(sim) = &simulation_result {
                 if !sim.feasible {
                     workspace.push_thought("executive: skipping execution — simulation infeasible");
                     None
+                } else if p.source == PlanSource::Investigation {
+                    // M7 evidence-gated plan: EVERY evidence action executes
+                    // through the evidence lifecycle — each carries its own
+                    // Prepared → Observed → Verified | Failed trail — then the
+                    // goal's own action executes as the main result. The trail
+                    // is published to the report and the workspace.
+                    let mut evidence_trail = EvidenceTrail {
+                        goal: g.description.clone(),
+                        records: Vec::new(),
+                    };
+                    let mut merged_nodes: Vec<TraceNode> = Vec::new();
+                    if let Some(t) = &planning_trace {
+                        merged_nodes.extend(t.nodes.iter().cloned());
+                    }
+                    let mut main_report: Option<GoalReport> = None;
+
+                    for (step, action) in p.actions.iter().enumerate() {
+                        workspace
+                            .push_thought(format!("executive: executing: {}", action.instruction));
+                        let expectation = Expectation::success(&action.instruction);
+                        let exec_ctx = ExecutionContext::for_goal(&g.id);
+                        let gr = self
+                            .goal_engine
+                            .execute(g, action, &expectation, &exec_ctx)
+                            .await;
+                        merged_nodes.extend(gr.cognitive_trace.nodes.iter().cloned());
+                        if is_evidence_action(action) {
+                            // An evidence action — record its own lifecycle.
+                            // is_evidence_action guarantees the parse succeeds.
+                            let (channel, _verb) = parse_evidence_id(&action.instruction)
+                                .expect("evidence action carries a parseable id");
+                            evidence_trail.records.push(EvidenceActionRecord {
+                                step,
+                                instruction: action.instruction.clone(),
+                                capability: action.capability.to_string(),
+                                channel,
+                                execution_state: gr.execution_state,
+                                verified: gr.verification.verified,
+                                tool_success: gr.verification.tool_success,
+                                duration_ms: gr.trace.duration_ms(),
+                            });
+                        } else {
+                            // The goal's own action — the main execution result.
+                            main_report = Some(gr);
+                        }
+                    }
+
+                    report.evidence_trail = evidence_trail.clone();
+                    workspace.set_evidence_trail(evidence_trail);
+
+                    if let Some(gr) = &main_report {
+                        // The canonical result is the raw output the tool
+                        // produced (Observed) — `execution_result` — never the
+                        // goal description or a reconstruction from metadata.
+                        // The captured result is present on every real run; the
+                        // fallback is purely defensive for hand-built reports.
+                        let tool_result =
+                            gr.execution_result.clone().unwrap_or_else(|| ToolResult {
+                                success: gr.success(),
+                                output: gr.execution_output(),
+                                error: if gr.success() {
+                                    None
+                                } else {
+                                    Some(gr.outcome.context.clone())
+                                },
+                                duration_ms: gr.trace.duration_ms(),
+                                metadata: serde_json::json!({}),
+                            });
+                        workspace.set_execution(tool_result.clone());
+                        report.result = Some(
+                            GoalResult::from_tool_result(&tool_result).with_tool(gr.tool.clone()),
+                        );
+                        // Full trail top-down: investigation → chosen plan →
+                        // every evidence action's lifecycle → the goal action.
+                        let mut trace = CognitiveTrace::new(&g.id);
+                        trace.nodes = merged_nodes;
+                        workspace.set_current_trace(trace);
+
+                        workspace.push_thought(format!(
+                            "executive: verified (verified={}, confidence={:.2})",
+                            gr.verification.verified,
+                            gr.verification.confidence.value()
+                        ));
+                        report.plan_executed = true;
+                    }
+                    main_report
                 } else if let Some(action) = p.actions.first() {
                     workspace.push_thought(format!("executive: executing: {}", action.instruction));
 
@@ -348,9 +467,9 @@ impl Executive {
                         .execute(g, action, &expectation, &exec_ctx)
                         .await;
 
-                    let tool_result = ToolResult {
+                    let tool_result = gr.execution_result.clone().unwrap_or_else(|| ToolResult {
                         success: gr.success(),
-                        output: gr.outcome.context.clone(),
+                        output: gr.execution_output(),
                         error: if gr.success() {
                             None
                         } else {
@@ -358,8 +477,10 @@ impl Executive {
                         },
                         duration_ms: gr.trace.duration_ms(),
                         metadata: serde_json::json!({}),
-                    };
-                    workspace.set_execution(tool_result);
+                    });
+                    workspace.set_execution(tool_result.clone());
+                    report.result =
+                        Some(GoalResult::from_tool_result(&tool_result).with_tool(gr.tool.clone()));
                     // Surface the full decision trail top-down: investigation →
                     // chosen plan (from this cycle) followed by the GoalEngine's
                     // execution → verification → reflection nodes.
@@ -486,9 +607,31 @@ impl Executive {
                 EpisodeOutcome::Failure
             });
 
-        self.episode_store.store(episode.clone());
-        workspace.set_current_episode(episode);
-        report.episode_stored = true;
+        // Phase 1b admission gate: nothing enters episodic memory without
+        // clearing importance / novelty / reliability / evidence (and no
+        // sensitive episode is ever silently stored — it is held for a human).
+        let (verdict, signal) = self.admission.admit(&episode, &self.episode_store);
+        report.admission_verdict = Some(verdict.clone());
+        report.admission_signal = Some(signal);
+        match verdict {
+            AdmissionVerdict::Store => {
+                self.episode_store.store(episode.clone());
+                workspace.set_current_episode(episode);
+                report.episode_stored = true;
+                workspace.push_thought("executive: episode admitted to episodic memory");
+            }
+            AdmissionVerdict::Reject(reason) => {
+                report.episode_stored = false;
+                workspace.push_thought(format!("executive: episode rejected — {reason}"));
+            }
+            AdmissionVerdict::Pending(reason) => {
+                self.admission.hold(episode, reason);
+                report.episode_stored = false;
+                workspace.push_thought(format!(
+                    "executive: episode held for human confirmation — {reason}"
+                ));
+            }
+        }
 
         self.phase = ExecutivePhase::Learn;
         report.phases_completed.push(ExecutivePhase::Learn);
@@ -521,6 +664,14 @@ impl Executive {
 
     pub fn episode_store(&self) -> &EpisodeStore {
         &self.episode_store
+    }
+
+    pub fn admission(&self) -> &MemoryAdmissionController {
+        &self.admission
+    }
+
+    pub fn admission_mut(&mut self) -> &mut MemoryAdmissionController {
+        &mut self.admission
     }
 
     pub fn semantic_memory(&self) -> &SemanticMemory {
@@ -702,6 +853,7 @@ impl Default for Executive {
             reflection_engine: ReflectionEngine::new(),
             semantic_memory: SemanticMemory::new(),
             episode_store: EpisodeStore::new(),
+            admission: MemoryAdmissionController::new(),
             attention_manager: AttentionManager::new(),
             cycle_count: 0,
         }
@@ -711,7 +863,9 @@ impl Default for Executive {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MockTool, PlanSource, WorldState};
+    use crate::{
+        AdmissionReason, ExecutionState, GoalResultKind, MockTool, PlanSource, WorldState,
+    };
 
     #[tokio::test]
     async fn executive_investigates_before_planning_and_executes_evidence() {
@@ -992,6 +1146,280 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn evidence_plan_runs_every_evidence_action_with_its_own_trail() {
+        // A two-channel evidence plan (web + docs) must execute BOTH evidence
+        // actions — each carrying its own Prepared → Observed → Verified trail
+        // — and then the goal's own action.
+        let workspace = CognitiveBlackboard::new();
+        let mut executive = Executive::new();
+        executive.register_tool(Box::new(
+            MockTool::success("web", "search results").with_capabilities(vec![
+                Capability::SearchWeb,
+                Capability::Custom("web.search".into()),
+            ]),
+        ));
+        executive.register_tool(Box::new(
+            MockTool::success("docs", "docs content").with_capabilities(vec![
+                Capability::ReadFile,
+                Capability::Custom("docs.search".into()),
+            ]),
+        ));
+        executive.register_tool(Box::new(
+            MockTool::success("terminal", "ok").with_capabilities(vec![Capability::ExecuteCommand]),
+        ));
+        workspace.set_world_state(
+            WorldState::new()
+                .with_tool(Capability::SearchWeb)
+                .with_tool(Capability::ReadFile)
+                .with_tool(Capability::ExecuteCommand)
+                .with_tool(Capability::Custom("web.search".into()))
+                .with_tool(Capability::Custom("docs.search".into())),
+        );
+
+        executive.add_observation("Search the web for the latest Rust async docs", 0.9);
+        let report = executive.cycle(&workspace).await;
+
+        // Every evidence action ran with its own verified trail.
+        let trail = &report.evidence_trail;
+        assert_eq!(
+            trail.records.len(),
+            2,
+            "both evidence channels ran: {trail:?}"
+        );
+        assert!(trail.all_verified(), "both verified: {trail:?}");
+        let channels: Vec<&str> = trail.records.iter().map(|r| r.channel.as_str()).collect();
+        assert!(channels.contains(&"web"), "channels: {channels:?}");
+        assert!(channels.contains(&"docs"), "channels: {channels:?}");
+        assert!(
+            trail
+                .records
+                .iter()
+                .all(|r| r.execution_state == ExecutionState::Verified),
+            "every evidence action verified: {trail:?}"
+        );
+
+        // The trail is published to the workspace (bridge observability).
+        let published = workspace.get_evidence_trail().expect("published trail");
+        assert_eq!(published.records.len(), 2);
+        assert_eq!(
+            published.goal,
+            "Search the web for the latest Rust async docs"
+        );
+
+        // The goal's own action still executed.
+        assert!(report.plan_executed);
+
+        // The merged trace carries BOTH evidence actions' lifecycle nodes
+        // (execution → verification per evidence action), not just the first.
+        let trace = workspace.get_current_trace().expect("trace");
+        let evidence_execs: Vec<_> = trace
+            .nodes
+            .iter()
+            .filter(|n| {
+                n.kind == TraceNodeKind::Execution
+                    && n.input["instruction"]
+                        .as_str()
+                        .map(|s| s.starts_with("gather evidence"))
+                        .unwrap_or(false)
+            })
+            .collect();
+        assert_eq!(evidence_execs.len(), 2, "two evidence executions in trace");
+        // Both evidence actions ended verified in their own trace nodes.
+        for node in evidence_execs {
+            assert_eq!(node.output["state"], serde_json::json!("observed"));
+        }
+        let evidence_verifies: Vec<_> = trace
+            .nodes
+            .iter()
+            .filter(|n| n.kind == TraceNodeKind::Verification)
+            .collect();
+        assert!(
+            evidence_verifies.len() >= 2,
+            "verification per evidence action"
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_evidence_action_is_recorded_as_failed_not_verified() {
+        // One evidence channel fails: its trail record must say Failed (the
+        // evidence lifecycle never claims verified on a failed tool), while the
+        // healthy channel and the goal action still run.
+        let workspace = CognitiveBlackboard::new();
+        let mut executive = Executive::new();
+        executive.register_tool(Box::new(
+            MockTool::failure("web", "search engine unreachable").with_capabilities(vec![
+                Capability::SearchWeb,
+                Capability::Custom("web.search".into()),
+            ]),
+        ));
+        executive.register_tool(Box::new(
+            MockTool::success("docs", "docs content").with_capabilities(vec![
+                Capability::ReadFile,
+                Capability::Custom("docs.search".into()),
+            ]),
+        ));
+        executive.register_tool(Box::new(
+            MockTool::success("terminal", "ok").with_capabilities(vec![Capability::ExecuteCommand]),
+        ));
+        workspace.set_world_state(
+            WorldState::new()
+                .with_tool(Capability::SearchWeb)
+                .with_tool(Capability::ReadFile)
+                .with_tool(Capability::ExecuteCommand)
+                .with_tool(Capability::Custom("web.search".into()))
+                .with_tool(Capability::Custom("docs.search".into())),
+        );
+
+        executive.add_observation("Search the web for the latest Rust async docs", 0.9);
+        let report = executive.cycle(&workspace).await;
+
+        let trail = &report.evidence_trail;
+        assert_eq!(trail.records.len(), 2);
+        assert!(!trail.all_verified(), "web failed: {trail:?}");
+        assert_eq!(trail.verified_count(), 1, "only docs verified: {trail:?}");
+        let web = trail
+            .records
+            .iter()
+            .find(|r| r.channel == "web")
+            .expect("web record");
+        assert_eq!(web.execution_state, ExecutionState::Failed);
+        assert!(!web.verified);
+        assert!(!web.tool_success);
+        let docs = trail
+            .records
+            .iter()
+            .find(|r| r.channel == "docs")
+            .expect("docs record");
+        assert_eq!(docs.execution_state, ExecutionState::Verified);
+    }
+
+    #[tokio::test]
+    async fn direct_plan_has_empty_evidence_trail() {
+        // A goal with no evidence requirements takes the direct plan — no
+        // evidence actions, so the trail must be empty (never a phantom
+        // "no channels verified" trail).
+        let workspace = CognitiveBlackboard::new();
+        let mut executive = Executive::new();
+        executive.add_observation("Open notepad and write a note", 0.9);
+        let report = executive.cycle(&workspace).await;
+
+        assert!(report.evidence_trail.is_empty());
+        assert!(workspace.get_evidence_trail().is_none());
+    }
+
+    #[tokio::test]
+    async fn direct_plan_after_evidence_plan_clears_the_stale_trail() {
+        // A direct-plan cycle must not render the *previous* goal's evidence
+        // trail: the workspace slot is cleared at the start of every Execute
+        // phase and only republished by the evidence-gated path.
+        let workspace = CognitiveBlackboard::new();
+        let mut executive = Executive::new();
+        executive.register_tool(Box::new(
+            MockTool::success("web", "search results").with_capabilities(vec![
+                Capability::SearchWeb,
+                Capability::Custom("web.search".into()),
+            ]),
+        ));
+        executive.register_tool(Box::new(
+            MockTool::success("docs", "docs content").with_capabilities(vec![
+                Capability::ReadFile,
+                Capability::Custom("docs.search".into()),
+            ]),
+        ));
+        executive.register_tool(Box::new(
+            MockTool::success("terminal", "ok").with_capabilities(vec![Capability::ExecuteCommand]),
+        ));
+        workspace.set_world_state(
+            WorldState::new()
+                .with_tool(Capability::SearchWeb)
+                .with_tool(Capability::ReadFile)
+                .with_tool(Capability::ExecuteCommand)
+                .with_tool(Capability::Custom("web.search".into()))
+                .with_tool(Capability::Custom("docs.search".into())),
+        );
+
+        // Cycle 1: evidence-gated (web + docs fire) → trail published.
+        executive.add_observation("Search the web for the latest Rust async docs", 0.9);
+        let _r1 = executive.cycle(&workspace).await;
+        assert!(
+            workspace.get_evidence_trail().is_some(),
+            "evidence cycle publishes a trail"
+        );
+
+        // Cycle 2: self-contained goal → the stale trail must be gone.
+        executive.add_observation("Open notepad", 0.9);
+        let r2 = executive.cycle(&workspace).await;
+        assert!(r2.evidence_trail.is_empty());
+        assert!(
+            workspace.get_evidence_trail().is_none(),
+            "direct cycle must not render the previous goal's evidence trail"
+        );
+    }
+
+    #[tokio::test]
+    async fn sensitive_episode_is_held_pending_not_stored() {
+        // Phase 1b admission gate: an episode whose goal carries sensitive
+        // content never enters episodic memory — it is held on the controller
+        // for a human to approve or reject.
+        let workspace = CognitiveBlackboard::new();
+        let mut exec = Executive::new();
+        exec.add_goal("rotate my api_key and reset the password", 0.9);
+        let report = exec.cycle(&workspace).await;
+
+        assert_eq!(
+            report.admission_verdict,
+            Some(AdmissionVerdict::Pending(AdmissionReason::Sensitive)),
+            "sensitive episode must be held, not stored"
+        );
+        assert!(
+            !report.episode_stored,
+            "held episode is not reported as stored"
+        );
+        assert_eq!(exec.admission().pending_count(), 1);
+        assert!(
+            workspace.get_current_episode().is_none(),
+            "held episode is not published as the current (stored) episode"
+        );
+        // The signal behind the verdict is recorded for audit.
+        let signal = report.admission_signal.expect("signal recorded");
+        assert!(
+            signal.sensitivity >= exec.admission().sensitivity_pending_at,
+            "sensitivity forced the hold: {signal:?}"
+        );
+        assert!(
+            workspace
+                .get_thoughts()
+                .iter()
+                .any(|t| t.contains("held for human confirmation")),
+            "executive narrated the hold: {:?}",
+            workspace.get_thoughts()
+        );
+    }
+
+    #[tokio::test]
+    async fn rejected_episode_is_not_stored_but_verdict_is_recorded() {
+        // A cycle whose execution failed verification produces an unreliable
+        // episode: the gate rejects it (no memory pollution), but the report
+        // still records the verdict + signal so the decision is auditable.
+        let workspace = CognitiveBlackboard::new();
+        let mut exec = Executive::new();
+        // No tools registered → execution fails → unreliable episode.
+        exec.add_goal("flaky unverified step", 0.9);
+        let report = exec.cycle(&workspace).await;
+
+        let verdict = report
+            .admission_verdict
+            .expect("admission verdict recorded");
+        assert!(
+            matches!(verdict, AdmissionVerdict::Reject(_)),
+            "unverified episode must be rejected: {verdict}"
+        );
+        assert!(!report.episode_stored);
+        assert!(exec.episode_store().count() == 0);
+        assert!(report.admission_signal.is_some());
+    }
+
     /// The LLM-backed strategy is a drop-in for the heuristic: the executive
     /// runs the model-derived requirements through the same plan → simulate →
     /// execute path, and the model-only channel reaches the plan.
@@ -1071,5 +1499,36 @@ mod tests {
             "the evidence action executed — thoughts: {:?}",
             workspace.get_thoughts()
         );
+    }
+
+    #[tokio::test]
+    async fn report_carries_the_real_execution_result() {
+        // The report's `result` is the executed tool's actual output — the
+        // answer the portal should show — never the goal text or a
+        // reconstruction from phase/evidence metadata.
+        let workspace = CognitiveBlackboard::new();
+        let mut executive = Executive::new();
+        executive.register_tool(Box::new(
+            MockTool::success("terminal", "Build complete")
+                .with_capabilities(vec![Capability::ExecuteCommand]),
+        ));
+        workspace.set_world_state(WorldState::new().with_tool(Capability::ExecuteCommand));
+
+        // "run the build" classifies as ExecuteCommand via infer_capability.
+        executive.add_observation("run the build", 0.9);
+        let report = executive.cycle(&workspace).await;
+
+        assert!(report.plan_executed);
+        let result = report.result.expect("a completed execution has a result");
+        assert_eq!(result.kind, GoalResultKind::Text);
+        assert_eq!(result.text, "Build complete");
+        assert!(result.success);
+        // The metadata trail survives alongside the result.
+        assert!(
+            report.phases_completed.len() >= 10,
+            "the full cognitive cycle still runs: {:?}",
+            report.phases_completed
+        );
+        assert!(report.evidence_trail.records.is_empty());
     }
 }
