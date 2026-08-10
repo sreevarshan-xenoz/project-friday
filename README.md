@@ -18,9 +18,11 @@ without a rewrite.
 
 ## Status
 
-**Phase: Alpha Qualification** — architecture milestones M0–M5 are complete and
-the runtime API is frozen. Work now proves reliability with benchmarks (MTBF,
-recovery, Windows-heavy tasks), not greenfield features.
+**Phase: Alpha Qualification + FRIDAY 2.0 synthesis** — the M0–M5 architecture
+is complete and the runtime API is frozen. Work now builds the layered cognitive
+stack on top of the proven core (evidence lifecycle, durable workflows,
+investigation, agent runtime, memory fabric) while qualification keeps proving
+reliability with benchmarks.
 
 | Area | State |
 | ---- | ----- |
@@ -29,20 +31,27 @@ recovery, Windows-heavy tasks), not greenfield features.
 | M2 Memory (working / session / long-term / vector + experience) | ✅ Done |
 | M3 Planner (intent → plan → execute → verify) | ✅ Done |
 | M4 Agent Kernel (permissions, audit, lifecycle, adapters) | ✅ Done |
-| M4.5 Services (filesystem, terminal, git, Windows bridge) | ✅ Done (browser still open) |
+| M4.5 Services (filesystem, terminal, git, Windows bridge, web, docs, codeintel, **browser**) | ✅ Done |
 | M4.6 Capability Intelligence + Service Orchestrator | ✅ Done |
 | M4.7 Plan Simulation | ✅ Done |
 | M4.8 Experience Engine (procedural memory) | ✅ Done |
 | M4.10 Context Builder | ✅ Done |
-| M5 Cognitive / Intelligence layer | ✅ Done (providers + router) |
+| M5 Skill Engine (installable capability bundles) | ✅ Done (`services/skills`) |
+| M5 Cognitive / Intelligence layer (capability routing, qualification profiles, health telemetry) | ✅ Done |
 | MCP as first-class `ActionAdapter` | ✅ Done |
-| Mobile daemon + Android console client | ✅ Scaffolded / build-verified |
-| Benchmark + Recovery + Windows / Provider qual harnesses | ✅ In use |
-| Skill Engine (modular capabilities) | 🚧 Spec complete |
-| Desktop UI (React + TypeScript) | ✅ Foundation complete |
-| Browser Runtime | ⏳ Next major capability |
-| Vision / Voice / Learning / Autonomy | Planned |
-| Evaluation framework, Knowledge Graph depth, Reasoning Session | 🚧 Specced / partial |
+| Mobile daemon + Android console client + web portal | ✅ Live (auth knob + real telemetry) |
+| Benchmark + Recovery + Windows / Provider qual harnesses | ✅ In use (chaos lab: 18 scenarios) |
+| Planner is skill-aware (RELEVANT SKILLS + EVIDENCE REQUIRED prompt) | ✅ Done |
+| Investigation Engine (heuristic + LLM strategies, evidence-gated plans) | ✅ Done (`services/investigation`) |
+| Agent Runtime (sub-agent orchestration, scoped contexts) | ✅ Done (`services/agent-runtime`) |
+| Evidence lifecycle (`Prepared → Observed → Verified`) | ✅ Done (goal-execution) |
+| Durable execution (workflow trait + checkpoint/resume) | ✅ Done (goal-execution) |
+| Memory fabric (admission controller, Knowledge Graph, World Model) | ✅ Done |
+| Persona Engine (identity + blended personas + PAD mood) | ✅ Built (`services/persona`), not yet wired |
+| Persistent Project Cognition (long-term goal memory) | ✅ Done (`services/project-cognition`) |
+| Skill Forge (create / validate / publish CLI) | ✅ Done (`services/skill-forge`) |
+| Desktop UI (React + TypeScript + engineering console) | ✅ Live (Execution Graph, bridge-driven) |
+| Vision / Voice / Learning / Autonomy / Active Inference | Planned (Phase 5 of the synthesis) |
 
 See [`docs/Roadmap.md`](docs/Roadmap.md) and [`specs/README.md`](specs/README.md)
 for the authoritative milestone and subsystem map.
@@ -57,22 +66,24 @@ FRIDAY/
 ├── architecture/    Diagrams / ADR index
 ├── core/            friday-core — event bus, plugins, memory, protocol, runtime
 ├── planner/         friday-planner — four reasoning engines
-├── services/        Long-lived capability services (kernel, caps, sim, intel, …)
+├── services/        Long-lived capability services (kernel, caps, sim, intel, skills,
+│                   investigation, agent-runtime, persona, knowledge, goal-execution, …)
 ├── mcp/             friday-mcp — MCP transport, adapter, discovery
 ├── plugins/         Capability plugins (e.g. windows bridge client)
 ├── windows-host/    C# Windows host (Win32 / UIA / COM / PowerShell)
 ├── clients/         External clients (Android console)
-├── e2e/             End-to-end test harness
+├── e2e/             End-to-end test harness (incl. live local-model + skill suites)
 ├── benchmarks/      Qualification run evidence (Windows, provider, …)
 ├── artifacts/       Reproducible build outputs (e.g. Android APK)
-├── frontend/        React + TypeScript desktop UI (design system + components + screens)
-├── skills/          Skill Engine — modular, installable capability bundles
+├── frontend/        React + TypeScript desktop UI (design system + components + screens + console)
+├── skills/          Bundled skill manifests (git, docker, web, python, …)
 ├── desktop/         Legacy path note — live host is windows-host/
-├── memory/          Memory layer notes (impl lives in core/)
+├── memory/          Memory layer notes (impl lives in core/ + services)
 ├── models/          Model registry notes (impl in services/intelligence)
 ├── sdk/             Cross-language SDK / protocol schema (in progress)
 ├── tests/           Cross-crate integration notes
 ├── scripts/         Build / dev automation
+├── validation/      Unattended long-running validation rig (VP-001)
 ├── assets/          Icons, sounds, branding
 └── prototypes/      Throwaway spikes
 ```
@@ -97,10 +108,25 @@ The `echo_plugin` example registers a plugin that answers `demo.ping` with
 cargo test -p friday-planner
 cargo test -p friday-actions
 
+# Skill Engine / Goal Execution (evidence lifecycle, workflows, admission)
+cargo test -p friday-skills
+cargo test -p friday-goal-execution
+
+# Investigation / Agent Runtime / Persona / Knowledge / Project Cognition
+cargo test -p friday-investigation
+cargo test -p friday-agent-runtime
+cargo test -p friday-persona
+cargo test -p friday-knowledge
+cargo test -p friday-project-cognition
+
 # Capability intelligence / simulation / recovery
 cargo test -p friday-capabilities
 cargo test -p friday-simulation
 cargo test -p friday-recovery
+
+# Provider qualification harness + chaos laboratory (18 scenarios)
+cargo run -p provider-qual -- --help
+cargo run -p provider-qual -- --chaos --mock
 
 # Benchmark harness (optional CHAOS mode)
 cargo run -p friday-benchmark -- 600
@@ -117,6 +143,23 @@ dotnet build windows-host/windows-host.csproj -c Release
 ```
 
 Android console: see [`clients/android/README.md`](clients/android/README.md).
+
+Mobile daemon (speaks the Mobile Protocol on `0.0.0.0:18432`; the web portal
+and Android client both talk to it):
+
+```powershell
+# Pairing on by default for phones; disable for local dev / the web portal
+$env:FRIDAY_MOBILE_AUTH = "off"
+cargo run -p friday-mobile --bin friday-mobile-daemon
+```
+
+Frontend dev server (portal):
+
+```powershell
+cd frontend
+npm install
+npm run dev     # http://localhost:5173 (default Vite port)
+```
 
 ## Documentation
 
