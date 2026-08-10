@@ -287,6 +287,43 @@ async fn demo_source_graph_comes_from_the_real_executive_runtime() {
 }
 
 #[tokio::test]
+async fn demo_source_evidence_trail_shows_the_executed_lifecycle() {
+    // The dashboard's evidence trail is the Execute-phase segment of the
+    // cognitive trace, read back from the Executive's own workspace: goal 0
+    // (web + docs) runs two evidence actions through the evidence lifecycle
+    // and both end Verified.
+    let source = DemoRuntimeSource::new(42, 5);
+    let snap = source.snapshot().await;
+
+    let evidence = snap
+        .dashboard
+        .evidence
+        .expect("evidence-gated goal carries an evidence trail");
+    assert_eq!(evidence.goal, friday_bridge::demo_goals()[0]);
+
+    let channels: Vec<&str> = evidence
+        .records
+        .iter()
+        .map(|r| r.channel.as_str())
+        .collect();
+    assert!(channels.contains(&"web"), "channels: {channels:?}");
+    assert!(channels.contains(&"docs"), "channels: {channels:?}");
+
+    // Mock tools succeed, so every record ends the lifecycle Verified — and
+    // the wire carries the real skill capability ids (per-action timing is 0
+    // for the instant mock tools, which is the honest recorded duration).
+    for record in &evidence.records {
+        assert_eq!(record.execution_state, "verified", "{record:?}");
+        assert!(record.verified, "{record:?}");
+        assert!(record.tool_success, "{record:?}");
+        assert!(
+            record.capability.contains('.'),
+            "capability is a skill id: {record:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn demo_source_self_contained_goal_has_no_investigate_phase() {
     // Three full cycles advance to goal index 3 ("Open notepad…"). The
     // Executive's investigation of a self-contained goal yields no branches
@@ -307,6 +344,10 @@ async fn demo_source_self_contained_goal_has_no_investigate_phase() {
     assert_eq!(
         graph.phases,
         vec!["plan".to_string(), "execute".to_string()]
+    );
+    assert!(
+        snap.dashboard.evidence.is_none(),
+        "self-contained goal gathers no evidence — no lifecycle to render"
     );
 }
 
