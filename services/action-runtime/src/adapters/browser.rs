@@ -16,8 +16,14 @@
 //! **Trust note:** `url` is scheme-guarded (http/https only) and navigation is
 //! driven by host-supplied params, the same trust class as the HTTP
 //! [`crate::adapters::WebAdapter`] — the permission layer is the boundary.
-//! `click`/`type` are classified `Risk::Medium` (mutating a live page);
-//! `open`/`extract`/`scroll`/`screenshot` are `Risk::Safe`.
+//! `click`/`type`/`submit` are classified `Risk::Medium` (mutating a live page);
+//! `open`/`extract`/`scroll`/`screenshot` are `Risk::Safe`; `evaluate`
+//! (arbitrary page JS) is `Risk::High` and is **denied by default** by the
+//! permission engine (see `specs/browser-organ.md` §4).
+//!
+//! **Credential guard:** `type` refuses `input[type=password]` structurally —
+//! the browser profile is the credential boundary, so FRIDAY never types
+//! credentials (specs/browser-organ.md §4).
 
 use async_trait::async_trait;
 use chromiumoxide::browser::{Browser, BrowserConfig};
@@ -214,9 +220,71 @@ impl BrowserAdapter {
             Ok(el) => el,
             Err(e) => return ActionResult::error(format!("find '{selector}': {e}")),
         };
+        // Granular permission guard (specs/browser-organ.md §4): FRIDAY never
+        // types credentials — the dedicated browser profile *is* the login.
+        if let Ok(Some(ty)) = el.attribute("type").await {
+            if ty.eq_ignore_ascii_case("password") {
+                return ActionResult::error(
+                    "refusing to type into a password field (browser profile is the credential boundary)",
+                );
+            }
+        }
+        // Focus the element first (chromiumoxide's documented click → type →
+        // key flow): keystrokes and later key events land on the focused
+        // element, which is what real input boxes expect.
+        if let Err(e) = el.click().await {
+            return ActionResult::error(format!("focus '{selector}': {e}"));
+        }
         match el.type_str(&text).await {
             Ok(_) => ActionResult::success(json!({ "typed": selector })),
             Err(e) => ActionResult::error(format!("type into '{selector}': {e}")),
+        }
+    }
+
+    async fn submit(&self, req: &ActionRequest) -> ActionResult {
+        let selector = match req.param_str("selector") {
+            Ok(s) => s,
+            Err(e) => return ActionResult::error(e),
+        };
+        let state = self.state.lock().await;
+        let st = match state.as_ref() {
+            Some(st) => st,
+            None => return ActionResult::error("no browser — call web.open first"),
+        };
+        let page = match st.page.as_ref() {
+            Some(p) => p,
+            None => return ActionResult::error("no page open — call web.open first"),
+        };
+        let el = match page.find_element(&selector).await {
+            Ok(el) => el,
+            Err(e) => return ActionResult::error(format!("find '{selector}': {e}")),
+        };
+        match el.press_key("Enter").await {
+            Ok(_) => ActionResult::success(json!({ "submitted": selector })),
+            Err(e) => ActionResult::error(format!("submit '{selector}': {e}")),
+        }
+    }
+
+    async fn evaluate(&self, req: &ActionRequest) -> ActionResult {
+        let expression = match req.param_str("expression") {
+            Ok(s) => s,
+            Err(e) => return ActionResult::error(e),
+        };
+        let state = self.state.lock().await;
+        let st = match state.as_ref() {
+            Some(st) => st,
+            None => return ActionResult::error("no browser — call web.open first"),
+        };
+        let page = match st.page.as_ref() {
+            Some(p) => p,
+            None => return ActionResult::error("no page open — call web.open first"),
+        };
+        match page.evaluate(expression).await {
+            Ok(ev) => match ev.into_value::<serde_json::Value>() {
+                Ok(v) => ActionResult::success(json!({ "result": v })),
+                Err(e) => ActionResult::error(format!("evaluate result: {e}")),
+            },
+            Err(e) => ActionResult::error(format!("evaluate: {e}")),
         }
     }
 
@@ -327,9 +395,23 @@ pub fn browser_capability_specs(
     push(
         "web.type",
         "Type into an element",
-        "Type text into the first element matching a CSS selector",
+        "Type text into the first element matching a CSS selector (never into a password field)",
         "type",
         Risk::Medium,
+    );
+    push(
+        "web.submit",
+        "Submit an element",
+        "Press Enter on the first element matching a CSS selector",
+        "submit",
+        Risk::Medium,
+    );
+    push(
+        "web.evaluate",
+        "Run a JavaScript expression",
+        "Execute a JavaScript expression in the current page and return its value (denied by default)",
+        "evaluate",
+        Risk::High,
     );
     specs
 }
@@ -353,7 +435,16 @@ impl ActionAdapter for BrowserAdapter {
     }
 
     fn actions(&self) -> Vec<&str> {
-        vec!["open", "click", "type", "scroll", "extract", "screenshot"]
+        vec![
+            "open",
+            "click",
+            "type",
+            "submit",
+            "scroll",
+            "extract",
+            "screenshot",
+            "evaluate",
+        ]
     }
 
     async fn execute(&self, req: ActionRequest) -> ActionResult {
@@ -362,12 +453,20 @@ impl ActionAdapter for BrowserAdapter {
             "extract" => self.extract(&req).await,
             "click" => self.click(&req).await,
             "type" => self.typing(&req).await,
+            "submit" => self.submit(&req).await,
             "scroll" => self.scroll(&req).await,
             "screenshot" => self.screenshot(&req).await,
+            "evaluate" => self.evaluate(&req).await,
             other => ActionResult::error(format!("unknown web browser action: {other}")),
         }
     }
 }
+
+/// Serializes live browser tests so two headless Chrome instances never launch
+/// concurrently — parallel launches are flaky on dev machines. Held only inside
+/// the env-gated integration tests (`FRIDAY_BROWSER_TEST=1`).
+#[cfg(test)]
+pub(crate) static BROWSER_LIVE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 mod tests {
@@ -421,6 +520,38 @@ mod tests {
         assert!(res.error.unwrap().contains("unknown"));
     }
 
+    /// Live browser integration: typing into an `input[type=password]` is
+    /// refused by the credential guard (specs/browser-organ.md §4). Skipped
+    /// unless `FRIDAY_BROWSER_TEST=1`.
+    #[tokio::test]
+    async fn typing_refuses_password_fields() {
+        if std::env::var("FRIDAY_BROWSER_TEST")
+            .map(|v| v != "1")
+            .unwrap_or(true)
+        {
+            eprintln!("skipping password-guard integration (set FRIDAY_BROWSER_TEST=1 to enable)");
+            return;
+        }
+        let _guard = BROWSER_LIVE.lock().unwrap_or_else(|e| e.into_inner());
+        let html = r#"<!doctype html><html><body><input type="password" id="pw"></body></html>"#;
+        let (base, server) = serve_html(html.to_string()).await;
+        let adapter = adapter();
+        let res = adapter
+            .execute(ActionRequest::new("web", "open", json!({ "url": base })))
+            .await;
+        assert!(res.success, "open failed: {:?}", res.error);
+        let res = adapter
+            .execute(ActionRequest::new(
+                "web",
+                "type",
+                json!({ "selector": "#pw", "text": "hunter2" }),
+            ))
+            .await;
+        assert!(!res.success, "typing into a password field must be refused");
+        assert!(res.error.unwrap().contains("password"), "unexpected error");
+        let _ = server.abort();
+    }
+
     /// Live browser integration (headless Chrome required): open a local page,
     /// extract, click, type, scroll, screenshot. Skipped unless
     /// `FRIDAY_BROWSER_TEST=1` so hermetic CI stays green.
@@ -433,6 +564,7 @@ mod tests {
             eprintln!("skipping browser integration (set FRIDAY_BROWSER_TEST=1 to enable)");
             return;
         }
+        let _guard = BROWSER_LIVE.lock().unwrap_or_else(|e| e.into_inner());
         let html = r#"<!doctype html><html><head><title>Test Page</title></head>
             <body><h1>Hello FRIDAY</h1>
             <input id="name"><button id="go">Go</button><p id="out">initial</p>
@@ -501,7 +633,7 @@ mod tests {
     /// Minimal static HTTP server for the browser test (no dependencies). Binds
     /// in the test task (no runtime race), then serves the HTML on a loop.
     async fn serve_html(html: String) -> (String, tokio::task::JoinHandle<()>) {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:18734")
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");
         let addr = listener.local_addr().expect("local addr");
