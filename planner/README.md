@@ -7,8 +7,12 @@ service decides *how*. Implemented as four independent bus plugins in the
 
 ## Status
 
-✅ **M3 complete.** Pipeline tested end-to-end; integrates with AgentKernel,
-MCP adapters, capability discovery, and telemetry paths.
+✅ **M3 complete + skill-aware planning.** Pipeline tested end-to-end;
+integrates with AgentKernel, MCP adapters, capability discovery, telemetry,
+and the Skill Engine. The LLM planner prompt is **skill-aware**: it receives a
+**RELEVANT SKILLS** section (ranked candidate skills from `SkillRegistry::context_for()`)
+joined by an **EVIDENCE REQUIRED** section from the Investigation Engine, so
+planning starts from skills + evidence requirements, not raw capabilities.
 
 ## Modules
 
@@ -16,8 +20,12 @@ MCP adapters, capability discovery, and telemetry paths.
 planner/src/
 ├── events.rs            Standard event vocabulary (intent/plan/task/verify)
 ├── intent/              Intent Engine: parser, classifier, goal
-├── planning/            Planning Engine: TaskGraph (DAG), planners, scheduler
-├── execution/           Execution Engine: dispatcher, executor, plugin_selector
+├── planning/            Planning Engine: TaskGraph (DAG), planners (rule / llm / router),
+│                        plan context (skills + investigation requirements)
+├── execution/           Execution Engine: executor, supervisor, capability registry,
+│                        native capabilities, persistence, lifecycle
+├── experience/          Experience engine integration: indexer, miner, recorder,
+│                        reflection, replay, suggestion, timeline, metrics
 ├── verification/        Verification Engine: verifier, retry, result
 └── engines.rs           Engine plugin implementations
 ```
@@ -49,4 +57,5 @@ cargo test -p friday-planner
 ```
 
 Includes pipeline tests against a `MockExecutor`, MCP integration, capability
-discovery, supervisor, telemetry, and regression suites under `planner/tests/`.
+discovery, supervisor, telemetry, planning-context (skills + evidence),
+experience retrieval, and regression suites under `planner/tests/`.
