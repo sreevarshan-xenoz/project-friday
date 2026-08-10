@@ -11,6 +11,11 @@ description = "FRIDAY Mobile Transport (M6.1): WebSocket gateway, QR-pair auth, 
 [dependencies]
 friday-core = { path = "../../core" }
 friday-capabilities = { path = "../capabilities" }
+friday-actions = { path = "../action-runtime" }
+friday-goal-execution = { path = "../goal-execution" }
+friday-intelligence = { path = "../intelligence" }
+friday-investigation = { path = "../investigation" }
+async-trait = { workspace = true }
 tokio = { workspace = true }
 tokio-tungstenite = { workspace = true }
 http = { workspace = true }
