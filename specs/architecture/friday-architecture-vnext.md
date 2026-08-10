@@ -276,34 +276,137 @@ Immutable Core          Adaptive Layer
 
 ---
 
-## 5. Engineering order — next builds (revised 2026-08-10)
+## 5. Engineering priority — dependencies and verified gaps (revised 2026-08-10)
 
-The order is: finish the substrate, make verification real, add delegation,
-then grow cognition — perception and observability last, as autonomy grows.
+> **Engineering priority is determined by verified FRIDAY repository state, not
+> by the novelty or importance of an external project. External projects are
+> references or implementations behind existing FRIDAY seams.**
 
-1. **Agent-Reach resolver + AnyDoc adapter** — Internet organ + Document organ
-   as capability nodes (`docs.parse` pattern already proven). Low-risk, closes
-   the biggest perception gaps with least machinery.
-2. **Capability routing substrate** — make
-   `Capability → Binding → Health → Policy → Fallback` the universal path
-   (some exists via `ExpertRouter`; harden health + fallback).
-3. **Concrete verification** — first real `Verifier` behind the existing seam:
-   code/test verifier, then Sonar/security, then evidence verification. **No new
-   verification system.**
-4. **Agent Director** — goal → decompose → spawn → execute → collect → verify.
-   Prime Agent + Multica patterns on top of `AgentRuntime`.
-5. **Real World Model** — entities, states, relationships, **causal edges**,
-   action effects, simulation. Not visualization.
-6. **Autonomous cognitive tick** — observe → reason → prioritize → act → verify
-   → remember, on a heartbeat. Start simple; decision function grows later.
-7. **LifeOS-style intent layer** — persistent current state, desired state,
-   goals, priorities, constraints, progress feeding the planner.
-8. **Skill compounding loop** — experience → reflection → procedure →
-   verification → skill → future use.
-9. **Perception** — vision + audio + screen + system telemetry, as real
-   sensors behind the perception seam.
-10. **Observability / secrets / egress / cost** — increasingly important as
-    autonomy grows; egress secret-scan should arguably arrive before step 9.
+The audit invalidated the old project-by-project ranking: several "future
+features" are **verified missing architectural capabilities**, while others
+should wait because the underlying substrate already exists. This order tracks
+the ACOS roadmap's separation — durable runtime, memory/world modeling,
+distributed execution, then metacognition/autonomy — instead of treating every
+capability as an equal-priority feature.
+
+### Priority table
+
+| Priority | Work                                     | Why now                                                              | Source/project                |
+| -------- | ---------------------------------------- | -------------------------------------------------------------------- | ----------------------------- |
+| **P0**   | **AnyDoc `docs.parse`**                  | Cleanest existing-seam integration — **DONE (2026-08-10)**           | AnyDoc                        |
+| **P0**   | **Rust-native Web Resolver**             | Gives FRIDAY reliable external information access                    | Agent-Reach                   |
+| **P1**   | **Concrete Verification Gate**           | Verifier framework exists, shipped implementations are weak/mock     | SonarQube + existing verifier |
+| **P1**   | **Evidence/Research pipeline hardening** | Connect web + docs + verification into one trustworthy research path | Agent-Reach + AnyDoc          |
+| **P1**   | **Agent Director / Subagents**           | Actual recursive/child-agent mechanism is missing                    | Prime Agent + Multica         |
+| **P2**   | **Parallel durable workflows**           | Checkpoint/resume already exists, parallel execution is missing      | DeepZero + OpenMontage        |
+| **P2**   | **Real World Model**                     | Current `WorldModel` is too minimal for ACOS planning                | ACOS architecture             |
+| **P2**   | **LifeOS-style Intent Layer**            | Goals exist, but current→ideal/gap reasoning is missing              | LifeOS                        |
+| **P2**   | **Skill Compounding Loop**               | Reflection + Skill Forge exist, but aren't closed-loop               | Multica + Prime Agent         |
+| **P3**   | **Real Audio/Voice Sensor**              | Current perception isn't real sensing                                | Meetily                       |
+| **P3**   | **Real Vision Sensor**                   | Vision organ is genuinely absent                                     | Vision Agents                 |
+| **P3**   | **Persistent Agent Workforce**           | Requires Agent Director first                                        | Multica                       |
+| **P3**   | **Autonomous Cognitive Tick**            | Requires perception + world state + goals + execution + safety       | ACOS / Active Inference       |
+| **P4**   | **Walrus Memory backend**                | Existing `MemoryLayer` already solves the abstraction — backend #5, not architecture | Walrus |
+| **P4**   | **Security/Egress/Secrets plane**        | Important before broad autonomy                                      | Archestra + Sonar             |
+| **P4**   | **Observability + cost telemetry**       | Required for long-running autonomous operation                       | Archestra                     |
+| **P5**   | **World-model visualization**            | Visualization is downstream of actually having a rich world model    | DrawDB                        |
+
+### Dependency graph
+
+Not a linear build order — a dependency graph. Runtime substrate first, then
+the organs that plug into it, then the cognition that makes FRIDAY autonomous:
+
+```text
+                         FRIDAY vNext
+                              │
+                    ┌─────────┴─────────┐
+                    │ Existing Runtime │
+                    └─────────┬─────────┘
+                              │
+          ┌───────────────────┼──────────────────┐
+          ↓                   ↓                  ↓
+       AnyDoc             Web Resolver       Verification
+          │                   │                  │
+          └───────────────────┼──────────────────┘
+                              ↓
+                     Evidence / Research
+                              │
+                              ↓
+                       Agent Director
+                              │
+                 ┌────────────┼────────────┐
+                 ↓            ↓            ↓
+             Researcher     Coder       Analyst
+                 │            │            │
+                 └────────────┼────────────┘
+                              ↓
+                     Durable Workflows
+                              │
+                  ┌───────────┴───────────┐
+                  ↓                       ↓
+             World Model             Intent Layer
+                  │                       │
+                  └───────────┬───────────┘
+                              ↓
+                       Skill Learning
+                              │
+                    ┌─────────┴─────────┐
+                    ↓                   ↓
+                 Audio               Vision
+                    │                   │
+                    └─────────┬─────────┘
+                              ↓
+                       Autonomous Tick
+                              │
+                              ↺
+```
+
+### Three categories, not a flat build order
+
+- **Foundation** — things other subsystems depend on (verified substrate work):
+  capability routing, verification, durable execution, world model, **Agent
+  Director**.
+- **Organs** — capabilities plugged into that foundation: AnyDoc, Agent-Reach,
+  Vision, Audio, Walrus (backend #5 behind the existing `MemoryLayer`).
+- **Cognitive expansion** — what makes FRIDAY progressively more autonomous:
+  LifeOS intent, skill compounding, persistent workforce, autonomous tick.
+
+### Two deliberate consolidations
+
+**One Agent Director, not three integrations.** Prime Agent (recursive
+spawning), Multica (persistence/workspaces), and Google ADK (workflow topology)
+all point at the same missing subsystem — supervisor, peer-to-peer, hierarchical
+and blackboard topologies. Build one FRIDAY subsystem:
+
+```text
+AgentDirector
+    │
+    ├── spawn()
+    ├── assign()
+    ├── supervise()
+    ├── suspend()
+    ├── resume()
+    ├── cancel()
+    ├── collect()
+    └── terminate()
+```
+
+**One sensor abstraction, not three features.** Meetily, Vision Agents, and
+screen/telemetry are not unrelated integrations — the sensor interface already
+exists:
+
+```text
+Sensor
+  │
+  ├── AudioSensor
+  ├── VisionSensor
+  ├── ScreenSensor
+  └── SystemSensor
+       ↓
+Perception Events
+       ↓
+Global Workspace
+```
 
 Each step is additive behind a frozen interface. No rewrite.
 
@@ -321,8 +424,8 @@ When a new project is discovered, answer **in this order**:
 3. **What must NOT enter core?** Extract only the pattern; never the repo, never
    its runtime, never its assumption that it IS the harness.
 4. **What is the acceptance criterion?** (must be testable in this repo).
-5. **Where does it land in §5?** Every accepted idea ranks into one of the ten
-   phases; nothing is "adopted" outside the order without an explicit
+5. **Where does it land in §5?** Every accepted idea ranks into one of the
+   P0–P5 tiers; nothing is "adopted" outside the order without an explicit
    re-ranking here.
 
 A project that passes 1–2 with a real seam, a clean 3, a testable 4, and a slot
