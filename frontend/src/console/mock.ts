@@ -13,6 +13,9 @@
 import type {
   CalibrationOffsets,
   Capability,
+  EvidenceAction,
+  EvidenceState,
+  EvidenceTrailDTO,
   ExecutivePhaseName,
   ExecutivePhaseState,
   WorldState,
@@ -747,4 +750,44 @@ export function worldState(timelines: DecisionTimeline[]): WorldState {
     episodes: timelines.length,
     confidence,
   };
+}
+
+/** The capability id each channel's evidence action carries in the trail. */
+const EVIDENCE_CAPABILITY: Record<InvestigationChannel, string> = {
+  web: 'web.search',
+  docs: 'docs.search',
+  codeintel: 'codeintel.understand',
+  memory: 'memory.recall',
+  git: 'git.status',
+  filesystem: 'filesystem.list_directory',
+};
+
+/**
+ * The evidence lifecycle of the current goal, mirroring the executive's
+ * Execute phase (`services/goal-execution/src/executive.rs`): planned
+ * channels appear as `prepared` when Execute begins, `observed` while Verify
+ * runs, and `verified` once the cycle completes the evidence gate (mock tools
+ * always succeed). Returns null before Execute and for self-contained goals —
+ * the same shape the bridge emits from the real runtime's workspace.
+ * `progress` is the demo executive progress (0..11, index of the running
+ * phase in the eleven-phase order).
+ */
+export function evidenceTrail(goal: string, progress: number): EvidenceTrailDTO | null {
+  const graph = investigationGraph(goal);
+  if (graph.requirements.length === 0) return null;
+  const EXECUTE_AT = 5; // ExecutivePhase index of Execute (Observe=0 … Idle=10)
+  if (progress < EXECUTE_AT) return null;
+  const state: EvidenceState =
+    progress === EXECUTE_AT ? 'prepared' : progress === EXECUTE_AT + 1 ? 'observed' : 'verified';
+  const records: EvidenceAction[] = graph.requirements.map((r) => ({
+    channel: r.channel,
+    capability: EVIDENCE_CAPABILITY[r.channel],
+    execution_state: state,
+    verified: state === 'verified',
+    // The mock's evidence tools always run cleanly — the lifecycle states
+    // this helper produces are prepared/observed/verified, never failed.
+    tool_success: true,
+    duration_ms: 12 + Math.round(r.confidence * 88),
+  }));
+  return { goal, records };
 }
