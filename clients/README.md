@@ -36,6 +36,20 @@ continues seamlessly on the Phone and back. That makes FRIDAY feel like one syst
 rather than two devices. It is a protocol capability (a `session.transfer`
 command/event), not client-specific logic.
 
+## Running the daemon
+
+```powershell
+cargo run -p friday-mobile --bin friday-mobile-daemon   # 0.0.0.0:18432
+```
+
+Pairing auth is **on by default** (QR-pairing for phones). For local dev or the
+web portal, open mode disables the challenge so clients connect directly:
+
+```powershell
+$env:FRIDAY_MOBILE_AUTH = "off"   # off | 0 | false | no
+cargo run -p friday-mobile --bin friday-mobile-daemon
+```
+
 ## Don't put FRIDAY logic in clients
 
 Clients know only protocol DTOs — never TaskGraph, RecoveryGraph, provider
