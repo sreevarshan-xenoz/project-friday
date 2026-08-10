@@ -9,6 +9,7 @@ repository.workspace = true
 description = "FRIDAY Action Runtime: dispatch/timeout/cancel/retry/telemetry + permission gate + audit"
 
 [dependencies]
+anydoc.workspace = true
 friday-core = { path = "../../core" }
 friday-planner = { path = "../../planner" }
 friday-capabilities = { path = "../capabilities" }
@@ -25,3 +26,7 @@ reqwest = { workspace = true }
 chromiumoxide = "0.7"
 futures = { workspace = true }
 tokio = { version = "1", features = ["full"] }
+
+[dev-dependencies]
+zip.workspace = true
+friday-knowledge = { path = "../knowledge" }
