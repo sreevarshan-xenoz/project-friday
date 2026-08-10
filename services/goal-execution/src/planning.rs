@@ -600,28 +600,160 @@ impl Planning {
             .unwrap_or_default()
     }
 
+    /// Route a goal's natural language to a capability — intent-first, so
+    /// `shell.execute` is reserved for explicit "run/execute a command"
+    /// requests and a goal is never defaulted into the shell. Filesystem
+    /// intents pick the verb by *how* the user asks to see files: a flat
+    /// listing (`filesystem.list`), the whole structure (`filesystem.tree`),
+    /// or a name/pattern search (`filesystem.search`).
     fn infer_capability(&self, description: &str, _knowledge: &[KnowledgeRecord]) -> Capability {
-        let desc_lower = description.to_lowercase();
-        if desc_lower.contains("cargo")
-            || desc_lower.contains("build")
-            || desc_lower.contains("test")
-            || desc_lower.contains("run")
-        {
-            Capability::ExecuteCommand
-        } else if desc_lower.contains("read") || desc_lower.contains("open") {
-            Capability::ReadFile
-        } else if desc_lower.contains("write") || desc_lower.contains("create") {
-            Capability::WriteFile
-        } else if desc_lower.contains("list") || desc_lower.contains("ls") {
-            Capability::ListDirectory
-        } else if desc_lower.contains("delete") || desc_lower.contains("remove") {
-            Capability::DeleteFile
-        } else if desc_lower.contains("search") || desc_lower.contains("find") {
-            Capability::SearchWeb
-        } else {
-            Capability::ExecuteCommand
-        }
+        capability_for_description(description)
     }
+}
+
+/// Intent classification for a goal description, in priority order. The first
+/// intent to match wins; the classifier never falls through to a shell-command
+/// default, so an ambiguous or unclassified goal degrades to read-only memory
+/// recall rather than an arbitrary `execute_command`.
+fn capability_for_description(description: &str) -> Capability {
+    let d = description.to_lowercase();
+
+    // 1. Shell — only explicit command/program requests.
+    if has_word(&d, "cargo")
+        || has_word(&d, "git")
+        || has_word(&d, "npm")
+        || has_word(&d, "pnpm")
+        || has_word(&d, "yarn")
+        || has_word(&d, "dotnet")
+        || has_word(&d, "pip")
+        || has_word(&d, "rustc")
+        || has_word(&d, "build")
+        || d.starts_with("run ")
+        || d.starts_with("execute ")
+    {
+        return Capability::ExecuteCommand;
+    }
+
+    // 2. Filesystem tree — the whole structure, not a flat listing.
+    if has_word(&d, "tree")
+        || has_word(&d, "structure")
+        || has_word(&d, "recursive")
+        || has_word(&d, "hierarchy")
+        || (has_word(&d, "explore") && !has_web_context(&d))
+    {
+        return Capability::Custom("filesystem.tree".into());
+    }
+
+    // 3. Filesystem search — find files by name/pattern.
+    if (has_word(&d, "find") || has_word(&d, "search")) && has_file_context(&d) {
+        return Capability::Custom("filesystem.search".into());
+    }
+
+    // 4. Filesystem listing.
+    if (has_word(&d, "list") || has_word(&d, "ls")) && has_file_context(&d) {
+        return Capability::ListDirectory;
+    }
+
+    // 5. Read a specific file.
+    if (has_word(&d, "read") || has_word(&d, "open")) && has_file_context(&d) {
+        return Capability::ReadFile;
+    }
+
+    // 6. Write / create a file.
+    if has_word(&d, "write")
+        || has_word(&d, "writing")
+        || has_word(&d, "create")
+        || has_word(&d, "saving")
+    {
+        return Capability::WriteFile;
+    }
+
+    // 7. Delete / remove.
+    if has_word(&d, "delete") || has_word(&d, "remove") {
+        return Capability::DeleteFile;
+    }
+
+    // 8. Memory recall — "remember/recall" is a memory intent even when it
+    // mentions research ("recall prior research").
+    if has_word(&d, "remember") || has_word(&d, "recall") {
+        return Capability::SearchMemory;
+    }
+
+    // 9. Web search — search/research without a filesystem target.
+    if has_word(&d, "search")
+        || has_word(&d, "find")
+        || has_word(&d, "research")
+        || has_word(&d, "look up")
+        || has_word(&d, "web")
+        || has_word(&d, "online")
+    {
+        return Capability::SearchWeb;
+    }
+
+    // 10. Safe default: read-only memory recall. The goal text is *never* run
+    // as a command — an unclassified goal answers from what FRIDAY already
+    // knows, or reports honestly that it has no answer yet.
+    Capability::SearchMemory
+}
+
+/// Whether `needle` appears in `haystack` as a whole word (alphanumeric or
+/// underscore delimited). Substring matches like "run" inside "Rust" do not
+/// count, and "ls" inside "files" does not.
+fn has_word(haystack: &str, needle: &str) -> bool {
+    let bytes = haystack.as_bytes();
+    let n = needle.as_bytes();
+    let mut offset = 0;
+    while let Some(pos) = haystack[offset..].find(needle) {
+        let start = offset + pos;
+        let end = start + n.len();
+        let before_ok = start == 0 || !is_word_char(bytes[start - 1]);
+        let after_ok = end >= bytes.len() || !is_word_char(bytes[end]);
+        if before_ok && after_ok {
+            return true;
+        }
+        offset = start + 1;
+    }
+    false
+}
+
+fn is_word_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+/// Does the goal name a filesystem target (files, folders, extensions, …)?
+fn has_file_context(d: &str) -> bool {
+    has_word(d, "file")
+        || has_word(d, "files")
+        || has_word(d, "folder")
+        || has_word(d, "directories")
+        || has_word(d, "directory")
+        || has_word(d, "project")
+        || has_word(d, "documents")
+        || has_word(d, "source")
+        || has_word(d, "codebase")
+        || has_word(d, "module")
+        || has_word(d, "path")
+        || d.contains(".rs")
+        || d.contains(".toml")
+        || d.contains(".py")
+        || d.contains(".js")
+        || d.contains(".ts")
+        || d.contains(".md")
+        || d.contains(".json")
+        || d.contains(".txt")
+        || d.contains(".log")
+}
+
+/// Does the goal target the web rather than the local filesystem?
+fn has_web_context(d: &str) -> bool {
+    has_word(d, "web")
+        || has_word(d, "online")
+        || has_word(d, "internet")
+        || has_word(d, "docs")
+        || has_word(d, "documentation")
+        || has_word(d, "research")
+        || has_word(d, "latest")
+        || has_word(d, "articles")
 }
 
 impl Default for Planning {
@@ -845,5 +977,69 @@ mod tests {
             actions[0].capability == Capability::ExecuteCommand
                 && actions[1].capability == Capability::ReadFile
         );
+    }
+
+    /// The routing contract: filesystem verbs are chosen by *how* the user
+    /// asks to see files, and the shell is reserved for explicit commands.
+    #[test]
+    fn capability_routes_by_intent_not_substring() {
+        assert_eq!(
+            capability_for_description("List the files in this project"),
+            Capability::ListDirectory
+        );
+        assert_eq!(
+            capability_for_description("Show the whole project structure"),
+            Capability::Custom("filesystem.tree".into())
+        );
+        assert_eq!(
+            capability_for_description("Find all Rust files"),
+            Capability::Custom("filesystem.search".into())
+        );
+        assert_eq!(
+            capability_for_description(
+                "explore more in the project folder and show me the whole structure"
+            ),
+            Capability::Custom("filesystem.tree".into())
+        );
+        assert_eq!(
+            capability_for_description("Run git status"),
+            Capability::ExecuteCommand
+        );
+        assert_eq!(
+            capability_for_description("Run cargo test"),
+            Capability::ExecuteCommand
+        );
+    }
+
+    /// Word-boundary matching: "Rust" must not classify as a shell command
+    /// (the old substring "run" heuristic), and "ls" must not fire on "files".
+    #[test]
+    fn capability_matches_whole_words_not_substrings() {
+        assert_ne!(
+            capability_for_description("Search the web for the latest Rust async docs"),
+            Capability::ExecuteCommand
+        );
+        assert!(!has_word("Rust async docs", "run"));
+        assert!(!has_word("files", "ls"));
+        assert!(has_word("Run git status", "git"));
+    }
+
+    /// The safe default: an unclassified goal is never a shell command.
+    #[test]
+    fn capability_defaults_to_safe_recall_never_shell() {
+        let planning = Planning::new();
+        let cases = [
+            "explain the provider routing architecture",
+            "why did the test fail",
+            "summarize the last session",
+        ];
+        for goal in cases {
+            let cap = planning.infer_capability(goal, &[]);
+            assert_ne!(
+                cap,
+                Capability::ExecuteCommand,
+                "'{goal}' must not route to the shell"
+            );
+        }
     }
 }
