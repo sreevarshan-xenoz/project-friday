@@ -139,7 +139,11 @@ opens a new reconnect epoch in the store (sequence tracking resets, cumulative
 counters persist).
 
 The Executive panel mirrors the real ten-phase cycle from
-`services/goal-execution/src/executive.rs` (frozen Core 1.0).
+`services/goal-execution/src/executive.rs` (frozen Core 1.0), including the
+**Investigate** phase, and the Execution Graph renders the live
+`InvestigationGraph` emitted by the Executive — driven by the Rust
+`DemoRuntimeSource`/bridge when `VITE_CONSOLE_BRIDGE=1` and `cargo run -p
+friday-bridge` is serving.
 
 ## How to run
 
@@ -157,13 +161,53 @@ $env:VITE_FRIDAY_WS = "ws://192.168.1.50:18432"
 npm run dev
 ```
 
+## Connecting the portal (live daemon)
+
+The portal's `FridayClient` connects to `VITE_FRIDAY_WS` (default
+`ws://localhost:18432`) — the **Mobile Protocol daemon**
+(`services/mobile`, `cargo run -p friday-mobile --bin friday-mobile-daemon`).
+Nothing else is needed for local dev **if the daemon runs in open mode** —
+pairing auth is on by default, so start it with:
+
+```powershell
+$env:FRIDAY_MOBILE_AUTH = "off"
+cargo run -p friday-mobile --bin friday-mobile-daemon
+```
+
+**Or just run the one-command boot script** (from `frontend/`):
+
+```bash
+npm run dev:portal                 # daemon + bridge + Vite
+npm run dev:portal -- -Port 5175   # same, portal on :5175
+npm run dev:portal:keep            # leave the daemon up after Vite exits
+```
+
+`scripts/dev-portal.ps1` boots **both** background services: the daemon with
+`FRIDAY_MOBILE_AUTH=off` when nothing is listening on `:18432`, and the
+ReadModelBridge (`friday-bridge`) when nothing is listening on `:18433` — each
+reused if already running. It then starts Vite with `VITE_CONSOLE_BRIDGE=1`
+(so the Engineering Console is live, not mocked) and stops the services it
+started when Vite exits. `dev:portal:keep` passes `-KeepDaemon` so the daemon
+stays up for the next portal session; pass `-KeepBridge` too (or run
+`powershell -File scripts/dev-portal.ps1 -KeepDaemon -KeepBridge`) to keep the
+bridge. Use `-SkipBridge` to boot daemon + Vite only (console uses the mock).
+
+In open mode the handshake is `Hello → Welcome(requires_auth=false)` and the
+client reaches `connected` immediately. The Home screen's **Resources card** is
+derived from `telemetry.system` bus events (real CPU/RAM/Disk every 2 s from
+the daemon's `SystemProbe`), so a connected portal shows live numbers — no
+mock data. (When the daemon is absent, the client reports `disconnected` and
+Home renders "FRIDAY is offline." honestly.)
+
 ## Status
 
 🟢 **Foundation complete** — design system, component library, all six screens,
 protocol client, navigation shell. TypeScript compiles clean, Vite builds clean.
 
-Next: Tauri integration, desktop animations polish, and wiring to the real
-`friday-mobile-daemon` for end-to-end testing.
+✅ **Wired to the real `friday-mobile-daemon` and verified end-to-end** —
+open-mode handshake + live `telemetry.system` frames confirmed on the wire.
+
+Next: Tauri integration and desktop animations polish.
 
 **Phase 1 Engineering Console (Week 1) done** — Dashboard, Timeline,
 Explanation, Metrics, Ledger screens consuming mocked read models. Dashboard
