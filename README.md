@@ -56,6 +56,56 @@ reliability with benchmarks.
 See [`docs/Roadmap.md`](docs/Roadmap.md) and [`specs/README.md`](specs/README.md)
 for the authoritative milestone and subsystem map.
 
+## Master Plan — the corrected build order
+
+The operational build order, **tracked here** and in
+[`docs/MasterPlan.md`](docs/MasterPlan.md) (definitions of done + rationale + update
+log). It re-sequences the constitution's P0–P5 tiers into the order we actually
+build; the audit trail and `file:line` evidence live in
+[`specs/architecture/friday-architecture-vnext.md`](specs/architecture/friday-architecture-vnext.md).
+Statuses are updated as commits land — this table is the tracker.
+
+| # | Work | Status |
+| - | ---- | ------ |
+| 1 | AnyDoc `docs.parse` | 🟢 DONE |
+| 2 | Agent-Reach resolver (binding resolver + health-gated fallback) | 🟢 DONE |
+| 3 | `web.search` resolver wiring (normalized `Evidence[]`) | 🟢 DONE |
+| 4 | **`web.fetch` resolver wiring** | 🔴 **NEXT** |
+| 5 | **Real local Code/Test Verifier** (`ConcreteVerifier`, before Sonar) | 🟡 |
+| 6 | **Evidence pipeline: Web + Docs → Verify → Memory** | 🟡 |
+| 7 | **Agent Director / bounded subagents** | 🔴 |
+| 8 | **Parallel durable workflows + agent journaling** | 🟡 |
+| 9 | **Causal World Model** (entities → causes → effects → simulation) | 🟡 |
+| 10 | **LifeOS current→ideal/gap layer** | 🔴 |
+| 11 | **Skill compounding** (only after real verification) | 🟡 |
+| 12 | **Egress policy + Secrets vault** (before autonomy) | 🔴 |
+| 13 | Screen perception | 🔴 |
+| 14 | Audio perception | 🔴 |
+| 15 | Vision perception | 🔴 |
+| 16 | Persistent Agent Workforce | 🔴 |
+| 17 | Autonomous Cognitive Tick (last) | 🔴 |
+| 18 | Observability | 🔴 |
+| 19 | Cost telemetry | 🔴 |
+| 20 | Walrus Memory backend (optional — 5th `MemoryLayer` backend) | optional |
+| 21 | World-model visualization / DrawDB | last |
+
+**Where we are:** between **Gate 1 (Information Organ)** and **Gate 2
+(Trustworthy Executor)**. The next unit of work is `web.fetch` resolver wiring and
+its tests, then the first real verifier — the point where FRIDAY stops merely
+gaining capabilities and starts gaining **trustworthy execution**.
+
+### Milestone gates
+
+| Gate | Name | Contents |
+| ---- | ---- | -------- |
+| 🟢 1 | Information Organ | AnyDoc · Web Search · Web Fetch · Evidence · Memory — *almost there* |
+| 🟢 2 | Trustworthy Executor | Planning · Execution · Verification · Permissions · Audit · Durability — *next serious milestone* |
+| 🟢 3 | Multi-Agent FRIDAY | Agent Director · Subagents · Parallel workflows · Recovery |
+| 🟢 4 | World-Aware FRIDAY | World Model · Intent · Gap Analysis · Causal Planning |
+| 🟢 5 | Learning FRIDAY | Reflection · Verification · Skill Compounding · Persistent Procedures |
+| 🟢 6 | Perceptive FRIDAY | Screen · Audio · Vision |
+| 🟢 7 | Autonomous FRIDAY | Observe → Reason → Decide → Act → Verify → Learn → Repeat |
+
 ## Repository layout
 
 ```
