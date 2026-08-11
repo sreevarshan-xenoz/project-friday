@@ -43,14 +43,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum DesiredState {
     /// An entity of this kind must exist in the causal entity graph.
-    EntityExists {
-        kind: String,
-    },
+    EntityExists { kind: String },
     /// A specific entity must be in a given `state`.
-    EntityInState {
-        entity_id: String,
-        state: String,
-    },
+    EntityInState { entity_id: String, state: String },
     /// A specific entity must have a property set to a value.
     EntityProperty {
         entity_id: String,
@@ -58,13 +53,9 @@ pub enum DesiredState {
         value: serde_json::Value,
     },
     /// A file must exist in the world state.
-    FileExists {
-        path: String,
-    },
+    FileExists { path: String },
     /// A tool / capability must be available in the world state.
-    ToolAvailable {
-        capability: Capability,
-    },
+    ToolAvailable { capability: Capability },
     /// Every sub-condition must hold.
     All(Vec<DesiredState>),
     /// At least one sub-condition must hold.
@@ -178,6 +169,20 @@ impl DesiredState {
     pub fn satisfied(&self, world: &WorldState, entities: &[Entity]) -> bool {
         self.evaluate(world, entities).is_empty()
     }
+
+    /// Number of independently observable conditions represented by this ideal.
+    /// Used only for a transparent progress estimate; satisfaction remains the
+    /// authoritative completion test, especially for `Any` conditions.
+    pub fn condition_count(&self) -> usize {
+        match self {
+            DesiredState::All(conditions) | DesiredState::Any(conditions) => conditions
+                .iter()
+                .map(Self::condition_count)
+                .sum::<usize>()
+                .max(1),
+            _ => 1,
+        }
+    }
 }
 
 // ── Gap ───────────────────────────────────────────────────────────
@@ -210,6 +215,16 @@ impl Gap {
                 .join("; ");
             format!("{} — unmet: {reasons}", describe(&self.desired))
         }
+    }
+
+    /// Estimated completion from observable conditions. A closed gap is always
+    /// exactly 1.0; an open gap reports the proportion of unmet conditions.
+    pub fn progress(&self) -> f32 {
+        if self.is_closed() {
+            return 1.0;
+        }
+        let total = self.desired.condition_count() as f32;
+        (1.0 - self.unmet.len() as f32 / total).clamp(0.0, 1.0)
     }
 }
 
@@ -266,6 +281,17 @@ impl IntentLayer {
     /// whose closing actions come from the causal model: each modeled action
     /// is simulated; an action closes the gap when its **projection** (never
     /// execution) satisfies the desired state.
+    /// Current progress toward an ideal, recalculated from the authoritative
+    /// WorldModel snapshot.
+    pub fn progress(&self, model: &WorldModel, desired: &DesiredState) -> f32 {
+        self.analyze(model, desired).progress()
+    }
+
+    /// Whether the current world has reached the desired state.
+    pub fn is_complete(&self, model: &WorldModel, desired: &DesiredState) -> bool {
+        self.analyze(model, desired).is_closed()
+    }
+
     pub fn objective(&self, model: &WorldModel, desired: &DesiredState) -> Option<Objective> {
         let gap = self.analyze(model, desired);
         if gap.is_closed() {
@@ -273,8 +299,7 @@ impl IntentLayer {
         }
         let (closing_actions, confidence) = closing_actions(model, desired);
         let suggested = if closing_actions.is_empty() {
-            "no modeled action closes this gap — the planner must explore"
-                .to_string()
+            "no modeled action closes this gap — the planner must explore".to_string()
         } else {
             format!(
                 "suggested: {}",
@@ -312,8 +337,8 @@ impl IntentLayer {
         desired: &DesiredState,
     ) -> Option<RankedPlan> {
         let objective = self.objective(model, desired)?;
-        let goal = Goal::new(&objective.statement)
-            .with_context(format!("Desired: {}", describe(desired)));
+        let goal =
+            Goal::new(&objective.statement).with_context(format!("Desired: {}", describe(desired)));
         let ctx = PlanningContext::new(goal.clone()).with_world_state(model.state().clone());
 
         let mut candidates = planner.think(&ctx);
@@ -357,9 +382,7 @@ fn closing_actions(model: &WorldModel, desired: &DesiredState) -> (Vec<Capabilit
         }
         seen.push(edge.action.clone());
         let sim = model.simulate(&edge.action);
-        if sim.applicable
-            && desired.satisfied(&sim.projected_world, &sim.projected_entities)
-        {
+        if sim.applicable && desired.satisfied(&sim.projected_world, &sim.projected_entities) {
             actions.push(edge.action.clone());
             confidences.push(sim.confidence);
         }
@@ -401,7 +424,8 @@ fn describe(desired: &DesiredState) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::causal::{CausalCondition, CausalEdge, CausalEffect, CausalModel, Entity};
+    use crate::causal::{CausalCondition, CausalEdge, CausalEffect, Entity};
+    use crate::world::FileMeta;
     use crate::{Capability, Goal, WorldModel};
 
     fn world() -> WorldModel {
@@ -506,7 +530,9 @@ mod tests {
         );
 
         let mut model = world();
-        model.causal_mut().add_entity(Entity::new("repo:x", "GitRepository"));
+        model
+            .causal_mut()
+            .add_entity(Entity::new("repo:x", "GitRepository"));
         assert!(either.satisfied(model.state(), &model.causal().entities));
     }
 
@@ -529,13 +555,70 @@ mod tests {
         assert!(DesiredState::ToolAvailable {
             capability: Capability::ReadFile,
         }
-        .satisfied(
-            &WorldState::new().with_tool(Capability::ReadFile),
-            &[],
-        ));
+        .satisfied(&WorldState::new().with_tool(Capability::ReadFile), &[],));
     }
 
     // ── Gap / Objective ──────────────────────────────────────────
+
+    #[test]
+    fn progress_recalculates_from_current_world_state() {
+        let layer = IntentLayer::new();
+        let desired = DesiredState::All(vec![
+            DesiredState::FileExists {
+                path: "a.txt".into(),
+            },
+            DesiredState::FileExists {
+                path: "b.txt".into(),
+            },
+        ]);
+        let mut model = world();
+        assert_eq!(layer.progress(&model, &desired), 0.0);
+        model.record_transition(
+            "observe-a",
+            "progress",
+            WorldState::new().with_file(
+                "a.txt",
+                FileMeta {
+                    path: "a.txt".into(),
+                    exists: true,
+                    size_bytes: None,
+                    is_directory: false,
+                    modified_at_ms: None,
+                },
+            ),
+            &[],
+        );
+        assert_eq!(layer.progress(&model, &desired), 0.5);
+        assert!(!layer.is_complete(&model, &desired));
+        model.record_transition(
+            "observe-b",
+            "progress",
+            WorldState::new()
+                .with_file(
+                    "a.txt",
+                    FileMeta {
+                        path: "a.txt".into(),
+                        exists: true,
+                        size_bytes: None,
+                        is_directory: false,
+                        modified_at_ms: None,
+                    },
+                )
+                .with_file(
+                    "b.txt",
+                    FileMeta {
+                        path: "b.txt".into(),
+                        exists: true,
+                        size_bytes: None,
+                        is_directory: false,
+                        modified_at_ms: None,
+                    },
+                ),
+            &[],
+        );
+        assert_eq!(layer.progress(&model, &desired), 1.0);
+        assert!(layer.is_complete(&model, &desired));
+    }
 
     #[test]
     fn analyze_reports_open_gap_and_describe() {
@@ -563,7 +646,10 @@ mod tests {
             kind: "GitRepository".into(),
         };
         assert!(layer.analyze(&model, &desired).is_closed());
-        assert!(layer.objective(&model, &desired).is_none(), "honest refusal");
+        assert!(
+            layer.objective(&model, &desired).is_none(),
+            "honest refusal"
+        );
     }
 
     #[test]
@@ -656,9 +742,9 @@ mod tests {
     }
 
     /// The full LifeOS loop: desired → gap → objective → apply the closing
-    /// action's projection → the ideal is now satisfied.
+    /// action's verified world transition → recalculate → complete.
     #[test]
-    fn applying_closing_action_closes_the_gap() {
+    fn autonomous_intent_loop_recalculates_after_verified_world_update() {
         let layer = IntentLayer::new();
         let mut model = world();
         model.causal_mut().add_edge(git_init_edge());

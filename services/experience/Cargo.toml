@@ -9,3 +9,5 @@ description = "FRIDAY Experience Engine — aggregates DecisionRecords into Expe
 
 [dependencies]
 friday-plugin-runtime = { path = "../plugin-runtime" }
+serde.workspace = true
+serde_json.workspace = true

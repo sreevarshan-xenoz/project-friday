@@ -24,6 +24,10 @@ stack on top of the proven core (evidence lifecycle, durable workflows,
 investigation, agent runtime, memory fabric) while qualification keeps proving
 reliability with benchmarks.
 
+Qualification state is tracked in [QUALIFICATION-STATUS.md](QUALIFICATION-STATUS.md).
+That document is the source of truth for `PASS` / `PARTIAL` / `BLOCKED` /
+`DEFERRED` project status.
+
 | Area | State |
 | ---- | ----- |
 | M0 Foundation (structure, docs, tooling) | ✅ Done |
@@ -31,7 +35,7 @@ reliability with benchmarks.
 | M2 Memory (working / session / long-term / vector + experience) | ✅ Done |
 | M3 Planner (intent → plan → execute → verify) | ✅ Done |
 | M4 Agent Kernel (permissions, audit, lifecycle, adapters) | ✅ Done |
-| M4.5 Services (filesystem, terminal, git, Windows bridge, web, docs, codeintel, **browser**) | ✅ Done |
+| M4.5 Services (filesystem, terminal, git, Windows bridge, web, docs, codeintel, browser adapter) | ✅ Implemented; browser runtime qualification deferred |
 | M4.6 Capability Intelligence + Service Orchestrator | ✅ Done |
 | M4.7 Plan Simulation | ✅ Done |
 | M4.8 Experience Engine (procedural memory) | ✅ Done |
@@ -51,7 +55,8 @@ reliability with benchmarks.
 | Persistent Project Cognition (long-term goal memory) | ✅ Done (`services/project-cognition`) |
 | Skill Forge (create / validate / publish CLI) | ✅ Done (`services/skill-forge`) |
 | Desktop UI (React + TypeScript + engineering console) | ✅ Live (Execution Graph, bridge-driven) |
-| Vision / Voice / Learning / Autonomy / Active Inference | Planned (Phase 5 of the synthesis) |
+| Vision / Voice / Learning / Active Inference | Planned (Phase 5 of the synthesis) |
+| Autonomous Cognitive Tick | ✅ Live — bounded tested runtime; `LiveRuntimeSource` runs through the real bridge process, executes/verifies a safe kernel action, exposes provenance, and rehydrates the journal without duplicate dispatch |
 
 See [`docs/Roadmap.md`](docs/Roadmap.md) and [`specs/README.md`](specs/README.md)
 for the authoritative milestone and subsystem map.
@@ -83,11 +88,11 @@ Statuses are updated as commits land — this table is the tracker.
 | 14 | Audio perception | 🟢 DONE |
 | 15 | Vision perception | 🟢 DONE |
 | 16 | Persistent Agent Workforce | 🟢 DONE |
-| 17 | Autonomous Cognitive Tick (last) | 🔴 **NEXT** |
-| 18 | Observability | 🔴 |
-| 19 | Cost telemetry | 🔴 |
+| 17 | Autonomous Cognitive Tick (last) | 🟢 **DONE** |
+| 18 | Observability | 🟢 DONE |
+| 19 | Cost telemetry | 🟢 DONE |
 | 20 | Walrus Memory backend (optional — 5th `MemoryLayer` backend) | optional |
-| 21 | World-model visualization / DrawDB | last |
+| 21 | World-model visualization / DrawDB | 🟢 DONE |
 
 **Where we are:** **Gate 1 (Information Organ) is complete** — AnyDoc · Web
 Search · Web Fetch · Evidence · Memory are all wired — and **#5/#6, the real
@@ -132,8 +137,12 @@ the world state + causal entity graph, the open `Gap` becomes an `Objective`
 whose closing actions are chosen by **causal simulation** (an action closes the
 gap only when its projection satisfies the ideal, never execution), and
 `IntentLayer::plan` feeds the objective into the planner producing
-`PlanSource::GapDriven` plans. A closed gap yields nothing — the layer never
-invents busywork.
+`PlanSource::GapDriven` plans. `IntentLayer::progress` and `is_complete` now
+recalculate progress from the authoritative WorldModel after transitions. A
+closed gap yields nothing — the layer never invents busywork. INT-01–INT-08
+are accepted in `docs/LIFEOS-INTENT-ACCEPTANCE.md`. `IntentDecision` now composes
+that existing layer as the sole decision source for the live bridge path; the
+acceptance remains bounded rather than generalized.
 **#11 is done:** the learning loop is closed. `SkillCompiler`
 (`services/skills/src/compound.rs`) turns a **verified successful trajectory**
 into a registered skill — the refusal gate IS the verification step (an
@@ -196,8 +205,18 @@ is assigned a task, picked up across runs (fresh instances over one Json
 store), reports progress/blockers, and its isolated workspace (`spec.cwd`)
 persists — proven with the real `SkillAgentDriver` across three instances
 (`tests/workforce.rs`).
-Next unit of work: **#17 — Autonomous Cognitive Tick** (the last gate:
-observe → evaluate → decide → act → verify → update state).
+#17 is complete for the tested live-runtime path.
+The real runtime path is live in
+`LiveRuntimeSource`: it runs the real `AutonomyHost` through the Action Kernel,
+performs and verifies safe `git.status`, exposes event/evidence provenance over
+WebSocket, and proves fresh-instance journal recovery without duplicate dispatch.
+The causal World Model and LifeOS intent layer are implemented and audited in
+`docs/WORLD-MODEL-ACCEPTANCE.md`. Runtime feedback is now wired through the
+same host: verified Action Kernel observations update the sole `WorldModel`,
+publish `world.updated`, and drive a second decision; see
+`docs/RUNTIME-WORLD-FEEDBACK-ACCEPTANCE.md`. The current qualification target
+is broader integration coverage, so Gate 7 remains a bounded tested-runtime
+claim rather than generalized autonomy.
 
 ### Milestone gates
 
@@ -267,6 +286,9 @@ cargo test -p friday-actions
 cargo test -p friday-skills
 cargo test -p friday-goal-execution
 
+# Cognitive runtime / autonomous tick
+cargo test -p friday-cognitive
+
 # Investigation / Agent Runtime / Persona / Knowledge / Project Cognition
 cargo test -p friday-investigation
 cargo test -p friday-agent-runtime
@@ -323,6 +345,13 @@ npm run dev     # http://localhost:5173 (default Vite port)
 | [`docs/Vision.md`](docs/Vision.md) | What FRIDAY is / is not |
 | [`docs/Architecture.md`](docs/Architecture.md) | Event-driven design + subsystem addendum |
 | [`docs/Roadmap.md`](docs/Roadmap.md) | Milestone history and current phase |
+| [`services/cognitive/README.md`](services/cognitive/README.md) | Cognitive runtime and autonomous tick |
+| [`docs/PARALLEL-DURABLE-ACCEPTANCE.md`](docs/PARALLEL-DURABLE-ACCEPTANCE.md) | PD-01–PD-07 durable parallel execution receipt |
+| [`docs/WORLD-MODEL-ACCEPTANCE.md`](docs/WORLD-MODEL-ACCEPTANCE.md) | WM-01–WM-09 world-model audit and receipt |
+| [`docs/RUNTIME-WORLD-FEEDBACK-ACCEPTANCE.md`](docs/RUNTIME-WORLD-FEEDBACK-ACCEPTANCE.md) | Verified runtime outcome → WorldModel → next-tick receipt |
+| [`docs/LIFEOS-INTENT-ACCEPTANCE.md`](docs/LIFEOS-INTENT-ACCEPTANCE.md) | INT-01–INT-09 current/desired/gap/planner receipt |
+| [`docs/CLOSED-COGNITIVE-LOOP-ACCEPTANCE.md`](docs/CLOSED-COGNITIVE-LOOP-ACCEPTANCE.md) | CC-01–CC-12 whole-loop regression receipt |
+| [`docs/FRIDAY-INTEGRATION-TEST-PLAN.md`](docs/FRIDAY-INTEGRATION-TEST-PLAN.md) | Repeatable integration campaigns and baseline status |
 | [`specs/README.md`](specs/README.md) | **Source of truth** for subsystem contracts |
 | [`docs/PluginSDK.md`](docs/PluginSDK.md) | Plugin contract |
 | [`engineering/qualification.md`](engineering/qualification.md) | How we measure readiness |

@@ -206,6 +206,7 @@ export class MockConsoleDataSource implements ConsoleDataSource {
       recent: this.timelines.slice(-6).reverse(),
       graph: investigationGraph(DEMO_GOALS[this.goalIndex]),
       evidence: evidenceTrail(DEMO_GOALS[this.goalIndex], this.progress),
+      autonomy: null,
     };
   }
 

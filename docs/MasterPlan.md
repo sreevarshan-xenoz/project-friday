@@ -5,7 +5,10 @@
 > lives in
 > [`specs/architecture/friday-architecture-vnext.md`](../specs/architecture/friday-architecture-vnext.md).
 > This doc re-sequences those tiers into the order we actually build and records
-> **why**. The same table (condensed) is mirrored in the repo
+> **why**. Project qualification state is tracked separately in
+> [`../QUALIFICATION-STATUS.md`](../QUALIFICATION-STATUS.md); that document is
+> the source of truth for `PASS` / `PARTIAL` / `BLOCKED` / `DEFERRED`.
+> The same table (condensed) is mirrored in the repo
 > [README](../README.md#master-plan--the-corrected-build-order).
 >
 > **Update this table every time a work item lands** — see
@@ -26,20 +29,20 @@ work.
 | 5 | Real local Code/Test Verifier | 🟢 DONE | `CodeTestVerifier`: workspace + command → real execution → stdout/stderr/exit code → `checks[]` → `VerifiedResult` (`services/goal-execution/src/verifiers.rs`). First concrete verifier, **not** Sonar — plus `OutputContains`/`OutputExcludes`/`ToolSuccess` sub-verifiers; 10 tests green |
 | 6 | Evidence pipeline hardening | 🟢 DONE | AnyDoc + Web → unified `Evidence[]` → Verification → Memory. `EvidenceSet` blends both organs (dedupe + cross-channel corroboration), `EvidenceVerifier` gates the body behind the frozen `Verifier` seam, the executive publishes the verified body and consolidates it through the admission gate (`services/goal-execution/src/evidence_pipeline.rs`) |
 | 7 | Agent Director / bounded subagents | 🟢 DONE | One parent safely creates bounded children and collects **verified** results. `AgentDirector` over `AgentRuntime`: role-typed children (Researcher/Analyst/Verifier), `DirectorConfig` bounds (pool/deadline/steps), `verify()` gates every result (`default_gate`: state + summary + verifier-ran-a-step) — goal completes only when `DirectorReport::all_verified`. Wired through the real `SkillAgentDriver` (acceptance: `services/action-runtime/tests/agent_director.rs`). No persistent workforce yet (that's #16) |
-| 8 | Parallel durable workflows + agent journaling | 🟢 DONE | `WorkflowStep::stage` (bounded-concurrency map/reduce, folded exactly once), write-ahead in-flight journaling with stable FNV-1a idempotency keys (`journal_key`), idempotent replay (verified steps never re-dispatched), mid-agent recovery (`recovered` counter), engine-owned persistence (`with_store`) — `services/goal-execution/src/workflow.rs` |
-| 9 | Causal World Model | 🟢 DONE | Entity graph + causal edges + typed effects + pure deterministic simulation (`CausalModel::simulate` — "if action A runs, S→S'"): `services/goal-execution/src/causal.rs`. `WorldModel::simulate`/`apply_simulation` close the predict→commit loop (stale projections refused); `find_missing_capability_prerequisites` reflects the entity graph |
-| 10 | LifeOS current→ideal/gap layer | 🟢 DONE | `DesiredState` (declarative ideal over entities/files/tools with All/Any algebra) evaluated against world state + causal entity graph → `Gap` (unmet conditions) → `Objective` whose closing actions come from **causal simulation** (an action closes the gap only when its projection satisfies the ideal — never execution) → `IntentLayer::plan` feeds the objective into the planner producing `PlanSource::GapDriven` plans — `services/goal-execution/src/intent.rs`. Honest: a closed gap yields no objective/plan |
+| 8 | Parallel durable workflows + agent journaling | 🟢 DONE | PD-01–PD-07 acceptance receipt in [`docs/PARALLEL-DURABLE-ACCEPTANCE.md`](PARALLEL-DURABLE-ACCEPTANCE.md): bounded map/reduce, branch failure/retry, crash recovery, idempotency, verification barrier, and persistent convergence; implementation in `services/goal-execution/src/workflow.rs` |
+| 9 | Causal World Model | 🟢 DONE | WM-01–WM-09 accepted in [`docs/WORLD-MODEL-ACCEPTANCE.md`](WORLD-MODEL-ACCEPTANCE.md), with runtime feedback receipt in [`docs/RUNTIME-WORLD-FEEDBACK-ACCEPTANCE.md`](RUNTIME-WORLD-FEEDBACK-ACCEPTANCE.md): explicit verified observations, stale-safe replanning, and two-tick world feedback |
+| 10 | LifeOS current→ideal/gap layer | 🟢 DONE FOR BOUNDED PATH | `DesiredState` + WorldModel → `Gap` → `Objective` → existing planner, with explicit progress/completion recalculation; INT-01–INT-09 pass for the bounded path in [`docs/LIFEOS-INTENT-ACCEPTANCE.md`](LIFEOS-INTENT-ACCEPTANCE.md), using `IntentDecision` as the live tick composition seam |
 | 11 | Skill compounding | 🟢 DONE | `SkillCompiler` (`services/skills/src/compound.rs`): neutral `TrajectorySkill` input (goal, Verified outcome + evidence ids, steps, confidence, support) → refusal gate that IS the verification step (Unverified / below-bar confidence / below-bar support / no steps / no capabilities / no actions all refuse with structured `RefusalCode`s) → `SkillSource::Learned` skill registered with collision-safe unique slug id, resolved capabilities, `skill.compounded` event carrying the full evidence trail → a later goal's `select_for` finds and chooses it. End-to-end proof in goal-execution integration using the real `CodeTestVerifier` |
 | 12 | Egress policy + Secrets vault | 🟢 DONE | `SecretsVault` (`services/intelligence/src/secrets.rs`): scope-keyed store whose `Secret` values are structurally unobservable (Debug/Display/Serialize redact; only `reveal()` exposes), `scoped()` capability handles, `seed_from_env` for provider keys. `EgressGate` (`services/intelligence/src/egress.rs`): scans outbound prompts for registered secrets and applies per-provider Block/Redact/LogOnly (default Block); wired into `InferenceFabric` at both dispatch sites before any provider call; a Block is recorded on the routing decision (auditable "which provider receives it?"). Off by default — enabling is one line |
 | 13 | Screen perception | 🟢 DONE | `WindowsScreenSensor` (`services/sensors/src/screen.rs`): real foreground-window capture (title/pid/process/bounds/state) + **continuous screen diff** (FNV-1a of client-area pixels via BitBlt+GetDIBits) → pure `Focus`/`Content` change events → `Topic::Screen` → `GlobalWorkspace` via `SensorLoop::poll_all_with_topics`. First poll emits the initial state; capture failure degrades honestly to `content_hash: None`. `PerceptionEngine::with_sensors` polls the real loop (reports the exact channels that fired) with the synthetic RNG fallback preserved |
 | 14 | Audio perception | 🟢 DONE | `AudioSensor` (`services/sensors/src/audio.rs`): WASAPI shared-mode mic capture (preferred 16 kHz mono PCM; `GetMixFormat` fallback with SubFormat GUID check) → pure energy VAD (hangover extends speech, never creates it) → pure turn detector (speech run closed by silence) → optional `SpeechToText` seam → `Topic::TurnDetected` events. Honest: `transcript: null`/`asr: null` until a real ASR backend is attached; no device → no events. Full pipeline tested end-to-end over synthetic PCM + tolerant real-mic poll |
 | 15 | Vision perception | 🟢 DONE | `CameraSensor` (`services/sensors/src/vision.rs`): Media Foundation webcam capture (RGB32 negotiated; dimensions from `MF_MT_FRAME_SIZE`, never guessed) → pure `frame_diff` (BT.601 luma) → `motion_score` → `changed_regions` connected-component blob detection → optional `ObjectDetector` ML seam → `Topic::ObjectDetected` events. Honest: first frame is a baseline (one frame sees nothing), static scenes emit nothing, `detector: "diff"` names the built-in. Full pipeline tested over synthetic frames |
 | 16 | Persistent Agent Workforce | 🟢 DONE | `Workforce` (`services/agent-runtime/src/workforce.rs`): persistent worker registry + assignable task board over `AgentRuntime` + `WorkforceStore` (InMemory / atomic Json) — `register` (isolated workspace dir), `create_task`/`assign` (role mismatch/busy/non-open refused), FIFO `pick_up`, `run` (spec.cwd = workspace, task params; only Succeeded → Done), `report_progress`/`report_blocker` (persistent notes; blocker → Blocked), `suspend`/`resume`/`retire` (refuses Running). Acceptance: register/assign in A, progress + run in B, Done + result + workspace content in C over one Json store with the real `SkillAgentDriver` (`tests/workforce.rs`) |
-| 17 | Autonomous Cognitive Tick | 🔴 **NEXT** | Observe → Evaluate → Decide → Act → Verify → Update State, looped. **Last** — needs perception + world model + intent + planning + director + execution + verification + security. Never a blind LLM heartbeat |
-| 18 | Observability (OTel/Prometheus) | 🔴 | `/metrics` endpoint consumed by Prometheus |
-| 19 | Cost telemetry | 🔴 | Per-model cost accounting ledger, queryable per goal |
+| 17 | Autonomous Cognitive Tick | 🟢 DONE | `LiveRuntimeSource` wires a long-lived bridge process to `AutonomyHost`, real `AgentKernel`/`GitAdapter`, verification, and the durable journal. Process-level acceptance proves a safe real `git.status` action reaches the WebSocket/frontend DTO with evidence IDs, event IDs, timestamps, execution status, and verification; a fresh runtime rehydrates the completed journal without a second record or dispatch. **Last** — never a blind LLM heartbeat |
+| 18 | Observability (OTel/Prometheus) | 🟢 DONE | Prometheus-compatible `/metrics` endpoint is served by `friday-bridge` at `127.0.0.1:18434/metrics`, exporting connection, frame, byte, resync, snapshot, and delta gauges/counters |
+| 19 | Cost telemetry | 🟢 DONE | `friday_experience::CostLedger` records actual input/output tokens and estimated/actual cost, with per-goal and per-model queries plus serde persistence |
 | 20 | Walrus Memory backend | optional | Fifth backend behind the existing `MemoryLayer` abstraction — not a missing architectural capability |
-| 21 | World-model visualization / DrawDB | last | Sugar; only after the causal world model (#9) is real |
+| 21 | World-model visualization / DrawDB | 🟢 DONE | Read-only DBML artifact in `docs/world-model.dbml` models entities, properties, relations, causal edges/effects, variables, files, and transitions for DrawDB import |
 
 ## Milestone gates
 
@@ -57,52 +60,27 @@ work.
 7. 🟢 Gate 7 — **Autonomous FRIDAY**: Observe → Reason → Decide → Act → Verify →
    Learn → Repeat.
 
-**Current position: Gate 1 complete; #5 (real local Code/Test Verifier), #6
-(the Evidence pipeline — AnyDoc + Web → `Evidence[]` → verification → memory),
-#7 (the Agent Director — bounded role-typed children with gated, verified
-results), #8 (parallel durable workflows + agent journaling) and #9 (the
-causal World Model — entity graph + causal edges + pure simulation) are done.
-Gate 2 (Trustworthy Executor) is real: Planning · Execution · Verification ·
-Permissions · Audit · **Durability** are all wired, Gate 3 (Multi-Agent
-FRIDAY) has its first two bricks (the supervisor topology, made durable), and
-Gate 4 (World-Aware FRIDAY) has its foundation: the world model can now
-predict "if action A runs, S→S'". Next: #10 — the LifeOS current→ideal/gap
-layer done — the intent layer turns `desired_state − current_state` into an
-Objective whose closing actions come from causal simulation, and the planner
-consumes it as `PlanSource::GapDriven` plans. #11 done — the learning loop is
-closed: `SkillCompiler` turns a verified trajectory into a `SkillSource::Learned`
-skill a later goal reuses (refusal gate = verification; `skill.compounded`
-carries the evidence trail). #12 done — the autonomy prerequisites are real:
-`SecretsVault` (values never leak through Debug/Display/Serialize, capability-
-scoped handles) + `EgressGate` (per-provider Block/Redact/LogOnly, wired into
-`InferenceFabric` at both dispatch sites; blocks recorded on the routing
-decision). #13 done — the first real sensor is live:
-`WindowsScreenSensor` (`services/sensors/src/screen.rs`) captures the real
-foreground window (identity/geometry/state) plus a **continuous pixel diff**
-(FNV-1a of the client area) and emits `Focus`/`Content` `Topic::Screen`
-events into the workspace; the perception engine's `with_sensors` mode polls
-the real loop and reports the exact channels that fired. **#14 done — the
-audio organ is real:** `AudioSensor` (`services/sensors/src/audio.rs`) runs
-WASAPI mic capture → pure energy VAD (hangover never creates speech) → pure
-turn detection → optional ASR seam, publishing honest `Topic::TurnDetected`
-events (`transcript: null` until a real backend is attached; no device →
-silence). **#15 done — the vision organ is real, completing the perception
-triad:** `CameraSensor` (`services/sensors/src/vision.rs`) runs Media
-Foundation webcam → pure frame diff → connected-component blob detection →
-optional ML seam, publishing honest `Topic::ObjectDetected` events (first
-frame is a baseline; `detector: "diff"` never fabricates labels). Screen +
-Audio + Vision all real. **#16 done — the persistent workforce is real:**
-`Workforce` (`services/agent-runtime/src/workforce.rs`) — a persistent
-worker registry + assignable task board over `AgentRuntime` + a
-`WorkforceStore` (InMemory/atomic Json): workers are registered with
-isolated workspace dirs, tasks are assigned (role-typed, FIFO pick_up), a
-run executes through the runtime with `spec.cwd` = the worker's workspace
-and only `Succeeded` yields Done (honest failures persisted), progress /
-blocker notes are recorded, and a fresh instance over the same store picks
-the work back up — proven across three instances with the real
-`SkillAgentDriver` (`tests/workforce.rs`). Next: #17 — Autonomous
-Cognitive Tick (observe → evaluate → decide → act → verify → update
-state; never a blind LLM heartbeat).**
+**Current position:** #1–#19 and #21 are complete or explicitly optional as
+shown in the tracker. Those are implementation and bounded-acceptance claims,
+not a project-wide production-qualification claim. #17 is complete for the
+tested live-runtime path: the real bridge process runs `AutonomyHost` through
+the Action Kernel, verifies a safe action, exposes provenance, and recovers its
+journal without duplicate dispatch. #7 Agent Director and #8 parallel durable
+execution are accepted. The World Model audit is complete for WM-01–WM-09 on
+the tested bounded runtime path. The runtime feedback receipt proves explicit
+verified observations, stale re-observation/replanning, and tick/world
+synchronization without a second state owner. The PD-01–PD-07 receipt proves
+bounded fan-out, retries, crash recovery, idempotency, verification barriers,
+and fresh-store convergence. The next engineering work is qualification and
+broader integration coverage, not a new workflow engine. #20 Walrus remains
+optional because local memory already satisfies the `MemoryLayer` contract.
+
+Gate 2 (Trustworthy Executor), Gate 3 (Multi-Agent FRIDAY), Gate 4
+(World-Aware FRIDAY), Gate 5 (Learning FRIDAY), and Gate 6 (Perceptive FRIDAY)
+all have the implemented evidence recorded in the tracker. Gate 7 remains a
+bounded claim: FRIDAY is autonomy-capable, but generalized autonomous behavior
+across arbitrary goals, tools, perception streams, and long-running operation
+still requires broader qualification.
 
 ## Why this order (the corrections vs. the flat P0–P5 table)
 
@@ -122,8 +100,9 @@ state; never a blind LLM heartbeat).**
 - **Skill compounding after verification.** Otherwise the closed loop trains on
   unverified trajectories and FRIDAY learns garbage.
 - **Autonomous Tick last.** A heartbeat that blindly calls the LLM is a fancy
-  CPU heater, not autonomy. It needs perception + world model + intent +
-  planning + director + execution + verification + security first.
+  CPU heater, not autonomy. The current slice therefore uses deterministic,
+  evidence-gated decisions and publishes one auditable action at most; it still
+  needs execution + verification + durable state updates before the loop is complete.
 - **Walrus down / DrawDB last.** `MemoryLayer` already has multiple real
   implementations — Walrus is an optional fifth backend, not a missing
   capability. DrawDB is sugar until the causal world model exists.
@@ -141,6 +120,46 @@ state; never a blind LLM heartbeat).**
 
 ## Update log
 
+- **2026-08-11** — Runtime World Feedback (#9): wired one bridge-owned `WorldModel` into `AutonomyHost`, mapped verified `git.status` output to explicit observations, refused failed/malformed feedback, and added stale-replan plus two-tick acceptance coverage. The canonical receipts are [`docs/WORLD-MODEL-ACCEPTANCE.md`](WORLD-MODEL-ACCEPTANCE.md) and [`docs/RUNTIME-WORLD-FEEDBACK-ACCEPTANCE.md`](RUNTIME-WORLD-FEEDBACK-ACCEPTANCE.md). No second world-state abstraction was introduced.
+- **2026-08-11** — Parallel durable execution acceptance (#8): audited the existing `WorkflowEngine` and recorded PD-01–PD-07 in [`docs/PARALLEL-DURABLE-ACCEPTANCE.md`](PARALLEL-DURABLE-ACCEPTANCE.md). The existing embedded tests prove bounded fan-out, failure/retry, crash recovery, stable idempotency, verification barriers, and persistent convergence. Added `failed_stage_evidence_persists_for_fresh_store_instance` to prove terminal failed-branch evidence survives a fresh JSON store. No workflow interfaces changed.
+- **2026-08-11** — Autonomous Cognitive Tick (#17) started: `services/cognitive`
+  adds `AutonomousTick` and the pluggable `DecisionFunction` seam. The built-in
+  `SalienceDecision` watches audio turns, vision objects, screen content, and
+  focus changes; it refuses empty or non-salient evidence, deduplicates events,
+  and publishes one `autonomy.action` with action, reason, priority, and workspace
+  event ids. The loop supports standalone operation and the cognitive `Act` phase.
+  The `execute_and_verify` continuation publishes auditable dispatch and outcome
+  events through injected executor/verifier seams. `KernelActionExecutor` now
+  proves a real `git.status` action through the Action Kernel, and
+  `JsonActionJournal` prevents duplicate dispatch after restart. It is still
+  partial: host runtime wiring and bridge exposure are not wired yet. Next:
+  connect those boundaries and finish the full observe → act → verify → update
+  cycle.
+- **2026-08-11** — Observability (#18), cost telemetry (#19), and world-model
+  visualization (#21): `friday-bridge` now serves Prometheus-compatible metrics
+  at `127.0.0.1:18434/metrics`; `friday_experience::CostLedger` records actual
+  token/cost usage with per-goal and per-model queries and serde persistence; and
+  `docs/world-model.dbml` provides a DrawDB-importable causal model view. #20
+  remains optional because no Walrus service contract or dependency is present.
+- **2026-08-11** — #17 execution/verification continuation: `KernelActionExecutor`
+  (`services/goal-execution/src/autonomy.rs`) dispatches a cognitive decision
+  through the real `AgentKernel` and `GitAdapter`, preserving structured output
+  for verification. `JsonActionJournal` (`services/cognitive/src/journal.rs`)
+  writes a prepared record before dispatch and a completed record after
+  verification; a fresh tick recovers completed outcomes and refuses to
+  redispatch in-flight work. Acceptance coverage proves a cognitive tick runs
+  real `git.status`, verifies the untracked-file output, publishes
+  `tool.executed`/`outcome.observed`, and recovers without a second dispatch.
+  Remaining: connect a deployed host instance to the bridge `DashboardDto.autonomy` field and pass the final frontend-backed acceptance.
+- **2026-08-11** — #17 completed: `LiveRuntimeSource` now runs beside the actual
+  `friday-bridge` executable with a real `AutonomyHost`, `AgentKernel`, and
+  `GitAdapter`. The process-level acceptance starts the live daemon, performs a
+  safe `git.status`, and observes verified action/execution/outcome provenance
+  over WebSocket with evidence IDs, event IDs, timestamps, and status. A fresh
+  runtime instance rehydrates the completed journal and leaves exactly one
+  record, proving no duplicate dispatch. Campaign E permission, egress,
+  verification-failure, no-op, restart, and live bridge checks are recorded in
+  `docs/FRIDAY-INTEGRATION-TEST-PLAN.md`.
 - **2026-08-10** — Plan adopted (corrected master order). Corrections: security
   (egress + secrets) moved ahead of autonomy; local Code/Test verifier before
   Sonar; Agent Director before durable parallelism; skill compounding gated on
@@ -224,7 +243,8 @@ state; never a blind LLM heartbeat).**
   guard). Constitution World model → 🟢 §3.1; P2 row → DONE. Next: #10 LifeOS
   current→ideal/gap layer.
 - **2026-08-11** — LifeOS intent layer (#10): `services/goal-execution/src/
-  intent.rs` makes current→ideal/gap real. **DesiredState** (`intent.rs:44`) —
+  intent.rs` makes current→ideal/gap real; the canonical INT-01–INT-09 receipt is
+  in [`docs/LIFEOS-INTENT-ACCEPTANCE.md`](LIFEOS-INTENT-ACCEPTANCE.md). **DesiredState** (`intent.rs:44`) —
   a declarative ideal (entity exists / entity in state / entity property /
   file exists / tool available, with All/Any algebra; empty `Any` is never
   satisfied, empty `All` vacuously true) — is evaluated against the **world

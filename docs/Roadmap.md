@@ -10,6 +10,10 @@ All architecture milestones (M0–M5) are **complete** and the runtime API is
 architecture — it is to *prove the system is reliable*. Every change from here is
 measured against real numbers, not vibes.
 
+For project qualification status, use [../QUALIFICATION-STATUS.md](../QUALIFICATION-STATUS.md).
+This roadmap records implementation order and bounded acceptance; it does not
+override the project-level qualification baseline.
+
 Qualification phases:
 
 1. **Alpha 1** — internal dogfooding build; everything wired end-to-end.
@@ -452,10 +456,21 @@ Thanks to M4.6 it only declares capabilities; the registry handles the rest.
   updates; feed simulation accuracy and recovery confidence from stored
   experiences.
 
-## M10 — Autonomy ⏳
+## M10 — Autonomy 🟢
 
-- Background tasks, long-running jobs, scheduling, goal monitoring,
-  self-recovery.
+- **Initial cognitive tick is live:** `services/cognitive` runs a standalone or
+  `Act`-phase `AutonomousTick` without requiring a user goal. The built-in
+  deterministic `SalienceDecision` evaluates audio turns, vision objects, screen
+  content, and focus changes; it ignores empty/non-salient input, deduplicates
+  events, and publishes at most one evidence-backed `autonomy.action` per tick.
+  The `execute_and_verify` seam now dispatches through injected executor/verifier
+  implementations and records `tool.executed` plus `outcome.observed` with the
+  evidence trace.
+- **Live autonomy is now proven:** `LiveRuntimeSource` instantiates
+  `AutonomyHost` in the long-lived bridge process, runs a real permitted action,
+  verifies the real result, publishes the event chain, and exposes it through
+  `DashboardDto.autonomy` to the runtime frontend source. Journal rehydration
+  prevents duplicate dispatch after restart.
 
 > The four reasoning engines and the standard event vocabulary are **locked**
 > (see `Architecture.md`, `Planner.md`, `Execution.md`). New features must answer:

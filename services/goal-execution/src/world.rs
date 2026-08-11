@@ -1,6 +1,6 @@
+use crate::causal::{CausalModel, CausalSimulation};
 use crate::common::Capability;
 use crate::confidence::Confidence;
-use crate::causal::{CausalModel, CausalSimulation};
 use friday_knowledge::KnowledgeGraph;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -306,6 +306,18 @@ pub struct StateTransition {
     pub occurred_at_ms: u64,
 }
 
+/// A verified observation produced by an action adapter or re-observation
+/// sensor. Intent and execution output are not observations; callers must only
+/// submit this record after verification succeeds.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerifiedObservation {
+    pub action_id: String,
+    pub goal_id: String,
+    pub state: WorldState,
+    #[serde(default)]
+    pub preconditions: Vec<Precondition>,
+}
+
 impl StateTransition {
     pub fn new(
         action_id: impl Into<String>,
@@ -443,13 +455,8 @@ impl WorldModel {
             return None;
         }
         let before = self.state.clone();
-        let transition = StateTransition::new(
-            action_id,
-            goal_id,
-            before,
-            sim.projected_world.clone(),
-            &[],
-        );
+        let transition =
+            StateTransition::new(action_id, goal_id, before, sim.projected_world.clone(), &[]);
         self.state = sim.projected_world.clone();
         self.causal.entities = sim.projected_entities.clone();
         self.history.push(transition.clone());
@@ -505,6 +512,21 @@ impl WorldModel {
             .filter(|p| !p.check(&self.state))
             .map(|p| p.describe())
             .collect()
+    }
+
+    /// Apply a verified observation as the new world state. This is the sole
+    /// runtime feedback entry point: callers must not use it for intentions or
+    /// unverified execution results.
+    pub fn apply_verified_observation(
+        &mut self,
+        observation: VerifiedObservation,
+    ) -> StateTransition {
+        self.record_transition(
+            observation.action_id,
+            observation.goal_id,
+            observation.state,
+            &observation.preconditions,
+        )
     }
 
     /// Record a transition (after execution). Returns the transition.

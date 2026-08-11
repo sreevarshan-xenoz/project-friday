@@ -541,7 +541,10 @@ impl WorkflowEngine {
     /// caller's own save is the authoritative durable copy.
     async fn done_paused(&self, cp: WorkflowCheckpoint, reason: PauseReason) -> WorkflowProgress {
         let _ = self.persist(&cp).await;
-        WorkflowProgress::Paused { checkpoint: cp, reason }
+        WorkflowProgress::Paused {
+            checkpoint: cp,
+            reason,
+        }
     }
 
     async fn done_failed(
@@ -645,9 +648,7 @@ impl WorkflowEngine {
             // re-dispatched — the cursor simply advances. This is the payoff
             // of the write-ahead journal.
             let already_verified = cp.journal.iter().any(|e| {
-                e.step_index == index
-                    && e.sub_index.is_none()
-                    && e.state == JournalState::Verified
+                e.step_index == index && e.sub_index.is_none() && e.state == JournalState::Verified
             });
             if already_verified {
                 cp.next_step += 1;
@@ -736,15 +737,9 @@ impl WorkflowEngine {
             // explicitly (once per step) instead of re-running silently. The
             // attempt it consumed stays consumed: an outcome we cannot
             // reproduce must not let a side-effecting step exceed its budget.
-            if cp
-                .journal
-                .iter()
-                .any(|e| {
-                    e.step_index == index
-                        && e.sub_index.is_none()
-                        && e.state == JournalState::InFlight
-                })
-            {
+            if cp.journal.iter().any(|e| {
+                e.step_index == index && e.sub_index.is_none() && e.state == JournalState::InFlight
+            }) {
                 cp.recovered += 1;
             }
 
@@ -791,8 +786,9 @@ impl WorkflowEngine {
                     entry.state = state;
                     entry.duration_ms = report.trace.duration_ms();
                 }
-                cp.evidence
-                    .push(StepEvidence::from_report(index, None, &label, attempt, &report));
+                cp.evidence.push(StepEvidence::from_report(
+                    index, None, &label, attempt, &report,
+                ));
                 cp.updated_at_ms = Self::now_ms();
                 // Fold workflow-owned state and advance the cursor BEFORE the
                 // terminal persist: the Verified journal entry, the fold, and
@@ -915,13 +911,7 @@ impl WorkflowEngine {
                 }
                 let attempt = child_attempt_count(cp, index, sub) + 1;
                 cp.journal.push(JournalEntry::in_flight(
-                    journal_key(
-                        &wf_id,
-                        index,
-                        Some(sub),
-                        attempt,
-                        &child.action.instruction,
-                    ),
+                    journal_key(&wf_id, index, Some(sub), attempt, &child.action.instruction),
                     index,
                     Some(sub),
                     &child.label,
@@ -962,8 +952,7 @@ impl WorkflowEngine {
                 }
                 cp.updated_at_ms = Self::now_ms();
                 if report.execution_state != ExecutionState::Verified {
-                    let attempted =
-                        child_attempt_count(cp, index, sub) as usize;
+                    let attempted = child_attempt_count(cp, index, sub) as usize;
                     return Err(format!(
                         "stage '{label}' child '{child_label}' failed after \
                          {attempted} attempt(s): {}",
@@ -999,7 +988,13 @@ impl WorkflowEngine {
         wf_id: &str,
         stage_index: usize,
         job: &StageChildJob,
-    ) -> (usize, String, Vec<JournalEntry>, Vec<StepEvidence>, GoalReport) {
+    ) -> (
+        usize,
+        String,
+        Vec<JournalEntry>,
+        Vec<StepEvidence>,
+        GoalReport,
+    ) {
         let goal = Goal::new(&job.child.label);
         let ctx = ExecutionContext::for_goal(&goal.id);
         let mut attempt = job.start_attempt;
@@ -1372,9 +1367,8 @@ mod tests {
             if self.stage_accumulate {
                 let n = state["stage_completed"].as_u64().unwrap_or(0);
                 state["stage_completed"] = serde_json::json!(n + children.len() as u64);
-                state["stage_verified"] = serde_json::json!(
-                    children.iter().filter(|c| c.verified).count()
-                );
+                state["stage_verified"] =
+                    serde_json::json!(children.iter().filter(|c| c.verified).count());
             }
         }
     }
@@ -1494,7 +1488,10 @@ mod tests {
             self.saves.lock().unwrap().push(checkpoint.clone());
             self.inner.save(checkpoint).await
         }
-        async fn load(&self, workflow_id: &str) -> Result<Option<WorkflowCheckpoint>, WorkflowError> {
+        async fn load(
+            &self,
+            workflow_id: &str,
+        ) -> Result<Option<WorkflowCheckpoint>, WorkflowError> {
             self.inner.load(workflow_id).await
         }
         async fn delete(&self, workflow_id: &str) -> Result<(), WorkflowError> {
@@ -2066,12 +2063,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn failed_stage_evidence_persists_for_fresh_store_instance() {
+        let dir =
+            std::env::temp_dir().join(format!("friday-wf-stage-fail-{}", uuid::Uuid::new_v4()));
+        let store = Arc::new(JsonWorkflowStore::new(&dir));
+        let mut wf = TestWorkflow::new(
+            "wf-stage-fail-persist",
+            vec![WorkflowStep::stage(
+                "fan",
+                vec![ok_step("c0"), ok_step("boom")],
+                2,
+            )],
+        );
+        let mut engine =
+            engine_with(vec![Box::new(SelectiveFailTool::fail("boom"))]).with_store(store);
+
+        match engine.start(&mut wf).await {
+            WorkflowProgress::Failed { checkpoint, .. } => {
+                assert_eq!(checkpoint.evidence.len(), 2);
+                assert_eq!(
+                    checkpoint.evidence[0].execution_state,
+                    ExecutionState::Verified
+                );
+                assert_eq!(
+                    checkpoint.evidence[1].execution_state,
+                    ExecutionState::Failed
+                );
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+
+        // A fresh process/store must recover the honest partial stage trail,
+        // rather than losing terminal branch evidence on the failure return.
+        let fresh = JsonWorkflowStore::new(&dir);
+        let loaded = fresh
+            .load("wf-stage-fail-persist")
+            .await
+            .unwrap()
+            .expect("failed workflow checkpoint is durable");
+        assert_eq!(loaded.evidence.len(), 2);
+        assert_eq!(loaded.evidence[0].sub_index, Some(0));
+        assert_eq!(loaded.evidence[1].sub_index, Some(1));
+        assert_eq!(loaded.evidence[1].execution_state, ExecutionState::Failed);
+        assert_eq!(loaded.next_step, 0, "failed stage is not advanced");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
     async fn stage_child_retries_recover_within_the_stage() {
         let mut wf = TestWorkflow::new(
             "wf-stage-retry",
             vec![WorkflowStep::stage(
                 "fan",
-                vec![ok_step("c0"), ok_step("flaky").with_max_attempts(3), ok_step("c2")],
+                vec![
+                    ok_step("c0"),
+                    ok_step("flaky").with_max_attempts(3),
+                    ok_step("c2"),
+                ],
                 3,
             )],
         );
@@ -2161,7 +2210,11 @@ mod tests {
         let calls = Arc::new(Mutex::new(Vec::<String>::new()));
         let mut wf = TestWorkflow::new(
             wf_id,
-            vec![WorkflowStep::stage("fan", vec![ok_step("c0"), ok_step("c1")], 2)],
+            vec![WorkflowStep::stage(
+                "fan",
+                vec![ok_step("c0"), ok_step("c1")],
+                2,
+            )],
         );
         let mut engine = engine_with(vec![Box::new(TrackTool {
             calls: calls.clone(),
@@ -2175,7 +2228,11 @@ mod tests {
                 // Only the unfinished child re-ran — the verified one was
                 // replayed from the journal, never re-dispatched.
                 let ran = calls.lock().unwrap().clone();
-                assert_eq!(ran, vec!["run c1".to_string()], "replay must not re-dispatch");
+                assert_eq!(
+                    ran,
+                    vec!["run c1".to_string()],
+                    "replay must not re-dispatch"
+                );
                 // No duplicate evidence for the replayed child.
                 assert_eq!(checkpoint.evidence.len(), 2);
                 assert_eq!(checkpoint.evidence[0].sub_index, Some(0));
@@ -2234,7 +2291,11 @@ mod tests {
         match engine.resume(&mut wf, cp).await {
             WorkflowProgress::Completed { checkpoint } => {
                 let ran = calls.lock().unwrap().clone();
-                assert_eq!(ran, vec!["run b".to_string()], "'a' was replayed, never re-run");
+                assert_eq!(
+                    ran,
+                    vec!["run b".to_string()],
+                    "'a' was replayed, never re-run"
+                );
                 assert_eq!(checkpoint.evidence.len(), 2, "no duplicate evidence");
                 assert_eq!(checkpoint.evidence[0].attempt, 1);
             }
@@ -2271,7 +2332,11 @@ mod tests {
         match engine.resume(&mut wf, cp).await {
             WorkflowProgress::Completed { checkpoint } => {
                 let ran = calls.lock().unwrap().clone();
-                assert_eq!(ran, vec!["run a".to_string()], "recovery re-executes the step");
+                assert_eq!(
+                    ran,
+                    vec!["run a".to_string()],
+                    "recovery re-executes the step"
+                );
                 assert_eq!(checkpoint.recovered, 1, "recovery is observable");
                 assert_eq!(checkpoint.evidence.len(), 1);
                 assert_eq!(checkpoint.evidence[0].attempt, 2);
@@ -2326,12 +2391,23 @@ mod tests {
                 assert_eq!(checkpoint.evidence.len(), 2);
                 // While each step ran, the store already held ITS InFlight entry
                 // (write-ahead) and never its terminal outcome.
-                assert_eq!(saw_in_flight.load(Ordering::SeqCst), 2, "write-ahead seen per step");
-                assert_eq!(saw_terminal.load(Ordering::SeqCst), 0, "outcome not yet durable");
+                assert_eq!(
+                    saw_in_flight.load(Ordering::SeqCst),
+                    2,
+                    "write-ahead seen per step"
+                );
+                assert_eq!(
+                    saw_terminal.load(Ordering::SeqCst),
+                    0,
+                    "outcome not yet durable"
+                );
                 // The durable checkpoint reflects the terminal state.
                 let saved = store.load("wf-store-probe").await.unwrap().unwrap();
                 assert_eq!(saved.evidence.len(), 2);
-                assert!(saved.journal.iter().all(|e| e.state != JournalState::InFlight));
+                assert!(saved
+                    .journal
+                    .iter()
+                    .all(|e| e.state != JournalState::InFlight));
                 assert_eq!(
                     saved
                         .journal
@@ -2350,12 +2426,20 @@ mod tests {
     #[test]
     fn journal_key_is_stable_and_distinct() {
         let a = journal_key("wf", 0, None, 1, "run x");
-        assert_eq!(a, journal_key("wf", 0, None, 1, "run x"), "stable across calls");
+        assert_eq!(
+            a,
+            journal_key("wf", 0, None, 1, "run x"),
+            "stable across calls"
+        );
         assert_ne!(a, journal_key("wf", 0, None, 1, "run y"), "instruction");
         assert_ne!(a, journal_key("wf", 0, None, 2, "run x"), "attempt");
         assert_ne!(a, journal_key("wf", 1, None, 1, "run x"), "step index");
         assert_ne!(a, journal_key("wf2", 0, None, 1, "run x"), "workflow id");
-        assert_ne!(a, journal_key("wf", 0, Some(0), 1, "run x"), "stage vs plain");
+        assert_ne!(
+            a,
+            journal_key("wf", 0, Some(0), 1, "run x"),
+            "stage vs plain"
+        );
         assert_ne!(
             journal_key("wf", 0, Some(0), 1, "run x"),
             journal_key("wf", 0, Some(1), 1, "run x"),
@@ -2367,7 +2451,8 @@ mod tests {
     fn checkpoint_with_journal_round_trips_serde() {
         let mut cp = WorkflowCheckpoint::new("wf-journal");
         cp.recovered = 2;
-        cp.journal.push(JournalEntry::in_flight("k1".into(), 0, None, "a", 1));
+        cp.journal
+            .push(JournalEntry::in_flight("k1".into(), 0, None, "a", 1));
         cp.journal.push(JournalEntry::terminal(
             "k2".into(),
             1,
@@ -2407,7 +2492,8 @@ mod tests {
 
         // A stage round-trips its body.
         let staged = WorkflowStep::stage("fan", vec![ok_step("c0")], 3);
-        let back: WorkflowStep = serde_json::from_str(&serde_json::to_string(&staged).unwrap()).unwrap();
+        let back: WorkflowStep =
+            serde_json::from_str(&serde_json::to_string(&staged).unwrap()).unwrap();
         let body = back.stage.expect("stage survives serialization");
         assert_eq!(body.max_parallel, 3);
         assert_eq!(body.children.len(), 1);
@@ -2423,8 +2509,8 @@ mod tests {
         // If this ever regressed (terminal persisted before the fold), a crash
         // would strand a Verified entry whose fold a resume silently skips.
         let store = RecordingStore::new();
-        let mut wf = TestWorkflow::new("wf-atomic", vec![ok_step("a"), ok_step("b")])
-            .accumulating();
+        let mut wf =
+            TestWorkflow::new("wf-atomic", vec![ok_step("a"), ok_step("b")]).accumulating();
         let mut engine = engine_with(vec![Box::new(AlwaysOkTool)]).with_store(store.clone());
 
         match engine.start(&mut wf).await {
@@ -2484,7 +2570,8 @@ mod tests {
                 JournalState::Verified,
                 3,
             ));
-            cp.evidence.push(verified_child_evidence(sub, &format!("c{sub}")));
+            cp.evidence
+                .push(verified_child_evidence(sub, &format!("c{sub}")));
         }
 
         let calls = Arc::new(Mutex::new(Vec::<String>::new()));
@@ -2550,14 +2637,18 @@ mod tests {
         assert_eq!(legacy.recovered, 0);
 
         // And it RUNS: resume through the cursor (step 1), never re-running 0.
-        let mut wf = TestWorkflow::new("legacy-run", vec![ok_step("a"), ok_step("b")])
-            .accumulating();
+        let mut wf =
+            TestWorkflow::new("legacy-run", vec![ok_step("a"), ok_step("b")]).accumulating();
         let mut engine = engine_with(vec![Box::new(AlwaysOkTool)]);
         match engine.resume(&mut wf, legacy).await {
             WorkflowProgress::Completed { checkpoint } => {
                 assert_eq!(checkpoint.next_step, 2);
                 assert_eq!(checkpoint.state["completed"], serde_json::json!(2));
-                assert_eq!(checkpoint.evidence.len(), 2, "step 0 carried over, step 1 fresh");
+                assert_eq!(
+                    checkpoint.evidence.len(),
+                    2,
+                    "step 0 carried over, step 1 fresh"
+                );
             }
             other => panic!("expected Completed, got {other:?}"),
         }

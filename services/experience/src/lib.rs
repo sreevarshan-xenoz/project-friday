@@ -66,6 +66,9 @@
 //! `TimelineStore` (incremental point-in-time timelines), `RunningMetrics`
 //! (stateless-to-stateful mirror of `MetricsEngine`).
 
+pub mod cost;
+pub use cost::{CostEntry, CostLedger};
+
 use std::collections::HashMap;
 use std::sync::Arc;
 

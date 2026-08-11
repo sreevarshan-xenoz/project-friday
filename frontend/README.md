@@ -145,6 +145,22 @@ The Executive panel mirrors the real ten-phase cycle from
 `DemoRuntimeSource`/bridge when `VITE_CONSOLE_BRIDGE=1` and `cargo run -p
 friday-bridge` is serving.
 
+### Autonomy wiring boundary
+
+The cognitive `autonomy.action`, `tool.executed`, and `outcome.observed`
+events are exposed as the optional `dashboard.autonomy` provenance DTO. The
+Dashboard renders the panel only when a real runtime source supplies it; the
+mock provider remains honest and leaves it `null`. The live bridge path can be
+started with a safe repository action:
+
+```powershell
+cargo run -p friday-bridge -- --live-repo C:\path\to\repo --journal C:\path\to\autonomy-journal.json
+```
+
+With `VITE_CONSOLE_BRIDGE=1`, the runtime provider consumes the same event IDs,
+timestamps, evidence, execution status, and verification result without any
+screen-level provider swap.
+
 ## How to run
 
 ```bash

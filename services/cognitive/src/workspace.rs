@@ -46,6 +46,11 @@ pub enum Topic {
     GoalCreated,
     ToolExecuted,
     OutcomeObserved,
+    /// The autonomous drive decided to fire ONE action, justified by an
+    /// evidence trace — the payload carries `action`/`reason`/`evidence`
+    /// (the workspace event ids that justify it). This is what turns the
+    /// cognitive loop from a heartbeat into a self-directed drive.
+    ActionDecided,
     Custom(String),
 }
 
@@ -97,6 +102,7 @@ impl<'de> serde::Deserialize<'de> for Topic {
                     "GoalCreated" | "goal.created" => Topic::GoalCreated,
                     "ToolExecuted" | "tool.executed" => Topic::ToolExecuted,
                     "OutcomeObserved" | "outcome.observed" => Topic::OutcomeObserved,
+                    "ActionDecided" | "autonomy.action" => Topic::ActionDecided,
                     other => Topic::Custom(other.to_string()),
                 })
             }
@@ -142,6 +148,7 @@ impl Topic {
             Self::GoalCreated => "goal.created".into(),
             Self::ToolExecuted => "tool.executed".into(),
             Self::OutcomeObserved => "outcome.observed".into(),
+            Self::ActionDecided => "autonomy.action".into(),
             Self::Custom(s) => s.clone(),
         }
     }
@@ -172,6 +179,7 @@ impl Topic {
             "goal.created" => Self::GoalCreated,
             "tool.executed" => Self::ToolExecuted,
             "outcome.observed" => Self::OutcomeObserved,
+            "autonomy.action" => Self::ActionDecided,
             other => Self::Custom(other.to_string()),
         }
     }
@@ -457,6 +465,23 @@ impl WorkspaceEvent {
 
 // ── GlobalWorkspace ─────────────────────────────────────────────────
 
+/// Read-only projection of the autonomy event chain for observers such as the
+/// console bridge. The workspace remains the source of truth; this projection
+/// only joins the latest decision, dispatch, and outcome events.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AutonomyReadModel {
+    pub action: Option<AutonomyEvent>,
+    pub execution: Option<AutonomyEvent>,
+    pub outcome: Option<AutonomyEvent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AutonomyEvent {
+    pub event_id: Uuid,
+    pub timestamp_ms: u64,
+    pub payload: serde_json::Value,
+}
+
 #[derive(Clone)]
 pub struct GlobalWorkspace {
     inner: Arc<RwLock<WorkspaceInner>>,
@@ -622,6 +647,24 @@ impl GlobalWorkspace {
     pub fn topic_count(&self) -> usize {
         self.inner.read().unwrap().current.len()
     }
+
+    /// Return the latest autonomy trace without exposing mutable workspace
+    /// internals. Missing stages are represented honestly as `None`.
+    pub fn autonomy_read_model(&self) -> AutonomyReadModel {
+        let inner = self.inner.read().unwrap();
+        let event = |topic: &str| {
+            inner.current.get(topic).map(|event| AutonomyEvent {
+                event_id: event.id,
+                timestamp_ms: event.timestamp_ms,
+                payload: event.payload.clone(),
+            })
+        };
+        AutonomyReadModel {
+            action: event("autonomy.action"),
+            execution: event("tool.executed"),
+            outcome: event("outcome.observed"),
+        }
+    }
 }
 
 impl Default for GlobalWorkspace {
@@ -737,6 +780,38 @@ mod tests {
         ws.publish_from(Topic::Mouse, EngineId::Perception, json!({"x": 1}));
         let event = ws.get("sensor.mouse").unwrap();
         assert_eq!(event.source, EngineId::Perception);
+    }
+
+    #[test]
+    fn autonomy_read_model_joins_real_workspace_events() {
+        let ws = GlobalWorkspace::new();
+        assert_eq!(
+            ws.autonomy_read_model(),
+            AutonomyReadModel {
+                action: None,
+                execution: None,
+                outcome: None
+            }
+        );
+        let action_id = ws.publish_from(
+            Topic::ActionDecided,
+            EngineId::Automation,
+            json!({"action": "git.status", "evidence": ["ev-1"]}),
+        );
+        let execution_id = ws.publish_from(
+            Topic::ToolExecuted,
+            EngineId::Automation,
+            json!({"action": "git.status", "success": true}),
+        );
+        let outcome_id = ws.publish_from(
+            Topic::OutcomeObserved,
+            EngineId::Automation,
+            json!({"action": "git.status", "verified": true}),
+        );
+        let trace = ws.autonomy_read_model();
+        assert_eq!(trace.action.unwrap().event_id, action_id);
+        assert_eq!(trace.execution.unwrap().event_id, execution_id);
+        assert_eq!(trace.outcome.unwrap().event_id, outcome_id);
     }
 
     #[test]

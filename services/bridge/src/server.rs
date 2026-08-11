@@ -9,7 +9,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::net::TcpListener;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use tokio_tungstenite::accept_async;
 use tracing::{info, warn};
@@ -39,6 +40,7 @@ pub struct BridgeServer {
     broadcast_capacity: usize,
     capabilities: CapabilitySet,
     negotiation_timeout: Duration,
+    metrics_addr: Option<SocketAddr>,
 }
 
 impl BridgeServer {
@@ -51,6 +53,7 @@ impl BridgeServer {
             broadcast_capacity: DEFAULT_BROADCAST_CAPACITY,
             capabilities: CapabilitySet::standard(),
             negotiation_timeout: Duration::from_millis(DEFAULT_NEGOTIATION_TIMEOUT_MS),
+            metrics_addr: Some(SocketAddr::from(([127, 0, 0, 1], 18434))),
         }
     }
 
@@ -82,6 +85,12 @@ impl BridgeServer {
         self
     }
 
+    /// Enable or disable the Prometheus-compatible metrics listener.
+    pub fn with_metrics_addr(mut self, addr: Option<SocketAddr>) -> Self {
+        self.metrics_addr = addr;
+        self
+    }
+
     /// Override the capability-negotiation window (tests use tiny values).
     pub fn with_negotiation_timeout_ms(mut self, timeout_ms: u64) -> Self {
         self.negotiation_timeout = Duration::from_millis(timeout_ms);
@@ -103,6 +112,9 @@ impl BridgeServer {
         };
 
         self.spawn_driver(manager.clone(), bridge_id.clone(), source_name.clone());
+        if let Some(metrics_addr) = self.metrics_addr {
+            self.spawn_metrics_server(metrics_addr, manager.stats());
+        }
 
         info!(
             bridge = %bridge_id,
@@ -136,6 +148,28 @@ impl BridgeServer {
         }
     }
 
+    fn spawn_metrics_server(&self, addr: SocketAddr, stats: Arc<crate::connection::BridgeStats>) {
+        tokio::spawn(async move {
+            let listener = match TcpListener::bind(addr).await {
+                Ok(listener) => listener,
+                Err(error) => {
+                    warn!(%addr, %error, "metrics listener failed to bind");
+                    return;
+                }
+            };
+            info!(%addr, "Prometheus metrics listening");
+            loop {
+                let Ok((stream, _)) = listener.accept().await else {
+                    break;
+                };
+                let stats = stats.clone();
+                tokio::spawn(async move {
+                    let _ = serve_metrics(stream, stats).await;
+                });
+            }
+        });
+    }
+
     fn spawn_driver(
         &self,
         manager: Arc<ConnectionManager>,
@@ -163,4 +197,31 @@ impl BridgeServer {
             }
         });
     }
+}
+
+async fn serve_metrics(
+    mut stream: TcpStream,
+    stats: Arc<crate::connection::BridgeStats>,
+) -> Result<(), std::io::Error> {
+    let mut request = [0u8; 1024];
+    let _ = stream.read(&mut request).await?;
+    let body = prometheus_metrics(&stats.snapshot());
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(), body
+    );
+    stream.write_all(response.as_bytes()).await
+}
+
+pub fn prometheus_metrics(stats: &crate::protocol::BridgeStatsDto) -> String {
+    format!(
+        "# TYPE friday_bridge_connections_active gauge\nfriday_bridge_connections_active {}\n# TYPE friday_bridge_connections_total counter\nfriday_bridge_connections_total {}\n# TYPE friday_bridge_resyncs_total counter\nfriday_bridge_resyncs_total {}\n# TYPE friday_bridge_frames_sent_total counter\nfriday_bridge_frames_sent_total {}\n# TYPE friday_bridge_bytes_sent_total counter\nfriday_bridge_bytes_sent_total {}\n# TYPE friday_bridge_snapshot_bytes gauge\nfriday_bridge_snapshot_bytes {}\n# TYPE friday_bridge_delta_bytes gauge\nfriday_bridge_delta_bytes {}\n",
+        stats.connections,
+        stats.reconnects,
+        stats.resyncs,
+        stats.frames_sent,
+        stats.bytes_sent,
+        stats.snapshot_size_bytes,
+        stats.delta_size_bytes,
+    )
 }

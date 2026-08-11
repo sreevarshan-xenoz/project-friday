@@ -32,17 +32,27 @@ async fn director_runs_the_three_role_topology_and_verifies_every_result() {
     let analyst = director.spawn(AgentRole::Analyst, "analyze the evidence");
     let verifier = director.spawn(AgentRole::Verifier, "verify the finding");
 
-    let report = director.verify(vec![researcher, analyst, verifier], default_gate()).await;
+    let report = director
+        .verify(vec![researcher, analyst, verifier], default_gate())
+        .await;
 
     assert_eq!(report.entries.len(), 3);
     assert_eq!(report.succeeded(), 3);
     assert_eq!(report.verified(), 3);
-    assert!(report.all_verified(), "{}", report.summary_lines().join("\n"));
+    assert!(
+        report.all_verified(),
+        "{}",
+        report.summary_lines().join("\n")
+    );
 
     let roles: Vec<AgentRole> = report.entries.iter().map(|e| e.role).collect();
     assert_eq!(
         roles,
-        vec![AgentRole::Researcher, AgentRole::Analyst, AgentRole::Verifier]
+        vec![
+            AgentRole::Researcher,
+            AgentRole::Analyst,
+            AgentRole::Verifier
+        ]
     );
     assert!(report
         .entries
@@ -64,7 +74,9 @@ async fn failed_child_blocks_the_verified_outcome() {
     let researcher = director.spawn(AgentRole::Researcher, "find the documentation");
     let verifier = director.spawn(AgentRole::Verifier, "verify the finding");
 
-    let report = director.verify(vec![researcher, verifier], default_gate()).await;
+    let report = director
+        .verify(vec![researcher, verifier], default_gate())
+        .await;
 
     assert_eq!(report.verified(), 1);
     assert!(
@@ -117,6 +129,52 @@ async fn cancelled_child_is_not_verified() {
         "{:?}",
         report.entries
     );
+}
+
+#[tokio::test]
+async fn failed_child_report_can_be_reassigned_and_verified() {
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let first_attempt = Arc::clone(&attempts);
+    let failing_driver: Arc<dyn AgentDriver> = Arc::new(FnDriver::new(move |ctx: AgentContext| {
+        first_attempt.fetch_add(1, Ordering::SeqCst);
+        AgentResult::failed(
+            &ctx.spec.id,
+            "worker lost its provider",
+            vec![],
+            "provider offline",
+        )
+    }));
+    let first_director = AgentDirector::new(failing_driver);
+    let failed = first_director
+        .verify(
+            vec![first_director.spawn(AgentRole::Researcher, "research safely")],
+            default_gate(),
+        )
+        .await;
+
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    assert!(!failed.all_verified());
+    assert_eq!(failed.entries.len(), 1);
+    assert_eq!(failed.entries[0].result.state, AgentState::Failed);
+
+    // Reassignment is explicit and bounded: the parent retains the failed
+    // report, then creates one replacement child under a fresh director/driver.
+    let replacement_driver: Arc<dyn AgentDriver> = Arc::new(FnDriver::new(|ctx: AgentContext| {
+        ok(&ctx.spec.id, "replacement completed the task")
+    }));
+    let replacement_director = AgentDirector::new(replacement_driver);
+    let replacement = replacement_director
+        .verify(
+            vec![replacement_director.spawn(AgentRole::Researcher, "research safely")],
+            default_gate(),
+        )
+        .await;
+    assert!(
+        replacement.all_verified(),
+        "{}",
+        replacement.summary_lines().join("\\n")
+    );
+    assert_eq!(replacement.verified(), 1);
 }
 
 #[tokio::test]
@@ -259,7 +317,9 @@ async fn terminate_stops_and_collects_every_child() {
 
     assert_eq!(results.len(), 3);
     assert!(
-        results.iter().all(|(_, r)| r.state == AgentState::Cancelled),
+        results
+            .iter()
+            .all(|(_, r)| r.state == AgentState::Cancelled),
         "{results:?}"
     );
 }

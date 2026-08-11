@@ -13,6 +13,7 @@ friday-plugin-runtime = { path = "../plugin-runtime" }
 friday-experience = { path = "../experience" }
 friday-investigation = { path = "../investigation" }
 friday-goal-execution = { path = "../goal-execution" }
+friday-cognitive = { path = "../cognitive" }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["float_roundtrip"] }

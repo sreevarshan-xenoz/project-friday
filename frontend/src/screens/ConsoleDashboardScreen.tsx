@@ -99,6 +99,18 @@ export function ConsoleDashboardScreen() {
           </div>
         </Panel>
 
+        {dashboard.autonomy && (
+          <Panel title="Autonomous tick provenance">
+            <div className="con-runtime">
+              <KeyVal k="Action" v={dashboard.autonomy.action?.payload.action as string ?? '—'} />
+              <KeyVal k="Evidence" v={dashboard.autonomy.action?.payload.evidence ? JSON.stringify(dashboard.autonomy.action.payload.evidence) : '—'} />
+              <KeyVal k="Executed" v={dashboard.autonomy.execution ? 'YES' : '—'} />
+              <KeyVal k="Verified" v={dashboard.autonomy.outcome?.payload.verified === true ? <Chip tone="green">YES</Chip> : dashboard.autonomy.outcome ? <Chip tone="red">NO</Chip> : '—'} />
+              <KeyVal k="Outcome event" v={dashboard.autonomy.outcome?.event_id ?? '—'} />
+            </div>
+          </Panel>
+        )}
+
         <Panel title="Latest decision">
           {last ? (
             <div className="con-latest">

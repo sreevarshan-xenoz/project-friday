@@ -71,6 +71,7 @@ const EMPTY: ConsoleSnapshot = {
     recent: [],
     graph: null,
     evidence: null,
+    autonomy: null,
   },
   timelines: [],
   metrics: {

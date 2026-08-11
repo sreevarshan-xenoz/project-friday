@@ -20,10 +20,12 @@ pub use protocol::{
     PROTOCOL_VERSION,
 };
 pub use server::{
-    BridgeServer, DEFAULT_HEARTBEAT_MS, DEFAULT_NEGOTIATION_TIMEOUT_MS, DEFAULT_TICK_MS,
+    prometheus_metrics, BridgeServer, DEFAULT_HEARTBEAT_MS, DEFAULT_NEGOTIATION_TIMEOUT_MS,
+    DEFAULT_TICK_MS,
 };
 pub use source::{
-    demo_goals, Clock, DemoRuntimeSource, RuntimeSource, Slice, SourceDelta, SourceSnapshot,
+    demo_goals, Clock, DemoRuntimeSource, LiveRuntimeSource, RuntimeSource, Slice, SourceDelta,
+    SourceSnapshot,
 };
 
 /// Current wall-clock time in milliseconds since the Unix epoch.

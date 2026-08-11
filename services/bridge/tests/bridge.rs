@@ -6,11 +6,14 @@
 //!   3. A live client over TCP/WebSocket sees hello -> snapshot -> delta ->
 //!      heartbeat with contiguous sequences and a measured round-trip.
 
+use std::fs;
 use std::net::SocketAddr;
-use std::time::Duration;
+use std::process::Command;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use friday_bridge::{
-    BridgeServer, DemoRuntimeSource, Frame, FrameSerializer, RuntimeSource, SourceDelta,
+    prometheus_metrics, BridgeServer, DemoRuntimeSource, Frame, FrameSerializer, LiveRuntimeSource,
+    RuntimeSource, SourceDelta,
 };
 use futures::{SinkExt, StreamExt};
 use tokio_tungstenite::connect_async;
@@ -18,6 +21,17 @@ use tokio_tungstenite::connect_async;
 // ---------------------------------------------------------------------------
 // Unit-ish: frame serialization
 // ---------------------------------------------------------------------------
+
+#[test]
+fn prometheus_metrics_exposes_bridge_counters() {
+    let stats = friday_bridge::connection::BridgeStats::default();
+    stats.connect();
+    stats.record_send(128);
+    let body = prometheus_metrics(&stats.snapshot());
+    assert!(body.contains("friday_bridge_connections_active 1"));
+    assert!(body.contains("friday_bridge_frames_sent_total 1"));
+    assert!(body.contains("friday_bridge_bytes_sent_total 128"));
+}
 
 #[test]
 fn hello_frame_matches_console_json_shape() {
@@ -200,6 +214,52 @@ fn error_frame_carries_full_machine_readable_taxonomy() {
 // ---------------------------------------------------------------------------
 // Unit-ish: demo source
 // ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn live_source_exposes_real_autonomy_provenance() {
+    let dir = std::env::temp_dir().join(format!(
+        "friday-live-source-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&dir).unwrap();
+    let repo = dir.to_string_lossy().to_string();
+    Command::new("git")
+        .args(["init", "--quiet", &repo])
+        .status()
+        .unwrap();
+    fs::write(dir.join("live-autonomy-marker.txt"), "safe\n").unwrap();
+
+    let journal_path = dir.join("journal.json");
+    let source = LiveRuntimeSource::new(&dir, &journal_path).await;
+    let snapshot = source.snapshot().await;
+    let trace = snapshot.dashboard.autonomy.expect("live source trace");
+    let action = trace.action.expect("decision event");
+    let execution = trace.execution.expect("execution event");
+    let outcome = trace.outcome.expect("outcome event");
+    assert_eq!(action.payload["action"], "git.status");
+    assert_eq!(execution.payload["success"], true);
+    assert_eq!(outcome.payload["verified"], true);
+    assert!(!action.event_id.is_empty());
+    assert!(!execution.event_id.is_empty());
+    assert!(!outcome.event_id.is_empty());
+    assert!(action.timestamp_ms <= execution.timestamp_ms);
+    assert!(execution.timestamp_ms <= outcome.timestamp_ms);
+
+    // A fresh runtime instance rehydrates the completed trace and does not
+    // create a second journal record or redispatch git.status.
+    let recovered_source = LiveRuntimeSource::new(&dir, &journal_path).await;
+    let recovered = recovered_source.snapshot().await;
+    let recovered_trace = recovered.dashboard.autonomy.expect("recovered trace");
+    assert_eq!(recovered_trace.outcome.unwrap().payload["recovered"], true);
+    let records: serde_json::Value =
+        serde_json::from_slice(&fs::read(&journal_path).unwrap()).unwrap();
+    assert_eq!(records.as_array().unwrap().len(), 1);
+    let _ = fs::remove_dir_all(dir);
+}
 
 #[tokio::test]
 async fn demo_source_seeds_read_models_through_frozen_engines() {
@@ -388,11 +448,13 @@ async fn live_client_sees_handshake_then_streams_with_contiguous_sequences() {
     assert_eq!(snapshot["kind"], "snapshot");
     assert_eq!(snapshot["timelines"].as_array().unwrap().len(), 5);
 
-    // Collect the stream for ~300ms and verify the frame grammar.
+    // Collect the stream for up to 1s and verify the frame grammar. The
+    // larger window accommodates Windows scheduling and a real source doing
+    // Executive work before its first measured heartbeat.
     let mut kinds = Vec::new();
     let mut sequences = Vec::new();
     let mut saw_heartbeat_with_rtt = false;
-    let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(1000);
     while tokio::time::Instant::now() < deadline {
         if let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) = ws.next().await {
             let value: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -422,6 +484,54 @@ async fn live_client_sees_handshake_then_streams_with_contiguous_sequences() {
         );
     }
     let _ = ws.close(None).await;
+}
+
+async fn spawn_live_bridge() -> (SocketAddr, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!(
+        "friday-live-bridge-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&dir).unwrap();
+    let repo = dir.to_string_lossy().to_string();
+    Command::new("git")
+        .args(["init", "--quiet", &repo])
+        .status()
+        .unwrap();
+    fs::write(dir.join("live-autonomy-marker.txt"), "safe\n").unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    drop(listener);
+    let source = LiveRuntimeSource::new(&dir, dir.join("journal.json")).await;
+    let server = BridgeServer::new(addr, Box::new(source))
+        .with_metrics_addr(None)
+        .with_negotiation_timeout_ms(20);
+    tokio::spawn(async move {
+        let _ = server.run().await;
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    (addr, dir)
+}
+
+#[tokio::test]
+async fn live_bridge_streams_real_autonomy_provenance() {
+    let (addr, dir) = spawn_live_bridge().await;
+    let (mut ws, _) = connect_async(format!("ws://{addr}")).await.unwrap();
+    let hello = next_frame(&mut ws).await;
+    assert_eq!(hello["bridge"], "friday-bridge-live");
+    let snapshot = next_frame(&mut ws).await;
+    assert_eq!(snapshot["kind"], "snapshot");
+    let autonomy = &snapshot["dashboard"]["autonomy"];
+    assert_eq!(autonomy["action"]["payload"]["action"], "git.status");
+    assert_eq!(autonomy["execution"]["payload"]["success"], true);
+    assert_eq!(autonomy["outcome"]["payload"]["verified"], true);
+    assert!(autonomy["action"]["event_id"].is_string());
+    assert!(autonomy["outcome"]["timestamp_ms"].is_number());
+    let _ = ws.close(None).await;
+    let _ = fs::remove_dir_all(dir);
 }
 
 async fn next_frame(

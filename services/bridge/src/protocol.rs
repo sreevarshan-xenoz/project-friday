@@ -17,6 +17,7 @@
 
 use std::collections::HashMap;
 
+use friday_cognitive::{AutonomyEvent, AutonomyReadModel};
 use friday_experience::{
     CalibrationFactor as FrozenCalibrationFactor, CalibrationMetrics, CalibrationOffsets,
     CandidateExplanation as FrozenCandidateExplanation, DecisionExplanation, DecisionTimeline,
@@ -428,6 +429,42 @@ pub struct EvidenceTrailDto {
     pub records: Vec<EvidenceActionDto>,
 }
 
+/// One workspace event in the autonomous decision → execution → outcome
+/// chain. The event id is the provenance join key used by the console.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AutonomyEventDto {
+    pub event_id: String,
+    pub timestamp_ms: u64,
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AutonomyTraceDto {
+    pub action: Option<AutonomyEventDto>,
+    pub execution: Option<AutonomyEventDto>,
+    pub outcome: Option<AutonomyEventDto>,
+}
+
+impl From<&AutonomyEvent> for AutonomyEventDto {
+    fn from(event: &AutonomyEvent) -> Self {
+        Self {
+            event_id: event.event_id.to_string(),
+            timestamp_ms: event.timestamp_ms,
+            payload: event.payload.clone(),
+        }
+    }
+}
+
+impl From<&AutonomyReadModel> for AutonomyTraceDto {
+    fn from(model: &AutonomyReadModel) -> Self {
+        Self {
+            action: model.action.as_ref().map(AutonomyEventDto::from),
+            execution: model.execution.as_ref().map(AutonomyEventDto::from),
+            outcome: model.outcome.as_ref().map(AutonomyEventDto::from),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DashboardDto {
     pub mission: String,
@@ -446,6 +483,11 @@ pub struct DashboardDto {
     /// evidence. Mirrors `friday_goal_execution::EvidenceTrail`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence: Option<EvidenceTrailDto>,
+    /// The latest real cognitive autonomy event chain, when the runtime wires
+    /// a GlobalWorkspace into this read model. Absent is honest: the demo
+    /// source does not fabricate autonomous actions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autonomy: Option<AutonomyTraceDto>,
 }
 
 // ---------------------------------------------------------------------------

@@ -455,6 +455,18 @@ export interface EvidenceTrailDTO {
   records: EvidenceAction[];
 }
 
+export interface AutonomyEventDTO {
+  event_id: string;
+  timestamp_ms: number;
+  payload: Record<string, unknown>;
+}
+
+export interface AutonomyTraceDTO {
+  action: AutonomyEventDTO | null;
+  execution: AutonomyEventDTO | null;
+  outcome: AutonomyEventDTO | null;
+}
+
 export interface DashboardDTO {
   mission: string;
   goal_progress: number;
@@ -469,6 +481,8 @@ export interface DashboardDTO {
    * execution / for direct-plan goals that gather no evidence).
    */
   evidence: EvidenceTrailDTO | null;
+  /** Real workspace autonomy events; null when the source has no host wiring. */
+  autonomy: AutonomyTraceDTO | null;
 }
 
 /**

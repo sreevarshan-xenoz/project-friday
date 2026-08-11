@@ -1,0 +1,71 @@
+// FRIDAY causal world-model visualization artifact
+// Generated from services/goal-execution/src/causal.rs and world.rs.
+// This is a read-only DrawDB/DBML view; runtime state remains in Rust.
+
+Table entities {
+  id varchar [pk]
+  kind varchar
+  state varchar
+  properties json
+}
+
+Table entity_properties {
+  entity_id varchar [ref: > entities.id]
+  key varchar
+  value json
+
+  indexes {
+    (entity_id, key) [pk]
+  }
+}
+
+Table entity_relations {
+  subject_id varchar [ref: > entities.id]
+  predicate varchar
+  object_id varchar [ref: > entities.id]
+
+  indexes {
+    (subject_id, predicate, object_id) [pk]
+  }
+}
+
+Table causal_edges {
+  id varchar [pk]
+  action varchar
+  condition json
+  description varchar
+}
+
+Table causal_effects {
+  edge_id varchar [ref: > causal_edges.id]
+  ordinal int
+  effect_kind varchar
+  payload json
+
+  indexes {
+    (edge_id, ordinal) [pk]
+  }
+}
+
+Table world_variables {
+  name varchar [pk]
+  value json
+}
+
+Table world_files {
+  path varchar [pk]
+  content_hash varchar
+  exists boolean
+}
+
+Table world_transitions {
+  transition_id varchar [pk]
+  action varchar
+  goal_id varchar
+  source_projection json
+  resulting_projection json
+  verified boolean
+  recorded_at_ms bigint
+}
+
+

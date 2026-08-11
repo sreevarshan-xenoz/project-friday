@@ -18,14 +18,19 @@
 //! over a real ledger. One point-in-time snapshot per decision, no O(history)
 //! rebuild.
 
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use friday_actions::WebAgentAdapter;
+use friday_actions::{AgentKernel, GitAdapter, WebAgentAdapter};
+use friday_cognitive::{
+    ActionExecution, ActionVerifier, EngineId, GlobalWorkspace, TickAction, Topic,
+};
 use friday_experience::{CalibrationStore, TimelineStore};
 use friday_goal_execution::{
-    AdapterTool, Capability as GoalCapability, CognitiveBlackboard, Executive, MockTool, WorldState,
+    AdapterTool, Capability as GoalCapability, CausalCondition, CausalEdge, CausalEffect,
+    CognitiveBlackboard, DesiredState, Executive, IntentDecision, MockTool, WorldModel, WorldState,
 };
 use friday_investigation::InvestigationGraph;
 use friday_plugin_runtime::{
@@ -34,8 +39,9 @@ use friday_plugin_runtime::{
 };
 
 use crate::protocol::{
-    DashboardDto, DecisionRecordDto, DecisionTimelineDto, EvidenceActionDto, EvidenceTrailDto,
-    ExecutivePhaseStateDto, InvestigationGraphDto, MetricsReportDto, WorldStateDto,
+    AutonomyTraceDto, DashboardDto, DecisionRecordDto, DecisionTimelineDto, EvidenceActionDto,
+    EvidenceTrailDto, ExecutivePhaseStateDto, InvestigationGraphDto, MetricsReportDto,
+    WorldStateDto,
 };
 
 /// Which slices a `SourceDelta` touches. Used by tests and instrumentation;
@@ -734,6 +740,9 @@ impl DemoRuntimeSource {
             recent,
             graph,
             evidence,
+            // DemoRuntimeSource intentionally does not fabricate autonomy
+            // events; a deployed source supplies this from GlobalWorkspace.
+            autonomy: None,
         }
     }
 
@@ -833,5 +842,149 @@ impl RuntimeSource for DemoRuntimeSource {
             delta.ledger = Some(self.ledger_dto());
         }
         vec![delta]
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LiveRuntimeSource
+// ---------------------------------------------------------------------------
+
+/// A small real-runtime source used by the daemon mode and acceptance tests.
+/// It preserves the existing frozen read models from `DemoRuntimeSource`, but
+/// obtains the autonomy trace from a real `AutonomyHost` and `GlobalWorkspace`.
+/// The action is deliberately harmless: `git.status` against a caller-provided
+/// repository, verified by the actual command output.
+pub struct LiveRuntimeSource {
+    demo: DemoRuntimeSource,
+    host: friday_goal_execution::AutonomyHost,
+    repo: PathBuf,
+    started: Mutex<bool>,
+}
+
+struct GitStatusVerifier;
+
+#[async_trait]
+impl ActionVerifier for GitStatusVerifier {
+    async fn verify(
+        &self,
+        _workspace: &GlobalWorkspace,
+        _action: &TickAction,
+        execution: &ActionExecution,
+    ) -> bool {
+        execution.success
+            && execution.output["stdout"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("live-autonomy-marker.txt")
+    }
+}
+
+impl LiveRuntimeSource {
+    pub async fn new(repo: impl Into<PathBuf>, journal_path: impl Into<PathBuf>) -> Self {
+        let repo = repo.into();
+        let kernel = Arc::new(AgentKernel::new().with_max_retries(0));
+        kernel.register_adapter(Box::new(GitAdapter::new())).await;
+        let executor = friday_goal_execution::KernelActionExecutor::new(
+            Arc::clone(&kernel),
+            serde_json::json!({ "repo": repo.to_string_lossy() }),
+            repo.clone(),
+        );
+        let workspace = GlobalWorkspace::new();
+        let mut initial_model =
+            WorldModel::new(WorldState::new().with_working_directory(repo.to_string_lossy()));
+        initial_model.causal_mut().add_edge(CausalEdge::new(
+            "observe-live-marker",
+            friday_goal_execution::Capability::Custom("git.status".into()),
+            CausalCondition::Always,
+            vec![CausalEffect::FileCreated {
+                path: "live-autonomy-marker.txt".into(),
+            }],
+        ));
+        let world_model = Arc::new(Mutex::new(initial_model));
+        let intent_decision = IntentDecision::new(
+            Arc::clone(&world_model),
+            DesiredState::FileExists {
+                path: "live-autonomy-marker.txt".into(),
+            },
+        );
+        let host = friday_goal_execution::AutonomyHost::new(
+            workspace,
+            friday_cognitive::AutonomousTick::new(Arc::new(intent_decision)),
+            Arc::new(executor),
+            Arc::new(GitStatusVerifier),
+            Arc::new(friday_cognitive::JsonActionJournal::new(journal_path)),
+        )
+        .with_world_model(world_model);
+        Self {
+            demo: DemoRuntimeSource::new(42, 140),
+            host,
+            repo,
+            started: Mutex::new(false),
+        }
+    }
+
+    async fn ensure_action(&self) {
+        let should_start = {
+            let mut started = self.started.lock().expect("live source lock poisoned");
+            if *started {
+                false
+            } else {
+                *started = true;
+                true
+            }
+        };
+        if should_start {
+            // A completed journal is authoritative across process instances.
+            // Rehydrate its trace instead of creating a new evidence UUID and
+            // redispatching the same side effect.
+            if self.host.recover().unwrap_or(false) {
+                return;
+            }
+            self.host.workspace().publish_from(
+                Topic::Screen,
+                EngineId::Perception,
+                serde_json::json!({
+                    "change": "content",
+                    "content_hash": "live-autonomy",
+                    "repository": self.repo,
+                }),
+            );
+            let _ = self.host.tick().await;
+        }
+    }
+
+    fn attach_autonomy(&self, dashboard: &mut DashboardDto) {
+        dashboard.autonomy = Some(AutonomyTraceDto::from(
+            &self.host.workspace().autonomy_read_model(),
+        ));
+    }
+}
+
+#[async_trait]
+impl RuntimeSource for LiveRuntimeSource {
+    fn bridge_id(&self) -> &str {
+        "friday-bridge-live"
+    }
+
+    fn source_name(&self) -> &str {
+        "runtime"
+    }
+
+    async fn snapshot(&self) -> SourceSnapshot {
+        self.ensure_action().await;
+        let mut snapshot = self.demo.snapshot().await;
+        self.attach_autonomy(&mut snapshot.dashboard);
+        snapshot
+    }
+
+    async fn tick(&mut self, now_ms: u64) -> Vec<SourceDelta> {
+        self.ensure_action().await;
+        let mut deltas = self.demo.tick(now_ms).await;
+        for delta in &mut deltas {
+            if let Some(dashboard) = &mut delta.dashboard {
+                self.attach_autonomy(dashboard);
+            }
+        }
+        deltas
     }
 }

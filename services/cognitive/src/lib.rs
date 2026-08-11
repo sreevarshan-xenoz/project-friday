@@ -33,16 +33,27 @@
 //! # }
 //! ```
 
+pub mod autonomy;
 pub mod handler;
+pub mod journal;
 pub mod phase;
 pub mod recorder;
 pub mod registry;
 pub mod runtime;
 pub mod workspace;
 
+pub use autonomy::{
+    ActionExecution, ActionExecutor, ActionOutcome, ActionVerifier, AutonomousTick,
+    DecisionFunction, DecisionState, Salience, SalienceDecision, TickAction,
+};
 pub use handler::{FnHandler, PhaseHandler, PhaseResult};
+pub use journal::{
+    ActionJournal, ActionJournalRecord, BeginAction, JournalState, JsonActionJournal,
+};
 pub use phase::{CognitivePhase, CognitiveTick, TickId};
 pub use recorder::EventRecorder;
 pub use registry::PhaseRegistry;
 pub use runtime::{CognitiveRuntime, RuntimeConfig, RuntimeMetrics};
-pub use workspace::{EngineId, GlobalWorkspace, Priority, Topic, WorkspaceEvent};
+pub use workspace::{
+    AutonomyEvent, AutonomyReadModel, EngineId, GlobalWorkspace, Priority, Topic, WorkspaceEvent,
+};

@@ -90,6 +90,6 @@ bus plugins.
 | **Kernel** | AgentKernel — execution, lifecycle, permissions, audit, sessions |
 | **Knowledge** | Memory, experience, capability registry |
 | **Services** | filesystem, git, terminal, windows, (future) browser |
-| **Cognition** | Planner + intelligence layer |
-| **Perception** | Vision, voice (planned) |
-| **Autonomy** | Learning, workflows, background agents (planned) |
+| **Cognition** | Planner + intelligence layer + `services/cognitive` runtime |
+| **Perception** | Screen, audio, and vision sensors |
+| **Autonomy** | Initial evidence-gated cognitive tick in `services/cognitive`; execution, verification, and durable state updates are in progress |
