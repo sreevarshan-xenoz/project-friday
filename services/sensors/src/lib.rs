@@ -2,6 +2,8 @@ use async_trait::async_trait;
 use friday_cognitive::WorkspaceEvent;
 
 #[cfg(target_os = "windows")]
+pub mod screen;
+#[cfg(target_os = "windows")]
 pub mod windows_focus;
 
 /// Platform-neutral sensor trait.
@@ -54,15 +56,26 @@ impl SensorLoop {
         &mut self,
         workspace: &friday_cognitive::workspace::GlobalWorkspace,
     ) -> usize {
-        let mut total = 0;
+        self.poll_all_with_topics(workspace).await.len()
+    }
+
+    /// Poll all sensors, publish events, and return the topics of what was
+    /// published this cycle (in publish order) — so the caller (e.g. the
+    /// perception engine's Observe phase) can report exactly which sensor
+    /// channels fired, never a wildcard guess.
+    pub async fn poll_all_with_topics(
+        &mut self,
+        workspace: &friday_cognitive::workspace::GlobalWorkspace,
+    ) -> Vec<String> {
+        let mut topics = Vec::new();
         for sensor in &mut self.sensors {
             let events = sensor.poll().await;
             for event in events {
+                topics.push(event.topic.as_str());
                 workspace.publish_event(event);
-                total += 1;
             }
         }
-        total
+        topics
     }
 
     pub fn sensor_count(&self) -> usize {
