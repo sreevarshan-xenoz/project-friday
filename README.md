@@ -81,8 +81,8 @@ Statuses are updated as commits land — this table is the tracker.
 | 12 | **Egress policy + Secrets vault** (autonomy prerequisites) | 🟢 DONE |
 | 13 | Screen perception | 🟢 DONE |
 | 14 | Audio perception | 🟢 DONE |
-| 15 | Vision perception | 🔴 **NEXT** |
-| 16 | Persistent Agent Workforce | 🔴 |
+| 15 | Vision perception | 🟢 DONE |
+| 16 | Persistent Agent Workforce | 🔴 **NEXT** |
 | 17 | Autonomous Cognitive Tick (last) | 🔴 |
 | 18 | Observability | 🔴 |
 | 19 | Cost telemetry | 🔴 |
@@ -178,8 +178,19 @@ is attached — the pipeline never fabricates words it did not hear — and a
 headless machine with no mic produces nothing. Events flow
 `SensorLoop::poll_all_with_topics` → `GlobalWorkspace` (`Topic::TurnDetected`),
 and the full VAD → turn → event path is tested end-to-end over synthetic PCM.
-Next unit of work: **#15 — Vision perception** (camera → frame → vision model
-→ object/event).
+**#15 is done — the vision organ is real, and the whole perception triad is
+complete.** `CameraSensor` (`services/sensors/src/vision.rs`) runs camera →
+frame → vision model → object/event: Media Foundation webcam capture
+(RGB32 negotiated, dimensions never guessed) → pure frame differencing
+(BT.601 luma) → a deterministic connected-component blob detector producing
+bounding boxes with confidence → the optional `ObjectDetector` ML seam
+(YOLO/ONNX). Honest by construction: the first frame is a baseline and
+*one frame sees nothing* (motion is between frames), a static scene emits
+nothing, and `detector: "diff"` names the built-in — never a fabricated label.
+Events flow `SensorLoop::poll_all_with_topics` → `GlobalWorkspace`
+(`Topic::ObjectDetected`). Screen + Audio + Vision are all real now.
+Next unit of work: **#16 — Persistent Agent Workforce** (assignable task
+board, persistent per-agent workspaces across runs).
 
 ### Milestone gates
 
