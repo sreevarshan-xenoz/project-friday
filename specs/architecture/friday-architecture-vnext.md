@@ -74,7 +74,7 @@ PERCEIVE → UNDERSTAND → DEFINE DESIRED STATE → PLAN → DELEGATE → EXECU
 | **LifeOS intent layer**        | 🟢 Implemented | `DesiredState` → `Gap` → `Objective` → plan (`intent.rs`); closing actions come from causal simulation, never execution |
 | **Persistent agent workforce** | 🔴 Missing | Agents are ephemeral |
 | **Screen perception**          | 🟢 Implemented | Real Win32 screen sensor: foreground window identity/geometry/state + client-area pixel hash (`services/sensors/src/screen.rs`) → `Topic::Screen` events → `GlobalWorkspace` |
-| **Audio organ**                | 🔴 Missing | No real audio sensor |
+| **Audio perception**           | 🟢 Implemented | Real mic sensor: WASAPI capture → energy VAD → turn detection → optional ASR seam → `Topic::TurnDetected` (`services/sensors/src/audio.rs`) |
 | **Vision organ**               | 🔴 Missing | No real vision sensor |
 | **World-model visualization**  | 🔴 Missing | No visual world-model layer |
 | **Egress policy**              | 🟢 Implemented | `EgressGate` scans every outbound prompt before it leaves; per-provider Block/Redact/LogOnly (`services/intelligence/src/egress.rs`) |
@@ -343,6 +343,39 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
   `with_sensors` path publishes real `sensor.screen` events verbatim
   (`perception_with_real_sensors_publishes_real_events`).
 
+#### Audio perception — 🟢 (mic → VAD → ASR → speaker/turn event)
+- **What exists:** `AudioSensor` (`services/sensors/src/audio.rs`) runs the real
+  pipeline. **Capture:** WASAPI shared-mode (`CoCreateInstance` MMDeviceEnumerator →
+  `GetDefaultAudioEndpoint(eCapture, eConsole)` → `IAudioClient` →
+  `IAudioCaptureClient`), preferred 16 kHz mono 16-bit PCM with a `GetMixFormat`
+  fallback (PCM/float, 16/32-bit, EXTENSIBLE SubFormat GUID check) so the mic
+  works on hardware that rejects the preferred format; packets are converted to
+  i16 mono (`read_available`, `audio.rs:415`). **VAD:** pure energy RMS +
+  hangover that **extends but never creates** speech (`Vad::classify`,
+  `audio.rs:118`) — leading silence stays silent. **Turn detection:** pure
+  state machine closing a speech run after `end_silence_frames` of silence
+  (`TurnDetector::feed`, `audio.rs:186`) → `Turn` (frames, duration_ms, raw
+  samples). **ASR seam:** the frozen `SpeechToText` trait — a turn's samples go
+  to the attached backend; without one the event honestly carries
+  `transcript: null` / `asr: null`, never a fabricated word. The event
+  (`Topic::TurnDetected`, `sensor.audio.turn`) is published through
+  `SensorLoop::poll_all_with_topics` → `GlobalWorkspace`. The whole VAD → turn
+  → event path is platform-neutral and tested end-to-end over synthetic PCM;
+  only capture is Windows-gated (honest silence on headless/no-device).
+- **Missing capability:** no bundled ASR model (a Whisper-style backend plugs
+  into the `SpeechToText` seam); the sensor is not yet attached to a live
+  runtime loop (additive, same as screen).
+- **Inspired by:** Meetily, Vision Agents (small-specialist → event → core —
+  only the completed turn enters the workspace, never raw PCM).
+- **Plugs into:** frozen `Sensor` trait + `SensorLoop` + `Topic::TurnDetected`
+  → `GlobalWorkspace`.
+- **Acceptance:** a real sensor publishes an event to the workspace that a
+  cognitive organ consumes — proven: synthetic-PCM end-to-end tests produce a
+  well-formed `TurnDetected` (`end_to_end_synthetic_turn_publishes_event`, with
+  and without ASR), the sensor-loop integration test lands it under
+  `sensor.audio.turn`, and `real_mic_poll_is_tolerant_and_well_formed` captures
+  the live mic (or degrades cleanly headless).
+
 #### Egress policy + Secrets vault — 🟢 (autonomy prerequisites)
 - **What exists:** [`SecretsVault`] (`services/intelligence/src/secrets.rs`):
   a scope-keyed store (`provider`, `git`, …) whose `Secret` values are
@@ -432,7 +465,7 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
 | **Autonomous drive** | No self-directed continuous loop. Current cognitive loop is in-memory phases + proactive project briefing (`services/project-cognition/src/engine.rs:339`), not an unsupervised drive. Start with a Cognitive Tick (observe → evaluate → maybe act → sleep → repeat), then grow the decision function — not full active-inference math first. | ACOS active inference | cognitive-runtime phases + workspace events | A tick loop runs without a user goal, observes the workspace, and fires one action justified by an evidence trace. |
 | **LifeOS intent layer** | Goals exist (`goal.rs`) but no persistent user-level current→ideal state, gap/opportunity detection, priorities, constraints, or progress tracking. | **LifeOS** | planner + intent router + context builder | `desired_state − current_state` produces objectives the planner can turn into plans — **DONE (2026-08-11)** (`IntentLayer`, `services/goal-execution/src/intent.rs`; closing actions from causal simulation; `PlanSource::GapDriven`); intent routing consuming user preferences remains additive |
 | **Persistent agent workforce** | Agents are ephemeral, in-process, per-goal. No persistent worker registry, assignable task board, isolated per-agent workspaces across runs, progress/blocker reporting. | **Multica** | `AgentRuntime` + `WorkflowStore` | A worker can be assigned a task, picked up across runs, report progress/blockers, and its workspace persists. |
-| **Real perception (vision/audio)** | Perception was synthetic RNG events, not sensing. The screen gap is CLOSED — **DONE (2026-08-11)** (`WindowsScreenSensor`, `services/sensors/src/screen.rs`; continuous client-area pixel diff, focus/content change events, `Topic::Screen` → `GlobalWorkspace`; perception engine polls real sensors via `with_sensors`). Remaining: no camera/video pipeline, no VAD/ASR/diarization/turn detection. Small-specialist → event → core, never raw 30fps into an LLM. | **Vision Agents**, Meetily | `PerceptionEngine` → workspace events | A real sensor publishes an event to the workspace that a cognitive organ consumes (proof: one camera frame → object event; one mic stream → turn event). |
+| **Real perception (vision)** | Perception was synthetic RNG events, not sensing. Screen AND audio gaps are CLOSED — **DONE (2026-08-11)** (`WindowsScreenSensor`, `services/sensors/src/screen.rs`; continuous client-area pixel diff → `Topic::Screen`) and (`AudioSensor`, `services/sensors/src/audio.rs`; WASAPI mic → energy VAD → turn detection → optional ASR seam → `Topic::TurnDetected`; honest `transcript: null` without a backend). Remaining: no camera/video pipeline (vision). Small-specialist → event → core, never raw 30fps into an LLM. | **Vision Agents**, Meetily | `PerceptionEngine` → workspace events | A real sensor publishes an event to the workspace that a cognitive organ consumes (proof: one camera frame → object event; one mic stream → turn event). |
 | **World-model visualization** | Deferred — the causal world model (§3.2) comes first; DrawDB is sugar. | DrawDB | `WorldModel` | None until causal model lands. |
 | **Egress policy / secret scan** | No "scan payload before sending to an external model" gate. Should become a global outbound-data policy, not just a coding feature. | **SonarQube CLI**, Archestra | permission engine (outbound hook) | A payload containing a detected secret is blocked/redacted before the provider call; policy is enforceable per-provider — **DONE (2026-08-11)** (`EgressGate`, `services/intelligence/src/egress.rs`, wired into `InferenceFabric`; per-provider Block/Redact/LogOnly, Block recorded on the routing decision); encrypted-at-rest vault remains |
 | **Secrets vault** | No secret store for tokens/keys. | — | permission + provider config | Secrets never appear in audit logs or memory; only capability-scoped access — **DONE (2026-08-11)** (`SecretsVault`, `services/intelligence/src/secrets.rs`; structurally redacted `Secret`, `scoped()` capability handles, `seed_from_env`); providers resolving keys FROM the vault remains |
@@ -491,8 +524,8 @@ capability as an equal-priority feature.
 | **P2**   | **LifeOS-style Intent Layer**            | **DONE (2026-08-11)** — `DesiredState` → `Gap` → `Objective` → `PlanSource::GapDriven` plan (`services/goal-execution/src/intent.rs`); closing actions selected by causal simulation; remaining: user-preference routing | LifeOS                        |
 | **P2**   | **Skill Compounding Loop**               | **DONE (2026-08-11)** — `SkillCompiler` closes the loop: verified trajectory → `SkillSource::Learned` skill in the registry, reused by later goals (`services/skills/src/compound.rs`); remaining: automatic trajectory mining | Multica + Prime Agent         |
 | **P3**   | **Real Screen Sensor**                  | **DONE (2026-08-11)** — `WindowsScreenSensor` real foreground-window capture + continuous pixel diff → `Topic::Screen` → workspace (`services/sensors/src/screen.rs`) | Vision Agents + Meetily       |
-| **P3**   | **Real Audio/Voice Sensor**              | Screen perception done; audio organ genuinely absent                  | Meetily                       |
-| **P3**   | **Real Vision Sensor**                   | Vision organ is genuinely absent                                     | Vision Agents                 |
+| **P3**   | **Real Audio/Voice Sensor**              | **DONE (2026-08-11)** — `AudioSensor` WASAPI mic → VAD → turn detection → optional ASR → `Topic::TurnDetected` (`services/sensors/src/audio.rs`); ASR backends plug into the `SpeechToText` seam | Meetily                       |
+| **P3**   | **Real Vision Sensor**                   | Screen + audio done; vision organ genuinely absent                    | Vision Agents                 |
 | **P3**   | **Persistent Agent Workforce**           | Requires Agent Director first                                        | Multica                       |
 | **P3**   | **Autonomous Cognitive Tick**            | Requires perception + world state + goals + execution + safety       | ACOS / Active Inference       |
 | **P4**   | **Walrus Memory backend**                | Existing `MemoryLayer` already solves the abstraction — backend #5, not architecture | Walrus |
