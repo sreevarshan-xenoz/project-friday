@@ -17,3 +17,8 @@ uuid.workspace = true
 chrono.workspace = true
 tracing.workspace = true
 tokio = { workspace = true }
+
+[dev-dependencies]
+friday-actions = { path = "../action-runtime" }
+friday-planner = { path = "../../planner" }
+friday-skills = { path = "../skills" }
