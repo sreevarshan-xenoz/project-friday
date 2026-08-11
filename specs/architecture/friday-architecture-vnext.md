@@ -73,7 +73,7 @@ PERCEIVE → UNDERSTAND → DEFINE DESIRED STATE → PLAN → DELEGATE → EXECU
 | **Autonomous drive**           | 🔴 Missing | No genuine self-directed continuous loop |
 | **LifeOS intent layer**        | 🟢 Implemented | `DesiredState` → `Gap` → `Objective` → plan (`intent.rs`); closing actions come from causal simulation, never execution |
 | **Persistent agent workforce** | 🔴 Missing | Agents are ephemeral |
-| **Real perception**            | 🔴 Missing | Perception is simulation, not actual sensing |
+| **Screen perception**          | 🟢 Implemented | Real Win32 screen sensor: foreground window identity/geometry/state + client-area pixel hash (`services/sensors/src/screen.rs`) → `Topic::Screen` events → `GlobalWorkspace` |
 | **Audio organ**                | 🔴 Missing | No real audio sensor |
 | **Vision organ**               | 🔴 Missing | No real vision sensor |
 | **World-model visualization**  | 🔴 Missing | No visual world-model layer |
@@ -315,6 +315,34 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
   is verified by the REAL `CodeTestVerifier`; `unverified_trajectory_is_
   refused_and_never_reused` proves the gate).
 
+#### Screen perception — 🟢 (the first real sensor: observe → understand → act → verify)
+- **What exists:** `WindowsScreenSensor` (`services/sensors/src/screen.rs:91`) — the first
+  **real** sensor, closing the constitution's "perception is synthetic RNG events" gap
+  for the screen. Each poll captures the **real foreground window**: identity
+  (`GetForegroundWindow` + `GetWindowTextW`), process (`QueryFullProcessImageNameW`),
+  geometry (`GetWindowRect`), state (`IsIconic`/`IsZoomed`), and the **continuous
+  screen diff** — an FNV-1a fingerprint of the client-area pixels via
+  `BitBlt`+`GetDIBits` (`capture_client_hash`, `screen.rs:234`). Change detection is
+  pure and precedence-correct: identity/geometry change → `Focus`, same-window pixel
+  change → `Content` (`changed_from`, `screen.rs:137`); capture failure (composited/GPU
+  window) degrades honestly to `content_hash: None` without inventing content motion.
+  The first poll emits the initial observation (FRIDAY sees its screen state on tick 1),
+  later polls are deduplicated. Events flow `SensorLoop::poll_all_with_topics`
+  (`services/sensors/src/lib.rs:47`) → `GlobalWorkspace` — the perception engine's
+  Observe phase reports exactly the channels that fired, never a wildcard guess.
+  `Topic::Screen` (`services/cognitive/src/workspace.rs:110`) is the canonical topic.
+- **Missing capability:** the sensor exists and is tested, but is not yet attached to a
+  live runtime loop (mobile/bridge wiring is additive — the `SensorLoop`/`PerceptionEngine`
+  seam is ready); audio + vision organs remain (#14/#15).
+- **Inspired by:** Vision Agents, Meetily (sensor → event → core; never raw pixels into
+  an LLM — only the diff fires).
+- **Plugs into:** frozen `Sensor` trait + `SensorLoop` + `Topic::Screen` → `GlobalWorkspace`.
+- **Acceptance:** a real sensor publishes an event to the workspace that a cognitive
+  organ consumes — proven: `real_screen_poll_is_tolerant_and_well_formed` captures the
+  live desktop (or degrades cleanly headless), and the perception engine's
+  `with_sensors` path publishes real `sensor.screen` events verbatim
+  (`perception_with_real_sensors_publishes_real_events`).
+
 #### Egress policy + Secrets vault — 🟢 (autonomy prerequisites)
 - **What exists:** [`SecretsVault`] (`services/intelligence/src/secrets.rs`):
   a scope-keyed store (`provider`, `git`, …) whose `Secret` values are
@@ -404,7 +432,7 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
 | **Autonomous drive** | No self-directed continuous loop. Current cognitive loop is in-memory phases + proactive project briefing (`services/project-cognition/src/engine.rs:339`), not an unsupervised drive. Start with a Cognitive Tick (observe → evaluate → maybe act → sleep → repeat), then grow the decision function — not full active-inference math first. | ACOS active inference | cognitive-runtime phases + workspace events | A tick loop runs without a user goal, observes the workspace, and fires one action justified by an evidence trace. |
 | **LifeOS intent layer** | Goals exist (`goal.rs`) but no persistent user-level current→ideal state, gap/opportunity detection, priorities, constraints, or progress tracking. | **LifeOS** | planner + intent router + context builder | `desired_state − current_state` produces objectives the planner can turn into plans — **DONE (2026-08-11)** (`IntentLayer`, `services/goal-execution/src/intent.rs`; closing actions from causal simulation; `PlanSource::GapDriven`); intent routing consuming user preferences remains additive |
 | **Persistent agent workforce** | Agents are ephemeral, in-process, per-goal. No persistent worker registry, assignable task board, isolated per-agent workspaces across runs, progress/blocker reporting. | **Multica** | `AgentRuntime` + `WorkflowStore` | A worker can be assigned a task, picked up across runs, report progress/blockers, and its workspace persists. |
-| **Real perception (vision/audio/screen)** | Perception is synthetic RNG events (`services/engines/perception/src/lib.rs:14`), not sensing. No camera/video pipeline, no VAD/ASR/diarization/turn detection, no continuous screen diff. Small-specialist → event → core, never raw 30fps into an LLM. | **Vision Agents**, Meetily | `PerceptionEngine` → workspace events | A real sensor publishes an event to the workspace that a cognitive organ consumes (proof: one camera frame → object event; one mic stream → turn event). |
+| **Real perception (vision/audio)** | Perception was synthetic RNG events, not sensing. The screen gap is CLOSED — **DONE (2026-08-11)** (`WindowsScreenSensor`, `services/sensors/src/screen.rs`; continuous client-area pixel diff, focus/content change events, `Topic::Screen` → `GlobalWorkspace`; perception engine polls real sensors via `with_sensors`). Remaining: no camera/video pipeline, no VAD/ASR/diarization/turn detection. Small-specialist → event → core, never raw 30fps into an LLM. | **Vision Agents**, Meetily | `PerceptionEngine` → workspace events | A real sensor publishes an event to the workspace that a cognitive organ consumes (proof: one camera frame → object event; one mic stream → turn event). |
 | **World-model visualization** | Deferred — the causal world model (§3.2) comes first; DrawDB is sugar. | DrawDB | `WorldModel` | None until causal model lands. |
 | **Egress policy / secret scan** | No "scan payload before sending to an external model" gate. Should become a global outbound-data policy, not just a coding feature. | **SonarQube CLI**, Archestra | permission engine (outbound hook) | A payload containing a detected secret is blocked/redacted before the provider call; policy is enforceable per-provider — **DONE (2026-08-11)** (`EgressGate`, `services/intelligence/src/egress.rs`, wired into `InferenceFabric`; per-provider Block/Redact/LogOnly, Block recorded on the routing decision); encrypted-at-rest vault remains |
 | **Secrets vault** | No secret store for tokens/keys. | — | permission + provider config | Secrets never appear in audit logs or memory; only capability-scoped access — **DONE (2026-08-11)** (`SecretsVault`, `services/intelligence/src/secrets.rs`; structurally redacted `Secret`, `scoped()` capability handles, `seed_from_env`); providers resolving keys FROM the vault remains |
@@ -462,7 +490,8 @@ capability as an equal-priority feature.
 | **P2**   | **Real World Model**                     | **DONE (2026-08-11)** — entity graph + causal edges + pure simulation (`services/goal-execution/src/causal.rs`); remaining: observed causal learning + LifeOS gap layer (#10) | ACOS architecture             |
 | **P2**   | **LifeOS-style Intent Layer**            | **DONE (2026-08-11)** — `DesiredState` → `Gap` → `Objective` → `PlanSource::GapDriven` plan (`services/goal-execution/src/intent.rs`); closing actions selected by causal simulation; remaining: user-preference routing | LifeOS                        |
 | **P2**   | **Skill Compounding Loop**               | **DONE (2026-08-11)** — `SkillCompiler` closes the loop: verified trajectory → `SkillSource::Learned` skill in the registry, reused by later goals (`services/skills/src/compound.rs`); remaining: automatic trajectory mining | Multica + Prime Agent         |
-| **P3**   | **Real Audio/Voice Sensor**              | Current perception isn't real sensing                                | Meetily                       |
+| **P3**   | **Real Screen Sensor**                  | **DONE (2026-08-11)** — `WindowsScreenSensor` real foreground-window capture + continuous pixel diff → `Topic::Screen` → workspace (`services/sensors/src/screen.rs`) | Vision Agents + Meetily       |
+| **P3**   | **Real Audio/Voice Sensor**              | Screen perception done; audio organ genuinely absent                  | Meetily                       |
 | **P3**   | **Real Vision Sensor**                   | Vision organ is genuinely absent                                     | Vision Agents                 |
 | **P3**   | **Persistent Agent Workforce**           | Requires Agent Director first                                        | Multica                       |
 | **P3**   | **Autonomous Cognitive Tick**            | Requires perception + world state + goals + execution + safety       | ACOS / Active Inference       |
