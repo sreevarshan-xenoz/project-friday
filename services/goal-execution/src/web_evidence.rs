@@ -78,19 +78,26 @@ impl WebSearchProvider {
     }
 }
 
+/// The canonical Jina Reader gateway prefix. The target URL is percent-encoded
+/// and appended, so a fetch of `https://example.com/a?b=c` composes
+/// `https://r.jina.ai/https%3A%2F%2Fexample.com%2Fa%3Fb%3Dc` — the gateway
+/// receives exactly one unbreakable path component (no raw `?`/`&`/`#`/space
+/// survives to be misinterpreted). Free without an API key (rate-limited).
+pub const JINA_READER_PREFIX: &str = "https://r.jina.ai/";
+
 /// One provider configuration for `web.fetch`. Providers differ in *how* the
 /// target page is fetched: the `url_prefix` is prepended to the target URL to
 /// form the URL the adapter GETs. Empty prefix = direct fetch (the plain HTTP
-/// path); a gateway template such as `https://r.jina.ai/` routes the fetch
-/// through a reader service. The resolver owns which provider is healthy and
+/// path); a non-empty prefix = a **gateway** — a reader service such as
+/// `https://r.jina.ai/` ([`JINA_READER_PREFIX`]) that is given the target
+/// embedded in its URL. The resolver owns which provider is healthy and
 /// therefore selected.
 ///
-/// **Gateway encoding note:** the prefix is concatenated raw. For the direct
-/// provider (empty prefix) the composed URL is the target itself, so nothing
-/// is lost. When configuring a query-bearing gateway (`…/fetch?url=`), the
-/// embedded target URL is *not* percent-encoded — a target containing `&` or
-/// `#` would be misinterpreted by the gateway. Encode the embedded URL before
-/// configuring such providers.
+/// **Gateway encoding contract:** composition is handled by the dispatch
+/// ([`compose_gateway_url`]) — for a gateway the target is **percent-encoded**
+/// before appending, so a target containing `?`, `&`, `#`, spaces, or non-ASCII
+/// bytes can never be misinterpreted by the gateway's URL parsing. The direct
+/// provider (empty prefix) is fetched verbatim.
 #[derive(Debug, Clone)]
 pub struct WebFetchProvider {
     pub name: String,
@@ -106,6 +113,36 @@ impl WebFetchProvider {
             url_prefix: url_prefix.into(),
             health: CapabilityHealth::Healthy,
         }
+    }
+
+    /// The canonical gateway shape: the dispatch percent-encodes the target
+    /// before appending it to `prefix` (see [`compose_gateway_url`]). Use for
+    /// any reader-service gateway, e.g. `WebFetchProvider::gateway("jina",
+    /// JINA_READER_PREFIX)`.
+    pub fn gateway(name: impl Into<String>, url_prefix: impl Into<String>) -> Self {
+        Self::new(name, url_prefix)
+    }
+}
+
+/// Compose the URL the adapter GETs for a fetch, from a provider's `url_prefix`
+/// and the target URL:
+///
+/// - **empty prefix (direct provider):** the target is returned **verbatim** —
+///   a direct fetch must GET exactly what was asked.
+/// - **non-empty prefix (gateway provider):** `prefix` + the target
+///   **percent-encoded** (RFC 3986 component encoding) — the gateway receives
+///   the target as a single opaque component, so embedded `?`, `&`, `#`,
+///   spaces, or non-ASCII bytes can never be misread as gateway syntax.
+///
+/// `target` must be the **raw, unencoded** URL (as the planner supplied it) —
+/// passing an already-encoded URL double-encodes it (`%` → `%25`).
+///
+/// Jina Reader canonical form: `https://r.jina.ai/https%3A%2F%2Fexample.com%2F…`.
+pub fn compose_gateway_url(prefix: &str, target: &str) -> String {
+    if prefix.is_empty() {
+        target.to_string()
+    } else {
+        format!("{prefix}{}", friday_actions::urlencode(target))
     }
 }
 
@@ -266,7 +303,7 @@ impl ResolvingWebTool {
                     "fetch" => {
                         if let Some(prefix) = fetch_prefixes.get(&candidate.provider) {
                             if let Some(url) = parameters.get("url").and_then(|v| v.as_str()) {
-                                parameters["url"] = json!(format!("{prefix}{url}"));
+                                parameters["url"] = json!(compose_gateway_url(prefix, url));
                             }
                         }
                     }
@@ -384,7 +421,7 @@ impl Tool for ResolvingWebTool {
         }
 
         let started = Instant::now();
-        let outcome = self
+        let mut outcome = self
             .resolver
             .execute(&capability, &parameters, &self.dispatch)
             .await;
@@ -406,6 +443,18 @@ impl Tool for ResolvingWebTool {
         let evidence = if verb == "search" {
             normalize_search_evidence(&outcome)
         } else {
+            // The canonical page URL is the target the planner asked for. A
+            // gateway winner echoes the composed gateway URL
+            // (`https://r.jina.ai/https%3A%2F%2F…`) back from the adapter — that
+            // must never leak into evidence: it is the gateway shape, and it
+            // would break the evidence pipeline's dedupe/corroboration, which
+            // keys on `url` (the same page via jina vs direct must collide).
+            // For the direct provider this restore is a no-op.
+            if let Some(target) = action.parameters.get("url").and_then(|v| v.as_str()) {
+                if let Some(map) = outcome.output.as_object_mut() {
+                    map.insert("url".to_string(), json!(target));
+                }
+            }
             normalize_fetch_evidence(&outcome)
         };
         let output = serde_json::to_string_pretty(&evidence)
@@ -533,6 +582,49 @@ mod tests {
         format!("http://{addr}/")
     }
 
+    /// Serve one canned HTML page whose title AND body echo the request path
+    /// — the "gateway role": a real reader service receives the composed URL
+    /// and reports back exactly what path it was asked for. Proves the
+    /// percent-encoded target survives HTTP transport unmodified.
+    async fn serve_echo() -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let _ = sock.read(&mut buf).await;
+                    // Request line: `GET /<path> HTTP/1.1`. The path is the
+                    // composed, percent-encoded target.
+                    let line = String::from_utf8_lossy(&buf)
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .to_string();
+                    let path = line
+                        .split_whitespace()
+                        .nth(1)
+                        .unwrap_or("")
+                        .to_string();
+                    let body = format!(
+                        "<html><head><title>{path}</title></head><body>gateway-path:{path}</body></html>"
+                    );
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = sock.write_all(head.as_bytes()).await;
+                    let _ = sock.write_all(body.as_bytes()).await;
+                });
+            }
+        });
+        format!("http://{addr}/")
+    }
+
     /// A guaranteed-dead endpoint: bind an ephemeral port, take its address,
     /// then drop the listener so connections are refused. Used to make a
     /// provider *fail at execution time* so the resolver must fall back.
@@ -572,6 +664,50 @@ mod tests {
 
     fn parsed_output(result: &ToolResult) -> Value {
         serde_json::from_str(&result.output).expect("tool output is JSON")
+    }
+
+    // ── Gateway URL composition (the percent-encoding contract) ────
+
+    #[test]
+    fn direct_provider_composes_the_target_verbatim() {
+        let target = "https://example.com/a b?x=1&y=2#frag";
+        assert_eq!(compose_gateway_url("", target), target);
+        assert_eq!(compose_gateway_url("", "http://127.0.0.1:9/"), "http://127.0.0.1:9/");
+    }
+
+    #[test]
+    fn gateway_provider_percent_encodes_the_target() {
+        assert_eq!(
+            compose_gateway_url(JINA_READER_PREFIX, "https://example.com/page"),
+            "https://r.jina.ai/https%3A%2F%2Fexample.com%2Fpage"
+        );
+        // Query, fragment, space, and unicode must all be encoded into one
+        // opaque component — no raw `?`/`&`/`#`/space survives for the gateway
+        // to misinterpret.
+        let composed = compose_gateway_url(
+            JINA_READER_PREFIX,
+            "https://example.com/a b?x=1&y=2#frag/Ü",
+        );
+        assert_eq!(
+            composed,
+            "https://r.jina.ai/https%3A%2F%2Fexample.com%2Fa%20b%3Fx%3D1%26y%3D2%23frag%2F%C3%9C"
+        );
+        assert!(!composed[..JINA_READER_PREFIX.len()].contains('?'), "{composed}");
+        assert!(!composed.contains(' '), "{composed}");
+        assert!(!composed.contains('&'), "{composed}");
+        assert!(!composed.contains('#'), "{composed}");
+    }
+
+    #[test]
+    fn query_style_gateway_prefix_gets_an_encoded_target_value() {
+        // `…/fetch?url=` gateways receive the target as a query VALUE: the
+        // encoded target cannot contain `&` or `#`, so it can never break out
+        // of the value.
+        let composed = compose_gateway_url("https://reader.example/fetch?url=", "https://x.io/?a=b&c=d");
+        assert_eq!(
+            composed,
+            "https://reader.example/fetch?url=https%3A%2F%2Fx.io%2F%3Fa%3Db%26c%3Dd"
+        );
     }
 
     // ── Guardrail: provider output never leaks upward ─────────────
@@ -840,6 +976,86 @@ mod tests {
         );
     }
 
+    // ── Acceptance 5: a real gateway receives the encoded target ──
+    //
+    // The `url_prefix` model proven on a real gateway transport: the dispatch
+    // composes `prefix + percent-encode(target)`, the adapter GETs it, and the
+    // gateway (here an echo server playing the reader-service role) reports
+    // back the exact path it was asked for. If composition or encoding broke,
+    // the echoed path would differ (raw `?`/`&`/`#`/space would split the URL).
+
+    #[tokio::test]
+    async fn jina_style_gateway_receives_the_percent_encoded_target_over_real_transport() {
+        let gateway = serve_echo().await;
+        let tool = ResolvingWebTool::for_web_fetch(
+            Arc::new(WebAdapter::new()),
+            vec![WebFetchProvider::gateway("jina", gateway)],
+        );
+        // A target full of gateway-breaking characters — the exact case the
+        // raw concatenation used to get wrong.
+        let target = "https://example.com/a b?x=1&y=2#frag";
+
+        let result = tool.execute(&fetch_action(target), &ExecutionContext::for_goal("g1")).await;
+        assert!(result.success, "gateway fetch failed: {:?}", result.error);
+
+        let output = parsed_output(&result);
+        assert_eq!(result.metadata["provider"], "jina");
+        // The evidence url is the canonical target — the composed gateway URL
+        // must not leak into evidence (it would break pipeline dedupe).
+        assert_eq!(output["url"], target);
+        assert_eq!(output["evidence"][0]["url"], target);
+        let evidence = output["evidence"].as_array().expect("evidence array");
+        assert_eq!(evidence[0]["source"], "jina");
+        let content = evidence[0]["content"].as_str().expect("content");
+        // The gateway echoed the composed path: prefix + the ENCODED target.
+        let encoded = friday_actions::urlencode(target);
+        assert!(
+            content.contains(&format!("gateway-path:/{encoded}")),
+            "the gateway must receive the percent-encoded target exactly: {content}"
+        );
+        // No raw gateway-breaking character may appear in the echoed path.
+        assert!(
+            !content.contains("x=1&y=2"),
+            "the raw query must not survive into the gateway path: {content}"
+        );
+        assert!(!content.contains(' '), "no raw space: {content}");
+        assert!(!content.contains('#'), "no raw fragment: {content}");
+    }
+
+    #[tokio::test]
+    async fn fetch_dispatch_composes_and_encodes_the_jina_gateway_url() {
+        // Recording adapter: asserts the exact URL the adapter would GET, with
+        // no real network — the dispatch-level proof of the composition.
+        let last = Arc::new(std::sync::Mutex::new(None));
+        let tool = ResolvingWebTool::for_web_fetch(
+            Arc::new(RecordingFetchAdapter { last: last.clone() }),
+            vec![WebFetchProvider::gateway("jina", JINA_READER_PREFIX)],
+        );
+        let target = "https://example.com/docs?lang=rust&q=async io";
+
+        let result = tool.execute(&fetch_action(target), &ExecutionContext::for_goal("g1")).await;
+        assert!(result.success, "recording gateway fetch failed: {:?}", result.error);
+
+        // The adapter is pointed at the composed, percent-encoded gateway URL…
+        let req = last.lock().unwrap().take().expect("adapter received a request");
+        let received = req.parameters["url"].as_str().expect("composed url");
+        assert_eq!(
+            received,
+            "https://r.jina.ai/https%3A%2F%2Fexample.com%2Fdocs%3Flang%3Drust%26q%3Dasync%20io",
+            "the adapter must be pointed at the percent-encoded gateway URL"
+        );
+        // …but the normalized evidence url is the canonical target the planner
+        // asked for — the gateway shape must never leak into evidence.
+        let output = parsed_output(&result);
+        assert_eq!(output["url"], target, "evidence url is the original target");
+        assert_eq!(result.metadata["provider"], "jina");
+        assert_eq!(output["evidence"][0]["source"], "jina");
+        assert_eq!(
+            output["evidence"][0]["url"], target,
+            "the evidence hit url is the original target, not the gateway URL"
+        );
+    }
+
     // ── Health-gated fallback is live, not just registration-time ──
 
     #[tokio::test]
@@ -1079,6 +1295,42 @@ mod tests {
         async fn execute(&self, req: ActionRequest) -> friday_actions::ActionResult {
             *self.last.lock().unwrap() = Some(req);
             friday_actions::ActionResult::success(json!({ "query": "q", "results": [] }))
+        }
+    }
+
+    /// Like [`RecordingAdapter`] but for `fetch`: records the composed URL the
+    /// adapter was pointed at and echoes it back like a real fetch would — so
+    /// a test can assert both the *request* URL (composed + encoded) and the
+    /// normalized evidence `url` (the original target).
+    struct RecordingFetchAdapter {
+        last: Arc<std::sync::Mutex<Option<ActionRequest>>>,
+    }
+
+    #[async_trait]
+    impl ActionAdapter for RecordingFetchAdapter {
+        fn tool(&self) -> &str {
+            "web"
+        }
+
+        fn actions(&self) -> Vec<&str> {
+            vec!["fetch"]
+        }
+
+        async fn execute(&self, req: ActionRequest) -> friday_actions::ActionResult {
+            let url = req
+                .parameters
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            *self.last.lock().unwrap() = Some(req);
+            friday_actions::ActionResult::success(json!({
+                "url": url,
+                "title": "page",
+                "text": "body",
+                "chars": 4,
+                "truncated": false,
+            }))
         }
     }
 

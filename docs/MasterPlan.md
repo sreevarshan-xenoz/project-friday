@@ -143,3 +143,16 @@ Verification · Permissions · Audit · Durability are all wired, and Gate 3
   treats TimedOut/BudgetExhausted as failure (`merge.rs`). Constitution §2/§3
   Recursive agents → 🟢; P1 Agent Director row → DONE. Next: #8 parallel
   durable workflows + agent journaling.
+- **2026-08-11** — Web fetch gateway enhancement (continues #4): a real
+  Jina-style gateway provider ships behind the resolver — `jina` →
+  `https://r.jina.ai/` (`JINA_READER_PREFIX`), with **percent-encoded URL
+  composition** (`compose_gateway_url`, `services/goal-execution/src/
+  web_evidence.rs:141`): direct (empty prefix) fetches verbatim; any gateway
+  embeds the target as one RFC 3986 component, so `?`/`&`/`#`/spaces/unicode
+  can never be misread by the gateway. Proven over a real gateway transport
+  (echo-server acceptance: the encoded target arrives as the gateway's path
+  unmodified) and at dispatch level (recording adapter). The gateway shape
+  never leaks into evidence — the canonical target URL survives, keeping the
+  pipeline's `(channel, url)` dedupe/corroboration intact. Jina is the
+  production fetch primary with `direct` as the health-gated fallback
+  (`services/mobile/src/goal_runner.rs:567`).

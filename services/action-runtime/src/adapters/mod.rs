@@ -47,7 +47,7 @@ pub use reasoning::{
 };
 pub use telemetry::{MeasuredOutcome, ProviderStats, ProviderTelemetry};
 pub use terminal::TerminalAdapter;
-pub use web::WebAdapter;
+pub use web::{urlencode, WebAdapter};
 pub use webagent::{
     agent_for_site, register_webagent_capabilities, webagent_capability_specs, ChatGPTAdapter,
     ClaudeAdapter, GeminiAdapter, GenericWebAgent, GrokAdapter, PerplexityAdapter, WebAgent,

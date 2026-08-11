@@ -42,8 +42,8 @@ use friday_actions::{
 use friday_core::event::{Event, EventBus};
 use friday_goal_execution::{
     Action, AdapterTool, Capability, CognitiveBlackboard, ExecutionContext, Executive,
-    ExecutiveReport, GoalResult, ResolvingWebTool, Tool, ToolResult, WebFetchProvider,
-    WebSearchProvider, WorldState,
+    ExecutiveReport, GoalResult, JINA_READER_PREFIX, ResolvingWebTool, Tool, ToolResult,
+    WebFetchProvider, WebSearchProvider, WorldState,
 };
 use friday_intelligence::InferenceFabric;
 use friday_investigation::InvestigationEngine;
@@ -551,9 +551,11 @@ impl GoalRunner {
         // binding resolver (health-gated provider fallback) instead of a
         // single hardwired adapter — registered ahead of the plain evidence
         // adapters so both verbs resolve here. Search: the configured endpoint
-        // (or the default) as the `duckduckgo` provider. Fetch: the `direct`
-        // provider (plain HTTP GET; gateway prefixes like `https://r.jina.ai/`
-        // can be added as providers later). The same configured endpoint keeps
+        // (or the default) as the `duckduckgo` provider. Fetch: the `jina`
+        // gateway (Jina Reader, `https://r.jina.ai/` — the target URL is
+        // percent-encoded into the gateway URL by the dispatch) first, with
+        // the `direct` plain-HTTP-GET provider as the health-gated fallback
+        // when the gateway is unreachable. The same configured endpoint keeps
         // the hermetic test path intact.
         let search_endpoint = web_endpoint
             .clone()
@@ -561,7 +563,10 @@ impl GoalRunner {
         executive.register_tool(Box::new(ResolvingWebTool::for_web(
             Arc::new(web_adapter.clone()),
             vec![WebSearchProvider::new("duckduckgo", search_endpoint)],
-            vec![WebFetchProvider::new("direct", "")],
+            vec![
+                WebFetchProvider::gateway("jina", JINA_READER_PREFIX),
+                WebFetchProvider::new("direct", ""),
+            ],
         )));
         // Real evidence adapters — the same seam the bridge/daemon use
         // (`AdapterTool::for_evidence`), so evidence actions run real tools.

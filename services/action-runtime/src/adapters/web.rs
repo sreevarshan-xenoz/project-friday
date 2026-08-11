@@ -154,9 +154,12 @@ impl WebAdapter {
     }
 }
 
-/// Percent-encode a query string for the `q=` parameter (keeps the adapter
-/// dependency-free and the URL safe for arbitrary queries).
-fn urlencode(s: &str) -> String {
+/// Percent-encode a string into a URL-safe component (RFC 3986 unreserved
+/// chars stay literal; everything else becomes `%XX`). Used for the `q=`
+/// search parameter and by the resolver-backed fetch tool to embed a target
+/// URL inside a gateway prefix (`https://r.jina.ai/<encoded target>`). Keeps
+/// the adapter dependency-free.
+pub fn urlencode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
         match b {

@@ -29,6 +29,7 @@ pub use adapters::{
     PerplexityAdapter, ProviderCapabilities, ProviderCapability, ProviderEntry, ProviderId,
     ProviderRegistry, ProviderStats, ProviderTelemetry, ReasoningAdapter, ReasoningProvider,
     TerminalAdapter, Transport, WebAdapter, WebAgent, WebAgentAdapter, WebAgentResponse,
+    urlencode,
 };
 pub use audit::{AuditEngine, AuditEntry};
 pub use kernel::{
