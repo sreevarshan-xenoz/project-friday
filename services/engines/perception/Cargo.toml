@@ -9,6 +9,7 @@ description = "FRIDAY Perception Engine — synthesizes and publishes sensor eve
 
 [dependencies]
 friday-cognitive = { path = "../../cognitive" }
+friday-sensors = { path = "../../sensors" }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
