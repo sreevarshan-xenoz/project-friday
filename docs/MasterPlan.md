@@ -32,8 +32,8 @@ work.
 | 11 | Skill compounding | 🟢 DONE | `SkillCompiler` (`services/skills/src/compound.rs`): neutral `TrajectorySkill` input (goal, Verified outcome + evidence ids, steps, confidence, support) → refusal gate that IS the verification step (Unverified / below-bar confidence / below-bar support / no steps / no capabilities / no actions all refuse with structured `RefusalCode`s) → `SkillSource::Learned` skill registered with collision-safe unique slug id, resolved capabilities, `skill.compounded` event carrying the full evidence trail → a later goal's `select_for` finds and chooses it. End-to-end proof in goal-execution integration using the real `CodeTestVerifier` |
 | 12 | Egress policy + Secrets vault | 🟢 DONE | `SecretsVault` (`services/intelligence/src/secrets.rs`): scope-keyed store whose `Secret` values are structurally unobservable (Debug/Display/Serialize redact; only `reveal()` exposes), `scoped()` capability handles, `seed_from_env` for provider keys. `EgressGate` (`services/intelligence/src/egress.rs`): scans outbound prompts for registered secrets and applies per-provider Block/Redact/LogOnly (default Block); wired into `InferenceFabric` at both dispatch sites before any provider call; a Block is recorded on the routing decision (auditable "which provider receives it?"). Off by default — enabling is one line |
 | 13 | Screen perception | 🟢 DONE | `WindowsScreenSensor` (`services/sensors/src/screen.rs`): real foreground-window capture (title/pid/process/bounds/state) + **continuous screen diff** (FNV-1a of client-area pixels via BitBlt+GetDIBits) → pure `Focus`/`Content` change events → `Topic::Screen` → `GlobalWorkspace` via `SensorLoop::poll_all_with_topics`. First poll emits the initial state; capture failure degrades honestly to `content_hash: None`. `PerceptionEngine::with_sensors` polls the real loop (reports the exact channels that fired) with the synthetic RNG fallback preserved |
-| 14 | Audio perception | 🔴 **NEXT** | mic → VAD → ASR → speaker/turn event |
-| 15 | Vision perception | 🔴 | camera → frame → vision model → object/event |
+| 14 | Audio perception | 🟢 DONE | `AudioSensor` (`services/sensors/src/audio.rs`): WASAPI shared-mode mic capture (preferred 16 kHz mono PCM; `GetMixFormat` fallback with SubFormat GUID check) → pure energy VAD (hangover extends speech, never creates it) → pure turn detector (speech run closed by silence) → optional `SpeechToText` seam → `Topic::TurnDetected` events. Honest: `transcript: null`/`asr: null` until a real ASR backend is attached; no device → no events. Full pipeline tested end-to-end over synthetic PCM + tolerant real-mic poll |
+| 15 | Vision perception | 🔴 **NEXT** | camera → frame → vision model → object/event |
 | 16 | Persistent Agent Workforce | 🔴 | Assignable task board, persistent per-agent workspaces — requires Agent Director (#7) first |
 | 17 | Autonomous Cognitive Tick | 🔴 | Observe → Evaluate → Decide → Act → Verify → Update State, looped. **Last** — needs perception + world model + intent + planning + director + execution + verification + security. Never a blind LLM heartbeat |
 | 18 | Observability (OTel/Prometheus) | 🔴 | `/metrics` endpoint consumed by Prometheus |
@@ -81,8 +81,13 @@ decision). #13 done — the first real sensor is live:
 foreground window (identity/geometry/state) plus a **continuous pixel diff**
 (FNV-1a of the client area) and emits `Focus`/`Content` `Topic::Screen`
 events into the workspace; the perception engine's `with_sensors` mode polls
-the real loop and reports the exact channels that fired. Next: #14 — Audio
-perception (mic → VAD → ASR → speaker/turn event).**
+the real loop and reports the exact channels that fired. **#14 done — the
+audio organ is real:** `AudioSensor` (`services/sensors/src/audio.rs`) runs
+WASAPI mic capture → pure energy VAD (hangover never creates speech) → pure
+turn detection → optional ASR seam, publishing honest `Topic::TurnDetected`
+events (`transcript: null` until a real backend is attached; no device →
+silence). Next: #15 — Vision perception (camera → frame → vision model →
+object/event).**
 
 ## Why this order (the corrections vs. the flat P0–P5 table)
 
@@ -282,6 +287,34 @@ perception (mic → VAD → ASR → speaker/turn event).**
   + 6 integration green, clippy-clean, dependents clean. Constitution Egress
   + Secrets 🔴 → 🟢 §3.1; §3.3 rows + P4 row → DONE. Next: #13 Screen
   perception.
+- **2026-08-11** — Audio perception (#14): the audio organ is real.
+  `services/sensors/src/audio.rs` — **capture**: WASAPI shared-mode
+  (`CoCreateInstance` MMDeviceEnumerator → `GetDefaultAudioEndpoint`
+  (eCapture/eConsole) → `IAudioClient` → `IAudioCaptureClient`), preferred
+  16 kHz mono 16-bit PCM, with a **`GetMixFormat` fallback** (PCM/IEEE-float at
+  16/32 bits; EXTENSIBLE resolved via the SubFormat GUID — never guessed) so
+  the mic path works on stacks that reject the preferred format; every packet
+  is converted to i16 mono (`read_available`) so the VAD sees one shape. Pure
+  + platform-neutral core, fully tested everywhere: **`rms`** (energy),
+  **`Vad`** (RMS threshold + hangover that **extends but never creates**
+  speech — the reviewer-caught bug where leading silence opened a turn is
+  fixed), **`TurnDetector`** (speech run closed after `end_silence_frames` of
+  silence → `Turn` with frames/duration_ms/samples), **`SpeechToText`** seam
+  (`MockTranscriber` for tests; no dead `NoTranscriber` — the `Option` IS the
+  honest null), **`build_turn_event`** (payload honest: `transcript: null` /
+  `asr: null` without a backend). `AudioSensor` exposes `process_pcm` for the
+  pure path + `without_capture` for headless; `unsafe impl Send + Sync` for the
+  WASAPI COM interfaces is documented and sound (MTA, only touched from poll).
+  `Topic::TurnDetected` (`sensor.audio.turn`) added to the workspace enum +
+  `as_str`/`parse`/Deserialize visitor. Reviewer-hardened: portability gate on
+  `WasapiCapture` (cfg windows, platform-neutral empty shape elsewhere),
+  `GetMixFormat` format fallback, dead `NoTranscriber` removed. 12 audio unit
+  tests (VAD hangover, turn closure, silence-never-opens, honest payload with/
+  without ASR, end-to-end synthetic turns, sensor-loop integration,
+  tolerant real-mic poll) + 22 sensors lib + 2 integration green,
+  clippy-clean, dependents clean. Constitution Audio organ 🔴 → 🟢 §3.1
+  (14 implemented entries); §3.3 row now scoped to vision; P3 row → DONE.
+  Next: #15 Vision perception.
 - **2026-08-11** — Screen perception (#13): the first **real** sensor —
   `WindowsScreenSensor` (`services/sensors/src/screen.rs`). Each poll captures
   the real foreground window: identity (`GetForegroundWindow`/`GetWindowTextW`),
