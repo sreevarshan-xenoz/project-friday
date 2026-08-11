@@ -12,6 +12,11 @@ use uuid::Uuid;
 pub enum Topic {
     WindowFocusChanged,
     WindowCurrent,
+    /// A screen observation — a real sensor captured the foreground window's
+    /// identity, geometry, state, and a content fingerprint (continuous
+    /// screen diff). Distinct from `WindowFocusChanged`, which is a bare
+    /// title/pid focus switch.
+    Screen,
     ClipboardChanged,
     CpuUsage,
     Mouse,
@@ -59,6 +64,7 @@ impl<'de> serde::Deserialize<'de> for Topic {
                     "WindowFocusChanged" | "sensor.window.focus_changed" => {
                         Topic::WindowFocusChanged
                     }
+                    "Screen" | "sensor.screen" => Topic::Screen,
                     "WindowCurrent" | "sensor.window.current" => Topic::WindowCurrent,
                     "ClipboardChanged" | "sensor.clipboard.changed" => Topic::ClipboardChanged,
                     "CpuUsage" | "sensor.cpu.usage" => Topic::CpuUsage,
@@ -101,6 +107,7 @@ impl Topic {
     pub fn as_str(&self) -> String {
         match self {
             Self::WindowFocusChanged => "sensor.window.focus_changed".into(),
+            Self::Screen => "sensor.screen".into(),
             Self::WindowCurrent => "sensor.window.current".into(),
             Self::ClipboardChanged => "sensor.clipboard.changed".into(),
             Self::CpuUsage => "sensor.cpu.usage".into(),
@@ -128,6 +135,7 @@ impl Topic {
     pub fn parse(s: &str) -> Self {
         match s {
             "sensor.window.focus_changed" => Self::WindowFocusChanged,
+            "sensor.screen" => Self::Screen,
             "sensor.window.current" => Self::WindowCurrent,
             "sensor.clipboard.changed" => Self::ClipboardChanged,
             "sensor.cpu.usage" => Self::CpuUsage,
