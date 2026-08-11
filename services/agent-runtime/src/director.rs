@@ -43,6 +43,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+
 use crate::driver::AgentDriver;
 use crate::handle::AgentHandle;
 use crate::merge::MergedReport;
@@ -50,7 +52,12 @@ use crate::runtime::AgentRuntime;
 use crate::spec::{AgentResult, AgentSpec, AgentState};
 
 /// The first director topology: Researcher / Analyst / Verifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// Serde uses the stable lowercase string form (`researcher`/`analyst`/
+/// `verifier` — the same shape as [`AgentRole::as_str`]) so persisted
+/// workforce records survive renames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum AgentRole {
     /// Gathers information (docs, web, git).
     Researcher,
