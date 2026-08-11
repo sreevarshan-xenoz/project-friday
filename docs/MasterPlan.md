@@ -31,8 +31,8 @@ work.
 | 10 | LifeOS current→ideal/gap layer | 🟢 DONE | `DesiredState` (declarative ideal over entities/files/tools with All/Any algebra) evaluated against world state + causal entity graph → `Gap` (unmet conditions) → `Objective` whose closing actions come from **causal simulation** (an action closes the gap only when its projection satisfies the ideal — never execution) → `IntentLayer::plan` feeds the objective into the planner producing `PlanSource::GapDriven` plans — `services/goal-execution/src/intent.rs`. Honest: a closed gap yields no objective/plan |
 | 11 | Skill compounding | 🟢 DONE | `SkillCompiler` (`services/skills/src/compound.rs`): neutral `TrajectorySkill` input (goal, Verified outcome + evidence ids, steps, confidence, support) → refusal gate that IS the verification step (Unverified / below-bar confidence / below-bar support / no steps / no capabilities / no actions all refuse with structured `RefusalCode`s) → `SkillSource::Learned` skill registered with collision-safe unique slug id, resolved capabilities, `skill.compounded` event carrying the full evidence trail → a later goal's `select_for` finds and chooses it. End-to-end proof in goal-execution integration using the real `CodeTestVerifier` |
 | 12 | Egress policy + Secrets vault | 🟢 DONE | `SecretsVault` (`services/intelligence/src/secrets.rs`): scope-keyed store whose `Secret` values are structurally unobservable (Debug/Display/Serialize redact; only `reveal()` exposes), `scoped()` capability handles, `seed_from_env` for provider keys. `EgressGate` (`services/intelligence/src/egress.rs`): scans outbound prompts for registered secrets and applies per-provider Block/Redact/LogOnly (default Block); wired into `InferenceFabric` at both dispatch sites before any provider call; a Block is recorded on the routing decision (auditable "which provider receives it?"). Off by default — enabling is one line |
-| 13 | Screen perception | 🔴 **NEXT** | observe UI → understand → act → verify; no camera hardware needed, so it comes first |
-| 14 | Audio perception | 🔴 | mic → VAD → ASR → speaker/turn event |
+| 13 | Screen perception | 🟢 DONE | `WindowsScreenSensor` (`services/sensors/src/screen.rs`): real foreground-window capture (title/pid/process/bounds/state) + **continuous screen diff** (FNV-1a of client-area pixels via BitBlt+GetDIBits) → pure `Focus`/`Content` change events → `Topic::Screen` → `GlobalWorkspace` via `SensorLoop::poll_all_with_topics`. First poll emits the initial state; capture failure degrades honestly to `content_hash: None`. `PerceptionEngine::with_sensors` polls the real loop (reports the exact channels that fired) with the synthetic RNG fallback preserved |
+| 14 | Audio perception | 🔴 **NEXT** | mic → VAD → ASR → speaker/turn event |
 | 15 | Vision perception | 🔴 | camera → frame → vision model → object/event |
 | 16 | Persistent Agent Workforce | 🔴 | Assignable task board, persistent per-agent workspaces — requires Agent Director (#7) first |
 | 17 | Autonomous Cognitive Tick | 🔴 | Observe → Evaluate → Decide → Act → Verify → Update State, looped. **Last** — needs perception + world model + intent + planning + director + execution + verification + security. Never a blind LLM heartbeat |
@@ -76,8 +76,13 @@ carries the evidence trail). #12 done — the autonomy prerequisites are real:
 `SecretsVault` (values never leak through Debug/Display/Serialize, capability-
 scoped handles) + `EgressGate` (per-provider Block/Redact/LogOnly, wired into
 `InferenceFabric` at both dispatch sites; blocks recorded on the routing
-decision). Next: #13 — Screen perception (observe UI → understand → act →
-verify).**
+decision). #13 done — the first real sensor is live:
+`WindowsScreenSensor` (`services/sensors/src/screen.rs`) captures the real
+foreground window (identity/geometry/state) plus a **continuous pixel diff**
+(FNV-1a of the client area) and emits `Focus`/`Content` `Topic::Screen`
+events into the workspace; the perception engine's `with_sensors` mode polls
+the real loop and reports the exact channels that fired. Next: #14 — Audio
+perception (mic → VAD → ASR → speaker/turn event).**
 
 ## Why this order (the corrections vs. the flat P0–P5 table)
 
@@ -277,6 +282,32 @@ verify).**
   + 6 integration green, clippy-clean, dependents clean. Constitution Egress
   + Secrets 🔴 → 🟢 §3.1; §3.3 rows + P4 row → DONE. Next: #13 Screen
   perception.
+- **2026-08-11** — Screen perception (#13): the first **real** sensor —
+  `WindowsScreenSensor` (`services/sensors/src/screen.rs`). Each poll captures
+  the real foreground window: identity (`GetForegroundWindow`/`GetWindowTextW`),
+  process (`QueryFullProcessImageNameW`), geometry (`GetWindowRect`), state
+  (`IsIconic`/`IsZoomed`), and the **continuous screen diff** — an FNV-1a
+  fingerprint of the client-area pixels via `BitBlt`+`GetDIBits`
+  (`capture_client_hash`). Pure change detection with correct precedence
+  (`changed_from`: identity/geometry → `Focus`, same-window pixel flip →
+  `Content`; a missing hash can never invent content motion) and **honest
+  degradation**: a composited/GPU window that refuses BitBlt yields
+  `content_hash: None`, and identity changes still fire. Reviewer-hardened:
+  the **first poll emits the initial observation** (FRIDAY perceives its
+  screen on tick 1 — the docs promised it, the code now does it), later polls
+  deduplicate. Events flow `SensorLoop::poll_all_with_topics`
+  (`services/sensors/src/lib.rs:47`) → `GlobalWorkspace` (`Topic::Screen`,
+  `services/cognitive/src/workspace.rs:110`); the perception engine gains
+  `with_sensors` — Observe polls the real loop and reports the exact channels
+  that fired, with the synthetic RNG fallback preserved for headless/dev.
+  `Topic` has no serde derive, so `as_str`/`parse` stay the canonical mapping
+  (Screen follows the existing pattern exactly). 10 screen unit tests
+  (hash determinism, change precedence, None-hash honesty, event shape) + a
+  tolerant real-desktop poll test + 2 sensor-loop/perception integration
+  tests; sensors 10 lib + 2 integration, perception 5 lib + 2 integration,
+  cognitive 24+3+2 green, clippy-clean, dependents clean. Constitution
+  Real perception → **Screen perception 🟢 §3.1** (audio/vision remain 🔴 §3.3);
+  P3 row → DONE for screen. Next: #14 Audio perception.
 - **2026-08-11** — Web fetch gateway enhancement (continues #4): a real
   Jina-style gateway provider ships behind the resolver — `jina` →
   `https://r.jina.ai/` (`JINA_READER_PREFIX`), with **percent-encoded URL
