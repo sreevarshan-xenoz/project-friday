@@ -80,8 +80,8 @@ Statuses are updated as commits land — this table is the tracker.
 | 11 | **Skill compounding** (verified trajectory → Skill Registry → reuse) | 🟢 DONE |
 | 12 | **Egress policy + Secrets vault** (autonomy prerequisites) | 🟢 DONE |
 | 13 | Screen perception | 🟢 DONE |
-| 14 | Audio perception | 🔴 **NEXT** |
-| 15 | Vision perception | 🔴 |
+| 14 | Audio perception | 🟢 DONE |
+| 15 | Vision perception | 🔴 **NEXT** |
 | 16 | Persistent Agent Workforce | 🔴 |
 | 17 | Autonomous Cognitive Tick (last) | 🔴 |
 | 18 | Observability | 🔴 |
@@ -166,8 +166,20 @@ same-window pixel change → Content), capture failure degrades honestly to
 FRIDAY sees its screen state on tick 1. Events flow
 `SensorLoop::poll_all_with_topics` → `GlobalWorkspace` (`Topic::Screen`), and
 the perception engine's `with_sensors` mode reports exactly the channels that
-fired — never a wildcard guess. Next unit of work: **#14 — Audio perception**
-(mic → VAD → ASR → speaker/turn event).
+fired — never a wildcard guess.
+**#14 is done — the audio organ is real.** `AudioSensor`
+(`services/sensors/src/audio.rs`) runs mic → VAD → ASR → speaker/turn event:
+WASAPI shared-mode capture of the default input device (16 kHz mono PCM,
+`GetMixFormat` fallback for hardware that rejects it) → a pure energy VAD
+(hangover extends speech, never creates it) → a pure turn detector (speech run
+closed by silence) → the optional `SpeechToText` seam. Honest by construction:
+a turn event carries `transcript: null` / `asr: null` until a real ASR backend
+is attached — the pipeline never fabricates words it did not hear — and a
+headless machine with no mic produces nothing. Events flow
+`SensorLoop::poll_all_with_topics` → `GlobalWorkspace` (`Topic::TurnDetected`),
+and the full VAD → turn → event path is tested end-to-end over synthetic PCM.
+Next unit of work: **#15 — Vision perception** (camera → frame → vision model
+→ object/event).
 
 ### Milestone gates
 
