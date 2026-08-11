@@ -79,8 +79,8 @@ Statuses are updated as commits land — this table is the tracker.
 | 10 | **LifeOS current→ideal/gap layer** (Current → Desired → Gap → Objective → Plan) | 🟢 DONE |
 | 11 | **Skill compounding** (verified trajectory → Skill Registry → reuse) | 🟢 DONE |
 | 12 | **Egress policy + Secrets vault** (autonomy prerequisites) | 🟢 DONE |
-| 13 | Screen perception | 🔴 **NEXT** |
-| 14 | Audio perception | 🔴 |
+| 13 | Screen perception | 🟢 DONE |
+| 14 | Audio perception | 🔴 **NEXT** |
 | 15 | Vision perception | 🔴 |
 | 16 | Persistent Agent Workforce | 🔴 |
 | 17 | Autonomous Cognitive Tick (last) | 🔴 |
@@ -155,8 +155,19 @@ registered secrets and applies a **per-provider** Block / Redact / LogOnly
 policy (safe default: Block), wired into `InferenceFabric` at both dispatch
 sites — a Block is recorded on the routing decision before the error returns.
 Enabling is one line (`fabric.egress = Some(gate)`); it stays off by default.
-Next unit of work: **#13 — Screen perception** (observe UI → understand → act
-→ verify; no camera hardware needed, so it comes first).
+**#13 is done — the first real sensor is live.** `WindowsScreenSensor`
+(`services/sensors/src/screen.rs`) closes the constitution's "perception is
+synthetic RNG" gap for the screen: each poll captures the **real foreground
+window** — title/pid/process, bounds, state — plus the **continuous screen
+diff**: an FNV-1a fingerprint of the client-area pixels via BitBlt+GetDIBits.
+Change detection is pure and precedence-correct (identity/geometry → Focus,
+same-window pixel change → Content), capture failure degrades honestly to
+`content_hash: None`, and the first poll emits the initial observation so
+FRIDAY sees its screen state on tick 1. Events flow
+`SensorLoop::poll_all_with_topics` → `GlobalWorkspace` (`Topic::Screen`), and
+the perception engine's `with_sensors` mode reports exactly the channels that
+fired — never a wildcard guess. Next unit of work: **#14 — Audio perception**
+(mic → VAD → ASR → speaker/turn event).
 
 ### Milestone gates
 
