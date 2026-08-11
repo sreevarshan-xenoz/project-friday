@@ -33,8 +33,8 @@ work.
 | 12 | Egress policy + Secrets vault | 🟢 DONE | `SecretsVault` (`services/intelligence/src/secrets.rs`): scope-keyed store whose `Secret` values are structurally unobservable (Debug/Display/Serialize redact; only `reveal()` exposes), `scoped()` capability handles, `seed_from_env` for provider keys. `EgressGate` (`services/intelligence/src/egress.rs`): scans outbound prompts for registered secrets and applies per-provider Block/Redact/LogOnly (default Block); wired into `InferenceFabric` at both dispatch sites before any provider call; a Block is recorded on the routing decision (auditable "which provider receives it?"). Off by default — enabling is one line |
 | 13 | Screen perception | 🟢 DONE | `WindowsScreenSensor` (`services/sensors/src/screen.rs`): real foreground-window capture (title/pid/process/bounds/state) + **continuous screen diff** (FNV-1a of client-area pixels via BitBlt+GetDIBits) → pure `Focus`/`Content` change events → `Topic::Screen` → `GlobalWorkspace` via `SensorLoop::poll_all_with_topics`. First poll emits the initial state; capture failure degrades honestly to `content_hash: None`. `PerceptionEngine::with_sensors` polls the real loop (reports the exact channels that fired) with the synthetic RNG fallback preserved |
 | 14 | Audio perception | 🟢 DONE | `AudioSensor` (`services/sensors/src/audio.rs`): WASAPI shared-mode mic capture (preferred 16 kHz mono PCM; `GetMixFormat` fallback with SubFormat GUID check) → pure energy VAD (hangover extends speech, never creates it) → pure turn detector (speech run closed by silence) → optional `SpeechToText` seam → `Topic::TurnDetected` events. Honest: `transcript: null`/`asr: null` until a real ASR backend is attached; no device → no events. Full pipeline tested end-to-end over synthetic PCM + tolerant real-mic poll |
-| 15 | Vision perception | 🔴 **NEXT** | camera → frame → vision model → object/event |
-| 16 | Persistent Agent Workforce | 🔴 | Assignable task board, persistent per-agent workspaces — requires Agent Director (#7) first |
+| 15 | Vision perception | 🟢 DONE | `CameraSensor` (`services/sensors/src/vision.rs`): Media Foundation webcam capture (RGB32 negotiated; dimensions from `MF_MT_FRAME_SIZE`, never guessed) → pure `frame_diff` (BT.601 luma) → `motion_score` → `changed_regions` connected-component blob detection → optional `ObjectDetector` ML seam → `Topic::ObjectDetected` events. Honest: first frame is a baseline (one frame sees nothing), static scenes emit nothing, `detector: "diff"` names the built-in. Full pipeline tested over synthetic frames |
+| 16 | Persistent Agent Workforce | 🔴 **NEXT** | Assignable task board, persistent per-agent workspaces — requires Agent Director (#7) first |
 | 17 | Autonomous Cognitive Tick | 🔴 | Observe → Evaluate → Decide → Act → Verify → Update State, looped. **Last** — needs perception + world model + intent + planning + director + execution + verification + security. Never a blind LLM heartbeat |
 | 18 | Observability (OTel/Prometheus) | 🔴 | `/metrics` endpoint consumed by Prometheus |
 | 19 | Cost telemetry | 🔴 | Per-model cost accounting ledger, queryable per goal |
@@ -86,8 +86,13 @@ audio organ is real:** `AudioSensor` (`services/sensors/src/audio.rs`) runs
 WASAPI mic capture → pure energy VAD (hangover never creates speech) → pure
 turn detection → optional ASR seam, publishing honest `Topic::TurnDetected`
 events (`transcript: null` until a real backend is attached; no device →
-silence). Next: #15 — Vision perception (camera → frame → vision model →
-object/event).**
+silence). **#15 done — the vision organ is real, completing the perception
+triad:** `CameraSensor` (`services/sensors/src/vision.rs`) runs Media
+Foundation webcam → pure frame diff → connected-component blob detection →
+optional ML seam, publishing honest `Topic::ObjectDetected` events (first
+frame is a baseline; `detector: "diff"` never fabricates labels). Screen +
+Audio + Vision all real. Next: #16 — Persistent Agent Workforce (assignable
+task board, persistent per-agent workspaces across runs).**
 
 ## Why this order (the corrections vs. the flat P0–P5 table)
 
@@ -287,6 +292,34 @@ object/event).**
   + 6 integration green, clippy-clean, dependents clean. Constitution Egress
   + Secrets 🔴 → 🟢 §3.1; §3.3 rows + P4 row → DONE. Next: #13 Screen
   perception.
+- **2026-08-11** — Vision perception (#15): the vision organ is real,
+  completing the perception triad. `services/sensors/src/vision.rs` —
+  **capture**: Media Foundation (`MFStartup` → `MFCreateAttributes` +
+  `MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE`=VIDCAP → `MFEnumDeviceSources` →
+  `IMFActivate::ActivateObject` → `MFCreateSourceReaderFromMediaSource`),
+  RGB32 negotiated so frames arrive as raw BGRA; `ReadSample` loops past
+  media-type changes (re-checking the flag each pass); packets are
+  Lock/copy/Unlock'd; dimensions via `GetUINT64(MF_MT_FRAME_SIZE)` — never
+  guessed (`pixels_to_frame` refuses a frame without a known size).
+  Reviewer-hardened: the `MFEnumDeviceSources` activate array is
+  `CoTaskMemFree`'d (it was leaking per construction), `MFShutdown` pairs
+  `MFStartup` in a `Drop` impl, and an attached ML seam replaces the diff
+  path entirely (no mixed detector/score provenance). **Pure vision**:
+  `frame_diff` (BT.601 luma from BGRA), `motion_score`, `changed_regions` — a
+  deterministic 4-connected BFS blob detector → `DetectedObject` bounding
+  boxes with confidence = changed/box-area; boundary wrapping guarded by
+  `nx < w`/`ny < h`. **Honesty**: first frame is a baseline and detects
+  nothing (one frame sees nothing — motion is between frames), static scenes
+  never emit, `detector: "diff"` names the built-in (no fabricated labels),
+  no camera → silence. `Topic::ObjectDetected` (`sensor.vision.objects`)
+  added to the workspace enum + `as_str`/`parse`/Deserialize visitor. 10
+  vision unit tests (diff/motion/blob correctness incl. disconnected blobs,
+  first-frame baseline, static-scene silence, honest event payload, ML seam,
+  sensor-loop integration) + 32 sensors lib + 2 integration green,
+  clippy-clean, dependents clean. Constitution Vision organ 🔴 → 🟢 §3.1 (15
+  implemented entries); §3.3 row fully DONE; P3 row → DONE. **Perception
+  triad complete: Screen + Audio + Vision.** Next: #16 Persistent Agent
+  Workforce.
 - **2026-08-11** — Audio perception (#14): the audio organ is real.
   `services/sensors/src/audio.rs` — **capture**: WASAPI shared-mode
   (`CoCreateInstance` MMDeviceEnumerator → `GetDefaultAudioEndpoint`
