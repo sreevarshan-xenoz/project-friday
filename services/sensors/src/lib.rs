@@ -4,8 +4,10 @@ use friday_cognitive::WorkspaceEvent;
 pub mod audio;
 #[cfg(target_os = "windows")]
 pub mod screen;
+pub mod vision;
 #[cfg(target_os = "windows")]
 pub mod windows_focus;
+
 
 /// Platform-neutral sensor trait.
 ///
@@ -18,6 +20,9 @@ pub mod windows_focus;
 /// - `WindowsFocusSensor` — Win32 active window tracking (feature-gated)
 /// - `AudioSensor` — WASAPI mic → VAD → turn detection → `Topic::TurnDetected`
 ///   (ASR optional; platform-neutral pipeline, Windows capture)
+/// - `CameraSensor` — Media Foundation webcam → frame diff → blob detection →
+///   `Topic::ObjectDetected` (ML optional; platform-neutral pipeline,
+///   Windows capture)
 #[async_trait]
 pub trait Sensor: Send {
     /// Human-readable name, e.g. "windows_focus", "clipboard".
