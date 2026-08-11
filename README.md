@@ -82,8 +82,8 @@ Statuses are updated as commits land — this table is the tracker.
 | 13 | Screen perception | 🟢 DONE |
 | 14 | Audio perception | 🟢 DONE |
 | 15 | Vision perception | 🟢 DONE |
-| 16 | Persistent Agent Workforce | 🔴 **NEXT** |
-| 17 | Autonomous Cognitive Tick (last) | 🔴 |
+| 16 | Persistent Agent Workforce | 🟢 DONE |
+| 17 | Autonomous Cognitive Tick (last) | 🔴 **NEXT** |
 | 18 | Observability | 🔴 |
 | 19 | Cost telemetry | 🔴 |
 | 20 | Walrus Memory backend (optional — 5th `MemoryLayer` backend) | optional |
@@ -189,8 +189,15 @@ bounding boxes with confidence → the optional `ObjectDetector` ML seam
 nothing, and `detector: "diff"` names the built-in — never a fabricated label.
 Events flow `SensorLoop::poll_all_with_topics` → `GlobalWorkspace`
 (`Topic::ObjectDetected`). Screen + Audio + Vision are all real now.
-Next unit of work: **#16 — Persistent Agent Workforce** (assignable task
-board, persistent per-agent workspaces across runs).
+The persistent workforce (#16) is real too: `Workforce`
+(`services/agent-runtime/src/workforce.rs`) — a persistent worker registry
++ assignable task board over `AgentRuntime` + a `WorkforceStore`; a worker
+is assigned a task, picked up across runs (fresh instances over one Json
+store), reports progress/blockers, and its isolated workspace (`spec.cwd`)
+persists — proven with the real `SkillAgentDriver` across three instances
+(`tests/workforce.rs`).
+Next unit of work: **#17 — Autonomous Cognitive Tick** (the last gate:
+observe → evaluate → decide → act → verify → update state).
 
 ### Milestone gates
 
