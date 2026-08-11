@@ -1102,6 +1102,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "friday-actions",
+ "friday-cognitive",
  "friday-experience",
  "friday-goal-execution",
  "friday-investigation",
@@ -1218,6 +1219,8 @@ name = "friday-experience"
 version = "0.1.0"
 dependencies = [
  "friday-plugin-runtime",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1227,6 +1230,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "friday-actions",
+ "friday-agent-runtime",
  "friday-capabilities",
  "friday-cognitive",
  "friday-investigation",
