@@ -17,6 +17,11 @@ pub enum Topic {
     /// screen diff). Distinct from `WindowFocusChanged`, which is a bare
     /// title/pid focus switch.
     Screen,
+    /// A complete speaker turn — the audio sensor ran mic → VAD → (ASR) and
+    /// a speech segment closed by silence was detected. The payload carries
+    /// duration/frames and a transcript only when an ASR backend was attached
+    /// (honest: no backend → no transcript, never a hallucinated one).
+    TurnDetected,
     ClipboardChanged,
     CpuUsage,
     Mouse,
@@ -65,6 +70,7 @@ impl<'de> serde::Deserialize<'de> for Topic {
                         Topic::WindowFocusChanged
                     }
                     "Screen" | "sensor.screen" => Topic::Screen,
+                    "TurnDetected" | "sensor.audio.turn" => Topic::TurnDetected,
                     "WindowCurrent" | "sensor.window.current" => Topic::WindowCurrent,
                     "ClipboardChanged" | "sensor.clipboard.changed" => Topic::ClipboardChanged,
                     "CpuUsage" | "sensor.cpu.usage" => Topic::CpuUsage,
@@ -108,6 +114,7 @@ impl Topic {
         match self {
             Self::WindowFocusChanged => "sensor.window.focus_changed".into(),
             Self::Screen => "sensor.screen".into(),
+            Self::TurnDetected => "sensor.audio.turn".into(),
             Self::WindowCurrent => "sensor.window.current".into(),
             Self::ClipboardChanged => "sensor.clipboard.changed".into(),
             Self::CpuUsage => "sensor.cpu.usage".into(),
@@ -136,6 +143,7 @@ impl Topic {
         match s {
             "sensor.window.focus_changed" => Self::WindowFocusChanged,
             "sensor.screen" => Self::Screen,
+            "sensor.audio.turn" => Self::TurnDetected,
             "sensor.window.current" => Self::WindowCurrent,
             "sensor.clipboard.changed" => Self::ClipboardChanged,
             "sensor.cpu.usage" => Self::CpuUsage,
