@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use friday_cognitive::WorkspaceEvent;
 
+pub mod audio;
 #[cfg(target_os = "windows")]
 pub mod screen;
 #[cfg(target_os = "windows")]
@@ -15,6 +16,8 @@ pub mod windows_focus;
 ///
 /// - `MockSensor` — deterministic events for tests
 /// - `WindowsFocusSensor` — Win32 active window tracking (feature-gated)
+/// - `AudioSensor` — WASAPI mic → VAD → turn detection → `Topic::TurnDetected`
+///   (ASR optional; platform-neutral pipeline, Windows capture)
 #[async_trait]
 pub trait Sensor: Send {
     /// Human-readable name, e.g. "windows_focus", "clipboard".
