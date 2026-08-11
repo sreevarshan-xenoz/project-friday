@@ -72,7 +72,7 @@ PERCEIVE → UNDERSTAND → DEFINE DESIRED STATE → PLAN → DELEGATE → EXECU
 | **Recursive agents / Agent Director** | 🟢 Implemented | Supervisor topology over `AgentRuntime`: role-typed bounded children (Researcher/Analyst/Verifier), results gated — a run completes only when `DirectorReport::all_verified` (`services/agent-runtime/src/director.rs:54,197,342`); wired through the real `SkillAgentDriver` (`services/action-runtime/tests/agent_director.rs:119`) |
 | **Autonomous drive**           | 🔴 Missing | No genuine self-directed continuous loop |
 | **LifeOS intent layer**        | 🟢 Implemented | `DesiredState` → `Gap` → `Objective` → plan (`intent.rs`); closing actions come from causal simulation, never execution |
-| **Persistent agent workforce** | 🔴 Missing | Agents are ephemeral |
+| **Persistent agent workforce** | 🟢 Implemented | Persistent worker registry + assignable task board over `AgentRuntime` + a `WorkforceStore`: a worker is assigned a task, picked up across runs, reports progress/blockers, and its isolated workspace persists (`services/agent-runtime/src/workforce.rs`); real-driver acceptance (`services/agent-runtime/tests/workforce.rs`) |
 | **Screen perception**          | 🟢 Implemented | Real Win32 screen sensor: foreground window identity/geometry/state + client-area pixel hash (`services/sensors/src/screen.rs`) → `Topic::Screen` events → `GlobalWorkspace` |
 | **Audio perception**           | 🟢 Implemented | Real mic sensor: WASAPI capture → energy VAD → turn detection → optional ASR seam → `Topic::TurnDetected` (`services/sensors/src/audio.rs`) |
 | **Vision perception**         | 🟢 Implemented | Real camera sensor: Media Foundation webcam → frame diff → blob detection → optional ML seam → `Topic::ObjectDetected` (`services/sensors/src/vision.rs`) |
@@ -189,13 +189,44 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
   acceptance runs `SkillAgentDriver` + the real kernel through the director —
   Researcher (docs) + Verifier (git) both verified, and an unapproved verifier
   blocks the run (`services/action-runtime/tests/agent_director.rs:119`).
-- **Missing capability:** persistent workforce (suspend/resume, assignable task
-  board, per-agent workspaces across runs) — deferred to the P3 step by design.
+- **Missing capability:** persistent workforce — **DONE (2026-08-11)**, see
+  `#### Persistent Workforce` below (registry + assignable board + isolated
+  per-agent workspaces + progress/blocker reporting, `workforce.rs`).
 - **Inspired by:** Prime Agent, Multica, Google ADK.
 - **Plugs into:** `AgentRuntime` + `AgentDriver` seam.
 - **Acceptance:** a goal can be decomposed into a director spawning bounded
   workers whose results are collected and verified before the goal completes
   (`services/agent-runtime/tests/director.rs:28`).
+
+#### Persistent Workforce — 🟢 (registry + assignable board + persistent workspaces)
+- **What exists:** the workforce makes the workforce itself durable.
+  `services/agent-runtime/src/workforce.rs` — **`WorkforceStore`** (the
+  `WorkflowStore`-shape persistence seam: save/load/list, InMemory + atomic
+  Json temp+rename stores, `workforce.rs:199`); **`WorkerRecord`** (id/role/
+  description/status/current_task/workspace `PathBuf`; `workforce.rs:104`)
+  and **`BoardTask`** (title/goal/required_role/status/assignee/capability
+  params/progress/blockers/persisted result; `workforce.rs:125`) are the
+  registry and the board. **`Workforce`** (`workforce.rs:377`): `register`
+  creates a persistent worker with an **isolated workspace directory**;
+  `create_task`/`assign` (role mismatch, busy worker, non-Open task all
+  refused)/`pick_up` (FIFO over the board by role); `run` executes the
+  assigned task through `AgentRuntime` with **`spec.cwd` = the worker's
+  workspace** + the task's capability params — only `Succeeded` yields
+  `Done`, every other terminal state is `Failed` with the honest result
+  persisted; `report_progress`/`report_blocker` write persistent notes
+  (blocker flips the task `Blocked`, resolvable); `suspend`/`resume` pause an
+  assigned worker without losing its task; `retire` (refuses Running) releases
+  its task back to Open. Ids derive from the store (never a per-instance
+  counter) so two instances can't collide.
+- **Acceptance (the constitution's own words):** *"A worker can be assigned a
+  task, picked up across runs, report progress/blockers, and its workspace
+  persists."* — proven across three `Workforce` instances over one Json store
+  with the **real `SkillAgentDriver`** + kernel: register/assign in instance
+  A, progress + run in B (a real `docs.search` executes), Done task + result
+  + workspace content visible in C (`services/agent-runtime/tests/workforce.rs`).
+- **Plugs into:** `AgentRuntime` + `WorkforceStore` (the `WorkflowStore`
+  persistence pattern). In-flight cancellation stays with the runtime; the
+  director (above) remains the verification gate for fan-outs.
 
 #### Durable execution — 🟢 (parallel stages + write-ahead journaling + mid-agent recovery)
 - **What exists:** `WorkflowEngine` + `WorkflowCheckpoint` (serializable
@@ -501,7 +532,7 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
 
 | **Autonomous drive** | No self-directed continuous loop. Current cognitive loop is in-memory phases + proactive project briefing (`services/project-cognition/src/engine.rs:339`), not an unsupervised drive. Start with a Cognitive Tick (observe → evaluate → maybe act → sleep → repeat), then grow the decision function — not full active-inference math first. | ACOS active inference | cognitive-runtime phases + workspace events | A tick loop runs without a user goal, observes the workspace, and fires one action justified by an evidence trace. |
 | **LifeOS intent layer** | Goals exist (`goal.rs`) but no persistent user-level current→ideal state, gap/opportunity detection, priorities, constraints, or progress tracking. | **LifeOS** | planner + intent router + context builder | `desired_state − current_state` produces objectives the planner can turn into plans — **DONE (2026-08-11)** (`IntentLayer`, `services/goal-execution/src/intent.rs`; closing actions from causal simulation; `PlanSource::GapDriven`); intent routing consuming user preferences remains additive |
-| **Persistent agent workforce** | Agents are ephemeral, in-process, per-goal. No persistent worker registry, assignable task board, isolated per-agent workspaces across runs, progress/blocker reporting. | **Multica** | `AgentRuntime` + `WorkflowStore` | A worker can be assigned a task, picked up across runs, report progress/blockers, and its workspace persists. |
+| **Persistent agent workforce** | Agents were ephemeral, in-process, per-goal. Now a persistent worker registry + assignable task board over `AgentRuntime` + `WorkforceStore`: `WorkerRecord`/`BoardTask` persisted (InMemory / atomic Json), role-typed assignment, FIFO `pick_up`, progress/blocker notes, suspend/resume, isolated per-agent workspaces (`spec.cwd`) that survive across runs. | **Multica** | `AgentRuntime` + `WorkflowStore` | A worker can be assigned a task, picked up across runs, report progress/blockers, and its workspace persists — **DONE (2026-08-11)** (`services/agent-runtime/src/workforce.rs`; acceptance `tests/workforce.rs`: register/assign in A, progress + run in B, Done + workspace content visible in C — all over one Json store) |
 | **Real perception** | Perception was synthetic RNG events, not sensing. ALL THREE perception organs are now CLOSED — **DONE (2026-08-11)**: Screen (`WindowsScreenSensor`, `services/sensors/src/screen.rs`; continuous client-area pixel diff → `Topic::Screen`), Audio (`AudioSensor`, `services/sensors/src/audio.rs`; WASAPI mic → VAD → turn detection → optional ASR → `Topic::TurnDetected`), Vision (`CameraSensor`, `services/sensors/src/vision.rs`; Media Foundation webcam → frame diff → blob detection → optional ML → `Topic::ObjectDetected`). Small-specialist → event → core, never raw 30fps into an LLM. | **Vision Agents**, Meetily | `PerceptionEngine` → workspace events | A real sensor publishes an event to the workspace that a cognitive organ consumes (proof: one camera frame → object event; one mic stream → turn event). |
 | **World-model visualization** | Deferred — the causal world model (§3.2) comes first; DrawDB is sugar. | DrawDB | `WorldModel` | None until causal model lands. |
 | **Egress policy / secret scan** | No "scan payload before sending to an external model" gate. Should become a global outbound-data policy, not just a coding feature. | **SonarQube CLI**, Archestra | permission engine (outbound hook) | A payload containing a detected secret is blocked/redacted before the provider call; policy is enforceable per-provider — **DONE (2026-08-11)** (`EgressGate`, `services/intelligence/src/egress.rs`, wired into `InferenceFabric`; per-provider Block/Redact/LogOnly, Block recorded on the routing decision); encrypted-at-rest vault remains |
@@ -563,7 +594,7 @@ capability as an equal-priority feature.
 | **P3**   | **Real Screen Sensor**                  | **DONE (2026-08-11)** — `WindowsScreenSensor` real foreground-window capture + continuous pixel diff → `Topic::Screen` → workspace (`services/sensors/src/screen.rs`) | Vision Agents + Meetily       |
 | **P3**   | **Real Audio/Voice Sensor**              | **DONE (2026-08-11)** — `AudioSensor` WASAPI mic → VAD → turn detection → optional ASR → `Topic::TurnDetected` (`services/sensors/src/audio.rs`); ASR backends plug into the `SpeechToText` seam | Meetily                       |
 | **P3**   | **Real Vision Sensor**                   | **DONE (2026-08-11)** — `CameraSensor` Media Foundation webcam → frame diff → blob detection → optional ML seam → `Topic::ObjectDetected` (`services/sensors/src/vision.rs`); ML backends plug into the `ObjectDetector` seam | Vision Agents                 |
-| **P3**   | **Persistent Agent Workforce**           | Requires Agent Director first                                        | Multica                       |
+| **P3**   | **Persistent Agent Workforce**           | **DONE (2026-08-11)** — `Workforce` registry + assignable task board + isolated per-agent workspaces + progress/blocker reporting over `AgentRuntime` + `WorkforceStore` (`services/agent-runtime/src/workforce.rs`); real-driver acceptance across instances (`tests/workforce.rs`) | Multica                       |
 | **P3**   | **Autonomous Cognitive Tick**            | Requires perception + world state + goals + execution + safety       | ACOS / Active Inference       |
 | **P4**   | **Walrus Memory backend**                | Existing `MemoryLayer` already solves the abstraction — backend #5, not architecture | Walrus |
 | **P4**   | **Security/Egress/Secrets plane**        | Permissions/audit 🟢 (existing); **Egress + Secrets DONE (2026-08-11)** — `EgressGate` + `SecretsVault` (`services/intelligence/src/`); remaining: vault persistence/encryption, providers resolving from the vault | Archestra + Sonar             |
