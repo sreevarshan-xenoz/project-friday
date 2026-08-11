@@ -28,6 +28,7 @@ pub mod merge;
 pub mod runtime;
 pub mod scheduling;
 pub mod spec;
+pub mod workforce;
 
 pub use budget::{BudgetLimits, BudgetTracker};
 pub use cancellation::CancellationToken;
@@ -42,3 +43,7 @@ pub use merge::{merge, MergedReport};
 pub use runtime::{AgentRuntime, DEFAULT_MAX_CONCURRENCY, DEFAULT_TIME_LIMIT};
 pub use scheduling::{DecomposeHint, Decomposer, HeuristicDecomposer};
 pub use spec::{AgentResult, AgentSpec, AgentState, AgentStep, ModelCapability};
+pub use workforce::{
+    BoardNote, BoardTask, InMemoryWorkforceStore, JsonWorkforceStore, TaskOutcome, TaskStatus,
+    WorkerRecord, WorkerStatus, Workforce, WorkforceStore,
+};
