@@ -546,3 +546,95 @@ fn closed_desired_state_yields_no_objective_or_plan() {
     assert!(layer.objective(&model, &desired).is_none());
     assert!(layer.plan(&Planning::new(), &model, &desired).is_none());
 }
+
+// ── Skill compounding (#11): verified trajectory → skill → reuse ──
+
+use friday_goal_execution::{CodeTestVerifier, run_command_in};
+use friday_skills::{
+    OutcomeSummary, SkillCompiler, SkillRegistry, TrajectorySkill, TrajectoryStep,
+};
+
+/// The constitution acceptance for skill compounding (§3.2 Reflection / §3.3):
+/// ONE verified successful trajectory becomes a reusable skill in the
+/// registry, and a later goal uses it. The "verified" here is goal-execution's
+/// REAL `CodeTestVerifier` over an actual command run — never a mock.
+#[test]
+fn verified_trajectory_compounds_into_a_reusable_skill() {
+    // 1. Real verification: the command actually runs and the concrete
+    //    verifier interprets the observed output (exit code + expect marker
+    //    + failure-marker forbids).
+    let verifier = CodeTestVerifier::for_test_run();
+    let obs = run_command_in(std::env::temp_dir().as_path(), "echo test result: ok");
+    let verified = verifier.verify_observation(&obs);
+    assert!(
+        verified.verified,
+        "the trajectory must be VERIFIED: {:?}",
+        verified.checks
+    );
+
+    // 2. The verified trajectory maps into the neutral compiler input,
+    //    carrying its evidence ids (the audit trail).
+    let trajectory = TrajectorySkill {
+        goal: "Run the friday test suite and check the result".to_string(),
+        outcome: OutcomeSummary::Verified {
+            evidence_ids: vec!["ev_verify_1".to_string()],
+        },
+        steps: vec![
+            TrajectoryStep {
+                instruction: "run the friday test suite".to_string(),
+                capability: "terminal.execute".to_string(),
+            },
+            TrajectoryStep {
+                instruction: "check for the test result marker".to_string(),
+                capability: "filesystem.read".to_string(),
+            },
+        ],
+        confidence: 0.9,
+        support: 2,
+    };
+
+    // 3. Compile → registered, enabled, source Learned.
+    let registry = SkillRegistry::new();
+    let outcome = SkillCompiler::new().compile(&registry, &trajectory);
+    assert!(outcome.compiled(), "refusals: {:?}", outcome.refusals);
+    assert_eq!(outcome.skill.as_ref().unwrap().resolved_capabilities(), vec![
+        "terminal.execute",
+        "filesystem.read"
+    ]);
+
+    // 4. A LATER goal uses the skill: selection ranks and chooses it.
+    let selected = registry
+        .select_for("run the friday tests and show me the result", 5)
+        .expect("a later goal finds the learned skill");
+    assert_eq!(
+        selected.skill.id(),
+        "run-the-friday-test-suite-and-check-the-result"
+    );
+}
+
+/// The gate that makes compounding trustworthy: an UNVERIFIED trajectory is
+/// refused — nothing is registered, so a later goal cannot reuse a failure.
+#[test]
+fn unverified_trajectory_is_refused_and_never_reused() {
+    let registry = SkillRegistry::new();
+    let trajectory = TrajectorySkill {
+        goal: "Deploy to production".to_string(),
+        outcome: OutcomeSummary::Unverified {
+            reason: "test result: FAILED. 1 failed; 0 passed".to_string(),
+        },
+        steps: vec![TrajectoryStep {
+            instruction: "deploy the service".to_string(),
+            capability: "git.push".to_string(),
+        }],
+        confidence: 0.9,
+        support: 1,
+    };
+
+    let outcome = SkillCompiler::new().compile(&registry, &trajectory);
+    assert!(!outcome.compiled(), "a failure is never compounded");
+    assert!(registry.all().is_empty());
+    assert!(
+        registry.select_for("deploy to production", 5).is_none(),
+        "nothing unverified is reusable"
+    );
+}

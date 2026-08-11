@@ -20,6 +20,10 @@ pub enum SkillSource {
     User,
     /// Attached to a plugin.
     Plugin,
+    /// Compounded at runtime from a verified trajectory (skill compounding —
+    /// the closed learning loop). Not loaded from disk; registered by
+    /// [`crate::SkillCompiler`].
+    Learned,
 }
 
 /// Whether a declared capability id is currently bound in the Capability

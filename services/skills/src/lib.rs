@@ -29,6 +29,7 @@
 //!   → emit lifecycle events
 //! ```
 
+pub mod compound;
 pub mod context;
 pub mod error;
 pub mod events;
@@ -40,6 +41,10 @@ pub mod permission;
 pub mod qualification;
 pub mod registry;
 
+pub use compound::{
+    CompileOutcome, OutcomeSummary, Refusal, RefusalCode, SkillCompiler, SkillProvenance,
+    TrajectorySkill, TrajectoryStep,
+};
 pub use context::{SkillContext, SkillContextSource, SkillSummary};
 pub use error::SkillError;
 pub use events::{SkillEvent, SkillEventSink, VecSink};

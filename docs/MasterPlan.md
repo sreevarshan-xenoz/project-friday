@@ -29,8 +29,8 @@ work.
 | 8 | Parallel durable workflows + agent journaling | 🟢 DONE | `WorkflowStep::stage` (bounded-concurrency map/reduce, folded exactly once), write-ahead in-flight journaling with stable FNV-1a idempotency keys (`journal_key`), idempotent replay (verified steps never re-dispatched), mid-agent recovery (`recovered` counter), engine-owned persistence (`with_store`) — `services/goal-execution/src/workflow.rs` |
 | 9 | Causal World Model | 🟢 DONE | Entity graph + causal edges + typed effects + pure deterministic simulation (`CausalModel::simulate` — "if action A runs, S→S'"): `services/goal-execution/src/causal.rs`. `WorldModel::simulate`/`apply_simulation` close the predict→commit loop (stale projections refused); `find_missing_capability_prerequisites` reflects the entity graph |
 | 10 | LifeOS current→ideal/gap layer | 🟢 DONE | `DesiredState` (declarative ideal over entities/files/tools with All/Any algebra) evaluated against world state + causal entity graph → `Gap` (unmet conditions) → `Objective` whose closing actions come from **causal simulation** (an action closes the gap only when its projection satisfies the ideal — never execution) → `IntentLayer::plan` feeds the objective into the planner producing `PlanSource::GapDriven` plans — `services/goal-execution/src/intent.rs`. Honest: a closed gap yields no objective/plan |
-| 11 | Skill compounding | 🟡 **NEXT** | Closed loop: Experience → Reflection → Pattern → Candidate skill → **Verification** → Skill Registry → reuse. Only after #5 — verification must exist first, or FRIDAY learns garbage |
-| 12 | Egress policy + Secrets vault | 🔴 | Outbound-data gate ("can this secret leave the machine? which provider receives it?") + secrets vault — **before autonomy** (autonomy without egress controls is backwards engineering) |
+| 11 | Skill compounding | 🟢 DONE | `SkillCompiler` (`services/skills/src/compound.rs`): neutral `TrajectorySkill` input (goal, Verified outcome + evidence ids, steps, confidence, support) → refusal gate that IS the verification step (Unverified / below-bar confidence / below-bar support / no steps / no capabilities / no actions all refuse with structured `RefusalCode`s) → `SkillSource::Learned` skill registered with collision-safe unique slug id, resolved capabilities, `skill.compounded` event carrying the full evidence trail → a later goal's `select_for` finds and chooses it. End-to-end proof in goal-execution integration using the real `CodeTestVerifier` |
+| 12 | Egress policy + Secrets vault | 🔴 **NEXT** | Outbound-data gate ("can this secret leave the machine? which provider receives it?") + secrets vault — **before autonomy** (autonomy without egress controls is backwards engineering) |
 | 13 | Screen perception | 🔴 | observe UI → understand → act → verify; no camera hardware needed, so it comes first |
 | 14 | Audio perception | 🔴 | mic → VAD → ASR → speaker/turn event |
 | 15 | Vision perception | 🔴 | camera → frame → vision model → object/event |
@@ -69,8 +69,12 @@ Gate 4 (World-Aware FRIDAY) has its foundation: the world model can now
 predict "if action A runs, S→S'". Next: #10 — the LifeOS current→ideal/gap
 layer done — the intent layer turns `desired_state − current_state` into an
 Objective whose closing actions come from causal simulation, and the planner
-consumes it as `PlanSource::GapDriven` plans. Next: #11 skill compounding (the
-closed loop that turns verified trajectories into reusable skills).**
+consumes it as `PlanSource::GapDriven` plans. #11 done — the learning loop is
+closed: `SkillCompiler` turns a verified trajectory into a `SkillSource::Learned`
+skill a later goal reuses (refusal gate = verification; `skill.compounded`
+carries the evidence trail). Next: #12 — Egress policy + Secrets vault, the
+autonomy prerequisites ("can this secret leave the machine? which provider
+receives it?").**
 
 ## Why this order (the corrections vs. the flat P0–P5 table)
 
@@ -214,6 +218,37 @@ closed loop that turns verified trajectories into reusable skills).**
   `closed_desired_state_yields_no_objective_or_plan`); 364 lib + 18
   integration green, clippy-clean. Constitution LifeOS → 🟢 §3.1; P2 row →
   DONE. Next: #11 skill compounding.
+- **2026-08-11** — Skill compounding (#11): the learning loop is closed.
+  `services/skills/src/compound.rs` adds **SkillCompiler** — the missing
+  link between verification and reuse. **Neutral input** (`TrajectorySkill`,
+  `compound.rs:76`) keeps the skills crate decoupled: goal, steps
+  (instruction + capability), confidence, support, and
+  **`OutcomeSummary::Verified { evidence_ids }`** (`compound.rs:49`) — the
+  audit trail. **The refusal gate is the verification step** (`compound.rs`
+  compile): an `Unverified` outcome is refused with its reason, and
+  below-bar confidence/support, empty steps, no usable capability, or no
+  natural-language actions each refuse with a structured `RefusalCode`
+  (`compound.rs:98`) — a failure is never learned. Success distills a
+  pure-data manifest (slug id, goal description, actions = goal + step
+  instructions deduped, capabilities deduped) and registers it with the new
+  **`SkillSource::Learned`** (`registry.rs:26`) and every used capability
+  Resolved — they all ran. **Collision-safe registration**: register with a
+  retry loop on `Duplicate` (the registry is Send + Sync), so a concurrent
+  compile never mislabels a dedup collision as a verdict on the trajectory;
+  genuine registry errors refuse as `RegistrationFailed`. The
+  **`skill.compounded`** event (`events.rs:31`) carries the full evidence
+  ids, not a count. **Reuse**: a later goal's `SkillRegistry::select_for`
+  ranks and chooses the learned skill exactly like a bundled one — the
+  constitution acceptance, proven end-to-end in
+  `services/goal-execution/tests/integration.rs`
+  (`verified_trajectory_compounds_into_a_reusable_skill` — the trajectory is
+  verified by the REAL `CodeTestVerifier`; `unverified_trajectory_is_refused_
+  and_never_reused`). 11 compound unit tests (refusals, id uniqueness,
+  dedup, reuse, event trail, unrankable-action guard); 55 skills lib + 6
+  skills integration + 364 goal-execution lib + 20 integration green,
+  clippy-clean, dependents clean. Constitution Skill compounding → 🟢 §3.1;
+  Reflection §3.2 missing-capability → automatic trajectory mining; P2 row →
+  DONE. Next: #12 Egress policy + Secrets vault.
 - **2026-08-11** — Web fetch gateway enhancement (continues #4): a real
   Jina-style gateway provider ships behind the resolver — `jina` →
   `https://r.jina.ai/` (`JINA_READER_PREFIX`), with **percent-encoded URL

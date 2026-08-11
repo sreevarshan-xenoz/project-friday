@@ -77,8 +77,8 @@ Statuses are updated as commits land — this table is the tracker.
 | 8 | **Parallel durable workflows + agent journaling** | 🟢 DONE |
 | 9 | **Causal World Model** (entities → causes → effects → simulation) | 🟢 DONE |
 | 10 | **LifeOS current→ideal/gap layer** (Current → Desired → Gap → Objective → Plan) | 🟢 DONE |
-| 11 | **Skill compounding** (only after real verification) | 🟡 **NEXT** |
-| 12 | **Egress policy + Secrets vault** (before autonomy) | 🔴 |
+| 11 | **Skill compounding** (verified trajectory → Skill Registry → reuse) | 🟢 DONE |
+| 12 | **Egress policy + Secrets vault** (before autonomy) | 🔴 **NEXT** |
 | 13 | Screen perception | 🔴 |
 | 14 | Audio perception | 🔴 |
 | 15 | Vision perception | 🔴 |
@@ -134,9 +134,19 @@ gap only when its projection satisfies the ideal, never execution), and
 `IntentLayer::plan` feeds the objective into the planner producing
 `PlanSource::GapDriven` plans. A closed gap yields nothing — the layer never
 invents busywork.
-Next unit of work: **#11 — skill compounding** (closed loop: Experience →
-Reflection → Pattern → Candidate skill → **Verification** → Skill Registry →
-reuse).
+**#11 is done:** the learning loop is closed. `SkillCompiler`
+(`services/skills/src/compound.rs`) turns a **verified successful trajectory**
+into a registered skill — the refusal gate IS the verification step (an
+`Unverified` outcome is never compounded; below-bar confidence/support, empty
+steps, and unrankable actions all refuse with structured reasons). Success
+registers a `SkillSource::Learned` skill with every used capability resolved
+and emits `skill.compounded` carrying the evidence trail. Proven end-to-end:
+the goal-execution integration test verifies a trajectory with the real
+`CodeTestVerifier`, compiles it, and a later goal's `select_for` finds and
+chooses it.
+Next unit of work: **#12 — Egress policy + Secrets vault** (the autonomy
+prerequisites: "can this secret leave the machine? which provider receives
+it?").
 
 ### Milestone gates
 

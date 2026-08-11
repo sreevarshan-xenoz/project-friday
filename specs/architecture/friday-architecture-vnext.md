@@ -286,6 +286,35 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
   satisfied ideal produces nothing (`closed_desired_state_yields_no_objective_
   or_plan`).
 
+#### Skill compounding — 🟢 (the learning loop is closed)
+- **What exists:** `SkillCompiler` (`services/skills/src/compound.rs:151`) turns
+  a **verified successful trajectory** into a registered skill. Neutral input
+  (`TrajectorySkill`: goal, `OutcomeSummary::Verified` + evidence ids, steps
+  with instruction + capability, confidence, support; `compound.rs:49,76`)
+  keeps the skills crate testable in isolation. The refusal gate IS the
+  verification step: an `Unverified` outcome is refused (a failure is never
+  compounded), as are below-bar confidence/support, no steps, no usable
+  capability, or no natural-language actions — every refusal is structured
+  (`RefusalCode`, `compound.rs:98`). Success registers a skill with
+  `SkillSource::Learned` (`registry.rs:26`), every used capability resolved,
+  a collision-safe unique slug id (retry on `Duplicate` — never mislabels a
+  dedup as a verdict on the trajectory), and emits `skill.compounded` carrying
+  the **full evidence trail** (`events.rs:31`).
+- **Missing capability:** automatic trajectory mining (feeding
+  `TrajectorySkill` from executed workflow journals without a hand-written
+  adapter) and persistence of learned skills across restarts (today they are
+  in-memory; the `SkillRegistry` is loaded from disk at boot by design).
+- **Inspired by:** Multica, Prime Agent, LifeOS.
+- **Plugs into:** `SkillRegistry` + the planner's skill context source — a
+  learned skill is ranked and chosen by a later goal exactly like a bundled
+  one (`SkillRegistry::select_for`).
+- **Acceptance:** one verified successful trajectory yields a reusable skill
+  in the registry, and a later goal uses it (proven end-to-end in
+  `services/goal-execution/tests/integration.rs` —
+  `verified_trajectory_compounds_into_a_reusable_skill`, where the trajectory
+  is verified by the REAL `CodeTestVerifier`; `unverified_trajectory_is_
+  refused_and_never_reused` proves the gate).
+
 ### 3.2 Partial (🟡)
 
 #### Cognitive planner — 🟡 (real; gap-driven planning now feeds it)
@@ -304,18 +333,21 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
   from a one-shot goal string (proven at the goal-execution level — §3.1
   LifeOS intent layer).
 
-#### Reflection — 🟡 (machinery real, loop unclosed)
+#### Reflection — 🟡 (machinery real; compounding closed, mining open)
 - **What exists:** `ReflectionEngine::reflect(knowledge, outcome) → Option<Insight>`
   (`services/reflection/src/lib.rs:90`); `KnowledgeEngine::analyze(episodes) →
   KnowledgeRecord` + `PatternDetector` (`services/knowledge/src/lib.rs:57`);
-  experience layer (recorder/miner/replay/suggestion/timeline/metrics).
-- **Missing capability:** the closed loop — trajectory → outcome → reflection →
-  pattern → candidate procedure → **verification** → skill → registry → reuse.
-  Nothing mutates FRIDAY's own prompts/skills/registry from evidence.
+  experience layer (recorder/miner/replay/suggestion/timeline/metrics). The
+  learning loop is now CLOSED by `SkillCompiler` (§3.1 skill compounding): a
+  verified trajectory becomes a registered skill a later goal reuses.
+- **Missing capability:** automatic mining — a trajectory→`TrajectorySkill`
+  adapter that reads executed (verified) workflow journals and insight/
+  pattern records without a hand-written mapping; persistence of learned
+  skills across restarts.
 - **Inspired by:** Multica, Prime Agent, LifeOS.
-- **Plugs into:** `ReflectionEngine` + `SkillRegistry` + `skill-forge`.
+- **Plugs into:** `ReflectionEngine` + `SkillRegistry` + `SkillCompiler`.
 - **Acceptance:** one verified successful trajectory yields a reusable skill in
-  the registry, and a later goal uses it (see §3.3 skill compounding).
+  the registry, and a later goal uses it (proven — §3.1 skill compounding).
 
 #### Context builder — 🟡 (exists, depth to verify)
 - **What exists:** `ContextBuilder` assembles `AgentContext` from skills,
@@ -343,7 +375,7 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
 | **Secrets vault** | No secret store for tokens/keys. | — | permission + provider config | Secrets never appear in audit logs or memory; only capability-scoped access. |
 | **Observability (OTel/Prometheus)** | No metrics/scrape endpoint. | Vision Agents, Archestra | — | A `/metrics` endpoint exposes runtime counters a Prometheus scrape consumes. |
 | **Cost telemetry** | No per-model cost accounting ledger. | — | provider engine | Every model call is ledgered with model, tokens, cost; queryable per goal. |
-| **Skill compounding** | `skill-forge` exists but no closed loop (§3.2 reflection). | Multica, Prime Agent | `SkillRegistry` + `skill-forge` | A verified successful trajectory becomes a skill used by a later goal. |
+| **Skill compounding** | `skill-forge` exists but no closed loop (§3.2 reflection). | Multica, Prime Agent | `SkillRegistry` + `skill-forge` | A verified successful trajectory becomes a skill used by a later goal — **DONE (2026-08-11)** (`SkillCompiler`, `services/skills/src/compound.rs`; verified-only gate, `SkillSource::Learned`, `skill.compounded` with evidence trail; end-to-end test in goal-execution integration); automatic trajectory mining remains |
 
 ---
 
@@ -394,7 +426,7 @@ capability as an equal-priority feature.
 | **P2**   | **Parallel durable workflows**           | **DONE (2026-08-11)** — parallel stages + write-ahead journaling + idempotent replay + mid-agent recovery (`services/goal-execution/src/workflow.rs`) | DeepZero + OpenMontage        |
 | **P2**   | **Real World Model**                     | **DONE (2026-08-11)** — entity graph + causal edges + pure simulation (`services/goal-execution/src/causal.rs`); remaining: observed causal learning + LifeOS gap layer (#10) | ACOS architecture             |
 | **P2**   | **LifeOS-style Intent Layer**            | **DONE (2026-08-11)** — `DesiredState` → `Gap` → `Objective` → `PlanSource::GapDriven` plan (`services/goal-execution/src/intent.rs`); closing actions selected by causal simulation; remaining: user-preference routing | LifeOS                        |
-| **P2**   | **Skill Compounding Loop**               | Reflection + Skill Forge exist, but aren't closed-loop               | Multica + Prime Agent         |
+| **P2**   | **Skill Compounding Loop**               | **DONE (2026-08-11)** — `SkillCompiler` closes the loop: verified trajectory → `SkillSource::Learned` skill in the registry, reused by later goals (`services/skills/src/compound.rs`); remaining: automatic trajectory mining | Multica + Prime Agent         |
 | **P3**   | **Real Audio/Voice Sensor**              | Current perception isn't real sensing                                | Meetily                       |
 | **P3**   | **Real Vision Sensor**                   | Vision organ is genuinely absent                                     | Vision Agents                 |
 | **P3**   | **Persistent Agent Workforce**           | Requires Agent Director first                                        | Multica                       |

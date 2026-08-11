@@ -25,6 +25,14 @@ pub enum SkillEvent {
     Activated { skill_id: String, goal: String },
     /// `skill.deactivated` — a skill is no longer the active skill.
     Deactivated { skill_id: String },
+    /// `skill.compounded` — a skill was learned at runtime from a verified
+    /// trajectory (skill compounding). Carries the full learning trail — the
+    /// evidence ids that proved the trajectory, not just a count.
+    Compounded {
+        skill_id: String,
+        goal: String,
+        evidence_ids: Vec<String>,
+    },
 }
 
 /// Consumer of [`SkillEvent`]s. The registry and loader hold one sink each.

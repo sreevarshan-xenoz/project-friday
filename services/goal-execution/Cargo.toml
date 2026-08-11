@@ -23,3 +23,9 @@ uuid.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
 futures.workspace = true
+
+[dev-dependencies]
+# Skill compounding (#11): the end-to-end acceptance proves a verified
+# trajectory (goal-execution's real CodeTestVerifier) becomes a reusable
+# skill in the friday-skills registry.
+friday-skills = { path = "../skills" }
