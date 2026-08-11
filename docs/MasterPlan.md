@@ -26,7 +26,7 @@ work.
 | 5 | Real local Code/Test Verifier | 🟢 DONE | `CodeTestVerifier`: workspace + command → real execution → stdout/stderr/exit code → `checks[]` → `VerifiedResult` (`services/goal-execution/src/verifiers.rs`). First concrete verifier, **not** Sonar — plus `OutputContains`/`OutputExcludes`/`ToolSuccess` sub-verifiers; 10 tests green |
 | 6 | Evidence pipeline hardening | 🟢 DONE | AnyDoc + Web → unified `Evidence[]` → Verification → Memory. `EvidenceSet` blends both organs (dedupe + cross-channel corroboration), `EvidenceVerifier` gates the body behind the frozen `Verifier` seam, the executive publishes the verified body and consolidates it through the admission gate (`services/goal-execution/src/evidence_pipeline.rs`) |
 | 7 | Agent Director / bounded subagents | 🟢 DONE | One parent safely creates bounded children and collects **verified** results. `AgentDirector` over `AgentRuntime`: role-typed children (Researcher/Analyst/Verifier), `DirectorConfig` bounds (pool/deadline/steps), `verify()` gates every result (`default_gate`: state + summary + verifier-ran-a-step) — goal completes only when `DirectorReport::all_verified`. Wired through the real `SkillAgentDriver` (acceptance: `services/action-runtime/tests/agent_director.rs`). No persistent workforce yet (that's #16) |
-| 8 | Parallel durable workflows + agent journaling | 🟡 **NEXT** | Enhancement on existing `WorkflowCheckpoint`/`WorkflowStore`/`resume()`: parallel stages + agent journaling + idempotency + mid-agent recovery. After #7 — know the execution topology before making it durable |
+| 8 | Parallel durable workflows + agent journaling | 🟢 DONE | `WorkflowStep::stage` (bounded-concurrency map/reduce, folded exactly once), write-ahead in-flight journaling with stable FNV-1a idempotency keys (`journal_key`), idempotent replay (verified steps never re-dispatched), mid-agent recovery (`recovered` counter), engine-owned persistence (`with_store`) — `services/goal-execution/src/workflow.rs` |
 | 9 | Causal World Model | 🟡 | `WorldModel` gains causal edges + action effects + simulation (Entity → State → Relation → Cause → Action → Effect → Simulation). Not DrawDB |
 | 10 | LifeOS current→ideal/gap layer | 🔴 | Current State → Desired State → Gap → Objective → Plan (feeds the planner) |
 | 11 | Skill compounding | 🟡 | Closed loop: Experience → Reflection → Pattern → Candidate skill → **Verification** → Skill Registry → reuse. Only after #5 — verification must exist first, or FRIDAY learns garbage |
@@ -58,12 +58,13 @@ work.
    Learn → Repeat.
 
 **Current position: Gate 1 complete; #5 (real local Code/Test Verifier), #6
-(the Evidence pipeline — AnyDoc + Web → `Evidence[]` → verification → memory)
-and #7 (the Agent Director — bounded role-typed children with gated, verified
-results) are done. Gate 2 (Trustworthy Executor) is real: Planning · Execution ·
-Verification · Permissions · Audit · Durability are all wired, and Gate 3
-(Multi-Agent FRIDAY) has its first brick: the supervisor topology. Next:
-#8 parallel durable workflows + agent journaling.**
+(the Evidence pipeline — AnyDoc + Web → `Evidence[]` → verification → memory),
+#7 (the Agent Director — bounded role-typed children with gated, verified
+results) and #8 (parallel durable workflows + agent journaling) are done. Gate
+2 (Trustworthy Executor) is real: Planning · Execution · Verification ·
+Permissions · Audit · **Durability** are all wired, and Gate 3 (Multi-Agent
+FRIDAY) has its first two bricks: the supervisor topology, now made durable.
+Next: #9 — the causal World Model (entities → causes → effects → simulation).**
 
 ## Why this order (the corrections vs. the flat P0–P5 table)
 
@@ -143,6 +144,24 @@ Verification · Permissions · Audit · Durability are all wired, and Gate 3
   treats TimedOut/BudgetExhausted as failure (`merge.rs`). Constitution §2/§3
   Recursive agents → 🟢; P1 Agent Director row → DONE. Next: #8 parallel
   durable workflows + agent journaling.
+- **2026-08-11** — Parallel durable workflows + agent journaling (#8): the
+  `Workflow` trait gains `WorkflowStep::stage` (`workflow.rs:160`) — the Agent
+  Director topology made durable, bounded-concurrency children each journaling
+  + verifying independently, folded exactly once by `on_stage_completed`;
+  write-ahead in-flight journaling with stable FNV-1a idempotency keys
+  (`JournalEntry`/`journal_key`, `workflow.rs:253,312`): InFlight persisted
+  before dispatch, terminal after; verified steps never re-dispatched
+  (idempotent replay), mid-agent recovery observable via `checkpoint.recovered`;
+  engine-owned persistence through `with_store`. Reviewer-hardened: the Verified
+  entry + state fold + cursor advance persist as ONE atomic save (no fold-loss
+  window), and a fully-verified stage persists its fold eagerly (exactly-once
+  even across the crash-between-terminal-and-fold window) — locked in by
+  `durable_verified_entry_always_carries_its_fold_and_cursor` and
+  `stage_fold_is_applied_exactly_once_after_crash_before_eager_persist`.
+  `GoalEngine::execute` is now `&self` (knowledge/reflection engines
+  Mutex-wrapped) enabling true concurrent stage children. 340/340 goal-execution
+  tests green, clippy-clean. Constitution §3.2 Durable execution → 🟢 §3.1;
+  P2 row → DONE. Next: #9 causal World Model.
 - **2026-08-11** — Web fetch gateway enhancement (continues #4): a real
   Jina-style gateway provider ships behind the resolver — `jina` →
   `https://r.jina.ai/` (`JINA_READER_PREFIX`), with **percent-encoded URL

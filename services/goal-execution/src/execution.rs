@@ -9,17 +9,23 @@ use friday_knowledge::KnowledgeEngine;
 use friday_knowledge::KnowledgeRecord;
 use friday_memory::Episode;
 use friday_reflection::{Insight, Outcome, OutcomeKind, ReflectionEngine};
+use std::sync::Mutex;
 
 // ── Goal Engine ─────────────────────────────────────────────────────
 
 /// The Goal Engine — owns how an Action becomes an Outcome.
 ///
 /// **Invariant**: Every execution produces exactly one Outcome.
+///
+/// The engine is `&self`-executable: the only mutable state is the reflection /
+/// knowledge accumulation (guarded by mutexes), so a workflow can dispatch
+/// parallel stage children against one shared engine — the tool execution, the
+/// expensive and truly parallel part, needs no exclusive access.
 pub struct GoalEngine {
     pub(crate) registry: ToolRegistry,
     verification: Verification,
-    knowledge_engine: KnowledgeEngine,
-    reflection_engine: ReflectionEngine,
+    knowledge_engine: Mutex<KnowledgeEngine>,
+    reflection_engine: Mutex<ReflectionEngine>,
 }
 
 impl GoalEngine {
@@ -27,8 +33,8 @@ impl GoalEngine {
         Self {
             registry: ToolRegistry::new(),
             verification: Verification::new(),
-            knowledge_engine: KnowledgeEngine::new(),
-            reflection_engine: ReflectionEngine::new(),
+            knowledge_engine: Mutex::new(KnowledgeEngine::new()),
+            reflection_engine: Mutex::new(ReflectionEngine::new()),
         }
     }
 
@@ -43,7 +49,7 @@ impl GoalEngine {
     }
 
     pub async fn execute(
-        &mut self,
+        &self,
         goal: &Goal,
         action: &Action,
         expectation: &Expectation,
@@ -233,8 +239,10 @@ impl GoalEngine {
         episodes
     }
 
-    fn reflect(&mut self, episodes: &[Episode], outcome: &Outcome) -> Vec<Insight> {
-        let knowledge = self.knowledge_engine.analyze(episodes);
+    fn reflect(&self, episodes: &[Episode], outcome: &Outcome) -> Vec<Insight> {
+        let mut knowledge_guard = self.knowledge_engine.lock().expect("knowledge engine poisoned");
+        let knowledge = knowledge_guard.analyze(episodes);
+        let mut reflection_guard = self.reflection_engine.lock().expect("reflection engine poisoned");
 
         if knowledge.is_empty() {
             let synthetic = KnowledgeRecord {
@@ -247,18 +255,18 @@ impl GoalEngine {
                 confidence: 1.0,
                 derived_at_ms: chrono::Utc::now().timestamp_millis() as u64,
             };
-            return self.reflection_engine.reflect_all(&[synthetic], outcome);
+            return reflection_guard.reflect_all(&[synthetic], outcome);
         }
 
-        self.reflection_engine.reflect_all(&knowledge, outcome)
+        reflection_guard.reflect_all(&knowledge, outcome)
     }
 
     pub fn registry(&self) -> &ToolRegistry {
         &self.registry
     }
 
-    pub fn reflection_engine(&self) -> &ReflectionEngine {
-        &self.reflection_engine
+    pub fn reflection_engine(&self) -> std::sync::MutexGuard<'_, ReflectionEngine> {
+        self.reflection_engine.lock().expect("reflection engine poisoned")
     }
 }
 

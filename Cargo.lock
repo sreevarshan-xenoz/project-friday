@@ -1230,6 +1230,7 @@ dependencies = [
  "friday-knowledge",
  "friday-memory",
  "friday-reflection",
+ "futures",
  "serde",
  "serde_json",
  "tokio",

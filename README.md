@@ -74,8 +74,8 @@ Statuses are updated as commits land — this table is the tracker.
 | 5 | **Real local Code/Test Verifier** (`ConcreteVerifier`, before Sonar) | 🟢 DONE |
 | 6 | **Evidence pipeline: Web + Docs → Verify → Memory** | 🟢 DONE |
 | 7 | **Agent Director / bounded subagents** | 🟢 DONE |
-| 8 | **Parallel durable workflows + agent journaling** | 🟡 **NEXT** |
-| 9 | **Causal World Model** (entities → causes → effects → simulation) | 🟡 |
+| 8 | **Parallel durable workflows + agent journaling** | 🟢 DONE |
+| 9 | **Causal World Model** (entities → causes → effects → simulation) | 🟡 **NEXT** |
 | 10 | **LifeOS current→ideal/gap layer** | 🔴 |
 | 11 | **Skill compounding** (only after real verification) | 🟡 |
 | 12 | **Egress policy + Secrets vault** (before autonomy) | 🔴 |
@@ -104,10 +104,20 @@ goal completes only when every result passes the trust gate
 (`AgentDirector::verify` → `DirectorReport::all_verified`,
 `services/agent-runtime/src/director.rs`), wired through the real
 `SkillAgentDriver` (`services/action-runtime/tests/agent_director.rs`). That is
-the first step into **Gate 3 (Multi-Agent FRIDAY)**. Next unit of work: **#8 —
-parallel durable workflows + agent journaling** (enhancing the existing
-`WorkflowCheckpoint`/`WorkflowStore`/`resume()` — topology first, durability
-second).
+the first step into **Gate 3 (Multi-Agent FRIDAY)**. **#8 — parallel durable
+workflows + agent journaling — is done**: the `Workflow` trait gained a
+**parallel stage** step (`WorkflowStep::stage`) — bounded-concurrency fan-out
+(the Director topology made durable), each child journaling + verifying
+independently and folded exactly once by `on_stage_completed` — plus
+**write-ahead in-flight journaling** with stable FNV-1a idempotency keys
+(`JournalEntry`/`journal_key`): every dispatch persists InFlight before it runs
+and the terminal outcome after, so a crash resumes with explicit, observable
+recovery (`checkpoint.recovered`), verified steps are never re-dispatched, and
+a Verified entry + state fold + cursor advance land in one atomic save
+(`services/goal-execution/src/workflow.rs`; `with_store` engine-owned
+persistence over `WorkflowStore`). The Director's topology is now durable.
+Next unit of work: **#9 — the causal World Model** (entities → causes →
+effects → simulation).
 
 ### Milestone gates
 

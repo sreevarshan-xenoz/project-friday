@@ -197,22 +197,39 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
   workers whose results are collected and verified before the goal completes
   (`services/agent-runtime/tests/director.rs:28`).
 
-### 3.2 Partial (🟡)
-
-#### Durable execution — 🟡 (framework real, not crash-complete)
+#### Durable execution — 🟢 (parallel stages + write-ahead journaling + mid-agent recovery)
 - **What exists:** `WorkflowEngine` + `WorkflowCheckpoint` (serializable
-  snapshot: next_step cursor, state, approvals, attempts, full evidence trail) —
-  `services/goal-execution/src/workflow.rs:162`; `WorkflowStore` trait with
-  InMemory + Json (atomic temp+rename) stores; `resume()` continues from
-  `next_step`, verified steps never re-run; `RecoveryGraph`/`RecoveryPolicy`
-  library (`services/recovery/src/policy.rs`).
-- **Missing capability (DeepZero enhancement reference, NOT a replacement):**
-  parallel stage execution (map/reduce), finer-grained in-flight agent journaling,
-  in-flight agent crash recovery, stronger idempotency semantics.
+  snapshot: next_step cursor, state, approvals, attempts, full evidence trail,
+  append-only journal) — `services/goal-execution/src/workflow.rs:348`;
+  `WorkflowStore` trait with InMemory + Json (atomic temp+rename) stores and
+  engine-owned persistence via `WorkflowEngine::with_store`.
+  **Parallel stages (map/reduce):** the `Workflow` trait gains a stage step
+  (`WorkflowStep::stage`, `workflow.rs:160`) — bounded-concurrency fan-out
+  (the Agent Director topology made durable), per-child journaling + evidence,
+  folded exactly once by the `on_stage_completed` hook.
+  **In-flight journaling (write-ahead):** every dispatch records a stable
+  idempotency key (`JournalEntry` + FNV-1a `journal_key`, `workflow.rs:253,312`)
+  — InFlight persisted before the run, terminal outcome after; a crash resumes
+  with explicit, observable recovery (`checkpoint.recovered`) instead of a
+  silent re-run, verified steps are **never re-dispatched** (idempotent
+  replay), and a Verified entry + state fold + cursor advance land in **one
+  atomic save** (no fold-loss window). Approval-gated steps cannot be stage
+  children (rejected loudly).
+- **Missing capability:** multi-process durable workflows (cross-node
+  recovery) + finer-grained journaling of the agent's *reasoning* state —
+  additive behind the same frozen seam.
 - **Inspired by:** DeepZero, LangGraph, Temporal.
 - **Plugs into:** `Workflow` trait + `WorkflowStore` seam (frozen).
-- **Acceptance:** a simulated crash mid-run + `resume()` from a stored checkpoint
-  reproduces exactly the evidence trail, with no re-execution of verified steps.
+- **Acceptance:** a simulated crash mid-run + `resume()` from a stored
+  checkpoint reproduces exactly the evidence trail with no re-execution of
+  verified steps; a parallel stage runs with bounded concurrency, folds exactly
+  once even after a crash between terminal persist and fold persist, replays
+  verified children, and recovers in-flight ones (`workflow.rs` —
+  `parallel_stage_runs_children_with_bounded_concurrency_and_folds`,
+  `stage_fold_is_applied_exactly_once_after_crash_before_eager_persist`,
+  `engine_with_store_persists_write_ahead_before_dispatch_and_terminal_after`).
+
+### 3.2 Partial (🟡)
 
 #### World model — 🟡 (real type, not causal)
 - **What exists:** `WorldModel` with `WorldState` snapshot + immutable
@@ -330,7 +347,7 @@ capability as an equal-priority feature.
 | **P1**   | **Concrete Verification Gate**           | **Local code/test verifier DONE (2026-08-10)**; Sonar/security/evidence verifiers remain additive behind the same seam | SonarQube + existing verifier |
 | **P1**   | **Evidence/Research pipeline hardening** | **DONE (2026-08-10)** — AnyDoc + Web → unified `Evidence[]` → verification → episodic memory (`services/goal-execution/src/evidence_pipeline.rs`); remaining evidence hardening is additive | Agent-Reach + AnyDoc          |
 | **P1**   | **Agent Director / Subagents**           | **DONE (2026-08-11)** — `AgentDirector` supervisor topology (Researcher/Analyst/Verifier) with gated result collection, wired through the real `SkillAgentDriver` | Prime Agent + Multica         |
-| **P2**   | **Parallel durable workflows**           | Checkpoint/resume already exists, parallel execution is missing      | DeepZero + OpenMontage        |
+| **P2**   | **Parallel durable workflows**           | **DONE (2026-08-11)** — parallel stages + write-ahead journaling + idempotent replay + mid-agent recovery (`services/goal-execution/src/workflow.rs`) | DeepZero + OpenMontage        |
 | **P2**   | **Real World Model**                     | Current `WorldModel` is too minimal for ACOS planning                | ACOS architecture             |
 | **P2**   | **LifeOS-style Intent Layer**            | Goals exist, but current→ideal/gap reasoning is missing              | LifeOS                        |
 | **P2**   | **Skill Compounding Loop**               | Reflection + Skill Forge exist, but aren't closed-loop               | Multica + Prime Agent         |
