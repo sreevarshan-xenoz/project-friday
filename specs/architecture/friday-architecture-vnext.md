@@ -75,7 +75,7 @@ PERCEIVE → UNDERSTAND → DEFINE DESIRED STATE → PLAN → DELEGATE → EXECU
 | **Persistent agent workforce** | 🔴 Missing | Agents are ephemeral |
 | **Screen perception**          | 🟢 Implemented | Real Win32 screen sensor: foreground window identity/geometry/state + client-area pixel hash (`services/sensors/src/screen.rs`) → `Topic::Screen` events → `GlobalWorkspace` |
 | **Audio perception**           | 🟢 Implemented | Real mic sensor: WASAPI capture → energy VAD → turn detection → optional ASR seam → `Topic::TurnDetected` (`services/sensors/src/audio.rs`) |
-| **Vision organ**               | 🔴 Missing | No real vision sensor |
+| **Vision perception**         | 🟢 Implemented | Real camera sensor: Media Foundation webcam → frame diff → blob detection → optional ML seam → `Topic::ObjectDetected` (`services/sensors/src/vision.rs`) |
 | **World-model visualization**  | 🔴 Missing | No visual world-model layer |
 | **Egress policy**              | 🟢 Implemented | `EgressGate` scans every outbound prompt before it leaves; per-provider Block/Redact/LogOnly (`services/intelligence/src/egress.rs`) |
 | **Secrets vault**              | 🟢 Implemented | `SecretsVault` — values never leak through Debug/Display/Serialize; capability-scoped handles (`services/intelligence/src/secrets.rs`) |
@@ -376,6 +376,43 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
   `sensor.audio.turn`, and `real_mic_poll_is_tolerant_and_well_formed` captures
   the live mic (or degrades cleanly headless).
 
+#### Vision perception — 🟢 (camera → frame → vision model → object/event)
+- **What exists:** `CameraSensor` (`services/sensors/src/vision.rs`) closes the
+  constitution's last perception gap. **Capture:** Media Foundation
+  (`MFStartup` → `MFCreateAttributes` + `MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE`=
+  VIDCAP → `MFEnumDeviceSources` → `IMFActivate::ActivateObject` →
+  `MFCreateSourceReaderFromMediaSource`), RGB32 negotiated so frames arrive as
+  raw BGRA; `ReadSample` loops past media-type changes, packets are
+  Lock/copy/Unlock'd, dimensions resolved via `GetUINT64(MF_MT_FRAME_SIZE)`
+  (never guessed — a frame without a known size is refused). Reviewer-hardened:
+  the `MFEnumDeviceSources` array is `CoTaskMemFree`'d, and `MFShutdown` pairs
+  `MFStartup` in a `Drop` impl. **Pure vision:** `frame_diff` (BT.601 luma),
+  `motion_score`, and `changed_regions` — a deterministic connected-component
+  blob detector (4-connected BFS flood fill) producing `DetectedObject`
+  bounding boxes with confidence = changed/box-area. **Honest semantics:** the
+  first frame is a baseline and detects nothing (one frame sees nothing —
+  motion is between frames); an attached [`ObjectDetector`] ML seam (YOLO/ONNX)
+  replaces the diff path entirely — no mixed provenance, `detector: "diff"`
+  names the built-in, never a fabricated label. Events
+  (`Topic::ObjectDetected`, `sensor.vision.objects`) flow
+  `SensorLoop::poll_all_with_topics` → `GlobalWorkspace`. The whole
+  diff → blob → event path is platform-neutral and tested over synthetic
+  frames; only capture is Windows-gated (honest silence on headless/no-camera).
+- **Missing capability:** no bundled ML model (a YOLO/ONNX backend plugs into
+  the `ObjectDetector` seam); sensor not yet attached to a live runtime loop
+  (additive, same as screen/audio).
+- **Inspired by:** Vision Agents (small-specialist → event → core — only the
+  completed object event enters the workspace, never raw frames).
+- **Plugs into:** frozen `Sensor` trait + `SensorLoop` + `Topic::ObjectDetected`
+  → `GlobalWorkspace`.
+- **Acceptance:** a real sensor publishes an event to the workspace that a
+  cognitive organ consumes — proven: synthetic-frame tests drive the pure
+  diff/blob pipeline to a well-formed `ObjectDetected`
+  (`first_frame_is_baseline_and_detects_nothing`, `changed_regions_finds_one_
+  blob_with_confidence`), the sensor-loop integration test lands it under
+  `sensor.vision.objects`, the ML seam reports its own objects, and the
+  tolerant real-camera poll is shaped correctly (or silent headless).
+
 #### Egress policy + Secrets vault — 🟢 (autonomy prerequisites)
 - **What exists:** [`SecretsVault`] (`services/intelligence/src/secrets.rs`):
   a scope-keyed store (`provider`, `git`, …) whose `Secret` values are
@@ -465,7 +502,7 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
 | **Autonomous drive** | No self-directed continuous loop. Current cognitive loop is in-memory phases + proactive project briefing (`services/project-cognition/src/engine.rs:339`), not an unsupervised drive. Start with a Cognitive Tick (observe → evaluate → maybe act → sleep → repeat), then grow the decision function — not full active-inference math first. | ACOS active inference | cognitive-runtime phases + workspace events | A tick loop runs without a user goal, observes the workspace, and fires one action justified by an evidence trace. |
 | **LifeOS intent layer** | Goals exist (`goal.rs`) but no persistent user-level current→ideal state, gap/opportunity detection, priorities, constraints, or progress tracking. | **LifeOS** | planner + intent router + context builder | `desired_state − current_state` produces objectives the planner can turn into plans — **DONE (2026-08-11)** (`IntentLayer`, `services/goal-execution/src/intent.rs`; closing actions from causal simulation; `PlanSource::GapDriven`); intent routing consuming user preferences remains additive |
 | **Persistent agent workforce** | Agents are ephemeral, in-process, per-goal. No persistent worker registry, assignable task board, isolated per-agent workspaces across runs, progress/blocker reporting. | **Multica** | `AgentRuntime` + `WorkflowStore` | A worker can be assigned a task, picked up across runs, report progress/blockers, and its workspace persists. |
-| **Real perception (vision)** | Perception was synthetic RNG events, not sensing. Screen AND audio gaps are CLOSED — **DONE (2026-08-11)** (`WindowsScreenSensor`, `services/sensors/src/screen.rs`; continuous client-area pixel diff → `Topic::Screen`) and (`AudioSensor`, `services/sensors/src/audio.rs`; WASAPI mic → energy VAD → turn detection → optional ASR seam → `Topic::TurnDetected`; honest `transcript: null` without a backend). Remaining: no camera/video pipeline (vision). Small-specialist → event → core, never raw 30fps into an LLM. | **Vision Agents**, Meetily | `PerceptionEngine` → workspace events | A real sensor publishes an event to the workspace that a cognitive organ consumes (proof: one camera frame → object event; one mic stream → turn event). |
+| **Real perception** | Perception was synthetic RNG events, not sensing. ALL THREE perception organs are now CLOSED — **DONE (2026-08-11)**: Screen (`WindowsScreenSensor`, `services/sensors/src/screen.rs`; continuous client-area pixel diff → `Topic::Screen`), Audio (`AudioSensor`, `services/sensors/src/audio.rs`; WASAPI mic → VAD → turn detection → optional ASR → `Topic::TurnDetected`), Vision (`CameraSensor`, `services/sensors/src/vision.rs`; Media Foundation webcam → frame diff → blob detection → optional ML → `Topic::ObjectDetected`). Small-specialist → event → core, never raw 30fps into an LLM. | **Vision Agents**, Meetily | `PerceptionEngine` → workspace events | A real sensor publishes an event to the workspace that a cognitive organ consumes (proof: one camera frame → object event; one mic stream → turn event). |
 | **World-model visualization** | Deferred — the causal world model (§3.2) comes first; DrawDB is sugar. | DrawDB | `WorldModel` | None until causal model lands. |
 | **Egress policy / secret scan** | No "scan payload before sending to an external model" gate. Should become a global outbound-data policy, not just a coding feature. | **SonarQube CLI**, Archestra | permission engine (outbound hook) | A payload containing a detected secret is blocked/redacted before the provider call; policy is enforceable per-provider — **DONE (2026-08-11)** (`EgressGate`, `services/intelligence/src/egress.rs`, wired into `InferenceFabric`; per-provider Block/Redact/LogOnly, Block recorded on the routing decision); encrypted-at-rest vault remains |
 | **Secrets vault** | No secret store for tokens/keys. | — | permission + provider config | Secrets never appear in audit logs or memory; only capability-scoped access — **DONE (2026-08-11)** (`SecretsVault`, `services/intelligence/src/secrets.rs`; structurally redacted `Secret`, `scoped()` capability handles, `seed_from_env`); providers resolving keys FROM the vault remains |
@@ -525,7 +562,7 @@ capability as an equal-priority feature.
 | **P2**   | **Skill Compounding Loop**               | **DONE (2026-08-11)** — `SkillCompiler` closes the loop: verified trajectory → `SkillSource::Learned` skill in the registry, reused by later goals (`services/skills/src/compound.rs`); remaining: automatic trajectory mining | Multica + Prime Agent         |
 | **P3**   | **Real Screen Sensor**                  | **DONE (2026-08-11)** — `WindowsScreenSensor` real foreground-window capture + continuous pixel diff → `Topic::Screen` → workspace (`services/sensors/src/screen.rs`) | Vision Agents + Meetily       |
 | **P3**   | **Real Audio/Voice Sensor**              | **DONE (2026-08-11)** — `AudioSensor` WASAPI mic → VAD → turn detection → optional ASR → `Topic::TurnDetected` (`services/sensors/src/audio.rs`); ASR backends plug into the `SpeechToText` seam | Meetily                       |
-| **P3**   | **Real Vision Sensor**                   | Screen + audio done; vision organ genuinely absent                    | Vision Agents                 |
+| **P3**   | **Real Vision Sensor**                   | **DONE (2026-08-11)** — `CameraSensor` Media Foundation webcam → frame diff → blob detection → optional ML seam → `Topic::ObjectDetected` (`services/sensors/src/vision.rs`); ML backends plug into the `ObjectDetector` seam | Vision Agents                 |
 | **P3**   | **Persistent Agent Workforce**           | Requires Agent Director first                                        | Multica                       |
 | **P3**   | **Autonomous Cognitive Tick**            | Requires perception + world state + goals + execution + safety       | ACOS / Active Inference       |
 | **P4**   | **Walrus Memory backend**                | Existing `MemoryLayer` already solves the abstraction — backend #5, not architecture | Walrus |
