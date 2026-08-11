@@ -34,8 +34,8 @@ work.
 | 13 | Screen perception | 🟢 DONE | `WindowsScreenSensor` (`services/sensors/src/screen.rs`): real foreground-window capture (title/pid/process/bounds/state) + **continuous screen diff** (FNV-1a of client-area pixels via BitBlt+GetDIBits) → pure `Focus`/`Content` change events → `Topic::Screen` → `GlobalWorkspace` via `SensorLoop::poll_all_with_topics`. First poll emits the initial state; capture failure degrades honestly to `content_hash: None`. `PerceptionEngine::with_sensors` polls the real loop (reports the exact channels that fired) with the synthetic RNG fallback preserved |
 | 14 | Audio perception | 🟢 DONE | `AudioSensor` (`services/sensors/src/audio.rs`): WASAPI shared-mode mic capture (preferred 16 kHz mono PCM; `GetMixFormat` fallback with SubFormat GUID check) → pure energy VAD (hangover extends speech, never creates it) → pure turn detector (speech run closed by silence) → optional `SpeechToText` seam → `Topic::TurnDetected` events. Honest: `transcript: null`/`asr: null` until a real ASR backend is attached; no device → no events. Full pipeline tested end-to-end over synthetic PCM + tolerant real-mic poll |
 | 15 | Vision perception | 🟢 DONE | `CameraSensor` (`services/sensors/src/vision.rs`): Media Foundation webcam capture (RGB32 negotiated; dimensions from `MF_MT_FRAME_SIZE`, never guessed) → pure `frame_diff` (BT.601 luma) → `motion_score` → `changed_regions` connected-component blob detection → optional `ObjectDetector` ML seam → `Topic::ObjectDetected` events. Honest: first frame is a baseline (one frame sees nothing), static scenes emit nothing, `detector: "diff"` names the built-in. Full pipeline tested over synthetic frames |
-| 16 | Persistent Agent Workforce | 🔴 **NEXT** | Assignable task board, persistent per-agent workspaces — requires Agent Director (#7) first |
-| 17 | Autonomous Cognitive Tick | 🔴 | Observe → Evaluate → Decide → Act → Verify → Update State, looped. **Last** — needs perception + world model + intent + planning + director + execution + verification + security. Never a blind LLM heartbeat |
+| 16 | Persistent Agent Workforce | 🟢 DONE | `Workforce` (`services/agent-runtime/src/workforce.rs`): persistent worker registry + assignable task board over `AgentRuntime` + `WorkforceStore` (InMemory / atomic Json) — `register` (isolated workspace dir), `create_task`/`assign` (role mismatch/busy/non-open refused), FIFO `pick_up`, `run` (spec.cwd = workspace, task params; only Succeeded → Done), `report_progress`/`report_blocker` (persistent notes; blocker → Blocked), `suspend`/`resume`/`retire` (refuses Running). Acceptance: register/assign in A, progress + run in B, Done + result + workspace content in C over one Json store with the real `SkillAgentDriver` (`tests/workforce.rs`) |
+| 17 | Autonomous Cognitive Tick | 🔴 **NEXT** | Observe → Evaluate → Decide → Act → Verify → Update State, looped. **Last** — needs perception + world model + intent + planning + director + execution + verification + security. Never a blind LLM heartbeat |
 | 18 | Observability (OTel/Prometheus) | 🔴 | `/metrics` endpoint consumed by Prometheus |
 | 19 | Cost telemetry | 🔴 | Per-model cost accounting ledger, queryable per goal |
 | 20 | Walrus Memory backend | optional | Fifth backend behind the existing `MemoryLayer` abstraction — not a missing architectural capability |
@@ -91,8 +91,18 @@ triad:** `CameraSensor` (`services/sensors/src/vision.rs`) runs Media
 Foundation webcam → pure frame diff → connected-component blob detection →
 optional ML seam, publishing honest `Topic::ObjectDetected` events (first
 frame is a baseline; `detector: "diff"` never fabricates labels). Screen +
-Audio + Vision all real. Next: #16 — Persistent Agent Workforce (assignable
-task board, persistent per-agent workspaces across runs).**
+Audio + Vision all real. **#16 done — the persistent workforce is real:**
+`Workforce` (`services/agent-runtime/src/workforce.rs`) — a persistent
+worker registry + assignable task board over `AgentRuntime` + a
+`WorkforceStore` (InMemory/atomic Json): workers are registered with
+isolated workspace dirs, tasks are assigned (role-typed, FIFO pick_up), a
+run executes through the runtime with `spec.cwd` = the worker's workspace
+and only `Succeeded` yields Done (honest failures persisted), progress /
+blocker notes are recorded, and a fresh instance over the same store picks
+the work back up — proven across three instances with the real
+`SkillAgentDriver` (`tests/workforce.rs`). Next: #17 — Autonomous
+Cognitive Tick (observe → evaluate → decide → act → verify → update
+state; never a blind LLM heartbeat).**
 
 ## Why this order (the corrections vs. the flat P0–P5 table)
 
@@ -320,6 +330,38 @@ task board, persistent per-agent workspaces across runs).**
   implemented entries); §3.3 row fully DONE; P3 row → DONE. **Perception
   triad complete: Screen + Audio + Vision.** Next: #16 Persistent Agent
   Workforce.
+- **2026-08-11** — Persistent Agent Workforce (#16): the workforce is
+  durable. `services/agent-runtime/src/workforce.rs` — **`WorkforceStore`**
+  (the `WorkflowStore`-shape seam: save/load/list; `InMemoryWorkforceStore` +
+  `JsonWorkforceStore` with atomic temp+rename, one file per record);
+  **`WorkerRecord`** (id/role/description/status/current_task/workspace) and
+  **`BoardTask`** (title/goal/required_role/status/assignee/capability
+  params/progress/blockers/persisted `AgentResult`) are the registry and the
+  board. **`Workforce`**: `register` (isolated workspace dir created),
+  `create_task`/`assign` (role mismatch, busy worker, non-Open task all
+  refused), `pick_up` (FIFO over the board by role), `run` (executes the
+  assigned task through `AgentRuntime` with `spec.cwd` = the worker's
+  workspace + task params; only `Succeeded` → `Done`, every other terminal
+  state → `Failed` with the honest result persisted; worker back to Idle),
+  `report_progress`/`report_blocker` (persistent notes; blocker flips the
+  task `Blocked`, resolvable), `suspend`/`resume` (keeps the assigned task),
+  `retire` (refuses Running — the reviewer-caught state hole where a
+  mid-flight run would resurrect a retired worker — and releases its task
+  back to Open). Ids derive from the store (never a per-instance counter),
+  so two instances can't collide. Reviewer-hardened: dead test code removed,
+  returned records are the persisted ones (same timestamps), `pick_up`
+  returns the post-assignment record. **Acceptance (the constitution's own
+  words):** a worker is assigned a task, picked up across runs, reports
+  progress/blockers, and its workspace persists — proven across three
+  `Workforce` instances over one Json store with the **real
+  `SkillAgentDriver`** + kernel: register/assign in A, progress + run in B
+  (real `docs.search` executes), Done task + result + workspace content
+  visible in C (`services/agent-runtime/tests/workforce.rs`). 11 workforce
+  unit tests + 2 real-driver acceptance tests; agent-runtime 29 lib + 21
+  integration green, clippy-clean, dependents clean. `AgentRole` now derives
+  Serialize/Deserialize (lowercase form) for persisted records. Constitution
+  Persistent agent workforce 🔴 → 🟢 §2/§3.1 (16 implemented entries); §3.3
+  row → DONE; P3 row → DONE. Next: #17 Autonomous Cognitive Tick.
 - **2026-08-11** — Audio perception (#14): the audio organ is real.
   `services/sensors/src/audio.rs` — **capture**: WASAPI shared-mode
   (`CoCreateInstance` MMDeviceEnumerator → `GetDefaultAudioEndpoint`
