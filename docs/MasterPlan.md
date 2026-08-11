@@ -27,7 +27,7 @@ work.
 | 6 | Evidence pipeline hardening | 🟢 DONE | AnyDoc + Web → unified `Evidence[]` → Verification → Memory. `EvidenceSet` blends both organs (dedupe + cross-channel corroboration), `EvidenceVerifier` gates the body behind the frozen `Verifier` seam, the executive publishes the verified body and consolidates it through the admission gate (`services/goal-execution/src/evidence_pipeline.rs`) |
 | 7 | Agent Director / bounded subagents | 🟢 DONE | One parent safely creates bounded children and collects **verified** results. `AgentDirector` over `AgentRuntime`: role-typed children (Researcher/Analyst/Verifier), `DirectorConfig` bounds (pool/deadline/steps), `verify()` gates every result (`default_gate`: state + summary + verifier-ran-a-step) — goal completes only when `DirectorReport::all_verified`. Wired through the real `SkillAgentDriver` (acceptance: `services/action-runtime/tests/agent_director.rs`). No persistent workforce yet (that's #16) |
 | 8 | Parallel durable workflows + agent journaling | 🟢 DONE | `WorkflowStep::stage` (bounded-concurrency map/reduce, folded exactly once), write-ahead in-flight journaling with stable FNV-1a idempotency keys (`journal_key`), idempotent replay (verified steps never re-dispatched), mid-agent recovery (`recovered` counter), engine-owned persistence (`with_store`) — `services/goal-execution/src/workflow.rs` |
-| 9 | Causal World Model | 🟡 | `WorldModel` gains causal edges + action effects + simulation (Entity → State → Relation → Cause → Action → Effect → Simulation). Not DrawDB |
+| 9 | Causal World Model | 🟢 DONE | Entity graph + causal edges + typed effects + pure deterministic simulation (`CausalModel::simulate` — "if action A runs, S→S'"): `services/goal-execution/src/causal.rs`. `WorldModel::simulate`/`apply_simulation` close the predict→commit loop (stale projections refused); `find_missing_capability_prerequisites` reflects the entity graph |
 | 10 | LifeOS current→ideal/gap layer | 🔴 | Current State → Desired State → Gap → Objective → Plan (feeds the planner) |
 | 11 | Skill compounding | 🟡 | Closed loop: Experience → Reflection → Pattern → Candidate skill → **Verification** → Skill Registry → reuse. Only after #5 — verification must exist first, or FRIDAY learns garbage |
 | 12 | Egress policy + Secrets vault | 🔴 | Outbound-data gate ("can this secret leave the machine? which provider receives it?") + secrets vault — **before autonomy** (autonomy without egress controls is backwards engineering) |
@@ -60,11 +60,15 @@ work.
 **Current position: Gate 1 complete; #5 (real local Code/Test Verifier), #6
 (the Evidence pipeline — AnyDoc + Web → `Evidence[]` → verification → memory),
 #7 (the Agent Director — bounded role-typed children with gated, verified
-results) and #8 (parallel durable workflows + agent journaling) are done. Gate
-2 (Trustworthy Executor) is real: Planning · Execution · Verification ·
-Permissions · Audit · **Durability** are all wired, and Gate 3 (Multi-Agent
-FRIDAY) has its first two bricks: the supervisor topology, now made durable.
-Next: #9 — the causal World Model (entities → causes → effects → simulation).**
+results), #8 (parallel durable workflows + agent journaling) and #9 (the
+causal World Model — entity graph + causal edges + pure simulation) are done.
+Gate 2 (Trustworthy Executor) is real: Planning · Execution · Verification ·
+Permissions · Audit · **Durability** are all wired, Gate 3 (Multi-Agent
+FRIDAY) has its first two bricks (the supervisor topology, made durable), and
+Gate 4 (World-Aware FRIDAY) has its foundation: the world model can now
+predict "if action A runs, S→S'". Next: #10 — the LifeOS current→ideal/gap
+layer (Current State → Desired State → Gap → Objective → Plan, feeding the
+planner).**
 
 ## Why this order (the corrections vs. the flat P0–P5 table)
 
@@ -162,6 +166,29 @@ Next: #9 — the causal World Model (entities → causes → effects → simulat
   Mutex-wrapped) enabling true concurrent stage children. 340/340 goal-execution
   tests green, clippy-clean. Constitution §3.2 Durable execution → 🟢 §3.1;
   P2 row → DONE. Next: #9 causal World Model.
+- **2026-08-11** — Causal World Model (#9): `services/goal-execution/src/
+  causal.rs` adds the causal seam the constitution called the largest cognitive
+  gap. **Entity graph** (`Entity` id/kind/properties, upsert-by-id;
+  `EntityRelation`s; `causal.rs:43`) is the grounded instance layer;
+  **CausalEdge** (action → effects, gated by `CausalCondition`
+  EntityExists/EntityInState/All/Any/Always; `causal.rs:103,224`) is the
+  cause→effect rule; **typed effects** (EntityCreated/Removed/StateChanged,
+  VariableSet, FileCreated; `causal.rs:169`) touch both the entity graph and
+  the world state. **Simulation is pure + deterministic**
+  (`CausalModel::simulate`, `causal.rs:379`): the first applicable edge fires,
+  its effects project S' (world + entities) on clones — the acceptance "if
+  action A runs, state S changes to S'" with counterfactual purity.
+  `WorldModel::simulate`/`apply_simulation` (`world.rs:423,433`) close the
+  predict→commit loop and refuse **stale projections** (source_world guard).
+  `find_missing_capability_prerequisites` now reflects the entity graph — an
+  observed `GitRepository` entity satisfies `git.commit` without a `.git` path
+  (`world.rs:494`). 11 causal unit tests + 3 integration acceptance tests
+  (`causal_edge_answers_if_action_runs_state_changes`,
+  `apply_simulation_commits_the_projected_state` incl. stale-refusal,
+  `missing_prerequisites_reflect_the_entity_graph`); 351 lib + 15 integration
+  green, clippy-clean. `WorldState`/components now derive `PartialEq` (staleness
+  guard). Constitution World model → 🟢 §3.1; P2 row → DONE. Next: #10 LifeOS
+  current→ideal/gap layer.
 - **2026-08-11** — Web fetch gateway enhancement (continues #4): a real
   Jina-style gateway provider ships behind the resolver — `jina` →
   `https://r.jina.ai/` (`JINA_READER_PREFIX`), with **percent-encoded URL

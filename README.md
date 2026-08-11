@@ -75,8 +75,8 @@ Statuses are updated as commits land — this table is the tracker.
 | 6 | **Evidence pipeline: Web + Docs → Verify → Memory** | 🟢 DONE |
 | 7 | **Agent Director / bounded subagents** | 🟢 DONE |
 | 8 | **Parallel durable workflows + agent journaling** | 🟢 DONE |
-| 9 | **Causal World Model** (entities → causes → effects → simulation) | 🟡 **NEXT** |
-| 10 | **LifeOS current→ideal/gap layer** | 🔴 |
+| 9 | **Causal World Model** (entities → causes → effects → simulation) | 🟢 DONE |
+| 10 | **LifeOS current→ideal/gap layer** | 🔴 **NEXT** |
 | 11 | **Skill compounding** (only after real verification) | 🟡 |
 | 12 | **Egress policy + Secrets vault** (before autonomy) | 🔴 |
 | 13 | Screen perception | 🔴 |
@@ -116,8 +116,18 @@ recovery (`checkpoint.recovered`), verified steps are never re-dispatched, and
 a Verified entry + state fold + cursor advance land in one atomic save
 (`services/goal-execution/src/workflow.rs`; `with_store` engine-owned
 persistence over `WorkflowStore`). The Director's topology is now durable.
-Next unit of work: **#9 — the causal World Model** (entities → causes →
-effects → simulation).
+**#9 — the causal World Model — is done**: the `WorldModel` now carries a
+**causal layer** (`services/goal-execution/src/causal.rs`) — a grounded
+**entity graph** (`Entity` id/kind/properties + relations), typed **causal
+edges** (action → effects gated by `CausalCondition`), and **pure
+simulation** (`CausalModel::simulate`): the first applicable edge fires and its
+effects project S' — answering exactly "if action A runs, state S changes to
+S'" without touching the real model (counterfactual). `WorldModel::simulate` /
+`apply_simulation` close the predict→commit loop with a stale-projection guard,
+and `find_missing_capability_prerequisites` now reflects the **entity graph** —
+an observed `GitRepository` entity satisfies `git.commit` with no `.git` path.
+Next unit of work: **#10 — the LifeOS current→ideal/gap layer** (Current State
+→ Desired State → Gap → Objective → Plan, feeding the planner).
 
 ### Milestone gates
 

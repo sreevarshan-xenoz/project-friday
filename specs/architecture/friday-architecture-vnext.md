@@ -65,7 +65,7 @@ PERCEIVE → UNDERSTAND → DEFINE DESIRED STATE → PLAN → DELEGATE → EXECU
 | **Web resolver**                | 🟢 Wired | BindingResolver → health-gated provider fallback (`services/capabilities/src/resolver.rs:31`); `web.search` **and** `web.fetch` routed end-to-end through the evidence seam — resolver → Action Runtime → normalized `Evidence[]` (`services/goal-execution/src/web_evidence.rs:129`; acceptance: search fallback at `web_evidence.rs:736`, fetch fallback at `web_evidence.rs:806`). Fetch now ships a **real gateway provider** — `jina` → `https://r.jina.ai/` with percent-encoded URL composition (`compose_gateway_url`, `web_evidence.rs:141`; gateway wins never leak the composed URL into evidence — the canonical target survives). Jina is the production fetch primary with `direct` as the health-gated fallback (`services/mobile/src/goal_runner.rs:567`). The whole Web organ is wired |
 | **Durable execution**          | 🟡 Partial | Checkpoint/resume exists; no full crash-safe agent journaling |
 | **Verification**               | 🟢 Implemented | Real framework **+ first concrete verifier**: `CodeTestVerifier` — workspace + command → real exit code/stdout/stderr → inspectable `checks[]` → `VerifiedResult` (`services/goal-execution/src/verifiers.rs:61,226,274`); FAILED-marker-blocks-false-success acceptance (`verifiers.rs:416`). Sonar/security/evidence verifiers remain additive behind the same seam |
-| **World model**                | 🟡 Partial | Real type exists; far from a causal world model |
+| **World model**                | 🟢 Implemented | Entity graph + causal edges + pure simulation ("if A runs, S→S'") — `services/goal-execution/src/causal.rs:43,224,311` |
 | **Cognitive planner**          | 🟡 Partial | Real planner; not yet the world-model-driven cognitive planner |
 | **Reflection**                 | 🟡 Partial | Real machinery; no closed self-improvement loop |
 | **Context builder**            | 🟡 Partial | Infrastructure exists; integration depth needs verification |
@@ -229,23 +229,39 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
   `stage_fold_is_applied_exactly_once_after_crash_before_eager_persist`,
   `engine_with_store_persists_write_ahead_before_dispatch_and_terminal_after`).
 
-### 3.2 Partial (🟡)
-
-#### World model — 🟡 (real type, not causal)
+#### World model — 🟢 (entity graph + causal edges + simulation)
 - **What exists:** `WorldModel` with `WorldState` snapshot + immutable
-  `StateTransition` history + embedded `KnowledgeGraph` (Requires/Creates edges);
-  precondition checks, transition recording
-  (`services/goal-execution/src/world.rs:296,361`); `KnowledgeGraph` triple store
-  with Cognee API (remember/recall/improve/forget) — `services/knowledge/src/graph.rs:95`.
-- **Missing capability (the largest gap — NOT visualization):** causal world
-  model = entity graph + environmental state + relations + **causal edges** +
-  action effects + simulation/counterfactuals. DrawDB-style visualization is
-  sugar, deferred until the model is real.
+  `StateTransition` history + embedded `KnowledgeGraph` (Requires/Creates edges)
+  + the **causal layer** (`causal.rs`): a grounded **entity graph** (`Entity`
+  id/kind/properties + `EntityRelation`s, `causal.rs:43`), typed **causal
+  edges** (`CausalEdge`: action → effects gated by `CausalCondition`
+  EntityExists/EntityInState/All/Any/Always, `causal.rs:103,224`) and typed
+  **effects** (EntityCreated/Removed/StateChanged, VariableSet, FileCreated,
+  `causal.rs:169`). **Simulation is pure and deterministic**
+  (`CausalModel::simulate`, `causal.rs:379`): the first applicable edge fires
+  and its effects project S' (world + entities) without touching the model —
+  exactly "if action A runs, state S changes to S'". `WorldModel::simulate` /
+  `apply_simulation` (`world.rs:423,433`) close the predict→commit loop with a
+  **stale-projection guard** (a sim derived from an older world is refused), and
+  `find_missing_capability_prerequisites` now reflects the **entity graph** — an
+  observed `GitRepository` entity satisfies `git.commit` without any `.git` path
+  (`world.rs:494`).
+- **Missing capability (still NOT visualization):** self-observed causal
+  learning (edges mined from executed transitions — that's #11 skill
+  compounding), multi-entity counterfactual chains, and the LifeOS
+  current→ideal/gap layer (#10) that consumes these edges for planning.
+  DrawDB-style visualization stays sugar, deferred.
 - **Inspired by:** Cognee, DrawDB (visualization only, later), ACOS world model.
 - **Plugs into:** `WorldModel` struct + `KnowledgeGraph` (M5.6 contract).
-- **Acceptance:** a causal edge answers "if action A runs, state S changes to S'";
-  `find_missing_capability_prerequisites` reflects real state, not just static
-  graph; `Planning::think()` appends prerequisite steps into the task graph.
+- **Acceptance:** a causal edge answers "if action A runs, state S changes to
+  S'" (proven with counterfactual purity in
+  `services/goal-execution/tests/integration.rs` — `causal_edge_answers_if_
+  action_runs_state_changes`); `find_missing_capability_prerequisites` reflects
+  real state, not just static graph (`missing_prerequisites_reflect_the_
+  entity_graph`); `apply_simulation` commits S' + an audit transition and
+  refuses stale projections.
+
+### 3.2 Partial (🟡)
 
 #### Cognitive planner — 🟡 (real, not yet world-model-driven)
 - **What exists:** full intent → plan → execute → verify pipeline: intent
@@ -348,7 +364,7 @@ capability as an equal-priority feature.
 | **P1**   | **Evidence/Research pipeline hardening** | **DONE (2026-08-10)** — AnyDoc + Web → unified `Evidence[]` → verification → episodic memory (`services/goal-execution/src/evidence_pipeline.rs`); remaining evidence hardening is additive | Agent-Reach + AnyDoc          |
 | **P1**   | **Agent Director / Subagents**           | **DONE (2026-08-11)** — `AgentDirector` supervisor topology (Researcher/Analyst/Verifier) with gated result collection, wired through the real `SkillAgentDriver` | Prime Agent + Multica         |
 | **P2**   | **Parallel durable workflows**           | **DONE (2026-08-11)** — parallel stages + write-ahead journaling + idempotent replay + mid-agent recovery (`services/goal-execution/src/workflow.rs`) | DeepZero + OpenMontage        |
-| **P2**   | **Real World Model**                     | Current `WorldModel` is too minimal for ACOS planning                | ACOS architecture             |
+| **P2**   | **Real World Model**                     | **DONE (2026-08-11)** — entity graph + causal edges + pure simulation (`services/goal-execution/src/causal.rs`); remaining: observed causal learning + LifeOS gap layer (#10) | ACOS architecture             |
 | **P2**   | **LifeOS-style Intent Layer**            | Goals exist, but current→ideal/gap reasoning is missing              | LifeOS                        |
 | **P2**   | **Skill Compounding Loop**               | Reflection + Skill Forge exist, but aren't closed-loop               | Multica + Prime Agent         |
 | **P3**   | **Real Audio/Voice Sensor**              | Current perception isn't real sensing                                | Meetily                       |

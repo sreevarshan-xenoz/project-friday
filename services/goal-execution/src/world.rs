@@ -1,5 +1,6 @@
 use crate::common::Capability;
 use crate::confidence::Confidence;
+use crate::causal::{CausalModel, CausalSimulation};
 use friday_knowledge::KnowledgeGraph;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -25,7 +26,7 @@ use std::collections::HashMap;
 /// Planning reasons against WorldState instead of raw knowledge.
 /// This lets the planner ask: "Given what exists right now,
 /// what's the best plan?"
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct WorldState {
     /// Current working directory.
     pub working_directory: Option<String>,
@@ -50,7 +51,7 @@ pub struct WorldState {
 }
 
 /// Metadata about a file.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileMeta {
     pub path: String,
     pub exists: bool,
@@ -60,7 +61,7 @@ pub struct FileMeta {
 }
 
 /// Information about a running process.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProcessInfo {
     pub pid: u32,
     pub name: String,
@@ -68,7 +69,7 @@ pub struct ProcessInfo {
 }
 
 /// Progress within a mission.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MissionProgress {
     pub mission_id: String,
     pub total_goals: usize,
@@ -351,18 +352,23 @@ impl StateTransition {
 ///   state:     WorldState        (current snapshot)
 ///   history:   Vec<StateTransition>  (immutable audit trail)
 ///   knowledge: KnowledgeGraph    (semantic facts: Requires / Creates edges)
+///   causal:    CausalModel       (entity graph + cause→effect edges + simulation)
 /// ```
 ///
 /// The World Model is the single source of truth for environment state.
 /// Actions declare preconditions; the model checks them before execution.
 /// After execution, postconditions are applied and a transition is recorded.
 /// The seeded knowledge graph lets the planner ask "what must exist before
-/// `git.commit` runs?" against the state (M5.6 planner integration).
+/// `git.commit` runs?" against the state (M5.6 planner integration); the
+/// causal model answers "if `git.commit` runs, what does the state become?"
+/// (synthesis Phase 4 — simulation/counterfactuals).
 pub struct WorldModel {
     state: WorldState,
     history: Vec<StateTransition>,
     /// Semantic relationship layer (seeded with the M5.6 ontology).
     knowledge: KnowledgeGraph,
+    /// Causal layer: grounded entity graph + cause→effect edges + simulation.
+    causal: CausalModel,
 }
 
 impl WorldModel {
@@ -371,6 +377,7 @@ impl WorldModel {
             state: initial,
             history: Vec::new(),
             knowledge: KnowledgeGraph::new(),
+            causal: CausalModel::new(),
         }
     }
 
@@ -398,6 +405,55 @@ impl WorldModel {
     pub fn with_knowledge(mut self, knowledge: KnowledgeGraph) -> Self {
         self.knowledge = knowledge;
         self
+    }
+
+    /// The causal layer — grounded entity graph + causal edges.
+    pub fn causal(&self) -> &CausalModel {
+        &self.causal
+    }
+
+    /// Mutable access to the causal layer (observe entities, teach edges).
+    pub fn causal_mut(&mut self) -> &mut CausalModel {
+        &mut self.causal
+    }
+
+    /// Simulate *"if `action` runs now, what changes?"* — the counterfactual
+    /// projection. Pure: the model and current state are untouched; the result
+    /// carries the projected world state and entity graph (S').
+    pub fn simulate(&self, action: &Capability) -> CausalSimulation {
+        self.causal.simulate(action, &self.state)
+    }
+
+    /// Commit a simulation's projection as the real state: adopt S' (world
+    /// state + entity graph) and record an audit transition. Returns `None`
+    /// when the simulation was inapplicable, and refuses a **stale** projection
+    /// whose `source_world` no longer matches the current state — adopting a
+    /// prediction derived from an older world would silently clobber newer
+    /// state. Simulate immediately before applying.
+    pub fn apply_simulation(
+        &mut self,
+        action_id: impl Into<String>,
+        goal_id: impl Into<String>,
+        sim: &CausalSimulation,
+    ) -> Option<StateTransition> {
+        if !sim.applicable {
+            return None;
+        }
+        if sim.source_world != self.state {
+            return None;
+        }
+        let before = self.state.clone();
+        let transition = StateTransition::new(
+            action_id,
+            goal_id,
+            before,
+            sim.projected_world.clone(),
+            &[],
+        );
+        self.state = sim.projected_world.clone();
+        self.causal.entities = sim.projected_entities.clone();
+        self.history.push(transition.clone());
+        Some(transition)
     }
 
     /// The planner-facing gate (M5.6): what does `capability` require that the
@@ -431,6 +487,12 @@ impl WorldModel {
             .any(|p| p == ".git" || p.starts_with(".git/") || p.ends_with("/.git"))
         {
             active.push("GitRepository".into());
+        }
+        // The causal layer's grounded entity graph is real, observed state:
+        // every entity kind present satisfies a prerequisite the file-path
+        // heuristic cannot see (e.g. an explicitly modeled GitRepository).
+        for entity in &self.causal.entities {
+            active.push(entity.kind.clone());
         }
         let refs: Vec<&str> = active.iter().map(|s| s.as_str()).collect();
         self.knowledge.find_missing_preconditions(capability, &refs)

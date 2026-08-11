@@ -316,3 +316,140 @@ async fn goal_engine_produces_cognitive_trace() {
     let display = report.cognitive_trace.display();
     assert!(display.contains("Goal:"));
 }
+
+// ── Causal World Model (synthesis Phase 4) ──────────────────────────
+
+use friday_goal_execution::{
+    CausalCondition, CausalEdge, CausalEffect, Entity, EntityRelation,
+};
+
+/// The causal acceptance: a causal edge answers "if action A runs, state S
+/// changes to S'". The model stays pure; the projection carries S'.
+#[test]
+fn causal_edge_answers_if_action_runs_state_changes() {
+    let mut model = WorldModel::new(WorldState::new().with_variable("head", serde_json::json!("old")));
+    model.causal_mut().add_entity(
+        Entity::new("repo:project-friday", "GitRepository").with_state("clean"),
+    );
+    model.causal_mut().add_relation(EntityRelation::new(
+        "repo:project-friday",
+        "hosts",
+        "branch:dev",
+    ));
+    model.causal_mut().add_edge(CausalEdge::new(
+        "git.commit->commit",
+        Capability::Custom("git.commit".into()),
+        CausalCondition::EntityExists {
+            kind: "GitRepository".into(),
+        },
+        vec![
+            CausalEffect::VariableSet {
+                key: "head".into(),
+                value: serde_json::json!("abc123"),
+            },
+            CausalEffect::EntityStateChanged {
+                entity_id: "repo:project-friday".into(),
+                to: "committed".into(),
+            },
+        ],
+    ));
+
+    // S → S': predict what git.commit does WITHOUT running it.
+    let sim = model.simulate(&Capability::Custom("git.commit".into()));
+    assert!(sim.applicable, "unmet: {:?}", sim.unmet);
+    assert_eq!(sim.fired_edge.as_deref(), Some("git.commit->commit"));
+    assert_eq!(sim.projected_world.variables["head"], serde_json::json!("abc123"));
+    assert_eq!(
+        sim.projected_entities
+            .iter()
+            .find(|e| e.id == "repo:project-friday")
+            .unwrap()
+            .state(),
+        Some("committed")
+    );
+
+    // Counterfactual purity: the model did not move.
+    assert_eq!(model.state().variables["head"], serde_json::json!("old"));
+    assert_eq!(
+        model.causal().entity("repo:project-friday").unwrap().state(),
+        Some("clean")
+    );
+    assert_eq!(model.causal().relations.len(), 1);
+}
+
+/// Committing a projection adopts S' as the real state and records an audit
+/// transition — the causal loop closes: predict → execute → commit.
+#[test]
+fn apply_simulation_commits_the_projected_state() {
+    let mut model = WorldModel::new(WorldState::new());
+    model.causal_mut().add_entity(Entity::new("repo:x", "GitRepository"));
+    model.causal_mut().add_edge(CausalEdge::new(
+        "init",
+        Capability::Custom("git.init".into()),
+        CausalCondition::Always,
+        vec![CausalEffect::FileCreated {
+            path: "/work/.git/config".into(),
+        }],
+    ));
+
+    let sim = model.simulate(&Capability::Custom("git.init".into()));
+    assert!(sim.applicable);
+    assert!(sim.projected_world.file_exists("/work/.git/config"));
+
+    // Simulated adoption: the state really becomes S'.
+    assert!(!model.state().file_exists("/work/.git/config"));
+    let transition = model
+        .apply_simulation("act_1", "goal_1", &sim)
+        .expect("applicable simulation commits");
+    assert!(model.state().file_exists("/work/.git/config"));
+    assert_eq!(transition.diff.added_files, vec!["/work/.git/config".to_string()]);
+    assert_eq!(model.history().len(), 1);
+
+    // An inapplicable simulation commits nothing — and its projection is the
+    // unchanged state, not an empty world.
+    let no_fire = model.simulate(&Capability::Custom("web.search".into()));
+    assert!(!no_fire.applicable);
+    assert!(
+        no_fire.projected_world.file_exists("/work/.git/config"),
+        "inapplicable projection carries the input state, not a blank world"
+    );
+    assert!(model.apply_simulation("act_2", "goal_1", &no_fire).is_none());
+    assert_eq!(model.history().len(), 1, "nothing adopted");
+
+    // A STALE projection (derived from an older world) is refused: committing
+    // it would silently clobber the current state.
+    let stale = model.simulate(&Capability::Custom("git.init".into()));
+    assert!(stale.applicable);
+    model.set_variable("moved", serde_json::json!(true)); // world advanced
+    assert!(
+        model.apply_simulation("act_3", "goal_1", &stale).is_none(),
+        "stale projection must not be committed"
+    );
+    assert_eq!(model.history().len(), 1, "no transition from stale commit");
+}
+
+/// `find_missing_capability_prerequisites` reflects the causal layer's
+/// grounded entity graph, not just the file-path heuristic.
+#[test]
+fn missing_prerequisites_reflect_the_entity_graph() {
+    // A GitRepository entity in the causal layer satisfies git.commit even
+    // though no `.git` file path is present in the world state.
+    // (`KnowledgeGraph::new()` already seeds the ontology.)
+    let mut model = WorldModel::new(WorldState::new());
+    model
+        .causal_mut()
+        .add_entity(Entity::new("repo:x", "GitRepository"));
+    assert!(
+        model
+            .find_missing_capability_prerequisites("git.commit")
+            .is_empty(),
+        "entity graph satisfies the prerequisite"
+    );
+
+    // Without the entity, the missing prerequisite is reported as before.
+    let bare = WorldModel::new(WorldState::new());
+    assert_eq!(
+        bare.find_missing_capability_prerequisites("git.commit"),
+        vec!["GitRepository".to_string()]
+    );
+}
