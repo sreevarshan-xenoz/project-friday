@@ -28,8 +28,8 @@ work.
 | 7 | Agent Director / bounded subagents | 🟢 DONE | One parent safely creates bounded children and collects **verified** results. `AgentDirector` over `AgentRuntime`: role-typed children (Researcher/Analyst/Verifier), `DirectorConfig` bounds (pool/deadline/steps), `verify()` gates every result (`default_gate`: state + summary + verifier-ran-a-step) — goal completes only when `DirectorReport::all_verified`. Wired through the real `SkillAgentDriver` (acceptance: `services/action-runtime/tests/agent_director.rs`). No persistent workforce yet (that's #16) |
 | 8 | Parallel durable workflows + agent journaling | 🟢 DONE | `WorkflowStep::stage` (bounded-concurrency map/reduce, folded exactly once), write-ahead in-flight journaling with stable FNV-1a idempotency keys (`journal_key`), idempotent replay (verified steps never re-dispatched), mid-agent recovery (`recovered` counter), engine-owned persistence (`with_store`) — `services/goal-execution/src/workflow.rs` |
 | 9 | Causal World Model | 🟢 DONE | Entity graph + causal edges + typed effects + pure deterministic simulation (`CausalModel::simulate` — "if action A runs, S→S'"): `services/goal-execution/src/causal.rs`. `WorldModel::simulate`/`apply_simulation` close the predict→commit loop (stale projections refused); `find_missing_capability_prerequisites` reflects the entity graph |
-| 10 | LifeOS current→ideal/gap layer | 🔴 | Current State → Desired State → Gap → Objective → Plan (feeds the planner) |
-| 11 | Skill compounding | 🟡 | Closed loop: Experience → Reflection → Pattern → Candidate skill → **Verification** → Skill Registry → reuse. Only after #5 — verification must exist first, or FRIDAY learns garbage |
+| 10 | LifeOS current→ideal/gap layer | 🟢 DONE | `DesiredState` (declarative ideal over entities/files/tools with All/Any algebra) evaluated against world state + causal entity graph → `Gap` (unmet conditions) → `Objective` whose closing actions come from **causal simulation** (an action closes the gap only when its projection satisfies the ideal — never execution) → `IntentLayer::plan` feeds the objective into the planner producing `PlanSource::GapDriven` plans — `services/goal-execution/src/intent.rs`. Honest: a closed gap yields no objective/plan |
+| 11 | Skill compounding | 🟡 **NEXT** | Closed loop: Experience → Reflection → Pattern → Candidate skill → **Verification** → Skill Registry → reuse. Only after #5 — verification must exist first, or FRIDAY learns garbage |
 | 12 | Egress policy + Secrets vault | 🔴 | Outbound-data gate ("can this secret leave the machine? which provider receives it?") + secrets vault — **before autonomy** (autonomy without egress controls is backwards engineering) |
 | 13 | Screen perception | 🔴 | observe UI → understand → act → verify; no camera hardware needed, so it comes first |
 | 14 | Audio perception | 🔴 | mic → VAD → ASR → speaker/turn event |
@@ -67,8 +67,10 @@ Permissions · Audit · **Durability** are all wired, Gate 3 (Multi-Agent
 FRIDAY) has its first two bricks (the supervisor topology, made durable), and
 Gate 4 (World-Aware FRIDAY) has its foundation: the world model can now
 predict "if action A runs, S→S'". Next: #10 — the LifeOS current→ideal/gap
-layer (Current State → Desired State → Gap → Objective → Plan, feeding the
-planner).**
+layer done — the intent layer turns `desired_state − current_state` into an
+Objective whose closing actions come from causal simulation, and the planner
+consumes it as `PlanSource::GapDriven` plans. Next: #11 skill compounding (the
+closed loop that turns verified trajectories into reusable skills).**
 
 ## Why this order (the corrections vs. the flat P0–P5 table)
 
@@ -189,6 +191,29 @@ planner).**
   green, clippy-clean. `WorldState`/components now derive `PartialEq` (staleness
   guard). Constitution World model → 🟢 §3.1; P2 row → DONE. Next: #10 LifeOS
   current→ideal/gap layer.
+- **2026-08-11** — LifeOS intent layer (#10): `services/goal-execution/src/
+  intent.rs` makes current→ideal/gap real. **DesiredState** (`intent.rs:44`) —
+  a declarative ideal (entity exists / entity in state / entity property /
+  file exists / tool available, with All/Any algebra; empty `Any` is never
+  satisfied, empty `All` vacuously true) — is evaluated against the **world
+  state + causal entity graph** (pure `evaluate`, `intent.rs`). **Gap** =
+  `desired_state − current_state` with per-condition unmet reasons
+  (`intent.rs:76,187`). **Objective** (`intent.rs:221`) carries the **closing
+  actions** — every modeled causal edge is simulated (`CausalModel::simulate`)
+  and an action is proposed only when its **projection** satisfies the ideal:
+  the counterfactual, never execution. **IntentLayer** (`intent.rs:247`):
+  `analyze` → `objective` → `plan`; `plan` feeds the objective into
+  `PlanningContext` and injects `PlanSource::GapDriven` candidates
+  (`planning.rs:67`) that compete under `PlanEvaluator` — a plan is generated
+  *from* a desired-state gap, not only from a one-shot goal string. Honesty
+  rule: a closed gap yields no objective and no plan; an open gap with no
+  modeled closing action says so and leaves the planner to explore. 14 intent
+  unit tests + 3 integration acceptance tests
+  (`intent_gap_closes_after_committing_the_proposed_action`,
+  `plan_is_generated_from_a_desired_state_gap`,
+  `closed_desired_state_yields_no_objective_or_plan`); 364 lib + 18
+  integration green, clippy-clean. Constitution LifeOS → 🟢 §3.1; P2 row →
+  DONE. Next: #11 skill compounding.
 - **2026-08-11** — Web fetch gateway enhancement (continues #4): a real
   Jina-style gateway provider ships behind the resolver — `jina` →
   `https://r.jina.ai/` (`JINA_READER_PREFIX`), with **percent-encoded URL

@@ -320,7 +320,8 @@ async fn goal_engine_produces_cognitive_trace() {
 // ── Causal World Model (synthesis Phase 4) ──────────────────────────
 
 use friday_goal_execution::{
-    CausalCondition, CausalEdge, CausalEffect, Entity, EntityRelation,
+    CausalCondition, CausalEdge, CausalEffect, DesiredState, Entity, EntityRelation, IntentLayer,
+    PlanSource,
 };
 
 /// The causal acceptance: a causal edge answers "if action A runs, state S
@@ -452,4 +453,96 @@ fn missing_prerequisites_reflect_the_entity_graph() {
         bare.find_missing_capability_prerequisites("git.commit"),
         vec!["GitRepository".to_string()]
     );
+}
+
+// ── LifeOS intent layer (#10): desired → gap → objective → plan ──
+
+/// The LifeOS loop at the public API: a desired state with an open gap yields
+/// an objective whose closing action (from the causal model's projection)
+/// really closes the gap once committed.
+#[test]
+fn intent_gap_closes_after_committing_the_proposed_action() {
+    let mut model = WorldModel::new(WorldState::new());
+    model.causal_mut().add_edge(CausalEdge::new(
+        "e:git.init",
+        Capability::Custom("git.init".into()),
+        CausalCondition::Always,
+        vec![CausalEffect::EntityCreated(Entity::new(
+            "repo:work",
+            "GitRepository",
+        ))],
+    ));
+    let desired = DesiredState::EntityExists {
+        kind: "GitRepository".into(),
+    };
+
+    let layer = IntentLayer::new();
+    let gap = layer.analyze(&model, &desired);
+    assert!(!gap.is_closed(), "ideal not yet reached: {}", gap.describe());
+
+    let objective = layer.objective(&model, &desired).expect("open gap → objective");
+    assert_eq!(
+        objective.closing_actions,
+        vec![Capability::Custom("git.init".into())],
+        "the modeled action whose projection closes the gap"
+    );
+
+    let sim = model.simulate(&objective.closing_actions[0]);
+    assert!(model.apply_simulation("git.init", "goal_1", &sim).is_some());
+    assert!(
+        layer.analyze(&model, &desired).is_closed(),
+        "committing the closing action reaches the ideal"
+    );
+}
+
+/// Constitution acceptance (§3.2 Cognitive planner): a plan can be generated
+/// *from* a desired-state gap — not only from a one-shot goal string. The
+/// plan's provenance is `PlanSource::GapDriven` and its action is the closing
+/// capability.
+#[test]
+fn plan_is_generated_from_a_desired_state_gap() {
+    let mut model = WorldModel::new(WorldState::new());
+    model.causal_mut().add_edge(CausalEdge::new(
+        "e:git.init",
+        Capability::Custom("git.init".into()),
+        CausalCondition::Always,
+        vec![CausalEffect::EntityCreated(Entity::new(
+            "repo:work",
+            "GitRepository",
+        ))],
+    ));
+    let desired = DesiredState::EntityExists {
+        kind: "GitRepository".into(),
+    };
+
+    let layer = IntentLayer::new();
+    let planning = Planning::new();
+    let ranked = layer
+        .plan(&planning, &model, &desired)
+        .expect("open gap yields a plan");
+
+    assert_eq!(ranked.plan.source, PlanSource::GapDriven);
+    assert_eq!(ranked.plan.action_count(), 1);
+    assert_eq!(
+        ranked.plan.actions[0].capability,
+        Capability::Custom("git.init".into())
+    );
+}
+
+/// Honesty rule: a satisfied ideal produces neither an objective nor a plan —
+/// the intent layer never invents busywork.
+#[test]
+fn closed_desired_state_yields_no_objective_or_plan() {
+    let mut model = WorldModel::new(WorldState::new());
+    model
+        .causal_mut()
+        .add_entity(Entity::new("repo:work", "GitRepository"));
+    let desired = DesiredState::EntityExists {
+        kind: "GitRepository".into(),
+    };
+
+    let layer = IntentLayer::new();
+    assert!(layer.analyze(&model, &desired).is_closed());
+    assert!(layer.objective(&model, &desired).is_none());
+    assert!(layer.plan(&Planning::new(), &model, &desired).is_none());
 }

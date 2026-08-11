@@ -94,6 +94,8 @@ pub mod world;
 pub use world::*;
 pub mod causal;
 pub use causal::*;
+pub mod intent;
+pub use intent::*;
 pub mod trace;
 pub use trace::*;
 pub mod planning;

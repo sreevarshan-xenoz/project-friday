@@ -76,8 +76,8 @@ Statuses are updated as commits land — this table is the tracker.
 | 7 | **Agent Director / bounded subagents** | 🟢 DONE |
 | 8 | **Parallel durable workflows + agent journaling** | 🟢 DONE |
 | 9 | **Causal World Model** (entities → causes → effects → simulation) | 🟢 DONE |
-| 10 | **LifeOS current→ideal/gap layer** | 🔴 **NEXT** |
-| 11 | **Skill compounding** (only after real verification) | 🟡 |
+| 10 | **LifeOS current→ideal/gap layer** (Current → Desired → Gap → Objective → Plan) | 🟢 DONE |
+| 11 | **Skill compounding** (only after real verification) | 🟡 **NEXT** |
 | 12 | **Egress policy + Secrets vault** (before autonomy) | 🔴 |
 | 13 | Screen perception | 🔴 |
 | 14 | Audio perception | 🔴 |
@@ -126,8 +126,17 @@ S'" without touching the real model (counterfactual). `WorldModel::simulate` /
 `apply_simulation` close the predict→commit loop with a stale-projection guard,
 and `find_missing_capability_prerequisites` now reflects the **entity graph** —
 an observed `GitRepository` entity satisfies `git.commit` with no `.git` path.
-Next unit of work: **#10 — the LifeOS current→ideal/gap layer** (Current State
-→ Desired State → Gap → Objective → Plan, feeding the planner).
+**#10 is done:** the LifeOS intent layer (`services/goal-execution/src/intent.rs`)
+makes current→ideal real — a declarative `DesiredState` is evaluated against
+the world state + causal entity graph, the open `Gap` becomes an `Objective`
+whose closing actions are chosen by **causal simulation** (an action closes the
+gap only when its projection satisfies the ideal, never execution), and
+`IntentLayer::plan` feeds the objective into the planner producing
+`PlanSource::GapDriven` plans. A closed gap yields nothing — the layer never
+invents busywork.
+Next unit of work: **#11 — skill compounding** (closed loop: Experience →
+Reflection → Pattern → Candidate skill → **Verification** → Skill Registry →
+reuse).
 
 ### Milestone gates
 

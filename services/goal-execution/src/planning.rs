@@ -60,6 +60,11 @@ pub enum PlanSource {
     /// Generated from an investigation plan: evidence gathering precedes
     /// execution (M7 — the planner consumes the Investigation Engine).
     Investigation,
+    /// Generated from a desired-state gap — the LifeOS intent layer turned
+    /// `desired_state − current_state` into an objective and a closing action
+    /// (the plan's actions are the causal edges whose projection closes the
+    /// gap).
+    GapDriven,
     /// Custom source.
     Custom(String),
 }

@@ -71,7 +71,7 @@ PERCEIVE → UNDERSTAND → DEFINE DESIRED STATE → PLAN → DELEGATE → EXECU
 | **Context builder**            | 🟡 Partial | Infrastructure exists; integration depth needs verification |
 | **Recursive agents / Agent Director** | 🟢 Implemented | Supervisor topology over `AgentRuntime`: role-typed bounded children (Researcher/Analyst/Verifier), results gated — a run completes only when `DirectorReport::all_verified` (`services/agent-runtime/src/director.rs:54,197,342`); wired through the real `SkillAgentDriver` (`services/action-runtime/tests/agent_director.rs:119`) |
 | **Autonomous drive**           | 🔴 Missing | No genuine self-directed continuous loop |
-| **LifeOS intent layer**        | 🔴 Missing | Goals exist; current→ideal / gap reasoning doesn't |
+| **LifeOS intent layer**        | 🟢 Implemented | `DesiredState` → `Gap` → `Objective` → plan (`intent.rs`); closing actions come from causal simulation, never execution |
 | **Persistent agent workforce** | 🔴 Missing | Agents are ephemeral |
 | **Real perception**            | 🔴 Missing | Perception is simulation, not actual sensing |
 | **Audio organ**                | 🔴 Missing | No real audio sensor |
@@ -248,9 +248,9 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
   (`world.rs:494`).
 - **Missing capability (still NOT visualization):** self-observed causal
   learning (edges mined from executed transitions — that's #11 skill
-  compounding), multi-entity counterfactual chains, and the LifeOS
-  current→ideal/gap layer (#10) that consumes these edges for planning.
-  DrawDB-style visualization stays sugar, deferred.
+  compounding) and multi-entity counterfactual chains. The LifeOS
+  current→ideal/gap layer (#10) now consumes these edges for planning — see
+  §3.1 LifeOS intent layer. DrawDB-style visualization stays sugar, deferred.
 - **Inspired by:** Cognee, DrawDB (visualization only, later), ACOS world model.
 - **Plugs into:** `WorldModel` struct + `KnowledgeGraph` (M5.6 contract).
 - **Acceptance:** a causal edge answers "if action A runs, state S changes to
@@ -261,20 +261,48 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
   entity_graph`); `apply_simulation` commits S' + an audit transition and
   refuses stale projections.
 
+#### LifeOS intent layer — 🟢 (current→ideal/gap now real)
+- **What exists:** `DesiredState` (declarative ideal: entity exists / entity in
+  state / entity property / file exists / tool available, with `All`/`Any`
+  algebra; `intent.rs:44`), `Gap` = `desired_state − current_state` with per-
+  condition unmet reasons (`intent.rs:76,187`), `Objective` whose **closing
+  actions come from the causal model** — every modeled edge is simulated, and
+  an action closes the gap only when its **projection** (never execution)
+  satisfies the ideal (`intent.rs:221`); `IntentLayer::analyze → objective →
+  plan` (`intent.rs:247,256,269,308`). `plan` feeds the objective into
+  `PlanningContext` and injects `PlanSource::GapDriven` candidates that
+  compete under `PlanEvaluator` (`planning.rs:67`) — a plan is generated
+  *from* a desired-state gap, not only from a one-shot goal string.
+- **Missing capability:** user-level preference/priority sources driving
+  intent routing; self-observed gap history (what gaps recur). The layer
+  itself is honest: a closed gap yields no objective and no plan.
+- **Inspired by:** LifeOS.
+- **Plugs into:** `WorldModel` (state + causal graph) + `Planning` / `PlanEvaluator`.
+- **Acceptance:** `desired_state − current_state` produces objectives the
+  planner can turn into plans (proven in
+  `services/goal-execution/tests/integration.rs` — `plan_is_generated_from_a_
+  desired_state_gap`); committing the proposed closing action really closes
+  the gap (`intent_gap_closes_after_committing_the_proposed_action`); a
+  satisfied ideal produces nothing (`closed_desired_state_yields_no_objective_
+  or_plan`).
+
 ### 3.2 Partial (🟡)
 
-#### Cognitive planner — 🟡 (real, not yet world-model-driven)
+#### Cognitive planner — 🟡 (real; gap-driven planning now feeds it)
 - **What exists:** full intent → plan → execute → verify pipeline: intent
   parser/classifier, `PlannerRouter` (llm/rule/backend), `TaskGraph`, dispatcher/
   executor/scheduler/supervisor, capability registry, persistence, experience
-  replay — `planner/src`. Most complete subsystem.
-- **Missing capability:** planning driven by the world model's causal edges +
-  gap analysis (current state → desired state), i.e. the LifeOS intent layer
-  feeding the planner.
+  replay — `planner/src`. Most complete subsystem. The LifeOS intent layer
+  (§3.1) now generates plans *from* desired-state gaps at the goal-execution
+  level (`IntentLayer::plan`, `services/goal-execution/src/intent.rs:308`).
+- **Missing capability:** wiring the frozen `friday-planner` public API to
+  consume `Objective`s directly (its `PlannerRouter` still takes one-shot goal
+  strings); LLM-classified desired states instead of hand-built `DesiredState`.
 - **Inspired by:** LifeOS, Google ADK.
 - **Plugs into:** friday-planner public API (frozen).
 - **Acceptance:** a plan can be generated *from* a desired-state gap, not only
-  from a one-shot goal string.
+  from a one-shot goal string (proven at the goal-execution level — §3.1
+  LifeOS intent layer).
 
 #### Reflection — 🟡 (machinery real, loop unclosed)
 - **What exists:** `ReflectionEngine::reflect(knowledge, outcome) → Option<Insight>`
@@ -307,7 +335,7 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
 |---|---|---|---|---|
 
 | **Autonomous drive** | No self-directed continuous loop. Current cognitive loop is in-memory phases + proactive project briefing (`services/project-cognition/src/engine.rs:339`), not an unsupervised drive. Start with a Cognitive Tick (observe → evaluate → maybe act → sleep → repeat), then grow the decision function — not full active-inference math first. | ACOS active inference | cognitive-runtime phases + workspace events | A tick loop runs without a user goal, observes the workspace, and fires one action justified by an evidence trace. |
-| **LifeOS intent layer** | Goals exist (`goal.rs`) but no persistent user-level current→ideal state, gap/opportunity detection, priorities, constraints, or progress tracking. | **LifeOS** | planner + intent router + context builder | `desired_state − current_state` produces objectives the planner can turn into plans; intent routing consumes user preferences. |
+| **LifeOS intent layer** | Goals exist (`goal.rs`) but no persistent user-level current→ideal state, gap/opportunity detection, priorities, constraints, or progress tracking. | **LifeOS** | planner + intent router + context builder | `desired_state − current_state` produces objectives the planner can turn into plans — **DONE (2026-08-11)** (`IntentLayer`, `services/goal-execution/src/intent.rs`; closing actions from causal simulation; `PlanSource::GapDriven`); intent routing consuming user preferences remains additive |
 | **Persistent agent workforce** | Agents are ephemeral, in-process, per-goal. No persistent worker registry, assignable task board, isolated per-agent workspaces across runs, progress/blocker reporting. | **Multica** | `AgentRuntime` + `WorkflowStore` | A worker can be assigned a task, picked up across runs, report progress/blockers, and its workspace persists. |
 | **Real perception (vision/audio/screen)** | Perception is synthetic RNG events (`services/engines/perception/src/lib.rs:14`), not sensing. No camera/video pipeline, no VAD/ASR/diarization/turn detection, no continuous screen diff. Small-specialist → event → core, never raw 30fps into an LLM. | **Vision Agents**, Meetily | `PerceptionEngine` → workspace events | A real sensor publishes an event to the workspace that a cognitive organ consumes (proof: one camera frame → object event; one mic stream → turn event). |
 | **World-model visualization** | Deferred — the causal world model (§3.2) comes first; DrawDB is sugar. | DrawDB | `WorldModel` | None until causal model lands. |
@@ -365,7 +393,7 @@ capability as an equal-priority feature.
 | **P1**   | **Agent Director / Subagents**           | **DONE (2026-08-11)** — `AgentDirector` supervisor topology (Researcher/Analyst/Verifier) with gated result collection, wired through the real `SkillAgentDriver` | Prime Agent + Multica         |
 | **P2**   | **Parallel durable workflows**           | **DONE (2026-08-11)** — parallel stages + write-ahead journaling + idempotent replay + mid-agent recovery (`services/goal-execution/src/workflow.rs`) | DeepZero + OpenMontage        |
 | **P2**   | **Real World Model**                     | **DONE (2026-08-11)** — entity graph + causal edges + pure simulation (`services/goal-execution/src/causal.rs`); remaining: observed causal learning + LifeOS gap layer (#10) | ACOS architecture             |
-| **P2**   | **LifeOS-style Intent Layer**            | Goals exist, but current→ideal/gap reasoning is missing              | LifeOS                        |
+| **P2**   | **LifeOS-style Intent Layer**            | **DONE (2026-08-11)** — `DesiredState` → `Gap` → `Objective` → `PlanSource::GapDriven` plan (`services/goal-execution/src/intent.rs`); closing actions selected by causal simulation; remaining: user-preference routing | LifeOS                        |
 | **P2**   | **Skill Compounding Loop**               | Reflection + Skill Forge exist, but aren't closed-loop               | Multica + Prime Agent         |
 | **P3**   | **Real Audio/Voice Sensor**              | Current perception isn't real sensing                                | Meetily                       |
 | **P3**   | **Real Vision Sensor**                   | Vision organ is genuinely absent                                     | Vision Agents                 |
