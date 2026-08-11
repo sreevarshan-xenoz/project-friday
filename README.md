@@ -73,8 +73,8 @@ Statuses are updated as commits land — this table is the tracker.
 | 4 | `web.fetch` resolver wiring (normalized fetch `Evidence[]`) | 🟢 DONE |
 | 5 | **Real local Code/Test Verifier** (`ConcreteVerifier`, before Sonar) | 🟢 DONE |
 | 6 | **Evidence pipeline: Web + Docs → Verify → Memory** | 🟢 DONE |
-| 7 | **Agent Director / bounded subagents** | 🔴 **NEXT** |
-| 8 | **Parallel durable workflows + agent journaling** | 🟡 |
+| 7 | **Agent Director / bounded subagents** | 🟢 DONE |
+| 8 | **Parallel durable workflows + agent journaling** | 🟡 **NEXT** |
 | 9 | **Causal World Model** (entities → causes → effects → simulation) | 🟡 |
 | 10 | **LifeOS current→ideal/gap layer** | 🔴 |
 | 11 | **Skill compounding** (only after real verification) | 🟡 |
@@ -98,9 +98,16 @@ command run → inspectable `checks[]`; a failed check is `Failed`, never
 + Web → unified `Evidence[]` → `EvidenceVerifier` → episodic memory
 (`evidence_pipeline.rs`). That closes the core of **Gate 2 (Trustworthy
 Executor)** — Planning · Execution · **Verification** · Permissions · Audit ·
-Durability are all real. Next unit of work: **#7 — the Agent Director**
-(bounded subagents with verified results), the first step into **Gate 3
-(Multi-Agent FRIDAY)**.
+Durability are all real. **#7 — the Agent Director — is done**: one parent
+spawns bounded, role-typed children (Researcher / Analyst / Verifier) and the
+goal completes only when every result passes the trust gate
+(`AgentDirector::verify` → `DirectorReport::all_verified`,
+`services/agent-runtime/src/director.rs`), wired through the real
+`SkillAgentDriver` (`services/action-runtime/tests/agent_director.rs`). That is
+the first step into **Gate 3 (Multi-Agent FRIDAY)**. Next unit of work: **#8 —
+parallel durable workflows + agent journaling** (enhancing the existing
+`WorkflowCheckpoint`/`WorkflowStore`/`resume()` — topology first, durability
+second).
 
 ### Milestone gates
 

@@ -25,8 +25,8 @@ work.
 | 4 | `web.fetch` resolver wiring | 🟢 DONE | Resolver-backed fetch tool (`ResolvingWebTool::for_web`/`for_web_fetch`) with fallback tests + normalized fetch evidence; Web resolver row fully 🟢 in the constitution |
 | 5 | Real local Code/Test Verifier | 🟢 DONE | `CodeTestVerifier`: workspace + command → real execution → stdout/stderr/exit code → `checks[]` → `VerifiedResult` (`services/goal-execution/src/verifiers.rs`). First concrete verifier, **not** Sonar — plus `OutputContains`/`OutputExcludes`/`ToolSuccess` sub-verifiers; 10 tests green |
 | 6 | Evidence pipeline hardening | 🟢 DONE | AnyDoc + Web → unified `Evidence[]` → Verification → Memory. `EvidenceSet` blends both organs (dedupe + cross-channel corroboration), `EvidenceVerifier` gates the body behind the frozen `Verifier` seam, the executive publishes the verified body and consolidates it through the admission gate (`services/goal-execution/src/evidence_pipeline.rs`) |
-| 7 | Agent Director / bounded subagents | 🔴 **NEXT** | One parent safely creates bounded children and collects **verified** results. First topology: Director → Researcher / Analyst / Verifier. No persistent workforce yet |
-| 8 | Parallel durable workflows + agent journaling | 🟡 | Enhancement on existing `WorkflowCheckpoint`/`WorkflowStore`/`resume()`: parallel stages + agent journaling + idempotency + mid-agent recovery. After #7 — know the execution topology before making it durable |
+| 7 | Agent Director / bounded subagents | 🟢 DONE | One parent safely creates bounded children and collects **verified** results. `AgentDirector` over `AgentRuntime`: role-typed children (Researcher/Analyst/Verifier), `DirectorConfig` bounds (pool/deadline/steps), `verify()` gates every result (`default_gate`: state + summary + verifier-ran-a-step) — goal completes only when `DirectorReport::all_verified`. Wired through the real `SkillAgentDriver` (acceptance: `services/action-runtime/tests/agent_director.rs`). No persistent workforce yet (that's #16) |
+| 8 | Parallel durable workflows + agent journaling | 🟡 **NEXT** | Enhancement on existing `WorkflowCheckpoint`/`WorkflowStore`/`resume()`: parallel stages + agent journaling + idempotency + mid-agent recovery. After #7 — know the execution topology before making it durable |
 | 9 | Causal World Model | 🟡 | `WorldModel` gains causal edges + action effects + simulation (Entity → State → Relation → Cause → Action → Effect → Simulation). Not DrawDB |
 | 10 | LifeOS current→ideal/gap layer | 🔴 | Current State → Desired State → Gap → Objective → Plan (feeds the planner) |
 | 11 | Skill compounding | 🟡 | Closed loop: Experience → Reflection → Pattern → Candidate skill → **Verification** → Skill Registry → reuse. Only after #5 — verification must exist first, or FRIDAY learns garbage |
@@ -57,12 +57,13 @@ work.
 7. 🟢 Gate 7 — **Autonomous FRIDAY**: Observe → Reason → Decide → Act → Verify →
    Learn → Repeat.
 
-**Current position: Gate 1 complete; #5 (real local Code/Test Verifier) and #6
+**Current position: Gate 1 complete; #5 (real local Code/Test Verifier), #6
 (the Evidence pipeline — AnyDoc + Web → `Evidence[]` → verification → memory)
-are done. Gate 2 (Trustworthy Executor) is substantially real: Planning ·
-Execution · Verification · Permissions · Audit · Durability are all wired. Next:
-#7 the Agent Director (bounded subagents with verified results), first step
-into Gate 3 (Multi-Agent FRIDAY).**
+and #7 (the Agent Director — bounded role-typed children with gated, verified
+results) are done. Gate 2 (Trustworthy Executor) is real: Planning · Execution ·
+Verification · Permissions · Audit · Durability are all wired, and Gate 3
+(Multi-Agent FRIDAY) has its first brick: the supervisor topology. Next:
+#8 parallel durable workflows + agent journaling.**
 
 ## Why this order (the corrections vs. the flat P0–P5 table)
 
@@ -129,3 +130,16 @@ into Gate 3 (Multi-Agent FRIDAY).**
   `evidence_pipeline_blends_web_and_docs_into_verified_memory`,
   `executive.rs`). Constitution P1 evidence row → DONE. Next: #7 the Agent
   Director.
+- **2026-08-11** — Item #7 Agent Director / bounded subagents 🟢 DONE
+  (`services/agent-runtime/src/director.rs`): the supervisor topology above
+  `AgentRuntime` — role-typed bounded children (Researcher/Analyst/Verifier,
+  `DirectorConfig` pool/deadline/steps), `spawn`/`assign`/`supervise`/`cancel`/
+  `collect`/`terminate`/`verify`; every result runs the parent's `ResultGate`
+  (`default_gate`) and the goal completes only when
+  `DirectorReport::all_verified`. Real-driver acceptance proves the capability
+  (`services/action-runtime/tests/agent_director.rs`): Researcher (docs) +
+  Verifier (git) through `SkillAgentDriver` + real kernel are both verified,
+  and an unapproved verifier blocks the run. `MergedReport::all_succeeded` now
+  treats TimedOut/BudgetExhausted as failure (`merge.rs`). Constitution §2/§3
+  Recursive agents → 🟢; P1 Agent Director row → DONE. Next: #8 parallel
+  durable workflows + agent journaling.

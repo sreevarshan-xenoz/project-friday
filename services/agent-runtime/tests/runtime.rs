@@ -37,9 +37,6 @@ async fn spawn_completes_and_reports_state() {
     assert_eq!(result.state, AgentState::Succeeded);
     assert_eq!(result.summary, "checked git status");
     assert_eq!(result.steps.len(), 1);
-    // Duration is best-effort metadata; an instant driver may legitimately
-    // report 0 ms.
-    assert!(result.duration_ms >= 0);
 }
 
 #[tokio::test]

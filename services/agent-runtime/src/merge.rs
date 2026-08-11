@@ -19,10 +19,12 @@ pub struct MergedReport {
 }
 
 impl MergedReport {
-    /// `true` when at least one worker ran and none failed, was cancelled,
-    /// timed out, or hit a budget wall.
+    /// `true` when at least one worker ran and **every** worker reached
+    /// [`AgentState::Succeeded`]. `Succeeded` is the only success: a worker
+    /// that failed, was cancelled, timed out, or hit a budget wall makes this
+    /// `false`.
     pub fn all_succeeded(&self) -> bool {
-        !self.agents.is_empty() && self.failed == 0 && self.cancelled == 0
+        !self.agents.is_empty() && self.agents.iter().all(|a| a.state.is_success())
     }
 
     /// One human/planner-readable line per worker.
@@ -86,5 +88,31 @@ mod tests {
 
         let all_ok = merge(vec![AgentResult::succeeded("a", "ok", vec![])]);
         assert!(all_ok.all_succeeded());
+    }
+
+    #[test]
+    fn aborted_workers_block_all_succeeded() {
+        use crate::context::AgentAbort;
+        let timed_out = AgentResult::aborted(
+            "slow",
+            AgentAbort::TimedOut,
+            "late",
+            vec![],
+            5000,
+        );
+        let report = merge(vec![AgentResult::succeeded("a", "ok", vec![]), timed_out]);
+        assert!(
+            !report.all_succeeded(),
+            "a timed-out worker is not success"
+        );
+
+        let budget = AgentResult::aborted(
+            "stepper",
+            AgentAbort::BudgetExhausted,
+            "budget",
+            vec![],
+            0,
+        );
+        assert!(!merge(vec![budget]).all_succeeded());
     }
 }

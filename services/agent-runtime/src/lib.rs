@@ -21,6 +21,7 @@
 pub mod budget;
 pub mod cancellation;
 pub mod context;
+pub mod director;
 pub mod driver;
 pub mod handle;
 pub mod merge;
@@ -31,6 +32,10 @@ pub mod spec;
 pub use budget::{BudgetLimits, BudgetTracker};
 pub use cancellation::CancellationToken;
 pub use context::{AgentAbort, AgentContext};
+pub use director::{
+    default_gate, AgentDirector, AgentRole, DirectedAgent, DirectorConfig, DirectorEntry,
+    DirectorReport, ResultGate, Verdict,
+};
 pub use driver::{AgentDriver, AsyncFnDriver, FnDriver};
 pub use handle::AgentHandle;
 pub use merge::{merge, MergedReport};

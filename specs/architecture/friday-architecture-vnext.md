@@ -69,7 +69,7 @@ PERCEIVE → UNDERSTAND → DEFINE DESIRED STATE → PLAN → DELEGATE → EXECU
 | **Cognitive planner**          | 🟡 Partial | Real planner; not yet the world-model-driven cognitive planner |
 | **Reflection**                 | 🟡 Partial | Real machinery; no closed self-improvement loop |
 | **Context builder**            | 🟡 Partial | Infrastructure exists; integration depth needs verification |
-| **Recursive agents**           | 🔴 Missing | No real child-agent spawning architecture |
+| **Recursive agents / Agent Director** | 🟢 Implemented | Supervisor topology over `AgentRuntime`: role-typed bounded children (Researcher/Analyst/Verifier), results gated — a run completes only when `DirectorReport::all_verified` (`services/agent-runtime/src/director.rs:54,197,342`); wired through the real `SkillAgentDriver` (`services/action-runtime/tests/agent_director.rs:119`) |
 | **Autonomous drive**           | 🔴 Missing | No genuine self-directed continuous loop |
 | **LifeOS intent layer**        | 🔴 Missing | Goals exist; current→ideal / gap reasoning doesn't |
 | **Persistent agent workforce** | 🔴 Missing | Agents are ephemeral |
@@ -175,6 +175,28 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
   `VerifiedResult` whose `checks` are inspectable; a failed check is recorded
   `Failed`, never `Verified`.
 
+#### Agent Director — 🟢 (supervisor topology over AgentRuntime)
+- **What exists:** `AgentDirector` supervisor above `AgentRuntime` — role-typed
+  children (`AgentRole` Researcher/Analyst/Verifier,
+  `services/agent-runtime/src/director.rs:54`), bounded by `DirectorConfig`
+  (pool cap / deadline / step budget, `director.rs:93`), with the method set
+  `spawn`/`assign`/`supervise`/`cancel`/`collect`/`terminate`/`verify`
+  (`director.rs:249,274,300,309`). Results are gated by a `ResultGate`
+  (`default_gate`: state + non-empty summary + verifier-ran-a-step,
+  `director.rs:342`); a run completes only when `DirectorReport::all_verified`
+  (`director.rs:147`). `MergedReport::all_succeeded` treats TimedOut /
+  BudgetExhausted as failure (`merge.rs:26`). **Wired with the real driver:**
+  acceptance runs `SkillAgentDriver` + the real kernel through the director —
+  Researcher (docs) + Verifier (git) both verified, and an unapproved verifier
+  blocks the run (`services/action-runtime/tests/agent_director.rs:119`).
+- **Missing capability:** persistent workforce (suspend/resume, assignable task
+  board, per-agent workspaces across runs) — deferred to the P3 step by design.
+- **Inspired by:** Prime Agent, Multica, Google ADK.
+- **Plugs into:** `AgentRuntime` + `AgentDriver` seam.
+- **Acceptance:** a goal can be decomposed into a director spawning bounded
+  workers whose results are collected and verified before the goal completes
+  (`services/agent-runtime/tests/director.rs:28`).
+
 ### 3.2 Partial (🟡)
 
 #### Durable execution — 🟡 (framework real, not crash-complete)
@@ -250,7 +272,7 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
 
 | Missing capability | Why it matters | Inspired by | Plugs into (frozen seam) | Acceptance |
 |---|---|---|---|---|
-| **Recursive agents / Agent Director** | `AgentRuntime` primitives exist (`spawn`/`spawn_many`/await/cancel — `services/agent-runtime/src/runtime.rs:67`), but no hierarchical spawn architecture (Researcher → {Web, GitHub, Doc} sub-agents), no supervisor topology. | Prime Agent, Multica | `AgentRuntime` + `AgentDriver` | A goal can be decomposed into a director spawning bounded workers whose results are collected and verified before the goal completes. |
+
 | **Autonomous drive** | No self-directed continuous loop. Current cognitive loop is in-memory phases + proactive project briefing (`services/project-cognition/src/engine.rs:339`), not an unsupervised drive. Start with a Cognitive Tick (observe → evaluate → maybe act → sleep → repeat), then grow the decision function — not full active-inference math first. | ACOS active inference | cognitive-runtime phases + workspace events | A tick loop runs without a user goal, observes the workspace, and fires one action justified by an evidence trace. |
 | **LifeOS intent layer** | Goals exist (`goal.rs`) but no persistent user-level current→ideal state, gap/opportunity detection, priorities, constraints, or progress tracking. | **LifeOS** | planner + intent router + context builder | `desired_state − current_state` produces objectives the planner can turn into plans; intent routing consumes user preferences. |
 | **Persistent agent workforce** | Agents are ephemeral, in-process, per-goal. No persistent worker registry, assignable task board, isolated per-agent workspaces across runs, progress/blocker reporting. | **Multica** | `AgentRuntime` + `WorkflowStore` | A worker can be assigned a task, picked up across runs, report progress/blockers, and its workspace persists. |
@@ -307,7 +329,7 @@ capability as an equal-priority feature.
 | **P0**   | **Rust-native Web Resolver**             | Web resolver wired end-to-end (`web.search` + `web.fetch`) — **DONE (2026-08-10)** | Agent-Reach                   |
 | **P1**   | **Concrete Verification Gate**           | **Local code/test verifier DONE (2026-08-10)**; Sonar/security/evidence verifiers remain additive behind the same seam | SonarQube + existing verifier |
 | **P1**   | **Evidence/Research pipeline hardening** | **DONE (2026-08-10)** — AnyDoc + Web → unified `Evidence[]` → verification → episodic memory (`services/goal-execution/src/evidence_pipeline.rs`); remaining evidence hardening is additive | Agent-Reach + AnyDoc          |
-| **P1**   | **Agent Director / Subagents**           | Actual recursive/child-agent mechanism is missing                    | Prime Agent + Multica         |
+| **P1**   | **Agent Director / Subagents**           | **DONE (2026-08-11)** — `AgentDirector` supervisor topology (Researcher/Analyst/Verifier) with gated result collection, wired through the real `SkillAgentDriver` | Prime Agent + Multica         |
 | **P2**   | **Parallel durable workflows**           | Checkpoint/resume already exists, parallel execution is missing      | DeepZero + OpenMontage        |
 | **P2**   | **Real World Model**                     | Current `WorldModel` is too minimal for ACOS planning                | ACOS architecture             |
 | **P2**   | **LifeOS-style Intent Layer**            | Goals exist, but current→ideal/gap reasoning is missing              | LifeOS                        |
