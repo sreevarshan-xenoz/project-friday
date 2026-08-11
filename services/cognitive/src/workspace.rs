@@ -22,6 +22,11 @@ pub enum Topic {
     /// duration/frames and a transcript only when an ASR backend was attached
     /// (honest: no backend → no transcript, never a hallucinated one).
     TurnDetected,
+    /// Objects detected by the vision sensor — Media Foundation webcam → frame
+    /// diff → blob detection (or an ML seam) → bounding boxes with confidence.
+    /// `detector` names the model: "diff" (built-in) or the attached ML
+    /// backend. The first frame is a baseline and detects nothing.
+    ObjectDetected,
     ClipboardChanged,
     CpuUsage,
     Mouse,
@@ -71,6 +76,7 @@ impl<'de> serde::Deserialize<'de> for Topic {
                     }
                     "Screen" | "sensor.screen" => Topic::Screen,
                     "TurnDetected" | "sensor.audio.turn" => Topic::TurnDetected,
+                    "ObjectDetected" | "sensor.vision.objects" => Topic::ObjectDetected,
                     "WindowCurrent" | "sensor.window.current" => Topic::WindowCurrent,
                     "ClipboardChanged" | "sensor.clipboard.changed" => Topic::ClipboardChanged,
                     "CpuUsage" | "sensor.cpu.usage" => Topic::CpuUsage,
@@ -115,6 +121,7 @@ impl Topic {
             Self::WindowFocusChanged => "sensor.window.focus_changed".into(),
             Self::Screen => "sensor.screen".into(),
             Self::TurnDetected => "sensor.audio.turn".into(),
+            Self::ObjectDetected => "sensor.vision.objects".into(),
             Self::WindowCurrent => "sensor.window.current".into(),
             Self::ClipboardChanged => "sensor.clipboard.changed".into(),
             Self::CpuUsage => "sensor.cpu.usage".into(),
@@ -144,6 +151,7 @@ impl Topic {
             "sensor.window.focus_changed" => Self::WindowFocusChanged,
             "sensor.screen" => Self::Screen,
             "sensor.audio.turn" => Self::TurnDetected,
+            "sensor.vision.objects" => Self::ObjectDetected,
             "sensor.window.current" => Self::WindowCurrent,
             "sensor.clipboard.changed" => Self::ClipboardChanged,
             "sensor.cpu.usage" => Self::CpuUsage,
