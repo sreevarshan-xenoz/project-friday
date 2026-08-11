@@ -78,8 +78,8 @@ Statuses are updated as commits land — this table is the tracker.
 | 9 | **Causal World Model** (entities → causes → effects → simulation) | 🟢 DONE |
 | 10 | **LifeOS current→ideal/gap layer** (Current → Desired → Gap → Objective → Plan) | 🟢 DONE |
 | 11 | **Skill compounding** (verified trajectory → Skill Registry → reuse) | 🟢 DONE |
-| 12 | **Egress policy + Secrets vault** (before autonomy) | 🔴 **NEXT** |
-| 13 | Screen perception | 🔴 |
+| 12 | **Egress policy + Secrets vault** (autonomy prerequisites) | 🟢 DONE |
+| 13 | Screen perception | 🔴 **NEXT** |
 | 14 | Audio perception | 🔴 |
 | 15 | Vision perception | 🔴 |
 | 16 | Persistent Agent Workforce | 🔴 |
@@ -144,9 +144,19 @@ and emits `skill.compounded` carrying the evidence trail. Proven end-to-end:
 the goal-execution integration test verifies a trajectory with the real
 `CodeTestVerifier`, compiles it, and a later goal's `select_for` finds and
 chooses it.
-Next unit of work: **#12 — Egress policy + Secrets vault** (the autonomy
-prerequisites: "can this secret leave the machine? which provider receives
-it?").
+**#12 is done:** the autonomy prerequisites are real.
+`SecretsVault` (`services/intelligence/src/secrets.rs`) holds credentials in
+`Secret` values that are **structurally unobservable** — `Debug`/`Display`/
+`Serialize` all render a redaction, only `reveal()` exposes a value — with
+capability-scoped handles and env seeding. `EgressGate`
+(`services/intelligence/src/egress.rs`) answers "can this secret leave the
+machine? which provider receives it?": it scans every outbound prompt for
+registered secrets and applies a **per-provider** Block / Redact / LogOnly
+policy (safe default: Block), wired into `InferenceFabric` at both dispatch
+sites — a Block is recorded on the routing decision before the error returns.
+Enabling is one line (`fabric.egress = Some(gate)`); it stays off by default.
+Next unit of work: **#13 — Screen perception** (observe UI → understand → act
+→ verify; no camera hardware needed, so it comes first).
 
 ### Milestone gates
 

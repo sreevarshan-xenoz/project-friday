@@ -1,11 +1,14 @@
 pub mod compiler;
+pub mod egress;
 pub mod parser;
 pub mod planner_backend;
 pub mod providers;
 pub mod qualification;
 pub mod router;
+pub mod secrets;
 
 pub use compiler::{ModelProvider, PromptAst, PromptCompiler};
+pub use egress::{EgressAction, EgressGate, EgressMode, EgressVerdict};
 pub use parser::{LlmResponse, ParsedTask, ResponseInterpreter};
 pub use planner_backend::InferenceBackend;
 pub use providers::{
@@ -20,3 +23,7 @@ pub use qualification::{
     QualificationProfile, RequestRequirements, Requirement, QUALIFICATION_SCHEMA_VERSION,
 };
 pub use router::{CognitiveMode, IntelligenceRouter};
+pub use secrets::{
+    looks_like_secret, redact_payload, scan_payload, Secret, SecretHit, SecretsVault,
+    ScopedSecrets, MIN_SCAN_LENGTH,
+};

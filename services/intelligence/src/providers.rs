@@ -9,10 +9,28 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use crate::egress::EgressGate;
 use crate::qualification::{
     routing_score, Budget, CandidateView, Preference, ProviderHealth, QualificationProfile,
     RequestRequirements, Requirement, QUALIFICATION_SCHEMA_VERSION,
 };
+
+/// The standard provider credential environment variables, used by
+/// [`crate::secrets::SecretsVault::seed_from_env`] to register production
+/// keys into the vault (so the egress gate can scan for them and nothing
+/// auto-prints them). Mirrors the provider-qual environment matrix.
+pub const PROVIDER_ENV_VARS: [(&str, &str); 10] = [
+    ("OMNIROUTE_API_KEY", "omniroute"),
+    ("OPENROUTER_API_KEY", "openrouter"),
+    ("GROQ_API_KEY", "groq"),
+    ("CEREBRAS_API_KEY", "cerebras"),
+    ("GEMINI_API_KEY", "gemini"),
+    ("OPENGATEWAY_API_KEY", "opengateway"),
+    ("SAMBA_API_KEY", "sambanova"),
+    ("GITHUB_TOKEN", "github-models"),
+    ("SILICONFLOW_API_KEY", "siliconflow"),
+    ("ZHIPU_API_KEY", "zhipu"),
+];
 
 /// Pluggable interface for calling large language models.
 /// Isolating this ensures we can swap backends (e.g. Gemini to OpenAI)
@@ -510,6 +528,13 @@ pub struct InferenceFabric {
     /// `.fabric/provider_health.json` (cwd-relative). Chaos laboratory Phase 2
     /// scenarios point this at a controlled file so corruption is injectable.
     pub health_state_path: std::path::PathBuf,
+    /// The outbound-data gate (#12 egress policy): `None` = egress scanning
+    /// is OFF (current behavior); `Some(gate)` = every routed prompt is
+    /// scanned for registered secrets before it leaves to ANY provider, with
+    /// a per-provider Block/Redact/LogOnly policy (`services/intelligence/src/
+    /// egress.rs`). Attaching is one line — autonomy's "can this secret leave
+    /// the machine?" prerequisite.
+    pub egress: Option<Arc<EgressGate>>,
 }
 
 impl InferenceFabric {
@@ -525,6 +550,25 @@ impl InferenceFabric {
             qualification_profiles: Arc::new(Mutex::new(HashMap::new())),
             request_timeout: None,
             health_state_path: std::path::PathBuf::from(".fabric/provider_health.json"),
+            egress: None,
+        }
+    }
+
+    /// Attach the egress gate: every routed outbound prompt is then scanned
+    /// (registered secrets + heuristic) and blocked/redacted per provider.
+    pub fn with_egress(mut self, gate: Arc<EgressGate>) -> Self {
+        self.egress = Some(gate);
+        self
+    }
+
+    /// The outbound seam shared by every dispatch site: apply the gate to a
+    /// prompt about to leave to `provider`. `Err` = the payload never leaves
+    /// (Block); `Ok(redacted)` = sanitized payload to send. No gate attached
+    /// → the prompt is returned unchanged (behavior unchanged).
+    fn egress_process(&self, provider: &str, prompt: &str) -> Result<String, String> {
+        match &self.egress {
+            None => Ok(prompt.to_string()),
+            Some(gate) => gate.process(provider, prompt),
         }
     }
 
@@ -683,9 +727,25 @@ impl InferenceFabric {
             Some((provider.to_string(), model.id.clone())),
         );
 
+        // Egress gate (#12): scan the prompt before it leaves to this
+        // provider. `Err` = blocked — the payload never leaves. The block is
+        // recorded on the routing decision FIRST so it stays auditable
+        // ("which provider was receiving it?"), then propagated.
+        let prompt = match self.egress_process(provider, prompt) {
+            Ok(prompt) => prompt,
+            Err(e) => {
+                decision.failures.push(CandidateFailure {
+                    provider: provider.to_string(),
+                    model: model.id.clone(),
+                    error: e.clone(),
+                });
+                self.record_decision(decision);
+                return Err(e);
+            }
+        };
         match run_attempt(
             self.request_timeout,
-            prov.complete(&model.id, prompt, require_json),
+            prov.complete(&model.id, &prompt, require_json),
         )
         .await
         {
@@ -1947,9 +2007,26 @@ impl InferenceFabric {
             );
 
             attempts += 1;
+            // Egress gate (#12): scan the prompt before it leaves to this
+            // candidate provider. `Err` = blocked — the payload never leaves,
+            // and the block is recorded on the routing decision so it stays
+            // auditable. A policy violation is NOT a provider failure: no
+            // failover, no retry.
+            let prompt = match self.egress_process(provider.name(), prompt) {
+                Ok(prompt) => prompt,
+                Err(e) => {
+                    decision.failures.push(CandidateFailure {
+                        provider: provider.name().to_string(),
+                        model: model.id.clone(),
+                        error: e.clone(),
+                    });
+                    self.record_decision(decision);
+                    return Err(e);
+                }
+            };
             match run_attempt(
                 self.request_timeout,
-                provider.complete(&model.id, prompt, false),
+                provider.complete(&model.id, &prompt, false),
             )
             .await
             {
@@ -3581,5 +3658,71 @@ mod v2_tests {
         let p =
             OmniRouteProviderV2::new("http://localhost:19999/v1".to_string(), String::new(), None);
         assert!(p.embeddings("auto", &["x".to_string()]).await.is_err());
+    }
+
+    // ── Egress policy (#12): the outbound seam shared by every dispatch ──
+
+    fn fabric_with_egress(policy_for: Option<(&str, crate::egress::EgressMode)>) -> InferenceFabric {
+        use crate::egress::EgressGate;
+        use crate::secrets::SecretsVault;
+        let vault = std::sync::Arc::new(SecretsVault::new());
+        vault.store("provider", "openrouter", "sk-token-abcdef");
+        let mut gate = EgressGate::new(std::sync::Arc::clone(&vault));
+        if let Some((provider, mode)) = policy_for {
+            gate = gate.with_provider_policy(provider, mode);
+        }
+        InferenceFabric::new().with_egress(std::sync::Arc::new(gate))
+    }
+
+    #[test]
+    fn egress_off_by_default_passes_prompts_through_unchanged() {
+        let fabric = InferenceFabric::new();
+        assert!(
+            fabric.egress.is_none(),
+            "egress is OFF unless explicitly attached (no behavior change)"
+        );
+        assert_eq!(
+            fabric.egress_process("openrouter", "summarize sk-token-abcdef").unwrap(),
+            "summarize sk-token-abcdef"
+        );
+    }
+
+    #[test]
+    fn egress_block_stops_a_secret_payload_before_dispatch() {
+        let fabric = fabric_with_egress(None); // default policy = Block
+        let err = fabric
+            .egress_process("openrouter", "please use sk-token-abcdef here")
+            .unwrap_err();
+        assert!(err.contains("egress policy blocked"), "{err}");
+        assert!(err.contains("provider/openrouter"), "{err}");
+        assert!(
+            !err.contains("sk-token-abcdef"),
+            "the error never carries the value: {err}"
+        );
+    }
+
+    #[test]
+    fn egress_redact_sanitizes_the_outbound_prompt() {
+        use crate::egress::EgressMode;
+        let fabric = fabric_with_egress(Some(("openrouter", EgressMode::Redact)));
+        let sent = fabric
+            .egress_process("openrouter", "use sk-token-abcdef in your answer")
+            .unwrap();
+        assert!(!sent.contains("sk-token-abcdef"), "{sent}");
+        assert!(sent.contains("[REDACTED:provider/openrouter]"), "{sent}");
+    }
+
+    #[test]
+    fn egress_policy_is_per_provider_at_the_fabric() {
+        use crate::egress::EgressMode;
+        let fabric = fabric_with_egress(Some(("openrouter", EgressMode::Redact)));
+        // openrouter: redacted; groq (unlisted): default Block.
+        assert!(
+            fabric
+                .egress_process("openrouter", "has sk-token-abcdef")
+                .unwrap()
+                .contains("[REDACTED:provider/openrouter]")
+        );
+        assert!(fabric.egress_process("groq", "has sk-token-abcdef").is_err());
     }
 }

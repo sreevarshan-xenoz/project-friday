@@ -28,7 +28,13 @@ dist/
 # Secrets / local config
 .env
 .env.*
-secrets*
+# Secret content files (a source module like secrets.rs is NOT a secret file)
+secrets.json
+secrets.yaml
+secrets.yml
+secrets.toml
+secrets.env
+secrets.txt
 *.pem
 
 # Logs

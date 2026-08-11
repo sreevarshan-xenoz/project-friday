@@ -30,8 +30,8 @@ work.
 | 9 | Causal World Model | 🟢 DONE | Entity graph + causal edges + typed effects + pure deterministic simulation (`CausalModel::simulate` — "if action A runs, S→S'"): `services/goal-execution/src/causal.rs`. `WorldModel::simulate`/`apply_simulation` close the predict→commit loop (stale projections refused); `find_missing_capability_prerequisites` reflects the entity graph |
 | 10 | LifeOS current→ideal/gap layer | 🟢 DONE | `DesiredState` (declarative ideal over entities/files/tools with All/Any algebra) evaluated against world state + causal entity graph → `Gap` (unmet conditions) → `Objective` whose closing actions come from **causal simulation** (an action closes the gap only when its projection satisfies the ideal — never execution) → `IntentLayer::plan` feeds the objective into the planner producing `PlanSource::GapDriven` plans — `services/goal-execution/src/intent.rs`. Honest: a closed gap yields no objective/plan |
 | 11 | Skill compounding | 🟢 DONE | `SkillCompiler` (`services/skills/src/compound.rs`): neutral `TrajectorySkill` input (goal, Verified outcome + evidence ids, steps, confidence, support) → refusal gate that IS the verification step (Unverified / below-bar confidence / below-bar support / no steps / no capabilities / no actions all refuse with structured `RefusalCode`s) → `SkillSource::Learned` skill registered with collision-safe unique slug id, resolved capabilities, `skill.compounded` event carrying the full evidence trail → a later goal's `select_for` finds and chooses it. End-to-end proof in goal-execution integration using the real `CodeTestVerifier` |
-| 12 | Egress policy + Secrets vault | 🔴 **NEXT** | Outbound-data gate ("can this secret leave the machine? which provider receives it?") + secrets vault — **before autonomy** (autonomy without egress controls is backwards engineering) |
-| 13 | Screen perception | 🔴 | observe UI → understand → act → verify; no camera hardware needed, so it comes first |
+| 12 | Egress policy + Secrets vault | 🟢 DONE | `SecretsVault` (`services/intelligence/src/secrets.rs`): scope-keyed store whose `Secret` values are structurally unobservable (Debug/Display/Serialize redact; only `reveal()` exposes), `scoped()` capability handles, `seed_from_env` for provider keys. `EgressGate` (`services/intelligence/src/egress.rs`): scans outbound prompts for registered secrets and applies per-provider Block/Redact/LogOnly (default Block); wired into `InferenceFabric` at both dispatch sites before any provider call; a Block is recorded on the routing decision (auditable "which provider receives it?"). Off by default — enabling is one line |
+| 13 | Screen perception | 🔴 **NEXT** | observe UI → understand → act → verify; no camera hardware needed, so it comes first |
 | 14 | Audio perception | 🔴 | mic → VAD → ASR → speaker/turn event |
 | 15 | Vision perception | 🔴 | camera → frame → vision model → object/event |
 | 16 | Persistent Agent Workforce | 🔴 | Assignable task board, persistent per-agent workspaces — requires Agent Director (#7) first |
@@ -72,9 +72,12 @@ Objective whose closing actions come from causal simulation, and the planner
 consumes it as `PlanSource::GapDriven` plans. #11 done — the learning loop is
 closed: `SkillCompiler` turns a verified trajectory into a `SkillSource::Learned`
 skill a later goal reuses (refusal gate = verification; `skill.compounded`
-carries the evidence trail). Next: #12 — Egress policy + Secrets vault, the
-autonomy prerequisites ("can this secret leave the machine? which provider
-receives it?").**
+carries the evidence trail). #12 done — the autonomy prerequisites are real:
+`SecretsVault` (values never leak through Debug/Display/Serialize, capability-
+scoped handles) + `EgressGate` (per-provider Block/Redact/LogOnly, wired into
+`InferenceFabric` at both dispatch sites; blocks recorded on the routing
+decision). Next: #13 — Screen perception (observe UI → understand → act →
+verify).**
 
 ## Why this order (the corrections vs. the flat P0–P5 table)
 
@@ -249,6 +252,31 @@ receives it?").**
   clippy-clean, dependents clean. Constitution Skill compounding → 🟢 §3.1;
   Reflection §3.2 missing-capability → automatic trajectory mining; P2 row →
   DONE. Next: #12 Egress policy + Secrets vault.
+- **2026-08-11** — Egress policy + Secrets vault (#12): the autonomy
+  prerequisites. `services/intelligence/src/secrets.rs` — **SecretsVault**
+  (scope → name → `Secret`): a `Secret`'s value is **structurally
+  unobservable** (`Debug`/`Display`/`Serialize` all render a redaction;
+  `secrets.rs:30`); only the deliberately-named `reveal()` exposes it, so a
+  vault handle can never leak into an audit log, trace, or memory dump.
+  `scoped(scope)` returns a **capability-scoped handle** owning only its
+  scope's entries (`secrets.rs:136`); `seed_from_env()`/`seed_from_vars()`
+  register the standard provider credential vars (`PROVIDER_ENV_VARS`).
+  `scan()`/`redact()` are longest-first deterministic (a shorter registered
+  value inside a longer one is handled correctly; `MIN_SCAN_LENGTH = 8` so a
+  local placeholder like `ollama` never false-positives).
+  `services/intelligence/src/egress.rs` — **EgressGate**: scans a payload
+  about to leave (registered values, name+count only) and applies a
+  **per-provider** `Block`/`Redact`/`LogOnly` policy; the safe default is
+  `Block`, and the gate is off until attached. Wired into `InferenceFabric`
+  (`providers.rs`): `fabric.egress = Some(gate)` enables scanning at BOTH
+  dispatch sites (`complete_tier` + `complete_candidates`) before any
+  provider call; a Block is recorded on the routing decision as a
+  `CandidateFailure` (auditable "which provider was receiving it?") before
+  the error returns. 11 secrets + 8 gate + 4 fabric-wiring unit tests
+  (incl. `egress_policy_is_per_provider_at_the_fabric`); 66 intelligence lib
+  + 6 integration green, clippy-clean, dependents clean. Constitution Egress
+  + Secrets 🔴 → 🟢 §3.1; §3.3 rows + P4 row → DONE. Next: #13 Screen
+  perception.
 - **2026-08-11** — Web fetch gateway enhancement (continues #4): a real
   Jina-style gateway provider ships behind the resolver — `jina` →
   `https://r.jina.ai/` (`JINA_READER_PREFIX`), with **percent-encoded URL

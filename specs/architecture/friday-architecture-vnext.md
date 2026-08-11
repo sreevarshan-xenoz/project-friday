@@ -77,8 +77,8 @@ PERCEIVE → UNDERSTAND → DEFINE DESIRED STATE → PLAN → DELEGATE → EXECU
 | **Audio organ**                | 🔴 Missing | No real audio sensor |
 | **Vision organ**               | 🔴 Missing | No real vision sensor |
 | **World-model visualization**  | 🔴 Missing | No visual world-model layer |
-| **Egress policy**              | 🔴 Missing | No generalized outbound-data policy |
-| **Secrets vault**              | 🔴 Missing | No proper secrets subsystem |
+| **Egress policy**              | 🟢 Implemented | `EgressGate` scans every outbound prompt before it leaves; per-provider Block/Redact/LogOnly (`services/intelligence/src/egress.rs`) |
+| **Secrets vault**              | 🟢 Implemented | `SecretsVault` — values never leak through Debug/Display/Serialize; capability-scoped handles (`services/intelligence/src/secrets.rs`) |
 | **OpenTelemetry/Prometheus**   | 🔴 Missing | No mature observability plane |
 | **Cost telemetry**             | 🔴 Missing | No model-cost accounting layer |
 
@@ -315,6 +315,41 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
   is verified by the REAL `CodeTestVerifier`; `unverified_trajectory_is_
   refused_and_never_reused` proves the gate).
 
+#### Egress policy + Secrets vault — 🟢 (autonomy prerequisites)
+- **What exists:** [`SecretsVault`] (`services/intelligence/src/secrets.rs`):
+  a scope-keyed store (`provider`, `git`, …) whose `Secret` values are
+  **structurally unobservable** — `Debug`, `Display`, and `Serialize` all
+  render a redaction; only the deliberately-named `reveal()` exposes a value,
+  so a vault handle can never leak into an audit log or trace
+  (`secrets.rs:30`). `scoped(scope)` hands out a **capability-scoped handle**
+  that owns only its scope's entries (`secrets.rs:136`).
+  `seed_from_env()` registers the standard provider credential vars
+  (`PROVIDER_ENV_VARS`) so production keys sit in the vault, not in plain
+  loggable strings. [`EgressGate`] (`services/intelligence/src/egress.rs`)
+  is the outbound-data gate: it scans a payload about to leave (registered
+  values, name+count only — never values) and applies a **per-provider**
+  `Block`/`Redact`/`LogOnly` policy; the safe default is `Block`. Wired into
+  `InferenceFabric` (`providers.rs`): `fabric.egress = Some(gate)` enables
+  scanning at BOTH dispatch sites (`complete_tier`, `complete_candidates`)
+  before any provider call; a Block is recorded on the routing decision
+  (auditable "which provider was receiving it?") before the error returns.
+  Off by default — enabling is one line.
+- **Missing capability:** providers still read keys from env into plain
+  `api_key` fields (the vault guarantees its OWN contents never leak; the
+  full "never in memory" story completes when providers resolve FROM the
+  vault); persisted/encrypted-at-rest vault backend.
+- **Inspired by:** SonarQube CLI, Archestra.
+- **Plugs into:** `InferenceFabric` (frozen provider path) + permission engine
+  (outbound hook — the gate sits before the provider call, complementing the
+  permission gate that precedes execution).
+- **Acceptance:** a payload containing a detected secret is blocked/redacted
+  before the provider call; policy is enforceable per-provider (proven:
+  `egress_block_stops_a_secret_payload_before_dispatch`,
+  `egress_redact_sanitizes_the_outbound_prompt`,
+  `egress_policy_is_per_provider_at_the_fabric`); a secret value never
+  reaches Debug/Display/Serialize/logs (`secret_never_leaks_through_debug_
+  display_or_serialize`).
+
 ### 3.2 Partial (🟡)
 
 #### Cognitive planner — 🟡 (real; gap-driven planning now feeds it)
@@ -371,8 +406,8 @@ Each entry: **what exists** (evidence), **missing capability**, **inspired by**,
 | **Persistent agent workforce** | Agents are ephemeral, in-process, per-goal. No persistent worker registry, assignable task board, isolated per-agent workspaces across runs, progress/blocker reporting. | **Multica** | `AgentRuntime` + `WorkflowStore` | A worker can be assigned a task, picked up across runs, report progress/blockers, and its workspace persists. |
 | **Real perception (vision/audio/screen)** | Perception is synthetic RNG events (`services/engines/perception/src/lib.rs:14`), not sensing. No camera/video pipeline, no VAD/ASR/diarization/turn detection, no continuous screen diff. Small-specialist → event → core, never raw 30fps into an LLM. | **Vision Agents**, Meetily | `PerceptionEngine` → workspace events | A real sensor publishes an event to the workspace that a cognitive organ consumes (proof: one camera frame → object event; one mic stream → turn event). |
 | **World-model visualization** | Deferred — the causal world model (§3.2) comes first; DrawDB is sugar. | DrawDB | `WorldModel` | None until causal model lands. |
-| **Egress policy / secret scan** | No "scan payload before sending to an external model" gate. Should become a global outbound-data policy, not just a coding feature. | **SonarQube CLI**, Archestra | permission engine (outbound hook) | A payload containing a detected secret is blocked/redacted before the provider call; policy is enforceable per-provider. |
-| **Secrets vault** | No secret store for tokens/keys. | — | permission + provider config | Secrets never appear in audit logs or memory; only capability-scoped access. |
+| **Egress policy / secret scan** | No "scan payload before sending to an external model" gate. Should become a global outbound-data policy, not just a coding feature. | **SonarQube CLI**, Archestra | permission engine (outbound hook) | A payload containing a detected secret is blocked/redacted before the provider call; policy is enforceable per-provider — **DONE (2026-08-11)** (`EgressGate`, `services/intelligence/src/egress.rs`, wired into `InferenceFabric`; per-provider Block/Redact/LogOnly, Block recorded on the routing decision); encrypted-at-rest vault remains |
+| **Secrets vault** | No secret store for tokens/keys. | — | permission + provider config | Secrets never appear in audit logs or memory; only capability-scoped access — **DONE (2026-08-11)** (`SecretsVault`, `services/intelligence/src/secrets.rs`; structurally redacted `Secret`, `scoped()` capability handles, `seed_from_env`); providers resolving keys FROM the vault remains |
 | **Observability (OTel/Prometheus)** | No metrics/scrape endpoint. | Vision Agents, Archestra | — | A `/metrics` endpoint exposes runtime counters a Prometheus scrape consumes. |
 | **Cost telemetry** | No per-model cost accounting ledger. | — | provider engine | Every model call is ledgered with model, tokens, cost; queryable per goal. |
 | **Skill compounding** | `skill-forge` exists but no closed loop (§3.2 reflection). | Multica, Prime Agent | `SkillRegistry` + `skill-forge` | A verified successful trajectory becomes a skill used by a later goal — **DONE (2026-08-11)** (`SkillCompiler`, `services/skills/src/compound.rs`; verified-only gate, `SkillSource::Learned`, `skill.compounded` with evidence trail; end-to-end test in goal-execution integration); automatic trajectory mining remains |
@@ -432,7 +467,7 @@ capability as an equal-priority feature.
 | **P3**   | **Persistent Agent Workforce**           | Requires Agent Director first                                        | Multica                       |
 | **P3**   | **Autonomous Cognitive Tick**            | Requires perception + world state + goals + execution + safety       | ACOS / Active Inference       |
 | **P4**   | **Walrus Memory backend**                | Existing `MemoryLayer` already solves the abstraction — backend #5, not architecture | Walrus |
-| **P4**   | **Security/Egress/Secrets plane**        | Important before broad autonomy                                      | Archestra + Sonar             |
+| **P4**   | **Security/Egress/Secrets plane**        | Permissions/audit 🟢 (existing); **Egress + Secrets DONE (2026-08-11)** — `EgressGate` + `SecretsVault` (`services/intelligence/src/`); remaining: vault persistence/encryption, providers resolving from the vault | Archestra + Sonar             |
 | **P4**   | **Observability + cost telemetry**       | Required for long-running autonomous operation                       | Archestra                     |
 | **P5**   | **World-model visualization**            | Visualization is downstream of actually having a rich world model    | DrawDB                        |
 
