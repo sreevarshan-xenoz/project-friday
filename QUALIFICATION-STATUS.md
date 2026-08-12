@@ -47,8 +47,10 @@ the final qualification gate, exactly as decided.
   CI-safe) and a **live integration gate** (network/model dependent,
   explicitly slower). The hermetic gate is green; live/slow e2e suites are
   documented separately with their own run commands and latency.
-- Feature expansion is frozen until the remaining qualification items are
-  dispositioned.
+- Feature expansion was frozen while the remaining qualification items were
+  dispositioned. As of the qualification-blockers audit (2026-08-12) those
+  blockers are resolved and feature development may resume, with the caveat that
+  **final endurance qualification (24 h decision runs) remains pending**.
 
 ## Matrix
 
@@ -69,7 +71,7 @@ the final qualification gate, exactly as decided.
 | E2E live_task (fallback) | PASS | `cargo test -p friday-e2e --test live_task` — native fallback fixed; 1 passed, 30.5s (2026-08-12) |
 | E2E local_model_task (live) | PASS | `cargo test -p friday-e2e --test local_model_task` — 1 passed, 110.5s, provider-dependent (2026-08-12) |
 | E2E skill_planning_suite (live) | SLOW | `cargo test -p friday-e2e --test skill_planning_suite` — 16 goals × 40s windows ≈ ≥10 min; not fully re-run this pass |
-| Formatting | FAIL | `cargo fmt --all -- --check` reported existing drift across the workspace |
+| Formatting | PASS | `cargo fmt --all -- --check` — clean across the workspace (2026-08-12) |
 | Clippy | PASS WITH WARNINGS | `cargo clippy --workspace --all-targets --all-features` completed with existing warnings |
 | Memory-growth qualification | PASS | [MECH-0002](docs/mech/MECH-0002-windowed-emission-evaluation.md) C2 implemented + implementation-validated (smoke + 64/256/512 sweep: RSS flat ~19–21 MB, bounded window); accepted as an implementation-level fix. Decision run (24 h, `< 1 MB/hr`) deferred to the final qualification gate (`Final endurance` ⏸) |
 | RTT-drift qualification | PASS\* | [MECH-0002](docs/mech/MECH-0002-windowed-emission-evaluation.md) C2 bounds the O(history) emission path (wire volume scales with window, plateaus past it); sub-ms RTT / ≤0.1 ms drift in sweep. Decision run (24 h, `< 10%`) deferred to the final qualification gate (`Final endurance` ⏸) |
@@ -151,14 +153,40 @@ The conservative reading is:
 
 The current stubs are not promoted to new features.
 
-- `e2e/src/runner.rs` capability stub: disposition pending qualification
-dependency review
+- `e2e/src/runner.rs` capability stub: harness data-fidelity only; no
+  qualification claim depends on it
 - `windows-host/UIAutomation/ElementFinder.cs`: deferred unless current
-qualification claims depend on it
+  qualification claims depend on it
+- `Experience::invalidate()` (`services/experience/src/lib.rs`): `todo!`
+  scoped to Phase 5H; has no production call sites (a test documents the panic)
+
+### Qualification blockers resolved — 2026-08-12
+
+Consistency audit over the matrix:
+
+- **`BLOCKED` entries:** none exist in the matrix. Nothing is blocked by an
+  external dependency.
+- **Remaining `FAIL`:** `Formatting` — resolved via the workspace-wide
+  `cargo fmt` cleanup (now PASS).
+- **Stubs:** all three dispositioned above; none blocks an architecture claim.
+- **Browser boundary:** conservative reading stands — adapter exists, runtime
+  not production-qualified, roadmap defers to M6, no receipt claims it.
+
+Conclusion: **core qualification blockers are resolved.** The closed-loop
+architecture is no longer blocked; this is not the same as claiming production
+qualification, which remains gated on final endurance (24 h decision runs) and
+the explicit deferred boundaries (browser runtime, UIAutomation,
+`Experience::invalidate`, Skill Compounding).
 
 ## Current freeze line
 
-Do not expand the feature surface until this matrix is updated to remove the
-remaining `PARTIAL`, `BLOCKED`, and `FAIL` entries that matter to the project
-claims.
+The feature-freeze rationale has changed. Previously: *feature expansion is
+frozen because blockers exist.* Now:
+
+> **Core qualification blockers resolved. Feature expansion may resume, but
+> final endurance qualification remains pending.**
+
+Feature development (next: Skill Compounding) may resume, with the 24 h
+endurance decision runs and the explicit deferred boundaries above still
+outstanding at the final qualification gate.
 
