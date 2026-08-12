@@ -14,9 +14,11 @@ use friday_skills::{
     SkillContextSource, SkillMemorySource, SkillPolicy, SkillSummary,
 };
 
+pub mod skill_learning;
 pub mod skills;
 
 pub use friday_skills::SkillSource;
+pub use skill_learning::{LearnError, LearnedCandidate, SkillLearningService};
 pub use skills::{
     load_skill_engine, register_engines_with_skills, SkillDecision, SkillDecisionCapability,
     SkillDir, SkillEngineWiring, SkillPermission,

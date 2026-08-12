@@ -19,12 +19,24 @@
 //!      │    • confidence / support below the bar → refused
 //!      │    • no steps / no usable capability → refused
 //!      ↓
-//! Skill (manifest distilled from the trajectory, source = Learned, enabled)
+//! Skill (manifest distilled from the trajectory, source = Learned,
+//!        registered DISABLED — a candidate, never immediately selectable)
 //!      ↓
 //! SkillRegistry.register  →  emits `skill.compounded`
 //!      ↓
+//! explicit admission (candidate → executable):
+//!      qualification gate → SkillRegistry::enable_learned  →  emits `skill.enabled`
+//!      ↓
 //! reuse: a later goal's SkillRegistry::select_for ranks and chooses it
 //! ```
+//!
+//! **Admission, not auto-activation.** Compounding produces a *candidate*: a
+//! learned skill is registered disabled and is invisible to `select_for` until
+//! someone deliberately admits it via [`SkillRegistry::enable_learned`] — the
+//! same gate bundled skills pass at load, applied here to a runtime-learned
+//! artifact. A failure is never learned, and a learned skill is never live
+//! until admitted. The [`SkillCompiler::with_start_enabled`] builder exists
+//! for callers that implement their own admission policy upstream.
 //!
 //! **Decoupling:** the input is neutral — no planner, goal-execution, or
 //! provider types. The caller (wherever the verified trajectory lives) maps
@@ -147,11 +159,15 @@ impl CompileOutcome {
 /// The compounding gate: verified trajectory → registered [`Skill`].
 ///
 /// Defaults: confidence ≥ 0.6, support ≥ 1, category `learned`, author
-/// `FRIDAY`, version `1.0.0`. All tunable via builders.
+/// `FRIDAY`, version `1.0.0`, and `start_enabled = false` — compiled skills
+/// register as **disabled candidates** that become selectable only through
+/// explicit admission (`SkillRegistry::enable_learned`). All tunable via
+/// builders.
 pub struct SkillCompiler {
     min_confidence: f32,
     min_support: u32,
     category: String,
+    start_enabled: bool,
 }
 
 impl Default for SkillCompiler {
@@ -166,6 +182,7 @@ impl SkillCompiler {
             min_confidence: 0.6,
             min_support: 1,
             category: "learned".to_string(),
+            start_enabled: false,
         }
     }
 
@@ -184,17 +201,30 @@ impl SkillCompiler {
         self
     }
 
+    /// Opt into registering compiled skills as immediately enabled.
+    /// Default is `false` (candidate + explicit admission); callers with their
+    /// own admission policy upstream may enable it. Every normal wiring point
+    /// (the skill-learning seam, the goal-execution acceptance) relies on the
+    /// default so a learned skill is never live before it is admitted.
+    pub fn with_start_enabled(mut self, start_enabled: bool) -> Self {
+        self.start_enabled = start_enabled;
+        self
+    }
+
     /// Compile a trajectory into a registered skill — or refuse, with
     /// reasons. The refusal gate IS the verification step of the compounding
     /// loop: an [`OutcomeSummary::Unverified`] trajectory is never learned.
     ///
-    /// On success the skill is registered (enabled, `SkillSource::Learned`,
-    /// every used capability resolved — they all ran), a unique slug id is
-    /// chosen against the live registry, and `skill.compounded` is emitted on
-    /// the registry's event sink. Note that [`SkillRegistry::register`] also
-    /// emits `skill.loaded` / `skill.enabled` (accurate — the skill IS in the
-    /// registry and active); `skill.compounded` is the learning-specific
-    /// marker carrying the evidence trail.
+    /// On success the skill is registered as a **candidate** (disabled,
+    /// `SkillSource::Learned`, every used capability marked resolved — they
+    /// all ran), a unique slug id is chosen against the live registry, and
+    /// `skill.compounded` is emitted on the registry's event sink. The skill
+    /// is NOT selectable until it is explicitly admitted with
+    /// [`SkillRegistry::enable_learned`] (see the module docs). Note that
+    /// [`SkillRegistry::register`] also emits `skill.loaded` (accurate — the
+    /// skill IS in the registry); `skill.enabled` is emitted by admission,
+    /// `skill.compounded` is the learning-specific marker carrying the
+    /// evidence trail.
     pub fn compile(
         &self,
         registry: &SkillRegistry,
@@ -288,7 +318,7 @@ impl SkillCompiler {
             dependencies: Vec::new(),
             platform: "Any".to_string(),
             min_core_version: FRIDAY_CORE_VERSION.to_string(),
-            enabled: true,
+            enabled: self.start_enabled,
             memory: Default::default(),
         };
         let capability_statuses: Vec<CapabilityStatus> = capabilities
@@ -299,7 +329,7 @@ impl SkillCompiler {
             manifest,
             source: SkillSource::Learned,
             loaded_at: Utc::now(),
-            enabled: true,
+            enabled: self.start_enabled,
             capabilities: capability_statuses,
         };
 
@@ -473,8 +503,10 @@ mod tests {
         assert!(outcome.compiled(), "refusals: {:?}", outcome.refusals);
         let skill = outcome.skill.expect("registered");
         assert_eq!(skill.source, SkillSource::Learned);
-        assert!(skill.enabled);
-        assert!(skill.is_usable());
+        // A compiled skill is a CANDIDATE: disabled and not selectable until
+        // explicitly admitted.
+        assert!(!skill.enabled);
+        assert!(!skill.is_usable());
         // Capabilities deduped, in first-use order, all resolved (they ran).
         assert_eq!(
             skill.resolved_capabilities(),
@@ -489,6 +521,10 @@ mod tests {
         assert_eq!(provenance.evidence_ids, vec!["ev_1"]);
         assert_eq!(provenance.goal, "run friday tests");
         assert_eq!(provenance.support, 3);
+
+        // Explicit admission flips the candidate into an executable skill.
+        registry.enable_learned("run-friday-tests").unwrap();
+        assert!(registry.get("run-friday-tests").unwrap().is_usable());
     }
 
     #[test]
@@ -655,10 +691,56 @@ mod tests {
         let outcome = compiler.compile(&registry, &verified_trajectory("run friday tests"));
         assert!(outcome.compiled());
 
-        // A NEW goal, phrased differently, but lexically related.
+        // Not selectable yet — it is a candidate awaiting admission.
+        assert!(registry
+            .select_for("please run the friday test suite", 5)
+            .is_none());
+
+        // Explicit admission, then a NEW goal, phrased differently, but
+        // lexically related, finds it.
+        registry.enable_learned("run-friday-tests").unwrap();
         let selected = registry.select_for("please run the friday test suite", 5);
         assert!(selected.is_some(), "a matching later goal finds the skill");
         assert_eq!(selected.unwrap().skill.id(), "run-friday-tests");
+    }
+
+    /// The candidate gate, asserted at the boundary: compiled is not live.
+    #[test]
+    fn learned_candidate_is_not_selectable_until_admission() {
+        let registry = SkillRegistry::new();
+        let compiler = SkillCompiler::new();
+        let outcome = compiler.compile(&registry, &verified_trajectory("backup the logs"));
+        assert!(outcome.compiled());
+        assert!(!outcome.skill.unwrap().enabled);
+        assert!(
+            registry.select_for("backup the logs", 5).is_none(),
+            "a candidate is invisible to the planner until admitted"
+        );
+        // Explainability: it still *ranks* as a disabled skill, so "why
+        // wasn't the learned skill chosen?" has an answer.
+        let disabled = registry.search_disabled("backup the logs", 5);
+        assert_eq!(disabled[0].skill.id(), "backup-the-logs");
+
+        // Admission is idempotent and one-way here (a candidate is not
+        // self-admitted by anything else).
+        registry.enable_learned("backup-the-logs").unwrap();
+        registry.enable_learned("backup-the-logs").unwrap();
+        let selected = registry.select_for("backup the logs", 5);
+        assert_eq!(selected.unwrap().skill.id(), "backup-the-logs");
+    }
+
+    /// The `with_start_enabled` escape hatch: a caller with its own admission
+    /// policy upstream can opt out of candidate mode.
+    #[test]
+    fn with_start_enabled_registers_immediately_enabled() {
+        let registry = SkillRegistry::new();
+        let compiler = SkillCompiler::new().with_start_enabled(true);
+        let outcome = compiler.compile(&registry, &verified_trajectory("warm the cache"));
+        assert!(outcome.compiled());
+        let skill = outcome.skill.expect("registered");
+        assert!(skill.enabled);
+        assert!(skill.is_usable());
+        assert!(registry.select_for("warm the cache", 5).is_some());
     }
 
     /// Honesty at the registry level: a refused trajectory never appears.

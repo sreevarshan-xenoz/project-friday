@@ -22,3 +22,4 @@ tracing = { workspace = true }
 tokio = { workspace = true }
 
 [dev-dependencies]
+friday-goal-execution = { path = "../goal-execution" }

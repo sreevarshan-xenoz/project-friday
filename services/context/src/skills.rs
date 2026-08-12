@@ -32,7 +32,8 @@ use friday_skills::{
 };
 
 use crate::{
-    PlannerRegistryResolver, RegistryHealthSource, RegistryRiskResolver, SkillPolicyAuthority,
+    skill_learning::SkillLearningService, PlannerRegistryResolver, RegistryHealthSource,
+    RegistryRiskResolver, SkillPolicyAuthority,
 };
 
 /// One skill source directory to load: `(path, source)`.
@@ -134,6 +135,19 @@ impl SkillEngineWiring {
             Arc::clone(&self.registry),
             skill_id,
         ))
+    }
+
+    /// The runtime skill-learning seam (skill compounding §3.3): a
+    /// [`SkillLearningService`] over the SAME registry and planner registry
+    /// this wiring loaded. Verified trajectories compound into candidates via
+    /// [`SkillLearningService::learn`]; explicit admission via
+    /// [`SkillLearningService::admit`] makes them selectable — all inside the
+    /// registry the supervisor and planner actually use.
+    pub fn skill_learning(&self) -> SkillLearningService {
+        SkillLearningService::new(
+            Arc::clone(&self.registry),
+            Arc::clone(&self.planner_registry),
+        )
     }
 }
 

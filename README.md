@@ -148,11 +148,17 @@ acceptance remains bounded rather than generalized.
 into a registered skill — the refusal gate IS the verification step (an
 `Unverified` outcome is never compounded; below-bar confidence/support, empty
 steps, and unrankable actions all refuse with structured reasons). Success
-registers a `SkillSource::Learned` skill with every used capability resolved
-and emits `skill.compounded` carrying the evidence trail. Proven end-to-end:
-the goal-execution integration test verifies a trajectory with the real
-`CodeTestVerifier`, compiles it, and a later goal's `select_for` finds and
-chooses it.
+registers a `SkillSource::Learned` skill **disabled as a candidate** with every
+used capability resolved and emits `skill.compounded` carrying the evidence
+trail; explicit admission (`qualify` → `SkillRegistry::enable_learned`) makes it
+selectable, so a learned skill is never live before it is admitted. The runtime
+seam `SkillLearningService` (`services/context/src/skill_learning.rs`) refuses
+trajectories with no planner-resolvable capability and re-resolves statuses
+honestly against the live registry. Proven end-to-end: the goal-execution
+integration test verifies a trajectory with the real `CodeTestVerifier`,
+compiles it, admits it, and a later goal's `select_for` finds and chooses it;
+`services/context/tests/skill_learning.rs` runs the same loop over the real
+wiring with a second verified execution.
 **#12 is done:** the autonomy prerequisites are real.
 `SecretsVault` (`services/intelligence/src/secrets.rs`) holds credentials in
 `Secret` values that are **structurally unobservable** — `Debug`/`Display`/

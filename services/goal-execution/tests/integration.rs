@@ -614,7 +614,7 @@ fn verified_trajectory_compounds_into_a_reusable_skill() {
         support: 2,
     };
 
-    // 3. Compile → registered, enabled, source Learned.
+    // 3. Compile → registered as a CANDIDATE (source Learned, disabled).
     let registry = SkillRegistry::new();
     let outcome = SkillCompiler::new().compile(&registry, &trajectory);
     assert!(outcome.compiled(), "refusals: {:?}", outcome.refusals);
@@ -622,6 +622,18 @@ fn verified_trajectory_compounds_into_a_reusable_skill() {
         outcome.skill.as_ref().unwrap().resolved_capabilities(),
         vec!["terminal.execute", "filesystem.read"]
     );
+    assert!(
+        !outcome.skill.as_ref().unwrap().enabled,
+        "compounding produces a candidate, never an immediately-live skill"
+    );
+
+    // 3.5. Explicit admission: qualification + enable_learned flips the
+    //      candidate into an executable skill (the reconciled §3.3 gate).
+    let skill_id = outcome.skill.as_ref().unwrap().id().to_string();
+    assert!(registry
+        .select_for("run the friday tests and show me the result", 5)
+        .is_none());
+    registry.enable_learned(&skill_id).unwrap();
 
     // 4. A LATER goal uses the skill: selection ranks and chooses it.
     let selected = registry

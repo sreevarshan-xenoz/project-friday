@@ -189,6 +189,32 @@ impl SkillRegistry {
         Ok(())
     }
 
+    /// Explicitly admit a runtime-learned skill (skill compounding §3.3): the
+    /// deliberate admission step that flips a compiled **candidate** into an
+    /// enabled, selectable skill. Only [`SkillSource::Learned`] skills can be
+    /// admitted here — a bundled/user/plugin skill goes through the normal
+    /// [`SkillRegistry::enable`], which is why this is a distinct,
+    /// deliberately-named gate. Emits `skill.enabled`. Unknown id → `NotFound`;
+    /// a non-Learned id → `NotLearned` (the candidate gate is enforced, not
+    /// documented).
+    pub fn enable_learned(&self, skill_id: &str) -> Result<(), SkillError> {
+        let mut guard = self.skills.write().expect("skill registry poisoned");
+        let skill = guard
+            .get_mut(skill_id)
+            .ok_or_else(|| SkillError::NotFound(skill_id.to_string()))?;
+        if skill.source != SkillSource::Learned {
+            return Err(SkillError::NotLearned(skill_id.to_string()));
+        }
+        if !skill.enabled {
+            skill.enabled = true;
+            drop(guard);
+            self.sink.emit(SkillEvent::Enabled {
+                skill_id: skill_id.to_string(),
+            });
+        }
+        Ok(())
+    }
+
     /// Deactivate a skill. Emits `skill.disabled`.
     pub fn disable(&self, skill_id: &str) -> Result<(), SkillError> {
         let mut guard = self.skills.write().expect("skill registry poisoned");
@@ -804,5 +830,77 @@ mod tests {
             git.soft_declared_capabilities(),
             vec!["git.status", "future.cap"]
         );
+    }
+
+    fn learned_candidate(id: &str) -> Skill {
+        let mut s = skill(id, &["do the thing"], &["terminal.execute"]);
+        s.source = SkillSource::Learned;
+        s.enabled = false; // a compiled candidate starts disabled
+        s
+    }
+
+    #[test]
+    fn enable_learned_admits_only_learned_candidates() {
+        let registry = SkillRegistry::new();
+        let s = learned_candidate("learned");
+        registry.register(s).unwrap();
+        assert!(!registry.get("learned").unwrap().enabled);
+        assert!(registry
+            .select_for("do the thing please", 5)
+            .is_none());
+
+        registry.enable_learned("learned").unwrap();
+        let admitted = registry.get("learned").unwrap();
+        assert!(admitted.enabled);
+        assert!(admitted.is_usable());
+        // A later goal's selection now finds it — the admission gate closes
+        // the learning loop.
+        let selected = registry.select_for("do the thing please", 5).unwrap();
+        assert_eq!(selected.skill.id(), "learned");
+    }
+
+    #[test]
+    fn enable_learned_refuses_non_learned_skills() {
+        let registry = SkillRegistry::new();
+        registry
+            .register(skill("git", &["commit"], &["git.commit"]))
+            .unwrap();
+        assert!(matches!(
+            registry.enable_learned("git"),
+            Err(SkillError::NotLearned(_))
+        ));
+        // The regular enable gate is unaffected by the learned-only rule.
+        assert!(registry.enable("git").is_ok());
+    }
+
+    #[test]
+    fn enable_learned_refuses_unknown_skill() {
+        let registry = SkillRegistry::new();
+        assert!(matches!(
+            registry.enable_learned("nope"),
+            Err(SkillError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn enable_learned_emits_the_enabled_event() {
+        let sink = Arc::new(crate::events::VecSink::new());
+        let registry = SkillRegistry::with_sink(sink.clone());
+        registry.register(learned_candidate("learned")).unwrap();
+        // Registration of a disabled candidate emits Loaded, not Enabled.
+        assert!(!sink
+            .events
+            .lock()
+            .expect("sink")
+            .iter()
+            .any(|e| matches!(e, SkillEvent::Enabled { .. })));
+
+        registry.enable_learned("learned").unwrap();
+        let events = sink.events.lock().expect("sink");
+        let enabled: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, SkillEvent::Enabled { skill_id } if skill_id == "learned"))
+            .collect();
+        assert_eq!(enabled.len(), 1, "admission emits exactly one enabled");
     }
 }

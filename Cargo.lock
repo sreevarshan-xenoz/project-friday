@@ -1156,6 +1156,7 @@ dependencies = [
  "chrono",
  "friday-capabilities",
  "friday-core",
+ "friday-goal-execution",
  "friday-planner",
  "friday-skills",
  "serde",

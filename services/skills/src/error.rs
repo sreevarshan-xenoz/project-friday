@@ -19,6 +19,9 @@ pub enum SkillError {
     #[error("skill '{0}' is not registered")]
     NotFound(String),
 
+    #[error("skill '{0}' is not a runtime-learned skill; only `SkillSource::Learned` skills are eligible for explicit admission via `SkillRegistry::enable_learned`")]
+    NotLearned(String),
+
     #[error("skill dependency '{skill}' (required by '{by}') is missing")]
     UnresolvedDependency { skill: String, by: String },
 
