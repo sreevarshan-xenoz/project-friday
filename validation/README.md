@@ -42,10 +42,12 @@ Short smoke (75 s) first, then scale up: 2 h → 8 h → 24 h → 72 h.
 | `--listen`   | `127.0.0.1:18433`              | bridge listen address |
 | `--seed`     | `42`                           | bridge RNG seed (same seed ⇒ same ledger) |
 | `--count`    | `140`                          | initial ledger records |
+| `--window`   | unbounded                      | bridge retention window (records; recent/windowed list semantics, MECH-0002 C2) |
 | `--bridge`   | `target/debug/friday-bridge`   | path to the bridge binary |
 | `--coverage-threshold` | `99`                  | min observation coverage (%) for a VALID run |
 | `--analyze`  | —                              | analyze an existing run directory |
 | `--no-analyze` | off                          | skip analysis after a run |
+| `--append`   | off                            | allow a non-empty `--output` dir (extend an interrupted run) |
 
 Exit codes: `0` clean + analyzer PASS · `1` crash, analyzer FAIL on any
 **decision**/**integrity** criterion, or INVALID observation coverage · `2`
@@ -69,6 +71,11 @@ Each sample captures `bridge` counters, `runtime` read-model counts,
 `process` RSS/CPU/handles, `network` RTT (raw samples kept for exact
 percentiles), and `transport` (frames/bytes, sequence gaps, connection
 starts/errors, error frames, per-kind counts).
+
+The runner **refuses a non-empty `--output` dir** unless `--append` is passed:
+a rerun into a stale directory would append new samples onto an aborted run's
+data and corrupt the measurement. Every run should land in a fresh directory
+(or pass `--append` deliberately, e.g. to extend an interrupted run).
 
 ## Observation coverage
 

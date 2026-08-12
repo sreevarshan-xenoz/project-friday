@@ -12,7 +12,7 @@
 // 2 = usage/config error. `--analyze <dir>` re-runs the analyzer only.
 
 import { spawn, execFileSync } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseFlags } from './lib/cli.mjs';
@@ -48,6 +48,8 @@ Options:
                              run. Below it the run is marked INVALID.
                              Default: 99
   --no-analyze         Run without analyzing
+  --append             Allow an existing, non-empty --output dir (extend an
+                       aborted/interrupted run rather than refuse it)
   --analyze <dir>      Analyze an existing run directory and exit
   --help               Show this help`,
   );
@@ -109,6 +111,16 @@ const analyzePath = join(here, 'analyze.mjs');
 if (!existsSync(bridgeBin)) {
   log(`bridge binary not found: ${bridgeBin}`);
   log('build it with: cargo build -p friday-bridge');
+  process.exit(2);
+}
+if (
+  existsSync(outDir) &&
+  readdirSync(outDir).length > 0 &&
+  args.append !== true
+) {
+  log(`output directory already contains data: ${outDir}`);
+  log('refusing to run into a non-empty directory — stale samples would corrupt the measurement.');
+  log('use a fresh --output dir, or pass --append to intentionally extend an existing run.');
   process.exit(2);
 }
 mkdirSync(outDir, { recursive: true });
