@@ -78,7 +78,7 @@ the final qualification gate, exactly as decided.
 | Final endurance (24 h decision runs) | DEFERRED | protocol-identical VP-001 (seed 42, count 140, 5 s interval) + 2 h soak deferred to the final qualification gate, per the build→validate-continuously→endure-once workflow |
 | E2E capability stub | PARTIAL | `e2e/src/runner.rs` contains a stubbed capability field; current qualification dependency not yet established |
 | UIAutomation TODO | DEFERRED | `windows-host/UIAutomation/ElementFinder.cs` is a placeholder; no current acceptance receipt depends on it |
-| Skill Compounding | DEFERRED | intentionally frozen until qualification baseline is clean |
+| Skill Compounding | PASS* | Verified supervisor completion now enters `SkillLearningService` through the production boot path (`register_engines_with_skills` → supervisor completion sink → `SkillLearningObserver` → `SkillLearningService`), creates a disabled learned candidate, requires explicit admission, and reselects after admission; receipt: `services/context/tests/skill_runtime.rs::supervisor_verified_execution_can_enter_skill_learning_path` and `services/context/tests/skill_learning.rs`; final endurance qualification remains deferred |
 
 ## Open qualification items
 
@@ -155,10 +155,10 @@ The current stubs are not promoted to new features.
 
 - `e2e/src/runner.rs` capability stub: harness data-fidelity only; no
   qualification claim depends on it
-- `windows-host/UIAutomation/ElementFinder.cs`: deferred unless current
-  qualification claims depend on it
-- `Experience::invalidate()` (`services/experience/src/lib.rs`): `todo!`
-  scoped to Phase 5H; has no production call sites (a test documents the panic)
+  - `windows-host/UIAutomation/ElementFinder.cs`: deferred unless current
+    qualification claims depend on it
+  - `Experience::invalidate()` (`services/experience/src/lib.rs`): `todo!`
+    scoped to Phase 5H; has no production call sites (a test documents the panic)
 
 ### Qualification blockers resolved — 2026-08-12
 
@@ -169,14 +169,14 @@ Consistency audit over the matrix:
 - **Remaining `FAIL`:** `Formatting` — resolved via the workspace-wide
   `cargo fmt` cleanup (now PASS).
 - **Stubs:** all three dispositioned above; none blocks an architecture claim.
-- **Browser boundary:** conservative reading stands — adapter exists, runtime
-  not production-qualified, roadmap defers to M6, no receipt claims it.
+  - **Browser boundary:** conservative reading stands — adapter exists, runtime
+    not production-qualified, roadmap defers to M6, no receipt claims it.
 
 Conclusion: **core qualification blockers are resolved.** The closed-loop
-architecture is no longer blocked; this is not the same as claiming production
-qualification, which remains gated on final endurance (24 h decision runs) and
-the explicit deferred boundaries (browser runtime, UIAutomation,
-`Experience::invalidate`, Skill Compounding).
+  architecture is no longer blocked; this is not the same as claiming production
+  qualification, which remains gated on final endurance (24 h decision runs) and
+  the explicit deferred boundaries (browser runtime, UIAutomation,
+  `Experience::invalidate`).
 
 ## Current freeze line
 
@@ -186,7 +186,6 @@ frozen because blockers exist.* Now:
 > **Core qualification blockers resolved. Feature expansion may resume, but
 > final endurance qualification remains pending.**
 
-Feature development (next: Skill Compounding) may resume, with the 24 h
-endurance decision runs and the explicit deferred boundaries above still
-outstanding at the final qualification gate.
-
+Feature development may continue; the 24 h endurance decision runs and the
+explicit deferred boundaries above remain outstanding at the final qualification
+gate.

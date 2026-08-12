@@ -22,6 +22,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use friday_core::Friday;
+use friday_planner::execution::GoalCompletionSink;
 use friday_planner::execution::capability_registry::CapabilityRegistry as PlannerCapabilityRegistry;
 use friday_planner::execution::PolicyAuthority;
 use friday_planner::planning::planners::backend::ReasoningBackend;
@@ -33,7 +34,7 @@ use friday_skills::{
 
 use crate::{
     skill_learning::SkillLearningService, PlannerRegistryResolver, RegistryHealthSource,
-    RegistryRiskResolver, SkillPolicyAuthority,
+    RegistryRiskResolver, SkillLearningObserver, SkillPolicyAuthority,
 };
 
 /// One skill source directory to load: `(path, source)`.
@@ -360,8 +361,11 @@ pub async fn register_engines_with_skills(
                 policy: Arc::new(AllowAllFallback),
                 skills: None,
                 investigation: None,
+                completion_sink: None,
             };
         }
+        let completion_sink: Arc<dyn GoalCompletionSink> =
+            Arc::new(SkillLearningObserver::new(Arc::new(wiring.skill_learning())));
         let policy: Arc<dyn PolicyAuthority> =
             Arc::new(SkillPolicyAuthority(Arc::clone(&wiring.policy)));
         // The loaded registry also feeds the planning engine: every goal's
@@ -374,6 +378,7 @@ pub async fn register_engines_with_skills(
             policy,
             skills,
             investigation: None,
+            completion_sink: Some(completion_sink),
         }
     })
     .await

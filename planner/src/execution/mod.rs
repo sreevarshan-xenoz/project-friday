@@ -19,4 +19,6 @@ pub use persistence::{GoalEvent, GoalStore};
 pub use plugin_selector::resolve;
 pub use reflection::{ReflectionAction, Reflector, RuleReflector};
 pub use scheduler::schedule_batch;
-pub use supervisor::{GoalSupervisor, PolicyAuthority};
+pub use supervisor::{
+    CompletedGoal, CompletedStep, GoalCompletionSink, GoalSupervisor, PolicyAuthority,
+};

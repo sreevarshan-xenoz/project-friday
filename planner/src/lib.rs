@@ -42,7 +42,9 @@ use friday_core::Friday;
 use friday_core::Result;
 
 use crate::execution::lifecycle::ExecutionBudget;
-use crate::execution::{CapabilityRegistry, GoalStore, GoalSupervisor, PolicyAuthority};
+use crate::execution::{
+    CapabilityRegistry, GoalCompletionSink, GoalStore, GoalSupervisor, PolicyAuthority,
+};
 use crate::planning::planners::backend::ReasoningBackend;
 use crate::planning::planners::context::{RiskPolicy, WorkspaceContext};
 use friday_investigation::InvestigationEngine;
@@ -107,6 +109,7 @@ pub async fn register_engines_with_llm(
         policy: Arc::new(AllowAllPolicy),
         skills: None,
         investigation: None,
+        completion_sink: None,
     })
     .await
 }
@@ -128,6 +131,8 @@ pub struct PolicyBinding {
     /// evidence from — the EVIDENCE REQUIRED section in the LLM planner's
     /// prompt. `None` disables the enrichment (rule planner is unaffected).
     pub investigation: Option<InvestigationEngine>,
+    /// Optional consumer of fully verified goal completions.
+    pub completion_sink: Option<Arc<dyn GoalCompletionSink>>,
 }
 
 /// Like [`register_engines_with_llm`] but the supervisor's [`PolicyAuthority`]
@@ -170,6 +175,7 @@ where
         policy,
         skills,
         investigation,
+        completion_sink,
     } = policy(registry.clone());
 
     friday
@@ -217,11 +223,10 @@ where
         friday_core::FridayError::Plugin("supervisor".to_string(), format!("goal store: {e}"))
     })?;
     friday
-        .register_plugin(Box::new(GoalSupervisor::new(
-            registry.clone(),
-            policy,
-            Arc::new(store),
-        )))
+        .register_plugin(Box::new(
+            GoalSupervisor::new(registry.clone(), policy, Arc::new(store))
+                .with_completion_sink_opt(completion_sink),
+        ))
         .await?;
     Ok(registry)
 }

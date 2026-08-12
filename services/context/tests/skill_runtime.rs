@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use friday_core::event::Event;
 use friday_core::plugin::{Plugin, PluginMetadata};
 use friday_core::Friday;
+use friday_goal_execution::{run_command_in, CodeTestVerifier};
 use friday_planner::events;
 use friday_planner::execution::capability_registry::CapabilityRegistry;
 use friday_planner::planning::planners::backend::{MockBackend, ReasoningBackend};
@@ -39,6 +40,120 @@ fn planner_registry() -> CapabilityRegistry {
     let reg = CapabilityRegistry::new();
     friday_planner::execution::native_caps::register_native_builtins(&reg);
     reg
+}
+
+/// The supervisor completion sink must route verified trajectories into the
+/// learning seam, keep the candidate disabled, require explicit admission,
+/// and only then make the learned skill discoverable.
+#[tokio::test]
+async fn supervisor_verified_execution_can_enter_skill_learning_path() {
+    friday_core::init_telemetry();
+    let mut friday = Friday::new();
+
+    let goal = "verify the emerald ledger snapshot";
+    let plan = serde_json::json!({
+        "tasks": [
+            {
+                "name": "Read the emerald ledger snapshot",
+                "capability": "filesystem.read_file",
+                "params": { "path": "notes.md" },
+                "depends_on_indices": []
+            }
+        ]
+    })
+    .to_string();
+    let (_, wiring) = register_engines_with_skills(
+        &mut friday,
+        Some(Box::new(MockBackend::new(plan))),
+        &[(bundled_dir(), SkillSource::Builtin)],
+    )
+    .await
+    .expect("register with skills");
+    let wiring = wiring.expect("skills loaded");
+
+    friday
+        .register_plugin(mock_executor())
+        .await
+        .expect("register mock executor");
+
+    // Real verifier succeeds on a real command run. This is the verified
+    // execution boundary the supervisor path is expected to consume.
+    let verifier = CodeTestVerifier::for_test_run();
+    let obs = run_command_in(std::env::temp_dir().as_path(), "echo test result: ok");
+    let verified = verifier.verify_observation(&obs);
+    assert!(verified.verified, "real verifier must succeed: {:?}", verified.checks);
+
+    let bus = friday.bus().clone();
+    let rx = bus.subscribe();
+    bus.publish(Event::new(
+        events::GOAL_RAW,
+        "user",
+        serde_json::json!({ "text": goal }),
+    ))
+    .await
+    .expect("publish goal");
+
+    let evs = run_and_collect(&mut friday, rx, 3).await;
+    let kinds = kinds_of(&evs);
+    assert!(
+        kinds.contains(&events::PLAN_CREATED),
+        "plan.created missing: {kinds:?}"
+    );
+    assert!(
+        kinds.contains(&events::TASK_COMPLETED),
+        "task.completed missing: {kinds:?}"
+    );
+    assert!(
+        kinds.contains(&events::VERIFICATION_COMPLETED),
+        "verification.completed missing: {kinds:?}"
+    );
+    assert!(
+        kinds.contains(&events::GOAL_COMPLETED),
+        "goal.completed missing: {kinds:?}"
+    );
+
+    // The supervisor-completion sink should have learned a candidate, but it
+    // must stay disabled until admitted.
+    let learning = wiring.skill_learning();
+    let registry = learning.registry_handle();
+    let disabled = registry.search_disabled(goal, 8);
+    assert!(
+        !disabled.is_empty(),
+        "the verified trajectory should register as a disabled candidate"
+    );
+    let candidate_id = disabled[0].skill.id().to_string();
+    assert!(
+        registry
+            .select_for(goal, 8)
+            .as_ref()
+            .map(|selected| selected.skill.id() != candidate_id.as_str())
+            .unwrap_or(true),
+        "candidate must not be selected before explicit admission"
+    );
+    let candidate = registry
+        .get(&candidate_id)
+        .expect("learned candidate must exist");
+    assert!(
+        !candidate.enabled,
+        "learned candidate must start disabled"
+    );
+
+    // Explicit admission is the only step that makes it reusable.
+    let report = learning.admit(&candidate_id).expect("admission ran");
+    assert!(report.passed, "qualification must pass: {:?}", report.checks);
+    assert!(
+        registry.get(&candidate_id).unwrap().enabled,
+        "explicit admission must enable the candidate"
+    );
+    let selected = registry
+        .select_for(goal, 8)
+        .expect("planner should discover the admitted skill");
+    assert_eq!(selected.skill.id(), candidate_id);
+
+    // Reuse remains independently verifiable.
+    let obs2 = run_command_in(std::env::temp_dir().as_path(), "echo test result: ok");
+    let verified2 = verifier.verify_observation(&obs2);
+    assert!(verified2.verified, "reused execution must verify: {:?}", verified2.checks);
 }
 
 #[test]

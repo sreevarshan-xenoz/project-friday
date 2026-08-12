@@ -58,6 +58,35 @@ pub trait PolicyAuthority: Send + Sync {
     fn allows(&self, tool: &str, action: &str) -> bool;
 }
 
+/// One successfully completed task in a verified goal trajectory.
+#[derive(Debug, Clone)]
+pub struct CompletedStep {
+    pub task_id: Uuid,
+    pub instruction: String,
+    pub capability: String,
+    pub output: serde_json::Value,
+}
+
+/// Neutral, planner-owned completion payload for downstream consumers.
+#[derive(Debug, Clone)]
+pub struct CompletedGoal {
+    pub goal_id: Uuid,
+    pub plan_id: Uuid,
+    pub goal: String,
+    pub steps: Vec<CompletedStep>,
+}
+
+/// Receives a goal only after the supervisor has observed successful execution
+/// for every task. Consumers still own any stronger verification/admission gate.
+pub trait GoalCompletionSink: Send + Sync {
+    fn on_completed_goal(&self, goal: CompletedGoal);
+}
+
+struct PendingCompletion {
+    goal: CompletedGoal,
+    verified_tasks: std::collections::HashSet<Uuid>,
+}
+
 /// The orchestration plugin.
 pub struct GoalSupervisor {
     meta: PluginMetadata,
@@ -66,6 +95,8 @@ pub struct GoalSupervisor {
     reflector: Arc<dyn Reflector>,
     store: Arc<GoalStore>,
     pool_size: usize,
+    completion_sink: Option<Arc<dyn GoalCompletionSink>>,
+    pending_completions: Mutex<HashMap<Uuid, PendingCompletion>>,
     goals: Mutex<HashMap<Uuid, GoalRuntime>>,
 }
 
@@ -92,6 +123,8 @@ impl GoalSupervisor {
             .subscribes(&[
                 events::PLAN_CREATED,
                 events::EXEC_RESULT,
+                events::VERIFICATION_COMPLETED,
+                events::VERIFICATION_FAILED,
                 events::GOAL_RESUME,
                 events::GOAL_CANCEL,
             ])
@@ -120,8 +153,22 @@ impl GoalSupervisor {
             reflector,
             store,
             pool_size,
+            completion_sink: None,
+            pending_completions: Mutex::new(HashMap::new()),
             goals: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Attach a neutral completion observer without coupling the planner to a
+    /// particular learning or persistence implementation.
+    pub fn with_completion_sink(mut self, sink: Arc<dyn GoalCompletionSink>) -> Self {
+        self.completion_sink = Some(sink);
+        self
+    }
+
+    pub fn with_completion_sink_opt(mut self, sink: Option<Arc<dyn GoalCompletionSink>>) -> Self {
+        self.completion_sink = sink;
+        self
     }
 
     fn emit_goal_created(&self, goal_id: Uuid, rt: &GoalRuntime) -> Event {
@@ -414,6 +461,37 @@ impl GoalSupervisor {
             }
 
             if rt.is_complete() {
+                let steps = rt
+                    .graph
+                    .tasks
+                    .iter()
+                    .filter_map(|task| {
+                        if !rt.completed.contains(&task.id) {
+                            return None;
+                        }
+                        Some(CompletedStep {
+                            task_id: task.id,
+                            instruction: task.name.clone(),
+                            capability: task.capability.clone(),
+                            output: task.output.clone(),
+                        })
+                    })
+                    .collect();
+                self.pending_completions
+                    .lock()
+                    .expect("completion map poisoned")
+                    .insert(
+                        plan_id,
+                        PendingCompletion {
+                            goal: CompletedGoal {
+                                goal_id,
+                                plan_id,
+                                goal: rt.intent.clone(),
+                                steps,
+                            },
+                            verified_tasks: std::collections::HashSet::new(),
+                        },
+                    );
                 rt.transition(GoalState::Completed);
                 self.store
                     .append(&GoalEvent::GoalCompleted { goal_id })
@@ -460,6 +538,31 @@ impl GoalSupervisor {
             out.extend(self.apply_reflection(rt, goal_id, task_id, action));
             out
         }
+    }
+
+    fn on_verification(&self, event: &Event) -> Vec<Event> {
+        let Some((task_id, plan_id)) = events::extract_ids(event) else {
+            return vec![];
+        };
+        let mut pending = self
+            .pending_completions
+            .lock()
+            .expect("completion map poisoned");
+        let Some(completion) = pending.get_mut(&plan_id) else {
+            return vec![];
+        };
+        if event.kind == events::VERIFICATION_FAILED {
+            pending.remove(&plan_id);
+            return vec![];
+        }
+        completion.verified_tasks.insert(task_id);
+        if completion.verified_tasks.len() == completion.goal.steps.len() {
+            let completion = pending.remove(&plan_id).expect("completion exists");
+            if let Some(sink) = &self.completion_sink {
+                sink.on_completed_goal(completion.goal);
+            }
+        }
+        vec![]
     }
 
     /// Translate a reflection decision into orchestration events. Operates on an
@@ -657,6 +760,9 @@ impl Plugin for GoalSupervisor {
         Ok(match event.kind.as_str() {
             events::PLAN_CREATED => self.on_plan(event),
             events::EXEC_RESULT => self.on_result(event),
+            events::VERIFICATION_COMPLETED | events::VERIFICATION_FAILED => {
+                self.on_verification(event)
+            }
             events::GOAL_RESUME => self.on_resume(event),
             events::GOAL_CANCEL => self.on_cancel(event),
             _ => vec![],
