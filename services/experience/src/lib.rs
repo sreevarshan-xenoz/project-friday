@@ -1781,6 +1781,13 @@ impl RunningMetrics {
 /// cycle. Every timeline is a point-in-time snapshot (see `build_timeline`),
 /// Arc-shared with the ledger and the stores, and `metrics()` is exactly
 /// `MetricsEngine::summarize(timelines)`.
+///
+/// A retention window (C2 windowed emission, MECH-0002) bounds the retained
+/// `timelines` to the `retention` most recent decisions; the running aggregates
+/// and the `experience`/`reputation`/`calibration` stores stay cumulative, so
+/// `metrics_report()` still describes full history. The window only affects the
+/// in-memory read model — the durable Experience-layer history (planner redb
+/// `TimelineStore`) is a separate store and is never truncated here.
 pub struct TimelineStore {
     experience: ExperienceStore,
     reputation: ReputationStore,
@@ -1789,6 +1796,8 @@ pub struct TimelineStore {
     metrics: RunningMetrics,
     policy_count: u64,
     confidence_sum: f64,
+    retention: Option<usize>,
+    total_appended: u64,
 }
 
 impl TimelineStore {
@@ -1801,14 +1810,37 @@ impl TimelineStore {
             metrics: RunningMetrics::new(),
             policy_count: 0,
             confidence_sum: 0.0,
+            retention: None,
+            total_appended: 0,
         }
+    }
+
+    /// Bound the retained read model to the `retention` most recent decisions
+    /// (MECH-0002 C2). Records older than the window are evicted from the
+    /// bridge read model; metrics and experience/reputation/calibration
+    /// aggregates remain cumulative over every appended record. A value of 1
+    /// keeps only the latest decision.
+    pub fn with_retention(mut self, retention: usize) -> Self {
+        self.retention = Some(retention.max(1));
+        self
+    }
+
+    /// Total decisions ever appended (cumulative across evictions). `len()`
+    /// returns how many are currently retained; this returns the lifetime
+    /// count, which stays monotonic under a retention window.
+    pub fn total_appended(&self) -> u64 {
+        self.total_appended
     }
 
     /// Incorporate one decision: update the affected experience entry, recompute
     /// the affected operator's reputation, build one point-in-time timeline, and
     /// fold it into the running aggregates. `record` must already be shared with
-    /// the ledger so both sides reference the same allocation.
+    /// the ledger so both sides reference the same allocation. With a retention
+    /// window set, the oldest timeline(s) are evicted once the window fills —
+    /// the Arc-shared snapshots they pinned are released and the retained set
+    /// stays bounded.
     pub fn append(&mut self, record: Arc<DecisionRecord>) {
+        self.total_appended += 1;
         apply_record(&record, &mut self.experience);
         ReputationEngine::update_operator(
             &self.experience,
@@ -1827,6 +1859,12 @@ impl TimelineStore {
         self.confidence_sum += timeline.prediction.confidence;
         self.metrics.record(&timeline);
         self.timelines.push(timeline);
+        if let Some(retention) = self.retention {
+            let overflow = self.timelines.len().saturating_sub(retention);
+            if overflow > 0 {
+                self.timelines.drain(0..overflow);
+            }
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -3365,6 +3403,52 @@ mod tests {
         assert!(
             (report.experience.avg_latency_ms - expected.experience.avg_latency_ms).abs() < 1e-9
         );
+    }
+
+    #[test]
+    fn retention_window_evicts_oldest_keeps_recent_ordered_and_metrics_cumulative() {
+        let mut store = TimelineStore::new(CalibrationStore::new()).with_retention(4);
+        let appended: Vec<Arc<DecisionRecord>> = (0..10)
+            .map(|i| {
+                Arc::new(make_record(
+                    if i % 2 == 0 {
+                        Capability::ReadFile
+                    } else {
+                        Capability::WriteFile
+                    },
+                    if i % 3 == 0 { "fs-native" } else { "shell" },
+                    i % 5 != 0,
+                ))
+            })
+            .collect();
+        let ids: Vec<CorrelationId> = appended.iter().map(|r| r.id.clone()).collect();
+        for r in &appended {
+            store.append(Arc::clone(r));
+        }
+
+        // Oldest records are absent from the retained read model.
+        assert_eq!(store.len(), 4, "window retains only the last 4");
+        assert_eq!(store.total_appended(), 10, "lifetime count stays cumulative");
+
+        // Recent records remain ordered correctly (oldest evicted first).
+        let retained_ids: Vec<CorrelationId> =
+            store.timelines().iter().map(|t| t.record.id.clone()).collect();
+        assert_eq!(retained_ids, ids[6..], "records 6..10 retained in order");
+
+        // Cumulative aggregates still describe the full history.
+        let report = store.metrics_report();
+        assert_eq!(report.decisions, 10, "metrics fold in every appended record");
+        assert!(report.experience.total_samples >= 10);
+
+        // Appending past the window keeps evicting the oldest.
+        let extra = Arc::new(make_record(Capability::ListDirectory, "code-reviewer", true));
+        store.append(Arc::clone(&extra));
+        assert_eq!(store.len(), 4);
+        assert_eq!(store.total_appended(), 11);
+        let retained_ids: Vec<CorrelationId> =
+            store.timelines().iter().map(|t| t.record.id.clone()).collect();
+        assert_eq!(retained_ids[3], extra.id, "newest record is retained");
+        assert_ne!(retained_ids[0], ids[6], "oldest evicted again");
     }
 
     #[test]

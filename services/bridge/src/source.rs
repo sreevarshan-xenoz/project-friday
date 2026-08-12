@@ -520,8 +520,20 @@ impl DemoRuntimeSource {
     /// goal-execution Executive wired with mock tools for every evidence
     /// channel (web, docs, git, codeintel, memory, filesystem, terminal).
     pub fn new(seed: u64, count: u64) -> Self {
+        Self::with_retention(seed, count, usize::MAX)
+    }
+
+    /// Same as [`DemoRuntimeSource::new`], but bounds the bridge's retained
+    /// read model to the `retention` most recent records (C2 windowed
+    /// emission, MECH-0002). Older records are evicted from the bridge's
+    /// in-memory store, so the emitted `timelines`/`ledger` lists are
+    /// **recent/windowed**, not full history. The durable Experience-layer
+    /// history (planner redb `TimelineStore`) is a separate store and is
+    /// never touched; the dashboard `episodes` count and metrics remain
+    /// cumulative over every appended record.
+    pub fn with_retention(seed: u64, count: u64, retention: usize) -> Self {
         let mut rng = Lcg::new(seed);
-        let mut store = TimelineStore::new(CalibrationStore::new());
+        let mut store = TimelineStore::new(CalibrationStore::new()).with_retention(retention);
         for seq in 0..count {
             store.append(Arc::new(make_record(seq, &mut rng)));
         }
@@ -734,7 +746,7 @@ impl DemoRuntimeSource {
                 processes: 8,
                 capabilities: CAPABILITIES.len() as u64,
                 policies,
-                episodes: self.store.len() as u64,
+                episodes: self.store.total_appended(),
                 confidence,
             },
             recent,
@@ -759,6 +771,10 @@ impl DemoRuntimeSource {
         let _ = executive.cycle(&self.workspace).await;
     }
 
+    /// The retained ledger as DTOs. With a retention window set (MECH-0002
+    /// C2) this is the **recent window**, not full history — older records
+    /// are evicted from the bridge read model and remain only in the durable
+    /// Experience-layer store.
     fn ledger_dto(&self) -> Vec<DecisionRecordDto> {
         self.store
             .timelines()
@@ -767,6 +783,8 @@ impl DemoRuntimeSource {
             .collect()
     }
 
+    /// The retained decision timelines as DTOs. With a retention window set
+    /// (MECH-0002 C2) this is the **recent window**, not full history.
     fn timelines_dto(&self) -> Vec<DecisionTimelineDto> {
         self.store
             .timelines()
@@ -818,7 +836,7 @@ impl RuntimeSource for DemoRuntimeSource {
                 self.run_cycle(&mut st.executive).await;
                 st.started = true;
             }
-            let record = make_record(self.store.len() as u64, &mut self.rng);
+            let record = make_record(self.store.total_appended() as u64, &mut self.rng);
             self.store.append(Arc::new(record));
         }
 

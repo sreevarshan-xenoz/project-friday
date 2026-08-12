@@ -45,8 +45,8 @@ Status legend:
 | E2E skill_planning_suite (live) | SLOW | `cargo test -p friday-e2e --test skill_planning_suite` — 16 goals × 40s windows ≈ ≥10 min; not fully re-run this pass |
 | Formatting | FAIL | `cargo fmt --all -- --check` reported existing drift across the workspace |
 | Clippy | PASS WITH WARNINGS | `cargo clippy --workspace --all-targets --all-features` completed with existing warnings |
-| Memory-growth qualification | BLOCKED | [docs/VALIDATION.md](docs/VALIDATION.md) records unresolved memory-growth criteria requiring baseline classification |
-| RTT-drift qualification | BLOCKED | [docs/VALIDATION.md](docs/VALIDATION.md) records unresolved RTT-drift criteria requiring baseline classification |
+| Memory-growth qualification | PARTIAL | [MECH-0002](docs/mech/MECH-0002-windowed-emission-evaluation.md) C2 implemented + implementation-validated (smoke + 64/256/512 sweep: RSS flat ~19–21 MB, bounded window); decision run (24 h, `< 1 MB/hr`) deferred to the final qualification gate |
+| RTT-drift qualification | PARTIAL | [MECH-0002](docs/mech/MECH-0002-windowed-emission-evaluation.md) C2 bounds the O(history) emission path (wire volume scales with window, plateaus past it); sub-ms RTT / ≤0.1 ms drift in sweep; decision run (24 h, `< 10%`) deferred to the final qualification gate |
 | E2E capability stub | PARTIAL | `e2e/src/runner.rs` contains a stubbed capability field; current qualification dependency not yet established |
 | UIAutomation TODO | DEFERRED | `windows-host/UIAutomation/ElementFinder.cs` is a placeholder; no current acceptance receipt depends on it |
 | Skill Compounding | DEFERRED | intentionally frozen until qualification baseline is clean |
@@ -100,16 +100,15 @@ Observed 2026-08-12: README written and committed, test ok in 30.5s.
 
 ### Validation criteria
 
-`docs/VALIDATION.md` still describes unresolved memory-growth and RTT-drift
-criteria. These need classification against:
-
-- baseline
-- threshold
-- reproducibility
-- environment dependence
-- regression vs expected variance
-
-No implementation change should be made until those criteria are classified.
+`docs/VALIDATION.md` tracks the memory-growth and RTT-drift criteria. Classified
+via [MECH-0002](docs/mech/MECH-0002-windowed-emission-evaluation.md): both
+residuals trace to the single O(history) full-list emission path
+(Finding VP-001-1 + VP-001-2, one root cause). C2 (retention window + windowed
+emission) is implemented and implementation-validated (smoke + 64/256/512
+sweep, all PASS). The decision thresholds (`< 1 MB/hr`, `< 10%`) are judged
+only on a protocol-identical 24 h run, **deferred to the final qualification
+gate** — after C2, RTT work, CC-11, the remaining blockers, and final
+integrations — per the build→validate-continuously→endure-once workflow.
 
 ### Browser status
 

@@ -41,7 +41,7 @@ are filled in afterwards. A run that surprises us is a finding, not a failure.
 
 ### VP-001 — Long-running cognition
 
-**Status:** ladder in progress — run-002 (2h) = **VP-001 Baseline**; run-003 (8h) done; run-004 (24h) = **INCONCLUSIVE** (host sleep, 9.7h observation gap); run-005 (24h continuous, **first protocol-compliant VP-001 execution**) = **CONFIRMED both curves** → ADR-0005 **ACCEPTED**; bounded read-model mechanism implemented (MECH-0001 C4+C6); **run-006 (re-validation) = FAIL on both decision criteria** (memory 9.8 MB/hr, RTT +394%), all integrity PASS at 100% coverage — alternatives under evaluation
+**Status:** ladder in progress — run-002 (2h) = **VP-001 Baseline**; run-003 (8h) done; run-004 (24h) = **INCONCLUSIVE** (host sleep, 9.7h observation gap); run-005 (24h continuous, **first protocol-compliant VP-001 execution**) = **CONFIRMED both curves** → ADR-0005 **ACCEPTED**; bounded read-model mechanism implemented (MECH-0001 C4+C6); **run-006 (re-validation) = FAIL on both decision criteria** (memory 9.8 MB/hr, RTT +394%), all integrity PASS at 100% coverage — alternatives under evaluation → **C2 (MECH-0002) implemented + implementation-validated** (retention window + windowed emission; smoke + 64/256/512 sweep all PASS, 2026-08-12) — the protocol-identical 24 h decision run is **deferred to the final qualification gate** (workflow: build → validate continuously → one endurance run when the architecture is complete)
 
 ```
 Evidence supports:
@@ -263,7 +263,7 @@ Evidence supports:
 
 | VP    | Program                 | Status    | Last run | Result link |
 | ----- | ----------------------- | --------- | -------- | ----------- |
-| VP-001 | Long-running cognition  | baseline + 8h + 24h ×3 (run-004 INCONCLUSIVE, host sleep; run-005 CONFIRMED → ADR-0005 accepted; run-006 FAIL on decision criteria, integrity clean) | 2026-08-07 | [run-002 baseline](..\artifacts\validation\run-002\report.md) · [run-003](..\artifacts\validation\run-003\report.md) · [run-004](..\artifacts\validation\run-004\report.md) · [run-005](..\artifacts\validation\run-005\report.md) · [run-006](..\artifacts\validation\run-006\report.md) |
+| VP-001 | Long-running cognition  | baseline + 8h + 24h ×3 (run-004 INCONCLUSIVE, host sleep; run-005 CONFIRMED → ADR-0005 accepted; run-006 FAIL on decision criteria, integrity clean) → **C2 accepted (MECH-0002): implementation-level PASS** (smoke + 64/256/512 sweep); 24h decision run deferred to final qualification gate | 2026-08-12 | [run-002 baseline](..\artifacts\validation\run-002\report.md) · [run-003](..\artifacts\validation\run-003\report.md) · [run-004](..\artifacts\validation\run-004\report.md) · [run-005](..\artifacts\validation\run-005\report.md) · [run-006](..\artifacts\validation\run-006\report.md) · [smoke-window-32](..\artifacts\validation\smoke-window-32\report.md) · [sweep-w64-clean](..\artifacts\validation\sweep-w64-clean\report.md) · [sweep-w256](..\artifacts\validation\sweep-w256\report.md) · [sweep-w512](..\artifacts\validation\sweep-w512\report.md) |
 | VP-002 | Prediction quality      | proposed  | —        | —           |
 | VP-003 | Replay correctness      | proposed  | —        | —           |
 | VP-004 | Scaling                 | first run | 2026-08-01 | [results](../benchmarks/VP-004/README.md) |

@@ -279,6 +279,39 @@ async fn demo_source_seeds_read_models_through_frozen_engines() {
 }
 
 #[tokio::test]
+async fn demo_source_retention_window_emits_recent_lists_and_keeps_metrics_cumulative() {
+    // MECH-0002 C2: with a retention window, the bridge read model (and thus
+    // the emitted timelines/ledger lists) is bounded to the recent window,
+    // while metrics/episodes stay cumulative over full history.
+    let mut source = DemoRuntimeSource::with_retention(42, 140, 8);
+    let snap = source.snapshot().await;
+
+    assert_eq!(snap.timelines.len(), 8, "read model bounded to the window");
+    assert_eq!(snap.ledger.len(), 8, "ledger list is the recent window");
+    assert_eq!(snap.metrics.decisions, 140, "metrics fold in full history");
+    assert_eq!(snap.dashboard.world.episodes, 140, "episodes stay cumulative");
+
+    let first_before = snap.ledger[0].id.clone();
+
+    // A full executive cycle appends one record: the window slides, oldest is
+    // evicted, the list stays at 8.
+    let mut deltas = Vec::new();
+    for _ in 0..11 {
+        deltas.extend(source.tick(1).await);
+    }
+    let ledger = deltas
+        .into_iter()
+        .rev()
+        .find_map(|d| d.ledger)
+        .expect("cycle completion carries the ledger slice");
+    assert_eq!(ledger.len(), 8, "window stays bounded as history grows");
+    assert_ne!(
+        ledger[0].id, first_before,
+        "oldest record evicted when the window slides"
+    );
+}
+
+#[tokio::test]
 async fn demo_source_tick_advances_executive_and_appends_on_cycle_completion() {
     let mut source = DemoRuntimeSource::new(42, 5);
 

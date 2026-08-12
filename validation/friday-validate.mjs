@@ -40,6 +40,8 @@ Options:
   --listen <addr>      Bridge listen address. Default: 127.0.0.1:18433
   --seed <n>           Bridge RNG seed. Default: 42
   --count <n>          Initial ledger records. Default: 140
+  --window <n>         Bridge retention window (records; recent/windowed list
+                       semantics, MECH-0002 C2). Default: unbounded
   --bridge <path>      Path to the friday-bridge binary
   --log-level <level>  RUST_LOG for the bridge. Default: info
   --coverage-threshold <pct>  Minimum observation coverage (%) for a VALID
@@ -95,6 +97,7 @@ const intervalMs = (() => {
 const listen = args.listen ?? '127.0.0.1:18433';
 const seed = args.seed ? Number(args.seed) : 42;
 const count = args.count ? Number(args.count) : 140;
+const window = args.window ? Number(args.window) : null;
 const bridgeBin =
   args.bridge ?? join(repoRoot, 'target', 'debug', `friday-bridge${isWin ? '.exe' : ''}`);
 const logLevel = args['log-level'] ?? 'info';
@@ -130,11 +133,14 @@ const state = {
 const bridgeLog = createWriteStream(join(outDir, 'bridge.log'), { flags: 'a' });
 const collectorLog = createWriteStream(join(outDir, 'collector.log'), { flags: 'a' });
 
-const bridge = spawn(
-  bridgeBin,
-  ['--listen', listen, '--seed', String(seed), '--count', String(count)],
-  { cwd: repoRoot, env: { ...process.env, RUST_LOG: logLevel }, stdio: ['ignore', 'pipe', 'pipe'] },
-);
+const bridgeArgs = ['--listen', listen, '--seed', String(seed), '--count', String(count)];
+if (window !== null) bridgeArgs.push('--window', String(window));
+
+const bridge = spawn(bridgeBin, bridgeArgs, {
+  cwd: repoRoot,
+  env: { ...process.env, RUST_LOG: logLevel },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
 bridge.stdout.on('data', (d) => bridgeLog.write(d));
 bridge.stderr.on('data', (d) => bridgeLog.write(d));
 bridge.on('exit', (code, signal) => {
