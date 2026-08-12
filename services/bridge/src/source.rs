@@ -915,8 +915,8 @@ impl LiveRuntimeSource {
             repo.clone(),
         ));
         let director = Arc::new(AgentDirector::new(child_driver));
-        let executor = friday_goal_execution::DirectorActionExecutor::new(director)
-            .with_cwd(repo.clone());
+        let executor =
+            friday_goal_execution::DirectorActionExecutor::new(director).with_cwd(repo.clone());
         let workspace = GlobalWorkspace::new();
         let mut initial_model =
             WorldModel::new(WorldState::new().with_working_directory(repo.to_string_lossy()));

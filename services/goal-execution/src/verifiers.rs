@@ -142,9 +142,7 @@ pub fn run_command_in_with_timeout(
                     return CommandObservation {
                         exit_code: -1,
                         stdout: String::new(),
-                        stderr: format!(
-                            "command exceeded {timeout:?} timeout and was terminated"
-                        ),
+                        stderr: format!("command exceeded {timeout:?} timeout and was terminated"),
                         duration_ms: started.elapsed().as_millis() as u64,
                     };
                 }
@@ -445,7 +443,11 @@ mod tests {
         assert!(names.contains(&"expect \"test result: ok\""), "{names:?}");
         assert!(names.contains(&"no \"FAILED\""), "{names:?}");
         // The exit-code check records the real observed code.
-        let exit = result.checks.iter().find(|c| c.name == "exit_code").unwrap();
+        let exit = result
+            .checks
+            .iter()
+            .find(|c| c.name == "exit_code")
+            .unwrap();
         assert_eq!(exit.detail, "exit code 0 (expected 0)");
     }
 
@@ -480,7 +482,11 @@ mod tests {
         assert_eq!(obs.exit_code, 1, "the command really failed");
         assert!(!result.tool_success);
         assert!(!result.verified);
-        let exit = result.checks.iter().find(|c| c.name == "exit_code").unwrap();
+        let exit = result
+            .checks
+            .iter()
+            .find(|c| c.name == "exit_code")
+            .unwrap();
         assert!(!exit.passed);
         assert!(exit.detail.contains("exit code 1"), "{}", exit.detail);
     }
@@ -523,7 +529,8 @@ mod tests {
     fn concrete_verification_passes_clean_observed_output() {
         let verification = CodeTestVerifier::for_test_run().to_verification();
         let action = Action::single("run cargo test", crate::Capability::ExecuteCommand, "g1");
-        let result = ToolResult::success("running 2 tests ... test result: ok. 2 passed; 0 failed;");
+        let result =
+            ToolResult::success("running 2 tests ... test result: ok. 2 passed; 0 failed;");
         let verified = verification.verify(&action, &result);
 
         assert!(verified.verified, "checks: {:?}", verified.checks);
@@ -542,12 +549,10 @@ mod tests {
         let result = ToolResult::success("thread 'main' panicked at src/main.rs:10");
         let verified = verification.verify(&action, &result);
         assert_eq!(verified.verified, false);
-        assert!(
-            verified
-                .checks
-                .iter()
-                .any(|c| c.name == "no \"panicked\"" && !c.passed)
-        );
+        assert!(verified
+            .checks
+            .iter()
+            .any(|c| c.name == "no \"panicked\"" && !c.passed));
     }
 
     #[test]

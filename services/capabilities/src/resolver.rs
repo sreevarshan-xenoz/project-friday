@@ -206,22 +206,27 @@ impl BindingResolver {
         }
 
         let error = if !failures.is_empty() {
-            format!("capability {capability} unavailable: {} attempted and failed", failures.join("; "))
+            format!(
+                "capability {capability} unavailable: {} attempted and failed",
+                failures.join("; ")
+            )
         } else if attempted.is_empty() {
-                let skipped = if resolved.skipped.is_empty() {
-                    String::new()
-                } else {
-                    format!(
-                        " (skipped: {})",
-                        resolved
-                            .skipped
-                            .iter()
-                            .map(|(p, why)| format!("{p}:{why}"))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                };
-                format!("capability {capability} unavailable: no online, policy-allowed binding{skipped}")
+            let skipped = if resolved.skipped.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " (skipped: {})",
+                    resolved
+                        .skipped
+                        .iter()
+                        .map(|(p, why)| format!("{p}:{why}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            format!(
+                "capability {capability} unavailable: no online, policy-allowed binding{skipped}"
+            )
         } else {
             format!("capability {capability} unavailable")
         };
@@ -329,7 +334,11 @@ mod tests {
         );
 
         let out = r
-            .execute("web.search", &serde_json::json!({ "query": "rust" }), &fake_ok())
+            .execute(
+                "web.search",
+                &serde_json::json!({ "query": "rust" }),
+                &fake_ok(),
+            )
             .await;
         assert!(out.success, "out: {out:?}");
         assert_eq!(out.provider, "duckduckgo", "healthy primary wins");
@@ -356,12 +365,23 @@ mod tests {
         );
 
         let out = r
-            .execute("web.search", &serde_json::json!({ "query": "rust" }), &fake_ok())
+            .execute(
+                "web.search",
+                &serde_json::json!({ "query": "rust" }),
+                &fake_ok(),
+            )
             .await;
         assert!(out.success, "fallback must succeed: {out:?}");
         assert_eq!(out.provider, "jina", "fallback selected");
-        assert_eq!(out.attempted, vec!["jina"], "offline primary is never attempted");
-        assert_eq!(out.output["echo"]["query"], "rust", "normalized evidence returned");
+        assert_eq!(
+            out.attempted,
+            vec!["jina"],
+            "offline primary is never attempted"
+        );
+        assert_eq!(
+            out.output["echo"]["query"], "rust",
+            "normalized evidence returned"
+        );
     }
 
     #[tokio::test]
@@ -384,7 +404,10 @@ mod tests {
         // ranked below the healthy fallback.
         let resolved = r.resolve("web.search");
         assert_eq!(resolved.ready.len(), 2);
-        assert_eq!(resolved.ready[0].provider, "jina", "healthy wins over degraded");
+        assert_eq!(
+            resolved.ready[0].provider, "jina",
+            "healthy wins over degraded"
+        );
 
         let out = r
             .execute("web.search", &serde_json::json!({}), &fake_ok())
@@ -410,10 +433,17 @@ mod tests {
         );
 
         let resolved = r.resolve("web.search");
-        assert_eq!(resolved.ready.len(), 1, "offline is excluded from selection");
+        assert_eq!(
+            resolved.ready.len(),
+            1,
+            "offline is excluded from selection"
+        );
         assert_eq!(resolved.ready[0].provider, "duckduckgo");
         assert!(
-            resolved.skipped.iter().any(|(p, why)| p == "jina" && *why == "offline"),
+            resolved
+                .skipped
+                .iter()
+                .any(|(p, why)| p == "jina" && *why == "offline"),
             "offline provider recorded as skipped"
         );
     }
@@ -436,15 +466,25 @@ mod tests {
 
         let mut results = HashMap::new();
         results.insert("ddg", Err::<serde_json::Value, _>("500 upstream"));
-        results.insert("jina", Ok::<serde_json::Value, _>(serde_json::json!({ "hits": [] })));
+        results.insert(
+            "jina",
+            Ok::<serde_json::Value, _>(serde_json::json!({ "hits": [] })),
+        );
         let dispatch = fake_result(results);
 
         let out = r
             .execute("web.search", &serde_json::json!({}), &dispatch)
             .await;
-        assert!(out.success, "fallback must rescue a failed primary: {out:?}");
+        assert!(
+            out.success,
+            "fallback must rescue a failed primary: {out:?}"
+        );
         assert_eq!(out.provider, "jina");
-        assert_eq!(out.attempted, vec!["duckduckgo", "jina"], "failure trail recorded");
+        assert_eq!(
+            out.attempted,
+            vec!["duckduckgo", "jina"],
+            "failure trail recorded"
+        );
     }
 
     #[tokio::test]
@@ -500,7 +540,10 @@ mod tests {
             .await;
         assert!(!out.success);
         let err = out.error.expect("structured error");
-        assert!(err.contains("no online, policy-allowed binding"), "err: {err}");
+        assert!(
+            err.contains("no online, policy-allowed binding"),
+            "err: {err}"
+        );
         assert!(err.contains("duckduckgo:offline"), "err: {err}");
     }
 
@@ -527,7 +570,10 @@ mod tests {
         );
 
         let resolved = r.resolve("web.search");
-        assert!(resolved.skipped.iter().any(|(p, why)| p == "duckduckgo" && *why == "policy_denied"));
+        assert!(resolved
+            .skipped
+            .iter()
+            .any(|(p, why)| p == "duckduckgo" && *why == "policy_denied"));
         assert_eq!(resolved.ready.len(), 1);
         assert_eq!(resolved.ready[0].provider, "jina");
     }
@@ -553,7 +599,10 @@ mod tests {
             .execute("web.search", &serde_json::json!({}), &fake_ok())
             .await;
         assert!(out.success);
-        assert_eq!(out.provider, "jina", "offline primary bypassed after live health update");
+        assert_eq!(
+            out.provider, "jina",
+            "offline primary bypassed after live health update"
+        );
     }
 
     #[tokio::test]
@@ -563,6 +612,9 @@ mod tests {
             .execute("web.search", &serde_json::json!({}), &fake_ok())
             .await;
         assert!(!out.success);
-        assert_eq!(out.error.unwrap(), "capability web.search unavailable: no online, policy-allowed binding");
+        assert_eq!(
+            out.error.unwrap(),
+            "capability web.search unavailable: no online, policy-allowed binding"
+        );
     }
 }

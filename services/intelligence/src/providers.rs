@@ -3662,7 +3662,9 @@ mod v2_tests {
 
     // ── Egress policy (#12): the outbound seam shared by every dispatch ──
 
-    fn fabric_with_egress(policy_for: Option<(&str, crate::egress::EgressMode)>) -> InferenceFabric {
+    fn fabric_with_egress(
+        policy_for: Option<(&str, crate::egress::EgressMode)>,
+    ) -> InferenceFabric {
         use crate::egress::EgressGate;
         use crate::secrets::SecretsVault;
         let vault = std::sync::Arc::new(SecretsVault::new());
@@ -3682,7 +3684,9 @@ mod v2_tests {
             "egress is OFF unless explicitly attached (no behavior change)"
         );
         assert_eq!(
-            fabric.egress_process("openrouter", "summarize sk-token-abcdef").unwrap(),
+            fabric
+                .egress_process("openrouter", "summarize sk-token-abcdef")
+                .unwrap(),
             "summarize sk-token-abcdef"
         );
     }
@@ -3717,12 +3721,12 @@ mod v2_tests {
         use crate::egress::EgressMode;
         let fabric = fabric_with_egress(Some(("openrouter", EgressMode::Redact)));
         // openrouter: redacted; groq (unlisted): default Block.
-        assert!(
-            fabric
-                .egress_process("openrouter", "has sk-token-abcdef")
-                .unwrap()
-                .contains("[REDACTED:provider/openrouter]")
-        );
-        assert!(fabric.egress_process("groq", "has sk-token-abcdef").is_err());
+        assert!(fabric
+            .egress_process("openrouter", "has sk-token-abcdef")
+            .unwrap()
+            .contains("[REDACTED:provider/openrouter]"));
+        assert!(fabric
+            .egress_process("groq", "has sk-token-abcdef")
+            .is_err());
     }
 }

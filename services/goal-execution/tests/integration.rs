@@ -328,10 +328,11 @@ use friday_goal_execution::{
 /// changes to S'". The model stays pure; the projection carries S'.
 #[test]
 fn causal_edge_answers_if_action_runs_state_changes() {
-    let mut model = WorldModel::new(WorldState::new().with_variable("head", serde_json::json!("old")));
-    model.causal_mut().add_entity(
-        Entity::new("repo:project-friday", "GitRepository").with_state("clean"),
-    );
+    let mut model =
+        WorldModel::new(WorldState::new().with_variable("head", serde_json::json!("old")));
+    model
+        .causal_mut()
+        .add_entity(Entity::new("repo:project-friday", "GitRepository").with_state("clean"));
     model.causal_mut().add_relation(EntityRelation::new(
         "repo:project-friday",
         "hosts",
@@ -359,7 +360,10 @@ fn causal_edge_answers_if_action_runs_state_changes() {
     let sim = model.simulate(&Capability::Custom("git.commit".into()));
     assert!(sim.applicable, "unmet: {:?}", sim.unmet);
     assert_eq!(sim.fired_edge.as_deref(), Some("git.commit->commit"));
-    assert_eq!(sim.projected_world.variables["head"], serde_json::json!("abc123"));
+    assert_eq!(
+        sim.projected_world.variables["head"],
+        serde_json::json!("abc123")
+    );
     assert_eq!(
         sim.projected_entities
             .iter()
@@ -372,7 +376,11 @@ fn causal_edge_answers_if_action_runs_state_changes() {
     // Counterfactual purity: the model did not move.
     assert_eq!(model.state().variables["head"], serde_json::json!("old"));
     assert_eq!(
-        model.causal().entity("repo:project-friday").unwrap().state(),
+        model
+            .causal()
+            .entity("repo:project-friday")
+            .unwrap()
+            .state(),
         Some("clean")
     );
     assert_eq!(model.causal().relations.len(), 1);
@@ -383,7 +391,9 @@ fn causal_edge_answers_if_action_runs_state_changes() {
 #[test]
 fn apply_simulation_commits_the_projected_state() {
     let mut model = WorldModel::new(WorldState::new());
-    model.causal_mut().add_entity(Entity::new("repo:x", "GitRepository"));
+    model
+        .causal_mut()
+        .add_entity(Entity::new("repo:x", "GitRepository"));
     model.causal_mut().add_edge(CausalEdge::new(
         "init",
         Capability::Custom("git.init".into()),
@@ -403,7 +413,10 @@ fn apply_simulation_commits_the_projected_state() {
         .apply_simulation("act_1", "goal_1", &sim)
         .expect("applicable simulation commits");
     assert!(model.state().file_exists("/work/.git/config"));
-    assert_eq!(transition.diff.added_files, vec!["/work/.git/config".to_string()]);
+    assert_eq!(
+        transition.diff.added_files,
+        vec!["/work/.git/config".to_string()]
+    );
     assert_eq!(model.history().len(), 1);
 
     // An inapplicable simulation commits nothing — and its projection is the
@@ -414,7 +427,9 @@ fn apply_simulation_commits_the_projected_state() {
         no_fire.projected_world.file_exists("/work/.git/config"),
         "inapplicable projection carries the input state, not a blank world"
     );
-    assert!(model.apply_simulation("act_2", "goal_1", &no_fire).is_none());
+    assert!(model
+        .apply_simulation("act_2", "goal_1", &no_fire)
+        .is_none());
     assert_eq!(model.history().len(), 1, "nothing adopted");
 
     // A STALE projection (derived from an older world) is refused: committing
@@ -478,9 +493,15 @@ fn intent_gap_closes_after_committing_the_proposed_action() {
 
     let layer = IntentLayer::new();
     let gap = layer.analyze(&model, &desired);
-    assert!(!gap.is_closed(), "ideal not yet reached: {}", gap.describe());
+    assert!(
+        !gap.is_closed(),
+        "ideal not yet reached: {}",
+        gap.describe()
+    );
 
-    let objective = layer.objective(&model, &desired).expect("open gap → objective");
+    let objective = layer
+        .objective(&model, &desired)
+        .expect("open gap → objective");
     assert_eq!(
         objective.closing_actions,
         vec![Capability::Custom("git.init".into())],
@@ -549,7 +570,7 @@ fn closed_desired_state_yields_no_objective_or_plan() {
 
 // ── Skill compounding (#11): verified trajectory → skill → reuse ──
 
-use friday_goal_execution::{CodeTestVerifier, run_command_in};
+use friday_goal_execution::{run_command_in, CodeTestVerifier};
 use friday_skills::{
     OutcomeSummary, SkillCompiler, SkillRegistry, TrajectorySkill, TrajectoryStep,
 };
@@ -597,10 +618,10 @@ fn verified_trajectory_compounds_into_a_reusable_skill() {
     let registry = SkillRegistry::new();
     let outcome = SkillCompiler::new().compile(&registry, &trajectory);
     assert!(outcome.compiled(), "refusals: {:?}", outcome.refusals);
-    assert_eq!(outcome.skill.as_ref().unwrap().resolved_capabilities(), vec![
-        "terminal.execute",
-        "filesystem.read"
-    ]);
+    assert_eq!(
+        outcome.skill.as_ref().unwrap().resolved_capabilities(),
+        vec!["terminal.execute", "filesystem.read"]
+    );
 
     // 4. A LATER goal uses the skill: selection ranks and chooses it.
     let selected = registry

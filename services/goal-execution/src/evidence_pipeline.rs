@@ -288,7 +288,11 @@ fn evidence_from_web_json(v: &serde_json::Value) -> Option<Evidence> {
     Some(Evidence {
         channel: EvidenceChannel::Web,
         source: source.to_string(),
-        title: v.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        title: v
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
         url: url.to_string(),
         content: v
             .get("content")
@@ -296,10 +300,7 @@ fn evidence_from_web_json(v: &serde_json::Value) -> Option<Evidence> {
             .unwrap_or("")
             .to_string(),
         retrieved_at,
-        confidence: v
-            .get("confidence")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(1.0),
+        confidence: v.get("confidence").and_then(|v| v.as_f64()).unwrap_or(1.0),
         metadata: json!({}),
     })
 }
@@ -358,7 +359,11 @@ impl Verifier for EvidenceConfidenceVerifier {
                     format!("all {} items meet the {:.2} floor", items.len(), self.floor)
                 }
             } else {
-                format!("{} items below the {:.2} floor: {low:?}", low.len(), self.floor)
+                format!(
+                    "{} items below the {:.2} floor: {low:?}",
+                    low.len(),
+                    self.floor
+                )
             },
         }
     }
@@ -607,7 +612,9 @@ mod tests {
         let corroborated = set
             .items
             .iter()
-            .find(|e| e.channel == EvidenceChannel::Web && e.url == "https://doc.rust-lang.org/book/")
+            .find(|e| {
+                e.channel == EvidenceChannel::Web && e.url == "https://doc.rust-lang.org/book/"
+            })
             .expect("web copy still present");
         assert!(
             corroborated.confidence > base,
@@ -684,7 +691,11 @@ mod tests {
             .find(|c| c.name == "evidence_confidence")
             .expect("confidence check present");
         assert!(!conf.passed);
-        assert!(conf.detail.contains("0.3"), "detail names the offender: {}", conf.detail);
+        assert!(
+            conf.detail.contains("0.3"),
+            "detail names the offender: {}",
+            conf.detail
+        );
     }
 
     #[test]
@@ -735,9 +746,15 @@ mod tests {
         let episode = evidence_episode(Goal::new("research"), &set, &verified);
         assert_eq!(episode.outcome, EpisodeOutcome::Success);
         assert!(episode.tags.contains(&"research".to_string()));
-        let exec = episode.execution_result.expect("evidence is the execution result");
+        let exec = episode
+            .execution_result
+            .expect("evidence is the execution result");
         let parsed: Vec<Evidence> = serde_json::from_str(&exec.output).unwrap();
-        assert_eq!(parsed.len(), 3, "blended body is the episode's execution result");
+        assert_eq!(
+            parsed.len(),
+            3,
+            "blended body is the episode's execution result"
+        );
         let ver = episode.verification_result.expect("verification attached");
         assert!(ver.verified);
     }

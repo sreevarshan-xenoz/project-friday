@@ -476,7 +476,10 @@ mod tests {
         assert!(skill.enabled);
         assert!(skill.is_usable());
         // Capabilities deduped, in first-use order, all resolved (they ran).
-        assert_eq!(skill.resolved_capabilities(), vec!["terminal.execute", "filesystem.read"]);
+        assert_eq!(
+            skill.resolved_capabilities(),
+            vec!["terminal.execute", "filesystem.read"]
+        );
         // Actions: goal first, then each step instruction.
         assert_eq!(skill.manifest.actions[0], "run friday tests");
         assert_eq!(skill.manifest.actions.len(), 3);
@@ -550,7 +553,10 @@ mod tests {
         trajectory.steps = vec![];
         let outcome = SkillCompiler::new().compile(&registry, &trajectory);
         assert!(!outcome.compiled());
-        assert!(outcome.refusals.iter().any(|r| r.code == RefusalCode::NoSteps));
+        assert!(outcome
+            .refusals
+            .iter()
+            .any(|r| r.code == RefusalCode::NoSteps));
 
         let mut trajectory = verified_trajectory("do nothing");
         trajectory.steps = vec![TrajectoryStep {
@@ -581,7 +587,10 @@ mod tests {
 
     #[test]
     fn slugify_follows_skill_id_rules() {
-        assert_eq!(slugify("Run cargo test on the Friday project!"), "run-cargo-test-on-the-friday-project");
+        assert_eq!(
+            slugify("Run cargo test on the Friday project!"),
+            "run-cargo-test-on-the-friday-project"
+        );
         assert_eq!(slugify("  spaced  out  "), "spaced-out");
         assert_eq!(slugify("!!!"), "learned-skill");
         // '_' is a valid skill-id char — it survives, like '-'.
@@ -592,7 +601,8 @@ mod tests {
     fn compounding_emits_the_compounded_event_with_the_evidence_trail() {
         let sink = Arc::new(VecSink::new());
         let registry = SkillRegistry::with_sink(sink.clone());
-        let outcome = SkillCompiler::new().compile(&registry, &verified_trajectory("backup the logs"));
+        let outcome =
+            SkillCompiler::new().compile(&registry, &verified_trajectory("backup the logs"));
 
         assert!(outcome.compiled());
         let events = sink.events.lock().expect("sink");
@@ -602,12 +612,18 @@ mod tests {
             .collect();
         assert_eq!(compounded.len(), 1, "exactly one skill.compounded event");
         if let SkillEvent::Compounded {
-            skill_id, goal, evidence_ids,
+            skill_id,
+            goal,
+            evidence_ids,
         } = compounded[0]
         {
             assert_eq!(skill_id, "backup-the-logs");
             assert_eq!(goal, "backup the logs");
-            assert_eq!(evidence_ids, &vec!["ev_1".to_string()], "the trail, not a count");
+            assert_eq!(
+                evidence_ids,
+                &vec!["ev_1".to_string()],
+                "the trail, not a count"
+            );
         }
     }
 
@@ -621,8 +637,14 @@ mod tests {
         }];
         let outcome = SkillCompiler::new().compile(&registry, &trajectory);
         assert!(!outcome.compiled());
-        assert!(outcome.refusals.iter().any(|r| r.code == RefusalCode::NoActions));
-        assert!(registry.all().is_empty(), "an unrankable skill never registers");
+        assert!(outcome
+            .refusals
+            .iter()
+            .any(|r| r.code == RefusalCode::NoActions));
+        assert!(
+            registry.all().is_empty(),
+            "an unrankable skill never registers"
+        );
     }
 
     /// The constitution acceptance: a later goal *uses* the learned skill.
@@ -647,7 +669,9 @@ mod tests {
         trajectory.outcome = OutcomeSummary::Unverified {
             reason: "panicked".to_string(),
         };
-        assert!(!SkillCompiler::new().compile(&registry, &trajectory).compiled());
+        assert!(!SkillCompiler::new()
+            .compile(&registry, &trajectory)
+            .compiled());
         assert!(registry.select_for("deploy broken code", 5).is_none());
     }
 }

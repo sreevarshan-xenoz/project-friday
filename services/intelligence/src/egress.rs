@@ -196,7 +196,8 @@ mod tests {
         assert_eq!(verdict.action, EgressAction::Allow);
         assert!(verdict.hits.is_empty());
         assert_eq!(
-            gate.process("openrouter", "summarize the quarterly report").unwrap(),
+            gate.process("openrouter", "summarize the quarterly report")
+                .unwrap(),
             "summarize the quarterly report"
         );
     }
@@ -213,7 +214,10 @@ mod tests {
         let err = gate.process("openrouter", payload).unwrap_err();
         assert!(err.contains("egress policy blocked"), "{err}");
         assert!(err.contains("provider/openrouter"), "{err}");
-        assert!(!err.contains("sk-token-abcdef"), "reason never carries the value: {err}");
+        assert!(
+            !err.contains("sk-token-abcdef"),
+            "reason never carries the value: {err}"
+        );
     }
 
     #[test]
@@ -239,7 +243,11 @@ mod tests {
         let (_, gate) = gate_with_secret("sk-token-abcdef");
         let gate = gate.with_provider_policy("openrouter", EgressMode::LogOnly);
         let verdict = gate.inspect("openrouter", "mention sk-token-abcdef here");
-        assert_eq!(verdict.action, EgressAction::Allow, "payload still goes out");
+        assert_eq!(
+            verdict.action,
+            EgressAction::Allow,
+            "payload still goes out"
+        );
         assert_eq!(verdict.hits.len(), 1, "but the hits are reported");
     }
 

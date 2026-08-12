@@ -142,7 +142,10 @@ impl Sensor for WindowsScreenSensor {
 // ── Pure helpers (platform-neutral, fully tested) ─────────────────
 
 /// Whether `new` differs observably from `last`. `None` = no change.
-pub fn changed_from(new: &ScreenObservation, last: Option<&ScreenObservation>) -> Option<ScreenChange> {
+pub fn changed_from(
+    new: &ScreenObservation,
+    last: Option<&ScreenObservation>,
+) -> Option<ScreenChange> {
     let last = last?;
     if new.signature() != last.signature() {
         Some(ScreenChange::Focus)
@@ -246,8 +249,8 @@ fn capture_foreground_window() -> Option<ScreenObservation> {
 unsafe fn capture_client_hash(hwnd: HWND) -> Result<Option<u64>, String> {
     use windows::Win32::Graphics::Gdi::{
         BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
-        GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS,
-        HBITMAP, HDC, SRCCOPY, BI_RGB,
+        GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
+        HBITMAP, HDC, SRCCOPY,
     };
     use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 
@@ -301,7 +304,15 @@ unsafe fn capture_client_hash(hwnd: HWND) -> Result<Option<u64>, String> {
         },
         ..Default::default()
     };
-    let lines = GetDIBits(mem, bmp, 0, h as u32, Some(buffer.as_mut_ptr() as *mut _), &mut bmi, DIB_RGB_COLORS);
+    let lines = GetDIBits(
+        mem,
+        bmp,
+        0,
+        h as u32,
+        Some(buffer.as_mut_ptr() as *mut _),
+        &mut bmi,
+        DIB_RGB_COLORS,
+    );
     let _ = SelectObject(mem, HBITMAP::default());
     let _ = DeleteObject(bmp);
     let _ = DeleteDC(mem);
@@ -315,10 +326,11 @@ unsafe fn capture_client_hash(hwnd: HWND) -> Result<Option<u64>, String> {
 /// The image file name stem of `pid`, or `None` (permission/vanished process).
 #[cfg(target_os = "windows")]
 fn process_name(pid: u32) -> Option<String> {
-    use windows::Win32::System::Threading::{
-        OpenProcess, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
-    };
     use windows::core::PWSTR;
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
 
     if pid == 0 {
         return None;
@@ -327,7 +339,14 @@ fn process_name(pid: u32) -> Option<String> {
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
         let mut buf = [0u16; 1024];
         let mut size = buf.len() as u32;
-        if QueryFullProcessImageNameW(handle, PROCESS_NAME_FORMAT(0), PWSTR(buf.as_mut_ptr()), &mut size).is_err() {
+        if QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_FORMAT(0),
+            PWSTR(buf.as_mut_ptr()),
+            &mut size,
+        )
+        .is_err()
+        {
             return None;
         }
         let path = String::from_utf16_lossy(&buf[..size as usize]);

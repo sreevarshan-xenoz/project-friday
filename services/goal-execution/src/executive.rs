@@ -459,16 +459,11 @@ impl Executive {
                             let body = serde_json::to_string(&set.items)
                                 .unwrap_or_else(|_| "[]".to_string());
                             let result = ToolResult::success(body);
-                            let verified =
-                                self.evidence_verification.verify(&action, &result);
+                            let verified = self.evidence_verification.verify(&action, &result);
                             report.evidence = Some(EvidenceBody { set, verified });
                             workspace.push_thought(format!(
                                 "executive: blended {} evidence items across {} (verified={})",
-                                report
-                                    .evidence
-                                    .as_ref()
-                                    .map(|b| b.set.len())
-                                    .unwrap_or(0),
+                                report.evidence.as_ref().map(|b| b.set.len()).unwrap_or(0),
                                 report
                                     .evidence
                                     .as_ref()
@@ -1666,7 +1661,11 @@ mod tests {
         let report = executive.cycle(&workspace).await;
 
         // Every evidence action ran verified (as before).
-        assert!(report.evidence_trail.all_verified(), "{trail:?}", trail = report.evidence_trail);
+        assert!(
+            report.evidence_trail.all_verified(),
+            "{trail:?}",
+            trail = report.evidence_trail
+        );
         // The blended body carries BOTH organs, channel-labeled.
         let body = report.evidence.expect("evidence body published");
         assert_eq!(body.set.len(), 2, "web + docs blended: {:?}", body.set);

@@ -3428,25 +3428,42 @@ mod tests {
 
         // Oldest records are absent from the retained read model.
         assert_eq!(store.len(), 4, "window retains only the last 4");
-        assert_eq!(store.total_appended(), 10, "lifetime count stays cumulative");
+        assert_eq!(
+            store.total_appended(),
+            10,
+            "lifetime count stays cumulative"
+        );
 
         // Recent records remain ordered correctly (oldest evicted first).
-        let retained_ids: Vec<CorrelationId> =
-            store.timelines().iter().map(|t| t.record.id.clone()).collect();
+        let retained_ids: Vec<CorrelationId> = store
+            .timelines()
+            .iter()
+            .map(|t| t.record.id.clone())
+            .collect();
         assert_eq!(retained_ids, ids[6..], "records 6..10 retained in order");
 
         // Cumulative aggregates still describe the full history.
         let report = store.metrics_report();
-        assert_eq!(report.decisions, 10, "metrics fold in every appended record");
+        assert_eq!(
+            report.decisions, 10,
+            "metrics fold in every appended record"
+        );
         assert!(report.experience.total_samples >= 10);
 
         // Appending past the window keeps evicting the oldest.
-        let extra = Arc::new(make_record(Capability::ListDirectory, "code-reviewer", true));
+        let extra = Arc::new(make_record(
+            Capability::ListDirectory,
+            "code-reviewer",
+            true,
+        ));
         store.append(Arc::clone(&extra));
         assert_eq!(store.len(), 4);
         assert_eq!(store.total_appended(), 11);
-        let retained_ids: Vec<CorrelationId> =
-            store.timelines().iter().map(|t| t.record.id.clone()).collect();
+        let retained_ids: Vec<CorrelationId> = store
+            .timelines()
+            .iter()
+            .map(|t| t.record.id.clone())
+            .collect();
         assert_eq!(retained_ids[3], extra.id, "newest record is retained");
         assert_ne!(retained_ids[0], ids[6], "oldest evicted again");
     }

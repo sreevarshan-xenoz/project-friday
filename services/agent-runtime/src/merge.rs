@@ -93,26 +93,12 @@ mod tests {
     #[test]
     fn aborted_workers_block_all_succeeded() {
         use crate::context::AgentAbort;
-        let timed_out = AgentResult::aborted(
-            "slow",
-            AgentAbort::TimedOut,
-            "late",
-            vec![],
-            5000,
-        );
+        let timed_out = AgentResult::aborted("slow", AgentAbort::TimedOut, "late", vec![], 5000);
         let report = merge(vec![AgentResult::succeeded("a", "ok", vec![]), timed_out]);
-        assert!(
-            !report.all_succeeded(),
-            "a timed-out worker is not success"
-        );
+        assert!(!report.all_succeeded(), "a timed-out worker is not success");
 
-        let budget = AgentResult::aborted(
-            "stepper",
-            AgentAbort::BudgetExhausted,
-            "budget",
-            vec![],
-            0,
-        );
+        let budget =
+            AgentResult::aborted("stepper", AgentAbort::BudgetExhausted, "budget", vec![], 0);
         assert!(!merge(vec![budget]).all_succeeded());
     }
 }

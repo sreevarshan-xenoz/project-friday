@@ -8,7 +8,6 @@ pub mod vision;
 #[cfg(target_os = "windows")]
 pub mod windows_focus;
 
-
 /// Platform-neutral sensor trait.
 ///
 /// Sensors observe the environment and produce workspace events.

@@ -14,7 +14,7 @@ use crate::world::{FileMeta, StateTransition, VerifiedObservation, WorldModel, W
 use async_trait::async_trait;
 use friday_actions::{ActionRequest, AgentKernel, ExecutionContext};
 use friday_agent_runtime::{
-    default_gate, AgentContext, AgentDriver, AgentDirector, AgentResult, AgentRole, AgentStep,
+    default_gate, AgentContext, AgentDirector, AgentDriver, AgentResult, AgentRole, AgentStep,
     ResultGate,
 };
 use friday_cognitive::{
@@ -333,11 +333,7 @@ impl AgentDriver for KernelChildDriver {
 
         let execution_id = Uuid::new_v4();
         let trace_id = Uuid::new_v4();
-        let cwd = ctx
-            .spec
-            .cwd
-            .clone()
-            .unwrap_or_else(|| self.cwd.clone());
+        let cwd = ctx.spec.cwd.clone().unwrap_or_else(|| self.cwd.clone());
         let context = ExecutionContext::builder()
             .execution_id(execution_id)
             .trace_id(trace_id)
@@ -364,7 +360,10 @@ impl AgentDriver for KernelChildDriver {
             interpret_world_observation(&goal, &observation, &cwd, execution_id, &goal)
         {
             if let Some(object) = observation.as_object_mut() {
-                object.insert("world_observation".into(), serde_json::to_value(world).unwrap());
+                object.insert(
+                    "world_observation".into(),
+                    serde_json::to_value(world).unwrap(),
+                );
             }
         }
         let mut completed = AgentResult::succeeded(
@@ -543,9 +542,12 @@ fn interpret_world_observation(
 ) -> Option<VerifiedObservation> {
     match output.get("world_observation") {
         Some(value) => serde_json::from_value(value.clone()).ok(),
-        None if action == "git.status" => {
-            git_status_observation(output["stdout"].as_str().unwrap_or_default(), cwd, execution_id, goal_id)
-        }
+        None if action == "git.status" => git_status_observation(
+            output["stdout"].as_str().unwrap_or_default(),
+            cwd,
+            execution_id,
+            goal_id,
+        ),
         None => None,
     }
 }

@@ -289,7 +289,10 @@ async fn demo_source_retention_window_emits_recent_lists_and_keeps_metrics_cumul
     assert_eq!(snap.timelines.len(), 8, "read model bounded to the window");
     assert_eq!(snap.ledger.len(), 8, "ledger list is the recent window");
     assert_eq!(snap.metrics.decisions, 140, "metrics fold in full history");
-    assert_eq!(snap.dashboard.world.episodes, 140, "episodes stay cumulative");
+    assert_eq!(
+        snap.dashboard.world.episodes, 140,
+        "episodes stay cumulative"
+    );
 
     let first_before = snap.ledger[0].id.clone();
 

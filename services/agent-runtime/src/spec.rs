@@ -300,7 +300,9 @@ mod tests {
         let plain = AgentResult::succeeded("a.1", "did the work", vec![]);
         assert!(plain.observation.is_none(), "no observation by default");
 
-        let with_obs = plain.clone().with_observation(serde_json::json!({ "stdout": "ok" }));
+        let with_obs = plain
+            .clone()
+            .with_observation(serde_json::json!({ "stdout": "ok" }));
         assert_eq!(with_obs.observation.as_ref().unwrap()["stdout"], "ok");
 
         // Round-trip preserves the payload.

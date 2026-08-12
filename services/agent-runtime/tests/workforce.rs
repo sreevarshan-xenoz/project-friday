@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use friday_actions::{AgentKernel, DocsAdapter, SkillAgentDriver};
 use friday_agent_runtime::{
-    AgentDriver, AgentRole, InMemoryWorkforceStore, JsonWorkforceStore, TaskOutcome,
-    TaskStatus, Workforce, WorkforceStore, WorkerStatus,
+    AgentDriver, AgentRole, InMemoryWorkforceStore, JsonWorkforceStore, TaskOutcome, TaskStatus,
+    WorkerStatus, Workforce, WorkforceStore,
 };
 use friday_planner::execution::capability_registry::CapabilityRegistry as PlannerCapabilityRegistry;
 use friday_planner::execution::native_caps::register_native_builtins;
@@ -107,7 +107,11 @@ async fn persistent_worker_runs_a_real_docs_task_across_instances() {
         );
 
         let task = wf
-            .create_task("read the docs", "find the documentation", AgentRole::Researcher)
+            .create_task(
+                "read the docs",
+                "find the documentation",
+                AgentRole::Researcher,
+            )
             .await
             .unwrap();
         wf.assign(&worker.id, &task.id).await.unwrap();
@@ -192,14 +196,22 @@ async fn in_memory_workforce_completes_the_assign_run_verify_flow() {
     std::fs::write(docs_root.path().join("README.md"), "# FRIDAY docs").unwrap();
 
     let store: Arc<dyn WorkforceStore> = Arc::new(InMemoryWorkforceStore::new());
-    let wf = Workforce::new(store, Arc::clone(&fx.driver), TempDir::new().path().to_path_buf());
+    let wf = Workforce::new(
+        store,
+        Arc::clone(&fx.driver),
+        TempDir::new().path().to_path_buf(),
+    );
 
     let worker = wf
         .register(AgentRole::Researcher, "reads docs")
         .await
         .unwrap();
     let mut task = wf
-        .create_task("read the docs", "find the documentation", AgentRole::Researcher)
+        .create_task(
+            "read the docs",
+            "find the documentation",
+            AgentRole::Researcher,
+        )
         .await
         .unwrap();
     task.params.insert(
@@ -214,12 +226,10 @@ async fn in_memory_workforce_completes_the_assign_run_verify_flow() {
         panic!("expected Done");
     };
     assert_eq!(task.status, TaskStatus::Done);
-    assert!(
-        result
-            .steps
-            .iter()
-            .any(|s| s.description == "docs.search" && s.outcome == "ok")
-    );
+    assert!(result
+        .steps
+        .iter()
+        .any(|s| s.description == "docs.search" && s.outcome == "ok"));
     assert_eq!(
         wf.worker(&worker.id).await.unwrap().unwrap().status,
         WorkerStatus::Idle

@@ -338,10 +338,7 @@ impl AudioSensor {
         for turn in turns {
             let transcript = match &self.asr {
                 Some(asr) => {
-                    match asr
-                        .transcribe(&turn.samples, self.turns.sample_rate)
-                        .await
-                    {
+                    match asr.transcribe(&turn.samples, self.turns.sample_rate).await {
                         Ok(text) => Some((asr.name().to_string(), text)),
                         Err(_) => None, // honest: no transcript
                     }
@@ -422,7 +419,9 @@ fn open_default_capture() -> Option<WasapiCapture> {
         eCapture, eConsole, IAudioCaptureClient, IAudioClient, IMMDeviceEnumerator,
         AUDCLNT_SHAREMODE_SHARED, WAVEFORMATEX,
     };
-    use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance, CoInitializeEx, COINIT_MULTITHREADED};
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED,
+    };
 
     unsafe {
         // MTA: the COM interfaces may be called from any tokio worker thread.
@@ -436,7 +435,9 @@ fn open_default_capture() -> Option<WasapiCapture> {
         let mmdevice_enumerator = GUID::from_u128(0xbcde0395e52f467c_8e3dc4579291692e);
         let enumerator: IMMDeviceEnumerator =
             CoCreateInstance(&mmdevice_enumerator, None, CLSCTX_ALL).ok()?;
-        let device = enumerator.GetDefaultAudioEndpoint(eCapture, eConsole).ok()?;
+        let device = enumerator
+            .GetDefaultAudioEndpoint(eCapture, eConsole)
+            .ok()?;
         let client: IAudioClient = device.Activate(CLSCTX_ALL, None).ok()?;
 
         // Preferred format: 16 kHz mono 16-bit PCM. Shared mode accepts a
@@ -483,7 +484,8 @@ fn open_default_capture() -> Option<WasapiCapture> {
             3 => (true, true),  // WAVE_FORMAT_IEEE_FLOAT
             0xFFFE => {
                 // KSDATAFORMAT_SUBTYPE_PCM / _IEEE_FLOAT inside the extension.
-                let sub = (&*mix.cast::<windows::Win32::Media::Audio::WAVEFORMATEXTENSIBLE>()).SubFormat;
+                let sub =
+                    (&*mix.cast::<windows::Win32::Media::Audio::WAVEFORMATEXTENSIBLE>()).SubFormat;
                 if sub == float_sub {
                     (true, true)
                 } else if sub == pcm_sub {
@@ -543,18 +545,27 @@ impl WasapiCapture {
                     // Silent packet: the buffer may be garbage — emit zeros.
                     out.resize(out.len() + frames as usize, 0);
                 } else if self.bits_per_sample == 16 {
-                    let pcm = std::slice::from_raw_parts(data as *const i16, frames as usize * self.channels as usize);
+                    let pcm = std::slice::from_raw_parts(
+                        data as *const i16,
+                        frames as usize * self.channels as usize,
+                    );
                     out.extend(pcm.iter().step_by(self.channels as usize).copied());
                 } else if self.is_float {
                     // 32-bit float: clamp + scale to i16.
-                    let f32s = std::slice::from_raw_parts(data as *const f32, frames as usize * self.channels as usize);
+                    let f32s = std::slice::from_raw_parts(
+                        data as *const f32,
+                        frames as usize * self.channels as usize,
+                    );
                     for sample in f32s.iter().step_by(self.channels as usize) {
                         let v = sample.clamp(-1.0, 1.0);
                         out.push((v * i16::MAX as f32) as i16);
                     }
                 } else {
                     // 32-bit integer PCM: take the top 16 bits.
-                    let i32s = std::slice::from_raw_parts(data as *const i32, frames as usize * self.channels as usize);
+                    let i32s = std::slice::from_raw_parts(
+                        data as *const i32,
+                        frames as usize * self.channels as usize,
+                    );
                     for sample in i32s.iter().step_by(self.channels as usize) {
                         out.push((sample >> 16) as i16);
                     }
@@ -626,7 +637,7 @@ mod tests {
         assert_eq!(turn.frames, 10);
         assert_eq!(turn.samples.len(), 10 * FRAME_SAMPLES);
         assert_eq!(turn.duration_ms, 200); // 10 × 20 ms
-        // After the close, more silence yields nothing new.
+                                           // After the close, more silence yields nothing new.
         assert!(detector.feed(false, &[0i16; FRAME_SAMPLES]).is_none());
     }
 
@@ -664,7 +675,11 @@ mod tests {
             duration_ms: 100,
             samples: vec![1i16; 5 * FRAME_SAMPLES],
         };
-        let event = build_turn_event(&turn, DEFAULT_SAMPLE_RATE, Some(("mock".into(), "hello".into())));
+        let event = build_turn_event(
+            &turn,
+            DEFAULT_SAMPLE_RATE,
+            Some(("mock".into(), "hello".into())),
+        );
         assert_eq!(event.payload["transcript"], "hello");
         assert_eq!(event.payload["asr"], "mock");
     }
@@ -691,10 +706,7 @@ mod tests {
         let topics = loop_.poll_all_with_topics(&workspace).await;
         assert_eq!(topics, vec!["sensor.audio.turn"]);
         assert_eq!(workspace.history(None).len(), 1);
-        assert_eq!(
-            workspace.history(None)[0].topic,
-            Topic::TurnDetected
-        );
+        assert_eq!(workspace.history(None)[0].topic, Topic::TurnDetected);
     }
 
     #[tokio::test]

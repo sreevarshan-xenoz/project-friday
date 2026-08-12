@@ -37,8 +37,12 @@ fn parse_args() -> (SocketAddr, u64, u64, Option<u64>, Option<PathBuf>, PathBuf)
             "--help" | "-h" => {
                 println!("friday-bridge [--listen 127.0.0.1:18433] [--seed 42] [--count 140] [--window N]");
                 println!("             [--live-repo PATH] [--journal PATH]");
-                println!("             --window N bounds the bridge read model to the N most recent");
-                println!("             records (windowed list semantics; durable history untouched)");
+                println!(
+                    "             --window N bounds the bridge read model to the N most recent"
+                );
+                println!(
+                    "             records (windowed list semantics; durable history untouched)"
+                );
                 println!("Prometheus metrics: http://127.0.0.1:18434/metrics");
                 std::process::exit(0);
             }

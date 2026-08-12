@@ -22,14 +22,13 @@ pub use adapters::sim::sim_registry;
 pub use adapters::{
     agent_for_site, browser_capability_specs, reasoning_capability_specs,
     register_browser_capabilities, register_reasoning_capabilities, register_webagent_capabilities,
-    webagent_capability_specs, ActionAdapter, BrowserAdapter, BrowserReasoningProvider,
+    urlencode, webagent_capability_specs, ActionAdapter, BrowserAdapter, BrowserReasoningProvider,
     ChatGPTAdapter, ClaudeAdapter, CodeIntelAdapter, ConsultResult, DocsAdapter, Document,
     DocumentAsset, DocumentId, DocumentMetadata, DocumentSource, ExpertProfile, ExpertRouter,
     FilesystemAdapter, GeminiAdapter, GenericWebAgent, GitAdapter, GrokAdapter, MeasuredOutcome,
     PerplexityAdapter, ProviderCapabilities, ProviderCapability, ProviderEntry, ProviderId,
     ProviderRegistry, ProviderStats, ProviderTelemetry, ReasoningAdapter, ReasoningProvider,
     TerminalAdapter, Transport, WebAdapter, WebAgent, WebAgentAdapter, WebAgentResponse,
-    urlencode,
 };
 pub use audit::{AuditEngine, AuditEntry};
 pub use kernel::{

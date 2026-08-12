@@ -370,10 +370,10 @@ unsafe impl Sync for MfCapture {}
 #[cfg(target_os = "windows")]
 fn open_default_camera() -> Option<MfCapture> {
     use windows::Win32::Media::MediaFoundation::{
-        MFEnumDeviceSources, MFStartup, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
-        MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID, MFMediaType_Video, MFVideoFormat_RGB32,
+        MFCreateAttributes, MFCreateMediaType, MFCreateSourceReaderFromMediaSource,
+        MFEnumDeviceSources, MFMediaType_Video, MFStartup, MFVideoFormat_RGB32, MFSTARTUP_FULL,
+        MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
         MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE, MF_SOURCE_READER_FIRST_VIDEO_STREAM, MF_VERSION,
-        MFSTARTUP_FULL, MFCreateAttributes, MFCreateMediaType, MFCreateSourceReaderFromMediaSource,
     };
     use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 
@@ -391,7 +391,10 @@ fn open_default_camera() -> Option<MfCapture> {
         MFCreateAttributes(&mut attrs, 1).ok()?;
         let attrs = attrs?;
         attrs
-            .SetGUID(&MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID)
+            .SetGUID(
+                &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+                &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
+            )
             .ok()?;
 
         let mut activates: *mut Option<windows::Win32::Media::MediaFoundation::IMFActivate> =
@@ -442,7 +445,7 @@ impl MfCapture {
     /// the sensor goes quiet rather than panicking.
     fn read_frame(&self) -> Option<Frame> {
         use windows::Win32::Media::MediaFoundation::{
-            MF_SOURCE_READER_FIRST_VIDEO_STREAM, MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED,
+            MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED, MF_SOURCE_READER_FIRST_VIDEO_STREAM,
         };
 
         let first_video = MF_SOURCE_READER_FIRST_VIDEO_STREAM;
@@ -542,7 +545,11 @@ mod tests {
                 pixels[i..i + 4].fill(fill);
             }
         }
-        Frame { width: w, height: h, pixels }
+        Frame {
+            width: w,
+            height: h,
+            pixels,
+        }
     }
 
     #[test]
@@ -657,7 +664,10 @@ mod tests {
         assert_eq!(event.topic, Topic::ObjectDetected);
 
         let mut loop_ = SensorLoop::new();
-        loop_.add(Box::new(crate::MockSensor::new("vision_events", vec![event])));
+        loop_.add(Box::new(crate::MockSensor::new(
+            "vision_events",
+            vec![event],
+        )));
         let workspace = friday_cognitive::workspace::GlobalWorkspace::new();
         let topics = loop_.poll_all_with_topics(&workspace).await;
         assert_eq!(topics, vec!["sensor.vision.objects"]);

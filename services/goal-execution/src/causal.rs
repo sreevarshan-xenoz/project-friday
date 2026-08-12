@@ -71,9 +71,7 @@ impl Entity {
 
     /// The entity's `state` property, if set.
     pub fn state(&self) -> Option<&str> {
-        self.properties
-            .get("state")
-            .and_then(|v| v.as_str())
+        self.properties.get("state").and_then(|v| v.as_str())
     }
 }
 
@@ -86,7 +84,11 @@ pub struct EntityRelation {
 }
 
 impl EntityRelation {
-    pub fn new(subject: impl Into<String>, predicate: impl Into<String>, object: impl Into<String>) -> Self {
+    pub fn new(
+        subject: impl Into<String>,
+        predicate: impl Into<String>,
+        object: impl Into<String>,
+    ) -> Self {
         Self {
             subject: subject.into(),
             predicate: predicate.into(),
@@ -102,14 +104,9 @@ impl EntityRelation {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CausalCondition {
     /// Any entity of this kind is present.
-    EntityExists {
-        kind: String,
-    },
+    EntityExists { kind: String },
     /// A specific entity is in a given state.
-    EntityInState {
-        entity_id: String,
-        state: String,
-    },
+    EntityInState { entity_id: String, state: String },
     /// Every sub-condition must hold.
     All(Vec<CausalCondition>),
     /// At least one sub-condition must hold.
@@ -154,7 +151,11 @@ impl CausalCondition {
                         Err(reason) => reasons.push(reason),
                     }
                 }
-                Err(format!("none of {} alternative(s) held: {}", reasons.len(), reasons.join("; ")))
+                Err(format!(
+                    "none of {} alternative(s) held: {}",
+                    reasons.len(),
+                    reasons.join("; ")
+                ))
             }
             CausalCondition::Always => Ok(()),
         }
@@ -170,14 +171,9 @@ pub enum CausalEffect {
     /// A new entity appears (upsert by id).
     EntityCreated(Entity),
     /// An entity is removed.
-    EntityRemoved {
-        entity_id: String,
-    },
+    EntityRemoved { entity_id: String },
     /// An entity's `state` property changes.
-    EntityStateChanged {
-        entity_id: String,
-        to: String,
-    },
+    EntityStateChanged { entity_id: String, to: String },
     /// A property on an entity is set.
     EntityPropertySet {
         entity_id: String,
@@ -190,9 +186,7 @@ pub enum CausalEffect {
         value: serde_json::Value,
     },
     /// A file appears in the world state.
-    FileCreated {
-        path: String,
-    },
+    FileCreated { path: String },
     /// A free-form effect (audit/descriptions only).
     Custom(String),
 }
@@ -435,11 +429,14 @@ impl CausalModel {
             }
             CausalEffect::EntityStateChanged { entity_id, to } => {
                 if let Some(e) = entities.iter_mut().find(|e| &e.id == entity_id) {
-                    e.properties
-                        .insert("state".into(), serde_json::json!(to));
+                    e.properties.insert("state".into(), serde_json::json!(to));
                 }
             }
-            CausalEffect::EntityPropertySet { entity_id, key, value } => {
+            CausalEffect::EntityPropertySet {
+                entity_id,
+                key,
+                value,
+            } => {
                 if let Some(e) = entities.iter_mut().find(|e| &e.id == entity_id) {
                     e.properties.insert(key.clone(), value.clone());
                 }
@@ -496,7 +493,10 @@ mod tests {
     fn entity_graph_lookup_by_kind_and_id() {
         let model = CausalModel::new().with_entity(repo());
         assert_eq!(model.entities_of_kind("GitRepository").count(), 1);
-        assert_eq!(model.entity("repo:project-friday").unwrap().kind, "GitRepository");
+        assert_eq!(
+            model.entity("repo:project-friday").unwrap().kind,
+            "GitRepository"
+        );
         assert!(model.entity("missing").is_none());
         assert_eq!(model.entities_of_kind("Process").count(), 0);
     }
@@ -506,8 +506,15 @@ mod tests {
         let mut model = CausalModel::new();
         model.add_entity(repo());
         model.add_entity(Entity::new("repo:project-friday", "GitRepository").with_state("dirty"));
-        assert_eq!(model.entities.len(), 1, "same id replaces, never duplicates");
-        assert_eq!(model.entity("repo:project-friday").unwrap().state(), Some("dirty"));
+        assert_eq!(
+            model.entities.len(),
+            1,
+            "same id replaces, never duplicates"
+        );
+        assert_eq!(
+            model.entity("repo:project-friday").unwrap().state(),
+            Some("dirty")
+        );
     }
 
     #[test]
@@ -591,7 +598,10 @@ mod tests {
         assert!(sim.applicable, "unmet: {:?}", sim.unmet);
         assert_eq!(sim.fired_edge.as_deref(), Some("git.commit->commit"));
         // S → S': the projected world carries the commit hash.
-        assert_eq!(sim.projected_world.variables["commit_hash"], serde_json::json!("abc123"));
+        assert_eq!(
+            sim.projected_world.variables["commit_hash"],
+            serde_json::json!("abc123")
+        );
         assert_eq!(
             sim.projected_entities
                 .iter()
@@ -604,8 +614,14 @@ mod tests {
 
         // Counterfactual purity: neither the model nor the input world moved.
         assert_eq!(model.entities.len(), 1);
-        assert_eq!(model.entity("repo:project-friday").unwrap().state(), Some("clean"));
-        assert!(world.variables.get("commit_hash").is_none(), "input world untouched");
+        assert_eq!(
+            model.entity("repo:project-friday").unwrap().state(),
+            Some("clean")
+        );
+        assert!(
+            world.variables.get("commit_hash").is_none(),
+            "input world untouched"
+        );
     }
 
     #[test]
@@ -636,7 +652,10 @@ mod tests {
         let sim = model.simulate(&Capability::Custom("git.commit".into()), &WorldState::new());
         // Both conditions hold, but the FIRST edge fires.
         assert_eq!(sim.fired_edge.as_deref(), Some("git.commit->warn"));
-        assert_eq!(sim.applied_effects, vec!["first edge (should not fire)".to_string()]);
+        assert_eq!(
+            sim.applied_effects,
+            vec!["first edge (should not fire)".to_string()]
+        );
     }
 
     #[test]
@@ -690,7 +709,11 @@ mod tests {
         let mut model = CausalModel::new()
             .with_entity(repo())
             .with_entity(Entity::new("sess:1", "BrowserSession"));
-        model.add_relation(EntityRelation::new("git.commit", "Requires", "GitRepository"));
+        model.add_relation(EntityRelation::new(
+            "git.commit",
+            "Requires",
+            "GitRepository",
+        ));
         model.add_edge(CausalEdge::new(
             "close",
             Capability::Custom("browser.close".into()),
@@ -702,13 +725,19 @@ mod tests {
             }],
         ));
 
-        let sim = model.simulate(&Capability::Custom("browser.close".into()), &WorldState::new());
+        let sim = model.simulate(
+            &Capability::Custom("browser.close".into()),
+            &WorldState::new(),
+        );
         assert!(sim.applicable);
         assert!(
             sim.projected_entities.iter().all(|e| e.id != "sess:1"),
             "session removed in the projection"
         );
-        assert!(model.entities.iter().any(|e| e.id == "sess:1"), "model untouched");
+        assert!(
+            model.entities.iter().any(|e| e.id == "sess:1"),
+            "model untouched"
+        );
         assert_eq!(model.relations.len(), 1);
     }
 

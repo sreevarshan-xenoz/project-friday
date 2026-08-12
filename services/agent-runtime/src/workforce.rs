@@ -388,10 +388,16 @@ impl WorkforceStore for JsonWorkforceStore {
 pub enum TaskOutcome {
     /// The worker's run reached [`crate::AgentState::Succeeded`]; the task is
     /// `Done` and carries the persisted result.
-    Done { task: BoardTask, result: AgentResult },
+    Done {
+        task: BoardTask,
+        result: AgentResult,
+    },
     /// The run ended in any non-success terminal state; the task is `Failed`
     /// and the honest result (state, error, steps) is persisted for audit.
-    Failed { task: BoardTask, result: AgentResult },
+    Failed {
+        task: BoardTask,
+        result: AgentResult,
+    },
 }
 
 /// The persistent workforce: registry + board + runtime, one owner.
@@ -489,9 +495,8 @@ impl Workforce {
         let id = self.next_worker_id(role).await;
         let now = Self::now_ms();
         let workspace = self.workspace_root.join(&id);
-        std::fs::create_dir_all(&workspace).map_err(|e| {
-            format!("cannot create workspace for {id}: {e}")
-        })?;
+        std::fs::create_dir_all(&workspace)
+            .map_err(|e| format!("cannot create workspace for {id}: {e}"))?;
         let worker = WorkerRecord {
             id,
             role,
@@ -695,11 +700,7 @@ impl Workforce {
 
     /// **report_progress** — append a progress note to the worker's current
     /// task. The note is persisted immediately; nothing is synthesized.
-    pub async fn report_progress(
-        &self,
-        worker_id: &str,
-        note: &str,
-    ) -> Result<BoardTask, String> {
+    pub async fn report_progress(&self, worker_id: &str, note: &str) -> Result<BoardTask, String> {
         let worker = self
             .store
             .load_worker(worker_id)
@@ -925,7 +926,10 @@ mod tests {
         assert!(worker.id.starts_with("researcher."));
         assert_eq!(worker.status, WorkerStatus::Idle);
         assert!(worker.workspace.starts_with(&root));
-        assert!(worker.workspace.exists(), "workspace dir must exist on disk");
+        assert!(
+            worker.workspace.exists(),
+            "workspace dir must exist on disk"
+        );
 
         let loaded = wf.worker(&worker.id).await.unwrap().unwrap();
         assert_eq!(loaded.id, worker.id);
@@ -938,10 +942,7 @@ mod tests {
         let root = workspace_root("assign");
         let wf = Workforce::new(store.clone(), ok_driver(), &root);
 
-        let researcher = wf
-            .register(AgentRole::Researcher, "reads")
-            .await
-            .unwrap();
+        let researcher = wf.register(AgentRole::Researcher, "reads").await.unwrap();
         let verifier = wf.register(AgentRole::Verifier, "proves").await.unwrap();
         let docs_task = wf
             .create_task("read docs", "read the docs", AgentRole::Researcher)
@@ -984,14 +985,15 @@ mod tests {
         wf.create_task("new", "new goal", AgentRole::Researcher)
             .await
             .unwrap();
-        let worker = wf
-            .register(AgentRole::Researcher, "reads")
-            .await
-            .unwrap();
+        let worker = wf.register(AgentRole::Researcher, "reads").await.unwrap();
 
         let picked = wf.pick_up(&worker.id).await.unwrap().unwrap();
         assert_eq!(picked.title, "old", "FIFO: the oldest matching task");
-        assert_eq!(picked.status, TaskStatus::Assigned, "returns the post-assignment record");
+        assert_eq!(
+            picked.status,
+            TaskStatus::Assigned,
+            "returns the post-assignment record"
+        );
         assert_eq!(picked.assignee.as_deref(), Some(worker.id.as_str()));
 
         let worker = wf.worker(&worker.id).await.unwrap().unwrap();
@@ -1010,10 +1012,7 @@ mod tests {
         let root = workspace_root("run");
         let wf = Workforce::new(store.clone(), workspace_writing_driver(), &root);
 
-        let worker = wf
-            .register(AgentRole::Researcher, "reads")
-            .await
-            .unwrap();
+        let worker = wf.register(AgentRole::Researcher, "reads").await.unwrap();
         let task = wf
             .create_task("read docs", "read the docs", AgentRole::Researcher)
             .await
@@ -1051,10 +1050,7 @@ mod tests {
         let root = workspace_root("fail");
         let wf = Workforce::new(store.clone(), failing_driver(), &root);
 
-        let worker = wf
-            .register(AgentRole::Analyst, "analyzes")
-            .await
-            .unwrap();
+        let worker = wf.register(AgentRole::Analyst, "analyzes").await.unwrap();
         let task = wf
             .create_task("analyze", "analyze the data", AgentRole::Analyst)
             .await
@@ -1083,10 +1079,7 @@ mod tests {
         let root = workspace_root("refuse");
         let wf = Workforce::new(store.clone(), ok_driver(), &root);
 
-        let worker = wf
-            .register(AgentRole::Researcher, "reads")
-            .await
-            .unwrap();
+        let worker = wf.register(AgentRole::Researcher, "reads").await.unwrap();
 
         // No task assigned.
         let err = wf.run(&worker.id).await.unwrap_err();
@@ -1113,17 +1106,17 @@ mod tests {
         let root = workspace_root("progress");
         let wf = Workforce::new(store.clone(), ok_driver(), &root);
 
-        let worker = wf
-            .register(AgentRole::Researcher, "reads")
-            .await
-            .unwrap();
+        let worker = wf.register(AgentRole::Researcher, "reads").await.unwrap();
         let task = wf
             .create_task("read docs", "read", AgentRole::Researcher)
             .await
             .unwrap();
         wf.assign(&worker.id, &task.id).await.unwrap();
 
-        let t = wf.report_progress(&worker.id, "found the index").await.unwrap();
+        let t = wf
+            .report_progress(&worker.id, "found the index")
+            .await
+            .unwrap();
         assert_eq!(t.progress.len(), 1);
         assert_eq!(t.progress[0].note, "found the index");
 
@@ -1151,10 +1144,7 @@ mod tests {
         let root = workspace_root("suspend");
         let wf = Workforce::new(store.clone(), ok_driver(), &root);
 
-        let worker = wf
-            .register(AgentRole::Researcher, "reads")
-            .await
-            .unwrap();
+        let worker = wf.register(AgentRole::Researcher, "reads").await.unwrap();
         let task = wf
             .create_task("read docs", "read", AgentRole::Researcher)
             .await
@@ -1186,10 +1176,7 @@ mod tests {
         let root = workspace_root("retire-running");
         let wf = Workforce::new(store.clone(), ok_driver(), &root);
 
-        let worker = wf
-            .register(AgentRole::Researcher, "reads")
-            .await
-            .unwrap();
+        let worker = wf.register(AgentRole::Researcher, "reads").await.unwrap();
         let task = wf
             .create_task("read docs", "read", AgentRole::Researcher)
             .await
@@ -1218,10 +1205,7 @@ mod tests {
         let root = workspace_root("retire");
         let wf = Workforce::new(store.clone(), ok_driver(), &root);
 
-        let worker = wf
-            .register(AgentRole::Researcher, "reads")
-            .await
-            .unwrap();
+        let worker = wf.register(AgentRole::Researcher, "reads").await.unwrap();
         let task = wf
             .create_task("read docs", "read", AgentRole::Researcher)
             .await

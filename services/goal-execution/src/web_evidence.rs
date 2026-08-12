@@ -398,9 +398,10 @@ impl Tool for ResolvingWebTool {
         // (`web`) and the verb it advertises in `capabilities`. A search-only
         // tool refuses web.fetch; the combined tool serves both.
         let capability = format!("web.{verb}");
-        let serves = self.capabilities.iter().any(|c| {
-            matches!(c, Capability::Custom(id) if id.as_str() == capability.as_str())
-        });
+        let serves = self
+            .capabilities
+            .iter()
+            .any(|c| matches!(c, Capability::Custom(id) if id.as_str() == capability.as_str()));
         if tool != "web" || !serves {
             return ToolResult::error(format!(
                 "{} only serves {}, not {tool}.{verb}",
@@ -457,8 +458,8 @@ impl Tool for ResolvingWebTool {
             }
             normalize_fetch_evidence(&outcome)
         };
-        let output = serde_json::to_string_pretty(&evidence)
-            .unwrap_or_else(|_| json!([]).to_string());
+        let output =
+            serde_json::to_string_pretty(&evidence).unwrap_or_else(|_| json!([]).to_string());
         ToolResult {
             success: true,
             output,
@@ -478,12 +479,10 @@ impl Tool for ResolvingWebTool {
 /// Normalize a successful `web.search` resolver outcome into [`WebEvidence`] —
 /// the single provider-agnostic evidence shape. `content` is populated when
 /// the provider supplies it; search hits carry title/url only.
-pub fn normalize_search_evidence(outcome: &friday_capabilities::ResolvedOutcome) -> serde_json::Value {
-    let query = outcome
-        .output
-        .get("query")
-        .cloned()
-        .unwrap_or(json!(null));
+pub fn normalize_search_evidence(
+    outcome: &friday_capabilities::ResolvedOutcome,
+) -> serde_json::Value {
+    let query = outcome.output.get("query").cloned().unwrap_or(json!(null));
     let results = outcome
         .output
         .get("results")
@@ -494,9 +493,21 @@ pub fn normalize_search_evidence(outcome: &friday_capabilities::ResolvedOutcome)
         .into_iter()
         .map(|r| WebEvidence {
             source: outcome.provider.clone(),
-            title: r.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            url: r.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            content: r.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            title: r
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            url: r
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            content: r
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             retrieved_at: Utc::now(),
             confidence: 1.0,
         })
@@ -605,11 +616,7 @@ mod tests {
                         .next()
                         .unwrap_or("")
                         .to_string();
-                    let path = line
-                        .split_whitespace()
-                        .nth(1)
-                        .unwrap_or("")
-                        .to_string();
+                    let path = line.split_whitespace().nth(1).unwrap_or("").to_string();
                     let body = format!(
                         "<html><head><title>{path}</title></head><body>gateway-path:{path}</body></html>"
                     );
@@ -672,7 +679,10 @@ mod tests {
     fn direct_provider_composes_the_target_verbatim() {
         let target = "https://example.com/a b?x=1&y=2#frag";
         assert_eq!(compose_gateway_url("", target), target);
-        assert_eq!(compose_gateway_url("", "http://127.0.0.1:9/"), "http://127.0.0.1:9/");
+        assert_eq!(
+            compose_gateway_url("", "http://127.0.0.1:9/"),
+            "http://127.0.0.1:9/"
+        );
     }
 
     #[test]
@@ -684,15 +694,16 @@ mod tests {
         // Query, fragment, space, and unicode must all be encoded into one
         // opaque component — no raw `?`/`&`/`#`/space survives for the gateway
         // to misinterpret.
-        let composed = compose_gateway_url(
-            JINA_READER_PREFIX,
-            "https://example.com/a b?x=1&y=2#frag/Ü",
-        );
+        let composed =
+            compose_gateway_url(JINA_READER_PREFIX, "https://example.com/a b?x=1&y=2#frag/Ü");
         assert_eq!(
             composed,
             "https://r.jina.ai/https%3A%2F%2Fexample.com%2Fa%20b%3Fx%3D1%26y%3D2%23frag%2F%C3%9C"
         );
-        assert!(!composed[..JINA_READER_PREFIX.len()].contains('?'), "{composed}");
+        assert!(
+            !composed[..JINA_READER_PREFIX.len()].contains('?'),
+            "{composed}"
+        );
         assert!(!composed.contains(' '), "{composed}");
         assert!(!composed.contains('&'), "{composed}");
         assert!(!composed.contains('#'), "{composed}");
@@ -703,7 +714,8 @@ mod tests {
         // `…/fetch?url=` gateways receive the target as a query VALUE: the
         // encoded target cannot contain `&` or `#`, so it can never break out
         // of the value.
-        let composed = compose_gateway_url("https://reader.example/fetch?url=", "https://x.io/?a=b&c=d");
+        let composed =
+            compose_gateway_url("https://reader.example/fetch?url=", "https://x.io/?a=b&c=d");
         assert_eq!(
             composed,
             "https://reader.example/fetch?url=https%3A%2F%2Fx.io%2F%3Fa%3Db%26c%3Dd"
@@ -757,7 +769,10 @@ mod tests {
             ] {
                 assert!(hit.contains_key(key), "evidence carries {key}: {hit:?}");
             }
-            assert_eq!(hit["source"], "duckduckgo", "provider survives as source only");
+            assert_eq!(
+                hit["source"], "duckduckgo",
+                "provider survives as source only"
+            );
             assert_eq!(hit["confidence"], 1.0);
         }
         assert_eq!(evidence[0]["title"], "The Rust Book");
@@ -834,8 +849,14 @@ mod tests {
             vec![WebSearchProvider::new("duckduckgo", base)],
         );
 
-        let result = tool.execute(&evidence_action(), &ExecutionContext::for_goal("g1")).await;
-        assert!(result.success, "end-to-end web.search failed: {:?}", result.error);
+        let result = tool
+            .execute(&evidence_action(), &ExecutionContext::for_goal("g1"))
+            .await;
+        assert!(
+            result.success,
+            "end-to-end web.search failed: {:?}",
+            result.error
+        );
 
         let output = parsed_output(&result);
         let evidence = output["evidence"].as_array().expect("evidence array");
@@ -879,7 +900,9 @@ mod tests {
             ],
         );
 
-        let result = tool.execute(&evidence_action(), &ExecutionContext::for_goal("g1")).await;
+        let result = tool
+            .execute(&evidence_action(), &ExecutionContext::for_goal("g1"))
+            .await;
         assert!(
             result.success,
             "fallback must rescue the failed primary: {:?}",
@@ -888,7 +911,11 @@ mod tests {
 
         let output = parsed_output(&result);
         let evidence = output["evidence"].as_array().expect("evidence array");
-        assert_eq!(evidence.len(), 2, "fallback served real results: {output:?}");
+        assert_eq!(
+            evidence.len(),
+            2,
+            "fallback served real results: {output:?}"
+        );
         assert_eq!(
             evidence[0]["source"], "fallback",
             "the winning provider is the fallback"
@@ -913,8 +940,14 @@ mod tests {
         );
         let url = format!("{base}article");
 
-        let result = tool.execute(&fetch_action(&url), &ExecutionContext::for_goal("g1")).await;
-        assert!(result.success, "end-to-end web.fetch failed: {:?}", result.error);
+        let result = tool
+            .execute(&fetch_action(&url), &ExecutionContext::for_goal("g1"))
+            .await;
+        assert!(
+            result.success,
+            "end-to-end web.fetch failed: {:?}",
+            result.error
+        );
 
         let output = parsed_output(&result);
         assert_eq!(output["url"], url);
@@ -953,7 +986,9 @@ mod tests {
             ],
         );
 
-        let result = tool.execute(&fetch_action(&url), &ExecutionContext::for_goal("g1")).await;
+        let result = tool
+            .execute(&fetch_action(&url), &ExecutionContext::for_goal("g1"))
+            .await;
         assert!(
             result.success,
             "fallback must rescue the failed primary: {:?}",
@@ -962,7 +997,10 @@ mod tests {
 
         let output = parsed_output(&result);
         let evidence = output["evidence"].as_array().expect("evidence array");
-        assert_eq!(evidence[0]["source"], "direct", "the winning provider is the fallback");
+        assert_eq!(
+            evidence[0]["source"], "direct",
+            "the winning provider is the fallback"
+        );
         assert_eq!(evidence[0]["title"], "Rust Async Book");
         assert_eq!(
             evidence[0]["url"], url,
@@ -995,7 +1033,9 @@ mod tests {
         // raw concatenation used to get wrong.
         let target = "https://example.com/a b?x=1&y=2#frag";
 
-        let result = tool.execute(&fetch_action(target), &ExecutionContext::for_goal("g1")).await;
+        let result = tool
+            .execute(&fetch_action(target), &ExecutionContext::for_goal("g1"))
+            .await;
         assert!(result.success, "gateway fetch failed: {:?}", result.error);
 
         let output = parsed_output(&result);
@@ -1033,11 +1073,21 @@ mod tests {
         );
         let target = "https://example.com/docs?lang=rust&q=async io";
 
-        let result = tool.execute(&fetch_action(target), &ExecutionContext::for_goal("g1")).await;
-        assert!(result.success, "recording gateway fetch failed: {:?}", result.error);
+        let result = tool
+            .execute(&fetch_action(target), &ExecutionContext::for_goal("g1"))
+            .await;
+        assert!(
+            result.success,
+            "recording gateway fetch failed: {:?}",
+            result.error
+        );
 
         // The adapter is pointed at the composed, percent-encoded gateway URL…
-        let req = last.lock().unwrap().take().expect("adapter received a request");
+        let req = last
+            .lock()
+            .unwrap()
+            .take()
+            .expect("adapter received a request");
         let received = req.parameters["url"].as_str().expect("composed url");
         assert_eq!(
             received,
@@ -1075,8 +1125,14 @@ mod tests {
 
         // An orchestrator marks the primary offline → the backup serves.
         tool.set_health("primary", CapabilityHealth::Offline);
-        let result = tool.execute(&evidence_action(), &ExecutionContext::for_goal("g1")).await;
-        assert!(result.success, "health-updated fallback failed: {:?}", result.error);
+        let result = tool
+            .execute(&evidence_action(), &ExecutionContext::for_goal("g1"))
+            .await;
+        assert!(
+            result.success,
+            "health-updated fallback failed: {:?}",
+            result.error
+        );
         let output = parsed_output(&result);
         assert_eq!(
             output["evidence"][0]["source"], "backup",
@@ -1099,10 +1155,17 @@ mod tests {
 
         // Same live seam as search, addressed per capability.
         tool.set_health_for("web.fetch", "primary", CapabilityHealth::Offline);
-        let result = tool.execute(&fetch_action(&url), &ExecutionContext::for_goal("g1")).await;
-        assert!(result.success, "health-updated fetch fallback failed: {:?}", result.error);
+        let result = tool
+            .execute(&fetch_action(&url), &ExecutionContext::for_goal("g1"))
+            .await;
+        assert!(
+            result.success,
+            "health-updated fetch fallback failed: {:?}",
+            result.error
+        );
         assert_eq!(
-            parsed_output(&result)["evidence"][0]["source"], "backup",
+            parsed_output(&result)["evidence"][0]["source"],
+            "backup",
             "offline primary is bypassed after the live health update"
         );
         assert_eq!(result.metadata["provider"], "backup");
@@ -1120,7 +1183,9 @@ mod tests {
             ],
         );
 
-        let result = tool.execute(&evidence_action(), &ExecutionContext::for_goal("g1")).await;
+        let result = tool
+            .execute(&evidence_action(), &ExecutionContext::for_goal("g1"))
+            .await;
         assert!(!result.success);
         let err = result.error.expect("structured error");
         assert!(err.contains("web.search unavailable"), "err: {err}");
@@ -1162,7 +1227,9 @@ mod tests {
     #[tokio::test]
     async fn no_providers_is_a_clean_capability_error() {
         let tool = ResolvingWebTool::for_web_search(Arc::new(WebAdapter::new()), vec![]);
-        let result = tool.execute(&evidence_action(), &ExecutionContext::for_goal("g1")).await;
+        let result = tool
+            .execute(&evidence_action(), &ExecutionContext::for_goal("g1"))
+            .await;
         assert!(!result.success);
         assert!(
             result
@@ -1205,11 +1272,12 @@ mod tests {
         assert!(r.error.unwrap().contains("only serves web.search"));
 
         // A non-evidence instruction is refused too.
-        let r = tool.execute(
-            &Action::single("run cargo test", Capability::ExecuteCommand, "g1"),
-            &ctx,
-        )
-        .await;
+        let r = tool
+            .execute(
+                &Action::single("run cargo test", Capability::ExecuteCommand, "g1"),
+                &ctx,
+            )
+            .await;
         assert!(!r.success);
         assert!(r.error.unwrap().contains("not an evidence action"));
     }
@@ -1235,7 +1303,9 @@ mod tests {
         let r = tool.execute(&unknown, &ctx).await;
         assert!(!r.success);
         assert!(
-            r.error.unwrap().contains("only serves web.search, web.fetch"),
+            r.error
+                .unwrap()
+                .contains("only serves web.search, web.fetch"),
             "refusal names the served verbs"
         );
 
@@ -1247,7 +1317,10 @@ mod tests {
         );
         let r = tool.execute(&git, &ctx).await;
         assert!(!r.success);
-        assert!(r.error.unwrap().contains("only serves web.search, web.fetch"));
+        assert!(r
+            .error
+            .unwrap()
+            .contains("only serves web.search, web.fetch"));
     }
 
     #[tokio::test]
@@ -1268,7 +1341,11 @@ mod tests {
         // Fetch through the combined tool resolves via its own candidate list
         // — capabilities and dispatch stay consistent on the production shape.
         let fetch = tool.execute(&fetch_action(&url), &ctx).await;
-        assert!(fetch.success, "combined-tool fetch failed: {:?}", fetch.error);
+        assert!(
+            fetch.success,
+            "combined-tool fetch failed: {:?}",
+            fetch.error
+        );
         assert_eq!(parsed_output(&fetch)["evidence"][0]["source"], "direct");
         assert_eq!(fetch.metadata["provider"], "direct");
     }
@@ -1346,9 +1423,17 @@ mod tests {
             .with_permissions(vec!["web.search".into()]);
 
         let result = tool.execute(&evidence_action(), &ctx).await;
-        assert!(result.success, "recording adapter must succeed: {:?}", result.error);
+        assert!(
+            result.success,
+            "recording adapter must succeed: {:?}",
+            result.error
+        );
 
-        let req = last.lock().unwrap().take().expect("adapter received a request");
+        let req = last
+            .lock()
+            .unwrap()
+            .take()
+            .expect("adapter received a request");
         assert_eq!(
             req.timeout,
             Some(std::time::Duration::from_millis(5000)),
@@ -1361,8 +1446,14 @@ mod tests {
         );
         // The reserved keys never reach the adapter's parameter contract.
         let params = req.parameters.as_object().expect("params object");
-        assert!(!params.contains_key("__timeout_ms"), "reserved key stripped: {params:?}");
-        assert!(!params.contains_key("__permissions"), "reserved key stripped: {params:?}");
+        assert!(
+            !params.contains_key("__timeout_ms"),
+            "reserved key stripped: {params:?}"
+        );
+        assert!(
+            !params.contains_key("__permissions"),
+            "reserved key stripped: {params:?}"
+        );
         assert_eq!(params["endpoint"], "http://127.0.0.1:9/");
         assert_eq!(params["query"], "rust async");
     }

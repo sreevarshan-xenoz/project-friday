@@ -281,7 +281,10 @@ impl AgentDirector {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        goals.into_iter().map(|goal| self.spawn(role, &goal.into())).collect()
+        goals
+            .into_iter()
+            .map(|goal| self.spawn(role, &goal.into()))
+            .collect()
     }
 
     /// The raw face for callers that need full spec control (params, cwd,
@@ -297,7 +300,8 @@ impl AgentDirector {
     /// runtime's [`MergedReport`] (the "did the fan-out succeed" view).
     pub async fn supervise(&self, agents: Vec<DirectedAgent>) -> MergedReport {
         let results = self.collect(agents).await;
-        self.runtime.merge(results.into_iter().map(|(_, r)| r).collect())
+        self.runtime
+            .merge(results.into_iter().map(|(_, r)| r).collect())
     }
 
     /// **collect** — await every child, returning role-typed results.
@@ -330,11 +334,7 @@ impl AgentDirector {
     /// [`ResultGate`] over each result, and return the [`DirectorReport`].
     /// The goal may complete only when [`DirectorReport::all_verified`] is
     /// `true`.
-    pub async fn verify(
-        &self,
-        agents: Vec<DirectedAgent>,
-        gate: ResultGate,
-    ) -> DirectorReport {
+    pub async fn verify(&self, agents: Vec<DirectedAgent>, gate: ResultGate) -> DirectorReport {
         let results = self.collect(agents).await;
         let mut entries = Vec::with_capacity(results.len());
         let mut total_duration_ms = 0u64;
@@ -397,10 +397,19 @@ mod tests {
         assert_eq!(AgentRole::Researcher.as_str(), "researcher");
         assert_eq!(AgentRole::Analyst.as_str(), "analyst");
         assert_eq!(AgentRole::Verifier.as_str(), "verifier");
-        assert_eq!(format!("{role}", role = AgentRole::Researcher), "researcher");
-        assert!(AgentRole::Researcher.default_skill_scope().contains(&"docs"));
-        assert!(AgentRole::Analyst.default_skill_scope().contains(&"codeintel"));
-        assert!(AgentRole::Verifier.default_skill_scope().contains(&"testing"));
+        assert_eq!(
+            format!("{role}", role = AgentRole::Researcher),
+            "researcher"
+        );
+        assert!(AgentRole::Researcher
+            .default_skill_scope()
+            .contains(&"docs"));
+        assert!(AgentRole::Analyst
+            .default_skill_scope()
+            .contains(&"codeintel"));
+        assert!(AgentRole::Verifier
+            .default_skill_scope()
+            .contains(&"testing"));
     }
 
     #[test]
@@ -452,12 +461,7 @@ mod tests {
         let all_failed = AgentResult::succeeded(
             "verifier.2",
             "all good",
-            vec![crate::spec::AgentStep::failed(
-                1,
-                "git.status",
-                "boom",
-                5,
-            )],
+            vec![crate::spec::AgentStep::failed(1, "git.status", "boom", 5)],
         );
         assert!(gate(AgentRole::Verifier, &all_failed).is_err());
 

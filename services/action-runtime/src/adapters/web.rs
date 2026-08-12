@@ -398,7 +398,10 @@ mod tests {
         );
 
         // Mixed-case tags are matched case-insensitively.
-        assert_eq!(extract_title("<HTML><HEAD><TITLE>Mixed Case</TITLE></HEAD></HTML>"), "Mixed Case");
+        assert_eq!(
+            extract_title("<HTML><HEAD><TITLE>Mixed Case</TITLE></HEAD></HTML>"),
+            "Mixed Case"
+        );
     }
 
     #[test]

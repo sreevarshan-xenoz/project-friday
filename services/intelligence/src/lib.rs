@@ -24,6 +24,6 @@ pub use qualification::{
 };
 pub use router::{CognitiveMode, IntelligenceRouter};
 pub use secrets::{
-    looks_like_secret, redact_payload, scan_payload, Secret, SecretHit, SecretsVault,
-    ScopedSecrets, MIN_SCAN_LENGTH,
+    looks_like_secret, redact_payload, scan_payload, ScopedSecrets, Secret, SecretHit,
+    SecretsVault, MIN_SCAN_LENGTH,
 };

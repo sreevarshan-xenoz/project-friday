@@ -89,13 +89,13 @@ impl SecretsVault {
     /// Store a secret under `scope` / `name` (upsert).
     pub fn store(&self, scope: &str, name: &str, value: impl Into<String>) {
         let mut guard = self.secrets.write().expect("vault poisoned");
-        guard
-            .entry(scope.to_string())
-            .or_default()
-            .insert(name.to_string(), Secret {
+        guard.entry(scope.to_string()).or_default().insert(
+            name.to_string(),
+            Secret {
                 name: format!("{scope}/{name}"),
                 value: value.into(),
-            });
+            },
+        );
     }
 
     /// Read a secret. The caller receives a [`Secret`] whose structural
@@ -183,9 +183,8 @@ impl SecretsVault {
         let known: Vec<(String, &str)> = guard
             .iter()
             .flat_map(|(scope, map)| {
-                map.iter().map(move |(name, secret)| {
-                    (format!("{scope}/{name}"), secret.value.as_str())
-                })
+                map.iter()
+                    .map(move |(name, secret)| (format!("{scope}/{name}"), secret.value.as_str()))
             })
             .collect();
         let known_refs: Vec<(&str, &str)> = known
@@ -202,9 +201,8 @@ impl SecretsVault {
         let known: Vec<(String, &str)> = guard
             .iter()
             .flat_map(|(scope, map)| {
-                map.iter().map(move |(name, secret)| {
-                    (format!("{scope}/{name}"), secret.value.as_str())
-                })
+                map.iter()
+                    .map(move |(name, secret)| (format!("{scope}/{name}"), secret.value.as_str()))
             })
             .collect();
         let known_refs: Vec<(&str, &str)> = known
@@ -348,7 +346,14 @@ pub fn looks_like_secret(candidate: &str) -> bool {
         return false;
     }
     const PREFIXES: [&str; 8] = [
-        "sk-", "sk_", "ghp_", "gho_", "github_pat_", "xoxb-", "AKIA", "eyJ",
+        "sk-",
+        "sk_",
+        "ghp_",
+        "gho_",
+        "github_pat_",
+        "xoxb-",
+        "AKIA",
+        "eyJ",
     ];
     if PREFIXES.iter().any(|p| c.starts_with(p)) {
         return true;
@@ -429,7 +434,10 @@ mod tests {
         vault.store("provider", "openrouter", "sk-very-secret-1");
         vault.store("provider", "groq", "gsk-very-secret-2");
         let debug = format!("{vault:?}");
-        assert!(debug.contains("openrouter") && debug.contains("groq"), "{debug}");
+        assert!(
+            debug.contains("openrouter") && debug.contains("groq"),
+            "{debug}"
+        );
         assert!(!debug.contains("sk-very"), "{debug}");
         assert!(!debug.contains("gsk-very"), "{debug}");
     }
@@ -464,7 +472,10 @@ mod tests {
         let redacted = vault.redact(payload);
         assert!(!redacted.contains("sk-token-abcdef"), "{redacted}");
         assert!(!redacted.contains("abc-ghp-12345678"), "{redacted}");
-        assert!(redacted.contains("[REDACTED:provider/openrouter]"), "{redacted}");
+        assert!(
+            redacted.contains("[REDACTED:provider/openrouter]"),
+            "{redacted}"
+        );
         assert!(redacted.contains("[REDACTED:git/token]"), "{redacted}");
         assert_eq!(
             redacted.matches("[REDACTED:provider/openrouter]").count(),
@@ -491,11 +502,15 @@ mod tests {
     fn looks_like_secret_heuristic() {
         assert!(looks_like_secret("sk-proj-abcdefghijklmnop"));
         assert!(looks_like_secret("ghp_abcdefghijklmnopqrst"));
-        assert!(looks_like_secret("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0"));
+        assert!(looks_like_secret(
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0"
+        ));
         assert!(looks_like_secret("aB3dE5fG7hI9jK1lM3nO5pQ7rS9tU1vW3xY5zA7"));
         assert!(!looks_like_secret("run the test suite"));
         assert!(!looks_like_secret("short"));
-        assert!(!looks_like_secret("a normal sentence with spaces inside it"));
+        assert!(!looks_like_secret(
+            "a normal sentence with spaces inside it"
+        ));
     }
 
     #[test]
@@ -507,11 +522,15 @@ mod tests {
         let seeded = vault.seed_from_vars("provider", &[(var, "openrouter")]);
         std::env::remove_var(var);
         assert_eq!(seeded, 1);
-        assert_eq!(vault.get("provider", "openrouter").unwrap().reveal(), "sk-seeded-value-12345");
+        assert_eq!(
+            vault.get("provider", "openrouter").unwrap().reveal(),
+            "sk-seeded-value-12345"
+        );
 
         // An absent var contributes nothing.
         let vault = SecretsVault::new();
-        let seeded = vault.seed_from_vars("provider", &[("FRIDAY_TEST_EGRESS_NEVER_SET_XYZ", "nope")]);
+        let seeded =
+            vault.seed_from_vars("provider", &[("FRIDAY_TEST_EGRESS_NEVER_SET_XYZ", "nope")]);
         assert_eq!(seeded, 0);
         assert_eq!(vault.store_count(), 0);
     }

@@ -240,9 +240,15 @@ impl GoalEngine {
     }
 
     fn reflect(&self, episodes: &[Episode], outcome: &Outcome) -> Vec<Insight> {
-        let mut knowledge_guard = self.knowledge_engine.lock().expect("knowledge engine poisoned");
+        let mut knowledge_guard = self
+            .knowledge_engine
+            .lock()
+            .expect("knowledge engine poisoned");
         let knowledge = knowledge_guard.analyze(episodes);
-        let mut reflection_guard = self.reflection_engine.lock().expect("reflection engine poisoned");
+        let mut reflection_guard = self
+            .reflection_engine
+            .lock()
+            .expect("reflection engine poisoned");
 
         if knowledge.is_empty() {
             let synthetic = KnowledgeRecord {
@@ -266,7 +272,9 @@ impl GoalEngine {
     }
 
     pub fn reflection_engine(&self) -> std::sync::MutexGuard<'_, ReflectionEngine> {
-        self.reflection_engine.lock().expect("reflection engine poisoned")
+        self.reflection_engine
+            .lock()
+            .expect("reflection engine poisoned")
     }
 }
 

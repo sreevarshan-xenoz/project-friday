@@ -42,8 +42,8 @@ use friday_actions::{
 use friday_core::event::{Event, EventBus};
 use friday_goal_execution::{
     Action, AdapterTool, Capability, CognitiveBlackboard, ExecutionContext, Executive,
-    ExecutiveReport, GoalResult, JINA_READER_PREFIX, ResolvingWebTool, Tool, ToolResult,
-    WebFetchProvider, WebSearchProvider, WorldState,
+    ExecutiveReport, GoalResult, ResolvingWebTool, Tool, ToolResult, WebFetchProvider,
+    WebSearchProvider, WorldState, JINA_READER_PREFIX,
 };
 use friday_intelligence::InferenceFabric;
 use friday_investigation::InvestigationEngine;
