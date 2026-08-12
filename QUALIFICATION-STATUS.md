@@ -32,7 +32,7 @@ Status legend:
 | Autonomous Tick | PASS | [docs/WORLD-MODEL-ACCEPTANCE.md](docs/WORLD-MODEL-ACCEPTANCE.md), [docs/RUNTIME-WORLD-FEEDBACK-ACCEPTANCE.md](docs/RUNTIME-WORLD-FEEDBACK-ACCEPTANCE.md) |
 | World Model | PASS | [docs/WORLD-MODEL-ACCEPTANCE.md](docs/WORLD-MODEL-ACCEPTANCE.md) |
 | LifeOS Intent | PASS | [docs/LIFEOS-INTENT-ACCEPTANCE.md](docs/LIFEOS-INTENT-ACCEPTANCE.md) |
-| Closed cognitive loop | PARTIAL | [docs/CLOSED-COGNITIVE-LOOP-ACCEPTANCE.md](docs/CLOSED-COGNITIVE-LOOP-ACCEPTANCE.md) — CC-11 remains partial |
+| Closed cognitive loop | PASS | [docs/CLOSED-COGNITIVE-LOOP-ACCEPTANCE.md](docs/CLOSED-COGNITIVE-LOOP-ACCEPTANCE.md) — CC-11 closed (structured child observation, Director-delegated live path) |
 | Agent Director | PASS | [docs/AGENT-DIRECTOR-ACCEPTANCE.md](docs/AGENT-DIRECTOR-ACCEPTANCE.md) |
 | Persistent Workforce | PASS | [docs/AGENT-DIRECTOR-ACCEPTANCE.md](docs/AGENT-DIRECTOR-ACCEPTANCE.md), `services/agent-runtime/tests/workforce.rs` |
 | Parallel Durable Execution | PASS | [docs/PARALLEL-DURABLE-ACCEPTANCE.md](docs/PARALLEL-DURABLE-ACCEPTANCE.md) |
@@ -53,14 +53,16 @@ Status legend:
 
 ## Open qualification items
 
-### CC-11
+### CC-11 — RESOLVED
 
-The remaining seam is the structured child-observation path between
-`DirectorActionExecutor` and the WorldModel update flow. Current evidence says
-bounded delegation and parent verification work, but the live bridge still uses
-the direct kernel executor path. This stays `PARTIAL` until the child result can
-carry a structured verified observation without inventing a parallel result
-abstraction.
+The exact intent action is delegated through the Agent Director: child results
+carry a structured observation (`AgentResult.observation`), the director hands it
+up (`DirectorReport::verified_observation`), `DirectorActionExecutor` folds the
+verified child's observation into the kernel-shaped
+`stdout`/`world_observation` envelope, and the live bridge
+(`LiveRuntimeSource`) runs the intent action through `KernelChildDriver` +
+`AgentDirector`. Evidence: `director_child_runs_exact_intent_action_and_exposes_world_observation`
+and `live_source_exposes_real_autonomy_provenance`.
 
 ### Workspace test completion — RESOLVED (hermetic gate)
 

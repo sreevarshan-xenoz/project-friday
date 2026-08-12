@@ -216,6 +216,12 @@ pub struct AgentResult {
     pub steps: Vec<AgentStep>,
     pub duration_ms: u64,
     pub error: Option<String>,
+    /// The worker's structured observation payload — a generic JSON artifact
+    /// the worker observed (e.g. a command's raw output). The runtime treats
+    /// it as **opaque**: the parent (director) is who interprets it into a
+    /// world-model observation. `None` when the worker produced nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation: Option<serde_json::Value>,
 }
 
 impl AgentResult {
@@ -231,6 +237,7 @@ impl AgentResult {
             steps,
             duration_ms: 0,
             error: None,
+            observation: None,
         }
     }
 
@@ -247,6 +254,7 @@ impl AgentResult {
             steps,
             duration_ms: 0,
             error: Some(error.into()),
+            observation: None,
         }
     }
 
@@ -271,6 +279,40 @@ impl AgentResult {
             steps,
             duration_ms,
             error: Some(reason.as_str().to_string()),
+            observation: None,
         }
+    }
+
+    /// Attach the worker's structured observation payload. The runtime never
+    /// interprets it — a parent director folds it into the world model.
+    pub fn with_observation(mut self, observation: serde_json::Value) -> Self {
+        self.observation = Some(observation);
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_result_carries_an_optional_structured_observation() {
+        let plain = AgentResult::succeeded("a.1", "did the work", vec![]);
+        assert!(plain.observation.is_none(), "no observation by default");
+
+        let with_obs = plain.clone().with_observation(serde_json::json!({ "stdout": "ok" }));
+        assert_eq!(with_obs.observation.as_ref().unwrap()["stdout"], "ok");
+
+        // Round-trip preserves the payload.
+        let json = serde_json::to_string(&with_obs).unwrap();
+        let restored: AgentResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.observation, with_obs.observation);
+
+        // A result without a payload serializes without the key and legacy
+        // records deserialize to `None`.
+        let plain_json = serde_json::to_string(&plain).unwrap();
+        assert!(!plain_json.contains("observation"), "{plain_json}");
+        let legacy: AgentResult = serde_json::from_str(&plain_json).unwrap();
+        assert!(legacy.observation.is_none());
     }
 }

@@ -1102,6 +1102,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "friday-actions",
+ "friday-agent-runtime",
  "friday-cognitive",
  "friday-experience",
  "friday-goal-execution",

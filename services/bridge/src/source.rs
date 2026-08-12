@@ -24,6 +24,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use friday_actions::{AgentKernel, GitAdapter, WebAgentAdapter};
+use friday_agent_runtime::AgentDirector;
 use friday_cognitive::{
     ActionExecution, ActionVerifier, EngineId, GlobalWorkspace, TickAction, Topic,
 };
@@ -871,7 +872,10 @@ impl RuntimeSource for DemoRuntimeSource {
 /// It preserves the existing frozen read models from `DemoRuntimeSource`, but
 /// obtains the autonomy trace from a real `AutonomyHost` and `GlobalWorkspace`.
 /// The action is deliberately harmless: `git.status` against a caller-provided
-/// repository, verified by the actual command output.
+/// repository, verified by the actual command output. The exact intent action
+/// is delegated through an `AgentDirector` child that runs it on the real
+/// Action Kernel; the child's structured observation is folded back into the
+/// WorldModel.
 pub struct LiveRuntimeSource {
     demo: DemoRuntimeSource,
     host: friday_goal_execution::AutonomyHost,
@@ -902,11 +906,17 @@ impl LiveRuntimeSource {
         let repo = repo.into();
         let kernel = Arc::new(AgentKernel::new().with_max_retries(0));
         kernel.register_adapter(Box::new(GitAdapter::new())).await;
-        let executor = friday_goal_execution::KernelActionExecutor::new(
+        // The exact intent action is delegated through an Agent Director: a
+        // bounded child whose driver runs the goal on the real kernel and
+        // attaches its output as a structured observation.
+        let child_driver = Arc::new(friday_goal_execution::KernelChildDriver::new(
             Arc::clone(&kernel),
             serde_json::json!({ "repo": repo.to_string_lossy() }),
             repo.clone(),
-        );
+        ));
+        let director = Arc::new(AgentDirector::new(child_driver));
+        let executor = friday_goal_execution::DirectorActionExecutor::new(director)
+            .with_cwd(repo.clone());
         let workspace = GlobalWorkspace::new();
         let mut initial_model =
             WorldModel::new(WorldState::new().with_working_directory(repo.to_string_lossy()));

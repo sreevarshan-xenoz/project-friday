@@ -13,7 +13,10 @@ use crate::planning::{PlanSource, Planning};
 use crate::world::{FileMeta, StateTransition, VerifiedObservation, WorldModel, WorldState};
 use async_trait::async_trait;
 use friday_actions::{ActionRequest, AgentKernel, ExecutionContext};
-use friday_agent_runtime::{default_gate, AgentDirector, AgentRole, ResultGate};
+use friday_agent_runtime::{
+    default_gate, AgentContext, AgentDriver, AgentDirector, AgentResult, AgentRole, AgentStep,
+    ResultGate,
+};
 use friday_cognitive::{
     ActionExecution, ActionExecutor, ActionOutcome, ActionVerifier, AutonomousTick,
     DecisionFunction, DecisionState, GlobalWorkspace, TickAction,
@@ -80,9 +83,10 @@ impl ActionExecutor for KernelActionExecutor {
             .build();
         let result = self.kernel.run_action(request, context).await;
         let mut output = result.output;
-        if tool == "git" && operation == "status" && result.success {
-            if let Some(observation) = git_status_observation(
-                output["stdout"].as_str().unwrap_or_default(),
+        if result.success {
+            if let Some(observation) = interpret_world_observation(
+                &action.action,
+                &output,
                 &self.cwd,
                 execution_id,
                 &action.action,
@@ -178,11 +182,16 @@ impl DecisionFunction for IntentDecision {
 ///
 /// The Director remains the only delegation/retry boundary. The host receives a
 /// normal `ActionExecution` so the existing verifier, journal, and WorldModel
-/// feedback path remain unchanged.
+/// feedback path remain unchanged. When the run is
+/// [`DirectorReport::all_verified`], the verified child's structured
+/// observation is interpreted into the same `stdout` / `world_observation`
+/// envelope the kernel executor produces — verifiers and the WorldModel can
+/// consume both paths identically.
 pub struct DirectorActionExecutor {
     director: Arc<AgentDirector>,
     role: AgentRole,
     gate: ResultGate,
+    cwd: PathBuf,
 }
 
 impl DirectorActionExecutor {
@@ -191,6 +200,7 @@ impl DirectorActionExecutor {
             director,
             role: AgentRole::Researcher,
             gate: default_gate(),
+            cwd: std::env::current_dir().unwrap_or_default(),
         }
     }
 
@@ -201,6 +211,12 @@ impl DirectorActionExecutor {
 
     pub fn with_gate(mut self, gate: ResultGate) -> Self {
         self.gate = gate;
+        self
+    }
+
+    /// The working directory interpreted world observations are grounded in.
+    pub fn with_cwd(mut self, cwd: PathBuf) -> Self {
+        self.cwd = cwd;
         self
     }
 }
@@ -214,22 +230,150 @@ impl ActionExecutor for DirectorActionExecutor {
             .verify(vec![child], Arc::clone(&self.gate))
             .await;
         let verified = report.all_verified();
+        let mut output = serde_json::json!({
+            "director": true,
+            "verified": verified,
+            "children": report.entries.len(),
+            "verified_children": report.verified(),
+        });
+        if verified {
+            if let Some(observation) = report.verified_observation() {
+                if let Some(object) = output.as_object_mut() {
+                    // Mirror the kernel's stdout envelope so existing
+                    // verifiers consume the director path identically.
+                    if let Some(stdout) = observation.get("stdout") {
+                        object.insert("stdout".into(), stdout.clone());
+                    }
+                    if let Some(world) = interpret_world_observation(
+                        &action.action,
+                        observation,
+                        &self.cwd,
+                        Uuid::new_v4(),
+                        &action.action,
+                    ) {
+                        object.insert(
+                            "world_observation".into(),
+                            serde_json::to_value(world).unwrap(),
+                        );
+                    }
+                }
+            }
+        }
         ActionExecution {
             action: action.action.clone(),
             success: verified,
             detail: report.summary_lines().join("; "),
-            output: serde_json::json!({
-                "director": true,
-                "verified": verified,
-                "children": report.entries.len(),
-                "verified_children": report.verified(),
-            }),
+            output,
             error: if verified {
                 None
             } else {
                 Some("director_child_unverified".into())
             },
         }
+    }
+}
+
+/// The director child that runs the *exact intent action* through the real
+/// Action Kernel.
+///
+/// The child's goal (its `AgentSpec.goal`) is the delegated action in
+/// `tool.operation` form — e.g. a Director spawn of `git.status` produces a
+/// child whose sole task is running `git.status`. The kernel's raw output is
+/// attached as the child's structured observation so the parent can fold a
+/// verified world observation into the WorldModel.
+pub struct KernelChildDriver {
+    kernel: Arc<AgentKernel>,
+    parameters: Value,
+    cwd: PathBuf,
+    timeout: Option<Duration>,
+}
+
+impl KernelChildDriver {
+    pub fn new(kernel: Arc<AgentKernel>, parameters: Value, cwd: PathBuf) -> Self {
+        Self {
+            kernel,
+            parameters,
+            cwd,
+            timeout: None,
+        }
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+}
+
+#[async_trait]
+impl AgentDriver for KernelChildDriver {
+    async fn run(&self, ctx: AgentContext) -> AgentResult {
+        let goal = ctx.spec.goal.clone();
+        let Some((tool, operation)) = goal.split_once('.') else {
+            return AgentResult::failed(
+                ctx.spec.id.clone(),
+                format!("malformed action goal: {goal}"),
+                vec![],
+                "malformed_action",
+            );
+        };
+        if let Err(reason) = ctx.check() {
+            return AgentResult::aborted(
+                ctx.spec.id.clone(),
+                reason,
+                "aborted before executing the intent action",
+                vec![],
+                0,
+            );
+        }
+
+        let start = std::time::Instant::now();
+        let mut request = ActionRequest::new(tool, operation, self.parameters.clone());
+        request.timeout = self.timeout;
+        request.permissions.push(goal.clone());
+
+        let execution_id = Uuid::new_v4();
+        let trace_id = Uuid::new_v4();
+        let cwd = ctx
+            .spec
+            .cwd
+            .clone()
+            .unwrap_or_else(|| self.cwd.clone());
+        let context = ExecutionContext::builder()
+            .execution_id(execution_id)
+            .trace_id(trace_id)
+            .cwd(cwd.clone())
+            .build();
+        let result = self.kernel.run_action(request, context).await;
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        if !result.success {
+            let error = result
+                .error
+                .clone()
+                .unwrap_or_else(|| "action_failed".to_string());
+            return AgentResult::failed(
+                ctx.spec.id.clone(),
+                format!("{goal} failed: {error}"),
+                vec![AgentStep::failed(1, goal, error.clone(), duration_ms)],
+                error,
+            );
+        }
+
+        let mut observation = result.output;
+        if let Some(world) =
+            interpret_world_observation(&goal, &observation, &cwd, execution_id, &goal)
+        {
+            if let Some(object) = observation.as_object_mut() {
+                object.insert("world_observation".into(), serde_json::to_value(world).unwrap());
+            }
+        }
+        let mut completed = AgentResult::succeeded(
+            ctx.spec.id.clone(),
+            format!("{goal} completed"),
+            vec![AgentStep::ok(1, goal, duration_ms)],
+        );
+        completed.duration_ms = duration_ms;
+        completed.with_observation(observation)
     }
 }
 
@@ -380,6 +524,29 @@ impl AutonomyHost {
             }
         }
         Some(outcome)
+    }
+}
+
+/// Interpret an action result into a world observation.
+///
+/// An explicit `world_observation` payload in the output wins (it is already a
+/// `VerifiedObservation`). Otherwise the known command adapters ground an
+/// observation in the command's actual output — currently only `git.status`
+/// via its verified porcelain output. Unknown actions yield no observation;
+/// the adapter never infers effects for mutating commands.
+fn interpret_world_observation(
+    action: &str,
+    output: &Value,
+    cwd: &std::path::Path,
+    execution_id: Uuid,
+    goal_id: &str,
+) -> Option<VerifiedObservation> {
+    match output.get("world_observation") {
+        Some(value) => serde_json::from_value(value.clone()).ok(),
+        None if action == "git.status" => {
+            git_status_observation(output["stdout"].as_str().unwrap_or_default(), cwd, execution_id, goal_id)
+        }
+        None => None,
     }
 }
 
@@ -755,6 +922,51 @@ mod tests {
         let result = executor.execute(&action).await;
         assert!(!result.success);
         assert_eq!(result.error.as_deref(), Some("director_child_unverified"));
+    }
+
+    #[tokio::test]
+    async fn director_child_runs_exact_intent_action_and_exposes_world_observation() {
+        let dir = std::env::temp_dir().join(format!("friday-director-real-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let repo = dir.to_string_lossy().to_string();
+        Command::new("git")
+            .args(["init", "--quiet", &repo])
+            .status()
+            .unwrap();
+        fs::write(dir.join("untracked.txt"), "director evidence\n").unwrap();
+
+        let kernel = Arc::new(AgentKernel::new().with_max_retries(0));
+        kernel.register_adapter(Box::new(GitAdapter::new())).await;
+
+        // The exact intent action (`git.status`) is delegated to a bounded
+        // director child that runs it through the real kernel.
+        let director = Arc::new(AgentDirector::new(Arc::new(KernelChildDriver::new(
+            Arc::clone(&kernel),
+            json!({ "repo": repo }),
+            dir.clone(),
+        ))));
+        let executor = DirectorActionExecutor::new(director).with_cwd(dir.clone());
+        let action = TickAction::new(
+            "git.status",
+            "gap-driven intent",
+            vec![Uuid::new_v4()],
+            Priority::High,
+        );
+
+        let result = executor.execute(&action).await;
+        assert!(result.success, "director path result: {result:?}");
+        assert_eq!(result.output["director"], true);
+        assert_eq!(result.output["verified_children"], 1);
+        // The kernel envelope is mirrored, so kernel-shaped verifiers work.
+        assert!(result.output["stdout"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("untracked.txt"));
+        // And the child's structured observation became a world observation.
+        let observation: VerifiedObservation =
+            serde_json::from_value(result.output["world_observation"].clone()).unwrap();
+        assert!(observation.state.file_exists("untracked.txt"));
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

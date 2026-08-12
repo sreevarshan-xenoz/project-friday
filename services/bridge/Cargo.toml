@@ -9,6 +9,7 @@ description = "ReadModelBridge: read-only WebSocket bridge from frozen FRIDAY re
 
 [dependencies]
 friday-actions = { path = "../action-runtime" }
+friday-agent-runtime = { path = "../agent-runtime" }
 friday-plugin-runtime = { path = "../plugin-runtime" }
 friday-experience = { path = "../experience" }
 friday-investigation = { path = "../investigation" }

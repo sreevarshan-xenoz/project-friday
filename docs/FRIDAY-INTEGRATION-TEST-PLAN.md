@@ -391,11 +391,12 @@ git diff --check
 
 The combined deterministic host path passes IntentDecision → GapDriven plan →
 durable tick → verified observation → WorldModel update → completion no-op.
-`DirectorActionExecutor` now provides the bounded child delegation seam and gates
-on `DirectorReport::all_verified()`. CC-11 remains partial for the live path:
-the bridge still uses the direct Kernel executor because child results do not yet
-carry a structured observation payload. Do not claim generalized autonomy from
-this campaign.
+The exact intent action is delegated through `DirectorActionExecutor`'s bounded
+child (`KernelChildDriver` runs the goal on the real kernel and attaches its
+output as a structured observation), gated on `DirectorReport::all_verified()`,
+and the verified child's observation is folded back into the kernel-shaped
+envelope the live bridge consumes. Do not claim generalized autonomy from this
+campaign.
 
 ## Reference-inspired mechanisms
 

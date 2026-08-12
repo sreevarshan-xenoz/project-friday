@@ -176,6 +176,19 @@ impl DirectorReport {
         !self.entries.is_empty() && self.entries.iter().all(|e| e.verified)
     }
 
+    /// The structured observation of the first verified child — the payload
+    /// the parent may fold into the world model. `None` unless the whole run
+    /// is [`DirectorReport::all_verified`] (an unverified run proves nothing)
+    /// and the verified child actually produced an observation.
+    pub fn verified_observation(&self) -> Option<&serde_json::Value> {
+        if !self.all_verified() {
+            return None;
+        }
+        self.entries
+            .first()
+            .and_then(|entry| entry.result.observation.as_ref())
+    }
+
     /// One human/planner-readable line per child.
     pub fn summary_lines(&self) -> Vec<String> {
         self.entries
@@ -369,6 +382,7 @@ pub fn default_gate() -> ResultGate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn ok_result(id: &str) -> AgentResult {
         AgentResult::succeeded(
@@ -507,5 +521,57 @@ mod tests {
             total_duration_ms: 0,
         };
         assert!(!report.all_verified());
+    }
+
+    #[test]
+    fn verified_observation_is_exposed_only_when_every_child_is_verified() {
+        let with_obs = ok_result("researcher.1").with_observation(json!({ "stdout": "a" }));
+
+        let all_verified = DirectorReport {
+            entries: vec![DirectorEntry {
+                role: AgentRole::Researcher,
+                verified: true,
+                verdict: None,
+                result: with_obs.clone(),
+            }],
+            total_duration_ms: 1,
+        };
+        assert_eq!(
+            all_verified.verified_observation().unwrap()["stdout"],
+            json!("a")
+        );
+
+        // A verified child without a payload has nothing to hand up.
+        let no_payload = DirectorReport {
+            entries: vec![DirectorEntry {
+                role: AgentRole::Researcher,
+                verified: true,
+                verdict: None,
+                result: ok_result("researcher.2"),
+            }],
+            total_duration_ms: 1,
+        };
+        assert!(no_payload.verified_observation().is_none());
+
+        // Any unverified child refuses the whole observation, even if the
+        // first child carried one.
+        let mixed = DirectorReport {
+            entries: vec![
+                DirectorEntry {
+                    role: AgentRole::Researcher,
+                    verified: true,
+                    verdict: None,
+                    result: with_obs,
+                },
+                DirectorEntry {
+                    role: AgentRole::Verifier,
+                    verified: false,
+                    verdict: Some("child ended failed".into()),
+                    result: ok_result("verifier.2"),
+                },
+            ],
+            total_duration_ms: 2,
+        };
+        assert!(mixed.verified_observation().is_none());
     }
 }
