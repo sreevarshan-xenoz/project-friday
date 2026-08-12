@@ -12,6 +12,32 @@ Status legend:
   diagnosis
 - `DEFERRED` = intentionally out of scope for the current qualification pass
 
+Board legend: 🟢 PASS · 🟢\* PASS (mechanism; final endurance deferred) ·
+🟡 PARTIAL · ⏸ deferred/paused
+
+## Board
+
+```text
+QUALIFICATION
+─────────────────────────────
+Workspace / Hermetic     🟢
+C2 memory mechanism       🟢
+RTT mechanism             🟢*
+CC-11                     🟢
+World Model               🟢
+LifeOS Intent             🟢
+Agent Director            🟢
+Parallel Durability       🟢
+Frontend                  🟢
+
+Final endurance           ⏸️
+Browser runtime           🟡
+```
+
+`RTT *`: the short C2 runs strongly demonstrate the mechanism, but the final
+endurance validation (protocol-identical 24 h decision run) remains deferred to
+the final qualification gate, exactly as decided.
+
 ## Baseline
 
 - Core workspace is buildable.
@@ -45,8 +71,9 @@ Status legend:
 | E2E skill_planning_suite (live) | SLOW | `cargo test -p friday-e2e --test skill_planning_suite` — 16 goals × 40s windows ≈ ≥10 min; not fully re-run this pass |
 | Formatting | FAIL | `cargo fmt --all -- --check` reported existing drift across the workspace |
 | Clippy | PASS WITH WARNINGS | `cargo clippy --workspace --all-targets --all-features` completed with existing warnings |
-| Memory-growth qualification | PARTIAL | [MECH-0002](docs/mech/MECH-0002-windowed-emission-evaluation.md) C2 implemented + implementation-validated (smoke + 64/256/512 sweep: RSS flat ~19–21 MB, bounded window); decision run (24 h, `< 1 MB/hr`) deferred to the final qualification gate |
-| RTT-drift qualification | PARTIAL | [MECH-0002](docs/mech/MECH-0002-windowed-emission-evaluation.md) C2 bounds the O(history) emission path (wire volume scales with window, plateaus past it); sub-ms RTT / ≤0.1 ms drift in sweep; decision run (24 h, `< 10%`) deferred to the final qualification gate |
+| Memory-growth qualification | PASS | [MECH-0002](docs/mech/MECH-0002-windowed-emission-evaluation.md) C2 implemented + implementation-validated (smoke + 64/256/512 sweep: RSS flat ~19–21 MB, bounded window); accepted as an implementation-level fix. Decision run (24 h, `< 1 MB/hr`) deferred to the final qualification gate (`Final endurance` ⏸) |
+| RTT-drift qualification | PASS\* | [MECH-0002](docs/mech/MECH-0002-windowed-emission-evaluation.md) C2 bounds the O(history) emission path (wire volume scales with window, plateaus past it); sub-ms RTT / ≤0.1 ms drift in sweep. Decision run (24 h, `< 10%`) deferred to the final qualification gate (`Final endurance` ⏸) |
+| Final endurance (24 h decision runs) | DEFERRED | protocol-identical VP-001 (seed 42, count 140, 5 s interval) + 2 h soak deferred to the final qualification gate, per the build→validate-continuously→endure-once workflow |
 | E2E capability stub | PARTIAL | `e2e/src/runner.rs` contains a stubbed capability field; current qualification dependency not yet established |
 | UIAutomation TODO | DEFERRED | `windows-host/UIAutomation/ElementFinder.cs` is a placeholder; no current acceptance receipt depends on it |
 | Skill Compounding | DEFERRED | intentionally frozen until qualification baseline is clean |
