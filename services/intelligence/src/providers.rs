@@ -14,6 +14,7 @@ use crate::qualification::{
     routing_score, Budget, CandidateView, Preference, ProviderHealth, QualificationProfile,
     RequestRequirements, Requirement, QUALIFICATION_SCHEMA_VERSION,
 };
+use crate::secrets::SecretsVault;
 
 /// The standard provider credential environment variables, used by
 /// [`crate::secrets::SecretsVault::seed_from_env`] to register production
@@ -1161,6 +1162,7 @@ impl InferenceFabric {
     /// Create default fabric configuration dynamically based on registry config file or env vars.
     pub fn default_from_env() -> Self {
         let mut fabric = Self::new();
+        let security_vault = Arc::new(SecretsVault::new());
 
         // Attempt to load dynamic model registry from workspace config file
         let mut registry_loaded = false;
@@ -1177,6 +1179,7 @@ impl InferenceFabric {
         // OpenRouter (Tier 1 Free Aggregator)
         // Free models: 20 req/min, 50/day (1,000/day with $10+ credit history)
         if let Ok(key) = std::env::var("OPENROUTER_API_KEY") {
+            security_vault.store("provider", "openrouter", key.clone());
             fabric.register_provider(Box::new(OpenAiProvider {
                 name: "openrouter".to_string(),
                 base_url: "https://openrouter.ai/api/v1".to_string(),
@@ -1548,6 +1551,10 @@ impl InferenceFabric {
                 Ok(n) => tracing::info!("Loaded {n} qualification profile(s) from {dir}"),
                 Err(e) => tracing::warn!("Failed to load qualification profiles from {dir}: {e}"),
             }
+        }
+
+        if security_vault.store_count() > 0 {
+            fabric = fabric.with_egress(Arc::new(EgressGate::new(security_vault)));
         }
 
         fabric
@@ -3558,6 +3565,8 @@ impl ProviderV2 for OmniRouteProviderV2 {
 #[cfg(test)]
 mod v2_tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::OnceLock;
 
     fn v2_metadata(id: &str) -> ProviderMetadata {
         ProviderMetadata {
@@ -3660,6 +3669,41 @@ mod v2_tests {
         assert!(p.embeddings("auto", &["x".to_string()]).await.is_err());
     }
 
+    struct CountingProvider {
+        name: String,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl CountingProvider {
+        fn new(name: impl Into<String>, calls: Arc<AtomicUsize>) -> Self {
+            Self {
+                name: name.into(),
+                calls,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for CountingProvider {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn complete(
+            &self,
+            _model_id: &str,
+            _prompt: &str,
+            _require_json: bool,
+        ) -> Result<String, String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok("ok".to_string())
+        }
+
+        async fn check_health(&self) -> bool {
+            true
+        }
+    }
+
     // ── Egress policy (#12): the outbound seam shared by every dispatch ──
 
     fn fabric_with_egress(
@@ -3728,5 +3772,78 @@ mod v2_tests {
         assert!(fabric
             .egress_process("groq", "has sk-token-abcdef")
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn default_from_env_attaches_security_context_and_blocks_secret_payloads() {
+        let env_lock = static_env_lock().lock().expect("env lock poisoned");
+        let secret = format!("sk-test-{}", uuid::Uuid::new_v4().simple());
+        std::env::set_var("OPENROUTER_API_KEY", &secret);
+
+        let mut fabric = InferenceFabric::default_from_env();
+        std::env::remove_var("OPENROUTER_API_KEY");
+        drop(env_lock);
+
+        assert!(
+            fabric.egress.is_some(),
+            "production boot must attach the existing egress gate when secrets are seeded"
+        );
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider_name = "mock-egress";
+        fabric.register_provider(Box::new(CountingProvider::new(
+            provider_name,
+            Arc::clone(&calls),
+        )));
+        fabric.register_model(ModelInfo {
+            id: "mock-egress/auto".to_string(),
+            family: "mock-egress".to_string(),
+            provider: provider_name.to_string(),
+            latency_ms: 1,
+            reliability: 1.0,
+            capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
+            max_context: 1024,
+            tier: Some(CapabilityTier::Auto),
+        });
+
+        let clean = fabric
+            .complete_tier(provider_name, CapabilityTier::Auto, "summarize the plan", false)
+            .await
+            .expect("clean request must pass");
+        assert_eq!(clean, "ok");
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "provider should be called once");
+
+        let blocked = fabric
+            .complete_tier(
+                provider_name,
+                CapabilityTier::Auto,
+                &format!("please use {secret} in the response"),
+                false,
+            )
+            .await
+            .expect_err("secret payload must be blocked before provider dispatch");
+        assert!(blocked.contains("egress policy blocked"), "{blocked}");
+        assert!(!blocked.contains(&secret), "{blocked}");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "blocked request must never reach the provider"
+        );
+
+        let decision = fabric.last_decision().expect("routing decision recorded");
+        let audit = serde_json::to_string(&decision).unwrap();
+        assert!(!audit.contains(&secret), "{audit}");
+        assert!(
+            decision
+                .failures
+                .iter()
+                .any(|f| f.error.contains("egress policy blocked") && !f.error.contains(&secret)),
+            "decision must record the block without leaking the secret: {decision:?}"
+        );
+    }
+
+    fn static_env_lock() -> &'static std::sync::Mutex<()> {
+        static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
     }
 }
