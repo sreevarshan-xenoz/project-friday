@@ -42,7 +42,7 @@ pub use handle::AgentHandle;
 pub use merge::{merge, MergedReport};
 pub use runtime::{AgentRuntime, DEFAULT_MAX_CONCURRENCY, DEFAULT_TIME_LIMIT};
 pub use scheduling::{DecomposeHint, Decomposer, HeuristicDecomposer};
-pub use spec::{AgentResult, AgentSpec, AgentState, AgentStep, ModelCapability};
+pub use spec::{AgentResult, AgentSpec, AgentState, AgentStep, ModelCapability, SecurityScope};
 pub use workforce::{
     BoardNote, BoardTask, InMemoryWorkforceStore, JsonWorkforceStore, TaskOutcome, TaskStatus,
     WorkerRecord, WorkerStatus, Workforce, WorkforceStore,

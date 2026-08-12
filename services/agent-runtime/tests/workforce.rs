@@ -12,8 +12,9 @@ use std::sync::Arc;
 
 use friday_actions::{AgentKernel, DocsAdapter, SkillAgentDriver};
 use friday_agent_runtime::{
-    AgentDriver, AgentRole, InMemoryWorkforceStore, JsonWorkforceStore, TaskOutcome, TaskStatus,
-    WorkerStatus, Workforce, WorkforceStore,
+    AgentContext, AgentDriver, AgentResult, AgentRole, FnDriver, InMemoryWorkforceStore,
+    JsonWorkforceStore, SecurityScope, TaskOutcome, TaskStatus, WorkerStatus, Workforce,
+    WorkforceStore,
 };
 use friday_planner::execution::capability_registry::CapabilityRegistry as PlannerCapabilityRegistry;
 use friday_planner::execution::native_caps::register_native_builtins;
@@ -234,6 +235,50 @@ async fn in_memory_workforce_completes_the_assign_run_verify_flow() {
         wf.worker(&worker.id).await.unwrap().unwrap().status,
         WorkerStatus::Idle
     );
+}
+
+#[tokio::test]
+async fn workforce_run_inherits_the_parent_security_scope() {
+    let seen: Arc<std::sync::Mutex<Vec<Option<SecurityScope>>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen_driver: Arc<std::sync::Mutex<Vec<Option<SecurityScope>>>> = Arc::clone(&seen);
+    let driver: Arc<dyn AgentDriver> = Arc::new(FnDriver::new(move |ctx: AgentContext| {
+        seen_driver
+            .lock()
+            .expect("record lock")
+            .push(ctx.spec.security_scope.clone());
+        AgentResult::succeeded(&ctx.spec.id, "scope ok", vec![])
+    }));
+
+    let store: Arc<dyn WorkforceStore> = Arc::new(InMemoryWorkforceStore::new());
+    let wf = Workforce::new(
+        store,
+        Arc::clone(&driver),
+        TempDir::new().path().to_path_buf(),
+    )
+    .with_security_scope(SecurityScope::new(&["web"], &["provider/openrouter"]));
+
+    let worker = wf
+        .register(AgentRole::Researcher, "reads docs")
+        .await
+        .unwrap();
+    let task = wf
+        .create_task("read", "find the documentation", AgentRole::Researcher)
+        .await
+        .unwrap();
+    wf.assign(&worker.id, &task.id).await.unwrap();
+
+    let outcome = wf.run(&worker.id).await.unwrap();
+    let TaskOutcome::Done { result, .. } = outcome else {
+        panic!("expected Done");
+    };
+    assert_eq!(result.summary, "scope ok");
+
+    let recorded = seen.lock().expect("record lock");
+    assert_eq!(recorded.len(), 1);
+    let scope = recorded[0].clone().expect("security scope attached");
+    assert_eq!(scope.egress, vec!["web".to_string()]);
+    assert_eq!(scope.secrets, vec!["provider/openrouter".to_string()]);
 }
 
 /// Minimal RAII temp dir for tests.

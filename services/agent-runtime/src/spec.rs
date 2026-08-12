@@ -14,6 +14,51 @@ use serde::{Deserialize, Serialize};
 
 use crate::context::AgentAbort;
 
+/// Security authority that can be threaded into a child worker.
+///
+/// Empty vectors are meaningful: they represent explicitly denied authority.
+/// `None` on an [`AgentSpec`] means no security boundary has been attached
+/// yet; a parent director/workforce may then clamp the child to the same or a
+/// narrower scope before dispatch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct SecurityScope {
+    #[serde(default)]
+    pub egress: Vec<String>,
+    #[serde(default)]
+    pub secrets: Vec<String>,
+}
+
+impl SecurityScope {
+    pub fn new(egress: &[&str], secrets: &[&str]) -> Self {
+        Self {
+            egress: egress.iter().map(|s| s.to_string()).collect(),
+            secrets: secrets.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    pub fn intersect(&self, requested: &Self) -> Self {
+        Self {
+            egress: self
+                .egress
+                .iter()
+                .filter(|value| requested.egress.contains(*value))
+                .cloned()
+                .collect(),
+            secrets: self
+                .secrets
+                .iter()
+                .filter(|value| requested.secrets.contains(*value))
+                .cloned()
+                .collect(),
+        }
+    }
+
+    pub fn is_subset_of(&self, parent: &Self) -> bool {
+        self.egress.iter().all(|value| parent.egress.contains(value))
+            && self.secrets.iter().all(|value| parent.secrets.contains(value))
+    }
+}
+
 /// Routing *preferences* an agent's work benefits from — constraints, never
 /// provider names. The fabric decides which provider actually serves the
 /// worker, so swapping Gemma for Qwen/Llama/DeepSeek changes nothing here.
@@ -49,6 +94,10 @@ pub struct AgentSpec {
     /// the planner promotes what becomes permanent.
     #[serde(default)]
     pub memory_scope: Vec<String>,
+    /// Security authority attached to this child. `None` means no boundary
+    /// has been attached yet; a parent can clamp it before execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub security_scope: Option<SecurityScope>,
     /// Hard time limit. 0 = the runtime's default.
     #[serde(default)]
     pub time_limit_ms: u64,
@@ -74,6 +123,7 @@ impl AgentSpec {
             allowed_skills: Vec::new(),
             preferred_models: Vec::new(),
             memory_scope: Vec::new(),
+            security_scope: None,
             time_limit_ms: 0,
             max_steps: 0,
             params: serde_json::Map::new(),
@@ -93,6 +143,11 @@ impl AgentSpec {
 
     pub fn with_memory_scope(mut self, keys: &[&str]) -> Self {
         self.memory_scope = keys.iter().map(|s| s.to_string()).collect();
+        self
+    }
+
+    pub fn with_security_scope(mut self, scope: SecurityScope) -> Self {
+        self.security_scope = Some(scope);
         self
     }
 

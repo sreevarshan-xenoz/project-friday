@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use friday_agent_runtime::{
     default_gate, AgentAbort, AgentContext, AgentDirector, AgentDriver, AgentResult, AgentRole,
-    AgentState, AgentStep, AsyncFnDriver, DirectorConfig, FnDriver,
+    AgentState, AgentStep, AsyncFnDriver, DirectorConfig, FnDriver, SecurityScope,
 };
 
 fn ok(id: &str, summary: &str) -> AgentResult {
@@ -286,6 +286,65 @@ async fn assign_overrides_the_role_scope() {
 
     assert!(report.all_verified(), "{:?}", report.entries);
     assert!(report.entries[0].result.agent_id.starts_with("verifier."));
+}
+
+#[tokio::test]
+async fn child_security_scope_is_inherited_and_clamped() {
+    let seen: Arc<std::sync::Mutex<Vec<(String, Option<SecurityScope>)>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen_driver: Arc<std::sync::Mutex<Vec<(String, Option<SecurityScope>)>>> =
+        Arc::clone(&seen);
+    let driver: Arc<dyn AgentDriver> = Arc::new(FnDriver::new(move |ctx: AgentContext| {
+        seen_driver
+            .lock()
+            .expect("record lock")
+            .push((ctx.spec.id.clone(), ctx.spec.security_scope.clone()));
+        ok(&ctx.spec.id, "scope ok")
+    }));
+
+    let parent_scope = SecurityScope::new(&["web", "git"], &["provider/openrouter"]);
+    let director = AgentDirector::with_config(
+        driver,
+        DirectorConfig {
+            security_scope: Some(parent_scope.clone()),
+            ..DirectorConfig::default()
+        },
+    );
+
+    let inherited = director.spawn(AgentRole::Researcher, "inherit the parent scope");
+    let requested_broader = friday_agent_runtime::AgentSpec::new("verifier.99", "narrow me")
+        .with_security_scope(SecurityScope::new(
+            &["web", "browser", "filesystem"],
+            &["provider/openrouter", "vault/root"],
+        ));
+    let clamped = director.spawn_spec(AgentRole::Verifier, requested_broader);
+
+    let report = director.verify(vec![inherited, clamped], default_gate()).await;
+    assert!(report.all_verified(), "{:?}", report.entries);
+
+    let seen = seen.lock().expect("record lock");
+    assert_eq!(seen.len(), 2);
+
+    let inherited_scope = seen
+        .iter()
+        .find(|(id, _)| id.starts_with("researcher."))
+        .and_then(|(_, scope)| scope.clone())
+        .expect("inherited scope recorded");
+    assert_eq!(inherited_scope, parent_scope);
+
+    let clamped_scope = seen
+        .iter()
+        .find(|(id, _)| id.starts_with("verifier."))
+        .and_then(|(_, scope)| scope.clone())
+        .expect("clamped scope recorded");
+    assert!(clamped_scope.is_subset_of(&parent_scope));
+    assert_eq!(clamped_scope.egress, vec!["web".to_string()]);
+    assert_eq!(
+        clamped_scope.secrets,
+        vec!["provider/openrouter".to_string()]
+    );
+    assert!(!clamped_scope.egress.contains(&"browser".to_string()));
+    assert!(!clamped_scope.secrets.contains(&"vault/root".to_string()));
 }
 
 #[tokio::test]

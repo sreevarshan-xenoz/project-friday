@@ -60,7 +60,7 @@ use serde::{Deserialize, Serialize};
 use crate::director::AgentRole;
 use crate::driver::AgentDriver;
 use crate::runtime::AgentRuntime;
-use crate::spec::{AgentResult, AgentSpec};
+use crate::spec::{AgentResult, AgentSpec, SecurityScope};
 
 // ── Data model ─────────────────────────────────────────────────────────
 
@@ -407,6 +407,7 @@ pub struct Workforce {
     driver: Arc<dyn AgentDriver>,
     workspace_root: PathBuf,
     max_steps: u32,
+    security_scope: Option<SecurityScope>,
 }
 
 impl Workforce {
@@ -433,12 +434,20 @@ impl Workforce {
             driver,
             workspace_root: workspace_root.into(),
             max_steps,
+            security_scope: None,
         }
     }
 
     /// Full runtime control (pool cap / deadline) for the workforce's runs.
     pub fn with_runtime(mut self, runtime: AgentRuntime) -> Self {
         self.runtime = runtime;
+        self
+    }
+
+    /// Security authority every worker inherits unless a narrower scope is
+    /// already attached to the task spec.
+    pub fn with_security_scope(mut self, scope: SecurityScope) -> Self {
+        self.security_scope = Some(scope);
         self
     }
 
@@ -659,6 +668,11 @@ impl Workforce {
             .with_allowed_skills(worker.role.default_skill_scope())
             .with_max_steps(self.max_steps)
             .with_cwd(worker.workspace.clone());
+        if spec.security_scope.is_none() {
+            spec.security_scope = self.security_scope.clone();
+        } else if let Some(parent) = &self.security_scope {
+            spec.security_scope = Some(parent.intersect(spec.security_scope.as_ref().unwrap()));
+        }
         for (capability, params) in &task.params {
             spec = spec.with_param(capability, params.clone());
         }

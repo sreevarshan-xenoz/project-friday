@@ -49,7 +49,7 @@ use crate::driver::AgentDriver;
 use crate::handle::AgentHandle;
 use crate::merge::MergedReport;
 use crate::runtime::AgentRuntime;
-use crate::spec::{AgentResult, AgentSpec, AgentState};
+use crate::spec::{AgentResult, AgentSpec, AgentState, SecurityScope};
 
 /// The first director topology: Researcher / Analyst / Verifier.
 ///
@@ -96,7 +96,7 @@ impl std::fmt::Display for AgentRole {
 /// The bounds every child inherits. A director built from this config can
 /// never fan out without limits — the runtime enforces the pool cap, the
 /// per-worker deadline, and the step budget.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct DirectorConfig {
     /// Maximum workers running at once (runtime semaphore).
     pub max_concurrency: usize,
@@ -104,6 +104,9 @@ pub struct DirectorConfig {
     pub time_limit: Duration,
     /// Per-worker step budget (0 = unlimited, inherited from the runtime).
     pub max_steps: u32,
+    /// Security authority that children inherit unless a caller explicitly
+    /// requests a narrower scope.
+    pub security_scope: Option<SecurityScope>,
 }
 
 impl Default for DirectorConfig {
@@ -112,6 +115,7 @@ impl Default for DirectorConfig {
             max_concurrency: crate::runtime::DEFAULT_MAX_CONCURRENCY,
             time_limit: crate::runtime::DEFAULT_TIME_LIMIT,
             max_steps: 16,
+            security_scope: None,
         }
     }
 }
@@ -243,14 +247,25 @@ impl AgentDirector {
     }
 
     pub fn config(&self) -> DirectorConfig {
-        self.config
+        self.config.clone()
+    }
+
+    fn derive_security_scope(&self, requested: Option<&SecurityScope>) -> Option<SecurityScope> {
+        match (self.config.security_scope.as_ref(), requested) {
+            (None, None) => None,
+            (None, Some(scope)) => Some(scope.clone()),
+            (Some(parent), None) => Some(parent.clone()),
+            (Some(parent), Some(scope)) => Some(parent.intersect(scope)),
+        }
     }
 
     fn spec_for(&self, role: AgentRole, goal: &str) -> AgentSpec {
         let n = self.next_id.fetch_add(1, Ordering::Relaxed);
-        AgentSpec::new(format!("{}.{n}", role.as_str()), goal)
+        let mut spec = AgentSpec::new(format!("{}.{n}", role.as_str()), goal)
             .with_allowed_skills(role.default_skill_scope())
-            .with_max_steps(self.config.max_steps)
+            .with_max_steps(self.config.max_steps);
+        spec.security_scope = self.derive_security_scope(None);
+        spec
     }
 
     /// **spawn** — a role-typed child with the role's default scope and the
@@ -290,6 +305,8 @@ impl AgentDirector {
     /// The raw face for callers that need full spec control (params, cwd,
     /// explicit time limit). The role still tags the child for the gate.
     pub fn spawn_spec(&self, role: AgentRole, spec: AgentSpec) -> DirectedAgent {
+        let mut spec = spec;
+        spec.security_scope = self.derive_security_scope(spec.security_scope.as_ref());
         DirectedAgent {
             role,
             handle: self.runtime.spawn(spec, Arc::clone(&self.driver)),
