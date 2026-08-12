@@ -17,7 +17,10 @@ Status legend:
 - Core workspace is buildable.
 - Several subsystems have bounded acceptance receipts and are not claimed as
   generalized autonomy.
-- Full-workspace test verification is not yet complete.
+- The test gate is split: a **hermetic gate** (fast, deterministic,
+  CI-safe) and a **live integration gate** (network/model dependent,
+  explicitly slower). The hermetic gate is green; live/slow e2e suites are
+  documented separately with their own run commands and latency.
 - Feature expansion is frozen until the remaining qualification items are
   dispositioned.
 
@@ -35,7 +38,11 @@ Status legend:
 | Parallel Durable Execution | PASS | [docs/PARALLEL-DURABLE-ACCEPTANCE.md](docs/PARALLEL-DURABLE-ACCEPTANCE.md) |
 | Browser capability | PARTIAL | `services/action-runtime/src/adapters/browser.rs` exists, but [docs/Roadmap.md](docs/Roadmap.md) still defers browser runtime to M6 |
 | Frontend | PASS | `frontend` build, lint, and 15 tests passed |
-| Full workspace tests | BLOCKED | `cargo test --workspace --no-fail-fast` timed out at 5 minutes during this pass |
+| Full workspace tests (hermetic gate) | PASS | `cargo test --workspace --exclude friday-e2e --no-fail-fast` — exit 0, 117 results, 1427 passed / 0 failed / 4 ignored (2026-08-12) |
+| E2E vertical slice | PASS | `cargo test -p friday-e2e --test e2e_tests` — 1 passed, 0.9s |
+| E2E live_task (fallback) | PASS | `cargo test -p friday-e2e --test live_task` — native fallback fixed; 1 passed, 30.5s (2026-08-12) |
+| E2E local_model_task (live) | PASS | `cargo test -p friday-e2e --test local_model_task` — 1 passed, 110.5s, provider-dependent (2026-08-12) |
+| E2E skill_planning_suite (live) | SLOW | `cargo test -p friday-e2e --test skill_planning_suite` — 16 goals × 40s windows ≈ ≥10 min; not fully re-run this pass |
 | Formatting | FAIL | `cargo fmt --all -- --check` reported existing drift across the workspace |
 | Clippy | PASS WITH WARNINGS | `cargo clippy --workspace --all-targets --all-features` completed with existing warnings |
 | Memory-growth qualification | BLOCKED | [docs/VALIDATION.md](docs/VALIDATION.md) records unresolved memory-growth criteria requiring baseline classification |
@@ -55,12 +62,41 @@ the direct kernel executor path. This stays `PARTIAL` until the child result can
 carry a structured verified observation without inventing a parallel result
 abstraction.
 
-### Workspace test completion
+### Workspace test completion — RESOLVED (hermetic gate)
 
-The workspace test suite was not fully green during this pass.
-`cargo test --workspace --no-fail-fast` timed out rather than producing a clean
-PASS/FAIL split. The next step is package-by-package diagnosis so the slow or
-blocked target is explicit.
+The >5-minute `cargo test --workspace --no-fail-fast` timeout was isolated to
+`friday-e2e`: its live integration binaries wait on real LLM inference and
+`run_with_timeout` always burns the full window (the bus only closes on
+shutdown), so windows of 180s / 90s / 16×40s stack far past a 5-minute budget.
+All 31 other workspace packages complete.
+
+The qualification gate is now split:
+
+- **Hermetic gate** (fast, deterministic, CI-safe):
+  `cargo test --workspace --exclude friday-e2e --no-fail-fast`
+  `cargo test -p friday-e2e --test e2e_tests`
+  Observed 2026-08-12: exit 0, 117 test results, 1427 passed / 0 failed /
+  4 ignored; vertical slice 0.9s.
+- **Live integration gate** (network/model dependent, explicitly slower; run
+  with `--nocapture` and a ≥10-minute budget):
+  - `cargo test -p friday-e2e --test live_task -- --nocapture`
+    (30s hermetic fallback; 180s when a provider is reachable)
+  - `cargo test -p friday-e2e --test local_model_task -- --nocapture`
+    (observed 110.5s live, 2026-08-12)
+  - `cargo test -p friday-e2e --test skill_planning_suite -- --nocapture`
+    (16 goals × 40s windows ≈ ≥640s live; chunk with
+    `FRIDAY_SUITE_GOALS` / `FRIDAY_SUITE_OFFSET`)
+
+`live_task` had a real fallback defect: its mock plan referenced
+`mcp:git.git_add` / `mcp:git.git_commit`, but the `uvx mcp-server-git`
+dependency is version-incompatible with the Rust MCP client
+(`AttributeError: 'Server' object has no attribute 'list_tools'`), so the git
+server never registered. The invalid capabilities failed plan validation, the
+planner fell back, and tasks retried until the 180s window — a false-negative
+retry burn, not a live-model wait. Fix: the fallback now executes through the
+already-proven native Filesystem/Git adapters
+(`filesystem.write_file` → `git.add` → `git.commit`), no external MCP runtime.
+Observed 2026-08-12: README written and committed, test ok in 30.5s.
 
 ### Validation criteria
 

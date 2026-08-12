@@ -1,8 +1,9 @@
 //! Live integration test — runs a real task through FRIDAY.
 //!
 //! With a working LLM (set OPENROUTER_API_KEY etc. in .env), uses the LLM
-//! planner.  Without one, falls back to a mock backend so the full execution
-//! pipeline is still validated end-to-end.
+//! planner. Without one, falls back to a deterministic native-adapter plan
+//! (`filesystem.write_file` → `git.add` → `git.commit`) so the full execution
+//! pipeline is still validated end-to-end, hermetically and quickly.
 //!
 //! ```
 //! cargo test -p friday-e2e --test live_task -- --nocapture
@@ -85,30 +86,33 @@ async fn live_task_execution() {
 
     let ws = workspace.display().to_string().replace("\\", "/");
 
-    // Build the mock plan with the real workspace path
+    // Build the mock plan with the real workspace path. The fallback uses
+    // native adapter capabilities only — no external MCP servers — so it stays
+    // hermetic and deterministic regardless of host tooling.
     let mock_plan = serde_json::json!({
         "tasks": [
             {
                 "name": "Write README",
-                "capability": "mcp:filesystem.write_file",
+                "capability": "filesystem.write_file",
                 "params": { "path": format!("{ws}/README.md"), "content": "# Hello from FRIDAY" },
                 "depends_on_indices": []
             },
             {
                 "name": "Git Add",
-                "capability": "mcp:git.git_add",
-                "params": { "repository": ws.clone(), "file_paths": ["README.md"] },
+                "capability": "git.add",
+                "params": { "path": ws.clone(), "paths": ["README.md"] },
                 "depends_on_indices": [0]
             },
             {
                 "name": "Git Commit",
-                "capability": "mcp:git.git_commit",
-                "params": { "repository": ws.clone(), "message": "Initial commit from FRIDAY" },
+                "capability": "git.commit",
+                "params": { "path": ws.clone(), "message": "Initial commit from FRIDAY" },
                 "depends_on_indices": [1]
             }
         ]
     });
 
+    let using_live = live_backend.is_some();
     let backend: Box<dyn ReasoningBackend> = match live_backend {
         Some(b) => b,
         None => Box::new(MockBackend::new(mock_plan.to_string())),
@@ -120,7 +124,7 @@ async fn live_task_execution() {
     // user-approved); MCP capabilities no skill declares keep the default
     // allow-all behavior.
     let bundled_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../skills/bundled");
-    let (registry, skills) = friday_context::register_engines_with_skills(
+    let (_registry, skills) = friday_context::register_engines_with_skills(
         &mut friday,
         Some(backend),
         &[(bundled_dir, friday_context::SkillSource::Builtin)],
@@ -133,58 +137,28 @@ async fn live_task_execution() {
             w.registry.all().len(),
             w.all_loaded()
         );
+        // Demo posture: approve every loaded skill so the deterministic
+        // fallback's medium-risk tasks (`filesystem.write_file`, `git.add`,
+        // `git.commit`) execute without a manual prompt. Mirrors
+        // `local_model_task`.
+        for skill in w.registry.all() {
+            w.approvals.approve(skill.id());
+        }
     } else {
         println!("[SKILLS] skill engine unavailable; allow-all policy active");
     }
 
-    // Start real MCP servers scoped to the workspace
-    let kernel = friday_actions::runtime::AgentKernel::new();
-
-    // Filesystem MCP server (Windows: use cmd /c npx)
-    match friday_mcp::transport::stdio_transport_for(
-        "cmd",
-        &[
-            "/c".into(),
-            "npx".into(),
-            "-y".into(),
-            "@modelcontextprotocol/server-filesystem".into(),
-            workspace.display().to_string(),
-        ],
-    ) {
-        Ok((transport, _child)) => {
-            match kernel.register_mcp_server("filesystem", transport).await {
-                Ok(tools) => {
-                    println!("[MCP] filesystem: {} tools", tools.len());
-                    friday_mcp::adapter::register_server_capabilities(
-                        "filesystem",
-                        &tools,
-                        &registry,
-                    );
-                }
-                Err(e) => println!("[MCP] filesystem failed: {e}"),
-            }
-        }
-        Err(e) => println!("[MCP] filesystem spawn failed: {e}"),
-    }
-
-    // Git MCP server
-    match friday_mcp::transport::stdio_transport_for(
-        "uvx",
-        &[
-            "mcp-server-git".into(),
-            "--repository".into(),
-            workspace.display().to_string(),
-        ],
-    ) {
-        Ok((transport, _child)) => match kernel.register_mcp_server("git", transport).await {
-            Ok(tools) => {
-                println!("[MCP] git: {} tools", tools.len());
-                friday_mcp::adapter::register_server_capabilities("git", &tools, &registry);
-            }
-            Err(e) => println!("[MCP] git failed: {e}"),
-        },
-        Err(e) => println!("[MCP] git spawn failed: {e}"),
-    }
+    // Native execution adapters only — no external MCP runtimes. The
+    // deterministic fallback (and any live LLM plan) executes entirely through
+    // these, so the test proves provider failure/fallback + pipeline execution,
+    // never MCP server version compatibility.
+    let kernel = friday_actions::AgentKernel::new();
+    kernel
+        .register_adapter(Box::new(friday_actions::FilesystemAdapter::new()))
+        .await;
+    kernel
+        .register_adapter(Box::new(friday_actions::GitAdapter::new()))
+        .await;
 
     friday
         .register_plugin(Box::new(kernel))
@@ -207,10 +181,18 @@ async fn live_task_execution() {
         .await
         .expect("publish goal");
 
-    // Run pipeline with timeout (LLM planning can take 30-90s on free models)
-    println!("[RUN] Starting pipeline...");
+    // Run pipeline with a generous window for live LLM planning (30-90s on
+    // free models). The mock fallback is deterministic, so its window is short.
+    // `run_with_timeout` always waits the full window (the bus only closes on
+    // shutdown), so a long window would burn minutes pointlessly in mock mode.
+    let run_window = if using_live {
+        Duration::from_secs(180)
+    } else {
+        Duration::from_secs(30)
+    };
+    println!("[RUN] Starting pipeline (window {run_window:?})...");
     friday
-        .run_with_timeout(Duration::from_secs(180))
+        .run_with_timeout(run_window)
         .await
         .expect("runtime error");
 
