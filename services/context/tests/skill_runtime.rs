@@ -81,7 +81,11 @@ async fn supervisor_verified_execution_can_enter_skill_learning_path() {
     let verifier = CodeTestVerifier::for_test_run();
     let obs = run_command_in(std::env::temp_dir().as_path(), "echo test result: ok");
     let verified = verifier.verify_observation(&obs);
-    assert!(verified.verified, "real verifier must succeed: {:?}", verified.checks);
+    assert!(
+        verified.verified,
+        "real verifier must succeed: {:?}",
+        verified.checks
+    );
 
     let bus = friday.bus().clone();
     let rx = bus.subscribe();
@@ -133,14 +137,15 @@ async fn supervisor_verified_execution_can_enter_skill_learning_path() {
     let candidate = registry
         .get(&candidate_id)
         .expect("learned candidate must exist");
-    assert!(
-        !candidate.enabled,
-        "learned candidate must start disabled"
-    );
+    assert!(!candidate.enabled, "learned candidate must start disabled");
 
     // Explicit admission is the only step that makes it reusable.
     let report = learning.admit(&candidate_id).expect("admission ran");
-    assert!(report.passed, "qualification must pass: {:?}", report.checks);
+    assert!(
+        report.passed,
+        "qualification must pass: {:?}",
+        report.checks
+    );
     assert!(
         registry.get(&candidate_id).unwrap().enabled,
         "explicit admission must enable the candidate"
@@ -153,7 +158,11 @@ async fn supervisor_verified_execution_can_enter_skill_learning_path() {
     // Reuse remains independently verifiable.
     let obs2 = run_command_in(std::env::temp_dir().as_path(), "echo test result: ok");
     let verified2 = verifier.verify_observation(&obs2);
-    assert!(verified2.verified, "reused execution must verify: {:?}", verified2.checks);
+    assert!(
+        verified2.verified,
+        "reused execution must verify: {:?}",
+        verified2.checks
+    );
 }
 
 #[test]

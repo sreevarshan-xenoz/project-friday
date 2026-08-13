@@ -54,8 +54,13 @@ impl SecurityScope {
     }
 
     pub fn is_subset_of(&self, parent: &Self) -> bool {
-        self.egress.iter().all(|value| parent.egress.contains(value))
-            && self.secrets.iter().all(|value| parent.secrets.contains(value))
+        self.egress
+            .iter()
+            .all(|value| parent.egress.contains(value))
+            && self
+                .secrets
+                .iter()
+                .all(|value| parent.secrets.contains(value))
     }
 }
 

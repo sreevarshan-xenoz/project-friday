@@ -176,12 +176,12 @@ impl SkillLearningService {
             skill_id,
         );
         if report.passed {
-            self.registry.enable_learned(skill_id).map_err(|e| {
-                LearnError::Admission {
+            self.registry
+                .enable_learned(skill_id)
+                .map_err(|e| LearnError::Admission {
                     skill_id: skill_id.to_string(),
                     detail: e.to_string(),
-                }
-            })?;
+                })?;
         }
         Ok(report)
     }

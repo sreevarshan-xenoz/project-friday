@@ -845,9 +845,7 @@ mod tests {
         let s = learned_candidate("learned");
         registry.register(s).unwrap();
         assert!(!registry.get("learned").unwrap().enabled);
-        assert!(registry
-            .select_for("do the thing please", 5)
-            .is_none());
+        assert!(registry.select_for("do the thing please", 5).is_none());
 
         registry.enable_learned("learned").unwrap();
         let admitted = registry.get("learned").unwrap();

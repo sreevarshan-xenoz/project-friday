@@ -22,8 +22,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use friday_core::Friday;
-use friday_planner::execution::GoalCompletionSink;
 use friday_planner::execution::capability_registry::CapabilityRegistry as PlannerCapabilityRegistry;
+use friday_planner::execution::GoalCompletionSink;
 use friday_planner::execution::PolicyAuthority;
 use friday_planner::planning::planners::backend::ReasoningBackend;
 use friday_skills::{
@@ -364,8 +364,9 @@ pub async fn register_engines_with_skills(
                 completion_sink: None,
             };
         }
-        let completion_sink: Arc<dyn GoalCompletionSink> =
-            Arc::new(SkillLearningObserver::new(Arc::new(wiring.skill_learning())));
+        let completion_sink: Arc<dyn GoalCompletionSink> = Arc::new(SkillLearningObserver::new(
+            Arc::new(wiring.skill_learning()),
+        ));
         let policy: Arc<dyn PolicyAuthority> =
             Arc::new(SkillPolicyAuthority(Arc::clone(&wiring.policy)));
         // The loaded registry also feeds the planning engine: every goal's

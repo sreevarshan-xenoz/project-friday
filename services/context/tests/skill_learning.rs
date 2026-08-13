@@ -78,7 +78,11 @@ fn verified_experience_learns_admits_and_reuses() {
     let verifier = CodeTestVerifier::for_test_run();
     let obs = run_command_in(std::env::temp_dir().as_path(), "echo test result: ok");
     let verified = verifier.verify_observation(&obs);
-    assert!(verified.verified, "first run must verify: {:?}", verified.checks);
+    assert!(
+        verified.verified,
+        "first run must verify: {:?}",
+        verified.checks
+    );
 
     // 2. learn → a CANDIDATE: registered, disabled, invisible to the planner.
     let candidate = service
@@ -88,7 +92,10 @@ fn verified_experience_learns_admits_and_reuses() {
             "",
         ))
         .expect("learned");
-    assert!(!candidate.skill.enabled, "a candidate is never immediately live");
+    assert!(
+        !candidate.skill.enabled,
+        "a candidate is never immediately live"
+    );
     assert_eq!(
         candidate.skill.resolved_capabilities(),
         vec!["terminal.exec", "filesystem.read_file"],
@@ -113,7 +120,11 @@ fn verified_experience_learns_admits_and_reuses() {
 
     // 3. Explicit admission (qualification gate) → enabled + discoverable.
     let report = service.admit(&skill_id).expect("admission ran");
-    assert!(report.passed, "admission qualification: {:?}", report.checks);
+    assert!(
+        report.passed,
+        "admission qualification: {:?}",
+        report.checks
+    );
     assert!(registry.get(&skill_id).unwrap().enabled);
     assert!(registry.get(&skill_id).unwrap().is_usable());
 
@@ -127,7 +138,11 @@ fn verified_experience_learns_admits_and_reuses() {
     //    loop is sound, not just selectable-on-paper.
     let obs2 = run_command_in(std::env::temp_dir().as_path(), "echo test result: ok");
     let verified2 = verifier.verify_observation(&obs2);
-    assert!(verified2.verified, "reuse still verifies: {:?}", verified2.checks);
+    assert!(
+        verified2.verified,
+        "reuse still verifies: {:?}",
+        verified2.checks
+    );
 }
 
 /// The verification-first rule at the seam: an UNVERIFIED trajectory is
@@ -143,7 +158,11 @@ fn unverified_trajectory_is_refused_and_nothing_is_registered() {
     assert!(!verifier.verify_observation(&obs).verified);
 
     let err = service
-        .learn(&verified_trajectory("deploy to production", false, "test result: FAILED"))
+        .learn(&verified_trajectory(
+            "deploy to production",
+            false,
+            "test result: FAILED",
+        ))
         .unwrap_err();
     assert!(
         matches!(&err, LearnError::Refused { .. }),
@@ -187,7 +206,10 @@ fn trajectory_with_no_resolvable_capability_is_refused_honestly() {
         "expected NoUsableCapability, got {err}"
     );
     assert!(
-        service.registry_handle().get("run-the-friday-tests").is_none(),
+        service
+            .registry_handle()
+            .get("run-the-friday-tests")
+            .is_none(),
         "a trajectory nothing could execute must not register"
     );
 }

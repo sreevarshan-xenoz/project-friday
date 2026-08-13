@@ -3807,11 +3807,20 @@ mod v2_tests {
         });
 
         let clean = fabric
-            .complete_tier(provider_name, CapabilityTier::Auto, "summarize the plan", false)
+            .complete_tier(
+                provider_name,
+                CapabilityTier::Auto,
+                "summarize the plan",
+                false,
+            )
             .await
             .expect("clean request must pass");
         assert_eq!(clean, "ok");
-        assert_eq!(calls.load(Ordering::SeqCst), 1, "provider should be called once");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "provider should be called once"
+        );
 
         let blocked = fabric
             .complete_tier(

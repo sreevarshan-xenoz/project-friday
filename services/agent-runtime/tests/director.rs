@@ -319,7 +319,9 @@ async fn child_security_scope_is_inherited_and_clamped() {
         ));
     let clamped = director.spawn_spec(AgentRole::Verifier, requested_broader);
 
-    let report = director.verify(vec![inherited, clamped], default_gate()).await;
+    let report = director
+        .verify(vec![inherited, clamped], default_gate())
+        .await;
     assert!(report.all_verified(), "{:?}", report.entries);
 
     let seen = seen.lock().expect("record lock");
