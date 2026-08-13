@@ -38,6 +38,13 @@ Browser runtime           🟡
 endurance validation (protocol-identical 24 h decision run) remains deferred to
 the final qualification gate, exactly as decided.
 
+The Gate 1–7 execution checklist for this qualification campaign lives in
+[`QUALIFICATION-CAMPAIGN.md`](QUALIFICATION-CAMPAIGN.md) (run ledger, failure
+register with classifications). **Campaign R1 (2026-08-13): ✅ ALL GATES PASS**
+— hermetic gate 121 suites / 1484 passed / 0 failed / 4 ignored, supporting
+gates clean, live gate green (e2e vertical slice, live_task mock fallback,
+local_model_task on a real provider, real-Chrome browser suite 15/15).
+
 ## Baseline
 
 - Core workspace is buildable.
@@ -79,6 +86,7 @@ the final qualification gate, exactly as decided.
 | E2E capability stub | PARTIAL | `e2e/src/runner.rs` contains a stubbed capability field; current qualification dependency not yet established |
 | UIAutomation TODO | DEFERRED | `windows-host/UIAutomation/ElementFinder.cs` is a placeholder; no current acceptance receipt depends on it |
 | Skill Compounding | PASS* | Verified supervisor completion now enters `SkillLearningService` through the production boot path (`register_engines_with_skills` → supervisor completion sink → `SkillLearningObserver` → `SkillLearningService`), creates a disabled learned candidate, requires explicit admission, and reselects after admission; receipt: `services/context/tests/skill_runtime.rs::supervisor_verified_execution_can_enter_skill_learning_path` and `services/context/tests/skill_learning.rs`; final endurance qualification remains deferred |
+| Egress + Secrets (security authority) | PASS | #12-A..E accepted (production egress context, child scopes, kernel boundary, web redirect boundary, browser redirect boundary) + cross-seam sweep `services/action-runtime/tests/security_sweep.rs` + `browser.rs::kernel_audits_browser_redirect_denial_and_cancels` (live): the kernel owns authority (request-carried scope overwritten), director/workforce only narrow it, adapters enforce, audit carries the reason without the secret. Commits `5e2f6bf` (C1), `9c90b99` (C2), `e9b370e` (E), `3e42678` (sweep) |
 
 ## Open qualification items
 
