@@ -1156,6 +1156,108 @@ mod tests {
         server.handle.abort();
     }
 
+    /// Live kernel→browser seam (#12 sweep): the full chain the redirect
+    /// boundary exists for — `SecurityScope` → kernel → `BrowserAdapter` → CDP
+    /// `Fetch` → redirect → `EgressPolicy`. The kernel classifies the initial
+    /// URL (`friday.test`, in scope, pinned to the loopback server), the
+    /// browser follows the 302, the interception fails the hop to an internal
+    /// destination *before* Chrome contacts it, and the kernel audits the
+    /// denial as `EgressRedirectDeny`, cancels the execution, and does not
+    /// retry. The secret embedded in the denied target never reaches the error
+    /// surface or the audit trail.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn kernel_audits_browser_redirect_denial_and_cancels() {
+        if std::env::var("FRIDAY_BROWSER_TEST")
+            .map(|v| v != "1")
+            .unwrap_or(true)
+        {
+            eprintln!("skipping browser egress integration (set FRIDAY_BROWSER_TEST=1 to enable)");
+            return;
+        }
+        let _guard = BROWSER_LIVE.lock().unwrap_or_else(|e| e.into_inner());
+        let secret = "sk-browser-secret-31337";
+        let server = CountingServer::start(|port| {
+            vec![
+                (
+                    "/public",
+                    Route {
+                        status: 302,
+                        location: Some(format!("http://127.0.0.1:{port}/private?token={secret}")),
+                        body: String::new(),
+                    },
+                ),
+                (
+                    "/private",
+                    Route {
+                        status: 200,
+                        location: None,
+                        body: "<!doctype html><title>Private</title>".to_string(),
+                    },
+                ),
+            ]
+        })
+        .await;
+
+        let kernel = Arc::new(
+            crate::runtime::AgentKernel::new().with_timeout(std::time::Duration::from_secs(30)),
+        );
+        kernel
+            .register_adapter(Box::new(
+                adapter().with_chrome_arg("--host-resolver-rules=MAP friday.test 127.0.0.1"),
+            ))
+            .await;
+
+        let c = crate::kernel::ExecutionContext::builder()
+            .execution_id(uuid::Uuid::new_v4())
+            .session_id(uuid::Uuid::new_v4())
+            .security_scope(Some(scope(&["friday.test"])))
+            .build();
+        let execution_id = c.execution_id;
+        let req = ActionRequest::new(
+            "web",
+            "open",
+            json!({ "url": format!("http://friday.test:{}/public", server.addr.port()) }),
+        );
+        let res = kernel.run_action(req, c).await;
+
+        assert!(!res.success, "internal redirect must be refused");
+        assert_eq!(res.error.as_deref(), Some("egress denied"));
+        assert_eq!(
+            server.hits("/public").await,
+            1,
+            "initial navigation must succeed"
+        );
+        assert_eq!(
+            server.hits("/private").await,
+            0,
+            "denied target was contacted"
+        );
+        let err = res.error.clone().unwrap_or_default();
+        assert!(!err.contains(secret), "error leaked the secret: {err}");
+        assert_eq!(
+            kernel.kernel().lifecycle.state(execution_id),
+            Some(crate::kernel::LifecycleState::Cancelled),
+            "an egress redirect denial cancels the execution"
+        );
+        let entries = kernel.audit().recent(10);
+        let denied = entries
+            .iter()
+            .find(|e| e.decision == "EgressRedirectDeny")
+            .expect("an EgressRedirectDeny audit entry must exist");
+        let detail = denied.detail.clone().unwrap_or_default();
+        assert_eq!(detail, "denied by egress policy (internal_destination)");
+        assert!(
+            !detail.contains(secret),
+            "audit leaked the secret: {detail}"
+        );
+        assert!(
+            !detail.contains("127.0.0.1"),
+            "audit leaked the destination: {detail}"
+        );
+        server.handle.abort();
+    }
+
     /// Minimal static HTTP server for the browser test (no dependencies). Binds
     /// in the test task (no runtime race), then serves the HTML on a loop.
     async fn serve_html(html: String) -> (String, tokio::task::JoinHandle<()>) {
