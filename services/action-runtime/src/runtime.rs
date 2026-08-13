@@ -32,7 +32,7 @@ use uuid::Uuid;
 
 use crate::adapters::ActionAdapter;
 use crate::audit::{AuditEngine, AuditEntry};
-use crate::egress::{EgressDecision, EgressPolicy};
+use crate::egress::{EgressDecision, EgressDenyReason, EgressPolicy};
 use crate::kernel::{ExecutionContext, Kernel, LifecycleState, MetricSample};
 use crate::permission::{PermissionDecision, PermissionEngine};
 use crate::request::{ActionRequest, ActionResult};
@@ -396,6 +396,12 @@ impl AgentKernel {
             return ActionResult::error("egress denied");
         }
 
+        // Carry the authority into the adapter so network-capable adapters can
+        // classify redirect hops (destinations the pre-dispatch gate never
+        // sees) against the same scope before issuing the next request (#12-C2).
+        let mut req = req;
+        req.security_scope = ctx.security_scope.clone();
+
         let start = std::time::Instant::now();
         let adapters = self.adapters.lock().await;
         let adapter = match adapters.get(&req.tool) {
@@ -451,6 +457,35 @@ impl AgentKernel {
                     match res {
                         Ok(r) => {
                             last = r;
+                            // #12-C2: the adapter refused a redirect hop under
+                            // egress policy before issuing the second request.
+                            // The reason is a static classifier label (parsed,
+                            // never trusted verbatim), so nothing embedded in a
+                            // redirected URL can leak into the audit trail.
+                            // Terminal — audited, cancelled, never retried.
+                            let denied_reason = last
+                                .metadata
+                                .get("egress_deny")
+                                .and_then(|v| v.as_str())
+                                .and_then(EgressDenyReason::parse);
+                            if let Some(reason) = denied_reason {
+                                self.audit.record(self.make_audit(
+                                    &req,
+                                    "EgressRedirectDeny",
+                                    trace,
+                                    0,
+                                    false,
+                                    Some(format!(
+                                        "denied by egress policy ({})",
+                                        reason.as_str()
+                                    )),
+                                ));
+                                self.kernel
+                                    .lifecycle
+                                    .transition(execution_id, LifecycleState::Cancelled)
+                                    .ok();
+                                return ActionResult::error("egress denied");
+                            }
                             if last.success {
                                 break;
                             }

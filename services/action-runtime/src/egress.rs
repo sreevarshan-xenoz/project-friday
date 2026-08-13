@@ -34,9 +34,16 @@
 //!
 //! The policy is **pure**: no DNS resolution and no I/O, so a decision is
 //! deterministic and never leaks a destination (or anything embedded in it)
-//! into audit or error strings. Redirect-following inside an HTTP client is a
-//! separate enforcement gap, deliberately out of scope here (see the redirect
-//! acceptance slice); this gate only covers the pre-dispatch URL.
+//! into audit or error strings.
+//!
+//! **Two enforcement seams consume this policy.** The kernel's pre-dispatch
+//! gate (`AgentKernel::run_action`) classifies a request's destination(s)
+//! before any adapter runs; the [`crate::adapters::WebAdapter`] additionally
+//! re-checks every redirect hop via [`EgressPolicy::check_url`] *before* the
+//! next request is sent, so a 302 that lands on an internal network is stopped
+//! (see the egress-redirect acceptance slice). The browser adapter's redirects
+//! happen inside Chrome and are not yet intercepted — the kernel gate still
+//! covers its pre-dispatch URL.
 
 use crate::request::ActionRequest;
 use friday_agent_runtime::SecurityScope;
@@ -66,6 +73,21 @@ impl EgressDenyReason {
             EgressDenyReason::InternalDestination => "internal_destination",
             EgressDenyReason::NoScopeAttached => "no_scope_attached",
             EgressDenyReason::NotCoveredByScope => "destination_not_covered_by_scope",
+        }
+    }
+
+    /// Reverse lookup from a classifier label (the only string an adapter may
+    /// report as the reason for a denied redirect hop). Returns `None` for
+    /// anything that is not a known label, so a misbehaving adapter can never
+    /// smuggle a destination into an audit trail through this channel.
+    pub fn parse(label: &str) -> Option<Self> {
+        match label {
+            "invalid_destination" => Some(Self::InvalidDestination),
+            "unsupported_url_scheme" => Some(Self::UnsupportedUrlScheme),
+            "internal_destination" => Some(Self::InternalDestination),
+            "no_scope_attached" => Some(Self::NoScopeAttached),
+            "destination_not_covered_by_scope" => Some(Self::NotCoveredByScope),
+            _ => None,
         }
     }
 }
@@ -131,6 +153,13 @@ impl EgressPolicy {
             }
         }
         EgressDecision::Allow
+    }
+
+    /// Classify one concrete destination URL (a redirect hop, an evidence
+    /// target, ...) against the attached authority. The same decision rules as
+    /// [`EgressPolicy::check`], reused so classification never forks.
+    pub fn check_url(&self, scope: Option<&SecurityScope>, dest: &str) -> EgressDecision {
+        self.classify(scope, dest)
     }
 
     fn classify(&self, scope: Option<&SecurityScope>, dest: &str) -> EgressDecision {

@@ -11,6 +11,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 use uuid::Uuid;
 
+use friday_agent_runtime::SecurityScope;
+
 mod serde_duration {
     use serde::{Deserialize, Deserializer, Serializer};
     use std::time::Duration;
@@ -46,6 +48,12 @@ pub struct ActionRequest {
     /// Capability strings the caller believes this action requires. The
     /// permission engine is the sole authority; these are hints only.
     pub permissions: Vec<String>,
+    /// Security authority stamped by the kernel at dispatch (from the
+    /// [`crate::kernel::ExecutionContext`]). Adapters that touch the network
+    /// use it to classify redirect hops against the egress policy *before*
+    /// issuing the next request; `None` keeps the legacy unscoped behavior.
+    #[serde(default)]
+    pub security_scope: Option<SecurityScope>,
 }
 
 impl ActionRequest {
@@ -61,6 +69,7 @@ impl ActionRequest {
             parameters,
             timeout: None,
             permissions: Vec::new(),
+            security_scope: None,
         }
     }
 
@@ -107,6 +116,12 @@ impl ActionResult {
     pub fn with_latency_ms(mut self, ms: u128) -> Self {
         self.metadata
             .insert("latency_ms".to_string(), serde_json::json!(ms));
+        self
+    }
+
+    /// Attach an arbitrary metadata key (audit hooks, adapter signals).
+    pub fn with_metadata(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
+        self.metadata.insert(key.into(), value);
         self
     }
 }

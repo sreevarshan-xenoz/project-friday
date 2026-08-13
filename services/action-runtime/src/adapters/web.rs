@@ -14,13 +14,18 @@
 //! NOT block internal networks (localhost, cloud metadata, RFC1918 ranges).
 //! This matches the platform's model (the permission layer is the boundary,
 //! same as `filesystem.read_file`); a hardened deployment should add an
-//! allowlist/denylist in the policy layer.
+//! allowlist/denylist in the policy layer. Since #12-C2 the adapter also
+//! re-checks every *redirect hop* against the egress policy before issuing the
+//! next request, so a 302 that lands on `127.0.0.1`/RFC1918 (or outside the
+//! attached security scope) is refused before it is ever contacted.
 
 use async_trait::async_trait;
 use serde_json::json;
 use std::time::Duration;
+use url::Url;
 
 use crate::adapters::ActionAdapter;
+use crate::egress::{EgressDecision, EgressDenyReason, EgressPolicy};
 use crate::request::{ActionRequest, ActionResult};
 
 /// Default search endpoint (DuckDuckGo's HTML endpoint — no API key needed).
@@ -32,10 +37,24 @@ pub const DEFAULT_SEARCH_ENDPOINT: &str = "https://html.duckduckgo.com/html/";
 /// its own per-attempt timeout).
 pub const MAX_FETCH_CHARS: usize = 200_000;
 
+/// Redirect hops the adapter will follow before giving up. Mirrors reqwest's
+/// default cap, now that redirects are resolved by the adapter itself so each
+/// hop can be checked against the egress policy (#12-C2).
+pub const MAX_REDIRECTS: usize = 10;
+
+/// Why a fetch failed. Kept separate from the public error string so an
+/// egress denial can carry a static classifier label (never the destination)
+/// for the kernel to audit.
+enum FetchError {
+    Http(String),
+    EgressDenied(EgressDenyReason),
+}
+
 #[derive(Clone)]
 pub struct WebAdapter {
     client: reqwest::Client,
     default_endpoint: String,
+    egress: EgressPolicy,
 }
 
 impl Default for WebAdapter {
@@ -55,13 +74,26 @@ impl WebAdapter {
     /// mock server in hermetic end-to-end tests.
     pub fn with_endpoint(default_endpoint: impl Into<String>) -> Self {
         Self {
+            // Redirects are handled by the adapter's own loop (#12-C2) so each
+            // hop is classified by the egress policy before the next request;
+            // the client itself never auto-follows.
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
                 .user_agent(concat!("friday-web/", env!("CARGO_PKG_VERSION")))
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .expect("reqwest client build"),
             default_endpoint: default_endpoint.into(),
+            egress: EgressPolicy::new(),
         }
+    }
+
+    /// Configure the policy used to classify redirect hops. Defaults to
+    /// [`EgressPolicy::new`]; direct users (outside the kernel's pre-dispatch
+    /// gate) can harden with `with_deny_without_scope(true)` here.
+    pub fn with_egress(mut self, egress: EgressPolicy) -> Self {
+        self.egress = egress;
+        self
     }
 
     fn all_actions() -> &'static [&'static str] {
@@ -87,9 +119,9 @@ impl WebAdapter {
             .min(20) as usize;
 
         let url = format!("{endpoint}?q={}", urlencode(&query));
-        let body = match self.get_text(&url).await {
+        let body = match self.get_text(req, &url).await {
             Ok(b) => b,
-            Err(e) => return ActionResult::error(e),
+            Err(e) => return Self::to_result(e),
         };
         let hits = parse_search_results(&body, limit);
         if hits.is_empty() {
@@ -118,9 +150,9 @@ impl WebAdapter {
         if !url.starts_with("http://") && !url.starts_with("https://") {
             return ActionResult::error(format!("unsupported url scheme: {url}"));
         }
-        let body = match self.get_text(&url).await {
+        let body = match self.get_text(req, &url).await {
             Ok(b) => b,
-            Err(e) => return ActionResult::error(e),
+            Err(e) => return Self::to_result(e),
         };
         let title = extract_title(&body);
         let text = strip_html(&body);
@@ -135,22 +167,71 @@ impl WebAdapter {
         }))
     }
 
-    async fn get_text(&self, url: &str) -> Result<String, String> {
-        let resp = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| format!("GET {url} failed: {e}"))?;
-        if !resp.status().is_success() {
-            return Err(format!("GET {url} returned status {}", resp.status()));
+    /// Fetch a URL, following redirects **by hand** so every hop is classified
+    /// by the egress policy before the next request is sent (#12-C2).
+    ///
+    /// The initial URL is intentionally not classified here: the kernel's
+    /// pre-dispatch gate owns that check, and direct callers (evidence seams
+    /// pointed at local mock servers) must stay able to fetch a local URL. Only
+    /// the *redirect targets* — which the kernel never sees — are checked.
+    async fn get_text(&self, req: &ActionRequest, url: &str) -> Result<String, FetchError> {
+        let mut current = url.to_string();
+        for _hop in 0..=MAX_REDIRECTS {
+            let resp = self
+                .client
+                .get(&current)
+                .send()
+                .await
+                .map_err(|e| FetchError::Http(format!("GET {current} failed: {e}")))?;
+
+            // Mirror reqwest's default redirect set: 301/302/303/307/308. Any
+            // other 3xx is a final (non-success) response.
+            let follow = matches!(resp.status().as_u16(), 301 | 302 | 303 | 307 | 308);
+            if !follow {
+                if !resp.status().is_success() {
+                    return Err(FetchError::Http(format!(
+                        "GET {current} returned status {}",
+                        resp.status()
+                    )));
+                }
+                let bytes = resp
+                    .bytes()
+                    .await
+                    .map_err(|e| FetchError::Http(format!("read body of {current} failed: {e}")))?;
+                let text = String::from_utf8_lossy(&bytes).into_owned();
+                return Ok(text.chars().take(MAX_FETCH_CHARS).collect());
+            }
+
+            // Resolve the next hop against the current URL, then check it.
+            let location = resp
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .ok_or_else(|| FetchError::Http("redirect without a location header".into()))?;
+            let base = Url::parse(&current)
+                .map_err(|_| FetchError::Http("invalid redirect base url".into()))?;
+            let next = base
+                .join(location)
+                .map_err(|_| FetchError::Http("invalid redirect location".into()))?;
+            let decision = self
+                .egress
+                .check_url(req.security_scope.as_ref(), next.as_str());
+            if let EgressDecision::Deny { reason } = decision {
+                // Refused before the second request. The reason is a static
+                // label; the denied target is never echoed.
+                return Err(FetchError::EgressDenied(reason));
+            }
+            current = next.to_string();
         }
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| format!("read body of {url} failed: {e}"))?;
-        let text = String::from_utf8_lossy(&bytes).into_owned();
-        Ok(text.chars().take(MAX_FETCH_CHARS).collect())
+        Err(FetchError::Http("too many redirects".into()))
+    }
+
+    fn to_result(e: FetchError) -> ActionResult {
+        match e {
+            FetchError::Http(msg) => ActionResult::error(msg),
+            FetchError::EgressDenied(reason) => ActionResult::error("egress denied")
+                .with_metadata("egress_deny", serde_json::json!(reason.as_str())),
+        }
     }
 }
 
