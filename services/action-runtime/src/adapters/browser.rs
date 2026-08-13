@@ -21,20 +21,42 @@
 //! (arbitrary page JS) is `Risk::High` and is **denied by default** by the
 //! permission engine (see `specs/browser-organ.md` §4).
 //!
+//! **Redirect boundary (#12-E):** the kernel's pre-dispatch gate classifies the
+//! initial `url`, but redirects are followed *inside* Chrome where the kernel
+//! never sees the next destination. To close that seam, every page the adapter
+//! creates is armed with CDP `Fetch` interception for document navigations: a
+//! redirect hop (or any other navigation-derived document request) is classified
+//! against the caller's [`SecurityScope`] via [`crate::egress::EgressPolicy::check_url`]
+//! before Chrome contacts it, and refused hops are failed with
+//! `Fetch.failRequest` — the same `egress denied` / `egress_deny` contract the
+//! HTTP adapter uses, which the runtime audits as `EgressRedirectDeny` and
+//! cancels without retrying. The initial navigation is always continued: the
+//! kernel owns that check, and direct callers pointed at local mock servers
+//! must stay able to drive kernel-vetted destinations.
+//!
 //! **Credential guard:** `type` refuses `input[type=password]` structurally —
 //! the browser profile is the credential boundary, so FRIDAY never types
 //! credentials (specs/browser-organ.md §4).
 
 use async_trait::async_trait;
 use chromiumoxide::browser::{Browser, BrowserConfig};
+use chromiumoxide::cdp::browser_protocol::fetch::{
+    ContinueRequestParams, EnableParams, EventRequestPaused, FailRequestParams, RequestId,
+    RequestPattern, RequestStage,
+};
+use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, ResourceType};
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
+use chromiumoxide::listeners::EventStream;
 use chromiumoxide::page::{Page, ScreenshotParams};
+use friday_agent_runtime::SecurityScope;
 use futures::StreamExt;
 use serde_json::json;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::adapters::ActionAdapter;
+use crate::egress::{EgressDecision, EgressDenyReason, EgressPolicy};
 use crate::request::{ActionRequest, ActionResult};
 
 /// Environment override for the Chrome/Chromium executable (chromiumoxide's
@@ -47,6 +69,144 @@ const HEADED_ENV: &str = "FRIDAY_BROWSER_HEADED";
 struct BrowserState {
     browser: Browser,
     page: Option<Page>,
+    /// Shared interception state for the page's document requests.
+    intercept: InterceptShared,
+}
+
+/// State shared between the adapter and the CDP interception task that answers
+/// every paused document request on the current page.
+#[derive(Clone)]
+struct InterceptShared {
+    /// The policy classification uses. Cloned from the adapter when the
+    /// browser starts (the policy is immutable once configured).
+    egress: EgressPolicy,
+    /// The [`SecurityScope`] stamped by `open` for the current navigation.
+    /// Click/type/submit-driven navigations reuse the most recently stamped
+    /// scope — they belong to the same execution, so that is the correct
+    /// authority for them too.
+    scope: Arc<Mutex<Option<SecurityScope>>>,
+    /// The initial URL of the current navigation, stamped by `open`. Any other
+    /// document request is navigation-derived and must be classified.
+    initial_url: Arc<Mutex<String>>,
+    /// The first refused redirect hop of the current navigation, if any. Set
+    /// *before* the request is failed, so by the time the navigation resolves
+    /// (success or failure) the denial is already recorded.
+    denied: Arc<Mutex<Option<EgressDenyReason>>>,
+}
+
+/// What to do with one paused document request: let Chrome continue it, or
+/// fail it before the network is touched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InterceptAction {
+    Continue,
+    Fail(EgressDenyReason),
+}
+
+/// Is a paused document request *navigation-derived* — a server redirect hop,
+/// a sub-frame document load, or a JS/meta navigation — rather than the
+/// initial URL the kernel already vetted?
+///
+/// The initial navigation is the only document request the kernel classifies
+/// up front (the `AgentKernel::run_action` pre-dispatch gate), so every other
+/// document request must be classified here. It is identified two ways so the
+/// guard does not depend on a single CDP signal: the protocol's own
+/// `redirectedRequestId` (set on requests that follow a redirect response),
+/// and a URL comparison against the stamped initial target.
+fn is_redirect_hop(
+    initial_url: &str,
+    redirected_request_id: Option<&RequestId>,
+    url: &str,
+) -> bool {
+    redirected_request_id.is_some() || initial_url != url
+}
+
+/// Classify one paused document request against the caller's egress authority.
+///
+/// Only *navigation-derived* requests are classified: the initial navigation
+/// is the kernel's pre-dispatch check and is always continued, so direct
+/// callers may still drive kernel-vetted local destinations. The decision is
+/// deliberately type-agnostic about *why* the request is a hop — it classifies
+/// whatever destination the page is trying to reach. Document-only
+/// *interception* is the scope boundary for this slice, not an architectural
+/// rule: if a redirect ever surfaces under another resource type, only the
+/// interception pattern needs widening, not this decision.
+fn intercept_decision(
+    egress: &EgressPolicy,
+    scope: Option<&SecurityScope>,
+    is_redirect_hop: bool,
+    url: &str,
+) -> InterceptAction {
+    if !is_redirect_hop {
+        return InterceptAction::Continue;
+    }
+    match egress.check_url(scope, url) {
+        EgressDecision::Allow => InterceptAction::Continue,
+        EgressDecision::Deny { reason } => InterceptAction::Fail(reason),
+    }
+}
+
+/// The adapter's half of the egress-denial contract: a static error string
+/// plus a static `egress_deny` classifier label (never the destination). The
+/// runtime parses the label into `EgressRedirectDeny`, audits it, and cancels
+/// the execution without retrying — exactly what the HTTP adapter reports.
+fn deny_result(reason: EgressDenyReason) -> ActionResult {
+    ActionResult::error("egress denied").with_metadata("egress_deny", json!(reason.as_str()))
+}
+
+/// Classify one paused document request and answer it: `Fetch.continueRequest`
+/// (initial navigation or an allowed hop) or `Fetch.failRequest` (a refused
+/// hop, with the denial recorded before Chrome's request is aborted). Errors
+/// answering are swallowed deliberately — a failed answer leaves the request
+/// paused, which aborts the navigation, which is the safe default.
+async fn answer_paused(page: &Page, shared: &InterceptShared, ev: &EventRequestPaused) {
+    let scope = shared.scope.lock().await.clone();
+    let initial_url = shared.initial_url.lock().await.clone();
+    let hop = is_redirect_hop(
+        &initial_url,
+        ev.redirected_request_id.as_ref(),
+        &ev.request.url,
+    );
+    match intercept_decision(&shared.egress, scope.as_ref(), hop, &ev.request.url) {
+        InterceptAction::Continue => {
+            let _ = page
+                .execute(ContinueRequestParams::new(ev.request_id.clone()))
+                .await;
+        }
+        InterceptAction::Fail(reason) => {
+            *shared.denied.lock().await = Some(reason);
+            let _ = page
+                .execute(FailRequestParams::new(
+                    ev.request_id.clone(),
+                    ErrorReason::BlockedByClient,
+                ))
+                .await;
+        }
+    }
+}
+
+/// Run the interception answering loop on its own thread.
+///
+/// The handler runs on a dedicated thread (not `tokio::spawn`) because
+/// chromiumoxide's [`EventStream`] is not `Send`; the thread drives a private
+/// tokio runtime. Commands are exchanged over runtime-agnostic channels, so
+/// `Page` handles work from both the adapter task and this thread. The loop
+/// exits when the page closes (its event channel closes), ending the thread.
+fn arm_interception(
+    page: Page,
+    shared: InterceptShared,
+    mut events: EventStream<EventRequestPaused>,
+) {
+    std::thread::spawn(move || {
+        let rt = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(_) => return,
+        };
+        rt.block_on(async move {
+            while let Some(ev) = events.next().await {
+                answer_paused(&page, &shared, &ev).await;
+            }
+        });
+    });
 }
 
 pub struct BrowserAdapter {
@@ -54,6 +214,12 @@ pub struct BrowserAdapter {
     chrome_path: Option<PathBuf>,
     user_data_dir: Option<PathBuf>,
     headed: bool,
+    /// Policy used to classify navigation-derived document requests (redirect
+    /// hops) via CDP `Fetch` interception. Defaults to [`EgressPolicy::new`].
+    egress: EgressPolicy,
+    /// Extra Chrome command-line arguments (e.g. `--host-resolver-rules` for
+    /// hermetic live tests).
+    chrome_args: Vec<String>,
 }
 
 impl Default for BrowserAdapter {
@@ -71,7 +237,26 @@ impl BrowserAdapter {
             chrome_path,
             user_data_dir: None,
             headed,
+            egress: EgressPolicy::new(),
+            chrome_args: Vec::new(),
         }
+    }
+
+    /// Configure the policy used to classify redirect hops and other
+    /// navigation-derived document requests. Defaults to [`EgressPolicy::new`];
+    /// direct users (outside the kernel's pre-dispatch gate) can harden with
+    /// `with_deny_without_scope(true)` here.
+    pub fn with_egress(mut self, egress: EgressPolicy) -> Self {
+        self.egress = egress;
+        self
+    }
+
+    /// Append a Chrome command-line argument. Test hosts use this to pin
+    /// hostname resolution (e.g. `--host-resolver-rules=MAP friday.test 127.0.0.1`)
+    /// so live redirect tests are hermetic without opening loopback egress.
+    pub fn with_chrome_arg(mut self, arg: impl Into<String>) -> Self {
+        self.chrome_args.push(arg.into());
+        self
     }
 
     /// Attach to an externally-managed browser session (Chrome started with
@@ -94,6 +279,9 @@ impl BrowserAdapter {
             .arg("--no-sandbox")
             .arg("--disable-dev-shm-usage")
             .arg("--disable-gpu");
+        for arg in &self.chrome_args {
+            builder = builder.arg(arg.as_str());
+        }
         if !self.headed {
             builder = builder.arg("--headless=new");
         }
@@ -114,6 +302,36 @@ impl BrowserAdapter {
         Ok(browser)
     }
 
+    /// Create a page on `about:blank`, arm document interception, and return
+    /// the page handle. Navigation is then driven via `Page::goto` so every
+    /// redirect hop is classified before Chrome contacts it.
+    ///
+    /// Interception is scoped to `ResourceType::Document` at the request
+    /// stage: only document navigations pause, so stylesheets/images/XHR/fetch
+    /// keep flowing untouched (no interception overhead, and nothing can hang
+    /// waiting on us). Document requests are the navigation boundary — the
+    /// redirect seam that would otherwise be invisible to the egress policy.
+    async fn new_page(browser: &Browser, shared: InterceptShared) -> Result<Page, String> {
+        let page = browser
+            .new_page("about:blank")
+            .await
+            .map_err(|e| format!("browser new page: {e}"))?;
+        let events = page
+            .event_listener::<EventRequestPaused>()
+            .await
+            .map_err(|e| format!("browser request listener: {e}"))?;
+        let pattern = RequestPattern::builder()
+            .url_pattern("*")
+            .resource_type(ResourceType::Document)
+            .request_stage(RequestStage::Request)
+            .build();
+        page.execute(EnableParams::builder().pattern(pattern).build())
+            .await
+            .map_err(|e| format!("browser fetch enable: {e}"))?;
+        arm_interception(page.clone(), shared, events);
+        Ok(page)
+    }
+
     async fn open(&self, req: &ActionRequest) -> ActionResult {
         let url = match req.param_str("url") {
             Ok(u) => u,
@@ -131,16 +349,42 @@ impl BrowserAdapter {
             *state = Some(BrowserState {
                 browser,
                 page: None,
+                intercept: InterceptShared {
+                    egress: self.egress.clone(),
+                    scope: Arc::new(Mutex::new(None)),
+                    initial_url: Arc::new(Mutex::new(String::new())),
+                    denied: Arc::new(Mutex::new(None)),
+                },
             });
         }
         let st = state.as_mut().expect("state initialized above");
-        let page = match st.browser.new_page(&url).await {
-            Ok(p) => p,
-            Err(e) => return ActionResult::error(format!("navigate {url}: {e}")),
+        let page = if st.page.is_some() {
+            st.page.as_ref().expect("checked above").clone()
+        } else {
+            let p = match Self::new_page(&st.browser, st.intercept.clone()).await {
+                Ok(p) => p,
+                Err(e) => return ActionResult::error(e),
+            };
+            st.page = Some(p.clone());
+            p
         };
+        // Stamp this navigation's authority and clear any prior denial before
+        // navigating. The interception task classifies every hop against it.
+        *st.intercept.scope.lock().await = req.security_scope.clone();
+        *st.intercept.initial_url.lock().await = url.clone();
+        *st.intercept.denied.lock().await = None;
+        let nav = page.goto(&url).await;
+        // A refused hop records the denial *before* failing the request, so by
+        // the time the navigation resolves (success or failure) the reason is
+        // already captured.
+        if let Some(reason) = *st.intercept.denied.lock().await {
+            return deny_result(reason);
+        }
+        if let Err(e) = nav {
+            return ActionResult::error(format!("navigate {url}: {e}"));
+        }
         let title = page.get_title().await.ok().flatten().unwrap_or_default();
         let current = page.url().await.unwrap_or_default();
-        st.page = Some(page);
         ActionResult::success(json!({ "title": title, "url": current }))
     }
 
@@ -520,6 +764,115 @@ mod tests {
         assert!(res.error.unwrap().contains("unknown"));
     }
 
+    fn scope(egress: &[&str]) -> SecurityScope {
+        SecurityScope::new(egress, &[])
+    }
+
+    #[test]
+    fn hop_detection_uses_both_cdp_signals() {
+        // The initial navigation is the only non-hop document request.
+        assert!(!is_redirect_hop(
+            "http://friday.test:1234/public",
+            None,
+            "http://friday.test:1234/public"
+        ));
+        // A redirect hop is caught by the protocol's redirectedRequestId...
+        assert!(is_redirect_hop(
+            "http://friday.test:1234/public",
+            Some(&RequestId::new("7")),
+            "http://friday.test:1234/public"
+        ));
+        // ...and independently by the URL differing from the stamped target,
+        // so the guard does not depend on a single CDP signal.
+        assert!(is_redirect_hop(
+            "http://friday.test:1234/public",
+            None,
+            "http://127.0.0.1:1234/private"
+        ));
+    }
+
+    #[test]
+    fn initial_navigation_is_always_continued() {
+        let p = EgressPolicy::new().with_deny_without_scope(true);
+        // Even a destination that would be denied as a hop is continued as the
+        // initial navigation: the kernel owns that check.
+        assert_eq!(
+            intercept_decision(&p, Some(&scope(&[])), false, "http://127.0.0.1:1/x"),
+            InterceptAction::Continue
+        );
+    }
+
+    #[test]
+    fn redirect_to_internal_network_is_failed_even_when_scope_grants_it() {
+        let p = EgressPolicy::new();
+        // A scope that explicitly grants the loopback literal cannot open it.
+        let grants = scope(&["127.0.0.1", "friday.test"]);
+        for url in [
+            "http://127.0.0.1:9000/private?token=SECRET",
+            "http://localhost:9000/admin",
+            "http://192.168.1.10/x",
+            "http://[::1]:9000/x",
+        ] {
+            assert_eq!(
+                intercept_decision(&p, Some(&grants), true, url),
+                InterceptAction::Fail(EgressDenyReason::InternalDestination),
+                "internal redirect not refused: {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn redirect_outside_the_scope_is_failed() {
+        let p = EgressPolicy::new();
+        let covered = scope(&["friday.test"]);
+        assert_eq!(
+            intercept_decision(&p, Some(&covered), true, "http://other.test:9000/landing"),
+            InterceptAction::Fail(EgressDenyReason::NotCoveredByScope)
+        );
+        // A lookalike host is not confidently inside the authority either.
+        assert_eq!(
+            intercept_decision(
+                &p,
+                Some(&covered),
+                true,
+                "http://notfriday.test:9000/landing"
+            ),
+            InterceptAction::Fail(EgressDenyReason::NotCoveredByScope)
+        );
+    }
+
+    #[test]
+    fn redirect_within_the_scope_is_allowed() {
+        let p = EgressPolicy::new();
+        let covered = scope(&["friday.test", "other.test"]);
+        assert_eq!(
+            intercept_decision(&p, Some(&covered), true, "http://other.test:9000/landing"),
+            InterceptAction::Continue
+        );
+        assert_eq!(
+            intercept_decision(&p, Some(&covered), true, "http://friday.test:9000/landing"),
+            InterceptAction::Continue
+        );
+    }
+
+    #[test]
+    fn deny_result_speaks_the_c2_kernel_contract() {
+        for reason in [
+            EgressDenyReason::InternalDestination,
+            EgressDenyReason::NotCoveredByScope,
+            EgressDenyReason::NoScopeAttached,
+        ] {
+            let res = deny_result(reason);
+            assert!(!res.success);
+            assert_eq!(res.error.as_deref(), Some("egress denied"));
+            assert_eq!(
+                res.metadata.get("egress_deny").and_then(|v| v.as_str()),
+                Some(reason.as_str()),
+                "label mismatch for {reason:?}"
+            );
+        }
+    }
+
     /// Live browser integration: typing into an `input[type=password]` is
     /// refused by the credential guard (specs/browser-organ.md §4). Skipped
     /// unless `FRIDAY_BROWSER_TEST=1`.
@@ -630,6 +983,179 @@ mod tests {
         let _ = server.abort();
     }
 
+    /// Live browser integration (#12-E): a document redirect that lands on an
+    /// internal network is failed by the CDP interception *before* Chrome
+    /// contacts it. The initial URL is a non-loopback host (`friday.test`,
+    /// pinned to the loopback server via `--host-resolver-rules`) so the
+    /// proof is a real redirected navigation, not a loopback first hop. The
+    /// request-counting server proves the denied target was never reached.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn browser_redirect_to_internal_is_blocked_and_not_contacted() {
+        if std::env::var("FRIDAY_BROWSER_TEST")
+            .map(|v| v != "1")
+            .unwrap_or(true)
+        {
+            eprintln!("skipping browser egress integration (set FRIDAY_BROWSER_TEST=1 to enable)");
+            return;
+        }
+        let _guard = BROWSER_LIVE.lock().unwrap_or_else(|e| e.into_inner());
+        let server = CountingServer::start(|port| {
+            vec![
+                (
+                    "/public",
+                    Route {
+                        status: 302,
+                        location: Some(format!("http://127.0.0.1:{port}/private?token=SECRET")),
+                        body: String::new(),
+                    },
+                ),
+                (
+                    "/private",
+                    Route {
+                        status: 200,
+                        location: None,
+                        body: "<!doctype html><title>Private</title>".to_string(),
+                    },
+                ),
+            ]
+        })
+        .await;
+        let adapter = adapter().with_chrome_arg("--host-resolver-rules=MAP friday.test 127.0.0.1");
+        let mut req = ActionRequest::new(
+            "web",
+            "open",
+            json!({ "url": format!("http://friday.test:{}/public", server.addr.port()) }),
+        );
+        req.security_scope = Some(scope(&["friday.test"]));
+        let res = adapter.execute(req).await;
+        assert!(!res.success, "internal redirect must be refused");
+        assert_eq!(res.error.as_deref(), Some("egress denied"));
+        assert_eq!(
+            res.metadata.get("egress_deny").and_then(|v| v.as_str()),
+            Some("internal_destination")
+        );
+        assert_eq!(
+            server.hits("/public").await,
+            1,
+            "initial navigation must succeed"
+        );
+        assert_eq!(
+            server.hits("/private").await,
+            0,
+            "denied target was contacted"
+        );
+        server.handle.abort();
+    }
+
+    /// Live browser integration (#12-E): a redirect to a host inside the
+    /// caller's scope is allowed through and the navigation completes.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn browser_allowed_cross_host_redirect_still_functions() {
+        if std::env::var("FRIDAY_BROWSER_TEST")
+            .map(|v| v != "1")
+            .unwrap_or(true)
+        {
+            eprintln!("skipping browser egress integration (set FRIDAY_BROWSER_TEST=1 to enable)");
+            return;
+        }
+        let _guard = BROWSER_LIVE.lock().unwrap_or_else(|e| e.into_inner());
+        let server = CountingServer::start(|port| {
+            vec![
+                (
+                    "/public",
+                    Route {
+                        status: 302,
+                        location: Some(format!("http://other.test:{port}/landing")),
+                        body: String::new(),
+                    },
+                ),
+                (
+                    "/landing",
+                    Route {
+                        status: 200,
+                        location: None,
+                        body: "<!doctype html><title>Landed</title>".to_string(),
+                    },
+                ),
+            ]
+        })
+        .await;
+        let adapter = adapter().with_chrome_arg(
+            "--host-resolver-rules=MAP friday.test 127.0.0.1, MAP other.test 127.0.0.1",
+        );
+        let mut req = ActionRequest::new(
+            "web",
+            "open",
+            json!({ "url": format!("http://friday.test:{}/public", server.addr.port()) }),
+        );
+        req.security_scope = Some(scope(&["friday.test", "other.test"]));
+        let res = adapter.execute(req).await;
+        assert!(res.success, "allowed redirect failed: {:?}", res.error);
+        assert_eq!(res.output["title"], "Landed");
+        assert_eq!(server.hits("/public").await, 1);
+        assert_eq!(server.hits("/landing").await, 1);
+        server.handle.abort();
+    }
+
+    /// Live browser integration (#12-E): a redirect to a host outside the
+    /// caller's scope is refused before Chrome contacts it.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn browser_out_of_scope_redirect_is_denied_before_contact() {
+        if std::env::var("FRIDAY_BROWSER_TEST")
+            .map(|v| v != "1")
+            .unwrap_or(true)
+        {
+            eprintln!("skipping browser egress integration (set FRIDAY_BROWSER_TEST=1 to enable)");
+            return;
+        }
+        let _guard = BROWSER_LIVE.lock().unwrap_or_else(|e| e.into_inner());
+        let server = CountingServer::start(|port| {
+            vec![
+                (
+                    "/public",
+                    Route {
+                        status: 302,
+                        location: Some(format!("http://other.test:{port}/landing")),
+                        body: String::new(),
+                    },
+                ),
+                (
+                    "/landing",
+                    Route {
+                        status: 200,
+                        location: None,
+                        body: "<!doctype html><title>Landed</title>".to_string(),
+                    },
+                ),
+            ]
+        })
+        .await;
+        let adapter = adapter().with_chrome_arg("--host-resolver-rules=MAP friday.test 127.0.0.1");
+        let mut req = ActionRequest::new(
+            "web",
+            "open",
+            json!({ "url": format!("http://friday.test:{}/public", server.addr.port()) }),
+        );
+        req.security_scope = Some(scope(&["friday.test"]));
+        let res = adapter.execute(req).await;
+        assert!(!res.success, "out-of-scope redirect must be refused");
+        assert_eq!(res.error.as_deref(), Some("egress denied"));
+        assert_eq!(
+            res.metadata.get("egress_deny").and_then(|v| v.as_str()),
+            Some("destination_not_covered_by_scope")
+        );
+        assert_eq!(server.hits("/public").await, 1);
+        assert_eq!(
+            server.hits("/landing").await,
+            0,
+            "out-of-scope target was contacted"
+        );
+        server.handle.abort();
+    }
+
     /// Minimal static HTTP server for the browser test (no dependencies). Binds
     /// in the test task (no runtime race), then serves the HTML on a loop.
     async fn serve_html(html: String) -> (String, tokio::task::JoinHandle<()>) {
@@ -656,5 +1182,90 @@ mod tests {
             }
         });
         (format!("http://{addr}/index.html"), handle)
+    }
+}
+
+/// A tiny route table for the live redirect tests: each route maps a request
+/// path to a status, optional `Location`, and body. Every request increments a
+/// per-path hit counter so tests can prove a denied target was never contacted
+/// and an allowed hop was followed exactly once.
+#[cfg(test)]
+struct CountingServer {
+    addr: std::net::SocketAddr,
+    hits: Arc<Mutex<std::collections::HashMap<String, usize>>>,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+struct Route {
+    status: u16,
+    location: Option<String>,
+    body: String,
+}
+
+#[cfg(test)]
+impl CountingServer {
+    async fn start(routes: impl FnOnce(u16) -> Vec<(&'static str, Route)>) -> Self {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let routes: std::collections::HashMap<String, Route> = routes(addr.port())
+            .into_iter()
+            .map(|(p, r)| (p.to_string(), r))
+            .collect();
+        let hits: Arc<Mutex<std::collections::HashMap<String, usize>>> =
+            Arc::new(Mutex::new(std::collections::HashMap::new()));
+        let hits_for_task = hits.clone();
+        let handle = tokio::spawn(async move {
+            loop {
+                if let Ok((mut sock, _)) = listener.accept().await {
+                    let routes = routes.clone();
+                    let hits = hits_for_task.clone();
+                    tokio::spawn(async move {
+                        let mut buf = [0u8; 4096];
+                        let _ = tokio::io::AsyncReadExt::read(&mut sock, &mut buf).await;
+                        let request_line = String::from_utf8_lossy(&buf);
+                        let path = request_line
+                            .split_whitespace()
+                            .nth(1)
+                            .unwrap_or("/")
+                            .to_string();
+                        *hits.lock().await.entry(path.clone()).or_insert(0) += 1;
+                        let route = routes.get(&path).cloned().unwrap_or(Route {
+                            status: 404,
+                            location: None,
+                            body: "not found".to_string(),
+                        });
+                        let reason = match route.status {
+                            302 => "Found",
+                            404 => "Not Found",
+                            _ => "OK",
+                        };
+                        let mut head = format!(
+                            "HTTP/1.1 {} {}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n",
+                            route.status,
+                            reason,
+                            route.body.len()
+                        );
+                        if let Some(loc) = &route.location {
+                            head.push_str(&format!("Location: {loc}\r\n"));
+                        }
+                        head.push_str("\r\n");
+                        let _ =
+                            tokio::io::AsyncWriteExt::write_all(&mut sock, head.as_bytes()).await;
+                        let _ =
+                            tokio::io::AsyncWriteExt::write_all(&mut sock, route.body.as_bytes())
+                                .await;
+                    });
+                }
+            }
+        });
+        Self { addr, hits, handle }
+    }
+
+    async fn hits(&self, path: &str) -> usize {
+        *self.hits.lock().await.get(path).unwrap_or(&0)
     }
 }

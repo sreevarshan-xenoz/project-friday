@@ -36,14 +36,18 @@
 //! deterministic and never leaks a destination (or anything embedded in it)
 //! into audit or error strings.
 //!
-//! **Two enforcement seams consume this policy.** The kernel's pre-dispatch
+//! **Three enforcement seams consume this policy.** The kernel's pre-dispatch
 //! gate (`AgentKernel::run_action`) classifies a request's destination(s)
 //! before any adapter runs; the [`crate::adapters::WebAdapter`] additionally
 //! re-checks every redirect hop via [`EgressPolicy::check_url`] *before* the
 //! next request is sent, so a 302 that lands on an internal network is stopped
-//! (see the egress-redirect acceptance slice). The browser adapter's redirects
-//! happen inside Chrome and are not yet intercepted — the kernel gate still
-//! covers its pre-dispatch URL.
+//! (see the egress-redirect acceptance slice); and the
+//! [`crate::adapters::BrowserAdapter`] arms CDP `Fetch` interception on every
+//! page so a redirect hop followed *inside* Chrome is classified by the same
+//! policy before the browser contacts it (see the browser-redirect boundary
+//! slice, #12-E). In all three seams the initial URL stays the kernel's
+//! pre-dispatch concern; only destinations the kernel never sees are
+//! re-classified by the adapters.
 
 use crate::request::ActionRequest;
 use friday_agent_runtime::SecurityScope;
