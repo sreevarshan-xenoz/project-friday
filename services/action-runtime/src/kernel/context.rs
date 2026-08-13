@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use friday_agent_runtime::SecurityScope;
 use serde_json::Value;
 use tokio::sync::Notify;
 use uuid::Uuid;
@@ -114,6 +115,11 @@ pub struct ExecutionContext {
     pub deadline: Option<DateTime<Utc>>,
     pub cancellation_token: CancellationToken,
     pub metadata: HashMap<String, Value>,
+    /// Security authority attached to this execution. `None` means no boundary
+    /// has been attached yet (the egress policy is not enforced for the
+    /// request); `Some` grants/denies egress destinations at the kernel
+    /// boundary. Children inherit the parent's scope.
+    pub security_scope: Option<SecurityScope>,
 }
 
 impl ExecutionContext {
@@ -139,6 +145,7 @@ impl ExecutionContext {
             deadline: self.deadline,
             cancellation_token: self.cancellation_token.child(),
             metadata: self.metadata.clone(),
+            security_scope: self.security_scope.clone(),
         }
     }
 
@@ -167,6 +174,7 @@ impl ExecutionContext {
             .permissions(parent.permissions.clone())
             .trace_id(parent.trace_id)
             .metadata(metadata)
+            .security_scope(parent.security_scope.clone())
             .build()
     }
 
@@ -201,6 +209,7 @@ pub struct ExecutionContextBuilder {
     trace_id: Uuid,
     deadline: Option<DateTime<Utc>>,
     metadata: HashMap<String, Value>,
+    security_scope: Option<SecurityScope>,
 }
 
 impl Default for ExecutionContextBuilder {
@@ -217,6 +226,7 @@ impl Default for ExecutionContextBuilder {
             trace_id: Uuid::new_v4(),
             deadline: None,
             metadata: HashMap::new(),
+            security_scope: None,
         }
     }
 }
@@ -270,6 +280,10 @@ impl ExecutionContextBuilder {
         self.metadata = m;
         self
     }
+    pub fn security_scope(mut self, scope: Option<SecurityScope>) -> Self {
+        self.security_scope = scope;
+        self
+    }
     pub fn build(self) -> ExecutionContext {
         ExecutionContext {
             execution_id: self.execution_id,
@@ -284,6 +298,7 @@ impl ExecutionContextBuilder {
             deadline: self.deadline,
             cancellation_token: CancellationToken::new(),
             metadata: self.metadata,
+            security_scope: self.security_scope,
         }
     }
 }

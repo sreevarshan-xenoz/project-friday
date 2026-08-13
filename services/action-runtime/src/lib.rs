@@ -11,6 +11,7 @@
 pub mod adapters;
 pub mod agent_driver;
 pub mod audit;
+pub mod egress;
 pub mod kernel;
 pub mod permission;
 pub mod request;
@@ -31,6 +32,7 @@ pub use adapters::{
     TerminalAdapter, Transport, WebAdapter, WebAgent, WebAgentAdapter, WebAgentResponse,
 };
 pub use audit::{AuditEngine, AuditEntry};
+pub use egress::{EgressDecision, EgressDenyReason, EgressPolicy};
 pub use kernel::{
     CancellationToken, ExecutionContext, ExecutionContextBuilder, Kernel, LifecycleError,
     LifecycleManager, LifecycleState, ManagedResource, MetricSample, Metrics, ResourceId,

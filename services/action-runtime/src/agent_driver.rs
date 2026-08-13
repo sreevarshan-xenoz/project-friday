@@ -205,6 +205,10 @@ impl AgentDriver for SkillAgentDriver {
                 // timeout around the whole worker.
                 cancellation_token: CancellationToken::new(),
                 metadata: HashMap::new(),
+                // The child's security authority flows into the kernel so the
+                // central egress gate classifies every destination this worker
+                // would reach. `None` keeps the legacy unscoped behavior.
+                security_scope: spec.security_scope.clone(),
             };
 
             let started = std::time::Instant::now();

@@ -32,6 +32,7 @@ use uuid::Uuid;
 
 use crate::adapters::ActionAdapter;
 use crate::audit::{AuditEngine, AuditEntry};
+use crate::egress::{EgressDecision, EgressPolicy};
 use crate::kernel::{ExecutionContext, Kernel, LifecycleState, MetricSample};
 use crate::permission::{PermissionDecision, PermissionEngine};
 use crate::request::{ActionRequest, ActionResult};
@@ -52,6 +53,7 @@ pub struct AgentKernel {
     /// (falling back to the first for a descriptive unknown-action error).
     adapters: tokio::sync::Mutex<HashMap<String, Vec<Box<dyn ActionAdapter>>>>,
     permission: PermissionEngine,
+    egress: EgressPolicy,
     audit: AuditEngine,
     kernel: Kernel,
     default_timeout: Duration,
@@ -79,6 +81,7 @@ impl AgentKernel {
             meta,
             adapters: tokio::sync::Mutex::new(HashMap::new()),
             permission: PermissionEngine::new(),
+            egress: EgressPolicy::new(),
             audit: AuditEngine::new(1024),
             kernel: Kernel::new(),
             default_timeout: DEFAULT_TIMEOUT,
@@ -93,6 +96,16 @@ impl AgentKernel {
     /// backend needs its own permission logic.
     pub fn with_permission(mut self, permission: PermissionEngine) -> Self {
         self.permission = permission;
+        self
+    }
+
+    /// Override the destination egress policy. A request that carries a
+    /// [`ExecutionContext::security_scope`] is checked here before any adapter
+    /// is dispatched; denied destinations are audited (redacted) and never
+    /// reach an adapter. Off until a scope is attached, unless the policy is
+    /// hardened with [`EgressPolicy::with_deny_without_scope`].
+    pub fn with_egress(mut self, egress: EgressPolicy) -> Self {
+        self.egress = egress;
         self
     }
 
@@ -357,6 +370,30 @@ impl AgentKernel {
                 .transition(execution_id, LifecycleState::Cancelled)
                 .ok();
             return ActionResult::error("permission denied");
+        }
+
+        // Central destination egress gate (#12-C1). Checks the request's
+        // destination(s) against the authority carried on the context before
+        // any adapter is selected or invoked — an egress denial means the
+        // adapter never runs. The reason recorded below is a static classifier
+        // label (never the destination itself), so a secret embedded in a
+        // denied URL cannot leak into the audit trail or the error surface.
+        if let EgressDecision::Deny { reason } =
+            self.egress.check(ctx.security_scope.as_ref(), &req)
+        {
+            self.audit.record(self.make_audit(
+                &req,
+                "EgressDeny",
+                trace,
+                0,
+                false,
+                Some(format!("denied by egress policy ({})", reason.as_str())),
+            ));
+            self.kernel
+                .lifecycle
+                .transition(execution_id, LifecycleState::Cancelled)
+                .ok();
+            return ActionResult::error("egress denied");
         }
 
         let start = std::time::Instant::now();

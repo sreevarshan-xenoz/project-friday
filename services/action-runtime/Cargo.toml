@@ -23,6 +23,7 @@ uuid.workspace = true
 chrono.workspace = true
 tracing.workspace = true
 reqwest = { workspace = true }
+url.workspace = true
 chromiumoxide = "0.7"
 futures = { workspace = true }
 tokio = { version = "1", features = ["full"] }
