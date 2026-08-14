@@ -620,8 +620,14 @@ impl Planning {
 /// intent to match wins; the classifier never falls through to a shell-command
 /// default, so an ambiguous or unclassified goal degrades to read-only memory
 /// recall rather than an arbitrary `execute_command`.
+///
+/// The GoalRunner composes the user's goal with `[session context]` / `[memory]`
+/// blocks appended after a blank line (S1/S2 context assembly). Intent is the
+/// USER'S goal segment only — echoed context must never re-classify the goal
+/// (a remembered fact containing "git" or "remember" must not hijack the next
+/// goal's routing).
 fn capability_for_description(description: &str) -> Capability {
-    let d = description.to_lowercase();
+    let d = goal_segment(description).to_lowercase();
 
     // 1. Shell — only explicit command/program requests.
     if has_word(&d, "cargo")
@@ -678,9 +684,13 @@ fn capability_for_description(description: &str) -> Capability {
         return Capability::DeleteFile;
     }
 
-    // 8. Memory recall — "remember/recall" is a memory intent even when it
-    // mentions research ("recall prior research").
-    if has_word(&d, "remember") || has_word(&d, "recall") {
+    // 8. Memory — "remember X" writes the fact into episodic memory;
+    // "recall X" reads it back. Both are memory intents even when they
+    // mention research ("recall prior research").
+    if has_word(&d, "remember") {
+        return Capability::Custom("memory.remember".into());
+    }
+    if has_word(&d, "recall") {
         return Capability::SearchMemory;
     }
 
@@ -699,6 +709,17 @@ fn capability_for_description(description: &str) -> Capability {
     // as a command — an unclassified goal answers from what FRIDAY already
     // knows, or reports honestly that it has no answer yet.
     Capability::SearchMemory
+}
+
+/// The current goal segment of a (possibly composed) description: everything
+/// up to the first context-block marker (`\n\n[`). The GoalRunner appends
+/// `[session context]` / `[memory]` blocks after a blank line (S1/S2 context
+/// assembly); the classifier reads only this segment so echoed context can
+/// never re-classify the user's goal.
+fn goal_segment(description: &str) -> &str {
+    description
+        .split_once("\n\n[")
+        .map_or(description, |(head, _)| head.trim())
 }
 
 /// Whether `needle` appears in `haystack` as a whole word (alphanumeric or
@@ -1046,5 +1067,34 @@ mod tests {
                 "'{goal}' must not route to the shell"
             );
         }
+    }
+
+    /// S2: intent is the user's goal segment only — context blocks echoed into
+    /// the composed description must never re-classify the goal. A remembered
+    /// fact containing "remember" / "git" cannot hijack the next goal.
+    #[test]
+    fn goal_segment_isolates_intent_from_context_blocks() {
+        let planning = Planning::new();
+        let composed = "What was that project I told you about?\n\n[memory]\ngoal: Remember that my main project is FRIDAY\nresult: remembered: Remember that my main project is FRIDAY";
+        assert_eq!(
+            planning.infer_capability(composed, &[]),
+            Capability::SearchMemory,
+            "echoed 'remember' in the memory block must not re-route the goal"
+        );
+
+        let composed = "What was that project I told you about?\n\n[session context]\nprevious goal: run cargo test\nprevious result: 10 passed";
+        assert_eq!(
+            planning.infer_capability(composed, &[]),
+            Capability::SearchMemory,
+            "echoed 'cargo' in the session block must not route to the shell"
+        );
+
+        // The current goal segment still wins: a git goal keeps its routing
+        // even when context blocks follow it.
+        let composed = "Check the git status of the workspace repository\n\n[session context]\nprevious goal: show the directory tree";
+        assert_eq!(
+            planning.infer_capability(composed, &[]),
+            Capability::ExecuteCommand
+        );
     }
 }

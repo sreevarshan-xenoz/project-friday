@@ -43,9 +43,9 @@ use friday_actions::{
 };
 use friday_core::event::{Event, EventBus};
 use friday_goal_execution::{
-    Action, AdapterTool, Capability, CognitiveBlackboard, ExecutionContext, Executive,
-    ExecutiveReport, GoalResult, ResolvingWebTool, Tool, ToolResult, WebFetchProvider,
-    WebSearchProvider, WorldState, JINA_READER_PREFIX,
+    Action, AdapterTool, Capability, CognitiveBlackboard, CognitiveEpisode, ExecutionContext,
+    Executive, ExecutiveReport, GoalResult, MemoryJournal, ResolvingWebTool, Tool, ToolResult,
+    WebFetchProvider, WebSearchProvider, WorldState, JINA_READER_PREFIX,
 };
 use friday_intelligence::InferenceFabric;
 use friday_investigation::InvestigationEngine;
@@ -230,6 +230,92 @@ impl Tool for WebSearchCapabilityTool {
                 .unwrap_or(0),
             metadata: json!(res.metadata),
         }
+    }
+}
+
+/// Real memory tool for the built-in `SearchMemory` capability (the planner's
+/// `infer_capability` classifies "recall …" and unclassified statements as
+/// memory recall). Reads the *shared durable episode journal* — the same store
+/// the Executive writes through its admission gate — so recall answers from
+/// FRIDAY's persistent memory (S2), never from a second, parallel store.
+struct MemoryRecallTool {
+    journal: Arc<MemoryJournal>,
+}
+
+/// Real memory tool for the `memory.remember` custom capability (the planner
+/// routes "remember X" here). The acknowledgment IS the execution: the goal's
+/// episode — whose description carries the fact — passes the admission gate and
+/// is stored + journaled by the Executive, so the fact enters the same
+/// persistent memory the recall tool reads.
+struct MemoryRememberTool {}
+
+#[async_trait]
+impl Tool for MemoryRecallTool {
+    fn name(&self) -> &str {
+        "memory"
+    }
+
+    fn description(&self) -> &str {
+        "Recalls what FRIDAY knows: searches persistent episodic memory for entries relevant to the query (SearchMemory capability)"
+    }
+
+    fn capabilities(&self) -> Vec<Capability> {
+        vec![
+            Capability::SearchMemory,
+            Capability::Custom("memory.recall".into()),
+        ]
+    }
+
+    async fn execute(&self, action: &Action, _ctx: &ExecutionContext) -> ToolResult {
+        let hits = self
+            .journal
+            .recall(&action.instruction, MEMORY_RECALL_LIMIT);
+        if hits.is_empty() {
+            return ToolResult::success("no memory matches yet");
+        }
+        let noun = if hits.len() == 1 { "entry" } else { "entries" };
+        let body: Vec<String> = hits
+            .iter()
+            .enumerate()
+            .map(|(i, ep)| {
+                let result = ep
+                    .execution_result
+                    .as_ref()
+                    .map(|r| r.output.trim())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("<no result>");
+                format!(
+                    "{}. {} — {}",
+                    i + 1,
+                    ep.goal.description,
+                    truncate(result, MAX_CONTEXT_CHARS)
+                )
+            })
+            .collect();
+        ToolResult::success(format!(
+            "recalled {} memory {noun}:\n{}",
+            hits.len(),
+            body.join("\n")
+        ))
+    }
+}
+
+#[async_trait]
+impl Tool for MemoryRememberTool {
+    fn name(&self) -> &str {
+        "memory"
+    }
+
+    fn description(&self) -> &str {
+        "Writes a fact to memory: acknowledges the instruction so its episode (goal + result) is stored in persistent episodic memory (memory.remember)"
+    }
+
+    fn capabilities(&self) -> Vec<Capability> {
+        vec![Capability::Custom("memory.remember".into())]
+    }
+
+    async fn execute(&self, action: &Action, _ctx: &ExecutionContext) -> ToolResult {
+        ToolResult::success(format!("remembered: {}", action.instruction))
     }
 }
 
@@ -471,6 +557,10 @@ const MAX_SESSIONS: usize = 32;
 /// Executive.
 const MAX_CONTEXT_CHARS: usize = 400;
 
+/// How many memory entries the Context Builder recalls into the composed goal
+/// and the recall tool returns — bounded so memory never floods a turn.
+const MEMORY_RECALL_LIMIT: usize = 3;
+
 /// One session's conversational state — held in memory only (S1; persistence
 /// is the separate memory-write slice). `last_goal` / `last_result` describe
 /// the just-finished turn and are composed into the *next* goal the Executive
@@ -504,28 +594,52 @@ fn now_ms() -> u64 {
 
 /// Compose the goal text the Executive plans on: the user's goal first, then —
 /// when the session has a prior turn — a clearly-delimited, size-capped
-/// `[session context]` block carrying the previous goal and result. This rides
-/// the existing context architecture (the goal description feeds both the
-/// intent classifier and the LLM investigation prompt), so a second goal in
-/// the same session resolves references to the prior turn. The block is
-/// appended *after* the current goal so the current intent reads first; the
-/// heuristic classifier's whole-word keyword scan can still be influenced by
-/// echoed words — accepted for the heuristic fallback, irrelevant to the
-/// LLM-backed path that powers the daemon.
-fn compose_goal_with_context(goal: &str, prior: &SessionContext) -> String {
-    if prior.turn == 0 {
-        return goal.to_string();
-    }
-    let mut out = String::with_capacity(goal.len() + 320);
+/// `[session context]` block carrying the previous goal and result, and when
+/// memory recall returned relevant entries — a `[memory]` block carrying what
+/// FRIDAY remembers. This rides the existing context architecture (the goal
+/// description feeds both the intent classifier and the LLM investigation
+/// prompt), so a later goal resolves references to prior turns *and* to facts
+/// from earlier sessions. The blocks are appended *after* the current goal so
+/// the current intent reads first; the heuristic classifier's whole-word
+/// keyword scan can still be influenced by echoed words — accepted for the
+/// heuristic fallback, irrelevant to the LLM-backed path that powers the
+/// daemon.
+fn compose_goal_with_context(goal: &str, prior: &SessionContext, recalled: &[String]) -> String {
+    let mut out = String::with_capacity(goal.len() + 640);
     out.push_str(goal);
-    out.push_str("\n\n[session context]\n");
-    out.push_str("previous goal: ");
-    out.push_str(&truncate(&prior.last_goal, MAX_CONTEXT_CHARS));
-    if !prior.last_result.is_empty() {
-        out.push_str("\nprevious result: ");
-        out.push_str(&truncate(&prior.last_result, MAX_CONTEXT_CHARS));
+    if prior.turn > 0 {
+        out.push_str("\n\n[session context]\n");
+        out.push_str("previous goal: ");
+        out.push_str(&truncate(&prior.last_goal, MAX_CONTEXT_CHARS));
+        if !prior.last_result.is_empty() {
+            out.push_str("\nprevious result: ");
+            out.push_str(&truncate(&prior.last_result, MAX_CONTEXT_CHARS));
+        }
+    }
+    if !recalled.is_empty() {
+        out.push_str("\n\n[memory]\n");
+        for line in recalled {
+            out.push_str(line);
+            out.push('\n');
+        }
     }
     out
+}
+
+/// Format one recalled episode as a `[memory]` block line: the episode's goal
+/// and its result, both size-capped.
+fn format_recalled_memory(ep: &CognitiveEpisode) -> String {
+    let result = ep
+        .execution_result
+        .as_ref()
+        .map(|r| r.output.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("<no result>");
+    format!(
+        "goal: {}\nresult: {}",
+        truncate(&ep.goal.description, MAX_CONTEXT_CHARS),
+        truncate(result, MAX_CONTEXT_CHARS)
+    )
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -573,13 +687,18 @@ pub struct GoalRunner {
     /// [`MAX_SESSIONS`] with LRU eviction. Locked only in short critical
     /// sections — never held across an await.
     sessions: Mutex<HashMap<String, SessionContext>>,
+    /// The durable memory journal this runner writes through (shared with the
+    /// Executive's `EpisodeStore` and the recall tool — one store, one
+    /// journal). `None` = memory stays in-memory only (heuristic test runners
+    /// and any caller that does not opt into persistence).
+    journal: Option<Arc<MemoryJournal>>,
 }
 
 impl GoalRunner {
     /// The assistant loop with the deterministic heuristic investigation
     /// strategy — hermetic (no model calls), used by tests.
     pub fn new(bus: EventBus) -> Self {
-        Self::with_investigation_engine(bus, InvestigationEngine::heuristic(), None, None)
+        Self::with_investigation_engine(bus, InvestigationEngine::heuristic(), None, None, None)
     }
 
     /// The daemon's LLM-backed assistant loop: the InferenceFabric derives the
@@ -597,6 +716,7 @@ impl GoalRunner {
             InvestigationEngine::llm(Box::new(fabric.clone())),
             Some(fabric),
             None,
+            None,
         )
     }
 
@@ -609,6 +729,38 @@ impl GoalRunner {
             InvestigationEngine::heuristic(),
             None,
             Some(endpoint.into()),
+            None,
+        )
+    }
+
+    /// Hermetic runner with persistent memory: the same heuristic strategy as
+    /// [`Self::new`], but every admitted episode is written to the shared
+    /// `journal` and recalled into later goals — so a test can restart the
+    /// runner on the same journal and prove memory survives the process.
+    pub fn with_memory(bus: EventBus, journal: Arc<MemoryJournal>) -> Self {
+        Self::with_investigation_engine(
+            bus,
+            InvestigationEngine::heuristic(),
+            None,
+            None,
+            Some(journal),
+        )
+    }
+
+    /// The daemon's LLM-backed assistant loop with persistent memory: the
+    /// fabric powers investigation and the shared `journal` makes memory survive
+    /// restarts (close FRIDAY, reopen it tomorrow, it still knows).
+    pub fn with_fabric_and_memory(
+        bus: EventBus,
+        fabric: Arc<InferenceFabric>,
+        journal: Arc<MemoryJournal>,
+    ) -> Self {
+        Self::with_investigation_engine(
+            bus,
+            InvestigationEngine::llm(Box::new(fabric.clone())),
+            Some(fabric),
+            None,
+            Some(journal),
         )
     }
 
@@ -617,14 +769,28 @@ impl GoalRunner {
     /// strategy injected (heuristic or fabric-backed) and the fabric the
     /// runner should query for the served route decision (`None` = heuristic).
     /// `web_endpoint` overrides the web-search tool's endpoint for tests.
+    /// `journal` attaches persistent memory: the Executive seeds its episode
+    /// store from it, every admitted episode is appended to it, and the memory
+    /// recall/remember tools read/write it (`None` = in-memory only).
     fn with_investigation_engine(
         bus: EventBus,
         investigation: InvestigationEngine,
         fabric: Option<Arc<InferenceFabric>>,
         web_endpoint: Option<String>,
+        journal: Option<Arc<MemoryJournal>>,
     ) -> Self {
         let workspace = CognitiveBlackboard::new();
         let mut executive = Executive::new().with_investigation_engine(investigation);
+        if let Some(journal) = &journal {
+            // One journal, one memory: seed the Executive's episode store from
+            // it and give the built-in SearchMemory capability a real tool that
+            // reads the same journal, so memory survives restarts.
+            executive = executive.with_episode_journal(journal.clone());
+            executive.register_tool(Box::new(MemoryRecallTool {
+                journal: journal.clone(),
+            }));
+            executive.register_tool(Box::new(MemoryRememberTool {}));
+        }
 
         // The dedicated filesystem tool first: the planner's direct goals carry
         // the *built-in* capabilities plus the `filesystem.tree`/`filesystem.
@@ -695,29 +861,31 @@ impl GoalRunner {
 
         // Advertise the same surface to the evaluator/simulator so evidence
         // plans are judged feasible and actually execute.
-        workspace.set_world_state(
-            WorldState::new()
-                .with_tool(Capability::SearchWeb)
-                .with_tool(Capability::ReadFile)
-                .with_tool(Capability::WriteFile)
-                .with_tool(Capability::ListDirectory)
-                .with_tool(Capability::ExecuteCommand)
-                .with_tool(Capability::Custom("web.search".into()))
-                .with_tool(Capability::Custom("web.fetch".into()))
-                .with_tool(Capability::Custom("git.status".into()))
-                .with_tool(Capability::Custom("git.log".into()))
-                .with_tool(Capability::Custom("docs.search".into()))
-                .with_tool(Capability::Custom("docs.read".into()))
-                .with_tool(Capability::Custom("codeintel.understand".into()))
-                .with_tool(Capability::Custom("filesystem.list_directory".into()))
-                .with_tool(Capability::Custom("filesystem.read_file".into()))
-                .with_tool(Capability::Custom("filesystem.tree".into()))
-                .with_tool(Capability::Custom("filesystem.search".into()))
-                .with_tool(Capability::SearchMemory)
-                .with_tool(Capability::Custom("webagent.ask".into()))
-                .with_tool(Capability::Custom("webagent.send".into()))
-                .with_tool(Capability::Custom("webagent.read".into())),
-        );
+        let mut world_state = WorldState::new()
+            .with_tool(Capability::SearchWeb)
+            .with_tool(Capability::ReadFile)
+            .with_tool(Capability::WriteFile)
+            .with_tool(Capability::ListDirectory)
+            .with_tool(Capability::ExecuteCommand)
+            .with_tool(Capability::Custom("web.search".into()))
+            .with_tool(Capability::Custom("web.fetch".into()))
+            .with_tool(Capability::Custom("git.status".into()))
+            .with_tool(Capability::Custom("git.log".into()))
+            .with_tool(Capability::Custom("docs.search".into()))
+            .with_tool(Capability::Custom("docs.read".into()))
+            .with_tool(Capability::Custom("codeintel.understand".into()))
+            .with_tool(Capability::Custom("filesystem.list_directory".into()))
+            .with_tool(Capability::Custom("filesystem.read_file".into()))
+            .with_tool(Capability::Custom("filesystem.tree".into()))
+            .with_tool(Capability::Custom("filesystem.search".into()))
+            .with_tool(Capability::SearchMemory)
+            .with_tool(Capability::Custom("webagent.ask".into()))
+            .with_tool(Capability::Custom("webagent.send".into()))
+            .with_tool(Capability::Custom("webagent.read".into()));
+        if journal.is_some() {
+            world_state = world_state.with_tool(Capability::Custom("memory.remember".into()));
+        }
+        workspace.set_world_state(world_state);
 
         Self {
             bus,
@@ -725,6 +893,7 @@ impl GoalRunner {
             workspace,
             fabric,
             sessions: Mutex::new(HashMap::new()),
+            journal,
         }
     }
 
@@ -784,7 +953,27 @@ impl GoalRunner {
             ctx.turn += 1;
             (prior, ctx.turn)
         };
-        let composed = compose_goal_with_context(&goal, &prior);
+
+        // Recall the relevant entries into the Context Builder *before*
+        // composing, so `[memory]` joins `[session context]` in the single
+        // context assembly path the Executive plans on. Recall runs on the RAW
+        // goal (the user's own words), not the composed text. The durable
+        // journal is the source of truth when one is attached; otherwise the
+        // in-memory episode store backs the same recall.
+        let recalled: Vec<String> = {
+            let exec = self.executive.lock().await;
+            let hits: Vec<CognitiveEpisode> = match &self.journal {
+                Some(journal) => journal.recall(&goal, MEMORY_RECALL_LIMIT),
+                None => exec
+                    .episode_store()
+                    .recall(&goal, MEMORY_RECALL_LIMIT)
+                    .into_iter()
+                    .cloned()
+                    .collect(),
+            };
+            hits.iter().map(format_recalled_memory).collect()
+        };
+        let composed = compose_goal_with_context(&goal, &prior, &recalled);
 
         let _ = self
             .bus
@@ -1654,14 +1843,105 @@ mod tests {
         );
     }
 
+    /// S2 acceptance: persistent memory write + recall. Telling FRIDAY a fact,
+    /// "closing" it (a brand-new runner, fresh Executive, on the same journal),
+    /// and asking about it later recalls the fact from durable memory — the
+    /// "use it today, close it, reopen it tomorrow, it still knows" criterion.
+    #[tokio::test]
+    async fn memory_recall_surfaces_prior_fact_across_restart() {
+        let path =
+            std::env::temp_dir().join(format!("friday-mobile-memory-{}", uuid::Uuid::new_v4()));
+        let journal = MemoryJournal::open(&path).expect("open journal");
+
+        // Turn 1, "today": the fact is admitted and journaled.
+        let bus1 = EventBus::new();
+        let mut rx1 = bus1.subscribe();
+        GoalRunner::with_memory(bus1.clone(), journal.clone()).start();
+        let (_, done1) = drive_goal(
+            &bus1,
+            &mut rx1,
+            json!({ "goal": "My main project is FRIDAY" }),
+        )
+        .await;
+        assert_eq!(done1["result"]["kind"], "text");
+        assert!(
+            !journal.is_empty(),
+            "the fact was written into durable memory (journal len {})",
+            journal.len()
+        );
+
+        // "Tomorrow": a fresh runner (new Executive, new session state) on the
+        // same journal must still know what mattered.
+        let bus2 = EventBus::new();
+        let mut rx2 = bus2.subscribe();
+        GoalRunner::with_memory(bus2.clone(), journal.clone()).start();
+        let (_, done2) = drive_goal(
+            &bus2,
+            &mut rx2,
+            json!({ "goal": "What was that project I told you about?" }),
+        )
+        .await;
+        let text = done2["result"]["text"].as_str().unwrap_or_default();
+        assert!(
+            text.contains("recalled") && text.contains("FRIDAY"),
+            "the restarted runner recalls the fact from memory: {text}"
+        );
+
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
+    /// S2 acceptance: an explicit "remember X" writes the fact to memory, and a
+    /// later question about it in the same session recalls it.
+    #[tokio::test]
+    async fn remember_goal_writes_fact_and_later_goal_recalls_it() {
+        let path =
+            std::env::temp_dir().join(format!("friday-mobile-remember-{}", uuid::Uuid::new_v4()));
+        let journal = MemoryJournal::open(&path).expect("open journal");
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        GoalRunner::with_memory(bus.clone(), journal.clone()).start();
+
+        let (_, done1) = drive_goal(
+            &bus,
+            &mut rx,
+            json!({ "goal": "Remember that my main project is FRIDAY" }),
+        )
+        .await;
+        let text1 = done1["result"]["text"].as_str().unwrap_or_default();
+        assert!(
+            text1.contains("remembered"),
+            "the remember goal acknowledges the write: {text1}"
+        );
+        assert!(
+            !journal.is_empty(),
+            "the remembered fact was written to durable memory (journal len {})",
+            journal.len()
+        );
+
+        let (_, done2) = drive_goal(
+            &bus,
+            &mut rx,
+            json!({ "goal": "What was that project I told you about?" }),
+        )
+        .await;
+        let text2 = done2["result"]["text"].as_str().unwrap_or_default();
+        assert!(
+            text2.contains("recalled") && text2.contains("FRIDAY"),
+            "the written fact is recalled: {text2}"
+        );
+
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
     /// S1 continuity seam: the goal the Executive plans on is composed from the
     /// session's prior turn — but only when a prior turn exists, so the first
-    /// goal of a session is never polluted with context.
+    /// goal of a session is never polluted with context. S2: the `[memory]`
+    /// block joins it when recall returned entries.
     #[test]
     fn compose_goal_with_context_embeds_prior_turn_only_when_present() {
         let fresh = SessionContext::new();
         assert_eq!(
-            compose_goal_with_context("Read the file foo.txt", &fresh),
+            compose_goal_with_context("Read the file foo.txt", &fresh, &[]),
             "Read the file foo.txt"
         );
 
@@ -1669,17 +1949,24 @@ mod tests {
         prior.turn = 1;
         prior.last_goal = "List the files in this project".into();
         prior.last_result = "src/main.rs, src/lib.rs".into();
-        let composed = compose_goal_with_context("Show me the second file", &prior);
+        let composed = compose_goal_with_context("Show me the second file", &prior, &[]);
         assert!(composed.starts_with("Show me the second file"));
         assert!(composed.contains("[session context]"));
         assert!(composed.contains("previous goal: List the files in this project"));
         assert!(composed.contains("previous result: src/main.rs, src/lib.rs"));
 
+        // The memory block appears even on a session's first turn — memory
+        // spans sessions, so there is nothing to anchor to but the recall.
+        let recalled = vec!["goal: My main project is FRIDAY\nresult: acknowledged".to_string()];
+        let composed = compose_goal_with_context("What was that project?", &fresh, &recalled);
+        assert!(composed.contains("[memory]"));
+        assert!(composed.contains("goal: My main project is FRIDAY"));
+
         let mut big = SessionContext::new();
         big.turn = 1;
         big.last_goal = "g".repeat(MAX_CONTEXT_CHARS * 2);
         big.last_result = "r".repeat(MAX_CONTEXT_CHARS * 2);
-        let composed = compose_goal_with_context("next", &big);
+        let composed = compose_goal_with_context("next", &big, &[]);
         assert!(
             composed.len() < MAX_CONTEXT_CHARS * 3,
             "composed context stays bounded: {}",

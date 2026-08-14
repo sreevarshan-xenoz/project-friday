@@ -882,6 +882,14 @@ impl Executive {
         self
     }
 
+    /// Attach a durable memory journal. The journal's history is replayed into
+    /// the episode store at startup and every admitted episode is persisted to
+    /// it, so memory survives process restarts (S2 memory write + recall).
+    pub fn with_episode_journal(mut self, journal: Arc<crate::journal::MemoryJournal>) -> Self {
+        self.episode_store = EpisodeStore::with_journal(journal);
+        self
+    }
+
     /// Register a tool with the executive's goal engine.
     pub fn register_tool(&mut self, tool: Box<dyn Tool>) {
         self.goal_engine.registry.register(tool);

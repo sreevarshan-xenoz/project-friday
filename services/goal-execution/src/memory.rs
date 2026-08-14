@@ -1,11 +1,13 @@
 use crate::confidence::Confidence;
 use crate::goal::Goal;
+use crate::journal::MemoryJournal;
 use crate::planning::Plan;
 use crate::trace::{CognitiveTrace, TraceNode};
 use crate::verification::{ToolResult, VerifiedResult};
 use crate::world::WorldState;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 // ── Belief ────────────────────────────────────────────────────────
 
@@ -576,6 +578,21 @@ impl CognitiveEpisode {
     pub fn push_trace(&mut self, node: TraceNode) {
         self.trace.push(node);
     }
+
+    /// The searchable text of this episode: goal + execution result + tags.
+    /// Used by memory recall to score relevance against a query.
+    pub fn recall_text(&self) -> String {
+        let mut text = self.goal.description.clone();
+        if let Some(result) = &self.execution_result {
+            text.push(' ');
+            text.push_str(&result.output);
+        }
+        for tag in &self.tags {
+            text.push(' ');
+            text.push_str(tag);
+        }
+        text
+    }
 }
 
 // ── Episode Store ─────────────────────────────────────────────────
@@ -584,9 +601,12 @@ impl CognitiveEpisode {
 ///
 /// Episodes are stored in-memory and can be queried by goal, outcome,
 /// time range, or tag. This is the source of truth for Semantic Memory.
+/// When a [`MemoryJournal`] is attached, every stored episode is also
+/// appended to the durable journal — the same memory, persisted.
 pub struct EpisodeStore {
     episodes: Vec<CognitiveEpisode>,
     max_episodes: usize,
+    journal: Option<Arc<MemoryJournal>>,
 }
 
 impl EpisodeStore {
@@ -594,6 +614,7 @@ impl EpisodeStore {
         Self {
             episodes: Vec::new(),
             max_episodes: 10_000,
+            journal: None,
         }
     }
 
@@ -601,11 +622,27 @@ impl EpisodeStore {
         Self {
             episodes: Vec::new(),
             max_episodes,
+            journal: None,
         }
     }
 
-    /// Store an episode. Prunes oldest if over capacity.
+    /// Attach a durable journal. The journal's history is replayed into the
+    /// store so a restarted process starts with the same memory.
+    pub fn with_journal(journal: Arc<MemoryJournal>) -> Self {
+        let episodes = journal.episodes();
+        Self {
+            episodes,
+            max_episodes: 10_000,
+            journal: Some(journal),
+        }
+    }
+
+    /// Store an episode. Prunes oldest if over capacity. When a journal is
+    /// attached, the episode is also persisted to disk.
     pub fn store(&mut self, episode: CognitiveEpisode) {
+        if let Some(journal) = &self.journal {
+            journal.append(&episode);
+        }
         self.episodes.push(episode);
         if self.episodes.len() > self.max_episodes {
             let drain = self.episodes.len() - self.max_episodes;
@@ -693,6 +730,22 @@ impl EpisodeStore {
     pub fn recent(&self, n: usize) -> Vec<&CognitiveEpisode> {
         let start = self.episodes.len().saturating_sub(n);
         self.episodes[start..].iter().collect()
+    }
+
+    /// Recall the top `limit` episodes most relevant to `query`, by token
+    /// overlap (see [`crate::journal::recall_score`]). Newest wins ties.
+    pub fn recall(&self, query: &str, limit: usize) -> Vec<&CognitiveEpisode> {
+        let mut scored: Vec<(usize, &CognitiveEpisode)> = self
+            .episodes
+            .iter()
+            .map(|ep| (crate::journal::recall_score(query, &ep.recall_text()), ep))
+            .filter(|(score, _)| *score > 0)
+            .collect();
+        scored.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then_with(|| b.1.started_ms.cmp(&a.1.started_ms))
+        });
+        scored.into_iter().take(limit).map(|(_, ep)| ep).collect()
     }
 
     /// Clear all episodes.

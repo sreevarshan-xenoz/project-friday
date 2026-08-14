@@ -55,31 +55,50 @@ YouTube" → "No, the other one" → "Open the first result" are unrelated goals
 "Show me planning.rs from that listing" reaches a verified file read without
 re-deriving the directory (or failing). Test in `goal_runner.rs`.
 
-## Gap B — memory write + recall in production
+## Gap B — memory write + recall in production ✅ shipped
 
-**Problem:** the durable tiers exist (redb Session/LongTerm, ExperienceEngine,
-planner TimelineStore) and the read path exists (`ContextBuilder` →
-`PromptCompiler`, context/src/lib.rs:124-163, intelligence/src/compiler.rs) but
-**only e2e** uses them. The daemon's GoalRunner never writes an episode and
-never recalls into the prompt.
+**Problem:** the Executive already runs an episodic admission gate every cycle
+(`admission.admit` → `EpisodeStore::store` → `SemanticMemory::process_episodes`,
+executive.rs:690-716), but it is **in-memory only** — restart the daemon and the
+goldfish is back. And a bare statement ("My main project is FRIDAY") classified
+to the `SearchMemory` capability found **no registered tool**, so its plan never
+executed → `NoEvidence` → rejected → nothing remembered.
 
-**Design (small, on the existing host):**
-1. A `MemoryWriteback` subscriber on the daemon: on `goal.completed`, append a
-   `CognitiveEpisode`/`MemoryEntry` to the redb Session layer (goal, phases,
-   result text, timestamp) and record the goal on the planner `TimelineStore`.
-   Reuses `friday_core::memory` + `planner::experience` — no new store.
-2. A `MemoryRecall` hook before each `Executive::cycle`: build a minimal
-   `AgentContext` (memories via `MemoryEngine::search`, experiences via
-   `ExperienceEngine::query_by_intent`) and inject it into the Executive's
-   working context so the planner sees prior related goals.
-3. Wire the daemon's `WorkspaceDataDir` (env `FRIDAY_DATA_DIR`, default
-   `~/.friday`) so redb/JSON paths are stable across restarts — the "goldfish
-   on reboot" fix.
+**Shipped design — one memory, made durable (no second store):**
+1. **`MemoryJournal`** (goal-execution `src/journal.rs`): a durable, append-only,
+   `Arc`-shareable JSONL journal of `CognitiveEpisode`s. `open()` creates the
+   dir + replays valid lines (corrupt lines are skipped, never fatal); `append()`
+   writes one line; `recall(query, limit)` scores by significant-token overlap
+   (stopwords dropped, ≥4 chars) and returns top-k, newest-first.
+2. **`EpisodeStore::with_journal`** (memory.rs): seeds the store from the journal
+   at startup and appends every admitted episode to it — the SAME episodes the
+   Semantic Memory derives patterns from. `Executive::with_episode_journal`
+   (executive.rs) wires it. So "close FRIDAY, reopen it tomorrow" replays memory.
+3. **Real memory tools** (mobile goal_runner.rs): `MemoryRecallTool` claims the
+   built-in `SearchMemory` capability and reads the shared journal —
+   unclassified/recall goals now **execute** and pass the evidence gate, so the
+   episode (with the fact in its goal text) is admitted + journaled.
+   `MemoryRememberTool` claims `memory.remember`; the classifier routes explicit
+   "remember X" here (planning.rs rule 8: `remember` → `memory.remember`,
+   `recall` stays `SearchMemory`).
+4. **Context Builder** (S1's `compose_goal_with_context`): now appends a
+   `[memory]` block — recall runs on the RAW goal, then goal + `[session
+   context]` + `[memory]` are assembled into the single context the planner and
+   the LLM investigation prompt read. The classifier reads only the user's
+   **goal segment** (`planning.rs::goal_segment`, everything before the first
+   `\n\n[` marker) so echoed context can never re-classify the goal.
+5. **Wiring:** `GoalRunner::with_memory` / `with_fabric_and_memory` attach the
+   journal (existing constructors stay `None` = in-memory, backwards compatible);
+   the daemon opens `FRIDAY_MEMORY_DIR` (default `friday-data`) +
+   `episodes.jsonl` and logs how many episodes were replayed.
 
-**Acceptance:** run the daemon, complete a goal, restart the daemon, ask
-"what did we do last session" — the recalled entry appears in the response.
-Test: `MemoryWriteback` appends + `MemoryRecall` returns the entry across an
-in-process restart of the memory store.
+**Acceptance (tests, green):** `memory_recall_surfaces_prior_fact_across_restart`
+— tell FRIDAY "My main project is FRIDAY", start a brand-new runner (fresh
+Executive) on the same journal, ask "What was that project I told you about?" →
+the result is `recalled … FRIDAY`. `remember_goal_writes_fact_and_later_goal_recalls_it`
+covers the explicit remember→recall loop. Journal round-trip/corrupt-line tests
+and classifier-immunity tests in goal-execution. The demo is the daemon + portal:
+tell it a fact today, restart, ask tomorrow.
 
 ## Gap C — human approve / pause / cancel actually consumed
 
@@ -124,12 +143,12 @@ browser baseline; add one daemon-level test for a windows mock transport.
 
 ## Build order (each lands green independently)
 
-| # | Slice | Files | Ships with |
-| - | ----- | ----- | ---------- |
-| 1 | Gap A — session continuity | `commands.rs`, `goal_runner.rs`, `client.ts` | portal conversation continuity |
-| 2 | Gap B — memory write+recall | new `memory.rs` in mobile, `goal_runner.rs`, daemon main | durable memory, no goldfish on restart |
-| 3 | Gap C — cancel consumed | `goal_runner.rs`, protocol event `goal.cancelled` | human can stop FRIDAY |
-| 4 | Gap D — browser+windows on kernel | `goal_runner.rs` | laptop control (browser first) |
+| # | Slice | Files | Ships with | Status |
+| - | ----- | ----- | ---------- | ------ |
+| 1 | Gap A — session continuity | `commands.rs`, `goal_runner.rs`, `client.ts` | portal conversation continuity | ✅ `7882658` |
+| 2 | Gap B — memory write+recall | `journal.rs`, `memory.rs`, `executive.rs`, `planning.rs`, `goal_runner.rs`, daemon main | durable memory, no goldfish on restart | ✅ |
+| 3 | Gap C — cancel consumed | `goal_runner.rs`, protocol event `goal.cancelled` | human can stop FRIDAY | |
+| 4 | Gap D — browser+windows on kernel | `goal_runner.rs` | laptop control (browser first) | |
 
 ## Non-goals for Step 1
 

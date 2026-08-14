@@ -15,17 +15,21 @@
 //! Run: `cargo run -p friday-mobile --bin friday-mobile-daemon`
 //! (or set `FRIDAY_MOBILE_ADDR`, default `0.0.0.0:18432`).
 //!
-//! The assistant loop runs **model-backed**: `GoalRunner::with_fabric` injects
-//! an [`InferenceFabric`] built from the environment (Ollama is always
+//! The assistant loop runs **model-backed**: `GoalRunner::with_fabric_and_memory`
+//! injects an [`InferenceFabric`] built from the environment (Ollama is always
 //! registered; OpenRouter/Groq/Gemini/OmniRoute/… register when their env
 //! vars are set), so the model decides what evidence a goal needs before
 //! planning — the heuristic catches any model failure (never a failed goal).
+//! Persistent memory (S2): every admitted episode is journaled to
+//! `FRIDAY_MEMORY_DIR` (default `./friday-data`) and replayed on restart, so
+//! FRIDAY knows tomorrow what mattered today.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use friday_core::runtime::Friday;
+use friday_goal_execution::MemoryJournal;
 use friday_intelligence::InferenceFabric;
 use tokio::sync::broadcast;
 
@@ -88,7 +92,20 @@ async fn main() {
         fabric.providers.len(),
         fabric.models.len()
     );
-    GoalRunner::with_fabric(bus.clone(), fabric).start();
+
+    // Persistent memory (S2): one durable journal backs the Executive's
+    // admission gate and the memory recall/remember tools. Episodes survive
+    // restarts, so the daemon keeps its memory across runs.
+    let memory_dir =
+        std::env::var("FRIDAY_MEMORY_DIR").unwrap_or_else(|_| "friday-data".to_string());
+    let journal = MemoryJournal::open(std::path::Path::new(&memory_dir).join("episodes.jsonl"))
+        .expect("open memory journal");
+    tracing::info!(
+        "persistent memory journal at {}/episodes.jsonl: {} episode(s) replayed",
+        memory_dir,
+        journal.len()
+    );
+    GoalRunner::with_fabric_and_memory(bus.clone(), fabric, journal).start();
 
     // Translate phone commands → real bus events, and return results.
     let gateway = CommandGateway::new(bus.clone(), sessions.clone());

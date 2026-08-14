@@ -112,6 +112,8 @@ pub mod learning;
 pub use learning::*;
 pub mod memory;
 pub use memory::*;
+pub mod journal;
+pub use journal::*;
 pub mod experience;
 pub use experience::*;
 pub mod attention;
