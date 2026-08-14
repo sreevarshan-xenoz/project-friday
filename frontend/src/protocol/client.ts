@@ -139,7 +139,13 @@ export class FridayClient {
 
   sendGoal(goal: string): string {
     const id = `cmd-${nextCmdId++}`;
-    this.send({ type: 'command', id, method: 'planner.goal', params: { goal } });
+    const params: Record<string, unknown> = { goal };
+    // S1: thread the session id (from `welcome`) so the daemon keeps this
+    // conversation continuous per session. Goals without it still work.
+    if (this._state.sessionId) {
+      params.session_id = this._state.sessionId;
+    }
+    this.send({ type: 'command', id, method: 'planner.goal', params });
     return id;
   }
 

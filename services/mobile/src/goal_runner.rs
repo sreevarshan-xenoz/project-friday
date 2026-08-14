@@ -31,7 +31,9 @@
 //! evidence a goal needs before planning — with the heuristic as the fallback
 //! whenever the model call fails. A failed model is never a failed goal.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use friday_actions::adapters::web::DEFAULT_SEARCH_ENDPOINT;
@@ -455,6 +457,105 @@ fn search_params(instruction: &str) -> Option<serde_json::Map<String, serde_json
     (!params.is_empty()).then_some(params)
 }
 
+/// Session identity for `plan.goal` events published without one (older portal
+/// builds): the goal runs under this fixed session so continuity still applies
+/// across its goals instead of degrading to an empty conversation.
+const DEFAULT_SESSION_ID: &str = "default";
+
+/// Hard cap on tracked sessions. Least-recently-used entries are evicted so a
+/// flood of short-lived sessions cannot grow the map unboundedly.
+const MAX_SESSIONS: usize = 32;
+
+/// Per-context character cap (applied to prior goal/result text) so a
+/// long-running session never balloons the composed goal handed to the
+/// Executive.
+const MAX_CONTEXT_CHARS: usize = 400;
+
+/// One session's conversational state — held in memory only (S1; persistence
+/// is the separate memory-write slice). `last_goal` / `last_result` describe
+/// the just-finished turn and are composed into the *next* goal the Executive
+/// sees, so the planner and its investigation are grounded in the prior turn
+/// instead of starting from an empty conversation.
+#[derive(Debug, Clone)]
+struct SessionContext {
+    turn: u64,
+    last_goal: String,
+    last_result: String,
+    last_seen_ms: u64,
+}
+
+impl SessionContext {
+    fn new() -> Self {
+        Self {
+            turn: 0,
+            last_goal: String::new(),
+            last_result: String::new(),
+            last_seen_ms: now_ms(),
+        }
+    }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Compose the goal text the Executive plans on: the user's goal first, then —
+/// when the session has a prior turn — a clearly-delimited, size-capped
+/// `[session context]` block carrying the previous goal and result. This rides
+/// the existing context architecture (the goal description feeds both the
+/// intent classifier and the LLM investigation prompt), so a second goal in
+/// the same session resolves references to the prior turn. The block is
+/// appended *after* the current goal so the current intent reads first; the
+/// heuristic classifier's whole-word keyword scan can still be influenced by
+/// echoed words — accepted for the heuristic fallback, irrelevant to the
+/// LLM-backed path that powers the daemon.
+fn compose_goal_with_context(goal: &str, prior: &SessionContext) -> String {
+    if prior.turn == 0 {
+        return goal.to_string();
+    }
+    let mut out = String::with_capacity(goal.len() + 320);
+    out.push_str(goal);
+    out.push_str("\n\n[session context]\n");
+    out.push_str("previous goal: ");
+    out.push_str(&truncate(&prior.last_goal, MAX_CONTEXT_CHARS));
+    if !prior.last_result.is_empty() {
+        out.push_str("\nprevious result: ");
+        out.push_str(&truncate(&prior.last_result, MAX_CONTEXT_CHARS));
+    }
+    out
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    let count = s.chars().count();
+    if count <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max).collect();
+    out.push('…');
+    out
+}
+
+/// Keep the session map bounded: drop the least-recently-seen entries until
+/// the map is at most `max` sessions.
+fn evict_lru(sessions: &Mutex<HashMap<String, SessionContext>>, max: usize) {
+    let mut sessions = sessions.lock().unwrap();
+    while sessions.len() > max {
+        let oldest = sessions
+            .iter()
+            .min_by_key(|(_, ctx)| ctx.last_seen_ms)
+            .map(|(k, _)| k.clone());
+        match oldest {
+            Some(k) => {
+                sessions.remove(&k);
+            }
+            None => break,
+        }
+    }
+}
+
 /// The daemon's assistant loop: consumes `plan.goal` bus events and runs each
 /// goal through the real goal-execution `Executive`, publishing
 /// `goal.started` / `goal.completed` / `goal.failed` events back to the bus so
@@ -468,6 +569,10 @@ pub struct GoalRunner {
     /// on `goal.completed` which provider/model actually answered. `None` for
     /// the heuristic-only runner (`Self::new`).
     fabric: Option<Arc<InferenceFabric>>,
+    /// Per-session conversational context (`session_id` → context), bounded by
+    /// [`MAX_SESSIONS`] with LRU eviction. Locked only in short critical
+    /// sections — never held across an await.
+    sessions: Mutex<HashMap<String, SessionContext>>,
 }
 
 impl GoalRunner {
@@ -619,6 +724,7 @@ impl GoalRunner {
             executive: tokio::sync::Mutex::new(executive),
             workspace,
             fabric,
+            sessions: Mutex::new(HashMap::new()),
         }
     }
 
@@ -645,20 +751,52 @@ impl GoalRunner {
                 if goal.trim().is_empty() {
                     continue;
                 }
-                self.run_goal(goal).await;
+                let session_id = ev
+                    .payload
+                    .get("session_id")
+                    .and_then(|s| s.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or(DEFAULT_SESSION_ID)
+                    .to_string();
+                self.run_goal(goal, session_id).await;
             }
         });
     }
 
-    /// Run one goal through the Executive and publish its lifecycle events.
-    async fn run_goal(&self, goal: String) {
+    /// Run one goal through the Executive and publish its lifecycle events,
+    /// keyed by the session the goal arrived from. The session's prior turn is
+    /// composed into the goal text the Executive plans on (per-session
+    /// continuity), and the finished turn is recorded for the next goal in the
+    /// same session.
+    async fn run_goal(&self, goal: String, session_id: String) {
         let id = format!("goal-{}", uuid::Uuid::new_v4().simple());
+
+        // Read the session's prior turn (short lock) and reserve the next turn
+        // number. `prior` is snapshotted BEFORE this turn is written back, so
+        // goal N+1 is composed from turn N's goal/result.
+        let (prior, next_turn) = {
+            let mut sessions = self.sessions.lock().unwrap();
+            let ctx = sessions
+                .entry(session_id.clone())
+                .or_insert_with(SessionContext::new);
+            ctx.last_seen_ms = now_ms();
+            let prior = ctx.clone();
+            ctx.turn += 1;
+            (prior, ctx.turn)
+        };
+        let composed = compose_goal_with_context(&goal, &prior);
+
         let _ = self
             .bus
             .publish(Event::new(
                 "goal.started",
                 "planner",
-                json!({ "goal": goal, "id": id }),
+                json!({
+                    "goal": goal,
+                    "id": id,
+                    "session_id": session_id,
+                    "session_turn": next_turn,
+                }),
             ))
             .await;
 
@@ -667,9 +805,24 @@ impl GoalRunner {
             // Keep focus deterministic: drop stale attention items so the fed
             // goal is always the next focus target.
             exec.attention_manager_mut().clear();
-            exec.add_goal(goal.clone(), 0.9);
+            exec.add_goal(composed, 0.9);
             exec.cycle(&self.workspace).await
         };
+
+        // Record the finished turn for the next goal in this session.
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            if let Some(ctx) = sessions.get_mut(&session_id) {
+                ctx.last_goal = goal.clone();
+                ctx.last_result = report
+                    .result
+                    .as_ref()
+                    .map(|r| truncate(&r.text, MAX_CONTEXT_CHARS))
+                    .unwrap_or_default();
+                ctx.last_seen_ms = now_ms();
+            }
+        }
+        evict_lru(&self.sessions, MAX_SESSIONS);
 
         if report.plan_executed {
             // The fabric is called exactly once per goal (the investigation), so
@@ -681,7 +834,9 @@ impl GoalRunner {
                 .as_ref()
                 .and_then(|f| f.last_decision())
                 .and_then(|d| d.served);
-            let payload = completed_payload(&goal, &id, &report, served.as_ref());
+            let mut payload = completed_payload(&goal, &id, &report, served.as_ref());
+            payload["session_id"] = json!(session_id);
+            payload["session_turn"] = json!(next_turn);
             let _ = self
                 .bus
                 .publish(Event::new("goal.completed", "planner", payload))
@@ -695,7 +850,13 @@ impl GoalRunner {
                 .publish(Event::new(
                     "goal.failed",
                     "planner",
-                    json!({ "goal": goal, "id": id, "error": reason }),
+                    json!({
+                        "goal": goal,
+                        "id": id,
+                        "session_id": session_id,
+                        "session_turn": next_turn,
+                        "error": reason,
+                    }),
                 ))
                 .await;
         }
@@ -1363,6 +1524,187 @@ mod tests {
         assert!(
             text.contains("tree") && text.contains("Cargo.toml"),
             "the result is a real directory tree: {text}"
+        );
+    }
+
+    /// Drive one goal to its terminal event and return the started + terminal
+    /// payloads (panics on timeout), mirroring the existing test pattern.
+    async fn drive_goal(
+        bus: &EventBus,
+        rx: &mut tokio::sync::broadcast::Receiver<Event>,
+        payload: serde_json::Value,
+    ) -> (serde_json::Value, serde_json::Value) {
+        bus.publish(Event::new("plan.goal", "mobile", payload))
+            .await
+            .expect("publish");
+        let mut started = None;
+        let mut terminal = None;
+        for _ in 0..30 {
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                .await
+                .map(|r| r.expect("bus alive"))
+            else {
+                break;
+            };
+            match ev.kind.as_str() {
+                "goal.started" => started = Some(ev.payload),
+                "goal.completed" | "goal.failed" => {
+                    terminal = Some(ev.payload);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        (
+            started.expect("goal.started must be published"),
+            terminal.expect("a terminal event must be published"),
+        )
+    }
+
+    /// S1 acceptance: the session id survives ingress end-to-end (runner sees
+    /// the same id it published for), the same session stays continuous (the
+    /// runner keys context by it — the turn increments per session), and
+    /// different sessions are isolated (each starts fresh at turn 1).
+    #[tokio::test]
+    async fn sessions_are_continuous_and_isolated() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let runner = GoalRunner::new(bus.clone());
+        runner.start();
+
+        let (s1_started, s1_done) = drive_goal(
+            &bus,
+            &mut rx,
+            json!({
+                "goal": "Check the git status of the workspace repository",
+                "session_id": "sess-a",
+            }),
+        )
+        .await;
+        assert_eq!(s1_started["session_id"], "sess-a");
+        assert_eq!(s1_started["session_turn"], 1);
+        assert_eq!(s1_done["session_id"], "sess-a");
+        assert_eq!(s1_done["session_turn"], 1);
+        assert_eq!(s1_done["result"]["kind"], "text", "turn 1 completes");
+
+        // Same session, second goal: continuous — turn 2 under the same id.
+        let (s2_started, s2_done) = drive_goal(
+            &bus,
+            &mut rx,
+            json!({
+                "goal": "Check the git status of the workspace repository",
+                "session_id": "sess-a",
+            }),
+        )
+        .await;
+        assert_eq!(s2_started["session_id"], "sess-a");
+        assert_eq!(s2_started["session_turn"], 2);
+        assert_eq!(s2_done["session_id"], "sess-a");
+        assert_eq!(s2_done["session_turn"], 2);
+        assert_eq!(s2_done["result"]["kind"], "text", "turn 2 completes");
+
+        // Different session: isolated — starts at turn 1 under its own id, and
+        // the runner holds both sessions' contexts independently.
+        let (s3_started, s3_done) = drive_goal(
+            &bus,
+            &mut rx,
+            json!({
+                "goal": "Check the git status of the workspace repository",
+                "session_id": "sess-b",
+            }),
+        )
+        .await;
+        assert_eq!(s3_started["session_id"], "sess-b");
+        assert_eq!(s3_started["session_turn"], 1, "sess-b starts fresh");
+        assert_eq!(s3_done["session_id"], "sess-b");
+        assert_eq!(s3_done["session_turn"], 1);
+    }
+
+    /// S1 acceptance: backward compatibility — a `plan.goal` without a
+    /// `session_id` (older portal builds) still runs, under the fixed default
+    /// session identity, and stays continuous across that session's goals.
+    #[tokio::test]
+    async fn goal_without_session_id_runs_under_default_session() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let runner = GoalRunner::new(bus.clone());
+        runner.start();
+
+        let (started, done) = drive_goal(
+            &bus,
+            &mut rx,
+            json!({ "goal": "Check the git status of the workspace repository" }),
+        )
+        .await;
+        assert_eq!(started["session_id"], DEFAULT_SESSION_ID);
+        assert_eq!(started["session_turn"], 1);
+        assert_eq!(done["session_id"], DEFAULT_SESSION_ID);
+        assert_eq!(done["result"]["kind"], "text");
+
+        let (started2, _) = drive_goal(
+            &bus,
+            &mut rx,
+            json!({ "goal": "Check the git status of the workspace repository" }),
+        )
+        .await;
+        assert_eq!(started2["session_id"], DEFAULT_SESSION_ID);
+        assert_eq!(
+            started2["session_turn"], 2,
+            "default session stays continuous"
+        );
+    }
+
+    /// S1 continuity seam: the goal the Executive plans on is composed from the
+    /// session's prior turn — but only when a prior turn exists, so the first
+    /// goal of a session is never polluted with context.
+    #[test]
+    fn compose_goal_with_context_embeds_prior_turn_only_when_present() {
+        let fresh = SessionContext::new();
+        assert_eq!(
+            compose_goal_with_context("Read the file foo.txt", &fresh),
+            "Read the file foo.txt"
+        );
+
+        let mut prior = SessionContext::new();
+        prior.turn = 1;
+        prior.last_goal = "List the files in this project".into();
+        prior.last_result = "src/main.rs, src/lib.rs".into();
+        let composed = compose_goal_with_context("Show me the second file", &prior);
+        assert!(composed.starts_with("Show me the second file"));
+        assert!(composed.contains("[session context]"));
+        assert!(composed.contains("previous goal: List the files in this project"));
+        assert!(composed.contains("previous result: src/main.rs, src/lib.rs"));
+
+        let mut big = SessionContext::new();
+        big.turn = 1;
+        big.last_goal = "g".repeat(MAX_CONTEXT_CHARS * 2);
+        big.last_result = "r".repeat(MAX_CONTEXT_CHARS * 2);
+        let composed = compose_goal_with_context("next", &big);
+        assert!(
+            composed.len() < MAX_CONTEXT_CHARS * 3,
+            "composed context stays bounded: {}",
+            composed.len()
+        );
+    }
+
+    /// The per-session map stays bounded: LRU eviction drops the oldest
+    /// sessions first.
+    #[test]
+    fn session_map_is_bounded_by_lru_eviction() {
+        let sessions: Mutex<HashMap<String, SessionContext>> = Mutex::new(HashMap::new());
+        for i in 0..(MAX_SESSIONS + 8) {
+            let mut ctx = SessionContext::new();
+            ctx.last_seen_ms = i as u64;
+            sessions.lock().unwrap().insert(format!("sess-{i}"), ctx);
+        }
+        evict_lru(&sessions, MAX_SESSIONS);
+        let map = sessions.lock().unwrap();
+        assert_eq!(map.len(), MAX_SESSIONS);
+        assert!(map.get("sess-0").is_none(), "oldest evicted");
+        assert!(map.get("sess-7").is_none(), "oldest evicted");
+        assert!(
+            map.get(&format!("sess-{}", MAX_SESSIONS + 7)).is_some(),
+            "newest survive"
         );
     }
 }

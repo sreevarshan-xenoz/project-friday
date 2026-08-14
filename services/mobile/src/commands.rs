@@ -48,10 +48,16 @@ impl CommandGateway {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                // A real Planner subscribes to `plan.goal` and begins planning.
+                // The GoalRunner subscribes to `plan.goal` and runs the goal.
+                // The session id rides along so the runner keeps this
+                // conversation continuous (per-session context, S1).
                 let _ = self
                     .bus
-                    .publish(Event::new("plan.goal", "mobile", json!({ "goal": goal })))
+                    .publish(Event::new(
+                        "plan.goal",
+                        "mobile",
+                        json!({ "goal": goal, "session_id": cmd.session_id }),
+                    ))
                     .await;
                 json!({ "accepted": true })
             }
@@ -180,5 +186,34 @@ mod tests {
             }
             _ => panic!(),
         }
+    }
+
+    /// S1 acceptance: the session id must survive ingress — the gateway keeps
+    /// it on the `plan.goal` event it publishes for the GoalRunner, so the
+    /// runner can key per-session continuity by it.
+    #[tokio::test]
+    async fn planner_goal_publishes_session_id_on_plan_event() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let g = CommandGateway::new(bus, SessionRegistry::new());
+        let r = g
+            .dispatch(&Command {
+                session_id: "sess-abc".into(),
+                id: "1".into(),
+                method: method::PLANNER_GOAL.into(),
+                params: json!({ "goal": "Check the git status" }),
+            })
+            .await;
+        match r {
+            ServerMessage::CommandResult { ok, .. } => assert!(ok),
+            _ => panic!(),
+        }
+        let ev = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await
+            .expect("plan.goal must be published")
+            .expect("bus alive");
+        assert_eq!(ev.kind, "plan.goal");
+        assert_eq!(ev.payload["goal"], "Check the git status");
+        assert_eq!(ev.payload["session_id"], "sess-abc");
     }
 }
