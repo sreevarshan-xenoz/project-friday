@@ -184,7 +184,7 @@ the portal "open notepad".
 | 1 | Gap A — session continuity | `commands.rs`, `goal_runner.rs`, `client.ts` | portal conversation continuity | ✅ `7882658` |
 | 2 | Gap B — memory write+recall | `journal.rs`, `memory.rs`, `executive.rs`, `planning.rs`, `goal_runner.rs`, daemon main | durable memory, no goldfish on restart | ✅ |
 | 3 | Gap C — cancel/pause/approve consumed | `executive.rs`, `goal_runner.rs`, `protocol.ts`, `ChatScreen.tsx` | human can stop/admit FRIDAY | ✅ `e571a3c` |
-| 4 | Gap D — browser+windows on kernel | `planning.rs`, `goal_runner.rs`, `Cargo.toml` | laptop control (open apps / URLs) | ✅ shipped |
+| 4 | Gap D — browser+windows on kernel | `planning.rs`, `goal_runner.rs`, `Cargo.toml` | laptop control (open apps / URLs) | ✅ `8f19e2f` |
 
 ## Non-goals for Step 1
 
