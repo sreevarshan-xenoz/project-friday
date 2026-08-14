@@ -162,7 +162,7 @@ browser baseline; add one daemon-level test for a windows mock transport.
 | - | ----- | ----- | ---------- | ------ |
 | 1 | Gap A — session continuity | `commands.rs`, `goal_runner.rs`, `client.ts` | portal conversation continuity | ✅ `7882658` |
 | 2 | Gap B — memory write+recall | `journal.rs`, `memory.rs`, `executive.rs`, `planning.rs`, `goal_runner.rs`, daemon main | durable memory, no goldfish on restart | ✅ |
-| 3 | Gap C — cancel/pause/approve consumed | `executive.rs`, `goal_runner.rs`, `protocol.ts`, `ChatScreen.tsx` | human can stop/admit FRIDAY | ✅ `a494308` |
+| 3 | Gap C — cancel/pause/approve consumed | `executive.rs`, `goal_runner.rs`, `protocol.ts`, `ChatScreen.tsx` | human can stop/admit FRIDAY | ✅ `e571a3c` |
 | 4 | Gap D — browser+windows on kernel | `goal_runner.rs` | laptop control (browser first) | |
 
 ## Non-goals for Step 1
