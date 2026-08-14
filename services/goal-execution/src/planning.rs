@@ -694,7 +694,33 @@ fn capability_for_description(description: &str) -> Capability {
         return Capability::SearchMemory;
     }
 
-    // 9. Web search — search/research without a filesystem target.
+    // 9. Open a URL in the browser — an address token (scheme, `www`, or a
+    //    known domain suffix) combined with an open/navigate verb. Ahead of
+    //    the app-open rule so "open example.com" is browser navigation, not a
+    //    desktop launch.
+    if is_url_intent(&d)
+        && (has_word(&d, "open")
+            || has_word(&d, "launch")
+            || has_word(&d, "browse")
+            || has_word(&d, "navigate")
+            || d.starts_with("go to "))
+    {
+        return Capability::Custom("web.open".into());
+    }
+
+    // 10. Open a desktop application via the Windows host — an explicit
+    //     open/launch with no file target, URL, or web framing, so "open
+    //     notepad" / "launch chrome" route to the WindowsAdapter instead of
+    //     falling through to the read-only memory default.
+    if (has_word(&d, "open") || has_word(&d, "launch"))
+        && !has_file_context(&d)
+        && !is_url_intent(&d)
+        && !has_web_context(&d)
+    {
+        return Capability::Custom("windows.open".into());
+    }
+
+    // 11. Web search — search/research without a filesystem target.
     if has_word(&d, "search")
         || has_word(&d, "find")
         || has_word(&d, "research")
@@ -705,7 +731,7 @@ fn capability_for_description(description: &str) -> Capability {
         return Capability::SearchWeb;
     }
 
-    // 10. Safe default: read-only memory recall. The goal text is *never* run
+    // 12. Safe default: read-only memory recall. The goal text is *never* run
     // as a command — an unclassified goal answers from what FRIDAY already
     // knows, or reports honestly that it has no answer yet.
     Capability::SearchMemory
@@ -780,6 +806,22 @@ fn has_web_context(d: &str) -> bool {
         || has_word(d, "research")
         || has_word(d, "latest")
         || has_word(d, "articles")
+}
+
+/// Does the goal name a URL explicitly — a scheme, `www`, or a known domain
+/// suffix? `has_web_context` is about *tone* ("research", "docs"); this is
+/// about an actual address the browser can navigate to.
+fn is_url_intent(d: &str) -> bool {
+    has_word(d, "http")
+        || has_word(d, "https")
+        || has_word(d, "www")
+        || d.contains("://")
+        || [
+            ".com", ".org", ".net", ".io", ".dev", ".co", ".ai", ".me", ".app", ".to", ".gov",
+            ".edu", ".xyz",
+        ]
+        .iter()
+        .any(|tld| d.contains(tld))
 }
 
 impl Default for Planning {
@@ -1067,6 +1109,79 @@ mod tests {
                 "'{goal}' must not route to the shell"
             );
         }
+    }
+
+    /// S4: open/launch goals route to the Windows host or the browser adapter —
+    /// a bare "open notepad" is `windows.open`, an addressed "open example.com"
+    /// is `web.open`, and neither ever falls through to the memory default.
+    #[test]
+    fn open_goals_route_to_windows_and_browser() {
+        let planning = Planning::new();
+        let cases = [
+            ("open notepad", Capability::Custom("windows.open".into())),
+            ("open chrome", Capability::Custom("windows.open".into())),
+            ("launch spotify", Capability::Custom("windows.open".into())),
+            (
+                "Open the calculator app",
+                Capability::Custom("windows.open".into()),
+            ),
+            ("open example.com", Capability::Custom("web.open".into())),
+            (
+                "open https://example.org",
+                Capability::Custom("web.open".into()),
+            ),
+            (
+                "open www.rust-lang.org",
+                Capability::Custom("web.open".into()),
+            ),
+            (
+                "browse to github.com",
+                Capability::Custom("web.open".into()),
+            ),
+            ("go to example.com", Capability::Custom("web.open".into())),
+        ];
+        for (goal, expected) in cases {
+            assert_eq!(
+                planning.infer_capability(goal, &[]),
+                expected,
+                "'{goal}' routed wrong"
+            );
+        }
+    }
+
+    /// S4: file-target opens stay filesystem reads ("open the README.md"), and
+    /// web-framed goals stay away from the Windows host ("open the latest
+    /// docs") — the new rules must not hijack existing intents.
+    #[test]
+    fn open_goals_do_not_hijack_existing_intents() {
+        let planning = Planning::new();
+        assert_eq!(
+            planning.infer_capability("open the README.md", &[]),
+            Capability::ReadFile
+        );
+        assert_eq!(
+            planning.infer_capability("open the project folder", &[]),
+            Capability::ReadFile
+        );
+        // ".rs" is a file extension AND the Rust domain: file-context opens win
+        // (rule 5 fires first), so a docs.rs URL keeps read-file behavior.
+        assert_eq!(
+            planning.infer_capability("open https://docs.rs/tokio", &[]),
+            Capability::ReadFile
+        );
+        assert_ne!(
+            planning.infer_capability("open the latest rust docs", &[]),
+            Capability::Custom("windows.open".into()),
+            "web-framed opens must not route to the Windows host"
+        );
+        assert_eq!(
+            planning.infer_capability("open the file docs/org.md", &[]),
+            Capability::ReadFile
+        );
+        assert_eq!(
+            planning.infer_capability("search the web for a good notepad", &[]),
+            Capability::SearchWeb
+        );
     }
 
     /// S2: intent is the user's goal segment only — context blocks echoed into

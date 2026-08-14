@@ -38,8 +38,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use friday_actions::adapters::web::DEFAULT_SEARCH_ENDPOINT;
 use friday_actions::{
-    ActionAdapter, ActionRequest, CodeIntelAdapter, DocsAdapter, FilesystemAdapter, GitAdapter,
-    TerminalAdapter, WebAdapter, WebAgentAdapter,
+    ActionAdapter, ActionRequest, BrowserAdapter, CodeIntelAdapter, DocsAdapter, FilesystemAdapter,
+    GitAdapter, TerminalAdapter, WebAdapter, WebAgentAdapter,
 };
 use friday_core::event::{Event, EventBus};
 use friday_goal_execution::{
@@ -49,6 +49,7 @@ use friday_goal_execution::{
 };
 use friday_intelligence::InferenceFabric;
 use friday_investigation::InvestigationEngine;
+use friday_windows::WindowsAdapter;
 use serde_json::json;
 
 /// Real terminal tool for the built-in `ExecuteCommand` capability (the
@@ -233,6 +234,99 @@ impl Tool for WebSearchCapabilityTool {
     }
 }
 
+/// Real Windows host tool for the `windows.open` capability (S4). The planner
+/// classifies "open notepad" / "launch chrome" as `windows.open`; this tool
+/// bridges the capability to the WindowsAdapter, which forwards the intent to
+/// the C# host over the named pipe. When the host is not running the transport
+/// returns HostUnavailable — an honest failure, never a fake launch.
+struct WindowsOpenTool {
+    adapter: WindowsAdapter,
+}
+
+#[async_trait]
+impl Tool for WindowsOpenTool {
+    fn name(&self) -> &str {
+        "windows"
+    }
+
+    fn description(&self) -> &str {
+        "Opens desktop applications on this Windows machine (windows.open capability)"
+    }
+
+    fn capabilities(&self) -> Vec<Capability> {
+        vec![Capability::Custom("windows.open".into())]
+    }
+
+    async fn execute(&self, action: &Action, _ctx: &ExecutionContext) -> ToolResult {
+        let res = self
+            .adapter
+            .execute(ActionRequest::new(
+                "windows",
+                "open",
+                json!({ "path": app_from_instruction(&action.instruction) }),
+            ))
+            .await;
+        ToolResult {
+            success: res.success,
+            output: serde_json::to_string_pretty(&res.output).unwrap_or_default(),
+            error: res.error,
+            duration_ms: res
+                .metadata
+                .get("latency_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            metadata: json!(res.metadata),
+        }
+    }
+}
+
+/// Real browser tool for the `web.open` capability (S4). The planner classifies
+/// "open example.com" as `web.open`; this tool bridges the capability to the
+/// BrowserAdapter (CDP-backed Chrome). Only the safe `web.open` verb is
+/// advertised — the adapter's high-risk `web.evaluate` stays unadvertised
+/// (denied by default).
+struct BrowserCapabilityTool {
+    adapter: BrowserAdapter,
+}
+
+#[async_trait]
+impl Tool for BrowserCapabilityTool {
+    fn name(&self) -> &str {
+        "browser"
+    }
+
+    fn description(&self) -> &str {
+        "Opens URLs in a browser (web.open capability)"
+    }
+
+    fn capabilities(&self) -> Vec<Capability> {
+        vec![Capability::Custom("web.open".into())]
+    }
+
+    async fn execute(&self, action: &Action, _ctx: &ExecutionContext) -> ToolResult {
+        let Some(url) = url_from_instruction(&action.instruction) else {
+            return ToolResult::error(
+                "no URL found in the goal — say which address to open (e.g. \"open example.com\")",
+            );
+        };
+        let res = self
+            .adapter
+            .execute(ActionRequest::new("web", "open", json!({ "url": url })))
+            .await;
+        ToolResult {
+            success: res.success,
+            output: serde_json::to_string_pretty(&res.output).unwrap_or_default(),
+            error: res.error,
+            duration_ms: res
+                .metadata
+                .get("latency_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            metadata: json!(res.metadata),
+        }
+    }
+}
+
 /// Real memory tool for the built-in `SearchMemory` capability (the planner's
 /// `infer_capability` classifies "recall …" and unclassified statements as
 /// memory recall). Reads the *shared durable episode journal* — the same store
@@ -364,6 +458,80 @@ fn command_from_instruction(instruction: &str) -> String {
         }
     }
     instruction.to_string()
+}
+
+/// The desktop application a `windows.open` goal names, resolved to an
+/// executable the C# host's CreateProcess can launch (via PATH or App Paths).
+/// Known aliases map to their exe name; bare or unknown names get `.exe`
+/// appended. "Open the calculator app" → `calc.exe`; "launch chrome" →
+/// `chrome.exe`; "open notepad" → `notepad.exe`.
+fn app_from_instruction(instruction: &str) -> String {
+    let trimmed = instruction.trim();
+    let rest = ["open ", "Open ", "launch ", "Launch "]
+        .iter()
+        .find_map(|p| trimmed.strip_prefix(p))
+        .unwrap_or(trimmed);
+    let mut name = rest.trim().to_lowercase();
+    for prefix in ["the ", "a ", "an ", "my "] {
+        if let Some(stripped) = name.strip_prefix(prefix) {
+            name = stripped.to_string();
+            break;
+        }
+    }
+    for suffix in [" app", " application", "."] {
+        if let Some(stripped) = name.strip_suffix(suffix) {
+            name = stripped.to_string();
+            break;
+        }
+    }
+    let name = name.split_whitespace().next().unwrap_or("").to_string();
+    let resolved = match name.as_str() {
+        "notepad" | "text editor" => "notepad.exe".to_string(),
+        "chrome" | "google chrome" | "browser" => "chrome.exe".to_string(),
+        "edge" | "microsoft edge" => "msedge.exe".to_string(),
+        "explorer" | "file explorer" => "explorer.exe".to_string(),
+        "cmd" | "command prompt" => "cmd.exe".to_string(),
+        "powershell" => "powershell.exe".to_string(),
+        "terminal" | "windows terminal" => "wt.exe".to_string(),
+        "calculator" | "calc" => "calc.exe".to_string(),
+        "vscode" | "visual studio code" | "vs code" => "code.exe".to_string(),
+        "word" | "microsoft word" => "winword.exe".to_string(),
+        "excel" | "microsoft excel" => "excel.exe".to_string(),
+        other => {
+            if other.ends_with(".exe") {
+                other.to_string()
+            } else if other.is_empty() {
+                trimmed.to_string()
+            } else {
+                format!("{other}.exe")
+            }
+        }
+    };
+    resolved
+}
+
+/// The URL a `web.open` goal names: a scheme, a `www.` host, or a bare domain
+/// with a known suffix (→ https://). Anything else returns `None` so the tool
+/// can fail honestly instead of guessing.
+fn url_from_instruction(instruction: &str) -> Option<String> {
+    let tlds = [
+        "com", "org", "net", "io", "dev", "co", "ai", "me", "app", "to", "gov", "edu", "xyz",
+    ];
+    for tok in instruction.split_whitespace() {
+        let t = tok.trim_matches(|c: char| c.is_ascii_punctuation());
+        if t.contains("://") {
+            return Some(t.to_string());
+        }
+        if t.starts_with("www.") {
+            return Some(format!("https://{t}"));
+        }
+        if let Some((_host, tld)) = t.rsplit_once('.') {
+            if tlds.contains(&tld) {
+                return Some(format!("https://{t}"));
+            }
+        }
+    }
+    None
 }
 
 /// The bare filename an instruction names, e.g. `planning.rs` from "Read the
@@ -727,7 +895,15 @@ impl GoalRunner {
     /// The assistant loop with the deterministic heuristic investigation
     /// strategy — hermetic (no model calls), used by tests.
     pub fn new(bus: EventBus) -> Self {
-        Self::with_investigation_engine(bus, InvestigationEngine::heuristic(), None, None, None)
+        Self::with_investigation_engine(
+            bus,
+            InvestigationEngine::heuristic(),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
     }
 
     /// The daemon's LLM-backed assistant loop: the InferenceFabric derives the
@@ -746,6 +922,8 @@ impl GoalRunner {
             Some(fabric),
             None,
             None,
+            None,
+            None,
         )
     }
 
@@ -758,6 +936,8 @@ impl GoalRunner {
             InvestigationEngine::heuristic(),
             None,
             Some(endpoint.into()),
+            None,
+            None,
             None,
         )
     }
@@ -773,12 +953,17 @@ impl GoalRunner {
             None,
             None,
             Some(journal),
+            None,
+            None,
         )
     }
 
     /// The daemon's LLM-backed assistant loop with persistent memory: the
     /// fabric powers investigation and the shared `journal` makes memory survive
-    /// restarts (close FRIDAY, reopen it tomorrow, it still knows).
+    /// restarts (close FRIDAY, reopen it tomorrow, it still knows). This is the
+    /// live-host constructor: it also wires the S4 desktop adapters — the real
+    /// Windows host (named pipe, `default` session matching the C# host's
+    /// `FRIDAY_SESSION`) and the browser (CDP-backed Chrome).
     pub fn with_fabric_and_memory(
         bus: EventBus,
         fabric: Arc<InferenceFabric>,
@@ -790,6 +975,11 @@ impl GoalRunner {
             Some(fabric),
             None,
             Some(journal),
+            #[cfg(windows)]
+            Some(WindowsAdapter::for_session("default")),
+            #[cfg(not(windows))]
+            None,
+            Some(BrowserAdapter::new()),
         )
     }
 
@@ -807,6 +997,8 @@ impl GoalRunner {
         fabric: Option<Arc<InferenceFabric>>,
         web_endpoint: Option<String>,
         journal: Option<Arc<MemoryJournal>>,
+        windows: Option<WindowsAdapter>,
+        browser: Option<BrowserAdapter>,
     ) -> Self {
         let workspace = CognitiveBlackboard::new();
         let mut executive = Executive::new().with_investigation_engine(investigation);
@@ -888,6 +1080,19 @@ impl GoalRunner {
             adapter: TerminalAdapter::new(),
         }));
 
+        // S4 live-kernel adapters: the Windows host (named-pipe to the C# host)
+        // and the browser (CDP-backed Chrome) are wired only when the daemon
+        // passes them in — hermetic runners keep None so a test never talks to
+        // a real pipe or launches Chrome.
+        let has_windows = windows.is_some();
+        let has_browser = browser.is_some();
+        if let Some(adapter) = windows {
+            executive.register_tool(Box::new(WindowsOpenTool { adapter }));
+        }
+        if let Some(adapter) = browser {
+            executive.register_tool(Box::new(BrowserCapabilityTool { adapter }));
+        }
+
         // Advertise the same surface to the evaluator/simulator so evidence
         // plans are judged feasible and actually execute.
         let mut world_state = WorldState::new()
@@ -913,6 +1118,12 @@ impl GoalRunner {
             .with_tool(Capability::Custom("webagent.read".into()));
         if journal.is_some() {
             world_state = world_state.with_tool(Capability::Custom("memory.remember".into()));
+        }
+        if has_windows {
+            world_state = world_state.with_tool(Capability::Custom("windows.open".into()));
+        }
+        if has_browser {
+            world_state = world_state.with_tool(Capability::Custom("web.open".into()));
         }
         workspace.set_world_state(world_state);
 
@@ -2522,5 +2733,153 @@ mod tests {
             !saw_approved,
             "approving an unknown id must not fabricate a transition"
         );
+    }
+
+    /// S4: "open notepad" travels the whole live-kernel path — plan → the
+    /// `windows.open` capability → Executive → WindowsAdapter → mock host →
+    /// verified → `goal.completed`. The MockTransport stands in for the C# host
+    /// (accepts `windows.open` with the resolved `path`, returns a window), so
+    /// the acceptance is hermetic and never touches a real pipe.
+    #[tokio::test]
+    async fn open_notepad_goal_completes_through_windows_host() {
+        use friday_windows::ipc::MockTransport;
+        use friday_windows::protocol::BridgeResponse;
+
+        let launched = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let launched_clone = launched.clone();
+        let adapter = WindowsAdapter::new(Arc::new(MockTransport::new(Arc::new(
+            move |frame: friday_windows::protocol::BridgeFrame| {
+                let intent = frame.message.action.clone();
+                let path = frame
+                    .message
+                    .payload
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                launched_clone
+                    .lock()
+                    .unwrap()
+                    .push(format!("{intent}:{path}"));
+                BridgeResponse::ok(json!({
+                    "hwnd": 42,
+                    "title": "Untitled - Notepad",
+                    "pid": 1234,
+                }))
+            },
+        ))));
+
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let runner = GoalRunner::with_investigation_engine(
+            bus.clone(),
+            InvestigationEngine::heuristic(),
+            None,
+            None,
+            None,
+            Some(adapter),
+            None,
+        );
+        runner.start();
+
+        bus.publish(Event::new(
+            "plan.goal",
+            "mobile",
+            json!({ "goal": "open notepad" }),
+        ))
+        .await
+        .expect("publish");
+
+        let mut saw_started = false;
+        let mut terminal = None;
+        for _ in 0..30 {
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                .await
+                .map(|r| r.expect("bus alive"))
+            else {
+                break;
+            };
+            match ev.kind.as_str() {
+                "goal.started" => saw_started = true,
+                "goal.completed" | "goal.failed" => {
+                    terminal = Some(ev);
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        assert!(saw_started, "goal.started must be published");
+        let ev = terminal.expect("a terminal event");
+        assert_eq!(
+            ev.kind, "goal.completed",
+            "windows goal must complete, not fail: {ev:?}"
+        );
+        let result = ev.payload["result"].as_object().expect("result object");
+        assert_eq!(result["kind"], "text");
+        assert_eq!(result["tool"], "windows", "served by the Windows host tool");
+        let calls = launched.lock().unwrap().clone();
+        assert_eq!(
+            calls,
+            vec!["windows.open:notepad.exe"],
+            "the adapter must have sent the resolved launch to the host"
+        );
+    }
+
+    /// S4: the browser tool advertises ONLY the safe `web.open` verb (the
+    /// adapter's high-risk `web.evaluate` stays off the surface) and refuses an
+    /// instruction with no URL instead of guessing or launching Chrome.
+    #[tokio::test]
+    async fn browser_tool_advertises_safe_surface_and_needs_a_url() {
+        let tool = BrowserCapabilityTool {
+            adapter: BrowserAdapter::new(),
+        };
+        assert_eq!(
+            tool.capabilities(),
+            vec![Capability::Custom("web.open".into())],
+            "only the safe web.open verb may be advertised"
+        );
+
+        let action = Action::single(
+            "open the browser",
+            Capability::Custom("web.open".into()),
+            "goal-1",
+        );
+        let res = tool
+            .execute(&action, &ExecutionContext::for_goal("goal-1"))
+            .await;
+        assert!(!res.success, "must refuse, not launch a browser: {res:?}");
+        assert!(
+            res.error.clone().unwrap_or_default().contains("no URL"),
+            "refusal must name the missing URL: {res:?}"
+        );
+    }
+
+    /// S4: the instruction parsers resolve friendly names / addresses the way
+    /// the host contract expects.
+    #[test]
+    fn app_from_instruction_resolves_names_to_executables() {
+        assert_eq!(app_from_instruction("open notepad"), "notepad.exe");
+        assert_eq!(app_from_instruction("launch chrome"), "chrome.exe");
+        assert_eq!(app_from_instruction("Open the calculator app"), "calc.exe");
+        assert_eq!(app_from_instruction("open notepad.exe"), "notepad.exe");
+        assert_eq!(app_from_instruction("open edge"), "msedge.exe");
+    }
+
+    #[test]
+    fn url_from_instruction_extracts_addresses() {
+        assert_eq!(
+            url_from_instruction("open example.com").as_deref(),
+            Some("https://example.com")
+        );
+        assert_eq!(
+            url_from_instruction("open https://example.org").as_deref(),
+            Some("https://example.org")
+        );
+        assert_eq!(
+            url_from_instruction("browse to www.rust-lang.org").as_deref(),
+            Some("https://www.rust-lang.org")
+        );
+        assert_eq!(url_from_instruction("open notepad"), None);
     }
 }

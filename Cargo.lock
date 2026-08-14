@@ -1343,6 +1343,7 @@ dependencies = [
  "friday-goal-execution",
  "friday-intelligence",
  "friday-investigation",
+ "friday-windows",
  "futures",
  "http 1.4.2",
  "rand 0.8.7",

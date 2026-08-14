@@ -136,25 +136,46 @@ Frontend: `protocol.ts` parses `cancelled`/`paused`/`pending_approval_id`;
 `ChatScreen.tsx` renders cancel/pause controls on running cards, an approve
 button on held goals, and terminal cancelled/paused badges.
 
-## Gap D — browser + Windows adapters on the real kernel path
+## Gap D — browser + Windows adapters on the real kernel path ✅ shipped
 
 **Problem:** the daemon's GoalRunner registers fs/git/terminal/web/docs/
-codeintel/webagent (goal_runner.rs:575-589) — **not** BrowserAdapter (real CDP,
-egress-hardened) and **not** the Windows desktop adapter (real C# host, currently
-only on the qual harness).
+codeintel/webagent — **not** BrowserAdapter (real CDP, egress-hardened) and
+**not** the Windows desktop adapter (real C# host, previously only on the qual
+harness). "Open notepad" fell through the classifier to read-only memory recall.
 
-**Design:**
-1. Register `BrowserAdapter` on the daemon's Executive with the permission gate
-   (evaluate/High still denied by default — browser.rs permission already
-   handles this). Cap one session, reuse the existing egress boundary.
-2. Register `WindowsAdapter` (plugins/windows) with real transport by default,
-   mock when the C# host isn't running (graceful degrade like sensors). The
-   kernel's permission/audit/egress stack sits in front automatically.
+**Design (implemented):**
+1. Intent routing in `planning.rs` `capability_for_description`:
+   - a URL intent (scheme / `www` / known domain suffix) + open/browse/
+     navigate/go-to → `web.open`;
+   - a bare open/launch with no file target, URL, or web framing →
+     `windows.open` (rule order keeps file reads and web search intact).
+2. Two dedicated tools on the daemon's Executive, wired by the live-host
+   constructor `with_fabric_and_memory` (hermetic constructors stay `None` so a
+   test never talks to a real pipe or launches Chrome):
+   - `WindowsOpenTool` → `WindowsAdapter` → named pipe to the C# host
+     (`friday-windows-default`), resolving friendly names to executables
+     (`open notepad` → `notepad.exe`);
+   - `BrowserCapabilityTool` → `BrowserAdapter` (CDP Chrome). Only the safe
+     `web.open` verb is advertised — `web.evaluate` (Risk::High) is off the
+     surface entirely, not merely denied.
+3. Both capabilities join the advertised world state so evidence/feasibility
+   checks accept them.
 
-**Acceptance:** "Open Chrome" / "Open notepad" goals route planner →
-capability → kernel → browser/windows host → verified result, surfaced as
-`goal.completed`. Start with the already-working real Chrome tests as the
-browser baseline; add one daemon-level test for a windows mock transport.
+**Honest degradation (deviation from the draft):** when the C# host isn't
+running, the pipe transport returns `HostUnavailable` and the goal fails
+honestly — the daemon never falls back to a mock that fakes a launch. The mock
+transport is a test stand-in only.
+
+**Acceptance (tests, green):** mobile E2E `open_notepad_goal_completes_through_windows_host`
+runs the whole live-kernel path — goal → classifier (`windows.open`) →
+Executive → `WindowsAdapter` → `MockTransport` → verified → `goal.completed`,
+asserting the adapter sent `windows.open:notepad.exe`. `browser_tool_advertises_safe_surface_and_needs_a_url`
+proves evaluate is unadvertised and a URL-less instruction is refused, never a
+browser launch. Classifier regression tests (`open_goals_route_to_windows_and_browser`,
+`open_goals_do_not_hijack_existing_intents`) in goal-execution. Real Chrome
+execution remains covered by the existing env-gated browser tests. Demo: run
+the C# `windows-host` (`FRIDAY_SESSION=default`), start the mobile daemon, tell
+the portal "open notepad".
 
 ## Build order (each lands green independently)
 
@@ -163,7 +184,7 @@ browser baseline; add one daemon-level test for a windows mock transport.
 | 1 | Gap A — session continuity | `commands.rs`, `goal_runner.rs`, `client.ts` | portal conversation continuity | ✅ `7882658` |
 | 2 | Gap B — memory write+recall | `journal.rs`, `memory.rs`, `executive.rs`, `planning.rs`, `goal_runner.rs`, daemon main | durable memory, no goldfish on restart | ✅ |
 | 3 | Gap C — cancel/pause/approve consumed | `executive.rs`, `goal_runner.rs`, `protocol.ts`, `ChatScreen.tsx` | human can stop/admit FRIDAY | ✅ `e571a3c` |
-| 4 | Gap D — browser+windows on kernel | `goal_runner.rs` | laptop control (browser first) | |
+| 4 | Gap D — browser+windows on kernel | `planning.rs`, `goal_runner.rs`, `Cargo.toml` | laptop control (open apps / URLs) | ✅ shipped |
 
 ## Non-goals for Step 1
 
