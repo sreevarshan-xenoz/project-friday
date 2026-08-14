@@ -67,7 +67,7 @@ export const Methods = {
 
 // ── Parsed event (from bus bridge _kind/_source tags) ────
 
-export type ParsedTaskStatus = 'done' | 'running' | 'waiting' | 'failed';
+export type ParsedTaskStatus = 'done' | 'running' | 'waiting' | 'failed' | 'cancelled' | 'paused';
 
 export interface ParsedTask {
   id: string;
@@ -130,6 +130,14 @@ export interface ParsedEvent {
   result?: GoalResult;
   /** Failure reason (`goal.failed.error`). */
   error?: string;
+  /** `task_id` from control events (`goal.approved.task_id` = the held
+   * episode id, distinct from the goal's run id). */
+  taskId?: string;
+  /** Whether the completed goal was held for a human (`goal.completed.pending_approval`). */
+  pendingApproval?: boolean;
+  /** The held episode's id — the exact `task_id` a `task.approve` must target
+   * (`goal.completed.pending_approval_id`). */
+  pendingApprovalId?: string;
 }
 
 export function parseEvent(topic: string, payload: unknown): ParsedEvent {
@@ -152,6 +160,9 @@ export function parseEvent(topic: string, payload: unknown): ParsedEvent {
     model: typeof obj.model === 'string' ? obj.model : undefined,
     result: parseResult(obj.result),
     error: typeof obj.error === 'string' ? obj.error : undefined,
+    taskId: typeof obj.task_id === 'string' ? obj.task_id : undefined,
+    pendingApproval: obj.pending_approval === true,
+    pendingApprovalId: typeof obj.pending_approval_id === 'string' ? obj.pending_approval_id : undefined,
   };
 }
 
@@ -194,6 +205,8 @@ function buildTask(kind: string, obj: Record<string, unknown>): ParsedTask | nul
   else if (kind.endsWith('.failed') || kind.endsWith('.error')) status = 'failed';
   else if (kind.endsWith('.started') || kind.endsWith('.running')) status = 'running';
   else if (kind.endsWith('.created') || kind.endsWith('.planned')) status = 'waiting';
+  else if (kind.endsWith('.cancelled')) status = 'cancelled';
+  else if (kind.endsWith('.paused')) status = 'paused';
   if (!status) return null;
 
   const id = (obj.id ?? obj.task_id ?? obj.goal) as string;

@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useFriday } from '../hooks/useFriday';
 import { useConnection, useEvents, useCommandResults } from '../hooks/useProtocol';
 import type { EvidenceChannel, GoalResult, ParsedEvent } from '../protocol/protocol';
+import { Methods } from '../protocol/protocol';
 import { PROVIDER_OPTIONS, providerById } from '../providerCatalog';
 import { arrayLines, classifyResult, entryCountLabel, fileListLines, structureRows } from './resultPresentation';
 import type { ResultView } from './resultPresentation';
@@ -20,7 +21,7 @@ export interface ChatMessage {
    * repeated identical goals are visibly distinct. */
   goalId?: string;
   /** Lifecycle stage of an in-flight goal message. */
-  stage?: 'sent' | 'understood' | 'started' | 'done' | 'failed';
+  stage?: 'sent' | 'understood' | 'started' | 'done' | 'failed' | 'cancelled' | 'paused';
   phases?: number;
   evidenceVerified?: number;
   /** Per-channel evidence lifecycle (`goal.completed.channels`). */
@@ -34,6 +35,13 @@ export interface ChatMessage {
   /** The model id that answered (`goal.completed.model`). */
   model?: string;
   error?: string;
+  /** Whether this goal's episode was held for a human and the card offers an
+   * approve action (`goal.completed.pending_approval`). */
+  pendingApproval?: boolean;
+  /** The held episode's id — the `task_id` a `task.approve` must target. */
+  pendingApprovalId?: string;
+  /** Set once `task.approve` → `goal.approved` admitted the held episode. */
+  approved?: boolean;
   /** Routing intent chosen in the composer (auto = runtime decides). */
   providerIntent?: string;
   /** command id so the accepted ack can resolve the stage. */
@@ -137,7 +145,11 @@ export function ChatScreen() {
               ? 'done'
               : p.kind === 'goal.failed'
                 ? 'failed'
-                : working.stage;
+                : p.kind === 'goal.cancelled'
+                  ? 'cancelled'
+                  : p.kind === 'goal.paused'
+                    ? 'paused'
+                    : working.stage;
         if (stage === working.stage) return conv;
         changed = true;
         const updated: ChatMessage = {
@@ -152,6 +164,8 @@ export function ChatScreen() {
           model: p.model ?? working.model,
           result: p.result ?? working.result,
           error: p.error ?? working.error,
+          pendingApproval: p.pendingApproval ?? working.pendingApproval,
+          pendingApprovalId: p.pendingApprovalId ?? working.pendingApprovalId,
           text:
             stage === 'done'
               ? hasRenderableResult(p)
@@ -159,9 +173,13 @@ export function ChatScreen() {
                 : completedFallback(p)
               : stage === 'failed'
                 ? p.error ?? 'The goal could not be completed.'
-                : stage === 'started'
-                  ? 'FRIDAY is working…'
-                  : 'FRIDAY understood the request.',
+                : stage === 'cancelled'
+                  ? 'The run was cancelled.'
+                  : stage === 'paused'
+                    ? 'The run was paused.'
+                    : stage === 'started'
+                      ? 'FRIDAY is working…'
+                      : 'FRIDAY understood the request.',
         };
         return { ...conv, messages: conv.messages.map((m) => (m.id === working.id ? updated : m)), updatedAt: Date.now() };
       });
@@ -194,6 +212,39 @@ export function ChatScreen() {
       return changed ? next : prev;
     });
   }, [results]);
+
+  /* Admit a held episode: `task.approve` → `goal.approved` carries the held
+   * episode's id as `task_id` — matched exactly against the card's
+   * `pendingApprovalId`, so the approve resolves THIS card's state
+   * transition, never another run's. */
+  useEffect(() => {
+    if (!events.length) return;
+    setConversations((prev) => {
+      let changed = false;
+      const next = prev.map((conv) => {
+        const held = conv.messages.find(
+          (m) => m.role === 'friday' && m.kind === 'goal' && !!m.pendingApprovalId && !m.approved,
+        );
+        if (!held) return conv;
+        const evt = events.find(
+          (e) => e.parsed.kind === 'goal.approved' && e.parsed.taskId === held.pendingApprovalId,
+        );
+        if (!evt) return conv;
+        changed = true;
+        const updated: ChatMessage = {
+          ...held,
+          approved: true,
+          text: 'Approved — the held episode was admitted to memory.',
+        };
+        return {
+          ...conv,
+          messages: conv.messages.map((m) => (m.id === held.id ? updated : m)),
+          updatedAt: Date.now(),
+        };
+      });
+      return changed ? next : prev;
+    });
+  }, [events]);
 
   const deleteConversation = useCallback((id: string) => {
     setConversations((prev) => prev.filter((c) => c.id !== id));
@@ -292,6 +343,26 @@ export function ChatScreen() {
     void navigator.clipboard?.writeText(text).catch(() => {});
   }, []);
 
+  /* S3 human control: a running goal can be cancelled or paused by its run id
+   * (`goal.started.id`). The runtime turns the command into the real
+   * `goal.cancelled`/`goal.paused` transition the card resolves to. */
+  const controlGoal = useCallback(
+    (msg: ChatMessage, method: string) => {
+      if (!msg.goalId) return;
+      client.sendCommand(method, { task_id: msg.goalId });
+    },
+    [client],
+  );
+
+  /* S3 approval: approve the exact held episode this card surfaced. */
+  const approveGoal = useCallback(
+    (msg: ChatMessage) => {
+      if (!msg.pendingApprovalId) return;
+      client.sendCommand(Methods.TASK_APPROVE, { task_id: msg.pendingApprovalId });
+    },
+    [client],
+  );
+
   const grouped = useMemo(() => {
     const groups: { label: string; items: Conversation[] }[] = [];
     const now = new Date();
@@ -314,11 +385,8 @@ export function ChatScreen() {
     [active?.messages],
   );
   // failed caps at 3 so the drawer's "Verified result" step stays unchecked.
-  const stageIdx = lastGoal
-    ? lastGoal.stage === 'failed'
-      ? 3
-      : ['sent', 'understood', 'started', 'done', 'failed'].indexOf(lastGoal.stage ?? 'sent')
-    : 0;
+  // cancelled/paused track by phases completed (verify is always skipped).
+  const stageIdx = lastGoal ? stageToIdx(lastGoal) : 0;
 
   const modelOption = providerById(model);
 
@@ -419,6 +487,9 @@ export function ChatScreen() {
                     askOpen={askMenuFor === msg.id}
                     onCloseAsk={() => setAskMenuFor(null)}
                     onPickAsk={(intent) => askAnotherModel(msg, intent)}
+                    onCancel={() => controlGoal(msg, Methods.TASK_CANCEL)}
+                    onPause={() => controlGoal(msg, Methods.TASK_PAUSE)}
+                    onApprove={() => approveGoal(msg)}
                   />
                 ) : (
                   <motion.div
@@ -662,6 +733,19 @@ function completedFallback(p: ParsedEvent): string {
   return `Done — ${p.phases ?? '–'} phases, ${p.evidenceVerified ?? 0} evidence verified.`;
 }
 
+/** Drawer checklist index for the last goal's stage. Failed caps at 3 so
+ * "Verified result" stays unchecked. A cancelled/paused run tracks by phases
+ * completed (verify is skipped on a stop): up to "Executing plan", never
+ * "Verified result". */
+function stageToIdx(g: ChatMessage): number {
+  if (g.stage === 'failed') return 3;
+  if (g.stage === 'cancelled' || g.stage === 'paused') {
+    const p = g.phases ?? 0;
+    return p >= 2 ? 2 : p >= 1 ? 1 : 0;
+  }
+  return ['sent', 'understood', 'started', 'done', 'failed'].indexOf(g.stage ?? 'sent');
+}
+
 /** Short display for a fabric model id: `openrouter/nvidia/nemotron:free` →
  * `nvidia/nemotron:free` (the leading segment is always the provider). */
 function shortModel(model?: string): string {
@@ -696,6 +780,9 @@ function GoalCard({
   askOpen,
   onCloseAsk,
   onPickAsk,
+  onCancel,
+  onPause,
+  onApprove,
 }: {
   msg: ChatMessage;
   onCopy: () => void;
@@ -704,11 +791,19 @@ function GoalCard({
   askOpen: boolean;
   onCloseAsk: () => void;
   onPickAsk: (intent: string) => void;
+  onCancel: () => void;
+  onPause: () => void;
+  onApprove: () => void;
 }) {
   const stage = msg.stage ?? 'sent';
   const done = stage === 'done';
   const failed = stage === 'failed';
-  const working = !done && !failed;
+  const cancelled = stage === 'cancelled';
+  const paused = stage === 'paused';
+  // A stop is terminal — the card is no longer "working", but it is neither a
+  // success nor a failure. `working` drives the spinner + control buttons.
+  const stopped = cancelled || paused;
+  const working = !done && !failed && !stopped;
   const pulse = working ? 'chat-card-pulse' : '';
   const view = useMemo(() => classifyResult(msg.result), [msg.result]);
 
@@ -719,19 +814,27 @@ function GoalCard({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
     >
-      <div className={`chat-card ${done ? 'chat-card--done' : ''} ${failed ? 'chat-card--failed' : ''}`}>
+      <div
+        className={`chat-card ${done ? 'chat-card--done' : ''} ${failed ? 'chat-card--failed' : ''} ${cancelled ? 'chat-card--cancelled' : ''} ${paused ? 'chat-card--paused' : ''}`}
+      >
         <div className="chat-card-head">
           <span className={`chat-card-avatar ${pulse}`}>◆</span>
           <span className="chat-card-name">FRIDAY</span>
-          <span className={`chat-card-status ${done ? 'chat-card-status--done' : failed ? 'chat-card-status--failed' : 'chat-card-status--working'}`}>
+          <span
+            className={`chat-card-status ${done ? 'chat-card-status--done' : failed ? 'chat-card-status--failed' : cancelled ? 'chat-card-status--cancelled' : paused ? 'chat-card-status--paused' : 'chat-card-status--working'}`}
+          >
             {working ? (
               <span className="chat-card-spinner" />
+            ) : cancelled ? (
+              '✕'
+            ) : paused ? (
+              '❚❚'
             ) : done ? (
               '✓'
             ) : (
               '✕'
             )}
-            {done ? 'Completed' : failed ? 'Failed' : 'Working…'}
+            {done ? 'Completed' : failed ? 'Failed' : cancelled ? 'Cancelled' : paused ? 'Paused' : 'Working…'}
           </span>
         </div>
 
@@ -768,6 +871,52 @@ function GoalCard({
                 🧠 {providerById(msg.providerIntent ?? 'auto').label}
               </span>
             )}
+          </div>
+        )}
+
+        {/* S3: a running goal carries its run id once started — the human can
+         * pause or cancel it; the runtime turns the command into the real
+         * goal.cancelled / goal.paused transition this card resolves to. */}
+        {working && msg.goalId && (
+          <div className="chat-card-controls">
+            <button
+              className="chat-card-control chat-card-control--pause"
+              onClick={onPause}
+              title="Pause the running goal"
+            >
+              ❚❚ Pause
+            </button>
+            <button
+              className="chat-card-control chat-card-control--cancel"
+              onClick={onCancel}
+              title="Cancel the running goal"
+            >
+              ✕ Cancel
+            </button>
+          </div>
+        )}
+
+        {/* S3: a completed goal whose episode was held for a human — approve
+         * admits it into memory (task.approve → goal.approved). */}
+        {done && msg.pendingApprovalId && !msg.approved && (
+          <div className="chat-card-approve">
+            <div className="chat-card-approve-text">
+              This result touches sensitive content — it was held for your
+              review and not stored in memory.
+            </div>
+            <button
+              className="chat-card-approve-btn"
+              onClick={onApprove}
+              title="Admit the held episode into memory"
+            >
+              Approve &amp; remember
+            </button>
+          </div>
+        )}
+        {done && msg.approved && (
+          <div className="chat-card-approve chat-card-approve--ok">
+            <span className="chat-card-approve-check">✓</span>
+            Approved — the held episode was admitted to memory.
           </div>
         )}
 

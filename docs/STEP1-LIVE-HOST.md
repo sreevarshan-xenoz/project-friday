@@ -100,26 +100,41 @@ covers the explicit remember→recall loop. Journal round-trip/corrupt-line test
 and classifier-immunity tests in goal-execution. The demo is the daemon + portal:
 tell it a fact today, restart, ask tomorrow.
 
-## Gap C — human approve / pause / cancel actually consumed
+## Gap C — human approve / pause / cancel actually consumed ✅ shipped
 
 **Problem:** `task.cancel` / `task.pause` / `task.approve` are published as bus
 events (commands.rs:58-80) and acked `{accepted:true}`, but **zero subscribers**
 act on them. Permission engine auto-approves `AllowOnce`
 (action-runtime/src/permission.rs:9-13). A human cannot stop FRIDAY.
 
-**Design:**
-1. `GoalRunner`: subscribe to `task.cancel`; when the id matches the in-flight
-   goal id, cancel the Executive cycle (the goal ids already flow in
-   `goal.started`/`goal.completed` payloads — goal_runner.rs:654-663).
-2. Add `task.cancel` to the goal lifecycle: emit `goal.cancelled` (new terminal
-   kind) so the portal card closes instead of hanging.
-3. Permission: leave `AllowOnce` auto-approve (current behavior is by design
-   for the bounded demo) but surface a `pending_approvals` bus event so a real
-   prompt flow can attach later — no behavior change now, just observability.
+**Design (implemented):**
+1. `GoalRunner` runs a **control subscriber loop** (goal_runner.rs `start()`):
+   - `task.cancel` → when the id matches the in-flight goal id (registered
+     before `goal.started`), flips the Executive's `abort` flag.
+   - `task.pause` → same, via the `pause` flag. Pause is **terminal in S3** (no
+     `task.resume` protocol method yet; `Executive::resume()` exists for tests).
+   - `task.approve` → `Executive::approve_pending(id)` admits the held episode;
+     success publishes `goal.approved { task_id }`; a miss is ignored (never a
+     fabricated transition).
+2. Cooperative cancellation: the Executive cycle checks the flags at three
+   checkpoints — post-investigate (before Plan), in the action loop (before
+   each action), and post-execute (before Verify). A stopped cycle records no
+   terminal episode and returns with phase=Idle.
+3. The runner publishes real state transitions, not acks: `goal.cancelled`
+   (reason `cancelled_by_human`) and `goal.paused` (reason `paused_by_human`),
+   each carrying the run id, phases completed, and session turn — the portal
+   card closes on these, never hangs, never resolves as success/failure.
+4. Held (sensitive) episodes: `goal.completed` carries `pending_approval: true`
+   + `pending_approval_id`; the portal renders an "Approve & remember" button
+   that sends `task.approve` with that exact id.
 
-**Acceptance:** send `planner.goal` with a slow goal (terminal sleep), send
-`task.cancel`, observe `goal.cancelled` and no further execution. Test in
-`goal_runner.rs`.
+**Acceptance:** unit + integration tests in `executive.rs` (cancel mid-execution
+with a gated tool, pause-then-resume, approve-pending) and mobile E2E tests in
+`goal_runner.rs` (cancel/pause against a delayed hermetic mock web server;
+approve against a sensitive "reset my password" goal; unknown-approve ignored).
+Frontend: `protocol.ts` parses `cancelled`/`paused`/`pending_approval_id`;
+`ChatScreen.tsx` renders cancel/pause controls on running cards, an approve
+button on held goals, and terminal cancelled/paused badges.
 
 ## Gap D — browser + Windows adapters on the real kernel path
 
@@ -147,7 +162,7 @@ browser baseline; add one daemon-level test for a windows mock transport.
 | - | ----- | ----- | ---------- | ------ |
 | 1 | Gap A — session continuity | `commands.rs`, `goal_runner.rs`, `client.ts` | portal conversation continuity | ✅ `7882658` |
 | 2 | Gap B — memory write+recall | `journal.rs`, `memory.rs`, `executive.rs`, `planning.rs`, `goal_runner.rs`, daemon main | durable memory, no goldfish on restart | ✅ |
-| 3 | Gap C — cancel consumed | `goal_runner.rs`, protocol event `goal.cancelled` | human can stop FRIDAY | |
+| 3 | Gap C — cancel/pause/approve consumed | `executive.rs`, `goal_runner.rs`, `protocol.ts`, `ChatScreen.tsx` | human can stop/admit FRIDAY | ✅ `a494308` |
 | 4 | Gap D — browser+windows on kernel | `goal_runner.rs` | laptop control (browser first) | |
 
 ## Non-goals for Step 1

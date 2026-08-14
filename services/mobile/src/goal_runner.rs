@@ -43,9 +43,9 @@ use friday_actions::{
 };
 use friday_core::event::{Event, EventBus};
 use friday_goal_execution::{
-    Action, AdapterTool, Capability, CognitiveBlackboard, CognitiveEpisode, ExecutionContext,
-    Executive, ExecutiveReport, GoalResult, MemoryJournal, ResolvingWebTool, Tool, ToolResult,
-    WebFetchProvider, WebSearchProvider, WorldState, JINA_READER_PREFIX,
+    Action, AdapterTool, AdmissionVerdict, Capability, CognitiveBlackboard, CognitiveEpisode,
+    ExecutionContext, Executive, ExecutiveReport, GoalResult, MemoryJournal, ResolvingWebTool,
+    Tool, ToolResult, WebFetchProvider, WebSearchProvider, WorldState, JINA_READER_PREFIX,
 };
 use friday_intelligence::InferenceFabric;
 use friday_investigation::InvestigationEngine;
@@ -672,11 +672,22 @@ fn evict_lru(sessions: &Mutex<HashMap<String, SessionContext>>, max: usize) {
 
 /// The daemon's assistant loop: consumes `plan.goal` bus events and runs each
 /// goal through the real goal-execution `Executive`, publishing
-/// `goal.started` / `goal.completed` / `goal.failed` events back to the bus so
-/// the portal chat shows real FRIDAY activity instead of a silent ack.
+/// `goal.started` / `goal.completed` / `goal.failed` / `goal.cancelled` /
+/// `goal.paused` events back to the bus so the portal chat shows real FRIDAY
+/// activity instead of a silent ack.
+///
+/// **Human control (S3):** a dedicated control subscriber (spawned by
+/// [`Self::start`]) consumes `task.cancel` / `task.pause` / `task.approve`
+/// *while* a goal cycle is running. Because the goal loop holds the executive
+/// lock across the whole cycle, control is cooperative: the control loop flips
+/// shared [`AtomicBool`] flags, and the Executive's cycle checks them at
+/// phase/action boundaries, stops, and reports — so the runner publishes the
+/// real state transitions `goal.cancelled` / `goal.paused`, never a silent
+/// ack. `task.approve` approves a held episode (admission `Pending`) into
+/// memory and publishes `goal.approved`.
 pub struct GoalRunner {
     bus: EventBus,
-    executive: tokio::sync::Mutex<Executive>,
+    executive: Arc<tokio::sync::Mutex<Executive>>,
     workspace: Arc<CognitiveBlackboard>,
     /// The fabric backing the LLM investigation. Retained (one Arc clone) so
     /// the runner can read the routing decision after each cycle and surface
@@ -692,6 +703,24 @@ pub struct GoalRunner {
     /// journal). `None` = memory stays in-memory only (heuristic test runners
     /// and any caller that does not opt into persistence).
     journal: Option<Arc<MemoryJournal>>,
+    /// The cancellation flag the Executive's cycle checks (S3). The control
+    /// subscriber flips it on `task.cancel`; a fresh goal clears it.
+    abort: Arc<std::sync::atomic::AtomicBool>,
+    /// The pause flag the Executive's cycle checks (S3). Flipped by the
+    /// control subscriber on `task.pause`; cleared by a fresh goal.
+    pause: Arc<std::sync::atomic::AtomicBool>,
+    /// The goal currently being run (`goal.started.id`), for the control
+    /// subscriber to match `task.cancel`/`task.pause` against. `None` when no
+    /// goal is in flight.
+    in_flight: Arc<Mutex<Option<InFlightGoal>>>,
+}
+
+/// The in-flight goal the control subscriber matches `task.cancel` /
+/// `task.pause` against (the id flows in `goal.started`). Only the id is
+/// needed — it is unique per run, so a stale control command can never
+/// match a newer goal.
+struct InFlightGoal {
+    id: String,
 }
 
 impl GoalRunner {
@@ -887,24 +916,127 @@ impl GoalRunner {
         }
         workspace.set_world_state(world_state);
 
+        // The runner holds its own clones of the Executive's control flags so
+        // the control subscriber can flip them while the cycle awaits inside
+        // the exec lock (cooperative cancellation, S3).
+        let abort = executive.abort_token();
+        let pause = executive.pause_token();
+
         Self {
             bus,
-            executive: tokio::sync::Mutex::new(executive),
+            executive: Arc::new(tokio::sync::Mutex::new(executive)),
             workspace,
             fabric,
             sessions: Mutex::new(HashMap::new()),
             journal,
+            abort,
+            pause,
+            in_flight: Arc::new(Mutex::new(None)),
         }
     }
 
     /// Subscribe to `plan.goal` and run each goal through the Executive,
-    /// publishing lifecycle events so the portal chat responds.
+    /// publishing lifecycle events so the portal chat responds. A second,
+    /// dedicated subscriber consumes the human-control events (`task.cancel` /
+    /// `task.pause` / `task.approve`) so a control request reaches the live
+    /// cycle even while the goal loop is blocked awaiting it.
     ///
-    /// The subscription is created *synchronously* before the task is spawned
-    /// so a `plan.goal` published immediately after `start()` returns is never
-    /// missed (broadcast receivers must exist before the send).
+    /// Both subscriptions are created *synchronously* before the tasks are
+    /// spawned so a `plan.goal` / `task.*` published immediately after
+    /// `start()` returns is never missed (broadcast receivers must exist
+    /// before the send).
     pub fn start(self) {
         let mut rx = self.bus.subscribe();
+        let mut control_rx = self.bus.subscribe();
+        let control_bus = self.bus.clone();
+        let abort = self.abort.clone();
+        let pause = self.pause.clone();
+        let in_flight = self.in_flight.clone();
+        let executive = self.executive.clone();
+
+        // Control plane: consumes task.cancel / task.pause / task.approve
+        // while a goal cycle runs. Matches the in-flight goal by its real run
+        // id (from `goal.started`) — a control request for anything else is a
+        // no-op (no fabricated state transition).
+        tokio::spawn(async move {
+            tracing::info!("goal runner control subscriber active");
+            while let Ok(ev) = control_rx.recv().await {
+                match ev.kind.as_str() {
+                    "task.cancel" => {
+                        let task_id = ev
+                            .payload
+                            .get("task_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let matches = in_flight
+                            .lock()
+                            .unwrap()
+                            .as_ref()
+                            .is_some_and(|g| g.id == task_id);
+                        if matches {
+                            abort.store(true, std::sync::atomic::Ordering::SeqCst);
+                            tracing::info!(task_id, "human cancelled the in-flight goal");
+                        } else {
+                            tracing::debug!(
+                                task_id,
+                                "task.cancel for unknown/not-in-flight goal — ignored"
+                            );
+                        }
+                    }
+                    "task.pause" => {
+                        let task_id = ev
+                            .payload
+                            .get("task_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let matches = in_flight
+                            .lock()
+                            .unwrap()
+                            .as_ref()
+                            .is_some_and(|g| g.id == task_id);
+                        if matches {
+                            pause.store(true, std::sync::atomic::Ordering::SeqCst);
+                            tracing::info!(task_id, "human paused the in-flight goal");
+                        } else {
+                            tracing::debug!(
+                                task_id,
+                                "task.pause for unknown/not-in-flight goal — ignored"
+                            );
+                        }
+                    }
+                    "task.approve" => {
+                        let task_id = ev
+                            .payload
+                            .get("task_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if task_id.is_empty() {
+                            continue;
+                        }
+                        let mut exec = executive.lock().await;
+                        match exec.approve_pending(&task_id) {
+                            Ok(()) => {
+                                let _ = control_bus
+                                    .publish(Event::new(
+                                        "goal.approved",
+                                        "planner",
+                                        json!({ "task_id": task_id }),
+                                    ))
+                                    .await;
+                                tracing::info!(task_id, "held episode approved into memory");
+                            }
+                            Err(e) => tracing::debug!(
+                                task_id,
+                                "task.approve ignored (no held episode under this id): {e}"
+                            ),
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        });
+
         tokio::spawn(async move {
             tracing::info!("goal runner subscribed to plan.goal");
             while let Ok(ev) = rx.recv().await {
@@ -939,6 +1071,14 @@ impl GoalRunner {
     /// same session.
     async fn run_goal(&self, goal: String, session_id: String) {
         let id = format!("goal-{}", uuid::Uuid::new_v4().simple());
+
+        // A fresh goal always starts with the control flags clear — a
+        // previously cancelled/paused goal must not bleed into the next one.
+        self.abort.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.pause.store(false, std::sync::atomic::Ordering::SeqCst);
+        // Register as in-flight so the control subscriber can match
+        // `task.cancel`/`task.pause` against this run's real id.
+        *self.in_flight.lock().unwrap() = Some(InFlightGoal { id: id.clone() });
 
         // Read the session's prior turn (short lock) and reserve the next turn
         // number. `prior` is snapshotted BEFORE this turn is written back, so
@@ -998,22 +1138,67 @@ impl GoalRunner {
             exec.cycle(&self.workspace).await
         };
 
+        // The run is over — no longer in flight (a stale task.cancel for this
+        // id must not stop the next goal).
+        *self.in_flight.lock().unwrap() = None;
+
         // Record the finished turn for the next goal in this session.
         {
             let mut sessions = self.sessions.lock().unwrap();
             if let Some(ctx) = sessions.get_mut(&session_id) {
                 ctx.last_goal = goal.clone();
-                ctx.last_result = report
-                    .result
-                    .as_ref()
-                    .map(|r| truncate(&r.text, MAX_CONTEXT_CHARS))
-                    .unwrap_or_default();
+                ctx.last_result = if report.cancelled {
+                    "cancelled by human".to_string()
+                } else if report.paused {
+                    "paused by human".to_string()
+                } else {
+                    report
+                        .result
+                        .as_ref()
+                        .map(|r| truncate(&r.text, MAX_CONTEXT_CHARS))
+                        .unwrap_or_default()
+                };
                 ctx.last_seen_ms = now_ms();
             }
         }
         evict_lru(&self.sessions, MAX_SESSIONS);
 
-        if report.plan_executed {
+        if report.cancelled {
+            // The human stopped this goal: publish the terminal `goal.cancelled`
+            // — the actual state transition, never a silent ack. The cycle
+            // already skipped remaining actions and recorded no episode.
+            let _ = self
+                .bus
+                .publish(Event::new(
+                    "goal.cancelled",
+                    "planner",
+                    json!({
+                        "goal": goal,
+                        "id": id,
+                        "session_id": session_id,
+                        "session_turn": next_turn,
+                        "reason": "cancelled_by_human",
+                        "phases": report.phases_completed.len(),
+                    }),
+                ))
+                .await;
+        } else if report.paused {
+            let _ = self
+                .bus
+                .publish(Event::new(
+                    "goal.paused",
+                    "planner",
+                    json!({
+                        "goal": goal,
+                        "id": id,
+                        "session_id": session_id,
+                        "session_turn": next_turn,
+                        "reason": "paused_by_human",
+                        "phases": report.phases_completed.len(),
+                    }),
+                ))
+                .await;
+        } else if report.plan_executed {
             // The fabric is called exactly once per goal (the investigation), so
             // its last routing decision is THIS goal's: `served` is
             // Some((provider, model)) when the model answered, None when it
@@ -1085,6 +1270,15 @@ fn completed_payload(
         "channels": channels,
         "result": result,
     });
+    // A held episode (admission Pending, e.g. sensitive content) was NOT
+    // stored — surface its id so the portal can offer a `task.approve` button
+    // for this exact episode (S3).
+    if matches!(report.admission_verdict, Some(AdmissionVerdict::Pending(_))) {
+        if let Some(held_id) = &report.held_episode_id {
+            payload["pending_approval"] = json!(true);
+            payload["pending_approval_id"] = json!(held_id);
+        }
+    }
     if let Some((provider, model)) = served {
         payload["provider"] = json!(provider);
         payload["model"] = json!(model);
@@ -1095,6 +1289,70 @@ fn completed_payload(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A tiny canned search-results page in the endpoint's HTML shape.
+    const MOCK_SEARCH_BODY: &str = r#"<html><body>
+        <a href="https://docs.rs/tokio/latest/tokio/">Tokio documentation</a>
+        <a href="https://rust-lang.github.io/async-book/">The Rust Async Book</a>
+    </body></html>"#;
+
+    /// Spin up a hermetic mock search endpoint (no network). When `delay_ms` >
+    /// 0 each response is parked that long, so a web goal is still mid-
+    /// execution when a test's control command lands — deterministic control
+    /// tests without timing races. Serves up to `max` requests, then exits
+    /// after a short idle window.
+    fn mock_search_endpoint(delay_ms: u64, max: usize) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind mock server");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking mock server");
+        let addr = listener.local_addr().expect("mock server address");
+        let handle = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            let mut served = 0usize;
+            let mut last_activity = std::time::Instant::now();
+            while std::time::Instant::now() < deadline && served < max {
+                let mut stream = match listener.accept() {
+                    Ok((s, _)) => s,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        if last_activity.elapsed() > std::time::Duration::from_secs(2) {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        continue;
+                    }
+                    Err(e) => panic!("mock server accept: {e}"),
+                };
+                last_activity = std::time::Instant::now();
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 1024];
+                loop {
+                    match stream.read(&mut chunk) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            buf.extend_from_slice(&chunk[..n]);
+                            if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                if delay_ms > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                }
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    MOCK_SEARCH_BODY.len(),
+                    MOCK_SEARCH_BODY
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                served += 1;
+            }
+        });
+        (format!("http://{addr}/"), handle)
+    }
 
     #[tokio::test]
     async fn goal_runner_publishes_lifecycle_events_for_a_goal() {
@@ -1992,6 +2250,277 @@ mod tests {
         assert!(
             map.get(&format!("sess-{}", MAX_SESSIONS + 7)).is_some(),
             "newest survive"
+        );
+    }
+
+    // ── S3 human control ─────────────────────────────────────────
+
+    /// S3 acceptance: a `task.cancel` matching the in-flight goal id must stop
+    /// the running goal — the Executive's cooperative checkpoint skips the
+    /// remaining actions — and the runner publishes the real state transition
+    /// `goal.cancelled`. No `goal.completed`/`goal.failed` ever follows (the
+    /// portal card must not hang OR resolve as success/failure).
+    #[tokio::test]
+    async fn task_cancel_stops_the_in_flight_goal_and_publishes_goal_cancelled() {
+        // A delayed mock: the web goal is still awaiting its (slow) web action
+        // when the cancel lands, so the mid-execution checkpoint fires
+        // deterministically.
+        let (endpoint, server) = mock_search_endpoint(1500, 2);
+
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let runner = GoalRunner::with_web_endpoint(bus.clone(), endpoint);
+        runner.start();
+
+        bus.publish(Event::new(
+            "plan.goal",
+            "mobile",
+            json!({ "goal": "Search the web for the latest Rust async docs" }),
+        ))
+        .await
+        .expect("publish");
+
+        let mut goal_id = None;
+        for _ in 0..30 {
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                .await
+                .map(|r| r.expect("bus alive"))
+            else {
+                break;
+            };
+            if ev.kind == "goal.started" {
+                goal_id = ev
+                    .payload
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                break;
+            }
+        }
+        let goal_id = goal_id.expect("goal.started must be published");
+
+        // Cancel the in-flight goal by its real run id.
+        bus.publish(Event::new(
+            "task.cancel",
+            "mobile",
+            json!({ "task_id": goal_id }),
+        ))
+        .await
+        .expect("publish");
+
+        let mut saw_cancelled = false;
+        let mut saw_terminal = false;
+        for _ in 0..30 {
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                .await
+                .map(|r| r.expect("bus alive"))
+            else {
+                break;
+            };
+            match ev.kind.as_str() {
+                "goal.cancelled" => {
+                    saw_cancelled = true;
+                    assert_eq!(ev.payload["id"], goal_id);
+                    assert_eq!(ev.payload["reason"], "cancelled_by_human");
+                }
+                "goal.completed" | "goal.failed" => {
+                    if ev.payload["id"] == goal_id {
+                        saw_terminal = true;
+                    }
+                }
+                _ => {}
+            }
+            if saw_cancelled && saw_terminal {
+                break;
+            }
+        }
+        let _ = server.join();
+
+        assert!(saw_cancelled, "task.cancel must produce goal.cancelled");
+        assert!(
+            !saw_terminal,
+            "a cancelled goal must never publish completed/failed"
+        );
+    }
+
+    /// S3: `task.pause` matching the in-flight goal id stops the run and the
+    /// runner publishes `goal.paused` — the same cooperative stop as cancel,
+    /// with the distinct terminal kind the portal renders as Paused.
+    #[tokio::test]
+    async fn task_pause_stops_the_in_flight_goal_and_publishes_goal_paused() {
+        let (endpoint, server) = mock_search_endpoint(1500, 2);
+
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let runner = GoalRunner::with_web_endpoint(bus.clone(), endpoint);
+        runner.start();
+
+        bus.publish(Event::new(
+            "plan.goal",
+            "mobile",
+            json!({ "goal": "Search the web for the latest Rust async docs" }),
+        ))
+        .await
+        .expect("publish");
+
+        let mut goal_id = None;
+        for _ in 0..30 {
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                .await
+                .map(|r| r.expect("bus alive"))
+            else {
+                break;
+            };
+            if ev.kind == "goal.started" {
+                goal_id = ev
+                    .payload
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                break;
+            }
+        }
+        let goal_id = goal_id.expect("goal.started must be published");
+
+        bus.publish(Event::new(
+            "task.pause",
+            "mobile",
+            json!({ "task_id": goal_id }),
+        ))
+        .await
+        .expect("publish");
+
+        let mut saw_paused = false;
+        for _ in 0..30 {
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                .await
+                .map(|r| r.expect("bus alive"))
+            else {
+                break;
+            };
+            if ev.kind == "goal.paused" {
+                saw_paused = true;
+                assert_eq!(ev.payload["id"], goal_id);
+                assert_eq!(ev.payload["reason"], "paused_by_human");
+                break;
+            }
+        }
+        let _ = server.join();
+
+        assert!(saw_paused, "task.pause must produce goal.paused");
+    }
+
+    /// S3: a sensitive goal completes WITHOUT storing (the episode is held for
+    /// a human), the `goal.completed` payload carries the held episode's id,
+    /// and a `task.approve` for that id admits the episode into memory and
+    /// publishes `goal.approved` — the approve control request produces a real
+    /// state transition, not a silent ack.
+    #[tokio::test]
+    async fn task_approve_admits_a_held_episode_and_publishes_goal_approved() {
+        let (endpoint, server) = mock_search_endpoint(0, 2);
+
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let runner = GoalRunner::with_web_endpoint(bus.clone(), endpoint);
+        runner.start();
+
+        // The goal text carries a sensitivity marker → the admission gate
+        // holds the episode for a human instead of silently storing it.
+        bus.publish(Event::new(
+            "plan.goal",
+            "mobile",
+            json!({ "goal": "Search the web for how to reset my password safely" }),
+        ))
+        .await
+        .expect("publish");
+
+        let mut saw_terminal = false;
+        let mut pending_approval_id = None;
+        for _ in 0..30 {
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                .await
+                .map(|r| r.expect("bus alive"))
+            else {
+                break;
+            };
+            if ev.kind == "goal.completed" {
+                saw_terminal = true;
+                assert_eq!(
+                    ev.payload["pending_approval"],
+                    json!(true),
+                    "the completed payload surfaces the held episode"
+                );
+                pending_approval_id = ev
+                    .payload
+                    .get("pending_approval_id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                break;
+            }
+        }
+        let _ = server.join();
+
+        assert!(saw_terminal, "the sensitive goal must complete");
+        let pending_id = pending_approval_id.expect("pending_approval_id in the payload");
+
+        // Approve the held episode by its id → admitted + goal.approved.
+        bus.publish(Event::new(
+            "task.approve",
+            "mobile",
+            json!({ "task_id": pending_id }),
+        ))
+        .await
+        .expect("publish");
+
+        let mut saw_approved = false;
+        for _ in 0..30 {
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                .await
+                .map(|r| r.expect("bus alive"))
+            else {
+                break;
+            };
+            if ev.kind == "goal.approved" {
+                saw_approved = true;
+                assert_eq!(ev.payload["task_id"], pending_id);
+                break;
+            }
+        }
+        assert!(saw_approved, "task.approve must publish goal.approved");
+    }
+
+    /// S3 honesty: a `task.approve` whose id matches no held episode must be a
+    /// no-op — never a fabricated `goal.approved`. The state transition only
+    /// exists when there is a real held episode to approve.
+    #[tokio::test]
+    async fn task_approve_for_unknown_id_is_ignored() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let runner = GoalRunner::new(bus.clone());
+        runner.start();
+
+        bus.publish(Event::new(
+            "task.approve",
+            "mobile",
+            json!({ "task_id": "ep-unknown" }),
+        ))
+        .await
+        .expect("publish");
+
+        // The control loop processes it within milliseconds; an idle window
+        // proves nothing was fabricated.
+        let mut saw_approved = false;
+        while let Ok(ev) = tokio::time::timeout(std::time::Duration::from_millis(300), rx.recv())
+            .await
+            .map(|r| r.expect("bus alive"))
+        {
+            if ev.kind == "goal.approved" {
+                saw_approved = true;
+            }
+        }
+        assert!(
+            !saw_approved,
+            "approving an unknown id must not fabricate a transition"
         );
     }
 }

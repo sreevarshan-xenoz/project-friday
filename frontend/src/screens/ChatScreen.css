@@ -288,6 +288,14 @@
   border-color: rgba(255, 92, 92, 0.25);
 }
 
+.chat-card--cancelled {
+  border-color: rgba(255, 92, 92, 0.18);
+}
+
+.chat-card--paused {
+  border-color: rgba(255, 176, 32, 0.22);
+}
+
 .chat-card-head {
   display: flex;
   align-items: center;
@@ -340,6 +348,16 @@
 .chat-card-status--failed {
   color: var(--fr-red);
   background: var(--fr-red-dim);
+}
+
+.chat-card-status--cancelled {
+  color: var(--fr-red);
+  background: var(--fr-red-dim);
+}
+
+.chat-card-status--paused {
+  color: var(--fr-amber);
+  background: var(--fr-amber-dim);
 }
 
 .chat-card-spinner {
@@ -396,6 +414,89 @@
   background: var(--fr-red-dim);
   border-radius: var(--fr-radius-sm);
   padding: var(--fr-sp-2) var(--fr-sp-3);
+}
+
+/* S3: pause/cancel controls on a running goal card. */
+.chat-card-controls {
+  display: flex;
+  gap: var(--fr-sp-2);
+  margin-top: var(--fr-sp-3);
+}
+
+.chat-card-control {
+  border: 1px solid var(--fr-border);
+  background: var(--fr-surface-2);
+  color: var(--fr-text-dim);
+  font-family: var(--fr-font);
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: var(--fr-sp-1) var(--fr-sp-3);
+  border-radius: var(--fr-radius-pill);
+  cursor: pointer;
+  transition: all var(--fr-duration) var(--fr-ease);
+}
+
+.chat-card-control--pause:hover {
+  color: var(--fr-amber);
+  border-color: rgba(255, 176, 32, 0.35);
+  background: var(--fr-amber-dim);
+}
+
+.chat-card-control--cancel:hover {
+  color: var(--fr-red);
+  border-color: rgba(255, 92, 92, 0.35);
+  background: var(--fr-red-dim);
+}
+
+/* S3: approve a held (sensitive) episode — task.approve → goal.approved. */
+.chat-card-approve {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--fr-sp-3);
+  margin-top: var(--fr-sp-3);
+  padding: var(--fr-sp-2) var(--fr-sp-3);
+  background: var(--fr-amber-dim);
+  border: 1px solid rgba(255, 176, 32, 0.22);
+  border-radius: var(--fr-radius-sm);
+}
+
+.chat-card-approve-text {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fr-text-dim);
+}
+
+.chat-card-approve-btn {
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 176, 32, 0.4);
+  background: transparent;
+  color: var(--fr-amber);
+  font-family: var(--fr-font);
+  font-size: 12px;
+  font-weight: 600;
+  padding: var(--fr-sp-1) var(--fr-sp-3);
+  border-radius: var(--fr-radius-pill);
+  cursor: pointer;
+  transition: all var(--fr-duration) var(--fr-ease);
+}
+
+.chat-card-approve-btn:hover {
+  background: var(--fr-amber-dim);
+  color: var(--fr-text);
+  border-color: rgba(255, 176, 32, 0.6);
+}
+
+.chat-card-approve--ok {
+  justify-content: flex-start;
+  background: var(--fr-green-dim);
+  border-color: rgba(61, 220, 132, 0.22);
+  color: var(--fr-green);
+  font-size: 12.5px;
+}
+
+.chat-card-approve-check {
+  font-weight: 700;
 }
 
 .chat-card-actions {

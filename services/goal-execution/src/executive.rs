@@ -42,6 +42,7 @@ use crate::VerifiedResult;
 use friday_investigation::{InvestigationEngine, InvestigationResult};
 use friday_knowledge::KnowledgeRecord;
 use friday_reflection::ReflectionEngine;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 // ── Executive ─────────────────────────────────────────────────────
@@ -94,6 +95,28 @@ impl std::fmt::Display for ExecutivePhase {
     }
 }
 
+/// Why a cycle stopped before reaching its natural end (S3 human control).
+/// `None` = the cycle runs to completion. The runner holds the executive's
+/// lock across the whole cycle, so a control request is never a dropped
+/// future — it is a cooperative flag the cycle checks at phase/action
+/// boundaries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControlStop {
+    /// A human cancelled the running goal (`task.cancel` → `goal.cancelled`).
+    Cancelled,
+    /// A human paused the running goal (`task.pause` → `goal.paused`).
+    Paused,
+}
+
+impl std::fmt::Display for ControlStop {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Cancelled => write!(f, "cancelled"),
+            Self::Paused => write!(f, "paused"),
+        }
+    }
+}
+
 /// Result of one executive cycle.
 #[derive(Debug, Clone, Default)]
 pub struct ExecutiveReport {
@@ -126,6 +149,27 @@ pub struct ExecutiveReport {
     /// phase, never reconstructed from phase/evidence metadata. `None` only
     /// when the cycle never executed a plan (those goals publish `failed`).
     pub result: Option<GoalResult>,
+    /// The cycle stopped before its natural end because a human cancelled the
+    /// running goal ([`ControlStop::Cancelled`]). A cancelled cycle records no
+    /// terminal episode — the runner publishes `goal.cancelled`.
+    pub cancelled: bool,
+    /// The cycle stopped because a human paused the running goal
+    /// ([`ControlStop::Paused`]). Same cooperative stop as cancellation; the
+    /// runner publishes `goal.paused`.
+    pub paused: bool,
+    /// The id of an episode the Consolidate phase held for human confirmation
+    /// (admission `Pending`). This is the handle a `task.approve` command
+    /// targets — `None` when nothing was held.
+    pub held_episode_id: Option<String>,
+}
+
+/// Record a control stop on a report: which stop fired and the elapsed time.
+/// Shared by the cycle's control checkpoints so a cancelled/paused cycle
+/// returns the same well-formed shape from every phase.
+fn mark_stopped(report: &mut ExecutiveReport, started_ms: u64, stop: ControlStop) {
+    report.cancelled = stop == ControlStop::Cancelled;
+    report.paused = stop == ControlStop::Paused;
+    report.duration_ms = chrono::Utc::now().timestamp_millis() as u64 - started_ms;
 }
 
 /// The Executive — orchestrates the cognitive cycle.
@@ -193,6 +237,12 @@ pub struct Executive {
     attention_manager: AttentionManager,
     /// Tick counter.
     cycle_count: u64,
+    /// Human-control flags (S3): the runner flips these on `task.cancel` /
+    /// `task.pause`, and the cycle checks them cooperatively at phase/action
+    /// boundaries. Both are `Arc<AtomicBool>` so the runner holds its own
+    /// clones while the cycle awaits inside the executive lock.
+    abort: Arc<AtomicBool>,
+    pause: Arc<AtomicBool>,
 }
 
 impl Executive {
@@ -294,6 +344,17 @@ impl Executive {
             }
             _ => None,
         };
+
+        // Human control: a cancel/pause that arrived during investigation stops
+        // the cycle before anything is planned or executed — no plan, no
+        // simulated future, no action. The report records the stop and the
+        // phases actually completed (never a terminal episode).
+        if let Some(stop) = self.control_stop() {
+            self.phase = ExecutivePhase::Idle;
+            workspace.clear_execution();
+            mark_stopped(&mut report, started_ms, stop);
+            return report;
+        }
 
         self.phase = ExecutivePhase::Plan;
         report.phases_completed.push(ExecutivePhase::Plan);
@@ -400,6 +461,15 @@ impl Executive {
                     let mut evidence_outputs: Vec<String> = Vec::new();
 
                     for (step, action) in p.actions.iter().enumerate() {
+                        // Human control checkpoint: a cancel/pause that landed
+                        // during a previous action stops the run HERE — no
+                        // further evidence or goal actions execute.
+                        if let Some(stop) = self.control_stop() {
+                            workspace.push_thought(format!(
+                                "executive: {stop} by human — skipping remaining actions"
+                            ));
+                            break;
+                        }
                         workspace
                             .push_thought(format!("executive: executing: {}", action.instruction));
                         let expectation = Expectation::success(&action.instruction);
@@ -573,6 +643,18 @@ impl Executive {
             }
         }
 
+        // Human control: a cancel/pause that arrived during execution stops the
+        // cycle here — the report records exactly what ran before the stop
+        // (partial evidence trail, phases), and the cycle skips verification,
+        // reflection, consolidation and learning. A cancelled goal produces no
+        // terminal episode; the runner publishes `goal.cancelled`/`goal.paused`.
+        if let Some(stop) = self.control_stop() {
+            self.phase = ExecutivePhase::Idle;
+            workspace.clear_execution();
+            mark_stopped(&mut report, started_ms, stop);
+            return report;
+        }
+
         self.phase = ExecutivePhase::Verify;
         report.phases_completed.push(ExecutivePhase::Verify);
 
@@ -702,7 +784,10 @@ impl Executive {
                 workspace.push_thought(format!("executive: episode rejected — {reason}"));
             }
             AdmissionVerdict::Pending(reason) => {
-                self.admission.hold(episode, reason);
+                let held_id = self.admission.hold(episode, reason);
+                // Surface the held episode's handle so the runner can offer a
+                // `task.approve` path for it (S3).
+                report.held_episode_id = Some(held_id);
                 report.episode_stored = false;
                 workspace.push_thought(format!(
                     "executive: episode held for human confirmation — {reason}"
@@ -743,12 +828,64 @@ impl Executive {
         &self.episode_store
     }
 
+    pub fn episode_store_mut(&mut self) -> &mut EpisodeStore {
+        &mut self.episode_store
+    }
+
     pub fn admission(&self) -> &MemoryAdmissionController {
         &self.admission
     }
 
     pub fn admission_mut(&mut self) -> &mut MemoryAdmissionController {
         &mut self.admission
+    }
+
+    /// A clone of the cancellation flag — the runner flips it on `task.cancel`.
+    /// The cycle checks it at phase/action boundaries and stops cooperatively.
+    pub fn abort_token(&self) -> Arc<AtomicBool> {
+        self.abort.clone()
+    }
+
+    /// A clone of the pause flag — the runner flips it on `task.pause`.
+    pub fn pause_token(&self) -> Arc<AtomicBool> {
+        self.pause.clone()
+    }
+
+    /// Cancel the current cycle: the next phase/action boundary stops it and
+    /// the report records `cancelled = true`. Safe to call while the cycle is
+    /// not running (the next cycle picks it up — the runner clears both flags
+    /// when a goal starts).
+    pub fn cancel(&self) {
+        self.abort.store(true, Ordering::SeqCst);
+    }
+
+    /// Pause the current cycle: same cooperative stop as [`Self::cancel`],
+    /// reported as `paused = true`.
+    pub fn pause(&self) {
+        self.pause.store(true, Ordering::SeqCst);
+    }
+
+    /// Clear the pause flag so a paused cycle may run again.
+    pub fn resume(&self) {
+        self.pause.store(false, Ordering::SeqCst);
+    }
+
+    /// Whether a human control stop is pending at this checkpoint.
+    fn control_stop(&self) -> Option<ControlStop> {
+        if self.abort.load(Ordering::SeqCst) {
+            Some(ControlStop::Cancelled)
+        } else if self.pause.load(Ordering::SeqCst) {
+            Some(ControlStop::Paused)
+        } else {
+            None
+        }
+    }
+
+    /// Human approves a held episode (admission `Pending`) into episodic
+    /// memory. `Err` when no episode is held under that id — the runner
+    /// publishes nothing for a miss.
+    pub fn approve_pending(&mut self, id: &str) -> Result<(), String> {
+        self.admission.approve(id, &mut self.episode_store)
     }
 
     pub fn semantic_memory(&self) -> &SemanticMemory {
@@ -942,6 +1079,8 @@ impl Default for Executive {
             admission: MemoryAdmissionController::new(),
             attention_manager: AttentionManager::new(),
             cycle_count: 0,
+            abort: Arc::new(AtomicBool::new(false)),
+            pause: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -952,6 +1091,41 @@ mod tests {
     use crate::{
         AdmissionReason, ExecutionState, GoalResultKind, MockTool, PlanSource, WorldState,
     };
+    use async_trait::async_trait;
+    use std::sync::Mutex;
+    use tokio::sync::{oneshot, watch};
+
+    /// A test tool whose execution parks until the test releases the gate, so a
+    /// test can deterministically land a cancel WHILE the action is "running" —
+    /// proving the cooperative checkpoint stops the cycle mid-execution.
+    struct GatedTool {
+        capabilities: Vec<Capability>,
+        began: Mutex<Option<oneshot::Sender<()>>>,
+        gate_rx: watch::Receiver<bool>,
+    }
+
+    #[async_trait]
+    impl Tool for GatedTool {
+        fn name(&self) -> &str {
+            "gated"
+        }
+        fn description(&self) -> &str {
+            "test gate tool"
+        }
+        fn capabilities(&self) -> Vec<Capability> {
+            self.capabilities.clone()
+        }
+        async fn execute(&self, _action: &Action, _context: &ExecutionContext) -> ToolResult {
+            if let Some(sender) = self.began.lock().unwrap().take() {
+                let _ = sender.send(());
+            }
+            if !*self.gate_rx.borrow() {
+                let mut rx = self.gate_rx.clone();
+                let _ = rx.changed().await;
+            }
+            ToolResult::success("gated output")
+        }
+    }
 
     #[tokio::test]
     async fn executive_investigates_before_planning_and_executes_evidence() {
@@ -1758,5 +1932,183 @@ mod tests {
             report.phases_completed
         );
         assert!(report.evidence_trail.records.is_empty());
+    }
+
+    // ── S3 human control ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn cancelled_cycle_stops_before_executing_and_records_no_episode() {
+        // A cancel that lands before/at the cycle start stops the cycle at the
+        // first checkpoint: nothing executes, no terminal episode is recorded,
+        // and the report carries the cancellation.
+        let workspace = CognitiveBlackboard::new();
+        let mut executive = Executive::new();
+        executive.register_tool(Box::new(
+            MockTool::success("terminal", "ran")
+                .with_capabilities(vec![Capability::ExecuteCommand]),
+        ));
+        workspace.set_world_state(WorldState::new().with_tool(Capability::ExecuteCommand));
+
+        executive.add_observation("run the build", 0.9);
+        executive.cancel();
+        let report = executive.cycle(&workspace).await;
+
+        assert!(report.cancelled, "cancel must mark the report cancelled");
+        assert!(!report.paused);
+        assert!(
+            !report.plan_executed,
+            "a cancelled goal never executes a plan"
+        );
+        assert!(
+            !report.phases_completed.contains(&ExecutivePhase::Execute),
+            "cycle stops before execution: {:?}",
+            report.phases_completed
+        );
+        assert!(!report.episode_stored);
+        assert!(
+            executive.episode_store().episodes().is_empty(),
+            "a cancelled goal records no terminal episode"
+        );
+    }
+
+    #[tokio::test]
+    async fn paused_then_resumed_cycle_runs_to_completion() {
+        let workspace = CognitiveBlackboard::new();
+        let mut executive = Executive::new();
+        executive.register_tool(Box::new(
+            MockTool::success("terminal", "Build complete")
+                .with_capabilities(vec![Capability::ExecuteCommand]),
+        ));
+        workspace.set_world_state(WorldState::new().with_tool(Capability::ExecuteCommand));
+
+        executive.add_observation("run the build", 0.9);
+        // Pause then resume before the cycle: pause must not stick.
+        executive.pause();
+        executive.resume();
+        let report = executive.cycle(&workspace).await;
+
+        assert!(!report.cancelled && !report.paused, "{report:?}");
+        assert!(
+            report.plan_executed,
+            "a resumed goal runs to completion: {report:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_landing_mid_execution_skips_remaining_actions() {
+        // A web evidence goal has several actions (web + docs + main). The
+        // first action parks on a gate; the test cancels while it is still
+        // "running", then releases it — the cooperative checkpoint must skip
+        // every remaining action, so only the web evidence record exists.
+        let workspace = CognitiveBlackboard::new();
+        let mut executive = Executive::new();
+
+        let (gate_tx, gate_rx) = watch::channel(false);
+        let (began_tx, mut began_rx) = oneshot::channel();
+        executive.register_tool(Box::new(GatedTool {
+            capabilities: vec![
+                Capability::SearchWeb,
+                Capability::Custom("web.search".into()),
+            ],
+            began: Mutex::new(Some(began_tx)),
+            gate_rx,
+        }));
+        executive.register_tool(Box::new(
+            MockTool::success("docs", "docs content").with_capabilities(vec![
+                Capability::ReadFile,
+                Capability::Custom("docs.search".into()),
+            ]),
+        ));
+        executive.register_tool(Box::new(
+            MockTool::success("terminal", "ok").with_capabilities(vec![Capability::ExecuteCommand]),
+        ));
+        workspace.set_world_state(
+            WorldState::new()
+                .with_tool(Capability::SearchWeb)
+                .with_tool(Capability::ReadFile)
+                .with_tool(Capability::ExecuteCommand)
+                .with_tool(Capability::Custom("web.search".into()))
+                .with_tool(Capability::Custom("docs.search".into())),
+        );
+
+        executive.add_observation("Search the web for the latest Rust async docs", 0.9);
+
+        let abort = executive.abort_token();
+        let workspace_clone = workspace.clone();
+        let handle = tokio::spawn(async move { executive.cycle(&workspace_clone).await });
+
+        // Wait until the gated web action is actually executing…
+        tokio::time::timeout(std::time::Duration::from_secs(5), &mut began_rx)
+            .await
+            .expect("the gated web action must start executing")
+            .expect("began signal");
+        // …land the cancel while it is parked, then release the gate.
+        abort.store(true, Ordering::SeqCst);
+        let _ = gate_tx.send(true);
+        let report = handle.await.expect("cycle task");
+
+        assert!(report.cancelled, "mid-execution cancel marks the report");
+        assert!(
+            !report.plan_executed,
+            "the main (non-evidence) action was skipped: {report:?}"
+        );
+        assert_eq!(
+            report.evidence_trail.records.len(),
+            1,
+            "only the web evidence action ran; docs + main were skipped: {:?}",
+            report.evidence_trail.records
+        );
+        assert_eq!(report.evidence_trail.records[0].channel, "web");
+        assert!(
+            workspace
+                .get_thoughts()
+                .iter()
+                .any(|t| t.contains("skipping remaining actions")),
+            "{:?}",
+            workspace.get_thoughts()
+        );
+    }
+
+    #[tokio::test]
+    async fn sensitive_goal_holds_episode_and_approve_pending_admits_it() {
+        let workspace = CognitiveBlackboard::new();
+        let mut executive = Executive::new();
+        executive.register_tool(Box::new(
+            MockTool::success("terminal", "rotated")
+                .with_capabilities(vec![Capability::ExecuteCommand]),
+        ));
+        workspace.set_world_state(WorldState::new().with_tool(Capability::ExecuteCommand));
+
+        // The sensitivity gate fires on "api_key"/"password" — the episode is
+        // held for a human, never silently stored, and the report exposes the
+        // held id as the approve handle.
+        executive.add_goal("rotate my api_key and reset the password", 0.9);
+        let report = executive.cycle(&workspace).await;
+
+        assert_eq!(
+            report.admission_verdict,
+            Some(AdmissionVerdict::Pending(AdmissionReason::Sensitive)),
+            "{:?}",
+            report.admission_signal
+        );
+        let held_id = report
+            .held_episode_id
+            .clone()
+            .expect("a held episode exposes its approve handle");
+        assert_eq!(executive.admission().pending_count(), 1);
+        assert!(
+            executive.episode_store().episodes().is_empty(),
+            "held, never silently stored"
+        );
+
+        // task.approve path: approve_pending moves the episode into memory.
+        executive.approve_pending(&held_id).expect("approve");
+        assert_eq!(executive.admission().pending_count(), 0);
+        assert_eq!(executive.episode_store().episodes().len(), 1);
+        // A second approve of the same id is a miss — no state change.
+        assert!(
+            executive.approve_pending(&held_id).is_err(),
+            "approving an already-approved id is a miss"
+        );
     }
 }
