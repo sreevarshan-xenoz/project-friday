@@ -16,6 +16,7 @@ pub mod probe;
 pub mod protocol;
 pub mod session;
 pub mod transport;
+pub mod voice;
 
 pub use auth::{sign_pairing, AuthError, AuthRegistry, PairingChallenge};
 pub use bridge::{translate, BusBridge};
@@ -28,3 +29,4 @@ pub use protocol::{
 };
 pub use session::{MobileSession, PhoneCapabilities, SessionRegistry};
 pub use transport::{Command, WsServer};
+pub use voice::VoiceIntake;

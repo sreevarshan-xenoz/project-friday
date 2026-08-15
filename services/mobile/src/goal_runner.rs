@@ -3280,6 +3280,90 @@ mod tests {
         assert_eq!(ev.payload["observations_folded"], json!(1), "{ev:?}");
     }
 
+    /// S8-A acceptance: the voice intake drives the *existing* goal loop end to
+    /// end. Synthetic PCM → `MockTranscriber` → `TurnDetected("open Chrome")`
+    /// → `VoiceIntake` → `plan.goal` (the same intake the portal uses) →
+    /// `GoalRunner` → planning → execution → verification → `goal.completed`.
+    ///
+    /// The transcript arrives verbatim and the loop answers exactly like a
+    /// portal goal — the voice goes through the same capability machinery, not
+    /// a voice→tool shortcut. The host launch goes over the same Windows bridge
+    /// mock the existing "open notepad" test uses.
+    #[tokio::test]
+    async fn voice_turn_drives_the_existing_goal_loop_to_goal_completed() {
+        use crate::voice::test_turn_pcm;
+        use crate::VoiceIntake;
+        use friday_sensors::audio::{AudioSensor, MockTranscriber, SpeechToText};
+        use friday_windows::ipc::MockTransport;
+        use friday_windows::protocol::BridgeResponse;
+
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+
+        let launched = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let launched_clone = launched.clone();
+        let adapter = WindowsAdapter::new(Arc::new(MockTransport::new(Arc::new(
+            move |frame: friday_windows::protocol::BridgeFrame| {
+                launched_clone
+                    .lock()
+                    .unwrap()
+                    .push(frame.message.action.clone());
+                BridgeResponse::ok(json!({
+                    "hwnd": 99,
+                    "title": "Chrome",
+                    "pid": 4242,
+                }))
+            },
+        ))));
+
+        let runner = GoalRunner::with_investigation_engine(
+            bus.clone(),
+            InvestigationEngine::heuristic(),
+            None,
+            None,
+            None,
+            Some(adapter),
+            None,
+            None,
+        );
+        runner.start();
+
+        // The ear: the existing AudioSensor behind the frozen SpeechToText seam,
+        // driven hermetically over synthetic PCM.
+        let asr: Arc<dyn SpeechToText> = Arc::new(MockTranscriber {
+            phrase: "open Chrome".into(),
+        });
+        let mut voice = VoiceIntake::new(bus.clone(), AudioSensor::without_capture().with_asr(asr));
+        voice.feed_pcm(&test_turn_pcm());
+
+        // The turn becomes a plan.goal on the intake — raw words, no plan made.
+        let admitted = voice.poll().await;
+        assert_eq!(admitted, vec!["open Chrome".to_string()]);
+
+        // The goal loop answers: planning → execution → verification → terminal.
+        let mut completed = None;
+        for _ in 0..30 {
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                .await
+                .map(|r| r.expect("bus alive"))
+            else {
+                break;
+            };
+            if ev.kind == "goal.completed" {
+                completed = Some(ev);
+                break;
+            }
+        }
+        let ev = completed.expect("voice goal must complete");
+        assert_eq!(ev.payload["session_id"], VoiceIntake::DEFAULT_SESSION_ID);
+        assert!(ev.payload["result"].is_object(), "a real result: {ev:?}");
+        assert_eq!(
+            launched.lock().unwrap().clone(),
+            vec!["windows.open".to_string()],
+            "the spoken goal ran through the existing host-launch capability, once"
+        );
+    }
+
     /// S7-B: the real laptop runner's learning loop. The same web-research
     /// goal runs four times against a hermetic mock search endpoint:
     ///

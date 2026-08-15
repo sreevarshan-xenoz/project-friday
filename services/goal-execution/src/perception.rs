@@ -59,8 +59,14 @@ impl Observer {
 /// Returns the updated state plus **one human-readable description per
 /// observable change** — the attention item the Observe phase surfaces. Only
 /// the senses the laptop observer wires today are folded (screen + window
-/// focus); the match is generic, so audio/vision objects slot into the same
-/// path later without touching the loop or the Executive.
+/// focus + spoken turns); the match is generic, so more senses slot into the
+/// same path without touching the loop or the Executive.
+///
+/// A spoken turn is folded **only** when it carries a transcript — that is the
+/// user actually saying something FRIDAY can reason about. A bare VAD segment
+/// (`transcript: null`, no ASR backend) is ignored honestly, never coerced
+/// into a fabricated observation. The fold records *what the user said*; it
+/// does not decide what it means — the existing goal pipeline does that.
 ///
 /// The fold is **pure**: the returned state is a copy with the new
 /// observations written into `variables` — the same `WorldState` the planner
@@ -104,6 +110,24 @@ pub fn fold_observation(
                         .unwrap_or("unknown")
                 ),
             ),
+            // S8-A: a spoken turn with a transcript — the user actually said
+            // something. The fold records it in the WorldState and surfaces it
+            // as attention ("user said: …"), but the utterance is raw text,
+            // not a plan: the existing goal pipeline decides what it means. A
+            // turn without a transcript (no ASR attached) is a bare VAD
+            // segment — ignored honestly, never invented into a goal.
+            Topic::TurnDetected => {
+                let transcript = event
+                    .payload
+                    .get("transcript")
+                    .and_then(|t| t.as_str())
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty());
+                match transcript {
+                    Some(text) => ("spoken_utterance", format!("user said: {text}")),
+                    None => continue,
+                }
+            }
             // Not a sense the laptop observer folds — ignored honestly, never
             // coerced into a fabricated observation.
             _ => continue,
@@ -161,6 +185,75 @@ mod tests {
         let base = WorldState::new().with_network(true);
         let (state, descriptions) = fold_observation(base.clone(), &[]);
         assert_eq!(state, base, "nothing observed → nothing changes");
+        assert!(descriptions.is_empty());
+    }
+
+    #[test]
+    fn fold_folds_transcripted_voice_turn_into_world_and_attention() {
+        // S8-A: a spoken turn with a transcript is a real observation — it lands
+        // in the WorldState and surfaces as attention ("user said: …"), while
+        // staying raw text (no plan is created by perception).
+        let base = WorldState::new();
+        let events = vec![WorkspaceEvent::new(
+            Topic::TurnDetected,
+            serde_json::json!({
+                "frames": 12,
+                "duration_ms": 240,
+                "sample_rate": 16_000,
+                "asr": "mock",
+                "transcript": "open Chrome",
+            }),
+        )];
+
+        let (state, descriptions) = fold_observation(base, &events);
+
+        assert_eq!(
+            state.variables["spoken_utterance"]["transcript"],
+            "open Chrome"
+        );
+        assert_eq!(state.variables["spoken_utterance"]["asr"], "mock");
+        assert_eq!(state.variables["spoken_utterance"]["duration_ms"], 240);
+        assert_eq!(
+            descriptions,
+            vec!["user said: open Chrome".to_string()],
+            "the attention item says what the user said, nothing more"
+        );
+    }
+
+    #[test]
+    fn fold_ignores_voice_turn_without_transcript_honestly() {
+        // A VAD segment with no ASR transcript is not something we can act on —
+        // the fold ignores it, never fabricating a spoken observation.
+        let base = WorldState::new();
+        let events = vec![
+            WorkspaceEvent::new(
+                Topic::TurnDetected,
+                serde_json::json!({
+                    "frames": 12,
+                    "duration_ms": 240,
+                    "sample_rate": 16_000,
+                    "asr": serde_json::Value::Null,
+                    "transcript": serde_json::Value::Null,
+                }),
+            ),
+            WorkspaceEvent::new(
+                Topic::TurnDetected,
+                serde_json::json!({
+                    "frames": 6,
+                    "duration_ms": 120,
+                    "sample_rate": 16_000,
+                    "asr": "mock",
+                    "transcript": "   ",
+                }),
+            ),
+        ];
+
+        let (state, descriptions) = fold_observation(base, &events);
+
+        assert!(
+            !state.variables.contains_key("spoken_utterance"),
+            "no transcript → no invented spoken observation"
+        );
         assert!(descriptions.is_empty());
     }
 
