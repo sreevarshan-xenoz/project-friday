@@ -115,14 +115,16 @@
 
 ## Build order (recommended)
 
-| Step | Slice | Unlocks |
-| ---- | ----- | ------- |
-| 1 | **Live host** — one daemon owning the loop: session context, memory write + recall, goal intake over a live protocol, approve/cancel surface | Path 3 core; the power line |
-| 2 | **Live portal** — wire the existing chat UI to the host (goal/approve/cancel/events), retire the dead bridge `Control` path | Path 3 user-visible |
-| 3 | **Desktop on the kernel** — register WindowsAdapter + browser session on the real kernel path | Path 4 |
-| 4 | **Live recovery** — classify failures at the action-failure point, real decisions, escalate to human | Path 5 |
-| 5 | **Perception into the loop** — real sensor loop → WorldModel observation → salience decision → action | Path 2 |
-| 6 | **Learning closed** — workflow durability + completion sink admits skills + timeline records | Path 6 |
-| 7 | **Voice I/O** — ASR + TTS + wake loop | Path 1 (rides on host) |
+| Step | Slice | Unlocks | Laptop status |
+| ---- | ----- | ------- | ------------- |
+| 1 | **Live host** — one daemon owning the loop: session context, memory write + recall, goal intake over a live protocol, approve/cancel surface | Path 3 core; the power line | ✅ Gap A–C (`7882658` / `e571a3c`) |
+| 2 | **Live portal** — wire the existing chat UI to the host (goal/approve/cancel/events), retire the dead bridge `Control` path | Path 3 user-visible | ✅ Assistant tab live (Gap A) |
+| 3 | **Desktop on the kernel** — register WindowsAdapter + browser session on the real kernel path | Path 4 | ✅ `8f19e2f` |
+| 4 | **Live recovery** — classify failures at the action-failure point, real decisions, escalate to human | Path 5 | ✅ `3e63361` |
+| 5 | **Perception into the loop** — real sensor loop → WorldModel observation → salience decision → action | Path 2 | ✅ `3bf4645` |
+| 6 | **Learning closed** — workflow durability + completion sink admits skills + timeline records | Path 6 | ✅ `07f8bb9` / `9ff78fb` |
+| 7 | **Voice I/O** — ASR + TTS + wake loop | Path 1 (rides on host) | ⏭ S8 next |
 
 Steps 1–2 make the biggest user-visible jump from "organs" to "creature"; 3–6 deepen it; 7 is the fantasy layer. The 24 h endurance and Server FRIDAY stay parked until Paths 1–6 are live on this laptop.
+
+> Authoritative per-gap record (design + acceptance): [`docs/STEP1-LIVE-HOST.md`](docs/STEP1-LIVE-HOST.md) Gaps A–G. `07f8bb9` = S7 code, `9ff78fb` = S7 receipt (Gap G).
