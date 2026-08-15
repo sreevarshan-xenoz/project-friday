@@ -228,6 +228,63 @@ observed state, no infinite retry machine). Runner (`goal_runner.rs` via
 `recoverable: true`, `failed_reason`, `recovery_attempts: 3`,
 `last_observed_state`).
 
+## Gap F — laptop perception on the live kernel path ✅ shipped
+
+**Problem:** FRIDAY already had real sensors (`WindowsScreenSensor` — Win32
+foreground window + FNV-1a client-area diff; `WindowsFocusSensor` —
+`GetForegroundWindow`; plus audio/camera pipelines) and a `SensorLoop`, but
+**none of it sat on the live laptop path**. `friday-goal-execution` had zero
+`sensors` dependency, the blackboard `WorldState` was written exactly once at
+runner construction (the static capability surface) and never updated, and the
+Executive's Observe phase read only that static snapshot. Perception existed;
+nothing on the host consumed it.
+
+**Design (implemented — the approved seam):**
+1. **One observation path, one WorldState.** The existing `SensorLoop` gains a
+   workspace-agnostic `poll_all_events()` (same loop, same ordering, no
+   publishing). The new adapter `goal-execution/src/perception.rs` — `Observer`
+   (owns the `SensorLoop`) plus a **pure** `fold_observation(state, events)`
+   that maps observed `WorkspaceEvent`s into the *existing* blackboard
+   `WorldState.variables` (`Topic::Screen → "screen"`, `Topic::WindowFocusChanged
+   → "active_window"`, other topics ignored honestly) and returns one
+   human-readable description per change. No second perception engine, no second
+   world abstraction: the cognitive runtime's `PerceptionEngine` handler stays
+   where it is.
+2. **The Executive observes.** `Executive` gains an optional
+   `observer: Option<Observer>` (`with_observer` builder; default `None` = the
+   exact pre-S6 cycle). The Observe phase polls the loop, folds events into the
+   world state, and surfaces each change as an `AttentionItemKind::Observation`
+   (importance 0.5 / urgency 0.4 / novelty 0.5 → aggregate 0.325) — scored to
+   **always lose focus to a fed goal** (0.395), so a sensor observation can
+   never hijack a user goal. `ExecutiveReport.observations_folded` counts the
+   observations actually folded (never a guessed count).
+3. **The runner wires the machine.** The daemon's `with_fabric_and_memory`
+   builds the real observer (cfg windows): one `SensorLoop` with
+   `WindowsScreenSensor` + `WindowsFocusSensor`. `goal.completed` /
+   `goal.failed` carry `observations_folded`. Hermetic runners pass `None` — a
+   test never touches a real window or screen.
+
+**Honest boundary:** S6 delivers **screen + focus perception into the cognitive
+world state with attention surfacing and goal-safe focus ordering**. It does
+**not** claim OCR, vision-language reasoning, full UI-element understanding, or
+autonomous (unsupervised) goal formation — those are later layers on this same
+observation path (audio/vision objects fold through the identical
+`fold_observation` match).
+
+**Acceptance (tests, green):** S6-A at the kernel (`executive.rs`):
+`observe_folds_sensor_events_into_world_state_and_attention` — a real
+`SensorLoop` + `MockSensor` screen event, one Observe phase → `WorldState`
+gains `variables["screen"]`, the change surfaces as an `Observation` attention
+item, `observations_folded == 1`, and existing world capabilities are never
+dropped; plus `cycle_without_observer_is_unchanged` (no observer → no variables,
+no sensor attention item, pre-S6 behavior preserved). S6-B at the runner
+(`goal_runner.rs` via `MockTransport` + observer with a mock screen sensor):
+`runner_observes_sensors_into_world_state_without_hijacking_the_goal` — the real
+Observe phase through the actual `GoalRunner` lands the observation in the
+blackboard WorldState, surfaces it in attention alongside the fed goal, the
+`goal.completed` payload reports `observations_folded: 1`, and the host launch
+proves the user goal (not the observation) drove execution.
+
 ## Build order (each lands green independently)
 
 | # | Slice | Files | Ships with | Status |
@@ -237,11 +294,13 @@ observed state, no infinite retry machine). Runner (`goal_runner.rs` via
 | 3 | Gap C — cancel/pause/approve consumed | `executive.rs`, `goal_runner.rs`, `protocol.ts`, `ChatScreen.tsx` | human can stop/admit FRIDAY | ✅ `e571a3c` |
 | 4 | Gap D — browser+windows on kernel | `planning.rs`, `goal_runner.rs`, `Cargo.toml` | laptop control (open apps / URLs) | ✅ `8f19e2f` |
 | 5 | Gap E — in-cycle recovery | `planning.rs`, `trace.rs`, `executive.rs`, `goal_runner.rs` | failure → re-observe → bounded retry → verify | ✅ `3e63361` |
+| 6 | Gap F — laptop perception | `sensors/src/lib.rs`, `goal-execution/src/perception.rs`, `executive.rs`, `goal_runner.rs`, `Cargo.toml` | screen/focus → WorldState → attention | ✅ `3bf4645` |
 
 ## Non-goals for Step 1
 
 - No new daemon binary (extend `friday-mobile-daemon`).
 - No voice, no TTS, no wake loop (that's Step 7, rides on this host).
-- No perception→action (Step 6).
+- No OCR / vision-language reasoning / full UI-element understanding (later
+  layers on the same observation path).
 - No durable WorkflowEngine swap of the Executive (Step 6).
 - No 24 h endurance / Server FRIDAY (parked).
