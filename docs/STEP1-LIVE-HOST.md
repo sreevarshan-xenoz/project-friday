@@ -285,6 +285,73 @@ blackboard WorldState, surfaces it in attention alongside the fed goal, the
 `goal.completed` payload reports `observations_folded: 1`, and the host launch
 proves the user goal (not the observation) drove execution.
 
+## Gap G — learning closes the loop on the live kernel path ✅ shipped
+
+**Problem:** the Executive already consolidated every admitted episode through
+`SemanticMemory` and promoted patterns into `Policy`s, but on the laptop runner
+the loop was **structurally inert**: learned policies could never influence a
+real goal. Evidence actions carry the channel skill ids
+(`Capability::Custom("web.search")`, `docs.search`, …) while the planner's
+classification infers built-in verbs (`SearchWeb`, `ReadFile`, …). The promotion
+gate compared capabilities by **exact equality**, so no promoted `Sequence`
+policy ever qualified for a runner goal — `policies_applied` was always 0. And
+the runner's tool registry resolved actions by capability alone, so a policy's
+goal-level `web.search` action collided with the evidence tool and was refused
+(evidence-only instructions).
+
+**Design (implemented — the approved seam):**
+1. **Relevance gate by capability overlap** (`planning.rs`): `capabilities_overlap`
+   maps exactly the five approved channel⇄verb pairs — `web.*⇄SearchWeb`,
+   `docs.*⇄ReadFile`, `memory.recall⇄SearchMemory`,
+   `filesystem.list_directory⇄ListDirectory`, `filesystem.read_file⇄ReadFile`.
+   Deliberately **not** mapped: `git.*`, `codeintel.*`, `external.*`,
+   `windows.open`, `web.open` — so a learned `git.*` sequence can never qualify
+   an arbitrary shell goal. `policy_applies` / `qualifying_policy_count` use it.
+2. **Well-formed Sequence policies** (`experience.rs`): workflow patterns record
+   their real `from → then` transition; the promoted `Sequence` policy carries
+   `capability: from` + `config["then"]` so the planner can actually consume it
+   (no degenerate `execute_command then execute_command`).
+3. **Real reflection** (`executive.rs`): the Reflect phase takes the strongest
+   real GoalEngine insight (`GoalReport.insights`) instead of the old fabricated
+   `builtin` knowledge record; a goal with no insight records no reflection
+   (honest empty — never fiction).
+4. **Evidence-aware dispatch** (`verification.rs` + `execution.rs`):
+   `ToolRegistry::resolve_action` routes `gather evidence:` actions to their
+   channel's evidence tool **by name** (`evidence:web`, `evidence:docs`, …) —
+   preserving the normalized / health-gated evidence seam — while goal-level
+   actions resolve by capability. The runner registers dedicated
+   `web.search` / `docs.search` goal tools ahead of the evidence wrappers, so a
+   learned workflow policy executes real searches.
+5. **Learning receipts** (`executive.rs` + `goal_runner.rs`): `policies_derived`
+   (consolidated knowledge after the cycle's Learn) and `policies_applied`
+   (how many qualified for THIS goal's planning) ride every `goal.completed`.
+
+**Honest boundary:** S7 proves learning closes the loop on the laptop runner —
+workflow → semantic memory → relevance-gated policy → applied plan → verified
+execution → real reflection — behind a deliberately narrow equivalence surface.
+It does **not** claim blind policy injection (every application is relevance-
+gated and rank-competitive), a reflection→skill compiler, a persistence redesign
+of the pattern store (journal-backed episodes already replay), or the 24 h
+endurance / Server FRIDAY layers (parked).
+
+**Acceptance (tests, green):** S7-A at the kernel (`executive.rs`):
+`learning_closes_the_loop_into_policy_driven_planning` (evidence plans →
+verified execution → semantic memory → support 3 → `policies_derived` ≥ 1 → the
+matching goal's planning qualifies → the PolicyDriven plan wins the ranking),
+`unrelated_goal_is_not_hijacked_by_a_learned_policy` (a non-matching goal plans
+Direct with `policies_applied == 0`), and
+`web_workflow_policy_qualifies_only_matching_web_goals` (the safety triangle:
+`open notepad` and `build the project` never qualify the web policy; the matching
+web goal does). S7-B at the runner (`goal_runner.rs` against a hermetic mock
+search endpoint): `runner_learns_and_reuses_a_web_workflow_policy` — the same
+web-research goal runs four times; runs 1–3 execute evidence-gated plans with
+`policies_derived` filling at support 3; run 4's goal qualifies the learned
+policy (`policies_applied` ≥ 1), plans
+`SearchWeb ⇄ web.search → docs.search` as `PolicyDriven` (2 actions at 0.75
+confidence beating the 3-step evidence plan at 0.769), executes against the same
+hermetic tools, verifies, and completes; the stored episode's reflection is the
+real insight naming the goal — never "builtin".
+
 ## Build order (each lands green independently)
 
 | # | Slice | Files | Ships with | Status |
@@ -295,6 +362,7 @@ proves the user goal (not the observation) drove execution.
 | 4 | Gap D — browser+windows on kernel | `planning.rs`, `goal_runner.rs`, `Cargo.toml` | laptop control (open apps / URLs) | ✅ `8f19e2f` |
 | 5 | Gap E — in-cycle recovery | `planning.rs`, `trace.rs`, `executive.rs`, `goal_runner.rs` | failure → re-observe → bounded retry → verify | ✅ `3e63361` |
 | 6 | Gap F — laptop perception | `sensors/src/lib.rs`, `goal-execution/src/perception.rs`, `executive.rs`, `goal_runner.rs`, `Cargo.toml` | screen/focus → WorldState → attention | ✅ `3bf4645` |
+| 7 | Gap G — learning closed | `planning.rs`, `experience.rs`, `executive.rs`, `verification.rs`, `execution.rs`, `goal_runner.rs` | workflow → policy → applied plan (relevance-gated) | ✅ `07f8bb9` |
 
 ## Non-goals for Step 1
 
