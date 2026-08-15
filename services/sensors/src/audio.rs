@@ -214,6 +214,10 @@ impl TurnDetector {
 /// ASR seam — the frozen plug-in point for real speech-to-text backends.
 /// A turn's samples are handed to the attached backend; the result rides on
 /// the workspace event. Nothing in the pipeline hard-depends on a backend.
+///
+/// Real backend: [`crate::whisper_cpp::WhisperCppTranscriber`] (S8-B) — runs
+/// the whisper.cpp CLI over a turn's 16 kHz mono PCM. Test backend:
+/// [`MockTranscriber`].
 #[async_trait]
 pub trait SpeechToText: Send + Sync {
     fn name(&self) -> &str;

@@ -5,6 +5,7 @@ pub mod audio;
 #[cfg(target_os = "windows")]
 pub mod screen;
 pub mod vision;
+pub mod whisper_cpp;
 #[cfg(target_os = "windows")]
 pub mod windows_focus;
 
