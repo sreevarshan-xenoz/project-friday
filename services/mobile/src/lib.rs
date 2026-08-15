@@ -29,4 +29,4 @@ pub use protocol::{
 };
 pub use session::{MobileSession, PhoneCapabilities, SessionRegistry};
 pub use transport::{Command, WsServer};
-pub use voice::VoiceIntake;
+pub use voice::{VoiceConfig, VoiceIntake};

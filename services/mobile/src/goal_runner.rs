@@ -56,6 +56,8 @@ use friday_sensors::{screen::WindowsScreenSensor, windows_focus::WindowsFocusSen
 use friday_windows::WindowsAdapter;
 use serde_json::json;
 
+use crate::voice::VoiceConfig;
+
 /// Real terminal tool for the built-in `ExecuteCommand` capability (the
 /// planner's `infer_capability` classifies goals like "run cargo test" as
 /// execute-command; the evidence seam only advertises `terminal.run/exec`
@@ -1032,6 +1034,7 @@ impl GoalRunner {
         bus: EventBus,
         fabric: Arc<InferenceFabric>,
         journal: Arc<MemoryJournal>,
+        voice: VoiceConfig,
     ) -> Self {
         Self::with_investigation_engine(
             bus,
@@ -1044,7 +1047,7 @@ impl GoalRunner {
             #[cfg(not(windows))]
             None,
             Some(BrowserAdapter::new()),
-            Self::live_observer(),
+            Self::live_observer(&voice),
         )
     }
 
@@ -1226,20 +1229,26 @@ impl GoalRunner {
         }
     }
 
-    /// The live-host observation seam (S6): the real Windows screen + focus
-    /// sensors on one SensorLoop, folded into the blackboard WorldState on
-    /// every Observe phase. Hermetic runners pass `None` so a test never
-    /// touches a real window or screen.
+    /// The live-host observation seam (S6 + S8-C): the real Windows screen +
+    /// focus sensors on one SensorLoop, plus — when voice is enabled — the
+    /// real microphone behind Whisper, all folded into the blackboard
+    /// WorldState on every Observe phase. Hermetic runners pass `None` so a
+    /// test never touches a real window, screen, or mic. A missing
+    /// microphone is honest silence: the sensor opens no capture device and
+    /// the loop simply reports nothing.
     #[cfg(windows)]
-    fn live_observer() -> Option<Observer> {
+    fn live_observer(voice: &VoiceConfig) -> Option<Observer> {
         let mut loop_ = SensorLoop::new();
         loop_.add(Box::new(WindowsScreenSensor::new()));
         loop_.add(Box::new(WindowsFocusSensor::new()));
+        if let Some(mic) = voice.sensor() {
+            loop_.add(Box::new(mic));
+        }
         Some(Observer::new(loop_))
     }
 
     #[cfg(not(windows))]
-    fn live_observer() -> Option<Observer> {
+    fn live_observer(_voice: &VoiceConfig) -> Option<Observer> {
         None
     }
 
@@ -3362,6 +3371,62 @@ mod tests {
             vec!["windows.open".to_string()],
             "the spoken goal ran through the existing host-launch capability, once"
         );
+    }
+
+    /// S8-C hermetic: the *live* voice wiring — an enabled [`VoiceConfig`]
+    /// attaches the real [`WhisperCppTranscriber`] behind the observer's
+    /// [`AudioSensor`] — proven **without requiring a physical microphone**.
+    ///
+    /// The no-capture sensor drives a full observer fold (the exact shape the
+    /// daemon's `live_observer` adds to the loop). A host with no mic therefore
+    /// behaves as honest silence: no capture → no events → the WorldState fold
+    /// is the identity. Voice is configuration, never a requirement — exactly
+    /// the S8-C failure semantics.
+    #[tokio::test]
+    async fn enabled_voice_wires_whisper_into_the_observer_without_a_mic() {
+        use friday_goal_execution::fold_observation;
+        use friday_sensors::whisper_cpp::WhisperCppConfig;
+
+        let voice = VoiceConfig::Enabled(WhisperCppConfig::new("whisper-cli", "ggml-base.bin"));
+        assert!(voice.enabled());
+
+        // The same sensor `VoiceConfig::sensor()` hands the live observer,
+        // minus the physical capture device — hermetic proof of the wiring.
+        let mic = voice
+            .sensor_without_capture()
+            .expect("enabled voice must build a sensor");
+        assert!(mic.asr_attached(), "Whisper must be the ASR backend");
+        assert!(!mic.capture_available(), "no physical mic needed");
+
+        let mut loop_ = SensorLoop::new();
+        loop_.add(Box::new(mic));
+        let mut observer = Observer::new(loop_);
+
+        // No mic → no events → the fold invents nothing (VAD-only honesty).
+        let events = observer.poll().await;
+        assert!(events.is_empty(), "a no-capture loop reports nothing");
+        let base = WorldState::new();
+        let (state, descriptions) = fold_observation(base.clone(), &events);
+        assert_eq!(state, base, "the fold is the identity without a mic");
+        assert!(descriptions.is_empty(), "no invented attention items");
+    }
+
+    /// S8-C: a disabled or misconfigured voice config attaches **nothing** to
+    /// the live loop — the exact pre-S8-C behavior, so voice can never take
+    /// the daemon down.
+    #[test]
+    fn disabled_or_misconfigured_voice_attaches_no_sensor() {
+        for voice in [
+            VoiceConfig::Disabled,
+            VoiceConfig::Misconfigured("FRIDAY_WHISPER_EXE is missing".into()),
+        ] {
+            assert!(voice.sensor().is_none(), "{voice:?} must stay offline");
+            assert!(
+                voice.sensor_without_capture().is_none(),
+                "{voice:?} must stay offline"
+            );
+            assert!(!voice.enabled(), "{voice:?} must not report enabled");
+        }
     }
 
     /// S7-B: the real laptop runner's learning loop. The same web-research

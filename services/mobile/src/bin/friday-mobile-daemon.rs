@@ -33,7 +33,9 @@ use friday_goal_execution::MemoryJournal;
 use friday_intelligence::InferenceFabric;
 use tokio::sync::broadcast;
 
-use friday_mobile::{BusBridge, CommandGateway, GoalRunner, SystemProbe, WsServer};
+use friday_mobile::{
+    BusBridge, CommandGateway, GoalRunner, SystemProbe, VoiceConfig, VoiceIntake, WsServer,
+};
 
 #[tokio::main]
 async fn main() {
@@ -105,7 +107,36 @@ async fn main() {
         memory_dir,
         journal.len()
     );
-    GoalRunner::with_fabric_and_memory(bus.clone(), fabric, journal).start();
+    // The voice live capability (S8-C): configuration, never a requirement.
+    // FRIDAY_VOICE=on + FRIDAY_WHISPER_EXE/MODEL wire the real microphone into
+    // the cognitive loop — once here (the intake turns a spoken turn into a
+    // plan.goal) and once inside the runner's observer (the same mic feeds the
+    // blackboard WorldState). Missing or unrequested voice is logged loudly
+    // and the daemon runs exactly as before; a misconfigured install never
+    // kills the host.
+    let voice = VoiceConfig::from_env();
+    match &voice {
+        VoiceConfig::Enabled(cfg) => tracing::info!(
+            "[voice] LIVE capability ON: real mic -> whisper (exe={}, model={})",
+            cfg.executable.display(),
+            cfg.model.display()
+        ),
+        VoiceConfig::Disabled => tracing::info!(
+            "[voice] capability OFF: set FRIDAY_VOICE=on + FRIDAY_WHISPER_EXE/MODEL to wire the microphone"
+        ),
+        VoiceConfig::Misconfigured(reason) => tracing::warn!(
+            "[voice] requested but NOT wired: {reason} - running without a microphone"
+        ),
+    }
+    if let Some(mic) = voice.sensor() {
+        tracing::info!(
+            "[voice] intake active: spoken turns enter plan.goal (capture device open: {})",
+            mic.capture_available()
+        );
+        let intake = VoiceIntake::new(bus.clone(), mic);
+        tokio::spawn(intake.run(Duration::from_secs(1)));
+    }
+    GoalRunner::with_fabric_and_memory(bus.clone(), fabric, journal, voice).start();
 
     // Translate phone commands → real bus events, and return results.
     let gateway = CommandGateway::new(bus.clone(), sessions.clone());

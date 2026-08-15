@@ -320,6 +320,11 @@ impl AudioSensor {
         self.capture.is_some()
     }
 
+    /// Whether a speech-to-text backend is attached (audit + hermetic tests).
+    pub fn asr_attached(&self) -> bool {
+        self.asr.is_some()
+    }
+
     /// Pure pipeline entry: feed raw i16 PCM and get back any closed turns.
     /// Used by `poll` on captured audio and by tests over synthetic audio.
     pub fn process_pcm(&mut self, samples: &[i16]) -> Vec<Turn> {

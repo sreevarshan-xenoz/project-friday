@@ -24,8 +24,110 @@ use std::time::Duration;
 use friday_cognitive::workspace::Topic;
 use friday_core::event::{Event, EventBus};
 use friday_sensors::audio::{AudioSensor, Turn};
+use friday_sensors::whisper_cpp::{WhisperCppConfig, WhisperCppTranscriber};
 use friday_sensors::Sensor;
 use serde_json::json;
+
+/// The voice *live capability* (S8-C): whether the real microphone rides the
+/// host's cognitive loop, and — when it does — the explicit whisper backend
+/// behind it.
+///
+/// Voice is **configuration, never a requirement**: a daemon without a mic, or
+/// with voice simply not asked for, behaves exactly as before. The three states
+/// make the failure semantics explicit instead of letting an audio problem
+/// silently vanish or, worse, take the whole host down:
+///
+/// - [`VoiceConfig::Enabled`] — `FRIDAY_VOICE=on` + a usable whisper install;
+///   the mic + WhisperCppTranscriber are wired into the live observer and the
+///   voice intake.
+/// - [`VoiceConfig::Disabled`] — not asked for; zero audio wiring.
+/// - [`VoiceConfig::Misconfigured`] — asked for but unusable (missing
+///   `FRIDAY_WHISPER_EXE`/`FRIDAY_WHISPER_MODEL`, …); the daemon must log it
+///   clearly and keep running without a microphone.
+///
+/// The microphone itself failing is handled by the sensor: `AudioSensor::new()`
+/// opens the device honestly, and a host without one simply polls quiet — the
+/// same wiring, no invented turns, no crash.
+#[derive(Debug, Clone)]
+pub enum VoiceConfig {
+    Enabled(WhisperCppConfig),
+    Disabled,
+    Misconfigured(String),
+}
+
+impl VoiceConfig {
+    /// Build the live-voice configuration from the environment:
+    ///
+    /// ```text
+    /// FRIDAY_VOICE             = on | 1 | true | yes          (default: off)
+    /// FRIDAY_WHISPER_EXE       = path to whisper-cli           (required if on)
+    /// FRIDAY_WHISPER_MODEL     = path to a ggml model          (required if on)
+    /// FRIDAY_WHISPER_LANGUAGE  = whisper code                  (default "en")
+    /// FRIDAY_WHISPER_THREADS   = worker threads                (default 4)
+    /// FRIDAY_WHISPER_TEMP_DIR  = temp wav directory            (default OS temp)
+    /// ```
+    pub fn from_env() -> Self {
+        let enabled = std::env::var("FRIDAY_VOICE")
+            .map(|v| matches!(v.to_ascii_lowercase().as_str(), "on" | "1" | "true" | "yes"))
+            .unwrap_or(false);
+        if !enabled {
+            return Self::Disabled;
+        }
+        let (Some(executable), Some(model)) = (
+            std::env::var("FRIDAY_WHISPER_EXE").ok(),
+            std::env::var("FRIDAY_WHISPER_MODEL").ok(),
+        ) else {
+            return Self::Misconfigured(
+                "FRIDAY_VOICE=on requires FRIDAY_WHISPER_EXE and FRIDAY_WHISPER_MODEL".into(),
+            );
+        };
+        let mut cfg = WhisperCppConfig::new(executable, model);
+        if let Ok(language) = std::env::var("FRIDAY_WHISPER_LANGUAGE") {
+            cfg.language = language;
+        }
+        if let Some(threads) = std::env::var("FRIDAY_WHISPER_THREADS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+        {
+            cfg.threads = threads;
+        }
+        if let Ok(temp_dir) = std::env::var("FRIDAY_WHISPER_TEMP_DIR") {
+            cfg.temp_dir = temp_dir.into();
+        }
+        Self::Enabled(cfg)
+    }
+
+    pub fn enabled(&self) -> bool {
+        matches!(self, Self::Enabled(_))
+    }
+
+    /// The mic sensor behind the Whisper backend (real capture device).
+    /// `None` when voice isn't enabled. The device being absent is handled by
+    /// the sensor itself — `AudioSensor::new()` degrades to honest silence.
+    pub fn sensor(&self) -> Option<AudioSensor> {
+        self.sensor_inner(true)
+    }
+
+    /// Same wiring with **no capture device** — the hermetic variant that
+    /// proves the voice capability attaches without any physical microphone.
+    pub fn sensor_without_capture(&self) -> Option<AudioSensor> {
+        self.sensor_inner(false)
+    }
+
+    fn sensor_inner(&self, capture: bool) -> Option<AudioSensor> {
+        match self {
+            Self::Enabled(cfg) => {
+                let base = if capture {
+                    AudioSensor::new()
+                } else {
+                    AudioSensor::without_capture()
+                };
+                Some(base.with_asr(std::sync::Arc::new(WhisperCppTranscriber::new(cfg.clone()))))
+            }
+            _ => None,
+        }
+    }
+}
 
 /// One voice turn → one `plan.goal` on the existing goal intake.
 pub struct VoiceIntake {
@@ -197,5 +299,136 @@ mod tests {
         assert!(admitted.is_empty());
         let timeout = tokio::time::timeout(Duration::from_millis(50), bus.subscribe().recv()).await;
         assert!(timeout.is_err(), "whitespace is not a goal");
+    }
+
+    /// Env vars are process-global; these tests mutate them, so they are
+    /// serialized against each other to stay deterministic.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn with_env(vars: &[(&str, &str)], f: impl FnOnce()) {
+        let _guard = ENV_LOCK.lock().unwrap();
+        for (k, v) in vars {
+            std::env::set_var(k, v);
+        }
+        f();
+        for (k, _) in vars {
+            std::env::remove_var(k);
+        }
+    }
+
+    #[test]
+    fn voice_config_defaults_to_disabled() {
+        with_env(&[], || {
+            assert!(
+                matches!(VoiceConfig::from_env(), VoiceConfig::Disabled),
+                "no FRIDAY_VOICE → the daemon runs exactly as before S8-C"
+            );
+        });
+    }
+
+    #[test]
+    fn voice_config_off_values_are_disabled() {
+        for off in ["off", "0", "false", "no"] {
+            with_env(&[("FRIDAY_VOICE", off)], || {
+                assert!(
+                    matches!(VoiceConfig::from_env(), VoiceConfig::Disabled),
+                    "FRIDAY_VOICE={off} must disable voice"
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn voice_config_on_without_backend_is_misconfigured() {
+        with_env(
+            &[
+                ("FRIDAY_VOICE", "on"),
+                ("FRIDAY_WHISPER_EXE", "whisper-cli"),
+            ],
+            || match VoiceConfig::from_env() {
+                VoiceConfig::Misconfigured(reason) => {
+                    assert!(
+                        reason.contains("FRIDAY_WHISPER_MODEL"),
+                        "the reason must point at the missing piece: {reason}"
+                    )
+                }
+                other => panic!("expected Misconfigured, got {other:?}"),
+            },
+        );
+    }
+
+    #[test]
+    fn voice_config_on_with_backend_is_enabled() {
+        with_env(
+            &[
+                ("FRIDAY_VOICE", "on"),
+                ("FRIDAY_WHISPER_EXE", r"C:\whisper\whisper-cli.exe"),
+                ("FRIDAY_WHISPER_MODEL", r"C:\whisper\ggml-base.bin"),
+            ],
+            || match VoiceConfig::from_env() {
+                VoiceConfig::Enabled(cfg) => {
+                    assert_eq!(
+                        cfg.executable,
+                        std::path::PathBuf::from(r"C:\whisper\whisper-cli.exe")
+                    );
+                    assert_eq!(
+                        cfg.model,
+                        std::path::PathBuf::from(r"C:\whisper\ggml-base.bin")
+                    );
+                    assert_eq!(cfg.language, "en", "whisper defaults hold");
+                    assert_eq!(cfg.threads, 4);
+                }
+                other => panic!("expected Enabled, got {other:?}"),
+            },
+        );
+    }
+
+    #[test]
+    fn voice_config_honors_optional_whisper_overrides() {
+        with_env(
+            &[
+                ("FRIDAY_VOICE", "1"),
+                ("FRIDAY_WHISPER_EXE", "whisper-cli"),
+                ("FRIDAY_WHISPER_MODEL", "model.bin"),
+                ("FRIDAY_WHISPER_LANGUAGE", "it"),
+                ("FRIDAY_WHISPER_THREADS", "8"),
+                ("FRIDAY_WHISPER_TEMP_DIR", r"C:\tmp\whisper"),
+            ],
+            || match VoiceConfig::from_env() {
+                VoiceConfig::Enabled(cfg) => {
+                    assert_eq!(cfg.language, "it");
+                    assert_eq!(cfg.threads, 8);
+                    assert_eq!(cfg.temp_dir, std::path::PathBuf::from(r"C:\tmp\whisper"));
+                }
+                other => panic!("expected Enabled, got {other:?}"),
+            },
+        );
+    }
+
+    #[test]
+    fn voice_config_builds_a_whisper_sensor_without_a_mic() {
+        let voice = VoiceConfig::Enabled(WhisperCppConfig::new("whisper-cli", "model.bin"));
+        let mic = voice
+            .sensor_without_capture()
+            .expect("enabled voice → a sensor");
+        assert!(
+            !mic.capture_available(),
+            "hermetic wiring needs no physical microphone"
+        );
+        assert!(
+            mic.asr_attached(),
+            "the whisper backend must be attached to the sensor"
+        );
+        assert!(
+            voice.sensor().is_some() && voice.enabled(),
+            "the real-mic variant and the enabled flag agree"
+        );
+    }
+
+    #[test]
+    fn voice_config_disabled_builds_no_sensor() {
+        assert!(VoiceConfig::Disabled.sensor().is_none());
+        assert!(VoiceConfig::Disabled.sensor_without_capture().is_none());
+        assert!(VoiceConfig::Misconfigured("nope".into()).sensor().is_none());
     }
 }
