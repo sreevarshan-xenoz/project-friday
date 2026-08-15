@@ -331,6 +331,23 @@ impl AudioSensor {
             .unwrap_or("")
     }
 
+    /// Live endpoint mute state of the opened input (`None` = not exposed).
+    /// The same control Windows Sound settings toggles.
+    pub fn capture_endpoint_muted(&self) -> Option<bool> {
+        self.capture.as_ref().and_then(|c| c.endpoint_muted())
+    }
+
+    /// Live endpoint input level 0.0..1.0 (`None` = not exposed).
+    pub fn capture_endpoint_level(&self) -> Option<f32> {
+        self.capture.as_ref().and_then(|c| c.endpoint_level())
+    }
+
+    /// Live endpoint peak meter 0.0..1.0 — the exact value Windows Sound
+    /// settings displays for this input. `None` when the stack hides it.
+    pub fn capture_peak_meter(&self) -> Option<f32> {
+        self.capture.as_ref().and_then(|c| c.peak_meter())
+    }
+
     /// Whether a speech-to-text backend is attached (audit + hermetic tests).
     pub fn asr_attached(&self) -> bool {
         self.asr.is_some()
@@ -415,6 +432,21 @@ struct WasapiCapture {
     /// device FRIDAY hears, so a silent capture can be attributed to hardware
     /// selection instead of the pipeline.
     device_id: String,
+    /// The endpoint's own volume/mute (Windows input level). Read live via
+    /// [`WasapiCapture::endpoint_muted`]/[`WasapiCapture::endpoint_level`] so a
+    /// silent capture is attributable to a muted or zeroed input, not the code.
+    /// `None` when the stack doesn't expose it — capture still works.
+    endpoint_volume: Option<windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume>,
+    /// The endpoint's peak meter — the same value Windows Sound settings shows
+    /// (Settings → System → Sound → Input). `peak_meter()` reads it live, so a
+    /// probe can tell "the device hears nothing" from "FRIDAY reads nothing".
+    /// `None` when the stack doesn't expose it.
+    peak_meter: Option<windows::Win32::Media::Audio::Endpoints::IAudioMeterInformation>,
+    /// Native stream sample rate (Hz) — the mix format on a Realtek stack is
+    /// ~48 kHz. `read_available` resamples everything to [`DEFAULT_SAMPLE_RATE`]
+    /// so the VAD/turn pipeline and whisper.cpp all keep the same 16 kHz
+    /// contract (whisper.cpp refuses non-16 kHz honestly).
+    sample_rate: u32,
 }
 
 // Never constructed on non-Windows; keeps `AudioSensor`'s `Option<WasapiCapture>`
@@ -432,11 +464,14 @@ unsafe impl Send for WasapiCapture {}
 #[cfg(target_os = "windows")]
 unsafe impl Sync for WasapiCapture {}
 
-/// Open the default input device in shared mode. First try our preferred
-/// 16 kHz mono 16-bit PCM (the VAD's native shape — no resampling); if the
-/// engine rejects it, fall back to `GetMixFormat` and convert packets to i16
-/// mono in `read_available`. `None` = no device / permission / COM failure —
-/// an honest silence.
+/// Open the default input device in shared mode. The engine's own mix format
+/// is tried first: some stacks *accept* a non-mix client format (our preferred
+/// 16 kHz mono PCM) and then deliver only SILENT packets — the endpoint meter
+/// moves but the stream is digital zeros (observed on Realtek). Mix-format
+/// capture is converted to i16 mono in `read_available`. If the mix format is
+/// unsupported (not 16/32-bit PCM or IEEE-float), fall back to the preferred
+/// 16 kHz mono 16-bit PCM. `None` = no device / permission / COM failure — an
+/// honest silence.
 #[cfg(target_os = "windows")]
 fn open_default_capture() -> Option<WasapiCapture> {
     use windows::core::GUID;
@@ -468,11 +503,66 @@ fn open_default_capture() -> Option<WasapiCapture> {
             .ok()
             .and_then(|id| id.to_string().ok())
             .unwrap_or_default();
+        // The endpoint's own controls — same surfaces Windows Sound settings
+        // reads. Optional: a stack that lacks them still captures fine.
+        let endpoint_volume = device.Activate(CLSCTX_ALL, None).ok();
+        let peak_meter = device.Activate(CLSCTX_ALL, None).ok();
         let client: IAudioClient = device.Activate(CLSCTX_ALL, None).ok()?;
 
-        // Preferred format: 16 kHz mono 16-bit PCM. Shared mode accepts a
-        // client-side format different from the mix format — the engine
-        // converts — but not every stack does, so we fall back below.
+        // 1) Engine-native mix format first — the reliable path on the Realtek
+        // stack where the preferred client format yields SILENT packets.
+        // (WAVE_FORMAT_IEEE_FLOAT = 3, WAVE_FORMAT_EXTENSIBLE = 0xFFFE; for the
+        // EXTENSIBLE tag the real format lives in the SubFormat GUID.)
+        let float_sub = GUID::from_u128(0x0000000300000010_800000aa00389b71);
+        let pcm_sub = GUID::from_u128(0x0000000100000010_800000aa00389b71);
+        if let Ok(mix) = client.GetMixFormat() {
+            let (is_float, pcm_ok) = match (*mix).wFormatTag {
+                1 => (false, true), // WAVE_FORMAT_PCM
+                3 => (true, true),  // WAVE_FORMAT_IEEE_FLOAT
+                0xFFFE => {
+                    // KSDATAFORMAT_SUBTYPE_PCM / _IEEE_FLOAT inside the extension.
+                    let sub = (&*mix.cast::<windows::Win32::Media::Audio::WAVEFORMATEXTENSIBLE>())
+                        .SubFormat;
+                    if sub == float_sub {
+                        (true, true)
+                    } else if sub == pcm_sub {
+                        (false, true)
+                    } else {
+                        (false, false)
+                    }
+                }
+                _ => (false, false),
+            };
+            let bits_ok = (*mix).wBitsPerSample == 16 || (*mix).wBitsPerSample == 32;
+            if pcm_ok
+                && bits_ok
+                && client
+                    .Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 10_000_000, 0, mix, None)
+                    .is_ok()
+            {
+                let capture: IAudioCaptureClient = client.GetService().ok()?;
+                client.Start().ok()?;
+                return Some(WasapiCapture {
+                    client,
+                    capture,
+                    channels: (*mix).nChannels.max(1),
+                    bits_per_sample: (*mix).wBitsPerSample,
+                    is_float,
+                    device_id,
+                    endpoint_volume,
+                    peak_meter,
+                    sample_rate: (*mix).nSamplesPerSec,
+                });
+            }
+            // Initialize failed with the mix format — the client stays
+            // uninitialized, so retrying with the preferred format below is
+            // valid.
+        }
+
+        // 2) Preferred format: 16 kHz mono 16-bit PCM — the VAD's native shape
+        // (no resampling). Shared mode accepts a client-side format different
+        // from the mix format — the engine converts — but not every stack
+        // delivers it (the Realtek SILENT-packet case), hence the fallback.
         let preferred = WAVEFORMATEX {
             wFormatTag: 1, // WAVE_FORMAT_PCM
             nChannels: 1,
@@ -496,60 +586,42 @@ fn open_default_capture() -> Option<WasapiCapture> {
                 bits_per_sample: 16,
                 is_float: false,
                 device_id,
+                endpoint_volume,
+                peak_meter,
+                sample_rate: DEFAULT_SAMPLE_RATE,
             });
         }
 
-        // Fallback: the engine's own mix format (often float32 / N channels).
-        // We only accept PCM or IEEE-float at 16 or 32 bits — anything else is
-        // left to the honest-silence rule rather than guessing. For the
-        // EXTENSIBLE tag the real format lives in the SubFormat GUID.
-        // (WAVE_FORMAT_IEEE_FLOAT = 3, WAVE_FORMAT_EXTENSIBLE = 0xFFFE.)
-        let mix = client.GetMixFormat().ok()?;
-        if (*mix).wBitsPerSample != 16 && (*mix).wBitsPerSample != 32 {
-            return None;
-        }
-        let float_sub = GUID::from_u128(0x0000000300000010_800000aa00389b71);
-        let pcm_sub = GUID::from_u128(0x0000000100000010_800000aa00389b71);
-        let (is_float, pcm_ok) = match (*mix).wFormatTag {
-            1 => (false, true), // WAVE_FORMAT_PCM
-            3 => (true, true),  // WAVE_FORMAT_IEEE_FLOAT
-            0xFFFE => {
-                // KSDATAFORMAT_SUBTYPE_PCM / _IEEE_FLOAT inside the extension.
-                let sub =
-                    (&*mix.cast::<windows::Win32::Media::Audio::WAVEFORMATEXTENSIBLE>()).SubFormat;
-                if sub == float_sub {
-                    (true, true)
-                } else if sub == pcm_sub {
-                    (false, true)
-                } else {
-                    (false, false)
-                }
-            }
-            _ => (false, false),
-        };
-        if !pcm_ok {
-            return None;
-        }
-        client
-            .Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 10_000_000, 0, mix, None)
-            .ok()?;
-        let capture: IAudioCaptureClient = client.GetService().ok()?;
-        client.Start().ok()?;
-
-        Some(WasapiCapture {
-            client,
-            capture,
-            channels: (*mix).nChannels.max(1),
-            bits_per_sample: (*mix).wBitsPerSample,
-            is_float,
-            device_id,
-        })
+        None
     }
 }
 
 #[cfg(not(target_os = "windows"))]
 fn open_default_capture() -> Option<WasapiCapture> {
     None
+}
+
+/// Linear-interpolation resample of i16 mono `from`→`to` Hz. Speech-grade: it
+/// keeps the amplitude continuous so the VAD and whisper.cpp (both 16 kHz)
+/// see the same signal regardless of the capture endpoint's native rate. The
+/// capture path needs this because the engine's mix format is often ~48 kHz.
+fn resample_i16(samples: &[i16], from: u32, to: u32) -> Vec<i16> {
+    if from == to || samples.is_empty() {
+        return samples.to_vec();
+    }
+    let out_len = (samples.len() as u64 * u64::from(to) / u64::from(from)) as usize;
+    let ratio = f64::from(from) / f64::from(to);
+    let mut out = Vec::with_capacity(out_len);
+    let last = samples.len().saturating_sub(1);
+    for i in 0..out_len {
+        let pos = i as f64 * ratio;
+        let idx = pos as usize;
+        let frac = pos - idx as f64;
+        let a = f64::from(samples[idx.min(last)]);
+        let b = f64::from(samples[(idx + 1).min(last)]);
+        out.push((a + (b - a) * frac).round() as i16);
+    }
+    out
 }
 
 #[cfg(target_os = "windows")]
@@ -604,8 +676,33 @@ impl WasapiCapture {
                 }
                 self.capture.ReleaseBuffer(frames).ok()?;
             }
+            let out = if self.sample_rate != DEFAULT_SAMPLE_RATE {
+                resample_i16(&out, self.sample_rate, DEFAULT_SAMPLE_RATE)
+            } else {
+                out
+            };
             Some(out)
         }
+    }
+
+    /// Live endpoint mute state (`None` = stack didn't expose the control).
+    fn endpoint_muted(&self) -> Option<bool> {
+        let vol = self.endpoint_volume.as_ref()?;
+        unsafe { Some(vol.GetMute().ok()?.as_bool()) }
+    }
+
+    /// Live endpoint master level 0.0..1.0 (`None` = not exposed).
+    fn endpoint_level(&self) -> Option<f32> {
+        let vol = self.endpoint_volume.as_ref()?;
+        unsafe { vol.GetMasterVolumeLevelScalar().ok() }
+    }
+
+    /// Live endpoint peak meter 0.0..1.0 — the value Windows Sound settings
+    /// displays for this input. Independent of what this capture reads, so a
+    /// probe can attribute silence to the device vs FRIDAY's read path.
+    fn peak_meter(&self) -> Option<f32> {
+        let meter = self.peak_meter.as_ref()?;
+        unsafe { meter.GetPeakValue().ok() }
     }
 }
 
@@ -626,6 +723,34 @@ mod tests {
 
     fn silence(frames: usize) -> Vec<i16> {
         vec![0i16; frames * FRAME_SAMPLES]
+    }
+
+    #[test]
+    fn resample_identity_is_a_noop() {
+        let pcm = tone(4, 440.0, DEFAULT_SAMPLE_RATE);
+        let out = resample_i16(&pcm, DEFAULT_SAMPLE_RATE, DEFAULT_SAMPLE_RATE);
+        assert_eq!(out, pcm, "same rate must pass through untouched");
+    }
+
+    #[test]
+    fn resample_48k_to_16k_preserves_signal() {
+        // 440 Hz tone generated at 48 kHz (native mix rate); resampling to
+        // 16 kHz must shrink the sample count 3× and keep speech-like energy —
+        // the VAD threshold and whisper.cpp rely on amplitude surviving.
+        let pcm48 = tone(3, 440.0, 48_000);
+        assert_eq!(pcm48.len(), 3 * FRAME_SAMPLES);
+        let pcm16 = resample_i16(&pcm48, 48_000, DEFAULT_SAMPLE_RATE);
+        assert_eq!(pcm16.len(), FRAME_SAMPLES, "48k→16k is a 3× reduction");
+        assert!(
+            rms(&pcm16) > 0.05,
+            "resampled tone must keep speech-like amplitude"
+        );
+    }
+
+    #[test]
+    fn resample_silence_stays_silent() {
+        let out = resample_i16(&silence(2), 48_000, DEFAULT_SAMPLE_RATE);
+        assert!(rms(&out) == 0.0, "silence must not gain energy");
     }
 
     #[test]
@@ -845,9 +970,19 @@ mod tests {
             seconds,
             log_path.display()
         );
+        let fmt = sensor
+            .capture
+            .as_ref()
+            .map(|c| (c.channels, c.bits_per_sample, c.is_float, c.sample_rate));
+        eprintln!(
+            "negotiated format: {fmt:?}  muted: {:?}  level: {:?}",
+            sensor.capture_endpoint_muted(),
+            sensor.capture_endpoint_level()
+        );
         for sec in 0..seconds {
             let mut reads = 0usize;
             let mut peak: f32 = 0.0;
+            let mut meter_peak: f32 = 0.0;
             let mut frames = 0usize;
             let mut speech_frames = 0usize;
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
@@ -867,14 +1002,20 @@ mod tests {
                         }
                     }
                 }
+                if let Some(m) = sensor.capture_peak_meter() {
+                    meter_peak = meter_peak.max(m);
+                }
                 if std::time::Instant::now() >= deadline {
                     break;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             }
-            let _ = writeln!(file, "{sec},{reads},{peak:.4},{frames},{speech_frames}");
+            let _ = writeln!(
+                file,
+                "{sec},{reads},{peak:.4},{frames},{speech_frames},{meter_peak:.4}"
+            );
             eprintln!(
-                "sec={sec} reads={reads} peak_rms={peak:.4} frames={frames} speech={speech_frames}"
+                "sec={sec} reads={reads} peak_rms={peak:.4} meter={meter_peak:.4} frames={frames} speech={speech_frames}"
             );
         }
     }

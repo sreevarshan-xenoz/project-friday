@@ -67,6 +67,15 @@ impl WhisperCppConfig {
     }
 }
 
+/// whisper.cpp prints one of these when it detects no speech in the segment.
+/// A transcript that is only a marker is silence, not a user request.
+fn is_blank_marker(line: &str) -> bool {
+    matches!(
+        line.trim().to_ascii_lowercase().as_str(),
+        "[blank_audio]" | "[silence]" | "[no_speech]" | "[music]"
+    )
+}
+
 /// Whisper.cpp wrapped in the frozen ASR seam.
 pub struct WhisperCppTranscriber {
     config: WhisperCppConfig,
@@ -103,12 +112,14 @@ impl WhisperCppTranscriber {
 
     /// Turn whisper-cli's captured stdout into a transcript: the non-empty,
     /// trimmed lines joined with spaces. `-np -nt` keep stdout to just the
-    /// transcript text. `None` = nothing was recognized.
+    /// transcript text. `None` = nothing was recognized — including whisper's
+    /// own "no speech" markers, which must count as silence rather than being
+    /// published as fabricated goals.
     pub(crate) fn parse_transcript(&self, stdout: &str) -> Option<String> {
         let lines: Vec<&str> = stdout
             .lines()
             .map(str::trim)
-            .filter(|l| !l.is_empty())
+            .filter(|l| !l.is_empty() && !is_blank_marker(l))
             .collect();
         if lines.is_empty() {
             None
@@ -318,6 +329,21 @@ mod tests {
         );
         assert_eq!(t.parse_transcript("  \n\t\n"), None);
         assert_eq!(t.parse_transcript(""), None);
+    }
+
+    #[test]
+    fn parse_transcript_treats_whisper_silence_markers_as_no_transcript() {
+        let t = WhisperCppTranscriber::new(test_config("whisper-cli".into()));
+        // The exact marker whisper.cpp emitted during S8-C live: quiet room
+        // audio must not become a fabricated goal in plan.goal.
+        assert_eq!(t.parse_transcript("[BLANK_AUDIO]\n"), None);
+        assert_eq!(t.parse_transcript("[silence]"), None);
+        assert_eq!(t.parse_transcript("[MUSIC]"), None);
+        // Real words around markers still pass through as a real transcript.
+        assert_eq!(
+            t.parse_transcript("open Chrome\n[silence]"),
+            Some("open Chrome".into())
+        );
     }
 
     #[tokio::test]
