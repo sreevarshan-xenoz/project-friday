@@ -212,7 +212,15 @@ impl Tool for WebSearchCapabilityTool {
     }
 
     fn capabilities(&self) -> Vec<Capability> {
-        vec![Capability::SearchWeb]
+        vec![
+            Capability::SearchWeb,
+            // Learned workflow policies reference the channel id they were
+            // learned from (evidence actions carry `web.search`); a goal-level
+            // `web.search` action must execute a real search here, never be
+            // refused by the `evidence:web` wrapper (the evidence dispatch
+            // still routes `gather evidence:` actions to `evidence:web`).
+            Capability::Custom("web.search".into()),
+        ]
     }
 
     async fn execute(&self, action: &Action, _ctx: &ExecutionContext) -> ToolResult {
@@ -222,6 +230,53 @@ impl Tool for WebSearchCapabilityTool {
                 "web",
                 "search",
                 json!({ "query": web_query_from_instruction(&action.instruction) }),
+            ))
+            .await;
+        ToolResult {
+            success: res.success,
+            output: serde_json::to_string_pretty(&res.output).unwrap_or_default(),
+            error: res.error,
+            duration_ms: res
+                .metadata
+                .get("latency_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            metadata: json!(res.metadata),
+        }
+    }
+}
+
+/// Real local-docs search tool for the `docs.search` skill id. Learned
+/// workflow policies reference the channel ids they were learned from, so a
+/// `web.search → docs.search` policy must execute a real docs search as a goal
+/// action — the `evidence:docs` wrapper would refuse the non-evidence
+/// instruction. Registered ahead of `evidence:docs`; evidence docs.search
+/// actions still resolve to `evidence:docs` via the evidence dispatch.
+struct DocsSearchCapabilityTool {
+    adapter: DocsAdapter,
+}
+
+#[async_trait]
+impl Tool for DocsSearchCapabilityTool {
+    fn name(&self) -> &str {
+        "docs"
+    }
+
+    fn description(&self) -> &str {
+        "Searches the local documentation and returns matching files (docs.search capability)"
+    }
+
+    fn capabilities(&self) -> Vec<Capability> {
+        vec![Capability::Custom("docs.search".into())]
+    }
+
+    async fn execute(&self, action: &Action, _ctx: &ExecutionContext) -> ToolResult {
+        let res = self
+            .adapter
+            .execute(ActionRequest::new(
+                "docs",
+                "search",
+                json!({ "query": action.instruction.trim() }),
             ))
             .await;
         ToolResult {
@@ -1056,6 +1111,14 @@ impl GoalRunner {
         executive.register_tool(Box::new(WebSearchCapabilityTool {
             adapter: web_adapter.clone(),
         }));
+        // The dedicated docs-search tool: the planner's direct goals carry the
+        // `docs.search` custom id, and the registry resolves first-match.
+        // Registered ahead of `evidence:docs` (which also advertises it) so a
+        // goal-level docs search — direct or from a learned workflow policy —
+        // is served by the dedicated tool, not refused by the evidence wrapper.
+        executive.register_tool(Box::new(DocsSearchCapabilityTool {
+            adapter: DocsAdapter::new(),
+        }));
         // web EVIDENCE actions (web.search + web.fetch) route through the
         // binding resolver (health-gated provider fallback) instead of a
         // single hardwired adapter — registered ahead of the plain evidence
@@ -1550,6 +1613,11 @@ fn completed_payload(
         // Observe phase folded into the world state this run (0 = no observer
         // attached or nothing observable fired).
         "observations_folded": report.observations_folded,
+        // S7 learning receipts: how many policies the cycle derived (consolidated
+        // knowledge in semantic memory) and how many qualified for this goal's
+        // planning via the relevance gate (0 = no learned policy matched yet).
+        "policies_derived": report.policies_derived,
+        "policies_applied": report.policies_applied,
     });
     // A held episode (admission Pending, e.g. sensitive content) was NOT
     // stored — surface its id so the portal can offer a `task.approve` button
@@ -3210,6 +3278,196 @@ mod tests {
         }
         let ev = completed.expect("a completed goal event");
         assert_eq!(ev.payload["observations_folded"], json!(1), "{ev:?}");
+    }
+
+    /// S7-B: the real laptop runner's learning loop. The same web-research
+    /// goal runs four times against a hermetic mock search endpoint:
+    ///
+    ///   runs 1-3 → each executes an evidence-gated plan and completes
+    ///   verified → SemanticMemory accumulates the `web.search → docs.search`
+    ///   workflow → it promotes at support 3 (`policies_derived` fills).
+    ///
+    ///   run 4 → the goal classifies to `SearchWeb`, which the relevance gate
+    ///   recognizes as the `web.*` channel skill the learned policy starts
+    ///   with → `policies_applied` fills → the `PolicyDriven` plan
+    ///   `web.search → docs.search` wins the ranking (same 0.75 confidence,
+    ///   one action shorter than the 3-step evidence plan), executes against
+    ///   the same hermetic tools, verifies, and completes.
+    ///
+    /// The stored episode carries the REAL GoalEngine insight — the goal's own
+    /// context in the statement — never the old fabricated "builtin"
+    /// reflection. The mock body is deliberately keyword-free (`Tokio
+    /// runtime`, `Rust home`) so a recalled memory line can never inflate the
+    /// investigation (a title like "documentation" would cap the docs
+    /// requirement at 1.0 and the evidence plan would beat the learned policy).
+    #[tokio::test]
+    async fn runner_learns_and_reuses_a_web_workflow_policy() {
+        use std::io::{Read, Write};
+
+        let body = r#"<html><body>
+            <a href="https://tokio.rs/">Tokio runtime</a>
+            <a href="https://rust-lang.org/">Rust home</a>
+        </body></html>"#;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind mock server");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking mock server");
+        let addr = listener.local_addr().expect("mock server address");
+        let server = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            let mut served = 0usize;
+            let mut last_activity = std::time::Instant::now();
+            while std::time::Instant::now() < deadline && served < 20 {
+                let mut stream = match listener.accept() {
+                    Ok((s, _)) => s,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        if last_activity.elapsed() > std::time::Duration::from_secs(2) {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        continue;
+                    }
+                    Err(e) => panic!("mock server accept: {e}"),
+                };
+                last_activity = std::time::Instant::now();
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 1024];
+                loop {
+                    match stream.read(&mut chunk) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            buf.extend_from_slice(&chunk[..n]);
+                            if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                served += 1;
+            }
+        });
+
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let runner = GoalRunner::with_investigation_engine(
+            bus.clone(),
+            InvestigationEngine::heuristic(),
+            None,
+            Some(format!("http://{addr}/")),
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let goal = "Search the web for the Rust async docs".to_string();
+        let mut derived: Vec<u64> = Vec::new();
+        let mut applied: Vec<u64> = Vec::new();
+
+        for run in 1..=4u32 {
+            runner
+                .run_goal(goal.clone(), format!("s7-session-{run}"))
+                .await;
+            let mut terminal = None;
+            for _ in 0..30 {
+                let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                    .await
+                    .map(|r| r.expect("bus alive"))
+                else {
+                    break;
+                };
+                if ev.kind == "goal.completed" || ev.kind == "goal.failed" {
+                    terminal = Some(ev);
+                    break;
+                }
+            }
+            let ev = terminal.unwrap_or_else(|| panic!("run {run} must reach a terminal event"));
+            assert_eq!(
+                ev.kind, "goal.completed",
+                "run {run} must complete, not fail: {ev:?}"
+            );
+            assert_eq!(
+                ev.payload["result"]["kind"], "text",
+                "run {run} must complete with a result: {ev:?}"
+            );
+            derived.push(ev.payload["policies_derived"].as_u64().unwrap_or(0));
+            applied.push(ev.payload["policies_applied"].as_u64().unwrap_or(0));
+        }
+        let _ = server.join();
+
+        // Runs 1-2: planning precedes the cycle's Learn, and support 3 has not
+        // been reached — nothing consolidated, nothing qualified.
+        assert_eq!(derived[0], 0, "run 1 consolidated nothing yet: {derived:?}");
+        assert_eq!(
+            derived[1], 0,
+            "run 2 is still below the support threshold: {derived:?}"
+        );
+        assert!(
+            derived[2] >= 1,
+            "run 3 must promote the workflow: {derived:?}"
+        );
+        for (i, a) in applied.iter().enumerate().take(3) {
+            assert_eq!(
+                *a,
+                0,
+                "run {} had no eligible policy yet: {applied:?}",
+                i + 1
+            );
+        }
+        // Run 4: SearchWeb ⇄ Custom("web.search") — the learned policy
+        // qualified for planning and won.
+        assert!(
+            applied[3] >= 1,
+            "run 4 must apply the learned policy: {applied:?}"
+        );
+
+        // Run 4's chosen plan is the learned transition — one action shorter
+        // than the evidence plan at the same confidence.
+        let plan = runner.workspace.get_active_plan().expect("run 4 plan");
+        assert_eq!(
+            plan.source,
+            friday_goal_execution::PlanSource::PolicyDriven,
+            "{plan:?}"
+        );
+        assert_eq!(plan.actions.len(), 2, "{plan:?}");
+        assert_eq!(
+            plan.actions[0].capability,
+            Capability::Custom("web.search".into()),
+            "{plan:?}"
+        );
+        assert_eq!(
+            plan.actions[1].capability,
+            Capability::Custom("docs.search".into()),
+            "{plan:?}"
+        );
+
+        // The stored episode's reflection is the REAL GoalEngine insight — it
+        // names the goal that ran; the fabricated "builtin" is gone.
+        let reflection = {
+            let exec = runner.executive.lock().await;
+            let episodes = exec.episode_store().episodes();
+            let latest = episodes.last().expect("run 4 stored an episode");
+            latest
+                .reflection
+                .clone()
+                .expect("run 4 episode records a real reflection")
+        };
+        assert!(!reflection.is_empty(), "reflection must not be empty");
+        assert!(
+            !reflection.contains("builtin"),
+            "the fabricated builtin reflection must be gone: {reflection:?}"
+        );
+        assert!(
+            reflection.contains("Search the web for the Rust async docs"),
+            "the reflection must derive from the real goal context: {reflection:?}"
+        );
     }
 
     /// S4: the browser tool advertises ONLY the safe `web.open` verb (the

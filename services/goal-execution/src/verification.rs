@@ -1,5 +1,6 @@
 use crate::common::{Action, Capability, ExecutionContext};
 use crate::confidence::Confidence;
+use crate::evidence::is_evidence_action;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
@@ -72,6 +73,30 @@ impl ToolRegistry {
             .iter()
             .find(|t| t.capabilities().contains(capability))
             .map(|t| t.as_ref())
+    }
+
+    /// Resolve the tool for an *action* rather than a bare capability.
+    ///
+    /// Evidence actions (`gather evidence: <channel> (<tool>.<verb>)`) resolve
+    /// to their channel's evidence tool (`evidence:web`, `evidence:docs`, …)
+    /// by name, so the investigation seam keeps its normalized / health-gated
+    /// semantics even when a dedicated goal tool claims the same skill id (a
+    /// learned workflow policy references `web.search` / `docs.search` as goal
+    /// actions, and must not be refused by the evidence wrapper). Falls back
+    /// to capability resolution when no evidence-named tool is registered
+    /// (kernels that mock evidence tools by capability), and non-evidence
+    /// actions always resolve by capability.
+    pub fn resolve_action(&self, action: &Action) -> Option<&dyn Tool> {
+        if is_evidence_action(action) {
+            if let Capability::Custom(id) = &action.capability {
+                if let Some((channel, _)) = id.split_once('.') {
+                    if let Some(tool) = self.get(&format!("evidence:{channel}")) {
+                        return Some(tool);
+                    }
+                }
+            }
+        }
+        self.resolve(&action.capability)
     }
 
     pub fn get(&self, name: &str) -> Option<&dyn Tool> {

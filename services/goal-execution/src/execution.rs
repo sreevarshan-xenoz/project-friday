@@ -63,7 +63,7 @@ impl GoalEngine {
         // verification may move it to Verified — or to Failed. The trace
         // records the full transition so the audit trail can answer "what did
         // FRIDAY *know* at each step?" not just "what did she do?".
-        let tool = self.registry.resolve(&action.capability);
+        let tool = self.registry.resolve_action(action);
         let (tool_result, tool_name) = match tool {
             Some(t) => {
                 let result = t.execute(action, context).await;

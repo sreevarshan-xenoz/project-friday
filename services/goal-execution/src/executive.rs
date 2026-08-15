@@ -42,8 +42,6 @@ use crate::Verification;
 use crate::VerifiedResult;
 use crate::WorldState;
 use friday_investigation::{InvestigationEngine, InvestigationResult};
-use friday_knowledge::KnowledgeRecord;
-use friday_reflection::ReflectionEngine;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -127,6 +125,14 @@ pub struct ExecutiveReport {
     pub plan_executed: bool,
     pub episode_stored: bool,
     pub patterns_promoted: usize,
+    /// S7 learning receipts. `policies_derived` — how many promoted policies
+    /// semantic memory holds after this cycle's Learn phase (learning
+    /// happened). `policies_applied` — how many of those passed the relevance
+    /// gate for THIS goal's planning and actually competed for the plan
+    /// (learning reached the plan). `0` on a cycle whose learned policy does
+    /// not match the goal is honest, not failure.
+    pub policies_derived: usize,
+    pub policies_applied: usize,
     pub duration_ms: u64,
     pub error: Option<String>,
     /// The memory admission gate (Phase 1b): what the Consolidate phase decided
@@ -251,7 +257,6 @@ pub struct Executive {
     /// Evidence verification (MasterPlan #6): the concrete `EvidenceVerifier`
     /// that gates the blended research body behind the frozen `Verifier` seam.
     evidence_verification: EvidenceVerifier,
-    reflection_engine: ReflectionEngine,
     semantic_memory: SemanticMemory,
     episode_store: EpisodeStore,
     /// The gate between experience and episodic memory (Phase 1b): every
@@ -435,7 +440,14 @@ impl Executive {
                 let (goal, investigation) =
                     focus.expect("goal/observation focus always investigates");
                 let world = workspace.get_world_state().unwrap_or_default();
-                let ctx = PlanningContext::new(goal.clone()).with_investigation(investigation);
+                // S7: feed the cycle's consolidated learning into planning —
+                // the promoted policies from semantic memory. The relevance
+                // gate in the planner decides which (if any) actually compete,
+                // so a workflow learned for one task can never hijack another.
+                let ctx = PlanningContext::new(goal.clone())
+                    .with_investigation(investigation)
+                    .with_policies(self.semantic_memory.knowledge().to_vec());
+                report.policies_applied = self.planner.qualifying_policy_count(&ctx);
                 let candidates = self.planner.think(&ctx);
                 let ranked = self.evaluator.evaluate(&candidates, &world);
 
@@ -752,37 +764,18 @@ impl Executive {
         report.phases_completed.push(ExecutivePhase::Reflect);
 
         if let Some(ref gr) = goal_report {
-            let outcome_kind = if gr.success() && gr.verification.verified {
-                friday_reflection::OutcomeKind::TaskCompleted
-            } else if !gr.success() && gr.verification.verified {
-                friday_reflection::OutcomeKind::TaskAbandoned
-            } else if gr.success() && !gr.verification.verified {
-                friday_reflection::OutcomeKind::UnexpectedSuccess
-            } else {
-                friday_reflection::OutcomeKind::UnexpectedFailure
-            };
-
-            let outcome = friday_reflection::Outcome {
-                id: format!("outcome-{}", started_ms),
-                kind: outcome_kind,
-                context: goal.description.clone(),
-                detail: serde_json::json!({}),
-                occurred_at_ms: chrono::Utc::now().timestamp_millis() as u64,
-            };
-
-            let dummy_knowledge = KnowledgeRecord {
-                id: "builtin".into(),
-                kind: friday_knowledge::KnowledgeKind::Workflow,
-                label: "default".into(),
-                description: "default knowledge".into(),
-                pattern: vec![],
-                support: 0,
-                confidence: Confidence::medium().into(),
-                derived_at_ms: 0,
-            };
-            let insights = self.reflection_engine.reflect(&dummy_knowledge, &outcome);
-
-            if let Some(ref insight) = insights {
+            // S7: reflect from what ACTUALLY happened. The GoalEngine already
+            // produced real, KnowledgeEngine-backed insights during execution
+            // (`GoalReport.insights`) — prefer the strongest one. Never
+            // fabricate a reflection from a hardcoded knowledge record: a
+            // cycle that learns from an invented reflection would be learning
+            // from fiction. When a goal produced no insight, no reflection is
+            // recorded (the episode keeps the honest empty string).
+            if let Some(insight) = gr.insights.iter().max_by(|a, b| {
+                a.confidence
+                    .partial_cmp(&b.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }) {
                 workspace.push_thought(format!(
                     "executive: reflection — {} (confidence: {:.2})",
                     insight.statement, insight.confidence
@@ -872,6 +865,8 @@ impl Executive {
 
         let learning_result = self.semantic_memory.process_episodes(&self.episode_store);
         report.patterns_promoted = learning_result.patterns_promoted;
+        // S7 receipt: how much consolidated knowledge the cycle now holds.
+        report.policies_derived = self.semantic_memory.knowledge_count();
         if learning_result.patterns_promoted > 0 {
             workspace.push_thought(format!(
                 "executive: learned {} new patterns, {} policies proposed",
@@ -1252,7 +1247,6 @@ impl Default for Executive {
                 .with_verification(Verification::new()),
             verification: Verification::new(),
             evidence_verification: EvidenceVerifier::new(),
-            reflection_engine: ReflectionEngine::new(),
             semantic_memory: SemanticMemory::new(),
             episode_store: EpisodeStore::new(),
             admission: MemoryAdmissionController::new(),
@@ -2303,6 +2297,276 @@ mod tests {
             report.evidence_trail.all_verified(),
             "tool-level success still verified (nothing to gate)"
         );
+    }
+
+    // ── S7 learning reuse ─────────────────────────────────────────
+
+    /// Seed `count` completed multi-step `ExecuteCommand → ReadFile` episodes
+    /// directly into the executive's episodic memory (bypassing the admission
+    /// gate — these are historical memory, the S7 kernel's prerequisite).
+    fn seed_workflow_episodes(executive: &mut Executive, count: usize) {
+        let plan = Plan::from_actions(
+            vec![
+                Action::step("build", Capability::ExecuteCommand, "seed", 0, 2),
+                Action::step("read output", Capability::ReadFile, "seed", 1, 2),
+            ],
+            "build then read",
+            PlanSource::Direct,
+        );
+        for _ in 0..count {
+            let episode = CognitiveEpisode::begin(Goal::new("build then read the output"))
+                .with_plan(plan.clone())
+                .with_execution_result(ToolResult::success("done"))
+                .with_verification(VerifiedResult {
+                    verified: true,
+                    tool_success: true,
+                    checks: vec![],
+                    confidence: Confidence::high(),
+                })
+                .finish(EpisodeOutcome::Success);
+            executive.episode_store.store(episode);
+        }
+    }
+
+    #[tokio::test]
+    async fn learning_closes_the_loop_into_policy_driven_planning() {
+        // S7-A reuse: episodes → promoted Sequence policy → a LATER matching
+        // goal plans PolicyDriven through the live cycle. Cycle 1 can't use a
+        // policy (planning precedes that cycle's Learn); cycle 2 can.
+        let workspace = CognitiveBlackboard::new();
+        let mut executive = Executive::new();
+        executive.register_tool(Box::new(
+            MockTool::success("terminal", "Build complete")
+                .with_capabilities(vec![Capability::ExecuteCommand]),
+        ));
+        executive.register_tool(Box::new(
+            MockTool::success("reader", "read the output")
+                .with_capabilities(vec![Capability::ReadFile]),
+        ));
+        workspace.set_world_state(
+            WorldState::new()
+                .with_tool(Capability::ExecuteCommand)
+                .with_tool(Capability::ReadFile),
+        );
+
+        // 3 completed multi-step episodes sharing the ExecuteCommand → ReadFile
+        // transition (>= default min_support of 3) so the workflow promotes.
+        seed_workflow_episodes(&mut executive, 3);
+
+        // Cycle 1: planning runs BEFORE this cycle's Learn → no policy applies
+        // yet; the promotion lands in `policies_derived`.
+        executive.add_observation("build the project", 0.9);
+        let report1 = executive.cycle(&workspace).await;
+        assert_eq!(
+            report1.policies_applied, 0,
+            "no policy existed before cycle 1's Learn"
+        );
+        assert!(
+            report1.patterns_promoted >= 1,
+            "seeded episodes must promote a pattern"
+        );
+        assert!(
+            report1.policies_derived >= 1,
+            "cycle 1 consolidated learning"
+        );
+
+        // Cycle 2, same goal: the ExecuteCommand → ReadFile sequence policy is
+        // now eligible (the goal classifies as ExecuteCommand) and its plan wins
+        // the ranking, executes, and verifies.
+        executive.add_observation("build the project", 0.9);
+        let report2 = executive.cycle(&workspace).await;
+        assert!(
+            report2.policies_applied >= 1,
+            "learned policy reached planning: {report2:?}"
+        );
+        assert!(report2.plan_executed, "the policy-driven plan executed");
+        let plan2 = workspace.get_active_plan().expect("cycle 2 chose a plan");
+        assert_eq!(plan2.source, PlanSource::PolicyDriven, "{plan2:?}");
+        assert_eq!(plan2.actions.len(), 2);
+        assert_eq!(plan2.actions[0].capability, Capability::ExecuteCommand);
+        assert_eq!(plan2.actions[1].capability, Capability::ReadFile);
+    }
+
+    #[tokio::test]
+    async fn unrelated_goal_is_not_hijacked_by_a_learned_policy() {
+        // S7-A guard (mandatory): a workflow learned for one capability must
+        // NOT compete for a goal of a different capability — otherwise learned
+        // behavior becomes an accidental global override.
+        let workspace = CognitiveBlackboard::new();
+        let mut executive = Executive::new();
+        executive.register_tool(Box::new(
+            MockTool::success("writer", "wrote the note")
+                .with_capabilities(vec![Capability::WriteFile]),
+        ));
+        workspace.set_world_state(WorldState::new().with_tool(Capability::WriteFile));
+
+        // Promote an ExecuteCommand → ReadFile workflow policy via seed memory.
+        seed_workflow_episodes(&mut executive, 3);
+
+        // Cycle 1 (unrelated WriteFile goal): Learn still runs and promotes the
+        // seeded workflow → `policies_derived` receipt fills.
+        executive.add_observation("write a note to notes.txt", 0.9);
+        let report1 = executive.cycle(&workspace).await;
+        assert!(
+            report1.policies_derived >= 1,
+            "cycle 1 consolidated the seeded workflow"
+        );
+
+        // Cycle 2, same unrelated goal, with the ExecuteCommand policy now in
+        // memory: the relevance gate must reject it (WriteFile ≠ ExecuteCommand)
+        // and the plan must stay Direct — no hijack.
+        executive.add_observation("write a note to notes.txt", 0.9);
+        let report2 = executive.cycle(&workspace).await;
+        assert_eq!(
+            report2.policies_applied, 0,
+            "a WriteFile goal must not qualify the ExecuteCommand policy: {report2:?}"
+        );
+        let plan2 = workspace.get_active_plan().expect("cycle 2 chose a plan");
+        assert_eq!(plan2.source, PlanSource::Direct, "{plan2:?}");
+        assert_eq!(plan2.actions.len(), 1);
+        assert_eq!(plan2.actions[0].capability, Capability::WriteFile);
+    }
+
+    /// Seed `count` completed multi-step `web.search → docs.search` evidence
+    /// episodes into the executive's episodic memory (the S7 channel-vocabulary
+    /// sibling of [`seed_workflow_episodes`]).
+    fn seed_web_workflow_episodes(executive: &mut Executive, count: usize) {
+        let plan = Plan::from_actions(
+            vec![
+                Action::step(
+                    "search the web",
+                    Capability::Custom("web.search".into()),
+                    "seed",
+                    0,
+                    2,
+                ),
+                Action::step(
+                    "read the docs",
+                    Capability::Custom("docs.search".into()),
+                    "seed",
+                    1,
+                    2,
+                ),
+            ],
+            "search then read docs",
+            PlanSource::Direct,
+        );
+        for _ in 0..count {
+            let episode =
+                CognitiveEpisode::begin(Goal::new("search the web for the Rust async docs"))
+                    .with_plan(plan.clone())
+                    .with_execution_result(ToolResult::success("done"))
+                    .with_verification(VerifiedResult {
+                        verified: true,
+                        tool_success: true,
+                        checks: vec![],
+                        confidence: Confidence::high(),
+                    })
+                    .finish(EpisodeOutcome::Success);
+            executive.episode_store.store(episode);
+        }
+    }
+
+    #[tokio::test]
+    async fn web_workflow_policy_qualifies_only_matching_web_goals() {
+        // S7 safety triangle: the channel⇄verb equivalence is scoped to the
+        // locked mappings. A learned `web.search → docs.search` workflow must
+        // (1) qualify a matching web goal — `SearchWeb ⇄ Custom("web.search")`
+        // is the real channel/verb bridge FRIDAY already uses elsewhere — but
+        // (2) never compete for a desktop-open goal (`windows.open` is not in
+        // the mapping set) nor (3) for a shell goal (`git.*`/`codeintel.*`/
+        // `external.*` are deliberately unmapped, so a web workflow can never
+        // become eligible for an arbitrary command goal).
+        let workspace = CognitiveBlackboard::new();
+        let mut executive = Executive::new();
+        executive.register_tool(Box::new(
+            MockTool::success("web", "web results")
+                .with_capabilities(vec![Capability::Custom("web.search".into())]),
+        ));
+        executive.register_tool(Box::new(
+            MockTool::success("docs", "docs results")
+                .with_capabilities(vec![Capability::Custom("docs.search".into())]),
+        ));
+        executive.register_tool(Box::new(
+            MockTool::success("searcher", "web results")
+                .with_capabilities(vec![Capability::SearchWeb]),
+        ));
+        executive.register_tool(Box::new(
+            MockTool::success("opener", "opened")
+                .with_capabilities(vec![Capability::Custom("windows.open".into())]),
+        ));
+        executive.register_tool(Box::new(
+            MockTool::success("terminal", "built")
+                .with_capabilities(vec![Capability::ExecuteCommand]),
+        ));
+        workspace.set_world_state(
+            WorldState::new()
+                .with_tool(Capability::Custom("web.search".into()))
+                .with_tool(Capability::Custom("docs.search".into()))
+                .with_tool(Capability::SearchWeb)
+                .with_tool(Capability::Custom("windows.open".into()))
+                .with_tool(Capability::ExecuteCommand),
+        );
+
+        // A web workflow promotes from seed memory (Learn runs even on a goal
+        // that does not qualify it — the receipts stay honest).
+        seed_web_workflow_episodes(&mut executive, 3);
+        executive.add_observation("open notepad", 0.9);
+        let report0 = executive.cycle(&workspace).await;
+        assert!(
+            report0.policies_derived >= 1,
+            "seeded web workflow must promote"
+        );
+        assert_eq!(
+            report0.policies_applied, 0,
+            "open notepad must not qualify the web policy: {report0:?}"
+        );
+
+        // (1) A matching web goal: `SearchWeb ⇄ Custom("web.search")` → the
+        // learned policy competes and wins (same confidence, one fewer action).
+        executive.add_observation("search the web for the Rust async docs", 0.9);
+        let report1 = executive.cycle(&workspace).await;
+        assert!(
+            report1.policies_applied >= 1,
+            "the web goal must qualify the web policy: {report1:?}"
+        );
+        assert!(report1.plan_executed, "the policy-driven plan executed");
+        let plan1 = workspace.get_active_plan().expect("web plan");
+        assert_eq!(plan1.source, PlanSource::PolicyDriven, "{plan1:?}");
+        assert_eq!(plan1.actions.len(), 2);
+        assert_eq!(
+            plan1.actions[0].capability,
+            Capability::Custom("web.search".into())
+        );
+        assert_eq!(
+            plan1.actions[1].capability,
+            Capability::Custom("docs.search".into())
+        );
+
+        // (2) A desktop-open goal stays Direct — `windows.open` is not bridged.
+        executive.add_observation("open notepad", 0.9);
+        let report2 = executive.cycle(&workspace).await;
+        assert_eq!(
+            report2.policies_applied, 0,
+            "open notepad must not qualify the web policy: {report2:?}"
+        );
+        let plan2 = workspace.get_active_plan().expect("notepad plan");
+        assert_eq!(plan2.source, PlanSource::Direct, "{plan2:?}");
+        assert_eq!(
+            plan2.actions[0].capability,
+            Capability::Custom("windows.open".into())
+        );
+
+        // (3) A shell goal stays Direct too — never hijacked by a web workflow.
+        executive.add_observation("build the project", 0.9);
+        let report3 = executive.cycle(&workspace).await;
+        assert_eq!(
+            report3.policies_applied, 0,
+            "a shell goal must not qualify the web policy: {report3:?}"
+        );
+        let plan3 = workspace.get_active_plan().expect("build plan");
+        assert_eq!(plan3.source, PlanSource::Direct, "{plan3:?}");
+        assert_eq!(plan3.actions[0].capability, Capability::ExecuteCommand);
     }
 
     #[tokio::test]

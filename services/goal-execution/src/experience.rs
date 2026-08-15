@@ -61,6 +61,12 @@ pub struct ExperiencePattern {
     pub episode_ids: Vec<String>,
     /// The capability this pattern relates to (if applicable).
     pub capability: Option<Capability>,
+    /// The recorded `from → then` transition of a Workflow pattern (S7). The
+    /// Sequence policy promoted from a workflow is only well-formed when it
+    /// carries the real capabilities — the planner consumes `from` as the
+    /// policy's capability and `then` as `config["then"]`.
+    #[serde(default)]
+    pub sequence: Option<(Capability, Capability)>,
     /// When this pattern was first detected.
     pub first_seen_ms: u64,
     /// When this pattern was last reinforced.
@@ -80,6 +86,7 @@ impl ExperiencePattern {
             confidence: 0.0,
             episode_ids: Vec::new(),
             capability: None,
+            sequence: None,
             first_seen_ms: now,
             last_seen_ms: now,
             promoted: false,
@@ -269,18 +276,27 @@ impl SemanticMemory {
             }
         }
 
-        // 2. Workflow patterns: if plan has multiple steps, record sequence.
+        // 2. Workflow patterns: if plan has multiple steps, record the
+        // `from → then` transition — the exact pair the promoted Sequence
+        // policy will carry (S7). Workflows group by their transition, so a
+        // "read then write" workflow never merges with a "search then read"
+        // one into a meaningless aggregate.
         if let Some(plan) = &episode.plan {
             if plan.actions.len() >= 2 {
+                let from = plan.actions[0].capability.clone();
+                let then = plan.actions[1].capability.clone();
                 let desc = format!(
-                    "workflow: {} steps for {}",
+                    "workflow: {} then {} ({} steps) for {}",
+                    from,
+                    then,
                     plan.actions.len(),
                     episode.goal.description
                 );
-                let existing_workflow = self
-                    .patterns
-                    .iter_mut()
-                    .find(|p| p.kind == PatternKind::Workflow && !p.promoted);
+                let existing_workflow = self.patterns.iter_mut().find(|p| {
+                    p.kind == PatternKind::Workflow
+                        && !p.promoted
+                        && p.sequence.as_ref() == Some(&(from.clone(), then.clone()))
+                });
 
                 match existing_workflow {
                     Some(wf) => {
@@ -288,6 +304,7 @@ impl SemanticMemory {
                     }
                     None => {
                         let mut wf = ExperiencePattern::new(PatternKind::Workflow, &desc);
+                        wf.sequence = Some((from, then));
                         wf.add_evidence(episode.id.clone());
                         self.patterns.push(wf);
                     }
@@ -338,18 +355,26 @@ impl SemanticMemory {
                     created_at_ms: chrono::Utc::now().timestamp_millis() as u64,
                 })
             }
-            PatternKind::Workflow => Some(Policy {
-                id: format!("policy_{}", uuid::Uuid::new_v4()),
-                kind: PolicyKind::Sequence,
-                statement: pattern.description.clone(),
-                capability: None,
-                config: serde_json::json!({ "steps": pattern.support }),
-                confidence: pattern.confidence,
-                support: pattern.support,
-                created_from: pattern.episode_ids.clone(),
-                expires_at: None,
-                created_at_ms: chrono::Utc::now().timestamp_millis() as u64,
-            }),
+            PatternKind::Workflow => {
+                // A Sequence policy is only consumable by the planner when it
+                // carries the real `from → then` transition: `capability` is
+                // the from-capability and `config["then"]` the then-capability.
+                // Without the pair, planning would degenerate into the default
+                // `execute_command then execute_command` sequence (S7).
+                let (from, then) = pattern.sequence.clone()?;
+                Some(Policy {
+                    id: format!("policy_{}", uuid::Uuid::new_v4()),
+                    kind: PolicyKind::Sequence,
+                    statement: pattern.description.clone(),
+                    capability: Some(from),
+                    config: serde_json::json!({ "then": then }),
+                    confidence: pattern.confidence,
+                    support: pattern.support,
+                    created_from: pattern.episode_ids.clone(),
+                    expires_at: None,
+                    created_at_ms: chrono::Utc::now().timestamp_millis() as u64,
+                })
+            }
             _ => None,
         }
     }

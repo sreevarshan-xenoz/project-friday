@@ -468,7 +468,7 @@ impl Planning {
         let seq_policy = context
             .policies
             .iter()
-            .find(|p| p.kind == PolicyKind::Sequence)?;
+            .find(|p| self.policy_applies(p, &context.goal))?;
 
         let from_cap = seq_policy
             .capability
@@ -497,6 +497,38 @@ impl Planning {
             preliminary_score: seq_policy.confidence,
             plan,
         })
+    }
+
+    /// Whether a learned policy may compete for a goal (S7 relevance gate).
+    ///
+    /// A policy is only goal-relevant when it is a well-formed `Sequence`
+    /// policy whose from-capability matches the goal's classified capability
+    /// (see [`capabilities_overlap`] for the channel⇄verb equivalence). This
+    /// is what stops learned experience from becoming an accidental global
+    /// override: a "search the web then read docs" workflow must never compete
+    /// for "open notepad". A malformed/legacy policy (no capability) never
+    /// applies.
+    fn policy_applies(&self, policy: &Policy, goal: &Goal) -> bool {
+        if policy.kind != PolicyKind::Sequence {
+            return false;
+        }
+        let from = match &policy.capability {
+            Some(cap) => cap.clone(),
+            None => return false,
+        };
+        capabilities_overlap(&from, &self.infer_capability(&goal.description, &[]))
+    }
+
+    /// How many of the context's policies pass the relevance gate for this
+    /// goal (S7 observability — the Executive's `policies_applied` receipt).
+    /// Single-sourced from [`Self::policy_applies`], so the count and the
+    /// candidate generator can never drift apart.
+    pub fn qualifying_policy_count(&self, context: &PlanningContext) -> usize {
+        context
+            .policies
+            .iter()
+            .filter(|p| self.policy_applies(p, &context.goal))
+            .count()
     }
 
     /// Plan derived from knowledge patterns.
@@ -757,6 +789,45 @@ fn capability_for_description(description: &str) -> Capability {
     // as a command — an unclassified goal answers from what FRIDAY already
     // knows, or reports honestly that it has no answer yet.
     Capability::SearchMemory
+}
+
+/// Whether two capabilities denote the same skill — the S7 relevance matcher.
+///
+/// Beyond exact equality, a channel's registry skill id (`web.search`,
+/// `docs.read`, …) is the same skill as the runtime verb a goal classifies to
+/// (`SearchWeb`, `ReadFile`, …): the Investigation Channel *suggests* exactly
+/// these ids, and the intent classifier maps the same natural language to the
+/// verb — the evidence plan already mixes both vocabularies for one goal (an
+/// evidence action `Custom("web.search")` beside a `SearchWeb` main action).
+///
+/// Only the unambiguous channel→verb pairs are bridged. `git.*`,
+/// `codeintel.*`, `external.*`, `windows.open` and `web.open` are
+/// deliberately NOT equivalent to anything: a learned `git.*` sequence must
+/// never become eligible for an arbitrary `execute_command` goal, and a
+/// desktop-open workflow must never qualify a web goal.
+fn capabilities_overlap(a: &Capability, b: &Capability) -> bool {
+    if a == b {
+        return true;
+    }
+    const CHANNEL_TO_VERB: &[(&str, Capability)] = &[
+        ("web.", Capability::SearchWeb),
+        ("docs.", Capability::ReadFile),
+        ("memory.recall", Capability::SearchMemory),
+        ("filesystem.list_directory", Capability::ListDirectory),
+        ("filesystem.read_file", Capability::ReadFile),
+    ];
+    // A skill id resolves to its channel's verb; a built-in verb resolves to
+    // itself. Two capabilities overlap when they resolve to the same verb.
+    let canonical = |c: &Capability| -> Option<Capability> {
+        match c {
+            Capability::Custom(id) => CHANNEL_TO_VERB
+                .iter()
+                .find(|(prefix, _)| id.starts_with(prefix))
+                .map(|(_, verb)| verb.clone()),
+            verb => Some(verb.clone()),
+        }
+    };
+    canonical(a) == canonical(b)
 }
 
 /// The current goal segment of a (possibly composed) description: everything
