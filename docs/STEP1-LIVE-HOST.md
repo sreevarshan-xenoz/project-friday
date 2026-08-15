@@ -177,6 +177,57 @@ execution remains covered by the existing env-gated browser tests. Demo: run
 the C# `windows-host` (`FRIDAY_SESSION=default`), start the mobile daemon, tell
 the portal "open notepad".
 
+## Gap E — in-cycle recovery on the kernel path ✅ shipped
+
+**Problem:** FRIDAY already had recovery machinery — `AgentKernel` retries
+(`action-runtime`), checkpointed `WorkflowEngine` recovery, `AutonomousTick`
+crash-safe continuation — but **none of it sat on the live laptop path**
+(`GoalRunner → Executive → GoalEngine`). A failed goal action was single-shot:
+execute once → fail → terminal, with no re-observe, no retry, no re-plan. The
+nasty case (action partially executes, then fails, then FRIDAY restarts) had no
+answer on this path.
+
+**Design (implemented):**
+1. A plan-level execution policy, not a learning dependency: `Plan::max_retries`
+   (default `DEFAULT_RECOVERY_MAX_ATTEMPTS = 2`, builder `with_max_retries`).
+   The Executive reads this bound at the Execute boundary. Recovery never
+   depends on the learning system; learning may later translate a `Retry`
+   policy into the bound, not the other way around.
+2. The Executive seam `execute_action_with_recovery`: when the goal's **own**
+   action fails unexpectedly (tool or verification), the Executive **re-observes
+   reality** (snapshots the world state, pushes a `TraceNodeKind::Recovery`
+   node into the audit trail), then re-executes and re-verifies — bounded.
+   Structural failures (no tool resolved for the capability) are never retried;
+   a human cancel/pause landing mid-recovery halts further retries so the
+   cooperative stop invariant (S3) holds.
+3. Recovery evidence: the report gains `recovered`, `recovery_attempts`,
+   `recoverable`, `failed_reason`, `last_observed_state`. `goal.completed`
+   carries `recovered` / `recovery_attempts`; an exhausted recovery publishes
+   `goal.failed` with the full recovery evidence — never a phantom completion.
+   Every attempt's execution → verification → reflection nodes remain in the
+   trace.
+
+**Honest boundary (deviation from the draft):** S5 proves **in-cycle runtime
+recovery** — failure → re-observation → bounded recovery → verification. It
+does **not** claim crash/restart continuation (process dies → restart →
+recover persisted world state → continue); that stays a later layer on the
+durable workflow infrastructure. "Re-plan from fresh state" is satisfied by the
+re-observe feeding the retry (re-execute against freshly observed reality);
+full plan regeneration is not in this seam.
+
+**Acceptance (tests, green):** S5-A and S5-B at both the kernel and runner
+level. Kernel (`executive.rs`): `goal_action_recovers_after_a_transient_failure`
+(fail once after a partial side effect → re-observe → retry → verified →
+`recovered: true`, `recovery_attempts: 2`, a `Recovery` node in the trace) and
+`goal_action_exhausts_recovery_and_fails_recoverable` (fails every attempt →
+hard ceiling at 1 + max_retries, `recoverable: true` + `failed_reason` + last
+observed state, no infinite retry machine). Runner (`goal_runner.rs` via
+`MockTransport`): `windows_goal_recovers_after_a_transient_host_failure`
+(`goal.completed` with `recovered: true`, both attempts reached the host) and
+`windows_goal_exhausts_recovery_and_fails_recoverable` (`goal.failed` with
+`recoverable: true`, `failed_reason`, `recovery_attempts: 3`,
+`last_observed_state`).
+
 ## Build order (each lands green independently)
 
 | # | Slice | Files | Ships with | Status |
@@ -185,11 +236,12 @@ the portal "open notepad".
 | 2 | Gap B — memory write+recall | `journal.rs`, `memory.rs`, `executive.rs`, `planning.rs`, `goal_runner.rs`, daemon main | durable memory, no goldfish on restart | ✅ |
 | 3 | Gap C — cancel/pause/approve consumed | `executive.rs`, `goal_runner.rs`, `protocol.ts`, `ChatScreen.tsx` | human can stop/admit FRIDAY | ✅ `e571a3c` |
 | 4 | Gap D — browser+windows on kernel | `planning.rs`, `goal_runner.rs`, `Cargo.toml` | laptop control (open apps / URLs) | ✅ `8f19e2f` |
+| 5 | Gap E — in-cycle recovery | `planning.rs`, `trace.rs`, `executive.rs`, `goal_runner.rs` | failure → re-observe → bounded retry → verify | ✅ `3e63361` |
 
 ## Non-goals for Step 1
 
 - No new daemon binary (extend `friday-mobile-daemon`).
 - No voice, no TTS, no wake loop (that's Step 7, rides on this host).
-- No perception→action (Step 5).
+- No perception→action (Step 6).
 - No durable WorkflowEngine swap of the Executive (Step 6).
 - No 24 h endurance / Server FRIDAY (parked).
