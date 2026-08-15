@@ -143,6 +143,11 @@ pub use verifiers::*;
 pub mod evidence_pipeline;
 
 pub use evidence_pipeline::*;
+
+pub mod perception;
+
+pub use perception::*;
+
 // ── Tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]

@@ -13,6 +13,12 @@ pub mod windows_focus;
 /// Sensors observe the environment and produce workspace events.
 /// The cognitive system never needs to know which platform it's running on.
 ///
+/// `Send + Sync` (S6): the laptop Observe seam stores a whole [`SensorLoop`]
+/// inside the Executive, and spawned cycles may hold `&Executive` across an
+/// await — so the sensor trait must be both. All real sensors are plain state
+/// plus `Arc<dyn Send + Sync>` pipeline objects, so nothing here forces an
+/// implementation to add locks it does not need.
+///
 /// # Implementors
 ///
 /// - `MockSensor` — deterministic events for tests
@@ -23,7 +29,7 @@ pub mod windows_focus;
 ///   `Topic::ObjectDetected` (ML optional; platform-neutral pipeline,
 ///   Windows capture)
 #[async_trait]
-pub trait Sensor: Send {
+pub trait Sensor: Send + Sync {
     /// Human-readable name, e.g. "windows_focus", "clipboard".
     fn name(&self) -> &str;
 
@@ -83,6 +89,18 @@ impl SensorLoop {
             }
         }
         topics
+    }
+
+    /// Poll all sensors and return every event produced this cycle **without**
+    /// publishing to any workspace. The laptop Observe seam (S6) reuses this
+    /// exact loop to fold real observations into its own WorldState — the same
+    /// sensors, the same ordering, no second perception path.
+    pub async fn poll_all_events(&mut self) -> Vec<WorkspaceEvent> {
+        let mut events = Vec::new();
+        for sensor in &mut self.sensors {
+            events.extend(sensor.poll().await);
+        }
+        events
     }
 
     pub fn sensor_count(&self) -> usize {
@@ -179,5 +197,31 @@ mod tests {
 
         let history = workspace.history(None);
         assert_eq!(history.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn sensor_loop_poll_all_events_returns_events_without_publishing() {
+        let events_a = vec![WorkspaceEvent::new(
+            Topic::WindowFocusChanged,
+            serde_json::json!({"title": "a"}),
+        )];
+        let events_b = vec![WorkspaceEvent::new(
+            Topic::Screen,
+            serde_json::json!({"title": "b"}),
+        )];
+
+        let mut loop_ = SensorLoop::new();
+        loop_.add(Box::new(MockSensor::new("sensor_a", events_a)));
+        loop_.add(Box::new(MockSensor::new("sensor_b", events_b)));
+
+        let events = loop_.poll_all_events().await;
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].topic, Topic::WindowFocusChanged);
+        assert_eq!(events[1].topic, Topic::Screen);
+        assert_eq!(events[0].payload["title"], "a");
+        assert_eq!(events[1].payload["title"], "b");
+
+        // MockSensors are exhausted: the loop reports nothing, never invents.
+        assert!(loop_.poll_all_events().await.is_empty());
     }
 }

@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::evidence::{is_evidence_action, parse_evidence_id, EvidenceActionRecord, EvidenceTrail};
 use crate::evidence_pipeline::{evidence_episode, EvidenceBody, EvidenceSet, EvidenceVerifier};
+use crate::perception::{fold_observation, Observer};
 use crate::simulation::{DefaultSimulator, Simulator};
 use crate::Action;
 use crate::AdmissionSignal;
@@ -180,6 +181,10 @@ pub struct ExecutiveReport {
     /// The last world state FRIDAY observed before giving up (S5-B) — the
     /// reality a follow-up goal can re-enter from instead of starting cold.
     pub last_observed_state: Option<WorldState>,
+    /// How many real sensor observations the Observe phase folded into the
+    /// world state this cycle (S6). `0` when no observer is attached or
+    /// nothing observable fired — never a guessed count.
+    pub observations_folded: usize,
 }
 
 /// Record a control stop on a report: which stop fired and the elapsed time.
@@ -262,6 +267,10 @@ pub struct Executive {
     /// clones while the cycle awaits inside the executive lock.
     abort: Arc<AtomicBool>,
     pause: Arc<AtomicBool>,
+    /// The laptop observation seam (S6): an optional [`Observer`] that polls
+    /// the real sensor loop during the Observe phase and folds what it sees
+    /// into the blackboard's WorldState. `None` = the exact pre-S6 behavior.
+    observer: Option<Observer>,
 }
 
 impl Executive {
@@ -277,6 +286,35 @@ impl Executive {
         self.phase = ExecutivePhase::Observe;
         report.phases_completed.push(ExecutivePhase::Observe);
         workspace.push_thought("executive: observing workspace");
+
+        // S6: the laptop path perceives the machine. Poll the attached sensor
+        // loop and fold real observations into the existing WorldState, then
+        // surface each observable change as an attention item. No observer
+        // attached → the exact pre-S6 behavior.
+        if let Some(observer) = &mut self.observer {
+            let events = observer.poll().await;
+            if !events.is_empty() {
+                let current = workspace.get_world_state().unwrap_or_default();
+                let (updated, descriptions) = fold_observation(current, &events);
+                report.observations_folded = descriptions.len();
+                workspace.set_world_state(updated);
+                workspace.push_thought(format!(
+                    "executive: observed {} change(s) from sensors",
+                    report.observations_folded
+                ));
+                for description in descriptions {
+                    self.attention_manager.add(AttentionItem::new(
+                        AttentionItemKind::Observation,
+                        description,
+                        AttentionScore::builder()
+                            .importance(0.5)
+                            .urgency(0.4)
+                            .novelty(0.5)
+                            .build(),
+                    ));
+                }
+            }
+        }
 
         if let Some(world) = workspace.get_world_state() {
             if world.confidence < Confidence::medium() {
@@ -1159,6 +1197,15 @@ impl Executive {
         self
     }
 
+    /// Attach the laptop observation seam (S6): the Executive polls the
+    /// observer's sensor loop during the Observe phase and folds what it sees
+    /// into the blackboard's WorldState, surfacing each change as an attention
+    /// item. Default: no observer — cycles observe exactly as before.
+    pub fn with_observer(mut self, observer: Observer) -> Self {
+        self.observer = Some(observer);
+        self
+    }
+
     /// Register a tool with the executive's goal engine.
     pub fn register_tool(&mut self, tool: Box<dyn Tool>) {
         self.goal_engine.registry.register(tool);
@@ -1213,6 +1260,7 @@ impl Default for Executive {
             cycle_count: 0,
             abort: Arc::new(AtomicBool::new(false)),
             pause: Arc::new(AtomicBool::new(false)),
+            observer: None,
         }
     }
 }
@@ -1447,6 +1495,88 @@ mod tests {
             executive.phase(),
             ExecutivePhase::Idle,
             "idle cycle must end in the Idle phase"
+        );
+    }
+
+    #[tokio::test]
+    async fn observe_folds_sensor_events_into_world_state_and_attention() {
+        // S6-A (kernel): a real sensor loop attached to the Executive must —
+        // through one Observe phase — land the observation in the blackboard
+        // WorldState and surface it as an attention item. The sensor is a real
+        // SensorLoop/MockSensor; only the platform sensor is mocked.
+        let workspace = CognitiveBlackboard::new();
+        workspace.set_world_state(WorldState::new().with_tool(Capability::ReadFile));
+
+        let mut loop_ = friday_sensors::SensorLoop::new();
+        loop_.add(Box::new(friday_sensors::MockSensor::new(
+            "mock_screen",
+            vec![friday_cognitive::WorkspaceEvent::new(
+                friday_cognitive::workspace::Topic::Screen,
+                serde_json::json!({
+                    "title": "Terminal",
+                    "process": "terminal",
+                    "change": "content",
+                }),
+            )],
+        )));
+
+        let mut executive = Executive::new().with_observer(Observer::new(loop_));
+        let report = executive.cycle(&workspace).await;
+
+        assert_eq!(
+            report.observations_folded, 1,
+            "the Executive must report exactly the observations it folded"
+        );
+        let world = workspace.get_world_state().expect("world state");
+        assert_eq!(
+            world.variables["screen"]["process"], "terminal",
+            "the folded screen observation must reach the WorldState"
+        );
+        assert!(
+            world.has_tool(&Capability::ReadFile),
+            "folding observations must never drop existing world capabilities"
+        );
+
+        let attention = workspace.get_attention();
+        assert!(
+            attention.iter().any(|i| {
+                i.kind == AttentionItemKind::Observation && i.description.contains("terminal")
+            }),
+            "the observed screen change must surface as an attention item: {:?}",
+            attention
+        );
+        assert!(
+            workspace
+                .get_thoughts()
+                .iter()
+                .any(|t| t.contains("observed 1 change")),
+            "the cycle must narrate the observation it consumed"
+        );
+    }
+
+    #[tokio::test]
+    async fn cycle_without_observer_is_unchanged() {
+        // Regression: no observer → no observation, no invented variables, no
+        // ghost attention item. The pre-S6 cycle behavior is exactly preserved.
+        let workspace = CognitiveBlackboard::new();
+        workspace.set_world_state(WorldState::new().with_tool(Capability::ReadFile));
+
+        let mut executive = Executive::new();
+        let report = executive.cycle(&workspace).await;
+
+        assert_eq!(report.observations_folded, 0);
+        let world = workspace.get_world_state().expect("world state");
+        assert!(
+            world.variables.is_empty(),
+            "no observer must inject no variables"
+        );
+        let attention = workspace.get_attention();
+        assert!(
+            attention.iter().all(|i| {
+                !i.description.contains("screen:") && !i.description.contains("window focus:")
+            }),
+            "no observer must surface no sensor-derived attention item: {:?}",
+            attention
         );
     }
 

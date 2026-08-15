@@ -13,6 +13,8 @@ friday-core = { path = "../../core" }
 friday-capabilities = { path = "../capabilities" }
 friday-actions = { path = "../action-runtime" }
 friday-goal-execution = { path = "../goal-execution" }
+friday-cognitive = { path = "../cognitive" }
+friday-sensors = { path = "../sensors" }
 friday-intelligence = { path = "../intelligence" }
 friday-investigation = { path = "../investigation" }
 friday-windows = { path = "../../plugins/windows" }

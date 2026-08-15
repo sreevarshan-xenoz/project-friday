@@ -44,11 +44,15 @@ use friday_actions::{
 use friday_core::event::{Event, EventBus};
 use friday_goal_execution::{
     Action, AdapterTool, AdmissionVerdict, Capability, CognitiveBlackboard, CognitiveEpisode,
-    ExecutionContext, Executive, ExecutiveReport, GoalResult, MemoryJournal, ResolvingWebTool,
-    Tool, ToolResult, WebFetchProvider, WebSearchProvider, WorldState, JINA_READER_PREFIX,
+    ExecutionContext, Executive, ExecutiveReport, GoalResult, MemoryJournal, Observer,
+    ResolvingWebTool, Tool, ToolResult, WebFetchProvider, WebSearchProvider, WorldState,
+    JINA_READER_PREFIX,
 };
 use friday_intelligence::InferenceFabric;
 use friday_investigation::InvestigationEngine;
+use friday_sensors::SensorLoop;
+#[cfg(windows)]
+use friday_sensors::{screen::WindowsScreenSensor, windows_focus::WindowsFocusSensor};
 use friday_windows::WindowsAdapter;
 use serde_json::json;
 
@@ -903,6 +907,7 @@ impl GoalRunner {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -924,6 +929,7 @@ impl GoalRunner {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -936,6 +942,7 @@ impl GoalRunner {
             InvestigationEngine::heuristic(),
             None,
             Some(endpoint.into()),
+            None,
             None,
             None,
             None,
@@ -955,6 +962,7 @@ impl GoalRunner {
             Some(journal),
             None,
             None,
+            None,
         )
     }
 
@@ -963,7 +971,8 @@ impl GoalRunner {
     /// restarts (close FRIDAY, reopen it tomorrow, it still knows). This is the
     /// live-host constructor: it also wires the S4 desktop adapters — the real
     /// Windows host (named pipe, `default` session matching the C# host's
-    /// `FRIDAY_SESSION`) and the browser (CDP-backed Chrome).
+    /// `FRIDAY_SESSION`) and the browser (CDP-backed Chrome) — plus the S6
+    /// observation seam (the real Windows screen + focus sensors).
     pub fn with_fabric_and_memory(
         bus: EventBus,
         fabric: Arc<InferenceFabric>,
@@ -980,6 +989,7 @@ impl GoalRunner {
             #[cfg(not(windows))]
             None,
             Some(BrowserAdapter::new()),
+            Self::live_observer(),
         )
     }
 
@@ -991,6 +1001,9 @@ impl GoalRunner {
     /// `journal` attaches persistent memory: the Executive seeds its episode
     /// store from it, every admitted episode is appended to it, and the memory
     /// recall/remember tools read/write it (`None` = in-memory only).
+    /// `observer` attaches the S6 observation seam (the Executive polls it
+    /// every Observe phase; `None` = no sensors, the exact pre-S6 behavior).
+    #[allow(clippy::too_many_arguments)]
     fn with_investigation_engine(
         bus: EventBus,
         investigation: InvestigationEngine,
@@ -999,9 +1012,13 @@ impl GoalRunner {
         journal: Option<Arc<MemoryJournal>>,
         windows: Option<WindowsAdapter>,
         browser: Option<BrowserAdapter>,
+        observer: Option<Observer>,
     ) -> Self {
         let workspace = CognitiveBlackboard::new();
         let mut executive = Executive::new().with_investigation_engine(investigation);
+        if let Some(observer) = observer {
+            executive = executive.with_observer(observer);
+        }
         if let Some(journal) = &journal {
             // One journal, one memory: seed the Executive's episode store from
             // it and give the built-in SearchMemory capability a real tool that
@@ -1144,6 +1161,23 @@ impl GoalRunner {
             pause,
             in_flight: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// The live-host observation seam (S6): the real Windows screen + focus
+    /// sensors on one SensorLoop, folded into the blackboard WorldState on
+    /// every Observe phase. Hermetic runners pass `None` so a test never
+    /// touches a real window or screen.
+    #[cfg(windows)]
+    fn live_observer() -> Option<Observer> {
+        let mut loop_ = SensorLoop::new();
+        loop_.add(Box::new(WindowsScreenSensor::new()));
+        loop_.add(Box::new(WindowsFocusSensor::new()));
+        Some(Observer::new(loop_))
+    }
+
+    #[cfg(not(windows))]
+    fn live_observer() -> Option<Observer> {
+        None
     }
 
     /// Subscribe to `plan.goal` and run each goal through the Executive,
@@ -1512,6 +1546,10 @@ fn completed_payload(
         // (1 = no recovery was needed).
         "recovered": report.recovered,
         "recovery_attempts": report.recovery_attempts,
+        // S6 perception evidence: how many real sensor observations the
+        // Observe phase folded into the world state this run (0 = no observer
+        // attached or nothing observable fired).
+        "observations_folded": report.observations_folded,
     });
     // A held episode (admission Pending, e.g. sensitive content) was NOT
     // stored — surface its id so the portal can offer a `task.approve` button
@@ -2811,6 +2849,7 @@ mod tests {
             None,
             Some(adapter),
             None,
+            None,
         );
         runner.start();
 
@@ -2909,6 +2948,7 @@ mod tests {
             None,
             Some(adapter),
             None,
+            None,
         );
         runner.start();
 
@@ -2997,6 +3037,7 @@ mod tests {
             None,
             Some(adapter),
             None,
+            None,
         );
         runner.start();
 
@@ -3049,6 +3090,126 @@ mod tests {
             3,
             "every bounded attempt reached the host — no infinite retry machine"
         );
+    }
+
+    /// S6-B (runner level): the laptop path perceives the machine. A real
+    /// Observe phase runs inside the actual GoalRunner with a sensor loop
+    /// attached — the screen observation must reach the blackboard WorldState,
+    /// surface as an attention item, be reported as `observations_folded`, and
+    /// the fed goal must still win focus (an observation is never allowed to
+    /// hijack a user goal).
+    #[tokio::test]
+    async fn runner_observes_sensors_into_world_state_without_hijacking_the_goal() {
+        use friday_cognitive::workspace::Topic;
+        use friday_cognitive::WorkspaceEvent;
+        use friday_sensors::MockSensor;
+        use friday_windows::ipc::MockTransport;
+        use friday_windows::protocol::BridgeResponse;
+
+        let launched = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let launched_clone = launched.clone();
+        let adapter = WindowsAdapter::new(Arc::new(MockTransport::new(Arc::new(
+            move |frame: friday_windows::protocol::BridgeFrame| {
+                launched_clone.lock().unwrap().push(format!(
+                    "{}:{}",
+                    frame.message.action,
+                    frame
+                        .message
+                        .payload
+                        .get("path")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                ));
+                BridgeResponse::ok(json!({
+                    "hwnd": 42,
+                    "title": "Untitled - Notepad",
+                    "pid": 1234,
+                }))
+            },
+        ))));
+
+        // The laptop's observation seam: the same SensorLoop type the cognitive
+        // runtime uses, with a deterministic screen sensor standing in for the
+        // real WindowsScreenSensor.
+        let mut loop_ = SensorLoop::new();
+        loop_.add(Box::new(MockSensor::new(
+            "mock_screen",
+            vec![WorkspaceEvent::new(
+                Topic::Screen,
+                json!({
+                    "title": "Terminal",
+                    "process": "terminal",
+                    "change": "content",
+                }),
+            )],
+        )));
+
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let runner = GoalRunner::with_investigation_engine(
+            bus.clone(),
+            InvestigationEngine::heuristic(),
+            None,
+            None,
+            None,
+            Some(adapter),
+            None,
+            Some(Observer::new(loop_)),
+        );
+
+        runner
+            .run_goal("open notepad".to_string(), DEFAULT_SESSION_ID.to_string())
+            .await;
+
+        // The Observe phase folded the sensor event into the blackboard WorldState.
+        let world = runner.workspace.get_world_state().expect("world state");
+        assert_eq!(
+            world.variables["screen"]["process"], "terminal",
+            "the real Observe phase must land the observation in the WorldState"
+        );
+        assert!(
+            world.has_tool(&Capability::Custom("windows.open".into())),
+            "the observation fold must never drop the advertised world surface"
+        );
+
+        // The observation surfaced as an attention item…
+        let attention = runner.workspace.get_attention();
+        assert!(
+            attention
+                .iter()
+                .any(|i| i.description.contains("screen: terminal")),
+            "the observed change must surface as an attention item: {:?}",
+            attention
+        );
+        // …while the fed goal stayed in the ranking too (it was never evicted
+        // by a sensor observation).
+        assert!(
+            attention
+                .iter()
+                .any(|i| i.kind == friday_goal_execution::AttentionItemKind::Goal),
+            "the fed goal must remain an attention item: {:?}",
+            attention
+        );
+
+        // The goal — not the observation — drove execution: the host was asked
+        // to launch notepad exactly once. A hijacked focus would have run the
+        // screen description instead and left the host untouched.
+        assert_eq!(
+            launched.lock().unwrap().clone(),
+            vec!["windows.open:notepad.exe".to_string()],
+            "the user goal must win focus over the sensor observation"
+        );
+
+        // The completed goal reports the folded-observation count honestly.
+        let mut completed = None;
+        while let Ok(ev) = rx.recv().await {
+            if ev.kind == "goal.completed" {
+                completed = Some(ev);
+                break;
+            }
+        }
+        let ev = completed.expect("a completed goal event");
+        assert_eq!(ev.payload["observations_folded"], json!(1), "{ev:?}");
     }
 
     /// S4: the browser tool advertises ONLY the safe `web.open` verb (the
