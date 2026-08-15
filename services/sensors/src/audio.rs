@@ -320,6 +320,17 @@ impl AudioSensor {
         self.capture.is_some()
     }
 
+    /// The MMDevice endpoint id of the opened input (empty when no capture
+    /// device). Makes the *explicit* device FRIDAY hears available for logs and
+    /// diagnostics — a silent capture can then be attributed to hardware
+    /// selection rather than the pipeline.
+    pub fn capture_device_id(&self) -> &str {
+        self.capture
+            .as_ref()
+            .map(|c| c.device_id.as_str())
+            .unwrap_or("")
+    }
+
     /// Whether a speech-to-text backend is attached (audit + hermetic tests).
     pub fn asr_attached(&self) -> bool {
         self.asr.is_some()
@@ -399,6 +410,11 @@ struct WasapiCapture {
     channels: u16,
     bits_per_sample: u16,
     is_float: bool,
+    /// The MMDevice endpoint id of the opened input (e.g. the `{GUID}` string
+    /// that `Get-PnpDevice -Class AudioEndpoint` reports) — the *explicit*
+    /// device FRIDAY hears, so a silent capture can be attributed to hardware
+    /// selection instead of the pipeline.
+    device_id: String,
 }
 
 // Never constructed on non-Windows; keeps `AudioSensor`'s `Option<WasapiCapture>`
@@ -447,6 +463,11 @@ fn open_default_capture() -> Option<WasapiCapture> {
         let device = enumerator
             .GetDefaultAudioEndpoint(eCapture, eConsole)
             .ok()?;
+        let device_id = device
+            .GetId()
+            .ok()
+            .and_then(|id| id.to_string().ok())
+            .unwrap_or_default();
         let client: IAudioClient = device.Activate(CLSCTX_ALL, None).ok()?;
 
         // Preferred format: 16 kHz mono 16-bit PCM. Shared mode accepts a
@@ -474,6 +495,7 @@ fn open_default_capture() -> Option<WasapiCapture> {
                 channels: 1,
                 bits_per_sample: 16,
                 is_float: false,
+                device_id,
             });
         }
 
@@ -520,6 +542,7 @@ fn open_default_capture() -> Option<WasapiCapture> {
             channels: (*mix).nChannels.max(1),
             bits_per_sample: (*mix).wBitsPerSample,
             is_float,
+            device_id,
         })
     }
 }
@@ -779,6 +802,80 @@ mod tests {
             assert!(p["frames"].is_u64());
             assert!(p["asr"].is_null() || p["asr"].is_string());
             assert!(p["transcript"].is_null() || p["transcript"].is_string());
+        }
+    }
+
+    /// Live capture diagnostic: opens the real device and reports whether any
+    /// samples are flowing, the peak RMS, and how much of it sits above the VAD
+    /// threshold. Run with `--ignored --nocapture`:
+    ///
+    /// ```text
+    /// cargo test -p friday-sensors --lib live_mic_diagnostic_probe -- --ignored --nocapture
+    /// ```
+    ///
+    /// `FRIDAY_MIC_PROBE_SECONDS` (default 20) sets the window; per-second
+    /// `peak_rms, speech_frames` lines are appended to `FRIDAY_MIC_PROBE_LOG`
+    /// (default `mic-probe.csv` in the current dir) so a long capture can be
+    /// analyzed after the fact. A zero-read or all-quiet result points at the
+    /// device/privacy layer; a high continuous speech-frame count points at a
+    /// noise floor that keeps the VAD "in speech" so turns never close.
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    #[ignore]
+    async fn live_mic_diagnostic_probe() {
+        use std::io::Write;
+        let seconds: u64 = std::env::var("FRIDAY_MIC_PROBE_SECONDS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(20);
+        let log_path = std::env::var("FRIDAY_MIC_PROBE_LOG")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from("mic-probe.csv"));
+        let sensor = AudioSensor::new();
+        let vad = Vad::default();
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .expect("open probe log");
+        eprintln!(
+            "capture device available: {} endpoint: {} — logging {}s to {}",
+            sensor.capture_available(),
+            sensor.capture_device_id(),
+            seconds,
+            log_path.display()
+        );
+        for sec in 0..seconds {
+            let mut reads = 0usize;
+            let mut peak: f32 = 0.0;
+            let mut frames = 0usize;
+            let mut speech_frames = 0usize;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+            loop {
+                let samples = sensor.capture.as_ref().and_then(|c| c.read_available());
+                if let Some(samples) = samples {
+                    if !samples.is_empty() {
+                        reads += 1;
+                        peak = peak.max(rms(&samples));
+                        for chunk in samples.chunks(FRAME_SAMPLES) {
+                            if chunk.len() == FRAME_SAMPLES {
+                                frames += 1;
+                                if rms(chunk) >= vad.threshold {
+                                    speech_frames += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+                if std::time::Instant::now() >= deadline {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            let _ = writeln!(file, "{sec},{reads},{peak:.4},{frames},{speech_frames}");
+            eprintln!(
+                "sec={sec} reads={reads} peak_rms={peak:.4} frames={frames} speech={speech_frames}"
+            );
         }
     }
 }

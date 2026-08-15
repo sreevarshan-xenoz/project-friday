@@ -1388,6 +1388,7 @@ impl GoalRunner {
     /// same session.
     async fn run_goal(&self, goal: String, session_id: String) {
         let id = format!("goal-{}", uuid::Uuid::new_v4().simple());
+        tracing::info!(id = %id, session = %session_id, "goal received: {goal}");
 
         // A fresh goal always starts with the control flags clear — a
         // previously cancelled/paused goal must not bleed into the next one.
@@ -1578,6 +1579,18 @@ impl GoalRunner {
                 ))
                 .await;
         }
+        let terminal = if report.cancelled {
+            "goal.cancelled"
+        } else if report.paused {
+            "goal.paused"
+        } else if report.recoverable {
+            "goal.recoverable"
+        } else if report.plan_executed {
+            "goal.completed"
+        } else {
+            "goal.failed"
+        };
+        tracing::info!(id = %id, session = %session_id, "goal terminal: {terminal}");
     }
 }
 

@@ -130,8 +130,9 @@ async fn main() {
     }
     if let Some(mic) = voice.sensor() {
         tracing::info!(
-            "[voice] intake active: spoken turns enter plan.goal (capture device open: {})",
-            mic.capture_available()
+            "[voice] intake active: spoken turns enter plan.goal (capture device open: {}, endpoint: {})",
+            mic.capture_available(),
+            mic.capture_device_id()
         );
         let intake = VoiceIntake::new(bus.clone(), mic);
         tokio::spawn(intake.run(Duration::from_secs(1)));
