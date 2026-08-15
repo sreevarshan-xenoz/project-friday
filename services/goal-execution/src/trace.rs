@@ -14,6 +14,9 @@ pub enum TraceNodeKind {
     Evaluation,
     Execution,
     Verification,
+    /// A bounded in-cycle recovery attempt (S5): the goal's action failed
+    /// unexpectedly and the Executive re-observed reality before retrying.
+    Recovery,
     Reflection,
     Learning,
     WorldStateChange,

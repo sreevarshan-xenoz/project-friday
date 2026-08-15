@@ -39,6 +39,7 @@ use crate::TraceNode;
 use crate::TraceNodeKind;
 use crate::Verification;
 use crate::VerifiedResult;
+use crate::WorldState;
 use friday_investigation::{InvestigationEngine, InvestigationResult};
 use friday_knowledge::KnowledgeRecord;
 use friday_reflection::ReflectionEngine;
@@ -161,6 +162,24 @@ pub struct ExecutiveReport {
     /// (admission `Pending`). This is the handle a `task.approve` command
     /// targets — `None` when nothing was held.
     pub held_episode_id: Option<String>,
+    /// The goal's own action recovered (S5): it failed once or more, the
+    /// Executive re-observed reality, and a bounded retry then succeeded.
+    /// `false` for a first-try success, a no-recovery plan, or an exhausted
+    /// recovery.
+    pub recovered: bool,
+    /// Total execute attempts of the goal's own action (1 = no recovery ran).
+    pub recovery_attempts: u32,
+    /// The recovery bound was exhausted: the goal action failed every bounded
+    /// attempt and the goal is a genuine, retryable failure (S5-B). `false`
+    /// for structural failures (no tool resolved), successes, and plans with a
+    /// zero retry budget.
+    pub recoverable: bool,
+    /// Why the goal action ultimately failed, when [`Self::recoverable`] — the
+    /// final tool error (never a reconstruction).
+    pub failed_reason: Option<String>,
+    /// The last world state FRIDAY observed before giving up (S5-B) — the
+    /// reality a follow-up goal can re-enter from instead of starting cold.
+    pub last_observed_state: Option<WorldState>,
 }
 
 /// Record a control stop on a report: which stop fired and the elapsed time.
@@ -472,14 +491,14 @@ impl Executive {
                         }
                         workspace
                             .push_thought(format!("executive: executing: {}", action.instruction));
-                        let expectation = Expectation::success(&action.instruction);
-                        let exec_ctx = ExecutionContext::for_goal(&g.id);
-                        let gr = self
-                            .goal_engine
-                            .execute(g, action, &expectation, &exec_ctx)
-                            .await;
-                        merged_nodes.extend(gr.cognitive_trace.nodes.iter().cloned());
                         if is_evidence_action(action) {
+                            let expectation = Expectation::success(&action.instruction);
+                            let exec_ctx = ExecutionContext::for_goal(&g.id);
+                            let gr = self
+                                .goal_engine
+                                .execute(g, action, &expectation, &exec_ctx)
+                                .await;
+                            merged_nodes.extend(gr.cognitive_trace.nodes.iter().cloned());
                             // An evidence action — record its own lifecycle.
                             // is_evidence_action guarantees the parse succeeds.
                             let (channel, _verb) = parse_evidence_id(&action.instruction)
@@ -505,8 +524,20 @@ impl Executive {
                                 }
                             }
                         } else {
-                            // The goal's own action — the main execution result.
-                            main_report = Some(gr);
+                            // The goal's own action — the main execution result,
+                            // running through the same bounded in-cycle recovery
+                            // seam as a direct plan (S5).
+                            let (main_gr, main_nodes) = self
+                                .execute_action_with_recovery(
+                                    g,
+                                    action,
+                                    p.max_retries,
+                                    workspace,
+                                    &mut report,
+                                )
+                                .await;
+                            merged_nodes.extend(main_nodes);
+                            main_report = Some(main_gr);
                         }
                     }
 
@@ -587,11 +618,14 @@ impl Executive {
                 } else if let Some(action) = p.actions.first() {
                     workspace.push_thought(format!("executive: executing: {}", action.instruction));
 
-                    let expectation = Expectation::success(&action.instruction);
-                    let exec_ctx = ExecutionContext::for_goal(&g.id);
-                    let gr = self
-                        .goal_engine
-                        .execute(g, action, &expectation, &exec_ctx)
+                    let (gr, exec_nodes) = self
+                        .execute_action_with_recovery(
+                            g,
+                            action,
+                            p.max_retries,
+                            workspace,
+                            &mut report,
+                        )
                         .await;
 
                     let tool_result = gr.execution_result.clone().unwrap_or_else(|| ToolResult {
@@ -614,7 +648,7 @@ impl Executive {
                     let mut trace = planning_trace
                         .clone()
                         .unwrap_or_else(|| CognitiveTrace::new(&g.id));
-                    trace.nodes.extend(gr.cognitive_trace.nodes.iter().cloned());
+                    trace.nodes.extend(exec_nodes);
                     workspace.set_current_trace(trace);
 
                     workspace.push_thought(format!(
@@ -898,6 +932,104 @@ impl Executive {
 
     pub fn attention_manager_mut(&mut self) -> &mut AttentionManager {
         &mut self.attention_manager
+    }
+
+    /// In-cycle recovery seam (S5): execute the goal's own action, and when it
+    /// fails unexpectedly (tool or verification), **re-observe reality**, then
+    /// re-execute and re-verify — up to the plan's `max_retries` bound. Every
+    /// attempt's execution → verification → reflection nodes stay in the audit
+    /// trail, joined by a [`TraceNodeKind::Recovery`] re-observation per retry.
+    /// The report records how many attempts ran, whether the goal recovered,
+    /// and — when the bound was exhausted — that it is `recoverable`, why it
+    /// failed, and the last observed world state.
+    ///
+    /// Structural failures are never retried: when no tool resolved for the
+    /// capability the registry decision is final. A human control stop landing
+    /// mid-recovery halts further retries so the cycle can stop cooperatively.
+    async fn execute_action_with_recovery(
+        &self,
+        g: &Goal,
+        action: &Action,
+        max_retries: u32,
+        workspace: &CognitiveBlackboard,
+        report: &mut ExecutiveReport,
+    ) -> (GoalReport, Vec<TraceNode>) {
+        let expectation = Expectation::success(&action.instruction);
+        let exec_ctx = ExecutionContext::for_goal(&g.id);
+        let mut nodes: Vec<TraceNode> = Vec::new();
+        let mut attempt: u32 = 0;
+        let current: Option<GoalReport>;
+        let mut stopped = false;
+
+        loop {
+            attempt += 1;
+            let gr = self
+                .goal_engine
+                .execute(g, action, &expectation, &exec_ctx)
+                .await;
+            nodes.extend(gr.cognitive_trace.nodes.iter().cloned());
+            report.recovery_attempts = attempt;
+
+            let structural = gr.tool.is_empty();
+            if structural || gr.success() || attempt > max_retries {
+                current = Some(gr);
+                break;
+            }
+
+            // About to retry: a cancel/pause that landed during the failed
+            // attempt halts further retries — no re-observe, no re-execute.
+            // The post-Execute checkpoint reports the cooperative stop.
+            if self.control_stop().is_some() {
+                stopped = true;
+                current = Some(gr);
+                break;
+            }
+
+            // Re-observe reality before the next attempt: snapshot the current
+            // world state and record the recovery decision in the audit trail.
+            let observed = workspace.get_world_state();
+            report.last_observed_state = observed.clone();
+            workspace.push_thought(format!(
+                "executive: recovery — re-observing before retry {attempt}/{max_retries}"
+            ));
+            nodes.push(
+                TraceNode::new(
+                    TraceNodeKind::Recovery,
+                    serde_json::json!({
+                        "attempt": attempt,
+                        "outcome_kind": format!("{:?}", gr.outcome.kind),
+                        "tool_success": gr.verification.tool_success,
+                        "verified": gr.verification.verified,
+                        "error": gr
+                            .execution_result
+                            .as_ref()
+                            .and_then(|r| r.error.clone())
+                            .unwrap_or_else(|| gr.outcome.context.clone()),
+                    }),
+                    serde_json::json!({
+                        "decision": "retry",
+                        "observed_state": observed,
+                    }),
+                )
+                .with_world_state(workspace.get_world_state().unwrap_or_default()),
+            );
+        }
+
+        let gr = current.expect("one attempt always ran");
+        report.recovered = report.recovery_attempts > 1 && gr.success();
+        report.recoverable = !stopped && !gr.tool.is_empty() && !gr.success() && max_retries > 0;
+        if report.recoverable {
+            report.failed_reason = Some(
+                gr.execution_result
+                    .as_ref()
+                    .and_then(|r| r.error.clone())
+                    .unwrap_or_else(|| gr.outcome.context.clone()),
+            );
+            // The last observed state at exhaustion — the reality FRIDAY saw
+            // before giving up.
+            report.last_observed_state = workspace.get_world_state();
+        }
+        (gr, nodes)
     }
 
     /// Build the planning segment of the cognitive trace: an Investigation
@@ -1678,6 +1810,146 @@ mod tests {
         assert!(!report.episode_stored);
         assert!(exec.episode_store().count() == 0);
         assert!(report.admission_signal.is_some());
+    }
+
+    /// A tool that fails the first `fail_times` calls (recording a "partial
+    /// side effect") then succeeds — the deterministic shape of a transient,
+    /// recoverable failure (S5-A).
+    struct FlakyTool {
+        capabilities: Vec<Capability>,
+        calls: Mutex<u32>,
+        fail_times: u32,
+    }
+
+    impl FlakyTool {
+        fn new(fail_times: u32, capabilities: Vec<Capability>) -> Self {
+            Self {
+                capabilities,
+                calls: Mutex::new(0),
+                fail_times,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Tool for FlakyTool {
+        fn name(&self) -> &str {
+            "flaky"
+        }
+        fn description(&self) -> &str {
+            "test tool that fails transiently then succeeds"
+        }
+        fn capabilities(&self) -> Vec<Capability> {
+            self.capabilities.clone()
+        }
+        async fn execute(&self, _action: &Action, _context: &ExecutionContext) -> ToolResult {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            if *calls <= self.fail_times {
+                ToolResult::error("transient failure after partial side effect")
+            } else {
+                ToolResult::success("done after retry")
+            }
+        }
+    }
+
+    /// S5-A (kernel level): the goal's action fails once after a partial side
+    /// effect, the Executive re-observes reality, retries, verifies, and marks
+    /// the goal `recovered` — FRIDAY does not blindly repeat the original
+    /// action nor fail it; the re-observation is part of the audit trail.
+    #[tokio::test]
+    async fn goal_action_recovers_after_a_transient_failure() {
+        let workspace = CognitiveBlackboard::new();
+        let mut executive = Executive::new();
+        executive.register_tool(Box::new(FlakyTool::new(
+            1,
+            vec![Capability::Custom("windows.open".into())],
+        )));
+        workspace.set_world_state(
+            WorldState::new().with_tool(Capability::Custom("windows.open".into())),
+        );
+
+        executive.add_goal("Open notepad", 0.9);
+        let report = executive.cycle(&workspace).await;
+
+        assert!(report.plan_executed, "the goal action ran");
+        assert!(
+            report.recovered,
+            "recovered after re-observe + retry: attempts={} result={:?}",
+            report.recovery_attempts, report.result
+        );
+        assert_eq!(report.recovery_attempts, 2, "fail once, succeed once");
+        assert!(!report.recoverable, "no exhaustion on a recovered goal");
+        assert_eq!(
+            report.result.as_ref().map(|r| r.success),
+            Some(true),
+            "the retried execution succeeded"
+        );
+        // The re-observation is in the audit trail, not just the outcome.
+        let trace = workspace.get_current_trace().expect("trace published");
+        assert!(
+            trace
+                .nodes
+                .iter()
+                .any(|n| n.kind == TraceNodeKind::Recovery),
+            "a Recovery node records the retry: {:?}",
+            trace.nodes.iter().map(|n| &n.kind).collect::<Vec<_>>()
+        );
+        assert!(
+            workspace
+                .get_thoughts()
+                .iter()
+                .any(|t| t.contains("recovery — re-observing")),
+            "the executive narrated the re-observation: {:?}",
+            workspace.get_thoughts()
+        );
+    }
+
+    /// S5-B (kernel level): a tool that fails every attempt — the recovery loop
+    /// hits its hard ceiling (1 + max_retries total attempts), the goal fails,
+    /// and the report carries the recovery evidence: why it failed, how many
+    /// attempts ran, and the last observed world state.
+    #[tokio::test]
+    async fn goal_action_exhausts_recovery_and_fails_recoverable() {
+        let workspace = CognitiveBlackboard::new();
+        let mut executive = Executive::new();
+        executive.register_tool(Box::new(
+            MockTool::failure("windows", "host unreachable")
+                .with_capabilities(vec![Capability::Custom("windows.open".into())]),
+        ));
+        workspace.set_world_state(
+            WorldState::new().with_tool(Capability::Custom("windows.open".into())),
+        );
+
+        executive.add_goal("Open notepad", 0.9);
+        let report = executive.cycle(&workspace).await;
+
+        assert!(report.plan_executed, "the goal action ran");
+        assert!(
+            report.recoverable,
+            "exhausted recovery is a retryable failure: attempts={}",
+            report.recovery_attempts
+        );
+        assert_eq!(
+            report.recovery_attempts,
+            1 + crate::DEFAULT_RECOVERY_MAX_ATTEMPTS,
+            "one initial attempt plus the bounded retries"
+        );
+        let reason = report.failed_reason.as_deref().expect("failed_reason set");
+        assert!(
+            reason.contains("host unreachable"),
+            "failed_reason is the final tool error, not a reconstruction: {reason}"
+        );
+        assert!(
+            report.last_observed_state.is_some(),
+            "the last observed state rides the report for a follow-up goal"
+        );
+        assert_eq!(
+            report.result.as_ref().map(|r| r.success),
+            Some(false),
+            "the goal action ultimately failed"
+        );
+        assert!(!report.recovered, "an exhausted goal never claims recovery");
     }
 
     /// The LLM-backed strategy is a drop-in for the heuristic: the executive

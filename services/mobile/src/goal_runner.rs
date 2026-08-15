@@ -1409,6 +1409,33 @@ impl GoalRunner {
                     }),
                 ))
                 .await;
+        } else if report.recoverable {
+            // S5-B: the goal's action exhausted its bounded recovery — a
+            // genuine, retryable failure, not a phantom completion. Publish the
+            // recovery evidence (why it failed and the last observed state) so
+            // a follow-up goal can re-enter from evidence instead of cold.
+            let reason = report
+                .failed_reason
+                .clone()
+                .unwrap_or_else(|| "action failed after bounded recovery".to_string());
+            let _ = self
+                .bus
+                .publish(Event::new(
+                    "goal.failed",
+                    "planner",
+                    json!({
+                        "goal": goal,
+                        "id": id,
+                        "session_id": session_id,
+                        "session_turn": next_turn,
+                        "error": reason,
+                        "recoverable": true,
+                        "failed_reason": report.failed_reason,
+                        "recovery_attempts": report.recovery_attempts,
+                        "last_observed_state": report.last_observed_state,
+                    }),
+                ))
+                .await;
         } else if report.plan_executed {
             // The fabric is called exactly once per goal (the investigation), so
             // its last routing decision is THIS goal's: `served` is
@@ -1480,6 +1507,11 @@ fn completed_payload(
         "strategy": if served.is_some() { "llm" } else { "heuristic" },
         "channels": channels,
         "result": result,
+        // S5 recovery evidence: whether the goal's action recovered on a bounded
+        // retry after re-observation, and how many execute attempts ran
+        // (1 = no recovery was needed).
+        "recovered": report.recovered,
+        "recovery_attempts": report.recovery_attempts,
     });
     // A held episode (admission Pending, e.g. sensitive content) was NOT
     // stored — surface its id so the portal can offer a `task.approve` button
@@ -2823,6 +2855,199 @@ mod tests {
             calls,
             vec!["windows.open:notepad.exe"],
             "the adapter must have sent the resolved launch to the host"
+        );
+    }
+
+    /// S5-A (runner level): the host fails the first launch (the partial side
+    /// effect is already recorded) then succeeds on the retry — the recovery
+    /// loop re-observes, retries, verifies, and publishes `goal.completed` with
+    /// `recovered: true` and both attempts visible in the adapter call log.
+    #[tokio::test]
+    async fn windows_goal_recovers_after_a_transient_host_failure() {
+        use friday_windows::ipc::MockTransport;
+        use friday_windows::protocol::BridgeResponse;
+
+        let launched = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let calls = Arc::new(std::sync::Mutex::new(0u32));
+        let launched_clone = launched.clone();
+        let calls_clone = calls.clone();
+        let adapter = WindowsAdapter::new(Arc::new(MockTransport::new(Arc::new(
+            move |frame: friday_windows::protocol::BridgeFrame| {
+                let intent = frame.message.action.clone();
+                let path = frame
+                    .message
+                    .payload
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                launched_clone
+                    .lock()
+                    .unwrap()
+                    .push(format!("{intent}:{path}"));
+                let mut n = calls_clone.lock().unwrap();
+                *n += 1;
+                if *n == 1 {
+                    BridgeResponse::err("app_not_found")
+                } else {
+                    BridgeResponse::ok(json!({
+                        "hwnd": 42,
+                        "title": "Untitled - Notepad",
+                        "pid": 1234,
+                    }))
+                }
+            },
+        ))));
+
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let runner = GoalRunner::with_investigation_engine(
+            bus.clone(),
+            InvestigationEngine::heuristic(),
+            None,
+            None,
+            None,
+            Some(adapter),
+            None,
+        );
+        runner.start();
+
+        bus.publish(Event::new(
+            "plan.goal",
+            "mobile",
+            json!({ "goal": "open notepad" }),
+        ))
+        .await
+        .expect("publish");
+
+        let mut terminal = None;
+        for _ in 0..30 {
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                .await
+                .map(|r| r.expect("bus alive"))
+            else {
+                break;
+            };
+            match ev.kind.as_str() {
+                "goal.completed" | "goal.failed" => {
+                    terminal = Some(ev);
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        let ev = terminal.expect("a terminal event");
+        assert_eq!(
+            ev.kind, "goal.completed",
+            "a recovered goal completes, not fails: {ev:?}"
+        );
+        assert_eq!(
+            ev.payload["recovered"],
+            json!(true),
+            "recovery evidence on the payload: {ev:?}"
+        );
+        assert_eq!(
+            ev.payload["recovery_attempts"],
+            json!(2),
+            "fail once, succeed once: {ev:?}"
+        );
+        let calls = launched.lock().unwrap().clone();
+        assert_eq!(
+            calls,
+            vec!["windows.open:notepad.exe".to_string(); 2],
+            "both attempts reached the host — the partial side effect then the retry"
+        );
+    }
+
+    /// S5-B (runner level): the host fails every launch — the recovery loop
+    /// hits its hard ceiling and the runner publishes `goal.failed` carrying
+    /// the recovery evidence: `recoverable: true`, the failed reason, the
+    /// attempt count, and the last observed world state.
+    #[tokio::test]
+    async fn windows_goal_exhausts_recovery_and_fails_recoverable() {
+        use friday_windows::ipc::MockTransport;
+        use friday_windows::protocol::BridgeResponse;
+
+        let launched = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let launched_clone = launched.clone();
+        let adapter = WindowsAdapter::new(Arc::new(MockTransport::new(Arc::new(
+            move |frame: friday_windows::protocol::BridgeFrame| {
+                launched_clone.lock().unwrap().push(format!(
+                    "{}:{}",
+                    frame.message.action,
+                    frame
+                        .message
+                        .payload
+                        .get("path")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                ));
+                BridgeResponse::err("app_not_found")
+            },
+        ))));
+
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let runner = GoalRunner::with_investigation_engine(
+            bus.clone(),
+            InvestigationEngine::heuristic(),
+            None,
+            None,
+            None,
+            Some(adapter),
+            None,
+        );
+        runner.start();
+
+        bus.publish(Event::new(
+            "plan.goal",
+            "mobile",
+            json!({ "goal": "open notepad" }),
+        ))
+        .await
+        .expect("publish");
+
+        let mut terminal = None;
+        for _ in 0..30 {
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                .await
+                .map(|r| r.expect("bus alive"))
+            else {
+                break;
+            };
+            match ev.kind.as_str() {
+                "goal.completed" | "goal.failed" => {
+                    terminal = Some(ev);
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        let ev = terminal.expect("a terminal event");
+        assert_eq!(
+            ev.kind, "goal.failed",
+            "an exhausted recovery is a real failure, never a phantom completion: {ev:?}"
+        );
+        assert_eq!(ev.payload["recoverable"], json!(true), "{ev:?}");
+        assert_eq!(
+            ev.payload["recovery_attempts"],
+            json!(3),
+            "one initial attempt plus the bounded retries: {ev:?}"
+        );
+        assert!(
+            ev.payload["failed_reason"].is_string(),
+            "failed_reason explains the exhaustion: {ev:?}"
+        );
+        assert!(
+            ev.payload["last_observed_state"].is_object(),
+            "the last observed state is carried for a follow-up goal: {ev:?}"
+        );
+        assert_eq!(
+            launched.lock().unwrap().len(),
+            3,
+            "every bounded attempt reached the host — no infinite retry machine"
         );
     }
 

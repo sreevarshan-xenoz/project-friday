@@ -25,6 +25,11 @@ use serde::{Deserialize, Serialize};
 /// }
 /// ```
 ///
+/// The default bounded retry ceiling for a plan's goal action (S5 Recovery):
+/// up to this many retries after the first attempt, so a failing action can
+/// re-observe and retry without becoming an infinite retry machine.
+pub const DEFAULT_RECOVERY_MAX_ATTEMPTS: u32 = 2;
+
 /// A plan wraps actions with metadata that the evaluator can reason about.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Plan {
@@ -34,6 +39,13 @@ pub struct Plan {
     pub strategy: String,
     /// The ordered actions in this plan.
     pub actions: Vec<Action>,
+    /// The execution policy for the goal's own action (S5): how many times it
+    /// may be retried after a failure, each preceded by a fresh re-observation
+    /// of reality. The Executive consumes this bound at the Execute boundary;
+    /// learning may later translate a `Retry` policy into it, but recovery
+    /// never depends on learning directly.
+    #[serde(default)]
+    pub max_retries: u32,
     /// Estimated cost (arbitrary units, lower = cheaper).
     pub estimated_cost: f64,
     /// Estimated duration in milliseconds.
@@ -83,6 +95,7 @@ impl Plan {
             confidence: 0.5,
             prerequisites: Vec::new(),
             source: PlanSource::Direct,
+            max_retries: DEFAULT_RECOVERY_MAX_ATTEMPTS,
         }
     }
 
@@ -109,7 +122,16 @@ impl Plan {
             confidence: 0.5,
             prerequisites: Vec::new(),
             source,
+            max_retries: DEFAULT_RECOVERY_MAX_ATTEMPTS,
         }
+    }
+
+    /// Bound the in-cycle recovery of the goal's own action (S5): the maximum
+    /// number of re-observes + retries after the first attempt. `0` disables
+    /// recovery entirely.
+    pub fn with_max_retries(mut self, max_retries: u32) -> Self {
+        self.max_retries = max_retries;
+        self
     }
 
     pub fn with_confidence(mut self, confidence: f32) -> Self {
