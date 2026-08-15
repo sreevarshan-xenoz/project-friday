@@ -123,8 +123,8 @@
 | 4 | **Live recovery** — classify failures at the action-failure point, real decisions, escalate to human | Path 5 | ✅ `3e63361` |
 | 5 | **Perception into the loop** — real sensor loop → WorldModel observation → salience decision → action | Path 2 | ✅ `3bf4645` |
 | 6 | **Learning closed** — workflow durability + completion sink admits skills + timeline records | Path 6 | ✅ `07f8bb9` / `9ff78fb` |
-| 7 | **Voice I/O** — ASR + TTS + wake loop | Path 1 (rides on host) | ⏭ S8 next |
+| 7 | **Voice I/O** — ASR + TTS + wake loop | Path 1 (rides on host) | 🔨 S8-A `957b93e` (spoken turn → goal intake, hermetic) |
 
 Steps 1–2 make the biggest user-visible jump from "organs" to "creature"; 3–6 deepen it; 7 is the fantasy layer. The 24 h endurance and Server FRIDAY stay parked until Paths 1–6 are live on this laptop.
 
-> Authoritative per-gap record (design + acceptance): [`docs/STEP1-LIVE-HOST.md`](docs/STEP1-LIVE-HOST.md) Gaps A–G. `07f8bb9` = S7 code, `9ff78fb` = S7 receipt (Gap G).
+> Authoritative per-gap record (design + acceptance): [`docs/STEP1-LIVE-HOST.md`](docs/STEP1-LIVE-HOST.md) Gaps A–G. `07f8bb9` = S7 code, `9ff78fb` = S7 receipt (Gap G). S8-A = spoken `TurnDetected` folded into perception + `VoiceIntake` (mic → `plan.goal`); benchmark (STT/TTS, `C:\Users\sreev\voice-bench`) chose whisper.cpp-base+CUDA and Audio8-0.6B/SAPI-fallback. S8-B real STT, S8-C live mic in `live_observer()`, S8-D voice→autonomous loop, S8-E response generation, S8-F TTS follow.
