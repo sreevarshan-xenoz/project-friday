@@ -42,7 +42,16 @@ pub use handle::AgentHandle;
 pub use merge::{merge, MergedReport};
 pub use runtime::{AgentRuntime, DEFAULT_MAX_CONCURRENCY, DEFAULT_TIME_LIMIT};
 pub use scheduling::{DecomposeHint, Decomposer, HeuristicDecomposer};
-pub use spec::{AgentResult, AgentSpec, AgentState, AgentStep, ModelCapability, SecurityScope};
+pub use spec::{
+    AgentResult, AgentSpec, AgentState, AgentStep, ModelCapability, SecurityScope, StepKind,
+};
+
+// Re-export trace types from friday-core so consumers of agent-runtime
+// can construct CognitiveTraceContext without a direct friday-core dependency.
+pub use friday_core::trace::{
+    CognitiveTraceContext, InMemoryTraceCollector, NoopTraceCollector, ResultType, SpanId,
+    TraceCollector, TraceId, SessionId, GoalId,
+};
 pub use workforce::{
     BoardNote, BoardTask, InMemoryWorkforceStore, JsonWorkforceStore, TaskOutcome, TaskStatus,
     WorkerRecord, WorkerStatus, Workforce, WorkforceStore,
