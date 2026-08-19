@@ -1070,6 +1070,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "friday-actions",
+ "friday-core",
  "friday-planner",
  "friday-skills",
  "futures",
@@ -1140,6 +1141,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "friday-core",
  "friday-memory",
  "friday-sensors",
  "serde",
@@ -1362,6 +1364,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "friday-observability"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "friday-core",
+ "opentelemetry",
+]
+
+[[package]]
 name = "friday-perception"
 version = "0.1.0"
 dependencies = [
@@ -1468,6 +1479,7 @@ dependencies = [
  "friday-cognitive",
  "serde_json",
  "tokio",
+ "tracing",
  "windows 0.58.0",
 ]
 
@@ -2443,6 +2455,20 @@ dependencies = [
  "libc",
  "pkg-config",
  "vcpkg",
+]
+
+[[package]]
+name = "opentelemetry"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab70038c28ed37b97d8ed414b6429d343a8bbf44c9f79ec854f3a643029ba6d7"
+dependencies = [
+ "futures-core",
+ "futures-sink",
+ "js-sys",
+ "pin-project-lite",
+ "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]
