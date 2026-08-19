@@ -3,6 +3,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use friday_core::event::Event;
 use friday_core::plugin::{Plugin, PluginMetadata};
+use friday_core::trace::{
+    CognitiveTraceContext, GoalId, NoopTraceCollector, ResultType, SessionId, SpanId,
+    TraceCollector, TraceId,
+};
 
 use crate::events;
 use crate::execution::capability_registry::CapabilityRegistry;
@@ -31,6 +35,14 @@ pub struct PlanningTelemetry {
     pub validation_failures: usize,
     pub fell_back_to_rule: bool,
     pub success: bool,
+    /// Phase 5C: the cognitive-trace propagation payload emitted at the
+    /// event-boundary. Carries the Planner's `trace_id` *and* the
+    /// `parent_span_id` of its `create_plan` span, so a downstream consumer
+    /// (GoalExecution → Director) can attach as a true child of the planner
+    /// rather than a correlated-but-separate trace. `None` only for callers
+    /// that build telemetry without a live planning context.
+    #[serde(default)]
+    pub trace_context: Option<friday_core::trace::TraceContext>,
 }
 
 /// The Intent Engine. Its only job is understanding the request: it turns free
@@ -106,6 +118,9 @@ pub struct PlanningEngine {
     /// the goal requires evidence from, so the LLM planner's prompt carries
     /// the EVIDENCE REQUIRED section. The rule planner ignores the field.
     investigation: Option<InvestigationEngine>,
+    /// Cognitive tracer for emitting spans. Uses `Arc<dyn TraceCollector>` for
+    /// concurrency safety. Defaults to NoopTraceCollector.
+    tracer: Arc<dyn TraceCollector>,
 }
 
 impl PlanningEngine {
@@ -147,6 +162,7 @@ impl PlanningEngine {
             experience: None,
             skills: None,
             investigation: None,
+            tracer: Arc::new(NoopTraceCollector),
         }
     }
 
@@ -156,6 +172,14 @@ impl PlanningEngine {
         provider: Arc<dyn crate::experience::ExperienceProvider + Send + Sync>,
     ) -> Self {
         self.experience = Some(provider);
+        self
+    }
+
+    /// Attach a cognitive tracer for emitting spans during planning.
+    /// When set, the engine emits `CognitiveTrace` records for each planning
+    /// operation, enabling trace hierarchy reconstruction.
+    pub fn with_tracer(mut self, tracer: Arc<dyn TraceCollector>) -> Self {
+        self.tracer = tracer;
         self
     }
 
@@ -196,6 +220,11 @@ impl PlanningEngine {
             RiskPolicy::default(),
             WorkspaceContext::default(),
         )
+    }
+
+    /// Get a reference to the cognitive tracer.
+    pub fn tracer(&self) -> &dyn TraceCollector {
+        self.tracer.as_ref()
     }
 
     /// Helper to build the grounding context for a planner from the registry.
@@ -339,15 +368,51 @@ impl Plugin for PlanningEngine {
         let kind = self.router.kind_for(&intent);
         let start = std::time::Instant::now();
 
-        let plan_result = planner.create_plan(&intent, &ctx).await;
-        let (graph, validation_failures, fell_back) = match plan_result {
-            Ok(g) => (g, 0usize, false),
+        // Create a cognitive trace context for this planning operation.
+        let trace_id = TraceId::from(event.trace_id);
+        let session_id = SessionId::default(); // TODO: extract from event when available
+        let goal_id = GoalId::default(); // TODO: extract from event when available
+        let trace_ctx = CognitiveTraceContext::for_goal(trace_id, session_id, goal_id);
+
+        // Emit the top-level planner span.
+        let planning_span = SpanId::default();
+        let planning_trace = trace_ctx.trace(planning_span, "planner", "create_plan")
+            .with_metadata(serde_json::json!({
+                "planner_kind": format!("{:?}", kind),
+                "capabilities_offered": caps_offered,
+            }));
+        self.tracer.record(planning_trace);
+
+        // Create child context so planner sub-spans are children of create_plan.
+        let child_ctx = trace_ctx.child(planning_span);
+
+        // The planner emits child spans (context, model call) via the tracer.
+        let plan_result = planner.create_plan(&intent, &ctx, self.tracer.as_ref(), &child_ctx).await;
+        let (graph, validation_failures, fell_back, _usage, _llm_duration_ms) = match plan_result {
+            Ok(result) => {
+                let elapsed_ms = start.elapsed().as_millis() as u64;
+                // Emit result span.
+                let mut result_trace = child_ctx.trace(SpanId::default(), "planner", "plan_result")
+                    .with_result(ResultType::Success)
+                    .with_timing(chrono::Utc::now() - chrono::Duration::milliseconds(elapsed_ms as i64), elapsed_ms);
+                if let Some(ref usage) = result.usage {
+                    result_trace = result_trace.with_model_usage(usage.clone());
+                }
+                self.tracer.record(result_trace);
+                (result.graph, 0usize, false, result.usage, result.llm_duration_ms)
+            }
             Err(e) => {
                 tracing::error!(error = %e, "planning failed; falling back to rule planner");
+                let elapsed_ms = start.elapsed().as_millis() as u64;
+                let failure_trace = child_ctx.trace(SpanId::default(), "planner", "plan_result")
+                    .with_result(ResultType::Failure)
+                    .with_error(e.to_string())
+                    .with_timing(chrono::Utc::now() - chrono::Duration::milliseconds(elapsed_ms as i64), elapsed_ms);
+                self.tracer.record(failure_trace);
                 // Deterministic fallback so the goal is never stranded.
-                let fb = RulePlanner::new().create_plan(&intent, &ctx).await;
+                let fb = RulePlanner::new().create_plan(&intent, &ctx, self.tracer.as_ref(), &child_ctx).await;
                 match fb {
-                    Ok(g) => (g, count_validation_issues(&e), true),
+                    Ok(result) => (result.graph, count_validation_issues(&e), true, result.usage, result.llm_duration_ms),
                     Err(fe) => {
                         return Err(friday_core::FridayError::Internal(format!(
                             "planning failed: {fe}"
@@ -375,6 +440,11 @@ impl Plugin for PlanningEngine {
             validation_failures,
             fell_back_to_rule: fell_back,
             success: true,
+            // Propagate the child context of the planner span so a downstream
+            // module can attach as a causal child of `create_plan`.
+            trace_context: Some(
+                friday_core::trace::TraceContext::from_context(&child_ctx.child(planning_span)),
+            ),
         };
 
         Ok(vec![
@@ -624,6 +694,19 @@ pub fn planning_engine_with(
     policy: RiskPolicy,
     workspace: WorkspaceContext,
 ) -> PlanningEngine {
+    planning_engine_with_tracer(registry, backend, budget, policy, workspace, None)
+}
+
+/// Like [`planning_engine_with`] but with an optional cognitive tracer for
+/// emitting spans during planning operations.
+pub fn planning_engine_with_tracer(
+    registry: Arc<CapabilityRegistry>,
+    backend: Option<Box<dyn ReasoningBackend>>,
+    budget: ExecutionBudget,
+    policy: RiskPolicy,
+    workspace: WorkspaceContext,
+    tracer: Option<Arc<dyn TraceCollector>>,
+) -> PlanningEngine {
     let rule = Arc::new(RulePlanner::new());
     let llm = backend.map(|b| {
         Arc::new(crate::planning::planners::llm::LlmPlanner::new(
@@ -633,11 +716,15 @@ pub fn planning_engine_with(
             policy.clone(),
         )) as Arc<dyn Planner>
     });
-    PlanningEngine::with_router(
+    let mut engine = PlanningEngine::with_router(
         PlannerRouter::new(rule, llm),
         registry,
         budget,
         policy,
         workspace,
-    )
+    );
+    if let Some(tracer) = tracer {
+        engine = engine.with_tracer(tracer);
+    }
+    engine
 }
