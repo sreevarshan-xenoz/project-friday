@@ -24,7 +24,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use friday_actions::{AgentKernel, GitAdapter, WebAgentAdapter};
-use friday_agent_runtime::AgentDirector;
+use friday_agent_runtime::{AgentDirector, CognitiveTraceContext, GoalId, InMemoryTraceCollector, SessionId, SpanId, TraceCollector, TraceId};
 use friday_cognitive::{
     ActionExecution, ActionVerifier, EngineId, GlobalWorkspace, TickAction, Topic,
 };
@@ -914,7 +914,26 @@ impl LiveRuntimeSource {
             serde_json::json!({ "repo": repo.to_string_lossy() }),
             repo.clone(),
         ));
-        let director = Arc::new(AgentDirector::new(child_driver));
+        let trace_collector = Arc::new(InMemoryTraceCollector::new());
+        // One coherent cognitive episode for this live autonomy source. The
+        // Director must attach under the upstream span rather than spawning a
+        // separate trace root — this is the Phase 5C propagation seam. In the
+        // full path the Planner supplies this context (a `TraceContext` child
+        // of its `create_plan` span); here the live intent decision is the
+        // upstream, so the director nests beneath an `intent` span.
+        let live_trace_id = TraceId::default();
+        let live_session = SessionId::default();
+        let live_goal = GoalId::default();
+        let intent_ctx =
+            CognitiveTraceContext::for_goal(live_trace_id, live_session, live_goal);
+        let intent_span = SpanId::default();
+        trace_collector.record(intent_ctx.trace(intent_span, "intent", "live_autonomy"));
+        let director_ctx = intent_ctx.child(intent_span);
+        let director = Arc::new(
+            AgentDirector::new(child_driver)
+                .with_tracer(trace_collector)
+                .with_trace_ctx(director_ctx),
+        );
         let executor =
             friday_goal_execution::DirectorActionExecutor::new(director).with_cwd(repo.clone());
         let workspace = GlobalWorkspace::new();
