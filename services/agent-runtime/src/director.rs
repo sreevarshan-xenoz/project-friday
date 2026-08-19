@@ -45,11 +45,16 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use friday_core::trace::{
+    CognitiveTraceContext, NoopTraceCollector, ResultType, SpanId, TraceCollector, TraceId,
+    SessionId, GoalId,
+};
+
 use crate::driver::AgentDriver;
 use crate::handle::AgentHandle;
 use crate::merge::MergedReport;
 use crate::runtime::AgentRuntime;
-use crate::spec::{AgentResult, AgentSpec, AgentState, SecurityScope};
+use crate::spec::{AgentResult, AgentSpec, AgentState, SecurityScope, StepKind};
 
 /// The first director topology: Researcher / Analyst / Verifier.
 ///
@@ -120,10 +125,12 @@ impl Default for DirectorConfig {
     }
 }
 
-/// A role-typed child: the role the parent assigned plus the runtime mailbox.
+/// A role-typed child: the role the parent assigned plus the runtime mailbox
+/// and the goal the child was given (for trace span metadata).
 pub struct DirectedAgent {
     pub role: AgentRole,
     pub handle: AgentHandle,
+    pub goal: String,
 }
 
 impl std::fmt::Debug for DirectedAgent {
@@ -131,6 +138,7 @@ impl std::fmt::Debug for DirectedAgent {
         f.debug_struct("DirectedAgent")
             .field("role", &self.role)
             .field("id", &self.handle.id)
+            .field("goal", &self.goal)
             .finish()
     }
 }
@@ -223,6 +231,11 @@ pub struct AgentDirector {
     driver: Arc<dyn AgentDriver>,
     config: DirectorConfig,
     next_id: AtomicU64,
+    /// Cognitive tracer for emitting spans. Defaults to NoopTraceCollector.
+    tracer: Arc<dyn TraceCollector>,
+    /// Trace context for this director session. Each director gets its own
+    /// context so child spans are correctly parented.
+    trace_ctx: CognitiveTraceContext,
 }
 
 impl AgentDirector {
@@ -238,7 +251,28 @@ impl AgentDirector {
             driver,
             config,
             next_id: AtomicU64::new(1),
+            tracer: Arc::new(NoopTraceCollector),
+            trace_ctx: CognitiveTraceContext::for_goal(
+                TraceId::default(),
+                SessionId::default(),
+                GoalId::default(),
+            ),
         }
+    }
+
+    /// Attach a cognitive tracer for emitting spans during agent supervision.
+    /// When set, the director emits `CognitiveTrace` records for each agent
+    /// spawn/complete/verify operation.
+    pub fn with_tracer(mut self, tracer: Arc<dyn TraceCollector>) -> Self {
+        self.tracer = tracer;
+        self
+    }
+
+    /// Set the trace context for this director session. Child spans will be
+    /// created under this context's root.
+    pub fn with_trace_ctx(mut self, trace_ctx: CognitiveTraceContext) -> Self {
+        self.trace_ctx = trace_ctx;
+        self
     }
 
     /// The underlying runtime (pool cap, deadlines, budgets live there).
@@ -275,6 +309,7 @@ impl AgentDirector {
         DirectedAgent {
             role,
             handle: self.runtime.spawn(spec, Arc::clone(&self.driver)),
+            goal: goal.to_string(),
         }
     }
 
@@ -287,6 +322,7 @@ impl AgentDirector {
         DirectedAgent {
             role,
             handle: self.runtime.spawn(spec, Arc::clone(&self.driver)),
+            goal: goal.to_string(),
         }
     }
 
@@ -305,11 +341,13 @@ impl AgentDirector {
     /// The raw face for callers that need full spec control (params, cwd,
     /// explicit time limit). The role still tags the child for the gate.
     pub fn spawn_spec(&self, role: AgentRole, spec: AgentSpec) -> DirectedAgent {
+        let goal = spec.goal.clone();
         let mut spec = spec;
         spec.security_scope = self.derive_security_scope(spec.security_scope.as_ref());
         DirectedAgent {
             role,
             handle: self.runtime.spawn(spec, Arc::clone(&self.driver)),
+            goal,
         }
     }
 
@@ -351,20 +389,192 @@ impl AgentDirector {
     /// [`ResultGate`] over each result, and return the [`DirectorReport`].
     /// The goal may complete only when [`DirectorReport::all_verified`] is
     /// `true`.
+    ///
+    /// When a tracer is attached, this emits hierarchical spans:
+    /// - root: `director_supervise` (the director's oversight of this batch)
+    /// - children: `agent_supervise` (one per agent, with role/goal/outcome)
+    /// - child: `verification_gate` (the gate decision for each agent)
+    ///
+    /// The supervision hierarchy is rooted at the director's own
+    /// [`CognitiveTraceContext`] (a fresh trace root unless one was supplied
+    /// via [`AgentDirector::with_trace_ctx`]).
     pub async fn verify(&self, agents: Vec<DirectedAgent>, gate: ResultGate) -> DirectorReport {
+        self.verify_with_context(agents, gate, self.trace_ctx.clone())
+            .await
+    }
+
+    /// Like [`AgentDirector::verify`], but emits the supervision hierarchy
+    /// under the supplied *parent* cognitive context instead of the
+    /// director's own root context.
+    ///
+    /// This is the seam that turns two correlated trace trees into one causal
+    /// episode: when the parent context's `parent_span_id` is the upstream
+    /// span (e.g. the Planner's `create_plan` span), the director's
+    /// `director_supervise` root becomes a *child* of that span rather than a
+    /// separate root. The receiver must materialize a [`TraceContext`]
+    /// propagated across the event-boundary — never a bare `trace_id` — to
+    /// preserve the causal link.
+    pub async fn verify_with_context(
+        &self,
+        agents: Vec<DirectedAgent>,
+        gate: ResultGate,
+        parent_ctx: CognitiveTraceContext,
+    ) -> DirectorReport {
+        let ctx = &parent_ctx;
+        let start = chrono::Utc::now();
+
+        // Extract goals before collect consumes the agents.
+        let goals: Vec<String> = agents.iter().map(|a| a.goal.clone()).collect();
         let results = self.collect(agents).await;
+        let elapsed_ms = (chrono::Utc::now() - start).num_milliseconds() as u64;
+
         let mut entries = Vec::with_capacity(results.len());
         let mut total_duration_ms = 0u64;
-        for (role, result) in results {
+
+        // ── Phase 1: collect results + run gates ────────────────────────
+        // We need to know every agent's outcome before we can emit spans
+        // (traces are immutable once recorded).
+        let mut agent_data: Vec<(AgentRole, AgentResult, Verdict, String)> = Vec::new();
+        for ((role, result), goal) in results.into_iter().zip(goals) {
             total_duration_ms += result.duration_ms;
             let verdict = gate(role, &result);
+            agent_data.push((role, result, verdict, goal));
+        }
+
+        let all_ok = !agent_data.is_empty()
+            && agent_data.iter().all(|(_, _, v, _)| v.is_ok());
+
+        // ── Phase 2: emit hierarchical traces ───────────────────────────
+        // Root span — the director's oversight of this batch. Parented under
+        // the supplied context (which may itself be a child of an upstream
+        // span, e.g. the Planner).
+        let root_span_id = SpanId::default();
+        let director_trace = ctx.trace(
+            root_span_id,
+            "agent-director",
+            "director_supervise",
+        )
+        .with_result(if all_ok {
+            ResultType::Success
+        } else {
+            ResultType::Failure
+        })
+        .with_timing(start, elapsed_ms)
+        .with_metadata(serde_json::json!({
+            "total_children": agent_data.len(),
+            "verified_children": agent_data.iter().filter(|(_, _, v, _)| v.is_ok()).count(),
+            "total_duration_ms": total_duration_ms,
+        }));
+        self.tracer.record(director_trace);
+
+        // Per-agent child spans — each child is parented under the root.
+        for (role, result, verdict, goal) in agent_data {
+            let verified = verdict.is_ok();
+            let agent_span_id = SpanId::default();
+            let mut agent_trace = ctx.child(root_span_id).trace(
+                agent_span_id,
+                "agent-director",
+                "agent_supervise",
+            )
+            .with_result(if result.state.is_success() && verified {
+                ResultType::Success
+            } else {
+                ResultType::Failure
+            })
+            .with_timing(
+                chrono::Utc::now() - chrono::Duration::milliseconds(result.duration_ms as i64),
+                result.duration_ms,
+            )
+            .with_metadata(serde_json::json!({
+                "agent.role": role.as_str(),
+                "agent.agent_id": result.agent_id,
+                "agent.goal": goal,
+                "agent.state": result.state.as_str(),
+                "agent.verified": verified,
+                "agent.verdict": verdict.as_ref().err().cloned().unwrap_or_default(),
+                "agent.step_count": result.steps.len(),
+            }));
+            if let Some(ref err) = result.error {
+                agent_trace = agent_trace.with_error(err.clone());
+            }
+            self.tracer.record(agent_trace);
+
+            // Per-step child spans — the previously-opaque "middle" of the
+            // agent lifecycle: what the agent actually did between supervise
+            // start and the verification gate. Model inference renders as
+            // `llm_call`, capability/tool execution as `tool_call`. Each is
+            // parented under the agent span so the trace tells the story of
+            // the agent's reasoning and external work.
+            for step in &result.steps {
+                let step_span_id = SpanId::default();
+                let op = match step.kind {
+                    StepKind::Model => "llm_call",
+                    StepKind::Tool => "tool_call",
+                };
+                let step_result = if step.outcome.starts_with("failed") {
+                    ResultType::Failure
+                } else {
+                    ResultType::Success
+                };
+                let mut step_trace = ctx
+                    .child(agent_span_id)
+                    .trace(step_span_id, "agent-director", op)
+                    .with_result(step_result)
+                    .with_timing(
+                        chrono::Utc::now()
+                            - chrono::Duration::milliseconds(step.duration_ms as i64),
+                        step.duration_ms,
+                    )
+                    .with_metadata(serde_json::json!({
+                        "step.index": step.index,
+                        "step.capability": step.description,
+                        "step.outcome": step.outcome,
+                        "step.kind": step.kind.as_str(),
+                    }));
+                // Model steps carry real inference telemetry (model/provider/
+                // tokens/cost) so the `llm_call` span is more than a label.
+                if let Some(usage) = &step.model_usage {
+                    step_trace = step_trace.with_model_usage(usage.clone());
+                }
+                if step_result == ResultType::Failure {
+                    step_trace = step_trace.with_error(step.outcome.clone());
+                }
+                self.tracer.record(step_trace);
+            }
+
+            // Verification gate child — parented under the agent span.
+            let gate_span_id = SpanId::default();
+            let gate_trace = ctx.child(agent_span_id).trace(
+                gate_span_id,
+                "agent-director",
+                "verification_gate",
+            )
+            .with_result(if verified {
+                ResultType::Success
+            } else {
+                ResultType::Failure
+            })
+            .with_metadata(serde_json::json!({
+                "gate.role": role.as_str(),
+                "gate.agent_id": result.agent_id,
+                "gate.verified": verified,
+                "gate.verdict": verdict.as_ref().err().cloned().unwrap_or_default(),
+                "gate.result_state": result.state.as_str(),
+            }));
+            self.tracer.record(gate_trace);
+
             entries.push(DirectorEntry {
                 role,
-                verified: verdict.is_ok(),
-                verdict: verdict.err(),
+                verified,
+                verdict: if verified {
+                    None
+                } else {
+                    Some(verdict.err().unwrap())
+                },
                 result,
             });
         }
+
         DirectorReport {
             entries,
             total_duration_ms,
