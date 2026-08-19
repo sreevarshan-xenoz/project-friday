@@ -4,6 +4,16 @@ use friday_planner::TaskGraph;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+// ============================================================================
+// TEST INFRASTRUCTURE — NOT the FRIDAY Cognitive Trace v1 (friday_core::trace).
+// ----------------------------------------------------------------------------
+// `ExecutionTrace` / `TraceReplayEngine` capture RAW vertical-slice I/O
+// (compiled prompt, raw + parsed LLM response, task graph, durations, errors)
+// for the e2e harness's save/load replay. The v1 contract intentionally does
+// NOT capture raw prompts/responses. Classified KEEP (test infrastructure).
+// Do not merge into v1. See docs/architecture/cognitive-trace-v1.md.
+// ============================================================================
+
 /// Capture all telemetry of a single vertical stack execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionTrace {
