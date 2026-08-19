@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use friday_actions::{ActionRequest, AgentKernel, ExecutionContext};
 use friday_agent_runtime::{
     default_gate, AgentContext, AgentDirector, AgentDriver, AgentResult, AgentRole, AgentStep,
-    ResultGate,
+    CognitiveTraceContext, ResultGate,
 };
 use friday_cognitive::{
     ActionExecution, ActionExecutor, ActionOutcome, ActionVerifier, AutonomousTick,
@@ -192,6 +192,11 @@ pub struct DirectorActionExecutor {
     role: AgentRole,
     gate: ResultGate,
     cwd: PathBuf,
+    /// Optional upstream cognitive context. When set, the Director's
+    /// supervision span is attached as a *child* of this context's parent
+    /// span (typically the Planner's `create_plan` span), so the director
+    /// becomes part of one causal episode instead of a separate trace tree.
+    trace_ctx: Option<CognitiveTraceContext>,
 }
 
 impl DirectorActionExecutor {
@@ -201,6 +206,7 @@ impl DirectorActionExecutor {
             role: AgentRole::Researcher,
             gate: default_gate(),
             cwd: std::env::current_dir().unwrap_or_default(),
+            trace_ctx: None,
         }
     }
 
@@ -219,16 +225,36 @@ impl DirectorActionExecutor {
         self.cwd = cwd;
         self
     }
+
+    /// Propagate an upstream cognitive context into the Director. The context
+    /// must be the boundary `TraceContext` produced by the upstream module
+    /// (e.g. the Planner), carrying `parent_span_id` = the upstream span. The
+    /// Director's `director_supervise` root will then attach under that span.
+    ///
+    /// Pass the result of `TraceContext::into_context()` (or a
+    /// `CognitiveTraceContext` built as a child of the upstream span).
+    pub fn with_trace_ctx(mut self, parent_ctx: CognitiveTraceContext) -> Self {
+        self.trace_ctx = Some(parent_ctx);
+        self
+    }
 }
 
 #[async_trait]
 impl ActionExecutor for DirectorActionExecutor {
     async fn execute(&self, action: &TickAction) -> ActionExecution {
         let child = self.director.spawn(self.role, &action.action);
-        let report = self
-            .director
-            .verify(vec![child], Arc::clone(&self.gate))
-            .await;
+        let report = match &self.trace_ctx {
+            Some(parent) => {
+                self.director
+                    .verify_with_context(vec![child], Arc::clone(&self.gate), parent.clone())
+                    .await
+            }
+            None => {
+                self.director
+                    .verify(vec![child], Arc::clone(&self.gate))
+                    .await
+            }
+        };
         let verified = report.all_verified();
         let mut output = serde_json::json!({
             "director": true,
@@ -1169,5 +1195,396 @@ mod tests {
         assert_eq!(workspace.history(Some("tool.executed")).len(), 1);
         assert_eq!(journal.records().unwrap().len(), 1);
         let _ = fs::remove_dir_all(dir);
+    }
+
+    // ── Phase 5B: DirectorActionExecutor → AgentDirector full-path trace ──
+
+    #[tokio::test]
+    async fn director_executor_full_path_emits_trace_hierarchy() {
+        use friday_agent_runtime::{
+            CognitiveTraceContext, InMemoryTraceCollector, TraceId, SessionId, GoalId,
+        };
+        use friday_cognitive::trace::reconstruct_trace_tree;
+        use uuid::Uuid;
+
+        let collector = InMemoryTraceCollector::new();
+        let trace_id = TraceId::from(Uuid::new_v4());
+        let trace_ctx = CognitiveTraceContext::for_goal(
+            trace_id,
+            SessionId::from(Uuid::new_v4()),
+            GoalId::from(Uuid::new_v4()),
+        );
+
+        let director = Arc::new(
+            AgentDirector::new(Arc::new(FnDriver::new(|ctx| {
+                AgentResult::succeeded(
+                    &ctx.spec.id,
+                    "child completed the action",
+                    vec![AgentStep::ok(1, "filesystem.create_target", 1)],
+                )
+            })))
+            .with_tracer(Arc::new(collector.clone()))
+            .with_trace_ctx(trace_ctx),
+        );
+
+        let executor = DirectorActionExecutor::new(Arc::clone(&director));
+        let action = TickAction::new(
+            "filesystem.create_target",
+            "gap-driven intent",
+            vec![Uuid::new_v4()],
+            Priority::High,
+        );
+        let result = executor.execute(&action).await;
+        assert!(result.success, "executor should succeed");
+
+        // Assert trace hierarchy exists.
+        let traces = collector.traces().clone();
+        assert!(!traces.is_empty(), "expected traces from full executor path");
+
+        let tree = reconstruct_trace_tree(&traces);
+
+        // Exactly one root: director_supervise.
+        assert_eq!(tree.len(), 1, "expected exactly one root span");
+        let root = &tree[0];
+        assert_eq!(root.trace.operation, "director_supervise");
+        assert_eq!(root.trace.organ, "agent-director");
+        assert_eq!(
+            root.trace.result,
+            friday_cognitive::trace::ResultType::Success
+        );
+
+        // Root has 1 agent_supervise child (the executor spawns one agent).
+        assert_eq!(root.children.len(), 1, "expected 1 agent child");
+        let agent = &root.children[0];
+        assert_eq!(agent.trace.operation, "agent_supervise");
+        assert_eq!(agent.trace.organ, "agent-director");
+
+        // Agent exposes its actual work: one tool_call step + the verification
+        // gate. (Phase 5D — the agent lifecycle is no longer opaque.)
+        let gate = agent
+            .children
+            .iter()
+            .find(|c| c.trace.operation == "verification_gate")
+            .expect("expected a verification_gate child");
+        assert_eq!(gate.trace.organ, "agent-director");
+        assert_eq!(
+            gate.trace.result,
+            friday_cognitive::trace::ResultType::Success
+        );
+        let tool = agent
+            .children
+            .iter()
+            .find(|c| c.trace.operation == "tool_call")
+            .expect("expected a tool_call step child");
+        assert_eq!(tool.trace.metadata["step.capability"], "filesystem.create_target");
+
+        // All spans share the same trace_id.
+        for t in &traces {
+            assert_eq!(t.trace_id, trace_id, "trace_id mismatch on {}", t.operation);
+        }
+
+        // Parent linkage is valid.
+        assert!(root.trace.parent_span_id.is_none());
+        assert_eq!(agent.trace.parent_span_id, Some(root.trace.span_id));
+        assert_eq!(gate.trace.parent_span_id, Some(agent.trace.span_id));
+    }
+
+    #[tokio::test]
+    async fn director_executor_failure_path_emits_failure_traces() {
+        use friday_agent_runtime::{
+            CognitiveTraceContext, InMemoryTraceCollector, TraceId, SessionId, GoalId,
+        };
+        use friday_cognitive::trace::reconstruct_trace_tree;
+        use uuid::Uuid;
+
+        let collector = InMemoryTraceCollector::new();
+        let trace_id = TraceId::from(Uuid::new_v4());
+        let trace_ctx = CognitiveTraceContext::for_goal(
+            trace_id,
+            SessionId::from(Uuid::new_v4()),
+            GoalId::from(Uuid::new_v4()),
+        );
+
+        let director = Arc::new(
+            AgentDirector::new(Arc::new(FnDriver::new(|ctx| {
+                AgentResult::failed(
+                    &ctx.spec.id,
+                    "child failed",
+                    vec![AgentStep::failed(1, "filesystem.create_target", "denied", 1)],
+                    "denied",
+                )
+            })))
+            .with_tracer(Arc::new(collector.clone()))
+            .with_trace_ctx(trace_ctx),
+        );
+
+        let executor = DirectorActionExecutor::new(director);
+        let action = TickAction::new(
+            "filesystem.create_target",
+            "gap-driven intent",
+            vec![Uuid::new_v4()],
+            Priority::High,
+        );
+        let result = executor.execute(&action).await;
+        assert!(!result.success, "executor should fail");
+
+        let traces = collector.traces().clone();
+        let tree = reconstruct_trace_tree(&traces);
+
+        // Root is Failure.
+        let root = &tree[0];
+        assert_eq!(root.trace.operation, "director_supervise");
+        assert_eq!(root.trace.result, friday_cognitive::trace::ResultType::Failure);
+
+        // Agent is Failure.
+        let agent = &root.children[0];
+        assert_eq!(agent.trace.operation, "agent_supervise");
+        assert_eq!(agent.trace.result, friday_cognitive::trace::ResultType::Failure);
+
+        // Gate is Failure with verdict.
+        let gate = agent
+            .children
+            .iter()
+            .find(|c| c.trace.operation == "verification_gate")
+            .expect("expected a verification_gate child");
+        assert_eq!(gate.trace.operation, "verification_gate");
+        assert_eq!(gate.trace.result, friday_cognitive::trace::ResultType::Failure);
+        let verdict = gate.trace.metadata["gate.verdict"].as_str().unwrap();
+        assert!(!verdict.is_empty());
+    }
+
+    // ── Phase 5C: Planner → GoalExecution → Director single trace tree ──
+    //
+    // The Director must not be a separate trace root. Its `director_supervise`
+    // span must be a *child* of the Planner's `create_plan` span, and the
+    // agent/verification spans must nest under the director — all sharing one
+    // `trace_id`. This proves cognitive context propagated across the
+    // event-bus boundary (a `TraceContext` payload, not a bare `trace_id`).
+
+    #[tokio::test]
+    async fn director_executor_planner_to_director_single_trace_tree() {
+        use super::DirectorActionExecutor;
+        use friday_agent_runtime::{
+            AgentDirector, AgentResult, AgentStep, CognitiveTraceContext, FnDriver,
+            InMemoryTraceCollector, GoalId, SessionId, SpanId, TraceId,
+        };
+        use friday_cognitive::trace::{reconstruct_trace_tree, TraceContext, TraceCollector};
+        use uuid::Uuid;
+
+        let collector = InMemoryTraceCollector::new();
+        let trace_id = TraceId::from(Uuid::new_v4());
+        let session_id = SessionId::from(Uuid::new_v4());
+        let goal_id = GoalId::from(Uuid::new_v4());
+
+        // 1. Intent root span (the user goal's cognitive episode root).
+        let intent_ctx = CognitiveTraceContext::for_goal(trace_id, session_id, goal_id);
+        let intent_span = SpanId::from(Uuid::new_v4());
+        collector.record(intent_ctx.trace(intent_span, "intent", "classify"));
+
+        // 2. Planner span, child of intent.
+        let planner_ctx = intent_ctx.child(intent_span);
+        let planner_span = SpanId::from(Uuid::new_v4());
+        collector.record(planner_ctx.trace(planner_span, "planner", "create_plan"));
+
+        // 3. Propagation payload at the event boundary: a child context whose
+        //    parent is the Planner span. This is what the Planner emits and the
+        //    GoalExecution → Director path must consume.
+        let propagation = TraceContext::from_context(&planner_ctx.child(planner_span));
+        assert_eq!(
+            propagation.parent_span_id,
+            Some(planner_span),
+            "boundary payload must point at the planner span"
+        );
+
+        // 4. GoalExecution → DirectorActionExecutor receives the propagated
+        //    context and materializes a child CognitiveTraceContext.
+        let director = Arc::new(
+            AgentDirector::new(Arc::new(FnDriver::new(|ctx| {
+                AgentResult::succeeded(
+                    &ctx.spec.id,
+                    "child completed the action",
+                    vec![AgentStep::ok(1, "filesystem.create_target", 1)],
+                )
+            })))
+            .with_tracer(Arc::new(collector.clone())),
+        );
+        let executor = DirectorActionExecutor::new(Arc::clone(&director))
+            .with_trace_ctx(propagation.into_context());
+
+        let action = TickAction::new(
+            "filesystem.create_target",
+            "gap-driven intent",
+            vec![Uuid::new_v4()],
+            Priority::High,
+        );
+        let result = executor.execute(&action).await;
+        assert!(result.success, "executor should succeed");
+
+        // 5. Reconstruct and validate the single causal tree.
+        let traces = collector.traces().clone();
+        let tree = reconstruct_trace_tree(&traces);
+
+        // Exactly one root (the intent span). No orphan trees.
+        assert_eq!(tree.len(), 1, "expected exactly one root span");
+        let intent_node = &tree[0];
+        assert_eq!(intent_node.trace.span_id, intent_span);
+        assert!(intent_node.trace.parent_span_id.is_none());
+
+        // Intent → Planner.
+        assert_eq!(
+            intent_node.children.len(),
+            1,
+            "intent should have exactly one child (planner)"
+        );
+        let planner_node = &intent_node.children[0];
+        assert_eq!(planner_node.trace.operation, "create_plan");
+        assert_eq!(planner_node.trace.organ, "planner");
+        assert_eq!(planner_node.trace.parent_span_id, Some(intent_span));
+
+        // Planner → Director (the key 5C assertion).
+        assert_eq!(
+            planner_node.children.len(),
+            1,
+            "planner should have exactly one child (director)"
+        );
+        let director_node = &planner_node.children[0];
+        assert_eq!(director_node.trace.operation, "director_supervise");
+        assert_eq!(director_node.trace.organ, "agent-director");
+        assert_eq!(
+            director_node.trace.parent_span_id,
+            Some(planner_span),
+            "director must be a child of the planner span"
+        );
+
+        // Director → Agent → Verification.
+        assert_eq!(director_node.children.len(), 1, "expected 1 agent child");
+        let agent_node = &director_node.children[0];
+        assert_eq!(agent_node.trace.operation, "agent_supervise");
+        assert_eq!(
+            agent_node.trace.parent_span_id,
+            Some(director_node.trace.span_id)
+        );
+
+        // The agent's "middle" (one tool step) + the verification gate.
+        let gate_node = agent_node
+            .children
+            .iter()
+            .find(|c| c.trace.operation == "verification_gate")
+            .expect("expected a verification_gate child");
+        assert_eq!(gate_node.trace.operation, "verification_gate");
+        assert_eq!(
+            gate_node.trace.parent_span_id,
+            Some(agent_node.trace.span_id)
+        );
+
+        // All spans share one trace_id; no orphan spans.
+        for t in &traces {
+            assert_eq!(t.trace_id, trace_id, "trace_id mismatch on {}", t.operation);
+        }
+    }
+
+    // ── Phase 5D: agent execution lifecycle is no longer opaque ──
+    //
+    // Between `agent_supervise` starting and `verification_gate`, the agent's
+    // actual work must be visible: model inference (`llm_call`) and tool/capability
+    // execution (`tool_call`). Each step is a child of the agent span, so the
+    // trace tells the story of the agent's reasoning and external work.
+
+    #[tokio::test]
+    async fn director_executor_agent_steps_emitted_as_call_spans() {
+        use super::DirectorActionExecutor;
+        use friday_agent_runtime::{
+            AgentDirector, AgentResult, AgentStep, CognitiveTraceContext, FnDriver,
+            InMemoryTraceCollector, GoalId, SessionId, TraceId,
+        };
+        use friday_cognitive::trace::{reconstruct_trace_tree, TraceCollector};
+        use uuid::Uuid;
+
+        let collector = InMemoryTraceCollector::new();
+        let trace_id = TraceId::from(Uuid::new_v4());
+        let trace_ctx = CognitiveTraceContext::for_goal(
+            trace_id,
+            SessionId::from(Uuid::new_v4()),
+            GoalId::from(Uuid::new_v4()),
+        );
+
+        let director = Arc::new(
+            AgentDirector::new(Arc::new(FnDriver::new(|ctx| {
+                AgentResult::succeeded(
+                    &ctx.spec.id,
+                    "agent reasoned then acted",
+                    vec![
+                        AgentStep::model(1, "reasoning.route", 12),
+                        AgentStep::ok(2, "web.search", 34),
+                        AgentStep::ok(3, "document.read", 8),
+                    ],
+                )
+            })))
+            .with_tracer(Arc::new(collector.clone()))
+            .with_trace_ctx(trace_ctx),
+        );
+
+        let executor = DirectorActionExecutor::new(Arc::clone(&director));
+        let action = TickAction::new(
+            "filesystem.create_target",
+            "gap-driven intent",
+            vec![Uuid::new_v4()],
+            Priority::High,
+        );
+        let result = executor.execute(&action).await;
+        assert!(result.success, "executor should succeed");
+
+        let traces = collector.traces().clone();
+        let tree = reconstruct_trace_tree(&traces);
+
+        let root = &tree[0];
+        assert_eq!(root.trace.operation, "director_supervise");
+        let agent = &root.children[0];
+        assert_eq!(agent.trace.operation, "agent_supervise");
+
+        // The agent's "middle" is now visible: one model call + two tool calls
+        // + the verification gate.
+        let mut ops: Vec<&str> = agent
+            .children
+            .iter()
+            .map(|c| c.trace.operation.as_str())
+            .collect();
+        ops.sort_unstable();
+        assert_eq!(
+            ops,
+            vec!["llm_call", "tool_call", "tool_call", "verification_gate"]
+        );
+
+        // Every step span is parented under the agent span.
+        for child in &agent.children {
+            assert_eq!(
+                child.trace.parent_span_id,
+                Some(agent.trace.span_id),
+                "{} should be a child of the agent span",
+                child.trace.operation
+            );
+        }
+
+        // Metadata distinguishes model inference from tool execution.
+        let model_span = agent
+            .children
+            .iter()
+            .find(|c| c.trace.operation == "llm_call")
+            .expect("expected an llm_call span");
+        assert_eq!(model_span.trace.metadata["step.kind"], "model");
+        assert_eq!(model_span.trace.metadata["step.capability"], "reasoning.route");
+
+        let tool_span = agent
+            .children
+            .iter()
+            .find(|c| c.trace.operation == "tool_call")
+            .expect("expected a tool_call span");
+        assert_eq!(tool_span.trace.metadata["step.kind"], "tool");
+        assert_eq!(tool_span.trace.metadata["step.capability"], "web.search");
+
+        // All spans share one trace_id; no orphan spans.
+        for t in &traces {
+            assert_eq!(t.trace_id, trace_id, "trace_id mismatch on {}", t.operation);
+        }
     }
 }
