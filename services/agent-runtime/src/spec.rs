@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::context::AgentAbort;
+use friday_core::trace::ModelUsage;
 
 /// Security authority that can be threaded into a child worker.
 ///
@@ -220,6 +221,26 @@ impl std::fmt::Display for AgentState {
     }
 }
 
+/// Classifies an [`AgentStep`] so tracing can render model inference
+/// (`llm_call`) distinctly from tool/capability execution (`tool_call`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum StepKind {
+    /// A model/LLM inference step (reasoning, routing, summarization).
+    Model,
+    /// A capability/tool execution (e.g. `git.status`, `web.search`).
+    #[default]
+    Tool,
+}
+
+impl StepKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            StepKind::Model => "model",
+            StepKind::Tool => "tool",
+        }
+    }
+}
+
 /// One observable step a worker took (a capability executed, a capability
 /// skipped for approval, a decision made) — the audit trail a planner merges.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -230,6 +251,17 @@ pub struct AgentStep {
     /// Outcome: `ok`, `requires-approval`, `skipped`, or `failed: <error>`.
     pub outcome: String,
     pub duration_ms: u64,
+    /// What kind of work this step was, so traces can distinguish a model
+    /// inference call from a tool execution. Defaults to `Tool` for legacy
+    /// records that predate the field.
+    #[serde(default)]
+    pub kind: StepKind,
+    /// Model telemetry for `Model` steps (what the inference call produced:
+    /// which model/provider served it, token counts, cost). `None` for tool
+    /// steps or model steps that did not capture usage. This is *what the
+    /// agent did*, not trace linkage — kept separate from the `CognitiveTrace`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_usage: Option<ModelUsage>,
 }
 
 impl AgentStep {
@@ -239,6 +271,8 @@ impl AgentStep {
             description: description.into(),
             outcome: "ok".to_string(),
             duration_ms,
+            kind: StepKind::Tool,
+            model_usage: None,
         }
     }
 
@@ -248,6 +282,8 @@ impl AgentStep {
             description: description.into(),
             outcome: reason.into(),
             duration_ms: 0,
+            kind: StepKind::Tool,
+            model_usage: None,
         }
     }
 
@@ -262,7 +298,35 @@ impl AgentStep {
             description: description.into(),
             outcome: format!("failed: {}", error.into()),
             duration_ms,
+            kind: StepKind::Tool,
+            model_usage: None,
         }
+    }
+
+    /// A model/LLM inference step (rendered as `llm_call` in traces).
+    pub fn model(index: u32, description: impl Into<String>, duration_ms: u64) -> Self {
+        Self {
+            index,
+            description: description.into(),
+            outcome: "ok".to_string(),
+            duration_ms,
+            kind: StepKind::Model,
+            model_usage: None,
+        }
+    }
+
+    /// Override the step kind (e.g. mark a step as a model call).
+    pub fn with_kind(mut self, kind: StepKind) -> Self {
+        self.kind = kind;
+        self
+    }
+
+    /// Attach model usage telemetry (model/provider/tokens/cost) to a step.
+    /// Used by `Model` steps so the resulting `llm_call` span carries real
+    /// inference telemetry rather than an empty record.
+    pub fn with_model_usage(mut self, usage: ModelUsage) -> Self {
+        self.model_usage = Some(usage);
+        self
     }
 }
 
