@@ -2,6 +2,19 @@ use serde::{Deserialize, Serialize};
 
 use super::WorldState;
 
+// ============================================================================
+// LEGACY / DOMAIN TRACE — NOT the FRIDAY Cognitive Trace v1 (friday_core::trace).
+// ----------------------------------------------------------------------------
+// This module models the EXECUTIVE DECISION-RECORD audit trail (a `Vec<TraceNode>`
+// of `TraceNodeKind`: Investigation/Planning/Evaluation/Execution/Verification/
+// Recovery/Reflection/Learning/WorldStateChange). It is the autonomy cycle's
+// reasoning history — a different axis from the cross-module span tree.
+// NOTE: this module also names a type `CognitiveTrace`; it is unrelated to
+// `friday_core::trace::CognitiveTrace` (the frozen v1 observability schema).
+// Classified KEEP (domain execution history). Do not merge into v1.
+// See docs/architecture/cognitive-trace-v1.md ("Legacy trace systems").
+// ============================================================================
+
 // ── Cognitive Trace ─────────────────────────────────────────────────
 
 /// The kind of a trace node.
