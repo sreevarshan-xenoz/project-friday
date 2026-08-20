@@ -124,13 +124,41 @@ The frozen semantic trace is the source of truth. OpenTelemetry is an
   it drops into any existing `Arc<dyn TraceCollector>` slot without touching
   the frozen types.
 - ID mapping: `TraceId` (128-bit Uuid) → OTel 128-bit `TraceId`; `SpanId`
-  (128-bit Uuid) → OTel 64-bit `SpanId` (low 8 bytes). Parentage is expressed
-  as an OTel `Link` to the parent `SpanContext` (OpenTelemetry 0.27 has no
-  `parent_span_id` builder field; Link-based linkage keeps asynchronous
-  cross-module parenting intact).
+  (128-bit Uuid) → OTel 64-bit `SpanId` (low 8 bytes).
+- **Parentage is an export representation, not a redefinition.** FRIDAY's
+  semantic `parent_span_id` is projected to a *real* OTel parent-child
+  relationship by placing the parent `SpanContext` into the export `Context`
+  (`with_remote_span_context`). A `Link` is deliberately **not** used — a Link is
+  related context, not a parent. This is an adapter-level mapping of FRIDAY's
+  causal model onto OpenTelemetry; it does **not** change FRIDAY's parent/child
+  semantics, which remain the frozen contract. Do not read "FRIDAY parent = OTel
+  Link parent" into this adapter.
 
 Real OTLP/SDK wiring is a later, equally thin addition — it supplies the
 concrete `Tracer` to `OtelTraceCollector` and changes nothing else.
+
+## Projection principle (Phases 6B / 6C)
+
+`CognitiveTrace` is the single semantic source. Exporters are independent
+projections of it, not a second source of truth:
+
+```text
+              CognitiveTrace
+             /              \
+   OTel exporter          Metrics aggregator
+        |                      |
+       OTLP                Prometheus
+```
+
+- **6B** wires a real `TracerProvider` + OTLP exporter behind
+  `OtelTraceCollector` (the 6A adapter stays exactly as-is).
+- **6C** aggregates spans into latency / failure / token / cost / verification
+  metrics. The metrics aggregator must read `CognitiveTrace` **directly** — do
+  **not** route Prometheus/metrics through OpenTelemetry spans. That would make
+  OTel a second source of truth and break the single-model guarantee.
+
+The same rule protects future consumers (trace viewer, cost analyzer, autonomy
+monitor, cognitive replay): each projects `CognitiveTrace` independently.
 
 ## Production status (honest, as of freeze)
 
