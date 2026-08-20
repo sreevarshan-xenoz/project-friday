@@ -33,6 +33,7 @@ pub mod scheduler;
 pub mod skill;
 pub mod tick;
 pub mod world;
+pub mod world_production;
 
 pub use orchestrator::{AutonomousTick, Executor, GoalSelector, ObservationSource, Planner, Verifier};
 pub use tick::{
