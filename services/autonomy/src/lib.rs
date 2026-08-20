@@ -29,6 +29,7 @@
 
 pub mod memory;
 pub mod orchestrator;
+pub mod scheduler;
 pub mod skill;
 pub mod tick;
 pub mod world;

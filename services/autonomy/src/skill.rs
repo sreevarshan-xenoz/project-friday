@@ -466,3 +466,41 @@ mod tests {
         }
     }
 }
+
+/// Context the planner uses to query applicable skills (consultation seam). Mirrors
+/// [crate::memory::LessonCondition] so a `SkillStore` can answer it directly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SkillContext {
+    pub action: String,
+    pub signals: Vec<String>,
+}
+
+/// A skill the planner is *allowed to consider* — pure data, never auto-executed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApplicableSkill {
+    pub id: String,
+    pub trajectory: Vec<String>,
+}
+
+/// Planner-consultation seam. Given a context, returns the skills the planner MAY
+/// use. The planner still decides whether to apply one — surfacing is not execution,
+/// and must never bypass planning, permissions, or verification.
+pub trait SkillProvider: Send + Sync {
+    fn applicable_skills(&self, ctx: &SkillContext) -> Vec<ApplicableSkill>;
+}
+
+impl SkillProvider for SimpleSkillStore {
+    fn applicable_skills(&self, ctx: &SkillContext) -> Vec<ApplicableSkill> {
+        let cond = LessonCondition {
+            action: ctx.action.clone(),
+            signals: ctx.signals.clone(),
+        };
+        match self.find_applicable(&cond) {
+            Some(sk) => vec![ApplicableSkill {
+                id: sk.id,
+                trajectory: sk.trajectory,
+            }],
+            None => vec![],
+        }
+    }
+}

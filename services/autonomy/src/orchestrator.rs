@@ -23,7 +23,7 @@ use friday_core::trace::{
 };
 
 use crate::memory::{Experience, ExperienceExtractor, MemoryStore};
-use crate::skill::{SkillAdmission, SkillEvaluator, SkillStore};
+use crate::skill::{ApplicableSkill, SkillAdmission, SkillContext, SkillEvaluator, SkillProvider, SkillStore};
 use crate::tick::{
     CognitiveTick, ExecutionResult, NextAction, Observation, Plan, TickOutcome, TickTrigger,
 };
@@ -39,9 +39,11 @@ pub trait GoalSelector: Send + Sync {
     fn select_goal(&self, obs: &Observation) -> Option<String>;
 }
 
-/// Produces a plan for a chosen goal.
+/// Produces a plan for a chosen goal. `skills` are applicable skills surfaced by the
+/// `SkillProvider` — the planner MAY consider them but still owns the decision; they
+/// never bypass planning, permissions, or verification.
 pub trait Planner: Send + Sync {
-    fn plan(&self, goal: &str) -> Plan;
+    fn plan(&self, goal: &str, skills: &[ApplicableSkill]) -> Plan;
 }
 
 /// Executes a plan. Records its own internal spans (agent / tool) through the
@@ -86,6 +88,10 @@ pub struct AutonomousTick {
     skill_store: Option<Box<dyn SkillStore>>,
     /// Skill promotion policy (7D). Deterministic thresholds + known-good trajectories.
     skill_evaluator: SkillEvaluator,
+    /// Optional skill provider (7E seam 1). When present, the tick asks it for
+    /// applicable skills and surfaces them to the planner. It never bypasses
+    /// planning, permissions, or verification — the planner still owns the decision.
+    skill_provider: Option<Box<dyn SkillProvider>>,
 }
 
 impl AutonomousTick {
@@ -112,6 +118,7 @@ impl AutonomousTick {
             extractor: ExperienceExtractor::default(),
             skill_store: None,
             skill_evaluator: SkillEvaluator::default(),
+            skill_provider: None,
         }
     }
 
@@ -131,6 +138,14 @@ impl AutonomousTick {
     /// Attach a skill store (7D). Skill promotion only *learns*; it never executes.
     pub fn with_skill_store(mut self, skill_store: Box<dyn SkillStore>) -> Self {
         self.skill_store = Some(skill_store);
+        self
+    }
+
+    /// Attach a skill provider (7E seam 1). The tick consults it for applicable
+    /// skills and surfaces them to the planner; it never bypasses planning,
+    /// permissions, or verification.
+    pub fn with_skill_provider(mut self, provider: Box<dyn SkillProvider>) -> Self {
+        self.skill_provider = Some(provider);
         self
     }
 
@@ -199,6 +214,21 @@ impl AutonomousTick {
         let planner_span = SpanId::default();
         let planner_ctx = CognitiveTraceContext::for_goal(trace_id, session, goal_id).child(root);
 
+        // 7E seam 1 — Skill consultation. The tick asks the provider for skills
+        // applicable to THIS goal/observation, then surfaces them to the planner.
+        // The planner still owns the decision; skills never bypass planning,
+        // permissions, or verification.
+        let applicable: Vec<ApplicableSkill> = self
+            .skill_provider
+            .as_ref()
+            .map(|p| {
+                p.applicable_skills(&SkillContext {
+                    action: goal.clone(),
+                    signals: observation.signals.clone(),
+                })
+            })
+            .unwrap_or_default();
+
         // Planner span (child of the goal root).
         collector.record(
             planner_ctx
@@ -207,8 +237,21 @@ impl AutonomousTick {
                 .with_result(ResultType::Success),
         );
 
+        // Record the consultation as a normal `skills.consult` operation so it is
+        // observable without modifying the frozen trace schema. Only emitted when a
+        // provider is actually attached — hermetic 7A–7D ticks stay at their counts.
+        if self.skill_provider.is_some() {
+            collector.record(
+                planner_ctx
+                    .child(planner_span)
+                    .trace(SpanId::default(), "skills", "consult")
+                    .with_timing(Utc::now(), 1)
+                    .with_result(ResultType::Success),
+            );
+        }
+
         // Execute — the executor records its own agent/tool spans under the planner.
-        let plan = self.planner.plan(&goal);
+        let plan = self.planner.plan(&goal, &applicable);
         let exec_ctx = planner_ctx.child(planner_span);
         let exec_result = self.executor.execute(&exec_ctx, collector, &plan);
 
@@ -349,6 +392,7 @@ mod tests {
     use crate::world::{SimpleWorldModel, WorldSnapshot};
     use crate::memory::SimpleMemory;
     use crate::skill::SimpleSkillStore;
+    use crate::scheduler::{Clock, FakeClock, Scheduler, SchedulerDecision, SchedulerPolicy};
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
 
@@ -390,7 +434,7 @@ mod tests {
 
     struct FakePlanner;
     impl Planner for FakePlanner {
-        fn plan(&self, goal: &str) -> Plan {
+        fn plan(&self, goal: &str, _skills: &[ApplicableSkill]) -> Plan {
             Plan {
                 goal: goal.into(),
                 steps: vec!["gather".into(), "synthesize".into()],
@@ -817,5 +861,116 @@ mod tests {
 
         // 8 spans: root+planner+agent+tool+verification+world_model.update+memory.writeback+skill.formation.
         assert_eq!(t.len(), 8);
+    }
+
+    // ── 7E seam 1: skill consultation is surfaced, not auto-executed ──────
+
+    struct FakeProvider {
+        skills: Vec<ApplicableSkill>,
+    }
+    impl SkillProvider for FakeProvider {
+        fn applicable_skills(&self, _ctx: &SkillContext) -> Vec<ApplicableSkill> {
+            self.skills.clone()
+        }
+    }
+
+    #[test]
+    fn skill_provider_is_consulted_and_surfaces_to_planner() {
+        let provider = FakeProvider {
+            skills: vec![ApplicableSkill {
+                id: "skill-1".into(),
+                trajectory: vec!["gather".into(), "synthesize".into()],
+            }],
+        };
+
+        let collector = InMemoryTraceCollector::new();
+        let _tick = AutonomousTick::new(
+            1,
+            TickTrigger::Scheduled,
+            Box::new(ObserveWork),
+            Box::new(SelectGoal),
+            Box::new(FakePlanner),
+            Box::new(FakeExecutor),
+            Box::new(VerifyPass),
+        )
+        .with_skill_provider(Box::new(provider))
+        .run(&collector);
+
+        // One bounded episode, still stops — consultation never spawns a tick.
+        let t = traces(&collector);
+        let ids: HashSet<TraceId> = t.iter().map(|x| x.trace_id).collect();
+        assert_eq!(ids.len(), 1);
+
+        // Exactly one `skills.consult` operation is recorded (no new schema fields).
+        let consult: Vec<&CognitiveTrace> = t
+            .iter()
+            .filter(|x| x.operation == "consult" && x.organ == "skills")
+            .collect();
+        assert_eq!(consult.len(), 1);
+        assert_eq!(consult[0].result, ResultType::Success);
+
+        // 6 spans: root+planner+consult+agent+tool+verification. The planner still
+        // produced its own steps — the skill did NOT bypass planning.
+        assert_eq!(t.len(), 6);
+    }
+
+    // ── 7E seam 2: deterministic scheduler drives many bounded ticks ───────
+
+    #[test]
+    fn scheduler_driver_runs_multiple_ticks_with_unique_trace_ids() {
+        let clock = FakeClock::new();
+        let mut p = SchedulerPolicy::allow_all();
+        // Unlimited budget: this test exercises failure-isolation + unique trace_ids,
+        // not the budget seam (covered by `scheduler::tests::budget_exhaustion_defers`).
+        p.max_ticks_window = u64::MAX;
+        p.window_ms = u64::MAX;
+        let mut sched = Scheduler::new(p, Box::new(clock.clone()));
+
+        let collector = InMemoryTraceCollector::new();
+        let mut seen_ids: Vec<TraceId> = Vec::new();
+
+        for i in 0..3 {
+            let now = clock.now();
+            match sched.decide(now) {
+                SchedulerDecision::Allowed(trigger) => {
+                    sched.mark_started(now);
+                    // Second tick fails on purpose to exercise failure isolation.
+                    let verifier: Box<dyn Verifier> = if i == 1 {
+                        Box::new(VerifyFail)
+                    } else {
+                        Box::new(VerifyPass)
+                    };
+                    let tick = AutonomousTick::new(
+                        i,
+                        trigger,
+                        Box::new(ObserveWork),
+                        Box::new(SelectGoal),
+                        Box::new(FakePlanner),
+                        Box::new(FakeExecutor),
+                        verifier,
+                    )
+                    .run(&collector);
+                    seen_ids.push(tick.trace_id);
+                    sched.mark_finished(tick.outcome, now);
+                }
+                other => panic!("expected Allowed, got {:?}", other),
+            }
+            clock.advance(1);
+        }
+
+        // Each scheduled tick got its own unique trace_id — episodes stay independent.
+        assert_eq!(seen_ids.len(), 3);
+        assert_ne!(seen_ids[0], seen_ids[1]);
+        assert_ne!(seen_ids[1], seen_ids[2]);
+
+        let t = traces(&collector);
+        let ids: HashSet<TraceId> = t.iter().map(|x| x.trace_id).collect();
+        assert_eq!(ids.len(), 3, "three independent episodes");
+
+        // Scheduler survived the mid-run failure and kept allowing ticks.
+        assert!(matches!(
+            sched.decide(clock.now()),
+            SchedulerDecision::Allowed(_)
+        ));
     }
 }
