@@ -180,6 +180,7 @@ impl<T: Tracer + Send + Sync> TraceCollector for OtelTraceCollector<T> {
     }
 }
 
+pub mod metrics;
 pub mod runtime;
 
 #[cfg(test)]
