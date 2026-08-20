@@ -11,7 +11,9 @@
 //! ```text
 //! CognitiveTrace.trace_id        -> OTel trace_id
 //! CognitiveTrace.span_id         -> OTel span_id   (128-bit Uuid -> low 8 bytes)
-//! CognitiveTrace.parent_span_id  -> OTel parent_span_id
+//! CognitiveTrace.parent_span_id  -> OTel parent (parent SpanContext placed in
+//!                                   the export Context — a true parent-child
+//!                                   edge, NOT a Link)
 //! CognitiveTrace.operation        -> span name
 //! CognitiveTrace.organ           -> attribute "friday.organ"
 //! CognitiveTrace.result          -> status (Failure -> Error)
@@ -29,8 +31,8 @@ use std::time::{Duration, SystemTime};
 
 use friday_core::trace::{CognitiveTrace, ResultType, TraceCollector};
 use opentelemetry::trace::{
-    Link, Span, SpanBuilder, SpanContext, SpanId, SpanKind, Status, TraceFlags, TraceId, TraceState,
-    Tracer,
+    Span, SpanBuilder, SpanContext, SpanId, SpanKind, Status, TraceContextExt, TraceFlags, TraceId,
+    TraceState, Tracer,
 };
 use opentelemetry::{Context, KeyValue};
 
@@ -130,19 +132,22 @@ pub fn export_span<T: Tracer>(tracer: &T, span: &CognitiveTrace) {
     builder.name = Cow::Owned(span.operation.clone());
     builder.trace_id = Some(to_otel_trace_id(&span.trace_id));
     builder.span_id = Some(to_otel_span_id(&span.span_id));
-    // OpenTelemetry 0.27 has no `parent_span_id` builder field; parentage is
-    // expressed as a Link to the parent's SpanContext so asynchronous
-    // cross-module parenting survives the projection.
-    if let Some(parent) = span.parent_span_id {
-        let link = Link::with_context(SpanContext::new(
+    // Establish a true OTel parent-child relationship by placing the parent's
+    // SpanContext into the export Context. This keeps FRIDAY's causal model
+    // intact: the OTel parent is an *export representation* of FRIDAY's
+    // semantic parent, never a reinterpretation of it. (OpenTelemetry 0.27 has
+    // no `parent_span_id` builder field, so we use `with_remote_span_context`
+    // rather than a Link — a Link is related context, not a parent.)
+    let cx = match span.parent_span_id {
+        Some(parent) => Context::current().with_remote_span_context(SpanContext::new(
             to_otel_trace_id(&span.trace_id),
             to_otel_span_id(&parent),
             TraceFlags::SAMPLED,
-            false,
+            true,
             TraceState::NONE,
-        ));
-        builder.links = Some(vec![link]);
-    }
+        )),
+        None => Context::current(),
+    };
     builder.span_kind = Some(SpanKind::Internal);
     builder.attributes = Some(span_attributes(span));
 
@@ -152,7 +157,7 @@ pub fn export_span<T: Tracer>(tracer: &T, span: &CognitiveTrace) {
     builder.end_time = Some(end);
     builder.status = status_for(span);
 
-    let mut otel_span = tracer.build_with_context(builder, &Context::current());
+    let mut otel_span = tracer.build_with_context(builder, &cx);
     otel_span.end_with_timestamp(end);
 }
 
