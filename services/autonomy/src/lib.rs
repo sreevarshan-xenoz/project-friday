@@ -29,6 +29,7 @@
 
 pub mod orchestrator;
 pub mod tick;
+pub mod world;
 
 pub use orchestrator::{AutonomousTick, Executor, GoalSelector, ObservationSource, Planner, Verifier};
 pub use tick::{

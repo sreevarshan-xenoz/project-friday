@@ -1,13 +1,18 @@
 //! 7A orchestrator — drives one bounded cognitive tick.
 //!
-//! `AutonomousTick::run` performs exactly one observation → (goal) → plan →
-//! execute → verify → record → STOP cycle and returns a `CognitiveTick`. It does
-//! not loop, does not schedule, and does not spawn further ticks. The caller may
-//! invoke `run` again later (a future scheduler, 7E), but each call creates its
-//! own `trace_id` — there is no hidden recursion.
+//! `AutonomousTick::run` performs exactly one
+//! `observe → (goal) → plan → predict → execute → verify → world_model.update → STOP`
+//! cycle and returns a `CognitiveTick`. It does not loop, does not schedule, and
+//! does not spawn further ticks. The caller may invoke `run` again later (a future
+//! scheduler, 7E), but each call creates its own `trace_id` — there is no hidden
+//! recursion.
 //!
 //! Stage behaviors are injected as traits so the real planner/director/verifier
-//! (7B+) plug in without changing the bounded control flow proven here.
+//! (7B+) plug in without changing the bounded control flow proven here. The
+//! optional world-model collaborator (7B) lets the tick predict the post-action
+//! state, re-observe reality, and update its belief — recording only the
+//! assessment (Correct / Mismatch / Unknown) as a `world_model.update` span. No
+//! world-model domain state is ever written into `CognitiveTrace`.
 
 use chrono::Utc;
 use friday_core::trace::{
@@ -18,6 +23,7 @@ use friday_core::trace::{
 use crate::tick::{
     CognitiveTick, ExecutionResult, NextAction, Observation, Plan, TickOutcome, TickTrigger,
 };
+use crate::world::{PredictionOutcome, WorldModel};
 
 /// What the tick observes about the world before deciding.
 pub trait ObservationSource: Send + Sync {
@@ -60,6 +66,10 @@ pub struct AutonomousTick {
     planner: Box<dyn Planner>,
     executor: Box<dyn Executor>,
     verifier: Box<dyn Verifier>,
+    /// Optional world-model collaborator (7B). When present, the tick predicts the
+    /// post-action state, re-observes reality, and asks the model to update itself.
+    /// `None` keeps the tick hermetic (7A behavior).
+    world_model: Option<Box<dyn WorldModel>>,
 }
 
 impl AutonomousTick {
@@ -81,7 +91,15 @@ impl AutonomousTick {
             planner,
             executor,
             verifier,
+            world_model: None,
         }
+    }
+
+    /// Attach a world-model collaborator (7B). The tick stays bounded and `&self`;
+    /// the model uses interior mutability.
+    pub fn with_world_model(mut self, world_model: Box<dyn WorldModel>) -> Self {
+        self.world_model = Some(world_model);
+        self
     }
 
     /// Run exactly one bounded tick and return its record. Writes the episode(s)
@@ -162,6 +180,13 @@ impl AutonomousTick {
         let exec_ctx = planner_ctx.child(planner_span);
         let exec_result = self.executor.execute(&exec_ctx, collector, &plan);
 
+        // 7B — Predict the post-action world state BEFORE verifying, so the model
+        // can be compared against reality after re-observation.
+        let predicted = self
+            .world_model
+            .as_ref()
+            .map(|wm| wm.predict(&goal));
+
         // Verify — record the verification gate explicitly with its verdict.
         let verdict = self.verifier.verify(&goal, &exec_result);
         collector.record(
@@ -176,6 +201,25 @@ impl AutonomousTick {
                     ResultType::Failure
                 }),
         );
+
+        // 7B — Re-observe reality and ask the world model to update itself.
+        // Records ONE `world_model.update` span carrying the assessment
+        // (Correct / Mismatch / Unknown). Domain state is NEVER written into the
+        // trace — only the operation and its verdict.
+        if let (Some(wm), Some(predicted)) = (&self.world_model, &predicted) {
+            let actual = wm.observe();
+            let assessment: PredictionOutcome = wm.update(predicted, actual);
+
+            let mut span = planner_ctx
+                .child(planner_span)
+                .trace(SpanId::default(), "world_model", "update")
+                .with_timing(Utc::now(), 3)
+                .with_result(assessment.result());
+            if let Some(v) = assessment.verification() {
+                span = span.with_verification(v);
+            }
+            collector.record(span);
+        }
 
         // Root goal span recorded LAST, carrying the final outcome + verdict.
         let (outcome, root_result) = if verdict.is_passed() {
@@ -208,11 +252,13 @@ impl AutonomousTick {
 mod tests {
     use super::*;
     use friday_core::trace::{
-        CognitiveTrace, InMemoryTraceCollector, TraceCollector, VerificationStatus,
+        CognitiveTrace, InMemoryTraceCollector, ResultType, TraceCollector, VerificationStatus,
         reconstruct_trace_tree,
     };
     use friday_observability::metrics::CognitiveMetrics;
     use friday_observability::viewer::ViewerModel;
+    use crate::world::{SimpleWorldModel, WorldSnapshot};
+    use serde_json::json;
     use std::collections::{HashMap, HashSet};
 
     // ── Fakes ────────────────────────────────────────────────────────────
@@ -485,5 +531,77 @@ mod tests {
         for count in per_id.values() {
             assert_eq!(*count, 5, "each tick is exactly one bounded episode");
         }
+    }
+
+    // ── 7B: world-model feedback is recorded as one bounded span ──────────
+
+    #[test]
+    fn autonomous_tick_records_world_model_update() {
+        let predicted = WorldSnapshot::new().with_variable("version", json!(1));
+        let actual = WorldSnapshot::new().with_variable("version", json!(1));
+        let wm = SimpleWorldModel::new(predicted, Some(actual));
+
+        let collector = InMemoryTraceCollector::new();
+        let tick = AutonomousTick::new(
+            1,
+            TickTrigger::Manual,
+            Box::new(ObserveWork),
+            Box::new(SelectGoal),
+            Box::new(FakePlanner),
+            Box::new(FakeExecutor),
+            Box::new(VerifyPass),
+        )
+        .with_world_model(Box::new(wm))
+        .run(&collector);
+
+        // Still exactly one bounded episode, still stops.
+        assert_eq!(tick.next_action, NextAction::Stop);
+        let t = traces(&collector);
+        let ids: HashSet<TraceId> = t.iter().map(|x| x.trace_id).collect();
+        assert_eq!(ids.len(), 1, "one episode even with world model");
+
+        // Exactly one world_model.update span, with a Correct assessment.
+        let wm_spans: Vec<&CognitiveTrace> = t
+            .iter()
+            .filter(|x| x.operation == "update" && x.organ == "world_model")
+            .collect();
+        assert_eq!(wm_spans.len(), 1);
+        let span = wm_spans[0];
+        assert_eq!(span.result, ResultType::Success);
+        assert!(span.verification().is_passed());
+
+        // 6 spans total: root+planner+agent+tool+verification+world_model.update.
+        assert_eq!(t.len(), 6);
+    }
+
+    // ── 7B.3 integration: unknown actual → deferred, no invented outcome ──
+
+    #[test]
+    fn unknown_actual_defers_world_model_update() {
+        let predicted = WorldSnapshot::new().with_variable("version", json!(1));
+        let wm = SimpleWorldModel::new(predicted, None); // observe() ⇒ unknown
+
+        let collector = InMemoryTraceCollector::new();
+        let _tick = AutonomousTick::new(
+            2,
+            TickTrigger::Manual,
+            Box::new(ObserveWork),
+            Box::new(SelectGoal),
+            Box::new(FakePlanner),
+            Box::new(FakeExecutor),
+            Box::new(VerifyPass),
+        )
+        .with_world_model(Box::new(wm))
+        .run(&collector);
+
+        let t = traces(&collector);
+        let span = t
+            .iter()
+            .find(|x| x.operation == "update" && x.organ == "world_model")
+            .expect("world_model.update span recorded");
+
+        // The model does NOT invent an outcome: Pending result, no verification.
+        assert_eq!(span.result, ResultType::Pending);
+        assert!(span.verification_info.is_none());
     }
 }
