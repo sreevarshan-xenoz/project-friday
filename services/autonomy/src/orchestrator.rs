@@ -23,6 +23,7 @@ use friday_core::trace::{
 };
 
 use crate::memory::{Experience, ExperienceExtractor, MemoryStore};
+use crate::skill::{SkillAdmission, SkillEvaluator, SkillStore};
 use crate::tick::{
     CognitiveTick, ExecutionResult, NextAction, Observation, Plan, TickOutcome, TickTrigger,
 };
@@ -79,6 +80,12 @@ pub struct AutonomousTick {
     memory: Option<Box<dyn MemoryStore>>,
     /// Admission policy (7C). Held across ticks so corroboration accumulates.
     extractor: ExperienceExtractor,
+    /// Optional skill store (7D). When present, the tick attempts to promote any
+    /// eligible lesson into a skill via the `SkillEvaluator`. This only *learns*
+    /// skills — it never executes them or changes the planner.
+    skill_store: Option<Box<dyn SkillStore>>,
+    /// Skill promotion policy (7D). Deterministic thresholds + known-good trajectories.
+    skill_evaluator: SkillEvaluator,
 }
 
 impl AutonomousTick {
@@ -103,6 +110,8 @@ impl AutonomousTick {
             world_model: None,
             memory: None,
             extractor: ExperienceExtractor::default(),
+            skill_store: None,
+            skill_evaluator: SkillEvaluator::default(),
         }
     }
 
@@ -116,6 +125,12 @@ impl AutonomousTick {
     /// Attach a memory store (7C). Memory writeback requires a world model too.
     pub fn with_memory_store(mut self, memory: Box<dyn MemoryStore>) -> Self {
         self.memory = Some(memory);
+        self
+    }
+
+    /// Attach a skill store (7D). Skill promotion only *learns*; it never executes.
+    pub fn with_skill_store(mut self, skill_store: Box<dyn SkillStore>) -> Self {
+        self.skill_store = Some(skill_store);
         self
     }
 
@@ -223,6 +238,7 @@ impl AutonomousTick {
         // trace — only the operation and its verdict.
         let mut observed_actual: Option<WorldSnapshot> = None;
         let mut assessment: Option<PredictionOutcome> = None;
+        let mut experience: Option<Experience> = None;
         if let (Some(wm), Some(pred)) = (&self.world_model, &predicted) {
             let actual = wm.observe();
             let assmt = wm.update(pred, actual.clone());
@@ -246,7 +262,7 @@ impl AutonomousTick {
         // Records a normal `memory.writeback` operation; the frozen `CognitiveTrace`
         // schema is never modified.
         if let (Some(mem), Some(assmt)) = (&self.memory, &assessment) {
-            let experience = Experience {
+            let exp = Experience {
                 action: goal.clone(),
                 predicted: predicted.clone().unwrap_or_default(),
                 actual: observed_actual.clone(),
@@ -257,11 +273,38 @@ impl AutonomousTick {
                 assessment: assmt.clone(),
                 observed_at_ms: Utc::now().timestamp_millis() as u64,
             };
-            self.extractor.process(&**mem, &experience);
+            self.extractor.process(&**mem, &exp);
+            experience = Some(exp);
             collector.record(
                 planner_ctx
                     .child(planner_span)
                     .trace(SpanId::default(), "memory", "writeback")
+                    .with_timing(Utc::now(), 2)
+                    .with_result(ResultType::Success),
+            );
+        }
+
+        // 7D — Skill formation (learning only, never execution / planner change).
+        // If a skill store is attached, attempt to promote the experience's lesson
+        // into a skill: look up the lesson, find a known-good trajectory, and let the
+        // evaluator decide. The planner is deliberately NOT modified here.
+        if let Some(skills) = &self.skill_store {
+            if let (Some(mem), Some(exp)) = (&self.memory, &experience) {
+                let cond = ExperienceExtractor::condition_of(exp);
+                if let (Some(lesson), Some(traj)) = (
+                    mem.find_similar_lesson(&cond),
+                    self.skill_evaluator.trajectory_for(&cond),
+                ) {
+                    let candidate = self.skill_evaluator.form_candidate(&lesson, &cond, traj);
+                    if let SkillAdmission::Promote(skill) = self.skill_evaluator.evaluate(&candidate) {
+                        skills.admit(skill);
+                    }
+                }
+            }
+            collector.record(
+                planner_ctx
+                    .child(planner_span)
+                    .trace(SpanId::default(), "skill", "formation")
                     .with_timing(Utc::now(), 2)
                     .with_result(ResultType::Success),
             );
@@ -305,6 +348,7 @@ mod tests {
     use friday_observability::viewer::ViewerModel;
     use crate::world::{SimpleWorldModel, WorldSnapshot};
     use crate::memory::SimpleMemory;
+    use crate::skill::SimpleSkillStore;
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
 
@@ -730,5 +774,48 @@ mod tests {
             .find(|x| x.operation == "writeback" && x.organ == "memory")
             .expect("memory.writeback emitted");
         assert_eq!(span.result, ResultType::Success);
+    }
+
+    // ── 7D: skill formation runs inside the bounded tick, never executes ──
+
+    #[test]
+    fn autonomous_tick_skill_formation_stops_and_is_bounded() {
+        let wm = SimpleWorldModel::new(
+            WorldSnapshot::new().with_variable("x", json!(1)),
+            Some(WorldSnapshot::new().with_variable("x", json!(1))),
+        );
+        let mem = SimpleMemory::new();
+        let skills = SimpleSkillStore::new();
+
+        let collector = InMemoryTraceCollector::new();
+        let _tick = AutonomousTick::new(
+            1,
+            TickTrigger::Manual,
+            Box::new(ObserveWork),
+            Box::new(SelectGoal),
+            Box::new(FakePlanner),
+            Box::new(FakeExecutor),
+            Box::new(VerifyPass),
+        )
+        .with_world_model(Box::new(wm))
+        .with_memory_store(Box::new(mem))
+        .with_skill_store(Box::new(skills))
+        .run(&collector);
+
+        // One bounded episode, still stops — skill formation never spawns a tick.
+        let t = traces(&collector);
+        let ids: HashSet<TraceId> = t.iter().map(|x| x.trace_id).collect();
+        assert_eq!(ids.len(), 1);
+
+        // Exactly one skill.formation span (operation), alongside the rest.
+        let skill_spans: Vec<&CognitiveTrace> = t
+            .iter()
+            .filter(|x| x.operation == "formation" && x.organ == "skill")
+            .collect();
+        assert_eq!(skill_spans.len(), 1);
+        assert_eq!(skill_spans[0].result, ResultType::Success);
+
+        // 8 spans: root+planner+agent+tool+verification+world_model.update+memory.writeback+skill.formation.
+        assert_eq!(t.len(), 8);
     }
 }
