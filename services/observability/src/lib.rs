@@ -182,6 +182,7 @@ impl<T: Tracer + Send + Sync> TraceCollector for OtelTraceCollector<T> {
 
 pub mod metrics;
 pub mod runtime;
+pub mod viewer;
 
 #[cfg(test)]
 mod tests {
