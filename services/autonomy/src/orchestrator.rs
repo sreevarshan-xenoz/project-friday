@@ -1,7 +1,7 @@
 //! 7A orchestrator — drives one bounded cognitive tick.
 //!
 //! `AutonomousTick::run` performs exactly one
-//! `observe → (goal) → plan → predict → execute → verify → world_model.update → STOP`
+//! `observe → (goal) → plan → predict → execute → verify → world_model.update → memory.writeback → STOP`
 //! cycle and returns a `CognitiveTick`. It does not loop, does not schedule, and
 //! does not spawn further ticks. The caller may invoke `run` again later (a future
 //! scheduler, 7E), but each call creates its own `trace_id` — there is no hidden
@@ -11,8 +11,10 @@
 //! (7B+) plug in without changing the bounded control flow proven here. The
 //! optional world-model collaborator (7B) lets the tick predict the post-action
 //! state, re-observe reality, and update its belief — recording only the
-//! assessment (Correct / Mismatch / Unknown) as a `world_model.update` span. No
-//! world-model domain state is ever written into `CognitiveTrace`.
+//! assessment (Correct / Mismatch / Unknown) as a `world_model.update` span. The
+//! optional memory store (7C) turns that outcome into a selective `Experience` →
+//! `Lesson` writeback (`memory.writeback` span). No world-model domain state is
+//! ever written into `CognitiveTrace`.
 
 use chrono::Utc;
 use friday_core::trace::{
@@ -20,10 +22,11 @@ use friday_core::trace::{
     VerificationStatus,
 };
 
+use crate::memory::{Experience, ExperienceExtractor, MemoryStore};
 use crate::tick::{
     CognitiveTick, ExecutionResult, NextAction, Observation, Plan, TickOutcome, TickTrigger,
 };
-use crate::world::{PredictionOutcome, WorldModel};
+use crate::world::{PredictionOutcome, WorldModel, WorldSnapshot};
 
 /// What the tick observes about the world before deciding.
 pub trait ObservationSource: Send + Sync {
@@ -70,6 +73,12 @@ pub struct AutonomousTick {
     /// post-action state, re-observes reality, and asks the model to update itself.
     /// `None` keeps the tick hermetic (7A behavior).
     world_model: Option<Box<dyn WorldModel>>,
+    /// Optional memory store (7C). When present alongside a world model, the tick
+    /// extracts an `Experience` and runs it through the `ExperienceExtractor`'s
+    /// selective admission policy. `None` skips memory writeback.
+    memory: Option<Box<dyn MemoryStore>>,
+    /// Admission policy (7C). Held across ticks so corroboration accumulates.
+    extractor: ExperienceExtractor,
 }
 
 impl AutonomousTick {
@@ -92,6 +101,8 @@ impl AutonomousTick {
             executor,
             verifier,
             world_model: None,
+            memory: None,
+            extractor: ExperienceExtractor::default(),
         }
     }
 
@@ -99,6 +110,12 @@ impl AutonomousTick {
     /// the model uses interior mutability.
     pub fn with_world_model(mut self, world_model: Box<dyn WorldModel>) -> Self {
         self.world_model = Some(world_model);
+        self
+    }
+
+    /// Attach a memory store (7C). Memory writeback requires a world model too.
+    pub fn with_memory_store(mut self, memory: Box<dyn MemoryStore>) -> Self {
+        self.memory = Some(memory);
         self
     }
 
@@ -182,10 +199,8 @@ impl AutonomousTick {
 
         // 7B — Predict the post-action world state BEFORE verifying, so the model
         // can be compared against reality after re-observation.
-        let predicted = self
-            .world_model
-            .as_ref()
-            .map(|wm| wm.predict(&goal));
+        let predicted: Option<WorldSnapshot> =
+            self.world_model.as_ref().map(|wm| wm.predict(&goal));
 
         // Verify — record the verification gate explicitly with its verdict.
         let verdict = self.verifier.verify(&goal, &exec_result);
@@ -206,19 +221,50 @@ impl AutonomousTick {
         // Records ONE `world_model.update` span carrying the assessment
         // (Correct / Mismatch / Unknown). Domain state is NEVER written into the
         // trace — only the operation and its verdict.
-        if let (Some(wm), Some(predicted)) = (&self.world_model, &predicted) {
+        let mut observed_actual: Option<WorldSnapshot> = None;
+        let mut assessment: Option<PredictionOutcome> = None;
+        if let (Some(wm), Some(pred)) = (&self.world_model, &predicted) {
             let actual = wm.observe();
-            let assessment: PredictionOutcome = wm.update(predicted, actual);
+            let assmt = wm.update(pred, actual.clone());
+            observed_actual = actual;
+            assessment = Some(assmt.clone());
 
             let mut span = planner_ctx
                 .child(planner_span)
                 .trace(SpanId::default(), "world_model", "update")
                 .with_timing(Utc::now(), 3)
-                .with_result(assessment.result());
-            if let Some(v) = assessment.verification() {
+                .with_result(assmt.result());
+            if let Some(v) = assmt.verification() {
                 span = span.with_verification(v);
             }
             collector.record(span);
+        }
+
+        // 7C — Experience extraction -> selective memory writeback.
+        // Builds one `Experience` from the world-model outcome and runs it through
+        // the `ExperienceExtractor` admission policy (corroboration + high-surprise).
+        // Records a normal `memory.writeback` operation; the frozen `CognitiveTrace`
+        // schema is never modified.
+        if let (Some(mem), Some(assmt)) = (&self.memory, &assessment) {
+            let experience = Experience {
+                action: goal.clone(),
+                predicted: predicted.clone().unwrap_or_default(),
+                actual: observed_actual.clone(),
+                prediction_error: match assmt {
+                    PredictionOutcome::Mismatch { diff } => Some(diff.clone()),
+                    _ => None,
+                },
+                assessment: assmt.clone(),
+                observed_at_ms: Utc::now().timestamp_millis() as u64,
+            };
+            self.extractor.process(&**mem, &experience);
+            collector.record(
+                planner_ctx
+                    .child(planner_span)
+                    .trace(SpanId::default(), "memory", "writeback")
+                    .with_timing(Utc::now(), 2)
+                    .with_result(ResultType::Success),
+            );
         }
 
         // Root goal span recorded LAST, carrying the final outcome + verdict.
@@ -258,6 +304,7 @@ mod tests {
     use friday_observability::metrics::CognitiveMetrics;
     use friday_observability::viewer::ViewerModel;
     use crate::world::{SimpleWorldModel, WorldSnapshot};
+    use crate::memory::SimpleMemory;
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
 
@@ -603,5 +650,85 @@ mod tests {
         // The model does NOT invent an outcome: Pending result, no verification.
         assert_eq!(span.result, ResultType::Pending);
         assert!(span.verification_info.is_none());
+    }
+
+    // ── 7C.7: tick remains bounded; memory writeback does not spawn a tick ──
+
+    #[test]
+    fn autonomous_tick_memory_writeback_stops_and_is_bounded() {
+        let wm = SimpleWorldModel::new(
+            WorldSnapshot::new().with_variable("x", json!(1)),
+            Some(WorldSnapshot::new().with_variable("x", json!(1))),
+        );
+        let mem = SimpleMemory::new();
+
+        let collector = InMemoryTraceCollector::new();
+        let _tick = AutonomousTick::new(
+            1,
+            TickTrigger::Manual,
+            Box::new(ObserveWork),
+            Box::new(SelectGoal),
+            Box::new(FakePlanner),
+            Box::new(FakeExecutor),
+            Box::new(VerifyPass),
+        )
+        .with_world_model(Box::new(wm))
+        .with_memory_store(Box::new(mem))
+        .run(&collector);
+
+        // One bounded episode, still stops — memory never triggers another tick.
+        let t = traces(&collector);
+        let ids: HashSet<TraceId> = t.iter().map(|x| x.trace_id).collect();
+        assert_eq!(ids.len(), 1);
+
+        // Exactly one memory.writeback span (operation), alongside the rest.
+        let mem_spans: Vec<&CognitiveTrace> = t
+            .iter()
+            .filter(|x| x.operation == "writeback" && x.organ == "memory")
+            .collect();
+        assert_eq!(mem_spans.len(), 1);
+        assert_eq!(mem_spans[0].result, ResultType::Success);
+
+        // 7 spans: root+planner+agent+tool+verification+world_model.update+memory.writeback.
+        assert_eq!(t.len(), 7);
+    }
+
+    // ── 7C.8: trace schema unchanged — only a normal operation is emitted ──
+
+    #[test]
+    fn memory_writeback_does_not_alter_frozen_trace_schema() {
+        let wm = SimpleWorldModel::new(
+            WorldSnapshot::new().with_variable("x", json!(1)),
+            Some(WorldSnapshot::new().with_variable("x", json!(1))),
+        );
+        let mem = SimpleMemory::new();
+
+        let collector = InMemoryTraceCollector::new();
+        let _tick = AutonomousTick::new(
+            2,
+            TickTrigger::Manual,
+            Box::new(ObserveWork),
+            Box::new(SelectGoal),
+            Box::new(FakePlanner),
+            Box::new(FakeExecutor),
+            Box::new(VerifyPass),
+        )
+        .with_world_model(Box::new(wm))
+        .with_memory_store(Box::new(mem))
+        .run(&collector);
+
+        let t = traces(&collector);
+        // Reconstructs into a single valid root — no schema breakage.
+        let tree = reconstruct_trace_tree(&t);
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].trace.operation, "resolve");
+
+        // The writeback uses ONLY existing CognitiveTrace fields (operation, organ,
+        // result) — no new fields were added to the frozen contract.
+        let span = t
+            .iter()
+            .find(|x| x.operation == "writeback" && x.organ == "memory")
+            .expect("memory.writeback emitted");
+        assert_eq!(span.result, ResultType::Success);
     }
 }

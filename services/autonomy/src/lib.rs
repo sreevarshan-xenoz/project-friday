@@ -27,6 +27,7 @@
 //! fans out to OTel (6A/6B), `CognitiveMetrics` (6C) and the viewer (6D) — one
 //! semantic source, as in the observability design.
 
+pub mod memory;
 pub mod orchestrator;
 pub mod tick;
 pub mod world;

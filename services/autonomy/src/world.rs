@@ -145,6 +145,14 @@ pub struct WorldModelCorrection {
 /// → [`WorldModel::observe`], `apply_verified_observation`/`record_transition` →
 /// [`WorldModel::update`].
 ///
+/// # Production seam (do not fork)
+///
+/// This trait is the **stable interface** the autonomy loop depends on. The real
+/// `friday-goal-execution::WorldModel` is the production implementation of it;
+/// [`SimpleWorldModel`] is the test/fake. The two must never diverge into
+/// competing world models — if the real model's shape changes, change its `impl`
+/// of this trait, not the orchestrator.
+///
 /// All methods are `&self` (interior mutability) so the tick can stay `&self` and
 /// bounded — no recursion, no scheduling.
 pub trait WorldModel: Send + Sync {
