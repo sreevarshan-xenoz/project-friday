@@ -1,0 +1,17 @@
+[package]
+name = "friday-autonomy"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "FRIDAY 7A — single bounded autonomous cognitive tick. Orchestrator above the frozen CognitiveTrace: one tick -> one episode -> stop."
+
+[dependencies]
+friday-core = { path = "../../core" }
+serde = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+friday-observability = { path = "../observability" }
