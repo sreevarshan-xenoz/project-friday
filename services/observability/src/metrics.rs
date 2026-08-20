@@ -81,19 +81,25 @@ enum SpanClass {
 }
 
 fn classify(trace: &CognitiveTrace) -> SpanClass {
-    // Model calls carry `model_usage`.
-    if trace.model_usage.is_some() {
-        return SpanClass::Model;
-    }
-    // Verification carries `verification_info`.
-    if trace.verification_info.is_some() {
-        return SpanClass::Verification;
-    }
+    // Key on the canonical operation name first. A goal span may also carry
+    // `verification_info` (the goal-level verdict) without ceasing to be the
+    // goal; a verification gate may carry model usage context without ceasing
+    // to be a verification span. Operation is the primary discriminator.
     match trace.operation.as_str() {
         "goal" | "resolve" => SpanClass::Goal,
         "agent_supervise" | "execute" => SpanClass::Agent,
         "tool_call" => SpanClass::Tool,
-        _ => SpanClass::Other,
+        "verification_gate" | "verify" => SpanClass::Verification,
+        _ => {
+            // Fall back to payload-driven classification for non-canonical ops.
+            if trace.model_usage.is_some() {
+                SpanClass::Model
+            } else if trace.verification_info.is_some() {
+                SpanClass::Verification
+            } else {
+                SpanClass::Other
+            }
+        }
     }
 }
 
