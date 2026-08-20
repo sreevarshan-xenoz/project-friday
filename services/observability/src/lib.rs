@@ -180,6 +180,8 @@ impl<T: Tracer + Send + Sync> TraceCollector for OtelTraceCollector<T> {
     }
 }
 
+pub mod runtime;
+
 #[cfg(test)]
 mod tests {
     use super::{export_span, span_attributes, status_for, OtelTraceCollector, to_otel_span_id, to_otel_trace_id};
