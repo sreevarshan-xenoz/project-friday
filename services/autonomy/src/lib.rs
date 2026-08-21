@@ -30,6 +30,8 @@
 pub mod memory;
 pub mod memory_production;
 pub mod orchestrator;
+#[cfg(test)]
+mod golden_8b;
 pub mod scheduler;
 pub mod skill;
 pub mod tick;

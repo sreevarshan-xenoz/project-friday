@@ -157,7 +157,6 @@ mod tests {
     #[test]
     fn admits_and_finds_via_production_store() {
         let adapter = lesson_store(Arc::new(IdentityResolver));
-        let exp = mismatch_exp("git.commit", &["dirty_tree"], 1000);
         let extractor = ExperienceExtractor::default();
         // High-surprise severity (1 key < 5) ⇒ accumulate; push to corroboration.
         // Use a high-surprise action by forcing 5 signals so it admits immediately.
