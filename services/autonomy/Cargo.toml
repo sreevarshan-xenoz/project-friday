@@ -11,6 +11,8 @@ description = "FRIDAY 7A — single bounded autonomous cognitive tick. Orchestra
 [dependencies]
 friday-core = { path = "../../core" }
 friday-goal-execution = { path = "../goal-execution" }
+friday-lesson-store = { path = "../lesson-store" }
+friday-capabilities = { path = "../capabilities" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }

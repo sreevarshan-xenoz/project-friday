@@ -28,6 +28,7 @@
 //! semantic source, as in the observability design.
 
 pub mod memory;
+pub mod memory_production;
 pub mod orchestrator;
 pub mod scheduler;
 pub mod skill;
