@@ -17,11 +17,13 @@
 //! `friday-memory`, lessons here).
 
 pub mod error;
+pub mod redb_store;
 pub mod resolver;
 pub mod store;
 pub mod types;
 
 pub use error::LessonStoreError;
+pub use redb_store::RedbLessonStore;
 pub use resolver::{CapabilityResolver, IdentityResolver, RegistryCapabilityResolver};
 pub use store::{InMemoryLessonStore, LessonStore};
 pub use types::{

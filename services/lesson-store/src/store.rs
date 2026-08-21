@@ -52,7 +52,7 @@ pub trait LessonStore: Send + Sync {
 }
 
 /// True when a stored lesson (given its key) matches a query key under `policy`.
-fn signals_match(stored: &LessonKey, query: &LessonKey, policy: MatchPolicy) -> bool {
+pub(crate) fn signals_match(stored: &LessonKey, query: &LessonKey, policy: MatchPolicy) -> bool {
     if stored.action_class != query.action_class {
         return false;
     }
