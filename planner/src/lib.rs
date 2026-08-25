@@ -26,6 +26,11 @@ pub mod verification;
 pub use engines::{
     count_validation_issues, planning_engine_with, IntentEngine, PlanningEngine, PlanningTelemetry,
 };
+pub use friday_core::trace::{
+    CognitiveTrace, CognitiveTraceContext, CognitiveTracer, ModelUsage, TraceCollector, TraceId, SpanId,
+    GoalId, SessionId, EventId, InMemoryTraceCollector, NoopTraceCollector,
+    reconstruct_trace_tree, validate_trace_hierarchy,
+};
 pub use events::{
     EXEC_ACTION, EXEC_RESULT, GOAL_RAW, INTENT_CREATED, PLAN_CREATED, TASK_COMPLETED, TASK_FAILED,
     TASK_RETRY, TASK_STARTED, VERIFICATION_COMPLETED, VERIFICATION_FAILED, VERIFICATION_STARTED,

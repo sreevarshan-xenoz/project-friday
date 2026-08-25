@@ -1,0 +1,15 @@
+{
+  "mode": "real",
+  "timestamp": "2026-08-15T15:15:31.003476200+00:00",
+  "friday_version": "0.1.0",
+  "provider_name": "gemini",
+  "provider_base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+  "model_id": "gemini-3.5-flash",
+  "os": "windows",
+  "configured_providers": [
+    "openrouter",
+    "gemini",
+    "opengateway",
+    "opengateway(base_url)"
+  ]
+}

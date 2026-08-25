@@ -20,6 +20,7 @@ pub mod protocol;
 pub mod runtime;
 pub mod services;
 pub mod telemetry;
+pub mod trace;
 
 pub use error::{FridayError, Result};
 pub use event::{Event, EventBus, Priority, MAX_HOPS};

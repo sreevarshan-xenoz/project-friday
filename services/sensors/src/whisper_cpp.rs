@@ -26,7 +26,7 @@ use crate::audio::SpeechToText;
 pub const WHISPER_SAMPLE_RATE: u32 = 16_000;
 
 /// Unique-per-process counter for temp WAV names.
-static WAV_COUNTER: AtomicU64 = AtomicU64::new(0);
+pub(crate) static WAV_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Explicit backend configuration — the deployment contract for whisper.cpp.
 ///
@@ -190,7 +190,7 @@ impl SpeechToText for WhisperCppTranscriber {
 /// Minimal RIFF/WAVE writer for 16-bit PCM (mono): 44-byte header + samples.
 /// Kept local (no dependency) because the only thing the backend needs is a
 /// file whisper-cli can open.
-fn write_wav(path: &Path, samples: &[i16], sample_rate: u32) -> std::io::Result<()> {
+pub(crate) fn write_wav(path: &Path, samples: &[i16], sample_rate: u32) -> std::io::Result<()> {
     let data_len = (samples.len() * 2) as u32;
     let byte_rate = sample_rate * 2;
     let mut bytes = Vec::with_capacity(44 + samples.len() * 2);

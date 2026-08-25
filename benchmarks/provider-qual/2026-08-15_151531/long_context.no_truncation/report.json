@@ -1,0 +1,36 @@
+{
+  "action_ok": true,
+  "change_reason": "candidate order changed",
+  "fault": null,
+  "group": "long_context",
+  "id": "long_context.no_truncation",
+  "issues": [],
+  "latency_ms": 4342,
+  "note": "array_complete=true",
+  "passed": true,
+  "routing_decision": {
+    "candidates": [
+      {
+        "latency_ms": 500,
+        "model": "gemini-3.5-flash",
+        "provider": "gemini",
+        "reliability": 1.0
+      }
+    ],
+    "chosen": [
+      "gemini",
+      "gemini-3.5-flash"
+    ],
+    "failures": [],
+    "requested_tier": null,
+    "routing_mode": "Quality",
+    "served": [
+      "gemini",
+      "gemini-3.5-flash"
+    ],
+    "timestamp": "2026-08-15T15:15:35.388906600+00:00",
+    "version": 1
+  },
+  "served_model": "gemini/gemini-3.5-flash",
+  "state_accuracy": true
+}

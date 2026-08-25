@@ -24,10 +24,10 @@ pub mod router;
 pub mod rule;
 pub mod validation;
 
-pub use backend::{PlanError, ReasoningBackend};
+pub use backend::{CompletionResult, PlanError, ReasoningBackend};
 pub use context::{AvailableCapability, PlanContext, RiskPolicy, WorkspaceContext};
 pub use llm::LlmPlanner;
-pub use planner_trait::Planner;
+pub use planner_trait::{Planner, PlanResult};
 pub use router::{PlannerKind, PlannerRouter};
 pub use rule::RulePlanner;
 pub use validation::validate_task_graph;

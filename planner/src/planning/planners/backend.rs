@@ -5,6 +5,45 @@
 //! or by `InferenceFabric` in production behind the `intelligence` feature.
 
 use async_trait::async_trait;
+use friday_core::trace::ModelUsage;
+
+/// The result of a model completion, carrying both the raw text response and
+/// optional usage metadata. The `usage` field is `None` when the backend
+/// cannot provide token/cost information (e.g. local models, mocks).
+///
+/// ```text
+/// CompletionResult
+///   ├── content: String       raw model response text
+///   └── usage: Option<ModelUsage>
+///         ├── model / provider identity
+///         ├── tokens_in / tokens_out
+///         ├── cached_tokens / reasoning_tokens (optional)
+///         ├── cost_usd (optional; computed by the backend layer)
+///         └── finish_reason (optional)
+/// ```
+#[derive(Debug, Clone)]
+pub struct CompletionResult {
+    pub content: String,
+    pub usage: Option<ModelUsage>,
+}
+
+impl CompletionResult {
+    /// A result with content only (no usage data).
+    pub fn text(content: impl Into<String>) -> Self {
+        Self {
+            content: content.into(),
+            usage: None,
+        }
+    }
+
+    /// A result with content and usage metadata.
+    pub fn with_usage(content: impl Into<String>, usage: ModelUsage) -> Self {
+        Self {
+            content: content.into(),
+            usage: Some(usage),
+        }
+    }
+}
 
 /// A minimal chat-completion backend. Implemented by a mock in tests and by an
 /// adapter over `InferenceFabric` (see `crate::intelligence_backend`).
@@ -12,6 +51,15 @@ use async_trait::async_trait;
 pub trait ReasoningBackend: Send + Sync {
     /// Run a single prompt and return the model's raw text response.
     async fn complete(&self, prompt: &str) -> Result<String, String>;
+
+    /// Run a single prompt and return a [`CompletionResult`] with optional
+    /// usage metadata. The default implementation delegates to [`complete`](Self::complete)
+    /// and returns `None` for usage — backends that can provide token counts
+    /// should override this method.
+    async fn complete_with_usage(&self, prompt: &str) -> Result<CompletionResult, String> {
+        let content = self.complete(prompt).await?;
+        Ok(CompletionResult::text(content))
+    }
 }
 
 /// Errors a planner can return. Validation failures carry the list of problems

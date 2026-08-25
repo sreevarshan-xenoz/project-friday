@@ -9,10 +9,10 @@ use async_trait::async_trait;
 use crate::intent::Intent;
 use crate::planning::planner::plan as rule_plan;
 use crate::planning::planners::context::PlanContext;
-use crate::planning::planners::planner_trait::Planner;
+use crate::planning::planners::planner_trait::{Planner, PlanResult};
 use crate::planning::planners::PlanError;
 use crate::planning::planners::PlannerKind;
-use crate::planning::TaskGraph;
+use friday_core::trace::{CognitiveTraceContext, TraceCollector};
 
 /// Deterministic, intent-type-driven planner. Always succeeds (it never calls a
 /// model) and produces the same graph the rule engine always did.
@@ -40,7 +40,13 @@ impl Planner for RulePlanner {
         &self,
         intent: &Intent,
         _ctx: &PlanContext,
-    ) -> Result<TaskGraph, PlanError> {
-        Ok(rule_plan(intent))
+        _tracer: &dyn TraceCollector,
+        _trace_ctx: &CognitiveTraceContext,
+    ) -> Result<PlanResult, PlanError> {
+        Ok(PlanResult {
+            graph: rule_plan(intent),
+            usage: None,
+            llm_duration_ms: None,
+        })
     }
 }

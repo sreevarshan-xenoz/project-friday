@@ -46,3 +46,5 @@ artifacts/validation/
 
 # FRIDAY local fabric cache
 .fabric/
+
+bench/sherpa/

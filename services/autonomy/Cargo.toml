@@ -13,6 +13,7 @@ friday-core = { path = "../../core" }
 friday-goal-execution = { path = "../goal-execution" }
 friday-lesson-store = { path = "../lesson-store" }
 friday-capabilities = { path = "../capabilities" }
+friday-skills = { path = "../skills" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }

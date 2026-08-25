@@ -9,6 +9,7 @@ repository.workspace = true
 description = "FRIDAY Cognitive Runtime — the heartbeat"
 
 [dependencies]
+friday-core = { path = "../../core" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

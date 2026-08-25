@@ -15,10 +15,13 @@ use crate::experience::GoalOutcome;
 use crate::intent::Intent;
 use crate::planning::planners::backend::{PlanError, ReasoningBackend};
 use crate::planning::planners::context::{PlanContext, RiskPolicy};
-use crate::planning::planners::planner_trait::Planner;
+use crate::planning::planners::planner_trait::{Planner, PlanResult};
 use crate::planning::planners::router::PlannerKind;
 use crate::planning::planners::validation::validate_task_graph;
 use crate::planning::TaskGraph;
+use friday_core::trace::{
+    CognitiveTraceContext, ResultType, SpanId, TraceCollector,
+};
 use friday_investigation::InvestigationResult;
 
 /// One task as the model is asked to emit it. Dependencies are by *index* into
@@ -322,15 +325,38 @@ impl Planner for LlmPlanner {
         &self,
         intent: &Intent,
         ctx: &PlanContext,
-    ) -> Result<TaskGraph, PlanError> {
+        tracer: &dyn TraceCollector,
+        trace_ctx: &CognitiveTraceContext,
+    ) -> Result<PlanResult, PlanError> {
+        // ── Model call ────────────────────────────────────────────────
+        let model_span = SpanId::default();
+        let model_start = std::time::Instant::now();
         let prompt = self.build_prompt(intent, ctx);
-        let raw = self
+        let completion = self
             .backend
-            .complete(&prompt)
+            .complete_with_usage(&prompt)
             .await
             .map_err(PlanError::Backend)?;
-        tracing::debug!(raw_len = raw.len(), "llm: raw response received");
-        let json_str = Self::extract_json(&raw)?;
+        let model_elapsed_ms = model_start.elapsed().as_millis() as u64;
+        tracing::debug!(raw_len = completion.content.len(), "llm: raw response received");
+
+        // Emit model call span with real usage data.
+        let mut model_trace = trace_ctx
+            .trace(model_span, "planner", "llm_call")
+            .with_result(ResultType::Success)
+            .with_timing(
+                chrono::Utc::now() - chrono::Duration::milliseconds(model_elapsed_ms as i64),
+                model_elapsed_ms,
+            );
+        if let Some(ref usage) = completion.usage {
+            model_trace = model_trace
+                .with_model_usage(usage.clone())
+                .with_result(ResultType::Success);
+        }
+        tracer.record(model_trace);
+
+        // ── Parse & validate ──────────────────────────────────────────
+        let json_str = Self::extract_json(&completion.content)?;
         tracing::debug!(json_len = json_str.len(), "llm: extracted JSON plan");
         let plan: LlmPlan =
             serde_json::from_str(json_str).map_err(|e| PlanError::Parse(e.to_string()))?;
@@ -341,7 +367,12 @@ impl Planner for LlmPlanner {
         }
         let graph = self.build_graph(&plan);
         validate_task_graph(&graph, &self.registry, &self.budget, &self.policy)?;
-        Ok(graph)
+
+        Ok(PlanResult {
+            graph,
+            usage: completion.usage,
+            llm_duration_ms: Some(model_elapsed_ms),
+        })
     }
 }
 

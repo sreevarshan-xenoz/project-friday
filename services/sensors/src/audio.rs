@@ -33,6 +33,7 @@
 //! completed turn (a few hundred bytes of metadata) enters the workspace —
 //! never raw PCM.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -40,6 +41,7 @@ use friday_cognitive::workspace::Topic;
 use friday_cognitive::WorkspaceEvent;
 
 use crate::Sensor;
+use crate::whisper_cpp::write_wav;
 
 /// PCM sample rate the sensor requests from WASAPI (and interprets synthetic
 /// frames at).
@@ -135,10 +137,16 @@ pub struct Turn {
 /// Pure turn detector: accumulates speech frames into a [`Turn`] and closes it
 /// after `end_silence_frames` consecutive silent frames. `None` while the turn
 /// is still open (or nothing is being said).
+///
+/// `min_speech_frames` prevents tiny noise fragments from becoming independent
+/// turns — the turn only finalises once at least that many speech frames have
+/// been accumulated.
 #[derive(Debug, Clone)]
 pub struct TurnDetector {
     /// Consecutive silent frames that end an open turn.
     pub end_silence_frames: usize,
+    /// Minimum speech frames before a turn can finalise.
+    pub min_speech_frames: usize,
     /// Samples per frame (for the duration estimate).
     pub sample_rate: u32,
     in_speech: bool,
@@ -151,6 +159,7 @@ impl Default for TurnDetector {
     fn default() -> Self {
         Self {
             end_silence_frames: 5,
+            min_speech_frames: 0,
             sample_rate: DEFAULT_SAMPLE_RATE,
             in_speech: false,
             speech_frames: 0,
@@ -172,6 +181,19 @@ impl TurnDetector {
         }
     }
 
+    /// Configure both endpoint parameters at once (used by env-var wiring).
+    pub fn with_endpoints(end_silence_ms: u64, min_speech_ms: u64) -> Self {
+        let sample_rate = DEFAULT_SAMPLE_RATE;
+        // Each frame is FRAME_SAMPLES / sample_rate seconds = 20 ms at 16 kHz.
+        let frame_duration_ms = FRAME_SAMPLES as u64 * 1000 / sample_rate as u64;
+        Self {
+            end_silence_frames: (end_silence_ms / frame_duration_ms.max(1)) as usize,
+            min_speech_frames: (min_speech_ms / frame_duration_ms.max(1)) as usize,
+            sample_rate,
+            ..Self::default()
+        }
+    }
+
     /// Feed one classified frame. `speech` is the VAD verdict for `frame`.
     /// Returns the closed [`Turn`] when this frame ends one — callers then own
     /// the samples (they were moved out).
@@ -188,6 +210,12 @@ impl TurnDetector {
         }
         self.silence_frames += 1;
         if self.silence_frames < self.end_silence_frames {
+            return None;
+        }
+        // Don't finalise if we haven't hit the minimum speech duration yet —
+        // keep accumulating through the silence gap instead.
+        if self.speech_frames < self.min_speech_frames {
+            self.silence_frames = 0;
             return None;
         }
         let duration_ms = (self.speech_frames as u64 * FRAME_SAMPLES as u64 * 1000)
@@ -279,6 +307,29 @@ pub struct AudioSensor {
     pending: Vec<i16>,
 }
 
+/// Build a [`TurnDetector`] from optional env overrides.
+///
+/// - `FRIDAY_VAD_END_SILENCE_MS` — consecutive silence (ms) that finalises a turn (default 100).
+/// - `FRIDAY_VAD_MIN_SPEECH_MS` — minimum speech (ms) before a turn can finalise (default 0).
+fn turn_detector_from_env() -> TurnDetector {
+    let end_silence_ms: u64 = std::env::var("FRIDAY_VAD_END_SILENCE_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(100);
+    let min_speech_ms: u64 = std::env::var("FRIDAY_VAD_MIN_SPEECH_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    if end_silence_ms != 100 || min_speech_ms != 0 {
+        tracing::info!(
+            end_silence_ms,
+            min_speech_ms,
+            "[audio] endpoint params from env"
+        );
+    }
+    TurnDetector::with_endpoints(end_silence_ms, min_speech_ms)
+}
+
 impl Default for AudioSensor {
     fn default() -> Self {
         Self::new()
@@ -289,7 +340,7 @@ impl AudioSensor {
     pub fn new() -> Self {
         Self {
             vad: Vad::default(),
-            turns: TurnDetector::with_sample_rate(DEFAULT_SAMPLE_RATE),
+            turns: turn_detector_from_env(),
             asr: None,
             capture: open_default_capture(),
             pending: Vec::new(),
@@ -302,7 +353,7 @@ impl AudioSensor {
     pub fn without_capture() -> Self {
         Self {
             vad: Vad::default(),
-            turns: TurnDetector::with_sample_rate(DEFAULT_SAMPLE_RATE),
+            turns: turn_detector_from_env(),
             asr: None,
             capture: None,
             pending: Vec::new(),
@@ -373,6 +424,47 @@ impl AudioSensor {
     pub async fn turns_to_events(&self, turns: Vec<Turn>) -> Vec<WorkspaceEvent> {
         let mut events = Vec::new();
         for turn in turns {
+            // ── Diagnostic: log turn metrics + optional WAV dump ──
+            let turn_rms = rms(&turn.samples);
+            let turn_peak = if turn.samples.is_empty() {
+                0.0f32
+            } else {
+                turn.samples
+                    .iter()
+                    .map(|&s| (s.abs() as f32) / i16::MAX as f32)
+                    .fold(0.0f32, f32::max)
+            };
+            let duration_s = turn.samples.len() as f64 / self.turns.sample_rate as f64;
+            tracing::info!(
+                turn_duration_ms = turn.duration_ms,
+                turn_samples = turn.samples.len(),
+                turn_duration_s = format!("{:.3}", duration_s),
+                turn_rms = format!("{:.4}", turn_rms),
+                turn_peak = format!("{:.4}", turn_peak),
+                sample_rate = self.turns.sample_rate,
+                "[voice-debug] turn finalized"
+            );
+            // Dump one turn as WAV when FRIDAY_WHISPER_DUMP_TURN is set.
+            // Reuses the same counter to avoid collisions with whisper temp files.
+            if std::env::var("FRIDAY_WHISPER_DUMP_TURN").is_ok() {
+                let path = std::env::temp_dir().join(format!(
+                    "friday_dump_turn_{}_{}.wav",
+                    std::process::id(),
+                    crate::whisper_cpp::WAV_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                ));
+                if let Err(e) = write_wav(&path, &turn.samples, self.turns.sample_rate) {
+                    tracing::warn!("failed to dump turn WAV: {e}");
+                } else {
+                    tracing::info!(
+                        path = %path.display(),
+                        samples = turn.samples.len(),
+                        rms = format!("{:.4}", turn_rms),
+                        peak = format!("{:.4}", turn_peak),
+                        "[voice-debug] turn WAV dumped"
+                    );
+                }
+            }
+            // ── End diagnostic ──
             let transcript = match &self.asr {
                 Some(asr) => {
                     match asr.transcribe(&turn.samples, self.turns.sample_rate).await {

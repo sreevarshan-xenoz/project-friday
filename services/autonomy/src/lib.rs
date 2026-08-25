@@ -34,9 +34,13 @@ pub mod orchestrator;
 mod golden_8b;
 pub mod scheduler;
 pub mod skill;
+pub mod skill_production;
 pub mod tick;
 pub mod world;
 pub mod world_production;
+
+#[cfg(test)]
+mod golden_8c;
 
 pub use orchestrator::{AutonomousTick, Executor, GoalSelector, ObservationSource, Planner, Verifier};
 pub use tick::{

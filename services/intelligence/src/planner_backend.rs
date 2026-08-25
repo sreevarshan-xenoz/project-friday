@@ -12,10 +12,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use friday_core::Friday;
-use friday_planner::planning::planners::ReasoningBackend as PlannerBackend;
+use friday_core::trace::ModelUsage;
+use friday_planner::planning::planners::{CompletionResult, ReasoningBackend as PlannerBackend};
 use friday_planner::register_engines_with_llm;
 
-use crate::providers::{InferenceFabric, ModelClient};
+use crate::providers::{InferenceFabric, ModelClient, ProviderUsage};
 use crate::qualification::RequestRequirements;
 
 /// Thin adapter over [`InferenceFabric`] satisfying the planner's
@@ -61,6 +62,28 @@ impl InferenceBackend {
 impl PlannerBackend for InferenceBackend {
     async fn complete(&self, prompt: &str) -> Result<String, String> {
         self.fabric.complete(prompt).await
+    }
+
+    async fn complete_with_usage(&self, prompt: &str) -> Result<CompletionResult, String> {
+        let response = self.fabric.complete_with_usage(prompt).await?;
+        let usage = response.usage.map(provider_usage_to_model_usage);
+        Ok(CompletionResult {
+            content: response.content,
+            usage,
+        })
+    }
+}
+
+fn provider_usage_to_model_usage(pu: ProviderUsage) -> ModelUsage {
+    ModelUsage {
+        model: "unknown".to_string(),
+        provider: "unknown".to_string(),
+        tokens_in: pu.prompt_tokens,
+        tokens_out: pu.completion_tokens,
+        cached_tokens: pu.cached_tokens,
+        reasoning_tokens: pu.reasoning_tokens,
+        cost_usd: None,
+        finish_reason: pu.finish_reason,
     }
 }
 

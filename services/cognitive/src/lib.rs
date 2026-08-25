@@ -40,6 +40,7 @@ pub mod phase;
 pub mod recorder;
 pub mod registry;
 pub mod runtime;
+pub mod trace;
 pub mod workspace;
 
 pub use autonomy::{
@@ -54,6 +55,14 @@ pub use phase::{CognitivePhase, CognitiveTick, TickId};
 pub use recorder::EventRecorder;
 pub use registry::PhaseRegistry;
 pub use runtime::{CognitiveRuntime, RuntimeConfig, RuntimeMetrics};
+pub use trace::{
+    CognitiveTrace, InMemoryTraceCollector, NoopTraceCollector, Organ, ResultType,
+    SessionId, TraceCollector, TraceId, VerificationStatus, GoalId,
+    // Re-exported from friday-core
+    SpanId, EventId, ModelUsage, VerificationInfo, TraceTreeNode,
+    CognitiveTraceContext, CognitiveTracer,
+    reconstruct_trace_tree, validate_trace_hierarchy,
+};
 pub use workspace::{
     AutonomyEvent, AutonomyReadModel, EngineId, GlobalWorkspace, Priority, Topic, WorkspaceEvent,
 };

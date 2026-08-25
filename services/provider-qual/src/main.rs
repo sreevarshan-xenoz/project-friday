@@ -140,7 +140,7 @@ fn build_target(provider: &str, mock: bool) -> (Target, String, String) {
             "gemini",
             "https://generativelanguage.googleapis.com/v1beta/openai/".to_string(),
             std::env::var("GEMINI_API_KEY").unwrap_or_default(),
-            "gemini-2.5-flash",
+            "gemini-3.5-flash",
             RoutingMode::Quality,
         ),
         "opengateway" => (

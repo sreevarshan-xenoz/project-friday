@@ -65,6 +65,11 @@ impl VoiceConfig {
     /// FRIDAY_WHISPER_LANGUAGE  = whisper code                  (default "en")
     /// FRIDAY_WHISPER_THREADS   = worker threads                (default 4)
     /// FRIDAY_WHISPER_TEMP_DIR  = temp wav directory            (default OS temp)
+    /// FRIDAY_WHISPER_PROMPT    = initial prompt hint           (default: none)
+    /// FRIDAY_WHISPER_NO_SPEECH_THOLD  = no-speech threshold   (default: 0.60)
+    /// FRIDAY_WHISPER_ENTROPY_THOLD    = entropy threshold     (default: 2.40)
+    /// FRIDAY_WHISPER_LOGPROB_THOLD    = logprob threshold     (default: -1.00)
+    /// FRIDAY_WHISPER_SUPPRESS_NST     = suppress non-speech   (default: false)
     /// ```
     pub fn from_env() -> Self {
         let enabled = std::env::var("FRIDAY_VOICE")
@@ -93,6 +98,35 @@ impl VoiceConfig {
         }
         if let Ok(temp_dir) = std::env::var("FRIDAY_WHISPER_TEMP_DIR") {
             cfg.temp_dir = temp_dir.into();
+        }
+        if let Ok(prompt) = std::env::var("FRIDAY_WHISPER_PROMPT") {
+            cfg.extra_args.push("--prompt".into());
+            cfg.extra_args.push(prompt);
+        }
+        // Decoder thresholds — Phase 1 experiment knobs.
+        // Unset by default; whisper.cpp uses its own defaults (0.60/2.40/-1.00).
+        macro_rules! push_float_arg {
+            ($env:literal, $flag:literal) => {
+                if let Ok(val) = std::env::var($env) {
+                    match val.parse::<f64>() {
+                        Ok(f) => {
+                            cfg.extra_args.push($flag.into());
+                            cfg.extra_args.push(f.to_string());
+                        }
+                        Err(_) => {
+                            tracing::warn!("invalid {} value {:?}, ignoring", $env, val);
+                        }
+                    }
+                }
+            };
+        }
+        push_float_arg!("FRIDAY_WHISPER_NO_SPEECH_THOLD", "--no-speech-thold");
+        push_float_arg!("FRIDAY_WHISPER_ENTROPY_THOLD", "--entropy-thold");
+        push_float_arg!("FRIDAY_WHISPER_LOGPROB_THOLD", "--logprob-thold");
+        if let Ok(val) = std::env::var("FRIDAY_WHISPER_SUPPRESS_NST") {
+            if val == "true" || val == "1" {
+                cfg.extra_args.push("--suppress-nst".into());
+            }
         }
         Self::Enabled(cfg)
     }

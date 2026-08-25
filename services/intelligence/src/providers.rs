@@ -143,7 +143,39 @@ pub trait Provider: Send + Sync {
         prompt: &str,
         require_json: bool,
     ) -> Result<String, String>;
+
+    /// Complete with usage metadata. The default delegates to `complete` and
+    /// returns `None` for usage — providers that can extract token counts from
+    /// the API response should override this.
+    async fn complete_with_usage(
+        &self,
+        model_id: &str,
+        prompt: &str,
+        require_json: bool,
+    ) -> Result<ProviderResponse, String> {
+        let content = self.complete(model_id, prompt, require_json).await?;
+        Ok(ProviderResponse { content, usage: None })
+    }
+
     async fn check_health(&self) -> bool;
+}
+
+/// Response from a provider, carrying content and optional usage metadata.
+#[derive(Debug, Clone)]
+pub struct ProviderResponse {
+    pub content: String,
+    pub usage: Option<ProviderUsage>,
+}
+
+/// Usage metadata extracted from an API response.
+#[derive(Debug, Clone)]
+pub struct ProviderUsage {
+    pub prompt_tokens: Option<u64>,
+    pub completion_tokens: Option<u64>,
+    pub total_tokens: Option<u64>,
+    pub cached_tokens: Option<u64>,
+    pub reasoning_tokens: Option<u64>,
+    pub finish_reason: Option<String>,
 }
 
 /// Circuit Breaker States
@@ -305,6 +337,81 @@ impl Provider for OpenAiProvider {
             .await;
         res.is_ok() && res.unwrap().status().is_success()
     }
+
+    async fn complete_with_usage(
+        &self,
+        model_id: &str,
+        prompt: &str,
+        _require_json: bool,
+    ) -> Result<ProviderResponse, String> {
+        let client = reqwest::Client::new();
+        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.api_key))
+                .map_err(|e| e.to_string())?,
+        );
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
+
+        if self.name == "openrouter" {
+            headers.insert(
+                reqwest::header::HeaderName::from_static("http-referer"),
+                reqwest::header::HeaderValue::from_static(
+                    "https://github.com/project-friday/friday",
+                ),
+            );
+            headers.insert(
+                reqwest::header::HeaderName::from_static("x-title"),
+                reqwest::header::HeaderValue::from_static("FRIDAY Cognitive Desktop Agent"),
+            );
+        }
+
+        let body = serde_json::json!({
+            "model": model_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        });
+
+        let res = client
+            .post(&url)
+            .headers(headers)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("HTTP request failed: {}", e))?;
+
+        if !res.status().is_success() {
+            let status = res.status();
+            let err_body = res.text().await.unwrap_or_default();
+            return Err(format!(
+                "Provider {} returned error status {}: {}",
+                self.name, status, err_body
+            ));
+        }
+
+        let json: serde_json::Value = res
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse response JSON: {}", e))?;
+
+        let content = json["choices"][0]["message"]["content"]
+            .as_str()
+            .ok_or_else(|| format!("Unexpected response structure: {:?}", json))?
+            .to_string();
+
+        let usage = extract_usage_from_json(&json);
+
+        Ok(ProviderResponse { content, usage })
+    }
 }
 
 /// OmniRoute provider — a self-hosted, OpenAI-compatible multi-provider gateway.
@@ -409,9 +516,103 @@ impl Provider for OmniRouteProvider {
             .await;
         res.is_ok() && res.unwrap().status().is_success()
     }
+
+    async fn complete_with_usage(
+        &self,
+        model_id: &str,
+        prompt: &str,
+        _require_json: bool,
+    ) -> Result<ProviderResponse, String> {
+        let client = reqwest::Client::new();
+        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.api_key))
+                .map_err(|e| e.to_string())?,
+        );
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
+
+        let body = serde_json::json!({
+            "model": model_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        });
+
+        let res = client
+            .post(&url)
+            .headers(headers)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("HTTP request failed: {}", e))?;
+
+        if !res.status().is_success() {
+            let status = res.status();
+            let err_body = res.text().await.unwrap_or_default();
+            return Err(format!(
+                "Provider {} returned error status {}: {}",
+                self.name, status, err_body
+            ));
+        }
+
+        let json: serde_json::Value = res
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse response JSON: {}", e))?;
+
+        let content = json["choices"][0]["message"]["content"]
+            .as_str()
+            .ok_or_else(|| format!("Unexpected response structure: {:?}", json))?
+            .to_string();
+
+        let usage = extract_usage_from_json(&json);
+
+        Ok(ProviderResponse { content, usage })
+    }
 }
 
 /// Telemetry metrics for each request made through the Inference Fabric.
+
+/// Extract usage metadata from an OpenAI-compatible JSON response.
+/// Returns `None` if the response doesn't contain a `usage` object.
+fn extract_usage_from_json(json: &serde_json::Value) -> Option<ProviderUsage> {
+    let usage = json.get("usage")?;
+    let prompt_tokens = usage.get("prompt_tokens").and_then(|v| v.as_u64());
+    let completion_tokens = usage.get("completion_tokens").and_then(|v| v.as_u64());
+    let total_tokens = usage.get("total_tokens").and_then(|v| v.as_u64());
+    // Some providers include cached_tokens inside prompt_tokens_details.
+    let cached_tokens = usage
+        .get("prompt_tokens_details")
+        .and_then(|d| d.get("cached_tokens"))
+        .and_then(|v| v.as_u64());
+    // Some providers include reasoning_tokens inside completion_tokens_details.
+    let reasoning_tokens = usage
+        .get("completion_tokens_details")
+        .and_then(|d| d.get("reasoning_tokens"))
+        .and_then(|v| v.as_u64());
+    let finish_reason = json["choices"][0]["finish_reason"]
+        .as_str()
+        .map(|s| s.to_string());
+
+    Some(ProviderUsage {
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+        cached_tokens,
+        reasoning_tokens,
+        finish_reason,
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InferenceMetrics {
     pub request_id: String,
@@ -1296,8 +1497,8 @@ impl InferenceFabric {
             }));
             if !registry_loaded {
                 fabric.register_model(ModelInfo {
-                    id: "gemini-2.0-flash".to_string(),
-                    family: "gemini-2.0-flash".to_string(),
+                    id: "gemini-3.5-flash".to_string(),
+                    family: "gemini-3.5-flash".to_string(),
                     provider: "gemini".to_string(),
                     latency_ms: 600,
                     reliability: 1.0,
@@ -1952,6 +2153,21 @@ impl InferenceFabric {
             .await
     }
 
+    /// Requirement-driven completion that returns usage metadata.
+    pub async fn complete_with_usage(
+        &self,
+        prompt: &str,
+    ) -> Result<ProviderResponse, String> {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        tracing::info!(
+            "[Inference Request {}] Starting completion routing (with usage)...",
+            request_id
+        );
+        let candidates = self.select_candidates(self.default_mode);
+        self.complete_candidates_with_usage(&request_id, candidates, prompt)
+            .await
+    }
+
     /// The shared attempt loop: iterate candidates in rank order, attempt each
     /// under the per-attempt deadline, record the immutable audit trail, and
     /// update health/circuits/metrics. Used by both the mode-based
@@ -2172,6 +2388,147 @@ impl InferenceFabric {
             provider: "all".to_string(),
             model: "none".to_string(),
             latency_ms,
+            success: false,
+            retry_count: attempts,
+            error: Some(final_err.clone()),
+        };
+        self.log_metrics(&metrics);
+
+        Err(final_err)
+    }
+
+    /// Like [`complete_candidates`] but returns usage metadata from the provider.
+    /// Falls back to `None`-usage if the underlying provider doesn't override
+    /// `complete_with_usage`.
+    async fn complete_candidates_with_usage(
+        &self,
+        request_id: &str,
+        candidates: Vec<(ModelInfo, &dyn Provider)>,
+        prompt: &str,
+    ) -> Result<ProviderResponse, String> {
+        if candidates.is_empty() {
+            let err_msg = "No eligible providers for this request.".to_string();
+            tracing::error!("[Inference Request {}] {}", request_id, err_msg);
+            return Err(err_msg);
+        }
+
+        let deadline = std::time::Duration::from_millis(3000);
+        let mut attempts = 0;
+        let mut last_err = String::new();
+
+        for (model, provider) in &candidates {
+            attempts += 1;
+            tracing::info!(
+                "[Inference Request {}] Attempting {}/{}: provider={}, model={}",
+                request_id,
+                attempts,
+                candidates.len(),
+                provider.name(),
+                model.id
+            );
+
+            let start = std::time::Instant::now();
+            let result = tokio::time::timeout(
+                deadline,
+                provider.complete_with_usage(&model.id, prompt, false),
+            )
+            .await;
+            let latency = start.elapsed().as_millis() as u64;
+
+            match result {
+                Ok(Ok(response)) => {
+                    let metrics = InferenceMetrics {
+                        request_id: request_id.to_string(),
+                        timestamp: chrono::Utc::now(),
+                        provider: provider.name().to_string(),
+                        model: model.id.clone(),
+                        latency_ms: latency,
+                        success: true,
+                        retry_count: attempts,
+                        error: None,
+                    };
+                    self.log_metrics(&metrics);
+
+                    {
+                        let mut guard = self.health_scores.lock().unwrap();
+                        if let Some(score) = guard.get_mut(provider.name()) {
+                            let before = *score;
+                            *score = (*score + 0.1).min(1.0);
+                            if (before - *score).abs() > f64::EPSILON {
+                                self.log_health_change(
+                                    provider.name(),
+                                    before,
+                                    *score,
+                                    "success",
+                                    "recovered",
+                                );
+                            }
+                        }
+                    }
+
+                    {
+                        let mut cb_guard = self.circuits.lock().unwrap();
+                        if let Some(cb) = cb_guard.get_mut(provider.name()) {
+                            cb.record_success();
+                        }
+                    }
+
+                    self.persist_health();
+                    return Ok(response);
+                }
+                Ok(Err(e)) => {
+                    last_err = e;
+                    tracing::warn!(
+                        "[Inference Request {}] Provider {} failed: {}",
+                        request_id,
+                        provider.name(),
+                        last_err
+                    );
+                    {
+                        let mut guard = self.health_scores.lock().unwrap();
+                        if let Some(score) = guard.get_mut(provider.name()) {
+                            *score = (*score - 0.2).max(0.0);
+                        }
+                    }
+                    {
+                        let mut cb_guard = self.circuits.lock().unwrap();
+                        if let Some(cb) = cb_guard.get_mut(provider.name()) {
+                            cb.record_failure();
+                        }
+                    }
+                }
+                Err(_) => {
+                    last_err = format!("Provider {} timed out", provider.name());
+                    tracing::warn!("[Inference Request {}] {}", request_id, last_err);
+                    {
+                        let mut guard = self.health_scores.lock().unwrap();
+                        if let Some(score) = guard.get_mut(provider.name()) {
+                            *score = (*score - 0.2).max(0.0);
+                        }
+                    }
+                    {
+                        let mut cb_guard = self.circuits.lock().unwrap();
+                        if let Some(cb) = cb_guard.get_mut(provider.name()) {
+                            cb.record_failure();
+                        }
+                    }
+                }
+            }
+        }
+
+        let final_err = format!(
+            "All {} providers failed. Last error: {}",
+            candidates.len(),
+            last_err
+        );
+        tracing::error!("[Inference Request {}] {}", request_id, final_err);
+
+        let metrics = InferenceMetrics {
+            request_id: request_id.to_string(),
+            timestamp: chrono::Utc::now(),
+            provider: "all".to_string(),
+            model: "none".to_string(),
+            latency_ms: 0,
             success: false,
             retry_count: attempts,
             error: Some(final_err.clone()),

@@ -9,6 +9,7 @@ repository.workspace = true
 description = "FRIDAY Agent Runtime: spawn/lifecycle/mailbox/cancellation/timeout/budget/scheduling/merge for scoped worker agents"
 
 [dependencies]
+friday-core = { path = "../../core" }
 async-trait.workspace = true
 futures.workspace = true
 serde = { workspace = true }
