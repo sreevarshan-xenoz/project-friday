@@ -754,3 +754,93 @@ mod tests {
         assert!(ctx.skills.is_none(), "rule goals must skip the skill pass");
     }
 }
+
+// -- R2-2 F1-B: dead reasoning backend falls back honestly -------------
+
+#[cfg(test)]
+mod r2_2_f1_tests {
+    use super::*;
+    use crate::intent::parse;
+    use crate::planning::planners::backend::ReasoningBackend;
+
+    /// A reasoning backend that is deterministically unreachable.
+    struct DeadBackend;
+    #[async_trait::async_trait]
+    impl ReasoningBackend for DeadBackend {
+        async fn complete(&self, _prompt: &str) -> Result<String, String> {
+            Err("provider unreachable: 503".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn f1_b_all_reasoning_failures_fall_back_to_rule_planner_with_honest_traces() {
+        let registry = Arc::new(CapabilityRegistry::new());
+        crate::execution::native_caps::register_native_builtins(&registry);
+        let concrete = Arc::new(friday_core::trace::InMemoryTraceCollector::new());
+        let collector: Arc<dyn friday_core::trace::TraceCollector> = concrete.clone();
+        let engine = planning_engine_with_tracer(
+            Arc::clone(&registry),
+            Some(Box::new(DeadBackend)),
+            ExecutionBudget::default(),
+            RiskPolicy::default(),
+            WorkspaceContext::default(),
+            Some(collector),
+        );
+
+        // Complex intent ? the router selects the LLM planner.
+        let intent = parse("Research the latest Rust async docs");
+        let event = events::event(
+            crate::events::INTENT_CREATED,
+            "r2_2_f1",
+            serde_json::to_value(&intent).unwrap(),
+            uuid::Uuid::new_v4(),
+        );
+
+        // The goal must NOT be stranded by the backend death.
+        let out = engine.handle_event(&event).await.unwrap();
+        assert!(
+            out.iter().any(|e| e.kind == crate::events::PLAN_CREATED),
+            "fallback must still produce a plan"
+        );
+
+        // Telemetry records the fallback explicitly.
+        let telemetry = out
+            .iter()
+            .find(|e| e.kind == crate::events::PLANNING_TELEMETRY)
+            .expect("telemetry emitted");
+        let tel: PlanningTelemetry = serde_json::from_value(telemetry.payload.clone()).unwrap();
+        assert!(
+            tel.fell_back_to_rule,
+            "telemetry must record that the rule planner took over"
+        );
+        assert!(tel.success);
+
+        // Honesty: the model attempt's FAILURE stays in the trace even though
+        // the overall plan succeeded via the fallback.
+        let traces = concrete.traces();
+        let failed_model_attempts: Vec<_> = traces
+            .iter()
+            .filter(|s| s.operation == "plan_result" && s.result == ResultType::Failure)
+            .collect();
+        assert_eq!(
+            failed_model_attempts.len(),
+            1,
+            "exactly one failed model attempt must be recorded"
+        );
+        assert!(
+            failed_model_attempts[0]
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("provider unreachable"),
+            "the real backend error must be preserved"
+        );
+        // The fallback's success is carried by the telemetry record
+        // (`fell_back_to_rule` + `success`) and the PLAN_CREATED event, not
+        // by a second trace span — assert THAT mechanism.
+        assert_eq!(
+            tel.planner, "Llm",
+            "telemetry names the originally selected planner kind"
+        );
+    }
+}

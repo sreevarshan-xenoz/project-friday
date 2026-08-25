@@ -4210,4 +4210,181 @@ mod v2_tests {
         static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| std::sync::Mutex::new(()))
     }
+
+    // ── R2-2 F1: reasoning provider death — qualification injections ─────
+
+    /// F1 fixture provider: always fails with a rate-limit-style error.
+    struct F1DeadProvider;
+    #[async_trait]
+    impl Provider for F1DeadProvider {
+        fn name(&self) -> &str {
+            "openrouter"
+        }
+        async fn complete(
+            &self,
+            _model_id: &str,
+            _prompt: &str,
+            _require_json: bool,
+        ) -> Result<String, String> {
+            Err("429 free-models-per-day-high-balance".to_string())
+        }
+        async fn check_health(&self) -> bool {
+            true
+        }
+    }
+
+    /// F1 fixture provider: always answers.
+    struct F1HealthyProvider;
+    #[async_trait]
+    impl Provider for F1HealthyProvider {
+        fn name(&self) -> &str {
+            "opengateway"
+        }
+        async fn complete(
+            &self,
+            _model_id: &str,
+            _prompt: &str,
+            _require_json: bool,
+        ) -> Result<String, String> {
+            Ok("ok".to_string())
+        }
+        async fn check_health(&self) -> bool {
+            true
+        }
+    }
+
+    /// Deterministic two-provider fixture: `alpha` (lower latency, always
+    /// fails) is the primary candidate; `beta` answers. Equal reliability
+    /// means candidate order is latency-ascending — fully deterministic.
+    fn f1_fabric() -> InferenceFabric {
+        let mut fabric = InferenceFabric::new();
+        fabric.default_mode = RoutingMode::Free;
+        fabric.register_provider(Box::new(F1DeadProvider));
+        fabric.register_provider(Box::new(F1HealthyProvider));
+        let model = |id: &str, provider: &str, latency_ms: u64| ModelInfo {
+            id: id.to_string(),
+            family: id.to_string(),
+            provider: provider.to_string(),
+            latency_ms,
+            reliability: 1.0,
+            capabilities: vec![],
+            max_context: 4096,
+            tier: None,
+        };
+        fabric.register_model(model("vend/alpha:free", "openrouter", 5));
+        fabric.register_model(model("vend/beta:free", "opengateway", 10));
+        fabric
+    }
+
+    #[tokio::test]
+    async fn f1_a_failover_records_candidate_failure_and_serves_backup_deterministically() {
+        let fabric = f1_fabric();
+
+        // One routed completion: A (primary) fails, B serves.
+        let text = fabric.complete("hi").await.expect("B must serve");
+        assert_eq!(text, "ok");
+
+        let d = fabric.last_decision().expect("audit recorded");
+        // Deterministic order: equal reliability → latency ascending.
+        assert_eq!(
+            d.candidates
+                .iter()
+                .map(|c| c.model.as_str())
+                .collect::<Vec<_>>(),
+            vec!["vend/alpha:free", "vend/beta:free"],
+            "failover order must be deterministic"
+        );
+        // A's failure is in the audit with its real error; chosen == A.
+        assert_eq!(d.failures.len(), 1);
+        assert_eq!(d.failures[0].provider, "openrouter");
+        assert_eq!(d.failures[0].model, "vend/alpha:free");
+        assert!(d.failures[0].error.contains("429"));
+        assert_eq!(
+            d.chosen,
+            Some(("openrouter".to_string(), "vend/alpha:free".to_string()))
+        );
+        assert_eq!(
+            d.served,
+            Some(("opengateway".to_string(), "vend/beta:free".to_string()))
+        );
+    }
+
+    #[tokio::test]
+    async fn f1_a_repeated_death_opens_breaker_and_excludes_the_dead_provider() {
+        // Single-provider fixture: every request attempts the dead provider,
+        // so consecutive-failure counting is unconfounded.
+        let mut fabric = InferenceFabric::new();
+        fabric.default_mode = RoutingMode::Free;
+        fabric.register_provider(Box::new(F1DeadProvider));
+        let model = |id: &str, provider: &str, latency_ms: u64| ModelInfo {
+            id: id.to_string(),
+            family: id.to_string(),
+            provider: provider.to_string(),
+            latency_ms,
+            reliability: 1.0,
+            capabilities: vec![],
+            max_context: 4096,
+            tier: None,
+        };
+        fabric.register_model(model("vend/alpha:free", "openrouter", 5));
+
+        // Three consecutive failures trip the breaker (record_failure >= 3).
+        for _ in 0..3 {
+            assert!(fabric.complete("hi").await.is_err());
+        }
+        {
+            let circuits = fabric.circuits.lock().unwrap();
+            let cb = circuits
+                .get("openrouter")
+                .expect("breaker registered per provider");
+            assert_eq!(cb.state, CircuitState::Open, "3 failures must open A");
+            assert_eq!(cb.failures, 3);
+        }
+        // While Open (cooldown not elapsed), selection excludes the provider.
+        let cands = fabric.select_candidates(RoutingMode::Free);
+        assert!(
+            !cands.iter().any(|(m, _)| m.provider == "openrouter"),
+            "an OPEN breaker must exclude the dead provider from candidates"
+        );
+        // And a completion fails honestly WITHOUT attempting the provider:
+        // nothing served, no new CandidateFailure for the excluded provider.
+        assert!(fabric.complete("hi").await.is_err());
+        let d = fabric.last_decision().expect("audit recorded");
+        assert_eq!(
+            d.served, None,
+            "nothing may be served while every provider is excluded"
+        );
+        assert!(
+            d.failures.iter().all(|f| f.provider != "openrouter"),
+            "a breaker-excluded provider must not be attempted"
+        );
+    }
+
+    #[tokio::test]
+    async fn f1_a_surviving_death_demotes_the_failed_provider_deterministically() {
+        // Two providers: after alpha's first failure its health degrades
+        // (-0.2), so the deterministic rank (reliability desc, latency asc)
+        // puts beta first and alpha is not retried while beta is healthy.
+        let fabric = f1_fabric();
+
+        assert!(fabric.complete("hi").await.is_ok(), "beta serves");
+        let d1 = fabric.last_decision().expect("audit recorded");
+        assert_eq!(d1.served.unwrap().0, "opengateway");
+
+        assert!(fabric.complete("hi").await.is_ok(), "beta serves again");
+        let d2 = fabric.last_decision().expect("audit recorded");
+        assert_eq!(
+            d2.candidates[0].provider, "opengateway",
+            "the failed provider must be demoted below the healthy one"
+        );
+        assert_eq!(
+            d2.chosen.map(|(p, _)| p),
+            Some("opengateway".to_string()),
+            "beta is now the primary candidate"
+        );
+        assert!(
+            d2.failures.is_empty(),
+            "alpha was never attempted again: no new failure, no hidden retry"
+        );
+    }
 }
