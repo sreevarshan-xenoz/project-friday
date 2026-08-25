@@ -134,6 +134,11 @@ pub struct WorkerRecord {
     pub current_task: Option<String>,
     /// The isolated workspace for this worker — persists across runs.
     pub workspace: PathBuf,
+    /// Process generation that last took this worker `Running` (R2-2 F2
+    /// repair). Empty until the worker's first checkpoint under the repaired
+    /// model.
+    #[serde(default)]
+    pub generation: String,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
 }
@@ -165,6 +170,18 @@ pub struct BoardTask {
     /// The persisted result of the last run (None until the task runs).
     #[serde(default)]
     pub result: Option<AgentResult>,
+    /// Process generation of the workforce instance that dispatched the run
+    /// (R2-2 F2 repair). Empty on pre-repair checkpoints and never set for
+    /// tasks that never ran. Under the single-owner contract, an `InProgress`
+    /// task whose owner generation differs from the live instance's proves
+    /// its owner is gone.
+    #[serde(default)]
+    pub owner_generation: String,
+    /// Wall-clock deadline (ms epoch) recorded at the pre-dispatch checkpoint.
+    /// Evidence for reconciliation; during flight the runtime's own
+    /// `timeout_at` enforces the same bound.
+    #[serde(default)]
+    pub run_deadline_ms: u64,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
 }
@@ -401,6 +418,19 @@ pub enum TaskOutcome {
 }
 
 /// The persistent workforce: registry + board + runtime, one owner.
+///
+/// **Ownership model (R2-2 F2 repair).** Exactly **one live `Workforce`
+/// instance may own a store's `InProgress` work.** The store has no
+/// cross-process coordination, so concurrent multi-writer sharing is
+/// unsupported by construction; sequential handoff (an instance dies, a
+/// fresh one is constructed over the same root) is the designed pattern.
+/// Each instance carries a random process `generation`, stamped into the
+/// worker record and the task at the pre-dispatch checkpoint. A persisted
+/// `InProgress` task whose `owner_generation` differs from the live
+/// instance's therefore **proves** its owner is gone — that inference is
+/// exactly what the single-owner contract licenses. Reconciliation reopens
+/// such orphans; a healthy `InProgress` run of the live generation is never
+/// touched.
 pub struct Workforce {
     store: Arc<dyn WorkforceStore>,
     runtime: AgentRuntime,
@@ -408,6 +438,8 @@ pub struct Workforce {
     workspace_root: PathBuf,
     max_steps: u32,
     security_scope: Option<SecurityScope>,
+    /// This instance's process generation (R2-2 F2).
+    generation: String,
 }
 
 impl Workforce {
@@ -435,6 +467,7 @@ impl Workforce {
             workspace_root: workspace_root.into(),
             max_steps,
             security_scope: None,
+            generation: uuid::Uuid::new_v4().to_string(),
         }
     }
 
@@ -458,6 +491,90 @@ impl Workforce {
     /// The root under which every worker's isolated workspace lives.
     pub fn workspace_root(&self) -> &Path {
         &self.workspace_root
+    }
+
+    /// This instance's process generation (R2-2 F2). The only generation
+    /// allowed to own live `InProgress` work on this store.
+    pub fn generation(&self) -> &str {
+        &self.generation
+    }
+
+    /// **reconcile** — recover provably orphaned `InProgress` tasks (R2-2 F2).
+    ///
+    /// An orphan is an `InProgress` task whose `owner_generation` differs
+    /// from this live instance's: under the single-owner contract that owner
+    /// process is gone, and nothing else can ever finish or release the task.
+    /// Each orphan is reopened to `Open` with an explicit note in the task's
+    /// existing progress history (honest audit, never silent), its dead
+    /// worker binding is released (`Running` → `Idle`), and a replacement
+    /// worker can pick it up like any other Open task. Idempotent: a second
+    /// call finds no orphans. Tasks of THIS generation (live runs) are never
+    /// touched; neither are `Open`/`Assigned`/`Blocked`/`Done`/`Failed`
+    /// entries.
+    pub async fn reconcile(&self) -> Result<Vec<String>, String> {
+        let mut recovered = Vec::new();
+        for mut task in self.store.list_tasks().await? {
+            if task.status != TaskStatus::InProgress || task.owner_generation == self.generation {
+                continue;
+            }
+            let dead_worker_id = task.assignee.clone();
+            let reason = if task.owner_generation.is_empty() {
+                format!(
+                    "orphaned task reopened: pre-repair checkpoint with no owning \
+                     generation; this workforce generation is {}",
+                    self.generation
+                )
+            } else {
+                format!(
+                    "orphaned task reopened: owning generation '{}' is not the live \
+                     workforce generation '{}'; recorded run deadline {} ms epoch",
+                    task.owner_generation, self.generation, task.run_deadline_ms
+                )
+            };
+            task.progress.push(BoardNote {
+                at_ms: Self::now_ms(),
+                note: reason.clone(),
+            });
+            task.assignee = None;
+            task.status = TaskStatus::Open;
+            task.updated_at_ms = Self::now_ms();
+            self.store.save_task(&task).await?;
+
+            // Release the dead worker's side of the ownership bond.
+            if let Some(worker_id) = &dead_worker_id {
+                if let Some(mut worker) = self.store.load_worker(worker_id).await? {
+                    if worker.current_task.as_deref() == Some(task.id.as_str()) {
+                        worker.status = WorkerStatus::Idle;
+                        worker.current_task = None;
+                        worker.updated_at_ms = Self::now_ms();
+                        self.store.save_worker(&worker).await?;
+                    }
+                }
+            }
+            recovered.push(format!("{}: {reason}", task.id));
+        }
+        Ok(recovered)
+    }
+
+    /// Like [`Workforce::new`] but reconciles the board at construction:
+    /// provably orphaned `InProgress` work from dead generations is recovered
+    /// before this instance serves any request (R2-2 F2).
+    pub async fn mount(
+        store: Arc<dyn WorkforceStore>,
+        driver: Arc<dyn AgentDriver>,
+        workspace_root: impl Into<PathBuf>,
+    ) -> Self {
+        let wf = Self::new(store, driver, workspace_root);
+        match wf.reconcile().await {
+            Ok(recovered) if !recovered.is_empty() => {
+                for entry in &recovered {
+                    tracing::warn!("workforce reconciliation recovered orphan: {entry}");
+                }
+            }
+            Ok(_) => {}
+            Err(e) => tracing::error!("workforce reconciliation failed: {e}"),
+        }
+        wf
     }
 
     fn now_ms() -> u64 {
@@ -513,6 +630,7 @@ impl Workforce {
             status: WorkerStatus::Idle,
             current_task: None,
             workspace,
+            generation: String::new(),
             created_at_ms: now,
             updated_at_ms: now,
         };
@@ -539,6 +657,8 @@ impl Workforce {
             progress: Vec::new(),
             blockers: Vec::new(),
             result: None,
+            owner_generation: String::new(),
+            run_deadline_ms: 0,
             created_at_ms: now,
             updated_at_ms: now,
         };
@@ -656,10 +776,16 @@ impl Workforce {
             ));
         }
 
-        // Mark both sides Running/InProgress before dispatch.
+        // Mark both sides Running/InProgress before dispatch, stamping the
+        // ownership identity (R2-2 F2): this generation + the run's wall-clock
+        // deadline are the durable evidence reconciliation later reasons over.
+        let run_deadline_ms = Self::now_ms() + self.runtime.default_time_limit().as_millis() as u64;
         worker.status = WorkerStatus::Running;
+        worker.generation = self.generation.clone();
         worker.updated_at_ms = Self::now_ms();
         task.status = TaskStatus::InProgress;
+        task.owner_generation = self.generation.clone();
+        task.run_deadline_ms = run_deadline_ms;
         task.updated_at_ms = Self::now_ms();
         self.store.save_worker(&worker).await?;
         self.store.save_task(&task).await?;

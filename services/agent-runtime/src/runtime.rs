@@ -61,6 +61,14 @@ impl AgentRuntime {
         self
     }
 
+    /// The default per-worker time limit used when a spec leaves it at 0.
+    /// The Workforce records the resulting wall-clock deadline in the durable
+    /// pre-dispatch checkpoint so reconciliation can reason about abandoned
+    /// runs (R2-2 F2).
+    pub fn default_time_limit(&self) -> Duration {
+        self.default_time_limit
+    }
+
     /// Spawn one worker. Returns immediately; the worker runs when a pool
     /// permit is free. State starts `Pending`, flips to `Running` when the
     /// permit is acquired, then to a terminal state.

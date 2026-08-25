@@ -409,3 +409,176 @@ async fn f2_hard_crash_orphans_an_in_progress_task_and_no_public_api_recovers_it
          recovery path through the public API"
     );
 }
+
+// ── R2-2 F2 repair: generation-bound ownership + reconciliation ───────
+
+/// Writes the exact durable pre-dispatch checkpoint `run()` produces under
+/// the repaired model, with an explicit owner generation.
+async fn write_checkpoint(
+    store: &Arc<dyn WorkforceStore>,
+    worker_id: &str,
+    task_id: &str,
+    owner_generation: &str,
+) {
+    let mut w = store.load_worker(worker_id).await.unwrap().unwrap();
+    w.status = WorkerStatus::Running;
+    w.generation = owner_generation.to_string();
+    store.save_worker(&w).await.unwrap();
+    let mut t = store.load_task(task_id).await.unwrap().unwrap();
+    t.status = TaskStatus::InProgress;
+    t.owner_generation = owner_generation.to_string();
+    t.run_deadline_ms = 4_000_000_000_000;
+    store.save_task(&t).await.unwrap();
+}
+
+#[tokio::test]
+async fn f2_repair_healthy_in_progress_run_of_the_live_generation_is_untouched() {
+    let fx = fixture().await;
+    let root = TempDir::new();
+    let shared: Arc<dyn WorkforceStore> = Arc::new(JsonWorkforceStore::new(root.path().join("s")));
+    let wf = Workforce::new(
+        Arc::clone(&shared),
+        Arc::clone(&fx.driver),
+        root.path().join("ws"),
+    );
+
+    let worker = wf.register(AgentRole::Researcher, "live").await.unwrap();
+    let task = wf
+        .create_task("t", "g", AgentRole::Researcher)
+        .await
+        .unwrap();
+    wf.assign(&worker.id, &task.id).await.unwrap();
+    // Simulate THIS instance's own live run at its checkpoint.
+    write_checkpoint(&shared, &worker.id, &task.id, wf.generation()).await;
+
+    let recovered = wf.reconcile().await.unwrap();
+    assert!(
+        recovered.is_empty(),
+        "the live generation's InProgress work must never be touched"
+    );
+    let t = wf.task(&task.id).await.unwrap().unwrap();
+    assert_eq!(t.status, TaskStatus::InProgress);
+    assert_eq!(t.assignee.as_deref(), Some(worker.id.as_str()));
+    assert_eq!(
+        wf.worker(&worker.id).await.unwrap().unwrap().status,
+        WorkerStatus::Running
+    );
+}
+
+#[tokio::test]
+async fn f2_repair_dead_generation_orphan_is_reopened_audited_and_assignable() {
+    let fx = fixture().await;
+    let root = TempDir::new();
+    let shared: Arc<dyn WorkforceStore> = Arc::new(JsonWorkforceStore::new(root.path().join("s")));
+
+    // Instance A takes ownership (its generation is stamped) and dies.
+    let (worker_id, task_id) = {
+        let wf = Workforce::new(
+            Arc::clone(&shared),
+            Arc::clone(&fx.driver),
+            root.path().join("ws"),
+        );
+        let worker = wf.register(AgentRole::Researcher, "doomed").await.unwrap();
+        let task = wf
+            .create_task("t", "g", AgentRole::Researcher)
+            .await
+            .unwrap();
+        wf.assign(&worker.id, &task.id).await.unwrap();
+        write_checkpoint(&shared, &worker.id, &task.id, wf.generation()).await;
+        (worker.id, task.id)
+        // Instance A dropped = process gone.
+    };
+
+    // Instance B mounts over the same store: recovery happens at construction.
+    let wf = Workforce::mount(
+        Arc::clone(&shared),
+        Arc::clone(&fx.driver),
+        root.path().join("ws"),
+    )
+    .await;
+
+    let t = wf.task(&task_id).await.unwrap().unwrap();
+    assert_eq!(t.status, TaskStatus::Open, "orphan must be reopened");
+    assert_eq!(t.assignee, None);
+    assert!(
+        t.progress
+            .iter()
+            .any(|n| n.note.contains("orphaned task reopened")),
+        "the recovery must be auditable in the existing note vocabulary"
+    );
+    let w = wf.worker(&worker_id).await.unwrap().unwrap();
+    assert_eq!(
+        w.status,
+        WorkerStatus::Idle,
+        "the dead binding must be released"
+    );
+    assert_eq!(w.current_task, None);
+
+    // And the reopened task is assignable again: a replacement picks it up.
+    let replacement = wf
+        .register(AgentRole::Researcher, "replacement")
+        .await
+        .unwrap();
+    let picked = wf
+        .pick_up(&replacement.id)
+        .await
+        .unwrap()
+        .expect("reopened task is visible");
+    assert_eq!(picked.id, task_id);
+}
+
+#[tokio::test]
+async fn f2_repair_legacy_store_orphan_recovers_and_reconcile_is_idempotent() {
+    let fx = fixture().await;
+    let root = TempDir::new();
+    let shared: Arc<dyn WorkforceStore> = Arc::new(JsonWorkforceStore::new(root.path().join("s")));
+    let wf = Workforce::new(
+        Arc::clone(&shared),
+        Arc::clone(&fx.driver),
+        root.path().join("ws"),
+    );
+
+    let worker = wf.register(AgentRole::Researcher, "legacy").await.unwrap();
+    let task = wf
+        .create_task("t", "g", AgentRole::Researcher)
+        .await
+        .unwrap();
+    wf.assign(&worker.id, &task.id).await.unwrap();
+    // Pre-repair checkpoint: Running/InProgress with EMPTY generation fields,
+    // byte-compatible with stores written before the repair.
+    write_checkpoint(&shared, &worker.id, &task.id, "").await;
+
+    let recovered = wf.reconcile().await.unwrap();
+    assert_eq!(recovered.len(), 1, "legacy orphans must recover");
+    assert!(recovered[0].starts_with(&task.id));
+
+    // Idempotent: the second pass finds nothing new.
+    let again = wf.reconcile().await.unwrap();
+    assert!(again.is_empty(), "reconcile must be idempotent");
+    assert_eq!(
+        wf.task(&task.id).await.unwrap().unwrap().status,
+        TaskStatus::Open
+    );
+
+    // Non-InProgress entries are untouched by construction of the rule.
+    let done = wf
+        .create_task("done", "g", AgentRole::Researcher)
+        .await
+        .unwrap();
+    let mut d = shared.load_task(&done.id).await.unwrap().unwrap();
+    d.status = TaskStatus::Done;
+    shared.save_task(&d).await.unwrap();
+    let open = wf
+        .create_task("open", "g", AgentRole::Researcher)
+        .await
+        .unwrap();
+    wf.reconcile().await.unwrap();
+    assert_eq!(
+        shared.load_task(&done.id).await.unwrap().unwrap().status,
+        TaskStatus::Done
+    );
+    assert_eq!(
+        shared.load_task(&open.id).await.unwrap().unwrap().status,
+        TaskStatus::Open
+    );
+}
