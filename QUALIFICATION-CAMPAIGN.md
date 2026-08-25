@@ -163,27 +163,59 @@ live gate (network/model-dependent, slower).
 
 Acceptance criterion for every record:
 
-> FRIDAY recovers without lying about what happened — no fabricated success,
+> FRIDAY recovers without lying about what happened ï¿½ no fabricated success,
 > no world-model advancement for refused or failed work, an explicit
 > machine-distinguishable identity for every refusal.
 
 | ID | Failure injected | Detection | State preserved | Recovery path | Verification result | World-model effect | Memory/lesson effect | Next-tick behavior |
 | -- | ---------------- | --------- | --------------- | ------------- | ------------------- | ------------------ | -------------------- | ------------------ |
-| F1 | Reasoning provider death | `run_attempt` timeout/`Err`; per-provider circuit breaker in `select_candidates`; `check_health()` probes | Immutable `RoutingDecision.failures` audit (candidates/chosen/served/failures) | Candidate failover across the ranked list; planner falls back to `RulePlanner` (`engines.rs`: "deterministic fallback so the goal is never stranded"); both failing ? `FridayError::Internal("planning failed")` | `plan_result` Failure trace span carries backend error; tick ends Failed | None fabricated — planning died before execution | None recorded (provider death is not a prediction error) — design-consistent | Fresh routing decision; breaker skips/probes dead provider |
-| F2 | Worker crash mid-stage (`Workforce`) | Driver returns `Err` ? `run()` marks task honestly; hard-crash orphan detection **UNVERIFIED** | Board entry + `AgentResult` persisted atomically (temp + rename); `a_failing_run_marks_the_task_failed_and_never_done`: "the honest failure must be persisted" | `resolve_blocker` ? re-Assignable; Director reassigns failed children (`failed_child_report_can_be_reassigned_and_verified`); cross-instance survival proven (`persistent_worker_runs_a_real_docs_task_across_instances`). **Auto-resume of orphaned `InProgress`/`Failed` tasks after hard crash = GAP CANDIDATE / UNVERIFIED** | Task is never marked Done on failure; persisted status is Failed/Blocked | None fabricated for the crashed run | Trajectory/result preserved as evidence on the board entry | Depends on injection outcome — this is the open question of R2-2 |
-| F3 | Verification failure | Verifier rejects execution (`VerificationStatus::Failed`, `ExecutionState::Failed` terminal) | Execution result kept as honest evidence | Orchestrator stops (`failed_verification_yields_failure_outcome_and_stops`); Director blocks child (`failed_child_blocks_the_verified_outcome`) | Goal NOT successful; refusal is explicit, not silent | `apply_verified_action_outcome` refuses unverified/failed/malformed outcomes (WF-03) — no false world advance | Mismatch feeds Experience admission (golden 8B Case A/B; lesson only after corroboration) | Next plan sees unadvanced world; may replan |
-| F4 | Egress secret block | Two independent defenses: **content** `EgressGate` (Block/Redact/LogOnly per provider) and **destination** `EgressPolicy` (fail-closed scope check at kernel pre-dispatch, redirect-hop re-check, CDP interception) | Block recorded on the routing decision BEFORE the payload leaves (`providers.rs` `egress_process`); deny labels never echo destinations | Blocked request is cancelled, audited, not retried (`kernel_audits_redirect_denial_cancels_and_does_not_retry`); SSRF/internal destinations denied unconditionally | Outbound side effect count = 0 proven with hit-counting mock servers (`internal_and_private_destinations_are_denied_before_adapter_dispatch`, `internal_redirect_is_refused_before_the_second_request`, `denied_url_with_secret_leaks_nothing_into_audit_or_error`) | None — nothing executed | Rejection is audit-only by design | Caller sees the explicit egress error |
-| F5 | Stale-plan rejection (world advanced past grounding) | Revision admission gate compares `plan.grounding_revision` to live world revision | Journal untouched, executor untouched | Refusal IS the correct outcome — replanning against current revision is the recovery | Explicit `DurableTickOutcome::StalePlanRejected{planned,current}` + `stale_plan_rejected` trace span + `plan.stale_rejected` workspace event | World NOT touched by the stale plan; next tick grounds at the new revision (R0?R1?R2 two-cycle proof) | No experience synthesized for refused work | Re-observe ? replan ? execute against current revision |
+| F1 | Reasoning provider death | `run_attempt` timeout/`Err`; per-provider circuit breaker in `select_candidates`; `check_health()` probes | Immutable `RoutingDecision.failures` audit (candidates/chosen/served/failures) | Candidate failover across the ranked list; planner falls back to `RulePlanner` (`engines.rs`: "deterministic fallback so the goal is never stranded"); both failing ? `FridayError::Internal("planning failed")` | `plan_result` Failure trace span carries backend error; tick ends Failed | None fabricated ï¿½ planning died before execution | None recorded (provider death is not a prediction error) ï¿½ design-consistent | Fresh routing decision; breaker skips/probes dead provider |
+| F2 | Worker crash mid-stage (`Workforce`) | Driver returns `Err` ? `run()` marks task honestly; hard-crash orphan detection **UNVERIFIED** | Board entry + `AgentResult` persisted atomically (temp + rename); `a_failing_run_marks_the_task_failed_and_never_done`: "the honest failure must be persisted" | `resolve_blocker` ? re-Assignable; Director reassigns failed children (`failed_child_report_can_be_reassigned_and_verified`); cross-instance survival proven (`persistent_worker_runs_a_real_docs_task_across_instances`). **Auto-resume of orphaned `InProgress`/`Failed` tasks after hard crash = GAP CANDIDATE / UNVERIFIED** | Task is never marked Done on failure; persisted status is Failed/Blocked | None fabricated for the crashed run | Trajectory/result preserved as evidence on the board entry | Depends on injection outcome ï¿½ this is the open question of R2-2 |
+| F3 | Verification failure | Verifier rejects execution (`VerificationStatus::Failed`, `ExecutionState::Failed` terminal) | Execution result kept as honest evidence | Orchestrator stops (`failed_verification_yields_failure_outcome_and_stops`); Director blocks child (`failed_child_blocks_the_verified_outcome`) | Goal NOT successful; refusal is explicit, not silent | `apply_verified_action_outcome` refuses unverified/failed/malformed outcomes (WF-03) ï¿½ no false world advance | Mismatch feeds Experience admission (golden 8B Case A/B; lesson only after corroboration) | Next plan sees unadvanced world; may replan |
+| F4 | Egress secret block | Two independent defenses: **content** `EgressGate` (Block/Redact/LogOnly per provider) and **destination** `EgressPolicy` (fail-closed scope check at kernel pre-dispatch, redirect-hop re-check, CDP interception) | Block recorded on the routing decision BEFORE the payload leaves (`providers.rs` `egress_process`); deny labels never echo destinations | Blocked request is cancelled, audited, not retried (`kernel_audits_redirect_denial_cancels_and_does_not_retry`); SSRF/internal destinations denied unconditionally | Outbound side effect count = 0 proven with hit-counting mock servers (`internal_and_private_destinations_are_denied_before_adapter_dispatch`, `internal_redirect_is_refused_before_the_second_request`, `denied_url_with_secret_leaks_nothing_into_audit_or_error`) | None ï¿½ nothing executed | Rejection is audit-only by design | Caller sees the explicit egress error |
+| F5 | Stale-plan rejection (world advanced past grounding) | Revision admission gate compares `plan.grounding_revision` to live world revision | Journal untouched, executor untouched | Refusal IS the correct outcome ï¿½ replanning against current revision is the recovery | Explicit `DurableTickOutcome::StalePlanRejected{planned,current}` + `stale_plan_rejected` trace span + `plan.stale_rejected` workspace event | World NOT touched by the stale plan; next tick grounds at the new revision (R0?R1?R2 two-cycle proof) | No experience synthesized for refused work | Re-observe ? replan ? execute against current revision |
 
 ### Current classification
 
 | ID | Scenario | Current classification |
 | -- | -------- | ---------------------- |
-| F1 | Reasoning provider death | ?? GREEN — injection needed to pin deterministic failover order |
-| F2 | Worker crash mid-stage | ?? PARTIAL — honest failure + persistence + blocker resolution + suspend/resume + Director reassign are GREEN; auto-recovery after hard crash **UNVERIFIED / GAP CANDIDATE** |
+| F1 | Reasoning provider death | ?? GREEN ï¿½ injection needed to pin deterministic failover order |
+| F2 | Worker crash mid-stage | PARTIAL - normal failure recovery GREEN; hard-crash orphan recovery RED / **PROVEN GAP** (injection `b93d43b`) |
 | F3 | Verification failure | ?? GREEN |
-| F4 | Egress secret block | ?? GREEN — content EgressGate and destination EgressPolicy are separate defenses, both pre-side-effect |
-| F5 | Stale-plan rejection | ?? GREEN — proven by R2-1 (`3b07180`): executor calls 0, journal empty |
+| F4 | Egress secret block | ?? GREEN ï¿½ content EgressGate and destination EgressPolicy are separate defenses, both pre-side-effect |
+| F5 | Stale-plan rejection | ?? GREEN ï¿½ proven by R2-1 (`3b07180`): executor calls 0, journal empty |
+
+
+### F2 crash-injection evidence (2026-08-25, commit `b93d43b`)
+
+Injected: hard termination between `Workforce::run`'s durable pre-dispatch
+checkpoint (worker `Running`, task `InProgress`, persisted atomically to
+`JsonWorkforceStore`) and any terminal write. No driver `Err` was injected -
+this is case B+C (process disappears, store reloaded), not the honest-failure
+path. A fresh `Workforce` was reconstructed over the same root.
+
+Observed:
+
+- state before termination: worker=Running(current_task bound), task=InProgress(assignee bound)
+- persisted: both records survive restart atomically (persistence itself GREEN)
+- reconstructed: fresh instance sees the orphan exactly as left
+- ownership/lease/heartbeat: none exists anywhere in the Workforce surface
+- pick_up(replacement): Ok(None) - orphan invisible (board scans Open only)
+- assign(replacement): Err "task X is in_progress, not open"
+- resolve_blocker: Err "not blocked"
+- suspend / resume / retire: all refused ("running")
+- post-restart state: InProgress forever - no automatic AND no manual path out
+
+Classification: **F2 = PARTIAL**
+
+- Normal worker failure recovery (driver Err -> honest Failed, persisted): GREEN
+- Hard-crash orphan recovery: RED / **PROVEN GAP** - an InProgress task whose
+  owner died is unrecoverable through any public API.
+
+Design question for the eventual smallest repair (NOT implemented yet): how does
+FRIDAY distinguish a legitimately long-running `InProgress` task from an orphaned
+one? Candidate shapes (lease/heartbeat/stale-ownership sweep) are deferred until
+this gap is dispositioned.
 
 Campaign order: F1 injection ? F2 crash injection (nasty enough to create a
 genuinely orphaned `InProgress` task) ? F3/F4/F5 registration verification ?
