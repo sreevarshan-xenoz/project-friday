@@ -40,6 +40,7 @@ fn base_plan_context() -> PlanContext {
         experience: None,
         skills: None,
         investigation: None,
+        grounding_revision: None,
     }
 }
 

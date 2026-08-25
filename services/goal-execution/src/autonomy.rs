@@ -166,15 +166,21 @@ impl DecisionFunction for IntentDecision {
         if ranked.plan.source != PlanSource::GapDriven {
             return None;
         }
-        Some(TickAction::new(
-            action.capability.to_string(),
-            format!(
-                "gap-driven intent: {}; {}",
-                ranked.rationale, ranked.plan.strategy
-            ),
-            vec![evidence.id],
-            friday_cognitive::Priority::High,
-        ))
+        Some(
+            TickAction::new(
+                action.capability.to_string(),
+                format!(
+                    "gap-driven intent: {}; {}",
+                    ranked.rationale, ranked.plan.strategy
+                ),
+                vec![evidence.id],
+                friday_cognitive::Priority::High,
+            )
+            // R2-1: stamp the world-model revision this decision was grounded
+            // against; durable admission refuses the action if the live revision
+            // has advanced past it before execution.
+            .with_grounding_revision(model.revision()),
+        )
     }
 }
 
@@ -518,16 +524,38 @@ impl AutonomyHost {
 
     /// Run one crash-safe observe → decide → execute → verify continuation,
     /// then fold an explicit verified observation into the host WorldModel.
+    /// R2-1: supplies the live world revision to admission and surfaces a
+    /// stale grounding as an explicit `plan.stale_rejected` workspace event
+    /// (no executor side effect, no journal write).
     pub async fn tick(&self) -> Option<ActionOutcome> {
-        let outcome = self
+        let current_revision = self
+            .world_model
+            .as_ref()
+            .map(|m| m.lock().expect("world model poisoned").revision());
+        let outcome = match self
             .tick
             .execute_and_verify_durable(
                 &self.workspace,
                 self.executor.as_ref(),
                 self.verifier.as_ref(),
                 self.journal.as_ref(),
+                current_revision,
             )
-            .await?;
+            .await
+        {
+            friday_cognitive::DurableTickOutcome::Completed(outcome) => outcome?,
+            friday_cognitive::DurableTickOutcome::StalePlanRejected { planned, current } => {
+                self.workspace.publish_from(
+                    friday_cognitive::Topic::Custom("plan.stale_rejected".into()),
+                    friday_cognitive::EngineId::WorldModel,
+                    serde_json::json!({
+                        "planned_revision": planned,
+                        "current_revision": current,
+                    }),
+                );
+                return None;
+            }
+        };
 
         if outcome.verified {
             if let Some(world_model) = &self.world_model {
@@ -1173,8 +1201,9 @@ mod tests {
         let tick = AutonomousTick::new(Arc::new(GitStatusDecision));
 
         let result = tick
-            .execute_and_verify_durable(&workspace, &executor, &verifier, &journal)
+            .execute_and_verify_durable(&workspace, &executor, &verifier, &journal, None)
             .await
+            .into_completed()
             .expect("real tick should execute");
         assert!(result.verified, "real kernel result: {result:?}");
         assert!(result.execution.output["stdout"]
@@ -1188,8 +1217,9 @@ mod tests {
         // without dispatching Git a second time.
         let recovered_tick = AutonomousTick::new(Arc::new(GitStatusDecision));
         let recovered = recovered_tick
-            .execute_and_verify_durable(&workspace, &executor, &verifier, &journal)
+            .execute_and_verify_durable(&workspace, &executor, &verifier, &journal, None)
             .await
+            .into_completed()
             .expect("completed action should be recovered");
         assert!(recovered.verified);
         assert_eq!(workspace.history(Some("tool.executed")).len(), 1);
@@ -1609,5 +1639,177 @@ mod tests {
         for t in &traces {
             assert_eq!(t.trace_id, trace_id, "trace_id mismatch on {}", t.operation);
         }
+    }
+
+    // -- R2-1: plan-grounding revision + stale-plan admission -------------
+
+    /// A decision that stamps the live world-model revision into every
+    /// action, mirroring what `IntentDecision` does against the real model.
+    struct GroundedDecision(Arc<Mutex<WorldModel>>, std::sync::atomic::AtomicUsize);
+
+    impl DecisionFunction for GroundedDecision {
+        fn decide(
+            &self,
+            workspace: &GlobalWorkspace,
+            _state: &mut DecisionState,
+        ) -> Option<TickAction> {
+            let evidence = workspace.get_latest("sensor.screen")?;
+            let revision = self.0.lock().expect("world model poisoned").revision();
+            // Unique action name per decision so the durable journal never
+            // mistakes tick 2 for tick 1's completed work.
+            let n = self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Some(
+                TickAction::new(
+                    format!("feedback.step-{}", n),
+                    "grounded against the current world revision",
+                    vec![evidence.id],
+                    Priority::High,
+                )
+                .with_grounding_revision(revision),
+            )
+        }
+    }
+
+    #[tokio::test]
+    async fn two_cycle_live_tick_grounds_each_decision_against_current_revision() {
+        let workspace = GlobalWorkspace::new();
+        workspace.publish_from(
+            Topic::Screen,
+            EngineId::Perception,
+            json!({ "change": "content", "content_hash": "grounded" }),
+        );
+        let model = Arc::new(Mutex::new(WorldModel::new(WorldState::new())));
+        let journal_path =
+            std::env::temp_dir().join(format!("friday-grounded-{}.json", Uuid::new_v4()));
+        let host = AutonomyHost::new(
+            workspace,
+            AutonomousTick::new(Arc::new(GroundedDecision(
+                Arc::clone(&model),
+                std::sync::atomic::AtomicUsize::new(0),
+            ))),
+            Arc::new(FeedbackExecutor),
+            Arc::new(FeedbackVerifier),
+            Arc::new(JsonActionJournal::new(&journal_path)),
+        )
+        .with_world_model(Arc::clone(&model));
+
+        let first = host.tick().await.expect("tick 1 should execute");
+        assert!(first.verified);
+        assert_eq!(
+            first.action.grounding_revision,
+            Some(0),
+            "tick 1 grounds at R0"
+        );
+        assert_eq!(model.lock().unwrap().revision(), 1, "R0 -> R1 after tick 1");
+
+        let second = host.tick().await.expect("tick 2 should execute");
+        assert!(second.verified);
+        assert_eq!(
+            second.action.grounding_revision,
+            Some(1),
+            "tick 2 must ground against the ADVANCED revision, not stale R0"
+        );
+        assert_eq!(model.lock().unwrap().revision(), 2);
+        assert!(host
+            .workspace()
+            .history(Some("plan.stale_rejected"))
+            .is_empty());
+        let _ = fs::remove_file(journal_path);
+    }
+
+    #[tokio::test]
+    async fn stale_plan_refused_before_executor_or_journal_side_effects() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct AlwaysStaleDecision;
+        impl DecisionFunction for AlwaysStaleDecision {
+            fn decide(
+                &self,
+                workspace: &GlobalWorkspace,
+                _state: &mut DecisionState,
+            ) -> Option<TickAction> {
+                let evidence = workspace.get_latest("sensor.screen")?;
+                Some(
+                    TickAction::new(
+                        "feedback.first",
+                        "grounded at an old revision",
+                        vec![evidence.id],
+                        Priority::High,
+                    )
+                    .with_grounding_revision(0),
+                )
+            }
+        }
+
+        struct CountingExecutor(AtomicUsize);
+        #[async_trait]
+        impl ActionExecutor for CountingExecutor {
+            async fn execute(&self, action: &TickAction) -> ActionExecution {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                ActionExecution {
+                    action: action.action.clone(),
+                    success: true,
+                    detail: "should never run".into(),
+                    output: json!({}),
+                    error: None,
+                }
+            }
+        }
+
+        struct AcceptVerifier;
+        #[async_trait]
+        impl ActionVerifier for AcceptVerifier {
+            async fn verify(
+                &self,
+                _workspace: &GlobalWorkspace,
+                _action: &TickAction,
+                _execution: &ActionExecution,
+            ) -> bool {
+                true
+            }
+        }
+
+        let workspace = GlobalWorkspace::new();
+        workspace.publish_from(
+            Topic::Screen,
+            EngineId::Perception,
+            json!({ "change": "content", "content_hash": "stale" }),
+        );
+        let journal_path =
+            std::env::temp_dir().join(format!("friday-stale-{}.json", Uuid::new_v4()));
+        let journal = JsonActionJournal::new(&journal_path);
+        let executor = Arc::new(CountingExecutor(AtomicUsize::new(0)));
+        let tick_drive = AutonomousTick::new(Arc::new(AlwaysStaleDecision));
+
+        let outcome = tick_drive
+            .execute_and_verify_durable(
+                &workspace,
+                executor.as_ref(),
+                &AcceptVerifier,
+                &journal,
+                Some(5), // world has advanced to R5; plan grounded at R0
+            )
+            .await;
+
+        match outcome {
+            friday_cognitive::DurableTickOutcome::StalePlanRejected { planned, current } => {
+                assert_eq!(planned, Some(0));
+                assert_eq!(current, Some(5));
+            }
+            other => panic!("expected StalePlanRejected, got {other:?}"),
+        }
+        assert_eq!(
+            executor.0.load(Ordering::SeqCst),
+            0,
+            "executor must not be called for a stale plan"
+        );
+        assert!(
+            journal.records().unwrap().is_empty(),
+            "journal must have no records: refusal happens before journal.begin"
+        );
+        assert!(workspace.history(Some("tool.executed")).is_empty());
+        assert!(workspace.history(Some("outcome.observed")).is_empty());
+        assert_eq!(workspace.history(Some("plan.stale_rejected")).len(), 1);
+        let _ = fs::remove_file(journal_path);
     }
 }

@@ -96,6 +96,7 @@ async fn llm_planner_produces_validated_graph() {
         experience: None,
         skills: None,
         investigation: None,
+        grounding_revision: None,
     };
     let tracer = NoopTraceCollector;
     let trace_ctx = CognitiveTraceContext::for_goal(
@@ -146,6 +147,7 @@ async fn llm_planner_rejects_unknown_capability() {
         experience: None,
         skills: None,
         investigation: None,
+        grounding_revision: None,
     };
     let tracer = NoopTraceCollector;
     let trace_ctx = CognitiveTraceContext::for_goal(
@@ -407,6 +409,7 @@ async fn llm_planner_handles_experience_context() {
         experience: Some(experience),
         skills: None,
         investigation: None,
+        grounding_revision: None,
     };
 
     let tracer = NoopTraceCollector;
@@ -430,6 +433,7 @@ async fn llm_planner_handles_experience_context() {
         experience: None,
         skills: None,
         investigation: None,
+        grounding_revision: None,
     };
     let result2 = planner
         .create_plan(&intent, &ctx_no_exp, &tracer, &trace_ctx)
@@ -791,4 +795,42 @@ async fn test_4f_failure_path_emits_failure_trace() {
             t.span_id, t.organ, t.operation, t.result, parent
         );
     }
+}
+
+// -- R2-1: grounding revision propagates from context into the plan ----
+
+#[tokio::test]
+async fn rule_planner_carries_grounding_revision_into_plan_result() {
+    use friday_core::trace::{
+        CognitiveTraceContext, GoalId, NoopTraceCollector, SessionId, TraceId,
+    };
+    use friday_planner::planning::planners::context::PlanContext;
+    use friday_planner::planning::planners::Planner;
+
+    let trace_ctx = CognitiveTraceContext::for_goal(
+        TraceId::default(),
+        SessionId::default(),
+        GoalId::default(),
+    );
+    let intent = parse("Summarize my Cargo.toml");
+    let ctx = PlanContext {
+        intent_raw: intent.raw.clone(),
+        capabilities: vec![],
+        budget: ExecutionBudget::default(),
+        workspace: WorkspaceContext::default(),
+        risk_policy: RiskPolicy::default(),
+        experience: None,
+        skills: None,
+        investigation: None,
+        grounding_revision: Some(7),
+    };
+    let result = RulePlanner
+        .create_plan(&intent, &ctx, &NoopTraceCollector, &trace_ctx)
+        .await
+        .unwrap();
+    assert_eq!(
+        result.grounding_revision,
+        Some(7),
+        "the plan must record the world revision it was grounded against"
+    );
 }

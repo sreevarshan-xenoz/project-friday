@@ -80,6 +80,12 @@ pub struct PlanContext {
     /// experience and skills — the planner folds weak evidence into the
     /// direct plan and keeps working without a seam.
     pub investigation: Option<InvestigationResult>,
+    /// The world-model revision this plan is grounded against, captured by
+    /// the host before planning. `None` when no world-model seam is wired.
+    /// Advisory to the planner; its authoritative consumer is execution
+    /// admission, which refuses a plan whose grounding no longer matches
+    /// the live world revision (R2-1 stale-plan rejection).
+    pub grounding_revision: Option<u64>,
 }
 
 impl PlanContext {

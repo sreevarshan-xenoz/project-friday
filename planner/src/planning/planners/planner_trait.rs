@@ -23,6 +23,10 @@ pub struct PlanResult {
     pub usage: Option<ModelUsage>,
     /// Total wall-clock time for the LLM call (None for rule planner).
     pub llm_duration_ms: Option<u64>,
+    /// The world-model revision the plan was grounded against (copied from
+    /// [`PlanContext::grounding_revision`]). `None` when no world-model seam
+    /// supplied one. Consumed by execution admission (R2-1).
+    pub grounding_revision: Option<u64>,
 }
 
 /// A planner turns an [`Intent`] (plus grounding [`PlanContext`]) into an

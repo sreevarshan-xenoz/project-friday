@@ -39,7 +39,7 @@ impl Planner for RulePlanner {
     async fn create_plan(
         &self,
         intent: &Intent,
-        _ctx: &PlanContext,
+        ctx: &PlanContext,
         _tracer: &dyn TraceCollector,
         _trace_ctx: &CognitiveTraceContext,
     ) -> Result<PlanResult, PlanError> {
@@ -47,6 +47,7 @@ impl Planner for RulePlanner {
             graph: rule_plan(intent),
             usage: None,
             llm_duration_ms: None,
+            grounding_revision: ctx.grounding_revision,
         })
     }
 }

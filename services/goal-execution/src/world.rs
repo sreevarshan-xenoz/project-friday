@@ -26,7 +26,7 @@ use std::collections::HashMap;
 /// Planning reasons against WorldState instead of raw knowledge.
 /// This lets the planner ask: "Given what exists right now,
 /// what's the best plan?"
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorldState {
     /// Current working directory.
     pub working_directory: Option<String>,
@@ -48,6 +48,32 @@ pub struct WorldState {
     pub os: String,
     /// Confidence that this snapshot is accurate.
     pub confidence: Confidence,
+    /// Monotonic world-model revision (R2-1). Bumped only at verified
+    /// commit points (`record_transition` / `apply_simulation`). Plans
+    /// capture this value as their grounding identity; execution admission
+    /// refuses a plan whose grounding no longer matches the live revision.
+    #[serde(default)]
+    pub revision: u64,
+}
+
+/// Structural equality **ignores `revision`**: the revision is an identity
+/// counter for plan grounding, not part of the world's content. This keeps
+/// WM-07's stale-simulation check (`sim.source_world != self.state`) purely
+/// structural — two states with identical content but different revisions
+/// are still "the same world" for commit-safety purposes.
+impl PartialEq for WorldState {
+    fn eq(&self, other: &Self) -> bool {
+        self.working_directory == other.working_directory
+            && self.files == other.files
+            && self.processes == other.processes
+            && self.environment == other.environment
+            && self.variables == other.variables
+            && self.available_tools == other.available_tools
+            && self.mission_progress == other.mission_progress
+            && self.network_available == other.network_available
+            && self.os == other.os
+            && self.confidence == other.confidence
+    }
 }
 
 /// Metadata about a file.
@@ -398,6 +424,12 @@ impl WorldModel {
         &self.state
     }
 
+    /// The current world-model revision (R2-1). Monotonic; bumped at every
+    /// verified commit point. Plans are grounded against this value.
+    pub fn revision(&self) -> u64 {
+        self.state.revision
+    }
+
     /// Full transition history (immutable audit trail).
     pub fn history(&self) -> &[StateTransition] {
         &self.history
@@ -454,10 +486,12 @@ impl WorldModel {
         if sim.source_world != self.state {
             return None;
         }
+        let next_revision = self.state.revision + 1;
         let before = self.state.clone();
         let transition =
             StateTransition::new(action_id, goal_id, before, sim.projected_world.clone(), &[]);
         self.state = sim.projected_world.clone();
+        self.state.revision = next_revision;
         self.causal.entities = sim.projected_entities.clone();
         self.history.push(transition.clone());
         Some(transition)
@@ -537,10 +571,12 @@ impl WorldModel {
         new_state: WorldState,
         preconditions: &[Precondition],
     ) -> StateTransition {
+        let next_revision = self.state.revision + 1;
         let before = self.state.clone();
         let transition =
             StateTransition::new(action_id, goal_id, before, new_state.clone(), preconditions);
         self.state = new_state;
+        self.state.revision = next_revision;
         self.history.push(transition.clone());
         transition
     }

@@ -30,6 +30,7 @@ fn to_snapshot(state: &WorldState) -> WorldSnapshot {
         "working_directory_set".to_string(),
         state.working_directory.is_some(),
     );
+    snap.revision = state.revision;
     snap
 }
 

@@ -67,6 +67,12 @@ pub struct TickAction {
     pub evidence: Vec<Uuid>,
     /// Salience of the trigger (priority ordering for the consumer).
     pub priority: Priority,
+    /// The world-model revision this action was grounded against (R2-1),
+    /// stamped by the decision function while reading the authoritative
+    /// model. `None` when no world-model seam is wired. Execution admission
+    /// refuses the action when the live revision has moved past it.
+    #[serde(default)]
+    pub grounding_revision: Option<u64>,
 }
 
 impl TickAction {
@@ -81,7 +87,14 @@ impl TickAction {
             reason: reason.into(),
             evidence,
             priority,
+            grounding_revision: None,
         }
+    }
+
+    /// Stamp the world-model revision this action is grounded against (R2-1).
+    pub fn with_grounding_revision(mut self, revision: u64) -> Self {
+        self.grounding_revision = Some(revision);
+        self
     }
 }
 
@@ -344,6 +357,34 @@ impl DecisionFunction for SalienceDecision {
 
 // ── The drive ─────────────────────────────────────────────────────────
 
+/// The explicit result of one durable tick (R2-1). Distinguishes "execution
+/// failed" from "execution was correctly refused because its world grounding
+/// went stale" — radically different outcomes for the qualification ledger.
+#[derive(Debug)]
+pub enum DurableTickOutcome {
+    /// Normal continuation. `None`: quiet world, or in-flight recovery.
+    Completed(Option<ActionOutcome>),
+    /// The decided action was grounded against an older world revision and
+    /// was refused BEFORE any journal write or executor side effect.
+    StalePlanRejected {
+        planned: Option<u64>,
+        current: Option<u64>,
+    },
+}
+
+impl DurableTickOutcome {
+    /// Unwrap the normal-continuation case. Panics on `StalePlanRejected` —
+    /// use in tests/callers that expect execution to proceed.
+    pub fn into_completed(self) -> Option<ActionOutcome> {
+        match self {
+            DurableTickOutcome::Completed(outcome) => outcome,
+            DurableTickOutcome::StalePlanRejected { planned, current } => panic!(
+                "stale plan rejected (planned={planned:?}, current={current:?}) but completed expected"
+            ),
+        }
+    }
+}
+
 /// The autonomous drive: one decision function + the workspace, exposed as a
 /// single `tick` (usable inside the [`crate::CognitiveRuntime`] via
 /// [`PhaseHandler`], or standalone via [`AutonomousTick::run`]).
@@ -387,27 +428,60 @@ impl AutonomousTick {
 
     /// Execute one decision with write-ahead persistence. A prepared or
     /// completed matching record is never dispatched again after restart:
-    /// in-flight work returns `None` for explicit recovery, while completed
-    /// work returns its recorded outcome.
+    /// in-flight work returns `Completed(None)` for explicit recovery, while
+    /// completed work returns its recorded outcome.
+    ///
+    /// R2-1 admission: when the decided action carries a `grounding_revision`
+    /// and the caller supplies the live world revision, a mismatch is refused
+    /// as [`DurableTickOutcome::StalePlanRejected`] BEFORE `journal.begin` or
+    /// any executor side effect — a refusal, not an execution failure.
     pub async fn execute_and_verify_durable(
         &self,
         workspace: &GlobalWorkspace,
         executor: &dyn ActionExecutor,
         verifier: &dyn ActionVerifier,
         journal: &dyn ActionJournal,
-    ) -> Option<ActionOutcome> {
-        let action = self.tick(workspace)?;
-        let record_id = match journal.begin(&action).ok()? {
-            BeginAction::New(id) => id,
-            BeginAction::InFlight(_) => return None,
-            BeginAction::Completed(id) => {
-                return journal
-                    .records()
-                    .ok()?
-                    .into_iter()
-                    .find(|record| record.id == id)
-                    .and_then(|record| record.outcome)
+        world_revision: Option<u64>,
+    ) -> DurableTickOutcome {
+        let action = match self.tick(workspace) {
+            Some(action) => action,
+            None => return DurableTickOutcome::Completed(None),
+        };
+        if let (Some(planned), Some(current)) = (action.grounding_revision, world_revision) {
+            if planned != current {
+                workspace.publish_from(
+                    Topic::Custom("plan.stale_rejected".into()),
+                    EngineId::Automation,
+                    serde_json::json!({
+                        "action": action.action,
+                        "planned_revision": planned,
+                        "current_revision": current,
+                    }),
+                );
+                tracing::warn!(
+                    action = %action.action,
+                    planned, current,
+                    "stale plan refused before any side effect"
+                );
+                return DurableTickOutcome::StalePlanRejected {
+                    planned: Some(planned),
+                    current: Some(current),
+                };
             }
+        }
+        let record_id = match journal.begin(&action).ok() {
+            Some(BeginAction::New(id)) => id,
+            Some(BeginAction::InFlight(_)) => return DurableTickOutcome::Completed(None),
+            Some(BeginAction::Completed(id)) => {
+                let outcome = journal.records().ok().and_then(|records| {
+                    records
+                        .into_iter()
+                        .find(|record| record.id == id)
+                        .and_then(|record| record.outcome)
+                });
+                return DurableTickOutcome::Completed(outcome);
+            }
+            None => return DurableTickOutcome::Completed(None),
         };
         let execution = executor.execute(&action).await;
         workspace.publish_from(
@@ -426,7 +500,9 @@ impl AutonomousTick {
             execution,
             verified,
         };
-        journal.complete(record_id, &outcome).ok()?;
+        if journal.complete(record_id, &outcome).is_err() {
+            return DurableTickOutcome::Completed(None);
+        }
         workspace.publish_from(
             Topic::OutcomeObserved,
             EngineId::Automation,
@@ -437,7 +513,7 @@ impl AutonomousTick {
                 "evidence": outcome.action.evidence,
             }),
         );
-        Some(outcome)
+        DurableTickOutcome::Completed(Some(outcome))
     }
 
     /// Continue one decision through bounded execution and explicit

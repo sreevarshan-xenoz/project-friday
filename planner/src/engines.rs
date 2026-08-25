@@ -343,6 +343,7 @@ impl PlanningEngine {
             experience,
             skills,
             investigation,
+            grounding_revision: None,
         }
     }
 }

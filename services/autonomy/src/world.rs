@@ -24,6 +24,12 @@ use std::sync::Mutex;
 pub struct WorldSnapshot {
     pub variables: HashMap<String, serde_json::Value>,
     pub flags: HashMap<String, bool>,
+    /// World-model revision this snapshot was produced at (R2-1). Stamped by
+    /// the model on `predict`/`observe`; plans capture it as their grounding
+    /// identity and admission refuses execution against a newer revision.
+    /// Not part of `diff` — content equality is unaffected.
+    #[serde(default)]
+    pub revision: u64,
 }
 
 impl WorldSnapshot {
@@ -203,15 +209,21 @@ impl SimpleWorldModel {
             .expect("world model poisoned")
             .clone()
     }
+
+    /// The current belief revision (R2-1).
+    fn stamp(&self, mut snapshot: WorldSnapshot) -> WorldSnapshot {
+        snapshot.revision = self.current.lock().expect("world model poisoned").revision;
+        snapshot
+    }
 }
 
 impl WorldModel for SimpleWorldModel {
     fn predict(&self, _action: &str) -> WorldSnapshot {
-        self.predicted.clone()
+        self.stamp(self.predicted.clone())
     }
 
     fn observe(&self) -> Option<WorldSnapshot> {
-        self.observed.clone()
+        self.observed.as_ref().map(|o| self.stamp(o.clone()))
     }
 
     fn update(
@@ -231,10 +243,14 @@ impl WorldModel for SimpleWorldModel {
             }
         };
 
-        // Reality wins: when actual is known, the belief adopts it. When unknown,
-        // the belief is deliberately left unchanged (deferred — never invented).
+        // Reality wins: when actual is known, the belief adopts it and the
+        // revision advances (R2-1). When unknown, belief AND revision are
+        // deliberately left unchanged (deferred — never invented).
         if let Some(a) = &actual {
-            *self.current.lock().expect("world model poisoned") = a.clone();
+            let mut current = self.current.lock().expect("world model poisoned");
+            let next = current.revision + 1;
+            *current = a.clone();
+            current.revision = next;
         }
 
         self.corrections
@@ -265,8 +281,11 @@ mod tests {
         let outcome = wm.update(&predicted, wm.observe());
 
         assert_eq!(outcome, PredictionOutcome::Correct);
-        // Belief accepted the (identical) actual state.
-        assert_eq!(wm.current(), predicted);
+        // Belief accepted the (identical) actual state, and the revision
+        // advanced (R2-1): every accepted update is a new model version.
+        let mut expected = predicted;
+        expected.revision = 1;
+        assert_eq!(wm.current(), expected);
         // Verification mapping is Passed.
         assert!(matches!(
             outcome.verification(),
@@ -296,8 +315,11 @@ mod tests {
             }
             other => panic!("expected Mismatch, got {:?}", other),
         }
-        // Reality wins: belief becomes the actual (version 2), not the prediction.
-        assert_eq!(wm.current(), actual);
+        // Reality wins: belief becomes the actual (version 2), not the prediction,
+        // and the revision advanced (R2-1).
+        let mut adopted = actual.clone();
+        adopted.revision = 1;
+        assert_eq!(wm.current(), adopted);
         // Failure remains a failure.
         assert!(matches!(
             outcome.verification(),

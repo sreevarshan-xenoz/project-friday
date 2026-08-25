@@ -254,8 +254,46 @@ impl AutonomousTick {
             );
         }
 
+        // R2-1 — capture the world-model revision the plan will be grounded
+        // against BEFORE planning, so execution can be refused when reality
+        // has moved past this plan's grounding.
+        let planned_revision: Option<u64> = self
+            .world_model
+            .as_ref()
+            .and_then(|wm| wm.observe())
+            .map(|s| s.revision);
+
         // Execute — the executor records its own agent/tool spans under the planner.
         let plan = self.planner.plan(&goal, &applicable);
+
+        // R2-1 — stale-plan admission gate. If the world advanced between
+        // grounding and execution, the plan is refused as `stale_plan_rejected`
+        // BEFORE any executor side effect. This is a refusal, not an execution
+        // failure: nothing ran, nothing is journaled, and no verification or
+        // world update is synthesized for work that never happened.
+        if let Some(wm) = &self.world_model {
+            let current_revision: Option<u64> = wm.observe().map(|s| s.revision);
+            if let (Some(planned), Some(current)) = (planned_revision, current_revision) {
+                if planned != current {
+                    collector.record(
+                        planner_ctx
+                            .child(planner_span)
+                            .trace(SpanId::default(), "execution", "stale_plan_rejected")
+                            .with_timing(Utc::now(), 0)
+                            .with_result(ResultType::Failure),
+                    );
+                    return CognitiveTick {
+                        tick_id: self.tick_id,
+                        trigger: self.trigger,
+                        input_state: observation,
+                        selected_goal: Some(goal),
+                        trace_id,
+                        outcome: TickOutcome::Failure,
+                        next_action: NextAction::Stop,
+                    };
+                }
+            }
+        }
         let exec_ctx = planner_ctx.child(planner_span);
         let exec_result = self.executor.execute(&exec_ctx, collector, &plan);
 
@@ -401,6 +439,7 @@ mod tests {
     use friday_observability::viewer::ViewerModel;
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
+    use std::sync::Arc;
 
     // ── Fakes ────────────────────────────────────────────────────────────
 
@@ -490,6 +529,89 @@ mod tests {
             VerificationStatus::Failed {
                 reason: "evidence mismatch".into(),
             }
+        }
+    }
+
+    // ── R2-1 fixtures ────────────────────────────────────────────────────
+
+    /// Counts executions across ticks; shared through `Arc`.
+    #[derive(Default)]
+    struct CountingExecutor(std::sync::atomic::AtomicUsize);
+    impl Executor for CountingExecutor {
+        fn execute(
+            &self,
+            _ctx: &CognitiveTraceContext,
+            collector: &dyn TraceCollector,
+            _plan: &Plan,
+        ) -> ExecutionResult {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            collector.record(
+                CognitiveTraceContext::for_goal(
+                    TraceId::default(),
+                    SessionId::default(),
+                    GoalId::default(),
+                )
+                .trace(SpanId::default(), "agents", "execute")
+                .with_timing(Utc::now(), 1)
+                .with_result(ResultType::Success),
+            );
+            ExecutionResult {
+                success: true,
+                detail: "executed".into(),
+            }
+        }
+    }
+
+    /// `Arc`-shared counting executor usable as a `Box<dyn Executor>`.
+    struct SharedCountingExecutor(Arc<CountingExecutor>);
+    impl Executor for SharedCountingExecutor {
+        fn execute(
+            &self,
+            ctx: &CognitiveTraceContext,
+            collector: &dyn TraceCollector,
+            plan: &Plan,
+        ) -> ExecutionResult {
+            self.0.execute(ctx, collector, plan)
+        }
+    }
+
+    /// Lets several ticks share one `SimpleWorldModel`.
+    struct SharedModel(Arc<SimpleWorldModel>);
+    impl WorldModel for SharedModel {
+        fn predict(&self, action: &str) -> WorldSnapshot {
+            self.0.predict(action)
+        }
+        fn observe(&self) -> Option<WorldSnapshot> {
+            self.0.observe()
+        }
+        fn update(
+            &self,
+            predicted: &WorldSnapshot,
+            actual: Option<WorldSnapshot>,
+        ) -> PredictionOutcome {
+            self.0.update(predicted, actual)
+        }
+    }
+
+    /// A world whose observation advances on every look: the plan is always
+    /// grounded against an older revision than the one seen at admission time.
+    struct AdvancingWorldModel(std::sync::atomic::AtomicUsize);
+    impl WorldModel for AdvancingWorldModel {
+        fn predict(&self, _action: &str) -> WorldSnapshot {
+            WorldSnapshot::new()
+        }
+        fn observe(&self) -> Option<WorldSnapshot> {
+            let n = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let mut snap = WorldSnapshot::new().with_variable("step", serde_json::json!(n));
+            snap.revision = n as u64;
+            Some(snap)
+        }
+        fn update(
+            &self,
+            _predicted: &WorldSnapshot,
+            _actual: Option<WorldSnapshot>,
+        ) -> PredictionOutcome {
+            PredictionOutcome::Unknown
         }
     }
 
@@ -982,5 +1104,107 @@ mod tests {
             sched.decide(clock.now()),
             SchedulerDecision::Allowed(_)
         ));
+    }
+    // -- R2-1: plan-grounding revision + stale-plan admission -------------
+
+    #[test]
+    fn two_cycle_tick_regrounds_each_plan_against_current_revision() {
+        let predicted = WorldSnapshot::new().with_variable("version", serde_json::json!(1));
+        let observed = Some(WorldSnapshot::new().with_variable("version", serde_json::json!(1)));
+        let shared = Arc::new(SimpleWorldModel::new(predicted, observed));
+
+        let executor = Arc::new(CountingExecutor::default());
+
+        let collector1 = InMemoryTraceCollector::new();
+        let t1 = AutonomousTick::new(
+            1,
+            TickTrigger::Manual,
+            Box::new(ObserveWork),
+            Box::new(SelectGoal),
+            Box::new(FakePlanner),
+            Box::new(SharedCountingExecutor(Arc::clone(&executor))),
+            Box::new(VerifyPass),
+        )
+        .with_world_model(Box::new(SharedModel(Arc::clone(&shared))))
+        .run(&collector1);
+        assert_eq!(t1.outcome, TickOutcome::Success);
+        assert_eq!(executor.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // Tick 1 executed against revision 0 and its verified feedback advanced
+        // the world model.
+        assert_eq!(shared.current().revision, 1);
+        assert!(
+            !traces(&collector1)
+                .iter()
+                .any(|s| s.operation == "stale_plan_rejected"),
+            "tick 1 must not be refused"
+        );
+
+        let collector2 = InMemoryTraceCollector::new();
+        let t2 = AutonomousTick::new(
+            2,
+            TickTrigger::Manual,
+            Box::new(ObserveWork),
+            Box::new(SelectGoal),
+            Box::new(FakePlanner),
+            Box::new(SharedCountingExecutor(Arc::clone(&executor))),
+            Box::new(VerifyPass),
+        )
+        .with_world_model(Box::new(SharedModel(Arc::clone(&shared))))
+        .run(&collector2);
+        assert_eq!(t2.outcome, TickOutcome::Success);
+        assert_eq!(executor.0.load(std::sync::atomic::Ordering::SeqCst), 2);
+        // Tick 2 grounded at revision 1 (not stale 0) and advanced it again.
+        assert_eq!(shared.current().revision, 2);
+        assert!(
+            !traces(&collector2)
+                .iter()
+                .any(|s| s.operation == "stale_plan_rejected"),
+            "tick 2 must be admitted because its grounding is current"
+        );
+    }
+
+    #[test]
+    fn stale_plan_is_rejected_without_executor_side_effects() {
+        let executor = Arc::new(CountingExecutor::default());
+        let counter = Arc::clone(&executor);
+        let collector = InMemoryTraceCollector::new();
+        let tick = AutonomousTick::new(
+            9,
+            TickTrigger::Manual,
+            Box::new(ObserveWork),
+            Box::new(SelectGoal),
+            Box::new(FakePlanner),
+            Box::new(SharedCountingExecutor(executor)),
+            Box::new(VerifyPass),
+        )
+        .with_world_model(Box::new(AdvancingWorldModel(
+            std::sync::atomic::AtomicUsize::new(0),
+        )))
+        .run(&collector);
+
+        // Refused as failure BEFORE any execution side effect...
+        assert_eq!(tick.outcome, TickOutcome::Failure);
+        assert_eq!(
+            counter.0.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "a stale plan must never reach the executor"
+        );
+
+        let t = traces(&collector);
+        assert!(
+            t.iter()
+                .any(|s| s.organ == "execution" && s.operation == "stale_plan_rejected"),
+            "the refusal must carry an explicit stale_plan_rejected identity"
+        );
+        // ...and no verification or world update may be synthesized for work
+        // that never ran.
+        assert!(
+            !t.iter().any(|s| s.operation == "verification_gate"),
+            "no verification for a refused plan"
+        );
+        assert!(
+            !t.iter().any(|s| s.organ == "world_model"),
+            "no world-model update for a refused plan"
+        );
     }
 }

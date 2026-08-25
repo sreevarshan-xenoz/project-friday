@@ -373,6 +373,7 @@ impl Planner for LlmPlanner {
             graph,
             usage: completion.usage,
             llm_duration_ms: Some(model_elapsed_ms),
+            grounding_revision: ctx.grounding_revision,
         })
     }
 }
@@ -418,6 +419,7 @@ mod tests {
                 active_skill: Some("git".to_string()),
             }),
             investigation: None,
+            grounding_revision: None,
         }
     }
 

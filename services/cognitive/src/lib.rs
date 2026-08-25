@@ -45,7 +45,7 @@ pub mod workspace;
 
 pub use autonomy::{
     ActionExecution, ActionExecutor, ActionOutcome, ActionVerifier, AutonomousTick,
-    DecisionFunction, DecisionState, Salience, SalienceDecision, TickAction,
+    DecisionFunction, DecisionState, DurableTickOutcome, Salience, SalienceDecision, TickAction,
 };
 pub use handler::{FnHandler, PhaseHandler, PhaseResult};
 pub use journal::{
