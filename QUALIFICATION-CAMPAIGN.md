@@ -257,6 +257,55 @@ Gates at repair commit `b9acbd6`: fmt/clippy/build PASS,
 1684 passed / 0 failed.
 
 **F2 = GREEN.**
+
+### R2-3: Director -> Workforce organism lifecycle (2026-08-25)
+
+```text
+Existing gap:   AgentDirector and Workforce were siblings - no production
+                delegation path between them (director.rs "No persistent
+                workforce yet").
+R2-3 enabler:   WorkforceDriver adapter (`278e543`) - pure contract
+                translation, no scheduler/board/persistence/verification.
+Qualification:  organism_r2_3_delegation_durability_recovery_learning_consult
+                (`c83cbbe`), hermetic, no LLM.
+```
+
+Proven chain (single test, in order):
+
+```text
+Goal (OrganismGoal decision, grounding-stamped)
+  -> AutonomyHost.tick -> DirectorActionExecutor -> AgentDirector
+  -> WorkforceDriver -> durable board task (Done) + persisted result
+  -> ResultGate verified                       [A literal delegation,
+  💥 hard crash of the owning generation        B durable identity]
+  -> Workforce::mount() reconciles orphan -> Open + audit note
+  -> replacement worker completes recovered task [C recovery, D completion]
+  -> post-recovery delegation verifies end-to-end [E Director semantics]
+  -> unverified / observation-less outcomes refused by WorldModel
+                                                [F verification honesty]
+  -> repeated prediction error corroborated x3 -> ProductionLessonStore
+     (Redb, durable)                            [G learning]
+  -> SkillEvaluator promotes with verification evidence = the two
+     gate-verified delegations; ProductionSkillStore compiles + admits
+                                                [H skill admission]
+  -> next tick emits skills.consult and offers the admitted skill to
+     planning                                   [I future consultation]
+```
+
+Observed limitations recorded (not repaired):
+
+- L1: orchestrator tick-path skill candidates carry zero verification
+  evidence (`SkillEvaluator::form_candidate` hardcodes 0), so ticks alone
+  never admit into the production store; admission requires externally
+  supplied verified-execution evidence. Future seam work.
+- L2: lesson production keys off bounded-tick prediction outcomes by
+  architecture; the organism couples delegation and learning through the
+  shared goal string + durable stores, not a new pipeline.
+
+Gates at `c83cbbe`: fmt/clippy/build PASS, 1685 passed / 0 failed.
+
+**R2-3 = GREEN.**
+
 Campaign order: F1 injection ? F2 crash injection (nasty enough to create a
 genuinely orphaned `InProgress` task) ? F3/F4/F5 registration verification ?
 update this ledger with observed evidence ? only then decide whether F2 needs
