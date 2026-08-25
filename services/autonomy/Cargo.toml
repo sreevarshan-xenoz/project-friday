@@ -26,3 +26,4 @@ friday-actions = { path = "../action-runtime" }
 friday-planner = { path = "../../planner" }
 tokio = { workspace = true }
 async-trait.workspace = true
+uuid.workspace = true
