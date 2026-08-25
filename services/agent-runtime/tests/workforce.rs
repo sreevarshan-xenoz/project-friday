@@ -307,3 +307,105 @@ impl Drop for TempDir {
         let _ = std::fs::remove_dir_all(&self.path);
     }
 }
+
+// ── R2-2 F2: hard-crash orphan injection (qualification, no fix) ──────
+
+/// Injects a **hard crash between the durable pre-dispatch checkpoint and
+/// the terminal write**: the exact state `Workforce::run` persists before
+/// dispatching the driver (worker `Running`, task `InProgress`) is written,
+/// then the owning instance is dropped - no driver `Err`, no panic, no
+/// terminal state. A fresh `Workforce` is reconstructed over the same
+/// persistent root and every public recovery avenue is tried.
+///
+/// This test QUALIFIES the recovery behavior; it intentionally does not
+/// repair it. Observed outcome recorded in QUALIFICATION-CAMPAIGN.md (F2).
+#[tokio::test]
+async fn f2_hard_crash_orphans_an_in_progress_task_and_no_public_api_recovers_it() {
+    let fx = fixture().await;
+    let root = TempDir::new();
+    let store_root = root.path().join("store");
+    let workspaces = root.path().join("workspaces");
+    let shared: Arc<dyn WorkforceStore> = Arc::new(JsonWorkforceStore::new(&store_root));
+
+    // Instance A: register + create + assign, then write the exact durable
+    // checkpoint run() persists immediately before dispatch.
+    let (worker_id, task_id) = {
+        let wf = Workforce::new(Arc::clone(&shared), Arc::clone(&fx.driver), &workspaces);
+        let worker = wf
+            .register(AgentRole::Researcher, "crash-test worker")
+            .await
+            .unwrap();
+        let task = wf
+            .create_task("crash test", "will be orphaned", AgentRole::Researcher)
+            .await
+            .unwrap();
+        wf.assign(&worker.id, &task.id).await.unwrap();
+
+        // The crash window - exactly what run() saves before dispatch:
+        let mut w = shared.load_worker(&worker.id).await.unwrap().unwrap();
+        w.status = WorkerStatus::Running;
+        shared.save_worker(&w).await.unwrap();
+        let mut t = shared.load_task(&task.id).await.unwrap().unwrap();
+        t.status = TaskStatus::InProgress;
+        shared.save_task(&t).await.unwrap();
+        (worker.id.clone(), task.id.clone())
+        // Process disappears here. No Done/Failed/Idle write ever happens.
+    };
+
+    // Instance C ("restart"): a fresh Workforce over the same store.
+    let wf = Workforce::new(Arc::clone(&shared), Arc::clone(&fx.driver), &workspaces);
+
+    // Persistence itself is GREEN: the orphaned state survived exactly as left.
+    let orphan = wf
+        .task(&task_id)
+        .await
+        .unwrap()
+        .expect("task survives restart");
+    assert_eq!(orphan.status, TaskStatus::InProgress);
+    assert_eq!(orphan.assignee.as_deref(), Some(worker_id.as_str()));
+    let crashed = wf.worker(&worker_id).await.unwrap().unwrap();
+    assert_eq!(crashed.status, WorkerStatus::Running);
+    assert_eq!(crashed.current_task.as_deref(), Some(task_id.as_str()));
+
+    // -- Every public recovery avenue, probed in turn --------------------
+
+    // 1. A replacement worker cannot even see the task (pick_up finds Open only).
+    let fresh = wf
+        .register(AgentRole::Researcher, "replacement worker")
+        .await
+        .unwrap();
+    assert!(
+        wf.pick_up(&fresh.id).await.unwrap().is_none(),
+        "pick_up sees only Open tasks: the orphan is invisible to the board"
+    );
+
+    // 2. Direct assignment is refused (task not Open).
+    let err = wf.assign(&fresh.id, &task_id).await.unwrap_err();
+    assert!(err.contains("in_progress"), "assign refused: {err}");
+
+    // 3. Blocker resolution does not apply (task not Blocked).
+    let err = wf.resolve_blocker(&task_id).await.unwrap_err();
+    assert!(
+        err.contains("not blocked"),
+        "resolve_blocker refused: {err}"
+    );
+
+    // 4. The crashed worker cannot suspend / resume / retire its way out.
+    let err = wf.suspend(&worker_id).await.unwrap_err();
+    assert!(err.contains("not assigned"), "suspend refused: {err}");
+    let err = wf.resume(&worker_id).await.unwrap_err();
+    assert!(err.contains("not suspended"), "resume refused: {err}");
+    let err = wf.retire(&worker_id).await.unwrap_err();
+    assert!(err.contains("running"), "retire refused: {err}");
+
+    // OBSERVED OUTCOME: the orphan remains InProgress forever. No stale-
+    // ownership detection, no lease/heartbeat, no reaper exists. This is the
+    // proven R2 GAP - recorded, not repaired here.
+    let after = wf.task(&task_id).await.unwrap().unwrap();
+    assert_eq!(
+        after.status,
+        TaskStatus::InProgress,
+        "PROVEN GAP: an orphaned InProgress task has no automatic or manual \
+         recovery path through the public API"
+    );
+}
