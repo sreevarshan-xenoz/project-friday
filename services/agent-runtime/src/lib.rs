@@ -29,6 +29,7 @@ pub mod runtime;
 pub mod scheduling;
 pub mod spec;
 pub mod workforce;
+pub mod workforce_driver;
 
 pub use budget::{BudgetLimits, BudgetTracker};
 pub use cancellation::CancellationToken;
@@ -56,3 +57,4 @@ pub use workforce::{
     BoardNote, BoardTask, InMemoryWorkforceStore, JsonWorkforceStore, TaskOutcome, TaskStatus,
     WorkerRecord, WorkerStatus, Workforce, WorkforceStore,
 };
+pub use workforce_driver::WorkforceDriver;
