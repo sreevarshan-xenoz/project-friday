@@ -180,7 +180,7 @@ Acceptance criterion for every record:
 | ID | Scenario | Current classification |
 | -- | -------- | ---------------------- |
 | F1 | Reasoning provider death | ?? GREEN � injection needed to pin deterministic failover order |
-| F2 | Worker crash mid-stage | PARTIAL - normal failure recovery GREEN; hard-crash orphan recovery RED / **PROVEN GAP** (injection `b93d43b`) |
+| F2 | Worker crash mid-stage | GREEN - hard-crash orphan GAP proven (`0c337fc`), repair landed + qualified (`b9acbd6`) |
 | F3 | Verification failure | ?? GREEN |
 | F4 | Egress secret block | ?? GREEN � content EgressGate and destination EgressPolicy are separate defenses, both pre-side-effect |
 | F5 | Stale-plan rejection | ?? GREEN � proven by R2-1 (`3b07180`): executor calls 0, journal empty |
@@ -217,6 +217,46 @@ FRIDAY distinguish a legitimately long-running `InProgress` task from an orphane
 one? Candidate shapes (lease/heartbeat/stale-ownership sweep) are deferred until
 this gap is dispositioned.
 
+
+### F2 disposition: GAP PROVEN -> REPAIR -> GREEN (2026-08-25)
+
+Evidence chain preserved in full:
+
+```text
+0c337fc  hard-crash orphan GAP proven (orphan InProgress forever; every
+         public recovery avenue refused)
+   |     (gap entry below retained verbatim - do not soften history)
+b9acbd6  repair: generation-bound ownership + Workforce::reconcile()
+```
+
+Repair summary:
+
+- Single-owner contract documented on `Workforce`: exactly one live
+  instance may own a store's `InProgress` work; the store has no
+  cross-process coordination, so generation mismatch proves owner death.
+- Durable fields `WorkerRecord.generation`,
+  `BoardTask.{owner_generation, run_deadline_ms}` stamped in run()'s
+  existing pre-dispatch checkpoint (serde-default => legacy compatible).
+- `reconcile()` reopens foreign-generation orphans to Open with an explicit
+  note in the existing progress vocabulary and releases the dead worker
+  binding; own-generation runs and all other statuses untouched;
+  idempotent. `mount()` reconciles at construction. No timers, no scheduler.
+
+Repair matrix (all pass):
+
+| Case | Result |
+| ---- | ------ |
+| Healthy InProgress, live generation | untouched, same owner |
+| Dead-generation orphan | reopened, audited, assignable again |
+| Legacy store (empty generations) | recovered |
+| Reconcile idempotence | second pass empty |
+| Done/Open entries after reconcile | unchanged |
+| Archaeology test (0c337fc) | still passes unmodified |
+
+Gates at repair commit `b9acbd6`: fmt/clippy/build PASS,
+1684 passed / 0 failed.
+
+**F2 = GREEN.**
 Campaign order: F1 injection ? F2 crash injection (nasty enough to create a
 genuinely orphaned `InProgress` task) ? F3/F4/F5 registration verification ?
 update this ledger with observed evidence ? only then decide whether F2 needs
