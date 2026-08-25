@@ -43,12 +43,26 @@ use crate::workforce::{TaskOutcome, WorkerStatus, Workforce};
 pub struct WorkforceDriver {
     workforce: Arc<Workforce>,
     role: AgentRole,
+    /// Capability params stamped onto every delegated board task (e.g. a
+    /// configured `docs.search` root). The delegating spec's own params are
+    /// overlaid on top of these at dispatch.
+    default_params: serde_json::Map<String, serde_json::Value>,
 }
 
 impl WorkforceDriver {
     /// Delegate every run to `workforce` as a task requiring `role`.
     pub fn new(workforce: Arc<Workforce>, role: AgentRole) -> Self {
-        Self { workforce, role }
+        Self {
+            workforce,
+            role,
+            default_params: serde_json::Map::new(),
+        }
+    }
+
+    /// Stamp a default capability param onto every delegated task.
+    pub fn with_param(mut self, capability: impl Into<String>, value: serde_json::Value) -> Self {
+        self.default_params.insert(capability.into(), value);
+        self
     }
 
     /// The workforce this driver delegates to (for seam assertions).
@@ -78,7 +92,26 @@ impl AgentDriver for WorkforceDriver {
         let goal = ctx.spec.goal.clone();
 
         let task = match self.workforce.create_task(&goal, &goal, self.role).await {
-            Ok(t) => t,
+            Ok(mut t) => {
+                // Carry dispatch params onto the durable board record: the
+                // adapter's defaults first, then the delegating spec's own
+                // params. run() later applies task.params to the worker spec.
+                for (k, v) in &self.default_params {
+                    t.params.insert(k.clone(), v.clone());
+                }
+                for (k, v) in &ctx.spec.params {
+                    t.params.insert(k.clone(), v.clone());
+                }
+                if let Err(e) = self.workforce.store().save_task(&t).await {
+                    return AgentResult::failed(
+                        agent_id,
+                        "workforce delegation failed at param persistence",
+                        vec![],
+                        e,
+                    );
+                }
+                t
+            }
             Err(e) => {
                 return AgentResult::failed(
                     agent_id,

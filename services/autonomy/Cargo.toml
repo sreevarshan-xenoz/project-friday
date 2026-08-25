@@ -20,3 +20,9 @@ chrono = { workspace = true }
 
 [dev-dependencies]
 friday-observability = { path = "../observability" }
+friday-agent-runtime = { path = "../agent-runtime" }
+friday-cognitive = { path = "../cognitive" }
+friday-actions = { path = "../action-runtime" }
+friday-planner = { path = "../../planner" }
+tokio = { workspace = true }
+async-trait.workspace = true

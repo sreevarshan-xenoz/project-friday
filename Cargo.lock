@@ -1154,15 +1154,21 @@ dependencies = [
 name = "friday-autonomy"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
+ "friday-actions",
+ "friday-agent-runtime",
  "friday-capabilities",
+ "friday-cognitive",
  "friday-core",
  "friday-goal-execution",
  "friday-lesson-store",
  "friday-observability",
+ "friday-planner",
  "friday-skills",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
