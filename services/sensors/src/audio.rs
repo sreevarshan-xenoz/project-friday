@@ -33,15 +33,14 @@
 //! completed turn (a few hundred bytes of metadata) enters the workspace —
 //! never raw PCM.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use friday_cognitive::workspace::Topic;
 use friday_cognitive::WorkspaceEvent;
 
-use crate::Sensor;
 use crate::whisper_cpp::write_wav;
+use crate::Sensor;
 
 /// PCM sample rate the sensor requests from WASAPI (and interprets synthetic
 /// frames at).
@@ -450,7 +449,8 @@ impl AudioSensor {
                 let path = std::env::temp_dir().join(format!(
                     "friday_dump_turn_{}_{}.wav",
                     std::process::id(),
-                    crate::whisper_cpp::WAV_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    crate::whisper_cpp::WAV_COUNTER
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
                 ));
                 if let Err(e) = write_wav(&path, &turn.samples, self.turns.sample_rate) {
                     tracing::warn!("failed to dump turn WAV: {e}");

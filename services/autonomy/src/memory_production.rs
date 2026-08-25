@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use friday_lesson_store::{
     build_lesson, CapabilityResolver, LessonKey, LessonProvenance, LessonStore, MatchPolicy,
-    PruneConfig, ProductionLesson,
+    ProductionLesson, PruneConfig,
 };
 
 use crate::memory::{Experience, Lesson, LessonCondition, MemoryStore};
@@ -25,10 +25,7 @@ fn now_ms() -> u64 {
 
 /// Translate a 7C condition into a production key. Returns `None` when the
 /// `action` cannot be resolved to a capability class (no fabrication).
-fn to_key(
-    condition: &LessonCondition,
-    resolver: &dyn CapabilityResolver,
-) -> Option<LessonKey> {
+fn to_key(condition: &LessonCondition, resolver: &dyn CapabilityResolver) -> Option<LessonKey> {
     let action_class = resolver.resolve(&condition.action)?;
     Some(LessonKey::new(
         action_class,
@@ -120,8 +117,8 @@ mod tests {
     use super::*;
     use crate::memory::{Experience, ExperienceExtractor};
     use crate::world::{PredictionOutcome, WorldSnapshot, WorldStateDiff};
-    use friday_lesson_store::{IdentityResolver, InMemoryLessonStore, RegistryCapabilityResolver};
     use friday_capabilities::CapabilityRegistry;
+    use friday_lesson_store::{IdentityResolver, InMemoryLessonStore, RegistryCapabilityResolver};
 
     fn lesson_store(resolver: Arc<dyn CapabilityResolver>) -> ProductionLessonStore {
         ProductionLessonStore::new(
@@ -160,11 +157,7 @@ mod tests {
         let extractor = ExperienceExtractor::default();
         // High-surprise severity (1 key < 5) ⇒ accumulate; push to corroboration.
         // Use a high-surprise action by forcing 5 signals so it admits immediately.
-        let big = mismatch_exp(
-            "git.commit",
-            &["a", "b", "c", "d", "e"],
-            1000,
-        );
+        let big = mismatch_exp("git.commit", &["a", "b", "c", "d", "e"], 1000);
         extractor.process(&adapter, &big);
         let cond = ExperienceExtractor::condition_of(&big);
         let found = adapter.find_similar_lesson(&cond);
@@ -211,12 +204,19 @@ mod tests {
         let extractor = ExperienceExtractor::new(5, 3);
         let moderate = mismatch_exp("git.commit", &["dirty_tree"], 1000);
         extractor.process(&adapter, &moderate);
-        assert!(adapter.find_similar_lesson(&ExperienceExtractor::condition_of(&moderate)).is_none());
+        assert!(adapter
+            .find_similar_lesson(&ExperienceExtractor::condition_of(&moderate))
+            .is_none());
         extractor.process(&adapter, &moderate);
-        assert!(adapter.find_similar_lesson(&ExperienceExtractor::condition_of(&moderate)).is_none());
+        assert!(adapter
+            .find_similar_lesson(&ExperienceExtractor::condition_of(&moderate))
+            .is_none());
         extractor.process(&adapter, &moderate);
         let found = adapter.find_similar_lesson(&ExperienceExtractor::condition_of(&moderate));
-        assert!(found.is_some(), "3rd corroborating error must admit a lesson");
+        assert!(
+            found.is_some(),
+            "3rd corroborating error must admit a lesson"
+        );
         assert_eq!(found.unwrap().support_count, 3);
     }
 }

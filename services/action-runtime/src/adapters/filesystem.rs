@@ -366,6 +366,7 @@ impl FilesystemAdapter {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn walk_search(
         dir: &Path,
         depth: usize,
@@ -395,7 +396,7 @@ impl FilesystemAdapter {
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
             let lower = name.to_lowercase();
-            let ext_ok = ext.map_or(true, |e| lower.ends_with(&format!(".{e}")));
+            let ext_ok = ext.is_none_or(|e| lower.ends_with(&format!(".{e}")));
             let terms_ok =
                 terms.is_empty() || terms.iter().all(|t| !t.is_empty() && lower.contains(&**t));
             let content_ok = match content {

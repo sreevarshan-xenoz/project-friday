@@ -69,7 +69,7 @@ async fn run_mcp_goal(text: &str, plan_json: &str) -> Run {
     // M8: register the MCP server as a first-class ActionAdapter under
     // `mcp:filesystem`. The real AgentKernel now routes `exec.action` for
     // `mcp:filesystem.read_file` to it — no shim, no CapabilitySource branching.
-    let mut kernel = friday_actions::runtime::AgentKernel::new();
+    let kernel = friday_actions::runtime::AgentKernel::new();
     kernel
         .register_mcp_server("filesystem", Box::new(client_side))
         .await
@@ -234,7 +234,7 @@ async fn mcp_server_disappears_mid_call_fails_cleanly() {
     register_server_capabilities("fs", std::slice::from_ref(&tool), &registry);
 
     let client_side = spawn_crashing_server().await;
-    let mut kernel = friday_actions::runtime::AgentKernel::new();
+    let kernel = friday_actions::runtime::AgentKernel::new();
     kernel
         .register_mcp_server("fs", Box::new(client_side))
         .await

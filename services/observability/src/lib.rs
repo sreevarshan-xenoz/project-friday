@@ -54,15 +54,16 @@ pub fn to_otel_span_id(id: &friday_core::trace::SpanId) -> SpanId {
 /// Map all strongly-typed `CognitiveTrace` fields to FRIDAY-namespaced
 /// OTel attributes. Provider-absent fields stay `None` (never fabricated).
 pub fn span_attributes(span: &CognitiveTrace) -> Vec<KeyValue> {
-    let mut attrs: Vec<KeyValue> = Vec::new();
-    attrs.push(KeyValue::new("friday.organ", span.organ.clone()));
-    attrs.push(KeyValue::new("friday.operation", span.operation.clone()));
-    attrs.push(KeyValue::new("friday.session_id", span.session_id.to_string()));
-    attrs.push(KeyValue::new("friday.goal_id", span.goal_id.to_string()));
-    attrs.push(KeyValue::new("friday.trace_id", span.trace_id.to_string()));
-    attrs.push(KeyValue::new("friday.span_id", span.span_id.to_string()));
-    attrs.push(KeyValue::new("friday.result", span.result.to_string()));
-    attrs.push(KeyValue::new("friday.trace_version", "1"));
+    let mut attrs: Vec<KeyValue> = vec![
+        KeyValue::new("friday.organ", span.organ.clone()),
+        KeyValue::new("friday.operation", span.operation.clone()),
+        KeyValue::new("friday.session_id", span.session_id.to_string()),
+        KeyValue::new("friday.goal_id", span.goal_id.to_string()),
+        KeyValue::new("friday.trace_id", span.trace_id.to_string()),
+        KeyValue::new("friday.span_id", span.span_id.to_string()),
+        KeyValue::new("friday.result", span.result.to_string()),
+        KeyValue::new("friday.trace_version", "1"),
+    ];
 
     if let Some(c) = span.confidence {
         attrs.push(KeyValue::new("friday.confidence", c as f64));
@@ -76,7 +77,10 @@ pub fn span_attributes(span: &CognitiveTrace) -> Vec<KeyValue> {
             format!("{:?}", v.status),
         ));
         if let Some(verifier) = &v.verifier {
-            attrs.push(KeyValue::new("friday.verification.verifier", verifier.clone()));
+            attrs.push(KeyValue::new(
+                "friday.verification.verifier",
+                verifier.clone(),
+            ));
         }
         if let Some(n) = v.evidence_count {
             attrs.push(KeyValue::new(
@@ -115,9 +119,7 @@ pub fn span_attributes(span: &CognitiveTrace) -> Vec<KeyValue> {
 pub fn status_for(span: &CognitiveTrace) -> Status {
     match span.result {
         ResultType::Failure => Status::error(Cow::Owned(
-            span.error
-                .clone()
-                .unwrap_or_else(|| "failure".to_string()),
+            span.error.clone().unwrap_or_else(|| "failure".to_string()),
         )),
         ResultType::Success => Status::Ok,
         _ => Status::Unset,
@@ -186,7 +188,10 @@ pub mod viewer;
 
 #[cfg(test)]
 mod tests {
-    use super::{export_span, span_attributes, status_for, OtelTraceCollector, to_otel_span_id, to_otel_trace_id};
+    use super::{
+        export_span, span_attributes, status_for, to_otel_span_id, to_otel_trace_id,
+        OtelTraceCollector,
+    };
     use friday_core::trace::{
         CognitiveTrace, GoalId, ModelUsage, ResultType, SessionId, SpanId as FridaySpanId, TraceId,
         VerificationInfo, VerificationStatus,
@@ -236,9 +241,7 @@ mod tests {
         assert!(keys.contains(&"friday.verification.evidence_count"));
         assert_eq!(status_for(&t), Status::Ok);
 
-        let failed = sample()
-            .with_result(ResultType::Failure)
-            .with_error("boom");
+        let failed = sample().with_result(ResultType::Failure).with_error("boom");
         assert!(
             matches!(status_for(&failed), Status::Error { .. }),
             "failure must map to OTel Error status"

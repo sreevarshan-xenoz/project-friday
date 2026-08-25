@@ -1,4 +1,4 @@
-﻿//! 7D skill compounding — hermetic, strict lesson -> skill promotion.
+//! 7D skill compounding — hermetic, strict lesson -> skill promotion.
 //!
 //! A Lesson (7C) is *knowledge*. A Skill is *executable behavior*. They are not
 //! interchangeable, so 7D has a much higher admission bar than 7C: a lesson only
@@ -266,7 +266,12 @@ impl SkillStore for SimpleSkillStore {
 
     fn strengthen(&self, trigger: &LessonCondition) {
         let mut skills = self.skills.lock().expect("skill store poisoned");
-        if let Some(id) = self.by_trigger.lock().expect("skill store poisoned").get(trigger) {
+        if let Some(id) = self
+            .by_trigger
+            .lock()
+            .expect("skill store poisoned")
+            .get(trigger)
+        {
             if let Some(sk) = skills.get_mut(id) {
                 sk.support_count += 1;
                 sk.confidence = (sk.confidence + 0.05).min(0.99);
@@ -277,7 +282,12 @@ impl SkillStore for SimpleSkillStore {
 
     fn weaken(&self, trigger: &LessonCondition) {
         let mut skills = self.skills.lock().expect("skill store poisoned");
-        if let Some(id) = self.by_trigger.lock().expect("skill store poisoned").get(trigger) {
+        if let Some(id) = self
+            .by_trigger
+            .lock()
+            .expect("skill store poisoned")
+            .get(trigger)
+        {
             if let Some(sk) = skills.get_mut(id) {
                 sk.failure_count += 1;
                 sk.confidence = (sk.confidence - 0.1).max(0.01);
@@ -295,7 +305,12 @@ impl SkillStore for SimpleSkillStore {
 
     fn disable(&self, trigger: &LessonCondition) {
         let mut skills = self.skills.lock().expect("skill store poisoned");
-        if let Some(id) = self.by_trigger.lock().expect("skill store poisoned").get(trigger) {
+        if let Some(id) = self
+            .by_trigger
+            .lock()
+            .expect("skill store poisoned")
+            .get(trigger)
+        {
             if let Some(sk) = skills.get_mut(id) {
                 sk.status = SkillStatus::Disabled;
             }
@@ -329,7 +344,12 @@ mod tests {
         }
     }
 
-    fn candidate(support: u64, verifications: u64, contradictions: u64, risk: RiskClass) -> SkillCandidate {
+    fn candidate(
+        support: u64,
+        verifications: u64,
+        contradictions: u64,
+        risk: RiskClass,
+    ) -> SkillCandidate {
         SkillCandidate {
             trigger: trigger(),
             trajectory: vec!["fallbackZ".to_string()],
@@ -418,7 +438,11 @@ mod tests {
         if let SkillAdmission::Promote(s) = ev.evaluate(&c2) {
             store.admit(s);
         }
-        assert_eq!(store.skill_count(), 1, "still exactly one skill per trigger");
+        assert_eq!(
+            store.skill_count(),
+            1,
+            "still exactly one skill per trigger"
+        );
     }
 
     // 7D.8: contradiction weakens, then disables (skill decay)
@@ -440,7 +464,10 @@ mod tests {
         assert!(store.find_applicable(&trigger()).is_some());
 
         store.weaken(&trigger()); // failure 3 > success 2 -> disabled
-        assert!(store.find_applicable(&trigger()).is_none(), "obsolete skill disabled");
+        assert!(
+            store.find_applicable(&trigger()).is_none(),
+            "obsolete skill disabled"
+        );
     }
 
     // 7D.9: full Lesson -> Candidate -> Skill promotion path

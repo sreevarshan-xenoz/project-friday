@@ -376,7 +376,8 @@ impl Plugin for PlanningEngine {
 
         // Emit the top-level planner span.
         let planning_span = SpanId::default();
-        let planning_trace = trace_ctx.trace(planning_span, "planner", "create_plan")
+        let planning_trace = trace_ctx
+            .trace(planning_span, "planner", "create_plan")
             .with_metadata(serde_json::json!({
                 "planner_kind": format!("{:?}", kind),
                 "capabilities_offered": caps_offered,
@@ -387,32 +388,56 @@ impl Plugin for PlanningEngine {
         let child_ctx = trace_ctx.child(planning_span);
 
         // The planner emits child spans (context, model call) via the tracer.
-        let plan_result = planner.create_plan(&intent, &ctx, self.tracer.as_ref(), &child_ctx).await;
+        let plan_result = planner
+            .create_plan(&intent, &ctx, self.tracer.as_ref(), &child_ctx)
+            .await;
         let (graph, validation_failures, fell_back, _usage, _llm_duration_ms) = match plan_result {
             Ok(result) => {
                 let elapsed_ms = start.elapsed().as_millis() as u64;
                 // Emit result span.
-                let mut result_trace = child_ctx.trace(SpanId::default(), "planner", "plan_result")
+                let mut result_trace = child_ctx
+                    .trace(SpanId::default(), "planner", "plan_result")
                     .with_result(ResultType::Success)
-                    .with_timing(chrono::Utc::now() - chrono::Duration::milliseconds(elapsed_ms as i64), elapsed_ms);
+                    .with_timing(
+                        chrono::Utc::now() - chrono::Duration::milliseconds(elapsed_ms as i64),
+                        elapsed_ms,
+                    );
                 if let Some(ref usage) = result.usage {
                     result_trace = result_trace.with_model_usage(usage.clone());
                 }
                 self.tracer.record(result_trace);
-                (result.graph, 0usize, false, result.usage, result.llm_duration_ms)
+                (
+                    result.graph,
+                    0usize,
+                    false,
+                    result.usage,
+                    result.llm_duration_ms,
+                )
             }
             Err(e) => {
                 tracing::error!(error = %e, "planning failed; falling back to rule planner");
                 let elapsed_ms = start.elapsed().as_millis() as u64;
-                let failure_trace = child_ctx.trace(SpanId::default(), "planner", "plan_result")
+                let failure_trace = child_ctx
+                    .trace(SpanId::default(), "planner", "plan_result")
                     .with_result(ResultType::Failure)
                     .with_error(e.to_string())
-                    .with_timing(chrono::Utc::now() - chrono::Duration::milliseconds(elapsed_ms as i64), elapsed_ms);
+                    .with_timing(
+                        chrono::Utc::now() - chrono::Duration::milliseconds(elapsed_ms as i64),
+                        elapsed_ms,
+                    );
                 self.tracer.record(failure_trace);
                 // Deterministic fallback so the goal is never stranded.
-                let fb = RulePlanner::new().create_plan(&intent, &ctx, self.tracer.as_ref(), &child_ctx).await;
+                let fb = RulePlanner::new()
+                    .create_plan(&intent, &ctx, self.tracer.as_ref(), &child_ctx)
+                    .await;
                 match fb {
-                    Ok(result) => (result.graph, count_validation_issues(&e), true, result.usage, result.llm_duration_ms),
+                    Ok(result) => (
+                        result.graph,
+                        count_validation_issues(&e),
+                        true,
+                        result.usage,
+                        result.llm_duration_ms,
+                    ),
                     Err(fe) => {
                         return Err(friday_core::FridayError::Internal(format!(
                             "planning failed: {fe}"
@@ -442,9 +467,9 @@ impl Plugin for PlanningEngine {
             success: true,
             // Propagate the child context of the planner span so a downstream
             // module can attach as a causal child of `create_plan`.
-            trace_context: Some(
-                friday_core::trace::TraceContext::from_context(&child_ctx.child(planning_span)),
-            ),
+            trace_context: Some(friday_core::trace::TraceContext::from_context(
+                &child_ctx.child(planning_span),
+            )),
         };
 
         Ok(vec![
@@ -472,6 +497,52 @@ pub fn count_validation_issues(e: &crate::planning::planners::PlanError) -> usiz
         crate::planning::planners::PlanError::Validation(issues) => issues.len(),
         _ => 0,
     }
+}
+
+/// Build a [`PlanningEngine`] wired to the given capability registry and an
+/// optional LLM backend (e.g. an adapter over `InferenceFabric`). When `backend`
+/// is `None` the engine is rule-only; when `Some`, the router uses the LLM
+/// planner for non-trivial intents.
+pub fn planning_engine_with(
+    registry: Arc<CapabilityRegistry>,
+    backend: Option<Box<dyn ReasoningBackend>>,
+    budget: ExecutionBudget,
+    policy: RiskPolicy,
+    workspace: WorkspaceContext,
+) -> PlanningEngine {
+    planning_engine_with_tracer(registry, backend, budget, policy, workspace, None)
+}
+
+/// Like [`planning_engine_with`] but with an optional cognitive tracer for
+/// emitting spans during planning operations.
+pub fn planning_engine_with_tracer(
+    registry: Arc<CapabilityRegistry>,
+    backend: Option<Box<dyn ReasoningBackend>>,
+    budget: ExecutionBudget,
+    policy: RiskPolicy,
+    workspace: WorkspaceContext,
+    tracer: Option<Arc<dyn TraceCollector>>,
+) -> PlanningEngine {
+    let rule = Arc::new(RulePlanner::new());
+    let llm = backend.map(|b| {
+        Arc::new(crate::planning::planners::llm::LlmPlanner::new(
+            b,
+            registry.clone(),
+            budget,
+            policy.clone(),
+        )) as Arc<dyn Planner>
+    });
+    let mut engine = PlanningEngine::with_router(
+        PlannerRouter::new(rule, llm),
+        registry,
+        budget,
+        policy,
+        workspace,
+    );
+    if let Some(tracer) = tracer {
+        engine = engine.with_tracer(tracer);
+    }
+    engine
 }
 
 #[cfg(test)]
@@ -681,50 +752,4 @@ mod tests {
         let ctx = engine.context(&intent).await;
         assert!(ctx.skills.is_none(), "rule goals must skip the skill pass");
     }
-}
-
-/// Build a [`PlanningEngine`] wired to the given capability registry and an
-/// optional LLM backend (e.g. an adapter over `InferenceFabric`). When `backend`
-/// is `None` the engine is rule-only; when `Some`, the router uses the LLM
-/// planner for non-trivial intents.
-pub fn planning_engine_with(
-    registry: Arc<CapabilityRegistry>,
-    backend: Option<Box<dyn ReasoningBackend>>,
-    budget: ExecutionBudget,
-    policy: RiskPolicy,
-    workspace: WorkspaceContext,
-) -> PlanningEngine {
-    planning_engine_with_tracer(registry, backend, budget, policy, workspace, None)
-}
-
-/// Like [`planning_engine_with`] but with an optional cognitive tracer for
-/// emitting spans during planning operations.
-pub fn planning_engine_with_tracer(
-    registry: Arc<CapabilityRegistry>,
-    backend: Option<Box<dyn ReasoningBackend>>,
-    budget: ExecutionBudget,
-    policy: RiskPolicy,
-    workspace: WorkspaceContext,
-    tracer: Option<Arc<dyn TraceCollector>>,
-) -> PlanningEngine {
-    let rule = Arc::new(RulePlanner::new());
-    let llm = backend.map(|b| {
-        Arc::new(crate::planning::planners::llm::LlmPlanner::new(
-            b,
-            registry.clone(),
-            budget,
-            policy.clone(),
-        )) as Arc<dyn Planner>
-    });
-    let mut engine = PlanningEngine::with_router(
-        PlannerRouter::new(rule, llm),
-        registry,
-        budget,
-        policy,
-        workspace,
-    );
-    if let Some(tracer) = tracer {
-        engine = engine.with_tracer(tracer);
-    }
-    engine
 }

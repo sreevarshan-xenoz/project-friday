@@ -60,7 +60,7 @@ async fn spawn_ws_mcp_server(tools: Vec<McpTool>) -> SocketAddr {
                     "error": { "code": -32601, "message": "method not found" }
                 }),
             };
-            let out = Message::Text(serde_json::to_string(&response).unwrap().into());
+            let out = Message::Text(serde_json::to_string(&response).unwrap());
             let _ = ws.send(out).await;
         }
     });
@@ -155,7 +155,7 @@ async fn websocket_auto_pong_on_server_ping() {
         let (sock, _) = listener.accept().await.unwrap();
         let mut ws = accept_async(sock).await.unwrap();
         // Send a ping immediately after the handshake.
-        ws.send(Message::Ping(vec![1, 2, 3].into())).await.unwrap();
+        ws.send(Message::Ping(vec![1, 2, 3])).await.unwrap();
         // Expect the client's automatic pong back.
         let got = ws.next().await;
         matches!(got, Some(Ok(Message::Pong(_))))

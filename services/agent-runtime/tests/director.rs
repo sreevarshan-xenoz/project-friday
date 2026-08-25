@@ -290,10 +290,9 @@ async fn assign_overrides_the_role_scope() {
 
 #[tokio::test]
 async fn child_security_scope_is_inherited_and_clamped() {
-    let seen: Arc<std::sync::Mutex<Vec<(String, Option<SecurityScope>)>>> =
-        Arc::new(std::sync::Mutex::new(Vec::new()));
-    let seen_driver: Arc<std::sync::Mutex<Vec<(String, Option<SecurityScope>)>>> =
-        Arc::clone(&seen);
+    type SeenLog = Vec<(String, Option<SecurityScope>)>;
+    let seen: Arc<std::sync::Mutex<SeenLog>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen_driver: Arc<std::sync::Mutex<SeenLog>> = Arc::clone(&seen);
     let driver: Arc<dyn AgentDriver> = Arc::new(FnDriver::new(move |ctx: AgentContext| {
         seen_driver
             .lock()
@@ -409,7 +408,7 @@ async fn director_spec_face_carries_params_and_cwd() {
 #[tokio::test]
 async fn verify_emits_hierarchical_trace_tree() {
     use friday_agent_runtime::{
-        CognitiveTraceContext, InMemoryTraceCollector, TraceId, SessionId, GoalId,
+        CognitiveTraceContext, GoalId, InMemoryTraceCollector, SessionId, TraceId,
     };
     use friday_core::trace::reconstruct_trace_tree;
     use uuid::Uuid;
@@ -442,10 +441,7 @@ async fn verify_emits_hierarchical_trace_tree() {
     let root = &tree[0];
     assert_eq!(root.trace.operation, "director_supervise");
     assert_eq!(root.trace.organ, "agent-director");
-    assert_eq!(
-        root.trace.result,
-        friday_core::trace::ResultType::Success
-    );
+    assert_eq!(root.trace.result, friday_core::trace::ResultType::Success);
 
     // Root has 3 agent_supervise children.
     assert_eq!(root.children.len(), 3, "expected 3 agent children");
@@ -454,14 +450,14 @@ async fn verify_emits_hierarchical_trace_tree() {
     for child in &root.children {
         assert_eq!(child.trace.operation, "agent_supervise");
         assert_eq!(child.trace.organ, "agent-director");
-        assert_eq!(
-            child.trace.result,
-            friday_core::trace::ResultType::Success
-        );
+        assert_eq!(child.trace.result, friday_core::trace::ResultType::Success);
 
         let meta = &child.trace.metadata;
         assert!(meta.get("agent.role").is_some(), "missing agent.role");
-        assert!(meta.get("agent.agent_id").is_some(), "missing agent.agent_id");
+        assert!(
+            meta.get("agent.agent_id").is_some(),
+            "missing agent.agent_id"
+        );
         assert!(meta.get("agent.goal").is_some(), "missing agent.goal");
         assert_eq!(meta["agent.verified"], true);
 
@@ -481,11 +477,11 @@ async fn verify_emits_hierarchical_trace_tree() {
                 .any(|c| c.trace.operation == "tool_call"),
             "expected a tool_call step child"
         );
-        assert_eq!(
-            gate.trace.result,
-            friday_core::trace::ResultType::Success
+        assert_eq!(gate.trace.result, friday_core::trace::ResultType::Success);
+        assert!(
+            gate.children.is_empty(),
+            "gate span should have no children"
         );
-        assert!(gate.children.is_empty(), "gate span should have no children");
     }
 
     // All spans share the same trace_id.
@@ -496,15 +492,21 @@ async fn verify_emits_hierarchical_trace_tree() {
     // Root has no parent; agent and gate spans do.
     assert!(root.trace.parent_span_id.is_none());
     for child in &root.children {
-        assert!(child.trace.parent_span_id.is_some(), "agent span missing parent");
-        assert_eq!(child.children[0].trace.parent_span_id, Some(child.trace.span_id));
+        assert!(
+            child.trace.parent_span_id.is_some(),
+            "agent span missing parent"
+        );
+        assert_eq!(
+            child.children[0].trace.parent_span_id,
+            Some(child.trace.span_id)
+        );
     }
 }
 
 #[tokio::test]
 async fn verify_failure_path_emits_failure_traces() {
     use friday_agent_runtime::{
-        CognitiveTraceContext, InMemoryTraceCollector, TraceId, SessionId, GoalId,
+        CognitiveTraceContext, GoalId, InMemoryTraceCollector, SessionId, TraceId,
     };
     use friday_core::trace::reconstruct_trace_tree;
     use uuid::Uuid;
@@ -673,18 +675,21 @@ async fn full_cognitive_episode_trace() {
     let tree = reconstruct_trace_tree(&traces);
 
     // Helpers ----------------------------------------------------------
-    let by_op = |op: &str| traces.iter().find(|t| t.operation == op).expect("missing span");
+    let by_op = |op: &str| {
+        traces
+            .iter()
+            .find(|t| t.operation == op)
+            .expect("missing span")
+    };
     let by_role = |role: &str| {
         traces
             .iter()
             .find(|t| {
-                t.operation == "agent_supervise"
-                    && t.metadata["agent.role"].as_str() == Some(role)
+                t.operation == "agent_supervise" && t.metadata["agent.role"].as_str() == Some(role)
             })
             .expect("missing agent span")
     };
-    let span_set: std::collections::HashSet<SpanId> =
-        traces.iter().map(|t| t.span_id).collect();
+    let span_set: std::collections::HashSet<SpanId> = traces.iter().map(|t| t.span_id).collect();
 
     // ── 1. Identity ──
     for t in &traces {
@@ -713,7 +718,11 @@ async fn full_cognitive_episode_trace() {
     let director_span = by_op("director_supervise");
     assert!(intent.parent_span_id.is_none(), "intent is the root");
     assert_eq!(planner.parent_span_id, Some(intent.span_id));
-    assert_eq!(director_span.parent_span_id, Some(planner.span_id), "director is child of planner");
+    assert_eq!(
+        director_span.parent_span_id,
+        Some(planner.span_id),
+        "director is child of planner"
+    );
 
     for role in ["researcher", "analyst", "verifier"] {
         let agent = by_role(role);
@@ -725,10 +734,7 @@ async fn full_cognitive_episode_trace() {
         // Its steps and verification gate parent to the agent.
         let gate = traces
             .iter()
-            .find(|t| {
-                t.operation == "verification_gate"
-                    && t.parent_span_id == Some(agent.span_id)
-            })
+            .find(|t| t.operation == "verification_gate" && t.parent_span_id == Some(agent.span_id))
             .expect("agent missing gate");
         assert_eq!(gate.parent_span_id, Some(agent.span_id));
         let step = traces
@@ -784,8 +790,7 @@ async fn full_cognitive_episode_trace() {
     let verifier_gate = traces
         .iter()
         .find(|t| {
-            t.operation == "verification_gate"
-                && t.parent_span_id == Some(verifier_agent.span_id)
+            t.operation == "verification_gate" && t.parent_span_id == Some(verifier_agent.span_id)
         })
         .expect("verifier missing gate");
     assert_eq!(
@@ -795,9 +800,7 @@ async fn full_cognitive_episode_trace() {
     );
     let verifier_step = traces
         .iter()
-        .find(|t| {
-            t.operation == "tool_call" && t.parent_span_id == Some(verifier_agent.span_id)
-        })
+        .find(|t| t.operation == "tool_call" && t.parent_span_id == Some(verifier_agent.span_id))
         .expect("verifier missing step");
     assert_eq!(
         verifier_step.result,

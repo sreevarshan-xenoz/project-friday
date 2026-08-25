@@ -547,7 +547,7 @@ mod tests {
         reg.register(Box::new(MockTool::success("cargo", "Build complete")));
         let planning = Planning::new();
         let evaluator = PlanEvaluator::new();
-        let mut engine = GoalEngine::new().with_registry(reg);
+        let engine = GoalEngine::new().with_registry(reg);
         let mut learning = LearningEngine::new();
 
         let goal = Goal::new("cargo build");
@@ -1058,7 +1058,7 @@ mod tests {
     async fn execute_produces_cognitive_trace() {
         let mut reg = ToolRegistry::new();
         reg.register(Box::new(MockTool::success("cargo", "ok")));
-        let mut engine = GoalEngine::new().with_registry(reg);
+        let engine = GoalEngine::new().with_registry(reg);
 
         let goal = Goal::new("cargo build");
         let action = Action::single("cargo build", Capability::ExecuteCommand, &goal.id);
@@ -1083,7 +1083,7 @@ mod tests {
     async fn cognitive_trace_records_timing() {
         let mut reg = ToolRegistry::new();
         reg.register(Box::new(MockTool::success("echo", "ok")));
-        let mut engine = GoalEngine::new().with_registry(reg);
+        let engine = GoalEngine::new().with_registry(reg);
 
         let goal = Goal::new("echo test");
         let action = Action::single("echo", Capability::ExecuteCommand, &goal.id);

@@ -569,7 +569,7 @@ async fn llm_planner_prompt_includes_ranked_bundled_skills() {
         .expect("register mock executor");
 
     let bus = friday.bus().clone();
-    let mut rx = bus.subscribe();
+    let rx = bus.subscribe();
     // "refactor" routes to the LLM planner (see PlannerRouter), and the goal
     // mentions git so the git skill ranks top.
     bus.publish(Event::new(
@@ -712,7 +712,7 @@ async fn skill_policy_gates_medium_risk_until_user_approval() {
         .expect("register mock executor");
 
     let bus = friday.bus().clone();
-    let mut rx = bus.subscribe();
+    let rx = bus.subscribe();
     bus.publish(Event::new(
         events::GOAL_RAW,
         "user",
@@ -744,7 +744,7 @@ async fn skill_policy_gates_medium_risk_until_user_approval() {
     // Phase 2: user approves the Docker skill (covers filesystem.write_file)
     // and resumes → the goal runs to completion.
     wiring.approvals.approve("docker");
-    let mut rx = bus.subscribe();
+    let rx = bus.subscribe();
     bus.publish(Event::new(
         events::GOAL_RESUME,
         "user",
@@ -790,7 +790,7 @@ async fn uncovered_capabilities_defer_to_allow_all() {
         .expect("register mock executor");
 
     let bus = friday.bus().clone();
-    let mut rx = bus.subscribe();
+    let rx = bus.subscribe();
     bus.publish(Event::new(
         events::GOAL_RAW,
         "user",
@@ -838,7 +838,7 @@ async fn high_risk_capability_pauses_even_with_approval() {
     wiring.approvals.approve("git");
 
     let bus = friday.bus().clone();
-    let mut rx = bus.subscribe();
+    let rx = bus.subscribe();
     bus.publish(Event::new(
         events::GOAL_RAW,
         "user",

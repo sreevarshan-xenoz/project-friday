@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use crate::intent::Intent;
 use crate::planning::planner::plan as rule_plan;
 use crate::planning::planners::context::PlanContext;
-use crate::planning::planners::planner_trait::{Planner, PlanResult};
+use crate::planning::planners::planner_trait::{PlanResult, Planner};
 use crate::planning::planners::PlanError;
 use crate::planning::planners::PlannerKind;
 use friday_core::trace::{CognitiveTraceContext, TraceCollector};

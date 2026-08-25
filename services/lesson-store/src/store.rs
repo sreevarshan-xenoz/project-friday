@@ -12,7 +12,7 @@ use std::sync::Mutex;
 
 use crate::error::LessonStoreError;
 use crate::types::{
-    recompute_confidence, LessonKey, LessonStatus, MatchPolicy, PruneConfig, ProductionLesson,
+    recompute_confidence, LessonKey, LessonStatus, MatchPolicy, ProductionLesson, PruneConfig,
 };
 
 const MS_PER_DAY: f64 = 86_400_000.0;
@@ -27,8 +27,11 @@ pub trait LessonStore: Send + Sync {
 
     /// Strengthen an existing lesson: bump support, refresh recency, recompute
     /// confidence. Returns the updated lesson, or `None` if the key is unknown.
-    fn strengthen(&self, key: &LessonKey, now_ms: u64)
-        -> Result<Option<ProductionLesson>, LessonStoreError>;
+    fn strengthen(
+        &self,
+        key: &LessonKey,
+        now_ms: u64,
+    ) -> Result<Option<ProductionLesson>, LessonStoreError>;
 
     /// Read-only retrieval of lessons matching `key` under `policy`. Never mutates.
     fn find_similar(
@@ -43,8 +46,7 @@ pub trait LessonStore: Send + Sync {
     fn get(&self, key: &LessonKey) -> Result<Option<ProductionLesson>, LessonStoreError>;
 
     /// Mark a lesson contradicted (and, if present, its counterpart). Deterministic.
-    fn mark_contradicted(&self, key: &LessonKey, with: &LessonKey)
-        -> Result<(), LessonStoreError>;
+    fn mark_contradicted(&self, key: &LessonKey, with: &LessonKey) -> Result<(), LessonStoreError>;
 
     /// Explicit maintenance: apply age/decay transitions. Returns the number of
     /// lessons whose status changed. Never called from `find_similar`.
@@ -110,8 +112,10 @@ impl LessonStore for InMemoryLessonStore {
         if lessons.contains_key(&lesson.key) {
             return Err(LessonStoreError::AlreadyExists(lesson.key.clone()));
         }
-        let age_days =
-            (lesson.last_observed_ms.saturating_sub(lesson.first_observed_ms)) as f64 / MS_PER_DAY;
+        let age_days = (lesson
+            .last_observed_ms
+            .saturating_sub(lesson.first_observed_ms)) as f64
+            / MS_PER_DAY;
         lesson.confidence = recompute_confidence(lesson.support_count, age_days, &self.config);
         lesson.status = LessonStatus::Active;
         lessons.insert(lesson.key.clone(), lesson);
@@ -129,8 +133,7 @@ impl LessonStore for InMemoryLessonStore {
             Some(l) => {
                 l.support_count += 1;
                 l.last_observed_ms = now_ms;
-                let age_days =
-                    (now_ms.saturating_sub(l.first_observed_ms)) as f64 / MS_PER_DAY;
+                let age_days = (now_ms.saturating_sub(l.first_observed_ms)) as f64 / MS_PER_DAY;
                 l.confidence = recompute_confidence(l.support_count, age_days, &self.config);
                 l.status = LessonStatus::Active; // a strengthen refreshes staleness
                 Ok(Some(l.clone()))
@@ -158,11 +161,7 @@ impl LessonStore for InMemoryLessonStore {
         Ok(lessons.get(key).cloned())
     }
 
-    fn mark_contradicted(
-        &self,
-        key: &LessonKey,
-        with: &LessonKey,
-    ) -> Result<(), LessonStoreError> {
+    fn mark_contradicted(&self, key: &LessonKey, with: &LessonKey) -> Result<(), LessonStoreError> {
         let mut lessons = self.lessons.lock().expect("lesson store poisoned");
         for k in [key, with] {
             if let Some(l) = lessons.get_mut(k) {
@@ -179,8 +178,7 @@ impl LessonStore for InMemoryLessonStore {
             if l.status == LessonStatus::Contradicted {
                 continue;
             }
-            let age_days =
-                (now_ms.saturating_sub(l.last_observed_ms)) as f64 / MS_PER_DAY;
+            let age_days = (now_ms.saturating_sub(l.last_observed_ms)) as f64 / MS_PER_DAY;
             let conf = recompute_confidence(l.support_count, age_days, config);
             l.confidence = conf;
             if conf < config.confidence_floor {
@@ -188,11 +186,11 @@ impl LessonStore for InMemoryLessonStore {
                     l.status = LessonStatus::Archived;
                     changed += 1;
                 }
-            } else if now_ms.saturating_sub(l.last_observed_ms) > config.ttl_ms {
-                if l.status != LessonStatus::Stale {
-                    l.status = LessonStatus::Stale;
-                    changed += 1;
-                }
+            } else if now_ms.saturating_sub(l.last_observed_ms) > config.ttl_ms
+                && l.status != LessonStatus::Stale
+            {
+                l.status = LessonStatus::Stale;
+                changed += 1;
             }
         }
         Ok(changed)
@@ -231,12 +229,11 @@ mod tests {
     fn subset_match_is_asymmetric() {
         let store = InMemoryLessonStore::new();
         let general = LessonKey::new("browser.search", ["network_unavailable"]);
-        store
-            .admit(lesson(general.clone(), 1, 1000, 1000))
-            .unwrap();
+        store.admit(lesson(general.clone(), 1, 1000, 1000)).unwrap();
 
         // stored {network_unavailable} ⊆ query {network_unavailable, browser_restart}
-        let specific_q = LessonKey::new("browser.search", ["network_unavailable", "browser_restart"]);
+        let specific_q =
+            LessonKey::new("browser.search", ["network_unavailable", "browser_restart"]);
         let hits = store
             .find_similar(&specific_q, MatchPolicy::Subset)
             .unwrap();
@@ -244,7 +241,9 @@ mod tests {
 
         // Reverse: stored {network_unavailable, browser_restart} is NOT ⊆ query.
         let specific = LessonKey::new("browser.search", ["network_unavailable", "browser_restart"]);
-        store.admit(lesson(specific.clone(), 1, 1000, 1000)).unwrap();
+        store
+            .admit(lesson(specific.clone(), 1, 1000, 1000))
+            .unwrap();
         let general_q = LessonKey::new("browser.search", ["network_unavailable"]);
         let hits = store.find_similar(&general_q, MatchPolicy::Subset).unwrap();
         assert_eq!(hits.len(), 1, "only the general lesson matches");
@@ -301,16 +300,16 @@ mod tests {
 
     #[test]
     fn prune_marks_stale_and_archived() {
-        let mut cfg = PruneConfig::default();
-        cfg.ttl_ms = 1000; // 1s TTL for the test
-        cfg.confidence_floor = 0.5;
+        let cfg = PruneConfig {
+            ttl_ms: 1000, // 1s TTL for the test
+            confidence_floor: 0.5,
+            ..PruneConfig::default()
+        };
         let store = InMemoryLessonStore::with_config(cfg.clone());
 
         // Old, low-support → should archive (confidence < floor).
         let archived = LessonKey::new("old", ["x"]);
-        store
-            .admit(lesson(archived.clone(), 1, 0, 0))
-            .unwrap();
+        store.admit(lesson(archived.clone(), 1, 0, 0)).unwrap();
         // Old but high support (>= implied by many strengthens) → stale only.
         let stale = LessonKey::new("stale", ["y"]);
         store.admit(lesson(stale.clone(), 5, 0, 0)).unwrap();
@@ -323,7 +322,10 @@ mod tests {
         let changed = store.prune_stale(864_000_000, &cfg).unwrap();
         assert_eq!(changed, 2);
 
-        let archived_l = store.get(&archived).unwrap().expect("archived lesson present");
+        let archived_l = store
+            .get(&archived)
+            .unwrap()
+            .expect("archived lesson present");
         assert_eq!(archived_l.status, LessonStatus::Archived);
         let stale_l = store.get(&stale).unwrap().expect("stale lesson present");
         assert_eq!(stale_l.status, LessonStatus::Stale);
@@ -338,13 +340,19 @@ mod tests {
         // query shares 1 of 3 → Jaccard 0.33; threshold 0.5 ⇒ no match.
         let q_low = LessonKey::new("a", ["b", "e", "f"]);
         assert_eq!(
-            store.find_similar(&q_low, MatchPolicy::Jaccard(0.5)).unwrap().len(),
+            store
+                .find_similar(&q_low, MatchPolicy::Jaccard(0.5))
+                .unwrap()
+                .len(),
             0
         );
         // query shares 2 of 3 → Jaccard 0.5 ⇒ match at threshold 0.5.
         let q_hi = LessonKey::new("a", ["b", "c", "e"]);
         assert_eq!(
-            store.find_similar(&q_hi, MatchPolicy::Jaccard(0.5)).unwrap().len(),
+            store
+                .find_similar(&q_hi, MatchPolicy::Jaccard(0.5))
+                .unwrap()
+                .len(),
             1
         );
     }

@@ -129,10 +129,7 @@ impl CognitiveMetrics {
     /// Fold one `CognitiveTrace` into the running metrics, applying the
     /// semantic rules so no counter is double-counted.
     pub fn record(&self, trace: &CognitiveTrace) {
-        let mut m = self
-            .inner
-            .lock()
-            .expect("cognitive metrics mutex poisoned");
+        let mut m = self.inner.lock().expect("cognitive metrics mutex poisoned");
         m.total_duration_ms = m.total_duration_ms.saturating_add(trace.duration_ms);
 
         match classify(trace) {
@@ -149,8 +146,7 @@ impl CognitiveMetrics {
             SpanClass::Model => {
                 m.model_calls += 1;
                 if let Some(u) = &trace.model_usage {
-                    m.total_tokens_in =
-                        m.total_tokens_in.saturating_add(u.tokens_in.unwrap_or(0));
+                    m.total_tokens_in = m.total_tokens_in.saturating_add(u.tokens_in.unwrap_or(0));
                     m.total_tokens_out =
                         m.total_tokens_out.saturating_add(u.tokens_out.unwrap_or(0));
                     if let Some(c) = u.cost_usd {
@@ -192,7 +188,10 @@ impl CognitiveMetrics {
             ("friday_goals", m.goals as f64),
             ("friday_successes", m.successes as f64),
             ("friday_failures", m.failures as f64),
-            ("friday_verification_failures", m.verification_failures as f64),
+            (
+                "friday_verification_failures",
+                m.verification_failures as f64,
+            ),
             ("friday_total_duration_ms", m.total_duration_ms as f64),
             ("friday_total_tokens_in", m.total_tokens_in as f64),
             ("friday_total_tokens_out", m.total_tokens_out as f64),
@@ -200,7 +199,10 @@ impl CognitiveMetrics {
             ("friday_model_calls", m.model_calls as f64),
             ("friday_tool_calls", m.tool_calls as f64),
             ("friday_agent_runs", m.agent_runs as f64),
-            ("friday_verification_attempts", m.verification_attempts as f64),
+            (
+                "friday_verification_attempts",
+                m.verification_attempts as f64,
+            ),
         ];
         let mut out = String::new();
         for (name, value) in rows {

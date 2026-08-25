@@ -309,7 +309,11 @@ fn explain_previous_outcome_returns_reflections() {
     store.save_reflection(&reflection).unwrap();
 
     let mut svc = ExperienceService::new();
-    svc.rebuild(&store.all_entries().unwrap(), &[], &[reflection.clone()]);
+    svc.rebuild(
+        &store.all_entries().unwrap(),
+        &[],
+        std::slice::from_ref(&reflection),
+    );
 
     let (outcome, reflections) = svc
         .explain_previous_outcome(goal_id)

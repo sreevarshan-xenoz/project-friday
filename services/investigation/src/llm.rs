@@ -285,9 +285,6 @@ mod tests {
                 last_prompt: std::sync::Mutex::new(None),
             }
         }
-        fn last_prompt(&self) -> Option<String> {
-            self.last_prompt.lock().unwrap().clone()
-        }
     }
 
     #[async_trait]

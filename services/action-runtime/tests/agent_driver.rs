@@ -56,6 +56,8 @@ fn git_manifest() -> &'static str {
 }
 
 struct Fixture {
+    /// Held only to keep the temp dir alive for the fixture's lifetime.
+    #[allow(dead_code)]
     skills_dir: TempDir,
     planner: Arc<PlannerCapabilityRegistry>,
     skills: Arc<SkillRegistry>,

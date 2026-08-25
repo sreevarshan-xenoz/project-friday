@@ -27,11 +27,11 @@
 //! fans out to OTel (6A/6B), `CognitiveMetrics` (6C) and the viewer (6D) — one
 //! semantic source, as in the observability design.
 
+#[cfg(test)]
+mod golden_8b;
 pub mod memory;
 pub mod memory_production;
 pub mod orchestrator;
-#[cfg(test)]
-mod golden_8b;
 pub mod scheduler;
 pub mod skill;
 pub mod skill_production;
@@ -42,7 +42,9 @@ pub mod world_production;
 #[cfg(test)]
 mod golden_8c;
 
-pub use orchestrator::{AutonomousTick, Executor, GoalSelector, ObservationSource, Planner, Verifier};
+pub use orchestrator::{
+    AutonomousTick, Executor, GoalSelector, ObservationSource, Planner, Verifier,
+};
 pub use tick::{
     CognitiveTick, ExecutionResult, NextAction, Observation, Plan, TickOutcome, TickTrigger,
 };

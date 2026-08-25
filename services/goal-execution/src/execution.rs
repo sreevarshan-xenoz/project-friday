@@ -529,7 +529,7 @@ mod tests {
     // ── Evidence lifecycle through the GoalEngine ───────────────────
 
     async fn run_goal(registry: ToolRegistry, verification: Verification) -> GoalReport {
-        let mut engine = GoalEngine::new()
+        let engine = GoalEngine::new()
             .with_registry(registry)
             .with_verification(verification);
         let goal = Goal::new("cargo build");
@@ -639,8 +639,8 @@ mod tests {
         let verification = Verification::new().register(Box::new(MockVerifier::fail("checksum")));
         let report = run_goal(reg, verification).await;
 
-        assert_eq!(report.verification.tool_success, true);
-        assert_eq!(report.verification.verified, false);
+        assert!(report.verification.tool_success);
+        assert!(!report.verification.verified);
         assert_eq!(report.execution_state, ExecutionState::Failed);
         assert!(!report.success());
         assert_eq!(
@@ -662,7 +662,7 @@ mod tests {
         // lifecycle stays Failed — the two axes are outcome vs epistemic.
         let mut reg = ToolRegistry::new();
         reg.register(Box::new(MockTool::failure("cargo", "intentional error")));
-        let mut engine = GoalEngine::new().with_registry(reg);
+        let engine = GoalEngine::new().with_registry(reg);
         let goal = Goal::new("expected failure");
         let action = Action::single("fail on purpose", Capability::ExecuteCommand, &goal.id);
         let exp = Expectation::failure("expected to fail");

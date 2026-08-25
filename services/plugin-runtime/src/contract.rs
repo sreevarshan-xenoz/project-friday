@@ -743,6 +743,15 @@ impl Default for Reputation {
     }
 }
 
+/// The contract every plugin must implement.
+pub trait Plugin: Send + Sync {
+    fn descriptor(&self) -> PluginDescriptor;
+    fn initialize(&mut self);
+    fn execute(&self, request: CapabilityRequest) -> CapabilityResult;
+    fn health(&self) -> PluginHealth;
+    fn shutdown(&mut self);
+}
+
 #[cfg(test)]
 mod planner_feedback_tests {
     use super::*;
@@ -896,13 +905,4 @@ mod planner_feedback_tests {
         let fb = PlannerFeedback::compare(&plan, &outcome);
         assert!(fb.timestamp_ms > 0);
     }
-}
-
-/// The contract every plugin must implement.
-pub trait Plugin: Send + Sync {
-    fn descriptor(&self) -> PluginDescriptor;
-    fn initialize(&mut self);
-    fn execute(&self, request: CapabilityRequest) -> CapabilityResult;
-    fn health(&self) -> PluginHealth;
-    fn shutdown(&mut self);
 }

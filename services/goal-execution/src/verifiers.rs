@@ -504,8 +504,8 @@ mod tests {
         let result = ToolResult::success("test result: FAILED. 1 failed; 0 passed;");
         let verified = verification.verify(&action, &result);
 
-        assert_eq!(verified.tool_success, true, "the tool itself succeeded");
-        assert_eq!(verified.verified, false, "the FAILED marker blocks success");
+        assert!(verified.tool_success, "the tool itself succeeded");
+        assert!(!verified.verified, "the FAILED marker blocks success");
         assert_eq!(
             ExecutionState::from_verified(&verified),
             ExecutionState::Failed,
@@ -548,7 +548,7 @@ mod tests {
         // A panicked run (common across languages) must not be verified.
         let result = ToolResult::success("thread 'main' panicked at src/main.rs:10");
         let verified = verification.verify(&action, &result);
-        assert_eq!(verified.verified, false);
+        assert!(!verified.verified);
         assert!(verified
             .checks
             .iter()
@@ -561,8 +561,8 @@ mod tests {
         let action = Action::single("run cargo test", crate::Capability::ExecuteCommand, "g1");
         let result = ToolResult::error("linker error");
         let verified = verification.verify(&action, &result);
-        assert_eq!(verified.verified, false);
-        assert_eq!(verified.tool_success, false);
+        assert!(!verified.verified);
+        assert!(!verified.tool_success);
         assert_eq!(
             ExecutionState::from_verified(&verified),
             ExecutionState::Failed

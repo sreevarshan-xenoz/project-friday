@@ -46,8 +46,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use friday_core::trace::{
-    CognitiveTraceContext, NoopTraceCollector, ResultType, SpanId, TraceCollector, TraceId,
-    SessionId, GoalId,
+    CognitiveTraceContext, GoalId, NoopTraceCollector, ResultType, SessionId, SpanId,
+    TraceCollector, TraceId,
 };
 
 use crate::driver::AgentDriver;
@@ -441,59 +441,53 @@ impl AgentDirector {
             agent_data.push((role, result, verdict, goal));
         }
 
-        let all_ok = !agent_data.is_empty()
-            && agent_data.iter().all(|(_, _, v, _)| v.is_ok());
+        let all_ok = !agent_data.is_empty() && agent_data.iter().all(|(_, _, v, _)| v.is_ok());
 
         // ── Phase 2: emit hierarchical traces ───────────────────────────
         // Root span — the director's oversight of this batch. Parented under
         // the supplied context (which may itself be a child of an upstream
         // span, e.g. the Planner).
         let root_span_id = SpanId::default();
-        let director_trace = ctx.trace(
-            root_span_id,
-            "agent-director",
-            "director_supervise",
-        )
-        .with_result(if all_ok {
-            ResultType::Success
-        } else {
-            ResultType::Failure
-        })
-        .with_timing(start, elapsed_ms)
-        .with_metadata(serde_json::json!({
-            "total_children": agent_data.len(),
-            "verified_children": agent_data.iter().filter(|(_, _, v, _)| v.is_ok()).count(),
-            "total_duration_ms": total_duration_ms,
-        }));
+        let director_trace = ctx
+            .trace(root_span_id, "agent-director", "director_supervise")
+            .with_result(if all_ok {
+                ResultType::Success
+            } else {
+                ResultType::Failure
+            })
+            .with_timing(start, elapsed_ms)
+            .with_metadata(serde_json::json!({
+                "total_children": agent_data.len(),
+                "verified_children": agent_data.iter().filter(|(_, _, v, _)| v.is_ok()).count(),
+                "total_duration_ms": total_duration_ms,
+            }));
         self.tracer.record(director_trace);
 
         // Per-agent child spans — each child is parented under the root.
         for (role, result, verdict, goal) in agent_data {
             let verified = verdict.is_ok();
             let agent_span_id = SpanId::default();
-            let mut agent_trace = ctx.child(root_span_id).trace(
-                agent_span_id,
-                "agent-director",
-                "agent_supervise",
-            )
-            .with_result(if result.state.is_success() && verified {
-                ResultType::Success
-            } else {
-                ResultType::Failure
-            })
-            .with_timing(
-                chrono::Utc::now() - chrono::Duration::milliseconds(result.duration_ms as i64),
-                result.duration_ms,
-            )
-            .with_metadata(serde_json::json!({
-                "agent.role": role.as_str(),
-                "agent.agent_id": result.agent_id,
-                "agent.goal": goal,
-                "agent.state": result.state.as_str(),
-                "agent.verified": verified,
-                "agent.verdict": verdict.as_ref().err().cloned().unwrap_or_default(),
-                "agent.step_count": result.steps.len(),
-            }));
+            let mut agent_trace = ctx
+                .child(root_span_id)
+                .trace(agent_span_id, "agent-director", "agent_supervise")
+                .with_result(if result.state.is_success() && verified {
+                    ResultType::Success
+                } else {
+                    ResultType::Failure
+                })
+                .with_timing(
+                    chrono::Utc::now() - chrono::Duration::milliseconds(result.duration_ms as i64),
+                    result.duration_ms,
+                )
+                .with_metadata(serde_json::json!({
+                    "agent.role": role.as_str(),
+                    "agent.agent_id": result.agent_id,
+                    "agent.goal": goal,
+                    "agent.state": result.state.as_str(),
+                    "agent.verified": verified,
+                    "agent.verdict": verdict.as_ref().err().cloned().unwrap_or_default(),
+                    "agent.step_count": result.steps.len(),
+                }));
             if let Some(ref err) = result.error {
                 agent_trace = agent_trace.with_error(err.clone());
             }
@@ -544,23 +538,21 @@ impl AgentDirector {
 
             // Verification gate child — parented under the agent span.
             let gate_span_id = SpanId::default();
-            let gate_trace = ctx.child(agent_span_id).trace(
-                gate_span_id,
-                "agent-director",
-                "verification_gate",
-            )
-            .with_result(if verified {
-                ResultType::Success
-            } else {
-                ResultType::Failure
-            })
-            .with_metadata(serde_json::json!({
-                "gate.role": role.as_str(),
-                "gate.agent_id": result.agent_id,
-                "gate.verified": verified,
-                "gate.verdict": verdict.as_ref().err().cloned().unwrap_or_default(),
-                "gate.result_state": result.state.as_str(),
-            }));
+            let gate_trace = ctx
+                .child(agent_span_id)
+                .trace(gate_span_id, "agent-director", "verification_gate")
+                .with_result(if verified {
+                    ResultType::Success
+                } else {
+                    ResultType::Failure
+                })
+                .with_metadata(serde_json::json!({
+                    "gate.role": role.as_str(),
+                    "gate.agent_id": result.agent_id,
+                    "gate.verified": verified,
+                    "gate.verdict": verdict.as_ref().err().cloned().unwrap_or_default(),
+                    "gate.result_state": result.state.as_str(),
+                }));
             self.tracer.record(gate_trace);
 
             entries.push(DirectorEntry {

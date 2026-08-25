@@ -1,4 +1,4 @@
-﻿//! 8A production seam: a thin adapter from the real `friday_goal_execution::WorldModel`
+//! 8A production seam: a thin adapter from the real `friday_goal_execution::WorldModel`
 //! to the autonomy [`WorldModel`](crate::world::WorldModel) trait.
 //!
 //! The adapter **translates types and delegates** — it contains no world-model
@@ -57,7 +57,11 @@ impl ProductionWorldModelAdapter {
 
     /// Inspect the live production state (tests / debugging).
     pub fn snapshot_state(&self) -> WorldState {
-        self.inner.lock().expect("world model poisoned").state().clone()
+        self.inner
+            .lock()
+            .expect("world model poisoned")
+            .state()
+            .clone()
     }
 
     /// Replace the production state (tests / debugging).
@@ -178,7 +182,9 @@ mod tests {
     // 8A.3: predict == observe ⇒ Correct (no second prediction engine, no clobber).
     #[test]
     fn matching_predict_and_observe_is_correct() {
-        let init = WorldState::new().with_variable("x", serde_json::json!(1)).with_network(true);
+        let init = WorldState::new()
+            .with_variable("x", serde_json::json!(1))
+            .with_network(true);
         let adapter = ProductionWorldModelAdapter::new(init);
 
         let predicted = adapter.predict("research project");
@@ -194,7 +200,9 @@ mod tests {
     // 8A.4: divergence between predict and observe ⇒ Mismatch (model records it).
     #[test]
     fn divergent_predict_and_observe_is_mismatch() {
-        let init = WorldState::new().with_variable("x", serde_json::json!(1)).with_network(true);
+        let init = WorldState::new()
+            .with_variable("x", serde_json::json!(1))
+            .with_network(true);
         let adapter = ProductionWorldModelAdapter::new(init);
 
         let predicted = adapter.predict("research project");

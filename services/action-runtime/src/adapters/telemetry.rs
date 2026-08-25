@@ -254,11 +254,15 @@ mod tests {
     fn confidence_ramps_with_samples() {
         let s = ProviderStats::default();
         assert_eq!(s.confidence(8), 0.0);
-        let mut s8 = ProviderStats::default();
-        s8.attempts = 8;
+        let s8 = ProviderStats {
+            attempts: 8,
+            ..ProviderStats::default()
+        };
         assert!((s8.confidence(8) - 0.5).abs() < 1e-6, "8/16 = 0.5");
-        let mut s24 = ProviderStats::default();
-        s24.attempts = 24;
+        let s24 = ProviderStats {
+            attempts: 24,
+            ..ProviderStats::default()
+        };
         assert!((s24.confidence(8) - 0.75).abs() < 1e-6, "24/32 = 0.75");
     }
 

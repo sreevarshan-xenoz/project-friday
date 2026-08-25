@@ -27,7 +27,7 @@ pub mod validation;
 pub use backend::{CompletionResult, PlanError, ReasoningBackend};
 pub use context::{AvailableCapability, PlanContext, RiskPolicy, WorkspaceContext};
 pub use llm::LlmPlanner;
-pub use planner_trait::{Planner, PlanResult};
+pub use planner_trait::{PlanResult, Planner};
 pub use router::{PlannerKind, PlannerRouter};
 pub use rule::RulePlanner;
 pub use validation::validate_task_graph;

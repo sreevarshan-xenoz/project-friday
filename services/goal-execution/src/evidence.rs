@@ -549,7 +549,7 @@ mod tests {
             &mut registry,
             &[Arc::new(friday_actions::GitAdapter::new())],
         );
-        let mut engine = GoalEngine::new().with_registry(registry);
+        let engine = GoalEngine::new().with_registry(registry);
         let goal = Goal::new("Check git status of the workspace repository");
         let ctx =
             ExecutionContext::for_goal(&goal.id).with_working_directory(dir.display().to_string());

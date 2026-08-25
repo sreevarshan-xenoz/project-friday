@@ -159,7 +159,12 @@ mod tests {
         let episode = TraceId::default();
         let root = sample(episode, "plan", ResultType::Success, None);
         let root_span_id = root.span_id;
-        let child = sample(episode, "web.search", ResultType::Success, Some(root_span_id));
+        let child = sample(
+            episode,
+            "web.search",
+            ResultType::Success,
+            Some(root_span_id),
+        );
 
         let expected_episode_trace = crate::to_otel_trace_id(&episode);
         let expected_root_span = crate::to_otel_span_id(&root_span_id);
@@ -175,7 +180,10 @@ mod tests {
         let spans: Vec<SpanData> = exporter.get_finished_spans().unwrap();
         assert_eq!(spans.len(), 2, "both spans should be exported");
 
-        let root_span = spans.iter().find(|s| s.name == "plan").expect("root exported");
+        let root_span = spans
+            .iter()
+            .find(|s| s.name == "plan")
+            .expect("root exported");
         let child_span = spans
             .iter()
             .find(|s| s.name == "web.search")
@@ -206,9 +214,13 @@ mod tests {
         assert_eq!(child_span.status, Status::Ok);
 
         // Attributes preserved (FRIDAY-namespaced).
-        let keys: Vec<&str> = root_span.attributes.iter().map(|kv| kv.key.as_str()).collect();
-        assert!(keys.iter().any(|k| *k == "friday.model"));
-        assert!(keys.iter().any(|k| *k == "friday.operation"));
+        let keys: Vec<&str> = root_span
+            .attributes
+            .iter()
+            .map(|kv| kv.key.as_str())
+            .collect();
+        assert!(keys.contains(&"friday.model"));
+        assert!(keys.contains(&"friday.operation"));
 
         // Timestamps preserved exactly.
         assert_eq!(root_span.start_time, expected_start);
@@ -227,15 +239,10 @@ mod tests {
                 &mut self,
                 _batch: Vec<SpanData>,
             ) -> std::pin::Pin<
-                Box<
-                    dyn std::future::Future<Output = Result<(), TraceError>>
-                        + Send
-                        + 'static,
-                >,
+                Box<dyn std::future::Future<Output = Result<(), TraceError>> + Send + 'static>,
             > {
                 Box::pin(async move {
-                    Err(TraceError::Other(Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Err(TraceError::Other(Box::new(std::io::Error::other(
                         "simulated telemetry export failure",
                     ))))
                 })
@@ -249,7 +256,12 @@ mod tests {
         // FRIDAY cognition must proceed regardless of telemetry health.
         let cognition = Arc::new(AtomicUsize::new(0));
         cognition.fetch_add(1, Ordering::SeqCst); // cognitive work
-        collector.record(sample(TraceId::default(), "plan", ResultType::Success, None)); // telemetry may fail
+        collector.record(sample(
+            TraceId::default(),
+            "plan",
+            ResultType::Success,
+            None,
+        )); // telemetry may fail
         cognition.fetch_add(1, Ordering::SeqCst); // continue despite failure
 
         assert_eq!(

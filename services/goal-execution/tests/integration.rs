@@ -11,7 +11,7 @@ async fn full_pipeline_with_learning() {
     let mut reg = ToolRegistry::new();
     reg.register(Box::new(MockTool::success("cargo", "Build complete")));
     let planning = Planning::new();
-    let mut engine = GoalEngine::new().with_registry(reg);
+    let engine = GoalEngine::new().with_registry(reg);
     let mut learning = LearningEngine::new();
 
     // 1. Goal
@@ -47,7 +47,7 @@ async fn verification_catches_false_success() {
     let mut reg = ToolRegistry::new();
     reg.register(Box::new(MockTool::success("download", "content")));
     let verification = Verification::new().register(Box::new(MockVerifier::fail("checksum")));
-    let mut engine = GoalEngine::new()
+    let engine = GoalEngine::new()
         .with_registry(reg)
         .with_verification(verification);
 
@@ -72,7 +72,7 @@ async fn verification_all_pass() {
     let verification = Verification::new()
         .register(Box::new(MockVerifier::pass("exit_code")))
         .register(Box::new(MockVerifier::pass("output_check")));
-    let mut engine = GoalEngine::new()
+    let engine = GoalEngine::new()
         .with_registry(reg)
         .with_verification(verification);
 
@@ -135,7 +135,7 @@ async fn goal_context_preserved() {
     let mut reg = ToolRegistry::new();
     reg.register(Box::new(MockTool::success("echo", "ok")));
     let planning = Planning::new();
-    let mut engine = GoalEngine::new().with_registry(reg);
+    let engine = GoalEngine::new().with_registry(reg);
 
     let goal = Goal::new("deploy").with_context("before release");
     let ctx = PlanningContext::new(goal.clone());
@@ -159,7 +159,7 @@ async fn goal_context_preserved() {
 async fn expectation_determines_outcome() {
     let mut reg = ToolRegistry::new();
     reg.register(Box::new(MockTool::failure("cargo", "compile error")));
-    let mut engine = GoalEngine::new().with_registry(reg);
+    let engine = GoalEngine::new().with_registry(reg);
 
     let goal = Goal::new("cargo build");
     let action = Action::single("cargo build", Capability::ExecuteCommand, &goal.id);
@@ -229,7 +229,7 @@ async fn execution_context_flows_to_tool() {
 
     let mut reg = ToolRegistry::new();
     reg.register(Box::new(ContextCapture { seen: seen_clone }));
-    let mut engine = GoalEngine::new().with_registry(reg);
+    let engine = GoalEngine::new().with_registry(reg);
 
     let goal = Goal::new("test context flow");
     let action = Action::single("test", Capability::ExecuteCommand, &goal.id);
@@ -293,7 +293,7 @@ fn world_model_records_transition_with_diff() {
 async fn goal_engine_produces_cognitive_trace() {
     let mut reg = ToolRegistry::new();
     reg.register(Box::new(MockTool::success("cargo", "Build OK")));
-    let mut engine = GoalEngine::new().with_registry(reg);
+    let engine = GoalEngine::new().with_registry(reg);
 
     let goal = Goal::new("cargo build");
     let action = Action::single("cargo build", Capability::ExecuteCommand, &goal.id);

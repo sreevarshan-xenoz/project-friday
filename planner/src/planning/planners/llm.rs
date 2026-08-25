@@ -15,13 +15,11 @@ use crate::experience::GoalOutcome;
 use crate::intent::Intent;
 use crate::planning::planners::backend::{PlanError, ReasoningBackend};
 use crate::planning::planners::context::{PlanContext, RiskPolicy};
-use crate::planning::planners::planner_trait::{Planner, PlanResult};
+use crate::planning::planners::planner_trait::{PlanResult, Planner};
 use crate::planning::planners::router::PlannerKind;
 use crate::planning::planners::validation::validate_task_graph;
 use crate::planning::TaskGraph;
-use friday_core::trace::{
-    CognitiveTraceContext, ResultType, SpanId, TraceCollector,
-};
+use friday_core::trace::{CognitiveTraceContext, ResultType, SpanId, TraceCollector};
 use friday_investigation::InvestigationResult;
 
 /// One task as the model is asked to emit it. Dependencies are by *index* into
@@ -338,7 +336,10 @@ impl Planner for LlmPlanner {
             .await
             .map_err(PlanError::Backend)?;
         let model_elapsed_ms = model_start.elapsed().as_millis() as u64;
-        tracing::debug!(raw_len = completion.content.len(), "llm: raw response received");
+        tracing::debug!(
+            raw_len = completion.content.len(),
+            "llm: raw response received"
+        );
 
         // Emit model call span with real usage data.
         let mut model_trace = trace_ctx

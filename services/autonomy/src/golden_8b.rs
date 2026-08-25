@@ -28,11 +28,11 @@ use serde_json::json;
 
 use friday_capabilities::CapabilityRegistry;
 use friday_core::trace::{
-    CognitiveTraceContext, InMemoryTraceCollector, ResultType, SpanId, TraceCollector,
-    reconstruct_trace_tree,
+    reconstruct_trace_tree, CognitiveTraceContext, InMemoryTraceCollector, ResultType, SpanId,
+    TraceCollector,
 };
 use friday_goal_execution::{
-    CausalCondition, CausalEdge, CausalEffect, Capability, WorldModel as ProdWorldModel, WorldState,
+    Capability, CausalCondition, CausalEdge, CausalEffect, WorldModel as ProdWorldModel, WorldState,
 };
 use friday_lesson_store::{
     LessonKey, LessonStore, MatchPolicy, PruneConfig, RedbLessonStore, RegistryCapabilityResolver,
@@ -147,7 +147,11 @@ impl Executor for FakeExecutor {
 
 struct VerifyPass;
 impl Verifier for VerifyPass {
-    fn verify(&self, _goal: &str, _result: &ExecutionResult) -> friday_core::trace::VerificationStatus {
+    fn verify(
+        &self,
+        _goal: &str,
+        _result: &ExecutionResult,
+    ) -> friday_core::trace::VerificationStatus {
         friday_core::trace::VerificationStatus::Passed
     }
 }
@@ -178,9 +182,8 @@ fn golden_8b_case_a_correct_prediction_admits_no_lesson() {
     let registry = Arc::new(make_registry());
     let resolver = Arc::new(RegistryCapabilityResolver::new(registry));
 
-    let store_arc = Arc::new(
-        RedbLessonStore::open(&tmp, PruneConfig::default()).expect("open redb"),
-    );
+    let store_arc =
+        Arc::new(RedbLessonStore::open(&tmp, PruneConfig::default()).expect("open redb"));
     let prod = ProductionLessonStore::new(
         store_arc.clone() as Arc<dyn LessonStore>,
         resolver,
@@ -215,7 +218,10 @@ fn golden_8b_case_a_correct_prediction_admits_no_lesson() {
     let hits = store_arc
         .find_similar(&none, MatchPolicy::Exact)
         .expect("query");
-    assert!(hits.is_empty(), "correct prediction must NOT admit a lesson");
+    assert!(
+        hits.is_empty(),
+        "correct prediction must NOT admit a lesson"
+    );
 }
 
 // ── Case B: repeated mismatch earns a lesson that survives a restart ───
@@ -226,9 +232,8 @@ fn golden_8b_case_b_mismatch_earns_lesson_and_persists_across_restart() {
     let registry = Arc::new(make_registry());
     let resolver = Arc::new(RegistryCapabilityResolver::new(registry.clone()));
 
-    let store_arc = Arc::new(
-        RedbLessonStore::open(&tmp, PruneConfig::default()).expect("open redb"),
-    );
+    let store_arc =
+        Arc::new(RedbLessonStore::open(&tmp, PruneConfig::default()).expect("open redb"));
     let prod = ProductionLessonStore::new(
         store_arc.clone() as Arc<dyn LessonStore>,
         resolver.clone(),
@@ -277,7 +282,11 @@ fn golden_8b_case_b_mismatch_earns_lesson_and_persists_across_restart() {
                 .is_empty()
         };
         if i < 2 {
-            assert!(!present(), "tick {}: not yet admitted (evidence not enough)", i);
+            assert!(
+                !present(),
+                "tick {}: not yet admitted (evidence not enough)",
+                i
+            );
         } else {
             assert!(present(), "tick {}: admitted once corroborated", i);
         }

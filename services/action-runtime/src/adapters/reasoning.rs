@@ -1071,6 +1071,9 @@ pub fn register_reasoning_capabilities(
 
 #[cfg(test)]
 mod tests {
+    // Live-browser tests intentionally hold a std Mutex across await to serialize
+    // real Chrome access; serialization is the point, not a bug.
+    #![allow(clippy::await_holding_lock)]
     use super::*;
 
     /// A fake provider with a fixed profile and canned reply — proves routing
@@ -1627,9 +1630,10 @@ mod tests {
     async fn preference_beats_score_within_capable_set() {
         // Grok with a qualification override: citations measured → promoted.
         let mut grok = realtime_expert();
-        let mut caps = ProviderCapabilities::default();
-        caps.citations = true;
-        grok.caps = Some(caps);
+        grok.caps = Some(ProviderCapabilities {
+            citations: true,
+            ..ProviderCapabilities::default()
+        });
 
         let router = ExpertRouter::new(vec![
             Box::new(code_expert()), // ChatGPT — no citations, excluded by gate
@@ -1980,9 +1984,10 @@ mod tests {
     #[tokio::test]
     async fn hard_gate_excludes_a_preferred_target_before_scoring() {
         let mut grok = realtime_expert();
-        let mut caps = ProviderCapabilities::default();
-        caps.browser = true; // qualification flipped Grok's vision off
-        grok.caps = Some(caps);
+        grok.caps = Some(ProviderCapabilities {
+            browser: true, // qualification flipped Grok's vision off
+            ..ProviderCapabilities::default()
+        });
 
         let router = ExpertRouter::new(vec![Box::new(grok), Box::new(deep_expert())]);
         let r = router
@@ -2358,7 +2363,7 @@ mod tests {
         assert_eq!(provider.transport(), Transport::Browser);
         let reply = provider.reason("Hello reasoning").await.expect("reason");
         assert!(reply.contains("Hello reasoning"), "reply: {reply}");
-        let _ = server.abort();
+        server.abort();
     }
 
     async fn serve_html(html: String) -> (String, tokio::task::JoinHandle<()>) {

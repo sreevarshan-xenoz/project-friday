@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use friday_core::Friday;
 use friday_core::trace::ModelUsage;
+use friday_core::Friday;
 use friday_planner::planning::planners::{CompletionResult, ReasoningBackend as PlannerBackend};
 use friday_planner::register_engines_with_llm;
 

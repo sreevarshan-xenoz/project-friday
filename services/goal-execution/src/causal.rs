@@ -619,7 +619,7 @@ mod tests {
             Some("clean")
         );
         assert!(
-            world.variables.get("commit_hash").is_none(),
+            !world.variables.contains_key("commit_hash"),
             "input world untouched"
         );
     }

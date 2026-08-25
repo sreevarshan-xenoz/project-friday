@@ -115,9 +115,11 @@ impl PredictionOutcome {
     pub fn verification(&self) -> Option<friday_core::trace::VerificationStatus> {
         match self {
             PredictionOutcome::Correct => Some(friday_core::trace::VerificationStatus::Passed),
-            PredictionOutcome::Mismatch { .. } => Some(friday_core::trace::VerificationStatus::Failed {
-                reason: "prediction mismatch".into(),
-            }),
+            PredictionOutcome::Mismatch { .. } => {
+                Some(friday_core::trace::VerificationStatus::Failed {
+                    reason: "prediction mismatch".into(),
+                })
+            }
             PredictionOutcome::Unknown => None,
         }
     }
@@ -164,7 +166,8 @@ pub trait WorldModel: Send + Sync {
 
     /// Compare `predicted` against `actual`, update the model's belief, and return
     /// the assessment. Unknown `actual` ⇒ `Unknown`, belief unchanged (deferred).
-    fn update(&self, predicted: &WorldSnapshot, actual: Option<WorldSnapshot>) -> PredictionOutcome;
+    fn update(&self, predicted: &WorldSnapshot, actual: Option<WorldSnapshot>)
+        -> PredictionOutcome;
 }
 
 /// A hermetic in-memory `WorldModel` used by 7B tests and as the reference
@@ -195,7 +198,10 @@ impl SimpleWorldModel {
 
     /// Inspect the correction audit trail (for assertions in tests).
     pub fn corrections(&self) -> Vec<WorldModelCorrection> {
-        self.corrections.lock().expect("world model poisoned").clone()
+        self.corrections
+            .lock()
+            .expect("world model poisoned")
+            .clone()
     }
 }
 
@@ -208,7 +214,11 @@ impl WorldModel for SimpleWorldModel {
         self.observed.clone()
     }
 
-    fn update(&self, predicted: &WorldSnapshot, actual: Option<WorldSnapshot>) -> PredictionOutcome {
+    fn update(
+        &self,
+        predicted: &WorldSnapshot,
+        actual: Option<WorldSnapshot>,
+    ) -> PredictionOutcome {
         let outcome = match &actual {
             None => PredictionOutcome::Unknown,
             Some(a) => {
@@ -296,7 +306,10 @@ mod tests {
 
         let corr = wm.corrections();
         assert_eq!(corr.len(), 1);
-        assert!(matches!(corr[0].outcome, PredictionOutcome::Mismatch { .. }));
+        assert!(matches!(
+            corr[0].outcome,
+            PredictionOutcome::Mismatch { .. }
+        ));
     }
 
     // ── 7B.3: unknown outcome ───────────────────────────────────────────

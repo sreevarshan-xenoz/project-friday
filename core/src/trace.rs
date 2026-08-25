@@ -392,11 +392,7 @@ impl CognitiveTrace {
     }
 
     /// Set model/provider info with token counts and cost.
-    pub fn with_model(
-        mut self,
-        model: impl Into<String>,
-        provider: impl Into<String>,
-    ) -> Self {
+    pub fn with_model(mut self, model: impl Into<String>, provider: impl Into<String>) -> Self {
         let existing = self.model_usage.take();
         self.model_usage = Some(ModelUsage {
             model: model.into(),
@@ -428,8 +424,14 @@ impl CognitiveTrace {
     pub fn with_tokens(mut self, tokens_in: u64, tokens_out: u64, cost_usd: f64) -> Self {
         let existing = self.model_usage.take();
         self.model_usage = Some(ModelUsage {
-            model: existing.as_ref().map(|m| m.model.clone()).unwrap_or_default(),
-            provider: existing.as_ref().map(|m| m.provider.clone()).unwrap_or_default(),
+            model: existing
+                .as_ref()
+                .map(|m| m.model.clone())
+                .unwrap_or_default(),
+            provider: existing
+                .as_ref()
+                .map(|m| m.provider.clone())
+                .unwrap_or_default(),
             tokens_in: Some(tokens_in),
             tokens_out: Some(tokens_out),
             cached_tokens: existing.as_ref().and_then(|m| m.cached_tokens),
@@ -531,7 +533,9 @@ impl CognitiveTrace {
 
     /// Get finish_reason, if set.
     pub fn finish_reason(&self) -> Option<&str> {
-        self.model_usage.as_ref().and_then(|m| m.finish_reason.as_deref())
+        self.model_usage
+            .as_ref()
+            .and_then(|m| m.finish_reason.as_deref())
     }
 
     /// Set cached token count.
@@ -644,14 +648,9 @@ impl CognitiveTraceContext {
         organ: impl Into<String>,
         operation: impl Into<String>,
     ) -> CognitiveTrace {
-        let mut trace = CognitiveTrace::new(
-            self.session_id,
-            self.goal_id,
-            span_id,
-            organ,
-            operation,
-        )
-        .with_trace_id(self.trace_id);
+        let mut trace =
+            CognitiveTrace::new(self.session_id, self.goal_id, span_id, organ, operation)
+                .with_trace_id(self.trace_id);
         if let Some(parent) = self.parent_span_id {
             trace = trace.with_parent_span(Some(parent));
         }
@@ -806,12 +805,7 @@ pub trait CognitiveTracer: Send + Sync {
 
     /// Start a new span, returning its ID.
     /// The caller is responsible for finishing the span.
-    fn start_span(
-        &self,
-        ctx: &CognitiveTraceContext,
-        organ: &str,
-        operation: &str,
-    ) -> SpanId {
+    fn start_span(&self, ctx: &CognitiveTraceContext, organ: &str, operation: &str) -> SpanId {
         let span_id = SpanId::default();
         let trace = ctx.trace(span_id, organ, operation);
         self.record(trace);
@@ -828,8 +822,12 @@ pub trait CognitiveTracer: Send + Sync {
         duration_ms: u64,
         result: ResultType,
     ) {
-        let trace = ctx.trace(span_id, organ, operation)
-            .with_timing(Utc::now() - chrono::Duration::milliseconds(duration_ms as i64), duration_ms)
+        let trace = ctx
+            .trace(span_id, organ, operation)
+            .with_timing(
+                Utc::now() - chrono::Duration::milliseconds(duration_ms as i64),
+                duration_ms,
+            )
             .with_result(result);
         self.record(trace);
     }
@@ -873,10 +871,7 @@ pub fn reconstruct_trace_tree(traces: &[CognitiveTrace]) -> Vec<TraceTreeNode> {
 
     for (i, t) in traces.iter().enumerate() {
         if let Some(parent_id) = t.parent_span_id {
-            children_of
-                .entry(parent_id)
-                .or_default()
-                .push(i);
+            children_of.entry(parent_id).or_default().push(i);
         } else {
             roots.push(i);
         }
@@ -887,7 +882,7 @@ pub fn reconstruct_trace_tree(traces: &[CognitiveTrace]) -> Vec<TraceTreeNode> {
         idx: usize,
         traces: &[CognitiveTrace],
         children_of: &HashMap<SpanId, Vec<usize>>,
-        by_span_id: &HashMap<SpanId, usize>,
+        _by_span_id: &HashMap<SpanId, usize>,
     ) -> TraceTreeNode {
         let trace = traces[idx].clone();
         let children = children_of
@@ -895,7 +890,7 @@ pub fn reconstruct_trace_tree(traces: &[CognitiveTrace]) -> Vec<TraceTreeNode> {
             .map(|child_indices| {
                 child_indices
                     .iter()
-                    .map(|&ci| build_tree(ci, traces, children_of, by_span_id))
+                    .map(|&ci| build_tree(ci, traces, children_of, _by_span_id))
                     .collect()
             })
             .unwrap_or_default();
@@ -1107,10 +1102,10 @@ mod tests {
         let s1 = SpanId::default();
         let s2 = SpanId::default();
 
-        let t1 = CognitiveTrace::new(session, goal, s1, "a", "op1")
-            .with_trace_id(TraceId::default());
-        let t2 = CognitiveTrace::new(session, goal, s2, "b", "op2")
-            .with_trace_id(TraceId::default());
+        let t1 =
+            CognitiveTrace::new(session, goal, s1, "a", "op1").with_trace_id(TraceId::default());
+        let t2 =
+            CognitiveTrace::new(session, goal, s2, "b", "op2").with_trace_id(TraceId::default());
 
         let result = validate_trace_hierarchy(&[t1, t2]);
         assert!(result.is_err());
@@ -1189,13 +1184,17 @@ mod tests {
         // ── 1. Goal Resolution (root span) ──
         let goal_span = SpanId::default();
         let goal_trace = ctx.trace(goal_span, "goal", "resolve");
-        assert!(goal_trace.parent_span_id.is_none(), "root must have no parent");
+        assert!(
+            goal_trace.parent_span_id.is_none(),
+            "root must have no parent"
+        );
         TraceCollector::record(&collector, goal_trace);
 
         // ── 2. Intent Classification ──
         let intent_ctx = ctx.child(goal_span);
         let intent_span = SpanId::default();
-        let intent_trace = intent_ctx.trace(intent_span, "intent", "classify")
+        let intent_trace = intent_ctx
+            .trace(intent_span, "intent", "classify")
             .with_result(ResultType::Success)
             .with_confidence(0.97);
         assert_eq!(intent_trace.parent_span_id, Some(goal_span));
@@ -1204,7 +1203,8 @@ mod tests {
         // ── 3. Planning ──
         let plan_ctx = intent_ctx.child(intent_span);
         let plan_span = SpanId::default();
-        let plan_trace = plan_ctx.trace(plan_span, "planner", "create_plan")
+        let plan_trace = plan_ctx
+            .trace(plan_span, "planner", "create_plan")
             .with_model("openrouter/gpt-4o", "openrouter")
             .with_tokens(1200, 340, 0.008)
             .with_result(ResultType::Success);
@@ -1214,7 +1214,8 @@ mod tests {
         // ── 4. Model Call (child of planning) ──
         let model_ctx = plan_ctx.child(plan_span);
         let model_span = SpanId::default();
-        let model_trace = model_ctx.trace(model_span, "planner", "llm_call")
+        let model_trace = model_ctx
+            .trace(model_span, "planner", "llm_call")
             .with_model("gpt-4o", "openai")
             .with_tokens(2400, 890, 0.015)
             .with_result(ResultType::Success)
@@ -1225,7 +1226,8 @@ mod tests {
         // ── 5. Agent Execution ──
         let agent_ctx = plan_ctx.child(plan_span);
         let agent_span = SpanId::default();
-        let agent_trace = agent_ctx.trace(agent_span, "agents", "execute")
+        let agent_trace = agent_ctx
+            .trace(agent_span, "agents", "execute")
             .with_result(ResultType::Success);
         assert_eq!(agent_trace.parent_span_id, Some(plan_span));
         TraceCollector::record(&collector, agent_trace);
@@ -1233,7 +1235,8 @@ mod tests {
         // ── 6. Tool Call (child of agent) ──
         let tool_ctx = agent_ctx.child(agent_span);
         let tool_span = SpanId::default();
-        let tool_trace = tool_ctx.trace(tool_span, "web", "search")
+        let tool_trace = tool_ctx
+            .trace(tool_span, "web", "search")
             .with_result(ResultType::Success)
             .with_metadata(serde_json::json!({"query": "Rust async 2026"}));
         assert_eq!(tool_trace.parent_span_id, Some(agent_span));
@@ -1242,7 +1245,8 @@ mod tests {
         // ── 7. Verification ──
         let verify_ctx = plan_ctx.child(plan_span);
         let verify_span = SpanId::default();
-        let verify_trace = verify_ctx.trace(verify_span, "verification", "verify")
+        let verify_trace = verify_ctx
+            .trace(verify_span, "verification", "verify")
             .with_verification(VerificationStatus::Passed)
             .with_result(ResultType::Success);
         assert_eq!(verify_trace.parent_span_id, Some(plan_span));
@@ -1281,7 +1285,11 @@ mod tests {
 
         let intent_subtree = &root.children[0];
         assert_eq!(intent_subtree.trace.operation, "classify");
-        assert_eq!(intent_subtree.children.len(), 1, "plan subtree under intent");
+        assert_eq!(
+            intent_subtree.children.len(),
+            1,
+            "plan subtree under intent"
+        );
 
         // Find the planning subtree.
         let plan_subtree = &intent_subtree.children[0];
@@ -1325,10 +1333,14 @@ mod tests {
         // 7. Duration was captured.
         assert!(model_subtree.trace.duration_ms > 0);
 
-        println!("Full episode reconstructed from {} trace records:", all_traces.len());
+        println!(
+            "Full episode reconstructed from {} trace records:",
+            all_traces.len()
+        );
         println!("  trace_id = {}", trace_id);
         for t in &all_traces {
-            let parent = t.parent_span_id
+            let parent = t
+                .parent_span_id
                 .map(|p| p.to_string())
                 .unwrap_or_else(|| "none".to_string());
             println!(

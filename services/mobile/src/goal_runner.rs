@@ -2049,20 +2049,22 @@ mod tests {
     fn completed_payload_carries_channels_and_served_route() {
         use friday_goal_execution::{EvidenceActionRecord, EvidenceTrail, ExecutionState};
 
-        let mut report = ExecutiveReport::default();
-        report.plan_executed = true;
-        report.evidence_trail = EvidenceTrail {
-            goal: "Check the git status of the workspace repository".into(),
-            records: vec![EvidenceActionRecord {
-                step: 0,
-                instruction: "gather evidence: git (git.status)".into(),
-                capability: "git.status".into(),
-                channel: "git".into(),
-                execution_state: ExecutionState::Verified,
-                verified: true,
-                tool_success: true,
-                duration_ms: 4,
-            }],
+        let report = ExecutiveReport {
+            plan_executed: true,
+            evidence_trail: EvidenceTrail {
+                goal: "Check the git status of the workspace repository".into(),
+                records: vec![EvidenceActionRecord {
+                    step: 0,
+                    instruction: "gather evidence: git (git.status)".into(),
+                    capability: "git.status".into(),
+                    channel: "git".into(),
+                    execution_state: ExecutionState::Verified,
+                    verified: true,
+                    tool_success: true,
+                    duration_ms: 4,
+                }],
+            },
+            ..ExecutiveReport::default()
         };
 
         // The fabric served a model → provider/model + strategy=llm.
@@ -2101,14 +2103,16 @@ mod tests {
     fn completed_payload_carries_the_goal_result() {
         use friday_goal_execution::{GoalResult, ToolResult};
 
-        let mut report = ExecutiveReport::default();
-        report.plan_executed = true;
-        report.result = Some(
-            GoalResult::from_tool_result(&ToolResult::success(
-                "Here are the files in the project:\n- Cargo.toml\n- frontend/\n- services/",
-            ))
-            .with_tool("filesystem"),
-        );
+        let report = ExecutiveReport {
+            plan_executed: true,
+            result: Some(
+                GoalResult::from_tool_result(&ToolResult::success(
+                    "Here are the files in the project:\n- Cargo.toml\n- frontend/\n- services/",
+                ))
+                .with_tool("filesystem"),
+            ),
+            ..ExecutiveReport::default()
+        };
 
         let p = completed_payload("List the files in this project", "id-3", &report, None);
         let result = p["result"].as_object().expect("result object");

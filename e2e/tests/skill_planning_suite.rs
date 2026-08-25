@@ -180,7 +180,7 @@ async fn skill_aware_planner_plans_through_skills_across_suite() {
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let repo_root = repo
         .canonicalize()
-        .unwrap_or_else(|_| repo)
+        .unwrap_or(repo)
         .display()
         .to_string()
         .replace("\\", "/");

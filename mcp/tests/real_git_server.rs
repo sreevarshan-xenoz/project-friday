@@ -111,12 +111,12 @@ async fn real_git_server_connect_initialize_discover() {
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
 
     // The Git MCP server exposes these tools (subset we care about for M10).
-    assert!(names.iter().any(|n| *n == "git_status"), "tools: {names:?}");
-    assert!(names.iter().any(|n| *n == "git_add"), "tools: {names:?}");
-    assert!(names.iter().any(|n| *n == "git_commit"), "tools: {names:?}");
-    assert!(names.iter().any(|n| *n == "git_diff"), "tools: {names:?}");
-    assert!(names.iter().any(|n| *n == "git_log"), "tools: {names:?}");
-    assert!(names.iter().any(|n| *n == "git_branch"), "tools: {names:?}");
+    assert!(names.contains(&"git_status"), "tools: {names:?}");
+    assert!(names.contains(&"git_add"), "tools: {names:?}");
+    assert!(names.contains(&"git_commit"), "tools: {names:?}");
+    assert!(names.contains(&"git_diff"), "tools: {names:?}");
+    assert!(names.contains(&"git_log"), "tools: {names:?}");
+    assert!(names.contains(&"git_branch"), "tools: {names:?}");
 
     std::fs::remove_dir_all(&repo).ok();
 }

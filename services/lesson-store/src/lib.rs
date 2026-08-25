@@ -27,6 +27,6 @@ pub use redb_store::RedbLessonStore;
 pub use resolver::{CapabilityResolver, IdentityResolver, RegistryCapabilityResolver};
 pub use store::{InMemoryLessonStore, LessonStore};
 pub use types::{
-    build_lesson, LessonKey, LessonProvenance, LessonStatus, MatchPolicy, PruneConfig,
-    ProductionLesson,
+    build_lesson, LessonKey, LessonProvenance, LessonStatus, MatchPolicy, ProductionLesson,
+    PruneConfig,
 };

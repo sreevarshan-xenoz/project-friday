@@ -154,7 +154,10 @@ pub trait Provider: Send + Sync {
         require_json: bool,
     ) -> Result<ProviderResponse, String> {
         let content = self.complete(model_id, prompt, require_json).await?;
-        Ok(ProviderResponse { content, usage: None })
+        Ok(ProviderResponse {
+            content,
+            usage: None,
+        })
     }
 
     async fn check_health(&self) -> bool;
@@ -579,8 +582,6 @@ impl Provider for OmniRouteProvider {
         Ok(ProviderResponse { content, usage })
     }
 }
-
-/// Telemetry metrics for each request made through the Inference Fabric.
 
 /// Extract usage metadata from an OpenAI-compatible JSON response.
 /// Returns `None` if the response doesn't contain a `usage` object.
@@ -2154,10 +2155,7 @@ impl InferenceFabric {
     }
 
     /// Requirement-driven completion that returns usage metadata.
-    pub async fn complete_with_usage(
-        &self,
-        prompt: &str,
-    ) -> Result<ProviderResponse, String> {
+    pub async fn complete_with_usage(&self, prompt: &str) -> Result<ProviderResponse, String> {
         let request_id = uuid::Uuid::new_v4().to_string();
         tracing::info!(
             "[Inference Request {}] Starting completion routing (with usage)...",

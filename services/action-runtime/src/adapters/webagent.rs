@@ -1215,6 +1215,9 @@ pub fn register_webagent_capabilities(
 
 #[cfg(test)]
 mod tests {
+    // Live-browser tests intentionally hold a std Mutex across await to serialize
+    // real Chrome access; serialization is the point, not a bug.
+    #![allow(clippy::await_holding_lock)]
     use super::*;
 
     #[test]
@@ -1647,7 +1650,7 @@ mod tests {
             "output: {}",
             res.output
         );
-        let _ = server.abort();
+        server.abort();
     }
 
     /// Live browser integration for the generic adapter (headless Chrome
@@ -1694,7 +1697,7 @@ mod tests {
             "got: {}",
             resp.text
         );
-        let _ = server.abort();
+        server.abort();
     }
 
     /// Live browser integration for the Grok adapter: the local echo page's
@@ -1734,7 +1737,7 @@ mod tests {
         let resp = agent.read_response().await.expect("read response");
         assert_eq!(resp.title, "Echo");
         assert!(resp.text.contains("Hello Grok echo"), "got: {}", resp.text);
-        let _ = server.abort();
+        server.abort();
     }
 
     /// Live browser integration for the Gemini adapter (same local echo page;
@@ -1777,7 +1780,7 @@ mod tests {
             "got: {}",
             resp.text
         );
-        let _ = server.abort();
+        server.abort();
     }
 
     /// Live browser integration for the Claude adapter (same local echo page;
@@ -1820,7 +1823,7 @@ mod tests {
             "got: {}",
             resp.text
         );
-        let _ = server.abort();
+        server.abort();
     }
 
     /// Live browser integration for the Perplexity adapter (same local echo
@@ -1865,7 +1868,7 @@ mod tests {
             "got: {}",
             resp.text
         );
-        let _ = server.abort();
+        server.abort();
     }
 
     /// Minimal static HTTP server for the browser test (same pattern as the

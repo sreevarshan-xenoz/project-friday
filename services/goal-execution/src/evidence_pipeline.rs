@@ -727,8 +727,8 @@ mod tests {
         let verifier = EvidenceVerifier::new();
         let result = ToolResult::error("web.search unavailable");
         let verified = verifier.verify(&evidence_action(), &result);
-        assert_eq!(verified.tool_success, false);
-        assert_eq!(verified.verified, false);
+        assert!(!verified.tool_success);
+        assert!(!verified.verified);
         assert_eq!(
             ExecutionState::from_verified(&verified),
             ExecutionState::Failed

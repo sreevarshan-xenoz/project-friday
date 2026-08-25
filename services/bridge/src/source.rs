@@ -24,7 +24,10 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use friday_actions::{AgentKernel, GitAdapter, WebAgentAdapter};
-use friday_agent_runtime::{AgentDirector, CognitiveTraceContext, GoalId, InMemoryTraceCollector, SessionId, SpanId, TraceCollector, TraceId};
+use friday_agent_runtime::{
+    AgentDirector, CognitiveTraceContext, GoalId, InMemoryTraceCollector, SessionId, SpanId,
+    TraceCollector, TraceId,
+};
 use friday_cognitive::{
     ActionExecution, ActionVerifier, EngineId, GlobalWorkspace, TickAction, Topic,
 };
@@ -837,7 +840,7 @@ impl RuntimeSource for DemoRuntimeSource {
                 self.run_cycle(&mut st.executive).await;
                 st.started = true;
             }
-            let record = make_record(self.store.total_appended() as u64, &mut self.rng);
+            let record = make_record(self.store.total_appended(), &mut self.rng);
             self.store.append(Arc::new(record));
         }
 
@@ -924,8 +927,7 @@ impl LiveRuntimeSource {
         let live_trace_id = TraceId::default();
         let live_session = SessionId::default();
         let live_goal = GoalId::default();
-        let intent_ctx =
-            CognitiveTraceContext::for_goal(live_trace_id, live_session, live_goal);
+        let intent_ctx = CognitiveTraceContext::for_goal(live_trace_id, live_session, live_goal);
         let intent_span = SpanId::default();
         trace_collector.record(intent_ctx.trace(intent_span, "intent", "live_autonomy"));
         let director_ctx = intent_ctx.child(intent_span);

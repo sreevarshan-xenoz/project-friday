@@ -49,8 +49,8 @@ pub use spec::{
 // Re-export trace types from friday-core so consumers of agent-runtime
 // can construct CognitiveTraceContext without a direct friday-core dependency.
 pub use friday_core::trace::{
-    CognitiveTraceContext, InMemoryTraceCollector, NoopTraceCollector, ResultType, SpanId,
-    TraceCollector, TraceId, SessionId, GoalId,
+    CognitiveTraceContext, GoalId, InMemoryTraceCollector, NoopTraceCollector, ResultType,
+    SessionId, SpanId, TraceCollector, TraceId,
 };
 pub use workforce::{
     BoardNote, BoardTask, InMemoryWorkforceStore, JsonWorkforceStore, TaskOutcome, TaskStatus,

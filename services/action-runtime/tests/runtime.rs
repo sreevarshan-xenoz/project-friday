@@ -299,7 +299,7 @@ async fn mcp_write_is_gated_by_unified_permission() {
     let (transport, _child) = friday_mcp::transport::stdio_transport_for(command, &args)
         .expect("spawn real filesystem MCP server");
 
-    let mut kernel = AgentKernel::new()
+    let kernel = AgentKernel::new()
         .with_permission(PermissionEngine::new().deny_substring("mcp:filesystem.write_file"));
     kernel
         .register_mcp_server("filesystem", transport)

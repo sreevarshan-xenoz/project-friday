@@ -714,6 +714,9 @@ pub(crate) static BROWSER_LIVE: std::sync::Mutex<()> = std::sync::Mutex::new(())
 
 #[cfg(test)]
 mod tests {
+    // Live-browser tests intentionally hold a std Mutex across await to serialize
+    // real Chrome access; serialization is the point, not a bug.
+    #![allow(clippy::await_holding_lock)]
     use super::*;
 
     fn adapter() -> BrowserAdapter {
@@ -902,7 +905,7 @@ mod tests {
             .await;
         assert!(!res.success, "typing into a password field must be refused");
         assert!(res.error.unwrap().contains("password"), "unexpected error");
-        let _ = server.abort();
+        server.abort();
     }
 
     /// Live browser integration (headless Chrome required): open a local page,
@@ -980,7 +983,7 @@ mod tests {
         assert!(res.success, "screenshot failed: {:?}", res.error);
         assert!(res.output["bytes"].as_u64().unwrap() > 0);
         let _ = std::fs::remove_file(&shot);
-        let _ = server.abort();
+        server.abort();
     }
 
     /// Live browser integration (#12-E): a document redirect that lands on an

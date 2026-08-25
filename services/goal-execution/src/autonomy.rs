@@ -1202,7 +1202,7 @@ mod tests {
     #[tokio::test]
     async fn director_executor_full_path_emits_trace_hierarchy() {
         use friday_agent_runtime::{
-            CognitiveTraceContext, InMemoryTraceCollector, TraceId, SessionId, GoalId,
+            CognitiveTraceContext, GoalId, InMemoryTraceCollector, SessionId, TraceId,
         };
         use friday_cognitive::trace::reconstruct_trace_tree;
         use uuid::Uuid;
@@ -1239,7 +1239,10 @@ mod tests {
 
         // Assert trace hierarchy exists.
         let traces = collector.traces().clone();
-        assert!(!traces.is_empty(), "expected traces from full executor path");
+        assert!(
+            !traces.is_empty(),
+            "expected traces from full executor path"
+        );
 
         let tree = reconstruct_trace_tree(&traces);
 
@@ -1276,7 +1279,10 @@ mod tests {
             .iter()
             .find(|c| c.trace.operation == "tool_call")
             .expect("expected a tool_call step child");
-        assert_eq!(tool.trace.metadata["step.capability"], "filesystem.create_target");
+        assert_eq!(
+            tool.trace.metadata["step.capability"],
+            "filesystem.create_target"
+        );
 
         // All spans share the same trace_id.
         for t in &traces {
@@ -1292,7 +1298,7 @@ mod tests {
     #[tokio::test]
     async fn director_executor_failure_path_emits_failure_traces() {
         use friday_agent_runtime::{
-            CognitiveTraceContext, InMemoryTraceCollector, TraceId, SessionId, GoalId,
+            CognitiveTraceContext, GoalId, InMemoryTraceCollector, SessionId, TraceId,
         };
         use friday_cognitive::trace::reconstruct_trace_tree;
         use uuid::Uuid;
@@ -1310,7 +1316,12 @@ mod tests {
                 AgentResult::failed(
                     &ctx.spec.id,
                     "child failed",
-                    vec![AgentStep::failed(1, "filesystem.create_target", "denied", 1)],
+                    vec![AgentStep::failed(
+                        1,
+                        "filesystem.create_target",
+                        "denied",
+                        1,
+                    )],
                     "denied",
                 )
             })))
@@ -1334,12 +1345,18 @@ mod tests {
         // Root is Failure.
         let root = &tree[0];
         assert_eq!(root.trace.operation, "director_supervise");
-        assert_eq!(root.trace.result, friday_cognitive::trace::ResultType::Failure);
+        assert_eq!(
+            root.trace.result,
+            friday_cognitive::trace::ResultType::Failure
+        );
 
         // Agent is Failure.
         let agent = &root.children[0];
         assert_eq!(agent.trace.operation, "agent_supervise");
-        assert_eq!(agent.trace.result, friday_cognitive::trace::ResultType::Failure);
+        assert_eq!(
+            agent.trace.result,
+            friday_cognitive::trace::ResultType::Failure
+        );
 
         // Gate is Failure with verdict.
         let gate = agent
@@ -1348,7 +1365,10 @@ mod tests {
             .find(|c| c.trace.operation == "verification_gate")
             .expect("expected a verification_gate child");
         assert_eq!(gate.trace.operation, "verification_gate");
-        assert_eq!(gate.trace.result, friday_cognitive::trace::ResultType::Failure);
+        assert_eq!(
+            gate.trace.result,
+            friday_cognitive::trace::ResultType::Failure
+        );
         let verdict = gate.trace.metadata["gate.verdict"].as_str().unwrap();
         assert!(!verdict.is_empty());
     }
@@ -1365,10 +1385,10 @@ mod tests {
     async fn director_executor_planner_to_director_single_trace_tree() {
         use super::DirectorActionExecutor;
         use friday_agent_runtime::{
-            AgentDirector, AgentResult, AgentStep, CognitiveTraceContext, FnDriver,
-            InMemoryTraceCollector, GoalId, SessionId, SpanId, TraceId,
+            AgentDirector, AgentResult, AgentStep, CognitiveTraceContext, FnDriver, GoalId,
+            InMemoryTraceCollector, SessionId, SpanId, TraceId,
         };
-        use friday_cognitive::trace::{reconstruct_trace_tree, TraceContext, TraceCollector};
+        use friday_cognitive::trace::{reconstruct_trace_tree, TraceCollector, TraceContext};
         use uuid::Uuid;
 
         let collector = InMemoryTraceCollector::new();
@@ -1494,10 +1514,10 @@ mod tests {
     async fn director_executor_agent_steps_emitted_as_call_spans() {
         use super::DirectorActionExecutor;
         use friday_agent_runtime::{
-            AgentDirector, AgentResult, AgentStep, CognitiveTraceContext, FnDriver,
-            InMemoryTraceCollector, GoalId, SessionId, TraceId,
+            AgentDirector, AgentResult, AgentStep, CognitiveTraceContext, FnDriver, GoalId,
+            InMemoryTraceCollector, SessionId, TraceId,
         };
-        use friday_cognitive::trace::{reconstruct_trace_tree, TraceCollector};
+        use friday_cognitive::trace::reconstruct_trace_tree;
         use uuid::Uuid;
 
         let collector = InMemoryTraceCollector::new();
@@ -1572,7 +1592,10 @@ mod tests {
             .find(|c| c.trace.operation == "llm_call")
             .expect("expected an llm_call span");
         assert_eq!(model_span.trace.metadata["step.kind"], "model");
-        assert_eq!(model_span.trace.metadata["step.capability"], "reasoning.route");
+        assert_eq!(
+            model_span.trace.metadata["step.capability"],
+            "reasoning.route"
+        );
 
         let tool_span = agent
             .children

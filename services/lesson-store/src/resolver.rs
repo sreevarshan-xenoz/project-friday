@@ -62,7 +62,10 @@ mod tests {
 
     #[test]
     fn identity_resolver_lowercases() {
-        assert_eq!(IdentityResolver.resolve("Browser.Search"), Some("browser.search".into()));
+        assert_eq!(
+            IdentityResolver.resolve("Browser.Search"),
+            Some("browser.search".into())
+        );
     }
 
     #[test]
@@ -74,10 +77,12 @@ mod tests {
 
         let resolver = RegistryCapabilityResolver::new(std::sync::Arc::new(reg));
         // Matches by action string → canonical capability id.
-        assert_eq!(resolver.resolve("browser.search"), Some("web.search".into()));
+        assert_eq!(
+            resolver.resolve("browser.search"),
+            Some("web.search".into())
+        );
         assert_eq!(resolver.resolve("WEB.SEARCH"), Some("web.search".into()));
         // Unknown action → no invented class.
         assert_eq!(resolver.resolve("totally-unknown-action"), None);
     }
 }
-

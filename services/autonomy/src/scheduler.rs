@@ -1,4 +1,4 @@
-﻿//! 7E scheduler + skill consultation — the controlled recurrence seam.
+//! 7E scheduler + skill consultation — the controlled recurrence seam.
 //!
 //! The scheduler is deliberately boring: it only decides *when* a bounded
 //! `AutonomousTick` may start. It owns no cognition — no planning, memory, skills,
@@ -227,13 +227,22 @@ mod tests {
         let clock = FakeClock::new();
         let mut sched = Scheduler::new(p, Box::new(clock.clone()));
 
-        assert!(matches!(sched.decide(clock.now()), SchedulerDecision::Allowed(_)));
+        assert!(matches!(
+            sched.decide(clock.now()),
+            SchedulerDecision::Allowed(_)
+        ));
         // Too soon — interval not elapsed.
         clock.advance(5_000);
-        assert!(matches!(sched.decide(clock.now()), SchedulerDecision::Deferred(_)));
+        assert!(matches!(
+            sched.decide(clock.now()),
+            SchedulerDecision::Deferred(_)
+        ));
         // Interval elapsed.
         clock.advance(5_000);
-        assert!(matches!(sched.decide(clock.now()), SchedulerDecision::Allowed(_)));
+        assert!(matches!(
+            sched.decide(clock.now()),
+            SchedulerDecision::Allowed(_)
+        ));
     }
 
     #[test]
@@ -243,13 +252,22 @@ mod tests {
         let clock = FakeClock::new();
         let mut sched = Scheduler::new(p, Box::new(clock.clone()));
 
-        assert!(matches!(sched.decide(clock.now()), SchedulerDecision::Allowed(_)));
+        assert!(matches!(
+            sched.decide(clock.now()),
+            SchedulerDecision::Allowed(_)
+        ));
         sched.mark_started(clock.now());
         // A second concurrent tick is deferred.
-        assert!(matches!(sched.decide(clock.now()), SchedulerDecision::Deferred(_)));
+        assert!(matches!(
+            sched.decide(clock.now()),
+            SchedulerDecision::Deferred(_)
+        ));
         sched.mark_finished(TickOutcome::Success, clock.now());
         // After it finishes, allowed again.
-        assert!(matches!(sched.decide(clock.now()), SchedulerDecision::Allowed(_)));
+        assert!(matches!(
+            sched.decide(clock.now()),
+            SchedulerDecision::Allowed(_)
+        ));
     }
 
     #[test]
@@ -265,7 +283,10 @@ mod tests {
         sched.mark_started(clock.now());
         sched.mark_finished(TickOutcome::Success, clock.now());
         // Budget (2) reached.
-        assert!(matches!(sched.decide(clock.now()), SchedulerDecision::Deferred(_)));
+        assert!(matches!(
+            sched.decide(clock.now()),
+            SchedulerDecision::Deferred(_)
+        ));
     }
 
     #[test]
@@ -277,11 +298,20 @@ mod tests {
 
         sched.mark_started(clock.now());
         sched.mark_finished(TickOutcome::Failure, clock.now());
-        assert!(matches!(sched.decide(clock.now()), SchedulerDecision::Deferred(_)));
+        assert!(matches!(
+            sched.decide(clock.now()),
+            SchedulerDecision::Deferred(_)
+        ));
         clock.advance(9_999);
-        assert!(matches!(sched.decide(clock.now()), SchedulerDecision::Deferred(_)));
+        assert!(matches!(
+            sched.decide(clock.now()),
+            SchedulerDecision::Deferred(_)
+        ));
         clock.advance(1);
-        assert!(matches!(sched.decide(clock.now()), SchedulerDecision::Allowed(_)));
+        assert!(matches!(
+            sched.decide(clock.now()),
+            SchedulerDecision::Allowed(_)
+        ));
     }
 
     #[test]
@@ -290,7 +320,10 @@ mod tests {
         p.enabled = false;
         let clock = FakeClock::new();
         let mut sched = Scheduler::new(p, Box::new(clock.clone()));
-        assert!(matches!(sched.decide(clock.now()), SchedulerDecision::Stopped(_)));
+        assert!(matches!(
+            sched.decide(clock.now()),
+            SchedulerDecision::Stopped(_)
+        ));
     }
 
     #[test]
@@ -298,7 +331,10 @@ mod tests {
         let p = SchedulerPolicy::new(Box::new(DenyAllPolicy));
         let clock = FakeClock::new();
         let mut sched = Scheduler::new(p, Box::new(clock.clone()));
-        assert!(matches!(sched.decide(clock.now()), SchedulerDecision::Stopped(_)));
+        assert!(matches!(
+            sched.decide(clock.now()),
+            SchedulerDecision::Stopped(_)
+        ));
     }
 
     #[test]
@@ -327,6 +363,9 @@ mod tests {
         sched.mark_started(clock.now());
         sched.mark_finished(TickOutcome::Failure, clock.now());
         clock.advance(1);
-        assert!(matches!(sched.decide(clock.now()), SchedulerDecision::Allowed(_)));
+        assert!(matches!(
+            sched.decide(clock.now()),
+            SchedulerDecision::Allowed(_)
+        ));
     }
 }

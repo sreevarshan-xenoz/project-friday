@@ -3,6 +3,10 @@
 
 use std::sync::Arc;
 
+use friday_core::trace::{
+    CognitiveTraceContext, GoalId, InMemoryTraceCollector, NoopTraceCollector, SessionId,
+    TraceCollector, TraceId,
+};
 use friday_planner::execution::capability_registry::CapabilityRegistry;
 use friday_planner::execution::lifecycle::ExecutionBudget;
 use friday_planner::intent::parse;
@@ -15,10 +19,6 @@ use friday_planner::planning::planners::validation::validate_task_graph;
 use friday_planner::planning::planners::Planner;
 use friday_planner::planning::TaskGraph;
 use friday_planner::register_engines_with_llm;
-use friday_core::trace::{
-    CognitiveTraceContext, InMemoryTraceCollector, NoopTraceCollector,
-    TraceCollector, TraceId, SessionId, GoalId,
-};
 
 fn registry_with_natives() -> CapabilityRegistry {
     let reg = CapabilityRegistry::new();
@@ -98,14 +98,21 @@ async fn llm_planner_produces_validated_graph() {
         investigation: None,
     };
     let tracer = NoopTraceCollector;
-    let trace_ctx = CognitiveTraceContext::for_goal(TraceId::default(), SessionId::default(), GoalId::default());
+    let trace_ctx = CognitiveTraceContext::for_goal(
+        TraceId::default(),
+        SessionId::default(),
+        GoalId::default(),
+    );
     let result = planner
         .create_plan(&intent, &ctx, &tracer, &trace_ctx)
         .await
         .expect("plan should validate");
     assert_eq!(result.graph.tasks.len(), 2);
     assert_eq!(result.graph.tasks[1].depends_on.len(), 1);
-    assert_eq!(result.graph.tasks[1].depends_on[0], result.graph.tasks[0].id);
+    assert_eq!(
+        result.graph.tasks[1].depends_on[0],
+        result.graph.tasks[0].id
+    );
     assert_eq!(result.graph.tasks[1].produces.as_deref(), Some("summary"));
     validate_task_graph(
         &result.graph,
@@ -141,8 +148,15 @@ async fn llm_planner_rejects_unknown_capability() {
         investigation: None,
     };
     let tracer = NoopTraceCollector;
-    let trace_ctx = CognitiveTraceContext::for_goal(TraceId::default(), SessionId::default(), GoalId::default());
-    let err = planner.create_plan(&intent, &ctx, &tracer, &trace_ctx).await.unwrap_err();
+    let trace_ctx = CognitiveTraceContext::for_goal(
+        TraceId::default(),
+        SessionId::default(),
+        GoalId::default(),
+    );
+    let err = planner
+        .create_plan(&intent, &ctx, &tracer, &trace_ctx)
+        .await
+        .unwrap_err();
     match err {
         PlanError::Validation(issues) => assert!(
             issues.iter().any(|i| i.contains("unobtanium.do_thing")),
@@ -185,8 +199,10 @@ fn validation_detects_cycles_and_budget() {
             &[],
         );
     }
-    let mut budget = ExecutionBudget::default();
-    budget.max_steps = Some(2);
+    let budget = ExecutionBudget {
+        max_steps: Some(2),
+        ..ExecutionBudget::default()
+    };
     let err2 = validate_task_graph(&g2, &reg, &budget, &RiskPolicy::default()).unwrap_err();
     match err2 {
         PlanError::Validation(issues) => assert!(
@@ -394,7 +410,11 @@ async fn llm_planner_handles_experience_context() {
     };
 
     let tracer = NoopTraceCollector;
-    let trace_ctx = CognitiveTraceContext::for_goal(TraceId::default(), SessionId::default(), GoalId::default());
+    let trace_ctx = CognitiveTraceContext::for_goal(
+        TraceId::default(),
+        SessionId::default(),
+        GoalId::default(),
+    );
     let result = planner
         .create_plan(&intent, &ctx, &tracer, &trace_ctx)
         .await
@@ -454,19 +474,21 @@ impl friday_planner::planning::planners::backend::ReasoningBackend for FakeTelem
         prompt: &str,
     ) -> Result<friday_planner::planning::planners::backend::CompletionResult, String> {
         let content = self.complete(prompt).await?;
-        Ok(friday_planner::planning::planners::backend::CompletionResult {
-            content,
-            usage: Some(MU {
-                model: "test-model".to_string(),
-                provider: "test-provider".to_string(),
-                tokens_in: Some(100),
-                tokens_out: Some(42),
-                cached_tokens: Some(10),
-                reasoning_tokens: Some(8),
-                cost_usd: Some(0.001),
-                finish_reason: Some("stop".to_string()),
-            }),
-        })
+        Ok(
+            friday_planner::planning::planners::backend::CompletionResult {
+                content,
+                usage: Some(MU {
+                    model: "test-model".to_string(),
+                    provider: "test-provider".to_string(),
+                    tokens_in: Some(100),
+                    tokens_out: Some(42),
+                    cached_tokens: Some(10),
+                    reasoning_tokens: Some(8),
+                    cost_usd: Some(0.001),
+                    finish_reason: Some("stop".to_string()),
+                }),
+            },
+        )
     }
 }
 
@@ -519,16 +541,26 @@ async fn test_4f_real_runtime_pipeline_with_model_telemetry() {
         .handle_event(&goal_event)
         .await
         .expect("intent should resolve");
-    assert_eq!(intent_events.len(), 1, "must emit exactly one INTENT_CREATED");
+    assert_eq!(
+        intent_events.len(),
+        1,
+        "must emit exactly one INTENT_CREATED"
+    );
     let intent_event = &intent_events[0];
     assert_eq!(intent_event.kind, friday_planner::events::INTENT_CREATED);
-    assert_eq!(intent_event.trace_id, trace_uuid, "trace_id must be preserved");
+    assert_eq!(
+        intent_event.trace_id, trace_uuid,
+        "trace_id must be preserved"
+    );
 
     let plan_events = engine
         .handle_event(intent_event)
         .await
         .expect("planning should succeed");
-    assert!(!plan_events.is_empty(), "planning must emit at least one event");
+    assert!(
+        !plan_events.is_empty(),
+        "planning must emit at least one event"
+    );
 
     let plan_event = plan_events
         .iter()
@@ -565,7 +597,10 @@ async fn test_4f_real_runtime_pipeline_with_model_telemetry() {
     let root = &trees[0];
     assert_eq!(root.trace.organ, "planner");
     assert_eq!(root.trace.operation, "create_plan");
-    assert!(root.trace.parent_span_id.is_none(), "root must have no parent");
+    assert!(
+        root.trace.parent_span_id.is_none(),
+        "root must have no parent"
+    );
 
     let model_subtree = root
         .children
@@ -579,7 +614,10 @@ async fn test_4f_real_runtime_pipeline_with_model_telemetry() {
         .as_ref()
         .expect("model span must carry ModelUsage");
     assert_eq!(usage.model, "test-model", "model identity must match");
-    assert_eq!(usage.provider, "test-provider", "provider identity must match");
+    assert_eq!(
+        usage.provider, "test-provider",
+        "provider identity must match"
+    );
     assert_eq!(usage.tokens_in, Some(100), "tokens_in must match");
     assert_eq!(usage.tokens_out, Some(42), "tokens_out must match");
     assert_eq!(usage.cost_usd, Some(0.001), "cost_usd must match");
@@ -686,7 +724,10 @@ async fn test_4f_failure_path_emits_failure_trace() {
         .get("tasks")
         .and_then(|t| t.as_array())
         .expect("plan must carry tasks");
-    assert!(!tasks.is_empty(), "rule fallback must produce at least one task");
+    assert!(
+        !tasks.is_empty(),
+        "rule fallback must produce at least one task"
+    );
 
     let guard = collector.traces();
     let traces: Vec<_> = guard.clone();
@@ -694,7 +735,10 @@ async fn test_4f_failure_path_emits_failure_trace() {
 
     let trace_id = TraceId(trace_uuid);
     for t in &traces {
-        assert_eq!(t.trace_id, trace_id, "trace_id must be preserved on failure");
+        assert_eq!(
+            t.trace_id, trace_id,
+            "trace_id must be preserved on failure"
+        );
     }
 
     friday_core::trace::validate_trace_hierarchy(&traces)

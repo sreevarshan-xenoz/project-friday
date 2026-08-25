@@ -23,7 +23,9 @@ use friday_core::trace::{
 };
 
 use crate::memory::{Experience, ExperienceExtractor, MemoryStore};
-use crate::skill::{ApplicableSkill, SkillAdmission, SkillContext, SkillEvaluator, SkillProvider, SkillStore};
+use crate::skill::{
+    ApplicableSkill, SkillAdmission, SkillContext, SkillEvaluator, SkillProvider, SkillStore,
+};
 use crate::tick::{
     CognitiveTick, ExecutionResult, NextAction, Observation, Plan, TickOutcome, TickTrigger,
 };
@@ -162,7 +164,9 @@ impl AutonomousTick {
         match selected {
             // 7A.1 — cheapest safe path: observe, find no work, record, stop.
             None => self.run_no_work(collector, session, goal_id, trace_id, observation),
-            Some(goal) => self.run_episode(collector, session, goal_id, trace_id, observation, goal),
+            Some(goal) => {
+                self.run_episode(collector, session, goal_id, trace_id, observation, goal)
+            }
         }
     }
 
@@ -339,7 +343,9 @@ impl AutonomousTick {
                     self.skill_evaluator.trajectory_for(&cond),
                 ) {
                     let candidate = self.skill_evaluator.form_candidate(&lesson, &cond, traj);
-                    if let SkillAdmission::Promote(skill) = self.skill_evaluator.evaluate(&candidate) {
+                    if let SkillAdmission::Promote(skill) =
+                        self.skill_evaluator.evaluate(&candidate)
+                    {
                         skills.admit(skill);
                     }
                 }
@@ -383,16 +389,16 @@ impl AutonomousTick {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::memory::SimpleMemory;
+    use crate::scheduler::{Clock, FakeClock, Scheduler, SchedulerDecision, SchedulerPolicy};
+    use crate::skill::SimpleSkillStore;
+    use crate::world::{SimpleWorldModel, WorldSnapshot};
     use friday_core::trace::{
-        CognitiveTrace, InMemoryTraceCollector, ResultType, TraceCollector, VerificationStatus,
-        reconstruct_trace_tree,
+        reconstruct_trace_tree, CognitiveTrace, InMemoryTraceCollector, ResultType, TraceCollector,
+        VerificationStatus,
     };
     use friday_observability::metrics::CognitiveMetrics;
     use friday_observability::viewer::ViewerModel;
-    use crate::world::{SimpleWorldModel, WorldSnapshot};
-    use crate::memory::SimpleMemory;
-    use crate::skill::SimpleSkillStore;
-    use crate::scheduler::{Clock, FakeClock, Scheduler, SchedulerDecision, SchedulerPolicy};
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
 
@@ -548,7 +554,11 @@ mod tests {
         assert_eq!(ids.iter().next().copied(), Some(tick.trace_id));
 
         // Exactly the spans of one episode — no second tick silently started.
-        assert_eq!(t.len(), 5, "one episode: root+planner+agent+tool+verification");
+        assert_eq!(
+            t.len(),
+            5,
+            "one episode: root+planner+agent+tool+verification"
+        );
 
         // The trace reconstructs into a valid single-rooted tree.
         let tree = reconstruct_trace_tree(&t);

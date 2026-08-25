@@ -21,7 +21,7 @@ use redb::{Database, ReadableTable, TableDefinition};
 use crate::error::LessonStoreError;
 use crate::store::signals_match;
 use crate::types::{
-    recompute_confidence, LessonKey, LessonStatus, MatchPolicy, PruneConfig, ProductionLesson,
+    recompute_confidence, LessonKey, LessonStatus, MatchPolicy, ProductionLesson, PruneConfig,
 };
 
 const MS_PER_DAY: f64 = 86_400_000.0;
@@ -83,12 +83,14 @@ impl crate::store::LessonStore for RedbLessonStore {
             return Err(LessonStoreError::AlreadyExists(lesson.key));
         }
 
-        let age_days =
-            (lesson.last_observed_ms.saturating_sub(lesson.first_observed_ms)) as f64 / MS_PER_DAY;
+        let age_days = (lesson
+            .last_observed_ms
+            .saturating_sub(lesson.first_observed_ms)) as f64
+            / MS_PER_DAY;
         lesson.confidence = recompute_confidence(lesson.support_count, age_days, &self.config);
         lesson.status = LessonStatus::Active;
-        let json =
-            serde_json::to_string(&lesson).map_err(|e| LessonStoreError::Serialization(e.to_string()))?;
+        let json = serde_json::to_string(&lesson)
+            .map_err(|e| LessonStoreError::Serialization(e.to_string()))?;
 
         {
             let mut table = Self::err(write.open_table(LESSONS))?;
@@ -136,13 +138,10 @@ impl crate::store::LessonStore for RedbLessonStore {
         let mut updated = None;
         {
             let mut table = Self::err(write.open_table(LESSONS))?;
-            let existing = match table
+            let existing = table
                 .get(key_str.as_str())
                 .map_err(|e| LessonStoreError::Storage(e.to_string()))?
-            {
-                Some(v) => Some(v.value().to_string()),
-                None => None,
-            };
+                .map(|v| v.value().to_string());
             if let Some(json_str) = existing {
                 let mut lesson = parse_lesson(&json_str)?;
                 lesson.support_count += 1;
@@ -255,23 +254,16 @@ impl crate::store::LessonStore for RedbLessonStore {
         }
     }
 
-    fn mark_contradicted(
-        &self,
-        key: &LessonKey,
-        with: &LessonKey,
-    ) -> Result<(), LessonStoreError> {
+    fn mark_contradicted(&self, key: &LessonKey, with: &LessonKey) -> Result<(), LessonStoreError> {
         let write = Self::err(self.db.begin_write())?;
         {
             let mut table = Self::err(write.open_table(LESSONS))?;
             for k in [key, with] {
                 let ks = key_string(k)?;
-                let existing = match table
+                let existing = table
                     .get(ks.as_str())
                     .map_err(|e| LessonStoreError::Storage(e.to_string()))?
-                {
-                    Some(v) => Some(v.value().to_string()),
-                    None => None,
-                };
+                    .map(|v| v.value().to_string());
                 if let Some(json_str) = existing {
                     let mut lesson = parse_lesson(&json_str)?;
                     lesson.status = LessonStatus::Contradicted;
@@ -310,8 +302,7 @@ impl crate::store::LessonStore for RedbLessonStore {
                 if lesson.status == LessonStatus::Contradicted {
                     continue;
                 }
-                let age_days =
-                    (now_ms.saturating_sub(lesson.last_observed_ms)) as f64 / MS_PER_DAY;
+                let age_days = (now_ms.saturating_sub(lesson.last_observed_ms)) as f64 / MS_PER_DAY;
                 let conf = recompute_confidence(lesson.support_count, age_days, config);
                 lesson.confidence = conf;
                 let new_status = if conf < config.confidence_floor {
@@ -416,9 +407,7 @@ mod tests {
             store.admit(lesson(key.clone(), 1, 1000, 1000)).unwrap();
         }
         let store = RedbLessonStore::open(&path, PruneConfig::default()).unwrap();
-        let hits = store
-            .find_similar(&key, MatchPolicy::Exact)
-            .unwrap();
+        let hits = store.find_similar(&key, MatchPolicy::Exact).unwrap();
         assert_eq!(hits.len(), 1);
     }
 
@@ -437,8 +426,11 @@ mod tests {
         assert_eq!(hits.len(), 1, "general lesson matches specific query");
 
         // And the reverse must NOT match (specific stored ⊄ general query).
-        let too_specific = LessonKey::new("browser.search", ["network_unavailable", "browser_restart"]);
-        store.admit(lesson(too_specific.clone(), 1, 1000, 1000)).unwrap();
+        let too_specific =
+            LessonKey::new("browser.search", ["network_unavailable", "browser_restart"]);
+        store
+            .admit(lesson(too_specific.clone(), 1, 1000, 1000))
+            .unwrap();
         let general_q = LessonKey::new("browser.search", ["network_unavailable"]);
         let hits = store.find_similar(&general_q, MatchPolicy::Subset).unwrap();
         assert_eq!(hits.len(), 1, "only the general lesson matches");
@@ -473,14 +465,20 @@ mod tests {
         store.admit(lesson(key.clone(), 1, 1000, 1000)).unwrap();
         assert_eq!(
             store
-                .find_similar(&LessonKey::new("a", ["b", "e", "f"]), MatchPolicy::Jaccard(0.5))
+                .find_similar(
+                    &LessonKey::new("a", ["b", "e", "f"]),
+                    MatchPolicy::Jaccard(0.5)
+                )
                 .unwrap()
                 .len(),
             0
         );
         assert_eq!(
             store
-                .find_similar(&LessonKey::new("a", ["b", "c", "e"]), MatchPolicy::Jaccard(0.5))
+                .find_similar(
+                    &LessonKey::new("a", ["b", "c", "e"]),
+                    MatchPolicy::Jaccard(0.5)
+                )
                 .unwrap()
                 .len(),
             1
@@ -517,17 +515,25 @@ mod tests {
             store.mark_contradicted(&k1, &k2).unwrap();
         }
         let store = RedbLessonStore::open(&path, PruneConfig::default()).unwrap();
-        assert_eq!(store.get(&k1).unwrap().unwrap().status, LessonStatus::Contradicted);
-        assert_eq!(store.get(&k2).unwrap().unwrap().status, LessonStatus::Contradicted);
+        assert_eq!(
+            store.get(&k1).unwrap().unwrap().status,
+            LessonStatus::Contradicted
+        );
+        assert_eq!(
+            store.get(&k2).unwrap().unwrap().status,
+            LessonStatus::Contradicted
+        );
     }
 
     // 8. stale/archive pruning persists across reopen.
     #[test]
     fn prune_persists() {
         let path = tmp_path("prune");
-        let mut cfg = PruneConfig::default();
-        cfg.ttl_ms = 1000;
-        cfg.confidence_floor = 0.5;
+        let cfg = PruneConfig {
+            ttl_ms: 1000,
+            confidence_floor: 0.5,
+            ..PruneConfig::default()
+        };
         {
             let store = RedbLessonStore::open(&path, cfg.clone()).unwrap();
             let archived = LessonKey::new("old", ["x"]);
@@ -541,11 +547,19 @@ mod tests {
         }
         let store = RedbLessonStore::open(&path, cfg.clone()).unwrap();
         assert_eq!(
-            store.get(&LessonKey::new("old", ["x"])).unwrap().unwrap().status,
+            store
+                .get(&LessonKey::new("old", ["x"]))
+                .unwrap()
+                .unwrap()
+                .status,
             LessonStatus::Archived
         );
         assert_eq!(
-            store.get(&LessonKey::new("stale", ["y"])).unwrap().unwrap().status,
+            store
+                .get(&LessonKey::new("stale", ["y"]))
+                .unwrap()
+                .unwrap()
+                .status,
             LessonStatus::Stale
         );
     }

@@ -68,7 +68,9 @@ impl ProductionSkillStore {
             // The autonomy `SkillEvaluator` is the authoritative gate, so the
             // compiler's own confidence/support bars are set permissive; only the
             // structural + verification refusal gates stay live.
-            compiler: SkillCompiler::new().with_confidence_bar(0.0).with_support_bar(0),
+            compiler: SkillCompiler::new()
+                .with_confidence_bar(0.0)
+                .with_support_bar(0),
             registry: SkillRegistry::new(),
             by_trigger: Mutex::new(HashMap::new()),
             meta: Mutex::new(HashMap::new()),
@@ -78,7 +80,9 @@ impl ProductionSkillStore {
     /// Wrap an externally-owned registry (useful for golden/seam assertions).
     pub fn with_registry(registry: SkillRegistry) -> Self {
         Self {
-            compiler: SkillCompiler::new().with_confidence_bar(0.0).with_support_bar(0),
+            compiler: SkillCompiler::new()
+                .with_confidence_bar(0.0)
+                .with_support_bar(0),
             registry,
             by_trigger: Mutex::new(HashMap::new()),
             meta: Mutex::new(HashMap::new()),
@@ -136,7 +140,12 @@ impl SkillStore for ProductionSkillStore {
     fn admit(&self, skill: AutonomySkill) {
         // Dedup by trigger: one skill per condition — strengthen the existing
         // skill instead of registering a duplicate candidate.
-        if self.by_trigger.lock().expect("skill store poisoned").contains_key(&skill.trigger) {
+        if self
+            .by_trigger
+            .lock()
+            .expect("skill store poisoned")
+            .contains_key(&skill.trigger)
+        {
             self.strengthen(&skill.trigger);
             return;
         }
@@ -236,7 +245,12 @@ impl SkillStore for ProductionSkillStore {
         if let Some(sk) = meta.get_mut(trigger) {
             sk.status = SkillStatus::Disabled;
         }
-        if let Some(id) = self.by_trigger.lock().expect("skill store poisoned").remove(trigger) {
+        if let Some(id) = self
+            .by_trigger
+            .lock()
+            .expect("skill store poisoned")
+            .remove(trigger)
+        {
             let _ = self.registry.disable(&id);
         }
     }

@@ -713,7 +713,7 @@ mod tests {
         assert_eq!(fired.topic, Topic::ActionDecided);
         assert_eq!(fired.source, EngineId::Automation);
         assert_eq!(fired.payload["action"], "screen.observe");
-        assert_eq!(fired.payload["reason"].as_str().unwrap().len() > 0, true);
+        assert!(!fired.payload["reason"].as_str().unwrap().is_empty());
         let evidence = fired.payload["evidence"].as_array().unwrap();
         assert_eq!(evidence.len(), 1, "the evidence trace is in the payload");
         assert_eq!(evidence[0], serde_json::json!(action.evidence[0]));
@@ -819,7 +819,7 @@ mod tests {
         assert_eq!(fired.topic, Topic::ActionDecided);
         assert_eq!(fired.payload["action"], "screen.observe");
         assert!(
-            ws.history(Some("autonomy.action")).len() >= 1,
+            !ws.history(Some("autonomy.action")).is_empty(),
             "the drive fired without a user goal"
         );
     }

@@ -367,7 +367,7 @@ fn builder_serializes_and_deserializes() {
 
 #[test]
 fn evidence_source_enum_values() {
-    let sources = vec![
+    let sources = [
         EvidenceSource::Retrieval,
         EvidenceSource::Replay,
         EvidenceSource::PatternMining,

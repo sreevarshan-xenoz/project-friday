@@ -328,12 +328,13 @@ pub fn describe_span(trace: &CognitiveTrace) -> Vec<(String, String)> {
         rows.push(("Provider".into(), m.provider.clone()));
         rows.push(("Tokens in".into(), m.tokens_in.unwrap_or(0).to_string()));
         rows.push(("Tokens out".into(), m.tokens_out.unwrap_or(0).to_string()));
-        rows.push(("Cost (USD)".into(), format!("{:.6}", m.cost_usd.unwrap_or(0.0))));
+        rows.push((
+            "Cost (USD)".into(),
+            format!("{:.6}", m.cost_usd.unwrap_or(0.0)),
+        ));
         rows.push((
             "Finish reason".into(),
-            m.finish_reason
-                .clone()
-                .unwrap_or_else(|| "none".into()),
+            m.finish_reason.clone().unwrap_or_else(|| "none".into()),
         ));
     }
 
@@ -365,8 +366,7 @@ mod tests {
     use super::*;
     use chrono::{Duration as ChronoDuration, TimeZone, Utc};
     use friday_core::trace::{
-        CognitiveTraceContext, GoalId, ModelUsage, SessionId, SpanId, TraceId,
-        VerificationStatus,
+        CognitiveTraceContext, GoalId, ModelUsage, SessionId, SpanId, TraceId, VerificationStatus,
     };
 
     /// Deterministic viewer fixture mirroring the 5E golden episode shape: a
@@ -497,7 +497,12 @@ mod tests {
         assert_eq!(ep.root.trace.operation, "resolve");
         // 3 agents directly under the root.
         assert_eq!(ep.root.children.len(), 3);
-        let organs: Vec<&str> = ep.root.children.iter().map(|c| c.trace.organ.as_str()).collect();
+        let organs: Vec<&str> = ep
+            .root
+            .children
+            .iter()
+            .map(|c| c.trace.organ.as_str())
+            .collect();
         assert!(organs.contains(&"researcher"));
         assert!(organs.contains(&"analyst"));
         assert!(organs.contains(&"verifier"));
@@ -580,7 +585,10 @@ mod tests {
             .iter()
             .find(|t| t.operation == "llm_call")
             .expect("model span exists");
-        let keys: Vec<String> = describe_span(model_trace).into_iter().map(|(k, _)| k).collect();
+        let keys: Vec<String> = describe_span(model_trace)
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect();
         assert!(keys.iter().any(|k| k == "Model"));
         assert!(keys.iter().any(|k| k == "Provider"));
         assert!(keys.iter().any(|k| k == "Tokens in"));
@@ -588,9 +596,7 @@ mod tests {
 
         let vtrace = traces
             .iter()
-            .find(|t| {
-                t.operation == "verification_gate" && t.verification().is_failed()
-            })
+            .find(|t| t.operation == "verification_gate" && t.verification().is_failed())
             .expect("failed verification gate exists");
         let keys: Vec<String> = describe_span(vtrace).into_iter().map(|(k, _)| k).collect();
         assert!(keys.iter().any(|k| k == "Verification status"));

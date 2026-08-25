@@ -36,6 +36,7 @@ pub enum MatchPolicy {
 }
 
 impl Default for MatchPolicy {
+    #[allow(clippy::derivable_impls)]
     fn default() -> Self {
         MatchPolicy::Subset
     }
@@ -117,7 +118,7 @@ const MS_PER_DAY: f64 = 86_400_000.0;
 pub fn recompute_confidence(support: u64, age_days: f64, config: &PruneConfig) -> f32 {
     let base = (0.5 + (support as f32).min(10.0) * 0.05).min(0.99);
     let decay = config.decay_per_day * age_days as f32;
-    (base - decay).max(0.0).min(0.99)
+    (base - decay).clamp(0.0, 0.99)
 }
 
 /// Build a `ProductionLesson` with confidence normalized via [`recompute_confidence`].

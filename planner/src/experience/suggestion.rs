@@ -183,7 +183,6 @@ impl Default for SuggestionEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     fn pattern(caps: Vec<&str>, freq: u32, success_rate: f64, days_ago: i64) -> Pattern {
         Pattern {

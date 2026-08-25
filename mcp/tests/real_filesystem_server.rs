@@ -95,19 +95,10 @@ async fn real_filesystem_server_connect_initialize_discover() {
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
 
     // Real tool schemas from the secure-filesystem-server.
-    assert!(names.iter().any(|n| *n == "write_file"), "tools: {names:?}");
-    assert!(
-        names.iter().any(|n| *n == "read_text_file"),
-        "tools: {names:?}"
-    );
-    assert!(
-        names.iter().any(|n| *n == "create_directory"),
-        "tools: {names:?}"
-    );
-    assert!(
-        names.iter().any(|n| *n == "list_directory"),
-        "tools: {names:?}"
-    );
+    assert!(names.contains(&"write_file"), "tools: {names:?}");
+    assert!(names.contains(&"read_text_file"), "tools: {names:?}");
+    assert!(names.contains(&"create_directory"), "tools: {names:?}");
+    assert!(names.contains(&"list_directory"), "tools: {names:?}");
 }
 
 #[tokio::test]

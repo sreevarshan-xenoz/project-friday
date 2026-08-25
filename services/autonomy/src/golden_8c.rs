@@ -62,11 +62,17 @@ fn golden_8c_verified_skill_compounded_and_admitted() {
     let reg = store.registry();
     assert_eq!(reg.all().len(), 1, "compiled candidate registered");
     let prod = reg.all().into_iter().next().unwrap();
-    assert_eq!(prod.source, SkillSource::Learned, "compounded from a trajectory");
+    assert_eq!(
+        prod.source,
+        SkillSource::Learned,
+        "compounded from a trajectory"
+    );
     assert!(prod.enabled, "explicitly admitted via enable_learned");
 
     // (2) find_applicable returns the faithful 7D skill.
-    let found = store.find_applicable(&trigger()).expect("retrievable by trigger");
+    let found = store
+        .find_applicable(&trigger())
+        .expect("retrievable by trigger");
     assert_eq!(found.status, SkillStatus::Active);
     assert_eq!(found.trajectory, vec!["fallbackZ".to_string()]);
 
@@ -88,7 +94,11 @@ fn golden_8c_unverified_skill_is_refused_by_the_seam() {
     let mut unverified = promoted_skill();
     unverified.verification_count = 0;
     store.admit(unverified);
-    assert_eq!(store.skill_count(), 0, "unverified skill must NOT be compounded");
+    assert_eq!(
+        store.skill_count(),
+        0,
+        "unverified skill must NOT be compounded"
+    );
     assert!(
         store.find_applicable(&trigger()).is_none(),
         "refused candidate is never selectable"
@@ -126,7 +136,14 @@ fn golden_8c_weaken_decays_then_disables_in_both_layers() {
     let store = ProductionSkillStore::new();
     store.admit(promoted_skill());
     let trig = trigger();
-    let id = store.registry().all().into_iter().next().unwrap().id().to_string();
+    let id = store
+        .registry()
+        .all()
+        .into_iter()
+        .next()
+        .unwrap()
+        .id()
+        .to_string();
 
     // verification_count = 2: failures 1, 2 still ≤ successes → still Active.
     store.weaken(&trig);
@@ -157,7 +174,14 @@ fn golden_8c_weaken_decays_then_disables_in_both_layers() {
 fn golden_8c_disable_removes_from_both_layers() {
     let store = ProductionSkillStore::new();
     store.admit(promoted_skill());
-    let id = store.registry().all().into_iter().next().unwrap().id().to_string();
+    let id = store
+        .registry()
+        .all()
+        .into_iter()
+        .next()
+        .unwrap()
+        .id()
+        .to_string();
 
     store.disable(&trigger());
     assert!(store.find_applicable(&trigger()).is_none());

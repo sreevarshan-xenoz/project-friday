@@ -161,9 +161,7 @@ async fn register_configured_servers_returns_ids_for_supervision() {
                 }
             };
             let _ = ws
-                .send(Message::Text(
-                    serde_json::to_string(&response).unwrap().into(),
-                ))
+                .send(Message::Text(serde_json::to_string(&response).unwrap()))
                 .await;
         }
     });
