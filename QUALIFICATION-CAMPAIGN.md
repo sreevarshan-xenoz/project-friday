@@ -306,6 +306,58 @@ Gates at `c83cbbe`: fmt/clippy/build PASS, 1685 passed / 0 failed.
 
 **R2-3 = GREEN.**
 
+
+### R2-4: deterministic multi-cycle endurance (2026-08-25, `dbab446`)
+
+12 hand-driven cycles over the real runtime, fixed failure schedule, no RNG,
+no new harness, no wall clock. Per-cycle ledger as actually observed:
+
+```text
+cycle | rev | lessons | skills | outcome
+   1  |  0  |    0    |    0   | delegated+verified
+   2  |  0  |    0    |    0   | delegated+verified
+   3  |  0  |    0    |    0   | provider-death;rule-fallback-ok
+   4  |  1  |    0    |    0   | verification-rejected
+   5  |  1  |    0    |    0   | egress-blocked;zero-dispatch
+   6  |  1  |    0    |    0   | stale-refused
+   7  |  1  |    0    |    0   | crash-recovered
+   8  |  1  |    0    |    0   | mismatch-corroborating
+   9  |  2  |    0    |    0   | mismatch-corroborating
+  10  |  3  |    1    |    1   | lesson-admitted;skill-admitted
+  11  |  4  |    1    |    1   | restart-ok;skill-consulted
+  12  |  5  |    1    |    1   | consulted;replay-safe
+```
+
+Nine invariants with specific in-run evidence:
+
+| # | Invariant | Evidence |
+| - | --------- | -------- |
+| I1 | world revision never regresses | windows-scan across all 12 rows (rev column monotonic) |
+| I2 | terminal tasks never resurrect | cycle-11 post-restart board sweep: every Done task still Done |
+| I3 | failed never becomes success | failed clone of a verified outcome refused by WorldModel; history stays empty |
+| I4 | stale plans never execute | cycle-6 executor call count = 0, journal empty, StalePlanRejected{0,9} |
+| I5 | egress rejection never dispatches | cycle-5 adapter invocation count = 0 after denial |
+| I6 | orphans do not survive mount | cycle-7 orphan reopened -> Done; final sweep: zero InProgress anywhere |
+| I7 | admitted skill remains retrievable | find_applicable Some at cycles 10, 11 and 12 |
+| I8 | lessons restart-consistent | cycle-11 Redb drop/reopen: count identical (1) |
+| I9 | journal replay-safe | cycle-12 replay of the cycle-1 decision created no new board work |
+
+Durability honesty:
+
+```text
+durable + restart verified      RedbLessonStore, JsonWorkforceStore, JsonActionJournal
+in-memory + NOT restart-verified  WorldModel (+revision), skill registry/meta map
+```
+
+L1 = KNOWN LIMITATION (tick-path candidates carry no verification evidence;
+cycle 10 used the two gate-verified delegations). L2 = KNOWN LIMITATION
+(delegation-learning coupling via shared goal string + durable stores).
+Both unchanged.
+
+Gates at `dbab446`: fmt/clippy/build PASS, 1686 passed / 0 failed.
+
+**R2-4 = GREEN.**
+
 Campaign order: F1 injection ? F2 crash injection (nasty enough to create a
 genuinely orphaned `InProgress` task) ? F3/F4/F5 registration verification ?
 update this ledger with observed evidence ? only then decide whether F2 needs
