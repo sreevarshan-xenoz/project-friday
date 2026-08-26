@@ -532,6 +532,7 @@ async fn organism_r2_3_delegation_durability_recovery_learning_consult() {
             claim: hits[0].claim.clone(),
             confidence: hits[0].confidence,
             support_count: hits[0].support_count,
+            verification_count: hits[0].verification_count,
             first_observed_ms: hits[0].first_observed_ms,
             last_observed_ms: hits[0].last_observed_ms,
         }

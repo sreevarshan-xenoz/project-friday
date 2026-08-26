@@ -28,6 +28,12 @@ const MS_PER_DAY: f64 = 86_400_000.0;
 
 const LESSONS: TableDefinition<&str, &str> = TableDefinition::new("lessons");
 const SIGNAL_INDEX: TableDefinition<&str, &str> = TableDefinition::new("lesson_signal_index");
+/// Verification evidence recorded BEFORE the condition's lesson is first
+/// admitted (L1). Folded into the lesson row at admission time, so evidence
+/// and lesson share one durable keyspace without ever creating lessons from
+/// successes.
+const PENDING_VERIFICATIONS: TableDefinition<&str, u64> =
+    TableDefinition::new("pending_verifications");
 /// Sentinel signal marking a lesson with an empty signal set (matches any Subset query).
 const EMPTY_SIGNAL: &str = "__lesson_empty_signals__";
 
@@ -55,6 +61,7 @@ impl RedbLessonStore {
             let write = Self::err(db.begin_write())?;
             Self::err(write.open_table(LESSONS))?;
             Self::err(write.open_table(SIGNAL_INDEX))?;
+            Self::err(write.open_table(PENDING_VERIFICATIONS))?;
             Self::err(write.commit())?;
         }
         Ok(Self { db, config })
@@ -97,6 +104,34 @@ impl crate::store::LessonStore for RedbLessonStore {
             table
                 .insert(key_str.as_str(), json.as_str())
                 .map_err(|e| LessonStoreError::Storage(e.to_string()))?;
+        }
+        // L1 — fold any verification evidence that accumulated before the
+        // claim existed into the new row; the pending entry is consumed.
+        let read_pending = || -> Result<Option<u64>, LessonStoreError> {
+            let pending = Self::err(write.open_table(PENDING_VERIFICATIONS))?;
+            let v = pending
+                .get(key_str.as_str())
+                .map_err(|e| LessonStoreError::Storage(e.to_string()))?
+                .map(|v| v.value());
+            Ok(v)
+        };
+        let pending_value = read_pending()?;
+        if let Some(v) = pending_value {
+            lesson.verification_count += v;
+            let json = serde_json::to_string(&lesson)
+                .map_err(|e| LessonStoreError::Serialization(e.to_string()))?;
+            {
+                let mut table = Self::err(write.open_table(LESSONS))?;
+                table
+                    .insert(key_str.as_str(), json.as_str())
+                    .map_err(|e| LessonStoreError::Storage(e.to_string()))?;
+            }
+            {
+                let mut pending = Self::err(write.open_table(PENDING_VERIFICATIONS))?;
+                pending
+                    .remove(key_str.as_str())
+                    .map_err(|e| LessonStoreError::Storage(e.to_string()))?;
+            }
         }
         {
             let mut idx = Self::err(write.open_table(SIGNAL_INDEX))?;
@@ -325,6 +360,57 @@ impl crate::store::LessonStore for RedbLessonStore {
         }
         Self::err(write.commit())?;
         Ok(changed)
+    }
+
+    fn record_verification(&self, key: &LessonKey) -> Result<u64, LessonStoreError> {
+        let ks = key_string(key)?;
+        let write = Self::err(self.db.begin_write())?;
+        // Does a lesson row already exist for this claim?
+        let exists = {
+            let table = Self::err(write.open_table(LESSONS))?;
+            let present = table
+                .get(ks.as_str())
+                .map_err(|e| LessonStoreError::Storage(e.to_string()))?;
+            let found = present.is_some();
+            drop(present);
+            drop(table);
+            found
+        };
+        if exists {
+            let mut table = Self::err(write.open_table(LESSONS))?;
+            let json_str = table
+                .get(ks.as_str())
+                .map_err(|e| LessonStoreError::Storage(e.to_string()))?
+                .expect("checked exists above")
+                .value()
+                .to_string();
+            let mut lesson = parse_lesson(&json_str)?;
+            lesson.verification_count += 1;
+            let new_count = lesson.verification_count;
+            let json = serde_json::to_string(&lesson)
+                .map_err(|e| LessonStoreError::Serialization(e.to_string()))?;
+            table
+                .insert(ks.as_str(), json.as_str())
+                .map_err(|e| LessonStoreError::Storage(e.to_string()))?;
+            drop(table);
+            Self::err(write.commit())?;
+            return Ok(new_count);
+        }
+        // Claim not admitted yet: bank the evidence durably; it is folded
+        // into the lesson row at admission time. Never creates a lesson.
+        let mut pending = Self::err(write.open_table(PENDING_VERIFICATIONS))?;
+        let current = pending
+            .get(ks.as_str())
+            .map_err(|e| LessonStoreError::Storage(e.to_string()))?
+            .map(|v| v.value())
+            .unwrap_or(0);
+        let new_count = current + 1;
+        pending
+            .insert(ks.as_str(), new_count)
+            .map_err(|e| LessonStoreError::Storage(e.to_string()))?;
+        drop(pending);
+        Self::err(write.commit())?;
+        Ok(new_count)
     }
 }
 

@@ -76,6 +76,11 @@ pub struct ProductionLesson {
     pub confidence: f32,
     /// Number of corroborating experiences backing this lesson.
     pub support_count: u64,
+    /// Verified-successful executions supporting this claim (L1). Only
+    /// `VerificationStatus::Passed` outcomes increment this; unverified or
+    /// failed executions never do. Shares the lesson's persistence boundary.
+    #[serde(default)]
+    pub verification_count: u64,
     pub first_observed_ms: u64,
     pub last_observed_ms: u64,
     pub status: LessonStatus,
@@ -138,6 +143,7 @@ pub fn build_lesson(
         claim: claim.into(),
         confidence,
         support_count,
+        verification_count: 0,
         first_observed_ms,
         last_observed_ms,
         status: LessonStatus::Active,

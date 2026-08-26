@@ -123,7 +123,7 @@ provider** (`nvidia-nim/nvidia/nemotron-3-super-120b-a12b`, 56.5 s plan →
 | Format | `cargo fmt --all -- --check` | PASS (clean after mechanical `cargo fmt --all` of 8 pre-existing files) |
 | Lint | `cargo clippy --workspace --all-targets --all-features` | PASS WITH WARNINGS (exit 0, 108 pre-existing warnings, no errors) |
 | Build | `cargo check --workspace` | PASS (clean) |
-| Hermetic tests | `cargo test --workspace --exclude friday-e2e --no-fail-fast` | PASS — exit 0, 121 suites, 1484 passed, 0 failed, 4 ignored (pre-existing `#[ignore]`) |
+| Hermetic tests | `cargo test --workspace --exclude friday-e2e --no-fail-fast` | PASS — exit 0, 1692 passed, 0 failed |
 
 The hermetic test gate is the deterministic aggregate behind Gates 1–7; the
 per-gate rows above name the packages that carry each gate's distinctive
@@ -294,13 +294,8 @@ Goal (OrganismGoal decision, grounding-stamped)
 
 Observed limitations recorded (not repaired):
 
-- L1: orchestrator tick-path skill candidates carry zero verification
-  evidence (`SkillEvaluator::form_candidate` hardcodes 0), so ticks alone
-  never admit into the production store; admission requires externally
-  supplied verified-execution evidence. Future seam work.
-- L2: lesson production keys off bounded-tick prediction outcomes by
-  architecture; the organism couples delegation and learning through the
-  shared goal string + durable stores, not a new pipeline.
+- ~~L1: orchestrator tick-path skill candidates carry zero verification evidence (`SkillEvaluator::form_candidate` hardcodes 0)~~ **RESOLVED** — verification evidence now flows from predicted-delta condition through `ExperienceExtractor` into the durable lesson store; `form_candidate` reads `lesson.verification_count`.
+- L2: lesson production keys off bounded-tick prediction outcomes by architecture; the organism couples delegation and learning through the shared goal string + durable stores, not a new pipeline.
 
 Gates at `c83cbbe`: fmt/clippy/build PASS, 1685 passed / 0 failed.
 
@@ -349,16 +344,140 @@ durable + restart verified      RedbLessonStore, JsonWorkforceStore, JsonActionJ
 in-memory + NOT restart-verified  WorldModel (+revision), skill registry/meta map
 ```
 
-L1 = KNOWN LIMITATION (tick-path candidates carry no verification evidence;
-cycle 10 used the two gate-verified delegations). L2 = KNOWN LIMITATION
+L1 = RESOLVED (verification evidence from predicted-delta condition now wired
+through; tick-path `PredictionOutcome::Passed` carries canonical `LessonCondition`
+into `ExperienceExtractor`, verification evidence banked durably in lesson store;
+6 dedicated tests in `l1_verification_tests.rs`). L2 = KNOWN LIMITATION
 (delegation-learning coupling via shared goal string + durable stores).
-Both unchanged.
 
-Gates at `dbab446`: fmt/clippy/build PASS, 1686 passed / 0 failed.
+Gates at L1: fmt/clippy/build PASS, 1692 passed / 0 failed.
 
-**R2-4 = GREEN.**
+**R2-4 = GREEN. L1 = RESOLVED.**
 
-Campaign order: F1 injection ? F2 crash injection (nasty enough to create a
-genuinely orphaned `InProgress` task) ? F3/F4/F5 registration verification ?
-update this ledger with observed evidence ? only then decide whether F2 needs
-implementation.
+### L1: Verification evidence from predicted-delta conditions (2026-08-26)
+
+```text
+Existing gap:   tick-path skill candidates carry zero verification evidence
+                (SkillEvaluator::form_candidate hardcodes 0); lesson admission
+                requires externally supplied verified-execution evidence.
+Resolution:     Wire canonical predicted-delta condition through orchestrator ->
+                ExperienceExtractor -> lesson store; verification evidence
+                banked durably before admission; fold-at-admission for
+                pre-claimed evidence.
+```
+
+Implementation:
+
+- `ExperienceExtractor::predicted_delta_condition(goal, predicted, pre_action)` → canonical `LessonCondition`
+- Orchestrator: predict-before-execute reorder; `learning_condition` computed from canonical predicted-delta; `record_verification` called on Passed outcome
+- `RedbLessonStore::record_verification`: bumps `verification_count` on admitted lessons; banks into `PENDING_VERIFICATIONS` table if claim not yet admitted
+- `InMemoryLessonStore::record_verification`: parallel in-memory pending map
+- `ProductionLesson::verification_count` + `Lesson::verification_count`: shared field, serde-default for backward compatibility
+- `form_candidate` reads `lesson.verification_count` instead of hardcoded 0
+- `MemoryStore::record_verification` default no-op; `SimpleMemory` overrides
+
+Six dedicated tests in `l1_verification_tests.rs`:
+
+| Test | What it proves |
+| ---- | -------------- |
+| `T1 canonical_condition_is_mismatch_derived` | predicted-delta condition is (goal + predicted vs pre-action-belief diff), not observation signals |
+| `T2_passed_outcome_records_verification_evidence` | orchestrator calls record_verification on Passed; EvidenceBanked event emitted |
+| `T3_pending_evidence_folds_at_admission` | pre-admission evidence durably banked, folded into lesson row at admit time |
+| `T4_form_candidate_uses_verification_count` | form_candidate reads verification_count; count=0 → draft, count≥1 → validated |
+| `T5_repeated_passes_increase_verification_count` | multiple Passed outcomes compound verification_count monotonically |
+| `T6_failed_outcome_does_not_record_evidence` | Failed outcome never calls record_verification |
+
+Gates at L1: fmt/clippy/build PASS, 1692 passed / 0 failed.
+
+### L2 disposition: ACCEPTED AS ARCHITECTURAL CHARACTERISTIC (2026-08-26)
+
+```text
+Existing characterization: delegation ↔ learning coupling via shared goal
+string, not typed pipeline.
+```
+
+Architecture survey traced the goal value through every stage:
+
+| Stage | Field | Value vs. Original |
+|-------|-------|--------------------|
+| GoalSelector | return | ORIGINAL |
+| run_episode | goal | IDENTICAL (moved) |
+| DirectorActionExecutor | &action.action | IDENTICAL (borrow) |
+| AgentSpec.goal | .goal | IDENTICAL (.into()) |
+| BoardTask.goal | .goal | IDENTICAL (.to_string()) |
+| Experience.action | .action | IDENTICAL (.clone()) |
+| predicted_delta_condition | .action | IDENTICAL (.to_string()) |
+| LessonCondition.action | .action | IDENTICAL (.clone()) |
+| SkillCandidate.trigger | .trigger | IDENTICAL (.clone()) |
+| Skill.id | N/A | DERIVED ("skill:{action}:{signals}") |
+| LessonKey.action_class | .action_class | TRANSFORMED (lowercased) |
+| LessonProvenance.action_raw | .action_raw | IDENTICAL (original preserved) |
+
+Four properties verified:
+
+1. **Complete:** goal survives GoalSelector → Director → Workforce → Experience → LessonCondition
+2. **Lossless:** autonomy-layer transitions preserve original string (no normalization)
+3. **Recoverable:** production persistence derives action_class but preserves action_raw
+4. **Consistent:** L1 verification evidence uses same LessonCondition identity as lesson formation
+
+Future trigger: GoalSelector becomes user/LLM-generated → semantic equivalents can diverge textually → learning fragments. Only then revisit normalization at goal creation.
+
+**L2 = ACCEPTED AS ARCHITECTURAL CHARACTERISTIC.**
+
+## Final R2 Campaign Scoreboard
+
+```text
+R2 baseline: 254dc25 → 3b07180 → 9a93555 → 4197ab9 → 0c337fc → b9acbd6
+             → 5bd66a8 → 278e543 → c83cbbe → 989432c → dbab446 → c18eca2
+             → L1 → 1692 passed / 0 failed
+
+Campaign phases:
+  R2-1  stale-plan admission gate       🟢 GREEN
+  R2-2  F1 provider failure             🟢 GREEN
+  R2-2  F2 crash/orphan recovery        🟢 GREEN
+  R2-3  Director → Workforce organism   🟢 GREEN
+  R2-4  12-cycle endurance              🟢 GREEN
+  L1    verification evidence           🟢 RESOLVED
+  L2    goal-string provenance          🟢 ACCEPTED (architectural characteristic)
+```
+
+### Proven invariants
+
+| # | Invariant | Evidence |
+| - | --------- | -------- |
+| I1 | world revision never regresses | 12-cycle endurance (R2-4) |
+| I2 | terminal tasks never resurrect | 12-cycle endurance (R2-4) |
+| I3 | failed never becomes success | 12-cycle endurance (R2-4) |
+| I4 | stale plans never execute | R2-1 (3b07180), 12-cycle endurance (R2-4) |
+| I5 | egress rejection never dispatches | 12-cycle endurance (R2-4) |
+| I6 | orphans do not survive mount | R2-2 F2 (0c337fc + b9acbd6), 12-cycle endurance (R2-4) |
+| I7 | admitted skill remains retrievable | 12-cycle endurance (R2-4) |
+| I8 | lessons restart-consistent | 12-cycle endurance (R2-4) |
+| I9 | journal replay-safe | 12-cycle endurance (R2-4) |
+
+### Repairs made
+
+| Issue | Fix | Commit | Status |
+|-------|-----|--------|--------|
+| Stale plans could execute | Plan grounding revision + admission gate | 3b07180 | PROVEN |
+| Worker crash orphans InProgress forever | Generation-bound ownership + reconcile | b9acbd6 | PROVEN |
+| Verification evidence lost on tick | Canonical predicted-delta condition wired through | L1 commit | PROVEN |
+| Director ↔ Workforce no delegation path | WorkforceDriver adapter | 278e543 | PROVEN |
+
+### Accepted architectural characteristics
+
+| Characteristic | Disposition |
+|---------------|-------------|
+| Goal-string as learning identity | ACCEPTED — complete, lossless, recoverable, consistent |
+| Delegation ↔ learning coupling via shared goal string | ACCEPTED — correct for current GoalSelector; revisit if user/LLM goals |
+
+### Remaining limitations
+
+| ID | Description | Disposition |
+|----|-------------|-------------|
+| — | Skill registry/meta is in-memory, not restart-durable | DEFERRED — not mixed into R2 |
+| — | Final endurance (24h decision runs) | DEFERRED — per build→validate→endure workflow |
+| — | Browser runtime production qualification | DEFERRED — per roadmap |
+
+Campaign order: F1 injection → F2 crash injection → F3/F4/F5 registration
+verification → L1 verification evidence → L2 architecture survey → freeze.

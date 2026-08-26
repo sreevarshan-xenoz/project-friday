@@ -800,6 +800,7 @@ async fn endurance_r2_4_twelve_cycles_state_stays_coherent() {
         claim: pl.claim.clone(),
         confidence: pl.confidence,
         support_count: pl.support_count,
+        verification_count: pl.verification_count,
         first_observed_ms: pl.first_observed_ms,
         last_observed_ms: pl.last_observed_ms,
     };

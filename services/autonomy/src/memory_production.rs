@@ -34,7 +34,7 @@ fn to_key(condition: &LessonCondition, resolver: &dyn CapabilityResolver) -> Opt
 }
 
 /// Translate a production lesson back into the 7C shape, recovering the raw
-/// action from provenance.
+/// action from provenance. The durable verification count rides along (L1).
 fn from_lesson(pl: ProductionLesson) -> Lesson {
     Lesson {
         condition: LessonCondition {
@@ -44,6 +44,7 @@ fn from_lesson(pl: ProductionLesson) -> Lesson {
         claim: pl.claim,
         confidence: pl.confidence,
         support_count: pl.support_count,
+        verification_count: pl.verification_count,
         first_observed_ms: pl.first_observed_ms,
         last_observed_ms: pl.last_observed_ms,
     }
@@ -109,6 +110,28 @@ impl MemoryStore for ProductionLessonStore {
         let key = to_key(condition, &*self.resolver)?;
         let updated = self.inner.strengthen(&key, now_ms()).ok().flatten()?;
         Some(from_lesson(updated))
+    }
+
+    /// L1 — record one verified-successful execution against the condition's
+    /// durable lesson row. Conditions that resolve to no capability class (or
+    /// have no lesson yet) bank nothing: evidence attaches to claims only.
+    fn record_verification(&self, condition: &LessonCondition) {
+        if let Some(key) = to_key(condition, &*self.resolver) {
+            let _ = self.inner.record_verification(&key);
+        }
+    }
+
+    fn verification_count(&self, condition: &LessonCondition) -> u64 {
+        match to_key(condition, &*self.resolver) {
+            Some(key) => self
+                .inner
+                .get(&key)
+                .ok()
+                .flatten()
+                .map(|l| l.verification_count)
+                .unwrap_or(0),
+            None => 0,
+        }
     }
 }
 

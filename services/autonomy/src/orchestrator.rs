@@ -22,7 +22,7 @@ use friday_core::trace::{
     VerificationStatus,
 };
 
-use crate::memory::{Experience, ExperienceExtractor, MemoryStore};
+use crate::memory::{Experience, ExperienceExtractor, LessonCondition, MemoryStore};
 use crate::skill::{
     ApplicableSkill, SkillAdmission, SkillContext, SkillEvaluator, SkillProvider, SkillStore,
 };
@@ -294,13 +294,24 @@ impl AutonomousTick {
                 }
             }
         }
-        let exec_ctx = planner_ctx.child(planner_span);
-        let exec_result = self.executor.execute(&exec_ctx, collector, &plan);
-
-        // 7B — Predict the post-action world state BEFORE verifying, so the model
-        // can be compared against reality after re-observation.
+        // L1 canonical learning identity — derived BEFORE execution from the
+        // world model's own prediction against the pre-action belief, so it
+        // is identical whether the run later succeeds or fails. The SAME
+        // predicted snapshot is reused for the post-run assessment (never
+        // re-predicted).
+        let pre_belief: Option<WorldSnapshot> =
+            self.world_model.as_ref().and_then(|wm| wm.observe());
         let predicted: Option<WorldSnapshot> =
             self.world_model.as_ref().map(|wm| wm.predict(&goal));
+        let learning_condition: Option<LessonCondition> = match (&predicted, &pre_belief) {
+            (Some(pred), Some(pre)) => Some(
+                crate::memory::ExperienceExtractor::predicted_delta_condition(&goal, pred, pre),
+            ),
+            _ => None,
+        };
+
+        let exec_ctx = planner_ctx.child(planner_span);
+        let exec_result = self.executor.execute(&exec_ctx, collector, &plan);
 
         // Verify — record the verification gate explicitly with its verdict.
         let verdict = self.verifier.verify(&goal, &exec_result);
@@ -341,6 +352,17 @@ impl AutonomousTick {
             collector.record(span);
         }
 
+        // L1 — verified-successful executions earn promotion evidence against
+        // the canonical condition. Only Passed counts; unverified/failed
+        // executions never touch the ledger. Correct/Unknown assessments are
+        // still discarded by the extractor — verification evidence is a
+        // separate ledger, never a lesson.
+        if verdict.is_passed() {
+            if let (Some(mem), Some(cond)) = (&self.memory, &learning_condition) {
+                mem.record_verification(cond);
+            }
+        }
+
         // 7C — Experience extraction -> selective memory writeback.
         // Builds one `Experience` from the world-model outcome and runs it through
         // the `ExperienceExtractor` admission policy (corroboration + high-surprise).
@@ -358,7 +380,14 @@ impl AutonomousTick {
                 assessment: assmt.clone(),
                 observed_at_ms: Utc::now().timestamp_millis() as u64,
             };
-            self.extractor.process(&**mem, &exp);
+            // L1 — the canonical prediction-derived condition, when present,
+            // is THE learning identity for this tick: lesson keys, skill
+            // triggers, and verification evidence all share it. Legacy
+            // fallback (no world model) keeps the mismatch-derived condition.
+            match &learning_condition {
+                Some(cond) => self.extractor.process_with_condition(&**mem, &exp, cond),
+                None => self.extractor.process(&**mem, &exp),
+            };
             experience = Some(exp);
             collector.record(
                 planner_ctx
@@ -375,7 +404,9 @@ impl AutonomousTick {
         // evaluator decide. The planner is deliberately NOT modified here.
         if let Some(skills) = &self.skill_store {
             if let (Some(mem), Some(exp)) = (&self.memory, &experience) {
-                let cond = ExperienceExtractor::condition_of(exp);
+                let cond = learning_condition
+                    .clone()
+                    .unwrap_or_else(|| ExperienceExtractor::condition_of(exp));
                 if let (Some(lesson), Some(traj)) = (
                     mem.find_similar_lesson(&cond),
                     self.skill_evaluator.trajectory_for(&cond),

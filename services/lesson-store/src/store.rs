@@ -51,6 +51,12 @@ pub trait LessonStore: Send + Sync {
     /// Explicit maintenance: apply age/decay transitions. Returns the number of
     /// lessons whose status changed. Never called from `find_similar`.
     fn prune_stale(&self, now_ms: u64, config: &PruneConfig) -> Result<usize, LessonStoreError>;
+
+    /// Record one verified-successful execution against an existing lesson
+    /// (L1). Bumps the durable `verification_count`; a no-op when no lesson
+    /// exists for the key — evidence attaches to claims, never banked for
+    /// absent ones and never creating lessons by itself.
+    fn record_verification(&self, key: &LessonKey) -> Result<u64, LessonStoreError>;
 }
 
 /// True when a stored lesson (given its key) matches a query key under `policy`.
@@ -77,6 +83,9 @@ pub(crate) fn signals_match(stored: &LessonKey, query: &LessonKey, policy: Match
 pub struct InMemoryLessonStore {
     config: PruneConfig,
     lessons: Mutex<HashMap<LessonKey, ProductionLesson>>,
+    /// Verification evidence banked before the condition's lesson exists
+    /// (L1); folded into the row on admission.
+    pending_verifications: Mutex<HashMap<LessonKey, u64>>,
 }
 
 impl InMemoryLessonStore {
@@ -88,6 +97,7 @@ impl InMemoryLessonStore {
         Self {
             config,
             lessons: Mutex::new(HashMap::new()),
+            pending_verifications: Mutex::new(HashMap::new()),
         }
     }
 
@@ -118,6 +128,15 @@ impl LessonStore for InMemoryLessonStore {
             / MS_PER_DAY;
         lesson.confidence = recompute_confidence(lesson.support_count, age_days, &self.config);
         lesson.status = LessonStatus::Active;
+        // L1 — fold banked pre-admission verification evidence into the row.
+        if let Some(v) = self
+            .pending_verifications
+            .lock()
+            .expect("lesson store poisoned")
+            .remove(&lesson.key)
+        {
+            lesson.verification_count += v;
+        }
         lessons.insert(lesson.key.clone(), lesson);
         Ok(())
     }
@@ -194,6 +213,26 @@ impl LessonStore for InMemoryLessonStore {
             }
         }
         Ok(changed)
+    }
+
+    fn record_verification(&self, key: &LessonKey) -> Result<u64, LessonStoreError> {
+        let mut lessons = self.lessons.lock().expect("lesson store poisoned");
+        match lessons.get_mut(key) {
+            Some(l) => {
+                l.verification_count += 1;
+                Ok(l.verification_count)
+            }
+            // Claim not admitted yet: bank in-memory; folded at admission.
+            None => {
+                let mut pending = self
+                    .pending_verifications
+                    .lock()
+                    .expect("lesson store poisoned");
+                let c = pending.entry(key.clone()).or_insert(0);
+                *c += 1;
+                Ok(*c)
+            }
+        }
     }
 }
 

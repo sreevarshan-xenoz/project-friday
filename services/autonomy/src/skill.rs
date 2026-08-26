@@ -144,6 +144,9 @@ impl SkillEvaluator {
     }
 
     /// Form a candidate from a corroborated lesson + a known trajectory.
+    /// The verification evidence is the lesson's DURABLE count of
+    /// verified-successful executions of this exact condition (L1) — no
+    /// fabrication, no copying of global counters.
     pub fn form_candidate(
         &self,
         lesson: &Lesson,
@@ -162,7 +165,7 @@ impl SkillEvaluator {
             trajectory,
             source_lesson: lesson.condition.clone(),
             supporting_experiences: lesson.support_count,
-            verification_evidence: 0,
+            verification_evidence: lesson.verification_count,
             contradictory_failures: 0,
             confidence: lesson.confidence,
             risk,
@@ -339,6 +342,7 @@ mod tests {
             claim: "Tool X fails under condition Y".into(),
             confidence: 0.7,
             support_count: support,
+            verification_count: 0,
             first_observed_ms: 1,
             last_observed_ms: 2,
         }
@@ -480,9 +484,12 @@ mod tests {
             .insert(trigger(), vec!["fallbackZ".to_string()]);
         let traj = ev2.trajectory_for(&trigger()).unwrap();
         let cand = ev2.form_candidate(&lesson, &trigger(), traj);
-        // form_candidate sets verification_evidence to 0; promote requires >=2, so it
-        // rejects until verified trajectory evidence is attached. Simulate attach:
+        // A lesson built by corroborated_lesson carries no verification
+        // evidence yet (nothing verified it); promote requires >=2, so the
+        // candidate is rejected until real evidence is attached. Simulate
+        // attaching the durable count of two verified executions:
         let mut cand = cand;
+        assert_eq!(cand.verification_evidence, 0, "unverified -> 0");
         cand.verification_evidence = 2;
         match ev.evaluate(&cand) {
             SkillAdmission::Promote(skill) => {

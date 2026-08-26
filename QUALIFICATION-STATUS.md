@@ -30,9 +30,24 @@ Agent Director            🟢
 Parallel Durability       🟢
 Frontend                  🟢
 
+R2 stale-plan gate        🟢
+R2 provider failover      🟢
+R2 crash recovery         🟢
+R2 organism lifecycle     🟢
+R2 endurance              🟢
+R2 verification evidence  🟢
+R2 goal provenance        🟢 (architectural characteristic)
+
 Final endurance           ⏸️
 Browser runtime           🟡
 ```
+
+R2 proven invariants: stale plans never execute (I4), orphans do not survive
+mount (I6), verification evidence flows through predicted-delta condition to
+durable lesson store (L1), goal-string provenance is complete/lossless/recoverable
+(L2). Repairs: grounding revision gate (`3b07180`), generation-bound ownership
+(`b9acbd6`), WorkforceDriver adapter (`278e543`). Full ledger in
+[QUALIFICATION-CAMPAIGN.md](QUALIFICATION-CAMPAIGN.md).
 
 `RTT *`: the short C2 runs strongly demonstrate the mechanism, but the final
 endurance validation (protocol-identical 24 h decision run) remains deferred to
@@ -44,6 +59,10 @@ register with classifications). **Campaign R1 (2026-08-13): ✅ ALL GATES PASS**
 — hermetic gate 121 suites / 1484 passed / 0 failed / 4 ignored, supporting
 gates clean, live gate green (e2e vertical slice, live_task mock fallback,
 local_model_task on a real provider, real-Chrome browser suite 15/15).
+**Campaign R2 (2026-08-25–26): ✅ ALL PHASES GREEN** — 1692 passed / 0 failed,
+7 phases (stale-plan gate, provider failover, crash recovery, organism lifecycle,
+endurance, verification evidence, goal provenance), 4 repairs, 9 proven
+invariants, L2 accepted as architectural characteristic.
 
 ## Baseline
 
@@ -73,7 +92,7 @@ local_model_task on a real provider, real-Chrome browser suite 15/15).
 | Parallel Durable Execution | PASS | [docs/PARALLEL-DURABLE-ACCEPTANCE.md](docs/PARALLEL-DURABLE-ACCEPTANCE.md) |
 | Browser capability | PARTIAL | `services/action-runtime/src/adapters/browser.rs` exists, but [docs/Roadmap.md](docs/Roadmap.md) still defers browser runtime to M6 |
 | Frontend | PASS | `frontend` build, lint, and 15 tests passed |
-| Full workspace tests (hermetic gate) | PASS | `cargo test --workspace --exclude friday-e2e --no-fail-fast` — exit 0, 117 results, 1427 passed / 0 failed / 4 ignored (2026-08-12) |
+| Full workspace tests (hermetic gate) | PASS | `cargo test --workspace --exclude friday-e2e --no-fail-fast` — exit 0, 1692 passed / 0 failed (2026-08-26) |
 | E2E vertical slice | PASS | `cargo test -p friday-e2e --test e2e_tests` — 1 passed, 0.9s |
 | E2E live_task (fallback) | PASS | `cargo test -p friday-e2e --test live_task` — native fallback fixed; 1 passed, 30.5s (2026-08-12) |
 | E2E local_model_task (live) | PASS | `cargo test -p friday-e2e --test local_model_task` — 1 passed, 110.5s, provider-dependent (2026-08-12) |
@@ -188,12 +207,19 @@ Conclusion: **core qualification blockers are resolved.** The closed-loop
 
 ## Current freeze line
 
-The feature-freeze rationale has changed. Previously: *feature expansion is
-frozen because blockers exist.* Now:
+R2 campaign complete. All phases green. The architecture is proven through the
+core autonomous loop:
 
-> **Core qualification blockers resolved. Feature expansion may resume, but
-> final endurance qualification remains pending.**
+```text
+Goal → Planning → Grounding → Execution → Verification → World update →
+Failure recovery → Learning → Durable evidence → Skill admission →
+Skill consultation → Repeated cycles
+```
 
-Feature development may continue; the 24 h endurance decision runs and the
-explicit deferred boundaries above remain outstanding at the final qualification
-gate.
+Remaining deferred items (not R2 blockers):
+- Skill registry/meta is in-memory, not restart-durable
+- Final endurance (24h decision runs)
+- Browser runtime production qualification
+
+Feature development may resume; the deferred boundaries above remain outstanding
+at the final qualification gate.

@@ -1,4 +1,4 @@
-﻿//! 7C memory writeback — hermetic, selective experience -> lesson pipeline.
+//! 7C memory writeback — hermetic, selective experience -> lesson pipeline.
 //!
 //! Mirrors the existing FRIDAY memory concepts (friday-memory / friday-knowledge)
 //! in a dependency-light form so the controlled tick can learn from one experience
@@ -46,6 +46,11 @@ pub struct Lesson {
     pub confidence: f32,
     /// How many corroborating experiences back this lesson.
     pub support_count: u64,
+    /// Verified-successful executions supporting this claim (L1). Only
+    /// `VerificationStatus::Passed` increments it; unverified/failed
+    /// executions never do. Durable wherever the lesson is durable.
+    #[serde(default)]
+    pub verification_count: u64,
     pub first_observed_ms: u64,
     pub last_observed_ms: u64,
 }
@@ -89,6 +94,16 @@ pub trait MemoryStore: Send + Sync {
     fn admit_lesson(&self, lesson: Lesson);
     /// Strengthen an existing lesson (bump support + refresh recency).
     fn strengthen_lesson(&self, condition: &LessonCondition) -> Option<Lesson>;
+    /// Record one VERIFIED-SUCCESSFUL execution against a condition's claim
+    /// (L1). Only passed verifications call this — the promotion ledger is
+    /// deliberately boring: verified success ⇒ +1 evidence, nothing else.
+    /// Unverified/failed/refused executions never touch it. No-op by default.
+    fn record_verification(&self, _condition: &LessonCondition) {}
+    /// The durable count of verified executions backing the condition's
+    /// claim. Zero unless a lesson exists and verifications were recorded.
+    fn verification_count(&self, _condition: &LessonCondition) -> u64 {
+        0
+    }
 }
 
 /// The admission decision for a single experience (internal to the extractor).
@@ -145,6 +160,28 @@ impl ExperienceExtractor {
         }
     }
 
+    /// The canonical learning condition (L1): derived from the world model's
+    /// own prediction against the pre-action belief, BEFORE execution. It is
+    /// identical whether the run later succeeds or fails — the prediction
+    /// does not depend on the outcome — so lesson support, verification
+    /// evidence, and candidate triggers all share one identity. For mismatch
+    /// runs the diverging keys are a subset of these delta keys.
+    pub fn predicted_delta_condition(
+        action: &str,
+        predicted: &crate::world::WorldSnapshot,
+        pre_belief: &crate::world::WorldSnapshot,
+    ) -> LessonCondition {
+        let diff = pre_belief.diff(predicted);
+        let mut signals = diff.added;
+        signals.extend(diff.changed);
+        signals.sort();
+        signals.dedup();
+        LessonCondition {
+            action: action.to_string(),
+            signals,
+        }
+    }
+
     fn confidence_for(count: u64) -> f32 {
         (0.5 + (count as f32).min(10.0) * 0.05).min(0.99)
     }
@@ -159,6 +196,7 @@ impl ExperienceExtractor {
             claim,
             confidence: Self::confidence_for(count),
             support_count: count,
+            verification_count: 0,
             first_observed_ms: observed_at_ms,
             last_observed_ms: observed_at_ms,
         }
@@ -182,26 +220,39 @@ impl ExperienceExtractor {
     /// Run one experience through the admission policy and update the store.
     /// Always records the experience (telemetry); only conditionally admits/strengthens.
     pub fn process(&self, store: &dyn MemoryStore, experience: &Experience) {
+        let condition = Self::condition_of(experience);
+        self.process_with_condition(store, experience, &condition);
+    }
+
+    /// Like [`Self::process`], but the caller supplies the CANONICAL learning
+    /// condition (L1 — the prediction-derived identity) instead of letting
+    /// this method re-derive it from the mismatch diff. Lesson keys, skill
+    /// triggers, and verification evidence all share this exact condition.
+    pub fn process_with_condition(
+        &self,
+        store: &dyn MemoryStore,
+        experience: &Experience,
+        condition: &LessonCondition,
+    ) {
         store.record_experience(experience);
 
         let decision = self.classify(experience);
-        let condition = Self::condition_of(experience);
 
         match decision {
             // Correct / unknown -> no lesson, ever.
             Admission::Discard => {}
             // High-surprise on first sight -> admit immediately.
             Admission::AdmitNew => {
-                store.admit_lesson(Self::build_lesson(&condition, 1, experience.observed_at_ms));
+                store.admit_lesson(Self::build_lesson(condition, 1, experience.observed_at_ms));
                 self.pending
                     .lock()
                     .expect("extractor poisoned")
-                    .remove(&condition);
+                    .remove(condition);
             }
             // Moderate -> accumulate, admit once corroborated.
             Admission::Accumulate => {
-                if store.find_similar_lesson(&condition).is_some() {
-                    store.strengthen_lesson(&condition);
+                if store.find_similar_lesson(condition).is_some() {
+                    store.strengthen_lesson(condition);
                     return;
                 }
                 let count = {
@@ -212,14 +263,14 @@ impl ExperienceExtractor {
                 };
                 if count >= self.corroboration_count {
                     store.admit_lesson(Self::build_lesson(
-                        &condition,
+                        condition,
                         count,
                         experience.observed_at_ms,
                     ));
                     self.pending
                         .lock()
                         .expect("extractor poisoned")
-                        .remove(&condition);
+                        .remove(condition);
                 }
             }
         }
@@ -299,6 +350,23 @@ impl MemoryStore for SimpleMemory {
         } else {
             None
         }
+    }
+
+    fn record_verification(&self, condition: &LessonCondition) {
+        let mut lessons = self.lessons.lock().expect("memory poisoned");
+        if let Some(l) = lessons.get_mut(condition) {
+            l.verification_count += 1;
+        }
+        // No lesson -> evidence is not banked (never creates lessons).
+    }
+
+    fn verification_count(&self, condition: &LessonCondition) -> u64 {
+        self.lessons
+            .lock()
+            .expect("memory poisoned")
+            .get(condition)
+            .map(|l| l.verification_count)
+            .unwrap_or(0)
     }
 }
 
