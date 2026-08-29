@@ -8,16 +8,46 @@ use std::env;
 use std::path::PathBuf;
 
 use friday_benchmark::{
-    load_history, render_dashboard, render_trend, run_benchmark, run_day, save_day,
+    load_history, render_dashboard, render_production, render_trend, run_benchmark, run_day,
+    run_production_pilot, save_day,
 };
 
 fn main() {
     let args: Vec<String> = env::args().collect();
     let save = args.iter().any(|a| a == "--save");
+    let production = args.iter().any(|a| a == "--production");
     let tasks: usize = args
         .iter()
         .find_map(|s| s.parse::<usize>().ok())
         .unwrap_or(600);
+
+    if production {
+        eprintln!(
+            "Running FRIDAY Production Execution Pilot: {} operations",
+            tasks
+        );
+        let pilot = run_production_pilot(tasks);
+        let out_dir = PathBuf::from("target/friday-bench");
+        let _ = std::fs::create_dir_all(&out_dir);
+        let json = serde_json::to_string_pretty(&pilot).expect("serialize pilot");
+        std::fs::write(out_dir.join("production.json"), &json).expect("write pilot json");
+        let md = render_production(&pilot);
+        std::fs::write(out_dir.join("production.md"), &md).expect("write pilot md");
+        print!("{}", md);
+        eprintln!(
+            "Pilot: attempted={} verified={} ({:.1}%) mismatches={}",
+            pilot.metrics.attempted,
+            pilot.metrics.verified_success,
+            if pilot.metrics.attempted > 0 {
+                pilot.metrics.verified_success as f64 / pilot.metrics.attempted as f64 * 100.0
+            } else {
+                0.0
+            },
+            pilot.metrics.mismatches
+        );
+        eprintln!("Pilot reports written to {}", out_dir.display());
+        return;
+    }
 
     if save {
         eprintln!("Running FRIDAY benchmark (both modes): {} tasks", tasks);

@@ -19,12 +19,15 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
+use friday_actions::request::ActionRequest;
+use friday_actions::{AgentKernel, ExecutionContext, FilesystemAdapter, PermissionEngine};
 use friday_capabilities::model::{Capability, Health, Platform};
 use friday_capabilities::registry::CapabilityRegistry;
 use friday_capabilities::sim::{
@@ -145,6 +148,59 @@ pub struct BenchmarkResult {
     pub metrics: Metrics,
     pub calibration: Vec<CalibrationBin>,
     pub tasks: Vec<TaskRecord>,
+    /// Production Execution Pilot results, when a pilot run was requested.
+    /// Kept separate from the simulation track: these numbers are not part of
+    /// `metrics` and are never blended into the simulation MTBF.
+    #[serde(default)]
+    pub production: Option<ProductionResult>,
+}
+
+/// A single real `filesystem.create_file` operation driven through the real
+/// [`friday_actions::AgentKernel`] path, reconciled against independent ground
+/// truth read back from the filesystem.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ProductionFSTask {
+    /// Scenario label: `p0` healthy, `p1` invalid target, `p2` permission,
+    /// `p3` recovery attempt.
+    pub scenario: String,
+    /// Whether the kernel returned success for the action.
+    pub kernel_success: bool,
+    /// Whether the filesystem independently contains the expected artifact.
+    pub ground_truth: bool,
+    /// `kernel_success AND ground_truth`.
+    pub verified_success: bool,
+    /// Kernel result and ground truth disagree (drift detection).
+    pub mismatch: bool,
+    /// Explicit failure category derived from the observed error; never
+    /// collapses into the generic `unknown` bucket.
+    pub classification: String,
+    /// Recovery step selected by the Recovery Graph (only for recovery attempts).
+    pub recovery_chosen: Option<String>,
+    /// Whether the Recovery Graph reported the failure resolved.
+    pub recovery_recovered: Option<bool>,
+}
+
+/// Aggregated Production Execution Pilot metrics — deliberately a separate
+/// block from [`Metrics`] so production observations never dilute simulation.
+#[derive(Serialize, Deserialize, Default, Clone)]
+pub struct ProductionMetrics {
+    pub attempted: usize,
+    pub kernel_success: usize,
+    pub ground_truth_success: usize,
+    pub verified_success: usize,
+    pub mismatches: usize,
+    /// Healthy (P0) creates attempted and independently verified.
+    pub p0_healthy: usize,
+    pub p0_verified: usize,
+}
+
+/// The full Production Execution Pilot result block.
+#[derive(Serialize, Deserialize, Default, Clone)]
+pub struct ProductionResult {
+    /// Human-readable track label (e.g. "Production Execution Pilot").
+    pub mode: String,
+    pub metrics: ProductionMetrics,
+    pub tasks: Vec<ProductionFSTask>,
 }
 
 /// Build a balanced corpus of `n` tasks spread across every subsystem.
@@ -798,7 +854,327 @@ pub fn run_benchmark_with(chaos: bool, n: usize, model: &mut ConfidenceModel) ->
         metrics,
         calibration: cal_bins,
         tasks: records,
+        production: None,
     }
+}
+
+/// Map an observed adapter error string onto an explicit [`FailureCategory`]
+/// label. Never collapses into `unknown`: a real filesystem error is at least
+/// an `execution` failure.
+fn classify_fs_error(err: &str) -> String {
+    let e = err.to_lowercase();
+    if e.contains("permission denied")
+        || e.contains("access is denied")
+        || e.contains("access denied")
+        || e.contains("eacces") /* POSIX */
+        || e.contains("denied")
+    {
+        "permission".into()
+    } else if e.contains("read-only")
+        || e.contains("no space left")
+        || e.contains("disk")
+        || e.contains("enospc")
+    {
+        "resource".into()
+    } else if e.contains("timed out") || e.contains("timeout") {
+        "timeout".into()
+    } else if e.contains("not a directory")
+        || e.contains("enotdir")
+        || e.contains("already exists")
+        || e.contains("not found")
+        || e.contains("enoent")
+    {
+        "execution".into()
+    } else if e.contains("no such device") || e.contains("enodev") {
+        "capability".into()
+    } else {
+        // A real I/O failure with an unrecognized text still deserves an
+        // explicit category rather than the generic `unknown` bucket.
+        "execution".into()
+    }
+}
+
+/// Execute one real `filesystem.create_file` through the production
+/// [`AgentKernel`] path and reconcile it against independent ground truth read
+/// back from the filesystem.
+///
+/// Returns `(kernel_success, ground_truth, error_text)` where `error_text` is
+/// the adapter's observed error string (absent on success) so failures can be
+/// classified from real evidence.
+async fn probe_fs_create(
+    kernel: &AgentKernel,
+    path: &Path,
+    content: &str,
+) -> (bool, bool, Option<String>) {
+    let req = ActionRequest::new(
+        "filesystem",
+        "create_file",
+        json!({ "path": path.to_string_lossy(), "content": content }),
+    );
+    let ctx = ExecutionContext::builder().build();
+    let result = kernel.run_action(req, ctx).await;
+    let ground_truth = std::fs::read_to_string(path)
+        .map(|s| s == content)
+        .unwrap_or(false);
+    (result.success, ground_truth, result.error)
+}
+
+/// The Production Execution Pilot (R4-1B).
+///
+/// Drives a real `filesystem.create_file` through the real `AgentKernel` ->
+/// real `FilesystemAdapter` -> real filesystem path, reading independent ground
+/// truth back from the filesystem. Results are reported in a separate block and
+/// never blended into the simulation `Metrics`/MTBF. No production code is
+/// touched; the benchmark owns the experiment.
+///
+/// Scenarios:
+/// * `p0` healthy create (the bulk; `n` iterations).
+/// * `p1` invalid target — create under a path whose parent is a file.
+/// * `p2` permission denial — a fresh kernel configured (via the documented
+///   `with_permission` seam) to deny `create_file`; the real kernel permission
+///   gate rejects the action deterministically and cross-platform.
+/// * `p3` recovery attempt — classify a real failure, consult the Recovery
+///   Graph, and record whether a step resolves.
+pub fn run_production_pilot(n: usize) -> ProductionResult {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build tokio runtime");
+    rt.block_on(async {
+        let kernel = AgentKernel::new()
+            .with_timeout(Duration::from_secs(30))
+            .with_max_retries(0);
+        kernel
+            .register_adapter(Box::new(FilesystemAdapter::new()))
+            .await;
+
+        let workspace = std::env::temp_dir().join(format!("friday-pilot-{}", Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&workspace);
+
+        let mut tasks = Vec::new();
+        let mut m = ProductionMetrics::default();
+
+        // P0: healthy creates — the acceptance demonstration.
+        for i in 0..n {
+            let path = workspace.join(format!("p0_{i}.txt"));
+            let (k, g, _err) = probe_fs_create(&kernel, &path, "benchmark").await;
+            let verified = k && g;
+            m.attempted += 1;
+            m.p0_healthy += 1;
+            if k {
+                m.kernel_success += 1;
+            }
+            if g {
+                m.ground_truth_success += 1;
+                m.p0_verified += 1;
+            }
+            if verified {
+                m.verified_success += 1;
+            }
+            if k != g {
+                m.mismatches += 1;
+            }
+            tasks.push(ProductionFSTask {
+                scenario: "p0".into(),
+                kernel_success: k,
+                ground_truth: g,
+                verified_success: verified,
+                mismatch: k != g,
+                classification: if k {
+                    "success".into()
+                } else {
+                    "execution".into()
+                },
+                recovery_chosen: None,
+                recovery_recovered: None,
+            });
+        }
+
+        // P1: invalid target — parent is an existing file, so create_dir_all
+        // must fail with a real OS error. Classified from the observed error.
+        let blocker = workspace.join("p1_blocker.txt");
+        let _ = std::fs::write(&blocker, "");
+        let p1_path = blocker.join("sub").join("x.txt");
+        let (k1, g1, e1) = probe_fs_create(&kernel, &p1_path, "x").await;
+        m.attempted += 1;
+        if k1 {
+            m.kernel_success += 1;
+        }
+        if g1 {
+            m.ground_truth_success += 1;
+        }
+        if k1 && g1 {
+            m.verified_success += 1;
+        }
+        if k1 != g1 {
+            m.mismatches += 1;
+        }
+        let p1_class = match e1 {
+            Some(err) => classify_fs_error(&err),
+            None => "success".into(),
+        };
+        tasks.push(ProductionFSTask {
+            scenario: "p1".into(),
+            kernel_success: k1,
+            ground_truth: g1,
+            verified_success: k1 && g1,
+            mismatch: k1 != g1,
+            classification: p1_class,
+            recovery_chosen: None,
+            recovery_recovered: None,
+        });
+
+        // P2: permission denial — a real denial through the kernel's own
+        // permission gate. A fresh AgentKernel is configured (via the
+        // documented `with_permission` seam, no production code touched) to
+        // deny `create_file`; `run_action` then rejects the action at the gate
+        // before the adapter ever runs, returning "permission denied". This is
+        // deterministic and identical across platforms.
+        let deny_kernel = AgentKernel::new()
+            .with_permission(PermissionEngine::new().deny_substring("create_file"))
+            .with_timeout(Duration::from_secs(30))
+            .with_max_retries(0);
+        deny_kernel
+            .register_adapter(Box::new(FilesystemAdapter::new()))
+            .await;
+        let p2_path = workspace.join("p2.txt");
+        let (k2, g2, e2) = probe_fs_create(&deny_kernel, &p2_path, "x").await;
+        m.attempted += 1;
+        if k2 {
+            m.kernel_success += 1;
+        }
+        if g2 {
+            m.ground_truth_success += 1;
+        }
+        if k2 && g2 {
+            m.verified_success += 1;
+        }
+        if k2 != g2 {
+            m.mismatches += 1;
+        }
+        let class2 = match &e2 {
+            Some(err) => classify_fs_error(err),
+            None => "success".into(),
+        };
+        tasks.push(ProductionFSTask {
+            scenario: "p2".into(),
+            kernel_success: k2,
+            ground_truth: g2,
+            verified_success: k2 && g2,
+            mismatch: k2 != g2,
+            classification: class2.clone(),
+            recovery_chosen: None,
+            recovery_recovered: None,
+        });
+
+        // P3: recovery attempt — take the observed P2 failure and ask the
+        // Recovery Graph what it would do. Filesystem policies never
+        // auto-resolve a permission denial (they hand off via SuggestElevation
+        // / AskUser), so the honest outcome is an explicit Escalate with the
+        // failure recorded as unresolved — not hidden in `unknown`.
+        let graph = default_graph();
+        let available: HashSet<String> = ["filesystem.create_file".to_string()].into();
+        let rec = graph.recover_with(
+            "filesystem.create_file",
+            FailureCategory::Permission,
+            &available,
+            &ConfidenceModel::new(),
+        );
+        tasks.push(ProductionFSTask {
+            scenario: "p3".into(),
+            kernel_success: k2,
+            ground_truth: g2,
+            verified_success: false,
+            mismatch: k2 != g2,
+            classification: class2.clone(),
+            recovery_chosen: Some(format!("{:?}", rec.chosen)),
+            recovery_recovered: Some(rec.recovered),
+        });
+
+        let _ = std::fs::remove_dir_all(&workspace);
+
+        ProductionResult {
+            mode: "Production Execution Pilot".into(),
+            metrics: m,
+            tasks,
+        }
+    })
+}
+
+/// Render the Production Execution Pilot as a dedicated, separate section.
+pub fn render_production(p: &ProductionResult) -> String {
+    let m = &p.metrics;
+    let mut s = String::new();
+    s.push_str("# FRIDAY Production Execution Pilot\n\n");
+    s.push_str("Separate track — these numbers are real `filesystem.create_file` ");
+    s.push_str(
+        "operations through the real AgentKernel; never blended into the simulation MTBF.\n\n",
+    );
+    s.push_str("| Metric | Value | Meaning |\n|---|---|---|\n");
+    s.push_str(&format!(
+        "| Attempted | {} | real operations run |\n",
+        m.attempted
+    ));
+    s.push_str(&format!(
+        "| Kernel Success | {} ({:.1}%) | AgentKernel returned success |\n",
+        m.kernel_success,
+        if m.attempted > 0 {
+            m.kernel_success as f64 / m.attempted as f64 * 100.0
+        } else {
+            0.0
+        }
+    ));
+    s.push_str(&format!(
+        "| Ground Truth Success | {} ({:.1}%) | filesystem contained the artifact |\n",
+        m.ground_truth_success,
+        if m.attempted > 0 {
+            m.ground_truth_success as f64 / m.attempted as f64 * 100.0
+        } else {
+            0.0
+        }
+    ));
+    s.push_str(&format!(
+        "| Verified Success | {} ({:.1}%) | kernel AND ground truth |\n",
+        m.verified_success,
+        if m.attempted > 0 {
+            m.verified_success as f64 / m.attempted as f64 * 100.0
+        } else {
+            0.0
+        }
+    ));
+    s.push_str(&format!(
+        "| Mismatches | {} | kernel/ground-truth disagreement |\n",
+        m.mismatches
+    ));
+    s.push_str(&format!(
+        "| P0 Healthy | {} tried / {} verified |\n",
+        m.p0_healthy, m.p0_verified
+    ));
+
+    s.push('\n');
+    s.push_str("## Per-Task Detail\n");
+    s.push_str(
+        "| Scenario | Kernel | Ground Truth | Verified | Mismatch | Classification | Recovery |\n",
+    );
+    s.push_str("|---|---|---|---|---|---|---|\n");
+    for t in &p.tasks {
+        let recovery = match (&t.recovery_chosen, &t.recovery_recovered) {
+            (Some(c), Some(r)) => format!("{} / {}", c, if *r { "resolved" } else { "unresolved" }),
+            _ => "—".into(),
+        };
+        s.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} | {} |\n",
+            t.scenario,
+            t.kernel_success,
+            t.ground_truth,
+            t.verified_success,
+            t.mismatch,
+            t.classification,
+            recovery
+        ));
+    }
+    s.push('\n');
+    s
 }
 
 /// Render a markdown reliability dashboard.

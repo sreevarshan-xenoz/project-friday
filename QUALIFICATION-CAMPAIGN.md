@@ -439,6 +439,18 @@ Campaign phases:
   R2-4  12-cycle endurance              🟢 GREEN
   L1    verification evidence           🟢 RESOLVED
   L2    goal-string provenance          🟢 ACCEPTED (architectural characteristic)
+
+R3 investigation phases:
+  R3-0  architecture delta survey       🟢 COMPLETE
+  R3-1  skill learning wire survey      🟢 COMPLETE
+  R3-2  convergence survey              🟢 COMPLETE (deferred: architecture boundary)
+  R3-3  execution provenance survey     🟢 COMPLETE (architecture boundary accepted)
+
+R4 benchmark qualification:
+  R4-1A real execution seam survey      🟢 READY
+  R4-1B production execution pilot     🟢 PASS (methodology proven; MTBF not yet measured)
+  R4-2  production failure campaign     ⬜ PENDING
+  R4-3  qualification decision          ⬜ PENDING
 ```
 
 ### Proven invariants
@@ -478,6 +490,190 @@ Campaign phases:
 | — | Skill registry/meta is in-memory, not restart-durable | DEFERRED — not mixed into R2 |
 | — | Final endurance (24h decision runs) | DEFERRED — per build→validate→endure workflow |
 | — | Browser runtime production qualification | DEFERRED — per roadmap |
+| R3 | Autonomous tick skill learning: thin execution model lacks capability bindings; convergence with supervisor path requires architecture decision | DEFERRED — trajectory exists (Task/CompletedStep/CompletedGoal); autonomous tick intentionally uses different model |
+| R4 | Qualification MTBF / first-pass / recovery effectiveness against roadmap (MTBF > 100, first-pass > 90%, recovery > 85%, user > 99%) | NOT YET MEASURED — R4-1B validated the production methodology only; R4-2 must run a statistically meaningful failure campaign before any reliability number is claimed |
+
+### Candidate issues (observed, not qualified)
+
+| ID | Observation | Location | Disposition |
+|----|-------------|----------|-------------|
+| CI-1 | `WorkforceDriver` silently overwrites Director's `allowed_skills` narrowing with role default; the Director's explicit skill scope is lost in the delegation chain | `workforce_driver.rs:90-178`, `workforce.rs:793` | NOT QUALIFIED — severity and intended semantics unknown; do not fix until the delegation integrity model is qualified |
 
 Campaign order: F1 injection → F2 crash injection → F3/F4/F5 registration
-verification → L1 verification evidence → L2 architecture survey → freeze.
+verification → L1 verification evidence → L2 architecture survey → freeze →
+R3 surveys (architecture delta, wire, convergence, execution provenance).
+
+### R3-0: Architecture delta survey (2026-08-27)
+
+```text
+Scope:     READ-ONLY audit of all qualification gaps. What exists, what's
+           missing, what's blocked, what needs investigation.
+Outcome:   30 proven, 5 incomplete, 0 missing. Skill learning identified as
+           highest-priority convergence gap.
+```
+
+### R3-1: Skill learning wire survey (2026-08-27)
+
+```text
+Scope:     Trace how skill learning is wired through the autonomous tick.
+Outcome:   DISPROVED "one wire change" hypothesis. Two completely separate
+           skill learning systems discovered:
+           - System A (autonomy/skill.rs): SkillEvaluator → private SkillRegistry
+           - System B (context/skill_learning.rs): SkillLearningService → planner's live SkillRegistry
+           Three execution paths identified. Skill learning only wired in
+           planner supervisor path. Autonomous tick has no production skill
+           learning wire.
+```
+
+### R3-2: Skill learning convergence survey (2026-08-27)
+
+```text
+Scope:     Semantic mapping, construction archaeology, admission policy
+           comparison, ownership analysis of System A vs System B.
+Outcome:   CONVERGENCE DEFERRED. Two separate SkillRegistry instances
+           (isolated test vs shared production). Admission policies are
+           complementary, not duplicate. The autonomous tick lacks
+           capability-binding data (Plan.steps is Vec<String>, ExecutionResult
+           has no capability identity) — the fundamental loss in A→B projection.
+```
+
+Dispositions:
+
+- **R3 = C / deferred** — no wire, no System B populator, no System A expansion, no third system
+- Convergence is blocked by missing capability-binding trajectory data, not by a wiring omission
+- The real architectural divergence is: **the autonomous path has a much poorer execution record than the supervisor path**
+- Deferred pending canonical execution-trajectory/capability-binding data flow
+
+Status language:
+
+> Skill-learning convergence deferred: autonomous execution lacks
+> capability-binding trajectory data required for lossless projection into the
+> planner's production `SkillRegistry`. No duplicate learning authority or
+> trace-derived production bridge introduced.
+
+### R3-3: Execution Provenance Survey (2026-08-27)
+
+```text
+Scope:     Trace the existing supervisor path (which already has the
+           capability-binding data the autonomous path lacks). Answer:
+           does FRIDAY already have a trajectory representation we can reuse?
+Key Q:     Is Task/CompletedStep/CompletedGoal the existing trajectory, or
+           is a new abstraction required?
+Outcome:   THE TRAJECTORY EXISTS — Task + CompletedStep + CompletedGoal.
+           No new abstraction needed. The autonomous tick has a completely
+           different execution model (Plan { goal, steps: Vec<String> },
+           ExecutionResult { success, detail }) — intentionally thin,
+           no capability bindings. Two architecturally separate execution
+           paths sharing names but not data.
+```
+
+Survey findings:
+
+1. **Capability binding created during planning** — LLM emits `LlmTask { capability }`, validated against `CapabilityRegistry::known()` before execution
+2. **Supervisor path preserves it unbroken** — `Task.capability` → `dispatch_event` → `on_result` → `CompletedStep.capability` → `TrajectoryStep.capability` → `SkillLearningService`
+3. **Autonomy path never has it** — `Plan { goal, steps: Vec<String> }` carries no capability; `ExecutionResult { success, detail }` carries none; no `CapabilityRegistry` participation
+4. **WorkforceDriver does not bridge the gap** — sits on Path B, never reaches `CompletedGoal` or `SkillLearningService`; additionally overwrites Director's `allowed_skills` narrowing with role default
+5. **SkillLearningObserver drops data even on Path A** — `output`, `params`, `depends_on`, `retries`, `trace_id`, `context`, `confidence` (hardcoded 1.0), `support` (hardcoded 1)
+6. **No new abstraction required** — `Task` + `CompletedStep` + `CompletedGoal` is the existing trajectory representation; the question is whether the autonomous tick should adopt it
+
+Dispositions:
+
+- **No code change.** The two execution paths serve different purposes (rich auditable execution vs thin world-model iteration)
+- **The autonomous tick's thin model is a design choice**, not an oversight
+- Convergence requires an architecture decision: should the autonomous tick adopt the supervisor's `Task`/`GoalRuntime` infrastructure for skill learning?
+- That decision is outside the scope of R3; defer to architecture phase if/when autonomous skill learning becomes a priority
+
+**R3-3 = 🟢 ARCHITECTURE BOUNDARY ACCEPTED.**
+
+## R4 benchmark qualification (benchmark-side, additive)
+
+R4 drives qualification by **measurement**: benchmark against the roadmap
+targets (MTBF > 100, first-pass > 90%, recovery effectiveness > 85%, user
+success > 99%). The benchmark gains a **production track** distinct from the
+simulation track — real `AgentKernel` → real adapter → real result → real
+ground truth → real recovery — and the two are kept deliberately separate (the
+simulation numbers are never contaminated with production results).
+
+### R4-1A: Real execution seam survey (2026-08-29)
+
+```text
+Scope:     READ-ONLY trace of the narrowest real dispatch path: does a real
+           filesystem.create_file flow through AgentKernel -> FilesystemAdapter
+           -> real filesystem -> independent ground truth, hermetically?
+Outcome:   🟢 READY. The bridge is already proven — e2e/src/runner.rs runs a
+           real AgentKernel + real FilesystemAdapter hermetically. Genuine gaps
+           (not rewrites): no verifier in the run_action path (benchmark must
+           supply its own independent ground-truth check), recovery not wired
+           into the kernel (harness calls RecoveryGraph itself), friday-actions
+           doesn't depend on friday-recovery (orchestration belongs in the
+           benchmark). No production-code change required.
+```
+
+Disposition:
+
+- Execution result (`ActionResult.success`) is **not** "verification". The pilot
+  records two separate facts — `execution_result` (kernel returned success) and
+  `ground_truth` (filesystem actually contains the expected artifact) — and
+  derives `verified_success = execution_result AND ground_truth`. This removes
+  the circularity in the simulation track's `actual = predicted || recovered`.
+
+### R4-1B: Production Execution Pilot (2026-08-29)
+
+```text
+Scope:     Benchmark-side production track for filesystem.create_file only.
+           Real AgentKernel + real FilesystemAdapter + isolated temp dir per
+           task + independent ground truth + deterministic repeatability, zero
+           external services, no production-code modifications, results kept
+           separate from simulation.
+Scenarios: P0 healthy create (bulk), P1 invalid target, P2 permission denial
+           (real kernel permission gate), P3 recovery attempt (Recovery Graph).
+```
+
+Evidence:
+
+- **120 real filesystem operations** through the real `AgentKernel`
+- **120 / 120 independently verified** (kernel success AND filesystem ground truth)
+- **0 ground-truth mismatches** (kernel/ground-truth never disagree)
+- Deterministic across repeated runs (identical output)
+- P2 injected a genuine **permission denial** via the kernel's `with_permission`
+  gate (documented config seam — the correct cross-platform seam; the earlier
+  read-only-directory trick was invalid on Windows and was discarded)
+- P1/P2 classified **explicitly** (`execution`, `permission`) — never the
+  generic `unknown` bucket
+- P3 reports **`Escalate / unresolved`** — the Recovery Graph honestly refuses
+  to auto-resolve a filesystem permission denial
+- Existing simulation track **unchanged** (MTBF=300.0, sim_acc=100%)
+- Gates: fmt clean, clippy `-D warnings` clean, `cargo build --workspace`
+  clean, `cargo test --workspace --exclude friday-e2e --no-fail-fast` 0 failed,
+  pilot tests 6/6
+
+```text
+R4-1B = 🟢 PASS  (methodology proven)
+
+120 real filesystem operations
+120 independently verified successes
+0 ground-truth mismatches
+deterministic across repeated runs
+permission-denial injection classified correctly
+simulation track unchanged
+
+Qualification MTBF: NOT YET MEASURED
+```
+
+Dispositions:
+
+- The pilot validates the **execution-pilot methodology**, not MTBF. 120
+  successful operations ≠ an MTBF estimate under a statistically meaningful
+  failure campaign.
+- **R4-2** becomes the production **failure campaign**: inject real failures,
+  collect real failure/recovery observations, then derive
+  MTBF / first-pass / recovery effectiveness against the roadmap targets.
+- **R4-3** is the qualification decision.
+- Do **not** expand task classes yet — one trustworthy production path is more
+  valuable than six half-real ones. (filesystem is the sole fully-real path;
+  terminal/git/windows/browser/inference remain simulation-only.)
+
+Campaign order: R2 baseline/freeze → R3 surveys (architecture delta, wire,
+convergence, execution provenance, all READ-ONLY) → R4-1A seam survey →
+R4-1B production execution pilot (methodology proven) → R4-2 production failure
+campaign → R4-3 qualification decision.

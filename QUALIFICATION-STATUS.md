@@ -38,6 +38,16 @@ R2 endurance              🟢
 R2 verification evidence  🟢
 R2 goal provenance        🟢 (architectural characteristic)
 
+R3 architecture delta     🟢 (survey complete)
+R3 skill learning wire    🟢 (survey complete)
+R3 convergence survey     🟢 (architecture boundary accepted)
+R3 execution provenance   🟢 (architecture boundary accepted)
+
+R4-1A execution seam      🟢 (READY)
+R4-1B production pilot    🟢 (methodology proven; MTBF not yet measured)
+R4-2  failure campaign    ⬜ (pending)
+R4-3  qualification       ⬜ (pending)
+
 Final endurance           ⏸️
 Browser runtime           🟡
 ```
@@ -220,6 +230,40 @@ Remaining deferred items (not R2 blockers):
 - Skill registry/meta is in-memory, not restart-durable
 - Final endurance (24h decision runs)
 - Browser runtime production qualification
+
+R3 skill-learning convergence deferred: the trajectory representation already
+exists (Task + CompletedStep + CompletedGoal), but the autonomous tick uses a
+completely different, intentionally thin execution model (Plan { goal, steps },
+ExecutionResult { success, detail }) with no capability bindings. Two
+architecturally separate execution paths sharing names but not data. No
+duplicate learning authority or trace-derived production bridge introduced.
+R3-3 = ARCHITECTURE BOUNDARY ACCEPTED. Full rationale in
+[QUALIFICATION-CAMPAIGN.md](QUALIFICATION-CAMPAIGN.md) (R3-2 and R3-3 sections).
+
+## R4 benchmark qualification
+
+Qualification is now driven by **measurement** against the roadmap targets
+(MTBF > 100, first-pass > 90%, recovery effectiveness > 85%, user success
+> 99%). The benchmark gains an additive **production track** — real
+`AgentKernel` → real `FilesystemAdapter` → real filesystem → independent ground
+truth — kept deliberately separate from the simulation track. No production
+code is modified; the benchmark owns the experiment.
+
+- **R4-1A** (seam survey): 🟢 READY — the narrowest real dispatch path is
+  proven hermetically (see `e2e/src/runner.rs`); gaps are benchmark-side, not
+  production-side.
+- **R4-1B** (production execution pilot): 🟢 PASS — 120 real filesystem
+  operations, 120/120 independently verified, 0 ground-truth mismatches,
+  deterministic, permission-denial injected via the kernel's real permission
+  gate and classified explicitly, recovery Graph consulted honestly.
+  **Qualification MTBF is NOT yet measured** — the pilot validates the
+  methodology, not a reliability number.
+- **R4-2** (production failure campaign): PENDING — inject real failures, then
+  derive MTBF / first-pass / recovery effectiveness.
+- **R4-3** (qualification decision): PENDING.
+
+Do not expand task classes before R4-2; one trustworthy production path
+(filesystem) beats six half-real ones.
 
 Feature development may resume; the deferred boundaries above remain outstanding
 at the final qualification gate.
