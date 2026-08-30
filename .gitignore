@@ -48,3 +48,8 @@ artifacts/validation/
 .fabric/
 
 bench/sherpa/
+
+# Frozen upstream checkout used as FRIDAY's substrate reference (R5).
+# Never committed inside project-friday; FRIDAY integrates as an overlay.
+omarchy/
+
