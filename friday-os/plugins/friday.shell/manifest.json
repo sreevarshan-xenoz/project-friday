@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "author": "Project FRIDAY",
   "license": "MIT OR Apache-2.0",
-  "description": "Live FRIDAY cognitive status in a native Omarchy bar widget: daemon status, current activity, last goal outcome, voice, and host telemetry — rendered from the genuine file-backed state (R5-1-2). Passive observe-only surface; no command entry (that joins in R5-1-3).",
+  "description": "Live FRIDAY status and one deliberate command surface in a native Omarchy bar widget: daemon status, current activity, last goal outcome, voice, host telemetry, and an explicit goal entry (R5-1-3). It observes via the genuine file-backed state and acts only on an explicit user GO.",
   "kinds": ["bar-widget"],
   "activation": "on-demand",
   "entryPoints": {
@@ -13,15 +13,19 @@
   },
   "barWidget": {
     "displayName": "FRIDAY",
-    "description": "A calm, peripheral FRIDAY status widget: glanceable bar dot + rich panel reflecting the daemon's state.json read model. It observes and reflects genuine state only; it issues no commands yet (R5-1-3).",
+    "description": "A calm FRIDAY widget: glanceable status dot + rich panel reflecting the daemon's state.json, plus a deliberate goal-command surface. Opening the panel sends nothing; a goal runs only when the user presses GO (or sends via the friday.shell IPC target).",
     "category": "AI",
     "aliases": ["friday", "friday-state", "cognition"],
     "allowMultiple": false,
     "defaults": {
-      "stateFilePath": ""
+      "stateFilePath": "",
+      "ctlCommand": "friday-ctl",
+      "ctlAddr": "127.0.0.1:18432"
     },
     "schema": [
-      { "key": "stateFilePath", "type": "string", "label": "Path to state.json (empty = default ~/.local/state/friday/state.json)", "defaultValue": "", "description": "Override the daemon state file this widget watches." }
+      { "key": "stateFilePath", "type": "string", "label": "Path to state.json (empty = default ~/.local/state/friday/state.json)", "defaultValue": "", "description": "Override the daemon state file this widget watches." },
+      { "key": "ctlCommand", "type": "string", "label": "friday-ctl command", "defaultValue": "friday-ctl", "description": "The audited CLI the widget invokes to run a goal. Must be on PATH." },
+      { "key": "ctlAddr", "type": "string", "label": "Daemon listen address", "defaultValue": "127.0.0.1:18432", "description": "Loopback address friday-ctl connects to (a non-default addr is passed through)." }
     ]
   }
 }

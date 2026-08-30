@@ -22,25 +22,48 @@ use tokio_tungstenite::tungstenite::Message;
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
-    let mut args = std::env::args().skip(1);
-    let Some(sub) = args.next() else {
-        eprintln!("usage: friday-ctl <goal|system-info> [goal text]");
-        return std::process::ExitCode::FAILURE;
-    };
+    let raw: Vec<String> = std::env::args().skip(1).collect();
 
-    // Resolve the daemon address + token from state.json, with env overrides.
+    // Resolve the daemon address + token, in precedence order: explicit CLI
+    // flags, then env overrides, then the file-backed state.
     let state_path = if let Ok(p) = std::env::var("FRIDAY_STATE_FILE") {
         std::path::PathBuf::from(p)
     } else {
         ShellState::default_path()
     };
-    let token = std::env::var("FRIDAY_CTL_TOKEN").ok().unwrap_or_default();
-    let addr_str = std::env::var("FRIDAY_CTL_ADDR")
+    let mut addr_str = std::env::var("FRIDAY_CTL_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:18432".to_string());
-    let rest: Vec<String> = std::env::args().skip(2).collect();
+    let mut token = std::env::var("FRIDAY_CTL_TOKEN").ok().unwrap_or_default();
+
+    // Scan ALL tokens for flags (`--addr`/`--token` may appear before or after
+    // the subcommand) so they never leak into the goal text. The first
+    // non-flag token is the subcommand; the rest are goal words.
+    let mut positional: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < raw.len() {
+        let w = &raw[i];
+        if w == "--addr" && i + 1 < raw.len() {
+            addr_str = raw[i + 1].clone();
+            i += 2;
+        } else if w == "--token" && i + 1 < raw.len() {
+            token = raw[i + 1].clone();
+            i += 2;
+        } else {
+            positional.push(w.clone());
+            i += 1;
+        }
+    }
+
+    let Some(sub) = positional.first() else {
+        eprintln!("usage: friday-ctl <goal|system-info> [goal text] [--addr <host:port>] [--token <tok>]");
+        return std::process::ExitCode::FAILURE;
+    };
+    let sub = sub.clone();
+    let goal_words = positional.into_iter().skip(1).collect::<Vec<_>>();
+
     if token.is_empty() {
         match read_token(&state_path) {
-            Some(t) => run(&addr_str, &t, &sub, rest).await,
+            Some(t) => run(&addr_str, &t, &sub, goal_words).await,
             None => {
                 eprintln!(
                     "no token found; daemon not running at {} (is friday-linux-daemon up?)",
@@ -50,7 +73,7 @@ async fn main() -> std::process::ExitCode {
             }
         }
     } else {
-        run(&addr_str, &token, &sub, rest).await
+        run(&addr_str, &token, &sub, goal_words).await
     }
 }
 

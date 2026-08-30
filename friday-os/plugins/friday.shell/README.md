@@ -21,6 +21,27 @@ It deliberately does **not** show fake AGI meters, "confidence 97%", or a
 decorative brain animation. If FRIDAY does not produce a measurement, the
 widget says nothing — exactly the ACOS calm/anti-fabrication direction.
 
+## The deliberate command surface (R5-1-3)
+
+One explicit user action → one real FRIDAY goal. Type a goal and press **GO**
+(or Enter, or `s`) in the panel; the widget shells out to the audited
+`friday-ctl` client (which reads the live session token from `state.json`
+itself) and the daemon runs it. The truth returns through the **state plane** —
+`state.json` → `FridayState.qml` — with no second WebSocket mechanism.
+
+Two planes, two responsibilities:
+
+```
+COMMAND PLANE:  friday.shell → friday-ctl → daemon   (returns {accepted:true}, async)
+STATE PLANE:    daemon → state.json → friday.shell    (the genuine result)
+```
+
+The shell stays passive otherwise: **opening the panel never sends a command**,
+and a duplicate GO while a goal is genuinely running is a no-op (no duplicate
+execution). `--addr`/`--token` CLI flags are honored before or after the
+subcommand, so a non-default loopback addr is a per-instance manifest option,
+never a code change.
+
 ## Why it is defensive
 
 This plugin runs **inside the shell host** and is not sandboxed, so every
@@ -73,15 +94,17 @@ The widget is then discoverable as a normal Omarchy bar widget and can be added
 to the bar. Its `moduleName`/`ipcTarget` is `friday.shell`, exposing
 `open`/`close`/`toggle`/`refresh`/`status`.
 
-## R5-1-2 status
+## R5-1-3 status
 
-The read model is hardened and proven end-to-end headlessly (live daemon:
-`goal.completed` → `last_goal.outcome/phases/strategy` reflect the Executive's
-real cycle; a goal with no captured output correctly reports no result). The
-R5-1-1 contract test and the `shell_state` unit suite are green.
+The command surface is implemented and the complete desktop loop is proven
+end-to-end headlessly: a goal issued through `friday-ctl` → daemon accepts →
+GoalRunner runs a real Executive cycle → `state.json` lands on a genuine
+terminal (`goal.completed`) → the FileView read-model picks it up without a
+restart. `--addr` works before or after the subcommand. Regression: 72 lib +
+1 contract test green, zero new warnings.
 
 The QML cannot be visually executed on this Windows dev box (no Quickshell
 shell), so the widget is authored against the real Omarchy plugin contract and
 its manifest parses, but on-screen rendering is verified on a real Omarchy
-session in the dedicated visual-verification step. Command entry is explicitly
-**not** part of R5-1-2 — that is R5-1-3.
+session in the dedicated visual-verification step (a real GO click on a live
+session). `omarchy/` remains untouched.
