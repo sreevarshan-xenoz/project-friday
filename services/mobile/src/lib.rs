@@ -15,6 +15,7 @@ pub mod goal_runner;
 pub mod probe;
 pub mod protocol;
 pub mod session;
+pub mod shell_state;
 pub mod transport;
 pub mod voice;
 

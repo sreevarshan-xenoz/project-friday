@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "friday.shell",
+  "name": "FRIDAY",
+  "version": "0.1.0",
+  "author": "Project FRIDAY",
+  "license": "MIT OR Apache-2.0",
+  "description": "Live FRIDAY cognitive state in a native Omarchy bar widget: daemon status, current goal and phase, cognition, voice, and host telemetry. Issues one controlled command (planner.goal) to the FRIDAY Linux daemon via friday-ctl.",
+  "kinds": ["bar-widget"],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "FRIDAY",
+    "description": "Renders the FRIDAY Linux daemon's state.json and issues a single controlled goal command from the desktop.",
+    "category": "AI",
+    "aliases": ["friday", "friday-state", "cognition"],
+    "allowMultiple": false,
+    "defaults": {
+      "ctl": {
+        "command": "friday-ctl",
+        "addr": "127.0.0.1:18432",
+        "stateFile": ""
+      },
+      "refreshIntervalSec": 5,
+      "commandGoal": "What is my current status?"
+    },
+    "schema": [
+      { "key": "refreshIntervalSec", "type": "integer", "label": "Refresh interval (seconds)", "min": 1, "max": 300, "step": 1, "defaultValue": 5 },
+      { "key": "commandGoal", "type": "string", "label": "Default goal for the command button", "defaultValue": "What is my current status?", "description": "The goal text sent when the desktop command button is pressed." }
+    ]
+  }
+}
