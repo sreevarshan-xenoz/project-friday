@@ -1,29 +1,65 @@
-# friday.shell — FRIDAY bar-widget for the Omarchy shell
+# friday.shell — FRIDAY, a calm cognitive-status bar-widget for the Omarchy shell
 
-The GRID/FRIDAY cognitive-state widget as a native Omarchy `bar-widget` plugin.
-It is FRIDAY-owned and **lives outside the frozen `omarchy/` tree**; it is
-delivered to the shell only as a plugin drop-in at the user path.
+The GRID/FRIDAY status widget as a native Omarchy `bar-widget` plugin. It is
+FRIDAY-owned and **lives outside the frozen `omarchy/` tree**; it is delivered
+to the shell only as a plugin drop-in at the user path.
 
-## What it is
+## What it is (R5-1-2)
 
-- A read-model over the FRIDAY Linux daemon's file-backed contract
-  (`~/.local/state/friday/state.json`): daemon status, current goal + phase,
-  cognition slots (voice), and host telemetry (CPU/memory).
-- A single controlled command (`planner.goal`) to the daemon, issued from the
-  desktop through the `friday-ctl` CLI.
-- An IPC surface at the `friday.shell` target (`status`, `refresh`, `goal`).
+A **passive, observe-only** surface that reflects FRIDAY's genuine state — it
+does not command the runtime, and it never invents a metric.
 
-It reuses the Omarchy plugin contract exactly: `manifest.json` (bar-widget,
-`Panel.qml` entry point), `Panel` base class with `moduleName`/`ipcTarget`/
-`manageIpc:false`, `FileView` watching, and `BarIconButton`/`KeyboardPanel`
-widgets. No change inside `omarchy/` is required.
+- A glanceable bar dot: quiet truth, three states only — `●` idle/online,
+  `●` working (a goal is genuinely in flight), `○` unavailable (daemon down or
+  state file missing).
+- A rich panel exposing only what the daemon actually reports: daemon status,
+  the current activity, the **last goal's genuine outcome** (result/error,
+  phases completed, route), voice, host telemetry, and the last accepted
+  command echo.
+
+It deliberately does **not** show fake AGI meters, "confidence 97%", or a
+decorative brain animation. If FRIDAY does not produce a measurement, the
+widget says nothing — exactly the ACOS calm/anti-fabrication direction.
+
+## Why it is defensive
+
+This plugin runs **inside the shell host** and is not sandboxed, so every
+accessor in `FridayState.qml` is guarded. A missing `state.json`, malformed
+JSON, an empty/partial document, or a vanished field degrades to a safe value
+(`FRIDAY not running` / stale) — never a property error that kills the widget.
+
+## The read model
+
+`state.json` is the contract, and only the daemon writes it. The widget only
+observes it via `FileView` (reacting to the daemon's atomic tmp+rename writes):
+
+```
+GoalRunner / Executive
+        ↓  bus events
+   shell_state.apply_event   ← records only genuine fields
+        ↓
+   state.json
+        ↓
+   FileView
+        ↓
+   FridayState.qml (defensive parse)
+        ↓
+   friday.shell panel
+```
+
+`apply_event` (in `services/mobile/src/shell_state.rs`) maps the real event
+set into a UI-complete document: `plan.goal`/`goal.started` open a `current`
+goal; the terminal events (`goal.completed|failed|cancelled|paused|
+recoverable`) close it into `last_goal` carrying only the outcome detail the
+runtime attached (`phases`, `result`, `error`, `strategy`,
+`evidence_verified`). It never manufactures a field.
 
 ## Layout
 
 ```
 manifest.json   — bar-widget plugin descriptor (schemaVersion 1, id friday.shell)
-FridayState.qml — headless FileView read-model over state.json
-Panel.qml       — the bar widget + IpcHandler + command entry
+FridayState.qml — defensive FileView read-model over state.json
+Panel.qml       — the glanceable bar dot + rich panel + IpcHandler
 ```
 
 ## Install
@@ -33,36 +69,19 @@ install -d "$HOME/.config/omarchy/plugins"
 cp -r friday-os/plugins/friday.shell "$HOME/.config/omarchy/plugins/friday.shell"
 ```
 
-The plugin is then discoverable as a normal Omarchy bar widget and can be
-added to the bar like any other. `moduleName`/`ipcTarget` are `friday.shell`,
-so `omarchy` → IPC can target it once loaded.
+The widget is then discoverable as a normal Omarchy bar widget and can be added
+to the bar. Its `moduleName`/`ipcTarget` is `friday.shell`, exposing
+`open`/`close`/`toggle`/`refresh`/`status`.
 
-## The controlled command
+## R5-1-2 status
 
-The widget never talks to the daemon itself. It shells out to `friday-ctl`
-(the CLI over the daemon's loopback, token-gated WebSocket) and renders the
-result. This keeps the single controlled-command surface in one audit-traceable
-place — the `planner.goal` method — and matches the R5-1-1 contract.
+The read model is hardened and proven end-to-end headlessly (live daemon:
+`goal.completed` → `last_goal.outcome/phases/strategy` reflect the Executive's
+real cycle; a goal with no captured output correctly reports no result). The
+R5-1-1 contract test and the `shell_state` unit suite are green.
 
-Daemon prerequisites (documented in the integration contract):
-
-- `friday-linux-daemon` running under the user session, writing
-  `~/.local/state/friday/state.json`.
-- `friday-ctl` on PATH (or the `ctl.command` manifest default overridden).
-
-## Status of this slice (R5-1-1)
-
-Per the R5-1-0 integration contract, the runtime side of this vertical slice is
-complete and proven headlessly:
-
-- `friday-linux-daemon` — token-gated WebSocket ingress, `state.json` heartbeat.
-- `shell_state` — pure `apply_event` state-transition core (unit-tested).
-- `friday-ctl` — the one command from the desktop (build + live-tested end to
-  end here: daemon accepted the goal, `state.json` echoed it).
-- `tests/shell_contract.rs` — end-to-end contract test over the live socket.
-
-This QML widget is authored against the real Omarchy plugin contract and its
-manifest parses, but it **cannot be visually executed on the Windows dev box**
-(the Quickshell shell does not run here). It is reviewed for structural
-correctness against the frozen `agents` plugin; visual verification is deferred
-until an Omarchy session is available (R5-1-2/R5-1-3).
+The QML cannot be visually executed on this Windows dev box (no Quickshell
+shell), so the widget is authored against the real Omarchy plugin contract and
+its manifest parses, but on-screen rendering is verified on a real Omarchy
+session in the dedicated visual-verification step. Command entry is explicitly
+**not** part of R5-1-2 — that is R5-1-3.
