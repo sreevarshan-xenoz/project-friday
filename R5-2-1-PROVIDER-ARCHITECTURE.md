@@ -108,6 +108,31 @@ The Context Gate is the **single consent boundary between OS context and any pro
 
 **Non-goals (explicitly not in R5-2):** web-UI automation/scraping (trap — banned), blanket OS exfiltration, forcing a paid key, "ChatGPT inside FRIDAY" as the center of the design. The local seam (already wired: ollama + `llamacpp`/`gemma4:e4b`) stays available as the privacy=Required fallback, but is **not** the R5-2 centerpiece.
 
+### R5-2-WEB (separate, research-only branch) — User-authorized browser reasoning
+
+Not part of the R5-2 build sequence. It is a **dedicated research branch** for the headless-web "ask my ChatGPT / ask my Gemini" idea. Distinct from R5-2-3 (official OAuth seams), which is the sanctioned build path.
+
+Architecture proposed for research (NOT built):
+```
+FRIDAY account/session
+   → user explicitly authorizes a browser session
+   → isolated browser profile
+   → CDP controller (navigate, inspect DOM, enter text, read response)
+   → provider web application
+   → FRIDAY reasoning interface
+
+Context Gate sits BEFORE the browser controller, not after:
+   Screen/selection/mic/files → Context Gate (user approves) → Browser Provider → remote reasoning
+```
+The Context Gate preventing unrestricted remote desktop access is what makes "Friday, look at my screen and ask my ChatGPT" architecturally safe.
+
+**Three independent questions to answer by fresh research (not guessing):**
+1. *Technical feasibility* — browser automation/CDP can control a session. (Yes, in the abstract.)
+2. *Authentication* — can the user legitimately attach an existing account/session to an isolated profile?
+3. *Provider permission* — does the service **permit** automated use of its web interface this way?
+
+**Hard boundary:** if provider rules offer no legitimate account/session integration path, we must **not** build a brittle workaround and call it a product feature. Technical cleverness does not override provider authorization. Vendors are re-evaluated on current rules, never on stale assumptions (openai.com/chatgpt.com policies, ai.google.dev, anthropic rules — fresh as of research date).
+
 ---
 
 ## 7. Acceptance boundary for R5-2-1
@@ -118,6 +143,7 @@ The Context Gate is the **single consent boundary between OS context and any pro
 - [x] Authentication boundaries incl. the sanctioned-seam rule frozen (§4).
 - [x] Context Gate position + policy frozen (§5).
 - [x] R5-2-2…R5-2-5 build order and non-goals frozen (§6; R5-2-2 corrected 2026-08-30 to a remote-first survey, no local-model build).
+- [x] **R5-2-WEB separate research-only branch** scoped (§6; isolated browser profile + CDP, Context Gate before controller, three-question evidence gate, no build without provider permission).
 - [x] Committed as this freeze point.
 
 **No code was written or touched in R5-2-1.** Next: **R5-2-2** surveys free remote reasoning and account-authenticated routes (build nothing).
