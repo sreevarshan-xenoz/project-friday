@@ -101,12 +101,12 @@ The Context Gate is the **single consent boundary between OS context and any pro
 
 ## 6. Decision for R5-2-2 onward (frozen)
 
-1. **R5-2-2 — Local reference provider (build first).** Implement the smallest real provider using the **already-wired local seam** (ollama always-registered `localhost:11434/v1`; `llamacpp` env-gated with `gemma4:e4b` default). This proves the abstraction, exercises the requirement-routing and free-first cascade, and validates FRIDAY-owns-reasoning before any cloud or account code exists. Zero API key, zero consent dependency.
-2. **R5-2-3 — Authorized account access.** Add the subscription class via an *officially supported authorized seam* (Codex-class OAuth/device-code) — the sanctioned answer to "who owns a paid key here." Never a web-UI driver. Preceded by a contract/expertise sign-off on embedding that flow (open risk from R5-2-0 §6).
+1. **R5-2-2 — Free remote provider + account-auth survey (build nothing).** FRIDAY's goal is *capable remote reasoning the user can access without buying an API key*. Survey what is actually available in 2026, what authentication each officially supports, what "free" really means, and what FRIDAY can legally/technically integrate. Do **not** assume Google / ChatGPT / Gemini yet. Classify every candidate by the three-way method table: Official API+key / Official OAuth-account / Website-automation (the last is research-only, potentially prohibited & fragile — see R5-2-0 §2 trap). The ChatGPT headless-websession idea is a **specifically marked research branch**, never an unexamined default.
+2. **R5-2-3 — Account-authenticated providers.** Build the subscription/account class via an *officially supported authorized seam* (e.g. OAuth/device-code) chosen from the R5-2-2 evidence — the sanctioned answer to "who owns a paid key here." Never a web-UI driver. Preceded by a contract/expertise sign-off where embedding a third party's auth flow (open risk from R5-2-0 §6) requires it.
 3. **R5-2-4 — Context Gate.** Build the real OS security boundary between context and remote providers (per-use, itemized consent + revoke + disclosure).
 4. **R5-2-5 — OS-level reasoning.** "Friday, what's wrong with this?" anywhere in the OS: FRIDAY derives relevant context (current app + selection + …), consents via the Gate if remote, sends only approved context to the best available authorized class, and presents inside FRIDAY UX.
 
-**Non-goals (explicitly not in R5-2):** web-UI automation/scraping (trap — banned), blanket OS exfiltration, forcing a paid key, "ChatGPT inside FRIDAY" as the center of the design.
+**Non-goals (explicitly not in R5-2):** web-UI automation/scraping (trap — banned), blanket OS exfiltration, forcing a paid key, "ChatGPT inside FRIDAY" as the center of the design. The local seam (already wired: ollama + `llamacpp`/`gemma4:e4b`) stays available as the privacy=Required fallback, but is **not** the R5-2 centerpiece.
 
 ---
 
@@ -117,7 +117,7 @@ The Context Gate is the **single consent boundary between OS context and any pro
 - [x] Routing rules, mode mapping to existing `RoutingMode`, and the new context-sensitivity + authorization signals frozen (§3).
 - [x] Authentication boundaries incl. the sanctioned-seam rule frozen (§4).
 - [x] Context Gate position + policy frozen (§5).
-- [x] R5-2-2…R5-2-5 build order and non-goals frozen (§6).
-- [ ] Committed as this freeze point.
+- [x] R5-2-2…R5-2-5 build order and non-goals frozen (§6; R5-2-2 corrected 2026-08-30 to a remote-first survey, no local-model build).
+- [x] Committed as this freeze point.
 
-**No code was written or touched in R5-2-1.** Next: **R5-2-2** builds the Local reference provider on the already-wired seam.
+**No code was written or touched in R5-2-1.** Next: **R5-2-2** surveys free remote reasoning and account-authenticated routes (build nothing).
