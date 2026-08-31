@@ -73,26 +73,26 @@ Per R5-1-0, this **reuses** Omarchy's existing hotkey/launch mechanisms — no n
 
 The current `ContextGate` (`services/intelligence/src/context_gate.rs`) is a **pure contract** — `ContextChannel` / `ContextGate::authorize(channel, ProviderTarget)` / `ContextDecision` / `compose(gate, egress, channel, provider, target, payload)`. It has **zero OS capture** and **zero wiring** into the daemon. That is the exact gap R5-2-5 fills.
 
-The seam where a context request must enter is the **friday-linux-daemon command path**:
+The **logical** data flow (independent of who owns the capture calls):
 
 ```text
-friday.shell → friday-ctl → (WS, token) → CommandGateway → plan.goal
-                                                              │
-                                        R5-2-5 adds here:  ┌──▼───────────────┐
-                                        approved context   │ approved context │
-                                        collector          │ collector        │
-                                        (reads channel      └──┬───────────────┘
-                                        via Omarchy cmds)      │  ContextDecision::Allow
-                                                               ▼
-                                                      ContextGate::authorize (per channel, per use)
-                                                               │  satisfied channels only
-                                                               ▼
-                                                       EgressGate::process (secret policy)
-                                                               ▼
-                                                      prompt payload → provider (Copilot/Groq/…)
+OS capture mechanism (grim / hyprctl / wl-copy / tesseract, already on substrate)
+        │   produces OS context ("here is what the OS can provide")
+        ▼
+FRIDAY Context Collector   ← pure capability, NO privacy decision
+        │   captured channel payloads
+        ▼
+ContextGate::authorize (per channel, per use)   ← consent / revoke / disclosure
+        │   satisfied channels only
+        ▼
+EgressGate::process (secret safety)
+        ▼
+Reasoning Provider (Copilot / Groq / …) → FRIDAY response
 ```
 
 The collector runs **only for channels the user consented to in the context chooser**, and each channel is fed to `ContextGate::authorize` as a `ProviderTarget`-tagged request before anything is assembled for the provider. An unauthorized channel never reaches the egress gate — exactly the R5-2-4 invariant.
+
+> ⚠️ **Ownership deliberately NOT locked here.** This survey sketched the daemon command path as an early ingest candidate, but that over-commits. The collector is an **OS capability**; the daemon is an orchestration/runtime component. Whether the daemon, the `friday.shell` plugin, or a **dedicated OS adapter** owns the actual capture calls is decided in **R5-2-5-1-0** (collector ownership + interface survey), not here. We design the collector contract first, then place it — so we never end up with `QML → shell command → daemon → shell command → grim`.
 
 ---
 
@@ -154,12 +154,13 @@ Investigated against the frozen `omarchy/@0b3f1b7`:
 ## 6. R5-2-5 coarse roadmap (survey output — for later freezing)
 
 - **R5-2-5-0** this survey (frozen, no code).
-- **R5-2-5-1** context collector contract — a small crate/service that wraps the chosen Omarchy capture commands behind a `ContextChannel → captured-context` seam, **unit-tested against mocks/CLI contracts** (no real Wayland needed to prove ordering).
-- **R5-2-5-2** daemon wiring — thread the collector + `ContextGate::authorize` (+ `compose` with `EgressGate`) into the friday-linux-daemon command path; extend the `friday-ctl`/shell `goal` protocol to carry a context-chooser payload.
+- **R5-2-5-1-0** collector **ownership + interface survey** — decides whether the daemon, the `friday.shell` plugin, or a dedicated OS adapter owns the capture calls, and locks the collector interface contract (channels, no privacy decision, provider-agnostic). No code.
+- **R5-2-5-1** minimal collector implementation — a small crate/service that wraps the chosen Omarchy capture commands behind the frozen `ContextChannel → captured-context` seam, **unit-tested against mocks/CLI contracts** (no real Wayland needed to prove ordering).
+- **R5-2-5-2** integration — thread the collector + `ContextGate::authorize` (+ `compose` with `EgressGate`) into the path chosen by 5-1-0; extend the `friday-ctl`/shell `goal` protocol to carry a context-chooser payload only if the chosen owner requires it.
 - **R5-2-5-3** shell context chooser — the `friday.shell` popup (hotkey → check channels → submit), reusing Omarchy Quickshell + NotificationServer; the moment the R5-2-4 gate becomes visible.
 - **R5-2-5-4** qualification + freeze (test the V1 vertical slice end-to-end, mocks for Wayland where the dev host is Windows — same strategy the repo already uses in `services/windows-qual`, `services/provider-qual`).
 
-Each of 5-1…5-4 is its own **prove → implement → qualify → freeze** slice, branched from `dev`, no cross-cutting refactor.
+Each of 5-1-0…5-4 is its own **prove → implement → qualify → freeze** slice, branched from `dev`, no cross-cutting refactor.
 
 ---
 
@@ -168,8 +169,8 @@ Each of 5-1…5-4 is its own **prove → implement → qualify → freeze** slic
 - [x] Five questions answered from verified primary sources (`file:line` in report body).
 - [x] Capture surface found to already exist on frozen substrate (grim/slurp/hyprpicker/hyprctl/wl-copy/tesseract + Omarchy wrapper commands).
 - [x] Invocation path mapped (hotkey/bar → `friday.shell` `goal(text)` → `friday-ctl` → daemon `plan.goal`).
-- [x] Context Gate ingest seam identified (friday-linux-daemon command path; collector + `authorize` + `compose`), preserving its per-use consent and independent EgressGate.
+- [x] Context Gate logical data flow identified (collector + `authorize` + `compose`), preserving per-use consent and independent EgressGate; **collector ownership deliberately left to R5-2-5-1-0, not locked here**.
 - [x] V1 scope frozen to "hotkey → choose context → FRIDAY answers" — no ambient surveillance, no browser proxy.
 - [x] Zero implementation — no `services/` source, no QML, no Wayland/protocol changes.
 
-**Next:** the R5-2-5-1 collector-contract slice (branched from `dev @ 19ec6b8`), then 5-2 (daemon wiring), then 5-3 (shell chooser), then 5-4 (qualify + freeze).
+**Next:** R5-2-5-1-0 collector ownership + interface survey (no code), then 5-1 (minimal collector), then 5-2 (integration at the 5-1-0-chosen seam), then 5-3 (shell chooser), then 5-4 (qualify + freeze).
