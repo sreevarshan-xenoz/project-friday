@@ -24,6 +24,9 @@ pub mod method {
     pub const TASK_PAUSE: &str = "task.pause";
     pub const TASK_APPROVE: &str = "task.approve";
     pub const SYSTEM_INFO: &str = "system.info";
+    /// Explicit, user-initiated Screen context read (R5-2-5-2). Composed by the
+    /// daemon: collector → ContextGate → EgressGate → provider. Never ambient.
+    pub const CONTEXT_READ: &str = "context.read";
 }
 
 /// Translates structured mobile commands into bus events + command results.

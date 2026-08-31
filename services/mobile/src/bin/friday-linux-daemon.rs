@@ -28,6 +28,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::io::Write;
 
+use friday_context_collector::{ContextCollector, RealCommandRunner};
 use friday_core::runtime::Friday;
 use friday_goal_execution::MemoryJournal;
 use friday_intelligence::InferenceFabric;
@@ -223,6 +224,22 @@ async fn main() {
     }
     write_state(&state_path, &render(&*state.lock().await));
 
+    // R5-2-5-2: the explicit Screen context read.
+    //   ContextCollector (real OS) → ContextGate → EgressGate → FabricSeam.
+    // The provider name is configured explicitly; a matching registered vendor
+    // is qualified on the Omarchy target (R5-2-5-4). A missing/unknown vendor
+    // fails honestly at the provider seam rather than silently.
+    let context_provider =
+        std::env::var("FRIDAY_CONTEXT_PROVIDER").unwrap_or_else(|_| "fabric".to_string());
+    let screen_reader = Arc::new(friday_mobile::context_read::ScreenReader::new(
+        ContextCollector::new(RealCommandRunner::default()),
+        friday_mobile::context_read::FabricProviderSeam::new(fabric.clone(), &context_provider),
+        &context_provider,
+    ));
+    tracing::info!(
+        "[context.read] Screen reader armed (collector=Real, provider={context_provider}); no ambient capture"
+    );
+
     // The assistant loop. Consumes `plan.goal` and runs each goal through the
     // real Executive with real evidence adapters.
     GoalRunner::with_fabric_and_memory(bus.clone(), fabric, journal, voice).start();
@@ -253,7 +270,7 @@ async fn main() {
                     Err(_) => {
                         // Heartbeat: just re-stamp.
                         let st = state_writer_lock.lock().await;
-                        write_state(&state_writer_path, &render(&*st));
+                        write_state(&state_writer_path, &render(&st));
                     }
                 }
             }
@@ -267,6 +284,7 @@ async fn main() {
     let result_out = outbound.clone();
     let state_cmd_lock = state.clone();
     let state_cmd_path = state_path.clone();
+    let context_reader = screen_reader.clone();
     tokio::spawn(async move {
         while let Ok(cmd) = ingress.recv().await {
             // Token gate: reject commands that don't present the current token.
@@ -283,6 +301,45 @@ async fn main() {
                 });
                 continue;
             }
+            // R5-2-5-2: explicit Screen context read. Scoped to `Screen` only;
+            // never ambient. Consent is a per-use, request-attributable opt-in.
+            if cmd.method == friday_mobile::method::CONTEXT_READ {
+                let want_consent = cmd
+                    .params
+                    .get("consent")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if want_consent {
+                    // The user explicitly opted in for this request. Without it,
+                    // `read()` is blocked at the ContextGate and the provider
+                    // receives nothing.
+                    context_reader.consent();
+                }
+                let (ok, result) = match context_reader.read().await {
+                    Ok(response) => {
+                        tracing::info!("[context.read] screen delivered to provider");
+                        (true, serde_json::json!({ "response": response }))
+                    }
+                    Err(e) => {
+                        tracing::warn!("[context.read] {e}");
+                        (false, serde_json::json!({ "error": e.to_string() }))
+                    }
+                };
+                let mut st = state_cmd_lock.lock().await;
+                st.context_read = Some(friday_mobile::shell_state::ContextReadRecord {
+                    method: cmd.method.clone(),
+                    ms: now_ms(),
+                    ok,
+                    channel: "screen".to_string(),
+                });
+                write_state(&state_cmd_path, &render(&st));
+                let _ = result_out.send(friday_mobile::protocol::ServerMessage::CommandResult {
+                    id: cmd.id.clone(),
+                    ok,
+                    result,
+                });
+                continue;
+            }
             let result = gateway.dispatch(&cmd).await;
             if cmd.method == friday_mobile::method::PLANNER_GOAL {
                 let goal = cmd
@@ -296,7 +353,7 @@ async fn main() {
                     accepted_ms: now_ms(),
                     goal,
                 });
-                write_state(&state_cmd_path, &render(&*st));
+                write_state(&state_cmd_path, &render(&st));
             }
             if result_out.send(result).is_err() {
                 break;
@@ -335,7 +392,7 @@ async fn main() {
     {
         let mut st = state.lock().await;
         st.status = "running".into();
-        write_state(&state_path, &render(&*st));
+        write_state(&state_path, &render(&st));
     }
 
     tracing::info!("FRIDAY linux daemon listening on {listen}");
@@ -352,7 +409,7 @@ async fn main() {
             tracing::info!("shutdown requested; stopping cleanly");
             let mut st = state.lock().await;
             st.status = "stopping".into();
-            write_state(&state_path, &render(&*st));
+            write_state(&state_path, &render(&st));
         }
     }
 

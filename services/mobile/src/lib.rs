@@ -10,6 +10,7 @@
 pub mod auth;
 pub mod bridge;
 pub mod commands;
+pub mod context_read;
 pub mod error;
 pub mod goal_runner;
 pub mod probe;

@@ -1454,6 +1454,7 @@ dependencies = [
  "friday-actions",
  "friday-capabilities",
  "friday-cognitive",
+ "friday-context-collector",
  "friday-core",
  "friday-goal-execution",
  "friday-intelligence",

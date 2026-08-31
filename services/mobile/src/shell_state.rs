@@ -88,6 +88,9 @@ pub struct ShellState {
     pub telemetry: Option<serde_json::Value>,
     /// Last shell command accepted (for echo in the UI), or `None`.
     pub command: Option<CommandRecord>,
+    /// Last explicit context read outcome (R5-2-5-2) surfaced to the shell, or
+    /// `None` if none has been attempted.
+    pub context_read: Option<ContextReadRecord>,
     /// A stable session token the plugin must present when it issues commands
     /// over the WebSocket ingress (loopback is the coarse trust boundary; this
     /// token is the fine-grained one, mirroring Omarchy shell validation).
@@ -100,6 +103,17 @@ pub struct CommandRecord {
     pub method: String,
     pub accepted_ms: u64,
     pub goal: Option<String>,
+}
+
+/// Outcome of one explicit context read (R5-2-5-2) for the shell read-model.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct ContextReadRecord {
+    pub method: String,
+    pub ms: u64,
+    /// `true` = captured, authorized, egress-safe, and delivered to the provider.
+    pub ok: bool,
+    /// The channel that was requested (`screen` in this slice).
+    pub channel: String,
 }
 
 impl ShellState {
@@ -116,6 +130,7 @@ impl ShellState {
             voice: "off".into(),
             telemetry: None,
             command: None,
+            context_read: None,
             token,
         }
     }
@@ -165,10 +180,9 @@ impl ShellState {
 ///
 ///   - `plan.goal`          → begin a `current` goal (command ingress)
 ///   - `goal.started`       → mark the `current` goal genuinely in flight
-///   - `goal.completed|failed|cancelled|paused|recoverable`
-///                          → close it into `last_goal` with any genuine
-///                            outcome detail the runtime attached (phases,
-///                            result, error, strategy, evidence_verified)
+///   - `goal.completed|failed|cancelled|paused|recoverable` → close it into
+///     `last_goal` with any genuine outcome detail the runtime attached
+///     (phases, result, error, strategy, evidence_verified)
 ///   - `telemetry.system`   → store the latest host sample
 ///
 /// Anything else leaves the state unchanged. This core only records what the
