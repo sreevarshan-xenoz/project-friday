@@ -9,7 +9,8 @@
 //! Usage:
 //!   friday-ctl goal "List the files in this folder"
 //!   friday-ctl system-info
-//!   friday-ctl context screen
+//!   friday-ctl context screen          (interactive consent)
+//!   friday-ctl context screen --yes    (consent already collected by the shell panel)
 //!
 //! `FRIDAY_CTL_ADDR` and `FRIDAY_CTL_TOKEN` override the state-file values for
 //! scripting/testing. `FRIDAY_CONTEXT_PROVIDER` names the (remote) provider a
@@ -107,12 +108,19 @@ async fn main() -> std::process::ExitCode {
         // R5-2-5-3: consent + disclosure come first, before any daemon or
         // state-file access, so a decline never touches the daemon at all. The
         // provider sees nothing unless the user explicitly answers `y`.
+        //
+        // R5-2-5-3-1: `--yes` means the caller (the Omarchy panel) already
+        // collected explicit consent via its Share button, so the terminal
+        // prompt is skipped. `consent: true` is still sent and still enforced
+        // by the frozen ContextGate — this only skips the TTY prompt, it never
+        // weakens the gate.
         let channel = goal_words.first().map(String::as_str).unwrap_or("");
         if channel != "screen" {
             eprintln!("friday-ctl context <screen> — only 'screen' context is supported");
             return std::process::ExitCode::FAILURE;
         }
-        if !confirm_context_consent() {
+        let assume_consent = goal_words.iter().any(|w| w == "--yes");
+        if !assume_consent && !confirm_context_consent() {
             eprintln!("Aborted — nothing was shared; the provider was never contacted.");
             return std::process::ExitCode::SUCCESS;
         }
