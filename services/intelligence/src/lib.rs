@@ -1,4 +1,5 @@
 pub mod compiler;
+pub mod context_gate;
 pub mod egress;
 pub mod parser;
 pub mod planner_backend;
@@ -8,6 +9,9 @@ pub mod router;
 pub mod secrets;
 
 pub use compiler::{ModelProvider, PromptAst, PromptCompiler};
+pub use context_gate::{
+    compose, ContextChannel, ContextComposeError, ContextDecision, ContextGate, ProviderTarget,
+};
 pub use egress::{EgressAction, EgressGate, EgressMode, EgressVerdict};
 pub use parser::{LlmResponse, ParsedTask, ResponseInterpreter};
 pub use planner_backend::InferenceBackend;
