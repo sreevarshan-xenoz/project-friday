@@ -131,7 +131,35 @@ struct TestProvider {
     name: String,
     succeed: bool,
     response: String,
+    /// Custom failure text returned by `complete()` when `succeed == false`.
+    /// Lets a test inject a credential-bearing error to pin credential hygiene.
+    failure_text: Option<String>,
     calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl TestProvider {
+    fn new(name: &str, succeed: bool, response: &str) -> Self
+    where
+        Self: Sized,
+    {
+        Self {
+            name: name.to_string(),
+            succeed,
+            response: response.to_string(),
+            failure_text: None,
+            calls: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        }
+    }
+
+    fn failing_with(name: &str, error: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            succeed: false,
+            response: String::new(),
+            failure_text: Some(error.to_string()),
+            calls: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -149,7 +177,10 @@ impl friday_intelligence::Provider for TestProvider {
         if self.succeed {
             Ok(self.response.clone())
         } else {
-            Err("Simulated failure".to_string())
+            Err(self
+                .failure_text
+                .clone()
+                .unwrap_or_else(|| "Simulated failure".to_string()))
         }
     }
     async fn check_health(&self) -> bool {
@@ -174,6 +205,7 @@ async fn test_inference_fabric_failover() {
         name: "ollama".to_string(),
         succeed: false,
         response: "".to_string(),
+        failure_text: None,
         calls: calls_p1.clone(),
     }));
     fabric.register_model(ModelInfo {
@@ -192,6 +224,7 @@ async fn test_inference_fabric_failover() {
         name: "openrouter".to_string(),
         succeed: true,
         response: "Target Answer".to_string(),
+        failure_text: None,
         calls: calls_p2.clone(),
     }));
     fabric.register_model(ModelInfo {
@@ -236,6 +269,7 @@ async fn test_inference_fabric_advanced_features() {
         name: "ollama".to_string(),
         succeed: false,
         response: "".to_string(),
+        failure_text: None,
         calls: calls_p1.clone(),
     }));
     fabric.register_model(ModelInfo {
@@ -254,6 +288,7 @@ async fn test_inference_fabric_advanced_features() {
         name: "openrouter".to_string(),
         succeed: true,
         response: "Vision Answer".to_string(),
+        failure_text: None,
         calls: calls_p2.clone(),
     }));
     fabric.register_model(ModelInfo {
@@ -319,6 +354,7 @@ async fn test_inference_fabric_persistence_and_telemetry() {
         name: "openrouter".to_string(),
         succeed: true,
         response: "Metric Response".to_string(),
+        failure_text: None,
         calls,
     }));
     fabric.register_model(ModelInfo {
@@ -346,4 +382,167 @@ async fn test_inference_fabric_persistence_and_telemetry() {
 
     // Clean up after test
     let _ = std::fs::remove_dir_all(".fabric");
+}
+
+// ======================================================================
+// R5-2-3-2 — failure/fallback qualification boundary tests (F1/F2/F3).
+// Frozen spec: `R5-2-3-2-FALLBACK-QUALIFICATION.md`. No architectural
+// change — these pin the fallback guarantees that the R5-2-3-1 wiring
+// (Copilot account-auth + Groq free-remote floor) must keep intact.
+// ======================================================================
+
+/// F2 — Copilot appears only under `Quality`/`Hybrid`, never `Free`/`Local`.
+/// This matches `select_candidates`' hierarchy slots: `copilot` is a
+/// subscription-class member gated to Quality/Hybrid, not a free/local seam.
+#[tokio::test]
+async fn fallback_routes_copilot_only_under_quality_or_hybrid() {
+    use friday_intelligence::{InferenceFabric, ModelInfo, RoutingMode};
+
+    let mut fabric = InferenceFabric::new();
+    fabric.register_provider(Box::new(TestProvider::new("copilot", true, "ok")));
+    fabric.register_model(ModelInfo {
+        id: "auto".to_string(),
+        family: "copilot-auto".to_string(),
+        provider: "copilot".to_string(),
+        latency_ms: 800,
+        reliability: 1.0,
+        capabilities: vec![],
+        max_context: 200_000,
+        tier: None,
+    });
+
+    let names = |mode: RoutingMode| {
+        fabric
+            .select_candidates(mode)
+            .iter()
+            .map(|(_, p)| p.name().to_string())
+            .collect::<Vec<_>>()
+    };
+
+    assert!(
+        names(RoutingMode::Quality).contains(&"copilot".to_string()),
+        "copilot is a Quality (subscription) member"
+    );
+    assert!(
+        names(RoutingMode::Hybrid).contains(&"copilot".to_string()),
+        "copilot is reachable under Hybrid"
+    );
+    assert!(
+        !names(RoutingMode::Free).contains(&"copilot".to_string()),
+        "copilot must not appear under Free"
+    );
+    assert!(
+        !names(RoutingMode::Local).contains(&"copilot".to_string()),
+        "copilot must not appear under Local"
+    );
+}
+
+/// F2 — Copilot is opt-in only: without `COPILOT_CLI_ENABLED` the real
+/// registration path (`default_from_env`) must not put a copilot candidate in
+/// the fabric; with it set, it must. Pins the account-auth gate so a bare
+/// `copilot`/`gh` binary on PATH never silently adds a cloud candidate.
+#[tokio::test]
+async fn fallback_skips_copilot_when_optout() {
+    use friday_intelligence::{InferenceFabric, RoutingMode};
+
+    std::env::remove_var("COPILOT_CLI_ENABLED");
+    let off = InferenceFabric::default_from_env();
+    let q_off = off
+        .select_candidates(RoutingMode::Quality)
+        .iter()
+        .map(|(_, p)| p.name().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        !q_off.contains(&"copilot".to_string()),
+        "COPILOT_CLI_ENABLED unset -> copilot must not be registered"
+    );
+
+    std::env::set_var("COPILOT_CLI_ENABLED", "true");
+    let on = InferenceFabric::default_from_env();
+    std::env::remove_var("COPILOT_CLI_ENABLED");
+    let q_on = on
+        .select_candidates(RoutingMode::Quality)
+        .iter()
+        .map(|(_, p)| p.name().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        q_on.contains(&"copilot".to_string()),
+        "COPILOT_CLI_ENABLED=true -> copilot is registered"
+    );
+}
+
+/// R5-2-3-0 §4 — Groq is the free-remote floor, so it is selectable under
+/// `RoutingMode::Free` (its `is_free_provider` reclassification must hold).
+#[tokio::test]
+async fn fallback_groq_is_free_provider() {
+    use friday_intelligence::{InferenceFabric, ModelInfo, RoutingMode};
+
+    let mut fabric = InferenceFabric::new();
+    fabric.register_provider(Box::new(TestProvider::new("groq", true, "ok")));
+    fabric.register_model(ModelInfo {
+        id: "llama-3.3-70b-versatile".to_string(),
+        family: "llama-3.3-70b".to_string(),
+        provider: "groq".to_string(),
+        latency_ms: 200,
+        reliability: 1.0,
+        capabilities: vec![],
+        max_context: 128_000,
+        tier: None,
+    });
+
+    let free = fabric
+        .select_candidates(RoutingMode::Free)
+        .iter()
+        .map(|(_, p)| p.name().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        free.contains(&"groq".to_string()),
+        "groq must be a free-remote floor member under RoutingMode::Free"
+    );
+}
+
+/// F3 — `classify_failure_reason` buckets a credential-bearing 401 as `auth`
+/// and the reason string carries no key fragment.
+#[test]
+fn fallback_classify_failure_reason_does_not_contain_key() {
+    use friday_intelligence::classify_failure_reason;
+
+    let err = "HTTP 401: invalid Bearer ghp_secret123 token";
+    assert_eq!(classify_failure_reason(err), "auth");
+}
+
+/// F3 — a provider failure whose error text contains a raw credential must
+/// surface as a sanitized `CandidateFailure` in the routing-decision audit
+/// trail: the `ghp_...` fragment must never appear in `failures[i].error`.
+#[tokio::test]
+async fn fallback_does_not_leak_credential_in_decision_audit() {
+    use friday_intelligence::{InferenceFabric, ModelClient, ModelInfo, RoutingMode};
+
+    let mut fabric = InferenceFabric::new();
+    fabric.default_mode = RoutingMode::Free;
+    fabric.register_provider(Box::new(TestProvider::failing_with(
+        "openrouter",
+        "HTTP 401: invalid Bearer ghp_secret123 token",
+    )));
+    fabric.register_model(ModelInfo {
+        id: "free-model".to_string(),
+        family: "auto".to_string(),
+        provider: "openrouter".to_string(),
+        latency_ms: 100,
+        reliability: 1.0,
+        capabilities: vec![],
+        max_context: 4096,
+        tier: None,
+    });
+
+    assert!(fabric.complete("trigger a failure").await.is_err());
+
+    let d = fabric.last_decision().expect("routing decision recorded");
+    assert!(
+        d.failures
+            .iter()
+            .all(|f| !f.error.contains("ghp_secret123")),
+        "no raw key fragment may surface in the audit trail: {:?}",
+        d.failures
+    );
 }

@@ -1203,7 +1203,7 @@ impl InferenceFabric {
                 decision.failures.push(CandidateFailure {
                     provider: provider.to_string(),
                     model: model.id.clone(),
-                    error: e.clone(),
+                    error: sanitize_candidate_error(&e),
                 });
                 self.record_decision(decision);
                 return Err(e);
@@ -1224,7 +1224,7 @@ impl InferenceFabric {
                 decision.failures.push(CandidateFailure {
                     provider: provider.to_string(),
                     model: model.id.clone(),
-                    error: e.clone(),
+                    error: sanitize_candidate_error(&e),
                 });
                 self.record_decision(decision);
                 Err(e)
@@ -2352,10 +2352,44 @@ async fn run_attempt(
     }
 }
 
+/// Sanitize a provider error string before it is recorded in a
+/// [`CandidateFailure`], a `RoutingDecision.failures` entry, or the routing
+/// audit trail. Strips raw bearer tokens (`Bearer ghp_...`, `Bearer sk-...`)
+/// and known credential prefixes so secrets never surface in FRIDAY errors,
+/// logs, or telemetry (R5-2-3-2 F3 — credential hygiene survives the fallback
+/// path). The Copilot seam already strips `COPILOT_*` control-plane lines via
+/// `copilot_meaningful_stderr`; this extends the same guarantee to every
+/// provider's failure string.
+pub fn sanitize_candidate_error(err: &str) -> String {
+    let mut out = err.to_string();
+    if let Some(pos) = out.find("Bearer ") {
+        let after = &out[pos + 7..];
+        let token_end = after
+            .find(|c: char| c.is_whitespace() || c == ',' || c == ';' || c == ')' || c == '"')
+            .unwrap_or(after.len());
+        if token_end > 0 {
+            let token = &after[..token_end];
+            out = out.replace(token, "[REDACTED]");
+        }
+    }
+    const PREFIXES: [&str; 6] = ["ghp_", "gho_", "github_pat_", "sk-", "sk_", "gsk_"];
+    for prefix in PREFIXES {
+        while let Some(pos) = out.find(prefix) {
+            let after = &out[pos..];
+            let token_end = after
+                .find(|c: char| c.is_whitespace() || c == ',' || c == ';' || c == ')' || c == '"')
+                .unwrap_or(after.len());
+            let token = &after[..token_end];
+            out = out.replace(token, "[REDACTED]");
+        }
+    }
+    out
+}
+
 /// Collapse a provider error string into a coarse reason bucket for the
 /// health-change telemetry log (e.g. `timeout`, `rate_limit`, `auth`,
 /// `unavailable`, `server_error`, or `error`).
-fn classify_failure_reason(err: &str) -> &str {
+pub fn classify_failure_reason(err: &str) -> &'static str {
     let lower = err.to_lowercase();
     if lower.contains("timed out") || lower.contains("timeout") {
         "timeout"
@@ -2533,7 +2567,7 @@ impl InferenceFabric {
                     decision.failures.push(CandidateFailure {
                         provider: provider.name().to_string(),
                         model: model.id.clone(),
-                        error: e.clone(),
+                        error: sanitize_candidate_error(&e),
                     });
                     self.record_decision(decision);
                     return Err(e);
@@ -2661,9 +2695,9 @@ impl InferenceFabric {
                     decision.failures.push(CandidateFailure {
                         provider: provider.name().to_string(),
                         model: model.id.clone(),
-                        error: err.clone(),
+                        error: sanitize_candidate_error(&err),
                     });
-                    last_error = err;
+                    last_error = sanitize_candidate_error(&err);
                 }
             }
         }

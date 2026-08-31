@@ -42,6 +42,10 @@ pub enum FaultMode {
     Hang,
     /// Connection dies after the first streaming chunk (V2 `stream` only).
     MidStream,
+    /// Returns a credential-bearing 401 error (R5-2-3-2 F3): the failure string
+    /// deliberately contains a raw token fragment that the fabric must never
+    /// surface in `CandidateFailure.error` or the routing audit trail.
+    CredentialLeak,
 }
 
 impl FaultMode {
@@ -179,6 +183,9 @@ impl Provider for MockProvider {
                 Err("Provider mock hung then failed".into())
             }
             FaultMode::MidStream => Err("connection reset mid-stream".into()),
+            FaultMode::CredentialLeak => {
+                Err("HTTP 401: invalid Bearer ghp_supersecret123 token".into())
+            }
         }
     }
 
