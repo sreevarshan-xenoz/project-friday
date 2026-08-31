@@ -1,0 +1,13 @@
+[package]
+name = "friday-context-collector"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "FRIDAY OS Context Collector (R5-2-5-1): pure OS capability that captures per-channel context (Screen/Selection/App/Clipboard) behind a command runner. Knows nothing about consent, providers, or egress."
+
+[dependencies]
+friday-intelligence = { path = "../intelligence" }
+serde_json = { workspace = true }

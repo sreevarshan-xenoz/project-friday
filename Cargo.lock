@@ -1262,6 +1262,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "friday-context-collector"
+version = "0.1.0"
+dependencies = [
+ "friday-intelligence",
+ "serde_json",
+]
+
+[[package]]
 name = "friday-core"
 version = "0.1.0"
 dependencies = [
