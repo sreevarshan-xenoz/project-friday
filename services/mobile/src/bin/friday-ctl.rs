@@ -9,16 +9,58 @@
 //! Usage:
 //!   friday-ctl goal "List the files in this folder"
 //!   friday-ctl system-info
+//!   friday-ctl context screen
 //!
 //! `FRIDAY_CTL_ADDR` and `FRIDAY_CTL_TOKEN` override the state-file values for
-//! scripting/testing.
+//! scripting/testing. `FRIDAY_CONTEXT_PROVIDER` names the (remote) provider a
+//! `context screen` share goes to, defaulting to `fabric` to match the daemon.
 
 use std::time::Duration;
 
-use friday_mobile::protocol::{ClientMessage, decode_server};
+use friday_mobile::protocol::{ClientMessage, ServerMessage, decode_server};
 use friday_mobile::shell_state::ShellState;
 use futures::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
+
+/// The disclosure text the terminal chooser must show **before** transmission.
+/// Pulled from the frozen ContextGate so the client never duplicates the
+/// system-of-record wording. A remote provider disclosure is always present.
+fn screen_disclosure() -> String {
+    friday_intelligence::ContextGate::new()
+        .disclosure_for(
+            friday_intelligence::ContextChannel::Screen,
+            friday_intelligence::ProviderTarget::Subscription,
+        )
+        .unwrap_or("This sends a screen capture to a remote provider.")
+        .to_string()
+}
+
+/// R5-2-5-3: the terminal reference implementation of the consent UX. It
+/// explains what would be shared and to whom, shows data-use disclosure, then
+/// demands an explicit `y` before anything is sent. Declining returns `false`
+/// so the caller can abort before ever contacting the daemon — the provider is
+/// guaranteed to see nothing.
+fn confirm_context_consent() -> bool {
+    let provider = std::env::var("FRIDAY_CONTEXT_PROVIDER")
+        .unwrap_or_else(|_| "fabric".to_string());
+
+    println!("FRIDAY — share the current Screen with the assistant");
+    println!();
+    println!("What would be shared:");
+    println!("  a screen capture of the current display (a still image)");
+    println!();
+    println!("Provider: {provider} (remote)");
+    println!("Data use: {}", screen_disclosure());
+    println!();
+    print!("Share this screen? [y/N] ");
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+
+    let mut answer = String::new();
+    if std::io::stdin().read_line(&mut answer).is_err() {
+        return false;
+    }
+    answer.trim().eq_ignore_ascii_case("y")
+}
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
@@ -55,25 +97,46 @@ async fn main() -> std::process::ExitCode {
     }
 
     let Some(sub) = positional.first() else {
-        eprintln!("usage: friday-ctl <goal|system-info> [goal text] [--addr <host:port>] [--token <tok>]");
+        eprintln!("usage: friday-ctl <goal|system-info|context screen> [goal text] [--addr <host:port>] [--token <tok>]");
         return std::process::ExitCode::FAILURE;
     };
     let sub = sub.clone();
     let goal_words = positional.into_iter().skip(1).collect::<Vec<_>>();
 
-    if token.is_empty() {
+    if sub == "context" {
+        // R5-2-5-3: consent + disclosure come first, before any daemon or
+        // state-file access, so a decline never touches the daemon at all. The
+        // provider sees nothing unless the user explicitly answers `y`.
+        let channel = goal_words.first().map(String::as_str).unwrap_or("");
+        if channel != "screen" {
+            eprintln!("friday-ctl context <screen> — only 'screen' context is supported");
+            return std::process::ExitCode::FAILURE;
+        }
+        if !confirm_context_consent() {
+            eprintln!("Aborted — nothing was shared; the provider was never contacted.");
+            return std::process::ExitCode::SUCCESS;
+        }
+    }
+
+    let cmd_token = if token.is_empty() {
         match read_token(&state_path) {
-            Some(t) => run(&addr_str, &t, &sub, goal_words).await,
+            Some(t) => t,
             None => {
                 eprintln!(
                     "no token found; daemon not running at {} (is friday-linux-daemon up?)",
                     state_path.display()
                 );
-                std::process::ExitCode::FAILURE
+                return std::process::ExitCode::FAILURE;
             }
         }
     } else {
-        run(&addr_str, &token, &sub, goal_words).await
+        token
+    };
+
+    if sub == "context" {
+        run_context(&addr_str, &cmd_token).await
+    } else {
+        run(&addr_str, &cmd_token, &sub, goal_words).await
     }
 }
 
@@ -92,17 +155,8 @@ async fn run(
     sub: &str,
     args: Vec<String>,
 ) -> std::process::ExitCode {
-    let ws_url = format!("ws://{addr}");
-    let (mut ws, _) = match tokio_tungstenite::connect_async(&ws_url).await {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("cannot reach daemon at {ws_url}: {e}");
-            return std::process::ExitCode::FAILURE;
-        }
-    };
-
-    // Build the command. Only `goal` and `system-info` are wired for now — the
-    // "one controlled command" surface. Everything else is rejected.
+    // Build the command. Only `goal`, `system-info`, and `context` are wired
+    // for now — the "one controlled command" surface.
     let (method, params) = match sub {
         "goal" => {
             let goal = args.join(" ");
@@ -124,6 +178,39 @@ async fn run(
             return std::process::ExitCode::FAILURE;
         }
     };
+    send_command(addr, &method, params).await
+}
+
+/// R5-2-5-3: send the Screen `context.read`. `main` has already presented
+/// disclosure and collected explicit consent; this only runs after the user
+/// answered `y`, so it sends with a per-use `consent: true`.
+async fn run_context(
+    addr: &str,
+    token: &str,
+) -> std::process::ExitCode {
+    send_command(
+        addr,
+        friday_mobile::method::CONTEXT_READ,
+        serde_json::json!({ "token": token, "consent": true }),
+    )
+    .await
+}
+
+/// Connect to the daemon, send one command, and await the matching
+/// `CommandResult`. Any welcome/events are consumed silently beforehand.
+async fn send_command(
+    addr: &str,
+    method: &str,
+    params: serde_json::Value,
+) -> std::process::ExitCode {
+    let ws_url = format!("ws://{addr}");
+    let (mut ws, _) = match tokio_tungstenite::connect_async(&ws_url).await {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("cannot reach daemon at {ws_url}: {e}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
 
     let id = uuid::Uuid::new_v4().to_string();
     let want_id = id.clone();
@@ -132,13 +219,11 @@ async fn run(
     // the matching CommandResult. Any welcome/events are consumed first.
     let client_msg = ClientMessage::Command {
         id: id.clone(),
-        method,
+        method: method.to_string(),
         params,
     };
     let _ = ws
-        .send(Message::Text(
-            serde_json::to_string(&client_msg).unwrap(),
-        ))
+        .send(Message::Text(serde_json::to_string(&client_msg).unwrap()))
         .await;
 
     // Loop until we see our CommandResult (skipping welcome/events).
@@ -148,10 +233,7 @@ async fn run(
             eprintln!("timed out waiting for command result");
             return std::process::ExitCode::FAILURE;
         }
-        let msg = match tokio::time::timeout(
-            Duration::from_secs(5),
-            ws.next(),
-        ).await {
+        let msg = match tokio::time::timeout(Duration::from_secs(5), ws.next()).await {
             Ok(Some(Ok(m))) => m,
             Ok(Some(Err(e))) => {
                 eprintln!("ws error: {e}");
@@ -160,20 +242,15 @@ async fn run(
             _ => continue,
         };
         if let Message::Text(t) = msg {
-            if let Ok(sm) = decode_server(&t) {
-                match sm {
-                    friday_mobile::protocol::ServerMessage::CommandResult { id, ok, result } => {
-                        if id == want_id {
-                            let json = serde_json::to_string_pretty(&result).unwrap_or_default();
-                            println!("{json}");
-                            return if ok {
-                                std::process::ExitCode::SUCCESS
-                            } else {
-                                std::process::ExitCode::FAILURE
-                            };
-                        }
-                    }
-                    _ => {}
+            if let Ok(ServerMessage::CommandResult { id, ok, result }) = decode_server(&t) {
+                if id == want_id {
+                    let json = serde_json::to_string_pretty(&result).unwrap_or_default();
+                    println!("{json}");
+                    return if ok {
+                        std::process::ExitCode::SUCCESS
+                    } else {
+                        std::process::ExitCode::FAILURE
+                    };
                 }
             }
         }
