@@ -45,33 +45,44 @@ screenshot") **cannot pass on existing code alone** — it needs a **small seam
 completion**: (a) register a vision-capable model on a `VisionFree`-reachable tier,
 and (b) construct a real image content block (decode the base64 → `image_url` /
 `data:image/png;base64,...`) in the provider body. That is an implementation step,
-not a qualification. Options:
+not a qualification.
 
-- **Option A — extend R5-2-5-4:** treat the seam completion as part of R5-2-5-4
-  (R5-2-5-4-2 becomes "implement + qualify true vision"). Fastest path to the
-  "FRIDAY can see" moment.
-- **Option B — keep R5-2-5-4 qualification-only:** R5-2-5-4 passes on real capture +
-  transport (R5-2-5-4-1) and the gates provably reach the seam; true vision becomes
-  a separate slice R5-2-5-4-2 with its own implementation + hardware qualify.
-  Keep R5-2-5-4 honest: it proves **gated screen-context transport**, not vision.
-
-Both are legitimate. The survey's job is only to surface the fork. (Recommendation
-leans **B** per the user's own "no implementation during a survey" discipline:
-let R5-2-5-4 qualify what exists, then implement vision cleanly as its own step.
-But it is the user's call.)
-
----
-
-## 2. Scope of R5-2-5-4
+**DECISION (adopted, post-freeze amendment):** the survey surfaced the fork, and
+the user chose **Option A** — fold vision delivery into R5-2-5-4 — but as a
+**disciplined two-part road test**, NOT a headlong implementation:
 
 ```text
-R5-2-5-4-0  real-OS readiness survey (this doc, NO implementation)
-R5-2-5-4-1  real capture qualification — grim proves a real Wayland PNG round-trips the gates
-R5-2-5-4-2  real vision qualification — (blocked by §1 open seam unless Option A)
-   ↓ green
-R5-2-6     FRIDAY OS adaptation decision (NOT ISO yet) — boot identity, packages,
-           defaults, FRIDAY shell, onboarding, installer, runtime packaging, update path
+R5-2-5-4-0  readiness survey (this doc, FROZEN caf38fa, no code)
+R5-2-5-4-1  REAL OS CAPTURE QUALIFICATION —— qualify-only, NO code
+            hotkey → friday.context → Share → friday-ctl context screen --yes
+              → grim → ContextGate → EgressGate → provider seam
+            proves the real Omarchy machine captures + safely transports context;
+            code changes ONLY if the test exposes a defect.
+   ↓ 4-1 freeze
+R5-2-5-4-2-0  TINY VISION-DELIVERY SURVEY (no code)
+            which qualified providers accept image input / request format each
+            requires / Groq free floor viability / Copilot account-auth vision
+            route / where image blocks live in the provider abstraction / how to
+            preserve ContextGate → EgressGate / smallest provider-neutral contract
+   ↓
+R5-2-5-4-2  IMPLEMENT only that contract + one provider
+            PNG bytes → vision-aware request construction → vision-capable provider
+              → actual multimodal inference → FRIDAY response grounded in pixels
+   ↓
+R5-2-5-4-2  REAL HARDWARE QUALIFY — ask something impossible from text alone,
+            e.g. "What application is open, and what is the largest visible number?"
+   ↓ freeze
+R5-2-6     ONLY after green: Omarchy → FRIDAY OS adaptation (NOT ISO yet)
 ```
+
+**Hawkeye framing that keeps this honest:** the current `SCREEN_CAPTURE … data=<base64>`
+string is **transport data, not multimodal input**. Passing that string to a text
+model is NOT "FRIDAY can see." 4-2 exists to close exactly that gap. Until 4-2
+passes on hardware, we label it **"gated screen-context transport,"** never vision.
+
+**HM-constraint carried forward:** 4-1 is qualification-only (no implementation).
+The moment any code must change to make a check pass, we are no longer in 4-1 —
+that is 4-2's job, which itself waits on the 4-2-0 survey.
 
 **"No implementation" everywhere in R5-2-5-4-0/1.** The moment any code must change
 to make a check pass (the vision seam), we are no longer in qualification.
@@ -123,28 +134,33 @@ a pass/fail gate.
 ## 5. Verification ordering
 
 1. **4.x readiness** — all pass ⇒ proceed.
-2. **R5-2-5-4-1 (capture envelope):** hotkey → Share → `friday-ctl context screen --yes`
-   with `FRIDAY_CONTEXT_PROVIDER` set; expect a `CommandResult`; inspect that the
-   provider seam received `SCREEN_CAPTURE mime=image/png … data=<b64>` with a
-   nonzero `bytes=`. This proves real Wayland `grim` output traversed
-   ContextGate → EgressGate. **Passes with current code.**
-3. **R5-2-5-4-2 (true vision):** **blocked by §1** unless Option A (seam completion)
-   is accepted. On Option A: `friday-ctl` baseline unauthenticated latency, then the
-   "what application is currently open, and what is the main thing displayed?"
-   question answered correctly from the actual pixels.
+2. **R5-2-5-4-1 (capture envelope, qualify-only):** hotkey → Share →
+   `friday-ctl context screen --yes` with `FRIDAY_CONTEXT_PROVIDER` set; expect a
+   `CommandResult`; inspect that the provider seam received
+   `SCREEN_CAPTURE mime=image/png … data=<b64>` with a nonzero `bytes=`. This
+   proves real Wayland `grim` output traversed ContextGate → EgressGate.
+   **Passes with current code — no implementation.**
+3. **R5-2-5-4-2-0 (vision survey):** see §1 sequence — provider image-input
+   support, request formats, provider-neutral contract.
+4. **R5-2-5-4-2 (implement + qualify true vision):** only after 4-1 freeze and
+   the 4-2-0 survey. Implement the smallest provider-neutral image delivery
+   contract + one provider, then on hardware answer a question impossible from
+   text alone (e.g. "what application is open, and the largest visible number?").
 
 ---
 
 ## 6. Honest labels
 
 - Until R5-2-5-4-1 + readiness pass: **"screen-context transport (gated)"**.
-- Only after R5-2-5-4-2 (Option A) passes: **"FRIDAY can see"** — and even then,
-  vision is one *channel*, not general perception.
+- Only after R5-2-5-4-2 passes on real hardware: **"FRIDAY can see"** — and even
+  then, vision is one *channel*, not general perception.
 
 ---
 
-## 7. Next-step decision (return to user)
+## 7. Next-step decision (adopted)
 
-Choose the R5-2-5-4-2 scope fork (§1). Whether or not seam completion is included,
-do **not** start any Omarchy → FRIDAY OS transformation (R5-2-6) before R5-2-5-4
-goes green. The engine must pass its road test before we build the chassis.
+Sequence is settled (§1 amendment): 4-1 qualify → 4-1 freeze → 4-2-0 vision
+survey → 4-2 implement → hardware qualify → freeze. The live-machine checklist
+(§4) is the user's to execute; 4-1 is qualification-only. Do **not** start any
+Omarchy → FRIDAY OS transformation (R5-2-6) before R5-2-5-4 fully goes green.
+The engine must pass its road test before we build the chassis.
