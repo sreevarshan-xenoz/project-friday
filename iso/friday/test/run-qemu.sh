@@ -89,7 +89,7 @@ fi
 cp -f /usr/share/edk2/x64/OVMF_VARS.4m.fd "$OVMF_VARS"
 
 BOOT_ORDER="d"
-VGA_OPT=("-vga" "std")
+VGA_OPT=("-vga" "virtio")
 
 if [[ "${BOOT_TARGET:-}" == "disk" ]]; then
   BOOT_ORDER="c"
