@@ -1,0 +1,11 @@
+[Unit]
+Description=FRIDAY Linux Host Daemon
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/friday-linux-daemon
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
