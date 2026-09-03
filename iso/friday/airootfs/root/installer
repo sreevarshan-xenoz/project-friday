@@ -26,12 +26,12 @@ draw_brand_banner() {
 }
 
 phase_msg() {
-  draw_brand_banner
-  gum style --foreground "$FRIDAY_ACCENT" --bold "Target: $TARGET_DISK"
-  echo
-  gum style --foreground "$FRIDAY_SUCCESS" "$1"
-  echo
-  gum style --foreground "$FRIDAY_MUTED" "Detailed log stream: $LOG_FILE"
+  draw_brand_banner >&3
+  gum style --foreground "$FRIDAY_ACCENT" --bold "Target: $TARGET_DISK" >&3
+  echo >&3
+  gum style --foreground "$FRIDAY_SUCCESS" "$1" >&3
+  echo >&3
+  gum style --foreground "$FRIDAY_MUTED" "Detailed log stream: $LOG_FILE" >&3
 }
 
 exec 3>&1 4>&2

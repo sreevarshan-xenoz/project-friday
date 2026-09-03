@@ -102,11 +102,11 @@ fi
 QEMU_CMD=(
   qemu-system-x86_64
   -enable-kvm
-  -m 4G
-  -smp 4
+  -m 6G
+  -smp 6
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd
   -drive if=pflash,format=raw,file="$OVMF_VARS"
-  -drive file="$DISK_PATH",if=virtio,format=qcow2
+  -drive file="$DISK_PATH",if=virtio,format=qcow2,cache=unsafe,aio=threads
   -cdrom "$ISO_PATH"
   -boot "order=$BOOT_ORDER"
   "${VGA_OPT[@]}"
