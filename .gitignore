@@ -28,6 +28,8 @@ dist/
 # Secrets / local config
 .env
 .env.*
+# FRIDAY live provider-credential file (sets FRIDAY_CONTEXT_PROVIDER + API keys)
+friday.env
 # Secret content files (a source module like secrets.rs is NOT a secret file)
 secrets.json
 secrets.yaml
