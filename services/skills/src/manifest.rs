@@ -301,7 +301,7 @@ mod tests {
                 "self dependency",
             ),
             (
-                r#"{"id":"x","name":"x","version":"1.0.0","actions":["a"],"platform":"Linux"}"#,
+                r#"{"id":"x","name":"x","version":"1.0.0","actions":["a"],"platform":"Mac"}"#,
                 "platform mismatch",
             ),
             (

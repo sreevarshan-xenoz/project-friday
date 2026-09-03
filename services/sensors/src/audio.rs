@@ -370,10 +370,11 @@ impl AudioSensor {
         self.capture.is_some()
     }
 
-    /// The MMDevice endpoint id of the opened input (empty when no capture
+    /// The capture endpoint id of the opened input (empty when no capture
     /// device). Makes the *explicit* device FRIDAY hears available for logs and
     /// diagnostics — a silent capture can then be attributed to hardware
     /// selection rather than the pipeline.
+    #[cfg(target_os = "windows")]
     pub fn capture_device_id(&self) -> &str {
         self.capture
             .as_ref()
@@ -381,21 +382,44 @@ impl AudioSensor {
             .unwrap_or("")
     }
 
+    #[cfg(not(target_os = "windows"))]
+    pub fn capture_device_id(&self) -> &str {
+        ""
+    }
+
     /// Live endpoint mute state of the opened input (`None` = not exposed).
-    /// The same control Windows Sound settings toggles.
+    /// The same control the OS sound settings toggles.
+    #[cfg(target_os = "windows")]
     pub fn capture_endpoint_muted(&self) -> Option<bool> {
         self.capture.as_ref().and_then(|c| c.endpoint_muted())
     }
 
+    #[cfg(not(target_os = "windows"))]
+    pub fn capture_endpoint_muted(&self) -> Option<bool> {
+        None
+    }
+
     /// Live endpoint input level 0.0..1.0 (`None` = not exposed).
+    #[cfg(target_os = "windows")]
     pub fn capture_endpoint_level(&self) -> Option<f32> {
         self.capture.as_ref().and_then(|c| c.endpoint_level())
     }
 
-    /// Live endpoint peak meter 0.0..1.0 — the exact value Windows Sound
+    #[cfg(not(target_os = "windows"))]
+    pub fn capture_endpoint_level(&self) -> Option<f32> {
+        None
+    }
+
+    /// Live endpoint peak meter 0.0..1.0 — the exact value the OS sound
     /// settings displays for this input. `None` when the stack hides it.
+    #[cfg(target_os = "windows")]
     pub fn capture_peak_meter(&self) -> Option<f32> {
         self.capture.as_ref().and_then(|c| c.peak_meter())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn capture_peak_meter(&self) -> Option<f32> {
+        None
     }
 
     /// Whether a speech-to-text backend is attached (audit + hermetic tests).
@@ -542,9 +566,18 @@ struct WasapiCapture {
 }
 
 // Never constructed on non-Windows; keeps `AudioSensor`'s `Option<WasapiCapture>`
-// field well-formed on every target.
+// field well-formed on every target. The accessor mirrors the Windows surface
+// so the platform-neutral `Sensor::poll` and diagnostic getters compile on
+// every target.
 #[cfg(not(target_os = "windows"))]
 struct WasapiCapture {}
+
+#[cfg(not(target_os = "windows"))]
+impl WasapiCapture {
+    fn read_available(&self) -> Option<Vec<i16>> {
+        None
+    }
+}
 
 // The COM interfaces are not `Send`/`Sync` by default in windows-rs. They are
 // created under MTA (`CoInitializeEx(COINIT_MULTITHREADED)`), which makes them

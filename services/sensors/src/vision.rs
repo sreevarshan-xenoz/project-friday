@@ -360,6 +360,15 @@ impl Drop for MfCapture {
 #[cfg(not(target_os = "windows"))]
 struct MfCapture {}
 
+#[cfg(not(target_os = "windows"))]
+impl MfCapture {
+    // Never constructed on non-Windows; mirrors the Windows surface so the
+    // platform-neutral `Sensor::poll` compiles on every target.
+    fn read_frame(&self) -> Option<Frame> {
+        None
+    }
+}
+
 #[cfg(target_os = "windows")]
 unsafe impl Send for MfCapture {}
 #[cfg(target_os = "windows")]

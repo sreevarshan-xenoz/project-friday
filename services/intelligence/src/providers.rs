@@ -20,12 +20,14 @@ use crate::secrets::SecretsVault;
 /// [`crate::secrets::SecretsVault::seed_from_env`] to register production
 /// keys into the vault (so the egress gate can scan for them and nothing
 /// auto-prints them). Mirrors the provider-qual environment matrix.
-pub const PROVIDER_ENV_VARS: [(&str, &str); 10] = [
+pub const PROVIDER_ENV_VARS: [(&str, &str); 12] = [
     ("OMNIROUTE_API_KEY", "omniroute"),
     ("OPENROUTER_API_KEY", "openrouter"),
     ("GROQ_API_KEY", "groq"),
     ("CEREBRAS_API_KEY", "cerebras"),
     ("GEMINI_API_KEY", "gemini"),
+    ("OPENCODE_API_KEY", "opencode"),
+    ("NVIDIA_NIM_API_KEY", "nvidia-nim"),
     ("OPENGATEWAY_API_KEY", "opengateway"),
     ("SAMBA_API_KEY", "sambanova"),
     ("GITHUB_TOKEN", "github-models"),
@@ -249,6 +251,51 @@ pub struct OpenAiProvider {
     pub api_key: String,
 }
 
+/// The FRIDAY screen-capture payload prefix carried by context.read (`ScreenReader`).
+/// The provider receives the real screenshot as base64 inline in the prompt; a
+/// vision-capable model wants it as a proper image part, not raw text.
+const SCREEN_CAPTURE_PREFIX: &str = "SCREEN_CAPTURE ";
+
+/// If `prompt` is a FRIDAY `SCREEN_CAPTURE` payload, return `(mime, base64_data)`.
+/// Otherwise return `None` (a plain text prompt should be sent as text).
+fn parse_screen_capture(prompt: &str) -> Option<(String, String)> {
+    let rest = prompt.strip_prefix(SCREEN_CAPTURE_PREFIX)?;
+    let mut mime = String::new();
+    let mut data = String::new();
+    for field in rest.split_ascii_whitespace() {
+        if let Some(v) = field.strip_prefix("mime=") {
+            mime = v.to_string();
+        } else if let Some(v) = field.strip_prefix("data=") {
+            data = v.to_string();
+        }
+    }
+    if mime.is_empty() || data.is_empty() {
+        return None;
+    }
+    Some((mime, data))
+}
+
+/// Build the user message `content` value for an OpenAI-compatible chat request.
+/// A `SCREEN_CAPTURE` prompt becomes a multimodal part list (`text` + `image_url`
+/// with a `data:` URI) so vision-capable models actually see the screenshot.
+fn openai_message_content(prompt: &str) -> serde_json::Value {
+    if let Some((mime, data)) = parse_screen_capture(prompt) {
+        let data_uri = format!("data:{mime};base64,{data}");
+        serde_json::json!([
+            {
+                "type": "text",
+                "text": "A screenshot of the user's screen was captured. Describe what is on the screen as a compact semantic observation (concise factual summary of visible apps, windows, text, and state)."
+            },
+            {
+                "type": "image_url",
+                "image_url": { "url": data_uri }
+            }
+        ])
+    } else {
+        serde_json::Value::String(prompt.to_string())
+    }
+}
+
 #[async_trait]
 impl Provider for OpenAiProvider {
     fn name(&self) -> &str {
@@ -293,7 +340,7 @@ impl Provider for OpenAiProvider {
             "messages": [
                 {
                     "role": "user",
-                    "content": prompt
+                    "content": openai_message_content(prompt)
                 }
             ]
         });
@@ -379,7 +426,7 @@ impl Provider for OpenAiProvider {
             "messages": [
                 {
                     "role": "user",
-                    "content": prompt
+                    "content": openai_message_content(prompt)
                 }
             ]
         });
@@ -1734,6 +1781,53 @@ impl InferenceFabric {
                     max_context: 128000,
                     tier: None,
                 });
+                // Free vision model — R5-2-5-4-2: carries the VisionFree tier
+                // so resolve_tier("groq", VisionFree) succeeds.
+                // (verified against live GET /v1/models: qwen3.8-27b accepts image input)
+                fabric.register_model(ModelInfo {
+                    id: "qwen/qwen3.8-27b".to_string(),
+                    family: "qwen3.8-27b".to_string(),
+                    provider: "groq".to_string(),
+                    latency_ms: 400,
+                    reliability: 1.0,
+                    capabilities: vec![
+                        ModelCapability::Json,
+                        ModelCapability::Vision,
+                    ],
+                    max_context: 131072,
+                    tier: Some(CapabilityTier::VisionFree),
+                });
+            }
+        }
+
+        // OpenCode Zen (AI gateway, OpenAI-compatible) — FRIDAY's free-remote
+        // floor. Free `$0` vision models verified live against
+        // GET https://opencode.ai/zen/v1/models (R5-2-5-4-2). Zen serves a
+        // rotating lineup at best effort; free quota/rate limits apply per
+        // account and may 429/500 when exhausted.
+        if let Ok(key) = std::env::var("OPENCODE_API_KEY") {
+            fabric.register_provider(Box::new(OpenAiProvider {
+                name: "opencode".to_string(),
+                base_url: "https://opencode.ai/zen/v1".to_string(),
+                api_key: key,
+            }));
+            if !registry_loaded {
+                // Free vision model — carries the VisionFree tier so
+                // resolve_tier("opencode", VisionFree) succeeds.
+                fabric.register_model(ModelInfo {
+                    id: "muse-spark-1.3-contributor-free".to_string(),
+                    family: "muse-spark-1.3".to_string(),
+                    provider: "opencode".to_string(),
+                    latency_ms: 800,
+                    reliability: 0.8,
+                    capabilities: vec![
+                        ModelCapability::Json,
+                        ModelCapability::Tools,
+                        ModelCapability::Vision,
+                    ],
+                    max_context: 200000,
+                    tier: Some(CapabilityTier::VisionFree),
+                });
             }
         }
 
@@ -1804,6 +1898,24 @@ impl InferenceFabric {
                     max_context: 1_000_000,
                     tier: None,
                 });
+                // Free vision model — R5-2-5-4-2: carries the VisionFree tier
+                // so resolve_tier("gemini", VisionFree) succeeds.
+                // (qualified 2x on live hardware: correct apps + largest number)
+                fabric.register_model(ModelInfo {
+                    id: "gemini-3.5-flash".to_string(),
+                    family: "gemini-3.5-flash".to_string(),
+                    provider: "gemini".to_string(),
+                    latency_ms: 800,
+                    reliability: 1.0,
+                    capabilities: vec![
+                        ModelCapability::Json,
+                        ModelCapability::Tools,
+                        ModelCapability::Vision,
+                        ModelCapability::LongContext,
+                    ],
+                    max_context: 1_000_000,
+                    tier: Some(CapabilityTier::VisionFree),
+                });
             }
         }
 
@@ -1825,6 +1937,24 @@ impl InferenceFabric {
                     capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
                     max_context: 131_072,
                     tier: None,
+                });
+                // Free vision model — R5-2-5-4-2: carries the VisionFree tier
+                // so resolve_tier("nvidia-nim", VisionFree) succeeds.
+                // (verified live: llama-3.2-11b-vision-instruct responds with
+                // image input on this account; 90b times out, phi-3/gemma-3
+                // 404 for this account)
+                fabric.register_model(ModelInfo {
+                    id: "meta/llama-3.2-11b-vision-instruct".to_string(),
+                    family: "llama-3.2-11b-vision".to_string(),
+                    provider: "nvidia-nim".to_string(),
+                    latency_ms: 600,
+                    reliability: 0.9,
+                    capabilities: vec![
+                        ModelCapability::Json,
+                        ModelCapability::Vision,
+                    ],
+                    max_context: 128000,
+                    tier: Some(CapabilityTier::VisionFree),
                 });
             }
         }
@@ -2107,6 +2237,8 @@ fn is_free_provider(name: &str) -> bool {
             | "siliconflow"
             | "zhipu"
             | "groq"
+            | "opencode"
+            | "nvidia-nim"
     )
 }
 
