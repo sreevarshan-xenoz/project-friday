@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FRIDAY Live ISO Interactive Configurator (Visual Identity Pass)
+# FRIDAY Live ISO Interactive Configurator (TUI Visual Identity Pass 2)
 set -euo pipefail
 
 OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
@@ -8,29 +8,46 @@ export PATH="$OMARCHY_PATH/bin:$PATH"
 # Centralized FRIDAY Visual Tokens
 FRIDAY_ACCENT="#7AA2F7"      # Deep Ice Blue
 FRIDAY_SECONDARY="#BB9AF7"   # Soft Purple
-FRIDAY_MUTED="#565F89"       # Muted Gray
-FRIDAY_SUCCESS="#9ECE6A"     # Crisp Mint Green
+FRIDAY_MUTED="#565F89"       # Muted Slate
+FRIDAY_SUCCESS="#9ECE6A"     # Mint Green
 FRIDAY_WARNING="#E0AF68"     # Warm Amber
-FRIDAY_ERROR="#F7768E"       # Soft Crimson
+FRIDAY_ERROR="#F7768E"       # Crimson Red
 FRIDAY_BORDER="#3B4261"      # Border Slate
 
-draw_header() {
+draw_brand_banner() {
   clear
-  gum style \
-    --foreground "$FRIDAY_ACCENT" \
-    --border-foreground "$FRIDAY_BORDER" \
-    --border rounded \
-    --align center \
-    --width 64 \
-    --padding "1 2" \
-    "F R I D A Y" \
-    "COGNITIVE OPERATING SYSTEM" \
-    "─────────────────────────────" \
-    "System Initialization & Target Setup"
+  echo
+  gum style --foreground "$FRIDAY_ACCENT" --align center \
+" ██████╗ ██████╗ ██╗██████╗  █████╗ ██╗   ██╗" \
+" ██╔════╝██╔══██╗██║██╔══██╗██╔══██╗╚██╗ ██╔╝" \
+" █████╗  ██████╔╝██║██║  ██║███████║ ╚████╔╝ " \
+" ██╔══╝  ██╔══██╗██║██║  ██║██╔══██║  ╚██╔╝  " \
+" ██║     ██║  ██║██║██████╔╝██║  ██║   ██║   " \
+" ╚═╝     ╚═╝  ╚═╝╚═╝╚═════╝ ╚═╝  ╚═╝   ╚═╝   "
+  echo
+  gum style --foreground "$FRIDAY_SECONDARY" --bold --align center "COGNITIVE OPERATING SYSTEM"
+  gum style --foreground "$FRIDAY_MUTED" --align center "────────────────────────────────────────────────────────────"
   echo
 }
 
-draw_header
+draw_rail() {
+  local step="$1"
+  local s1="○ MACHINE" s2="○ IDENTITY" s3="○ SECURITY" s4="○ TIME" s5="○ INSTALL"
+
+  case "$step" in
+    1) s1="● MACHINE" ;;
+    2) s1="✓ MACHINE"; s2="● IDENTITY" ;;
+    3) s1="✓ MACHINE"; s2="✓ IDENTITY"; s3="● SECURITY" ;;
+    4) s1="✓ MACHINE"; s2="✓ IDENTITY"; s3="✓ SECURITY"; s4="● TIME" ;;
+    5) s1="✓ MACHINE"; s2="✓ IDENTITY"; s3="✓ SECURITY"; s4="✓ TIME"; s5="● INSTALL" ;;
+  esac
+
+  gum style --foreground "$FRIDAY_MUTED" --align center "$s1   $s2   $s3   $s4   $s5"
+  echo
+}
+
+draw_brand_banner
+draw_rail 1
 
 # 1. Discover Disks & Exclude ISO Boot Media
 BOOT_MOUNT="/run/archiso/bootmnt"
@@ -39,14 +56,18 @@ if findmnt -n -o SOURCE "$BOOT_MOUNT" >/dev/null 2>&1; then
   BOOT_DEV=$(findmnt -n -o SOURCE "$BOOT_MOUNT" | sed 's/[0-9]*$//;s/p[0-9]*$//')
 fi
 
-gum style --foreground "$FRIDAY_MUTED" "Scanning available hardware & target disks..."
+if [[ -n "$BOOT_DEV" ]]; then
+  gum style --foreground "$FRIDAY_MUTED" --border rounded --border-foreground "$FRIDAY_BORDER" --padding "0 1" --width 72 \
+    "LIVE BOOT MEDIA EXCLUDED: $BOOT_DEV (Protected Boot Medium)"
+  echo
+fi
+
 CANDIDATE_DISKS=()
 CANDIDATE_LABELS=()
 
 while read -r name type size model; do
   dev_path="/dev/$name"
   if [[ -n "$BOOT_DEV" && "$dev_path" == "$BOOT_DEV"* ]]; then
-    gum style --foreground "$FRIDAY_MUTED" "  - Excluding Live ISO boot medium: $dev_path ($model, $size)"
     continue
   fi
   if [[ "$type" == "disk" ]]; then
@@ -56,40 +77,37 @@ while read -r name type size model; do
 done < <(lsblk -d -n -o NAME,TYPE,SIZE,MODEL)
 
 if (( ${#CANDIDATE_DISKS[@]} == 0 )); then
-  gum style --foreground "$FRIDAY_ERROR" "ERROR: No target installation disks found (excluding Live USB)."
+  gum style --foreground "$FRIDAY_ERROR" --bold "ERROR: No target installation disks found (excluding Live USB)."
   exit 1
 fi
 
-echo
-gum style --foreground "$FRIDAY_SECONDARY" "Step 1 of 5: Select Target Installation Disk"
-CHOICE_LABEL=$(printf "%s\n" "${CANDIDATE_LABELS[@]}" | gum choose --cursor="❯ " --header="Target Disk Candidate")
+gum style --foreground "$FRIDAY_ACCENT" --bold "Select Target Installation Disk:"
+CHOICE_LABEL=$(printf "%s\n" "${CANDIDATE_LABELS[@]}" | gum choose --cursor="❯ " --height=8)
 TARGET_DISK=$(echo "$CHOICE_LABEL" | awk -F'|' '{print $1}' | xargs)
 
-draw_header
-gum style --foreground "$FRIDAY_SUCCESS" "✓ Target Disk: $TARGET_DISK"
+# Step 2: Identity
+draw_brand_banner
+draw_rail 2
+gum style --foreground "$FRIDAY_SUCCESS" "✓ Target Disk Selected: $TARGET_DISK"
 echo
-gum style --foreground "$FRIDAY_SECONDARY" "Step 2 of 5: Keyboard Layout"
-KEYBOARD=$(gum input --placeholder="us" --prompt="Keyboard [us]> " || echo "us")
-KEYBOARD="${KEYBOARD:-us}"
-
-draw_header
-gum style --foreground "$FRIDAY_SUCCESS" "✓ Target Disk: $TARGET_DISK"
-gum style --foreground "$FRIDAY_SUCCESS" "✓ Keyboard:    $KEYBOARD"
-echo
-gum style --foreground "$FRIDAY_SECONDARY" "Step 3 of 5: Hostname & Admin Account"
+gum style --foreground "$FRIDAY_ACCENT" --bold "Machine Identity Configuration:"
 HOSTNAME=$(gum input --placeholder="friday" --prompt="System Hostname [friday]> " || echo "friday")
 HOSTNAME="${HOSTNAME:-friday}"
 
 USERNAME=$(gum input --placeholder="friday" --prompt="Admin Username [friday]> " || echo "friday")
 USERNAME="${USERNAME:-friday}"
 
-draw_header
+KEYBOARD=$(gum input --placeholder="us" --prompt="Keyboard Layout [us]> " || echo "us")
+KEYBOARD="${KEYBOARD:-us}"
+
+# Step 3: Security
+draw_brand_banner
+draw_rail 3
 gum style --foreground "$FRIDAY_SUCCESS" "✓ Target Disk: $TARGET_DISK"
-gum style --foreground "$FRIDAY_SUCCESS" "✓ Keyboard:    $KEYBOARD"
-gum style --foreground "$FRIDAY_SUCCESS" "✓ Identity:    $USERNAME@$HOSTNAME"
+gum style --foreground "$FRIDAY_SUCCESS" "✓ Identity:    $USERNAME@$HOSTNAME ($KEYBOARD)"
 echo
-gum style --foreground "$FRIDAY_SECONDARY" "Step 4 of 5: Admin Password"
-PASSWORD=$(gum input --password --prompt="Password> ")
+gum style --foreground "$FRIDAY_ACCENT" --bold "Security Credentials:"
+PASSWORD=$(gum input --password --prompt="Admin Password> ")
 PASSWORD_CONFIRM=$(gum input --password --prompt="Confirm Password> ")
 
 if [[ "$PASSWORD" != "$PASSWORD_CONFIRM" ]]; then
@@ -97,36 +115,40 @@ if [[ "$PASSWORD" != "$PASSWORD_CONFIRM" ]]; then
   exit 1
 fi
 
-draw_header
+# Step 4: Timezone
+draw_brand_banner
+draw_rail 4
 gum style --foreground "$FRIDAY_SUCCESS" "✓ Target Disk: $TARGET_DISK"
-gum style --foreground "$FRIDAY_SUCCESS" "✓ Keyboard:    $KEYBOARD"
-gum style --foreground "$FRIDAY_SUCCESS" "✓ Identity:    $USERNAME@$HOSTNAME"
+gum style --foreground "$FRIDAY_SUCCESS" "✓ Identity:    $USERNAME@$HOSTNAME ($KEYBOARD)"
 gum style --foreground "$FRIDAY_SUCCESS" "✓ Password:    ••••••••"
 echo
-gum style --foreground "$FRIDAY_SECONDARY" "Step 5 of 5: Timezone"
+gum style --foreground "$FRIDAY_ACCENT" --bold "Time & Region:"
 TIMEZONE=$(gum input --placeholder="UTC" --prompt="Timezone [UTC]> " || echo "UTC")
 TIMEZONE="${TIMEZONE:-UTC}"
 
-draw_header
+# Step 5: Final Review & Confirmation
+draw_brand_banner
+draw_rail 5
+
 gum style \
   --foreground "$FRIDAY_ACCENT" \
   --border-foreground "$FRIDAY_BORDER" \
   --border rounded \
   --padding "1 2" \
-  --width 64 \
-  "INSTALLATION SPECIFICATION SUMMARY" \
-  "─────────────────────────────────" \
-  "Target Disk:  $TARGET_DISK" \
-  "Keyboard:     $KEYBOARD" \
-  "Hostname:     $HOSTNAME" \
-  "Admin User:   $USERNAME" \
-  "Timezone:     $TIMEZONE"
+  --width 72 \
+  "SYSTEM INITIALIZATION SPECIFICATION" \
+  "──────────────────────────────────────────────────────────" \
+  "  Target Disk:  $TARGET_DISK" \
+  "  Keyboard:     $KEYBOARD" \
+  "  Hostname:     $HOSTNAME" \
+  "  Admin User:   $USERNAME" \
+  "  Timezone:     $TIMEZONE"
 
 echo
-gum style --foreground "$FRIDAY_WARNING" "WARNING: Destructive Operation. All data on $TARGET_DISK will be erased."
-if gum confirm "Proceed with installation onto $TARGET_DISK?"; then
+gum style --foreground "$FRIDAY_WARNING" --bold "WARNING: ALL EXISTING DATA ON $TARGET_DISK WILL BE PERMANENTLY WIPED."
+if gum confirm "Proceed with destructive installation onto $TARGET_DISK?"; then
   echo
-  gum style --foreground "$FRIDAY_SUCCESS" "Target specification accepted. Handoff to FRIDAY installer..."
+  gum style --foreground "$FRIDAY_SUCCESS" "Specification approved. Initiating system assembly..."
   export TARGET_DISK KEYBOARD HOSTNAME USERNAME PASSWORD TIMEZONE
   exec /root/installer
 else

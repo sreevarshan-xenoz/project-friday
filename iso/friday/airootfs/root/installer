@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FRIDAY Live ISO Target Installer (Visual Identity Pass)
+# FRIDAY Live ISO Target Installer (Visual Identity Pass 2)
 set -euo pipefail
 
 FRIDAY_ACCENT="#7AA2F7"
@@ -7,26 +7,37 @@ FRIDAY_SECONDARY="#BB9AF7"
 FRIDAY_MUTED="#565F89"
 FRIDAY_SUCCESS="#9ECE6A"
 FRIDAY_BORDER="#3B4261"
+LOG_FILE="/var/log/friday-install.log"
 
-draw_status() {
+draw_brand_banner() {
   clear
-  gum style \
-    --foreground "$FRIDAY_ACCENT" \
-    --border-foreground "$FRIDAY_BORDER" \
-    --border rounded \
-    --align center \
-    --width 64 \
-    --padding "1 2" \
-    "I N I T I A L I Z I N G   F R I D A Y" \
-    "────────────────────────────────────" \
-    "$1"
+  echo
+  gum style --foreground "$FRIDAY_ACCENT" --align center \
+" ██████╗ ██████╗ ██╗██████╗  █████╗ ██╗   ██╗" \
+" ██╔════╝██╔══██╗██║██╔══██╗██╔══██╗╚██╗ ██╔╝" \
+" █████╗  ██████╔╝██║██║  ██║███████║ ╚████╔╝ " \
+" ██╔══╝  ██╔══██╗██║██║  ██║██╔══██║  ╚██╔╝  " \
+" ██║     ██║  ██║██║██████╔╝██║  ██║   ██║   " \
+" ╚═╝     ╚═╝  ╚═╝╚═╝╚═════╝ ╚═╝  ╚═╝   ╚═╝   "
+  echo
+  gum style --foreground "$FRIDAY_SECONDARY" --bold --align center "SYSTEM ASSEMBLY IN PROGRESS"
+  gum style --foreground "$FRIDAY_MUTED" --align center "────────────────────────────────────────────────────────────"
   echo
 }
 
-draw_status "Preparing target disk $TARGET_DISK..."
+phase_msg() {
+  draw_brand_banner
+  gum style --foreground "$FRIDAY_ACCENT" --bold "Target: $TARGET_DISK"
+  echo
+  gum style --foreground "$FRIDAY_SUCCESS" "$1"
+  echo
+  gum style --foreground "$FRIDAY_MUTED" "Detailed log stream: $LOG_FILE"
+}
 
-# 1. Partition & Format Target Disk
-gum style --foreground "$FRIDAY_MUTED" "Partitioning $TARGET_DISK (GPT / ESP / Root)..."
+exec 3>&1 4>&2
+exec >>"$LOG_FILE" 2>&1
+
+phase_msg "● Step 1 of 6: Partitioning & Formatting Target Disk ($TARGET_DISK)"
 parted -s "$TARGET_DISK" mklabel gpt
 parted -s "$TARGET_DISK" mkpart ESP fat32 1MiB 1024MiB
 parted -s "$TARGET_DISK" set 1 esp on
@@ -40,25 +51,21 @@ else
   ROOT_PART="${TARGET_DISK}2"
 fi
 
-gum style --foreground "$FRIDAY_MUTED" "Formatting filesystems (FAT32 / EXT4)..."
-mkfs.vfat -F32 "$BOOT_PART" >/dev/null
-mkfs.ext4 -F "$ROOT_PART" >/dev/null
+mkfs.vfat -F32 "$BOOT_PART"
+mkfs.ext4 -F "$ROOT_PART"
 
-draw_status "Mounting target filesystems..."
+phase_msg "● Step 2 of 6: Mounting Filesystems & Preparing Chroot"
 mkdir -p /mnt
 mount "$ROOT_PART" /mnt
 mkdir -p /mnt/boot
 mount "$BOOT_PART" /mnt/boot
 
-# 2. Pacstrap Base System & Packages
-draw_status "Pacstrapping base Arch Linux & desktop substrate..."
+phase_msg "● Step 3 of 6: Pacstrapping Arch Base & Desktop Substrate"
 pacstrap /mnt base linux linux-firmware sudo zsh hyprland sddm uwsm quickshell waybar xdg-desktop-portal-hyprland grim slurp wl-clipboard pipewire pipewire-alsa pipewire-pulse wireplumber foot ttf-jetbrains-mono-nerd noto-fonts networkmanager rsync gum
 
-draw_status "Generating system fstab..."
 genfstab -U /mnt >> /mnt/etc/fstab
 
-# 3. Materialize FRIDAY Binaries & Omarchy Substrate into Target /mnt
-draw_status "Materializing FRIDAY runtime & Omarchy substrate..."
+phase_msg "● Step 4 of 6: Materializing FRIDAY Binaries & Omarchy Substrate"
 mkdir -p /mnt/usr/bin
 cp -p /usr/bin/friday /usr/bin/friday-ctl /usr/bin/friday-linux-daemon /mnt/usr/bin/
 chmod 755 /mnt/usr/bin/friday*
@@ -69,16 +76,13 @@ rsync -a /usr/share/omarchy/ /mnt/usr/share/omarchy/
 rsync -a /etc/sddm.conf.d/ /mnt/etc/sddm.conf.d/ 2>/dev/null || true
 rsync -a /etc/sysctl.d/ /mnt/etc/sysctl.d/ 2>/dev/null || true
 
-# 4. Enable SDDM & User Services on Target System
-draw_status "Configuring SDDM & systemd user services..."
+phase_msg "● Step 5 of 6: Configuring SDDM & Systemd User Units"
 mkdir -p /mnt/etc/systemd/system
 ln -sf /usr/lib/systemd/system/sddm.service /mnt/etc/systemd/system/display-manager.service
 mkdir -p /mnt/etc/systemd/user/default.target.wants
 cp -p /etc/systemd/user/friday-linux-daemon.service /mnt/etc/systemd/user/ 2>/dev/null || true
 ln -sf ../friday-linux-daemon.service /mnt/etc/systemd/user/default.target.wants/friday-linux-daemon.service 2>/dev/null || true
 
-# 5. Set up First-Boot Provisioning Marker
-draw_status "Arming first-boot provisioning marker..."
 mkdir -p /mnt/var/lib/omarchy/provisioning
 touch /mnt/var/lib/omarchy/provisioning/pending
 cat << EOF > /mnt/var/lib/omarchy/provisioning/install-info.json
@@ -90,9 +94,8 @@ cat << EOF > /mnt/var/lib/omarchy/provisioning/install-info.json
 }
 EOF
 
-# 6. Configure Bootloader
-draw_status "Installing UEFI bootloader..."
-bootctl --path=/mnt/boot install >/dev/null
+phase_msg "● Step 6 of 6: Installing UEFI Bootloader & Finalizing System"
+bootctl --path=/mnt/boot install
 cat << EOF > /mnt/boot/loader/loader.conf
 default arch.conf
 timeout 1
@@ -107,7 +110,18 @@ EOF
 
 chmod +x /root/configurator /root/installer
 
+exec 1>&3 2>&4
+
 clear
+echo
+gum style --foreground "$FRIDAY_ACCENT" --align center \
+" ██████╗ ██████╗ ██╗██████╗  █████╗ ██╗   ██╗" \
+" ██╔════╝██╔══██╗██║██╔══██╗██╔══██╗╚██╗ ██╔╝" \
+" █████╗  ██████╔╝██║██║  ██║███████║ ╚████╔╝ " \
+" ██╔══╝  ██╔══██╗██║██║  ██║██╔══██║  ╚██╔╝  " \
+" ██║     ██║  ██║██║██████╔╝██║  ██║   ██║   " \
+" ╚═╝     ╚═╝  ╚═╝╚═╝╚═════╝ ╚═╝  ╚═╝   ╚═╝   "
+echo
 gum style \
   --foreground "$FRIDAY_SUCCESS" \
   --border-foreground "$FRIDAY_BORDER" \
@@ -115,11 +129,11 @@ gum style \
   --align center \
   --width 64 \
   --padding "1 2" \
-  "S Y S T E M   R E A D Y" \
-  "──────────────────────" \
+  "SYSTEM ASSEMBLY COMPLETE" \
+  "─────────────────────────────────" \
   "FRIDAY has been installed to $TARGET_DISK." \
   "" \
-  "Remove the installation media and reboot."
+  "Remove installation media and reboot into your system."
 
 sleep 3
 umount -R /mnt
