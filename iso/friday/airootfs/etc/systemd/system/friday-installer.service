@@ -1,0 +1,19 @@
+[Unit]
+Description=FRIDAY Installer Setup
+After=multi-user.target
+Conflicts=getty@tty1.service
+
+[Service]
+Type=idle
+User=root
+WorkingDirectory=/root
+ExecStart=/root/configurator
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+
+[Install]
+WantedBy=multi-user.target
