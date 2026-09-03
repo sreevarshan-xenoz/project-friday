@@ -88,6 +88,17 @@ fi
 # Prepare UEFI variables template
 cp -f /usr/share/edk2/x64/OVMF_VARS.4m.fd "$OVMF_VARS"
 
+BOOT_ORDER="d"
+VGA_OPT=("-vga" "std")
+
+if [[ "${BOOT_TARGET:-}" == "disk" ]]; then
+  BOOT_ORDER="c"
+fi
+
+if [[ "${ENABLE_GPU:-}" == "true" ]]; then
+  VGA_OPT=("-vga" "virtio" "-display" "default,show-cursor=on")
+fi
+
 QEMU_CMD=(
   qemu-system-x86_64
   -enable-kvm
@@ -97,8 +108,8 @@ QEMU_CMD=(
   -drive if=pflash,format=raw,file="$OVMF_VARS"
   -drive file="$DISK_PATH",if=virtio,format=qcow2
   -cdrom "$ISO_PATH"
-  -boot order=d
-  -vga virtio
+  -boot "order=$BOOT_ORDER"
+  "${VGA_OPT[@]}"
 )
 
 if [[ "$MODE" == "debug" ]]; then

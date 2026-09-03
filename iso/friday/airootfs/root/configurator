@@ -1,20 +1,36 @@
 #!/usr/bin/env bash
-# FRIDAY Live ISO Interactive Configurator
+# FRIDAY Live ISO Interactive Configurator (Visual Identity Pass)
 set -euo pipefail
 
 OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
 export PATH="$OMARCHY_PATH/bin:$PATH"
 
-if [[ -f "$OMARCHY_PATH/install/provisioning/setup-form.sh" ]]; then
-  source "$OMARCHY_PATH/install/provisioning/setup-form.sh"
-fi
+# Centralized FRIDAY Visual Tokens
+FRIDAY_ACCENT="#7AA2F7"      # Deep Ice Blue
+FRIDAY_SECONDARY="#BB9AF7"   # Soft Purple
+FRIDAY_MUTED="#565F89"       # Muted Gray
+FRIDAY_SUCCESS="#9ECE6A"     # Crisp Mint Green
+FRIDAY_WARNING="#E0AF68"     # Warm Amber
+FRIDAY_ERROR="#F7768E"       # Soft Crimson
+FRIDAY_BORDER="#3B4261"      # Border Slate
 
-clear
-echo "============================================================"
-echo "               WELCOME TO PROJECT FRIDAY OS                 "
-echo "                   System Installer ISO                     "
-echo "============================================================"
-echo
+draw_header() {
+  clear
+  gum style \
+    --foreground "$FRIDAY_ACCENT" \
+    --border-foreground "$FRIDAY_BORDER" \
+    --border rounded \
+    --align center \
+    --width 64 \
+    --padding "1 2" \
+    "F R I D A Y" \
+    "COGNITIVE OPERATING SYSTEM" \
+    "─────────────────────────────" \
+    "System Initialization & Target Setup"
+  echo
+}
+
+draw_header
 
 # 1. Discover Disks & Exclude ISO Boot Media
 BOOT_MOUNT="/run/archiso/bootmnt"
@@ -23,75 +39,97 @@ if findmnt -n -o SOURCE "$BOOT_MOUNT" >/dev/null 2>&1; then
   BOOT_DEV=$(findmnt -n -o SOURCE "$BOOT_MOUNT" | sed 's/[0-9]*$//;s/p[0-9]*$//')
 fi
 
-echo "Scanning for available target installation disks..."
+gum style --foreground "$FRIDAY_MUTED" "Scanning available hardware & target disks..."
 CANDIDATE_DISKS=()
+CANDIDATE_LABELS=()
+
 while read -r name type size model; do
   dev_path="/dev/$name"
   if [[ -n "$BOOT_DEV" && "$dev_path" == "$BOOT_DEV"* ]]; then
-    echo "  - Excluding Live ISO boot medium: $dev_path ($model, $size)"
+    gum style --foreground "$FRIDAY_MUTED" "  - Excluding Live ISO boot medium: $dev_path ($model, $size)"
     continue
   fi
   if [[ "$type" == "disk" ]]; then
-    CANDIDATE_DISKS+=("$dev_path | $size | $model")
+    CANDIDATE_DISKS+=("$dev_path")
+    CANDIDATE_LABELS+=("$dev_path | $size | $model")
   fi
 done < <(lsblk -d -n -o NAME,TYPE,SIZE,MODEL)
 
 if (( ${#CANDIDATE_DISKS[@]} == 0 )); then
-  echo "ERROR: No target installation disks found (excluding Live USB)."
+  gum style --foreground "$FRIDAY_ERROR" "ERROR: No target installation disks found (excluding Live USB)."
   exit 1
 fi
 
 echo
-echo "Available Target Disks:"
-select choice in "${CANDIDATE_DISKS[@]}"; do
-  if [[ -n "${choice:-}" ]]; then
-    TARGET_DISK=$(echo "$choice" | awk -F'|' '{print $1}' | xargs)
-    echo "Selected Target Disk: $TARGET_DISK"
-    break
-  fi
-done
+gum style --foreground "$FRIDAY_SECONDARY" "Step 1 of 5: Select Target Installation Disk"
+CHOICE_LABEL=$(printf "%s\n" "${CANDIDATE_LABELS[@]}" | gum choose --cursor="❯ " --header="Target Disk Candidate")
+TARGET_DISK=$(echo "$CHOICE_LABEL" | awk -F'|' '{print $1}' | xargs)
 
+draw_header
+gum style --foreground "$FRIDAY_SUCCESS" "✓ Target Disk: $TARGET_DISK"
 echo
-read -p "Keyboard Layout [us]: " KEYBOARD
+gum style --foreground "$FRIDAY_SECONDARY" "Step 2 of 5: Keyboard Layout"
+KEYBOARD=$(gum input --placeholder="us" --prompt="Keyboard [us]> " || echo "us")
 KEYBOARD="${KEYBOARD:-us}"
 
-read -p "Hostname [friday]: " HOSTNAME
+draw_header
+gum style --foreground "$FRIDAY_SUCCESS" "✓ Target Disk: $TARGET_DISK"
+gum style --foreground "$FRIDAY_SUCCESS" "✓ Keyboard:    $KEYBOARD"
+echo
+gum style --foreground "$FRIDAY_SECONDARY" "Step 3 of 5: Hostname & Admin Account"
+HOSTNAME=$(gum input --placeholder="friday" --prompt="System Hostname [friday]> " || echo "friday")
 HOSTNAME="${HOSTNAME:-friday}"
 
-read -p "Admin Username [friday]: " USERNAME
+USERNAME=$(gum input --placeholder="friday" --prompt="Admin Username [friday]> " || echo "friday")
 USERNAME="${USERNAME:-friday}"
 
-read -s -p "Admin Password: " PASSWORD
+draw_header
+gum style --foreground "$FRIDAY_SUCCESS" "✓ Target Disk: $TARGET_DISK"
+gum style --foreground "$FRIDAY_SUCCESS" "✓ Keyboard:    $KEYBOARD"
+gum style --foreground "$FRIDAY_SUCCESS" "✓ Identity:    $USERNAME@$HOSTNAME"
 echo
-read -s -p "Confirm Password: " PASSWORD_CONFIRM
-echo
+gum style --foreground "$FRIDAY_SECONDARY" "Step 4 of 5: Admin Password"
+PASSWORD=$(gum input --password --prompt="Password> ")
+PASSWORD_CONFIRM=$(gum input --password --prompt="Confirm Password> ")
 
 if [[ "$PASSWORD" != "$PASSWORD_CONFIRM" ]]; then
-  echo "ERROR: Passwords do not match!"
+  gum style --foreground "$FRIDAY_ERROR" "ERROR: Passwords do not match!"
   exit 1
 fi
 
-read -p "Timezone [UTC]: " TIMEZONE
+draw_header
+gum style --foreground "$FRIDAY_SUCCESS" "✓ Target Disk: $TARGET_DISK"
+gum style --foreground "$FRIDAY_SUCCESS" "✓ Keyboard:    $KEYBOARD"
+gum style --foreground "$FRIDAY_SUCCESS" "✓ Identity:    $USERNAME@$HOSTNAME"
+gum style --foreground "$FRIDAY_SUCCESS" "✓ Password:    ••••••••"
+echo
+gum style --foreground "$FRIDAY_SECONDARY" "Step 5 of 5: Timezone"
+TIMEZONE=$(gum input --placeholder="UTC" --prompt="Timezone [UTC]> " || echo "UTC")
 TIMEZONE="${TIMEZONE:-UTC}"
 
-echo
-echo "============================================================"
-echo "                  INSTALLATION SUMMARY                      "
-echo "============================================================"
-echo "  Target Disk:  $TARGET_DISK"
-echo "  Keyboard:     $KEYBOARD"
-echo "  Hostname:     $HOSTNAME"
-echo "  Username:     $USERNAME"
-echo "  Timezone:     $TIMEZONE"
-echo "============================================================"
-echo "WARNING: ALL DATA ON $TARGET_DISK WILL BE DESTROYED!"
-read -p "Type 'CONFIRM' to proceed with installation: " CONFIRMATION
+draw_header
+gum style \
+  --foreground "$FRIDAY_ACCENT" \
+  --border-foreground "$FRIDAY_BORDER" \
+  --border rounded \
+  --padding "1 2" \
+  --width 64 \
+  "INSTALLATION SPECIFICATION SUMMARY" \
+  "─────────────────────────────────" \
+  "Target Disk:  $TARGET_DISK" \
+  "Keyboard:     $KEYBOARD" \
+  "Hostname:     $HOSTNAME" \
+  "Admin User:   $USERNAME" \
+  "Timezone:     $TIMEZONE"
 
-if [[ "$CONFIRMATION" != "CONFIRM" ]]; then
-  echo "Installation aborted."
+echo
+gum style --foreground "$FRIDAY_WARNING" "WARNING: Destructive Operation. All data on $TARGET_DISK will be erased."
+if gum confirm "Proceed with installation onto $TARGET_DISK?"; then
+  echo
+  gum style --foreground "$FRIDAY_SUCCESS" "Target specification accepted. Handoff to FRIDAY installer..."
+  export TARGET_DISK KEYBOARD HOSTNAME USERNAME PASSWORD TIMEZONE
+  exec /root/installer
+else
+  gum style --foreground "$FRIDAY_ERROR" "Installation cancelled by user."
   exit 1
 fi
-
-echo "Configurator complete. Handoff to installer..."
-export TARGET_DISK KEYBOARD HOSTNAME USERNAME PASSWORD TIMEZONE
-/root/installer
