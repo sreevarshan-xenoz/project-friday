@@ -25,4 +25,6 @@ file_permissions=(
   ["/usr/bin/friday"]="0:0:755"
   ["/usr/bin/friday-ctl"]="0:0:755"
   ["/usr/bin/friday-linux-daemon"]="0:0:755"
+  ["/root/configurator"]="0:0:755"
+  ["/root/installer"]="0:0:755"
 )

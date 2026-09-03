@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# FRIDAY Live ISO Interactive Configurator
+set -euo pipefail
+
+OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
+export PATH="$OMARCHY_PATH/bin:$PATH"
+
+if [[ -f "$OMARCHY_PATH/install/provisioning/setup-form.sh" ]]; then
+  source "$OMARCHY_PATH/install/provisioning/setup-form.sh"
+fi
+
+clear
+echo "============================================================"
+echo "               WELCOME TO PROJECT FRIDAY OS                 "
+echo "                   System Installer ISO                     "
+echo "============================================================"
+echo
+
+# 1. Discover Disks & Exclude ISO Boot Media
+BOOT_MOUNT="/run/archiso/bootmnt"
+BOOT_DEV=""
+if findmnt -n -o SOURCE "$BOOT_MOUNT" >/dev/null 2>&1; then
+  BOOT_DEV=$(findmnt -n -o SOURCE "$BOOT_MOUNT" | sed 's/[0-9]*$//;s/p[0-9]*$//')
+fi
+
+echo "Scanning for available target installation disks..."
+CANDIDATE_DISKS=()
+while read -r name type size model; do
+  dev_path="/dev/$name"
+  if [[ -n "$BOOT_DEV" && "$dev_path" == "$BOOT_DEV"* ]]; then
+    echo "  - Excluding Live ISO boot medium: $dev_path ($model, $size)"
+    continue
+  fi
+  if [[ "$type" == "disk" ]]; then
+    CANDIDATE_DISKS+=("$dev_path | $size | $model")
+  fi
+done < <(lsblk -d -n -o NAME,TYPE,SIZE,MODEL)
+
+if (( ${#CANDIDATE_DISKS[@]} == 0 )); then
+  echo "ERROR: No target installation disks found (excluding Live USB)."
+  exit 1
+fi
+
+echo
+echo "Available Target Disks:"
+select choice in "${CANDIDATE_DISKS[@]}"; do
+  if [[ -n "${choice:-}" ]]; then
+    TARGET_DISK=$(echo "$choice" | awk -F'|' '{print $1}' | xargs)
+    echo "Selected Target Disk: $TARGET_DISK"
+    break
+  fi
+done
+
+echo
+read -p "Keyboard Layout [us]: " KEYBOARD
+KEYBOARD="${KEYBOARD:-us}"
+
+read -p "Hostname [friday]: " HOSTNAME
+HOSTNAME="${HOSTNAME:-friday}"
+
+read -p "Admin Username [friday]: " USERNAME
+USERNAME="${USERNAME:-friday}"
+
+read -s -p "Admin Password: " PASSWORD
+echo
+read -s -p "Confirm Password: " PASSWORD_CONFIRM
+echo
+
+if [[ "$PASSWORD" != "$PASSWORD_CONFIRM" ]]; then
+  echo "ERROR: Passwords do not match!"
+  exit 1
+fi
+
+read -p "Timezone [UTC]: " TIMEZONE
+TIMEZONE="${TIMEZONE:-UTC}"
+
+echo
+echo "============================================================"
+echo "                  INSTALLATION SUMMARY                      "
+echo "============================================================"
+echo "  Target Disk:  $TARGET_DISK"
+echo "  Keyboard:     $KEYBOARD"
+echo "  Hostname:     $HOSTNAME"
+echo "  Username:     $USERNAME"
+echo "  Timezone:     $TIMEZONE"
+echo "============================================================"
+echo "WARNING: ALL DATA ON $TARGET_DISK WILL BE DESTROYED!"
+read -p "Type 'CONFIRM' to proceed with installation: " CONFIRMATION
+
+if [[ "$CONFIRMATION" != "CONFIRM" ]]; then
+  echo "Installation aborted."
+  exit 1
+fi
+
+echo "Configurator complete. Handoff to installer..."
+export TARGET_DISK KEYBOARD HOSTNAME USERNAME PASSWORD TIMEZONE
+/root/installer

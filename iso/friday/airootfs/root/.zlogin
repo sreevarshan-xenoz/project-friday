@@ -4,3 +4,7 @@ if grep -Fqa 'accessibility=' /proc/cmdline &> /dev/null; then
 fi
 
 ~/.automated_script.sh
+
+if [[ $(tty) == "/dev/tty1" ]]; then
+    /root/configurator
+fi

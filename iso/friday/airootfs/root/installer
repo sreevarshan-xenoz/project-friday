@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# FRIDAY Live ISO Target Installer
+set -euo pipefail
+
+echo "============================================================"
+echo "          EXECUTING FRIDAY TARGET INSTALLATION              "
+echo "============================================================"
+echo "Target Disk: $TARGET_DISK"
+
+# 1. Partition & Format Target Disk
+echo "Wiping and partitioning $TARGET_DISK..."
+parted -s "$TARGET_DISK" mklabel gpt
+parted -s "$TARGET_DISK" mkpart ESP fat32 1MiB 1024MiB
+parted -s "$TARGET_DISK" set 1 esp on
+parted -s "$TARGET_DISK" mkpart primary ext4 1024MiB 100%
+
+if [[ "$TARGET_DISK" =~ nvme || "$TARGET_DISK" =~ mmcblk ]]; then
+  BOOT_PART="${TARGET_DISK}p1"
+  ROOT_PART="${TARGET_DISK}p2"
+else
+  BOOT_PART="${TARGET_DISK}1"
+  ROOT_PART="${TARGET_DISK}2"
+fi
+
+echo "Formatting partitions..."
+mkfs.vfat -F32 "$BOOT_PART"
+mkfs.ext4 -F "$ROOT_PART"
+
+echo "Mounting target filesystem..."
+mkdir -p /mnt
+mount "$ROOT_PART" /mnt
+mkdir -p /mnt/boot
+mount "$BOOT_PART" /mnt/boot
+
+# 2. Pacstrap Base System & Packages
+echo "Pacstrapping base Arch Linux packages to /mnt..."
+pacstrap /mnt base linux linux-firmware sudo zsh hyprland sddm uwsm quickshell waybar xdg-desktop-portal-hyprland grim slurp wl-clipboard pipewire pipewire-alsa pipewire-pulse wireplumber foot ttf-jetbrains-mono-nerd noto-fonts networkmanager rsync
+
+echo "Generating fstab..."
+genfstab -U /mnt >> /mnt/etc/fstab
+
+# 3. Materialize FRIDAY Binaries & Omarchy Substrate into Target /mnt
+echo "Materializing FRIDAY binaries to /mnt/usr/bin/..."
+mkdir -p /mnt/usr/bin
+cp -p /usr/bin/friday /usr/bin/friday-ctl /usr/bin/friday-linux-daemon /mnt/usr/bin/
+chmod 755 /mnt/usr/bin/friday*
+
+echo "Materializing Omarchy Substrate to /mnt/usr/share/omarchy/..."
+mkdir -p /mnt/usr/share/omarchy
+rsync -a /usr/share/omarchy/ /mnt/usr/share/omarchy/
+
+echo "Copying system drop-in configs..."
+rsync -a /etc/sddm.conf.d/ /mnt/etc/sddm.conf.d/ 2>/dev/null || true
+rsync -a /etc/sysctl.d/ /mnt/etc/sysctl.d/ 2>/dev/null || true
+
+# 4. Enable SDDM & User Services on Target System
+echo "Enabling display-manager (SDDM) on target system..."
+mkdir -p /mnt/etc/systemd/system
+ln -sf /usr/lib/systemd/system/sddm.service /mnt/etc/systemd/system/display-manager.service
+mkdir -p /mnt/etc/systemd/user/default.target.wants
+cp -p /etc/systemd/user/friday-linux-daemon.service /mnt/etc/systemd/user/ 2>/dev/null || true
+ln -sf ../friday-linux-daemon.service /mnt/etc/systemd/user/default.target.wants/friday-linux-daemon.service 2>/dev/null || true
+
+# 5. Set up First-Boot Provisioning Marker
+echo "Setting up first-boot provisioning marker..."
+mkdir -p /mnt/var/lib/omarchy/provisioning
+touch /mnt/var/lib/omarchy/provisioning/pending
+cat << EOF > /mnt/var/lib/omarchy/provisioning/install-info.json
+{
+  "hostname": "$HOSTNAME",
+  "username": "$USERNAME",
+  "timezone": "$TIMEZONE",
+  "keyboard": "$KEYBOARD"
+}
+EOF
+
+# 6. Configure Bootloader
+echo "Installing bootloader..."
+bootctl --path=/mnt/boot install
+cat << EOF > /mnt/boot/loader/loader.conf
+default arch.conf
+timeout 3
+EOF
+
+cat << EOF > /mnt/boot/loader/entries/arch.conf
+title   FRIDAY OS
+linux   /vmlinuz-linux
+initrd  /initramfs-linux.img
+options root=PARTUUID=$(blkid -s PARTUUID -o value "$ROOT_PART") rw
+EOF
+
+# 7. Set executable permissions inside chroot
+chmod +x /root/configurator /root/installer
+
+echo "============================================================"
+echo "          INSTALLATION COMPLETE! REBOOTING...               "
+echo "============================================================"
+sleep 3
+umount -R /mnt
+reboot
