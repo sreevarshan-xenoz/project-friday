@@ -1,0 +1,12 @@
+; https://github.com/uiriansan/SilentSDDM
+[SddmGreeterTheme]
+Name=FRIDAY SilentSDDM (Material You)
+Type=sddm-theme
+Description=Project FRIDAY Edition of SilentSDDM with Deep Ice Blue & Soft Purple accents
+License=GPL-3.0-or-later
+Version=1.5.0
+Theme-Id=silent-friday
+Theme-API=2.0
+MainScript=Main.qml
+ConfigFile=configs/friday.conf
+QtVersion=6

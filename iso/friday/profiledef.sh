@@ -25,6 +25,10 @@ file_permissions=(
   ["/usr/bin/friday"]="0:0:755"
   ["/usr/bin/friday-ctl"]="0:0:755"
   ["/usr/bin/friday-linux-daemon"]="0:0:755"
+  ["/usr/bin/friday-skill-forge"]="0:0:755"
+  ["/usr/bin/friday-os"]="0:0:755"
+  ["/usr/bin/omarchy"]="0:0:755"
+  ["/usr/lib/friday/friday-skill-forge"]="0:0:755"
   ["/root/configurator"]="0:0:755"
   ["/root/installer"]="0:0:755"
 )

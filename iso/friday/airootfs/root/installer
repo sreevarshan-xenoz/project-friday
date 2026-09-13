@@ -1,13 +1,28 @@
 #!/usr/bin/env bash
-# FRIDAY Live ISO Target Installer (Visual Identity Pass 2)
+# FRIDAY OS Automated Core Assembler (M7 Identity Baseline + Dots-Hyprland Theming)
 set -euo pipefail
 
+OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
+export PATH="$OMARCHY_PATH/bin:$PATH"
+
+# Configuration parameters with resilient defaults
+TARGET_DISK="${TARGET_DISK:-/dev/sda}"
+KEYBOARD="${KEYBOARD:-us}"
+HOSTNAME="${HOSTNAME:-friday}"
+USERNAME="${USERNAME:-friday}"
+PASSWORD="${PASSWORD:-friday}"
+TIMEZONE="${TIMEZONE:-UTC}"
+THEME="${THEME:-FRIDAY Dots-Hyprland (Material You / Illogical Impulse)}"
+SDDM_THEME="${SDDM_THEME:-SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)}"
+AUTO_REBOOT="${AUTO_REBOOT:-false}"
+LOG_FILE="/tmp/friday-installer.log"
+
+# FRIDAY Visual Tokens
 FRIDAY_ACCENT="#7AA2F7"
 FRIDAY_SECONDARY="#BB9AF7"
 FRIDAY_MUTED="#565F89"
 FRIDAY_SUCCESS="#9ECE6A"
 FRIDAY_BORDER="#3B4261"
-LOG_FILE="/var/log/friday-install.log"
 
 draw_brand_banner() {
   clear
@@ -26,18 +41,22 @@ draw_brand_banner() {
 }
 
 phase_msg() {
-  draw_brand_banner >&3
-  gum style --foreground "$FRIDAY_ACCENT" --bold "Target: $TARGET_DISK" >&3
-  echo >&3
-  gum style --foreground "$FRIDAY_SUCCESS" "$1" >&3
-  echo >&3
-  gum style --foreground "$FRIDAY_MUTED" "Detailed log stream: $LOG_FILE" >&3
+  draw_brand_banner >&3 2>/dev/null || true
+  gum style --foreground "$FRIDAY_ACCENT" --bold "Target: $TARGET_DISK | Host: $HOSTNAME | User: $USERNAME | Theme: $THEME" >&3 2>/dev/null || true
+  echo >&3 2>/dev/null || true
+  gum style --foreground "$FRIDAY_SUCCESS" "$1" >&3 2>/dev/null || echo "$1" >&3
+  echo >&3 2>/dev/null || true
+  gum style --foreground "$FRIDAY_MUTED" "Detailed log stream: $LOG_FILE" >&3 2>/dev/null || true
 }
 
 exec 3>&1 4>&2
 exec >>"$LOG_FILE" 2>&1
 
 phase_msg "● Step 1 of 6: Partitioning & Formatting Target Disk ($TARGET_DISK)"
+if mountpoint -q /mnt; then fuser -km /mnt 2>/dev/null || true; fi
+umount -R /mnt 2>/dev/null || true
+swapoff -a 2>/dev/null || true
+
 parted -s "$TARGET_DISK" mklabel gpt
 parted -s "$TARGET_DISK" mkpart ESP fat32 1MiB 1024MiB
 parted -s "$TARGET_DISK" set 1 esp on
@@ -51,6 +70,10 @@ else
   ROOT_PART="${TARGET_DISK}2"
 fi
 
+# Wait for kernel partition table refresh
+sleep 1
+udevadm settle
+
 mkfs.vfat -F32 "$BOOT_PART"
 mkfs.ext4 -F "$ROOT_PART"
 
@@ -60,53 +83,226 @@ mount "$ROOT_PART" /mnt
 mkdir -p /mnt/boot
 mount "$BOOT_PART" /mnt/boot
 
-phase_msg "● Step 3 of 6: Pacstrapping Arch Base & Desktop Substrate"
-pacstrap /mnt base linux linux-firmware sudo zsh hyprland sddm uwsm quickshell waybar xdg-desktop-portal-hyprland grim slurp wl-clipboard pipewire pipewire-alsa pipewire-pulse wireplumber foot ttf-jetbrains-mono-nerd noto-fonts networkmanager rsync gum
+phase_msg "● Step 3 of 6: Pacstrapping Arch Base, Omarchy Substrate & Tools"
+pacstrap /mnt base linux linux-firmware sudo zsh hyprland sddm uwsm quickshell waybar \
+  xdg-desktop-portal-hyprland grim slurp wl-clipboard pipewire pipewire-alsa pipewire-pulse wireplumber \
+  foot alacritty ttf-jetbrains-mono-nerd noto-fonts networkmanager rsync gum openssh \
+  jq socat fzf bc wtype fastfetch starship playerctl brightnessctl pavucontrol polkit-kde-agent \
+  matugen hypridle hyprlock fuzzel cliphist imagemagick libqalculate hyprsunset hyprpaper \
+  qt6-5compat qt6-imageformats qt6-multimedia qt6-multimedia-ffmpeg qt6-virtualkeyboard qt6-quicktimeline qt6-svg qt6-wayland \
+  kirigami kdialog syntax-highlighting
 
 genfstab -U /mnt >> /mnt/etc/fstab
 
-phase_msg "● Step 4 of 6: Materializing FRIDAY Binaries & Omarchy Substrate"
+phase_msg "● Step 4 of 6: Materializing FRIDAY Binaries & Omarchy System"
 mkdir -p /mnt/usr/bin
-cp -p /usr/bin/friday /usr/bin/friday-ctl /usr/bin/friday-linux-daemon /mnt/usr/bin/
+cp -a /usr/bin/friday* /mnt/usr/bin/
 chmod 755 /mnt/usr/bin/friday*
+[ -d /usr/lib/friday ] && { mkdir -p /mnt/usr/lib ; cp -a /usr/lib/friday /mnt/usr/lib/ ; }
+ln -sf /usr/share/omarchy/bin/omarchy /mnt/usr/bin/omarchy
+ln -sf /usr/bin/friday /mnt/usr/bin/friday-os
 
 mkdir -p /mnt/usr/share/omarchy
 rsync -a /usr/share/omarchy/ /mnt/usr/share/omarchy/
 
+if [ -d /usr/share/friday ]; then
+  mkdir -p /mnt/usr/share/friday
+  rsync -a /usr/share/friday/ /mnt/usr/share/friday/
+fi
+
+rsync -a /etc/sddm.conf* /mnt/etc/ 2>/dev/null || true
 rsync -a /etc/sddm.conf.d/ /mnt/etc/sddm.conf.d/ 2>/dev/null || true
 rsync -a /etc/sysctl.d/ /mnt/etc/sysctl.d/ 2>/dev/null || true
+rsync -a /etc/skel/ /mnt/etc/skel/ 2>/dev/null || true
+rsync -a /etc/fastfetch/ /mnt/etc/fastfetch/ 2>/dev/null || true
+rsync -a /etc/plymouth/ /mnt/etc/plymouth/ 2>/dev/null || true
+rsync -a /etc/profile.d/ /mnt/etc/profile.d/ 2>/dev/null || true
+cp -p /etc/os-release /mnt/etc/os-release 2>/dev/null || true
+cp -p /etc/motd /mnt/etc/motd 2>/dev/null || true
 
-phase_msg "● Step 5 of 6: Configuring SDDM & Systemd User Units"
+# System branding and session links
+mkdir -p /mnt/usr/share/wayland-sessions
+cp -p /usr/share/wayland-sessions/* /mnt/usr/share/wayland-sessions/ 2>/dev/null || true
+
+mkdir -p /mnt/usr/share/sddm/themes
+rsync -a /usr/share/sddm/themes/ /mnt/usr/share/sddm/themes/ 2>/dev/null || true
+
+mkdir -p /mnt/usr/share/fonts
+rsync -a /usr/share/fonts/ /mnt/usr/share/fonts/ 2>/dev/null || true
+
+mkdir -p /mnt/usr/share/plymouth/themes
+cp -r /usr/share/plymouth/themes/omarchy /mnt/usr/share/plymouth/themes/ 2>/dev/null || true
+
+phase_msg "● Step 5 of 6: Configuring Users, SDDM, Services & Theme"
+# Hostname & Locales
+echo "$HOSTNAME" > /mnt/etc/hostname
+echo "LANG=en_US.UTF-8" > /mnt/etc/locale.conf
+echo "en_US.UTF-8 UTF-8" >> /mnt/etc/locale.gen
+arch-chroot /mnt locale-gen 2>/dev/null || true
+
+# Timezone
+arch-chroot /mnt ln -sf "/usr/share/zoneinfo/$TIMEZONE" /etc/localtime 2>/dev/null || true
+
+# Display manager & services
 mkdir -p /mnt/etc/systemd/system
 ln -sf /usr/lib/systemd/system/sddm.service /mnt/etc/systemd/system/display-manager.service
+arch-chroot /mnt systemctl enable NetworkManager 2>/dev/null || true
+arch-chroot /mnt systemctl enable sddm 2>/dev/null || true
+
+# FRIDAY systemd user daemon
 mkdir -p /mnt/etc/systemd/user/default.target.wants
 cp -p /etc/systemd/user/friday-linux-daemon.service /mnt/etc/systemd/user/ 2>/dev/null || true
 ln -sf ../friday-linux-daemon.service /mnt/etc/systemd/user/default.target.wants/friday-linux-daemon.service 2>/dev/null || true
 
+# Serial getty autologin on installed system for debug mode
+mkdir -p /mnt/etc/systemd/system/serial-getty@ttyS0.service.d
+cat << 'EOF_SERIAL' > /mnt/etc/systemd/system/serial-getty@ttyS0.service.d/autologin.conf
+[Service]
+ExecStart=
+ExecStart=-/usr/bin/agetty --noreset --noclear --autologin root -s %I 115200,38400,9600 vt220
+EOF_SERIAL
+
+# SSH root & wheel access
+mkdir -p /mnt/etc/ssh/sshd_config.d
+cat << 'EOF_SSH' > /mnt/etc/ssh/sshd_config.d/10-friday.conf
+PasswordAuthentication yes
+PermitRootLogin yes
+PermitEmptyPasswords yes
+EOF_SSH
+arch-chroot /mnt systemctl enable sshd 2>/dev/null || true
+
+# Create Admin User
+USER_HOME="/home/$USERNAME"
+if [ "$USERNAME" != "root" ]; then
+  arch-chroot /mnt useradd -m -G wheel,video,audio,input,storage -s /bin/zsh "$USERNAME" 2>/dev/null || true
+else
+  USER_HOME="/root"
+fi
+echo "$USERNAME:$PASSWORD" | arch-chroot /mnt chpasswd
+echo "root:$PASSWORD" | arch-chroot /mnt chpasswd
+mkdir -p /mnt/etc/sudoers.d
+echo "%wheel ALL=(ALL:ALL) ALL" > /mnt/etc/sudoers.d/wheel
+chmod 440 /mnt/etc/sudoers.d/wheel
+
+# Populate User Home from /etc/skel
+mkdir -p "/mnt$USER_HOME"
+rsync -a /mnt/etc/skel/. "/mnt$USER_HOME/" 2>/dev/null || true
+if [ "$USERNAME" != "root" ]; then
+  mkdir -p /mnt/root
+  rsync -a /mnt/etc/skel/. /mnt/root/ 2>/dev/null || true
+fi
+
+# Deploy Theme Selection
+if [[ "$THEME" =~ "Dots-Hyprland" ]]; then
+  if [ -d /mnt/usr/share/friday/dots-hyprland ]; then
+    rsync -a /mnt/usr/share/friday/dots-hyprland/.config/ /mnt/etc/skel/.config/ 2>/dev/null || true
+    rsync -a /mnt/usr/share/friday/dots-hyprland/.local/ /mnt/etc/skel/.local/ 2>/dev/null || true
+    rsync -a /mnt/usr/share/friday/dots-hyprland/.config/ "/mnt$USER_HOME/.config/" 2>/dev/null || true
+    rsync -a /mnt/usr/share/friday/dots-hyprland/.local/ "/mnt$USER_HOME/.local/" 2>/dev/null || true
+    if [ "$USERNAME" != "root" ]; then
+      rsync -a /mnt/usr/share/friday/dots-hyprland/.config/ /mnt/root/.config/ 2>/dev/null || true
+      rsync -a /mnt/usr/share/friday/dots-hyprland/.local/ /mnt/root/.local/ 2>/dev/null || true
+    fi
+  fi
+
+  cat << 'EOF_FRIDAY_SESSION' > /mnt/usr/share/wayland-sessions/friday.desktop
+[Desktop Entry]
+Name=FRIDAY OS (Dots Hyprland)
+Comment=FRIDAY OS Cognitive Desktop with Material You Quickshell
+Exec=/usr/bin/start-hyprland
+TryExec=/usr/bin/start-hyprland
+Type=Application
+DesktopNames=Hyprland
+EOF_FRIDAY_SESSION
+
+  cp -p /mnt/usr/share/wayland-sessions/friday.desktop /mnt/usr/share/wayland-sessions/hyprland.desktop 2>/dev/null || true
+else
+  THEME_SLUG="tokyo-night"
+  case "$THEME" in
+    *"Tokyo Night"*) THEME_SLUG="tokyo-night" ;;
+    *"Catppuccin"*)  THEME_SLUG="catppuccin" ;;
+    *"Nord"*)        THEME_SLUG="nord" ;;
+  esac
+  arch-chroot /mnt su - "$USERNAME" -c "omarchy-theme-set '$THEME_SLUG'" 2>/dev/null || true
+fi
+
+if [ "$USERNAME" != "root" ]; then
+  arch-chroot /mnt chown -R "$USERNAME:$USERNAME" "$USER_HOME" 2>/dev/null || true
+fi
+
+# Configure SDDM Greeter Theme Architecture
+SDDM_THEME_ID="silent-friday"
+case "$SDDM_THEME" in
+  *"FRIDAY Edition"*)
+    SDDM_THEME_ID="silent-friday"
+    ;;
+  *"Classic"*)
+    SDDM_THEME_ID="silent"
+    sed -i 's|^ConfigFile=.*|ConfigFile=configs/default.conf|' /mnt/usr/share/sddm/themes/silent/metadata.desktop 2>/dev/null || true
+    ;;
+  *"Rei"*)
+    SDDM_THEME_ID="silent"
+    sed -i 's|^ConfigFile=.*|ConfigFile=configs/rei.conf|' /mnt/usr/share/sddm/themes/silent/metadata.desktop 2>/dev/null || true
+    ;;
+  *"Ken"*)
+    SDDM_THEME_ID="silent"
+    sed -i 's|^ConfigFile=.*|ConfigFile=configs/ken.conf|' /mnt/usr/share/sddm/themes/silent/metadata.desktop 2>/dev/null || true
+    ;;
+  *"Nord"*)
+    SDDM_THEME_ID="silent"
+    sed -i 's|^ConfigFile=.*|ConfigFile=configs/nord.conf|' /mnt/usr/share/sddm/themes/silent/metadata.desktop 2>/dev/null || true
+    ;;
+  *"Omarchy"*)
+    SDDM_THEME_ID="omarchy"
+    ;;
+  *)
+    SDDM_THEME_ID="silent-friday"
+    ;;
+esac
+
+mkdir -p /mnt/etc/sddm.conf.d
+cat << EOF_SDDM_THEME > /mnt/etc/sddm.conf.d/10-theme.conf
+[Theme]
+Current=$SDDM_THEME_ID
+
+[General]
+InputMethod=qtvirtualkeyboard
+GreeterEnvironment=QML2_IMPORT_PATH=/usr/share/sddm/themes/$SDDM_THEME_ID/components/,QT_IM_MODULE=qtvirtualkeyboard
+EOF_SDDM_THEME
+cp -p /mnt/etc/sddm.conf.d/10-theme.conf /mnt/etc/sddm.conf
+
+cat << EOF_SDDM_AUTO > /mnt/etc/sddm.conf.d/autologin.conf
+[Autologin]
+User=$USERNAME
+Session=hyprland.desktop
+Relogin=false
+EOF_SDDM_AUTO
+
 mkdir -p /mnt/var/lib/omarchy/provisioning
-touch /mnt/var/lib/omarchy/provisioning/pending
-cat << EOF > /mnt/var/lib/omarchy/provisioning/install-info.json
+cat << EOF_INFO > /mnt/var/lib/omarchy/provisioning/install-info.json
 {
   "hostname": "$HOSTNAME",
   "username": "$USERNAME",
   "timezone": "$TIMEZONE",
-  "keyboard": "$KEYBOARD"
+  "keyboard": "$KEYBOARD",
+  "theme": "$THEME",
+  "sddm_theme": "$SDDM_THEME"
 }
-EOF
+EOF_INFO
 
 phase_msg "● Step 6 of 6: Installing UEFI Bootloader & Finalizing System"
 bootctl --path=/mnt/boot install
-cat << EOF > /mnt/boot/loader/loader.conf
+cat << EOF_LOADER > /mnt/boot/loader/loader.conf
 default arch.conf
-timeout 1
-EOF
+timeout 2
+EOF_LOADER
 
-cat << EOF > /mnt/boot/loader/entries/arch.conf
-title   FRIDAY OS
+cat << EOF_ENTRY > /mnt/boot/loader/entries/arch.conf
+title   FRIDAY OS (Omarchy Substrate)
 linux   /vmlinuz-linux
 initrd  /initramfs-linux.img
-options root=PARTUUID=$(blkid -s PARTUUID -o value "$ROOT_PART") rw
-EOF
+options root=PARTUUID=$(blkid -s PARTUUID -o value "$ROOT_PART") rw console=ttyS0,115200 console=tty1
+EOF_ENTRY
 
 chmod +x /root/configurator /root/installer
 
@@ -131,10 +327,15 @@ gum style \
   --padding "1 2" \
   "SYSTEM ASSEMBLY COMPLETE" \
   "─────────────────────────────────" \
-  "FRIDAY has been installed to $TARGET_DISK." \
-  "" \
-  "Remove installation media and reboot into your system."
+  "FRIDAY OS installed onto $TARGET_DISK." \
+  "Desktop UI: $THEME" \
+  "SDDM Theme: $SDDM_THEME" \
+  "Admin user: $USERNAME ($HOSTNAME)" \
+  "Reboot to launch installed system."
 
-sleep 3
-umount -R /mnt
-reboot
+if [[ "$AUTO_REBOOT" == "true" ]]; then
+  echo "Rebooting into FRIDAY OS in 3 seconds..."
+  sleep 3
+  umount -R /mnt 2>/dev/null || true
+  reboot
+fi

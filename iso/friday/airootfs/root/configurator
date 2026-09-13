@@ -32,17 +32,18 @@ draw_brand_banner() {
 
 draw_rail() {
   local step="$1"
-  local s1="○ MACHINE" s2="○ IDENTITY" s3="○ SECURITY" s4="○ TIME" s5="○ INSTALL"
+  local s1="○ MACHINE" s2="○ IDENTITY" s3="○ SECURITY" s4="○ TIME" s5="○ THEME" s6="○ INSTALL"
 
   case "$step" in
     1) s1="● MACHINE" ;;
     2) s1="✓ MACHINE"; s2="● IDENTITY" ;;
     3) s1="✓ MACHINE"; s2="✓ IDENTITY"; s3="● SECURITY" ;;
     4) s1="✓ MACHINE"; s2="✓ IDENTITY"; s3="✓ SECURITY"; s4="● TIME" ;;
-    5) s1="✓ MACHINE"; s2="✓ IDENTITY"; s3="✓ SECURITY"; s4="✓ TIME"; s5="● INSTALL" ;;
+    5) s1="✓ MACHINE"; s2="✓ IDENTITY"; s3="✓ SECURITY"; s4="✓ TIME"; s5="● THEME" ;;
+    6) s1="✓ MACHINE"; s2="✓ IDENTITY"; s3="✓ SECURITY"; s4="✓ TIME"; s5="✓ THEME"; s6="● INSTALL" ;;
   esac
 
-  gum style --foreground "$FRIDAY_MUTED" --align center "$s1   $s2   $s3   $s4   $s5"
+  gum style --foreground "$FRIDAY_MUTED" --align center "$s1   $s2   $s3   $s4   $s5   $s6"
   echo
 }
 
@@ -70,7 +71,7 @@ while read -r name type size model; do
   if [[ -n "$BOOT_DEV" && "$dev_path" == "$BOOT_DEV"* ]]; then
     continue
   fi
-  if [[ "$type" == "disk" ]]; then
+  if [[ "$type" == "disk" && ! "$name" =~ ^(fd|loop|ram|sr) ]]; then
     CANDIDATE_DISKS+=("$dev_path")
     CANDIDATE_LABELS+=("$dev_path | $size | $model")
   fi
@@ -126,9 +127,36 @@ gum style --foreground "$FRIDAY_ACCENT" --bold "Time & Region:"
 TIMEZONE=$(gum input --placeholder="UTC" --prompt="Timezone [UTC]> " || echo "UTC")
 TIMEZONE="${TIMEZONE:-UTC}"
 
-# Step 5: Final Review & Confirmation
+# Step 5: Visual Theme Selection
 draw_brand_banner
 draw_rail 5
+gum style --foreground "$FRIDAY_SUCCESS" "✓ Target Disk: $TARGET_DISK"
+gum style --foreground "$FRIDAY_SUCCESS" "✓ Identity:    $USERNAME@$HOSTNAME ($KEYBOARD)"
+gum style --foreground "$FRIDAY_SUCCESS" "✓ Password:    ••••••••"
+gum style --foreground "$FRIDAY_SUCCESS" "✓ Timezone:    $TIMEZONE"
+echo
+gum style --foreground "$FRIDAY_ACCENT" --bold "Desktop Visual Identity & Theme Architecture:"
+THEME_CHOICE=$(gum choose --cursor="❯ " --height=6 \
+  "FRIDAY Dots-Hyprland (Material You / Illogical Impulse)" \
+  "FRIDAY Tokyo Night (Default Cybernetic Dark)" \
+  "FRIDAY Catppuccin Mocha" \
+  "FRIDAY Nord Arctic")
+THEME="${THEME_CHOICE:-FRIDAY Dots-Hyprland (Material You / Illogical Impulse)}"
+
+echo
+gum style --foreground "$FRIDAY_ACCENT" --bold "SDDM Display Manager Greeter Theme Architecture:"
+SDDM_CHOICE=$(gum choose --cursor="❯ " --height=8 \
+  "SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)" \
+  "SilentSDDM Classic (Minimal Dark Smoky)" \
+  "SilentSDDM Rei (Animated Cyberpunk)" \
+  "SilentSDDM Ken (Animated Synthwave)" \
+  "SilentSDDM Nord (Arctic Frost)" \
+  "Omarchy Classic SDDM")
+SDDM_THEME="${SDDM_CHOICE:-SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)}"
+
+# Step 6: Final Review & Confirmation
+draw_brand_banner
+draw_rail 6
 
 gum style \
   --foreground "$FRIDAY_ACCENT" \
@@ -142,14 +170,16 @@ gum style \
   "  Keyboard:     $KEYBOARD" \
   "  Hostname:     $HOSTNAME" \
   "  Admin User:   $USERNAME" \
-  "  Timezone:     $TIMEZONE"
+  "  Timezone:     $TIMEZONE" \
+  "  Desktop UI:   $THEME" \
+  "  SDDM Greeter: $SDDM_THEME"
 
 echo
 gum style --foreground "$FRIDAY_WARNING" --bold "WARNING: ALL EXISTING DATA ON $TARGET_DISK WILL BE PERMANENTLY WIPED."
 if gum confirm "Proceed with destructive installation onto $TARGET_DISK?"; then
   echo
   gum style --foreground "$FRIDAY_SUCCESS" "Specification approved. Initiating system assembly..."
-  export TARGET_DISK KEYBOARD HOSTNAME USERNAME PASSWORD TIMEZONE
+  export TARGET_DISK KEYBOARD HOSTNAME USERNAME PASSWORD TIMEZONE THEME SDDM_THEME
   exec /root/installer
 else
   gum style --foreground "$FRIDAY_ERROR" "Installation cancelled by user."

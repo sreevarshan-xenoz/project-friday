@@ -1,0 +1,10 @@
+NAME="FRIDAY OS"
+PRETTY_NAME="FRIDAY OS (M7 Cognitive Edition)"
+ID=friday
+ID_LIKE=arch
+BUILD_ID=2026.09.13
+ANSI_COLOR="38;2;122;162;247"
+HOME_URL="https://project-friday.org"
+SUPPORT_URL="https://project-friday.org"
+BUG_REPORT_URL="https://github.com/project-friday/friday"
+LOGO=friday
