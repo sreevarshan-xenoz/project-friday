@@ -505,3 +505,17 @@ own milestone sequence, defined in `specs/skill-engine.md` and implemented in
 | M8b Agent Runtime | ✅ | Sub-agent orchestration: spawn/lifecycle/mailbox/cancellation/timeout/budget/scheduling/merge (`services/agent-runtime`) |
 | M8c Web + Docs + CodeIntel skills | ✅ | Read-only `web`/`docs`/`codeintel` bundled skills + adapters (`web.search/fetch`, `docs.search/read`, `codeintel.understand`); browser verbs soft-declared until a browser runtime |
 | M9 Autonomous skills | ⏳ | Skills that install/configure themselves — deliberately NOT started until the above is battle-tested |
+
+## M11 — Ecosystem & Native Capabilities (The 20-Capability Integration Track) ⏳
+
+Master blueprint: [`docs/FRIDAY-20-ECOSYSTEM-ROADMAP.md`](FRIDAY-20-ECOSYSTEM-ROADMAP.md)  
+Operating guidelines for agents: [`../AGENTS.md`](../AGENTS.md)
+
+Curated from high-synergy starred repositories and organized into 5 implementation waves executed 1-by-1:
+
+1. **Wave 1: Native Bridges & Hardware Adaptation** (Linux-Link remote streaming, my-quickshell desktop, xencode offline engine, llmfit model profiler)
+2. **Wave 2: Desktop Shell & Visual Intelligence** (quickshell-overview, thuki floating secretary, NibrasShell AI widgets, skwd-wall wallpaper engine, caelestia shell)
+3. **Wave 3: Local Voice & Audio Subsystem** (KittenTTS <25MB engine, OpenVoice/VoiceStudio Friday voice cloning, meetily local Whisper transcription)
+4. **Wave 4: Autonomous Web & System Agents** (browser-use operator, Agent-Reach zero-fee search, CLI-Anything universal adapter, page-agent DOM operator, agentic-awesome-skills catalog)
+5. **Wave 5: Gateway & Developer Ecosystem** (OmniRoute local AI gateway, charmbracelet/crush TUI agent, avante.nvim Neovim AI IDE)
+

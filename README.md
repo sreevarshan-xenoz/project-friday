@@ -58,8 +58,9 @@ That document is the source of truth for `PASS` / `PARTIAL` / `BLOCKED` /
 | Vision / Voice / Learning / Active Inference | Planned (Phase 5 of the synthesis) |
 | Autonomous Cognitive Tick | ✅ Live — bounded tested runtime; `LiveRuntimeSource` runs through the real bridge process, executes/verifies a safe kernel action, exposes provenance, and rehydrates the journal without duplicate dispatch |
 
-See [`docs/Roadmap.md`](docs/Roadmap.md) and [`specs/README.md`](specs/README.md)
-for the authoritative milestone and subsystem map.
+See [`docs/Roadmap.md`](docs/Roadmap.md), [`docs/FRIDAY-20-ECOSYSTEM-ROADMAP.md`](docs/FRIDAY-20-ECOSYSTEM-ROADMAP.md),
+[`AGENTS.md`](AGENTS.md), and [`specs/README.md`](specs/README.md)
+for the authoritative milestone, subsystem, and agent operating guidelines.
 
 ## Master Plan — the corrected build order
 
