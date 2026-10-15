@@ -24,16 +24,32 @@ if ! command -v mkarchiso &>/dev/null; then
   exit 1
 fi
 
-# Ensure friday binaries exist in airootfs
-for bin in friday friday-ctl friday-linux-daemon; do
-  if [[ ! -f "$PROFILE_DIR/airootfs/usr/bin/$bin" ]]; then
-    echo "Binary $bin not found in airootfs/usr/bin/. Rebuilding..."
-    cargo build --release --manifest-path "$PROJECT_ROOT/Cargo.toml" \
-      --package friday-mobile --bin friday-linux-daemon --bin friday-ctl \
-      --package friday-skill-forge --bin friday
-    cp -f "$PROJECT_ROOT/target/release/friday"* "$PROFILE_DIR/airootfs/usr/bin/"
-    strip "$PROFILE_DIR/airootfs/usr/bin/friday"* 2>/dev/null || true
-    chmod 755 "$PROFILE_DIR/airootfs/usr/bin/friday"*
+# Build the FRIDAY binaries from source on every ISO build (cargo is
+# incremental) so the image never ships stale ones. SKIP_CARGO_BUILD=true
+# reuses whatever is already in airootfs/usr/bin.
+# release target -> airootfs name. /usr/bin/friday is the CLI shell script and
+# is never overwritten; skill-forge's cargo bin (also named `friday`) is
+# installed as friday-skill-forge.
+declare -A FRIDAY_BINARIES=(
+  [friday-linux-daemon]=friday-linux-daemon
+  [friday-ctl]=friday-ctl
+  [friday]=friday-skill-forge
+)
+if [[ "${SKIP_CARGO_BUILD:-false}" != "true" ]]; then
+  echo "Building FRIDAY release binaries..."
+  cargo build --release --manifest-path "$PROJECT_ROOT/Cargo.toml" \
+    --package friday-mobile --bin friday-linux-daemon --bin friday-ctl \
+    --package friday-skill-forge --bin friday
+  for src in "${!FRIDAY_BINARIES[@]}"; do
+    dest="$PROFILE_DIR/airootfs/usr/bin/${FRIDAY_BINARIES[$src]}"
+    install -m 755 "$PROJECT_ROOT/target/release/$src" "$dest"
+    strip "$dest" 2>/dev/null || true
+  done
+fi
+for bin in friday "${FRIDAY_BINARIES[@]}"; do
+  if [[ ! -x "$PROFILE_DIR/airootfs/usr/bin/$bin" ]]; then
+    echo "Error: airootfs/usr/bin/$bin is missing" >&2
+    exit 1
   fi
 done
 
