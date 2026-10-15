@@ -76,6 +76,11 @@ async fn local_model_drives_skill_wired_runtime() {
 
     let mut fabric = InferenceFabric::default_from_env();
     fabric.default_mode = RoutingMode::Hybrid;
+    // Only the local llama.cpp server may serve this test. With provider keys
+    // in `.env`, a cloud provider would otherwise answer the probe below and
+    // the test would silently become a live, non-deterministic cloud run.
+    fabric.providers.retain(|name, _| name == "llamacpp");
+    fabric.models.retain(|m| m.provider == "llamacpp");
     println!(
         "[BOOT] InferenceFabric loaded {} provider(s), mode Hybrid",
         fabric.providers.len()
