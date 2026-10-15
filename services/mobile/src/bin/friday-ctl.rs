@@ -8,6 +8,8 @@
 //!
 //! Usage:
 //!   friday-ctl goal "List the files in this folder"
+//!   friday-ctl goal --wait "open chromium"   (block until the goal finishes;
+//!                                            exit status = its outcome)
 //!   friday-ctl system-info
 //!   friday-ctl context screen          (interactive consent)
 //!   friday-ctl context screen --yes    (consent already collected by the shell panel)
@@ -77,9 +79,10 @@ async fn main() -> std::process::ExitCode {
     let mut addr_str =
         std::env::var("FRIDAY_CTL_ADDR").unwrap_or_else(|_| "127.0.0.1:18432".to_string());
     let mut token = std::env::var("FRIDAY_CTL_TOKEN").ok().unwrap_or_default();
+    let mut wait = false;
 
-    // Scan ALL tokens for flags (`--addr`/`--token` may appear before or after
-    // the subcommand) so they never leak into the goal text. The first
+    // Scan ALL tokens for flags (`--addr`/`--token`/`--wait` may appear before
+    // or after the subcommand) so they never leak into the goal text. The first
     // non-flag token is the subcommand; the rest are goal words.
     let mut positional: Vec<String> = Vec::new();
     let mut i = 0;
@@ -91,6 +94,9 @@ async fn main() -> std::process::ExitCode {
         } else if w == "--token" && i + 1 < raw.len() {
             token = raw[i + 1].clone();
             i += 2;
+        } else if w == "--wait" {
+            wait = true;
+            i += 1;
         } else {
             positional.push(w.clone());
             i += 1;
@@ -142,10 +148,79 @@ async fn main() -> std::process::ExitCode {
     };
 
     if sub == "context" {
-        run_context(&addr_str, &cmd_token).await
-    } else {
-        run(&addr_str, &cmd_token, &sub, goal_words).await
+        return run_context(&addr_str, &cmd_token).await;
     }
+    let goal = goal_words.join(" ");
+    let submitted_ms = now_ms();
+    let accepted = run(&addr_str, &cmd_token, &sub, goal_words).await;
+    if sub == "goal" && wait && accepted == std::process::ExitCode::SUCCESS {
+        return wait_for_goal(&state_path, &goal, submitted_ms).await;
+    }
+    accepted
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// `--wait`: follow the daemon's `state.json` until `goal` (submitted at
+/// `since_ms`) reaches a terminal phase, then print its outcome. Exits
+/// non-zero unless the goal completed. `FRIDAY_CTL_WAIT_SECS` bounds the wait
+/// (default 180 s).
+async fn wait_for_goal(
+    state_path: &std::path::Path,
+    goal: &str,
+    since_ms: u64,
+) -> std::process::ExitCode {
+    let limit = std::env::var("FRIDAY_CTL_WAIT_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(180);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(limit);
+    while tokio::time::Instant::now() < deadline {
+        let state = std::fs::read_to_string(state_path)
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+        if let Some(done) = state.and_then(|s| finished_goal(&s, goal, since_ms)) {
+            let summary = serde_json::json!({
+                "outcome": done["outcome"],
+                "result": done["result"],
+                "error": done["error"],
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&summary).unwrap_or_default()
+            );
+            return if done["outcome"] == "completed" {
+                std::process::ExitCode::SUCCESS
+            } else {
+                std::process::ExitCode::FAILURE
+            };
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    eprintln!("timed out after {limit}s waiting for the goal to finish");
+    std::process::ExitCode::FAILURE
+}
+
+/// The state document's `last_goal` when it is `goal`, finished, and
+/// completed no earlier than `since_ms` (so an older run of the same goal
+/// text is not mistaken for this one).
+fn finished_goal(
+    state: &serde_json::Value,
+    goal: &str,
+    since_ms: u64,
+) -> Option<serde_json::Value> {
+    let last = state.get("last_goal")?;
+    let finished = last["goal"] == goal
+        && last["active"] != true
+        && last["completed_ms"]
+            .as_u64()
+            .is_some_and(|ms| ms >= since_ms);
+    finished.then(|| last.clone())
 }
 
 fn read_token(path: &std::path::Path) -> Option<String> {
@@ -254,5 +329,55 @@ async fn send_command(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn state(goal: &str, active: bool, completed_ms: Option<u64>) -> serde_json::Value {
+        json!({ "last_goal": {
+            "goal": goal, "active": active, "completed_ms": completed_ms,
+            "outcome": "completed", "result": "done", "error": null
+        }})
+    }
+
+    #[test]
+    fn wait_matches_only_this_goal_once_it_has_finished() {
+        assert!(finished_goal(
+            &state("open chromium", false, Some(200)),
+            "open chromium",
+            100
+        )
+        .is_some());
+        assert!(
+            finished_goal(
+                &state("open chromium", true, Some(200)),
+                "open chromium",
+                100
+            )
+            .is_none(),
+            "still running"
+        );
+        assert!(
+            finished_goal(&state("open chromium", false, None), "open chromium", 100).is_none(),
+            "not completed"
+        );
+        assert!(
+            finished_goal(
+                &state("open chromium", false, Some(50)),
+                "open chromium",
+                100
+            )
+            .is_none(),
+            "an earlier run"
+        );
+        assert!(
+            finished_goal(&state("open files", false, Some(200)), "open chromium", 100).is_none(),
+            "another goal"
+        );
+        assert!(finished_goal(&json!({ "last_goal": null }), "open chromium", 100).is_none());
     }
 }
