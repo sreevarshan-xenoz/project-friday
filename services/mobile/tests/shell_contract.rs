@@ -16,12 +16,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures::SinkExt;
 use friday_core::event::EventBus;
 use friday_mobile::commands::{method, CommandGateway};
+use friday_mobile::protocol::{ClientMessage, ServerMessage};
 use friday_mobile::shell_state::{CommandRecord, ShellState};
 use friday_mobile::transport::WsServer;
-use friday_mobile::protocol::{ClientMessage, ServerMessage};
+use futures::SinkExt;
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -77,10 +77,9 @@ async fn one_controlled_command_end_to_end() {
             let result = gateway.dispatch(&cmd).await;
             // A client sends a goal command; capture the bus event it produced.
             if is_goal {
-                if let Ok(Ok(ev)) = tokio::time::timeout(
-                    Duration::from_secs(5),
-                    bus_sub.recv(),
-                ).await {
+                if let Ok(Ok(ev)) =
+                    tokio::time::timeout(Duration::from_secs(5), bus_sub.recv()).await
+                {
                     assert_eq!(ev.kind, "plan.goal");
                     assert_eq!(ev.payload["goal"], "List the files");
                 }
@@ -88,7 +87,11 @@ async fn one_controlled_command_end_to_end() {
                 st.command = Some(CommandRecord {
                     method: cmd.method.clone(),
                     accepted_ms: 0,
-                    goal: cmd.params.get("goal").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    goal: cmd
+                        .params
+                        .get("goal")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
                 });
             }
             let _ = outbound.send(result);

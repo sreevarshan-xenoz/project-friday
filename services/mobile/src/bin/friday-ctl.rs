@@ -18,7 +18,7 @@
 
 use std::time::Duration;
 
-use friday_mobile::protocol::{ClientMessage, ServerMessage, decode_server};
+use friday_mobile::protocol::{decode_server, ClientMessage, ServerMessage};
 use friday_mobile::shell_state::ShellState;
 use futures::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
@@ -42,8 +42,8 @@ fn screen_disclosure() -> String {
 /// so the caller can abort before ever contacting the daemon — the provider is
 /// guaranteed to see nothing.
 fn confirm_context_consent() -> bool {
-    let provider = std::env::var("FRIDAY_CONTEXT_PROVIDER")
-        .unwrap_or_else(|_| "fabric".to_string());
+    let provider =
+        std::env::var("FRIDAY_CONTEXT_PROVIDER").unwrap_or_else(|_| "fabric".to_string());
 
     println!("FRIDAY — share the current Screen with the assistant");
     println!();
@@ -74,8 +74,8 @@ async fn main() -> std::process::ExitCode {
     } else {
         ShellState::default_path()
     };
-    let mut addr_str = std::env::var("FRIDAY_CTL_ADDR")
-        .unwrap_or_else(|_| "127.0.0.1:18432".to_string());
+    let mut addr_str =
+        std::env::var("FRIDAY_CTL_ADDR").unwrap_or_else(|_| "127.0.0.1:18432".to_string());
     let mut token = std::env::var("FRIDAY_CTL_TOKEN").ok().unwrap_or_default();
 
     // Scan ALL tokens for flags (`--addr`/`--token` may appear before or after
@@ -157,12 +157,7 @@ fn read_token(path: &std::path::Path) -> Option<String> {
     Some(st.token)
 }
 
-async fn run(
-    addr: &str,
-    token: &str,
-    sub: &str,
-    args: Vec<String>,
-) -> std::process::ExitCode {
+async fn run(addr: &str, token: &str, sub: &str, args: Vec<String>) -> std::process::ExitCode {
     // Build the command. Only `goal`, `system-info`, and `context` are wired
     // for now — the "one controlled command" surface.
     let (method, params) = match sub {
@@ -192,10 +187,7 @@ async fn run(
 /// R5-2-5-3: send the Screen `context.read`. `main` has already presented
 /// disclosure and collected explicit consent; this only runs after the user
 /// answered `y`, so it sends with a per-use `consent: true`.
-async fn run_context(
-    addr: &str,
-    token: &str,
-) -> std::process::ExitCode {
+async fn run_context(addr: &str, token: &str) -> std::process::ExitCode {
     send_command(
         addr,
         friday_mobile::method::CONTEXT_READ,

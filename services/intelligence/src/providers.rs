@@ -1790,10 +1790,7 @@ impl InferenceFabric {
                     provider: "groq".to_string(),
                     latency_ms: 400,
                     reliability: 1.0,
-                    capabilities: vec![
-                        ModelCapability::Json,
-                        ModelCapability::Vision,
-                    ],
+                    capabilities: vec![ModelCapability::Json, ModelCapability::Vision],
                     max_context: 131072,
                     tier: Some(CapabilityTier::VisionFree),
                 });
@@ -1949,10 +1946,7 @@ impl InferenceFabric {
                     provider: "nvidia-nim".to_string(),
                     latency_ms: 600,
                     reliability: 0.9,
-                    capabilities: vec![
-                        ModelCapability::Json,
-                        ModelCapability::Vision,
-                    ],
+                    capabilities: vec![ModelCapability::Json, ModelCapability::Vision],
                     max_context: 128000,
                     tier: Some(CapabilityTier::VisionFree),
                 });

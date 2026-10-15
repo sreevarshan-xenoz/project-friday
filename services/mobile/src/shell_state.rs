@@ -230,10 +230,7 @@ pub fn apply_event(mut state: ShellState, ev: &Event) -> ShellState {
                 });
             }
         }
-        "goal.completed"
-        | "goal.failed"
-        | "goal.cancelled"
-        | "goal.paused"
+        "goal.completed" | "goal.failed" | "goal.cancelled" | "goal.paused"
         | "goal.recoverable" => {
             if let Some(cur) = &mut state.current {
                 cur.completed_ms = Some(now_ms());
@@ -378,7 +375,10 @@ mod tests {
         );
         assert!(paused.current.is_some(), "paused goal stays current");
         assert!(paused.last_goal.is_none());
-        assert_eq!(paused.current.as_ref().unwrap().outcome.as_deref(), Some("paused"));
+        assert_eq!(
+            paused.current.as_ref().unwrap().outcome.as_deref(),
+            Some("paused")
+        );
 
         // A recoverable failure stays current (retryable) and carries its reason.
         let s2 = apply_event(state(), &goal_event());
@@ -391,7 +391,10 @@ mod tests {
             ),
         );
         assert!(rec.current.is_some(), "recoverable goal stays current");
-        assert_eq!(rec.current.as_ref().unwrap().outcome.as_deref(), Some("recoverable"));
+        assert_eq!(
+            rec.current.as_ref().unwrap().outcome.as_deref(),
+            Some("recoverable")
+        );
     }
 
     #[test]
@@ -415,7 +418,11 @@ mod tests {
     fn telemetry_is_stored_and_serializable() {
         let s1 = apply_event(
             state(),
-            &Event::new("telemetry.system", "probe", serde_json::json!({ "cpu_percent": 12.0 })),
+            &Event::new(
+                "telemetry.system",
+                "probe",
+                serde_json::json!({ "cpu_percent": 12.0 }),
+            ),
         );
         // The whole document must round-trip through the JSON shape the shell
         // reads, including the token (which the plugin must present).

@@ -21,21 +21,19 @@
 //! Linux-graphical pieces that were greenfield: goal ownership, `state.json`,
 //! SIGTERM shutdown, and systemd readiness.
 
+use std::io::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::io::Write;
 
 use friday_context_collector::{ContextCollector, RealCommandRunner};
 use friday_core::runtime::Friday;
 use friday_goal_execution::MemoryJournal;
 use friday_intelligence::InferenceFabric;
 use friday_mobile::shell_state::{CommandRecord, ShellState};
-use friday_mobile::{
-    CommandGateway, GoalRunner, SystemProbe, VoiceConfig, VoiceIntake, WsServer,
-};
+use friday_mobile::{CommandGateway, GoalRunner, SystemProbe, VoiceConfig, VoiceIntake, WsServer};
 use tokio::sync::broadcast;
 use tokio::sync::Mutex;
 
@@ -264,7 +262,10 @@ async fn main() {
                         let next = friday_mobile::shell_state::apply_event(st.clone(), &ev);
                         *st = next;
                         drop(st);
-                        write_state(&state_writer_path, &render(&*state_writer_lock.lock().await));
+                        write_state(
+                            &state_writer_path,
+                            &render(&*state_writer_lock.lock().await),
+                        );
                     }
                     Ok(Err(_)) => break, // bus closed
                     Err(_) => {
@@ -365,7 +366,7 @@ async fn main() {
     // selects on `stopping`.
     #[cfg(unix)]
     {
-        use tokio::signal::unix::{SignalKind, signal};
+        use tokio::signal::unix::{signal, SignalKind};
         let flag = stopping.clone();
         tokio::spawn(async move {
             let mut term = signal(SignalKind::terminate()).expect("install SIGTERM handler");
