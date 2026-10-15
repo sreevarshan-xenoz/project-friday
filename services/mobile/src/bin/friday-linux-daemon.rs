@@ -85,7 +85,8 @@ fn now_utc() -> String {
 }
 
 /// Atomically write the state document (tmp + rename) so any inotify watch
-/// never observes a half-written file.
+/// never observes a half-written file. Owner-only (0600): it carries the
+/// session token that authorizes commands.
 fn write_state(path: &std::path::Path, value: &serde_json::Value) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -98,6 +99,14 @@ fn write_state(path: &std::path::Path, value: &serde_json::Value) {
             return;
         }
     };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) = f.set_permissions(std::fs::Permissions::from_mode(0o600)) {
+            tracing::warn!("state: cannot restrict {}: {e}", tmp.display());
+            return;
+        }
+    }
     let bytes = match serde_json::to_vec_pretty(value) {
         Ok(b) => b,
         Err(e) => {
