@@ -37,9 +37,8 @@ fn full_filesystem_pipeline_read() {
     assert_eq!(result.output, "integration test content");
     // Timing is recorded between two millisecond clock reads; a fast machine
     // can complete the read within one millisecond, so the duration may
-    // legitimately be 0. We assert the field is measured (>= 0) rather than
-    // strictly positive to avoid a sub-millisecond flake.
-    assert!(result.telemetry.duration_ms() >= 0);
+    // legitimately be 0. `duration_ms` is a u64, so there is no lower bound
+    // to assert, and asserting it is strictly positive would flake.
     assert_eq!(result.telemetry.plugin_id, "filesystem");
 
     // Verify rationale produced
@@ -162,7 +161,8 @@ fn health_monitor_tracks_across_multiple_executions() {
     assert_eq!(health.total_executions, 5);
     assert_eq!(health.failure_count, 0);
     assert!((health.success_rate - 1.0).abs() < 0.01);
-    assert!(health.average_latency_ms > 0.0);
+    // Latency is not asserted: five local reads/listings can each finish
+    // within one millisecond, so a 0.0 average is legitimate (see above).
 
     let _ = fs::remove_file(&path);
 }
