@@ -96,7 +96,7 @@ pacstrap /mnt base linux linux-firmware sudo zsh hyprland sddm uwsm quickshell w
   jq socat fzf bc wtype fastfetch starship playerctl brightnessctl pavucontrol polkit-kde-agent \
   matugen hypridle hyprlock fuzzel cliphist imagemagick libqalculate hyprsunset hyprpaper \
   qt6-5compat qt6-imageformats qt6-multimedia qt6-multimedia-ffmpeg qt6-virtualkeyboard qt6-quicktimeline qt6-svg qt6-wayland \
-  kirigami kdialog syntax-highlighting
+  kirigami kdialog syntax-highlighting chromium libnotify
 
 genfstab -U /mnt >> /mnt/etc/fstab
 

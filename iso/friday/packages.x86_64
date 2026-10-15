@@ -176,3 +176,5 @@ qt6-wayland
 kirigami
 kdialog
 syntax-highlighting
+chromium
+libnotify
