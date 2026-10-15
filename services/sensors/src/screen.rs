@@ -25,14 +25,19 @@
 //! `BitBlt`) degrades to `content_hash: None` and identity/geometry changes
 //! still fire events — the sensor is honest about what it could see.
 //!
-//! Only compiled on Windows (`cfg(target_os = "windows")`); the pure change-
-//! detection and event-building logic is platform-neutral and tested everywhere.
+//! The Win32 capture is only compiled on Windows (`cfg(target_os = "windows")`);
+//! the pure change-detection and event-building logic is platform-neutral,
+//! tested everywhere, and shared with the Hyprland sensor
+//! ([`crate::hyprland`]).
 
+#[cfg(target_os = "windows")]
 use async_trait::async_trait;
 use friday_cognitive::workspace::Topic;
 use friday_cognitive::WorkspaceEvent;
+#[cfg(target_os = "windows")]
 use windows::Win32::Foundation::HWND;
 
+#[cfg(target_os = "windows")]
 use crate::Sensor;
 
 /// A window's visible state — the durable screen truth the sensor diff's.
@@ -90,22 +95,26 @@ impl ScreenChange {
 /// poll always emits the initial observation (there is no prior state to
 /// deduplicate against), subsequent polls are deduplicated against the last
 /// observation.
+#[cfg(target_os = "windows")]
 pub struct WindowsScreenSensor {
     last: Option<ScreenObservation>,
 }
 
+#[cfg(target_os = "windows")]
 impl WindowsScreenSensor {
     pub fn new() -> Self {
         Self { last: None }
     }
 }
 
+#[cfg(target_os = "windows")]
 impl Default for WindowsScreenSensor {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(target_os = "windows")]
 #[async_trait]
 impl Sensor for WindowsScreenSensor {
     fn name(&self) -> &str {
@@ -122,24 +131,29 @@ impl Sensor for WindowsScreenSensor {
             // observable — do not invent one.
             return Vec::new();
         };
-
-        // First observation: emit it as a Focus change — the initial screen
-        // state is itself an event (observe → understand starts from here).
-        // Later polls only emit when something visibly changed.
-        let change = match self.last.as_ref() {
-            None => Some(ScreenChange::Focus),
-            Some(last) => changed_from(&observation, Some(last)),
-        };
-        self.last = Some(observation.clone());
-        let Some(change) = change else {
-            return Vec::new();
-        };
-
-        vec![build_screen_event(&observation, change)]
+        observe(&mut self.last, observation).into_iter().collect()
     }
 }
 
 // ── Pure helpers (platform-neutral, fully tested) ─────────────────
+
+/// Fold a fresh observation into the sensor's last state and return the
+/// [`Topic::Screen`] event to emit, if any. The first observation is emitted
+/// as a Focus change — the initial screen state is itself an event (observe →
+/// understand starts from here); later ones only when something visibly
+/// changed.
+pub fn observe(
+    last: &mut Option<ScreenObservation>,
+    observation: ScreenObservation,
+) -> Option<WorkspaceEvent> {
+    let change = match last.as_ref() {
+        None => Some(ScreenChange::Focus),
+        Some(prev) => changed_from(&observation, Some(prev)),
+    };
+    let event = change.map(|change| build_screen_event(&observation, change));
+    *last = Some(observation);
+    event
+}
 
 /// Whether `new` differs observably from `last`. `None` = no change.
 pub fn changed_from(

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use friday_cognitive::WorkspaceEvent;
 
 pub mod audio;
-#[cfg(target_os = "windows")]
+pub mod hyprland;
 pub mod screen;
 pub mod vision;
 pub mod whisper_cpp;

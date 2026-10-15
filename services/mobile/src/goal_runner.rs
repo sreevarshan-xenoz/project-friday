@@ -50,7 +50,7 @@ use friday_goal_execution::{
 };
 use friday_intelligence::InferenceFabric;
 use friday_investigation::InvestigationEngine;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 use friday_sensors::SensorLoop;
 #[cfg(windows)]
 use friday_sensors::{screen::WindowsScreenSensor, windows_focus::WindowsFocusSensor};
@@ -1252,7 +1252,32 @@ impl GoalRunner {
         Some(Observer::new(loop_))
     }
 
-    #[cfg(not(windows))]
+    /// Linux: the same seam over Hyprland (screen + focus via `hyprctl`/`grim`),
+    /// with commands run through the collector's runner so a daemon started
+    /// before the compositor still finds the live session.
+    #[cfg(target_os = "linux")]
+    fn live_observer(voice: &VoiceConfig) -> Option<Observer> {
+        use friday_context_collector::{CommandRunner, RealCommandRunner};
+        use friday_sensors::hyprland::{CommandFn, HyprlandFocusSensor, HyprlandScreenSensor};
+
+        let runner = RealCommandRunner {
+            timeout: Some(std::time::Duration::from_secs(3)),
+        };
+        let run: CommandFn = Arc::new(move |program: &str, args: &[&str]| {
+            let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+            let out = runner.run(program, &args).ok()?;
+            (out.status == Some(0)).then_some(out.stdout)
+        });
+        let mut loop_ = SensorLoop::new();
+        loop_.add(Box::new(HyprlandScreenSensor::new(run.clone())));
+        loop_.add(Box::new(HyprlandFocusSensor::new(run)));
+        if let Some(mic) = voice.sensor() {
+            loop_.add(Box::new(mic));
+        }
+        Some(Observer::new(loop_))
+    }
+
+    #[cfg(not(any(windows, target_os = "linux")))]
     fn live_observer(_voice: &VoiceConfig) -> Option<Observer> {
         None
     }
