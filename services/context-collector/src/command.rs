@@ -17,8 +17,9 @@
 //!   without needing a Wayland session.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 /// Why a capture command could not run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +105,7 @@ impl CommandRunner for RealCommandRunner {
         let run_once = move || {
             let child = Command::new(&program)
                 .args(&args)
+                .envs(session_env())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .stdin(std::process::Stdio::null())
@@ -135,6 +137,77 @@ impl CommandRunner for RealCommandRunner {
             }
         }
     }
+}
+
+/// The Wayland/Hyprland session variables an OS command needs, for any the
+/// current process lacks or holds stale values for.
+///
+/// The FRIDAY daemon is a systemd user service and can start before the
+/// compositor (or outlive a session), so its own environment may not name the
+/// live session. `grim`, `wl-paste`, `wtype` and `hyprctl` all fail without it;
+/// the session is rediscovered from `$XDG_RUNTIME_DIR` on every call instead.
+pub fn session_env() -> Vec<(String, String)> {
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
+    discover_session_env(runtime_dir.as_deref(), |k| std::env::var(k).ok())
+}
+
+/// [`session_env`] against an explicit runtime dir and environment lookup.
+pub fn discover_session_env(
+    runtime_dir: Option<&Path>,
+    current: impl Fn(&str) -> Option<String>,
+) -> Vec<(String, String)> {
+    let Some(dir) = runtime_dir else {
+        return Vec::new();
+    };
+    let mut env = Vec::new();
+
+    let hypr_dir = dir.join("hypr");
+    let live_signature = current("HYPRLAND_INSTANCE_SIGNATURE")
+        .filter(|sig| hypr_dir.join(sig).join(".socket.sock").exists());
+    if live_signature.is_none() {
+        if let Some(sig) = newest_hyprland_instance(&hypr_dir) {
+            env.push(("HYPRLAND_INSTANCE_SIGNATURE".to_string(), sig));
+        }
+    }
+
+    let live_display = current("WAYLAND_DISPLAY").filter(|d| dir.join(d).exists());
+    if live_display.is_none() {
+        if let Some(display) = first_wayland_display(dir) {
+            env.push(("WAYLAND_DISPLAY".to_string(), display));
+        }
+    }
+    env
+}
+
+/// The Hyprland instance whose control socket was touched most recently —
+/// crashed sessions can leave stale instance directories behind.
+fn newest_hyprland_instance(hypr_dir: &Path) -> Option<String> {
+    std::fs::read_dir(hypr_dir)
+        .ok()?
+        .flatten()
+        .filter_map(|entry| {
+            let socket = entry.path().join(".socket.sock");
+            let modified = socket
+                .metadata()
+                .ok()?
+                .modified()
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            Some((modified, entry.file_name().to_string_lossy().into_owned()))
+        })
+        .max()
+        .map(|(_, sig)| sig)
+}
+
+/// The lowest-numbered `wayland-N` socket in the runtime dir.
+fn first_wayland_display(dir: &Path) -> Option<String> {
+    let mut displays: Vec<String> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("wayland-") && !name.ends_with(".lock"))
+        .collect();
+    displays.sort();
+    displays.into_iter().next()
 }
 
 /// Deterministic test double. Scripts canned [`CommandOutput`] per exact
@@ -217,6 +290,82 @@ mod tests {
             .run("hyprctl", &["-j".into(), "activewindow".into()])
             .unwrap_err();
         assert!(err.to_string().contains("unscripted"), "got: {err}");
+    }
+
+    /// A throwaway `$XDG_RUNTIME_DIR` with the given hypr instances (those in
+    /// `live` get a control socket) and plain files.
+    fn runtime_dir(name: &str, instances: &[&str], live: &[&str], files: &[&str]) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("friday-session-env-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for sig in instances {
+            std::fs::create_dir_all(dir.join("hypr").join(sig)).unwrap();
+        }
+        for sig in live {
+            std::fs::write(dir.join("hypr").join(sig).join(".socket.sock"), b"").unwrap();
+        }
+        for file in files {
+            std::fs::write(dir.join(file), b"").unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn session_env_discovers_a_session_the_process_does_not_know() {
+        let dir = runtime_dir(
+            "discover",
+            &["stale", "live"],
+            &["live"],
+            &["wayland-1", "wayland-1.lock"],
+        );
+        let env = discover_session_env(Some(&dir), |_| None);
+        assert_eq!(
+            env,
+            vec![
+                (
+                    "HYPRLAND_INSTANCE_SIGNATURE".to_string(),
+                    "live".to_string()
+                ),
+                ("WAYLAND_DISPLAY".to_string(), "wayland-1".to_string()),
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn session_env_keeps_live_values_and_replaces_stale_ones() {
+        let dir = runtime_dir("stale", &["old", "new"], &["new"], &["wayland-0"]);
+        // A live signature + display already in the environment: nothing to add.
+        let current = |k: &str| match k {
+            "HYPRLAND_INSTANCE_SIGNATURE" => Some("new".to_string()),
+            "WAYLAND_DISPLAY" => Some("wayland-0".to_string()),
+            _ => None,
+        };
+        assert!(discover_session_env(Some(&dir), current).is_empty());
+
+        // Values from a session that has since ended are replaced.
+        let stale = |k: &str| match k {
+            "HYPRLAND_INSTANCE_SIGNATURE" => Some("old".to_string()),
+            "WAYLAND_DISPLAY" => Some("wayland-9".to_string()),
+            _ => None,
+        };
+        let env = discover_session_env(Some(&dir), stale);
+        assert_eq!(
+            env,
+            vec![
+                ("HYPRLAND_INSTANCE_SIGNATURE".to_string(), "new".to_string()),
+                ("WAYLAND_DISPLAY".to_string(), "wayland-0".to_string()),
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn session_env_is_empty_without_a_runtime_dir_or_session() {
+        assert!(discover_session_env(None, |_| None).is_empty());
+        let dir = runtime_dir("none", &[], &[], &[]);
+        assert!(discover_session_env(Some(&dir), |_| None).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
