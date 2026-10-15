@@ -50,6 +50,7 @@ use friday_goal_execution::{
 };
 use friday_intelligence::InferenceFabric;
 use friday_investigation::InvestigationEngine;
+#[cfg(any(windows, test))]
 use friday_sensors::SensorLoop;
 #[cfg(windows)]
 use friday_sensors::{screen::WindowsScreenSensor, windows_focus::WindowsFocusSensor};

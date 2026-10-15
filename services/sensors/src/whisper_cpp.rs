@@ -216,7 +216,10 @@ pub(crate) fn write_wav(path: &Path, samples: &[i16], sample_rate: u32) -> std::
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::{AudioSensor, DEFAULT_SAMPLE_RATE, FRAME_SAMPLES};
+    #[cfg(target_os = "windows")]
+    use crate::audio::AudioSensor;
+    use crate::audio::{DEFAULT_SAMPLE_RATE, FRAME_SAMPLES};
+    #[cfg(target_os = "windows")]
     use friday_cognitive::workspace::Topic;
 
     /// Deterministic "speech-like" energy: 10 frames of 440 Hz tone + 8 silent
@@ -362,6 +365,7 @@ mod tests {
 
     /// A fake `whisper-cli` as a batch script: ignores args, echoes a fixed
     /// transcript, exits 0. Drives the spawn → capture → parse path hermetically.
+    #[cfg(target_os = "windows")]
     fn mock_binary(dir: &Path, body: &str) -> PathBuf {
         let bat = dir.join("mock-whisper-cli.bat");
         std::fs::write(&bat, body).expect("write mock binary");

@@ -730,6 +730,7 @@ fn open_default_capture() -> Option<WasapiCapture> {
 /// keeps the amplitude continuous so the VAD and whisper.cpp (both 16 kHz)
 /// see the same signal regardless of the capture endpoint's native rate. The
 /// capture path needs this because the engine's mix format is often ~48 kHz.
+#[cfg(any(target_os = "windows", test))]
 fn resample_i16(samples: &[i16], from: u32, to: u32) -> Vec<i16> {
     if from == to || samples.is_empty() {
         return samples.to_vec();
