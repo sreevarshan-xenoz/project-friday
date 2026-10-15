@@ -15,6 +15,8 @@ TIMEZONE="${TIMEZONE:-UTC}"
 THEME="${THEME:-FRIDAY Dots-Hyprland (Material You / Illogical Impulse)}"
 SDDM_THEME="${SDDM_THEME:-SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)}"
 AUTO_REBOOT="${AUTO_REBOOT:-false}"
+FRIDAY_AI_PROVIDER="${FRIDAY_AI_PROVIDER:-}"
+FRIDAY_AI_KEY="${FRIDAY_AI_KEY:-}"
 # Root SSH + serial autologin on the installed system, for VM debugging only.
 # Opt in with FRIDAY_DEBUG_ACCESS=true or `friday.debug` on the live kernel cmdline.
 FRIDAY_DEBUG_ACCESS="${FRIDAY_DEBUG_ACCESS:-false}"
@@ -230,6 +232,33 @@ else
     *"Nord"*)        THEME_SLUG="nord" ;;
   esac
   arch-chroot /mnt su - "$USERNAME" -c "omarchy-theme-set '$THEME_SLUG'" 2>/dev/null || true
+fi
+
+# FRIDAY AI provider credentials, loaded by friday-linux-daemon.service via
+# EnvironmentFile. Owner-only (0600); the key is never echoed so it stays out of $LOG_FILE.
+AI_KEY_VAR=""
+AI_VISION=false
+case "$FRIDAY_AI_PROVIDER" in
+  gemini)     AI_KEY_VAR="GEMINI_API_KEY";     AI_VISION=true ;;
+  groq)       AI_KEY_VAR="GROQ_API_KEY";       AI_VISION=true ;;
+  nvidia-nim) AI_KEY_VAR="NVIDIA_NIM_API_KEY"; AI_VISION=true ;;
+  openrouter) AI_KEY_VAR="OPENROUTER_API_KEY" ;;
+  cerebras)   AI_KEY_VAR="CEREBRAS_API_KEY" ;;
+esac
+if [[ -n "$AI_KEY_VAR" && -n "$FRIDAY_AI_KEY" ]]; then
+  (
+    umask 077
+    mkdir -p "/mnt$USER_HOME/.config/friday"
+    {
+      echo "# FRIDAY AI provider credentials (written by the installer)."
+      printf '%s=%s\n' "$AI_KEY_VAR" "$FRIDAY_AI_KEY"
+      # Screen-context reads need a provider with a vision model.
+      if $AI_VISION; then echo "FRIDAY_CONTEXT_PROVIDER=$FRIDAY_AI_PROVIDER"; fi
+    } > "/mnt$USER_HOME/.config/friday/friday.env"
+  )
+  echo "FRIDAY AI provider configured: $FRIDAY_AI_PROVIDER"
+else
+  echo "FRIDAY AI provider skipped; create ~/.config/friday/friday.env to enable reasoning."
 fi
 
 if [ "$USERNAME" != "root" ]; then

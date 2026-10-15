@@ -3,6 +3,8 @@ Description=FRIDAY Linux Host Daemon
 
 [Service]
 Type=notify
+# Provider API keys + FRIDAY_CONTEXT_PROVIDER (written by the installer; optional).
+EnvironmentFile=-%h/.config/friday/friday.env
 ExecStart=/usr/bin/friday-linux-daemon
 Restart=on-failure
 RestartSec=3

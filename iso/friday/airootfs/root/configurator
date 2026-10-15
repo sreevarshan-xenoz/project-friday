@@ -32,7 +32,7 @@ draw_brand_banner() {
 
 draw_rail() {
   local step="$1"
-  local s1="○ MACHINE" s2="○ IDENTITY" s3="○ SECURITY" s4="○ TIME" s5="○ THEME" s6="○ INSTALL"
+  local s1="○ MACHINE" s2="○ IDENTITY" s3="○ SECURITY" s4="○ TIME" s5="○ THEME" s6="○ AI" s7="○ INSTALL"
 
   case "$step" in
     1) s1="● MACHINE" ;;
@@ -40,10 +40,11 @@ draw_rail() {
     3) s1="✓ MACHINE"; s2="✓ IDENTITY"; s3="● SECURITY" ;;
     4) s1="✓ MACHINE"; s2="✓ IDENTITY"; s3="✓ SECURITY"; s4="● TIME" ;;
     5) s1="✓ MACHINE"; s2="✓ IDENTITY"; s3="✓ SECURITY"; s4="✓ TIME"; s5="● THEME" ;;
-    6) s1="✓ MACHINE"; s2="✓ IDENTITY"; s3="✓ SECURITY"; s4="✓ TIME"; s5="✓ THEME"; s6="● INSTALL" ;;
+    6) s1="✓ MACHINE"; s2="✓ IDENTITY"; s3="✓ SECURITY"; s4="✓ TIME"; s5="✓ THEME"; s6="● AI" ;;
+    7) s1="✓ MACHINE"; s2="✓ IDENTITY"; s3="✓ SECURITY"; s4="✓ TIME"; s5="✓ THEME"; s6="✓ AI"; s7="● INSTALL" ;;
   esac
 
-  gum style --foreground "$FRIDAY_MUTED" --align center "$s1   $s2   $s3   $s4   $s5   $s6"
+  gum style --foreground "$FRIDAY_MUTED" --align center "$s1   $s2   $s3   $s4   $s5   $s6   $s7"
   echo
 }
 
@@ -154,9 +155,53 @@ SDDM_CHOICE=$(gum choose --cursor="❯ " --height=8 \
   "Omarchy Classic SDDM")
 SDDM_THEME="${SDDM_CHOICE:-SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)}"
 
-# Step 6: Final Review & Confirmation
+# Step 6: AI Provider — the daemon has no model without one
 draw_brand_banner
 draw_rail 6
+gum style --foreground "$FRIDAY_SUCCESS" "✓ Desktop UI:  $THEME"
+gum style --foreground "$FRIDAY_SUCCESS" "✓ Greeter:     $SDDM_THEME"
+echo
+gum style --foreground "$FRIDAY_ACCENT" --bold "FRIDAY Intelligence Provider:"
+gum style --foreground "$FRIDAY_MUTED" "FRIDAY needs an LLM API key to reason. Vision-capable providers also enable screen context."
+echo
+AI_CHOICE=$(gum choose --cursor="❯ " --height=8 \
+  "Google Gemini (vision)" \
+  "Groq (fast, vision)" \
+  "NVIDIA NIM (vision)" \
+  "OpenRouter (many models, no screen context)" \
+  "Cerebras (fast, no screen context)" \
+  "Skip — configure later" || echo "Skip — configure later")
+
+FRIDAY_AI_PROVIDER=""
+case "$AI_CHOICE" in
+  "Google Gemini"*) FRIDAY_AI_PROVIDER="gemini" ;;
+  "Groq"*)          FRIDAY_AI_PROVIDER="groq" ;;
+  "NVIDIA NIM"*)    FRIDAY_AI_PROVIDER="nvidia-nim" ;;
+  "OpenRouter"*)    FRIDAY_AI_PROVIDER="openrouter" ;;
+  "Cerebras"*)      FRIDAY_AI_PROVIDER="cerebras" ;;
+esac
+
+FRIDAY_AI_KEY=""
+FRIDAY_AI_LABEL="Skipped (set later in ~/.config/friday/friday.env)"
+if [[ -n "$FRIDAY_AI_PROVIDER" ]]; then
+  while true; do
+    FRIDAY_AI_KEY=$(gum input --password --prompt="API Key (empty to skip)> " || true)
+    if [[ -z "$FRIDAY_AI_KEY" ]]; then
+      FRIDAY_AI_PROVIDER=""
+      break
+    fi
+    # Written verbatim into a systemd EnvironmentFile; reject anything that would need quoting.
+    if [[ "$FRIDAY_AI_KEY" =~ ^[A-Za-z0-9._:-]+$ ]]; then
+      FRIDAY_AI_LABEL="$AI_CHOICE (key ••••${FRIDAY_AI_KEY: -4})"
+      break
+    fi
+    gum style --foreground "$FRIDAY_ERROR" "That doesn't look like an API key (unexpected spaces or symbols). Try again."
+  done
+fi
+
+# Step 7: Final Review & Confirmation
+draw_brand_banner
+draw_rail 7
 
 gum style \
   --foreground "$FRIDAY_ACCENT" \
@@ -172,14 +217,15 @@ gum style \
   "  Admin User:   $USERNAME" \
   "  Timezone:     $TIMEZONE" \
   "  Desktop UI:   $THEME" \
-  "  SDDM Greeter: $SDDM_THEME"
+  "  SDDM Greeter: $SDDM_THEME" \
+  "  AI Provider:  $FRIDAY_AI_LABEL"
 
 echo
 gum style --foreground "$FRIDAY_WARNING" --bold "WARNING: ALL EXISTING DATA ON $TARGET_DISK WILL BE PERMANENTLY WIPED."
 if gum confirm "Proceed with destructive installation onto $TARGET_DISK?"; then
   echo
   gum style --foreground "$FRIDAY_SUCCESS" "Specification approved. Initiating system assembly..."
-  export TARGET_DISK KEYBOARD HOSTNAME USERNAME PASSWORD TIMEZONE THEME SDDM_THEME
+  export TARGET_DISK KEYBOARD HOSTNAME USERNAME PASSWORD TIMEZONE THEME SDDM_THEME FRIDAY_AI_PROVIDER FRIDAY_AI_KEY
   exec /root/installer
 else
   gum style --foreground "$FRIDAY_ERROR" "Installation cancelled by user."
