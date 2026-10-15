@@ -12,7 +12,9 @@ description = "FRIDAY Windows Bridge: platform-agnostic ActionAdapter over IPC t
 friday-core = { path = "../../core" }
 friday-actions = { path = "../../services/action-runtime" }
 friday-capabilities = { path = "../../services/capabilities" }
+friday-context-collector = { path = "../../services/context-collector" }
 async-trait.workspace = true
+base64.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

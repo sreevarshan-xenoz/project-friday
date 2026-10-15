@@ -17,6 +17,7 @@
 pub mod actions;
 pub mod bridge;
 pub mod error;
+pub mod hyprland;
 pub mod ipc;
 pub mod manifest;
 pub mod model;

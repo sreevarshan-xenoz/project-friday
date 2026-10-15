@@ -296,11 +296,12 @@ impl Tool for DocsSearchCapabilityTool {
     }
 }
 
-/// Real Windows host tool for the `windows.open` capability (S4). The planner
+/// Real desktop host tool for the `windows.open` capability (S4). The planner
 /// classifies "open notepad" / "launch chrome" as `windows.open`; this tool
 /// bridges the capability to the WindowsAdapter, which forwards the intent to
-/// the C# host over the named pipe. When the host is not running the transport
-/// returns HostUnavailable — an honest failure, never a fake launch.
+/// the C# host over the named pipe (Windows) or to Hyprland (Linux). When the
+/// host is not running the transport returns HostUnavailable — an honest
+/// failure, never a fake launch.
 struct WindowsOpenTool {
     adapter: WindowsAdapter,
 }
@@ -312,7 +313,7 @@ impl Tool for WindowsOpenTool {
     }
 
     fn description(&self) -> &str {
-        "Opens desktop applications on this Windows machine (windows.open capability)"
+        "Opens desktop applications on this machine (windows.open capability)"
     }
 
     fn capabilities(&self) -> Vec<Capability> {
@@ -1029,8 +1030,9 @@ impl GoalRunner {
     /// restarts (close FRIDAY, reopen it tomorrow, it still knows). This is the
     /// live-host constructor: it also wires the S4 desktop adapters — the real
     /// Windows host (named pipe, `default` session matching the C# host's
-    /// `FRIDAY_SESSION`) and the browser (CDP-backed Chrome) — plus the S6
-    /// observation seam (the real Windows screen + focus sensors).
+    /// `FRIDAY_SESSION`), or on Linux the Hyprland host, and the browser
+    /// (CDP-backed Chrome) — plus the S6 observation seam (the real screen +
+    /// focus sensors).
     pub fn with_fabric_and_memory(
         bus: EventBus,
         fabric: Arc<InferenceFabric>,
@@ -1045,7 +1047,9 @@ impl GoalRunner {
             Some(journal),
             #[cfg(windows)]
             Some(WindowsAdapter::for_session("default")),
-            #[cfg(not(windows))]
+            #[cfg(target_os = "linux")]
+            Some(WindowsAdapter::for_hyprland()),
+            #[cfg(not(any(windows, target_os = "linux")))]
             None,
             Some(BrowserAdapter::new()),
             Self::live_observer(&voice),

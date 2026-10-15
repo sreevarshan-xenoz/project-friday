@@ -29,6 +29,13 @@ impl WindowsAdapter {
         Self::new(Arc::new(crate::ipc::NamedPipeTransport::session(session)))
     }
 
+    /// Serve the same intents on a Linux Hyprland desktop (FRIDAY OS). The
+    /// session is discovered per call, so this may be built before Hyprland
+    /// starts; with no session every intent is `HostUnavailable`.
+    pub fn for_hyprland() -> Self {
+        Self::new(Arc::new(crate::hyprland::HyprlandTransport::new()))
+    }
+
     /// Decode a response frame into a normalized `ActionResult`.
     fn decode(&self, frame: BridgeFrame) -> ActionResult {
         if frame.protocol_version != PROTOCOL_VERSION {
