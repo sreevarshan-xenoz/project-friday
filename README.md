@@ -58,6 +58,21 @@ That document is the source of truth for `PASS` / `PARTIAL` / `BLOCKED` /
 | Vision / Voice / Learning / Active Inference | Planned (Phase 5 of the synthesis) |
 | Autonomous Cognitive Tick | ✅ Live — bounded tested runtime; `LiveRuntimeSource` runs through the real bridge process, executes/verifies a safe kernel action, exposes provenance, and rehydrates the journal without duplicate dispatch |
 
+The table above describes the crates. What actually ships on **FRIDAY OS**
+(the Arch/Hyprland ISO in `iso/friday`, daemon `friday-linux-daemon`):
+
+| FRIDAY OS capability | State |
+| -------------------- | ----- |
+| Reasoning provider | ✅ Installer asks for a Gemini / Groq / NVIDIA NIM / OpenRouter / Cerebras key → `~/.config/friday/friday.env` (skippable) |
+| Act on the desktop (`windows.open`, close, focus, move, resize, type, clipboard, capture) | ✅ Hyprland host (`plugins/windows/src/hyprland.rs`), qualified live on Hyprland 0.56 |
+| See the desktop (screen + focus sensors) | ✅ Hyprland sensors (`services/sensors/src/hyprland.rs`) |
+| Screen context read (`friday context screen`) | 🟡 Wired for vision-capable providers (session + provider fixes); not yet qualified live |
+| Desktop entry point | ✅ `SUPER+Y` → `friday ask` prompt, result as a notification |
+| Browser automation | ✅ Chromium shipped for the CDP browser adapter |
+| Click / scroll | ❌ No Wayland pointer injection yet (`Unsupported`) |
+| Voice | ❌ Linux mic capture not implemented; whisper.cpp is AUR-only |
+| Experience, Persona, Project Cognition, Autonomous Tick, Simulation | ❌ Not linked into the Linux daemon |
+
 See [`docs/Roadmap.md`](docs/Roadmap.md), [`docs/FRIDAY-20-ECOSYSTEM-ROADMAP.md`](docs/FRIDAY-20-ECOSYSTEM-ROADMAP.md),
 [`AGENTS.md`](AGENTS.md), and [`specs/README.md`](specs/README.md)
 for the authoritative milestone, subsystem, and agent operating guidelines.
