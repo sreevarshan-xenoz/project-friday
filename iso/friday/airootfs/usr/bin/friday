@@ -20,6 +20,7 @@ Usage:
   friday <group> <command> [args...]
 
 Autonomous Agent & Cognitive Loop:
+  friday ask ["<objective>"]       Ask FRIDAY (prompts if no text); result as a notification
   friday goal "<objective>"        Dispatch an autonomous goal to FRIDAY agent
   friday status | system-info      Inspect daemon state, memory, and telemetry
   friday context screen [--yes]    Share screen context with assistant
@@ -47,6 +48,26 @@ case "${1:-}" in
   ""|"-h"|"--help"|"help")
     show_help
     exit 0
+    ;;
+  ask)
+    # Desktop entry point (SUPER+SHIFT+CTRL+A): prompt, run the goal, and
+    # report the outcome as a notification.
+    shift
+    goal="$*"
+    if [ -z "$goal" ]; then
+      goal=$(fuzzel --dmenu --prompt-only="FRIDAY › " --width=60 </dev/null) || exit 0
+    fi
+    [ -n "${goal// /}" ] || exit 0
+    notify() { notify-send -a FRIDAY "$@" 2>/dev/null || true; }
+    notify "FRIDAY" "Working on: $goal"
+    # friday-ctl prints the acceptance, then the {outcome,result,error} summary.
+    if out=$(friday-ctl goal --wait "$goal" 2>&1); then
+      result=$(jq -r 'select(.outcome? != null) | .result // empty' <<<"$out" 2>/dev/null | tail -n 1)
+      notify "FRIDAY ✓" "${result:-Done: $goal}"
+    else
+      error=$(jq -r 'select(.outcome? != null) | .error // .outcome' <<<"$out" 2>/dev/null | tail -n 1)
+      notify -u critical "FRIDAY ✗ $goal" "${error:-$out}"
+    fi
     ;;
   goal)
     shift

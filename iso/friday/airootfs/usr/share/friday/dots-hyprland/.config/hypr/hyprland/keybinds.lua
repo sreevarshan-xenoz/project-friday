@@ -129,5 +129,6 @@ hl.bind("SUPER + CTRL + C", hl.dsp.exec_cmd("omarchy-menu toggle capture"), { de
 hl.bind("SUPER + CTRL + H", hl.dsp.exec_cmd("omarchy-menu toggle hardware"), { description = "Omarchy: Hardware menu" })
 
 -- FRIDAY Cognitive Subsystem
-hl.bind("SUPER + SHIFT + CTRL + A", hl.dsp.exec_cmd("friday menu || omarchy-agent --pick"), { description = "FRIDAY: Cognitive Assistant" })
+hl.bind("SUPER + SHIFT + CTRL + A", hl.dsp.exec_cmd("friday ask"), { description = "FRIDAY: Ask" })
+hl.bind("SUPER + Y", hl.dsp.exec_cmd("friday ask"), { description = "FRIDAY: Ask" })
 hl.bind("SUPER + CTRL + F", hl.dsp.exec_cmd("friday status || omarchy-state"), { description = "FRIDAY: System State" })
