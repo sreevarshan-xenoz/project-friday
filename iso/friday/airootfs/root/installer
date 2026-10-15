@@ -15,6 +15,10 @@ TIMEZONE="${TIMEZONE:-UTC}"
 THEME="${THEME:-FRIDAY Dots-Hyprland (Material You / Illogical Impulse)}"
 SDDM_THEME="${SDDM_THEME:-SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)}"
 AUTO_REBOOT="${AUTO_REBOOT:-false}"
+# Root SSH + serial autologin on the installed system, for VM debugging only.
+# Opt in with FRIDAY_DEBUG_ACCESS=true or `friday.debug` on the live kernel cmdline.
+FRIDAY_DEBUG_ACCESS="${FRIDAY_DEBUG_ACCESS:-false}"
+if grep -qw 'friday.debug' /proc/cmdline 2>/dev/null; then FRIDAY_DEBUG_ACCESS=true; fi
 LOG_FILE="/tmp/friday-installer.log"
 
 # FRIDAY Visual Tokens
@@ -154,22 +158,24 @@ mkdir -p /mnt/etc/systemd/user/default.target.wants
 cp -p /etc/systemd/user/friday-linux-daemon.service /mnt/etc/systemd/user/ 2>/dev/null || true
 ln -sf ../friday-linux-daemon.service /mnt/etc/systemd/user/default.target.wants/friday-linux-daemon.service 2>/dev/null || true
 
-# Serial getty autologin on installed system for debug mode
-mkdir -p /mnt/etc/systemd/system/serial-getty@ttyS0.service.d
-cat << 'EOF_SERIAL' > /mnt/etc/systemd/system/serial-getty@ttyS0.service.d/autologin.conf
+# Debug-only access: serial root autologin + open root SSH. Never on by default —
+# an installed system must not accept unauthenticated or root logins over the network.
+if [ "$FRIDAY_DEBUG_ACCESS" = "true" ]; then
+  mkdir -p /mnt/etc/systemd/system/serial-getty@ttyS0.service.d
+  cat << 'EOF_SERIAL' > /mnt/etc/systemd/system/serial-getty@ttyS0.service.d/autologin.conf
 [Service]
 ExecStart=
 ExecStart=-/usr/bin/agetty --noreset --noclear --autologin root -s %I 115200,38400,9600 vt220
 EOF_SERIAL
 
-# SSH root & wheel access
-mkdir -p /mnt/etc/ssh/sshd_config.d
-cat << 'EOF_SSH' > /mnt/etc/ssh/sshd_config.d/10-friday.conf
+  mkdir -p /mnt/etc/ssh/sshd_config.d
+  cat << 'EOF_SSH' > /mnt/etc/ssh/sshd_config.d/10-friday.conf
 PasswordAuthentication yes
 PermitRootLogin yes
 PermitEmptyPasswords yes
 EOF_SSH
-arch-chroot /mnt systemctl enable sshd 2>/dev/null || true
+  arch-chroot /mnt systemctl enable sshd 2>/dev/null || true
+fi
 
 # Create Admin User
 USER_HOME="/home/$USERNAME"
