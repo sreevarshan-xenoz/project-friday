@@ -61,7 +61,9 @@ StyledPopup {
             Layout.topMargin: 2
             color: Appearance.colors.colSubtext
             font.pixelSize: Appearance.font.pixelSize.smaller
-            text: Translation.tr("Click or Super+Y to ask")
+            text: (Friday.mode === "offline" || Friday.mode === "degraded")
+                ? Translation.tr("Click to start FRIDAY · right-click for diagnostics")
+                : Translation.tr("Click or Super+Y to ask · right-click for diagnostics")
         }
     }
 }

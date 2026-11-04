@@ -10,8 +10,9 @@ import QtQuick
  *  - degraded: amber-ish tertiary tint
  *  - offline:  dimmed outline icon
  * Colour and fill changes cross-fade; the pulse eases back to rest instead of
- * snapping when a goal finishes. Click opens `friday ask` (same as SUPER+Y);
- * hover shows the detail popup.
+ * snapping when a goal finishes. Left click opens `friday ask` (same as
+ * SUPER+Y), or starts the daemon when it is down; right click runs
+ * `friday doctor`; hover shows the detail popup.
  */
 MouseArea {
     id: root
@@ -22,9 +23,18 @@ MouseArea {
     implicitWidth: Appearance.sizes.barHeight * 0.8
     implicitHeight: Appearance.sizes.barHeight
     hoverEnabled: !Config.options.bar.tooltips.clickToShow
-    acceptedButtons: Qt.LeftButton
+    acceptedButtons: Qt.LeftButton | Qt.RightButton
     cursorShape: Qt.PointingHandCursor
-    onClicked: Friday.ask()
+    // Left: ask, or bring the daemon up when it is down (asking would fail).
+    // Right: open `friday doctor`.
+    onClicked: mouse => {
+        if (mouse.button === Qt.RightButton)
+            Friday.doctor();
+        else if (root.mode === "offline" || root.mode === "degraded")
+            Friday.startDaemon();
+        else
+            Friday.ask();
+    }
 
     readonly property color iconColor: {
         switch (mode) {

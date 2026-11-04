@@ -84,4 +84,14 @@ Singleton {
     function ask() {
         Quickshell.execDetached(["friday", "ask"]);
     }
+
+    /** (Re)start the user daemon; state.json updates once it is up. */
+    function startDaemon() {
+        Quickshell.execDetached(["systemctl", "--user", "restart", "friday-linux-daemon"]);
+    }
+
+    /** Health check in a terminal that stays open (`foot -H`). */
+    function doctor() {
+        Quickshell.execDetached(["foot", "-H", "-T", "FRIDAY doctor", "friday", "doctor"]);
+    }
 }
