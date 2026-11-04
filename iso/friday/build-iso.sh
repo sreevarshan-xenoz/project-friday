@@ -56,6 +56,10 @@ for bin in friday "${FRIDAY_BINARIES[@]}"; do
   fi
 done
 
+# Stage the pinned Omarchy checkout (gitignored; fetched at a fixed commit,
+# never "latest"). Keeps an existing hand-staged copy; see fetch-omarchy.sh.
+bash "$SCRIPT_DIR/fetch-omarchy.sh"
+
 # Ensure Omarchy and Friday plugins are fully synced
 echo "Synchronizing Omarchy shell and Friday OS desktop plugins..."
 mkdir -p "$PROFILE_DIR/airootfs/usr/share/omarchy/shell/plugins"
