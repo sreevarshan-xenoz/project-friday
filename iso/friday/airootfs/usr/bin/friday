@@ -21,6 +21,8 @@ Usage:
 
 Autonomous Agent & Cognitive Loop:
   friday ask ["<objective>"]       Ask FRIDAY (prompts if no text); result as a notification
+  friday ask --selection           Ask about the selected/copied text (Super+Alt+Y)
+  friday answers                   Show past answers (last one: friday answers --last)
   friday goal "<objective>"        Dispatch an autonomous goal to FRIDAY agent
   friday status | system-info      Inspect daemon state, memory, and telemetry
   friday context screen [--yes]    Share screen context with assistant
@@ -127,13 +129,36 @@ case "${1:-}" in
     exit 0
     ;;
   ask)
-    # Desktop entry point (SUPER+SHIFT+CTRL+A): prompt, run the goal, and
-    # report the outcome as a notification.
+    # Desktop entry point (SUPER+Y): prompt, run the goal, report the outcome
+    # as a notification, and keep the full answer on disk.
+    #   friday ask [text]               ask (prompts if no text)
+    #   friday ask --selection [text]   ask about the selected/copied text (SUPER+ALT+Y)
     shift
+    use_selection=false
+    if [ "${1:-}" = "--selection" ] || [ "${1:-}" = "-s" ]; then use_selection=true; shift; fi
     goal="$*"
-    history_file="${XDG_STATE_HOME:-$HOME/.local/state}/friday/ask-history"
+    state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
+    history_file="$state_dir/ask-history"
+    notify() { notify-send -a FRIDAY "$@" 2>/dev/null || true; }
+
+    context=""
+    if $use_selection; then
+      # Primary selection (highlighted text) first, then the clipboard.
+      context=$(wl-paste --primary --no-newline 2>/dev/null || true)
+      [ -n "${context//[[:space:]]/}" ] || context=$(wl-paste --no-newline 2>/dev/null || true)
+      if [ -z "${context//[[:space:]]/}" ]; then
+        notify "FRIDAY" "Select or copy some text first, then press Super+Alt+Y."
+        exit 0
+      fi
+      context="${context:0:4000}"
+    fi
+
     if [ -z "$goal" ]; then
-      if [ -s "$history_file" ]; then
+      if $use_selection; then
+        preview=$(tr '\n\t' '  ' <<<"$context" | cut -c1-50)
+        goal=$(fuzzel --dmenu --prompt-only="FRIDAY › " --width=70 \
+          --placeholder="About \"$preview…\" (e.g. summarise, explain, translate)" </dev/null) || exit 0
+      elif [ -s "$history_file" ]; then
         # Recent asks, newest first. Enter re-runs the highlighted one;
         # Shift+Enter sends exactly what was typed (fuzzel execute-input).
         goal=$(fuzzel --dmenu --prompt="FRIDAY › " --width=60 --minimal-lines --lines=8 \
@@ -145,20 +170,52 @@ case "${1:-}" in
       fi
     fi
     [ -n "${goal// /}" ] || exit 0
-    # Remember it: move to the top, drop duplicates, keep the last 50.
-    mkdir -p "$(dirname "$history_file")"
+    mkdir -p "$state_dir"
+    # Remember the question (not the pasted context): newest first, no dups, last 50.
     { printf '%s\n' "$goal"; grep -vxF -- "$goal" "$history_file" 2>/dev/null || true; } \
       | head -n 50 >"$history_file.tmp" && mv -f "$history_file.tmp" "$history_file"
-    notify() { notify-send -a FRIDAY "$@" 2>/dev/null || true; }
-    notify "FRIDAY" "Working on: $goal"
-    # friday-ctl prints the acceptance, then the {outcome,result,error} summary.
-    if out=$(friday-ctl goal --wait "$goal" 2>&1); then
-      result=$(jq -r 'select(.outcome? != null) | .result // empty' <<<"$out" 2>/dev/null | tail -n 1)
-      notify "FRIDAY ✓" "${result:-Done: $goal}"
-    else
-      error=$(jq -r 'select(.outcome? != null) | .error // .outcome' <<<"$out" 2>/dev/null | tail -n 1)
-      notify -u critical "FRIDAY ✗ $goal" "${error:-$out}"
+
+    request="$goal"
+    if [ -n "$context" ]; then
+      request=$(printf '%s\n\nUse this text as context:\n"""\n%s\n"""' "$goal" "$context")
     fi
+
+    notify "FRIDAY" "Working on: $goal"
+    ok=true
+    out=$(friday-ctl goal --wait "$request" 2>&1) || ok=false
+    # The final {outcome,result,error} object; keep every line of the answer.
+    summary=$(jq -s 'map(select(type == "object" and .outcome? != null)) | last // {}' <<<"$out" 2>/dev/null || echo '{}')
+    if $ok; then
+      answer=$(jq -r '.result // empty' <<<"$summary")
+      [ -n "$answer" ] || answer="Done: $goal"
+      title="FRIDAY ✓"
+    else
+      answer=$(jq -r '.error // .outcome // empty' <<<"$summary")
+      [ -n "$answer" ] || answer="$out"
+      title="FRIDAY ✗ $goal"
+    fi
+
+    # Full answer on disk; the notification shows a preview with an Open button.
+    answer_file="$state_dir/last-answer.md"
+    {
+      printf '# %s\n\n_%s_\n\n' "$goal" "$(date '+%Y-%m-%d %H:%M')"
+      [ -n "$context" ] && printf '> %s\n\n' "$(head -c 300 <<<"$context" | tr '\n' ' ')"
+      printf '%s\n' "$answer"
+    } >"$answer_file"
+    cat "$answer_file" >>"$state_dir/answers.md"
+    printf '\n---\n\n' >>"$state_dir/answers.md"
+
+    preview="$answer"
+    [ "${#preview}" -le 220 ] || preview="${preview:0:217}…"
+    urgency=normal; $ok || urgency=critical
+    (
+      action=$(notify-send -a FRIDAY -u "$urgency" -A open="Open full answer" "$title" "$preview" 2>/dev/null || true)
+      if [ "$action" = "open" ]; then
+        foot -T "FRIDAY · $goal" less -R "$answer_file" 2>/dev/null \
+          || xdg-open "$answer_file" 2>/dev/null || true
+      fi
+    ) </dev/null >/dev/null 2>&1 &
+    disown 2>/dev/null || true
     ;;
   goal)
     shift
@@ -166,6 +223,12 @@ case "${1:-}" in
     ;;
   doctor)
     friday_doctor
+    ;;
+  answers)
+    d="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
+    f="$d/answers.md"; [ "${2:-}" = "--last" ] && f="$d/last-answer.md"
+    if [ ! -s "$f" ]; then echo "No answers yet. Try: friday ask \"what's using my disk?\""; exit 0; fi
+    if [ -t 1 ]; then exec less -R +G "$f"; else cat "$f"; fi
     ;;
   status|system-info)
     shift
