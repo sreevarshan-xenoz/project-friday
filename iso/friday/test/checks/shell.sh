@@ -15,8 +15,13 @@ echo '{"status":"running","current":{"active":true,"goal":"smoke test","phase":"
   >"$XDG_STATE_HOME/friday/state.json"
 
 printf 'output HEADLESS-1 resolution 1600x900\n' >"$W/sway.conf"
+# Arch's sway carries a file capability (cap_sys_nice). In a container whose
+# bounding set lacks it (Docker's default, e.g. CI) exec fails with "Operation
+# not permitted". A plain copy drops the capability; headless sway doesn't
+# need it.
+cp "$(command -v sway)" "$W/sway"
 WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1 LIBSEAT_BACKEND=noop \
-  sway -c "$W/sway.conf" >"$W/sway.log" 2>&1 &
+  "$W/sway" -c "$W/sway.conf" >"$W/sway.log" 2>&1 &
 SWAY=$!
 trap 'kill $QS $SWAY 2>/dev/null; wait 2>/dev/null' EXIT
 for _ in $(seq 40); do compgen -G "$XDG_RUNTIME_DIR/wayland-*" >/dev/null && break; sleep 0.25; done
