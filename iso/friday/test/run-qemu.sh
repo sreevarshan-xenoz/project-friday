@@ -133,10 +133,18 @@ if [[ "$MODE" == "gui" ]]; then
   VGA_OPT=("-vga" "virtio" "-display" "default,show-cursor=on")
 fi
 
+# Use KVM when the host offers it; otherwise fall back to TCG software
+# emulation (much slower, but works in containers and nested VMs).
+if [[ -w /dev/kvm ]]; then
+  ACCEL_OPT=(-enable-kvm -cpu host)
+else
+  echo "Warning: /dev/kvm unavailable, using TCG software emulation (slow)." >&2
+  ACCEL_OPT=(-accel "tcg,thread=multi" -cpu max)
+fi
+
 QEMU_CMD=(
   qemu-system-x86_64
-  -enable-kvm
-  -cpu host
+  "${ACCEL_OPT[@]}"
   -m 6G
   -smp 4
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd
