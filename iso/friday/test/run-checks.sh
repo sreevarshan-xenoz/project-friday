@@ -4,7 +4,7 @@
 # Each check here exists because the same problem once shipped unnoticed.
 # Runs on an Arch system (CI uses the archlinux container). Needs:
 #   pacman -S --needed git gum jq libnotify python zsh lua kbd tzdata \
-#     quickshell sway grim foot qt6-5compat qt6-imageformats qt6-multimedia \
+#     hyprland quickshell sway grim foot qt6-5compat qt6-imageformats qt6-multimedia \
 #     qt6-multimedia-ffmpeg qt6-virtualkeyboard qt6-quicktimeline qt6-svg \
 #     qt6-wayland qt6-positioning kirigami syntax-highlighting \
 #     ttf-material-symbols-variable noto-fonts

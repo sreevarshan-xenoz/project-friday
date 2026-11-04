@@ -20,6 +20,27 @@ if [[ -n "$LUAC" ]]; then
   done < <(find "$AIROOTFS/etc/skel/.config/hypr" "$AIROOTFS/usr/share/friday/dots-hyprland/.config/hypr" -name '*.lua')
 else skip "Lua syntax (no luac)"; fi
 
+echo "Hyprland accepts the shipped configs (Hyprland --verify-config)"
+if need Hyprland runuser; then
+  for cfg in "usr/share/friday/dots-hyprland/.config/hypr:Dots-Hyprland" "etc/skel/.config/hypr:Omarchy themes"; do
+    src="$AIROOTFS/${cfg%%:*}"; label="${cfg##*:}"
+    # Outside $WORK: mktemp's 0700 directory is not reachable by `nobody`.
+    H=$(mktemp -d /tmp/friday-hypr-verify.XXXXXX); chmod 755 "$H"
+    mkdir -p "$H/.config"; cp -a "$src" "$H/.config/hypr"; chmod -R a+rwX "$H"
+    # Hyprland refuses to run as root; verify as an unprivileged user.
+    out=$(cd "$H" && runuser -u nobody -- env HOME="$H" XDG_RUNTIME_DIR="$H" \
+      OMARCHY_PATH="$AIROOTFS/usr/share/omarchy" timeout 60 \
+      Hyprland --verify-config -c "$H/.config/hypr/hyprland.lua" 2>&1)
+    if grep -q "config ok" <<<"$out"; then pass "$label config"
+    else
+      fail "$label config:"
+      if grep -q "Config parsing result" <<<"$out"; then sed -n '/Config parsing result/,$p' <<<"$out"
+      else tail -n 5 <<<"$out"; fi | sed 's/^/      /'
+    fi
+    rm -rf "$H"
+  done
+else skip "Hyprland config verification (needs Hyprland)"; fi
+
 echo "executables are stored executable in git"
 for f in usr/bin/friday usr/bin/friday-ctl usr/bin/friday-linux-daemon usr/bin/friday-skill-forge \
          root/configurator root/installer; do
