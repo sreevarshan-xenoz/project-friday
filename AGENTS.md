@@ -68,7 +68,8 @@ failures.
 - **Upstreams are pinned, not followed.** Omarchy is fetched at the commit in
   `iso/friday/fetch-omarchy.sh`; vendored dots/themes are copied as files. Bump
   a pin on purpose, in its own commit.
-- **Don't commit build output** (ISOs, `target/`, `iso/out/`).
+- **Don't commit build output** (ISOs, `target/`, `iso/out/`, the FRIDAY
+  binaries in `airootfs/usr/bin/`: `build-iso.sh` compiles them).
 
 ## Commands
 

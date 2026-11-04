@@ -58,3 +58,8 @@ omarchy/
 
 # ISO build output (build-iso.sh latest-ISO symlink)
 iso/out/
+
+# FRIDAY binaries are built by build-iso.sh (cargo --release), not committed.
+iso/friday/airootfs/usr/bin/friday-ctl
+iso/friday/airootfs/usr/bin/friday-linux-daemon
+iso/friday/airootfs/usr/bin/friday-skill-forge

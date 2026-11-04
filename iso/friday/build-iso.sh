@@ -52,6 +52,8 @@ for bin in friday "${FRIDAY_BINARIES[@]}"; do
   [[ -f "$PROFILE_DIR/airootfs/usr/bin/$bin" ]] && chmod 755 "$PROFILE_DIR/airootfs/usr/bin/$bin"
   if [[ ! -x "$PROFILE_DIR/airootfs/usr/bin/$bin" ]]; then
     echo "Error: airootfs/usr/bin/$bin is missing" >&2
+    echo "  The FRIDAY binaries are not committed; build them by running without" >&2
+    echo "  SKIP_CARGO_BUILD=true (needs a Rust toolchain)." >&2
     exit 1
   fi
 done

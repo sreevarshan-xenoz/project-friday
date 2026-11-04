@@ -41,9 +41,15 @@ if need Hyprland runuser; then
   done
 else skip "Hyprland config verification (needs Hyprland)"; fi
 
-echo "executables are stored executable in git"
-for f in usr/bin/friday usr/bin/friday-ctl usr/bin/friday-linux-daemon usr/bin/friday-skill-forge \
-         root/configurator root/installer; do
+echo "build output is not committed"
+for f in usr/bin/friday-ctl usr/bin/friday-linux-daemon usr/bin/friday-skill-forge; do
+  if git -C "$REPO_ROOT" ls-files --error-unmatch "iso/friday/airootfs/$f" >/dev/null 2>&1; then
+    fail "$f is tracked in git (build-iso.sh builds it)"
+  else pass "$f is built, not committed"; fi
+done
+
+echo "scripts are stored executable in git"
+for f in usr/bin/friday root/configurator root/installer; do
   mode=$(git -C "$REPO_ROOT" ls-files -s "iso/friday/airootfs/$f" | awk '{print $1}')
   if [[ "$mode" == 100755 ]]; then pass "$f is 100755"; else fail "$f is ${mode:-untracked} (want 100755)"; fi
 done
