@@ -1,0 +1,1 @@
+Vendored from https://github.com/end-4/rounded-polygon-qmljs @ e31ec4cb4ebf6a46b267f5c42eabf6874916fa16 (the commit end-4/dots-hyprland pins as its submodule). Apache-2.0, see LICENSE.

@@ -116,6 +116,7 @@ pacstrap_with_retry /mnt base linux linux-firmware sudo zsh hyprland sddm uwsm q
   jq socat fzf bc wtype fastfetch starship playerctl brightnessctl pavucontrol polkit-kde-agent \
   matugen hypridle hyprlock fuzzel cliphist imagemagick libqalculate hyprsunset hyprpaper \
   qt6-5compat qt6-imageformats qt6-multimedia qt6-multimedia-ffmpeg qt6-virtualkeyboard qt6-quicktimeline qt6-svg qt6-wayland \
+  qt6-positioning ttf-material-symbols-variable \
   kirigami kdialog syntax-highlighting chromium libnotify
 
 genfstab -U /mnt >> /mnt/etc/fstab
