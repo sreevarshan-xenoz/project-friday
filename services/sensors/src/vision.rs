@@ -519,7 +519,7 @@ impl MfCapture {
 /// never guess an aspect ratio that would mislabel every coordinate).
 #[cfg(target_os = "windows")]
 fn pixels_to_frame(pixels: Vec<u8>, size: Option<(u32, u32)>) -> Option<Frame> {
-    if !pixels.len().is_multiple_of(4) || pixels.is_empty() {
+    if pixels.len() % 4 != 0 || pixels.is_empty() {
         return None;
     }
     let (width, height) = size?;
