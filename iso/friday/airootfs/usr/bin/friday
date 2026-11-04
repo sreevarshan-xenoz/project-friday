@@ -28,6 +28,7 @@ Autonomous Agent & Cognitive Loop:
   friday context screen [--yes]    Share screen context with assistant
   friday daemon <status|restart|logs> Control friday-linux-daemon service
   friday doctor                    Check daemon, AI provider and desktop health
+  friday setup-ai [provider]       Set or change the AI provider key
 
 Skill Forge:
   friday create-skill <id>         Create new skill template
@@ -121,6 +122,84 @@ friday_doctor() {
     echo "$fails problem(s), $warns warning(s)."
   fi
   [ "$fails" -eq 0 ]
+}
+
+# `friday setup-ai [provider]`: choose a provider, store its key in
+# ~/.config/friday/friday.env (0600), restart the daemon. The key is read
+# from the terminal (hidden) or from stdin, never from argv.
+friday_setup_ai() {
+  local provider="${1:-}" key="" var="" vision=false choice
+  if [ -z "$provider" ]; then
+    command -v gum >/dev/null || { echo "usage: echo KEY | friday setup-ai <gemini|groq|nvidia-nim|openrouter|cerebras>" >&2; return 1; }
+    echo "FRIDAY thinks with a cloud language model. Pick a provider:"
+    choice=$(gum choose --cursor="❯ " \
+      "Google Gemini (vision, free tier)" "Groq (fast, vision)" "NVIDIA NIM (vision)" \
+      "OpenRouter (many models, no screen context)" "Cerebras (fast, no screen context)") || return 1
+    case "$choice" in
+      "Google Gemini"*) provider=gemini ;; "Groq"*) provider=groq ;; "NVIDIA NIM"*) provider=nvidia-nim ;;
+      "OpenRouter"*) provider=openrouter ;; "Cerebras"*) provider=cerebras ;;
+    esac
+  fi
+  case "$provider" in
+    gemini)     var=GEMINI_API_KEY;     vision=true ;;
+    groq)       var=GROQ_API_KEY;       vision=true ;;
+    nvidia-nim) var=NVIDIA_NIM_API_KEY; vision=true ;;
+    openrouter) var=OPENROUTER_API_KEY ;;
+    cerebras)   var=CEREBRAS_API_KEY ;;
+    *) echo "unknown provider '$provider' (gemini, groq, nvidia-nim, openrouter, cerebras)" >&2; return 1 ;;
+  esac
+  if [ -t 0 ]; then
+    key=$(gum input --password --prompt="$var › " --placeholder="paste your key") || return 1
+  else
+    IFS= read -r key || true
+  fi
+  if [[ ! "$key" =~ ^[A-Za-z0-9._:-]{8,}$ ]]; then
+    echo "That doesn't look like an API key (too short, or contains spaces/symbols)." >&2
+    return 1
+  fi
+  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
+  mkdir -p "$(dirname "$env_file")"
+  (
+    umask 077
+    {
+      echo "# FRIDAY AI provider credentials (friday setup-ai)."
+      grep -vE '^(#|[A-Z_]+_API_KEY=|FRIDAY_CONTEXT_PROVIDER=)' "$env_file" 2>/dev/null || true
+      printf '%s=%s\n' "$var" "$key"
+      if $vision; then echo "FRIDAY_CONTEXT_PROVIDER=$provider"; fi
+    } >"$env_file.tmp"
+    mv -f "$env_file.tmp" "$env_file"
+  )
+  echo "Saved $var to $env_file (only you can read it)."
+  if systemctl --user restart friday-linux-daemon 2>/dev/null; then
+    echo "Restarted FRIDAY. Press Super+Y to ask something."
+  else
+    echo "Saved, but could not restart the daemon; run: friday daemon restart" >&2
+  fi
+}
+
+# `friday welcome`: one-time first-login greeting (autostarted by Hyprland).
+friday_welcome() {
+  local stamp="${XDG_STATE_HOME:-$HOME/.local/state}/friday/welcomed"
+  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
+  [ "${1:-}" = "--force" ] || [ ! -e "$stamp" ] || return 0
+  mkdir -p "$(dirname "$stamp")"; : >"$stamp"
+  sleep "${FRIDAY_WELCOME_DELAY:-6}"   # let the notification daemon come up
+  local name action
+  name=$(getent passwd "${USER:-$(id -un)}" | cut -d: -f5 | cut -d, -f1 || true); name="${name:-${USER:-friend}}"
+  if grep -qE '^[A-Z_]+_API_KEY=.+' "$env_file" 2>/dev/null; then
+    action=$(notify-send -a FRIDAY -t 15000 -A keys="Show shortcuts" \
+      "Hello, $name. I'm FRIDAY." \
+      "Press Super+Y to ask me anything, or select text and press Super+Alt+Y." 2>/dev/null || true)
+  else
+    action=$(notify-send -a FRIDAY -t 0 -A setup="Set up AI" -A keys="Show shortcuts" \
+      "Hello, $name. I'm FRIDAY." \
+      "I need an AI provider key before I can think. It takes a minute." 2>/dev/null || true)
+  fi
+  case "$action" in
+    setup) foot -T "FRIDAY setup" bash -c 'friday setup-ai; echo; read -rsn1 -p "Press any key to close."' ;;
+    keys)  notify-send -a FRIDAY -t 20000 "FRIDAY shortcuts" \
+             $'Super+Y  ask\nSuper+Alt+Y  ask about selected text\nfriday doctor  check health\nfriday answers  past answers' ;;
+  esac
 }
 
 case "${1:-}" in
@@ -223,6 +302,14 @@ case "${1:-}" in
     ;;
   doctor)
     friday_doctor
+    ;;
+  setup-ai)
+    shift
+    friday_setup_ai "$@"
+    ;;
+  welcome)
+    shift
+    friday_welcome "$@"
     ;;
   answers)
     d="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
