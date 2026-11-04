@@ -325,7 +325,13 @@ async fn main() {
                     // receives nothing.
                     context_reader.consent();
                 }
-                let (ok, result) = match context_reader.read().await {
+                // Optional: what the user wants to know about the screen.
+                let question = cmd
+                    .params
+                    .get("question")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let (ok, result) = match context_reader.ask(question.as_deref()).await {
                     Ok(response) => {
                         tracing::info!("[context.read] screen delivered to provider");
                         (true, serde_json::json!({ "response": response }))

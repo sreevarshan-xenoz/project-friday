@@ -13,6 +13,8 @@
 //!   friday-ctl system-info
 //!   friday-ctl context screen          (interactive consent)
 //!   friday-ctl context screen --yes    (consent already collected by the shell panel)
+//!   friday-ctl context screen --yes --ask "what does this error mean?"
+//!                                      (answer a question about the screen)
 //!
 //! `FRIDAY_CTL_ADDR` and `FRIDAY_CTL_TOKEN` override the state-file values for
 //! scripting/testing. `FRIDAY_CONTEXT_PROVIDER` names the (remote) provider a
@@ -80,6 +82,7 @@ async fn main() -> std::process::ExitCode {
         std::env::var("FRIDAY_CTL_ADDR").unwrap_or_else(|_| "127.0.0.1:18432".to_string());
     let mut token = std::env::var("FRIDAY_CTL_TOKEN").ok().unwrap_or_default();
     let mut wait = false;
+    let mut question: Option<String> = None;
 
     // Scan ALL tokens for flags (`--addr`/`--token`/`--wait` may appear before
     // or after the subcommand) so they never leak into the goal text. The first
@@ -93,6 +96,9 @@ async fn main() -> std::process::ExitCode {
             i += 2;
         } else if w == "--token" && i + 1 < raw.len() {
             token = raw[i + 1].clone();
+            i += 2;
+        } else if w == "--ask" && i + 1 < raw.len() {
+            question = Some(raw[i + 1].clone());
             i += 2;
         } else if w == "--wait" {
             wait = true;
@@ -148,7 +154,7 @@ async fn main() -> std::process::ExitCode {
     };
 
     if sub == "context" {
-        return run_context(&addr_str, &cmd_token).await;
+        return run_context(&addr_str, &cmd_token, question.as_deref()).await;
     }
     let goal = goal_words.join(" ");
     let submitted_ms = now_ms();
@@ -262,13 +268,12 @@ async fn run(addr: &str, token: &str, sub: &str, args: Vec<String>) -> std::proc
 /// R5-2-5-3: send the Screen `context.read`. `main` has already presented
 /// disclosure and collected explicit consent; this only runs after the user
 /// answered `y`, so it sends with a per-use `consent: true`.
-async fn run_context(addr: &str, token: &str) -> std::process::ExitCode {
-    send_command(
-        addr,
-        friday_mobile::method::CONTEXT_READ,
-        serde_json::json!({ "token": token, "consent": true }),
-    )
-    .await
+async fn run_context(addr: &str, token: &str, question: Option<&str>) -> std::process::ExitCode {
+    let mut params = serde_json::json!({ "token": token, "consent": true });
+    if let Some(q) = question {
+        params["question"] = serde_json::Value::String(q.to_string());
+    }
+    send_command(addr, friday_mobile::method::CONTEXT_READ, params).await
 }
 
 /// Connect to the daemon, send one command, and await the matching

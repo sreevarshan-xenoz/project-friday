@@ -171,6 +171,13 @@ where
     /// Perform one explicit Screen read. Captures, authorizes, egress-checks,
     /// then — **and only then** — hands the payload to the provider.
     pub async fn read(&self) -> Result<String, ContextReadError> {
+        self.ask(None).await
+    }
+
+    /// Like [`ScreenReader::read`], but the provider answers `question` about
+    /// the screen instead of describing it. The question travels inside the
+    /// payload, so it goes through the same ContextGate / EgressGate.
+    pub async fn ask(&self, question: Option<&str>) -> Result<String, ContextReadError> {
         let captured = self
             .collector
             .capture(
@@ -182,7 +189,12 @@ where
             )
             .map_err(|e| ContextReadError::Capture(e.to_string()))?;
 
-        let payload = screen_payload(&captured)?;
+        let mut payload = screen_payload(&captured)?;
+        if let Some(q) = question.map(str::trim).filter(|q| !q.is_empty()) {
+            // One line: the provider reads everything after `QUESTION: `.
+            payload.push_str("\nQUESTION: ");
+            payload.push_str(&q.replace(['\n', '\r'], " "));
+        }
 
         let composed = {
             let mut gate = self.gate.lock().unwrap();
@@ -325,6 +337,27 @@ mod tests {
         assert!(sent.contains("SCREEN_CAPTURE"));
         assert!(sent.contains("data="));
         assert!(sent.contains(&base64::engine::general_purpose::STANDARD.encode(PNG)));
+    }
+
+    #[tokio::test]
+    async fn question_travels_with_the_screenshot() {
+        let reader = ScreenReader::new(fake_collector(), RecordingSeam::default(), "fabric");
+        reader.consent();
+        reader
+            .ask(Some("what does this\nerror mean?"))
+            .await
+            .unwrap();
+        let sent = reader.provider.last().unwrap();
+        let (fields, question) = sent.split_once('\n').expect("question on its own line");
+        assert!(fields.starts_with("SCREEN_CAPTURE"));
+        assert_eq!(question, "QUESTION: what does this error mean?");
+    }
+
+    #[tokio::test]
+    async fn asking_still_requires_consent() {
+        let reader = ScreenReader::new(fake_collector(), RecordingSeam::default(), "fabric");
+        assert!(reader.ask(Some("what is this?")).await.is_err());
+        assert_eq!(reader.provider.sent(), 0, "no consent: nothing reaches the provider");
     }
 
     /// Invariant 2: a consenting read must NEVER reach the provider.
