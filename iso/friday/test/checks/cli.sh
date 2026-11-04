@@ -12,6 +12,11 @@ export HOME="$W/home" XDG_STATE_HOME="" XDG_CONFIG_HOME="" USER="${USER:-tester}
 
 cat >"$S/friday-ctl" <<EOF
 #!/bin/bash
+if [[ "\$1" == cancel ]]; then
+  echo "friday-ctl-cancel" >> "$LOG"
+  [[ -n "\$HAVE_GOAL" ]] && { echo '{"accepted":true}'; exit 0; }
+  echo "no goal is running" >&2; exit 1
+fi
 if [[ "\$1" == context ]]; then
   printf 'friday-ctl-context %s\n' "\$*" >> "$LOG"
   printf '{\n "response": "The error says E0308.\\\\nFix the type."\n}\n'; exit 0
@@ -76,6 +81,14 @@ if [[ "$(head -n1 <<<"$history")" == "this will fail" && "$history" != *Bonjour*
   pass "history: newest first, questions only"
 else fail "history order/content: $(tr '\n' '|' <<<"$history")"; fi
 expect "friday answers --last prints the last answer" bash -c "bash '$F' answers --last | grep -q 'this will fail'"
+
+echo "cancel"
+: >"$LOG"
+out=$(HAVE_GOAL=1 bash "$F" cancel 2>&1); rc=$?
+[[ $rc == 0 && "$out" == *"Cancelled the current goal"* ]] && pass "cancels a running goal" || fail "cancel with a goal: rc=$rc $out"
+contains "cancel goes through friday-ctl" "$(cat "$LOG")" "friday-ctl-cancel"
+out=$(bash "$F" cancel 2>&1); rc=$?
+[[ $rc == 1 && "$out" == *"no goal is running"* ]] && pass "says so when nothing is running" || fail "cancel without a goal: rc=$rc $out"
 
 echo "setup-ai"
 mkdir -p "$HOME/.config/friday"; printf 'FRIDAY_LOG=debug\nOLD_API_KEY=zzzzzzzzzz\n' >"$HOME/.config/friday/friday.env"

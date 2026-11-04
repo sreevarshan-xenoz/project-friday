@@ -23,12 +23,15 @@ MouseArea {
     implicitWidth: Appearance.sizes.barHeight * 0.8
     implicitHeight: Appearance.sizes.barHeight
     hoverEnabled: !Config.options.bar.tooltips.clickToShow
-    acceptedButtons: Qt.LeftButton | Qt.RightButton
+    acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
     cursorShape: Qt.PointingHandCursor
     // Left: ask, or bring the daemon up when it is down (asking would fail).
-    // Right: open `friday doctor`.
+    // Right: open `friday doctor`. Middle, while working: cancel the goal.
     onClicked: mouse => {
-        if (mouse.button === Qt.RightButton)
+        if (mouse.button === Qt.MiddleButton) {
+            if (root.working)
+                Friday.cancel();
+        } else if (mouse.button === Qt.RightButton)
             Friday.doctor();
         else if (root.mode === "offline" || root.mode === "degraded")
             Friday.startDaemon();

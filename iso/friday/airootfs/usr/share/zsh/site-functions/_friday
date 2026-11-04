@@ -6,6 +6,7 @@ _friday() {
   commands=(
     'ask:Ask FRIDAY (prompts if no text)'
     'goal:Dispatch an autonomous goal'
+    'cancel:Cancel the goal FRIDAY is working on'
     'answers:Show past answers'
     'status:Inspect daemon state and telemetry'
     'doctor:Check daemon, AI provider and desktop health'

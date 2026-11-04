@@ -25,6 +25,7 @@ Autonomous Agent & Cognitive Loop:
   friday ask --screen              Ask about what's on screen (Super+Ctrl+Y)
   friday answers                   Show past answers (last one: friday answers --last)
   friday goal "<objective>"        Dispatch an autonomous goal to FRIDAY agent
+  friday cancel                    Cancel the goal FRIDAY is working on
   friday status | system-info      Inspect daemon state, memory, and telemetry
   friday context screen [--yes]    Share screen context with assistant
   friday daemon <status|restart|logs> Control friday-linux-daemon service
@@ -352,6 +353,15 @@ case "${1:-}" in
   goal)
     shift
     exec friday-ctl goal "$@"
+    ;;
+  cancel)
+    if friday-ctl cancel >/dev/null 2>&1; then
+      echo "Cancelled the current goal."
+      notify-send -a FRIDAY "FRIDAY" "Cancelled the current goal." 2>/dev/null || true
+    else
+      echo "Nothing to cancel: no goal is running." >&2
+      exit 1
+    fi
     ;;
   doctor)
     friday_doctor

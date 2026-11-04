@@ -85,6 +85,11 @@ Singleton {
         Quickshell.execDetached(["friday", "ask"]);
     }
 
+    /** Cancel the goal in flight. */
+    function cancel() {
+        Quickshell.execDetached(["friday", "cancel"]);
+    }
+
     /** (Re)start the user daemon; state.json updates once it is up. */
     function startDaemon() {
         Quickshell.execDetached(["systemctl", "--user", "restart", "friday-linux-daemon"]);
