@@ -91,6 +91,11 @@ pub struct ShellState {
     /// Last explicit context read outcome (R5-2-5-2) surfaced to the shell, or
     /// `None` if none has been attempted.
     pub context_read: Option<ContextReadRecord>,
+    /// The address the command ingress actually bound (e.g. `127.0.0.1:18432`).
+    /// Clients connect here; it is not always the default port (another
+    /// user's daemon may hold it). Empty in documents from older daemons.
+    #[serde(default)]
+    pub listen: String,
     /// A stable session token the plugin must present when it issues commands
     /// over the WebSocket ingress (loopback is the coarse trust boundary; this
     /// token is the fine-grained one, mirroring Omarchy shell validation).
@@ -131,6 +136,7 @@ impl ShellState {
             telemetry: None,
             command: None,
             context_read: None,
+            listen: String::new(),
             token,
         }
     }
@@ -169,6 +175,7 @@ impl ShellState {
             "voice": self.voice,
             "telemetry": self.telemetry,
             "command": self.command,
+            "listen": self.listen,
             "token": self.token,
         })
     }
@@ -283,6 +290,24 @@ fn now_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn listen_address_is_published() {
+        let mut st = ShellState::starting("tok".into());
+        st.listen = "127.0.0.1:42301".into();
+        let json = st.to_json(1, "t".into());
+        assert_eq!(json["listen"], "127.0.0.1:42301");
+    }
+
+    #[test]
+    fn state_from_an_older_daemon_without_listen_still_parses() {
+        let old = r#"{"status":"running","updated_ms":1,"updated_utc":"t","version":1,
+            "current":null,"last_goal":null,"cognition":{},"voice":"off",
+            "telemetry":null,"command":null,"token":"tok"}"#;
+        let st: ShellState = serde_json::from_str(old).expect("older state.json parses");
+        assert_eq!(st.listen, "");
+        assert_eq!(st.token, "tok");
+    }
     use super::*;
 
     fn state() -> ShellState {

@@ -15,6 +15,12 @@ TIMEZONE="${TIMEZONE:-UTC}"
 THEME="${THEME:-FRIDAY Dots-Hyprland (Material You / Illogical Impulse)}"
 SDDM_THEME="${SDDM_THEME:-SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)}"
 AUTO_REBOOT="${AUTO_REBOOT:-false}"
+# Skip the SDDM password screen at boot. Off by default: with it on, anyone
+# who powers the machine on gets the desktop.
+AUTOLOGIN="${AUTOLOGIN:-false}"
+# LUKS2 full-disk encryption of the root partition, unlocked with PASSWORD
+# at boot. The configurator asks (default yes); unattended runs opt in.
+ENCRYPT="${ENCRYPT:-false}"
 FRIDAY_AI_PROVIDER="${FRIDAY_AI_PROVIDER:-}"
 FRIDAY_AI_KEY="${FRIDAY_AI_KEY:-}"
 # Root SSH + serial autologin on the installed system, for VM debugging only.
@@ -23,44 +29,84 @@ FRIDAY_DEBUG_ACCESS="${FRIDAY_DEBUG_ACCESS:-false}"
 if grep -qw 'friday.debug' /proc/cmdline 2>/dev/null; then FRIDAY_DEBUG_ACCESS=true; fi
 LOG_FILE="/tmp/friday-installer.log"
 
-# FRIDAY Visual Tokens
-FRIDAY_ACCENT="#7AA2F7"
-FRIDAY_SECONDARY="#BB9AF7"
-FRIDAY_MUTED="#565F89"
-FRIDAY_SUCCESS="#9ECE6A"
-FRIDAY_BORDER="#3B4261"
+# shellcheck source=friday-tui.sh
+source "$(dirname "$(readlink -f "$0")")/friday-tui.sh"
+INSTALL_STARTED=$SECONDS
+INSTALL_STEPS=(DISK MOUNT PACKAGES FRIDAY CONFIGURE BOOT)
 
-draw_brand_banner() {
-  clear
-  echo
-  gum style --foreground "$FRIDAY_ACCENT" --align center \
-" ██████╗ ██████╗ ██╗██████╗  █████╗ ██╗   ██╗" \
-" ██╔════╝██╔══██╗██║██╔══██╗██╔══██╗╚██╗ ██╔╝" \
-" █████╗  ██████╔╝██║██║  ██║███████║ ╚████╔╝ " \
-" ██╔══╝  ██╔══██╗██║██║  ██║██╔══██║  ╚██╔╝  " \
-" ██║     ██║  ██║██║██████╔╝██║  ██║   ██║   " \
-" ╚═╝     ╚═╝  ╚═╝╚═╝╚═════╝ ╚═╝  ╚═╝   ╚═╝   "
-  echo
-  gum style --foreground "$FRIDAY_SECONDARY" --bold --align center "SYSTEM ASSEMBLY IN PROGRESS"
-  gum style --foreground "$FRIDAY_MUTED" --align center "────────────────────────────────────────────────────────────"
-  echo
-}
+elapsed() { printf '%02d:%02d' $(((SECONDS - INSTALL_STARTED) / 60)) $(((SECONDS - INSTALL_STARTED) % 60)); }
 
+# phase_msg <step 1-6> <what FRIDAY is doing>
 phase_msg() {
-  draw_brand_banner >&3 2>/dev/null || true
-  gum style --foreground "$FRIDAY_ACCENT" --bold "Target: $TARGET_DISK | Host: $HOSTNAME | User: $USERNAME | Theme: $THEME" >&3 2>/dev/null || true
-  echo >&3 2>/dev/null || true
-  gum style --foreground "$FRIDAY_SUCCESS" "$1" >&3 2>/dev/null || echo "$1" >&3
-  echo >&3 2>/dev/null || true
-  gum style --foreground "$FRIDAY_MUTED" "Detailed log stream: $LOG_FILE" >&3 2>/dev/null || true
+  {
+    friday_banner "SYSTEM ASSEMBLY"
+    friday_rail "$1" "${INSTALL_STEPS[@]}"
+    friday_note "  $USERNAME@$HOSTNAME  ·  $TARGET_DISK  ·  elapsed $(elapsed)"
+    echo
+    gum style --foreground "$FRIDAY_SUCCESS" --bold "  Step $1 of 6 · $2"
+    echo
+    friday_note "  Full log: $LOG_FILE  (Alt+F2 for a shell: tail -f it)"
+    echo
+  } >&3 2>/dev/null || echo "Step $1 of 6: $2" >&3
+  echo "=== Step $1 of 6: $2"
 }
+
+# A live one-line status under the step header while a long step runs:
+# spinner, elapsed time, and the latest package pacman is handling.
+LIVE_PID=""
+live_status_start() {
+  [[ -t 3 ]] || return 0
+  (
+    trap - ERR EXIT
+    set +e
+    frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'; i=0
+    while true; do
+      line=$(tail -n 40 "$LOG_FILE" 2>/dev/null | tr '\r' '\n' \
+        | grep -oE '\(\s*[0-9]+/[0-9]+\) (installing|upgrading|checking|downloading|loading|resolving)[^ ]* ?[^ ]*|downloading [^ ]+|:: [A-Za-z ]+\.\.\.' \
+        | tail -n 1)
+      printf '\r\e[2K  \e[38;2;122;162;247m%s\e[0m %s  \e[38;2;86;95;137m%s\e[0m' \
+        "${frames:i%10:1}" "$(elapsed)" "${line:0:60}" >&3
+      i=$((i + 1))
+      sleep 0.15
+    done
+  ) &
+  LIVE_PID=$!
+}
+live_status_stop() {
+  [[ -n "$LIVE_PID" ]] || return 0
+  local pid="$LIVE_PID"
+  LIVE_PID=""
+  # A killed job makes `wait` return 143; never let that trip set -e / ERR.
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  printf '\r\e[2K' >&3
+}
+trap 'live_status_stop' EXIT
 
 exec 3>&1 4>&2
 exec >>"$LOG_FILE" 2>&1
 
-phase_msg "● Step 1 of 6: Partitioning & Formatting Target Disk ($TARGET_DISK)"
+# On any failure, show what went wrong on screen instead of a silent exit.
+on_failure() {
+  local code=$?
+  trap - ERR
+  live_status_stop
+  {
+    echo
+    friday_err "Installation stopped (exit $code). Last lines of $LOG_FILE:"
+    echo
+    tail -n 15 "$LOG_FILE" | sed 's/^/    /'
+    echo
+  } >&3 2>&1
+  exit "$code"
+}
+set -E
+trap on_failure ERR
+
+phase_msg 1 "Preparing $TARGET_DISK"
 if mountpoint -q /mnt; then fuser -km /mnt 2>/dev/null || true; fi
 umount -R /mnt 2>/dev/null || true
+cryptsetup close cryptroot 2>/dev/null || true   # left open by an earlier attempt
 swapoff -a 2>/dev/null || true
 
 parted -s "$TARGET_DISK" mklabel gpt
@@ -81,32 +127,80 @@ sleep 1
 udevadm settle
 
 mkfs.vfat -F32 "$BOOT_PART"
-mkfs.ext4 -F "$ROOT_PART"
+ROOT_DEV="$ROOT_PART"
+if [[ "$ENCRYPT" == "true" ]]; then
+  # Passphrase via stdin, never argv.
+  printf '%s' "$PASSWORD" | cryptsetup luksFormat --type luks2 --batch-mode --key-file=- "$ROOT_PART"
+  printf '%s' "$PASSWORD" | cryptsetup open --key-file=- "$ROOT_PART" cryptroot
+  ROOT_DEV=/dev/mapper/cryptroot
+fi
+mkfs.ext4 -F "$ROOT_DEV"
 
-phase_msg "● Step 2 of 6: Mounting Filesystems & Preparing Chroot"
+phase_msg 2 "Mounting filesystems"
 mkdir -p /mnt
-mount "$ROOT_PART" /mnt
+mount "$ROOT_DEV" /mnt
 mkdir -p /mnt/boot
-mount "$BOOT_PART" /mnt/boot
+# Root-only ESP: it holds the systemd-boot random seed, which bootctl flags
+# as a security hole when world-readable. genfstab carries the options over.
+mount -o fmask=0077,dmask=0077 "$BOOT_PART" /mnt/boot
 
-phase_msg "● Step 3 of 6: Pacstrapping Arch Base, Omarchy Substrate & Tools"
-pacstrap /mnt base linux linux-firmware sudo zsh hyprland sddm uwsm quickshell waybar \
+phase_msg 3 "Downloading and installing packages (the long one)"
+# A single slow or unreachable mirror ("Operation too slow") aborts pacstrap.
+# Re-running it on the same /mnt is safe: already-downloaded packages stay in
+# the cache and already-installed ones are skipped, so retry before giving up.
+PACSTRAP_ATTEMPTS="${PACSTRAP_ATTEMPTS:-3}"
+pacstrap_with_retry() {
+  local attempt=1
+  while true; do
+    if pacstrap "$@"; then
+      return 0
+    fi
+    if (( attempt >= PACSTRAP_ATTEMPTS )); then
+      echo "pacstrap failed after $attempt attempts" >&2
+      return 1
+    fi
+    echo "pacstrap attempt $attempt failed; retrying in $((attempt * 10))s" >&2
+    phase_msg 3 "A mirror was slow; retrying (attempt $((attempt + 1)) of $PACSTRAP_ATTEMPTS)"
+    sleep $((attempt * 10))
+    attempt=$((attempt + 1))
+  done
+}
+# pacstrap needs the live system's pacman keyring. pacman-init.service
+# creates it, but only after time sync; if that hasn't happened (no NTP, slow
+# boot), initialise the keyring here instead of failing with "keyring is not
+# writable".
+for _ in $(seq 120); do   # let a running pacman-init finish first
+  [[ "$(systemctl is-active pacman-init.service 2>/dev/null)" == activating ]] || break
+  sleep 1
+done
+if [[ ! -s /etc/pacman.d/gnupg/pubring.gpg && ! -s /etc/pacman.d/gnupg/pubring.kbx ]] \
+   || ! systemctl is-active --quiet pacman-init.service; then
+  echo "pacman keyring not initialised by pacman-init.service; initialising it now"
+  pacman-key --init
+  pacman-key --populate archlinux
+fi
+
+live_status_start
+pacstrap_with_retry /mnt base linux linux-firmware sudo zsh hyprland sddm uwsm quickshell waybar \
   xdg-desktop-portal-hyprland grim slurp wl-clipboard pipewire pipewire-alsa pipewire-pulse wireplumber \
   foot alacritty ttf-jetbrains-mono-nerd noto-fonts networkmanager rsync gum openssh \
   jq socat fzf bc wtype fastfetch starship playerctl brightnessctl pavucontrol polkit-kde-agent \
   matugen hypridle hyprlock fuzzel cliphist imagemagick libqalculate hyprsunset hyprpaper \
   qt6-5compat qt6-imageformats qt6-multimedia qt6-multimedia-ffmpeg qt6-virtualkeyboard qt6-quicktimeline qt6-svg qt6-wayland \
+  qt6-positioning ttf-material-symbols-variable \
   kirigami kdialog syntax-highlighting chromium libnotify
+live_status_stop
 
 genfstab -U /mnt >> /mnt/etc/fstab
 
-phase_msg "● Step 4 of 6: Materializing FRIDAY Binaries & Omarchy System"
+phase_msg 4 "Installing FRIDAY and the Omarchy desktop layer"
 mkdir -p /mnt/usr/bin
 cp -a /usr/bin/friday* /mnt/usr/bin/
 chmod 755 /mnt/usr/bin/friday*
 [ -d /usr/lib/friday ] && { mkdir -p /mnt/usr/lib ; cp -a /usr/lib/friday /mnt/usr/lib/ ; }
 ln -sf /usr/share/omarchy/bin/omarchy /mnt/usr/bin/omarchy
 ln -sf /usr/bin/friday /mnt/usr/bin/friday-os
+install -Dm644 /usr/share/zsh/site-functions/_friday /mnt/usr/share/zsh/site-functions/_friday 2>/dev/null || true
 
 mkdir -p /mnt/usr/share/omarchy
 rsync -a /usr/share/omarchy/ /mnt/usr/share/omarchy/
@@ -139,7 +233,7 @@ rsync -a /usr/share/fonts/ /mnt/usr/share/fonts/ 2>/dev/null || true
 mkdir -p /mnt/usr/share/plymouth/themes
 cp -r /usr/share/plymouth/themes/omarchy /mnt/usr/share/plymouth/themes/ 2>/dev/null || true
 
-phase_msg "● Step 5 of 6: Configuring Users, SDDM, Services & Theme"
+phase_msg 5 "Creating $USERNAME and applying your theme"
 # Hostname & Locales
 echo "$HOSTNAME" > /mnt/etc/hostname
 echo "LANG=en_US.UTF-8" > /mnt/etc/locale.conf
@@ -239,6 +333,7 @@ fi
 AI_KEY_VAR=""
 AI_VISION=false
 case "$FRIDAY_AI_PROVIDER" in
+  opencode)   AI_KEY_VAR="OPENCODE_API_KEY";   AI_VISION=true ;;
   gemini)     AI_KEY_VAR="GEMINI_API_KEY";     AI_VISION=true ;;
   groq)       AI_KEY_VAR="GROQ_API_KEY";       AI_VISION=true ;;
   nvidia-nim) AI_KEY_VAR="NVIDIA_NIM_API_KEY"; AI_VISION=true ;;
@@ -258,7 +353,7 @@ if [[ -n "$AI_KEY_VAR" && -n "$FRIDAY_AI_KEY" ]]; then
   )
   echo "FRIDAY AI provider configured: $FRIDAY_AI_PROVIDER"
 else
-  echo "FRIDAY AI provider skipped; create ~/.config/friday/friday.env to enable reasoning."
+  echo "No AI key: FRIDAY uses OpenCode Zen's free models (change with: friday setup-ai)."
 fi
 
 if [ "$USERNAME" != "root" ]; then
@@ -306,12 +401,15 @@ GreeterEnvironment=QML2_IMPORT_PATH=/usr/share/sddm/themes/$SDDM_THEME_ID/compon
 EOF_SDDM_THEME
 cp -p /mnt/etc/sddm.conf.d/10-theme.conf /mnt/etc/sddm.conf
 
-cat << EOF_SDDM_AUTO > /mnt/etc/sddm.conf.d/autologin.conf
+rm -f /mnt/etc/sddm.conf.d/autologin.conf
+if [[ "$AUTOLOGIN" == "true" ]]; then
+  cat << EOF_SDDM_AUTO > /mnt/etc/sddm.conf.d/autologin.conf
 [Autologin]
 User=$USERNAME
 Session=hyprland.desktop
 Relogin=false
 EOF_SDDM_AUTO
+fi
 
 mkdir -p /mnt/var/lib/omarchy/provisioning
 cat << EOF_INFO > /mnt/var/lib/omarchy/provisioning/install-info.json
@@ -325,52 +423,60 @@ cat << EOF_INFO > /mnt/var/lib/omarchy/provisioning/install-info.json
 }
 EOF_INFO
 
-phase_msg "● Step 6 of 6: Installing UEFI Bootloader & Finalizing System"
+phase_msg 6 "Installing the bootloader"
 bootctl --path=/mnt/boot install
 cat << EOF_LOADER > /mnt/boot/loader/loader.conf
 default arch.conf
 timeout 2
 EOF_LOADER
 
+if [[ "$ENCRYPT" == "true" ]]; then
+  LUKS_UUID=$(cryptsetup luksUUID "$ROOT_PART")
+  [[ -n "$LUKS_UUID" ]] || { echo "Could not read the LUKS UUID of $ROOT_PART." >&2; false; }
+  ROOT_OPTIONS=$(friday_add_crypt_hook /mnt/etc/mkinitcpio.conf "$LUKS_UUID" cryptroot)
+  arch-chroot /mnt mkinitcpio -P
+else
+  ROOT_PARTUUID=$(blkid -s PARTUUID -o value "$ROOT_PART")
+  if [[ -z "$ROOT_PARTUUID" ]]; then
+    echo "Could not read the PARTUUID of $ROOT_PART; the boot entry would be unbootable." >&2
+    false
+  fi
+  ROOT_OPTIONS="root=PARTUUID=$ROOT_PARTUUID"
+fi
 cat << EOF_ENTRY > /mnt/boot/loader/entries/arch.conf
 title   FRIDAY OS (Omarchy Substrate)
 linux   /vmlinuz-linux
 initrd  /initramfs-linux.img
-options root=PARTUUID=$(blkid -s PARTUUID -o value "$ROOT_PART") rw console=ttyS0,115200 console=tty1
+options $ROOT_OPTIONS rw console=ttyS0,115200 console=tty1
 EOF_ENTRY
 
 chmod +x /root/configurator /root/installer
 
 exec 1>&3 2>&4
+trap - ERR
+live_status_stop
 
-clear
+friday_banner "SYSTEM ASSEMBLY COMPLETE"
+friday_rail 7 "${INSTALL_STEPS[@]}"
+gum style --foreground "$FRIDAY_SUCCESS" --border rounded --border-foreground "$FRIDAY_BORDER" \
+  --align center --width 64 --padding "1 2" \
+  "FRIDAY OS is installed on $TARGET_DISK" \
+  "in $(elapsed)." \
+  "" \
+  "Sign in as $USERNAME on $HOSTNAME." \
+  "Press Super+Y any time to ask me something."
 echo
-gum style --foreground "$FRIDAY_ACCENT" --align center \
-" ██████╗ ██████╗ ██╗██████╗  █████╗ ██╗   ██╗" \
-" ██╔════╝██╔══██╗██║██╔══██╗██╔══██╗╚██╗ ██╔╝" \
-" █████╗  ██████╔╝██║██║  ██║███████║ ╚████╔╝ " \
-" ██╔══╝  ██╔══██╗██║██║  ██║██╔══██║  ╚██╔╝  " \
-" ██║     ██║  ██║██║██████╔╝██║  ██║   ██║   " \
-" ╚═╝     ╚═╝  ╚═╝╚═╝╚═════╝ ╚═╝  ╚═╝   ╚═╝   "
+friday_say "All done, $USERNAME. Remove the USB stick and I'll see you on the other side."
 echo
-gum style \
-  --foreground "$FRIDAY_SUCCESS" \
-  --border-foreground "$FRIDAY_BORDER" \
-  --border rounded \
-  --align center \
-  --width 64 \
-  --padding "1 2" \
-  "SYSTEM ASSEMBLY COMPLETE" \
-  "─────────────────────────────────" \
-  "FRIDAY OS installed onto $TARGET_DISK." \
-  "Desktop UI: $THEME" \
-  "SDDM Theme: $SDDM_THEME" \
-  "Admin user: $USERNAME ($HOSTNAME)" \
-  "Reboot to launch installed system."
 
 if [[ "$AUTO_REBOOT" == "true" ]]; then
   echo "Rebooting into FRIDAY OS in 3 seconds..."
   sleep 3
   umount -R /mnt 2>/dev/null || true
   reboot
+elif [[ "${FRIDAY_INTERACTIVE:-0}" == "1" ]]; then
+  if gum confirm --affirmative="Reboot now" --negative="Stay in the live system" "Restart into FRIDAY OS?"; then
+    umount -R /mnt 2>/dev/null || true
+    systemctl reboot
+  fi
 fi

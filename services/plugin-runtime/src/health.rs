@@ -135,12 +135,8 @@ impl HealthMonitor {
         plugin_ids
             .iter()
             .filter_map(|id| {
-                self.metrics.get(id).and_then(|h| {
-                    if h.status == PluginStatus::Healthy || h.status == PluginStatus::Initialized {
-                        Some(h)
-                    } else {
-                        None
-                    }
+                self.metrics.get(id).filter(|&h| {
+                    h.status == PluginStatus::Healthy || h.status == PluginStatus::Initialized
                 })
             })
             .collect()

@@ -1,106 +1,85 @@
-# AGENTS.md — Development & Operating Guide for AI Agents
+# AGENTS.md — guide for agents and contributors
 
-> **Authoritative agent guideline for Project FRIDAY (Friday OS Cognitive Operating System).**
-> All autonomous agents, subagents, and contributors modifying this codebase must adhere to the rules, architecture contracts, and roadmaps documented here.
+## What FRIDAY is
 
----
+**Goal:** a standalone assistant for **Windows and Linux** with deep
+system integration. A shared Rust core plus a thin host per platform;
+installable on an existing machine. FRIDAY OS (the Arch ISO) is the
+showcase and reference Linux setup, not the only way in.
 
-## 1. Project Mission & Identity
+**Today:**
 
-**FRIDAY OS** is an Arch Linux-based **Cognitive Operating System** designed from first principles. It fuses a Wayland dynamic tiling substrate (Hyprland + Quickshell + SDDM) with a native Rust cognitive daemon (`friday-linux-daemon`), an intent-driven agent kernel, local speech/vision/audio intelligence, and universal desktop automation.
+- Core: Rust workspace (`core`, `planner`, `services/*`).
+  `friday-linux-daemon` (`services/mobile`) runs goals through an LLM
+  provider and publishes `~/.local/state/friday/state.json`. Default
+  provider: OpenCode Zen's free models (no key); a user-configured key
+  (`friday setup-ai`) takes precedence.
+- Windows: `windows-host/` (C#: UI Automation, COM, Win32, PowerShell),
+  `plugins/windows`, Windows sensors behind `cfg(windows)`.
+- Linux: Hyprland host and sensors, the `friday` CLI
+  (`iso/friday/airootfs/usr/bin/friday`: `ask`, `goal`, `doctor`,
+  `setup-ai`, `answers`), a bar indicator, Super+Y / Super+Alt+Y.
+- FRIDAY OS: installer in `iso/friday/airootfs/root/`.
 
-- **Primary Repository Workspace**: `/home/sreevarshan/projects/project-friday`
-- **Substrate Layers**: Omarchy (Wayland, Hyprland, Quickshell, SDDM) + Friday Cognitive Subsystems (Planner, Actions, Memory, Intelligence, Sensors).
-- **Core CLI Interfaces**:
-  - `friday` — Primary user and system CLI (`friday status`, `friday goal "<objective>"`, `friday theme`, etc.)
-  - `friday-ctl` — Desktop IPC and HUD controller (toggles floating assistant HUD, quick actions, audio capture)
-  - `friday-linux-daemon` — Continuous background cognitive daemon
-  - `friday-skill-forge` — Skill compiler, validator, and packager
+**Core use case (comes before everything else):** press a key, ask about
+what's on screen or selected, get a useful answer or action, reliably, on
+both platforms.
 
----
+**System integration, not kernel code.** Go deep through the sanctioned
+interfaces: UI Automation / ETW / Win32 / services on Windows; AT-SPI /
+Wayland portals / compositor IPC / eBPF / D-Bus / systemd on Linux. No
+kernel drivers or modules (signing, crashes, kernel churn, user trust)
+unless a concrete need can't be met any other way.
 
-## 2. Core Agent Principles
+## Current plan
 
-1. **Verify Before Declaring Done**:
-   Never claim a feature works without empirical evidence. For desktop/ISO changes, run the QEMU test VM (`iso/friday/test/run-qemu.sh`) and capture visual screenshots via `iso/friday/test/vm-control.py screenshot`. For Rust crates, run `cargo test -p <crate>`.
-2. **Atomic, Coherent Changes**:
-   Implement features incrementally. Do not batch unrelated changes into single edits or commits. Follow conventional commit messages (`feat(...)`, `fix(...)`, `docs(...)`, `refactor(...)`).
-3. **Preserve Architectural Discipline**:
-   - The Core Agent Kernel stays abstract and ignorant of plugin internals.
-   - Subsystems communicate strictly via the Event Bus and IPC contracts (defined in `specs/`).
-   - Changes to the live ISO filesystem must be staged in `iso/friday/airootfs/` and declared in `profiledef.sh` and `packages.x86_64`.
-4. **No Destructive Operations**:
-   Preserve existing user configurations and code integrity. Do not wipe work directories without verifying cache reuse.
+Work top to bottom. Don't start a later phase while an earlier one has known
+failures.
 
----
+1. **First hour works.** Linux: fresh clone → `build-iso.sh` → VM install →
+   first login → Super+Y answers (VM checklist in
+   `docs/HANDOFF-2026-11-04.md`). Windows: install on a clean machine →
+   hotkey → answer. Fix everything found.
+2. **Automate it.** Every bug found by hand becomes a test: Linux desktop in
+   `iso/friday/test/` (CI `desktop` job, done); Windows host and hotkey flow
+   on the `windows-latest` runner.
+3. **Make the core use case excellent** on both platforms: selection/screen
+   context, answer quality, reliable actions, latency, clear failures.
+4. **Ship as standalone packages.** One core, per-platform packaging: an
+   Arch package (daemon, CLI, desktop integration) and a Windows installer
+   (service + tray app + hotkey, MSI/winget). Same CLI and `state.json`
+   contract everywhere.
+5. **Deeper integration** through the interfaces above (e.g. eBPF/ETW for
+   system awareness), each behind explicit user consent.
+6. **Only then** pull items from `docs/roadmap/ecosystem-backlog.md`.
 
-## 3. The 20-Capability Strategic Roadmap (1-by-1 Rollout)
+## Rules
 
-Project FRIDAY incorporates 20 high-value capabilities curated from starred repositories into a unified 5-wave implementation roadmap:
+- **Verify before saying done.** Rust: `cargo test -p <crate>`. Desktop/ISO:
+  `bash iso/friday/test/run-checks.sh`, and the VM for anything the checks
+  can't see. Say what wasn't verified.
+- **One change per commit**, conventional messages (`feat(...)`, `fix(...)`).
+- **Contracts stay narrow.** Subsystems talk through the event bus / IPC and
+  `state.json` (`specs/`). The daemon acts only on an explicit request;
+  screen capture needs per-use consent. Never print or log secrets.
+- **ISO changes** go under `iso/friday/airootfs/`; new packages go in
+  `packages.x86_64` (live ISO) and/or the installer's pacstrap list, and must
+  exist in the Arch repos (the checks verify this).
+- **Upstreams are pinned, not followed.** Omarchy is fetched at the commit in
+  `iso/friday/fetch-omarchy.sh`; vendored dots/themes are copied as files. Bump
+  a pin on purpose, in its own commit.
+- **Don't commit build output** (ISOs, `target/`, `iso/out/`, the FRIDAY
+  binaries in `airootfs/usr/bin/`: `build-iso.sh` compiles them).
 
-```mermaid
-graph TD
-  W1["Wave 1: Native Bridges & System Foundations<br/>Linux-Link • my-quickshell • xencode • llmfit"]
-  W2["Wave 2: Desktop Shell & Visual Intelligence<br/>quickshell-overview • thuki • NibrasShell • skwd-wall • caelestia"]
-  W3["Wave 3: Local Voice & Audio Subsystem<br/>KittenTTS • OpenVoice/VoiceStudio • meetily"]
-  W4["Wave 4: Web Autonomy & Agent Tooling<br/>browser-use • Agent-Reach • CLI-Anything • page-agent • awesome-skills"]
-  W5["Wave 5: Gateway & Developer Ecosystem<br/>OmniRoute • crush • avante.nvim"]
+## Commands
 
-  W1 --> W2 --> W3 --> W4 --> W5
-```
+| What | Command |
+|---|---|
+| Build the ISO | `CLEAN_WORK=true bash iso/friday/build-iso.sh` (Arch host with `archiso`) |
+| Desktop/installer checks | `bash iso/friday/test/run-checks.sh` (Arch; see script header for deps) |
+| Test VM | `bash iso/friday/test/run-qemu.sh --headless --daemon --reset-disk` (falls back to TCG without KVM) |
+| Drive the VM | `python3 iso/friday/test/vm-control.py status \| exec "<cmd>" \| screenshot --output x.png` |
+| Health on a running system | `friday doctor` |
 
-### Wave 1 — Native Bridges & Hardware Adaptation
-- **`sreevarshan-xenoz/Linux-Link`**: Remote desktop and phone pairing over Tailscale (Wayland streaming, clipboard sync, remote input).
-- **`sreevarshan-xenoz/my-quickshell-config`**: Integration of the user's custom Quickshell QML shell and UPGRADE_ROADMAP modules.
-- **`sreevarshan-xenoz/xencode`**: Local offline-first agentic coding companion integrated into the terminal/daemon.
-- **`AlexsJones/llmfit`**: First-boot hardware profiler that evaluates CPU/GPU/VRAM to auto-configure optimal Ollama models.
-
-### Wave 2 — Wayland Desktop Shell & Visual Intelligence
-- **`Shanu-Kumawat/quickshell-overview`**: Interactive drag-and-drop workspace overview for Hyprland.
-- **`quiet-node/thuki`**: Lightweight context-aware floating AI companion widget for desktop tasks.
-- **`AhmedSaadi0/NibrasShell`**: Native AI prompt and response UI widgets in Quickshell.
-- **`liixini/skwd-wall`**: Aesthetics-first wallpaper and video background selector in Rust.
-- **`caelestia-dots/shell`**: Alternative morphing shell option in the Friday installer.
-
-### Wave 3 — Voice, Speech & Iron Man Persona
-- **`KittenML/KittenTTS`**: Ultra-fast on-device TTS under 25MB for sub-second spoken replies.
-- **`myshell-ai/OpenVoice` / `debpalash/VoiceStudio`**: Friday / Jarvis voice cloning and expressive speech profiles.
-- **`Zackriya-Solutions/meetily`**: 100% local meeting notes, live Whisper transcription, and audio processing.
-
-### Wave 4 — Autonomous Browser & Universal System Control
-- **`browser-use/browser-use`**: Full browser automation agent for `friday goal` web tasks.
-- **`Panniantong/Agent-Reach`**: Zero-cost internet search and article scraping for agent awareness.
-- **`HKUDS/CLI-Anything`**: Universal translation layer making any installed Linux CLI agent-native.
-- **`alibaba/page-agent`**: Natural language DOM operator for GUI web pages.
-- **`sickn33/agentic-awesome-skills`**: Pre-built skill catalog integration into `friday-skill-forge`.
-
-### Wave 5 — Gateway & Developer Power Tools
-- **`diegosouzapw/OmniRoute`**: Local-first multi-model AI gateway with token compression.
-- **`charmbracelet/crush`**: Beautiful terminal agent for interactive coding.
-- **`avante-corp/avante.nvim`**: Cursor AI-like Neovim configuration pre-bundled in default skeleton.
-
----
-
-## 4. Testing & Verification Infrastructure
-
-- **QEMU Debug VM Control**:
-  - Script: `iso/friday/test/vm-control.py`
-  - Status check: `python3 iso/friday/test/vm-control.py status`
-  - Run command in VM: `python3 iso/friday/test/vm-control.py exec "<command>"`
-  - Send key to VM: `python3 iso/friday/test/vm-control.py monitor "sendkey <key>"`
-  - Screenshot live VM: `python3 iso/friday/test/vm-control.py screenshot --output <path.png>`
-- **ISO Rebuild**:
-  - Fast rebuild: `CLEAN_WORK=false bash iso/friday/build-iso.sh`
-  - Output directory: `/tmp/friday-iso-out/friday-<version>-x86_64.iso`
-  - Public symlink: `iso/out/friday-latest.iso`
-
----
-
-## 5. Implementation Protocol (Step-by-Step Rule)
-
-When instructed to implement items from the roadmap:
-1. **Focus on exactly ONE item at a time**.
-2. Document the implementation contract in `docs/` or `specs/`.
-3. Implement the crate/service/script with strict test coverage.
-4. Integrate the deliverable into `iso/friday/airootfs` or the cargo workspace.
-5. Verify in the live test environment and document the result before advancing to the next item.
+Gotcha: `vm-control.py wait-ready` reports SSH up before the guest is; poll a
+real `ssh … uptime`.

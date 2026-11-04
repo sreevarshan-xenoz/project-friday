@@ -309,9 +309,10 @@ impl From<&str> for EngineId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Priority {
     Low,
+    #[default]
     Normal,
     High,
     Critical,
@@ -368,12 +369,6 @@ impl serde::Serialize for Priority {
             Priority::Critical => "critical",
         };
         serializer.serialize_str(s)
-    }
-}
-
-impl Default for Priority {
-    fn default() -> Self {
-        Self::Normal
     }
 }
 

@@ -129,6 +129,18 @@ hl.bind("SUPER + CTRL + C", hl.dsp.exec_cmd("omarchy-menu toggle capture"), { de
 hl.bind("SUPER + CTRL + H", hl.dsp.exec_cmd("omarchy-menu toggle hardware"), { description = "Omarchy: Hardware menu" })
 
 -- FRIDAY Cognitive Subsystem
-hl.bind("SUPER + SHIFT + CTRL + A", hl.dsp.exec_cmd("friday ask"), { description = "FRIDAY: Ask" })
-hl.bind("SUPER + Y", hl.dsp.exec_cmd("friday ask"), { description = "FRIDAY: Ask" })
+-- The shell toggles search when Super is released (SUPER + SUPER_L above)
+-- unless searchToggleReleaseInterrupt fired while Super was held; nothing
+-- else triggers it, so without this the search overview also opened on top
+-- of FRIDAY's prompt.
+local function friday(cmd)
+    return function()
+        hl.dispatch(hl.dsp.global("quickshell:searchToggleReleaseInterrupt"))
+        hl.dispatch(hl.dsp.exec_cmd(cmd))
+    end
+end
+hl.bind("SUPER + SHIFT + CTRL + A", friday("friday ask"), { description = "FRIDAY: Ask" })
+hl.bind("SUPER + Y", friday("friday ask"), { description = "FRIDAY: Ask" })
+hl.bind("SUPER + ALT + Y", friday("friday ask --selection"), { description = "FRIDAY: Ask about selected text" })
+hl.bind("SUPER + CTRL + Y", friday("friday ask --screen"), { description = "FRIDAY: Ask about the screen" })
 hl.bind("SUPER + CTRL + F", hl.dsp.exec_cmd("friday status || omarchy-state"), { description = "FRIDAY: System State" })

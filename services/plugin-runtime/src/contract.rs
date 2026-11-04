@@ -151,33 +151,23 @@ pub struct PluginDescriptor {
 }
 
 /// How urgently a capability execution is needed.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Urgency {
     Low,
+    #[default]
     Normal,
     High,
     Critical,
 }
 
-impl Default for Urgency {
-    fn default() -> Self {
-        Self::Normal
-    }
-}
-
 /// Security sensitivity level for a request context.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum SecurityLevel {
     Low,
+    #[default]
     Medium,
     High,
     Maximum,
-}
-
-impl Default for SecurityLevel {
-    fn default() -> Self {
-        Self::Medium
-    }
 }
 
 /// Contextual information about a capability request.

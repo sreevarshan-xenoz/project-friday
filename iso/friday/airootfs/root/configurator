@@ -1,233 +1,321 @@
 #!/usr/bin/env bash
-# FRIDAY Live ISO Interactive Configurator (TUI Visual Identity Pass 2)
-set -euo pipefail
+# FRIDAY Live ISO interactive configurator.
+# Collects the install specification, then hands off to /root/installer.
+# Every step validates its input and loops on mistakes; the review screen can
+# jump back to any step; leaving never strands tty1 on a blank screen.
+set -uo pipefail
 
 OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
 export PATH="$OMARCHY_PATH/bin:$PATH"
+# shellcheck source=friday-tui.sh
+source "$(dirname "$(readlink -f "$0")")/friday-tui.sh"
 
-# Centralized FRIDAY Visual Tokens
-FRIDAY_ACCENT="#7AA2F7"      # Deep Ice Blue
-FRIDAY_SECONDARY="#BB9AF7"   # Soft Purple
-FRIDAY_MUTED="#565F89"       # Muted Slate
-FRIDAY_SUCCESS="#9ECE6A"     # Mint Green
-FRIDAY_WARNING="#E0AF68"     # Warm Amber
-FRIDAY_ERROR="#F7768E"       # Crimson Red
-FRIDAY_BORDER="#3B4261"      # Border Slate
+STEPS=(NETWORK DISK IDENTITY SECURITY REGION LOOK AI REVIEW)
 
-draw_brand_banner() {
-  clear
-  echo
-  gum style --foreground "$FRIDAY_ACCENT" --align center \
-" ██████╗ ██████╗ ██╗██████╗  █████╗ ██╗   ██╗" \
-" ██╔════╝██╔══██╗██║██╔══██╗██╔══██╗╚██╗ ██╔╝" \
-" █████╗  ██████╔╝██║██║  ██║███████║ ╚████╔╝ " \
-" ██╔══╝  ██╔══██╗██║██║  ██║██╔══██║  ╚██╔╝  " \
-" ██║     ██║  ██║██║██████╔╝██║  ██║   ██║   " \
-" ╚═╝     ╚═╝  ╚═╝╚═╝╚═════╝ ╚═╝  ╚═╝   ╚═╝   "
-  echo
-  gum style --foreground "$FRIDAY_SECONDARY" --bold --align center "COGNITIVE OPERATING SYSTEM"
-  gum style --foreground "$FRIDAY_MUTED" --align center "────────────────────────────────────────────────────────────"
-  echo
+# Defaults (also what an unattended run would use).
+TARGET_DISK="" TARGET_LABEL=""
+HOSTNAME="friday" USERNAME="friday" PASSWORD=""
+KEYBOARD="us" TIMEZONE="UTC"
+THEME="FRIDAY Dots-Hyprland (Material You / Illogical Impulse)"
+SDDM_THEME="SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)"
+FRIDAY_AI_PROVIDER="" FRIDAY_AI_KEY=""
+AUTOLOGIN="false"
+ENCRYPT="true"
+FRIDAY_AI_LABEL="OpenCode Zen free models (no key)"
+
+screen() { # screen <step-index> [subtitle]
+  friday_banner "${2:-COGNITIVE OPERATING SYSTEM}"
+  friday_rail "$1" "${STEPS[@]}"
 }
 
-draw_rail() {
-  local step="$1"
-  local s1="○ MACHINE" s2="○ IDENTITY" s3="○ SECURITY" s4="○ TIME" s5="○ THEME" s6="○ AI" s7="○ INSTALL"
-
-  case "$step" in
-    1) s1="● MACHINE" ;;
-    2) s1="✓ MACHINE"; s2="● IDENTITY" ;;
-    3) s1="✓ MACHINE"; s2="✓ IDENTITY"; s3="● SECURITY" ;;
-    4) s1="✓ MACHINE"; s2="✓ IDENTITY"; s3="✓ SECURITY"; s4="● TIME" ;;
-    5) s1="✓ MACHINE"; s2="✓ IDENTITY"; s3="✓ SECURITY"; s4="✓ TIME"; s5="● THEME" ;;
-    6) s1="✓ MACHINE"; s2="✓ IDENTITY"; s3="✓ SECURITY"; s4="✓ TIME"; s5="✓ THEME"; s6="● AI" ;;
-    7) s1="✓ MACHINE"; s2="✓ IDENTITY"; s3="✓ SECURITY"; s4="✓ TIME"; s5="✓ THEME"; s6="✓ AI"; s7="● INSTALL" ;;
-  esac
-
-  gum style --foreground "$FRIDAY_MUTED" --align center "$s1   $s2   $s3   $s4   $s5   $s6   $s7"
-  echo
-}
-
-draw_brand_banner
-draw_rail 1
-
-# 1. Discover Disks & Exclude ISO Boot Media
-BOOT_MOUNT="/run/archiso/bootmnt"
-BOOT_DEV=""
-if findmnt -n -o SOURCE "$BOOT_MOUNT" >/dev/null 2>&1; then
-  BOOT_DEV=$(findmnt -n -o SOURCE "$BOOT_MOUNT" | sed 's/[0-9]*$//;s/p[0-9]*$//')
-fi
-
-if [[ -n "$BOOT_DEV" ]]; then
-  gum style --foreground "$FRIDAY_MUTED" --border rounded --border-foreground "$FRIDAY_BORDER" --padding "0 1" --width 72 \
-    "LIVE BOOT MEDIA EXCLUDED: $BOOT_DEV (Protected Boot Medium)"
-  echo
-fi
-
-CANDIDATE_DISKS=()
-CANDIDATE_LABELS=()
-
-while read -r name type size model; do
-  dev_path="/dev/$name"
-  if [[ -n "$BOOT_DEV" && "$dev_path" == "$BOOT_DEV"* ]]; then
-    continue
-  fi
-  if [[ "$type" == "disk" && ! "$name" =~ ^(fd|loop|ram|sr) ]]; then
-    CANDIDATE_DISKS+=("$dev_path")
-    CANDIDATE_LABELS+=("$dev_path | $size | $model")
-  fi
-done < <(lsblk -d -n -o NAME,TYPE,SIZE,MODEL)
-
-if (( ${#CANDIDATE_DISKS[@]} == 0 )); then
-  gum style --foreground "$FRIDAY_ERROR" --bold "ERROR: No target installation disks found (excluding Live USB)."
-  exit 1
-fi
-
-gum style --foreground "$FRIDAY_ACCENT" --bold "Select Target Installation Disk:"
-CHOICE_LABEL=$(printf "%s\n" "${CANDIDATE_LABELS[@]}" | gum choose --cursor="❯ " --height=8)
-TARGET_DISK=$(echo "$CHOICE_LABEL" | awk -F'|' '{print $1}' | xargs)
-
-# Step 2: Identity
-draw_brand_banner
-draw_rail 2
-gum style --foreground "$FRIDAY_SUCCESS" "✓ Target Disk Selected: $TARGET_DISK"
-echo
-gum style --foreground "$FRIDAY_ACCENT" --bold "Machine Identity Configuration:"
-HOSTNAME=$(gum input --placeholder="friday" --prompt="System Hostname [friday]> " || echo "friday")
-HOSTNAME="${HOSTNAME:-friday}"
-
-USERNAME=$(gum input --placeholder="friday" --prompt="Admin Username [friday]> " || echo "friday")
-USERNAME="${USERNAME:-friday}"
-
-KEYBOARD=$(gum input --placeholder="us" --prompt="Keyboard Layout [us]> " || echo "us")
-KEYBOARD="${KEYBOARD:-us}"
-
-# Step 3: Security
-draw_brand_banner
-draw_rail 3
-gum style --foreground "$FRIDAY_SUCCESS" "✓ Target Disk: $TARGET_DISK"
-gum style --foreground "$FRIDAY_SUCCESS" "✓ Identity:    $USERNAME@$HOSTNAME ($KEYBOARD)"
-echo
-gum style --foreground "$FRIDAY_ACCENT" --bold "Security Credentials:"
-PASSWORD=$(gum input --password --prompt="Admin Password> ")
-PASSWORD_CONFIRM=$(gum input --password --prompt="Confirm Password> ")
-
-if [[ "$PASSWORD" != "$PASSWORD_CONFIRM" ]]; then
-  gum style --foreground "$FRIDAY_ERROR" "ERROR: Passwords do not match!"
-  exit 1
-fi
-
-# Step 4: Timezone
-draw_brand_banner
-draw_rail 4
-gum style --foreground "$FRIDAY_SUCCESS" "✓ Target Disk: $TARGET_DISK"
-gum style --foreground "$FRIDAY_SUCCESS" "✓ Identity:    $USERNAME@$HOSTNAME ($KEYBOARD)"
-gum style --foreground "$FRIDAY_SUCCESS" "✓ Password:    ••••••••"
-echo
-gum style --foreground "$FRIDAY_ACCENT" --bold "Time & Region:"
-TIMEZONE=$(gum input --placeholder="UTC" --prompt="Timezone [UTC]> " || echo "UTC")
-TIMEZONE="${TIMEZONE:-UTC}"
-
-# Step 5: Visual Theme Selection
-draw_brand_banner
-draw_rail 5
-gum style --foreground "$FRIDAY_SUCCESS" "✓ Target Disk: $TARGET_DISK"
-gum style --foreground "$FRIDAY_SUCCESS" "✓ Identity:    $USERNAME@$HOSTNAME ($KEYBOARD)"
-gum style --foreground "$FRIDAY_SUCCESS" "✓ Password:    ••••••••"
-gum style --foreground "$FRIDAY_SUCCESS" "✓ Timezone:    $TIMEZONE"
-echo
-gum style --foreground "$FRIDAY_ACCENT" --bold "Desktop Visual Identity & Theme Architecture:"
-THEME_CHOICE=$(gum choose --cursor="❯ " --height=6 \
-  "FRIDAY Dots-Hyprland (Material You / Illogical Impulse)" \
-  "FRIDAY Tokyo Night (Default Cybernetic Dark)" \
-  "FRIDAY Catppuccin Mocha" \
-  "FRIDAY Nord Arctic")
-THEME="${THEME_CHOICE:-FRIDAY Dots-Hyprland (Material You / Illogical Impulse)}"
-
-echo
-gum style --foreground "$FRIDAY_ACCENT" --bold "SDDM Display Manager Greeter Theme Architecture:"
-SDDM_CHOICE=$(gum choose --cursor="❯ " --height=8 \
-  "SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)" \
-  "SilentSDDM Classic (Minimal Dark Smoky)" \
-  "SilentSDDM Rei (Animated Cyberpunk)" \
-  "SilentSDDM Ken (Animated Synthwave)" \
-  "SilentSDDM Nord (Arctic Frost)" \
-  "Omarchy Classic SDDM")
-SDDM_THEME="${SDDM_CHOICE:-SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)}"
-
-# Step 6: AI Provider — the daemon has no model without one
-draw_brand_banner
-draw_rail 6
-gum style --foreground "$FRIDAY_SUCCESS" "✓ Desktop UI:  $THEME"
-gum style --foreground "$FRIDAY_SUCCESS" "✓ Greeter:     $SDDM_THEME"
-echo
-gum style --foreground "$FRIDAY_ACCENT" --bold "FRIDAY Intelligence Provider:"
-gum style --foreground "$FRIDAY_MUTED" "FRIDAY needs an LLM API key to reason. Vision-capable providers also enable screen context."
-echo
-AI_CHOICE=$(gum choose --cursor="❯ " --height=8 \
-  "Google Gemini (vision)" \
-  "Groq (fast, vision)" \
-  "NVIDIA NIM (vision)" \
-  "OpenRouter (many models, no screen context)" \
-  "Cerebras (fast, no screen context)" \
-  "Skip — configure later" || echo "Skip — configure later")
-
-FRIDAY_AI_PROVIDER=""
-case "$AI_CHOICE" in
-  "Google Gemini"*) FRIDAY_AI_PROVIDER="gemini" ;;
-  "Groq"*)          FRIDAY_AI_PROVIDER="groq" ;;
-  "NVIDIA NIM"*)    FRIDAY_AI_PROVIDER="nvidia-nim" ;;
-  "OpenRouter"*)    FRIDAY_AI_PROVIDER="openrouter" ;;
-  "Cerebras"*)      FRIDAY_AI_PROVIDER="cerebras" ;;
-esac
-
-FRIDAY_AI_KEY=""
-FRIDAY_AI_LABEL="Skipped (set later in ~/.config/friday/friday.env)"
-if [[ -n "$FRIDAY_AI_PROVIDER" ]]; then
+# Never leave tty1 dead: always end in a menu.
+leave_menu() {
+  local why="${1:-}"
   while true; do
-    FRIDAY_AI_KEY=$(gum input --password --prompt="API Key (empty to skip)> " || true)
-    if [[ -z "$FRIDAY_AI_KEY" ]]; then
-      FRIDAY_AI_PROVIDER=""
-      break
-    fi
-    # Written verbatim into a systemd EnvironmentFile; reject anything that would need quoting.
-    if [[ "$FRIDAY_AI_KEY" =~ ^[A-Za-z0-9._:-]+$ ]]; then
-      FRIDAY_AI_LABEL="$AI_CHOICE (key ••••${FRIDAY_AI_KEY: -4})"
-      break
-    fi
-    gum style --foreground "$FRIDAY_ERROR" "That doesn't look like an API key (unexpected spaces or symbols). Try again."
+    friday_banner "SETUP PAUSED"
+    [[ -n "$why" ]] && friday_say "$why"
+    echo
+    case "$(gum choose --cursor="❯ " "Start setup again" "Open a shell" "Reboot" "Power off")" in
+      "Start setup again") exec "$0" ;;
+      "Open a shell")
+        friday_note "Type 'exit' to come back to setup."
+        bash -l || true ;;
+      "Reboot") systemctl reboot ;;
+      "Power off") systemctl poweroff ;;
+      *) ;;
+    esac
   done
-fi
+}
 
-# Step 7: Final Review & Confirmation
-draw_brand_banner
-draw_rail 7
+# ------------------------------------------------------------------ steps
 
-gum style \
-  --foreground "$FRIDAY_ACCENT" \
-  --border-foreground "$FRIDAY_BORDER" \
-  --border rounded \
-  --padding "1 2" \
-  --width 72 \
-  "SYSTEM INITIALIZATION SPECIFICATION" \
-  "──────────────────────────────────────────────────────────" \
-  "  Target Disk:  $TARGET_DISK" \
-  "  Keyboard:     $KEYBOARD" \
-  "  Hostname:     $HOSTNAME" \
-  "  Admin User:   $USERNAME" \
-  "  Timezone:     $TIMEZONE" \
-  "  Desktop UI:   $THEME" \
-  "  SDDM Greeter: $SDDM_THEME" \
-  "  AI Provider:  $FRIDAY_AI_LABEL"
-
-echo
-gum style --foreground "$FRIDAY_WARNING" --bold "WARNING: ALL EXISTING DATA ON $TARGET_DISK WILL BE PERMANENTLY WIPED."
-if gum confirm "Proceed with destructive installation onto $TARGET_DISK?"; then
+step_welcome() {
+  friday_banner
+  friday_say "Hello. I'm FRIDAY."
+  friday_say "I'll ask you a few questions, then build your system while you grab a coffee."
+  friday_say "It usually takes 15 to 30 minutes, depending on your connection."
   echo
-  gum style --foreground "$FRIDAY_SUCCESS" "Specification approved. Initiating system assembly..."
-  export TARGET_DISK KEYBOARD HOSTNAME USERNAME PASSWORD TIMEZONE THEME SDDM_THEME FRIDAY_AI_PROVIDER FRIDAY_AI_KEY
-  exec /root/installer
-else
-  gum style --foreground "$FRIDAY_ERROR" "Installation cancelled by user."
-  exit 1
-fi
+  gum confirm --affirmative="Let's begin" --negative="Not now" "Ready?" || leave_menu "Whenever you're ready."
+}
+
+connect_wifi() {
+  local dev ssid pass
+  dev=$(basename "$(dirname "$(ls -d /sys/class/net/*/wireless 2>/dev/null | head -n1)")" 2>/dev/null)
+  if [[ -z "$dev" || "$dev" == "." ]]; then
+    friday_err "No Wi-Fi adapter found. Plug in an Ethernet cable instead."
+    sleep 2
+    return 1
+  fi
+  gum spin --spinner dot --title "Scanning for networks on $dev…" -- \
+    bash -c "iwctl station '$dev' scan >/dev/null 2>&1; sleep 4"
+  ssid=$( { iw dev "$dev" scan 2>/dev/null | sed -n 's/^[[:space:]]*SSID: //p'
+            iwctl station "$dev" get-networks 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' \
+              | awk 'NR>4 && NF>=3 {sub(/^[ >]+/,""); $(NF)=""; $(NF-1)=""; sub(/[ ]+$/,""); print}'
+          } | grep -v '^$' | sort -u | gum filter --placeholder "Choose a network (type to search)" ) || return 1
+  [[ -n "$ssid" ]] || return 1
+  pass=$(gum input --password --placeholder "Password for $ssid (empty for open network)") || return 1
+  if [[ -n "$pass" ]]; then
+    gum spin --spinner dot --title "Connecting to $ssid…" -- \
+      iwctl --passphrase "$pass" station "$dev" connect "$ssid"
+  else
+    gum spin --spinner dot --title "Connecting to $ssid…" -- iwctl station "$dev" connect "$ssid"
+  fi
+  sleep 3
+}
+
+step_network() {
+  while true; do
+    screen 1
+    friday_head "Network"
+    if gum spin --spinner dot --title "Checking the internet connection…" -- bash -c "$(declare -f friday_online); friday_online"; then
+      friday_ok "Online. I'll download the latest packages during install."
+      sleep 1
+      return
+    fi
+    friday_warn "I can't reach the package mirrors, and I need them to install."
+    echo
+    case "$(gum choose --cursor="❯ " "Connect to Wi-Fi" "Check again (I plugged in a cable)" "Open a shell to fix it" "Quit setup")" in
+      "Connect to Wi-Fi") connect_wifi || true ;;
+      "Check again"*) ;;
+      "Open a shell"*) friday_note "Type 'exit' when done."; bash -l || true ;;
+      *) leave_menu "Setup needs a network connection." ;;
+    esac
+  done
+}
+
+step_disk() {
+  screen 2
+  local boot_dev="" name type size model fstypes
+  if findmnt -n -o SOURCE /run/archiso/bootmnt >/dev/null 2>&1; then
+    boot_dev=$(findmnt -n -o SOURCE /run/archiso/bootmnt | sed 's/p\?[0-9]*$//')
+  fi
+  local labels=()
+  while read -r name type size model; do
+    [[ "$type" == "disk" && ! "$name" =~ ^(fd|loop|ram|sr|zram) ]] || continue
+    [[ -n "$boot_dev" && "/dev/$name" == "$boot_dev"* ]] && continue
+    fstypes=$(lsblk -n -o FSTYPE "/dev/$name" 2>/dev/null | grep -v '^$' | sort -u | paste -sd, -)
+    labels+=("/dev/$name │ $size │ ${model:-unknown model}${fstypes:+ │ has: $fstypes}")
+  done < <(lsblk -d -n -o NAME,TYPE,SIZE,MODEL)
+
+  if (( ${#labels[@]} == 0 )); then
+    leave_menu "I couldn't find a disk to install onto (the USB stick I booted from is excluded)."
+  fi
+  [[ -n "$boot_dev" ]] && friday_note "  Your boot USB ($boot_dev) is protected and not listed."
+  friday_head "Where should FRIDAY live?"
+  friday_note "  The whole disk will be erased."
+  TARGET_LABEL=$(printf '%s\n' "${labels[@]}" | gum choose --cursor="❯ " --height=8) || leave_menu
+  TARGET_DISK=$(awk -F'│' '{print $1}' <<<"$TARGET_LABEL" | xargs)
+}
+
+step_identity() {
+  screen 3
+  friday_head "Name your machine and yourself"
+  local v
+  while true; do
+    v=$(gum input --value="$HOSTNAME" --prompt="Computer name › " --placeholder="friday") || leave_menu
+    v=$(tr '[:upper:]' '[:lower:]' <<<"${v:-friday}")
+    friday_valid_hostname "$v" && { HOSTNAME="$v"; break; }
+    friday_err "Use lowercase letters, digits and hyphens (no spaces), up to 63 characters."
+  done
+  friday_ok "Computer name: $HOSTNAME"
+  while true; do
+    v=$(gum input --value="$USERNAME" --prompt="Your username › " --placeholder="friday") || leave_menu
+    v="${v:-friday}"
+    friday_valid_username "$v" && { USERNAME="$v"; break; }
+    friday_err "Start with a lowercase letter; then lowercase letters, digits, - or _. System names like root are taken."
+  done
+  friday_ok "Username: $USERNAME"
+}
+
+step_security() {
+  screen 4
+  friday_head "Choose a password for $USERNAME"
+  friday_note "  It's also used for sudo."
+  local p1 p2
+  while true; do
+    p1=$(gum input --password --prompt="Password › ") || leave_menu
+    if [[ -z "$p1" ]]; then friday_err "The password can't be empty."; continue; fi
+    p2=$(gum input --password --prompt="Again › ") || leave_menu
+    if [[ "$p1" != "$p2" ]]; then friday_err "Those didn't match. Let's try again."; continue; fi
+    if (( ${#p1} < 6 )); then
+      gum confirm --affirmative="Keep it" --negative="Choose another" "That's short (${#p1} characters). Keep it anyway?" || continue
+    fi
+    PASSWORD="$p1"
+    break
+  done
+  friday_ok "Password set"
+  echo
+  if gum confirm --default=false --affirmative="Yes, skip it" --negative="No, ask for it" \
+      "Skip the password screen when the computer starts?"; then
+    AUTOLOGIN="true"
+    friday_warn "Automatic login on: anyone who turns this computer on gets your desktop."
+  else
+    AUTOLOGIN="false"
+    friday_ok "Password required at login"
+  fi
+  echo
+  if gum confirm --default=true --affirmative="Encrypt" --negative="Don't encrypt" \
+      "Encrypt the disk with this password? (asked at every start; recommended for laptops)"; then
+    ENCRYPT="true"
+    friday_ok "Disk will be encrypted (LUKS2)"
+  else
+    ENCRYPT="false"
+    friday_warn "Disk not encrypted: anyone with the drive can read your files."
+  fi
+}
+
+step_region() {
+  screen 5
+  friday_head "Region"
+  local v
+  friday_note "  Type to search, e.g. 'kolkata', 'berlin', 'new_york'."
+  v=$(friday_timezones | gum filter --height=10 --placeholder="Timezone (current: $TIMEZONE)") || true
+  if friday_valid_timezone "${v:-}"; then TIMEZONE="$v"; fi
+  friday_ok "Timezone: $TIMEZONE"
+  friday_note "  Keyboard layout, e.g. 'us', 'uk', 'de', 'fr'."
+  v=$(friday_keymaps | gum filter --height=10 --placeholder="Keyboard (current: $KEYBOARD)") || true
+  if friday_valid_keymap "${v:-}"; then KEYBOARD="$v"; fi
+  friday_ok "Keyboard: $KEYBOARD"
+}
+
+step_look() {
+  screen 6
+  friday_head "Desktop"
+  local v
+  v=$(gum choose --cursor="❯ " --height=6 --selected="$THEME" \
+    "FRIDAY Dots-Hyprland (Material You / Illogical Impulse)" \
+    "FRIDAY Tokyo Night (Default Cybernetic Dark)" \
+    "FRIDAY Catppuccin Mocha" \
+    "FRIDAY Nord Arctic") && THEME="$v"
+  friday_ok "$THEME"
+  echo
+  friday_head "Login screen"
+  v=$(gum choose --cursor="❯ " --height=8 --selected="$SDDM_THEME" \
+    "SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)" \
+    "SilentSDDM Classic (Minimal Dark Smoky)" \
+    "SilentSDDM Rei (Animated Cyberpunk)" \
+    "SilentSDDM Ken (Animated Synthwave)" \
+    "SilentSDDM Nord (Arctic Frost)" \
+    "Omarchy Classic SDDM") && SDDM_THEME="$v"
+  friday_ok "$SDDM_THEME"
+}
+
+step_ai() {
+  screen 7
+  friday_head "Give FRIDAY a brain"
+  friday_say "I think with a cloud language model. OpenCode Zen's free models work with no account."
+  friday_note "  Prefer your own provider? Pick it and paste its key. Change it later with: friday setup-ai"
+  echo
+  local choice key
+  choice=$(gum choose --cursor="❯ " --height=8 \
+    "OpenCode Zen (free, no key needed)" \
+    "Google Gemini (vision, free tier)" \
+    "Groq (fast, vision)" \
+    "NVIDIA NIM (vision)" \
+    "OpenRouter (many models, no screen context)" \
+    "Cerebras (fast, no screen context)") || choice="OpenCode Zen"
+  FRIDAY_AI_PROVIDER=""
+  case "$choice" in
+    "OpenCode Zen"*)  FRIDAY_AI_PROVIDER="opencode" ;;
+    "Google Gemini"*) FRIDAY_AI_PROVIDER="gemini" ;;
+    "Groq"*)          FRIDAY_AI_PROVIDER="groq" ;;
+    "NVIDIA NIM"*)    FRIDAY_AI_PROVIDER="nvidia-nim" ;;
+    "OpenRouter"*)    FRIDAY_AI_PROVIDER="openrouter" ;;
+    "Cerebras"*)      FRIDAY_AI_PROVIDER="cerebras" ;;
+  esac
+  FRIDAY_AI_KEY=""
+  FRIDAY_AI_LABEL="OpenCode Zen free models (no key)"
+  local optional=false placeholder="paste it here (empty: use OpenCode Zen's free models)"
+  if [[ "$FRIDAY_AI_PROVIDER" == opencode ]]; then
+    optional=true placeholder="optional: OpenCode key for paid models (Enter to skip)"
+  fi
+  while true; do
+    key=$(gum input --password --prompt="API key › " --placeholder="$placeholder") || key=""
+    if [[ -z "$key" ]]; then
+      # No key: OpenCode Zen's free models (the daemon's default).
+      $optional || friday_note "  No key: using OpenCode Zen's free models instead."
+      FRIDAY_AI_PROVIDER=""
+      friday_ok "$FRIDAY_AI_LABEL"
+      return 0
+    fi
+    if friday_valid_api_key "$key"; then
+      FRIDAY_AI_KEY="$key"
+      FRIDAY_AI_LABEL="${choice%% (*} (key ••••${key: -4})"
+      friday_ok "$FRIDAY_AI_LABEL"
+      return 0
+    fi
+    friday_err "That doesn't look like an API key (too short, or has spaces/symbols). Try again."
+  done
+}
+
+review() {
+  while true; do
+    screen 8 "REVIEW"
+    gum style --foreground "$FRIDAY_ACCENT" --border rounded --border-foreground "$FRIDAY_BORDER" \
+      --padding "1 2" --width 90 \
+      "Disk        $TARGET_LABEL$([[ $ENCRYPT == true ]] && echo "  (encrypted)")" \
+      "Computer    $HOSTNAME" \
+      "User        $USERNAME   (password set, $([[ $AUTOLOGIN == true ]] && echo "automatic login" || echo "asked at login"))" \
+      "Region      $TIMEZONE · keyboard $KEYBOARD" \
+      "Desktop     $THEME" \
+      "Login       $SDDM_THEME" \
+      "AI          $FRIDAY_AI_LABEL"
+    echo
+    gum style --foreground "$FRIDAY_WARNING" --bold "  Installing erases everything on $TARGET_DISK."
+    echo
+    case "$(gum choose --cursor="❯ " \
+        "Install FRIDAY OS" "Change disk" "Change names" "Change password" \
+        "Change region" "Change desktop" "Change AI" "Quit setup")" in
+      "Install FRIDAY OS")
+        gum confirm --default=false --affirmative="Erase and install" --negative="Back" \
+          "Last check: erase $TARGET_DISK and install?" && return 0 ;;
+      "Change disk") step_disk ;;
+      "Change names") step_identity ;;
+      "Change password") step_security ;;
+      "Change region") step_region ;;
+      "Change desktop") step_look ;;
+      "Change AI") step_ai ;;
+      *) leave_menu "Nothing was written to disk." ;;
+    esac
+  done
+}
+
+# ------------------------------------------------------------------ flow
+
+step_welcome
+step_network
+step_disk
+step_identity
+step_security
+step_region
+step_look
+step_ai
+review
+
+friday_banner
+friday_say "Thanks, $USERNAME. I'll take it from here."
+sleep 1
+export TARGET_DISK KEYBOARD HOSTNAME USERNAME PASSWORD TIMEZONE THEME SDDM_THEME FRIDAY_AI_PROVIDER FRIDAY_AI_KEY AUTOLOGIN ENCRYPT
+export FRIDAY_INTERACTIVE=1
+/root/installer || leave_menu "Something went wrong during the install. The full log is in /tmp/friday-installer.log."
+leave_menu ""

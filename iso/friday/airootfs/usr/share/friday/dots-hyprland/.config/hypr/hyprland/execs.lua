@@ -22,4 +22,7 @@ hl.on("hyprland.start", function ()
 
     -- Cursor
     hl.exec_cmd("hyprctl setcursor Bibata-Modern-Classic 24")
+
+    -- FRIDAY: one-time first-login greeting (offers AI setup if no key yet)
+    hl.exec_cmd("friday welcome")
 end)

@@ -1,6 +1,11 @@
 -- Keep only your personal keybinding overrides here. Add new bindings or
 -- unbind defaults before replacing them.
 
+-- FRIDAY (same keys as the Dots-Hyprland desktop).
+o.bind("SUPER + Y", "FRIDAY: Ask", "friday ask")
+o.bind("SUPER + ALT + Y", "FRIDAY: Ask about selected text", "friday ask --selection")
+o.bind("SUPER + CTRL + Y", "FRIDAY: Ask about the screen", "friday ask --screen")
+
 -- See current bindings and descriptions:
 --   omarchy menu keybindings --print
 

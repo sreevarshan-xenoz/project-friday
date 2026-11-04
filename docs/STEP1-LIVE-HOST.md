@@ -2,7 +2,7 @@
 
 > Design doc for turning the existing architecture into the daily laptop host.
 > Follows the trace of the **actual** executable seam — no invented daemon.
-> Companion to [`TRUE-FRIDAY-INTEGRATION-MATRIX.md`](TRUE-FRIDAY-INTEGRATION-MATRIX.md).
+> Companion to [`TRUE-FRIDAY-INTEGRATION-MATRIX.md`](design/TRUE-FRIDAY-INTEGRATION-MATRIX.md).
 
 ## The seam we extend: `friday-mobile-daemon` (NOT the bridge)
 

@@ -1,5 +1,9 @@
 [Unit]
 Description=FRIDAY Linux Host Daemon
+# Enabled globally (all users' default.target), but it serves the desktop
+# user: never start it for root or system accounts. A root session (e.g. a
+# root console login) would otherwise take 127.0.0.1:18432 first.
+ConditionUser=!@system
 
 [Service]
 Type=notify

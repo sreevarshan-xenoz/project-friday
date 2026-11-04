@@ -143,15 +143,30 @@ async fn main() {
     let friday = Friday::new();
     let bus = friday.bus().clone();
 
-    let listen: SocketAddr = std::env::var("FRIDAY_LISTEN")
+    let explicit_listen: Option<SocketAddr> = std::env::var("FRIDAY_LISTEN")
         .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_else(|| DEFAULT_LISTEN.parse().unwrap());
+        .and_then(|s| s.parse().ok());
+    let listen: SocketAddr = explicit_listen.unwrap_or_else(|| DEFAULT_LISTEN.parse().unwrap());
     if !listen.ip().is_loopback() {
         tracing::warn!(
             "listen {listen} is not loopback; the shell contract expects loopback as the trust boundary"
         );
     }
+    // Bind up front so the real address can be published in state.json. The
+    // default port may belong to another user's daemon on the same machine;
+    // then take any free loopback port (clients read `listen` from
+    // state.json). An explicitly configured FRIDAY_LISTEN must be honoured or
+    // fail.
+    let listener = match tokio::net::TcpListener::bind(listen).await {
+        Ok(l) => Ok(l),
+        Err(e) if explicit_listen.is_none() && e.kind() == std::io::ErrorKind::AddrInUse => {
+            tracing::warn!(
+                "{listen} is in use (another user's FRIDAY?); using a free loopback port"
+            );
+            tokio::net::TcpListener::bind("127.0.0.1:0").await
+        }
+        Err(e) => Err(e),
+    };
 
     // Shell ingress: loopback WebSocket, NO QR-pair auth (same host; the
     // loopback bind + per-run session token are the trust boundary).
@@ -171,6 +186,22 @@ async fn main() {
 
     let token = generate_token();
     let state = Arc::new(Mutex::new(ShellState::starting(token.clone())));
+    let listener = match listener {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!("cannot bind the command ingress on {listen}: {e}");
+            let mut st = state.lock().await;
+            st.status = "failed".into();
+            write_state(&state_path, &render(&st));
+            std::process::exit(1);
+        }
+    };
+    let bound = listener
+        .local_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_else(|_| listen.to_string());
+    state.lock().await.listen = bound.clone();
+    tracing::info!("shell command ingress bound on {bound}");
 
     // Seed initial `starting` document so the shell sees something on first read.
     write_state(&state_path, &render(&*state.lock().await));
@@ -183,6 +214,15 @@ async fn main() {
     // a hung-local-model stall (same fabric tuning as the mobile daemon).
     let mut fabric = InferenceFabric::default_from_env();
     fabric.request_timeout = Some(Duration::from_secs(15));
+    // OpenCode Zen (the keyless default) rotates its free models: swap the
+    // static fallback for the live free lineup. Bounded so a slow or offline
+    // network never delays startup.
+    match tokio::time::timeout(Duration::from_secs(8), fabric.refresh_opencode_catalog()).await {
+        Ok(true) => tracing::info!("[providers] OpenCode Zen: live free models loaded"),
+        _ => tracing::warn!(
+            "[providers] OpenCode Zen catalog unavailable; using built-in free models"
+        ),
+    }
     let fabric = Arc::new(fabric);
     tracing::info!(
         "[Investigation] fabric: {} providers / {} models registered",
@@ -237,7 +277,9 @@ async fn main() {
     // is qualified on the Omarchy target (R5-2-5-4). A missing/unknown vendor
     // fails honestly at the provider seam rather than silently.
     let context_provider =
-        std::env::var("FRIDAY_CONTEXT_PROVIDER").unwrap_or_else(|_| "fabric".to_string());
+        // "opencode" is the keyless default (the old "fabric" default named no
+        // real provider, so screen reads failed unless this was set).
+        std::env::var("FRIDAY_CONTEXT_PROVIDER").unwrap_or_else(|_| "opencode".to_string());
     let screen_reader = Arc::new(friday_mobile::context_read::ScreenReader::new(
         ContextCollector::new(RealCommandRunner::default()),
         friday_mobile::context_read::FabricProviderSeam::new(fabric.clone(), &context_provider),
@@ -325,7 +367,13 @@ async fn main() {
                     // receives nothing.
                     context_reader.consent();
                 }
-                let (ok, result) = match context_reader.read().await {
+                // Optional: what the user wants to know about the screen.
+                let question = cmd
+                    .params
+                    .get("question")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let (ok, result) = match context_reader.ask(question.as_deref()).await {
                     Ok(response) => {
                         tracing::info!("[context.read] screen delivered to provider");
                         (true, serde_json::json!({ "response": response }))
@@ -408,11 +456,19 @@ async fn main() {
     tracing::info!("FRIDAY linux daemon listening on {listen}");
 
     // Run the WS server until told to stop.
-    tokio::select! {
-        r = server.run() => {
+    let failed = tokio::select! {
+        r = server.run_on(listener) => {
             match r {
-                Ok(()) => tracing::info!("shell ingress closed cleanly"),
-                Err(e) => tracing::error!("shell ingress stopped: {e}"),
+                Ok(()) => {
+                    tracing::info!("shell ingress closed cleanly");
+                    false
+                }
+                Err(e) => {
+                    // e.g. another daemon (another user's session) already owns
+                    // the port. Treat it as a failure, not a clean stop.
+                    tracing::error!("shell ingress stopped: {e}");
+                    true
+                }
             }
         }
         _ = wait_for_stop(&stopping) => {
@@ -420,11 +476,24 @@ async fn main() {
             let mut st = state.lock().await;
             st.status = "stopping".into();
             write_state(&state_path, &render(&st));
+            false
         }
-    }
+    };
 
+    // Never leave state.json claiming "running" after exit: the bar, doctor
+    // and friday-ctl all trust it.
+    {
+        let mut st = state.lock().await;
+        st.status = if failed { "failed" } else { "stopped" }.into();
+        write_state(&state_path, &render(&st));
+    }
     sd_notify("STOPPING=1\nSTATUS=FRIDAY stopped\n");
     tracing::info!("FRIDAY linux daemon stopped");
+    if failed {
+        // Non-zero so systemd marks the unit failed and Restart=on-failure
+        // retries it.
+        std::process::exit(1);
+    }
 }
 
 async fn wait_for_stop(flag: &Arc<AtomicBool>) {

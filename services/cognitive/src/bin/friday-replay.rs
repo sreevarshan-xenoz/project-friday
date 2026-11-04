@@ -71,7 +71,7 @@ fn main() {
 
         println!(
             "{}  {:<40}  source={:<15}  priority={:?}",
-            time, &event.topic, &event.source, event.priority
+            time, event.topic, event.source, event.priority
         );
         count += 1;
     }

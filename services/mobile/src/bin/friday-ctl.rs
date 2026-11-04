@@ -11,12 +11,16 @@
 //!   friday-ctl goal --wait "open chromium"   (block until the goal finishes;
 //!                                            exit status = its outcome)
 //!   friday-ctl system-info
+//!   friday-ctl cancel                  (cancel the goal in flight)
 //!   friday-ctl context screen          (interactive consent)
 //!   friday-ctl context screen --yes    (consent already collected by the shell panel)
+//!   friday-ctl context screen --yes --ask "what does this error mean?"
+//!                                      (answer a question about the screen)
 //!
-//! `FRIDAY_CTL_ADDR` and `FRIDAY_CTL_TOKEN` override the state-file values for
+//! The daemon's address comes from `state.json` (`listen`). `FRIDAY_CTL_ADDR`
+//! and `FRIDAY_CTL_TOKEN` override the state-file values for
 //! scripting/testing. `FRIDAY_CONTEXT_PROVIDER` names the (remote) provider a
-//! `context screen` share goes to, defaulting to `fabric` to match the daemon.
+//! `context screen` share goes to, defaulting to `opencode` to match the daemon.
 
 use std::time::Duration;
 
@@ -45,7 +49,7 @@ fn screen_disclosure() -> String {
 /// guaranteed to see nothing.
 fn confirm_context_consent() -> bool {
     let provider =
-        std::env::var("FRIDAY_CONTEXT_PROVIDER").unwrap_or_else(|_| "fabric".to_string());
+        std::env::var("FRIDAY_CONTEXT_PROVIDER").unwrap_or_else(|_| "opencode".to_string());
 
     println!("FRIDAY — share the current Screen with the assistant");
     println!();
@@ -76,10 +80,16 @@ async fn main() -> std::process::ExitCode {
     } else {
         ShellState::default_path()
     };
-    let mut addr_str =
-        std::env::var("FRIDAY_CTL_ADDR").unwrap_or_else(|_| "127.0.0.1:18432".to_string());
+    // Address precedence: --addr, then FRIDAY_CTL_ADDR, then the address the
+    // daemon published in state.json (it is not always the default port),
+    // then the default.
+    let mut addr_str = std::env::var("FRIDAY_CTL_ADDR")
+        .ok()
+        .or_else(|| read_listen(&state_path))
+        .unwrap_or_else(|| "127.0.0.1:18432".to_string());
     let mut token = std::env::var("FRIDAY_CTL_TOKEN").ok().unwrap_or_default();
     let mut wait = false;
+    let mut question: Option<String> = None;
 
     // Scan ALL tokens for flags (`--addr`/`--token`/`--wait` may appear before
     // or after the subcommand) so they never leak into the goal text. The first
@@ -94,6 +104,9 @@ async fn main() -> std::process::ExitCode {
         } else if w == "--token" && i + 1 < raw.len() {
             token = raw[i + 1].clone();
             i += 2;
+        } else if w == "--ask" && i + 1 < raw.len() {
+            question = Some(raw[i + 1].clone());
+            i += 2;
         } else if w == "--wait" {
             wait = true;
             i += 1;
@@ -104,7 +117,7 @@ async fn main() -> std::process::ExitCode {
     }
 
     let Some(sub) = positional.first() else {
-        eprintln!("usage: friday-ctl <goal|system-info|context screen> [goal text] [--addr <host:port>] [--token <tok>]");
+        eprintln!("usage: friday-ctl <goal|cancel|system-info|context screen> [goal text] [--addr <host:port>] [--token <tok>]");
         return std::process::ExitCode::FAILURE;
     };
     let sub = sub.clone();
@@ -148,7 +161,21 @@ async fn main() -> std::process::ExitCode {
     };
 
     if sub == "context" {
-        return run_context(&addr_str, &cmd_token).await;
+        return run_context(&addr_str, &cmd_token, question.as_deref()).await;
+    }
+    if sub == "cancel" {
+        // Cancel the goal the daemon reports as in flight (state.json
+        // `current`); the daemon matches it by run id.
+        let Some(task_id) = read_current_goal_id(&state_path) else {
+            eprintln!("no goal is running");
+            return std::process::ExitCode::FAILURE;
+        };
+        return send_command(
+            &addr_str,
+            friday_mobile::method::TASK_CANCEL,
+            serde_json::json!({ "token": cmd_token, "task_id": task_id }),
+        )
+        .await;
     }
     let goal = goal_words.join(" ");
     let submitted_ms = now_ms();
@@ -223,6 +250,20 @@ fn finished_goal(
     finished.then(|| last.clone())
 }
 
+/// The id of the goal the daemon reports as in flight, if any.
+fn read_current_goal_id(path: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let st: ShellState = serde_json::from_str(&text).ok()?;
+    st.current.map(|g| g.id).filter(|id| !id.is_empty())
+}
+
+/// The ingress address the daemon published in state.json, if any.
+fn read_listen(path: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let st: ShellState = serde_json::from_str(&text).ok()?;
+    (!st.listen.is_empty()).then_some(st.listen)
+}
+
 fn read_token(path: &std::path::Path) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
     let st: ShellState = serde_json::from_str(&text).ok()?;
@@ -262,13 +303,12 @@ async fn run(addr: &str, token: &str, sub: &str, args: Vec<String>) -> std::proc
 /// R5-2-5-3: send the Screen `context.read`. `main` has already presented
 /// disclosure and collected explicit consent; this only runs after the user
 /// answered `y`, so it sends with a per-use `consent: true`.
-async fn run_context(addr: &str, token: &str) -> std::process::ExitCode {
-    send_command(
-        addr,
-        friday_mobile::method::CONTEXT_READ,
-        serde_json::json!({ "token": token, "consent": true }),
-    )
-    .await
+async fn run_context(addr: &str, token: &str, question: Option<&str>) -> std::process::ExitCode {
+    let mut params = serde_json::json!({ "token": token, "consent": true });
+    if let Some(q) = question {
+        params["question"] = serde_json::Value::String(q.to_string());
+    }
+    send_command(addr, friday_mobile::method::CONTEXT_READ, params).await
 }
 
 /// Connect to the daemon, send one command, and await the matching

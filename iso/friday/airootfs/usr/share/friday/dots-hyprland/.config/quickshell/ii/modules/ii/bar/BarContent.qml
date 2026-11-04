@@ -131,7 +131,6 @@ Item { // Bar content region
         BarGroup {
             id: middleCenterGroup
             anchors.verticalCenter: parent.verticalCenter
-            padding: workspacesWidget.widgetPadding
 
             Workspaces {
                 id: workspacesWidget
@@ -176,6 +175,10 @@ Item { // Bar content region
 
                 UtilButtons {
                     visible: (Config.options.bar.verbose && root.useShortenedForm === 0)
+                    Layout.alignment: Qt.AlignVCenter
+                }
+
+                FridayIndicator {
                     Layout.alignment: Qt.AlignVCenter
                 }
 

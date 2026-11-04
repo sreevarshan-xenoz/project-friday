@@ -1,0 +1,44 @@
+#compdef friday friday-os
+# zsh completion for the FRIDAY CLI.
+
+_friday() {
+  local -a commands
+  commands=(
+    'ask:Ask FRIDAY (prompts if no text)'
+    'goal:Dispatch an autonomous goal'
+    'cancel:Cancel the goal FRIDAY is working on'
+    'answers:Show past answers'
+    'status:Inspect daemon state and telemetry'
+    'doctor:Check daemon, AI provider and desktop health'
+    'setup-ai:Set or change the AI provider key'
+    'welcome:Show the first-login greeting again'
+    'context:Share screen context with the assistant'
+    'daemon:Control the friday-linux-daemon service'
+    'create-skill:Create a new skill template'
+    'validate:Validate a skill manifest'
+    'publish:Publish a validated skill'
+    'theme:Switch the desktop theme'
+    'bar:Configure the Quickshell bar'
+    'update:Update the system'
+    'menu:Launch the system control menu'
+    'commands:List desktop substrate commands'
+  )
+
+  if (( CURRENT == 2 )); then
+    _describe -t commands 'friday command' commands
+    return
+  fi
+
+  case "$words[2]" in
+    ask)      _arguments '(-s --selection --screen)'{-s,--selection}'[ask about the selected/copied text]' \
+                '(-s --selection --screen)--screen[ask about what is on screen]' '*:question:' ;;
+    answers)  _arguments '--last[show only the last answer]' ;;
+    setup-ai) _values 'provider' opencode gemini groq nvidia-nim openrouter cerebras ;;
+    welcome)  _arguments '--force[show it even if already shown]' ;;
+    daemon)   _values 'action' status start stop restart logs ;;
+    context)  _values 'source' screen ;;
+    validate|publish) _files ;;
+  esac
+}
+
+_friday "$@"

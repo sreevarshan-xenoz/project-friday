@@ -8,19 +8,20 @@ Communicates directly with the QEMU VM via:
   4. Framebuffer screenshots & serial logs
 """
 
-import sys
+import argparse
 import os
-import time
+import select
 import socket
 import subprocess
-import argparse
-import select
+import sys
+import time
 
 MONITOR_SOCK = "/tmp/friday-qemu-monitor.sock"
 SERIAL_SOCK = "/tmp/friday-qemu-serial.sock"
 SERIAL_LOG = "/tmp/friday-qemu-serial.log"
 SSH_HOST = "127.0.0.1"
 SSH_PORT = 2222
+
 
 def send_qemu_monitor(cmd: str, timeout: float = 2.0) -> str:
     if not os.path.exists(MONITOR_SOCK):
@@ -36,28 +37,33 @@ def send_qemu_monitor(cmd: str, timeout: float = 2.0) -> str:
                 data = s.recv(1024)
                 if not data or b"(qemu)" in data:
                     break
-        except socket.timeout:
+        except TimeoutError:
             pass
 
-        s.sendall((cmd + "\n").encode('utf-8'))
+        s.sendall((cmd + "\n").encode("utf-8"))
         response = ""
         s.settimeout(timeout)
         while True:
             try:
-                data = s.recv(4096).decode('utf-8', errors='replace')
-                if not data:
+                chunk = s.recv(4096).decode("utf-8", errors="replace")
+                if not chunk:
                     break
-                response += data
+                response += chunk
                 if "(qemu)" in response:
                     break
-            except socket.timeout:
+            except TimeoutError:
                 break
         s.close()
         # Clean up echo and final prompt
-        lines = [line for line in response.splitlines() if not line.strip().startswith("(qemu)") and line.strip() != cmd.strip()]
+        lines = [
+            line
+            for line in response.splitlines()
+            if not line.strip().startswith("(qemu)") and line.strip() != cmd.strip()
+        ]
         return "\n".join(lines).strip()
     except Exception as e:
         return f"Error communicating with QEMU monitor: {e}"
+
 
 def send_serial(cmd: str, wait_secs: float = 2.0) -> str:
     if not os.path.exists(SERIAL_SOCK):
@@ -66,13 +72,13 @@ def send_serial(cmd: str, wait_secs: float = 2.0) -> str:
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.settimeout(1.0)
         s.connect(SERIAL_SOCK)
-        s.sendall((cmd + "\n").encode('utf-8'))
+        s.sendall((cmd + "\n").encode("utf-8"))
         time.sleep(wait_secs)
         response = ""
         while True:
             ready, _, _ = select.select([s], [], [], 0.5)
             if ready:
-                data = s.recv(4096).decode('utf-8', errors='replace')
+                data = s.recv(4096).decode("utf-8", errors="replace")
                 if not data:
                     break
                 response += data
@@ -83,21 +89,29 @@ def send_serial(cmd: str, wait_secs: float = 2.0) -> str:
     except Exception as e:
         return f"Error sending serial command: {e}"
 
-def ssh_exec(cmd: str, timeout: int = 30) -> subprocess.CompletedProcess:
+
+def ssh_exec(cmd: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
     ssh_cmd = [
         "ssh",
-        "-p", str(SSH_PORT),
-        "-o", "LogLevel=ERROR",
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "UserKnownHostsFile=/dev/null",
-        "-o", "ConnectTimeout=5",
-        "-o", "BatchMode=yes",
+        "-p",
+        str(SSH_PORT),
+        "-o",
+        "LogLevel=ERROR",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "ConnectTimeout=5",
+        "-o",
+        "BatchMode=yes",
         f"root@{SSH_HOST}",
-        cmd
+        cmd,
     ]
     return subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=timeout)
 
-def check_status():
+
+def check_status() -> None:
     print("=== FRIDAY OS VM Status ===")
     # Check if QEMU process is alive
     res = subprocess.run(["pgrep", "-f", "qemu-system-x86_64"], capture_output=True, text=True)
@@ -117,7 +131,10 @@ def check_status():
     sock.settimeout(1.0)
     ssh_open = sock.connect_ex((SSH_HOST, SSH_PORT)) == 0
     sock.close()
-    print(f"● SSH Daemon (127.0.0.1:{SSH_PORT}): {'ONLINE (Ready for commands)' if ssh_open else 'BOOTING / INITIALIZING'}")
+    print(
+        f"● SSH Daemon (127.0.0.1:{SSH_PORT}): "
+        + ("ONLINE (Ready for commands)" if ssh_open else "BOOTING / INITIALIZING")
+    )
 
     # Check serial log size
     if os.path.exists(SERIAL_LOG):
@@ -125,10 +142,10 @@ def check_status():
         print(f"● Serial Log: {SERIAL_LOG} ({size} bytes)")
     print("===========================")
 
-def wait_ready(timeout=180):
+
+def wait_ready(timeout: int = 180) -> bool:
     print(f"Waiting for VM to boot and present console / SSH (timeout {timeout}s)...")
     start = time.time()
-    last_log_pos = 0
     while time.time() - start < timeout:
         # Check SSH
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -141,16 +158,22 @@ def wait_ready(timeout=180):
 
         # Check serial log for prompt
         if os.path.exists(SERIAL_LOG):
-            with open(SERIAL_LOG, "r", errors="replace") as f:
+            with open(SERIAL_LOG, errors="replace") as f:
                 content = f.read()
-                if "login:" in content or "root@" in content or "archiso ~ #" in content or "Startup finished" in content:
+                if (
+                    "login:" in content
+                    or "root@" in content
+                    or "archiso ~ #" in content
+                    or "Startup finished" in content
+                ):
                     print(f"VM console ready after {int(time.time() - start)}s!")
                     return True
         time.sleep(2)
     print("Timed out waiting for VM readiness.")
     return False
 
-def screenshot(out_path="screenshot.png"):
+
+def screenshot(out_path: str = "screenshot.png") -> None:
     ppm_path = "/tmp/friday-screen.ppm"
     print("Triggering QEMU screendump...")
     send_qemu_monitor(f"screendump {ppm_path}")
@@ -165,15 +188,18 @@ def screenshot(out_path="screenshot.png"):
     else:
         print("Failed to capture framebuffer dump from QEMU monitor.")
 
-def main():
+
+def main() -> None:
     parser = argparse.ArgumentParser(description="FRIDAY OS VM Terminal Control & Monitoring")
     subparsers = parser.add_subparsers(dest="action")
 
     subparsers.add_parser("status", help="Check VM and services status")
-    
+
     exec_p = subparsers.add_parser("exec", help="Execute command inside VM (via SSH or Serial)")
     exec_p.add_argument("command", help="Command to run in VM")
-    exec_p.add_argument("--serial", action="store_true", help="Force serial transport instead of SSH")
+    exec_p.add_argument(
+        "--serial", action="store_true", help="Force serial transport instead of SSH"
+    )
 
     ser_p = subparsers.add_parser("serial", help="Send command to VM serial console")
     ser_p.add_argument("command", help="Command to send")
@@ -191,7 +217,7 @@ def main():
     wait_p = subparsers.add_parser("wait-ready", help="Wait for VM to complete booting")
     wait_p.add_argument("--timeout", type=int, default=180, help="Timeout in seconds")
 
-    stop_p = subparsers.add_parser("stop", help="Stop VM cleanly")
+    subparsers.add_parser("stop", help="Stop VM cleanly")
 
     args = parser.parse_args()
 
@@ -206,7 +232,10 @@ def main():
                     sys.stderr.write(res.stderr)
                     sys.exit(0)
                 else:
-                    print(f"SSH returned {res.returncode}: {res.stderr.strip()}. Falling back to serial console...")
+                    print(
+                        f"SSH returned {res.returncode}: {res.stderr.strip()}. "
+                        "Falling back to serial console..."
+                    )
             except Exception as e:
                 print(f"SSH failed ({e}). Falling back to serial console...")
         out = send_serial(args.command)
@@ -232,6 +261,7 @@ def main():
         print(send_qemu_monitor("system_powerdown"))
     else:
         parser.print_help()
+
 
 if __name__ == "__main__":
     main()
