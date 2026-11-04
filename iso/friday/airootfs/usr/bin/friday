@@ -101,13 +101,28 @@ friday_doctor() {
 
   echo
   echo "AI provider"
+  local key_var=""
   if [ -r "$env_file" ]; then
-    local key_var
     key_var=$(grep -oE '^[A-Z_]+_API_KEY=.+' "$env_file" | head -n1 | cut -d= -f1 || true)
-    if [ -n "$key_var" ]; then ok "$key_var is set in $env_file"
-    else ok "no API key: using OpenCode Zen's free models (rate-limited; friday setup-ai to add a key)"; fi
+  fi
+  if [ -n "$key_var" ]; then ok "$key_var is set in $env_file"
+  else ok "no API key: using OpenCode Zen's free models (rate-limited; friday setup-ai to add a key)"; fi
+  # Can this machine reach the provider at all? (Offline, a firewall or a
+  # captive portal otherwise only shows up as asks failing.) Any HTTP answer
+  # counts as reachable; no credentials are sent.
+  local api_host
+  case "$key_var" in
+    GEMINI_API_KEY)     api_host=generativelanguage.googleapis.com ;;
+    GROQ_API_KEY)       api_host=api.groq.com ;;
+    OPENROUTER_API_KEY) api_host=openrouter.ai ;;
+    CEREBRAS_API_KEY)   api_host=api.cerebras.ai ;;
+    NVIDIA_NIM_API_KEY) api_host=integrate.api.nvidia.com ;;
+    *)                  api_host=opencode.ai ;;
+  esac
+  if curl -sS -o /dev/null --max-time 6 "https://$api_host/" 2>/dev/null; then
+    ok "$api_host is reachable"
   else
-    ok "no API key: using OpenCode Zen's free models (rate-limited; friday setup-ai to add a key)"
+    bad "can't reach $api_host" "check the network (Wi-Fi, firewall, captive portal); asks fail until it's reachable"
   fi
 
   echo

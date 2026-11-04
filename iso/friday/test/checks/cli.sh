@@ -41,6 +41,7 @@ printf '#!/bin/bash\necho "foot $*" >> %q\n' "$LOG" >"$S/foot"
 printf '#!/bin/bash\necho "systemctl $*" >> %q\n[[ "$*" == *is-active* && -n "$STUB_INACTIVE" ]] && exit 3\nexit 0\n' "$LOG" >"$S/systemctl"
 printf '#!/bin/bash\n[[ "$*" == *--primary* ]] && { printf %%s "$PRIMARY"; exit 0; }\nprintf %%s "$CLIP"\n' >"$S/wl-paste"
 printf '#!/bin/bash\necho "fuzzel $*" >> %q\necho "$PICK"\n' "$LOG" >"$S/fuzzel"
+printf '#!/bin/bash\necho "curl $*" >> %q\n[[ -n "$OFFLINE" ]] && exit 6\nexit 0\n' "$LOG" >"$S/curl"
 chmod +x "$S"/*
 export PATH="$S:$PATH"
 state="$HOME/.local/state/friday"
@@ -126,8 +127,12 @@ contains "probes the address the daemon published" "$out" "nothing listening on 
 out=$(STUB_INACTIVE=1 bash "$F" doctor 2>&1 || true)
 contains "stale state (running, but service dead) is flagged" "$out" "stale: the daemon crashed or was killed"
 contains "names the key variable" "$out" "GEMINI_API_KEY is set"
+contains "checks the configured provider is reachable" "$out" "generativelanguage.googleapis.com is reachable"
+out=$(OFFLINE=1 bash "$F" doctor 2>&1 || true)
+contains "offline: says the provider can't be reached" "$out" "can't reach generativelanguage.googleapis.com"
 rm -f "$envf"; out=$(bash "$F" doctor 2>&1 || true)
 contains "no key is fine: uses OpenCode Zen" "$out" "using OpenCode Zen's free models"
+contains "no key: checks OpenCode Zen is reachable" "$out" "opencode.ai is reachable"
 if [[ "$out" == *"!"*"API key"* ]]; then fail "doctor warns about a missing key"; else pass "doctor does not warn without a key"; fi
 if [[ "$out" == *s3cret* || "$out" == *abc123secret* ]]; then fail "doctor printed a secret"; else pass "doctor prints no secrets"; fi
 
