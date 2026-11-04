@@ -149,6 +149,21 @@ pacstrap_with_retry() {
     attempt=$((attempt + 1))
   done
 }
+# pacstrap needs the live system's pacman keyring. pacman-init.service
+# creates it, but only after time sync; if that hasn't happened (no NTP, slow
+# boot), initialise the keyring here instead of failing with "keyring is not
+# writable".
+for _ in $(seq 120); do   # let a running pacman-init finish first
+  [[ "$(systemctl is-active pacman-init.service 2>/dev/null)" == activating ]] || break
+  sleep 1
+done
+if [[ ! -s /etc/pacman.d/gnupg/pubring.gpg && ! -s /etc/pacman.d/gnupg/pubring.kbx ]] \
+   || ! systemctl is-active --quiet pacman-init.service; then
+  echo "pacman keyring not initialised by pacman-init.service; initialising it now"
+  pacman-key --init
+  pacman-key --populate archlinux
+fi
+
 live_status_start
 pacstrap_with_retry /mnt base linux linux-firmware sudo zsh hyprland sddm uwsm quickshell waybar \
   xdg-desktop-portal-hyprland grim slurp wl-clipboard pipewire pipewire-alsa pipewire-pulse wireplumber \
