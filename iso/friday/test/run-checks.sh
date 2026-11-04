@@ -35,7 +35,12 @@ for g in "${groups[@]}"; do
   fi
   echo
   echo "━━━ $g ━━━"
-  if bash "$script"; then
+  runner=(bash "$script")
+  # The shell check needs a session bus for notifications.
+  if [[ "$g" == shell && -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]] && command -v dbus-run-session >/dev/null; then
+    runner=(dbus-run-session -- bash "$script")
+  fi
+  if "${runner[@]}"; then
     echo "━━━ $g: ok"
   else
     echo "━━━ $g: FAILED"

@@ -27,6 +27,11 @@ export WAYLAND_DISPLAY="$(basename "$sock")" QT_QPA_PLATFORM=wayland
 qs -p "$HOME/.config/quickshell/ii" >"$W/qs.log" 2>&1 &
 QS=$!
 sleep "${SHELL_WAIT:-20}"
+# FRIDAY answers arrive as notifications; ii is the notification server.
+if [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] && need notify-send; then
+  notify-send -a FRIDAY "FRIDAY check" "notification popup test" && sleep 4
+  NOTIFIED=1
+fi
 grim "$W/bar.png" 2>/dev/null || true
 
 if grep -q "Failed to load configuration" "$W/qs.log"; then
@@ -35,9 +40,13 @@ if grep -q "Failed to load configuration" "$W/qs.log"; then
 else
   pass "ii shell loaded"
 fi
-errs=$(grep -E "(TypeError|ReferenceError|is not a type|unavailable).*(Friday|friday)" "$W/qs.log" || true)
-if [[ -n "$errs" ]]; then fail "FRIDAY widget errors:"; sed 's/^/      /' <<<"$errs"
-else pass "FRIDAY indicator: no QML errors"; fi
+# Any QML type/binding error anywhere in the shell (not only FRIDAY's widget).
+errs=$(grep -E "TypeError|ReferenceError|Unable to assign|is not a type|unavailable" "$W/qs.log" \
+  | sed 's/\x1b\[[0-9;]*m//g' | sort | uniq -c || true)
+if [[ -n "$errs" ]]; then fail "QML errors in the shell log:"; sed 's/^/      /' <<<"$errs"
+else pass "no QML type or binding errors"; fi
+if [[ "${NOTIFIED:-0}" == 1 ]]; then pass "notification sent to the shell (see screenshot)"
+else skip "notification popup (no D-Bus session; run under dbus-run-session)"; fi
 if kill -0 "$QS" 2>/dev/null; then pass "shell still running after ${SHELL_WAIT:-20}s"; else fail "shell exited (see $W/qs.log)"; fi
 [[ -s "$W/bar.png" ]] && pass "screenshot: $W/bar.png"
 
