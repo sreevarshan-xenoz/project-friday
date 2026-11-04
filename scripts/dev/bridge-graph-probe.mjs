@@ -1,3 +1,4 @@
+// Dev probe: watch InvestigationGraph goal changes on the live bridge (node 22+).
 // Track InvestigationGraph goal changes on the live bridge (~40s ≈ 3 cycles).
 const ws = new WebSocket('ws://127.0.0.1:18433');
 let lastGoal = null;

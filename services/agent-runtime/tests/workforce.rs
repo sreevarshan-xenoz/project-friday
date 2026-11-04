@@ -318,7 +318,7 @@ impl Drop for TempDir {
 /// persistent root and every public recovery avenue is tried.
 ///
 /// This test QUALIFIES the recovery behavior; it intentionally does not
-/// repair it. Observed outcome recorded in QUALIFICATION-CAMPAIGN.md (F2).
+/// repair it. Observed outcome recorded in docs/design/QUALIFICATION-CAMPAIGN.md (F2).
 #[tokio::test]
 async fn f2_hard_crash_orphans_an_in_progress_task_and_no_public_api_recovers_it() {
     let fx = fixture().await;

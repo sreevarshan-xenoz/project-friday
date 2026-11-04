@@ -1,5 +1,5 @@
 //! **R5-2-4 — Context Gate**: the single consent boundary between OS context and
-//! any provider (frozen spec `R5-2-4-CONTEXT-GATE-SPEC.md`).
+//! any provider (frozen spec `docs/design/R5-2-4-CONTEXT-GATE-SPEC.md`).
 //!
 //! This gate answers one question, **before** any context channel may travel to a
 //! provider:

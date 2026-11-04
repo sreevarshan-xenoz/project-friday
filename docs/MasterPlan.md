@@ -6,7 +6,7 @@
 > [`specs/architecture/friday-architecture-vnext.md`](../specs/architecture/friday-architecture-vnext.md).
 > This doc re-sequences those tiers into the order we actually build and records
 > **why**. Project qualification state is tracked separately in
-> [`../QUALIFICATION-STATUS.md`](../QUALIFICATION-STATUS.md); that document is
+> [`design/QUALIFICATION-STATUS.md`](design/QUALIFICATION-STATUS.md); that document is
 > the source of truth for `PASS` / `PARTIAL` / `BLOCKED` / `DEFERRED`.
 > The same table (condensed) is mirrored in the repo
 > [README](../README.md#master-plan--the-corrected-build-order).

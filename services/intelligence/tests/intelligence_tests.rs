@@ -386,7 +386,7 @@ async fn test_inference_fabric_persistence_and_telemetry() {
 
 // ======================================================================
 // R5-2-3-2 — failure/fallback qualification boundary tests (F1/F2/F3).
-// Frozen spec: `R5-2-3-2-FALLBACK-QUALIFICATION.md`. No architectural
+// Frozen spec: `docs/design/R5-2-3-2-FALLBACK-QUALIFICATION.md`. No architectural
 // change — these pin the fallback guarantees that the R5-2-3-1 wiring
 // (Copilot account-auth + Groq free-remote floor) must keep intact.
 // ======================================================================

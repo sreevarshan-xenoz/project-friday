@@ -10,7 +10,7 @@ All architecture milestones (M0–M5) are **complete** and the runtime API is
 architecture — it is to *prove the system is reliable*. Every change from here is
 measured against real numbers, not vibes.
 
-For project qualification status, use [../QUALIFICATION-STATUS.md](../QUALIFICATION-STATUS.md).
+For project qualification status, use [design/QUALIFICATION-STATUS.md](design/QUALIFICATION-STATUS.md).
 This roadmap records implementation order and bounded acceptance; it does not
 override the project-level qualification baseline.
 

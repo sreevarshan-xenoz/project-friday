@@ -24,7 +24,7 @@ stack on top of the proven core (evidence lifecycle, durable workflows,
 investigation, agent runtime, memory fabric) while qualification keeps proving
 reliability with benchmarks.
 
-Qualification state is tracked in [QUALIFICATION-STATUS.md](QUALIFICATION-STATUS.md).
+Qualification state is tracked in [docs/design/QUALIFICATION-STATUS.md](docs/design/QUALIFICATION-STATUS.md).
 That document is the source of truth for `PASS` / `PARTIAL` / `BLOCKED` /
 `DEFERRED` project status.
 
