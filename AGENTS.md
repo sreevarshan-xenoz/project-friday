@@ -11,7 +11,9 @@ showcase and reference Linux setup, not the only way in.
 
 - Core: Rust workspace (`core`, `planner`, `services/*`).
   `friday-linux-daemon` (`services/mobile`) runs goals through an LLM
-  provider and publishes `~/.local/state/friday/state.json`.
+  provider and publishes `~/.local/state/friday/state.json`. Default
+  provider: OpenCode Zen's free models (no key); a user-configured key
+  (`friday setup-ai`) takes precedence.
 - Windows: `windows-host/` (C#: UI Automation, COM, Win32, PowerShell),
   `plugins/windows`, Windows sensors behind `cfg(windows)`.
 - Linux: Hyprland host and sensors, the `friday` CLI

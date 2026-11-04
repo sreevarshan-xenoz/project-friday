@@ -32,7 +32,7 @@ _friday() {
     ask)      _arguments '(-s --selection --screen)'{-s,--selection}'[ask about the selected/copied text]' \
                 '(-s --selection --screen)--screen[ask about what is on screen]' '*:question:' ;;
     answers)  _arguments '--last[show only the last answer]' ;;
-    setup-ai) _values 'provider' gemini groq nvidia-nim openrouter cerebras ;;
+    setup-ai) _values 'provider' opencode gemini groq nvidia-nim openrouter cerebras ;;
     welcome)  _arguments '--force[show it even if already shown]' ;;
     daemon)   _values 'action' status start stop restart logs ;;
     context)  _values 'source' screen ;;

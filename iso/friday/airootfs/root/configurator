@@ -20,7 +20,7 @@ THEME="FRIDAY Dots-Hyprland (Material You / Illogical Impulse)"
 SDDM_THEME="SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)"
 FRIDAY_AI_PROVIDER="" FRIDAY_AI_KEY=""
 AUTOLOGIN="false"
-FRIDAY_AI_LABEL="Skipped (set later in ~/.config/friday/friday.env)"
+FRIDAY_AI_LABEL="OpenCode Zen free models (no key)"
 
 screen() { # screen <step-index> [subtitle]
   friday_banner "${2:-COGNITIVE OPERATING SYSTEM}"
@@ -213,19 +213,20 @@ step_look() {
 step_ai() {
   screen 7
   friday_head "Give FRIDAY a brain"
-  friday_say "I think with a cloud language model. Pick a provider and paste its API key."
-  friday_note "  Vision-capable providers also let me look at your screen, only when you ask."
+  friday_say "I think with a cloud language model. OpenCode Zen's free models work with no account."
+  friday_note "  Prefer your own provider? Pick it and paste its key. Change it later with: friday setup-ai"
   echo
   local choice key
   choice=$(gum choose --cursor="❯ " --height=8 \
+    "OpenCode Zen (free, no key needed)" \
     "Google Gemini (vision, free tier)" \
     "Groq (fast, vision)" \
     "NVIDIA NIM (vision)" \
     "OpenRouter (many models, no screen context)" \
-    "Cerebras (fast, no screen context)" \
-    "Skip for now") || choice="Skip for now"
+    "Cerebras (fast, no screen context)") || choice="OpenCode Zen"
   FRIDAY_AI_PROVIDER=""
   case "$choice" in
+    "OpenCode Zen"*)  FRIDAY_AI_PROVIDER="opencode" ;;
     "Google Gemini"*) FRIDAY_AI_PROVIDER="gemini" ;;
     "Groq"*)          FRIDAY_AI_PROVIDER="groq" ;;
     "NVIDIA NIM"*)    FRIDAY_AI_PROVIDER="nvidia-nim" ;;
@@ -233,11 +234,20 @@ step_ai() {
     "Cerebras"*)      FRIDAY_AI_PROVIDER="cerebras" ;;
   esac
   FRIDAY_AI_KEY=""
-  FRIDAY_AI_LABEL="Skipped (set later in ~/.config/friday/friday.env)"
-  [[ -n "$FRIDAY_AI_PROVIDER" ]] || return 0
+  FRIDAY_AI_LABEL="OpenCode Zen free models (no key)"
+  local optional=false placeholder="paste it here (empty: use OpenCode Zen's free models)"
+  if [[ "$FRIDAY_AI_PROVIDER" == opencode ]]; then
+    optional=true placeholder="optional: OpenCode key for paid models (Enter to skip)"
+  fi
   while true; do
-    key=$(gum input --password --prompt="API key › " --placeholder="paste it here (empty to skip)") || key=""
-    if [[ -z "$key" ]]; then FRIDAY_AI_PROVIDER=""; return 0; fi
+    key=$(gum input --password --prompt="API key › " --placeholder="$placeholder") || key=""
+    if [[ -z "$key" ]]; then
+      # No key: OpenCode Zen's free models (the daemon's default).
+      $optional || friday_note "  No key: using OpenCode Zen's free models instead."
+      FRIDAY_AI_PROVIDER=""
+      friday_ok "$FRIDAY_AI_LABEL"
+      return 0
+    fi
     if friday_valid_api_key "$key"; then
       FRIDAY_AI_KEY="$key"
       FRIDAY_AI_LABEL="${choice%% (*} (key ••••${key: -4})"

@@ -320,6 +320,7 @@ fi
 AI_KEY_VAR=""
 AI_VISION=false
 case "$FRIDAY_AI_PROVIDER" in
+  opencode)   AI_KEY_VAR="OPENCODE_API_KEY";   AI_VISION=true ;;
   gemini)     AI_KEY_VAR="GEMINI_API_KEY";     AI_VISION=true ;;
   groq)       AI_KEY_VAR="GROQ_API_KEY";       AI_VISION=true ;;
   nvidia-nim) AI_KEY_VAR="NVIDIA_NIM_API_KEY"; AI_VISION=true ;;
@@ -339,7 +340,7 @@ if [[ -n "$AI_KEY_VAR" && -n "$FRIDAY_AI_KEY" ]]; then
   )
   echo "FRIDAY AI provider configured: $FRIDAY_AI_PROVIDER"
 else
-  echo "FRIDAY AI provider skipped; create ~/.config/friday/friday.env to enable reasoning."
+  echo "No AI key: FRIDAY uses OpenCode Zen's free models (change with: friday setup-ai)."
 fi
 
 if [ "$USERNAME" != "root" ]; then

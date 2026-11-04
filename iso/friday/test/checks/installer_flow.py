@@ -35,7 +35,8 @@ STEPS = [
     (4, "kolkata"), (2, ENTER),     # timezone search
     (4, "uk"), (2, ENTER),          # keymap search
     (3, ENTER), (2, ENTER),         # desktop, login theme
-    (6, DOWN * 5), (1, ENTER),      # AI: Skip
+    (6, ENTER),                     # AI: OpenCode Zen (first, default)
+    (3, ENTER),                     # no key: free models
     (4, DOWN * 2), (1, ENTER),      # review: Change names
     (3, ENTER), (2, ENTER),         # keep names
     (4, ENTER),                     # review: Install
@@ -84,6 +85,7 @@ checks = {
     "password mismatch re-prompts": "didn't match" in text,
     "review screen shown": "Last check: erase /dev/vda" in text,
     "autologin defaults to off": "Password required at login" in text,
+    "AI defaults to OpenCode Zen free models": "OpenCode Zen free models (no key)" in text,
     "installer received the spec": bool(env_lines),
 }
 env = env_lines[-1] if env_lines else ""

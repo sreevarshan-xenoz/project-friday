@@ -93,9 +93,9 @@ friday_doctor() {
     local key_var
     key_var=$(grep -oE '^[A-Z_]+_API_KEY=.+' "$env_file" | head -n1 | cut -d= -f1 || true)
     if [ -n "$key_var" ]; then ok "$key_var is set in $env_file"
-    else warn "no *_API_KEY in $env_file" "add e.g. GEMINI_API_KEY=… then: friday daemon restart"; fi
+    else ok "no API key: using OpenCode Zen's free models (rate-limited; friday setup-ai to add a key)"; fi
   else
-    warn "no $env_file (reasoning runs local-only)" "create it with e.g. GEMINI_API_KEY=… then: friday daemon restart"
+    ok "no API key: using OpenCode Zen's free models (rate-limited; friday setup-ai to add a key)"
   fi
 
   echo
@@ -131,30 +131,38 @@ friday_doctor() {
 friday_setup_ai() {
   local provider="${1:-}" key="" var="" vision=false choice
   if [ -z "$provider" ]; then
-    command -v gum >/dev/null || { echo "usage: echo KEY | friday setup-ai <gemini|groq|nvidia-nim|openrouter|cerebras>" >&2; return 1; }
+    command -v gum >/dev/null || { echo "usage: echo KEY | friday setup-ai <opencode|gemini|groq|nvidia-nim|openrouter|cerebras>" >&2; return 1; }
     echo "FRIDAY thinks with a cloud language model. Pick a provider:"
     choice=$(gum choose --cursor="❯ " \
+      "OpenCode Zen (free, no key needed)" \
       "Google Gemini (vision, free tier)" "Groq (fast, vision)" "NVIDIA NIM (vision)" \
       "OpenRouter (many models, no screen context)" "Cerebras (fast, no screen context)") || return 1
     case "$choice" in
+      "OpenCode Zen"*) provider=opencode ;;
       "Google Gemini"*) provider=gemini ;; "Groq"*) provider=groq ;; "NVIDIA NIM"*) provider=nvidia-nim ;;
       "OpenRouter"*) provider=openrouter ;; "Cerebras"*) provider=cerebras ;;
     esac
   fi
   case "$provider" in
+    opencode)   var=OPENCODE_API_KEY;   vision=true ;;
     gemini)     var=GEMINI_API_KEY;     vision=true ;;
     groq)       var=GROQ_API_KEY;       vision=true ;;
     nvidia-nim) var=NVIDIA_NIM_API_KEY; vision=true ;;
     openrouter) var=OPENROUTER_API_KEY ;;
     cerebras)   var=CEREBRAS_API_KEY ;;
-    *) echo "unknown provider '$provider' (gemini, groq, nvidia-nim, openrouter, cerebras)" >&2; return 1 ;;
+    *) echo "unknown provider '$provider' (opencode, gemini, groq, nvidia-nim, openrouter, cerebras)" >&2; return 1 ;;
   esac
   if [ -t 0 ]; then
-    key=$(gum input --password --prompt="$var › " --placeholder="paste your key") || return 1
+    local hint="paste your key"
+    [ "$provider" = opencode ] && hint="optional (Enter for the free models)"
+    key=$(gum input --password --prompt="$var › " --placeholder="$hint") || return 1
   else
     IFS= read -r key || true
   fi
-  if [[ ! "$key" =~ ^[A-Za-z0-9._:-]{8,}$ ]]; then
+  # OpenCode Zen's free models need no key: an empty key is valid there.
+  if [ "$provider" = opencode ] && [ -z "$key" ]; then
+    :
+  elif [[ ! "$key" =~ ^[A-Za-z0-9._:-]{8,}$ ]]; then
     echo "That doesn't look like an API key (too short, or contains spaces/symbols)." >&2
     return 1
   fi
@@ -165,12 +173,13 @@ friday_setup_ai() {
     {
       echo "# FRIDAY AI provider credentials (friday setup-ai)."
       grep -vE '^(#|[A-Z_]+_API_KEY=|FRIDAY_CONTEXT_PROVIDER=)' "$env_file" 2>/dev/null || true
-      printf '%s=%s\n' "$var" "$key"
+      [ -z "$key" ] || printf '%s=%s\n' "$var" "$key"
       if $vision; then echo "FRIDAY_CONTEXT_PROVIDER=$provider"; fi
     } >"$env_file.tmp"
     mv -f "$env_file.tmp" "$env_file"
   )
-  echo "Saved $var to $env_file (only you can read it)."
+  if [ -n "$key" ]; then echo "Saved $var to $env_file (only you can read it)."
+  else echo "Using OpenCode Zen's free models (no key). Saved to $env_file."; fi
   if systemctl --user restart friday-linux-daemon 2>/dev/null; then
     echo "Restarted FRIDAY. Press Super+Y to ask something."
   else
@@ -187,19 +196,15 @@ friday_welcome() {
   sleep "${FRIDAY_WELCOME_DELAY:-6}"   # let the notification daemon come up
   local name action
   name=$(getent passwd "${USER:-$(id -un)}" | cut -d: -f5 | cut -d, -f1 || true); name="${name:-${USER:-friend}}"
-  if grep -qE '^[A-Z_]+_API_KEY=.+' "$env_file" 2>/dev/null; then
-    action=$(notify-send -a FRIDAY -t 15000 -A keys="Show shortcuts" \
-      "Hello, $name. I'm FRIDAY." \
-      "Press Super+Y to ask me anything, or select text and press Super+Alt+Y." 2>/dev/null || true)
-  else
-    action=$(notify-send -a FRIDAY -t 0 -A setup="Set up AI" -A keys="Show shortcuts" \
-      "Hello, $name. I'm FRIDAY." \
-      "I need an AI provider key before I can think. It takes a minute." 2>/dev/null || true)
-  fi
+  local body="Press Super+Y to ask me anything, Super+Alt+Y about selected text, Super+Ctrl+Y about your screen."
+  grep -qE '^[A-Z_]+_API_KEY=.+' "$env_file" 2>/dev/null \
+    || body="$body I'm on OpenCode Zen's free models; add your own key any time."
+  action=$(notify-send -a FRIDAY -t 20000 -A keys="Show shortcuts" -A setup="Choose AI provider" \
+    "Hello, $name. I'm FRIDAY." "$body" 2>/dev/null || true)
   case "$action" in
     setup) foot -T "FRIDAY setup" bash -c 'friday setup-ai; echo; read -rsn1 -p "Press any key to close."' ;;
     keys)  notify-send -a FRIDAY -t 20000 "FRIDAY shortcuts" \
-             $'Super+Y  ask\nSuper+Alt+Y  ask about selected text\nfriday doctor  check health\nfriday answers  past answers' ;;
+             $'Super+Y  ask\nSuper+Alt+Y  ask about selected text\nSuper+Ctrl+Y  ask about the screen\nfriday doctor  check health\nfriday answers  past answers' ;;
   esac
 }
 
@@ -288,6 +293,9 @@ case "${1:-}" in
     else
       answer=$(jq -r '.error // .outcome // empty' <<<"$summary")
       [ -n "$answer" ] || answer="$out"
+      if [[ "$answer$out" == *FreeUsageLimitError* ]]; then
+        answer="OpenCode Zen's free limit is used up for now. Try again later, or add your own key: friday setup-ai"
+      fi
       title="FRIDAY ✗ $goal"
     fi
 

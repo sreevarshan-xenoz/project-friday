@@ -18,6 +18,7 @@ if [[ "\$1" == context ]]; then
 fi
 printf 'friday-ctl %q\n' "\$3" >> "$LOG"
 echo '{"accepted":true}'
+if [[ "\$3" == *limit* ]]; then printf '{\n "outcome": "failed",\n "error": "provider opencode: 429 FreeUsageLimitError"\n}\n'; exit 1; fi
 if [[ "\$3" == *fail* ]]; then printf '{\n "outcome": "failed",\n "error": "network unreachable"\n}\n'; exit 1; fi
 printf '{\n "outcome": "completed",\n "result": "Line one.\\\\nLine two.\\\\nLast line."\n}\n'
 EOF
@@ -54,6 +55,8 @@ PICK="what does this error mean" bash "$F" ask --screen; sleep 0.3
 contains "screen: asks the daemon with consent and the question" "$(cat "$LOG")" "friday-ctl-context context screen --yes --ask what does this error mean"
 contains "screen: prompt says a screenshot is shared" "$(cat "$LOG")" "a screenshot goes to your AI provider"
 contains "screen: full answer saved" "$(cat "$state/last-answer.md")" $'The error says E0308.\nFix the type.'
+bash "$F" ask "hit the limit"; sleep 0.3
+contains "free-limit error explained with a way out" "$(cat "$state/last-answer.md")" "free limit is used up for now"
 bash "$F" ask "this will fail"; sleep 0.3
 contains "failure is critical with the error" "$(cat "$LOG")" "-u critical"
 contains "failure shows the reason" "$(cat "$LOG")" "network unreachable"
@@ -75,11 +78,16 @@ contains "vision provider enables screen context" "$(cat "$envf")" "FRIDAY_CONTE
 contains "daemon restarted" "$(cat "$LOG")" "systemctl --user restart friday-linux-daemon"
 refuse "rejects a malformed key" bash -c "echo 'bad key!' | bash '$F' setup-ai groq"
 refuse "rejects an unknown provider" bash -c "echo AIzaSyTestKey_12345 | bash '$F' setup-ai openai"
+expect "opencode works with no key" bash -c "printf '\\n' | bash '$F' setup-ai opencode"
+if grep -qE '_API_KEY=' "$envf"; then fail "opencode without key left an API key in the env file"
+else pass "switching to opencode free models clears the old key"; fi
+contains "opencode handles screen questions" "$(cat "$envf")" "FRIDAY_CONTEXT_PROVIDER=opencode"
 
 echo "welcome"
 : >"$LOG"; rm -f "$envf"
 bash "$F" welcome
-contains "no key: offers AI setup" "$(cat "$LOG")" "setup=Set up AI"
+contains "no key: still greets, mentions free models" "$(cat "$LOG")" "OpenCode Zen's free models"
+contains "offers choosing a provider" "$(cat "$LOG")" "setup=Choose AI provider"
 contains "setup opens in a terminal" "$(cat "$LOG")" "foot -T FRIDAY setup"
 : >"$LOG"; bash "$F" welcome
 if [[ ! -s "$LOG" ]]; then pass "shown only once"; else fail "shown twice"; fi
@@ -90,6 +98,9 @@ printf 'GEMINI_API_KEY=abc123secret\n' >"$envf"
 out=$(bash "$F" doctor 2>&1 || true)
 contains "reads daemon status" "$out" "state.json reports: running"
 contains "names the key variable" "$out" "GEMINI_API_KEY is set"
+rm -f "$envf"; out=$(bash "$F" doctor 2>&1 || true)
+contains "no key is fine: uses OpenCode Zen" "$out" "using OpenCode Zen's free models"
+if [[ "$out" == *"!"*"API key"* ]]; then fail "doctor warns about a missing key"; else pass "doctor does not warn without a key"; fi
 if [[ "$out" == *s3cret* || "$out" == *abc123secret* ]]; then fail "doctor printed a secret"; else pass "doctor prints no secrets"; fi
 
 finish
