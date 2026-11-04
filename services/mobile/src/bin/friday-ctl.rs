@@ -11,6 +11,7 @@
 //!   friday-ctl goal --wait "open chromium"   (block until the goal finishes;
 //!                                            exit status = its outcome)
 //!   friday-ctl system-info
+//!   friday-ctl cancel                  (cancel the goal in flight)
 //!   friday-ctl context screen          (interactive consent)
 //!   friday-ctl context screen --yes    (consent already collected by the shell panel)
 //!   friday-ctl context screen --yes --ask "what does this error mean?"
@@ -116,7 +117,7 @@ async fn main() -> std::process::ExitCode {
     }
 
     let Some(sub) = positional.first() else {
-        eprintln!("usage: friday-ctl <goal|system-info|context screen> [goal text] [--addr <host:port>] [--token <tok>]");
+        eprintln!("usage: friday-ctl <goal|cancel|system-info|context screen> [goal text] [--addr <host:port>] [--token <tok>]");
         return std::process::ExitCode::FAILURE;
     };
     let sub = sub.clone();
@@ -161,6 +162,20 @@ async fn main() -> std::process::ExitCode {
 
     if sub == "context" {
         return run_context(&addr_str, &cmd_token, question.as_deref()).await;
+    }
+    if sub == "cancel" {
+        // Cancel the goal the daemon reports as in flight (state.json
+        // `current`); the daemon matches it by run id.
+        let Some(task_id) = read_current_goal_id(&state_path) else {
+            eprintln!("no goal is running");
+            return std::process::ExitCode::FAILURE;
+        };
+        return send_command(
+            &addr_str,
+            friday_mobile::method::TASK_CANCEL,
+            serde_json::json!({ "token": cmd_token, "task_id": task_id }),
+        )
+        .await;
     }
     let goal = goal_words.join(" ");
     let submitted_ms = now_ms();
@@ -233,6 +248,13 @@ fn finished_goal(
             .as_u64()
             .is_some_and(|ms| ms >= since_ms);
     finished.then(|| last.clone())
+}
+
+/// The id of the goal the daemon reports as in flight, if any.
+fn read_current_goal_id(path: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let st: ShellState = serde_json::from_str(&text).ok()?;
+    st.current.map(|g| g.id).filter(|id| !id.is_empty())
 }
 
 /// The ingress address the daemon published in state.json, if any.
