@@ -41,7 +41,8 @@ friday_banner() {
   local subtitle="${1:-COGNITIVE OPERATING SYSTEM}"
   local cols
   cols=$(tput cols 2>/dev/null || echo 80)
-  clear
+  # Unattended runs (SSH, no TERM) have no screen to clear; never fail on it.
+  clear 2>/dev/null || true
   echo
   gum style --width "$cols" --foreground "$FRIDAY_ACCENT" --align center \
 " ██████╗ ██████╗ ██╗██████╗  █████╗ ██╗   ██╗" \

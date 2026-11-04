@@ -26,6 +26,10 @@ refuse "api key with space"          friday_valid_api_key "has space key"
 expect "timezone list never empty"   test -n "$(friday_timezones | head -n1)"
 expect "keymap list never empty"     test -n "$(friday_keymaps | head -n1)"
 
+echo "unattended runs (no terminal)"
+expect "banner and rail work without TERM" env -u TERM bash -c \
+  "source '$ROOT/friday-tui.sh'; set -e; friday_banner TEST; friday_rail 2 A B C; friday_say hi" </dev/null
+
 echo "login security"
 guarded=$(awk '/if \[\[ "\$AUTOLOGIN" == "true" \]\]/ {g=1} /EOF_SDDM_AUTO > \/mnt\/etc\/sddm.conf.d\/autologin.conf/ {print (g ? "guarded" : "unguarded"); exit}' "$ROOT/installer")
 if [[ "$guarded" == guarded ]]; then pass "SDDM autologin is only written when AUTOLOGIN=true"
