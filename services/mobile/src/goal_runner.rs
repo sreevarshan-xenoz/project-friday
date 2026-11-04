@@ -2728,10 +2728,8 @@ mod tests {
                     assert_eq!(ev.payload["id"], goal_id);
                     assert_eq!(ev.payload["reason"], "cancelled_by_human");
                 }
-                "goal.completed" | "goal.failed" => {
-                    if ev.payload["id"] == goal_id {
-                        saw_terminal = true;
-                    }
+                "goal.completed" | "goal.failed" if ev.payload["id"] == goal_id => {
+                    saw_terminal = true;
                 }
                 _ => {}
             }
