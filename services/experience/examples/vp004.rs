@@ -51,7 +51,7 @@ fn make_record(seq: usize, rng: &mut Lcg) -> DecisionRecord {
     let cid = CorrelationId::new();
     let operator = OPERATORS[seq % OPERATORS.len()];
     let capability = CAPABILITIES[(seq / 3) % CAPABILITIES.len()].clone();
-    let success = !rng.next().is_multiple_of(5);
+    let success = rng.next() % 5 != 0;
     let latency = 5 + (rng.next() % 40);
     let cost = 0.05 + (rng.next() % 10) as f64 / 50.0;
 
