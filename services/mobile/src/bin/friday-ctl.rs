@@ -16,7 +16,8 @@
 //!   friday-ctl context screen --yes --ask "what does this error mean?"
 //!                                      (answer a question about the screen)
 //!
-//! `FRIDAY_CTL_ADDR` and `FRIDAY_CTL_TOKEN` override the state-file values for
+//! The daemon's address comes from `state.json` (`listen`). `FRIDAY_CTL_ADDR`
+//! and `FRIDAY_CTL_TOKEN` override the state-file values for
 //! scripting/testing. `FRIDAY_CONTEXT_PROVIDER` names the (remote) provider a
 //! `context screen` share goes to, defaulting to `opencode` to match the daemon.
 
@@ -78,8 +79,13 @@ async fn main() -> std::process::ExitCode {
     } else {
         ShellState::default_path()
     };
-    let mut addr_str =
-        std::env::var("FRIDAY_CTL_ADDR").unwrap_or_else(|_| "127.0.0.1:18432".to_string());
+    // Address precedence: --addr, then FRIDAY_CTL_ADDR, then the address the
+    // daemon published in state.json (it is not always the default port),
+    // then the default.
+    let mut addr_str = std::env::var("FRIDAY_CTL_ADDR")
+        .ok()
+        .or_else(|| read_listen(&state_path))
+        .unwrap_or_else(|| "127.0.0.1:18432".to_string());
     let mut token = std::env::var("FRIDAY_CTL_TOKEN").ok().unwrap_or_default();
     let mut wait = false;
     let mut question: Option<String> = None;
@@ -227,6 +233,13 @@ fn finished_goal(
             .as_u64()
             .is_some_and(|ms| ms >= since_ms);
     finished.then(|| last.clone())
+}
+
+/// The ingress address the daemon published in state.json, if any.
+fn read_listen(path: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let st: ShellState = serde_json::from_str(&text).ok()?;
+    (!st.listen.is_empty()).then_some(st.listen)
 }
 
 fn read_token(path: &std::path::Path) -> Option<String> {

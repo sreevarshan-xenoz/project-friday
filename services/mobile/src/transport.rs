@@ -103,7 +103,17 @@ impl WsServer {
         let listener = TcpListener::bind(self.addr).await.map_err(|e| {
             crate::error::MobileError::Transport(format!("bind {}: {}", self.addr, e))
         })?;
-        tracing::info!("mobile ws listening on {}", self.addr);
+        self.run_on(listener).await
+    }
+
+    /// Serve forever on a listener the caller already bound (so it can learn
+    /// the real address first, e.g. after binding port 0).
+    pub async fn run_on(self, listener: TcpListener) -> Result<(), crate::error::MobileError> {
+        let local = listener
+            .local_addr()
+            .map(|a| a.to_string())
+            .unwrap_or_else(|_| self.addr.to_string());
+        tracing::info!("mobile ws listening on {local}");
         loop {
             let (sock, peer) = listener
                 .accept()

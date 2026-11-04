@@ -143,15 +143,30 @@ async fn main() {
     let friday = Friday::new();
     let bus = friday.bus().clone();
 
-    let listen: SocketAddr = std::env::var("FRIDAY_LISTEN")
+    let explicit_listen: Option<SocketAddr> = std::env::var("FRIDAY_LISTEN")
         .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_else(|| DEFAULT_LISTEN.parse().unwrap());
+        .and_then(|s| s.parse().ok());
+    let listen: SocketAddr = explicit_listen.unwrap_or_else(|| DEFAULT_LISTEN.parse().unwrap());
     if !listen.ip().is_loopback() {
         tracing::warn!(
             "listen {listen} is not loopback; the shell contract expects loopback as the trust boundary"
         );
     }
+    // Bind up front so the real address can be published in state.json. The
+    // default port may belong to another user's daemon on the same machine;
+    // then take any free loopback port (clients read `listen` from
+    // state.json). An explicitly configured FRIDAY_LISTEN must be honoured or
+    // fail.
+    let listener = match tokio::net::TcpListener::bind(listen).await {
+        Ok(l) => Ok(l),
+        Err(e) if explicit_listen.is_none() && e.kind() == std::io::ErrorKind::AddrInUse => {
+            tracing::warn!(
+                "{listen} is in use (another user's FRIDAY?); using a free loopback port"
+            );
+            tokio::net::TcpListener::bind("127.0.0.1:0").await
+        }
+        Err(e) => Err(e),
+    };
 
     // Shell ingress: loopback WebSocket, NO QR-pair auth (same host; the
     // loopback bind + per-run session token are the trust boundary).
@@ -171,6 +186,22 @@ async fn main() {
 
     let token = generate_token();
     let state = Arc::new(Mutex::new(ShellState::starting(token.clone())));
+    let listener = match listener {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!("cannot bind the command ingress on {listen}: {e}");
+            let mut st = state.lock().await;
+            st.status = "failed".into();
+            write_state(&state_path, &render(&st));
+            std::process::exit(1);
+        }
+    };
+    let bound = listener
+        .local_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_else(|_| listen.to_string());
+    state.lock().await.listen = bound.clone();
+    tracing::info!("shell command ingress bound on {bound}");
 
     // Seed initial `starting` document so the shell sees something on first read.
     write_state(&state_path, &render(&*state.lock().await));
@@ -426,7 +457,7 @@ async fn main() {
 
     // Run the WS server until told to stop.
     let failed = tokio::select! {
-        r = server.run() => {
+        r = server.run_on(listener) => {
             match r {
                 Ok(()) => {
                     tracing::info!("shell ingress closed cleanly");
