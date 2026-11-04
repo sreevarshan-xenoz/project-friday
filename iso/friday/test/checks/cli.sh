@@ -97,6 +97,9 @@ printf '{"status":"running","token":"s3cret-token"}' >"$state/state.json"
 printf 'GEMINI_API_KEY=abc123secret\n' >"$envf"
 out=$(bash "$F" doctor 2>&1 || true)
 contains "reads daemon status" "$out" "state.json reports: running"
+printf '{"status":"running","token":"t","listen":"127.0.0.1:1"}' >"$state/state.json"
+out=$(bash "$F" doctor 2>&1 || true)
+contains "probes the address the daemon published" "$out" "nothing listening on 127.0.0.1:1"
 out=$(STUB_INACTIVE=1 bash "$F" doctor 2>&1 || true)
 contains "stale state (running, but service dead) is flagged" "$out" "stale: the daemon crashed or was killed"
 contains "names the key variable" "$out" "GEMINI_API_KEY is set"

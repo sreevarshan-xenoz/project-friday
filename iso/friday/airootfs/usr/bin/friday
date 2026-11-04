@@ -86,10 +86,16 @@ friday_doctor() {
   else
     bad "no state file at $state" "the daemon has not started for this user: friday daemon start"
   fi
-  if (exec 3<>/dev/tcp/127.0.0.1/18432) 2>/dev/null; then
-    ok "listening on 127.0.0.1:18432"
+  # The daemon publishes its real address; :18432 is only the default (a second
+  # user's daemon falls back to a free port).
+  local listen host port
+  listen=$(jq -r '.listen // empty' "$state" 2>/dev/null || true)
+  listen="${listen:-127.0.0.1:18432}"
+  host="${listen%:*}" port="${listen##*:}"
+  if (exec 3<>"/dev/tcp/$host/$port") 2>/dev/null; then
+    ok "listening on $listen"
   else
-    bad "nothing listening on 127.0.0.1:18432" "friday daemon logs"
+    bad "nothing listening on $listen" "friday daemon logs"
   fi
 
   echo
