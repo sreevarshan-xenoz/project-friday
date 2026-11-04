@@ -34,6 +34,7 @@ echo "login security"
 guarded=$(awk '/if \[\[ "\$AUTOLOGIN" == "true" \]\]/ {g=1} /EOF_SDDM_AUTO > \/mnt\/etc\/sddm.conf.d\/autologin.conf/ {print (g ? "guarded" : "unguarded"); exit}' "$ROOT/installer")
 if [[ "$guarded" == guarded ]]; then pass "SDDM autologin is only written when AUTOLOGIN=true"
 else fail "installer writes SDDM autologin unconditionally"; fi
+expect "ESP mounted root-only (fmask/dmask 0077)" grep -q 'mount -o fmask=0077,dmask=0077 "$BOOT_PART" /mnt/boot' "$ROOT/installer"
 expect "AUTOLOGIN defaults to false" grep -q 'AUTOLOGIN="${AUTOLOGIN:-false}"' "$ROOT/installer"
 
 echo "configurator flow (pty)"

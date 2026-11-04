@@ -129,7 +129,9 @@ phase_msg 2 "Mounting filesystems"
 mkdir -p /mnt
 mount "$ROOT_PART" /mnt
 mkdir -p /mnt/boot
-mount "$BOOT_PART" /mnt/boot
+# Root-only ESP: it holds the systemd-boot random seed, which bootctl flags
+# as a security hole when world-readable. genfstab carries the options over.
+mount -o fmask=0077,dmask=0077 "$BOOT_PART" /mnt/boot
 
 phase_msg 3 "Downloading and installing packages (the long one)"
 # A single slow or unreachable mirror ("Operation too slow") aborts pacstrap.
