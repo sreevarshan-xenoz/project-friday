@@ -255,14 +255,14 @@ impl ExperienceIndexer {
             .values()
             .filter(|r| r.goal_id.0 == goal_id)
             .collect();
-        candidates.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
+        candidates.sort_by_key(|r| std::cmp::Reverse(r.last_activity));
         candidates.first().copied()
     }
 
     /// All goal records, sorted by last activity descending.
     pub fn all_records(&self) -> Vec<&GoalRecord> {
         let mut records: Vec<&GoalRecord> = self.chronological.values().collect();
-        records.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
+        records.sort_by_key(|r| std::cmp::Reverse(r.last_activity));
         records
     }
 

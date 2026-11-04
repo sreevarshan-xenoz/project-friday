@@ -66,11 +66,9 @@ impl ProviderStats {
     }
 
     pub fn avg_latency_ms(&self) -> u64 {
-        if self.attempts == 0 {
-            0
-        } else {
-            self.total_latency_ms / self.attempts
-        }
+        self.total_latency_ms
+            .checked_div(self.attempts)
+            .unwrap_or(0)
     }
 
     /// Evidence confidence: how much to trust the measurements. At

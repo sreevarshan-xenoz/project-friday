@@ -85,7 +85,7 @@ impl PatternMiner {
 
         // Sort by timestamp to ensure correct ordering.
         let mut sorted = entries.to_vec();
-        sorted.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        sorted.sort_by_key(|a| a.timestamp);
 
         for entry in &sorted {
             if current_goal != Some(entry.goal_id) {
@@ -192,7 +192,7 @@ impl PatternMiner {
             })
             .collect();
 
-        patterns.sort_by(|a, b| b.frequency.cmp(&a.frequency));
+        patterns.sort_by_key(|p| std::cmp::Reverse(p.frequency));
         patterns
     }
 }

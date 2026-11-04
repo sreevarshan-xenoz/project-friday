@@ -296,7 +296,7 @@ pub fn scan_payload(payload: &str, known: &[(&str, &str)]) -> Vec<SecretHit> {
         .copied()
         .filter(|(_, value)| value.len() >= MIN_SCAN_LENGTH)
         .collect();
-    ordered.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    ordered.sort_by_key(|(_, value)| std::cmp::Reverse(value.len()));
     let mut hits = Vec::new();
     for (name, value) in ordered {
         let count = count_occurrences(payload, value);
@@ -320,7 +320,7 @@ pub fn redact_payload(payload: &str, known: &[(&str, &str)]) -> String {
         .copied()
         .filter(|(_, value)| value.len() >= MIN_SCAN_LENGTH)
         .collect();
-    ordered.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    ordered.sort_by_key(|(_, value)| std::cmp::Reverse(value.len()));
     let mut out = payload.to_string();
     for (name, value) in ordered {
         if out.contains(value) {

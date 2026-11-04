@@ -358,8 +358,8 @@ impl BrowserAdapter {
             });
         }
         let st = state.as_mut().expect("state initialized above");
-        let page = if st.page.is_some() {
-            st.page.as_ref().expect("checked above").clone()
+        let page = if let Some(page) = st.page.as_ref() {
+            page.clone()
         } else {
             let p = match Self::new_page(&st.browser, st.intercept.clone()).await {
                 Ok(p) => p,

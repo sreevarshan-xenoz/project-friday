@@ -239,9 +239,10 @@ pub struct WorkspaceEventRef {
 }
 
 /// What the system is currently focused on.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum FocusTarget {
     /// Not focused on anything specific.
+    #[default]
     Idle,
     /// Pursuing a specific goal.
     Goal(String),
@@ -253,12 +254,6 @@ pub enum FocusTarget {
     Executing(String),
     /// Reflecting on an outcome.
     Reflecting(String),
-}
-
-impl Default for FocusTarget {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 impl Default for WorkingMemory {
