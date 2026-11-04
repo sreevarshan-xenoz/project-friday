@@ -143,5 +143,9 @@ contains "no key is fine: uses OpenCode Zen" "$out" "using OpenCode Zen's free m
 contains "no key: checks OpenCode Zen is reachable" "$out" "opencode.ai is reachable"
 if [[ "$out" == *"!"*"API key"* ]]; then fail "doctor warns about a missing key"; else pass "doctor does not warn without a key"; fi
 if [[ "$out" == *s3cret* || "$out" == *abc123secret* ]]; then fail "doctor printed a secret"; else pass "doctor prints no secrets"; fi
+if [[ "$out" == *Quickshell* || "$out" == *quickshell* ]]; then fail "standalone (no ii shell): doctor checks the Quickshell bar"
+else pass "standalone (no ii shell): no Quickshell checks"; fi
+mkdir -p "$HOME/.config/quickshell/ii"; out=$(bash "$F" doctor 2>&1 || true)
+contains "FRIDAY OS (ii shell): checks the bar" "$out" "Quickshell bar"
 
 finish

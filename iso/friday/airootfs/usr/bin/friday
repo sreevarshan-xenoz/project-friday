@@ -129,15 +129,24 @@ friday_doctor() {
   echo "Desktop"
   if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then ok "inside a Hyprland session"
   else warn "not inside a Hyprland session" "desktop checks below may not apply over SSH/TTY"; fi
-  if pgrep -x qs >/dev/null || pgrep -x quickshell >/dev/null; then ok "Quickshell bar is running"
-  else warn "Quickshell bar is not running" "qs -c ii &disown   (or log out and back in)"; fi
+  # The Quickshell bar is FRIDAY OS's desktop; a standalone install (the
+  # `friday` package on any Wayland desktop) only needs the prompt and
+  # notification tools.
+  local pkgs=(fuzzel libnotify jq)
+  if [ -d "${XDG_CONFIG_HOME:-$HOME/.config}/quickshell/ii" ]; then
+    if pgrep -x qs >/dev/null || pgrep -x quickshell >/dev/null; then ok "Quickshell bar is running"
+    else warn "Quickshell bar is not running" "qs -c ii &disown   (or log out and back in)"; fi
+    pkgs=(quickshell qt6-positioning qt6-virtualkeyboard ttf-material-symbols-variable "${pkgs[@]}")
+  fi
   local pkg missing=0
-  for pkg in quickshell qt6-positioning qt6-virtualkeyboard ttf-material-symbols-variable fuzzel libnotify jq; do
-    if ! pacman -Q "$pkg" >/dev/null 2>&1; then
-      bad "package $pkg is missing" "sudo pacman -S $pkg"; missing=$((missing + 1))
-    fi
-  done
-  [ "$missing" -eq 0 ] && ok "required desktop packages installed"
+  if command -v pacman >/dev/null 2>&1; then
+    for pkg in "${pkgs[@]}"; do
+      if ! pacman -Q "$pkg" >/dev/null 2>&1; then
+        bad "package $pkg is missing" "sudo pacman -S $pkg"; missing=$((missing + 1))
+      fi
+    done
+    [ "$missing" -eq 0 ] && ok "required desktop packages installed"
+  fi
   local tool
   for tool in friday-ctl fuzzel notify-send jq; do
     command -v "$tool" >/dev/null 2>&1 || bad "$tool not on PATH" "reinstall the package that provides $tool"
