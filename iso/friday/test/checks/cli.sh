@@ -12,6 +12,10 @@ export HOME="$W/home" XDG_STATE_HOME="" XDG_CONFIG_HOME="" USER="${USER:-tester}
 
 cat >"$S/friday-ctl" <<EOF
 #!/bin/bash
+if [[ "\$1" == context ]]; then
+  printf 'friday-ctl-context %s\n' "\$*" >> "$LOG"
+  printf '{\n "response": "The error says E0308.\\\\nFix the type."\n}\n'; exit 0
+fi
 printf 'friday-ctl %q\n' "\$3" >> "$LOG"
 echo '{"accepted":true}'
 if [[ "\$3" == *fail* ]]; then printf '{\n "outcome": "failed",\n "error": "network unreachable"\n}\n'; exit 1; fi
@@ -46,6 +50,10 @@ PRIMARY="" CLIP="Bonjour" bash "$F" ask -s "translate"; sleep 0.3
 contains "falls back to the clipboard" "$(cat "$LOG")" "Bonjour"
 : >"$LOG"; PRIMARY="" CLIP="" bash "$F" ask -s
 contains "empty selection explains what to do" "$(cat "$LOG")" "Select or copy some text first"
+PICK="what does this error mean" bash "$F" ask --screen; sleep 0.3
+contains "screen: asks the daemon with consent and the question" "$(cat "$LOG")" "friday-ctl-context context screen --yes --ask what does this error mean"
+contains "screen: prompt says a screenshot is shared" "$(cat "$LOG")" "a screenshot goes to your AI provider"
+contains "screen: full answer saved" "$(cat "$state/last-answer.md")" $'The error says E0308.\nFix the type.'
 bash "$F" ask "this will fail"; sleep 0.3
 contains "failure is critical with the error" "$(cat "$LOG")" "-u critical"
 contains "failure shows the reason" "$(cat "$LOG")" "network unreachable"

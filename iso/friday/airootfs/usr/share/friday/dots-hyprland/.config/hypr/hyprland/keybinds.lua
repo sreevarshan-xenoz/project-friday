@@ -132,4 +132,5 @@ hl.bind("SUPER + CTRL + H", hl.dsp.exec_cmd("omarchy-menu toggle hardware"), { d
 hl.bind("SUPER + SHIFT + CTRL + A", hl.dsp.exec_cmd("friday ask"), { description = "FRIDAY: Ask" })
 hl.bind("SUPER + Y", hl.dsp.exec_cmd("friday ask"), { description = "FRIDAY: Ask" })
 hl.bind("SUPER + ALT + Y", hl.dsp.exec_cmd("friday ask --selection"), { description = "FRIDAY: Ask about selected text" })
+hl.bind("SUPER + CTRL + Y", hl.dsp.exec_cmd("friday ask --screen"), { description = "FRIDAY: Ask about the screen" })
 hl.bind("SUPER + CTRL + F", hl.dsp.exec_cmd("friday status || omarchy-state"), { description = "FRIDAY: System State" })

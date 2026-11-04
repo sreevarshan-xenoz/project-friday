@@ -22,6 +22,7 @@ Usage:
 Autonomous Agent & Cognitive Loop:
   friday ask ["<objective>"]       Ask FRIDAY (prompts if no text); result as a notification
   friday ask --selection           Ask about the selected/copied text (Super+Alt+Y)
+  friday ask --screen              Ask about what's on screen (Super+Ctrl+Y)
   friday answers                   Show past answers (last one: friday answers --last)
   friday goal "<objective>"        Dispatch an autonomous goal to FRIDAY agent
   friday status | system-info      Inspect daemon state, memory, and telemetry
@@ -212,9 +213,14 @@ case "${1:-}" in
     # as a notification, and keep the full answer on disk.
     #   friday ask [text]               ask (prompts if no text)
     #   friday ask --selection [text]   ask about the selected/copied text (SUPER+ALT+Y)
+    #   friday ask --screen [text]      ask about what's on screen (SUPER+CTRL+Y);
+    #                                   a screenshot goes to the AI provider, this once
     shift
-    use_selection=false
-    if [ "${1:-}" = "--selection" ] || [ "${1:-}" = "-s" ]; then use_selection=true; shift; fi
+    use_selection=false use_screen=false
+    case "${1:-}" in
+      --selection|-s) use_selection=true; shift ;;
+      --screen) use_screen=true; shift ;;
+    esac
     goal="$*"
     state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
     history_file="$state_dir/ask-history"
@@ -233,7 +239,10 @@ case "${1:-}" in
     fi
 
     if [ -z "$goal" ]; then
-      if $use_selection; then
+      if $use_screen; then
+        goal=$(fuzzel --dmenu --prompt-only="FRIDAY 👁 " --width=70 \
+          --placeholder="Ask about your screen (a screenshot goes to your AI provider)" </dev/null) || exit 0
+      elif $use_selection; then
         preview=$(tr '\n\t' '  ' <<<"$context" | cut -c1-50)
         goal=$(fuzzel --dmenu --prompt-only="FRIDAY › " --width=70 \
           --placeholder="About \"$preview…\" (e.g. summarise, explain, translate)" </dev/null) || exit 0
@@ -259,11 +268,19 @@ case "${1:-}" in
       request=$(printf '%s\n\nUse this text as context:\n"""\n%s\n"""' "$goal" "$context")
     fi
 
-    notify "FRIDAY" "Working on: $goal"
     ok=true
-    out=$(friday-ctl goal --wait "$request" 2>&1) || ok=false
-    # The final {outcome,result,error} object; keep every line of the answer.
-    summary=$(jq -s 'map(select(type == "object" and .outcome? != null)) | last // {}' <<<"$out" 2>/dev/null || echo '{}')
+    if $use_screen; then
+      # Pressing the key and typing the question is the per-use consent;
+      # the daemon's ContextGate still enforces it.
+      notify "FRIDAY" "Looking at your screen: $goal"
+      out=$(friday-ctl context screen --yes --ask "$goal" 2>&1) || ok=false
+      summary=$(jq -s 'map(select(type == "object")) | last // {} | {result: .response, error: .error}' <<<"$out" 2>/dev/null || echo '{}')
+    else
+      notify "FRIDAY" "Working on: $goal"
+      out=$(friday-ctl goal --wait "$request" 2>&1) || ok=false
+      # The final {outcome,result,error} object; keep every line of the answer.
+      summary=$(jq -s 'map(select(type == "object" and .outcome? != null)) | last // {}' <<<"$out" 2>/dev/null || echo '{}')
+    fi
     if $ok; then
       answer=$(jq -r '.result // empty' <<<"$summary")
       [ -n "$answer" ] || answer="Done: $goal"
