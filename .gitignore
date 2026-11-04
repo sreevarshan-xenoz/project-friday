@@ -55,3 +55,6 @@ bench/sherpa/
 # Never committed inside project-friday; FRIDAY integrates as an overlay.
 omarchy/
 
+
+# ISO build output (build-iso.sh latest-ISO symlink)
+iso/out/
