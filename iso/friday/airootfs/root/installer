@@ -18,6 +18,9 @@ AUTO_REBOOT="${AUTO_REBOOT:-false}"
 # Skip the SDDM password screen at boot. Off by default: with it on, anyone
 # who powers the machine on gets the desktop.
 AUTOLOGIN="${AUTOLOGIN:-false}"
+# LUKS2 full-disk encryption of the root partition, unlocked with PASSWORD
+# at boot. The configurator asks (default yes); unattended runs opt in.
+ENCRYPT="${ENCRYPT:-false}"
 FRIDAY_AI_PROVIDER="${FRIDAY_AI_PROVIDER:-}"
 FRIDAY_AI_KEY="${FRIDAY_AI_KEY:-}"
 # Root SSH + serial autologin on the installed system, for VM debugging only.
@@ -103,6 +106,7 @@ trap on_failure ERR
 phase_msg 1 "Preparing $TARGET_DISK"
 if mountpoint -q /mnt; then fuser -km /mnt 2>/dev/null || true; fi
 umount -R /mnt 2>/dev/null || true
+cryptsetup close cryptroot 2>/dev/null || true   # left open by an earlier attempt
 swapoff -a 2>/dev/null || true
 
 parted -s "$TARGET_DISK" mklabel gpt
@@ -123,11 +127,18 @@ sleep 1
 udevadm settle
 
 mkfs.vfat -F32 "$BOOT_PART"
-mkfs.ext4 -F "$ROOT_PART"
+ROOT_DEV="$ROOT_PART"
+if [[ "$ENCRYPT" == "true" ]]; then
+  # Passphrase via stdin, never argv.
+  printf '%s' "$PASSWORD" | cryptsetup luksFormat --type luks2 --batch-mode --key-file=- "$ROOT_PART"
+  printf '%s' "$PASSWORD" | cryptsetup open --key-file=- "$ROOT_PART" cryptroot
+  ROOT_DEV=/dev/mapper/cryptroot
+fi
+mkfs.ext4 -F "$ROOT_DEV"
 
 phase_msg 2 "Mounting filesystems"
 mkdir -p /mnt
-mount "$ROOT_PART" /mnt
+mount "$ROOT_DEV" /mnt
 mkdir -p /mnt/boot
 # Root-only ESP: it holds the systemd-boot random seed, which bootctl flags
 # as a security hole when world-readable. genfstab carries the options over.
@@ -419,16 +430,24 @@ default arch.conf
 timeout 2
 EOF_LOADER
 
-ROOT_PARTUUID=$(blkid -s PARTUUID -o value "$ROOT_PART")
-if [[ -z "$ROOT_PARTUUID" ]]; then
-  echo "Could not read the PARTUUID of $ROOT_PART; the boot entry would be unbootable." >&2
-  false
+if [[ "$ENCRYPT" == "true" ]]; then
+  LUKS_UUID=$(cryptsetup luksUUID "$ROOT_PART")
+  [[ -n "$LUKS_UUID" ]] || { echo "Could not read the LUKS UUID of $ROOT_PART." >&2; false; }
+  ROOT_OPTIONS=$(friday_add_crypt_hook /mnt/etc/mkinitcpio.conf "$LUKS_UUID" cryptroot)
+  arch-chroot /mnt mkinitcpio -P
+else
+  ROOT_PARTUUID=$(blkid -s PARTUUID -o value "$ROOT_PART")
+  if [[ -z "$ROOT_PARTUUID" ]]; then
+    echo "Could not read the PARTUUID of $ROOT_PART; the boot entry would be unbootable." >&2
+    false
+  fi
+  ROOT_OPTIONS="root=PARTUUID=$ROOT_PARTUUID"
 fi
 cat << EOF_ENTRY > /mnt/boot/loader/entries/arch.conf
 title   FRIDAY OS (Omarchy Substrate)
 linux   /vmlinuz-linux
 initrd  /initramfs-linux.img
-options root=PARTUUID=$ROOT_PARTUUID rw console=ttyS0,115200 console=tty1
+options $ROOT_OPTIONS rw console=ttyS0,115200 console=tty1
 EOF_ENTRY
 
 chmod +x /root/configurator /root/installer

@@ -20,6 +20,7 @@ THEME="FRIDAY Dots-Hyprland (Material You / Illogical Impulse)"
 SDDM_THEME="SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)"
 FRIDAY_AI_PROVIDER="" FRIDAY_AI_KEY=""
 AUTOLOGIN="false"
+ENCRYPT="true"
 FRIDAY_AI_LABEL="OpenCode Zen free models (no key)"
 
 screen() { # screen <step-index> [subtitle]
@@ -172,6 +173,15 @@ step_security() {
     AUTOLOGIN="false"
     friday_ok "Password required at login"
   fi
+  echo
+  if gum confirm --default=true --affirmative="Encrypt" --negative="Don't encrypt" \
+      "Encrypt the disk with this password? (asked at every start; recommended for laptops)"; then
+    ENCRYPT="true"
+    friday_ok "Disk will be encrypted (LUKS2)"
+  else
+    ENCRYPT="false"
+    friday_warn "Disk not encrypted: anyone with the drive can read your files."
+  fi
 }
 
 step_region() {
@@ -263,7 +273,7 @@ review() {
     screen 8 "REVIEW"
     gum style --foreground "$FRIDAY_ACCENT" --border rounded --border-foreground "$FRIDAY_BORDER" \
       --padding "1 2" --width 90 \
-      "Disk        $TARGET_LABEL" \
+      "Disk        $TARGET_LABEL$([[ $ENCRYPT == true ]] && echo "  (encrypted)")" \
       "Computer    $HOSTNAME" \
       "User        $USERNAME   (password set, $([[ $AUTOLOGIN == true ]] && echo "automatic login" || echo "asked at login"))" \
       "Region      $TIMEZONE · keyboard $KEYBOARD" \
@@ -305,7 +315,7 @@ review
 friday_banner
 friday_say "Thanks, $USERNAME. I'll take it from here."
 sleep 1
-export TARGET_DISK KEYBOARD HOSTNAME USERNAME PASSWORD TIMEZONE THEME SDDM_THEME FRIDAY_AI_PROVIDER FRIDAY_AI_KEY AUTOLOGIN
+export TARGET_DISK KEYBOARD HOSTNAME USERNAME PASSWORD TIMEZONE THEME SDDM_THEME FRIDAY_AI_PROVIDER FRIDAY_AI_KEY AUTOLOGIN ENCRYPT
 export FRIDAY_INTERACTIVE=1
 /root/installer || leave_menu "Something went wrong during the install. The full log is in /tmp/friday-installer.log."
 leave_menu ""

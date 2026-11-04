@@ -35,6 +35,7 @@ STEPS = [
     (2, "secret1" + ENTER),
     (2, "secret1" + ENTER),
     (3, ENTER),  # autologin? default No
+    (3, ENTER),  # encrypt the disk? default Yes
     (4, "kolkata"),
     (2, ENTER),  # timezone search
     (4, "uk"),
@@ -97,6 +98,8 @@ checks = {
     "password mismatch re-prompts": "didn't match" in text,
     "review screen shown": "Last check: erase /dev/vda" in text,
     "autologin defaults to off": "Password required at login" in text,
+    "encryption defaults to on": "Disk will be encrypted (LUKS2)" in text,
+    "review shows encryption": "(encrypted)" in text,
     "AI defaults to OpenCode Zen free models": "OpenCode Zen free models (no key)" in text,
     "installer received the spec": bool(env_lines),
 }
@@ -110,6 +113,7 @@ for key, want in [
     ("kb", "uk"),
     ("ai", "[]"),
     ("autologin", "false"),
+    ("encrypt", "true"),
     ("interactive", "1"),
 ]:
     checks[f"spec {key}={want}"] = f"{key}={want}" in env

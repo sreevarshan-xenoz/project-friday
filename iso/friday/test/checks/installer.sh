@@ -26,6 +26,33 @@ refuse "api key with space"          friday_valid_api_key "has space key"
 expect "timezone list never empty"   test -n "$(friday_timezones | head -n1)"
 expect "keymap list never empty"     test -n "$(friday_keymaps | head -n1)"
 
+echo "disk encryption: mkinitcpio hook"
+C="$WORK/crypt"; mkdir -p "$C"
+printf 'MODULES=()\nHOOKS=(base systemd autodetect microcode modconf kms keyboard sd-vconsole block filesystems fsck)\n' >"$C/sd.conf"
+printf 'HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block filesystems fsck)\n' >"$C/bb.conf"
+printf 'HOOKS=(base udev block fsck)\n' >"$C/bad.conf"
+params=$(friday_add_crypt_hook "$C/sd.conf" 1234-ab cryptroot)
+contains "systemd initramfs gets sd-encrypt before filesystems" "$(cat "$C/sd.conf")" "block sd-encrypt filesystems"
+[[ "$params" == "rd.luks.name=1234-ab=cryptroot root=/dev/mapper/cryptroot" ]] && pass "systemd boot params" || fail "systemd boot params: $params"
+params=$(friday_add_crypt_hook "$C/bb.conf" 1234-ab cryptroot)
+contains "busybox initramfs gets encrypt before filesystems" "$(cat "$C/bb.conf")" "block encrypt filesystems"
+[[ "$params" == "cryptdevice=UUID=1234-ab:cryptroot root=/dev/mapper/cryptroot" ]] && pass "busybox boot params" || fail "busybox boot params: $params"
+friday_add_crypt_hook "$C/sd.conf" 1234-ab cryptroot >/dev/null
+[[ $(grep -o sd-encrypt "$C/sd.conf" | wc -l) == 1 ]] && pass "hook insertion is idempotent" || fail "sd-encrypt added twice"
+refuse "fails when there is no filesystems hook" friday_add_crypt_hook "$C/bad.conf" 1234-ab cryptroot
+
+echo "disk encryption: real LUKS2 round trip (installer's commands)"
+if need cryptsetup && [[ $EUID -eq 0 ]]; then
+  img="$C/disk.img"; truncate -s 64M "$img"
+  pw='p@ss word"with$odd'
+  if printf '%s' "$pw" | cryptsetup luksFormat --type luks2 --batch-mode --pbkdf-memory 32768 --key-file=- "$img" 2>"$C/err"; then
+    pass "luksFormat with the passphrase on stdin"
+    expect "luksUUID readable" test -n "$(cryptsetup luksUUID "$img")"
+    expect "the same passphrase unlocks it" bash -c "printf '%s' '$pw' | cryptsetup open --test-passphrase --key-file=- '$img'"
+    refuse "a wrong passphrase does not" bash -c "printf 'nope' | cryptsetup open --test-passphrase --key-file=- '$img'"
+  else skip "LUKS round trip ($(tail -n1 "$C/err"))"; fi
+else skip "LUKS round trip (needs root + cryptsetup)"; fi
+
 echo "unattended runs (no terminal)"
 expect "banner and rail work without TERM" env -u TERM bash -c \
   "source '$ROOT/friday-tui.sh'; set -e; friday_banner TEST; friday_rail 2 A B C; friday_say hi" </dev/null
@@ -50,7 +77,7 @@ EOF
   printf '#!/bin/bash\nexit 0\n' >"$W/stub/curl"   # pretend we're online
   cat >"$W/stub/installer" <<'EOF'
 #!/bin/bash
-echo "INSTALLER-ENV disk=$TARGET_DISK host=$HOSTNAME user=$USERNAME pw=$PASSWORD tz=$TIMEZONE kb=$KEYBOARD ai=[$FRIDAY_AI_PROVIDER] autologin=$AUTOLOGIN interactive=$FRIDAY_INTERACTIVE"
+echo "INSTALLER-ENV disk=$TARGET_DISK host=$HOSTNAME user=$USERNAME pw=$PASSWORD tz=$TIMEZONE kb=$KEYBOARD ai=[$FRIDAY_AI_PROVIDER] autologin=$AUTOLOGIN encrypt=$ENCRYPT interactive=$FRIDAY_INTERACTIVE"
 EOF
   chmod +x "$W"/stub/* "$W/configurator"
   if python3 "$CHECKS/installer_flow.py" "$W/configurator" "$W/stub"; then :; else FAILS=$((FAILS + 1)); fi

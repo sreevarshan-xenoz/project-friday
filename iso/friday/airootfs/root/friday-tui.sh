@@ -136,3 +136,22 @@ friday_keymaps() {
     || echo us
 }
 friday_valid_keymap() { [[ -n "$1" ]] && friday_keymaps | grep -qxF -- "$1"; }
+
+# Add the LUKS unlock hook to an mkinitcpio.conf before `filesystems` and print
+# the kernel parameters that go with it. systemd-based initramfs (current Arch
+# default) uses sd-encrypt + rd.luks.name; busybox-based uses encrypt +
+# cryptdevice. Idempotent.
+#   friday_add_crypt_hook <mkinitcpio.conf> <luks-uuid> <mapper-name>
+friday_add_crypt_hook() {
+  local conf="$1" uuid="$2" name="$3" hook params
+  if grep -qE '^HOOKS=\(.*\bsystemd\b' "$conf"; then
+    hook=sd-encrypt params="rd.luks.name=$uuid=$name"
+  else
+    hook=encrypt params="cryptdevice=UUID=$uuid:$name"
+  fi
+  if ! grep -qE "^HOOKS=\(.*\b$hook\b" "$conf"; then
+    sed -i -E "/^HOOKS=\(/ s/\bfilesystems\b/$hook filesystems/" "$conf"
+  fi
+  grep -qE "^HOOKS=\(.*\b$hook filesystems\b" "$conf" || return 1
+  printf '%s root=/dev/mapper/%s\n' "$params" "$name"
+}
