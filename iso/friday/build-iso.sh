@@ -47,6 +47,9 @@ if [[ "${SKIP_CARGO_BUILD:-false}" != "true" ]]; then
   done
 fi
 for bin in friday "${FRIDAY_BINARIES[@]}"; do
+  # Git stores these as 100644, so a fresh clone has no exec bit; restore it
+  # (profiledef.sh sets 0755 in the image regardless).
+  [[ -f "$PROFILE_DIR/airootfs/usr/bin/$bin" ]] && chmod 755 "$PROFILE_DIR/airootfs/usr/bin/$bin"
   if [[ ! -x "$PROFILE_DIR/airootfs/usr/bin/$bin" ]]; then
     echo "Error: airootfs/usr/bin/$bin is missing" >&2
     exit 1
