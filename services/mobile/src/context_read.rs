@@ -357,7 +357,11 @@ mod tests {
     async fn asking_still_requires_consent() {
         let reader = ScreenReader::new(fake_collector(), RecordingSeam::default(), "fabric");
         assert!(reader.ask(Some("what is this?")).await.is_err());
-        assert_eq!(reader.provider.sent(), 0, "no consent: nothing reaches the provider");
+        assert_eq!(
+            reader.provider.sent(),
+            0,
+            "no consent: nothing reaches the provider"
+        );
     }
 
     /// Invariant 2: a consenting read must NEVER reach the provider.

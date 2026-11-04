@@ -18,7 +18,7 @@
 //!
 //! `FRIDAY_CTL_ADDR` and `FRIDAY_CTL_TOKEN` override the state-file values for
 //! scripting/testing. `FRIDAY_CONTEXT_PROVIDER` names the (remote) provider a
-//! `context screen` share goes to, defaulting to `fabric` to match the daemon.
+//! `context screen` share goes to, defaulting to `opencode` to match the daemon.
 
 use std::time::Duration;
 
@@ -47,7 +47,7 @@ fn screen_disclosure() -> String {
 /// guaranteed to see nothing.
 fn confirm_context_consent() -> bool {
     let provider =
-        std::env::var("FRIDAY_CONTEXT_PROVIDER").unwrap_or_else(|_| "fabric".to_string());
+        std::env::var("FRIDAY_CONTEXT_PROVIDER").unwrap_or_else(|_| "opencode".to_string());
 
     println!("FRIDAY — share the current Screen with the assistant");
     println!();

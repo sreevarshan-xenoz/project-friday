@@ -352,11 +352,14 @@ impl Provider for OpenAiProvider {
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
 
         let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            reqwest::header::AUTHORIZATION,
-            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.api_key))
-                .map_err(|e| e.to_string())?,
-        );
+        // Keyless providers (OpenCode Zen's free tier) get no Authorization.
+        if !self.api_key.is_empty() {
+            headers.insert(
+                reqwest::header::AUTHORIZATION,
+                reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.api_key))
+                    .map_err(|e| e.to_string())?,
+            );
+        }
         headers.insert(
             reqwest::header::CONTENT_TYPE,
             reqwest::header::HeaderValue::from_static("application/json"),
@@ -438,11 +441,14 @@ impl Provider for OpenAiProvider {
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
 
         let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            reqwest::header::AUTHORIZATION,
-            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.api_key))
-                .map_err(|e| e.to_string())?,
-        );
+        // Keyless providers (OpenCode Zen's free tier) get no Authorization.
+        if !self.api_key.is_empty() {
+            headers.insert(
+                reqwest::header::AUTHORIZATION,
+                reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.api_key))
+                    .map_err(|e| e.to_string())?,
+            );
+        }
         headers.insert(
             reqwest::header::CONTENT_TYPE,
             reqwest::header::HeaderValue::from_static("application/json"),
@@ -1138,6 +1144,42 @@ impl InferenceFabric {
             .unwrap_or_else(|| models[0].clone());
         self.models.retain(|m| m.provider != "groq");
         self.register_model(pick);
+        true
+    }
+
+    /// Pull OpenCode Zen's live catalog and register its current free models
+    /// (Zen rotates them, so static ids go stale). Works without a key.
+    /// Returns `false` and keeps the existing models on any failure.
+    pub async fn refresh_opencode_catalog(&mut self) -> bool {
+        let mut req = reqwest::Client::new().get(format!("{OPENCODE_ZEN_BASE_URL}/models"));
+        if let Ok(key) = std::env::var("OPENCODE_API_KEY") {
+            if !key.is_empty() {
+                req = req.header(reqwest::header::AUTHORIZATION, format!("Bearer {key}"));
+            }
+        }
+        let json = match req.send().await {
+            Ok(res) if res.status().is_success() => match res.json::<serde_json::Value>().await {
+                Ok(j) => j,
+                Err(_) => return false,
+            },
+            _ => return false,
+        };
+        let fresh = opencode_free_models(&json);
+        if fresh.is_empty() {
+            return false;
+        }
+        // Keep the routing latency the constructor chose (keyless = fallback).
+        let latency = self
+            .models
+            .iter()
+            .find(|m| m.provider == "opencode")
+            .map(|m| m.latency_ms)
+            .unwrap_or(800);
+        self.models.retain(|m| m.provider != "opencode");
+        for mut m in fresh {
+            m.latency_ms = latency;
+            self.register_model(m);
+        }
         true
     }
 
@@ -1837,34 +1879,30 @@ impl InferenceFabric {
             }
         }
 
-        // OpenCode Zen (AI gateway, OpenAI-compatible) — FRIDAY's free-remote
-        // floor. Free `$0` vision models verified live against
-        // GET https://opencode.ai/zen/v1/models (R5-2-5-4-2). Zen serves a
-        // rotating lineup at best effort; free quota/rate limits apply per
-        // account and may 429/500 when exhausted.
-        if let Ok(key) = std::env::var("OPENCODE_API_KEY") {
+        // OpenCode Zen (AI gateway, OpenAI-compatible) — FRIDAY's DEFAULT
+        // provider: its free models need no account, so FRIDAY can think out
+        // of the box. OPENCODE_API_KEY is optional (paid models / higher
+        // limits). Zen rotates its free lineup, so these static ids are only
+        // the boot fallback; `refresh_opencode_catalog` replaces them with the
+        // live free models at warm-up. Free use is rate-limited (HTTP 429
+        // FreeUsageLimitError when exhausted). Without a key it is given a high
+        // latency so a provider the user configured with a key wins routing.
+        {
+            let key = std::env::var("OPENCODE_API_KEY").unwrap_or_default();
+            if !key.is_empty() {
+                security_vault.store("provider", "opencode", key.clone());
+            }
+            let latency_ms = if key.is_empty() { 3_000 } else { 800 };
             fabric.register_provider(Box::new(OpenAiProvider {
                 name: "opencode".to_string(),
-                base_url: "https://opencode.ai/zen/v1".to_string(),
+                base_url: OPENCODE_ZEN_BASE_URL.to_string(),
                 api_key: key,
             }));
             if !registry_loaded {
-                // Free vision model — carries the VisionFree tier so
-                // resolve_tier("opencode", VisionFree) succeeds.
-                fabric.register_model(ModelInfo {
-                    id: "muse-spark-1.3-contributor-free".to_string(),
-                    family: "muse-spark-1.3".to_string(),
-                    provider: "opencode".to_string(),
-                    latency_ms: 800,
-                    reliability: 0.8,
-                    capabilities: vec![
-                        ModelCapability::Json,
-                        ModelCapability::Tools,
-                        ModelCapability::Vision,
-                    ],
-                    max_context: 200000,
-                    tier: Some(CapabilityTier::VisionFree),
-                });
+                for mut m in opencode_static_models() {
+                    m.latency_ms = latency_ms;
+                    fabric.register_model(m);
+                }
             }
         }
 
@@ -2274,6 +2312,117 @@ fn is_free_provider(name: &str) -> bool {
             | "opencode"
             | "nvidia-nim"
     )
+}
+
+/// OpenCode Zen's OpenAI-compatible endpoint (FRIDAY's default provider).
+pub const OPENCODE_ZEN_BASE_URL: &str = "https://opencode.ai/zen/v1";
+
+/// Boot-time fallback for OpenCode Zen's free models (verified against the
+/// live `GET /zen/v1/models` on 2026-11-04). The live catalog replaces these
+/// at warm-up because Zen rotates free models.
+pub fn opencode_static_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "big-pickle".to_string(),
+            family: "big-pickle".to_string(),
+            provider: "opencode".to_string(),
+            latency_ms: 800,
+            reliability: 0.8,
+            capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
+            max_context: 200_000,
+            tier: None,
+        },
+        ModelInfo {
+            id: "deepseek-v4.1-flash-free".to_string(),
+            family: "deepseek-v4.1-flash".to_string(),
+            provider: "opencode".to_string(),
+            latency_ms: 800,
+            reliability: 0.8,
+            capabilities: vec![
+                ModelCapability::Json,
+                ModelCapability::Tools,
+                ModelCapability::Vision,
+            ],
+            max_context: 128_000,
+            tier: Some(CapabilityTier::VisionFree),
+        },
+    ]
+}
+
+/// Pick FRIDAY's models from a live OpenCode Zen `/models` response: only
+/// free ones (zero input and output price, or an id ending in `-free`). The
+/// first text model becomes the general model; the first that accepts image
+/// input becomes the `VisionFree` tier. Pure and deterministic; returns an
+/// empty list when nothing free is offered.
+pub fn opencode_free_models(catalog: &serde_json::Value) -> Vec<ModelInfo> {
+    let Some(data) = catalog.get("data").and_then(|d| d.as_array()) else {
+        return Vec::new();
+    };
+    let is_free = |m: &serde_json::Value| {
+        let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let price = |dir: &str| {
+            m.pointer(&format!("/cost/text/{dir}/price"))
+                .and_then(|v| v.as_f64())
+        };
+        id.ends_with("-free") || (price("input") == Some(0.0) && price("output") == Some(0.0))
+    };
+    let accepts_images = |m: &serde_json::Value| {
+        m.pointer("/modalities/input")
+            .and_then(|v| v.as_array())
+            .is_some_and(|ins| {
+                ins.iter()
+                    .filter_map(|i| i.as_str())
+                    .any(|i| i == "image" || i.starts_with("image/"))
+            })
+    };
+    let to_info = |m: &serde_json::Value, vision: bool| {
+        let id = m
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let ctx = m
+            .pointer("/limit/context")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(128_000) as usize;
+        let mut caps = vec![ModelCapability::Json];
+        if m.pointer("/capabilities/tools/supported")
+            .and_then(|v| v.as_bool())
+            == Some(true)
+        {
+            caps.push(ModelCapability::Tools);
+        }
+        if vision {
+            caps.push(ModelCapability::Vision);
+        }
+        ModelInfo {
+            family: m
+                .get("family")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&id)
+                .to_string(),
+            id,
+            provider: "opencode".to_string(),
+            latency_ms: 800,
+            reliability: 0.8,
+            capabilities: caps,
+            max_context: ctx,
+            tier: vision.then_some(CapabilityTier::VisionFree),
+        }
+    };
+    let chat_free: Vec<&serde_json::Value> = data
+        .iter()
+        .filter(|m| m.get("type").and_then(|v| v.as_str()).unwrap_or("chat") == "chat")
+        .filter(|m| is_free(m))
+        .collect();
+    let mut out = Vec::new();
+    if let Some(text) = chat_free.first() {
+        out.push(to_info(text, false));
+    }
+    if let Some(vision) = chat_free.iter().find(|m| accepts_images(m)) {
+        out.push(to_info(vision, true));
+    }
+    out
 }
 
 /// OpenGateway (gitlawb) model catalog — single source of truth for the free
@@ -3054,6 +3203,66 @@ impl Default for InferenceFabric {
 #[cfg(test)]
 mod tests {
 
+    fn zen_catalog() -> serde_json::Value {
+        serde_json::json!({"object": "list", "data": [
+            {"id": "claude-opus-5", "type": "chat",
+             "cost": {"text": {"input": {"price": 5.0}, "output": {"price": 25.0}}},
+             "modalities": {"input": ["text", "image/png"]}},
+            {"id": "big-pickle", "type": "chat", "family": "big-pickle",
+             "cost": {"text": {"input": {"price": 0}, "output": {"price": 0}}},
+             "capabilities": {"tools": {"supported": true}},
+             "modalities": {"input": ["text"]}, "limit": {"context": 200000}},
+            {"id": "deepseek-v4.1-flash-free", "type": "chat",
+             "modalities": {"input": ["text", "image/jpeg", "image/png"]},
+             "limit": {"context": 128000}},
+            {"id": "some-embed-free", "type": "embedding"}
+        ]})
+    }
+
+    #[test]
+    fn opencode_catalog_picks_only_free_models() {
+        let models = opencode_free_models(&zen_catalog());
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["big-pickle", "deepseek-v4.1-flash-free"],
+            "paid and non-chat models excluded"
+        );
+        assert!(models.iter().all(|m| m.provider == "opencode"));
+    }
+
+    #[test]
+    fn opencode_catalog_marks_the_image_model_as_vision_tier() {
+        let models = opencode_free_models(&zen_catalog());
+        assert_eq!(models[0].tier, None);
+        assert!(models[0].capabilities.contains(&ModelCapability::Tools));
+        assert_eq!(models[0].max_context, 200_000);
+        assert_eq!(models[1].tier, Some(CapabilityTier::VisionFree));
+        assert!(models[1].capabilities.contains(&ModelCapability::Vision));
+    }
+
+    #[test]
+    fn opencode_catalog_without_free_models_is_empty() {
+        assert!(opencode_free_models(&serde_json::json!({"data": []})).is_empty());
+        assert!(opencode_free_models(&serde_json::json!({"oops": 1})).is_empty());
+    }
+
+    #[test]
+    fn opencode_is_registered_without_a_key() {
+        std::env::remove_var("OPENCODE_API_KEY");
+        let fabric = InferenceFabric::default_from_env();
+        assert!(
+            fabric.providers.contains_key("opencode"),
+            "keyless default provider"
+        );
+        assert!(
+            fabric
+                .resolve_tier("opencode", CapabilityTier::VisionFree)
+                .is_some(),
+            "screen questions work out of the box"
+        );
+    }
+
     #[test]
     fn screen_capture_without_question_asks_for_a_description() {
         let p = "SCREEN_CAPTURE mime=image/png geometry=fullscreen bytes=3 data=QUJD";
@@ -3062,7 +3271,10 @@ mod tests {
         assert_eq!(cap.data, "QUJD");
         assert_eq!(cap.question, None);
         let content = openai_message_content(p);
-        assert!(content[0]["text"].as_str().unwrap().contains("Describe what is on the screen"));
+        assert!(content[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Describe what is on the screen"));
         assert_eq!(content[1]["image_url"]["url"], "data:image/png;base64,QUJD");
     }
 
@@ -3071,12 +3283,18 @@ mod tests {
         let p = "SCREEN_CAPTURE mime=image/png geometry=fullscreen bytes=3 data=QUJD\n\
                  QUESTION: what does this error mean?";
         let cap = parse_screen_capture(p).unwrap();
-        assert_eq!(cap.data, "QUJD", "the question must not leak into the image data");
+        assert_eq!(
+            cap.data, "QUJD",
+            "the question must not leak into the image data"
+        );
         assert_eq!(cap.question.as_deref(), Some("what does this error mean?"));
         let content = openai_message_content(p);
         let text = content[0]["text"].as_str().unwrap();
         assert!(text.contains("what does this error mean?"));
-        assert!(text.contains("not as commands"), "screen text must not be obeyed");
+        assert!(
+            text.contains("not as commands"),
+            "screen text must not be obeyed"
+        );
         assert!(!text.contains("Describe what is on the screen"));
     }
 

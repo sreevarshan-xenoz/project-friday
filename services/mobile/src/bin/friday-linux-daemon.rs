@@ -183,6 +183,15 @@ async fn main() {
     // a hung-local-model stall (same fabric tuning as the mobile daemon).
     let mut fabric = InferenceFabric::default_from_env();
     fabric.request_timeout = Some(Duration::from_secs(15));
+    // OpenCode Zen (the keyless default) rotates its free models: swap the
+    // static fallback for the live free lineup. Bounded so a slow or offline
+    // network never delays startup.
+    match tokio::time::timeout(Duration::from_secs(8), fabric.refresh_opencode_catalog()).await {
+        Ok(true) => tracing::info!("[providers] OpenCode Zen: live free models loaded"),
+        _ => tracing::warn!(
+            "[providers] OpenCode Zen catalog unavailable; using built-in free models"
+        ),
+    }
     let fabric = Arc::new(fabric);
     tracing::info!(
         "[Investigation] fabric: {} providers / {} models registered",
@@ -237,7 +246,9 @@ async fn main() {
     // is qualified on the Omarchy target (R5-2-5-4). A missing/unknown vendor
     // fails honestly at the provider seam rather than silently.
     let context_provider =
-        std::env::var("FRIDAY_CONTEXT_PROVIDER").unwrap_or_else(|_| "fabric".to_string());
+        // "opencode" is the keyless default (the old "fabric" default named no
+        // real provider, so screen reads failed unless this was set).
+        std::env::var("FRIDAY_CONTEXT_PROVIDER").unwrap_or_else(|_| "opencode".to_string());
     let screen_reader = Arc::new(friday_mobile::context_read::ScreenReader::new(
         ContextCollector::new(RealCommandRunner::default()),
         friday_mobile::context_read::FabricProviderSeam::new(fabric.clone(), &context_provider),
