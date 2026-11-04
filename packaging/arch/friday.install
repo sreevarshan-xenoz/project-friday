@@ -1,0 +1,21 @@
+post_install() {
+  cat <<'MSG'
+==> FRIDAY is installed. As your desktop user (not root):
+      systemctl --user enable --now friday-linux-daemon
+      friday doctor
+    It works with no key (OpenCode Zen's free models); add one any time:
+      friday setup-ai
+    Hyprland keys (Super+Y ask, Super+Alt+Y selection, Super+Ctrl+Y screen),
+    add to ~/.config/hypr/hyprland.lua:
+      dofile("/usr/share/friday/hyprland/friday.lua")
+    Other desktops: bind a key to `friday ask`, or use the "FRIDAY" launcher.
+MSG
+}
+
+post_upgrade() {
+  echo "==> Restart FRIDAY to use the new version: systemctl --user restart friday-linux-daemon"
+}
+
+post_remove() {
+  echo "==> Your settings and answers stay in ~/.config/friday and ~/.local/state/friday."
+}

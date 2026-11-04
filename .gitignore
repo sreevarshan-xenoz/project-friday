@@ -63,3 +63,9 @@ iso/out/
 iso/friday/airootfs/usr/bin/friday-ctl
 iso/friday/airootfs/usr/bin/friday-linux-daemon
 iso/friday/airootfs/usr/bin/friday-skill-forge
+
+# makepkg output and working dirs (packaging/arch)
+packaging/arch/*.pkg.tar.*
+packaging/arch/friday/
+packaging/arch/src/
+packaging/arch/pkg/

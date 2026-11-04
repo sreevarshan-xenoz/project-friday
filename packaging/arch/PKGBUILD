@@ -1,0 +1,77 @@
+# FRIDAY for an existing Arch Linux install: the daemon, the `friday` CLI,
+# its user service and the desktop hooks (launcher entry, Hyprland keys).
+# FRIDAY OS ships the same files in its ISO.
+#
+# Build from a checkout of this repository:
+#   cd packaging/arch && makepkg -si
+# makepkg clones the checkout's committed HEAD (uncommitted changes are not
+# packaged). Set FRIDAY_REPO to build from another clone or a URL.
+
+pkgname=friday-git
+_name=friday
+pkgver=0.1.0.r0.g0000000
+pkgrel=1
+pkgdesc="FRIDAY: press a key, ask about what's on screen or selected, get an answer"
+arch=('x86_64')
+url="https://github.com/sreevarshan-xenoz/project-friday"
+license=('MIT OR Apache-2.0')
+depends=('gcc-libs' 'glibc' 'openssl' 'bash' 'curl' 'jq' 'fuzzel' 'libnotify' 'wl-clipboard')
+makedepends=('cargo' 'git')
+optdepends=(
+  'grim: ask about the screen (friday ask --screen)'
+  'hyprland: the bundled keybindings and window context'
+  'foot: open full answers in a terminal'
+  'gum: interactive provider picker in friday setup-ai'
+)
+provides=("$_name")
+conflicts=("$_name")
+install=friday.install
+source=("$_name::git+${FRIDAY_REPO:-file://$(realpath "${startdir:-.}/../..")}")
+sha256sums=('SKIP')
+options=('!lto' '!debug')
+
+pkgver() {
+  cd "$_name"
+  local v
+  v=$(sed -n 's/^version *= *"\(.*\)"/\1/p' services/mobile/Cargo.toml | head -n1)
+  printf '%s.r%s.g%s' "${v:-0.1.0}" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  cd "$_name"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/^host: //p')"
+}
+
+build() {
+  cd "$_name"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release \
+    --package friday-mobile --bin friday-linux-daemon --bin friday-ctl \
+    --package friday-skill-forge --bin friday
+}
+
+check() {
+  cd "$_name"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo test --frozen --release --package friday-mobile
+}
+
+package() {
+  cd "$_name"
+  local root=iso/friday/airootfs
+
+  install -Dm755 target/release/friday-linux-daemon -t "$pkgdir/usr/bin"
+  install -Dm755 target/release/friday-ctl -t "$pkgdir/usr/bin"
+  # skill-forge's binary is also called `friday`; the CLI script owns that name.
+  install -Dm755 target/release/friday "$pkgdir/usr/lib/friday/friday-skill-forge"
+  install -Dm755 "$root/usr/bin/friday" "$pkgdir/usr/bin/friday"
+
+  install -Dm644 "$root/etc/systemd/user/friday-linux-daemon.service" \
+    "$pkgdir/usr/lib/systemd/user/friday-linux-daemon.service"
+  install -Dm644 "$root/usr/share/zsh/site-functions/_friday" -t "$pkgdir/usr/share/zsh/site-functions"
+
+  install -Dm644 packaging/linux/friday.desktop -t "$pkgdir/usr/share/applications"
+  install -Dm644 packaging/linux/hyprland/friday.lua -t "$pkgdir/usr/share/friday/hyprland"
+}
