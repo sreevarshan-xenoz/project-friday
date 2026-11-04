@@ -169,6 +169,7 @@ chmod 755 /mnt/usr/bin/friday*
 [ -d /usr/lib/friday ] && { mkdir -p /mnt/usr/lib ; cp -a /usr/lib/friday /mnt/usr/lib/ ; }
 ln -sf /usr/share/omarchy/bin/omarchy /mnt/usr/bin/omarchy
 ln -sf /usr/bin/friday /mnt/usr/bin/friday-os
+install -Dm644 /usr/share/zsh/site-functions/_friday /mnt/usr/share/zsh/site-functions/_friday 2>/dev/null || true
 
 mkdir -p /mnt/usr/share/omarchy
 rsync -a /usr/share/omarchy/ /mnt/usr/share/omarchy/
