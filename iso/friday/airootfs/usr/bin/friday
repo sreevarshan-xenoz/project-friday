@@ -63,7 +63,9 @@ friday_doctor() {
   echo "FRIDAY doctor"
   echo
   echo "Daemon"
+  local svc_active=false
   if systemctl --user is-active --quiet friday-linux-daemon 2>/dev/null; then
+    svc_active=true
     ok "friday-linux-daemon service is active"
   else
     bad "friday-linux-daemon service is not active" "friday daemon start; then: friday daemon logs"
@@ -71,8 +73,11 @@ friday_doctor() {
   if [ -r "$state" ]; then
     local status
     status=$(jq -r '.status // "unknown"' "$state" 2>/dev/null || echo "unreadable")
-    if [ "$status" = "running" ]; then ok "state.json reports: running"
-    else bad "state.json reports: $status" "friday daemon restart"; fi
+    if [ "$status" = "running" ] && ! $svc_active; then
+      bad "state.json says running, but the service is not (stale: the daemon crashed or was killed)" \
+        "friday daemon restart; if it fails again: friday daemon logs"
+    elif [ "$status" = "running" ]; then ok "state.json reports: running"
+    else bad "state.json reports: $status" "friday daemon restart; then: friday daemon logs"; fi
     if [ "$(jq -r '(.token // "") | length > 0' "$state" 2>/dev/null)" = "true" ]; then
       ok "command token present"
     else

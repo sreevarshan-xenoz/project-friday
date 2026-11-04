@@ -30,7 +30,7 @@ echo "notify \$*" >> "$LOG"
 true
 EOF
 printf '#!/bin/bash\necho "foot $*" >> %q\n' "$LOG" >"$S/foot"
-printf '#!/bin/bash\necho "systemctl $*" >> %q\n' "$LOG" >"$S/systemctl"
+printf '#!/bin/bash\necho "systemctl $*" >> %q\n[[ "$*" == *is-active* && -n "$STUB_INACTIVE" ]] && exit 3\nexit 0\n' "$LOG" >"$S/systemctl"
 printf '#!/bin/bash\n[[ "$*" == *--primary* ]] && { printf %%s "$PRIMARY"; exit 0; }\nprintf %%s "$CLIP"\n' >"$S/wl-paste"
 printf '#!/bin/bash\necho "fuzzel $*" >> %q\necho "$PICK"\n' "$LOG" >"$S/fuzzel"
 chmod +x "$S"/*
@@ -97,6 +97,8 @@ printf '{"status":"running","token":"s3cret-token"}' >"$state/state.json"
 printf 'GEMINI_API_KEY=abc123secret\n' >"$envf"
 out=$(bash "$F" doctor 2>&1 || true)
 contains "reads daemon status" "$out" "state.json reports: running"
+out=$(STUB_INACTIVE=1 bash "$F" doctor 2>&1 || true)
+contains "stale state (running, but service dead) is flagged" "$out" "stale: the daemon crashed or was killed"
 contains "names the key variable" "$out" "GEMINI_API_KEY is set"
 rm -f "$envf"; out=$(bash "$F" doctor 2>&1 || true)
 contains "no key is fine: uses OpenCode Zen" "$out" "using OpenCode Zen's free models"
