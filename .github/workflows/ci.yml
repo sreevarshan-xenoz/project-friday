@@ -66,6 +66,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Trust the checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Stage the pinned Omarchy checkout
+        # Gitignored; build-iso.sh normally fetches it. The static group
+        # verifies the Omarchy-theme Hyprland config against it.
+        run: bash iso/friday/fetch-omarchy.sh
       - name: Run checks
         run: CHECK_WORK="$RUNNER_TEMP/friday-checks" bash iso/friday/test/run-checks.sh
       - name: Upload shell screenshot and logs
