@@ -425,11 +425,19 @@ async fn main() {
     tracing::info!("FRIDAY linux daemon listening on {listen}");
 
     // Run the WS server until told to stop.
-    tokio::select! {
+    let failed = tokio::select! {
         r = server.run() => {
             match r {
-                Ok(()) => tracing::info!("shell ingress closed cleanly"),
-                Err(e) => tracing::error!("shell ingress stopped: {e}"),
+                Ok(()) => {
+                    tracing::info!("shell ingress closed cleanly");
+                    false
+                }
+                Err(e) => {
+                    // e.g. another daemon (another user's session) already owns
+                    // the port. Treat it as a failure, not a clean stop.
+                    tracing::error!("shell ingress stopped: {e}");
+                    true
+                }
             }
         }
         _ = wait_for_stop(&stopping) => {
@@ -437,11 +445,24 @@ async fn main() {
             let mut st = state.lock().await;
             st.status = "stopping".into();
             write_state(&state_path, &render(&st));
+            false
         }
-    }
+    };
 
+    // Never leave state.json claiming "running" after exit: the bar, doctor
+    // and friday-ctl all trust it.
+    {
+        let mut st = state.lock().await;
+        st.status = if failed { "failed" } else { "stopped" }.into();
+        write_state(&state_path, &render(&st));
+    }
     sd_notify("STOPPING=1\nSTATUS=FRIDAY stopped\n");
     tracing::info!("FRIDAY linux daemon stopped");
+    if failed {
+        // Non-zero so systemd marks the unit failed and Restart=on-failure
+        // retries it.
+        std::process::exit(1);
+    }
 }
 
 async fn wait_for_stop(flag: &Arc<AtomicBool>) {
