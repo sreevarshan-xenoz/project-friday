@@ -1,36 +1,55 @@
 # AGENTS.md — guide for agents and contributors
 
-## What FRIDAY is (today)
+## What FRIDAY is
 
-An Arch Linux + Hyprland desktop with a built-in assistant:
+**Goal:** a standalone assistant for **Windows and Linux** with deep
+system integration. A shared Rust core plus a thin host per platform;
+installable on an existing machine. FRIDAY OS (the Arch ISO) is the
+showcase and reference Linux setup, not the only way in.
 
-- `friday-linux-daemon` (Rust, `services/mobile`) runs goals through an LLM
-  provider and publishes its state to `~/.local/state/friday/state.json`.
-- `friday` CLI (`iso/friday/airootfs/usr/bin/friday`): `ask`, `goal`,
-  `doctor`, `setup-ai`, `answers`; Omarchy commands pass through.
-- Desktop: Dots-Hyprland "ii" Quickshell shell (default) or Omarchy themes,
-  with a FRIDAY bar indicator and Super+Y / Super+Alt+Y.
-- Installer: `iso/friday/airootfs/root/{configurator,installer}`.
+**Today:**
 
-The core use case, which comes before anything else: **press a key, ask about
-what's on screen or selected, get a useful answer or action, reliably.**
+- Core: Rust workspace (`core`, `planner`, `services/*`).
+  `friday-linux-daemon` (`services/mobile`) runs goals through an LLM
+  provider and publishes `~/.local/state/friday/state.json`.
+- Windows: `windows-host/` (C#: UI Automation, COM, Win32, PowerShell),
+  `plugins/windows`, Windows sensors behind `cfg(windows)`.
+- Linux: Hyprland host and sensors, the `friday` CLI
+  (`iso/friday/airootfs/usr/bin/friday`: `ask`, `goal`, `doctor`,
+  `setup-ai`, `answers`), a bar indicator, Super+Y / Super+Alt+Y.
+- FRIDAY OS: installer in `iso/friday/airootfs/root/`.
+
+**Core use case (comes before everything else):** press a key, ask about
+what's on screen or selected, get a useful answer or action, reliably, on
+both platforms.
+
+**System integration, not kernel code.** Go deep through the sanctioned
+interfaces: UI Automation / ETW / Win32 / services on Windows; AT-SPI /
+Wayland portals / compositor IPC / eBPF / D-Bus / systemd on Linux. No
+kernel drivers or modules (signing, crashes, kernel churn, user trust)
+unless a concrete need can't be met any other way.
 
 ## Current plan
 
 Work top to bottom. Don't start a later phase while an earlier one has known
 failures.
 
-1. **First hour works.** Fresh clone → `build-iso.sh` → install in a VM →
-   first login → Super+Y answers. Run the VM checklist in
-   `docs/HANDOFF-2026-11-04.md` and fix everything it finds.
-2. **Automate it.** Every check that found a bug by hand becomes a test in
-   `iso/friday/test/` and runs in CI (the `desktop` job).
-3. **Make the core use case excellent.** Selection/screen context, answer
-   quality, the actions FRIDAY can take reliably, latency, clear failures.
-4. **Package FRIDAY separately.** Daemon + CLI + bar widget + keybinds as an
-   Arch package usable on any Arch/Hyprland machine; the ISO becomes the
-   showcase, not the only way in.
-5. **Only then** pull items from `docs/roadmap/ecosystem-backlog.md`.
+1. **First hour works.** Linux: fresh clone → `build-iso.sh` → VM install →
+   first login → Super+Y answers (VM checklist in
+   `docs/HANDOFF-2026-11-04.md`). Windows: install on a clean machine →
+   hotkey → answer. Fix everything found.
+2. **Automate it.** Every bug found by hand becomes a test: Linux desktop in
+   `iso/friday/test/` (CI `desktop` job, done); Windows host and hotkey flow
+   on the `windows-latest` runner.
+3. **Make the core use case excellent** on both platforms: selection/screen
+   context, answer quality, reliable actions, latency, clear failures.
+4. **Ship as standalone packages.** One core, per-platform packaging: an
+   Arch package (daemon, CLI, desktop integration) and a Windows installer
+   (service + tray app + hotkey, MSI/winget). Same CLI and `state.json`
+   contract everywhere.
+5. **Deeper integration** through the interfaces above (e.g. eBPF/ETW for
+   system awareness), each behind explicit user consent.
+6. **Only then** pull items from `docs/roadmap/ecosystem-backlog.md`.
 
 ## Rules
 
