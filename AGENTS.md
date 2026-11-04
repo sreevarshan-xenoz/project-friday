@@ -76,6 +76,7 @@ failures.
 | What | Command |
 |---|---|
 | Build the ISO | `CLEAN_WORK=true bash iso/friday/build-iso.sh` (Arch host with `archiso`) |
+| Arch package | `cd packaging/arch && makepkg -si` (builds committed HEAD); smoke test: `bash packaging/arch/check-package.sh <pkg>` |
 | Desktop/installer checks | `bash iso/friday/test/run-checks.sh` (Arch; see script header for deps) |
 | Test VM | `bash iso/friday/test/run-qemu.sh --headless --daemon --reset-disk` (falls back to TCG without KVM) |
 | Drive the VM | `python3 iso/friday/test/vm-control.py status \| exec "<cmd>" \| screenshot --output x.png` |
