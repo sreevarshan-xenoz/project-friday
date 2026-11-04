@@ -25,6 +25,7 @@ Autonomous Agent & Cognitive Loop:
   friday status | system-info      Inspect daemon state, memory, and telemetry
   friday context screen [--yes]    Share screen context with assistant
   friday daemon <status|restart|logs> Control friday-linux-daemon service
+  friday doctor                    Check daemon, AI provider and desktop health
 
 Skill Forge:
   friday create-skill <id>         Create new skill template
@@ -44,6 +45,82 @@ Run 'friday <group> --help' or 'omarchy --help' for full substrate routing.
 HELP_EOF
 }
 
+# `friday doctor`: one screen answering "why isn't FRIDAY working?".
+# Read-only; never prints secrets. Exit 1 if any check fails.
+friday_doctor() {
+  local fails=0 warns=0
+  local state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
+  local state="$state_dir/state.json"
+  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
+  ok()   { printf '  \e[32m✓\e[0m %s\n' "$1"; }
+  warn() { printf '  \e[33m!\e[0m %s\n      → %s\n' "$1" "$2"; warns=$((warns + 1)); }
+  bad()  { printf '  \e[31m✗\e[0m %s\n      → %s\n' "$1" "$2"; fails=$((fails + 1)); }
+
+  echo "FRIDAY doctor"
+  echo
+  echo "Daemon"
+  if systemctl --user is-active --quiet friday-linux-daemon 2>/dev/null; then
+    ok "friday-linux-daemon service is active"
+  else
+    bad "friday-linux-daemon service is not active" "friday daemon start; then: friday daemon logs"
+  fi
+  if [ -r "$state" ]; then
+    local status
+    status=$(jq -r '.status // "unknown"' "$state" 2>/dev/null || echo "unreadable")
+    if [ "$status" = "running" ]; then ok "state.json reports: running"
+    else bad "state.json reports: $status" "friday daemon restart"; fi
+    if [ "$(jq -r '(.token // "") | length > 0' "$state" 2>/dev/null)" = "true" ]; then
+      ok "command token present"
+    else
+      bad "no command token in state.json" "friday daemon restart (the daemon writes a fresh token)"
+    fi
+  else
+    bad "no state file at $state" "the daemon has not started for this user: friday daemon start"
+  fi
+  if (exec 3<>/dev/tcp/127.0.0.1/18432) 2>/dev/null; then
+    ok "listening on 127.0.0.1:18432"
+  else
+    bad "nothing listening on 127.0.0.1:18432" "friday daemon logs"
+  fi
+
+  echo
+  echo "AI provider"
+  if [ -r "$env_file" ]; then
+    local key_var
+    key_var=$(grep -oE '^[A-Z_]+_API_KEY=.+' "$env_file" | head -n1 | cut -d= -f1 || true)
+    if [ -n "$key_var" ]; then ok "$key_var is set in $env_file"
+    else warn "no *_API_KEY in $env_file" "add e.g. GEMINI_API_KEY=… then: friday daemon restart"; fi
+  else
+    warn "no $env_file (reasoning runs local-only)" "create it with e.g. GEMINI_API_KEY=… then: friday daemon restart"
+  fi
+
+  echo
+  echo "Desktop"
+  if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then ok "inside a Hyprland session"
+  else warn "not inside a Hyprland session" "desktop checks below may not apply over SSH/TTY"; fi
+  if pgrep -x qs >/dev/null || pgrep -x quickshell >/dev/null; then ok "Quickshell bar is running"
+  else warn "Quickshell bar is not running" "qs -c ii &disown   (or log out and back in)"; fi
+  local pkg missing=0
+  for pkg in quickshell qt6-positioning qt6-virtualkeyboard ttf-material-symbols-variable fuzzel libnotify jq; do
+    if ! pacman -Q "$pkg" >/dev/null 2>&1; then
+      bad "package $pkg is missing" "sudo pacman -S $pkg"; missing=$((missing + 1))
+    fi
+  done
+  [ "$missing" -eq 0 ] && ok "required desktop packages installed"
+  local tool
+  for tool in friday-ctl fuzzel notify-send jq; do
+    command -v "$tool" >/dev/null 2>&1 || bad "$tool not on PATH" "reinstall the package that provides $tool"
+  done
+
+  echo
+  if [ "$fails" -eq 0 ] && [ "$warns" -eq 0 ]; then
+    echo "All good."
+  else
+    echo "$fails problem(s), $warns warning(s)."
+  fi
+  [ "$fails" -eq 0 ]
+}
+
 case "${1:-}" in
   ""|"-h"|"--help"|"help")
     show_help
@@ -54,10 +131,24 @@ case "${1:-}" in
     # report the outcome as a notification.
     shift
     goal="$*"
+    history_file="${XDG_STATE_HOME:-$HOME/.local/state}/friday/ask-history"
     if [ -z "$goal" ]; then
-      goal=$(fuzzel --dmenu --prompt-only="FRIDAY › " --width=60 </dev/null) || exit 0
+      if [ -s "$history_file" ]; then
+        # Recent asks, newest first. Enter re-runs the highlighted one;
+        # Shift+Enter sends exactly what was typed (fuzzel execute-input).
+        goal=$(fuzzel --dmenu --prompt="FRIDAY › " --width=60 --minimal-lines --lines=8 \
+          --placeholder="Ask anything · Shift+Enter sends your text as typed" \
+          <"$history_file") || exit 0
+      else
+        goal=$(fuzzel --dmenu --prompt-only="FRIDAY › " --width=60 \
+          --placeholder="Ask anything" </dev/null) || exit 0
+      fi
     fi
     [ -n "${goal// /}" ] || exit 0
+    # Remember it: move to the top, drop duplicates, keep the last 50.
+    mkdir -p "$(dirname "$history_file")"
+    { printf '%s\n' "$goal"; grep -vxF -- "$goal" "$history_file" 2>/dev/null || true; } \
+      | head -n 50 >"$history_file.tmp" && mv -f "$history_file.tmp" "$history_file"
     notify() { notify-send -a FRIDAY "$@" 2>/dev/null || true; }
     notify "FRIDAY" "Working on: $goal"
     # friday-ctl prints the acceptance, then the {outcome,result,error} summary.
@@ -72,6 +163,9 @@ case "${1:-}" in
   goal)
     shift
     exec friday-ctl goal "$@"
+    ;;
+  doctor)
+    friday_doctor
     ;;
   status|system-info)
     shift
