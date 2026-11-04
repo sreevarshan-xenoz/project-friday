@@ -1,10 +1,14 @@
+# Vendored third-party code (end-4 dots, SilentSDDM, Omarchy) is excluded from
+# FRIDAY's Python checks: it is copied as-is and owned upstream.
 [tool.black]
 line-length = 100
 target-version = ["py312"]
+extend-exclude = "iso/friday/airootfs/usr/share/"
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+extend-exclude = ["iso/friday/airootfs/usr/share"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
@@ -14,6 +18,7 @@ ignore = ["B008"]
 python_version = "3.12"
 strict = true
 ignore_missing_imports = true
+exclude = ["^iso/friday/airootfs/usr/share/", "^target/"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

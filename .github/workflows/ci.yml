@@ -68,6 +68,7 @@ jobs:
       - name: Black
         run: uvx black --check .
       - name: Mypy
-        run: uvx mypy . || true
+        run: uvx mypy .
       - name: Pytest
-        run: uvx pytest || true
+        # Exit 5 = no tests collected (there are none yet); any real failure fails CI.
+        run: uvx pytest || [ $? -eq 5 ]
