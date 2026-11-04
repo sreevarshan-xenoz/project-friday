@@ -4,12 +4,12 @@ source "$(dirname "$0")/lib.sh"
 
 echo "shell scripts parse"
 for f in "$AIROOTFS/root/configurator" "$AIROOTFS/root/installer" "$AIROOTFS/root/friday-tui.sh" \
-         "$AIROOTFS/usr/bin/friday" "$PROFILE_DIR/build-iso.sh" "$PROFILE_DIR/fetch-omarchy.sh" \
+         "$REPO_ROOT/packaging/linux/friday" "$PROFILE_DIR/build-iso.sh" "$PROFILE_DIR/fetch-omarchy.sh" \
          "$PROFILE_DIR/test/run-qemu.sh"; do
   expect "bash -n ${f#"$REPO_ROOT"/}" bash -n "$f"
 done
 if need zsh; then
-  expect "zsh -n _friday completion" zsh -n "$AIROOTFS/usr/share/zsh/site-functions/_friday"
+  expect "zsh -n _friday completion" zsh -n "$REPO_ROOT/packaging/linux/_friday"
 else skip "zsh completion syntax (no zsh)"; fi
 
 echo "Hyprland Lua configs parse"
@@ -41,24 +41,30 @@ if need Hyprland runuser; then
   done
 else skip "Hyprland config verification (needs Hyprland)"; fi
 
-echo "build output is not committed"
-for f in usr/bin/friday-ctl usr/bin/friday-linux-daemon usr/bin/friday-skill-forge; do
-  if git -C "$REPO_ROOT" ls-files --error-unmatch "iso/friday/airootfs/$f" >/dev/null 2>&1; then
-    fail "$f is tracked in git (build-iso.sh builds it)"
-  else pass "$f is built, not committed"; fi
+echo "FRIDAY comes from its package, not loose files in airootfs"
+# pacman refuses to install over files it doesn't own, so these must not be in
+# airootfs (the friday-git package installs them).
+for f in usr/bin/friday usr/bin/friday-ctl usr/bin/friday-linux-daemon usr/lib/friday \
+         usr/lib/systemd/user/friday-linux-daemon.service etc/systemd/user/friday-linux-daemon.service \
+         usr/share/zsh/site-functions/_friday usr/share/applications/friday.desktop usr/share/friday/hyprland; do
+  if [[ -e "$AIROOTFS/$f" ]]; then fail "airootfs/$f would conflict with the friday-git package"
+  else pass "$f is left to the package"; fi
 done
+grep -qx 'friday-git' "$PROFILE_DIR/packages.x86_64" && pass "live ISO installs friday-git" \
+  || fail "friday-git is not in packages.x86_64"
+grep -q 'pacstrap_with_retry -U /mnt "$FRIDAY_PKG"' "$AIROOTFS/root/installer" \
+  && pass "installer installs the friday-git package" || fail "installer does not install friday-git"
 
 echo "scripts are stored executable in git"
-for f in usr/bin/friday root/configurator root/installer; do
-  mode=$(git -C "$REPO_ROOT" ls-files -s "iso/friday/airootfs/$f" | awk '{print $1}')
+for f in packaging/linux/friday iso/friday/airootfs/root/configurator iso/friday/airootfs/root/installer; do
+  mode=$(git -C "$REPO_ROOT" ls-files -s "$f" | awk '{print $1}')
   if [[ "$mode" == 100755 ]]; then pass "$f is 100755"; else fail "$f is ${mode:-untracked} (want 100755)"; fi
 done
 
 echo "files the desktop needs are present"
 QS="$AIROOTFS/usr/share/friday/dots-hyprland/.config/quickshell/ii"
 for f in "$QS/shell.qml" "$QS/services/Friday.qml" "$QS/modules/ii/bar/FridayIndicator.qml" \
-         "$QS/modules/common/widgets/shapes/material-shapes.js" \
-         "$AIROOTFS/usr/share/zsh/site-functions/_friday"; do
+         "$QS/modules/common/widgets/shapes/material-shapes.js"; do
   expect "${f#"$AIROOTFS"/}" test -s "$f"
 done
 # Every relative QML import directory must exist (a lost git submodule broke the shell once).

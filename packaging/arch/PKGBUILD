@@ -1,6 +1,6 @@
 # FRIDAY for an existing Arch Linux install: the daemon, the `friday` CLI,
 # its user service and the desktop hooks (launcher entry, Hyprland keys).
-# FRIDAY OS ships the same files in its ISO.
+# FRIDAY OS installs this same package (iso/friday/build-iso.sh builds it).
 #
 # Build from a checkout of this repository:
 #   cd packaging/arch && makepkg -si
@@ -60,19 +60,18 @@ check() {
 
 package() {
   cd "$_name"
-  local root=iso/friday/airootfs
+  local lin=packaging/linux
 
   install -Dm755 target/release/friday-linux-daemon -t "$pkgdir/usr/bin"
   install -Dm755 target/release/friday-ctl -t "$pkgdir/usr/bin"
   # skill-forge's binary is also called `friday`; the CLI script owns that name.
   install -Dm755 target/release/friday "$pkgdir/usr/lib/friday/friday-skill-forge"
-  install -Dm755 "$root/usr/bin/friday" "$pkgdir/usr/bin/friday"
+  install -Dm755 "$lin/friday" -t "$pkgdir/usr/bin"
 
-  install -Dm644 "$root/etc/systemd/user/friday-linux-daemon.service" \
-    "$pkgdir/usr/lib/systemd/user/friday-linux-daemon.service"
-  install -Dm644 "$root/usr/share/zsh/site-functions/_friday" -t "$pkgdir/usr/share/zsh/site-functions"
+  install -Dm644 "$lin/friday-linux-daemon.service" -t "$pkgdir/usr/lib/systemd/user"
+  install -Dm644 "$lin/_friday" -t "$pkgdir/usr/share/zsh/site-functions"
 
-  install -Dm644 packaging/linux/friday.desktop -t "$pkgdir/usr/share/applications"
-  install -Dm644 packaging/linux/hyprland/friday.lua -t "$pkgdir/usr/share/friday/hyprland"
+  install -Dm644 "$lin/friday.desktop" -t "$pkgdir/usr/share/applications"
+  install -Dm644 "$lin/hyprland/friday.lua" -t "$pkgdir/usr/share/friday/hyprland"
   install -Dm644 LICENSE-MIT LICENSE-APACHE -t "$pkgdir/usr/share/licenses/$pkgname"
 }

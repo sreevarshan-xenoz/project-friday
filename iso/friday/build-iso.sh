@@ -24,39 +24,42 @@ if ! command -v mkarchiso &>/dev/null; then
   exit 1
 fi
 
-# Build the FRIDAY binaries from source on every ISO build (cargo is
-# incremental) so the image never ships stale ones. SKIP_CARGO_BUILD=true
-# reuses whatever is already in airootfs/usr/bin.
-# release target -> airootfs name. /usr/bin/friday is the CLI shell script and
-# is never overwritten; skill-forge's cargo bin (also named `friday`) is
-# installed as friday-skill-forge.
-declare -A FRIDAY_BINARIES=(
-  [friday-linux-daemon]=friday-linux-daemon
-  [friday-ctl]=friday-ctl
-  [friday]=friday-skill-forge
-)
-if [[ "${SKIP_CARGO_BUILD:-false}" != "true" ]]; then
-  echo "Building FRIDAY release binaries..."
-  cargo build --release --manifest-path "$PROJECT_ROOT/Cargo.toml" \
-    --package friday-mobile --bin friday-linux-daemon --bin friday-ctl \
-    --package friday-skill-forge --bin friday
-  for src in "${!FRIDAY_BINARIES[@]}"; do
-    dest="$PROFILE_DIR/airootfs/usr/bin/${FRIDAY_BINARIES[$src]}"
-    install -m 755 "$PROJECT_ROOT/target/release/$src" "$dest"
-    strip "$dest" 2>/dev/null || true
-  done
-fi
-for bin in friday "${FRIDAY_BINARIES[@]}"; do
-  # Git stores these as 100644, so a fresh clone has no exec bit; restore it
-  # (profiledef.sh sets 0755 in the image regardless).
-  [[ -f "$PROFILE_DIR/airootfs/usr/bin/$bin" ]] && chmod 755 "$PROFILE_DIR/airootfs/usr/bin/$bin"
-  if [[ ! -x "$PROFILE_DIR/airootfs/usr/bin/$bin" ]]; then
-    echo "Error: airootfs/usr/bin/$bin is missing" >&2
-    echo "  The FRIDAY binaries are not committed; build them by running without" >&2
-    echo "  SKIP_CARGO_BUILD=true (needs a Rust toolchain)." >&2
+# FRIDAY itself (daemon, CLI, user service, desktop hooks) is the friday-git
+# package from packaging/arch, the same one an existing Arch install uses.
+# It is built into a local [friday] repo that ships in the ISO at
+# /opt/friday/repo: mkarchiso installs it on the live system (packages.x86_64)
+# and the installer pacstraps it onto the target. makepkg packages the
+# committed HEAD. SKIP_PACKAGE_BUILD=true reuses the package already there.
+FRIDAY_REPO_DIR="$PROFILE_DIR/airootfs/opt/friday/repo"
+if [[ "${SKIP_PACKAGE_BUILD:-false}" != "true" ]]; then
+  if [[ $EUID -eq 0 ]]; then
+    echo "Error: makepkg refuses to run as root. Run build-iso.sh as a normal user" >&2
+    echo "  (it uses sudo for mkarchiso), or build the package first and set" >&2
+    echo "  SKIP_PACKAGE_BUILD=true." >&2
     exit 1
   fi
-done
+  if [[ -n "$(git -C "$PROJECT_ROOT" status --porcelain 2>/dev/null)" ]]; then
+    echo "Note: uncommitted changes are not in the package (makepkg builds HEAD)."
+  fi
+  echo "Building the FRIDAY package..."
+  mkdir -p "$FRIDAY_REPO_DIR"
+  find "$FRIDAY_REPO_DIR" -maxdepth 1 -name 'friday*' -type f -delete
+  (cd "$PROJECT_ROOT/packaging/arch" && PKGDEST="$FRIDAY_REPO_DIR" makepkg -f --noconfirm --syncdeps --nocheck)
+fi
+FRIDAY_PKG=$(find "$FRIDAY_REPO_DIR" -maxdepth 1 -name 'friday-git-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1)
+if [[ -z "$FRIDAY_PKG" ]]; then
+  echo "Error: no friday-git package in $FRIDAY_REPO_DIR" >&2
+  echo "  Run without SKIP_PACKAGE_BUILD=true (needs base-devel and rust)." >&2
+  exit 1
+fi
+[[ -f "$FRIDAY_REPO_DIR/friday.db" ]] || repo-add -q "$FRIDAY_REPO_DIR/friday.db.tar.gz" "$FRIDAY_PKG"
+# The profile's pacman.conf plus the local repo, for this build only.
+BUILD_PACMAN_CONF=$(mktemp)
+trap 'rm -f "$BUILD_PACMAN_CONF"' EXIT
+{
+  cat "$PROFILE_DIR/pacman.conf"
+  printf '\n[friday]\nSigLevel = Optional TrustAll\nServer = file://%s\n' "$FRIDAY_REPO_DIR"
+} >"$BUILD_PACMAN_CONF"
 
 # Stage the pinned Omarchy checkout (gitignored; fetched at a fixed commit,
 # never "latest"). Keeps an existing hand-staged copy; see fetch-omarchy.sh.
@@ -82,7 +85,7 @@ if [[ -d "$WORK_DIR" && "${CLEAN_WORK:-false}" == "true" ]]; then
 fi
 
 echo "Invoking mkarchiso (requires sudo)..."
-sudo mkarchiso -v -w "$WORK_DIR" -o "$OUT_DIR" "$PROFILE_DIR"
+sudo mkarchiso -v -C "$BUILD_PACMAN_CONF" -w "$WORK_DIR" -o "$OUT_DIR" "$PROFILE_DIR"
 
 LATEST_ISO=$(ls -t "$OUT_DIR"/*.iso 2>/dev/null | head -n 1 || true)
 if [[ -n "$LATEST_ISO" && -f "$LATEST_ISO" ]]; then

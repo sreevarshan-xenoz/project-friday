@@ -194,20 +194,23 @@ live_status_stop
 genfstab -U /mnt >> /mnt/etc/fstab
 
 phase_msg 4 "Installing FRIDAY and the Omarchy desktop layer"
+# FRIDAY itself is the friday-git package the ISO was built with (daemon,
+# CLI, user service); pacman owns its files, so `pacman -Syu` and a later
+# package upgrade work on the installed system.
+FRIDAY_PKG=$(find /opt/friday/repo -maxdepth 1 -name 'friday-git-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1)
+[[ -n "$FRIDAY_PKG" ]] || { echo "the FRIDAY package is missing from /opt/friday/repo" >&2; exit 1; }
+pacstrap_with_retry -U /mnt "$FRIDAY_PKG"
 mkdir -p /mnt/usr/bin
-cp -a /usr/bin/friday* /mnt/usr/bin/
-chmod 755 /mnt/usr/bin/friday*
-[ -d /usr/lib/friday ] && { mkdir -p /mnt/usr/lib ; cp -a /usr/lib/friday /mnt/usr/lib/ ; }
 ln -sf /usr/share/omarchy/bin/omarchy /mnt/usr/bin/omarchy
-ln -sf /usr/bin/friday /mnt/usr/bin/friday-os
-install -Dm644 /usr/share/zsh/site-functions/_friday /mnt/usr/share/zsh/site-functions/_friday 2>/dev/null || true
+ln -sf friday /mnt/usr/bin/friday-os
 
 mkdir -p /mnt/usr/share/omarchy
 rsync -a /usr/share/omarchy/ /mnt/usr/share/omarchy/
 
-if [ -d /usr/share/friday ]; then
+# The FRIDAY OS desktop (the package owns the rest of /usr/share/friday).
+if [ -d /usr/share/friday/dots-hyprland ]; then
   mkdir -p /mnt/usr/share/friday
-  rsync -a /usr/share/friday/ /mnt/usr/share/friday/
+  rsync -a /usr/share/friday/dots-hyprland /mnt/usr/share/friday/
 fi
 
 rsync -a /etc/sddm.conf* /mnt/etc/ 2>/dev/null || true
@@ -250,9 +253,10 @@ arch-chroot /mnt systemctl enable NetworkManager 2>/dev/null || true
 arch-chroot /mnt systemctl enable sddm 2>/dev/null || true
 
 # FRIDAY systemd user daemon
+# (enabled for every user, like `systemctl --global enable`)
 mkdir -p /mnt/etc/systemd/user/default.target.wants
-cp -p /etc/systemd/user/friday-linux-daemon.service /mnt/etc/systemd/user/ 2>/dev/null || true
-ln -sf ../friday-linux-daemon.service /mnt/etc/systemd/user/default.target.wants/friday-linux-daemon.service 2>/dev/null || true
+ln -sf /usr/lib/systemd/user/friday-linux-daemon.service \
+  /mnt/etc/systemd/user/default.target.wants/friday-linux-daemon.service
 
 # Debug-only access: serial root autologin + open root SSH. Never on by default —
 # an installed system must not accept unauthenticated or root logins over the network.

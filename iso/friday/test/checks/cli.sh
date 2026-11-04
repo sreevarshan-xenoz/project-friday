@@ -4,7 +4,7 @@
 source "$(dirname "$0")/lib.sh"
 need jq || { skip "friday CLI (needs jq)"; exit 0; }
 
-F="$AIROOTFS/usr/bin/friday"
+F="$REPO_ROOT/packaging/linux/friday"
 W="$WORK/cli"; S="$W/stub"; LOG="$W/calls.log"
 rm -rf "$W"; mkdir -p "$S" "$W/home"
 export HOME="$W/home" XDG_STATE_HOME="" XDG_CONFIG_HOME="" USER="${USER:-tester}" FRIDAY_WELCOME_DELAY=0

@@ -177,3 +177,7 @@ kdialog
 syntax-highlighting
 chromium
 libnotify
+
+# FRIDAY itself (daemon, CLI, user service): built by build-iso.sh from
+# packaging/arch into the local [friday] repo, not from the Arch repos.
+friday-git

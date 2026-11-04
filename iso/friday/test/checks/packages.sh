@@ -21,7 +21,8 @@ check_list() { # check_list <label> <pkg...>
   else pass "$label: all $# packages exist"; fi
 }
 
-mapfile -t live < <(grep -vE '^\s*(#|$)' "$PROFILE_DIR/packages.x86_64")
+# friday-git comes from the local [friday] repo build-iso.sh builds.
+mapfile -t live < <(grep -vE '^\s*(#|$)' "$PROFILE_DIR/packages.x86_64" | grep -vx 'friday-git')
 check_list "live ISO (packages.x86_64)" "${live[@]}"
 
 # The installer's pacstrap list: from the pacstrap call to the first line
