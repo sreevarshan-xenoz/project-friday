@@ -261,8 +261,19 @@ case "${1:-}" in
     context=""
     if $use_selection; then
       # Primary selection (highlighted text) first, then the clipboard.
+      source_label="Selected"
       context=$(wl-paste --primary --no-newline 2>/dev/null || true)
-      [ -n "${context//[[:space:]]/}" ] || context=$(wl-paste --no-newline 2>/dev/null || true)
+      if [ -z "${context//[[:space:]]/}" ]; then
+        source_label="Clipboard"
+        context=$(wl-paste --no-newline 2>/dev/null || true)
+        # The clipboard often holds a just-copied password or token. Never
+        # send something shaped like one (a single long token mixing letters
+        # and digits) to a cloud model by accident.
+        if [[ "$context" =~ ^[^[:space:]]{12,}$ && "$context" =~ [A-Za-z] && "$context" =~ [0-9] ]]; then
+          notify "FRIDAY" "The clipboard looks like a password or token, so I won't send it. Highlight the text you mean instead."
+          exit 0
+        fi
+      fi
       if [ -z "${context//[[:space:]]/}" ]; then
         notify "FRIDAY" "Select or copy some text first, then press Super+Alt+Y."
         exit 0
@@ -277,7 +288,7 @@ case "${1:-}" in
       elif $use_selection; then
         preview=$(tr '\n\t' '  ' <<<"$context" | cut -c1-50)
         goal=$(fuzzel --dmenu --prompt-only="FRIDAY › " --width=70 \
-          --placeholder="About \"$preview…\" (e.g. summarise, explain, translate)" </dev/null) || exit 0
+          --placeholder="$source_label: \"$preview…\" (e.g. summarise, explain, translate)" </dev/null) || exit 0
       elif [ -s "$history_file" ]; then
         # Recent asks, newest first. Enter re-runs the highlighted one;
         # Shift+Enter sends exactly what was typed (fuzzel execute-input).

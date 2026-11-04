@@ -58,6 +58,14 @@ contains "selection sent as context" "$(cat "$LOG")" "Use this text as context"
 contains "selection text included" "$(cat "$LOG")" "E0308 mismatched types"
 PRIMARY="" CLIP="Bonjour" bash "$F" ask -s "translate"; sleep 0.3
 contains "falls back to the clipboard" "$(cat "$LOG")" "Bonjour"
+: >"$LOG"; PRIMARY="" CLIP="Bonjour tout le monde" PICK="translate" bash "$F" ask -s; sleep 0.3
+contains "prompt says the text came from the clipboard" "$(cat "$LOG")" 'Clipboard: "Bonjour tout le monde'
+: >"$LOG"; PRIMARY="" CLIP="hunter2SecretToken99" bash "$F" ask -s "explain"; sleep 0.3
+if grep -q "friday-ctl" "$LOG"; then fail "a password-shaped clipboard was sent"
+else pass "password-shaped clipboard is never sent"; fi
+contains "and the user is told why" "$(cat "$LOG")" "looks like a password or token"
+: >"$LOG"; PRIMARY="hunter2SecretToken99" PICK="explain" bash "$F" ask -s; sleep 0.3
+contains "highlighted text is sent as chosen" "$(cat "$LOG")" "hunter2SecretToken99"
 : >"$LOG"; PRIMARY="" CLIP="" bash "$F" ask -s
 contains "empty selection explains what to do" "$(cat "$LOG")" "Select or copy some text first"
 PICK="what does this error mean" bash "$F" ask --screen; sleep 0.3
