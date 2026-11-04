@@ -18,6 +18,8 @@ if [[ "\$1" == context ]]; then
 fi
 printf 'friday-ctl %q\n' "\$3" >> "$LOG"
 echo '{"accepted":true}'
+if [[ "\$3" == *nodaemon* ]]; then echo "no token found; daemon not running at /x/state.json (is friday-linux-daemon up?)" >&2; exit 1; fi
+if [[ "\$3" == *slowgoal* ]]; then echo '{"accepted":true}'; echo "timed out after 180s waiting for the goal to finish" >&2; exit 1; fi
 if [[ "\$3" == *limit* ]]; then printf '{\n "outcome": "failed",\n "error": "provider opencode: 429 FreeUsageLimitError"\n}\n'; exit 1; fi
 if [[ "\$3" == *fail* ]]; then printf '{\n "outcome": "failed",\n "error": "network unreachable"\n}\n'; exit 1; fi
 printf '{\n "outcome": "completed",\n "result": "Line one.\\\\nLine two.\\\\nLast line."\n}\n'
@@ -27,6 +29,7 @@ cat >"$S/notify-send" <<EOF
 echo "notify \$*" >> "$LOG"
 [[ "\$*" == *open=* ]] && echo open
 [[ "\$*" == *setup=* ]] && echo setup
+[[ "\$*" == *start=* ]] && echo start
 true
 EOF
 printf '#!/bin/bash\necho "foot $*" >> %q\n' "$LOG" >"$S/foot"
@@ -57,6 +60,13 @@ contains "screen: prompt says a screenshot is shared" "$(cat "$LOG")" "a screens
 contains "screen: full answer saved" "$(cat "$state/last-answer.md")" $'The error says E0308.\nFix the type.'
 bash "$F" ask "hit the limit"; sleep 0.3
 contains "free-limit error explained with a way out" "$(cat "$state/last-answer.md")" "free limit is used up for now"
+: >"$LOG"; bash "$F" ask "nodaemon test"; sleep 0.5
+contains "daemon down: plain message" "$(cat "$state/last-answer.md")" "FRIDAY isn't running"
+contains "daemon down: raw error kept for debugging" "$(cat "$state/last-answer.md")" "no token found"
+contains "daemon down: offers Start FRIDAY" "$(cat "$LOG")" "start=Start FRIDAY"
+contains "Start FRIDAY restarts the daemon" "$(cat "$LOG")" "systemctl --user restart friday-linux-daemon"
+bash "$F" ask "slowgoal test"; sleep 0.3
+contains "timeout: explains it may still be running" "$(cat "$state/last-answer.md")" "taking longer than expected"
 bash "$F" ask "this will fail"; sleep 0.3
 contains "failure is critical with the error" "$(cat "$LOG")" "-u critical"
 contains "failure shows the reason" "$(cat "$LOG")" "network unreachable"
