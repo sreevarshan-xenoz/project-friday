@@ -15,6 +15,9 @@ TIMEZONE="${TIMEZONE:-UTC}"
 THEME="${THEME:-FRIDAY Dots-Hyprland (Material You / Illogical Impulse)}"
 SDDM_THEME="${SDDM_THEME:-SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)}"
 AUTO_REBOOT="${AUTO_REBOOT:-false}"
+# Skip the SDDM password screen at boot. Off by default: with it on, anyone
+# who powers the machine on gets the desktop.
+AUTOLOGIN="${AUTOLOGIN:-false}"
 FRIDAY_AI_PROVIDER="${FRIDAY_AI_PROVIDER:-}"
 FRIDAY_AI_KEY="${FRIDAY_AI_KEY:-}"
 # Root SSH + serial autologin on the installed system, for VM debugging only.
@@ -384,12 +387,15 @@ GreeterEnvironment=QML2_IMPORT_PATH=/usr/share/sddm/themes/$SDDM_THEME_ID/compon
 EOF_SDDM_THEME
 cp -p /mnt/etc/sddm.conf.d/10-theme.conf /mnt/etc/sddm.conf
 
-cat << EOF_SDDM_AUTO > /mnt/etc/sddm.conf.d/autologin.conf
+rm -f /mnt/etc/sddm.conf.d/autologin.conf
+if [[ "$AUTOLOGIN" == "true" ]]; then
+  cat << EOF_SDDM_AUTO > /mnt/etc/sddm.conf.d/autologin.conf
 [Autologin]
 User=$USERNAME
 Session=hyprland.desktop
 Relogin=false
 EOF_SDDM_AUTO
+fi
 
 mkdir -p /mnt/var/lib/omarchy/provisioning
 cat << EOF_INFO > /mnt/var/lib/omarchy/provisioning/install-info.json

@@ -19,6 +19,7 @@ KEYBOARD="us" TIMEZONE="UTC"
 THEME="FRIDAY Dots-Hyprland (Material You / Illogical Impulse)"
 SDDM_THEME="SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)"
 FRIDAY_AI_PROVIDER="" FRIDAY_AI_KEY=""
+AUTOLOGIN="false"
 FRIDAY_AI_LABEL="Skipped (set later in ~/.config/friday/friday.env)"
 
 screen() { # screen <step-index> [subtitle]
@@ -162,6 +163,15 @@ step_security() {
     break
   done
   friday_ok "Password set"
+  echo
+  if gum confirm --default=false --affirmative="Yes, skip it" --negative="No, ask for it" \
+      "Skip the password screen when the computer starts?"; then
+    AUTOLOGIN="true"
+    friday_warn "Automatic login on: anyone who turns this computer on gets your desktop."
+  else
+    AUTOLOGIN="false"
+    friday_ok "Password required at login"
+  fi
 }
 
 step_region() {
@@ -245,7 +255,7 @@ review() {
       --padding "1 2" --width 90 \
       "Disk        $TARGET_LABEL" \
       "Computer    $HOSTNAME" \
-      "User        $USERNAME   (password set)" \
+      "User        $USERNAME   (password set, $([[ $AUTOLOGIN == true ]] && echo "automatic login" || echo "asked at login"))" \
       "Region      $TIMEZONE · keyboard $KEYBOARD" \
       "Desktop     $THEME" \
       "Login       $SDDM_THEME" \
@@ -285,7 +295,7 @@ review
 friday_banner
 friday_say "Thanks, $USERNAME. I'll take it from here."
 sleep 1
-export TARGET_DISK KEYBOARD HOSTNAME USERNAME PASSWORD TIMEZONE THEME SDDM_THEME FRIDAY_AI_PROVIDER FRIDAY_AI_KEY
+export TARGET_DISK KEYBOARD HOSTNAME USERNAME PASSWORD TIMEZONE THEME SDDM_THEME FRIDAY_AI_PROVIDER FRIDAY_AI_KEY AUTOLOGIN
 export FRIDAY_INTERACTIVE=1
 /root/installer || leave_menu "Something went wrong during the install. The full log is in /tmp/friday-installer.log."
 leave_menu ""

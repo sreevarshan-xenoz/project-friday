@@ -31,6 +31,7 @@ STEPS = [
     (2, CTRL_U + "alice" + ENTER),
     (2, "abc" + ENTER), (2, "abd" + ENTER),          # mismatch
     (2, "secret1" + ENTER), (2, "secret1" + ENTER),
+    (3, ENTER),                     # autologin? default No
     (4, "kolkata"), (2, ENTER),     # timezone search
     (4, "uk"), (2, ENTER),          # keymap search
     (3, ENTER), (2, ENTER),         # desktop, login theme
@@ -82,12 +83,13 @@ checks = {
     "invalid username re-prompts": "Start with a lowercase letter" in text,
     "password mismatch re-prompts": "didn't match" in text,
     "review screen shown": "Last check: erase /dev/vda" in text,
+    "autologin defaults to off": "Password required at login" in text,
     "installer received the spec": bool(env_lines),
 }
 env = env_lines[-1] if env_lines else ""
 for key, want in [("disk", "/dev/vda"), ("host", "mybox"), ("user", "alice"),
                   ("pw", "secret1"), ("tz", "Asia/Kolkata"), ("kb", "uk"),
-                  ("ai", "[]"), ("interactive", "1")]:
+                  ("ai", "[]"), ("autologin", "false"), ("interactive", "1")]:
     checks[f"spec {key}={want}"] = f"{key}={want}" in env
 
 ok = True

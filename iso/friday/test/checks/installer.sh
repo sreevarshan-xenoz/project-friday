@@ -26,6 +26,12 @@ refuse "api key with space"          friday_valid_api_key "has space key"
 expect "timezone list never empty"   test -n "$(friday_timezones | head -n1)"
 expect "keymap list never empty"     test -n "$(friday_keymaps | head -n1)"
 
+echo "login security"
+guarded=$(awk '/if \[\[ "\$AUTOLOGIN" == "true" \]\]/ {g=1} /EOF_SDDM_AUTO > \/mnt\/etc\/sddm.conf.d\/autologin.conf/ {print (g ? "guarded" : "unguarded"); exit}' "$ROOT/installer")
+if [[ "$guarded" == guarded ]]; then pass "SDDM autologin is only written when AUTOLOGIN=true"
+else fail "installer writes SDDM autologin unconditionally"; fi
+expect "AUTOLOGIN defaults to false" grep -q 'AUTOLOGIN="${AUTOLOGIN:-false}"' "$ROOT/installer"
+
 echo "configurator flow (pty)"
 if need gum python3; then
   W="$WORK/installer"; mkdir -p "$W/stub"
@@ -39,7 +45,7 @@ EOF
   printf '#!/bin/bash\nexit 0\n' >"$W/stub/curl"   # pretend we're online
   cat >"$W/stub/installer" <<'EOF'
 #!/bin/bash
-echo "INSTALLER-ENV disk=$TARGET_DISK host=$HOSTNAME user=$USERNAME pw=$PASSWORD tz=$TIMEZONE kb=$KEYBOARD ai=[$FRIDAY_AI_PROVIDER] interactive=$FRIDAY_INTERACTIVE"
+echo "INSTALLER-ENV disk=$TARGET_DISK host=$HOSTNAME user=$USERNAME pw=$PASSWORD tz=$TIMEZONE kb=$KEYBOARD ai=[$FRIDAY_AI_PROVIDER] autologin=$AUTOLOGIN interactive=$FRIDAY_INTERACTIVE"
 EOF
   chmod +x "$W"/stub/* "$W/configurator"
   if python3 "$CHECKS/installer_flow.py" "$W/configurator" "$W/stub"; then :; else FAILS=$((FAILS + 1)); fi
