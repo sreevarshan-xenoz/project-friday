@@ -9,15 +9,41 @@ FRIDAY_SUCCESS="#9ECE6A"     # Mint Green
 FRIDAY_WARNING="#E0AF68"     # Warm Amber
 FRIDAY_ERROR="#F7768E"       # Crimson Red
 FRIDAY_BORDER="#3B4261"      # Border Slate
+FRIDAY_TEXT="#C0CAF5"        # Soft White
+FRIDAY_BG="#1A1B26"          # Night
+
+# Put every gum prompt in FRIDAY's palette (gum defaults to pink).
+export GUM_CHOOSE_CURSOR_FOREGROUND="$FRIDAY_ACCENT"
+export GUM_CHOOSE_SELECTED_FOREGROUND="$FRIDAY_ACCENT"
+export GUM_CHOOSE_HEADER_FOREGROUND="$FRIDAY_SECONDARY"
+export GUM_CHOOSE_ITEM_FOREGROUND="$FRIDAY_TEXT"
+export GUM_CONFIRM_PROMPT_FOREGROUND="$FRIDAY_SECONDARY"
+export GUM_CONFIRM_SELECTED_BACKGROUND="$FRIDAY_ACCENT"
+export GUM_CONFIRM_SELECTED_FOREGROUND="$FRIDAY_BG"
+export GUM_CONFIRM_UNSELECTED_BACKGROUND="$FRIDAY_BORDER"
+export GUM_CONFIRM_UNSELECTED_FOREGROUND="$FRIDAY_TEXT"
+export GUM_INPUT_PROMPT_FOREGROUND="$FRIDAY_SECONDARY"
+export GUM_INPUT_CURSOR_FOREGROUND="$FRIDAY_ACCENT"
+export GUM_INPUT_PLACEHOLDER_FOREGROUND="$FRIDAY_MUTED"
+export GUM_FILTER_INDICATOR_FOREGROUND="$FRIDAY_ACCENT"
+export GUM_FILTER_MATCH_FOREGROUND="$FRIDAY_ACCENT"
+export GUM_FILTER_PROMPT_FOREGROUND="$FRIDAY_SECONDARY"
+export GUM_FILTER_PLACEHOLDER_FOREGROUND="$FRIDAY_MUTED"
+export GUM_FILTER_HEADER_FOREGROUND="$FRIDAY_SECONDARY"
+export GUM_SPIN_SPINNER_FOREGROUND="$FRIDAY_ACCENT"
+export GUM_SPIN_TITLE_FOREGROUND="$FRIDAY_TEXT"
+export GUM_CHOOSE_HEADER=""
 
 # FRIDAY_FAST=1 (or a non-tty) disables the typewriter effect.
 friday_is_tty() { [[ -t 1 && "${FRIDAY_FAST:-0}" != "1" ]]; }
 
 friday_banner() {
   local subtitle="${1:-COGNITIVE OPERATING SYSTEM}"
+  local cols
+  cols=$(tput cols 2>/dev/null || echo 80)
   clear
   echo
-  gum style --foreground "$FRIDAY_ACCENT" --align center \
+  gum style --width "$cols" --foreground "$FRIDAY_ACCENT" --align center \
 " ██████╗ ██████╗ ██╗██████╗  █████╗ ██╗   ██╗" \
 " ██╔════╝██╔══██╗██║██╔══██╗██╔══██╗╚██╗ ██╔╝" \
 " █████╗  ██████╔╝██║██║  ██║███████║ ╚████╔╝ " \
@@ -25,8 +51,8 @@ friday_banner() {
 " ██║     ██║  ██║██║██████╔╝██║  ██║   ██║   " \
 " ╚═╝     ╚═╝  ╚═╝╚═╝╚═════╝ ╚═╝  ╚═╝   ╚═╝   "
   echo
-  gum style --foreground "$FRIDAY_SECONDARY" --bold --align center "$subtitle"
-  gum style --foreground "$FRIDAY_MUTED" --align center "────────────────────────────────────────────────────────────"
+  gum style --width "$cols" --foreground "$FRIDAY_SECONDARY" --bold --align center "$subtitle"
+  gum style --width "$cols" --foreground "$FRIDAY_MUTED" --align center "────────────────────────────────────────────────────────────"
   echo
 }
 
@@ -67,7 +93,7 @@ friday_rail() {
     else out+="○ $label   "; fi
     i=$((i + 1))
   done
-  gum style --foreground "$FRIDAY_MUTED" --align center "${out%   }"
+  gum style --width "$(tput cols 2>/dev/null || echo 80)" --foreground "$FRIDAY_MUTED" --align center "${out%   }"
   echo
 }
 

@@ -242,7 +242,7 @@ review() {
   while true; do
     screen 8 "REVIEW"
     gum style --foreground "$FRIDAY_ACCENT" --border rounded --border-foreground "$FRIDAY_BORDER" \
-      --padding "1 2" --width 76 \
+      --padding "1 2" --width 90 \
       "Disk        $TARGET_LABEL" \
       "Computer    $HOSTNAME" \
       "User        $USERNAME   (password set)" \
