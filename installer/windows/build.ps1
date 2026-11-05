@@ -17,6 +17,9 @@
 [CmdletBinding()]
 param(
     [string]$OutDir = "$PSScriptRoot\out",
+    # Release builds pass the tag's version (major.minor.patch); otherwise
+    # major.minor come from the crate and the patch is the commit count.
+    [string]$ReleaseVersion,
     [switch]$SkipCargo
 )
 $ErrorActionPreference = 'Stop'
@@ -33,10 +36,15 @@ function Run([string]$exe, [string[]]$arguments) {
 }
 
 # MSI ProductVersion: major.minor.build, each build distinct so upgrades apply.
-$crateVersion = (Select-String -Path "$repo\services\mobile\Cargo.toml" -Pattern '^version\s*=\s*"([0-9]+)\.([0-9]+)\.' |
-    Select-Object -First 1).Matches[0].Groups
-$commits = (git -C $repo rev-list --count HEAD).Trim()
-$version = "$($crateVersion[1].Value).$($crateVersion[2].Value).$commits"
+if ($ReleaseVersion) {
+    if ($ReleaseVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw "-ReleaseVersion must be major.minor.patch (got '$ReleaseVersion')" }
+    $version = $ReleaseVersion
+} else {
+    $crateVersion = (Select-String -Path "$repo\services\mobile\Cargo.toml" -Pattern '^version\s*=\s*"([0-9]+)\.([0-9]+)\.' |
+        Select-Object -First 1).Matches[0].Groups
+    $commits = (git -C $repo rev-list --count HEAD).Trim()
+    $version = "$($crateVersion[1].Value).$($crateVersion[2].Value).$commits"
+}
 Write-Host "FRIDAY $version"
 
 Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue

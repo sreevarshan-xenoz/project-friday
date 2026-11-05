@@ -1,0 +1,124 @@
+name: Release
+
+# Push a tag vX.Y.Z to publish FRIDAY: the Arch package and the Windows MSI
+# are built, smoke-tested, and attached to a GitHub release with SHA-256
+# sums and the winget manifests for that MSI (ready for microsoft/winget-pkgs).
+#
+# Versions: the MSI takes X.Y.Z from the tag. CI builds number the MSI
+# 0.1.<commit count>, so a release must be newer than those (0.2.0 or later)
+# for an installed CI build to upgrade to it.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    name: Check the tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "::error::release tags look like v1.2.3 (got $tag)"; exit 1
+          fi
+          echo "version=${BASH_REMATCH[1]}" >>"$GITHUB_OUTPUT"
+
+  arch:
+    name: Arch package
+    needs: version
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm --needed base-devel git rust namcap desktop-file-utils \
+            jq fuzzel libnotify wl-clipboard curl openssl
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build with makepkg
+        run: |
+          git config --system --add safe.directory '*'
+          useradd -m builder
+          chown -R builder "$GITHUB_WORKSPACE"
+          cd packaging/arch
+          runuser -u builder -- env RUSTFLAGS= makepkg --noconfirm
+      - name: Smoke test the package
+        run: bash packaging/arch/check-package.sh packaging/arch/friday-git-*.pkg.tar.zst
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-arch
+          path: packaging/arch/friday-git-*.pkg.tar.zst
+          if-no-files-found: error
+
+  windows:
+    name: Windows MSI
+    needs: version
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Build the MSI
+        id: build
+        run: installer/windows/build.ps1 -ReleaseVersion ${{ needs.version.outputs.version }}
+      - name: Install, smoke test, uninstall
+        run: |
+          $msi = '${{ steps.build.outputs.msi }}'
+          $p = Start-Process msiexec -ArgumentList '/i', $msi, '/qn' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "install exited $($p.ExitCode)" }
+          $p = Start-Process "$env:LOCALAPPDATA\Programs\FRIDAY\friday-tray.exe" -ArgumentList '--smoke' -Wait -PassThru
+          Get-Content "$env:LOCALAPPDATA\friday\logs\smoke.log" -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0) { throw "smoke test failed" }
+          $p = Start-Process msiexec -ArgumentList '/x', $msi, '/qn' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "uninstall exited $($p.ExitCode)" }
+      - name: winget manifests for the published URL
+        run: |
+          $msi = '${{ steps.build.outputs.msi }}'
+          $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$(Split-Path $msi -Leaf)"
+          installer/windows/winget/New-WingetManifest.ps1 -Msi $msi -Url $url -Version ${{ needs.version.outputs.version }}
+          winget validate --manifest "installer/windows/winget/manifests/p/ProjectFRIDAY/FRIDAY/${{ needs.version.outputs.version }}"
+          if ($LASTEXITCODE -ne 0) { throw "winget validate failed" }
+          Compress-Archive -Path installer/windows/winget/manifests/* -DestinationPath "installer/windows/out/winget-manifests-${{ needs.version.outputs.version }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: |
+            installer/windows/out/*.msi
+            installer/windows/out/winget-manifests-*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish the release
+    needs: [version, arch, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum * | tee SHA256SUMS
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" dist/* \
+            --repo "${{ github.repository }}" \
+            --title "FRIDAY ${{ needs.version.outputs.version }}" \
+            --generate-notes

@@ -45,6 +45,15 @@ CI (`windows-installer` job) does exactly this on every push: build, silent
 install, check files, Run entry, PATH and shortcut, smoke test, uninstall,
 and check it cleaned up.
 
+## Releases
+
+Pushing a tag `vX.Y.Z` runs `.github/workflows/release.yml`:
+- it builds and smoke-tests the Arch package and the MSI (versioned X.Y.Z);
+- it attaches both to a GitHub release, with `SHA256SUMS` and a zip of the
+  winget manifests already pointing at the release's MSI.
+
+CI builds are numbered 0.1.<commits>, so release 0.2.0 or later.
+
 ## winget
 
 winget installs from a public URL, so its manifests are generated per

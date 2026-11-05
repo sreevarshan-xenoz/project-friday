@@ -163,6 +163,17 @@ jobs:
             Get-ChildItem "$env:LOCALAPPDATA\friday\logs" -Filter *.log | ForEach-Object { Write-Host "--- $($_.Name)"; Get-Content $_.FullName -Tail 40 }
             throw "smoke test failed ($($p.ExitCode))"
           }
+      - name: Screen capture (the host's --screenshot, used for "ask about the screen")
+        run: |
+          $host_exe = "$env:LOCALAPPDATA\Programs\FRIDAY\friday-windows-host.exe"
+          $png = "$env:RUNNER_TEMP\screen.png"
+          # Through cmd so the PNG bytes on stdout reach the file unaltered.
+          cmd /c "`"$host_exe`" --screenshot > `"$png`""
+          if ($LASTEXITCODE -ne 0) { throw "--screenshot exited $LASTEXITCODE" }
+          $bytes = [System.IO.File]::ReadAllBytes($png)
+          $sig = [byte[]](0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+          if ($bytes.Length -lt 100 -or (Compare-Object $bytes[0..7] $sig)) { throw "not a PNG ($($bytes.Length) bytes)" }
+          Write-Host "captured a $($bytes.Length)-byte PNG of the desktop"
       - name: End-to-end ask on the installed binaries (fake model, no network)
         shell: bash
         run: bash tests/e2e/ask.sh "$LOCALAPPDATA/Programs/FRIDAY"
@@ -195,6 +206,7 @@ jobs:
           path: |
             installer/windows/out/*.msi
             ${{ runner.temp }}/*.log
+            ${{ runner.temp }}/screen.png
           if-no-files-found: ignore
 
   python:

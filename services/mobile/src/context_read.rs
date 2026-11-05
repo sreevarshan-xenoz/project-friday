@@ -318,10 +318,19 @@ mod tests {
         }
     }
 
+    fn strs(v: &[String]) -> Vec<&str> {
+        v.iter().map(String::as_str).collect()
+    }
+
+    /// The platform's capture command (grim on Linux, the Windows host on
+    /// Windows), scripted to return a PNG.
     fn fake_collector() -> ContextCollector<FakeCommandRunner> {
+        let full = friday_context_collector::screen_command(None);
+        let region =
+            friday_context_collector::screen_command(Some(ScreenRegion::new(0, 0, 1920, 1080)));
         let runner = FakeCommandRunner::new()
-            .script_stdout("grim", &["-"], PNG)
-            .script_stdout("grim", &["-g", "0,0 1920x1080", "-"], PNG);
+            .script_stdout(&full.0, &strs(&full.1), PNG)
+            .script_stdout(&region.0, &strs(&region.1), PNG);
         ContextCollector::new(runner)
     }
 
