@@ -162,6 +162,21 @@ pub trait Provider: Send + Sync {
         })
     }
 
+    /// Complete, reporting the answer as it arrives: `progress` gets the text
+    /// so far (not a delta) each time it grows. The default can't stream, so
+    /// it reports the whole answer once.
+    async fn complete_streaming(
+        &self,
+        model_id: &str,
+        prompt: &str,
+        require_json: bool,
+        progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+    ) -> Result<String, String> {
+        let text = self.complete(model_id, prompt, require_json).await?;
+        progress(&text);
+        Ok(text)
+    }
+
     async fn check_health(&self) -> bool;
 }
 
@@ -336,18 +351,14 @@ fn openai_message_content(prompt: &str) -> serde_json::Value {
     }
 }
 
-#[async_trait]
-impl Provider for OpenAiProvider {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    async fn complete(
+impl OpenAiProvider {
+    /// POST one chat completion (headers, body); a non-2xx status is an error.
+    async fn send_chat(
         &self,
         model_id: &str,
         prompt: &str,
-        _require_json: bool,
-    ) -> Result<String, String> {
+        stream: bool,
+    ) -> Result<reqwest::Response, String> {
         let client = reqwest::Client::new();
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
 
@@ -378,7 +389,7 @@ impl Provider for OpenAiProvider {
             );
         }
 
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "model": model_id,
             "messages": [
                 {
@@ -387,6 +398,9 @@ impl Provider for OpenAiProvider {
                 }
             ]
         });
+        if stream {
+            body["stream"] = serde_json::Value::Bool(true);
+        }
 
         let res = client
             .post(&url)
@@ -404,17 +418,124 @@ impl Provider for OpenAiProvider {
                 self.name, status, err_body
             ));
         }
+        Ok(res)
+    }
+}
 
+/// The answer text of a (non-streamed) chat-completions response.
+fn openai_content(json: &serde_json::Value) -> Result<String, String> {
+    json["choices"][0]["message"]["content"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| format!("Unexpected response structure: {:?}", json))
+}
+
+/// Splits a server-sent-events byte stream into completion chunks, however
+/// the bytes are cut (an event or a UTF-8 character may span reads).
+#[derive(Default)]
+pub struct SseEvents {
+    pending: Vec<u8>,
+}
+
+impl SseEvents {
+    pub fn push(&mut self, bytes: &[u8]) -> Vec<CompletionChunk> {
+        self.pending.extend_from_slice(bytes);
+        let mut out = Vec::new();
+        loop {
+            let text = String::from_utf8_lossy(&self.pending);
+            let normalized = text.replace("\r\n", "\n");
+            let Some(end) = normalized.find("\n\n") else {
+                break;
+            };
+            if let Some(chunk) = parse_sse_event(&normalized[..end]) {
+                out.push(chunk);
+            }
+            // Drop the consumed event from the raw bytes (by its normalized
+            // length plus any CRs it had).
+            let consumed = normalized[..end + 2].to_string();
+            let raw_len = byte_len_with_crs(&self.pending, &consumed);
+            self.pending.drain(..raw_len);
+        }
+        out
+    }
+}
+
+/// How many raw bytes make up `normalized` once its CRLFs are counted back in.
+fn byte_len_with_crs(raw: &[u8], normalized: &str) -> usize {
+    let target = normalized.len();
+    let (mut i, mut n) = (0, 0);
+    while n < target && i < raw.len() {
+        if raw[i] == b'\r' && raw.get(i + 1) == Some(&b'\n') {
+            i += 1;
+            continue;
+        }
+        i += 1;
+        n += 1;
+    }
+    i
+}
+
+#[async_trait]
+impl Provider for OpenAiProvider {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn complete(
+        &self,
+        model_id: &str,
+        prompt: &str,
+        _require_json: bool,
+    ) -> Result<String, String> {
+        let res = self.send_chat(model_id, prompt, false).await?;
         let json: serde_json::Value = res
             .json()
             .await
             .map_err(|e| format!("Failed to parse response JSON: {}", e))?;
+        openai_content(&json)
+    }
 
-        let content = json["choices"][0]["message"]["content"]
-            .as_str()
-            .ok_or_else(|| format!("Unexpected response structure: {:?}", json))?;
-
-        Ok(content.to_string())
+    /// `stream: true` (server-sent events). A server that ignores `stream`
+    /// and answers with one JSON body is handled too.
+    async fn complete_streaming(
+        &self,
+        model_id: &str,
+        prompt: &str,
+        _require_json: bool,
+        progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+    ) -> Result<String, String> {
+        use futures::StreamExt;
+        let res = self.send_chat(model_id, prompt, true).await?;
+        let is_sse = res
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.starts_with("text/event-stream"));
+        if !is_sse {
+            let json: serde_json::Value = res
+                .json()
+                .await
+                .map_err(|e| format!("Failed to parse response JSON: {}", e))?;
+            let text = openai_content(&json)?;
+            progress(&text);
+            return Ok(text);
+        }
+        let mut text = String::new();
+        let mut events = SseEvents::default();
+        let mut body = res.bytes_stream();
+        while let Some(bytes) = body.next().await {
+            let bytes = bytes.map_err(|e| format!("stream from {} broke: {}", self.name, e))?;
+            for chunk in events.push(&bytes) {
+                if !chunk.delta.is_empty() {
+                    text.push_str(&chunk.delta);
+                    progress(&text);
+                }
+            }
+        }
+        if text.is_empty() {
+            return Err(format!("Provider {} streamed an empty answer", self.name));
+        }
+        Ok(text)
     }
 
     async fn check_health(&self) -> bool {
@@ -2289,6 +2410,14 @@ impl friday_investigation::LlmStrategyClient for InferenceFabric {
         self.complete_with(&RequestRequirements::default(), prompt)
             .await
     }
+    async fn complete_with_progress(
+        &self,
+        prompt: &str,
+        progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+    ) -> Result<String, String> {
+        self.complete_with_progress(&RequestRequirements::default(), prompt, progress)
+            .await
+    }
 }
 
 /// Recursively collect every `qualification.json` under `dir` (missing or
@@ -2840,6 +2969,20 @@ impl InferenceFabric {
             .await
     }
 
+    /// [`InferenceFabric::complete_with`], streaming: `progress` gets the
+    /// answer so far as it arrives (the whole text each time, not a delta).
+    pub async fn complete_with_progress(
+        &self,
+        req: &RequestRequirements,
+        prompt: &str,
+        progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+    ) -> Result<String, String> {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let candidates = self.select_for(req);
+        self.complete_candidates_reporting(&request_id, candidates, prompt, Some(progress))
+            .await
+    }
+
     /// [`InferenceFabric::complete_with`] restricted to `providers`: nothing
     /// is sent to any other provider, even when every allowed one fails.
     pub async fn complete_with_among(
@@ -2879,6 +3022,19 @@ impl InferenceFabric {
         request_id: &str,
         candidates: Vec<(ModelInfo, &dyn Provider)>,
         prompt: &str,
+    ) -> Result<String, String> {
+        self.complete_candidates_reporting(request_id, candidates, prompt, None)
+            .await
+    }
+
+    /// The attempt loop; with `progress`, each candidate streams and reports
+    /// its text so far (a fallback to the next candidate starts over).
+    async fn complete_candidates_reporting(
+        &self,
+        request_id: &str,
+        candidates: Vec<(ModelInfo, &dyn Provider)>,
+        prompt: &str,
+        progress: Option<&(dyn for<'s> Fn(&'s str) + Send + Sync)>,
     ) -> Result<String, String> {
         if candidates.is_empty() {
             let err_msg = "No eligible providers for this request.".to_string();
@@ -2949,12 +3105,17 @@ impl InferenceFabric {
                     return Err(e);
                 }
             };
-            match run_attempt(
-                self.request_timeout,
-                provider.complete(&model.id, &prompt, false),
-            )
-            .await
-            {
+            let attempt = async {
+                match progress {
+                    Some(p) => {
+                        provider
+                            .complete_streaming(&model.id, &prompt, false, p)
+                            .await
+                    }
+                    None => provider.complete(&model.id, &prompt, false).await,
+                }
+            };
+            match run_attempt(self.request_timeout, attempt).await {
                 Ok(response) => {
                     let latency_ms = start.elapsed().as_millis() as u64;
                     tracing::info!(
@@ -4166,6 +4327,95 @@ mod tests {
             ["opencode"],
             "without a local vision model only Zen's can see"
         );
+    }
+
+    fn sse(deltas: &[&str]) -> String {
+        let mut out = String::new();
+        for d in deltas {
+            let ev = serde_json::json!({"choices": [{"delta": {"content": d}}]});
+            out.push_str(&format!("data: {ev}\r\n\r\n"));
+        }
+        out.push_str("data: [DONE]\r\n\r\n");
+        out
+    }
+
+    #[test]
+    fn sse_events_survive_any_split() {
+        let body = sse(&["Héllo", " wörld", "!"]);
+        let bytes = body.as_bytes();
+        // Every split point, including inside "é"/"ö" and inside "\r\n".
+        for cut in 0..bytes.len() {
+            let mut ev = SseEvents::default();
+            let mut text = String::new();
+            for part in [&bytes[..cut], &bytes[cut..]] {
+                for c in ev.push(part) {
+                    text.push_str(&c.delta);
+                }
+            }
+            assert_eq!(text, "Héllo wörld!", "split at {cut}");
+        }
+    }
+
+    /// Serve one HTTP response on a local port; returns the base URL.
+    async fn serve_once(content_type: &'static str, body: String) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 65536];
+            let _ = sock.read(&mut buf).await;
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = sock.write_all(head.as_bytes()).await;
+            // Dribble the body so the client sees several reads.
+            for piece in body.as_bytes().chunks(7) {
+                let _ = sock.write_all(piece).await;
+                let _ = sock.flush().await;
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        });
+        format!("http://{addr}/v1")
+    }
+
+    fn local_provider(base_url: String) -> OpenAiProvider {
+        OpenAiProvider {
+            name: "llamacpp".to_string(),
+            base_url,
+            api_key: String::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn openai_provider_streams_and_reports_the_text_so_far() {
+        let base = serve_once("text/event-stream", sse(&["The ", "answer ", "is 42."])).await;
+        let seen = std::sync::Mutex::new(Vec::<String>::new());
+        let text = local_provider(base)
+            .complete_streaming("m", "q", false, &|t: &str| {
+                seen.lock().unwrap().push(t.to_string())
+            })
+            .await
+            .unwrap();
+        assert_eq!(text, "The answer is 42.");
+        let seen = seen.into_inner().unwrap();
+        assert_eq!(seen, ["The ", "The answer ", "The answer is 42."]);
+    }
+
+    #[tokio::test]
+    async fn openai_provider_handles_a_server_that_does_not_stream() {
+        let json = serde_json::json!({"choices": [{"message": {"content": "whole answer"}}]});
+        let base = serve_once("application/json", json.to_string()).await;
+        let seen = std::sync::Mutex::new(Vec::<String>::new());
+        let text = local_provider(base)
+            .complete_streaming("m", "q", false, &|t: &str| {
+                seen.lock().unwrap().push(t.to_string())
+            })
+            .await
+            .unwrap();
+        assert_eq!(text, "whole answer");
+        assert_eq!(seen.into_inner().unwrap(), ["whole answer"]);
     }
 
     #[test]
