@@ -95,6 +95,9 @@ to this machine and may not be running:
 - `LLAMACPP_MODEL` labels the served GGUF; defaults to `gemma4:e4b`. The id is a
   label only — llama-server serves whatever `-m` loaded at startup.
 - Default model capability set: `Json`, `Tools`, `Local`.
+- `LLAMACPP_VISION=true|1` says the server can see images (llama-server started
+  with `--mmproj`): the model gains `Vision` and the `vision-free` tier, so a
+  screen ask can be answered on this machine.
 
 Qualification: `cargo run -p friday-provider-qual -- --provider llamacpp` targets
 `RoutingMode::Local` against the default endpoint. Per the ADR-0005 one-variable
