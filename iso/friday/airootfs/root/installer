@@ -333,7 +333,12 @@ else
     *"Catppuccin"*)   THEME_SLUG="catppuccin" ;;
     *"Nord"*)         THEME_SLUG="nord" ;;
   esac
-  arch-chroot /mnt su - "$USERNAME" -c "omarchy-theme-set '$THEME_SLUG'" 2>/dev/null || true
+  # A login shell outside the desktop session has neither OMARCHY_PATH nor
+  # Omarchy's bin/ on PATH (uwsm sets both at login), so pass them here.
+  if ! arch-chroot /mnt su - "$USERNAME" -c \
+      "OMARCHY_PATH=/usr/share/omarchy PATH=/usr/share/omarchy/bin:\$PATH omarchy-theme-set '$THEME_SLUG'"; then
+    echo "warning: could not apply the $THEME_SLUG theme (run omarchy-theme-set $THEME_SLUG after login)" >&2
+  fi
 
   # FRIDAY Shell draws the bar, notifications and OSD, so Omarchy's shell turns
   # those off (friday.bar is an empty bar option). Its user shell.json replaces

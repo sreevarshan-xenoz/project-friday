@@ -101,6 +101,9 @@ if need jq; then
   expect "friday.bar manifest is valid JSON" jq -e '.id == "friday.bar" and (.kinds | index("bar"))' \
     "$REPO_ROOT/friday-os/plugins/friday.bar/manifest.json"
 fi
+grep -q 'OMARCHY_PATH=/usr/share/omarchy PATH=/usr/share/omarchy/bin:\\$PATH omarchy-theme-set' "$AIROOTFS/root/installer" \
+  && pass "installer runs omarchy-theme-set with Omarchy's environment" \
+  || fail "installer runs omarchy-theme-set without OMARCHY_PATH/PATH (theme silently not applied)"
 grep -q 'friday-os/plugins/friday.bar' "$PROFILE_DIR/build-iso.sh" \
   && pass "build-iso.sh ships the friday.bar plugin" || fail "build-iso.sh does not ship friday.bar"
 
