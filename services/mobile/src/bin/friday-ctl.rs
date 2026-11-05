@@ -19,8 +19,9 @@
 //!
 //! The daemon's address comes from `state.json` (`listen`). `FRIDAY_CTL_ADDR`
 //! and `FRIDAY_CTL_TOKEN` override the state-file values for
-//! scripting/testing. `FRIDAY_CONTEXT_PROVIDER` names the (remote) provider a
-//! `context screen` share goes to, defaulting to `opencode` to match the daemon.
+//! scripting/testing. `FRIDAY_CONTEXT_PROVIDER` names the provider a `context
+//! screen` share goes to; unset, the daemon routes it to a vision model (the
+//! user's provider before keyless OpenCode Zen).
 
 use std::time::Duration;
 
@@ -48,15 +49,17 @@ fn screen_disclosure() -> String {
 /// so the caller can abort before ever contacting the daemon — the provider is
 /// guaranteed to see nothing.
 fn confirm_context_consent() -> bool {
-    let provider =
-        std::env::var("FRIDAY_CONTEXT_PROVIDER").unwrap_or_else(|_| "opencode".to_string());
+    let provider = std::env::var("FRIDAY_CONTEXT_PROVIDER")
+        .ok()
+        .filter(|p| !p.trim().is_empty())
+        .unwrap_or_else(|| "your AI provider's vision model".to_string());
 
     println!("FRIDAY — share the current Screen with the assistant");
     println!();
     println!("What would be shared:");
     println!("  a screen capture of the current display (a still image)");
     println!();
-    println!("Provider: {provider} (remote)");
+    println!("Provider: {provider}");
     println!("Data use: {}", screen_disclosure());
     println!();
     print!("Share this screen? [y/N] ");
