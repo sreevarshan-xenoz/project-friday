@@ -80,6 +80,30 @@ while IFS= read -r mod; do
 done < <(grep -rhoE '^import qs(\.[A-Za-z0-9_]+)+' "$QS" --include='*.qml' | awk '{print $2}' | sort -u)
 pass "shell-internal QML modules resolve"
 
+echo "FRIDAY Shell is the default desktop"
+FSH="$REPO_ROOT/packaging/linux/shell"
+expect "packaging/linux/shell/shell.qml" test -s "$FSH/shell.qml"
+while IFS= read -r mod; do
+  [[ -d "$FSH/$(tr . / <<<"${mod#qs.}")" ]] || fail "FRIDAY Shell module $mod has no directory"
+done < <(grep -rhoE '^import qs(\.[A-Za-z0-9_]+)+' "$FSH" --include='*.qml' | awk '{print $2}' | sort -u)
+pass "FRIDAY Shell's internal QML modules resolve"
+grep -q 'THEME="${THEME:-FRIDAY Shell' "$AIROOTFS/root/installer" \
+  && pass "installer defaults to FRIDAY Shell" || fail "installer does not default to FRIDAY Shell"
+grep -q '^THEME="FRIDAY Shell' "$AIROOTFS/root/configurator" \
+  && pass "configurator defaults to FRIDAY Shell" || fail "configurator does not default to FRIDAY Shell"
+grep -q 'Dots-Hyprland' "$AIROOTFS/root/configurator" \
+  && pass "end-4 Dots-Hyprland is still offered" || fail "end-4 Dots-Hyprland option is gone"
+grep -q 'o.exec_on_start("friday shell")' "$AIROOTFS/etc/skel/.config/hypr/autostart.lua" \
+  && pass "Hyprland autostarts FRIDAY Shell" || fail "Hyprland does not start FRIDAY Shell"
+grep -q '.bar.id = "friday.bar"' "$AIROOTFS/root/installer" && grep -q 'omarchy.notifications' "$AIROOTFS/root/installer" \
+  && pass "installer turns off Omarchy's bar and notifications" || fail "installer leaves Omarchy's bar or notifications on"
+if need jq; then
+  expect "friday.bar manifest is valid JSON" jq -e '.id == "friday.bar" and (.kinds | index("bar"))' \
+    "$REPO_ROOT/friday-os/plugins/friday.bar/manifest.json"
+fi
+grep -q 'friday-os/plugins/friday.bar' "$PROFILE_DIR/build-iso.sh" \
+  && pass "build-iso.sh ships the friday.bar plugin" || fail "build-iso.sh does not ship friday.bar"
+
 echo "Omarchy pin is a full SHA"
 pin=$(sed -n 's/^OMARCHY_PIN="\([0-9a-f]*\)"/\1/p' "$PROFILE_DIR/fetch-omarchy.sh")
 if [[ "$pin" =~ ^[0-9a-f]{40}$ ]]; then pass "pinned at ${pin:0:8}"; else fail "OMARCHY_PIN is not a 40-char SHA"; fi

@@ -12,7 +12,7 @@ HOSTNAME="${HOSTNAME:-friday}"
 USERNAME="${USERNAME:-friday}"
 PASSWORD="${PASSWORD:-friday}"
 TIMEZONE="${TIMEZONE:-UTC}"
-THEME="${THEME:-FRIDAY Dots-Hyprland (Material You / Illogical Impulse)}"
+THEME="${THEME:-FRIDAY Shell (Ember, made for FRIDAY)}"
 SDDM_THEME="${SDDM_THEME:-SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)}"
 AUTO_REBOOT="${AUTO_REBOOT:-false}"
 # Skip the SDDM password screen at boot. Off by default: with it on, anyone
@@ -323,13 +323,31 @@ EOF_FRIDAY_SESSION
 
   cp -p /mnt/usr/share/wayland-sessions/friday.desktop /mnt/usr/share/wayland-sessions/hyprland.desktop 2>/dev/null || true
 else
-  THEME_SLUG="tokyo-night"
+  # Every other option is FRIDAY Shell on Omarchy's Hyprland config. The
+  # FRIDAY Shell option uses FRIDAY's own colours; the named themes colour
+  # FRIDAY Shell from the Omarchy theme.
+  THEME_SLUG="matte-black"; SHELL_PALETTE="omarchy"
   case "$THEME" in
-    *"Tokyo Night"*) THEME_SLUG="tokyo-night" ;;
-    *"Catppuccin"*)  THEME_SLUG="catppuccin" ;;
-    *"Nord"*)        THEME_SLUG="nord" ;;
+    *"FRIDAY Shell"*) THEME_SLUG="matte-black"; SHELL_PALETTE="friday" ;;
+    *"Tokyo Night"*)  THEME_SLUG="tokyo-night" ;;
+    *"Catppuccin"*)   THEME_SLUG="catppuccin" ;;
+    *"Nord"*)         THEME_SLUG="nord" ;;
   esac
   arch-chroot /mnt su - "$USERNAME" -c "omarchy-theme-set '$THEME_SLUG'" 2>/dev/null || true
+
+  # FRIDAY Shell draws the bar, notifications and OSD, so Omarchy's shell turns
+  # those off (friday.bar is an empty bar option). Its user shell.json replaces
+  # the defaults wholesale, so start from the pinned defaults.
+  mkdir -p "/mnt$USER_HOME/.config/omarchy" "/mnt$USER_HOME/.config/friday"
+  if jq '.bar.id = "friday.bar"
+         | .disabledPlugins = (((.disabledPlugins // []) + ["omarchy.notifications", "omarchy.osd"]) | unique)' \
+       /mnt/usr/share/omarchy/config/omarchy/shell.json >"/mnt$USER_HOME/.config/omarchy/shell.json.new"; then
+    mv "/mnt$USER_HOME/.config/omarchy/shell.json.new" "/mnt$USER_HOME/.config/omarchy/shell.json"
+  else
+    rm -f "/mnt$USER_HOME/.config/omarchy/shell.json.new"
+    echo "warning: could not write Omarchy shell.json; Omarchy's bar stays on" >&2
+  fi
+  printf '{\n  "palette": "%s"\n}\n' "$SHELL_PALETTE" >"/mnt$USER_HOME/.config/friday/shell.json"
 fi
 
 # FRIDAY AI provider credentials, loaded by friday-linux-daemon.service via
