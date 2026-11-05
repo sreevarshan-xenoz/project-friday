@@ -35,6 +35,33 @@ public static partial class Asking
         : ["goal", "--wait", request];
 
     /// <summary>
+    /// The answer so far while <paramref name="request"/> is the goal in flight:
+    /// state.json's <c>current.partial</c>, which grows as the answer streams.
+    /// Null when there is none yet, the goal is another one, or it has ended.
+    /// </summary>
+    public static string? PartialAnswer(string stateJson, string request)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(stateJson);
+            if (!doc.RootElement.TryGetProperty("current", out var cur) || cur.ValueKind != JsonValueKind.Object)
+                return null;
+            if (!cur.TryGetProperty("goal", out var goal) || goal.GetString() != request)
+                return null;
+            if (!cur.TryGetProperty("active", out var active) || active.ValueKind != JsonValueKind.True)
+                return null;
+            if (!cur.TryGetProperty("partial", out var partial) || partial.ValueKind != JsonValueKind.String)
+                return null;
+            var text = partial.GetString();
+            return string.IsNullOrWhiteSpace(text) ? null : text;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Clipboard text that looks like a password or token (one long run of
     /// non-space characters mixing letters and digits) must not be sent to a
     /// cloud model by accident.

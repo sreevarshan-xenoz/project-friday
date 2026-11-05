@@ -95,20 +95,66 @@ internal sealed class TrayContext : ApplicationContext
             _log.Remember(question);
 
             var request = Asking.BuildRequest(question, context);
-            Notify("FRIDAY", (kind == AskKind.Screen ? "Looking at your screen: " : "Working on: ") + question, ToolTipIcon.None);
+            // The answer window opens now and fills in while the answer
+            // streams (state.json's current.partial); a screen answer comes
+            // whole, so it just says what is happening.
+            var answer = NewAnswerForm(kind, question,
+                kind == AskKind.Screen ? "Looking at your screen…" : "Thinking…");
+            using var poll = new System.Windows.Forms.Timer { Interval = 250 };
+            string? shown = null;
+            if (kind != AskKind.Screen)
+            {
+                poll.Tick += (_, _) =>
+                {
+                    var partial = ReadPartial(request);
+                    if (partial != null && partial != shown && !answer.IsDisposed)
+                    {
+                        answer.ShowPartial(partial);
+                        shown = partial;
+                    }
+                };
+                poll.Start();
+            }
             var (ok, output) = await Ctl.RunAsync(_install, Asking.CtlArguments(kind, question, request), TimeSpan.FromSeconds(240));
+            poll.Stop();
             var outcome = Asking.Interpret(kind, question, ok, output);
             _log.Save(question, context, outcome, DateTime.Now);
 
-            var answer = new AnswerForm(question, outcome);
-            answer.AskAgain += () => _ = AskAsync(kind);
-            answer.StartFriday += RestartChildren;
-            answer.Show();
+            // Closed while it was on its way: show the answer anyway.
+            if (answer.IsDisposed)
+                answer = NewAnswerForm(kind, question, "");
+            answer.ShowOutcome(outcome);
             answer.Activate();
         }
         finally
         {
             _asking = false;
+        }
+    }
+
+    private AnswerForm NewAnswerForm(AskKind kind, string question, string waiting)
+    {
+        var form = new AnswerForm(question, waiting);
+        form.AskAgain += () => _ = AskAsync(kind);
+        form.StartFriday += RestartChildren;
+        form.Show();
+        form.Activate();
+        return form;
+    }
+
+    /// <summary>The streaming answer to <paramref name="request"/> so far, if any.</summary>
+    private string? ReadPartial(string request)
+    {
+        try
+        {
+            using var fs = new FileStream(_install.Paths.StateFile, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(fs);
+            return Asking.PartialAnswer(reader.ReadToEnd(), request);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
         }
     }
 
