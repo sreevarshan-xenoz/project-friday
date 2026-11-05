@@ -44,12 +44,12 @@ use friday_actions::{
 use friday_core::event::{Event, EventBus};
 use friday_goal_execution::{
     Action, AdapterTool, AdmissionVerdict, Capability, CognitiveBlackboard, CognitiveEpisode,
-    ExecutionContext, Executive, ExecutiveReport, GoalResult, MemoryJournal, Observer,
-    ResolvingWebTool, Tool, ToolResult, WebFetchProvider, WebSearchProvider, WorldState,
+    ExecutionContext, Executive, ExecutiveReport, GoalResult, GoalResultKind, MemoryJournal,
+    Observer, ResolvingWebTool, Tool, ToolResult, WebFetchProvider, WebSearchProvider, WorldState,
     JINA_READER_PREFIX,
 };
 use friday_intelligence::InferenceFabric;
-use friday_investigation::InvestigationEngine;
+use friday_investigation::{InvestigationEngine, LlmStrategyClient};
 #[cfg(any(windows, target_os = "linux", test))]
 use friday_sensors::SensorLoop;
 #[cfg(windows)]
@@ -925,6 +925,11 @@ pub struct GoalRunner {
     /// on `goal.completed` which provider/model actually answered. `None` for
     /// the heuristic-only runner (`Self::new`).
     fabric: Option<Arc<InferenceFabric>>,
+    /// The model that writes the reply once a goal has run (the answer step,
+    /// see [`compose_answer`]): the fabric when there is one, so a question
+    /// gets an answer and not just a tool's raw output. `None` (heuristic
+    /// runners) keeps the tool output as the result.
+    answerer: Option<Arc<dyn LlmStrategyClient>>,
     /// Per-session conversational context (`session_id` → context), bounded by
     /// [`MAX_SESSIONS`] with LRU eviction. Locked only in short critical
     /// sections — never held across an await.
@@ -990,6 +995,13 @@ impl GoalRunner {
             None,
             None,
         )
+    }
+
+    /// Use `client` for the answer step (tests script it; the daemon's runners
+    /// already use their fabric).
+    pub fn with_answerer(mut self, client: Arc<dyn LlmStrategyClient>) -> Self {
+        self.answerer = Some(client);
+        self
     }
 
     /// Hermetic runner for tests: the web-search tool points at a local mock
@@ -1225,6 +1237,7 @@ impl GoalRunner {
             bus,
             executive: Arc::new(tokio::sync::Mutex::new(executive)),
             workspace,
+            answerer: fabric.clone().map(|f| f as Arc<dyn LlmStrategyClient>),
             fabric,
             sessions: Mutex::new(HashMap::new()),
             journal,
@@ -1477,14 +1490,25 @@ impl GoalRunner {
             ))
             .await;
 
-        let report = {
+        let mut report = {
             let mut exec = self.executive.lock().await;
             // Keep focus deterministic: drop stale attention items so the fed
             // goal is always the next focus target.
             exec.attention_manager_mut().clear();
-            exec.add_goal(composed, 0.9);
+            exec.add_goal(composed.clone(), 0.9);
             exec.cycle(&self.workspace).await
         };
+
+        // The answer step: the cycle ran a tool and gathered evidence; the
+        // model now writes the reply from them. Only for a goal that ran to
+        // completion; any model failure keeps the cycle's own result.
+        if report.plan_executed && !report.cancelled && !report.paused && !report.recoverable {
+            if let Some(answerer) = &self.answerer {
+                if let Some(answer) = compose_answer(answerer.as_ref(), &composed, &report).await {
+                    report.result = Some(answer);
+                }
+            }
+        }
 
         // The run is over — no longer in flight (a stale task.cancel for this
         // id must not stop the next goal).
@@ -1622,6 +1646,98 @@ impl GoalRunner {
         };
         tracing::info!(id = %id, session = %session_id, "goal terminal: {terminal}");
     }
+}
+
+/// How long the answer step waits for the model before keeping the tool's
+/// own result (friday-ctl --wait gives the whole goal 180 s).
+const ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+/// How much tool output / evidence goes into the answer prompt.
+const ANSWER_SOURCE_CHARS: usize = 6000;
+
+/// The prompt for the answer step: the user's request (with any session
+/// context and recalled memory the runner composed), then what FRIDAY did and
+/// found. The model answers from those; it is told not to invent beyond them
+/// for facts about the user's machine.
+fn answer_prompt(request: &str, report: &ExecutiveReport) -> String {
+    let mut p = String::from(
+        "You are FRIDAY, a desktop assistant. Answer the user's request directly and \
+         concisely, in plain text. If the request includes text to work on (selected or \
+         copied text), work on that text. Use what FRIDAY did and found below when it is \
+         relevant; for facts about the user's own machine, files or history, rely only \
+         on it, and say so when it doesn't contain the answer. If an action was taken, \
+         say what happened.\n\n",
+    );
+    p.push_str("Request:\n");
+    p.push_str(request.trim());
+    p.push('\n');
+    if let Some(r) = &report.result {
+        if !r.text.trim().is_empty() {
+            let tool = r.tool.as_deref().unwrap_or("tool");
+            let label = if r.success { "output" } else { "error" };
+            p.push_str(&format!(
+                "\nWhat FRIDAY did ({tool}, {label}):\n{}\n",
+                truncate(&r.text, ANSWER_SOURCE_CHARS)
+            ));
+        }
+    }
+    if let Some(ev) = &report.evidence {
+        let mut block = String::new();
+        for item in &ev.set.items {
+            block.push_str(&format!(
+                "- {} ({}): {}\n",
+                item.title,
+                item.url,
+                item.content.trim()
+            ));
+        }
+        if !block.is_empty() {
+            p.push_str(&format!(
+                "\nEvidence:\n{}",
+                truncate(&block, ANSWER_SOURCE_CHARS)
+            ));
+        }
+    }
+    p.push_str("\nAnswer:\n");
+    p
+}
+
+/// The answer step: ask the model to reply to `request` from what the cycle
+/// produced. Returns the reply as a `Text` result (the tool's own output is
+/// kept in `structured.source`), or `None` when the model errors, times out or
+/// says nothing, so the caller keeps the cycle's result.
+async fn compose_answer(
+    client: &dyn LlmStrategyClient,
+    request: &str,
+    report: &ExecutiveReport,
+) -> Option<GoalResult> {
+    let prompt = answer_prompt(request, report);
+    let reply = match tokio::time::timeout(ANSWER_TIMEOUT, client.complete(&prompt)).await {
+        Ok(Ok(text)) => text,
+        Ok(Err(e)) => {
+            tracing::warn!("answer step: model error, keeping the tool result: {e}");
+            return None;
+        }
+        Err(_) => {
+            tracing::warn!(
+                "answer step: model timed out after {ANSWER_TIMEOUT:?}, keeping the tool result"
+            );
+            return None;
+        }
+    };
+    let text = reply.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let source = report.result.as_ref().map(|r| {
+        json!({ "tool": r.tool, "success": r.success, "text": truncate(&r.text, ANSWER_SOURCE_CHARS) })
+    });
+    Some(GoalResult {
+        kind: GoalResultKind::Text,
+        text: text.to_string(),
+        structured: source.map(|s| json!({ "source": s })),
+        tool: Some("answer".to_string()),
+        success: true,
+    })
 }
 
 /// Build the `goal.completed` payload: the goal's own facts, the evidence
@@ -1838,6 +1954,107 @@ mod tests {
     /// The daemon's LLM-backed path must degrade gracefully: an InferenceFabric
     /// with no providers cannot route (fast error, `LlmInvestigationStrategy`
     /// falls back to the heuristic), so the goal still reaches a terminal
+    /// A scripted model for the answer step: replies with `reply` (or fails)
+    /// and records every prompt it was given.
+    struct ScriptedAnswerer {
+        reply: Result<String, String>,
+        prompts: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl LlmStrategyClient for ScriptedAnswerer {
+        async fn complete(&self, prompt: &str) -> Result<String, String> {
+            self.prompts.lock().unwrap().push(prompt.to_string());
+            self.reply.clone()
+        }
+    }
+
+    /// Run one goal on a hermetic runner with the given answerer and return
+    /// the terminal event's payload.
+    async fn run_with_answerer(goal: &str, answerer: Arc<ScriptedAnswerer>) -> serde_json::Value {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let runner = GoalRunner::new(bus.clone()).with_answerer(answerer);
+        runner.start();
+        bus.publish(Event::new("plan.goal", "mobile", json!({ "goal": goal })))
+            .await
+            .expect("publish");
+        for _ in 0..40 {
+            let ev = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+                .await
+                .expect("a terminal event in time")
+                .expect("bus alive");
+            if ev.kind == "goal.completed" || ev.kind == "goal.failed" {
+                assert_eq!(ev.kind, "goal.completed", "{:?}", ev.payload);
+                return ev.payload;
+            }
+        }
+        panic!("no terminal event");
+    }
+
+    /// The answer step: a question gets the model's reply as its result, and
+    /// the tool's own output rides along as the source.
+    #[tokio::test]
+    async fn answer_step_makes_the_model_reply_the_result() {
+        let answerer = Arc::new(ScriptedAnswerer {
+            reply: Ok("  E0308 means mismatched types.  ".to_string()),
+            prompts: Mutex::new(Vec::new()),
+        });
+        let payload =
+            run_with_answerer("What does the Rust error E0308 mean?", answerer.clone()).await;
+        assert_eq!(payload["result"]["kind"], "text");
+        assert_eq!(payload["result"]["text"], "E0308 means mismatched types.");
+        assert_eq!(payload["result"]["tool"], "answer");
+        assert!(
+            payload["result"]["structured"]["source"].is_object(),
+            "{payload}"
+        );
+        let prompts = answerer.prompts.lock().unwrap();
+        assert_eq!(prompts.len(), 1, "one answer call per goal");
+        assert!(
+            prompts[0].contains("Request:\nWhat does the Rust error E0308 mean?"),
+            "{}",
+            prompts[0]
+        );
+    }
+
+    /// A model failure keeps the cycle's own result: the answer step never
+    /// turns a completed goal into a failed or empty one.
+    #[tokio::test]
+    async fn answer_step_failure_keeps_the_tool_result() {
+        let answerer = Arc::new(ScriptedAnswerer {
+            reply: Err("provider down".to_string()),
+            prompts: Mutex::new(Vec::new()),
+        });
+        let payload =
+            run_with_answerer("What does the Rust error E0308 mean?", answerer.clone()).await;
+        assert_ne!(payload["result"]["tool"], "answer", "{payload}");
+        assert_eq!(answerer.prompts.lock().unwrap().len(), 1);
+    }
+
+    /// The prompt carries the request, what the tool produced, and evidence.
+    #[test]
+    fn answer_prompt_carries_request_tool_output_and_evidence() {
+        let report = ExecutiveReport {
+            result: Some(
+                GoalResult::from_tool_result(&ToolResult::success("42 tests passed"))
+                    .with_tool("terminal"),
+            ),
+            ..Default::default()
+        };
+        let p = answer_prompt(
+            "summarise the test run\n\n[memory]\nlast run failed",
+            &report,
+        );
+        assert!(p.contains("Request:\nsummarise the test run"));
+        assert!(
+            p.contains("[memory]\nlast run failed"),
+            "session/memory context is kept"
+        );
+        assert!(p.contains("What FRIDAY did (terminal, output):\n42 tests passed"));
+        assert!(p.trim_end().ends_with("Answer:"));
+    }
+
     /// event — a failed model call is never a failed goal.
     #[tokio::test]
     async fn goal_runner_with_empty_fabric_falls_back_to_heuristic() {
