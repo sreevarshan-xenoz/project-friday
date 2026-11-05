@@ -31,7 +31,7 @@ public static partial class Asking
     public static string[] CtlArguments(AskKind kind, string question, string request) => kind == AskKind.Screen
         // Pressing the key and typing the question is the per-use consent;
         // the daemon's ContextGate still enforces it.
-        ? ["context", "screen", "--yes", "--ask", question]
+        ? ["context", "screen", "--yes", "--ask", question, "--stream"]
         : ["goal", "--wait", request];
 
     /// <summary>
@@ -56,6 +56,26 @@ public static partial class Asking
             return string.IsNullOrWhiteSpace(text) ? null : text;
         }
         catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The answer so far from one line of <c>friday-ctl --stream</c> output
+    /// (<c>{"partial": "..."}</c>), or null for any other line.
+    /// </summary>
+    public static string? PartialLine(string line)
+    {
+        if (!line.StartsWith("{\"partial\"", StringComparison.Ordinal))
+            return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(line);
+            var text = doc.RootElement.GetProperty("partial").GetString();
+            return string.IsNullOrWhiteSpace(text) ? null : text;
+        }
+        catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
         {
             return null;
         }
@@ -111,7 +131,8 @@ public static partial class Asking
         string? result, error;
         if (kind == AskKind.Screen)
         {
-            var last = objects.LastOrDefault();
+            // The result, not one of the {"partial": ...} lines before it.
+            var last = objects.LastOrDefault(o => !o.TryGetProperty("partial", out _));
             result = last.ValueKind == JsonValueKind.Object ? Str(last, "response") : null;
             error = last.ValueKind == JsonValueKind.Object ? Str(last, "error") : null;
         }

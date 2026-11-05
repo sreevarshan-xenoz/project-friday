@@ -6,7 +6,9 @@ namespace FridayTray;
 /// <summary>Runs friday-ctl and collects everything it prints.</summary>
 internal static class Ctl
 {
-    public static async Task<(bool ok, string output)> RunAsync(Install install, IEnumerable<string> args, TimeSpan timeout)
+    /// <param name="onLine">Called with each line friday-ctl prints, as it prints it.</param>
+    public static async Task<(bool ok, string output)> RunAsync(Install install, IEnumerable<string> args, TimeSpan timeout,
+        Action<string>? onLine = null)
     {
         var psi = new ProcessStartInfo(install.Ctl)
         {
@@ -31,7 +33,7 @@ internal static class Ctl
         {
             return (false, $"cannot reach daemon: could not start friday-ctl ({e.Message})");
         }
-        var stdout = p.StandardOutput.ReadToEndAsync();
+        var stdout = ReadLinesAsync(p.StandardOutput, onLine);
         var stderr = p.StandardError.ReadToEndAsync();
         using var cts = new CancellationTokenSource(timeout);
         try
@@ -44,5 +46,16 @@ internal static class Ctl
             return (false, (await stdout) + (await stderr) + $"\ntimed out after {(int)timeout.TotalSeconds}s waiting for friday-ctl");
         }
         return (p.ExitCode == 0, (await stdout) + (await stderr));
+    }
+
+    private static async Task<string> ReadLinesAsync(StreamReader reader, Action<string>? onLine)
+    {
+        var all = new StringBuilder();
+        while (await reader.ReadLineAsync() is { } line)
+        {
+            all.Append(line).Append('\n');
+            onLine?.Invoke(line);
+        }
+        return all.ToString();
     }
 }

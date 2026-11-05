@@ -25,6 +25,24 @@ public class AskingTests
     }
 
     [Fact]
+    public void Partial_lines_are_the_answer_so_far()
+    {
+        Assert.Equal("The screen sh", Asking.PartialLine("""{"partial":"The screen sh"}"""));
+        Assert.Null(Asking.PartialLine("""{"response":"done"}"""));
+        Assert.Null(Asking.PartialLine("""{"partial": broken"""));
+        Assert.Null(Asking.PartialLine("plain log line"));
+    }
+
+    [Fact]
+    public void Screen_result_is_the_final_object_not_a_partial()
+    {
+        var output = "{\"partial\":\"A ter\"}\n{\"partial\":\"A terminal\"}\n{\n  \"response\": \"A terminal with an error.\"\n}\n";
+        var o = Asking.Interpret(AskKind.Screen, "what is this", true, output);
+        Assert.True(o.Ok);
+        Assert.Equal("A terminal with an error.", o.Answer);
+    }
+
+    [Fact]
     public void Request_caps_context_length()
     {
         var r = Asking.BuildRequest("q", new string('x', 9000));
@@ -35,7 +53,7 @@ public class AskingTests
     [Fact]
     public void Screen_asks_go_through_the_context_command()
     {
-        Assert.Equal(["context", "screen", "--yes", "--ask", "what is this"],
+        Assert.Equal(["context", "screen", "--yes", "--ask", "what is this", "--stream"],
             Asking.CtlArguments(AskKind.Screen, "what is this", "ignored"));
         Assert.Equal(["goal", "--wait", "req"], Asking.CtlArguments(AskKind.Plain, "q", "req"));
     }
