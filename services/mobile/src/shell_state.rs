@@ -63,6 +63,10 @@ pub struct GoalState {
     pub strategy: Option<String>,
     /// The `evidence_verified` count a completed goal carries.
     pub evidence_verified: Option<u64>,
+    /// The answer so far while it streams (`goal.progress`); `None` once the
+    /// goal ends (its `result` holds the whole answer) or before it starts.
+    #[serde(default)]
+    pub partial: Option<String>,
 }
 
 /// The live file-backed contract the shell reads.
@@ -199,6 +203,7 @@ impl ShellState {
 ///
 ///   - `plan.goal`          → begin a `current` goal (command ingress)
 ///   - `goal.started`       → mark the `current` goal genuinely in flight
+///   - `goal.progress`      → the answer so far for that goal (`partial`)
 ///   - `goal.completed|failed|cancelled|paused|recoverable` → close it into
 ///     `last_goal` with any genuine outcome detail the runtime attached
 ///     (phases, result, error, strategy, evidence_verified)
@@ -246,6 +251,7 @@ pub fn apply_event(mut state: ShellState, ev: &Event) -> ShellState {
                     error: None,
                     strategy: None,
                     evidence_verified: None,
+                    partial: None,
                 });
             }
         }
@@ -254,6 +260,7 @@ pub fn apply_event(mut state: ShellState, ev: &Event) -> ShellState {
             if let Some(cur) = &mut state.current {
                 cur.completed_ms = Some(now_ms());
                 cur.active = false;
+                cur.partial = None;
                 cur.phase = match kind {
                     "goal.recoverable" => "failed".to_string(),
                     other => other.trim_start_matches("goal.").to_string(),
@@ -292,6 +299,18 @@ pub fn apply_event(mut state: ShellState, ev: &Event) -> ShellState {
             }
             if matches!(kind, "goal.completed" | "goal.failed" | "goal.cancelled") {
                 state.last_goal = state.current.take();
+            }
+        }
+        "goal.progress" => {
+            // Only the goal in flight, and only while it is.
+            let id = ev.payload.get("id").and_then(|v| v.as_str());
+            if let (Some(cur), Some(partial)) = (
+                state.current.as_mut(),
+                ev.payload.get("partial").and_then(|v| v.as_str()),
+            ) {
+                if cur.active && id == Some(cur.id.as_str()) {
+                    cur.partial = Some(partial.to_string());
+                }
             }
         }
         "telemetry.system" => {
@@ -540,5 +559,49 @@ mod tests {
             .last_goal
             .expect("last goal preserved");
         assert_eq!(last.result, None);
+    }
+
+    #[test]
+    fn progress_fills_partial_for_the_goal_in_flight_then_clears() {
+        let st = apply_event(
+            state(),
+            &Event::new(
+                "goal.started",
+                "planner",
+                serde_json::json!({"goal": "q", "id": "g1"}),
+            ),
+        );
+        let progress = |id: &str, text: &str| {
+            Event::new(
+                "goal.progress",
+                "planner",
+                serde_json::json!({"id": id, "partial": text}),
+            )
+        };
+        let st = apply_event(st, &progress("g1", "The answer"));
+        assert_eq!(
+            st.current.as_ref().unwrap().partial.as_deref(),
+            Some("The answer")
+        );
+        // Another goal's progress is ignored.
+        let st = apply_event(st, &progress("other", "nope"));
+        assert_eq!(
+            st.current.as_ref().unwrap().partial.as_deref(),
+            Some("The answer")
+        );
+        let st = apply_event(
+            st,
+            &Event::new(
+                "goal.completed",
+                "planner",
+                serde_json::json!({"result": {"text": "The answer is 42."}}),
+            ),
+        );
+        let done = st.last_goal.as_ref().unwrap();
+        assert_eq!(done.partial, None, "the result replaces the partial");
+        assert_eq!(done.result.as_deref(), Some("The answer is 42."));
+        // Progress after the end changes nothing.
+        let st = apply_event(st, &progress("g1", "late"));
+        assert!(st.current.is_none());
     }
 }

@@ -1504,7 +1504,9 @@ impl GoalRunner {
         // completion; any model failure keeps the cycle's own result.
         if report.plan_executed && !report.cancelled && !report.paused && !report.recoverable {
             if let Some(answerer) = &self.answerer {
-                if let Some(answer) = compose_answer(answerer.as_ref(), &composed, &report).await {
+                if let Some(answer) =
+                    compose_answer(answerer.as_ref(), &composed, &report, &self.bus, &id).await
+                {
                     report.result = Some(answer);
                 }
             }
@@ -1651,6 +1653,38 @@ impl GoalRunner {
 /// How long the answer step waits for the model before keeping the tool's
 /// own result (friday-ctl --wait gives the whole goal 180 s).
 const ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// How often a streaming answer is published as `goal.progress` (each one is
+/// a state.json write, so not on every token).
+const PROGRESS_EVERY: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// Publish the latest answer text as `goal.progress` {id, partial} whenever
+/// it changed, at most every [`PROGRESS_EVERY`], until the sender is gone.
+async fn forward_progress(
+    mut rx: tokio::sync::watch::Receiver<String>,
+    bus: EventBus,
+    goal_id: String,
+) {
+    let mut sent = String::new();
+    loop {
+        let open = rx.changed().await.is_ok();
+        let text = rx.borrow_and_update().clone();
+        if !text.trim().is_empty() && text != sent {
+            let _ = bus
+                .publish(Event::new(
+                    "goal.progress",
+                    "planner",
+                    json!({ "id": goal_id, "partial": text }),
+                ))
+                .await;
+            sent = text;
+        }
+        if !open {
+            return;
+        }
+        tokio::time::sleep(PROGRESS_EVERY).await;
+    }
+}
 /// How much tool output / evidence goes into the answer prompt.
 const ANSWER_SOURCE_CHARS: usize = 6000;
 
@@ -1709,9 +1743,23 @@ async fn compose_answer(
     client: &dyn LlmStrategyClient,
     request: &str,
     report: &ExecutiveReport,
+    bus: &EventBus,
+    goal_id: &str,
 ) -> Option<GoalResult> {
     let prompt = answer_prompt(request, report);
-    let reply = match tokio::time::timeout(ANSWER_TIMEOUT, client.complete(&prompt)).await {
+    // The answer streams: the text so far goes out as `goal.progress` events
+    // (at most every PROGRESS_EVERY), and the forwarder is drained before
+    // returning so no progress can land after the goal's terminal event.
+    let (tx, rx) = tokio::sync::watch::channel(String::new());
+    let forwarder = tokio::spawn(forward_progress(rx, bus.clone(), goal_id.to_string()));
+    let progress = move |text: &str| {
+        let _ = tx.send(text.to_string());
+    };
+    let call = client.complete_with_progress(&prompt, &progress);
+    let outcome = tokio::time::timeout(ANSWER_TIMEOUT, call).await;
+    drop(progress);
+    let _ = forwarder.await;
+    let reply = match outcome {
         Ok(Ok(text)) => text,
         Ok(Err(e)) => {
             tracing::warn!("answer step: model error, keeping the tool result: {e}");
@@ -1967,6 +2015,78 @@ mod tests {
             self.prompts.lock().unwrap().push(prompt.to_string());
             self.reply.clone()
         }
+    }
+
+    /// Streams its reply in words, with pauses longer than the progress
+    /// throttle so each step is published.
+    struct StreamingAnswerer {
+        words: Vec<&'static str>,
+    }
+
+    #[async_trait]
+    impl LlmStrategyClient for StreamingAnswerer {
+        async fn complete(&self, _prompt: &str) -> Result<String, String> {
+            Ok(self.words.concat())
+        }
+        async fn complete_with_progress(
+            &self,
+            _prompt: &str,
+            progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+        ) -> Result<String, String> {
+            let mut text = String::new();
+            for w in &self.words {
+                text.push_str(w);
+                progress(&text);
+                tokio::time::sleep(PROGRESS_EVERY * 2).await;
+            }
+            Ok(text)
+        }
+    }
+
+    /// The answer streams as `goal.progress` events, growing, for this goal,
+    /// all before its `goal.completed`.
+    #[tokio::test]
+    async fn answer_streams_as_progress_before_completion() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let answerer = Arc::new(StreamingAnswerer {
+            words: vec!["E0308 ", "means ", "mismatched types."],
+        });
+        GoalRunner::new(bus.clone()).with_answerer(answerer).start();
+        bus.publish(Event::new(
+            "plan.goal",
+            "mobile",
+            json!({ "goal": "What is E0308?" }),
+        ))
+        .await
+        .expect("publish");
+        let (mut id, mut partials, mut done) = (String::new(), Vec::new(), None);
+        for _ in 0..200 {
+            let ev = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+                .await
+                .expect("an event in time")
+                .expect("bus open");
+            match ev.kind.as_str() {
+                "goal.started" => id = ev.payload["id"].as_str().unwrap_or("").to_string(),
+                "goal.progress" => {
+                    assert!(done.is_none(), "progress after completion: {}", ev.payload);
+                    assert_eq!(ev.payload["id"], id.as_str());
+                    partials.push(ev.payload["partial"].as_str().unwrap().to_string());
+                }
+                "goal.completed" => {
+                    done = Some(ev.payload.clone());
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let done = done.expect("the goal completed");
+        assert_eq!(done["result"]["text"], "E0308 means mismatched types.");
+        assert_eq!(
+            partials,
+            ["E0308 ", "E0308 means ", "E0308 means mismatched types."],
+            "each step of the answer, growing"
+        );
     }
 
     /// Run one goal on a hermetic runner with the given answerer and return
