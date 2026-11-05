@@ -166,6 +166,18 @@ jobs:
           if (Test-Path "$env:LOCALAPPDATA\Programs\FRIDAY\friday-tray.exe") { throw "files left behind" }
           if ((Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run').PSObject.Properties.Name -contains 'FRIDAY') { throw "start-at-login entry left behind" }
           Write-Host "uninstalled cleanly"
+      - name: winget manifests
+        run: |
+          $msi = '${{ steps.build.outputs.msi }}'
+          installer/windows/winget/New-WingetManifest.ps1 -Msi $msi -Url "https://example.invalid/$(Split-Path $msi -Leaf)"
+          $dir = Get-ChildItem installer/windows/winget/manifests -Recurse -Filter ProjectFRIDAY.FRIDAY.yaml | Select-Object -First 1 | ForEach-Object DirectoryName
+          if ((Get-ChildItem $dir -Filter *.yaml).Count -ne 3) { throw "expected 3 manifest files in $dir" }
+          if (Get-Command winget -ErrorAction SilentlyContinue) {
+            winget validate --manifest $dir
+            if ($LASTEXITCODE -ne 0) { throw "winget validate failed" }
+          } else {
+            Write-Host "winget is not on this runner; manifests generated but not validated"
+          }
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -44,3 +44,17 @@ msiexec /x FRIDAY-<version>-x64.msi /qn
 CI (`windows-installer` job) does exactly this on every push: build, silent
 install, check files, Run entry, PATH and shortcut, smoke test, uninstall,
 and check it cleaned up.
+
+## winget
+
+winget installs from a public URL, so its manifests are generated per
+release. Publish the MSI (e.g. as a GitHub release asset), then:
+
+```powershell
+pwsh installer\windows\winget\New-WingetManifest.ps1 -Msi out\FRIDAY-<version>-x64.msi -Url <public URL of that MSI>
+winget validate --manifest installer\windows\winget\manifests\p\ProjectFRIDAY\FRIDAY\<version>
+```
+
+The script writes the three manifest files (version, installer, locale) for
+`ProjectFRIDAY.FRIDAY`: a per-user MSI, silent-capable, with `friday-ctl` on
+`PATH`. Submitting them is a pull request to `microsoft/winget-pkgs`.
