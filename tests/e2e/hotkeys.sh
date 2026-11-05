@@ -27,6 +27,9 @@ for t in "$LUA" jq python3; do
   [[ -n "$t" ]] && command -v "$t" >/dev/null || { echo "needs lua, jq and python3" >&2; exit 2; }
 done
 A="$REPO/iso/friday/airootfs"
+# FRIDAY OS's keymap is Omarchy's config plus ours; Omarchy (pinned) is
+# fetched, not committed.
+[[ -f "$A/usr/share/omarchy/default/hypr/bootstrap.lua" ]] || bash iso/friday/fetch-omarchy.sh
 
 W=$(mktemp -d)
 FAKE="" DAEMON=""
