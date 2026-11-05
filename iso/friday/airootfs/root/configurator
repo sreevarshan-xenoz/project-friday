@@ -16,7 +16,7 @@ STEPS=(NETWORK DISK IDENTITY SECURITY REGION LOOK AI REVIEW)
 TARGET_DISK="" TARGET_LABEL=""
 HOSTNAME="friday" USERNAME="friday" PASSWORD=""
 KEYBOARD="us" TIMEZONE="UTC"
-THEME="FRIDAY Dots-Hyprland (Material You / Illogical Impulse)"
+THEME="FRIDAY Shell (Ember, made for FRIDAY)"
 SDDM_THEME="SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)"
 FRIDAY_AI_PROVIDER="" FRIDAY_AI_KEY=""
 AUTOLOGIN="false"
@@ -202,11 +202,12 @@ step_look() {
   screen 6
   friday_head "Desktop"
   local v
-  v=$(gum choose --cursor="❯ " --height=6 --selected="$THEME" \
-    "FRIDAY Dots-Hyprland (Material You / Illogical Impulse)" \
+  v=$(gum choose --cursor="❯ " --height=7 --selected="$THEME" \
+    "FRIDAY Shell (Ember, made for FRIDAY)" \
     "FRIDAY Tokyo Night (Default Cybernetic Dark)" \
     "FRIDAY Catppuccin Mocha" \
-    "FRIDAY Nord Arctic") && THEME="$v"
+    "FRIDAY Nord Arctic" \
+    "end-4 Dots-Hyprland (Material You / Illogical Impulse)") && THEME="$v"
   friday_ok "$THEME"
   echo
   friday_head "Login screen"

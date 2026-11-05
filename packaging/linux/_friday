@@ -17,6 +17,7 @@ _friday() {
     'create-skill:Create a new skill template'
     'validate:Validate a skill manifest'
     'publish:Publish a validated skill'
+    'shell:Run FRIDAY Shell or toggle one of its drawers'
     'theme:Switch the desktop theme'
     'bar:Configure the Quickshell bar'
     'update:Update the system'
@@ -36,6 +37,7 @@ _friday() {
     setup-ai) _values 'provider' opencode gemini groq nvidia-nim openrouter cerebras ;;
     welcome)  _arguments '--force[show it even if already shown]' ;;
     daemon)   _values 'action' status start stop restart logs ;;
+    shell)    _values 'action' start restart stop close ipc friday control calendar launcher session ;;
     context)  _values 'source' screen ;;
     validate|publish) _files ;;
   esac

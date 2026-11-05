@@ -62,7 +62,7 @@ jobs:
             hyprland quickshell sway grim foot qt6-5compat qt6-imageformats qt6-multimedia \
             qt6-multimedia-ffmpeg qt6-virtualkeyboard qt6-quicktimeline qt6-svg \
             qt6-wayland qt6-positioning kirigami syntax-highlighting \
-            ttf-material-symbols-variable noto-fonts
+            ttf-material-symbols-variable noto-fonts ttf-jetbrains-mono-nerd
       - uses: actions/checkout@v4
       - name: Trust the checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -79,6 +79,34 @@ jobs:
           name: desktop-checks
           path: ${{ runner.temp }}/friday-checks/shell/
           if-no-files-found: ignore
+
+  package:
+    name: Arch package (build, install, smoke test)
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm --needed base-devel git rust namcap desktop-file-utils \
+            jq fuzzel libnotify wl-clipboard curl openssl
+      - uses: actions/checkout@v4
+        with:
+          # makepkg clones the checkout and counts commits for pkgver.
+          fetch-depth: 0
+      - name: Build with makepkg
+        # makepkg refuses to run as root.
+        run: |
+          git config --system --add safe.directory '*'
+          useradd -m builder
+          chown -R builder "$GITHUB_WORKSPACE"
+          cd packaging/arch
+          runuser -u builder -- env RUSTFLAGS= makepkg --noconfirm
+      - name: Smoke test the package
+        run: bash packaging/arch/check-package.sh packaging/arch/friday-git-*.pkg.tar.zst
+      - uses: actions/upload-artifact@v4
+        with:
+          name: friday-arch-package
+          path: packaging/arch/*.pkg.tar.zst
 
   python:
     name: Python (lint, type, test)

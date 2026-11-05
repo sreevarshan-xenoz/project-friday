@@ -1,0 +1,58 @@
+pragma Singleton
+
+import QtQuick
+import Quickshell
+
+// Glyphs from the Material Design Icons set in JetBrainsMono Nerd Font
+// (ttf-jetbrains-mono-nerd). Named here so the rest of the shell never
+// carries raw codepoints.
+Singleton {
+  readonly property string search: "\u{f0349}"
+  readonly property string apps: "\u{f003b}"
+  readonly property string wifi: "\u{f0928}"
+  readonly property string wifiWeak: "\u{f0922}"
+  readonly property string wifiOff: "\u{f05aa}"
+  readonly property string ethernet: "\u{f0200}"
+  readonly property string bluetooth: "\u{f00af}"
+  readonly property string bluetoothOff: "\u{f00b2}"
+  readonly property string bluetoothConnected: "\u{f00b1}"
+  readonly property string volumeHigh: "\u{f057e}"
+  readonly property string volumeMid: "\u{f0580}"
+  readonly property string volumeLow: "\u{f057f}"
+  readonly property string volumeOff: "\u{f0581}"
+  readonly property string mic: "\u{f036c}"
+  readonly property string micOff: "\u{f036d}"
+  readonly property string battery: "\u{f0079}"
+  readonly property string batteryHalf: "\u{f007e}"
+  readonly property string batteryLow: "\u{f007b}"
+  readonly property string batteryCharging: "\u{f0084}"
+  readonly property string power: "\u{f0425}"
+  readonly property string lock: "\u{f033e}"
+  readonly property string logout: "\u{f0343}"
+  readonly property string restart: "\u{f0709}"
+  readonly property string sleep: "\u{f04b2}"
+  readonly property string bell: "\u{f009a}"
+  readonly property string bellOff: "\u{f009b}"
+  readonly property string brightness: "\u{f00df}"
+  readonly property string chevronLeft: "\u{f0141}"
+  readonly property string chevronRight: "\u{f0142}"
+  readonly property string close: "\u{f0156}"
+  readonly property string copy: "\u{f018f}"
+  readonly property string play: "\u{f040a}"
+  readonly property string pause: "\u{f03e4}"
+  readonly property string next: "\u{f04ad}"
+  readonly property string previous: "\u{f04ae}"
+  readonly property string doctor: "\u{f04d9}"
+  readonly property string selection: "\u{f05e7}"
+  readonly property string screen: "\u{f0e51}"
+  readonly property string history: "\u{f02da}"
+  readonly property string send: "\u{f048a}"
+  readonly property string stop: "\u{f04db}"
+  readonly property string settings: "\u{f0493}"
+  readonly property string clearAll: "\u{f05e9}"
+  readonly property string check: "\u{f012c}"
+  readonly property string alert: "\u{f0028}"
+  readonly property string calendar: "\u{f0e17}"
+  readonly property string terminal: "\u{f018d}"
+  readonly property string app: "\u{f08c6}"
+}

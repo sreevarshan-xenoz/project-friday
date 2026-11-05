@@ -17,9 +17,15 @@ showcase and reference Linux setup, not the only way in.
 - Windows: `windows-host/` (C#: UI Automation, COM, Win32, PowerShell),
   `plugins/windows`, Windows sensors behind `cfg(windows)`.
 - Linux: Hyprland host and sensors, the `friday` CLI
-  (`iso/friday/airootfs/usr/bin/friday`: `ask`, `goal`, `doctor`,
-  `setup-ai`, `answers`), a bar indicator, Super+Y / Super+Alt+Y.
-- FRIDAY OS: installer in `iso/friday/airootfs/root/`.
+  (`packaging/linux/friday`: `ask`, `goal`, `doctor`,
+  `setup-ai`, `answers`, `shell`), Super+Y / Super+Alt+Y, and
+  FRIDAY Shell (`packaging/linux/shell`): FRIDAY's own Quickshell desktop
+  (bar, drawers, notifications, OSD), shipped in `friday-git`.
+- FRIDAY OS: installer in `iso/friday/airootfs/root/`. Default desktop is
+  FRIDAY Shell on Omarchy's pinned Hyprland config; Omarchy's shell keeps
+  lock/idle/polkit/menus with its bar, notifications and OSD switched off
+  (`friday-os/plugins/friday.bar`). end-4's Dots-Hyprland is a vendored,
+  non-default option: don't copy its look or code into FRIDAY Shell.
 
 **Core use case (comes before everything else):** press a key, ask about
 what's on screen or selected, get a useful answer or action, reliably, on
@@ -68,14 +74,17 @@ failures.
 - **Upstreams are pinned, not followed.** Omarchy is fetched at the commit in
   `iso/friday/fetch-omarchy.sh`; vendored dots/themes are copied as files. Bump
   a pin on purpose, in its own commit.
-- **Don't commit build output** (ISOs, `target/`, `iso/out/`, the FRIDAY
-  binaries in `airootfs/usr/bin/`: `build-iso.sh` compiles them).
+- **FRIDAY ships as the `friday-git` package** (`packaging/`), on FRIDAY OS
+  too: its files never go in `airootfs/` (pacman would conflict).
+- **Don't commit build output** (ISOs, `target/`, `iso/out/`, packages and
+  the local repo in `airootfs/opt/friday/repo/`).
 
 ## Commands
 
 | What | Command |
 |---|---|
-| Build the ISO | `CLEAN_WORK=true bash iso/friday/build-iso.sh` (Arch host with `archiso`) |
+| Build the ISO | `CLEAN_WORK=true bash iso/friday/build-iso.sh` (Arch host with `archiso`, `base-devel`, `rust`; run as a normal user: it builds the `friday-git` package, then sudo mkarchiso) |
+| Arch package | `cd packaging/arch && makepkg -si` (builds committed HEAD); smoke test: `bash packaging/arch/check-package.sh <pkg>` |
 | Desktop/installer checks | `bash iso/friday/test/run-checks.sh` (Arch; see script header for deps) |
 | Test VM | `bash iso/friday/test/run-qemu.sh --headless --daemon --reset-disk` (falls back to TCG without KVM) |
 | Drive the VM | `python3 iso/friday/test/vm-control.py status \| exec "<cmd>" \| screenshot --output x.png` |

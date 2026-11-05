@@ -1,1 +1,1 @@
-../friday-linux-daemon.service
+/usr/lib/systemd/user/friday-linux-daemon.service

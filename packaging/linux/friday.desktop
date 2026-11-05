@@ -1,0 +1,23 @@
+[Desktop Entry]
+Type=Application
+Name=FRIDAY
+GenericName=Assistant
+Comment=Ask FRIDAY a question; the answer arrives as a notification
+Exec=friday ask
+Icon=dialog-question
+Terminal=false
+Categories=Utility;
+Keywords=assistant;ai;ask;friday;
+Actions=selection;screen;doctor;
+
+[Desktop Action selection]
+Name=Ask about selected text
+Exec=friday ask --selection
+
+[Desktop Action screen]
+Name=Ask about the screen
+Exec=friday ask --screen
+
+[Desktop Action doctor]
+Name=Check FRIDAY's health
+Exec=foot -H -T "FRIDAY doctor" friday doctor

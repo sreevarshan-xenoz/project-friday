@@ -7,7 +7,7 @@
 #     hyprland quickshell sway grim foot qt6-5compat qt6-imageformats qt6-multimedia \
 #     qt6-multimedia-ffmpeg qt6-virtualkeyboard qt6-quicktimeline qt6-svg \
 #     qt6-wayland qt6-positioning kirigami syntax-highlighting \
-#     ttf-material-symbols-variable noto-fonts
+#     ttf-material-symbols-variable noto-fonts ttf-jetbrains-mono-nerd
 #
 #   bash iso/friday/test/run-checks.sh            # everything available
 #   bash iso/friday/test/run-checks.sh static cli # only some groups

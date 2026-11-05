@@ -4,7 +4,7 @@
 source "$(dirname "$0")/lib.sh"
 need jq || { skip "friday CLI (needs jq)"; exit 0; }
 
-F="$AIROOTFS/usr/bin/friday"
+F="$REPO_ROOT/packaging/linux/friday"
 W="$WORK/cli"; S="$W/stub"; LOG="$W/calls.log"
 rm -rf "$W"; mkdir -p "$S" "$W/home"
 export HOME="$W/home" XDG_STATE_HOME="" XDG_CONFIG_HOME="" USER="${USER:-tester}" FRIDAY_WELCOME_DELAY=0
@@ -143,5 +143,16 @@ contains "no key is fine: uses OpenCode Zen" "$out" "using OpenCode Zen's free m
 contains "no key: checks OpenCode Zen is reachable" "$out" "opencode.ai is reachable"
 if [[ "$out" == *"!"*"API key"* ]]; then fail "doctor warns about a missing key"; else pass "doctor does not warn without a key"; fi
 if [[ "$out" == *s3cret* || "$out" == *abc123secret* ]]; then fail "doctor printed a secret"; else pass "doctor prints no secrets"; fi
+if [[ "$out" == *Quickshell* || "$out" == *quickshell* ]]; then fail "standalone (no ii shell): doctor checks the Quickshell bar"
+else pass "standalone (no ii shell): no Quickshell checks"; fi
+if [[ "$out" == *"FRIDAY Shell"* ]]; then fail "standalone: doctor checks FRIDAY Shell"
+else pass "standalone: no FRIDAY Shell checks"; fi
+mkdir -p "$HOME/.config/hypr"; echo 'o.exec_on_start("friday shell")' >"$HOME/.config/hypr/autostart.lua"
+out=$(bash "$F" doctor 2>&1 || true)
+contains "FRIDAY OS (FRIDAY Shell): says when it is not running" "$out" "FRIDAY Shell is not running"
+contains "FRIDAY OS (FRIDAY Shell): suggests restarting it" "$out" "friday shell restart"
+rm -rf "$HOME/.config/hypr"
+mkdir -p "$HOME/.config/quickshell/ii"; out=$(bash "$F" doctor 2>&1 || true)
+contains "FRIDAY OS (ii shell): checks the bar" "$out" "Quickshell bar"
 
 finish
