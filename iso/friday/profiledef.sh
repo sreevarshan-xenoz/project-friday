@@ -27,3 +27,15 @@ file_permissions=(
   ["/root/configurator"]="0:0:755"
   ["/root/installer"]="0:0:755"
 )
+# Omarchy (fetched by fetch-omarchy.sh) keeps its executable bits, but
+# mkarchiso copies airootfs without file modes, which left every Omarchy
+# command except `omarchy` non-executable on installed systems (no theme, no
+# Omarchy shell: no lock screen, idle or polkit agent). Restore the bit for
+# each file that is executable in the checkout. mkarchiso sources this file
+# from the profile directory.
+if [[ -d airootfs/usr/share/omarchy ]]; then
+  while IFS= read -r -d '' _f; do
+    file_permissions["/${_f#airootfs/}"]="0:0:755"
+  done < <(find airootfs/usr/share/omarchy -type f -perm -u+x -print0)
+  unset _f
+fi

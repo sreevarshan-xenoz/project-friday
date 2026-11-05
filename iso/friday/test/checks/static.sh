@@ -104,6 +104,20 @@ fi
 grep -q 'friday-os/plugins/friday.bar' "$PROFILE_DIR/build-iso.sh" \
   && pass "build-iso.sh ships the friday.bar plugin" || fail "build-iso.sh does not ship friday.bar"
 
+echo "Omarchy commands stay executable in the ISO"
+if [[ -x "$AIROOTFS/usr/share/omarchy/bin/omarchy-theme-set" ]]; then
+  # mkarchiso drops file modes; profiledef.sh must list every executable.
+  perms=$(cd "$PROFILE_DIR" && bash -c 'declare -A file_permissions; . ./profiledef.sh; printf "%s\n" "${!file_permissions[@]}"')
+  missing=0
+  while IFS= read -r f; do
+    grep -qxF "/${f#"$PROFILE_DIR/airootfs/"}" <<<"$perms" || missing=$((missing + 1))
+  done < <(find "$AIROOTFS/usr/share/omarchy" -type f -perm -u+x)
+  if (( missing == 0 )); then pass "profiledef.sh keeps every Omarchy executable executable"
+  else fail "$missing Omarchy executables would lose their executable bit in the ISO"; fi
+else
+  skip "Omarchy executables (no staged Omarchy checkout)"
+fi
+
 echo "Omarchy pin is a full SHA"
 pin=$(sed -n 's/^OMARCHY_PIN="\([0-9a-f]*\)"/\1/p' "$PROFILE_DIR/fetch-omarchy.sh")
 if [[ "$pin" =~ ^[0-9a-f]{40}$ ]]; then pass "pinned at ${pin:0:8}"; else fail "OMARCHY_PIN is not a 40-char SHA"; fi
