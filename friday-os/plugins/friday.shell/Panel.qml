@@ -3,7 +3,8 @@ import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
 
-import "FridayState.qml" as StateDS
+import qs.Commons
+import qs.Ui
 
 Panel {
   id: root
@@ -13,14 +14,14 @@ Panel {
 
   // ------------------------------------------------------------- the view
 
-  readonly property color foreground: bar ? bar.foreground : Color.foreground
-  readonly property color urgent: bar ? bar.urgent : Color.urgent
+  readonly property color foreground: bar && bar.foreground ? bar.foreground : Color.foreground
+  readonly property color urgent: bar && bar.urgent ? bar.urgent : Color.urgent
   readonly property color dim: Qt.darker(foreground, 1.55)
-  readonly property color ok: bar ? (bar.ok || Color.green) : Color.green
-  readonly property color accent: bar ? bar.accent : Color.accent
+  readonly property color ok: bar ? (bar.ok || "#8bd17c") : "#8bd17c"
+  readonly property color accent: (bar && bar.accent) || Color.accent || foreground
 
   // Shared, defensive read-model over the daemon's state.json.
-  StateDS.FridayState {
+  FridayState {
     id: state
     stateFilePath: root.stateFilePath
     // The state plane confirms a sent goal — clear the command latch.
@@ -145,8 +146,7 @@ Panel {
     // dot turns the button accent so it is visible but not alarming.
     active: !state.attention ? root.working : true
     onPressed: function(buttonCode) { root.toggle() }
-    ToolTip.text: root.barLabel
-    ToolTip.visible: hovered
+    tooltipText: root.barLabel
   }
 
   // -------------------------------------------------------------- rich panel
@@ -181,18 +181,18 @@ Panel {
         Text {
           text: state.working ? "●" : (state.attention ? "○" : "●")
           color: state.attention ? root.urgent : (state.working ? root.accent : root.ok)
-          font.pixelSize: Style.font.sizes.text
+          font.pixelSize: Style.font.body
           anchors.verticalCenter: parent.verticalCenter
         }
         Text {
           text: "FRIDAY"
-          font.pixelSize: Style.font.sizes.panel
+          font.pixelSize: Style.font.heading
           font.bold: true
           color: root.foreground
         }
         Text {
           text: state.present ? state.status : "unavailable"
-          font.pixelSize: Style.font.sizes.subtext
+          font.pixelSize: Style.font.bodySmall
           color: state.present ? root.dim : root.urgent
           anchors.verticalCenter: parent.verticalCenter
         }
@@ -205,7 +205,7 @@ Panel {
         text: state.present
           ? ("daemon " + state.status)
           : "FRIDAY not running — state file missing"
-        font.pixelSize: Style.font.sizes.subtext
+        font.pixelSize: Style.font.bodySmall
         color: root.urgent
         wrapMode: Text.WordWrap
         width: parent.width
@@ -217,14 +217,14 @@ Panel {
       Text {
         visible: state.active && state.goalText !== ""
         text: "Working"
-        font.pixelSize: Style.font.sizes.text
+        font.pixelSize: Style.font.body
         font.bold: true
         color: root.accent
       }
       Text {
         visible: state.active && state.goalText !== ""
         text: state.goalText
-        font.pixelSize: Style.font.sizes.text
+        font.pixelSize: Style.font.body
         color: root.foreground
         wrapMode: Text.WordWrap
         width: parent.width
@@ -234,20 +234,20 @@ Panel {
       Text {
         visible: state.last !== null
         text: "Last goal"
-        font.pixelSize: Style.font.sizes.subtext
+        font.pixelSize: Style.font.bodySmall
         color: root.dim
       }
       Text {
         visible: state.last !== null
         text: state.lastOutcome
-        font.pixelSize: Style.font.sizes.panel
+        font.pixelSize: Style.font.heading
         font.bold: true
         color: root.lastOutcome === "completed" ? root.ok : root.urgent
       }
       Text {
         visible: state.last !== null && state.lastResult !== ""
         text: "Result: " + state.lastResult
-        font.pixelSize: Style.font.sizes.subtext
+        font.pixelSize: Style.font.bodySmall
         color: root.foreground
         wrapMode: Text.WordWrap
         width: parent.width
@@ -255,7 +255,7 @@ Panel {
       Text {
         visible: state.last !== null && state.lastError !== ""
         text: "Error: " + state.lastError
-        font.pixelSize: Style.font.sizes.subtext
+        font.pixelSize: Style.font.bodySmall
         color: root.urgent
         wrapMode: Text.WordWrap
         width: parent.width
@@ -268,13 +268,13 @@ Panel {
         Text {
           visible: state.lastPhases > 0
           text: "phases " + state.lastPhases
-          font.pixelSize: Style.font.sizes.subtext
+          font.pixelSize: Style.font.bodySmall
           color: root.dim
         }
         Text {
           visible: state.lastStrategy !== ""
           text: "route " + state.lastStrategy
-          font.pixelSize: Style.font.sizes.subtext
+          font.pixelSize: Style.font.bodySmall
           color: root.dim
         }
       }
@@ -286,7 +286,7 @@ Panel {
       // press GO (or Enter). Nothing fires merely by opening this panel.
       Text {
         text: "Give FRIDAY a goal"
-        font.pixelSize: Style.font.sizes.subtext
+        font.pixelSize: Style.font.bodySmall
         color: root.dim
       }
       Row {
@@ -318,7 +318,7 @@ Panel {
         id: commandNote
         visible: text !== ""
         text: ""
-        font.pixelSize: Style.font.sizes.subtext
+        font.pixelSize: Style.font.bodySmall
         color: root.accent
         wrapMode: Text.WordWrap
         width: parent.width
@@ -326,13 +326,13 @@ Panel {
       Text {
         visible: !root.canCommand
         text: "daemon required to run a goal"
-        font.pixelSize: Style.font.sizes.subtext
+        font.pixelSize: Style.font.bodySmall
         color: root.urgent
       }
       Text {
         visible: root.canCommand && state.active
         text: "a goal is running — new goals are queued only after it ends"
-        font.pixelSize: Style.font.sizes.subtext
+        font.pixelSize: Style.font.bodySmall
         color: root.dim
         wrapMode: Text.WordWrap
         width: parent.width
@@ -343,20 +343,20 @@ Panel {
       Row {
         visible: state.voiceOn
         spacing: Style.space(6)
-        Text { text: "voice"; font.pixelSize: Style.font.sizes.subtext; color: root.dim }
-        Text { text: state.voice; font.pixelSize: Style.font.sizes.subtext; color: root.foreground }
+        Text { text: "voice"; font.pixelSize: Style.font.bodySmall; color: root.dim }
+        Text { text: state.voice; font.pixelSize: Style.font.bodySmall; color: root.foreground }
       }
       Row {
         visible: state.cpu >= 0
         spacing: Style.space(6)
-        Text { text: "cpu"; font.pixelSize: Style.font.sizes.subtext; color: root.dim }
-        Text { text: state.cpu.toFixed(1) + "%"; font.pixelSize: Style.font.sizes.subtext; color: root.foreground }
-        Text { text: "mem"; font.pixelSize: Style.font.sizes.subtext; color: root.dim }
+        Text { text: "cpu"; font.pixelSize: Style.font.bodySmall; color: root.dim }
+        Text { text: state.cpu.toFixed(1) + "%"; font.pixelSize: Style.font.bodySmall; color: root.foreground }
+        Text { text: "mem"; font.pixelSize: Style.font.bodySmall; color: root.dim }
         Text {
           text: (state.memUsedMb > 0 && state.memTotalMb > 0)
             ? state.memUsedMb.toFixed(0) + " / " + state.memTotalMb.toFixed(0) + " MB"
             : "—"
-          font.pixelSize: Style.font.sizes.subtext
+          font.pixelSize: Style.font.bodySmall
           color: root.foreground
         }
       }
@@ -364,7 +364,7 @@ Panel {
         visible: state.lastCommand
         text: "last: " + String((state.lastCommand || {}).method || "")
           + " — " + String((state.lastCommand || {}).goal || "")
-        font.pixelSize: Style.font.sizes.subtext
+        font.pixelSize: Style.font.bodySmall
         color: root.dim
         elide: Text.ElideRight
         width: parent.width
@@ -372,7 +372,7 @@ Panel {
 
       Text {
         text: "r to refresh · s to send goal"
-        font.pixelSize: Style.font.sizes.subtext
+        font.pixelSize: Style.font.bodySmall
         color: root.dim
       }
     }

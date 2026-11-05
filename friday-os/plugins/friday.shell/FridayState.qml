@@ -32,14 +32,25 @@ Item {
 
   FileView {
     id: fileView
-    paths: [root.stateFile]
-    rerunOnFileChange: true
-    onExistsChanged: root.load()
-    onDataChanged: root.load()
+    path: root.stateFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.load(text())
+    onLoadFailed: root.load("")
   }
 
-  function load() {
-    var text = fileView.getData(root.stateFile)
+  // The daemon replaces the file atomically, which can drop the watch, and it
+  // may not exist yet when the shell starts first. A slow re-read covers both.
+  Timer {
+    interval: 3000
+    running: true
+    repeat: true
+    onTriggered: fileView.reload()
+  }
+
+  function load(text) {
+    root.present = text !== ""
     if (!text) {
       root.parsed = {}
       root.loadedOnce = true
@@ -49,7 +60,7 @@ Item {
     try {
       obj = JSON.parse(text)
     } catch (e) {
-      // Malformed state: keep the last good view fresh and flag parse failure.
+      // Malformed state: flag the parse failure, show nothing stale.
       root.parsed = {}
       root.parseError = true
       root.loadedOnce = true
@@ -59,8 +70,6 @@ Item {
     root.parsed = (obj && typeof obj === "object") ? obj : {}
     root.loadedOnce = true
   }
-
-  Component.onCompleted: root.load()
 
   property bool loadedOnce: false
   property bool parseError: false
@@ -77,7 +86,7 @@ Item {
 
   // `present` is true only if the file exists. Even then every field stays
   // guarded, so a stale/partial document degrades gracefully.
-  readonly property bool present: fileView.exists
+  property bool present: false
 
   readonly property string status: str(root.parsed.status)
   readonly property bool running: root.status === "running"
