@@ -37,7 +37,7 @@ _friday() {
     setup-ai) _values 'provider' opencode gemini groq nvidia-nim openrouter cerebras ;;
     welcome)  _arguments '--force[show it even if already shown]' ;;
     daemon)   _values 'action' status start stop restart logs ;;
-    shell)    _values 'action' start restart stop close friday control calendar launcher session ;;
+    shell)    _values 'action' start restart stop close ipc friday control calendar launcher session ;;
     context)  _values 'source' screen ;;
     validate|publish) _files ;;
   esac

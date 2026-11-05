@@ -2,6 +2,7 @@ pragma Singleton
 
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import Quickshell.Services.Notifications
 
 // The desktop notification server (org.freedesktop.Notifications). FRIDAY's
@@ -10,6 +11,8 @@ import Quickshell.Services.Notifications
 //
 // `popups` is what is on screen now; `list` is the history kept until
 // dismissed. Do-not-disturb holds back popups except critical ones.
+//
+// IPC target `notifications`: dismissOne, dismissAll, invokeLast, toggleDnd.
 Singleton {
   id: root
 
@@ -29,6 +32,26 @@ Singleton {
     for (const n of server.trackedNotifications.values.slice())
       n.dismiss();
     root.popups = [];
+  }
+
+  function newest() {
+    const all = server.trackedNotifications.values;
+    return all.length > 0 ? all[all.length - 1] : null;
+  }
+
+  IpcHandler {
+    target: "notifications"
+    function dismissOne(): void { const n = root.newest(); if (n) root.dismiss(n); }
+    function dismissAll(): void { root.clearAll(); }
+    function invokeLast(): void {
+      const n = root.newest();
+      if (!n)
+        return;
+      const a = n.actions.find(x => x.identifier === "default") || n.actions[0];
+      if (a)
+        a.invoke();
+    }
+    function toggleDnd(): void { root.dnd = !root.dnd; }
   }
 
   NotificationServer {
