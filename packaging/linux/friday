@@ -416,7 +416,9 @@ case "${1:-}" in
       case "$answer$out" in
         *FreeUsageLimitError*)
           answer="OpenCode Zen's free limit is used up for now. Try again later, or add your own key: friday setup-ai" ;;
-        *"no token found"*|*"cannot reach daemon"*|*"Connection refused"*)
+        # friday-ctl's own errors only: a provider's "Connection refused"
+        # (say, a local model server that isn't running) is not FRIDAY down.
+        *"no token found"*|*"cannot reach daemon"*)
           answer="FRIDAY isn't running, so I couldn't ask. Start it and try again."
           daemon_down=true ;;
         *"timed out after"*)

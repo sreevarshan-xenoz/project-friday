@@ -105,9 +105,19 @@ public class AskingTests
         var o = Asking.Interpret(AskKind.Plain, "q", false, "no token found; daemon not running at C:\\x\\state.json");
         Assert.True(o.DaemonDown);
         Assert.StartsWith("FRIDAY isn't running", o.Answer);
-        // Windows wording of a refused TCP connection.
+        // friday-ctl's own message when the daemon's port refuses (Windows wording).
         Assert.True(Asking.Interpret(AskKind.Plain, "q", false,
-            "No connection could be made because the target machine actively refused it.").DaemonDown);
+            "cannot reach daemon at ws://127.0.0.1:18432: IO error: No connection could be made because the target machine actively refused it.").DaemonDown);
+    }
+
+    [Fact]
+    public void A_model_server_refusing_is_not_friday_down()
+    {
+        var o = Asking.Interpret(AskKind.Plain, "q", false,
+            "{\"outcome\":\"failed\",\"error\":\"Couldn't reach your AI provider. Check your internet connection (or that your local model server is running).\"}\n"
+            + "provider llamacpp: tcp connect error: No connection could be made because the target machine actively refused it.");
+        Assert.False(o.DaemonDown);
+        Assert.StartsWith("Couldn't reach your AI provider", o.Answer);
     }
 
     [Fact]

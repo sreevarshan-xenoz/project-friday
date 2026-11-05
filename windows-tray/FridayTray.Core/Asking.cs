@@ -150,8 +150,9 @@ public static partial class Asking
         var all = raw + output;
         if (all.Contains("FreeUsageLimitError"))
             return new AskOutcome(false, "OpenCode Zen's free limit is used up for now. Try again later, or add your own key (tray menu: AI provider).", raw, false);
-        if (all.Contains("no token found") || all.Contains("cannot reach daemon") || all.Contains("Connection refused")
-            || all.Contains("actively refused"))
+        // friday-ctl's own errors only: a provider's "connection refused"
+        // (a local model server that isn't running) is not FRIDAY down.
+        if (all.Contains("no token found") || all.Contains("cannot reach daemon"))
             return new AskOutcome(false, "FRIDAY isn't running, so I couldn't ask. Start it and try again.", raw, true);
         if (all.Contains("timed out after"))
             return new AskOutcome(false, "This is taking longer than expected. FRIDAY may still be working on it: check the tray icon, or open the answers later.", raw, false);
