@@ -118,13 +118,11 @@ press() {
   local body; body=$(awk -F'\t' '{ print $(NF-1) }' <<<"$line" | tail -1)
   if [[ "$line" == *"FRIDAY ✓"* && "$body" == $expect ]]; then pass "$key: notified \"${body:0:80}\""
   else fail "$key: expected an answer notification like '$expect', got:"; sed 's/^/       /' "$W/notify.log"; fi
-  # Asks (not the screen) stream: the notification fills in, then the final
-  # answer replaces that same notification (-r with the id -p gave).
-  if [[ "$key" != CTRL+SUPER+Y ]]; then
-    local updates; updates=$(grep -c $'^-a\tFRIDAY\t-r\t7\tFRIDAY · ' "$W/notify.log" || true)
-    if (( updates >= 1 )) && [[ "$line" == *$'-r\t7\t'* ]]; then pass "$key: the answer filled in ($updates updates), then replaced them"
-    else fail "$key: expected streaming updates and a final replace (updates: $updates)"; sed 's/^/       /' "$W/notify.log"; fi
-  fi
+  # Every ask streams, the screen too: the notification fills in, then the
+  # final answer replaces that same notification (-r with the id -p gave).
+  local updates; updates=$(grep -c $'^-a\tFRIDAY\t-r\t7\tFRIDAY · ' "$W/notify.log" || true)
+  if (( updates >= 1 )) && [[ "$line" == *$'-r\t7\t'* ]]; then pass "$key: the answer filled in ($updates updates), then replaced them"
+  else fail "$key: expected streaming updates and a final replace (updates: $updates)"; sed 's/^/       /' "$W/notify.log"; fi
 }
 
 press SUPER+Y "What does the Rust error E0308 mean?" "FAKE-MODEL-ANSWER: What does the Rust error E0308 mean?*"

@@ -191,7 +191,7 @@ try {
         Fail "Win+Ctrl+Y: Notepad did not come to the front (foreground: '$([Keys]::ForegroundTitle())')"
     }
     Ask "Win+Ctrl+Y" @((@($VK.WIN, $VK.CTRL), $VK.Y, "Win+Ctrl+Y"), (@($VK.CTRL, $VK.ALT, $VK.SHIFT), $VK.S, "Ctrl+Alt+Shift+S")) `
-        "what is on my screen" "FAKE-MODEL-ANSWER: what is on my screen \[saw a [1-9][0-9]*-byte [0-9]+x[0-9]+ image/png\]"
+        "what is on my screen" "FAKE-MODEL-ANSWER: what is on my screen \[saw a [1-9][0-9]*-byte [0-9]+x[0-9]+ image/png\]" -Streams
     $saved = if (Test-Path "$state\last-answer.md") { Get-Content "$state\last-answer.md" -Raw } else { "" }
     $desktop = [System.Windows.Forms.SystemInformation]::VirtualScreen
     if ($saved -match '-byte (\d+)x(\d+) image/png') {
