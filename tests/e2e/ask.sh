@@ -5,6 +5,7 @@
 #   - every goal finishes (a missing desktop tool once made goals hang),
 #   - the answer friday-ctl prints is the model's reply to that question
 #     (the answer step, and its result reaching state.json),
+#   - the answer streams: `--stream` shows it growing before the end,
 #   - the daemon doesn't panic.
 #
 # Usage: tests/e2e/ask.sh [bin-dir]   (default target/debug)
@@ -48,7 +49,7 @@ else fail "daemon never reported running"; tail -20 "$W/daemon.log"; exit 1; fi
 echo "ask"
 for q in "Summarise this text: The quick brown fox jumps over the lazy dog." \
          "What does the Rust error E0308 mean?"; do
-  out=$("${offline[@]}" timeout 90 "$CTL_BIN" goal --wait "$q" 2>&1) || true
+  out=$("${offline[@]}" timeout 90 "$CTL_BIN" goal --wait --stream "$q" 2>&1) || true
   if grep -q '"outcome": *"completed"' <<<"$out"; then pass "completes: $q"
   else fail "did not complete: $q"; sed 's/^/       /' <<<"$out" | tail -8; continue; fi
   answer=$("$PY" -c 'import json,sys
@@ -60,6 +61,19 @@ done=[o for o in objs if isinstance(o, dict) and "outcome" in o]
 print((done[-1].get("result") or "") if done else "")' <<<"$out")
   if [[ "$answer" == "FAKE-MODEL-ANSWER: $q"* ]]; then pass "answered by the model: ${answer:0:70}"
   else fail "answer is not the model's reply to the question (got: '${answer:0:120}')"; fi
+  # The {"partial": ...} lines: at least two, growing, each a start of the answer.
+  steps=$("$PY" -c 'import json,sys
+answer=sys.argv[1]; parts=[]
+for line in sys.stdin:
+    line=line.strip()
+    if line.startswith("{\"partial\""):
+        try: parts.append(json.loads(line)["partial"])
+        except ValueError: pass
+ok = len(parts) >= 2 and all(answer.startswith(p) for p in parts) \
+     and all(len(a) < len(b) for a, b in zip(parts, parts[1:]))
+print(len(parts) if ok else "bad:" + json.dumps(parts)[:200])' "$answer" <<<"$out")
+  if [[ "$steps" =~ ^[0-9]+$ ]]; then pass "streamed: the answer grew in $steps steps"
+  else fail "the answer did not stream (partials: ${steps#bad:})"; fi
 done
 
 answers=$(grep -vc "Investigation Engine" "$W/model.log" 2>/dev/null || echo 0)
