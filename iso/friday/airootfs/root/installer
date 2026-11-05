@@ -297,6 +297,12 @@ if [ "$USERNAME" != "root" ]; then
   mkdir -p /mnt/root
   rsync -a /mnt/etc/skel/. /mnt/root/ 2>/dev/null || true
 fi
+# rsync -a ran as root and copied skel's own ownership, home directory
+# included. Hand the home to the user now: the theme step below runs as
+# the user and cannot write to a root-owned home.
+if [ "$USERNAME" != "root" ]; then
+  arch-chroot /mnt chown -R "$USERNAME:$USERNAME" "$USER_HOME"
+fi
 
 # Deploy Theme Selection
 if [[ "$THEME" =~ "Dots-Hyprland" ]]; then
@@ -335,8 +341,10 @@ else
   esac
   # A login shell outside the desktop session has neither OMARCHY_PATH nor
   # Omarchy's bin/ on PATH (uwsm sets both at login), so pass them here.
-  if ! arch-chroot /mnt su - "$USERNAME" -c \
-      "OMARCHY_PATH=/usr/share/omarchy PATH=/usr/share/omarchy/bin:\$PATH omarchy-theme-set '$THEME_SLUG'"; then
+  # omarchy-theme-set exits 0 even when it fails, so check what it left.
+  arch-chroot /mnt su - "$USERNAME" -c \
+    "OMARCHY_PATH=/usr/share/omarchy PATH=/usr/share/omarchy/bin:\$PATH omarchy-theme-set '$THEME_SLUG'" || true
+  if [[ ! -s "/mnt$USER_HOME/.local/state/omarchy/current/theme.name" ]]; then
     echo "warning: could not apply the $THEME_SLUG theme (run omarchy-theme-set $THEME_SLUG after login)" >&2
   fi
 

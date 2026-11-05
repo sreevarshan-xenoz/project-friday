@@ -104,6 +104,13 @@ fi
 grep -q 'OMARCHY_PATH=/usr/share/omarchy PATH=/usr/share/omarchy/bin:\\$PATH omarchy-theme-set' "$AIROOTFS/root/installer" \
   && pass "installer runs omarchy-theme-set with Omarchy's environment" \
   || fail "installer runs omarchy-theme-set without OMARCHY_PATH/PATH (theme silently not applied)"
+chown_line=$(grep -n 'chown -R "$USERNAME:$USERNAME" "$USER_HOME"' "$AIROOTFS/root/installer" | head -1 | cut -d: -f1)
+theme_line=$(grep -n 'omarchy-theme-set .\$THEME_SLUG' "$AIROOTFS/root/installer" | head -1 | cut -d: -f1)
+if [[ -n "$chown_line" && -n "$theme_line" ]] && (( chown_line < theme_line )); then
+  pass "installer hands the home to the user before the theme step"
+else
+  fail "installer runs omarchy-theme-set before the user owns their home (theme silently not applied)"
+fi
 grep -q 'friday-os/plugins/friday.bar' "$PROFILE_DIR/build-iso.sh" \
   && pass "build-iso.sh ships the friday.bar plugin" || fail "build-iso.sh does not ship friday.bar"
 
