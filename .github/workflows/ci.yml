@@ -50,6 +50,10 @@ jobs:
         run: cargo clippy --all-targets --all -- -D warnings
       - name: Test
         run: cargo test --all
+      - name: End-to-end ask (real daemon, fake model, no network)
+        run: |
+          cargo build -p friday-mobile --bin friday-linux-daemon --bin friday-ctl
+          bash tests/e2e/ask.sh
 
   desktop:
     name: Desktop, installer & CLI checks (Arch)
