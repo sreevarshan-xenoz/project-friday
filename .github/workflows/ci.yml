@@ -164,7 +164,10 @@ jobs:
           $p = Start-Process msiexec -ArgumentList '/x', '${{ steps.build.outputs.msi }}', '/qn', '/l*v', "$env:RUNNER_TEMP\uninstall.log" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "msiexec /x exited with $($p.ExitCode)" }
           if (Test-Path "$env:LOCALAPPDATA\Programs\FRIDAY\friday-tray.exe") { throw "files left behind" }
-          if ((Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run').PSObject.Properties.Name -contains 'FRIDAY') { throw "start-at-login entry left behind" }
+          # The installer may have created the Run key itself, so uninstall can
+          # remove the whole key: a missing key means no entry.
+          $run = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue
+          if ($run -and ($run.PSObject.Properties.Name -contains 'FRIDAY')) { throw "start-at-login entry left behind" }
           Write-Host "uninstalled cleanly"
       - name: winget manifests
         run: |
