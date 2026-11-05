@@ -18,7 +18,8 @@ pub mod collector;
 pub mod command;
 
 pub use collector::{
-    CaptureError, CaptureOptions, CapturedContext, ContextCollector, ScreenRegion, TextSource,
+    screen_capture_command, screen_command, CaptureError, CaptureOptions, CapturedContext,
+    ContextCollector, ScreenRegion, TextSource,
 };
 pub use command::{
     CommandOutput, CommandRunner, FakeCommandRunner, RealCommandRunner, RunnerError,

@@ -192,21 +192,16 @@ impl<R: CommandRunner> ContextCollector<R> {
 
     fn capture_screen(&self, options: &CaptureOptions) -> Result<CapturedContext, CaptureError> {
         let channel = ContextChannel::Screen;
-
-        let (args, geometry) = if options.fullscreen {
-            (vec!["-".to_string()], None)
+        let geometry = if options.fullscreen {
+            None
         } else {
-            let region = options.region.ok_or(CaptureError::InvalidOptions {
+            Some(options.region.ok_or(CaptureError::InvalidOptions {
                 channel,
                 message: "screen capture requires a region or fullscreen=true".to_string(),
-            })?;
-            (
-                vec!["-g".to_string(), region.slurp(), "-".to_string()],
-                Some(region),
-            )
+            })?)
         };
-
-        let out = self.run_capture(channel, "grim", &args)?;
+        let (program, args) = screen_command(geometry);
+        let out = self.run_capture(channel, &program, &args)?;
 
         Ok(CapturedContext::Image {
             bytes: out.stdout,
@@ -292,6 +287,51 @@ impl<R: CommandRunner> ContextCollector<R> {
     }
 }
 
+/// The program and arguments that write a PNG of the screen (or `region`) to
+/// stdout: `grim` on Wayland, and on Windows FRIDAY's own host
+/// (`friday-windows-host --screenshot [x y w h]`), which has no grim.
+pub fn screen_capture_command(
+    region: Option<ScreenRegion>,
+    windows: bool,
+    windows_host: &str,
+) -> (String, Vec<String>) {
+    if windows {
+        let mut args = vec!["--screenshot".to_string()];
+        if let Some(r) = region {
+            args.extend([
+                r.x.to_string(),
+                r.y.to_string(),
+                r.width.to_string(),
+                r.height.to_string(),
+            ]);
+        }
+        (windows_host.to_string(), args)
+    } else {
+        let args = match region {
+            Some(r) => vec!["-g".to_string(), r.slurp(), "-".to_string()],
+            None => vec!["-".to_string()],
+        };
+        ("grim".to_string(), args)
+    }
+}
+
+/// This platform's screen capture command (see [`screen_capture_command`]);
+/// tests script their fake capture with it so they hold on every platform.
+pub fn screen_command(region: Option<ScreenRegion>) -> (String, Vec<String>) {
+    screen_capture_command(region, cfg!(windows), &windows_host_program())
+}
+
+/// `friday-windows-host.exe` next to the running daemon (the installer puts
+/// them together), else the bare name for PATH lookup.
+fn windows_host_program() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|d| d.join("friday-windows-host.exe")))
+        .filter(|p| p.exists())
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "friday-windows-host".to_string())
+}
+
 /// Parse `hyprctl -j activewindow` JSON into [`CapturedContext::AppInfo`].
 fn parse_activewindow(stdout: &[u8]) -> Result<CapturedContext, String> {
     let v: serde_json::Value =
@@ -335,10 +375,16 @@ mod tests {
         fullscreen: false,
     };
 
+    fn strs(v: &[String]) -> Vec<&str> {
+        v.iter().map(String::as_str).collect()
+    }
+
     fn collector() -> ContextCollector<FakeCommandRunner> {
+        let (region_prog, region_args) = screen_command(Some(ScreenRegion::new(10, 20, 640, 480)));
+        let (full_prog, full_args) = screen_command(None);
         let runner = FakeCommandRunner::new()
-            .script_stdout("grim", &["-g", "10,20 640x480", "-"], PNG)
-            .script_stdout("grim", &["-"], PNG)
+            .script_stdout(&region_prog, &strs(&region_args), PNG)
+            .script_stdout(&full_prog, &strs(&full_args), PNG)
             .script_stdout(
                 "omarchy-capture-text",
                 &["--stdout", "10,20 640x480"],
@@ -389,6 +435,31 @@ mod tests {
                 mime: "image/png",
                 geometry: None
             }
+        );
+    }
+
+    #[test]
+    fn screen_capture_command_per_platform() {
+        let r = ScreenRegion::new(10, 20, 300, 200);
+        assert_eq!(
+            screen_capture_command(None, false, "host"),
+            ("grim".to_string(), vec!["-".to_string()])
+        );
+        assert_eq!(
+            screen_capture_command(Some(r), false, "host").1,
+            vec!["-g", "10,20 300x200", "-"]
+        );
+        // Windows has no grim: FRIDAY's host writes the PNG instead.
+        assert_eq!(
+            screen_capture_command(None, true, "C:/F/friday-windows-host.exe"),
+            (
+                "C:/F/friday-windows-host.exe".to_string(),
+                vec!["--screenshot".to_string()]
+            )
+        );
+        assert_eq!(
+            screen_capture_command(Some(r), true, "h").1,
+            vec!["--screenshot", "10", "20", "300", "200"]
         );
     }
 
@@ -506,12 +577,9 @@ mod tests {
 
     #[test]
     fn nonzero_command_exit_is_reported_not_fabricated() {
-        let runner = FakeCommandRunner::new().script_error(
-            "grim",
-            &["-g", "10,20 640x480", "-"],
-            "failed to capture",
-            1,
-        );
+        let (prog, args) = screen_command(Some(ScreenRegion::new(10, 20, 640, 480)));
+        let runner =
+            FakeCommandRunner::new().script_error(&prog, &strs(&args), "failed to capture", 1);
         let err = ContextCollector::new(runner)
             .capture(ContextChannel::Screen, &screen_region())
             .unwrap_err();

@@ -20,8 +20,13 @@ using WindowsHost.Win32;
 /// </summary>
 public static class Program
 {
-    public static void Main()
+    public static int Main(string[] args)
     {
+        // One-shot screen capture for the daemon's context collector (the
+        // Windows counterpart of `grim -`); not the pipe service.
+        if (args.Length > 0 && args[0] == "--screenshot")
+            return OperatingSystem.IsWindows() ? Screenshot.Run(args[1..]) : 2;
+
         var session = Environment.GetEnvironmentVariable("FRIDAY_SESSION") ?? "default";
         var pipeName = $"friday-windows-{session}";
         var dispatcher = new Dispatcher();
