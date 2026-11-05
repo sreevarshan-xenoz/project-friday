@@ -13,9 +13,14 @@ files=$(bsdtar -tf "$pkg")
 for f in usr/bin/friday usr/bin/friday-linux-daemon usr/bin/friday-ctl \
   usr/lib/friday/friday-skill-forge usr/lib/systemd/user/friday-linux-daemon.service \
   usr/share/zsh/site-functions/_friday usr/share/applications/friday.desktop \
-  usr/share/friday/hyprland/friday.lua usr/share/licenses/friday-git/LICENSE-MIT; do
+  usr/share/friday/hyprland/friday.lua usr/share/licenses/friday-git/LICENSE-MIT \
+  usr/share/friday/shell/shell.qml usr/share/friday/shell/services/Friday.qml; do
   grep -qx "$f" <<<"$files" && ok "$f" || bad "missing $f"
 done
+# Every FRIDAY Shell file in the tree is in the package.
+src=$(cd "$(dirname "$0")/../linux/shell" && find . -name '*.qml' | wc -l)
+pkgd=$(grep -c '^usr/share/friday/shell/.*\.qml$' <<<"$files")
+[[ "$src" -eq "$pkgd" ]] && ok "FRIDAY Shell: $pkgd QML files" || bad "FRIDAY Shell: $pkgd of $src QML files packaged"
 
 if command -v namcap >/dev/null; then
   echo "namcap"

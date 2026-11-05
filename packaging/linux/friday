@@ -38,6 +38,8 @@ Skill Forge:
   friday publish <id-or-path>      Publish validated skill
 
 Desktop & System Substrate:
+  friday shell [start|restart|stop] Run FRIDAY Shell (bar, drawers, notifications)
+  friday shell <drawer>            Toggle a drawer: friday control calendar launcher session
   friday theme [list|set <name>]   Switch desktop visual theme (22 available)
   friday bar [toggle|reload]       Configure Quickshell bar and widgets
   friday update                    Update system and OS components
@@ -133,7 +135,14 @@ friday_doctor() {
   # `friday` package on any Wayland desktop) only needs the prompt and
   # notification tools.
   local pkgs=(fuzzel libnotify jq)
-  if [ -d "${XDG_CONFIG_HOME:-$HOME/.config}/quickshell/ii" ]; then
+  # FRIDAY Shell: running, or set to start with Hyprland but not up.
+  if pgrep -f 'quickshell.*friday/shell' >/dev/null 2>&1; then
+    ok "FRIDAY Shell is running"
+    pkgs=(quickshell ttf-jetbrains-mono-nerd noto-fonts "${pkgs[@]}")
+  elif grep -rqs 'friday shell' "${XDG_CONFIG_HOME:-$HOME/.config}/hypr"; then
+    warn "FRIDAY Shell is not running" "friday shell restart"
+    pkgs=(quickshell ttf-jetbrains-mono-nerd noto-fonts "${pkgs[@]}")
+  elif [ -d "${XDG_CONFIG_HOME:-$HOME/.config}/quickshell/ii" ]; then
     if pgrep -x qs >/dev/null || pgrep -x quickshell >/dev/null; then ok "Quickshell bar is running"
     else warn "Quickshell bar is not running" "qs -c ii &disown   (or log out and back in)"; fi
     pkgs=(quickshell qt6-positioning qt6-virtualkeyboard ttf-material-symbols-variable "${pkgs[@]}")
@@ -422,6 +431,25 @@ case "${1:-}" in
   context)
     shift
     exec friday-ctl context "$@"
+    ;;
+  shell)
+    # FRIDAY Shell. A copy in ~/.config/friday/shell (or $FRIDAY_SHELL_DIR)
+    # takes precedence over the packaged one, for people who want to edit it.
+    shift
+    dir="${FRIDAY_SHELL_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/friday/shell}"
+    [ -f "$dir/shell.qml" ] || dir=/usr/share/friday/shell
+    [ -f "$dir/shell.qml" ] || { echo "friday: FRIDAY Shell not found ($dir)" >&2; exit 1; }
+    command -v quickshell >/dev/null 2>&1 || { echo "friday: quickshell is not installed" >&2; exit 1; }
+    case "${1:-start}" in
+      start)   exec quickshell -n -p "$dir" ;;
+      restart) quickshell kill -p "$dir" >/dev/null 2>&1 || true
+               exec quickshell -n -d -p "$dir" ;;
+      stop)    exec quickshell kill -p "$dir" ;;
+      close)   exec quickshell -p "$dir" ipc call shell close ;;
+      friday|control|calendar|launcher|session)
+               exec quickshell -p "$dir" ipc call shell toggle "$1" ;;
+      *) echo "Usage: friday shell [start|restart|stop|close|friday|control|calendar|launcher|session]" >&2; exit 1 ;;
+    esac
     ;;
   daemon)
     shift
