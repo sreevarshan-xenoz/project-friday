@@ -18,8 +18,14 @@ showcase and reference Linux setup, not the only way in.
   `plugins/windows`, Windows sensors behind `cfg(windows)`.
 - Linux: Hyprland host and sensors, the `friday` CLI
   (`packaging/linux/friday`: `ask`, `goal`, `doctor`,
-  `setup-ai`, `answers`), a bar indicator, Super+Y / Super+Alt+Y.
-- FRIDAY OS: installer in `iso/friday/airootfs/root/`.
+  `setup-ai`, `answers`, `shell`), Super+Y / Super+Alt+Y, and
+  FRIDAY Shell (`packaging/linux/shell`): FRIDAY's own Quickshell desktop
+  (bar, drawers, notifications, OSD), shipped in `friday-git`.
+- FRIDAY OS: installer in `iso/friday/airootfs/root/`. Default desktop is
+  FRIDAY Shell on Omarchy's pinned Hyprland config; Omarchy's shell keeps
+  lock/idle/polkit/menus with its bar, notifications and OSD switched off
+  (`friday-os/plugins/friday.bar`). end-4's Dots-Hyprland is a vendored,
+  non-default option: don't copy its look or code into FRIDAY Shell.
 
 **Core use case (comes before everything else):** press a key, ask about
 what's on screen or selected, get a useful answer or action, reliably, on
