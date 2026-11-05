@@ -130,10 +130,11 @@ impl CommandRunner for RealCommandRunner {
                 std::thread::spawn(move || {
                     let _ = tx.send(run_once());
                 });
-                Ok(rx
-                    .recv_timeout(d)
+                // The worker always sends run_once's own Result; a failure to
+                // start the program (e.g. hyprctl not installed) is an Err to
+                // return, never a panic: it took the whole goal down with it.
+                rx.recv_timeout(d)
                     .map_err(|_| RunnerError::Timeout(format!("'{name}' exceeded {d:?}")))?
-                    .expect("spawn thread must send"))
             }
         }
     }
@@ -269,6 +270,23 @@ fn key(program: &str, args: &[&str]) -> (String, Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A program that isn't installed (hyprctl outside Hyprland) is an error
+    /// the caller handles, with or without a timeout: it used to panic in the
+    /// timeout path, which killed the goal and left every ask hanging.
+    #[test]
+    fn missing_program_is_an_error_not_a_panic() {
+        for timeout in [None, Some(Duration::from_secs(5))] {
+            let runner = RealCommandRunner { timeout };
+            let err = runner
+                .run("friday-test-no-such-program", &[])
+                .expect_err("a missing program must be an Err");
+            assert!(
+                matches!(err, RunnerError::Io(_)),
+                "timeout={timeout:?}: {err:?}"
+            );
+        }
+    }
 
     #[test]
     fn fake_returns_scripted_output_for_exact_argv() {
