@@ -273,20 +273,23 @@ async fn main() {
 
     // R5-2-5-2: the explicit Screen context read.
     //   ContextCollector (real OS) → ContextGate → EgressGate → FabricSeam.
-    // The provider name is configured explicitly; a matching registered vendor
-    // is qualified on the Omarchy target (R5-2-5-4). A missing/unknown vendor
-    // fails honestly at the provider seam rather than silently.
-    let context_provider =
-        // "opencode" is the keyless default (the old "fabric" default named no
-        // real provider, so screen reads failed unless this was set).
-        std::env::var("FRIDAY_CONTEXT_PROVIDER").unwrap_or_else(|_| "opencode".to_string());
+    // The screenshot goes to a vision model routed like any ask (the user's
+    // provider before keyless OpenCode Zen), unless FRIDAY_CONTEXT_PROVIDER
+    // names one provider to always use.
+    let context_provider = std::env::var("FRIDAY_CONTEXT_PROVIDER")
+        .ok()
+        .filter(|p| !p.trim().is_empty());
+    let context_label = context_provider.as_deref().unwrap_or("routed");
     let screen_reader = Arc::new(friday_mobile::context_read::ScreenReader::new(
         ContextCollector::new(RealCommandRunner::default()),
-        friday_mobile::context_read::FabricProviderSeam::new(fabric.clone(), &context_provider),
-        &context_provider,
+        friday_mobile::context_read::FabricProviderSeam::new(
+            fabric.clone(),
+            context_provider.as_deref(),
+        ),
+        context_label,
     ));
     tracing::info!(
-        "[context.read] Screen reader armed (collector=Real, provider={context_provider}); no ambient capture"
+        "[context.read] Screen reader armed (collector=Real, provider={context_label}); no ambient capture"
     );
 
     // The assistant loop. Consumes `plan.goal` and runs each goal through the

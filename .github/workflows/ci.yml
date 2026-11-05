@@ -54,6 +54,10 @@ jobs:
         run: |
           cargo build -p friday-mobile --bin friday-linux-daemon --bin friday-ctl
           bash tests/e2e/ask.sh
+      - name: End-to-end hotkeys (shipped keymaps, each key's command to its answer)
+        run: |
+          sudo apt-get install -y lua5.4
+          bash tests/e2e/hotkeys.sh
 
   desktop:
     name: Desktop, installer & CLI checks (Arch)
@@ -177,6 +181,8 @@ jobs:
       - name: End-to-end ask on the installed binaries (fake model, no network)
         shell: bash
         run: bash tests/e2e/ask.sh "$LOCALAPPDATA/Programs/FRIDAY"
+      - name: End-to-end hotkeys (the tray, keys pressed on the desktop)
+        run: pwsh tests/e2e/hotkeys.ps1
       - name: Uninstall silently
         run: |
           $p = Start-Process msiexec -ArgumentList '/x', '${{ steps.build.outputs.msi }}', '/qn', '/l*v', "$env:RUNNER_TEMP\uninstall.log" -Wait -PassThru
@@ -207,6 +213,7 @@ jobs:
             installer/windows/out/*.msi
             ${{ runner.temp }}/*.log
             ${{ runner.temp }}/screen.png
+            ${{ runner.temp }}/hotkeys-failure.png
           if-no-files-found: ignore
 
   python:

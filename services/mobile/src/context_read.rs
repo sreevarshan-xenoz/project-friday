@@ -237,23 +237,25 @@ where
 
 /// A [`ProviderSeam`] backed by the real [`friday_intelligence::InferenceFabric`].
 ///
-/// Routes the gated Screen payload to a **vision** capability model so the
-/// actual capture bytes can inform the reply. The model/vendor resolution and
-/// live Wayland capture are qualified on the Omarchy target (R5-2-5-4); on a
-/// Windows dev host the daemon's tests drive [`FakeCommandRunner`] + a scripted
-/// seam instead, so a passing Windows unit test is never mistaken for proof that
-/// Linux `grim` capture works.
+/// Sends the gated Screen payload to a model that can see images. With a
+/// provider named (FRIDAY_CONTEXT_PROVIDER), that provider's vision model;
+/// otherwise the fabric routes it like any ask, restricted to vision-capable
+/// models, so the provider the user configured is used before keyless OpenCode
+/// Zen. On a Windows dev host the daemon's tests drive [`FakeCommandRunner`] +
+/// a scripted seam instead, so a passing unit test is never mistaken for proof
+/// that real capture works.
 #[derive(Clone)]
 pub struct FabricProviderSeam {
     fabric: Arc<friday_intelligence::InferenceFabric>,
-    provider: String,
+    provider: Option<String>,
 }
 
 impl FabricProviderSeam {
-    pub fn new(fabric: Arc<friday_intelligence::InferenceFabric>, provider: &str) -> Self {
+    /// `provider`: a provider to always use, or `None` to route.
+    pub fn new(fabric: Arc<friday_intelligence::InferenceFabric>, provider: Option<&str>) -> Self {
         Self {
             fabric,
-            provider: provider.to_string(),
+            provider: provider.map(str::to_string),
         }
     }
 }
@@ -261,14 +263,25 @@ impl FabricProviderSeam {
 #[async_trait]
 impl ProviderSeam for FabricProviderSeam {
     async fn send(&self, payload: &str) -> Result<String, String> {
-        self.fabric
-            .complete_tier(
-                &self.provider,
-                friday_intelligence::CapabilityTier::VisionFree,
-                payload,
-                false,
-            )
-            .await
+        match &self.provider {
+            Some(provider) => {
+                self.fabric
+                    .complete_tier(
+                        provider,
+                        friday_intelligence::CapabilityTier::VisionFree,
+                        payload,
+                        false,
+                    )
+                    .await
+            }
+            None => {
+                let needs_vision = friday_intelligence::RequestRequirements {
+                    vision: friday_intelligence::Requirement::Required,
+                    ..Default::default()
+                };
+                self.fabric.complete_with(&needs_vision, payload).await
+            }
+        }
     }
 }
 

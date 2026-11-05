@@ -6,13 +6,17 @@ LLAMACPP_BASE_URL=http://127.0.0.1:<port>/v1). It answers deterministically:
   - the Investigation Engine's prompt gets {"requirements":[]} (no evidence),
   - any other prompt (the answer step) gets "FAKE-MODEL-ANSWER: " plus the
     user's request,
+  - a request with an image (a screen ask) gets the question and the image's
+    type and size,
 and appends every request to the log file, so a test can prove which model
 calls a goal made and that its answer came from here.
 
 Usage: fake_model.py <port-file> <log-file>   (writes the chosen port, then serves)
 """
 
+import base64
 import json
+import re
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -20,13 +24,23 @@ from typing import Any
 MARKER = "FAKE-MODEL-ANSWER"
 
 
-def reply_for(prompt: str) -> str:
+def reply_for(prompt: str, images: list[str] | None = None) -> str:
     """The model's reply: no evidence for the investigation; for the answer
     step, an echo of the user's request (the line after "Request:"), so a test
-    can tell which question was answered."""
+    can tell which question was answered. A request carrying an image (a
+    screen ask) gets the question asked about it and the image's type and
+    size, so a test can tell the screenshot itself reached the model."""
     if "Investigation Engine" in prompt:
         return '{"requirements":[]}'
     lines = prompt.splitlines()
+    if images:
+        # FRIDAY's screen instruction puts the question after "asks:".
+        question = ""
+        for i, line in enumerate(lines[:-2]):
+            if line.rstrip().endswith("asks:"):
+                question = lines[i + 2] if not lines[i + 1].strip() else lines[i + 1]
+                break
+        return f"{MARKER}: {question[:200]} [saw a {images[0]}]"
     request = ""
     for i, line in enumerate(lines[:-1]):
         if line.strip() == "Request:":
@@ -38,13 +52,34 @@ def reply_for(prompt: str) -> str:
     return f"{MARKER}: {request[:200]}"
 
 
-def prompt_of(request: dict[str, Any]) -> str:
-    """All message contents of a chat-completions request, one per line."""
-    parts = []
+def describe_image(url: str) -> str:
+    """ "<bytes>-byte <mime>" for a data: URI, else "remote image"."""
+    match = re.match(r"data:([^;,]+);base64,(.*)$", url, re.S)
+    if not match:
+        return "remote image"
+    try:
+        size = len(base64.b64decode(match.group(2), validate=True))
+    except ValueError:
+        return f"undecodable {match.group(1)}"
+    return f"{size}-byte {match.group(1)}"
+
+
+def prompt_of(request: dict[str, Any]) -> tuple[str, list[str]]:
+    """The text of a chat-completions request (one line per text part) and a
+    description of each image part in it."""
+    parts: list[str] = []
+    images: list[str] = []
     for message in request.get("messages") or []:
         content = message.get("content")
-        parts.append(content if isinstance(content, str) else json.dumps(content))
-    return "\n".join(parts)
+        if isinstance(content, str):
+            parts.append(content)
+            continue
+        for part in content or []:
+            if part.get("type") == "text":
+                parts.append(str(part.get("text", "")))
+            elif part.get("type") == "image_url":
+                images.append(describe_image(str((part.get("image_url") or {}).get("url", ""))))
+    return "\n".join(parts), images
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -73,9 +108,14 @@ class Handler(BaseHTTPRequestHandler):
             request = json.loads(self.rfile.read(length) or b"{}")
         except json.JSONDecodeError:
             request = {}
-        prompt = prompt_of(request)
+        prompt, images = prompt_of(request)
         with open(self.log_path, "a", encoding="utf-8") as log:
-            entry = {"path": self.path, "model": request.get("model"), "prompt": prompt}
+            entry = {
+                "path": self.path,
+                "model": request.get("model"),
+                "prompt": prompt,
+                "images": images,
+            }
             log.write(json.dumps(entry) + "\n")
         self._send(
             200,
@@ -87,7 +127,7 @@ class Handler(BaseHTTPRequestHandler):
                     {
                         "index": 0,
                         "finish_reason": "stop",
-                        "message": {"role": "assistant", "content": reply_for(prompt)},
+                        "message": {"role": "assistant", "content": reply_for(prompt, images)},
                     }
                 ],
                 "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
