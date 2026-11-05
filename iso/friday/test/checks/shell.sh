@@ -34,7 +34,7 @@ fresh_home() {
   export HOME="$W/$1/home" XDG_STATE_HOME="$W/$1/home/.local/state"
   unset XDG_CONFIG_HOME
   mkdir -p "$HOME/.config" "$XDG_STATE_HOME/friday"
-  echo '{"status":"running","current":{"active":true,"goal":"smoke test","phase":"plan"},"last_goal":{"goal":"earlier","outcome":"completed","result":"ok"}}' \
+  echo '{"status":"running","current":{"active":true,"goal":"smoke test","phase":"plan","partial":"The answer is arriving word by word: E0308 means the types don'"'"'t match"},"last_goal":{"goal":"earlier","outcome":"completed","result":"ok"}}' \
     >"$XDG_STATE_HOME/friday/state.json"
 }
 
