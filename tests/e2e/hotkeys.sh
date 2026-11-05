@@ -81,6 +81,8 @@ printf '#!/bin/bash\n[[ "$*" == *--primary* ]] && { printf %%s "$PRIMARY"; exit 
 printf '#!/bin/bash\nprintf "%%s\\t" "$@" >>%q; echo >>%q\nfor a in "$@"; do [[ "$a" == -p ]] && echo 7; done; true\n' "$W/notify.log" "$W/notify.log" >"$S/notify-send"
 # A real 1x1 PNG on stdout, as `grim -` writes.
 printf '#!/bin/bash\necho "grim $*" >>%q\nbase64 -d <<<iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==\n' "$W/grim.log" >"$S/grim"
+# hyprctl: the focused window a screen ask should capture (just it).
+printf '#!/bin/bash\n[[ "$*" == "-j activewindow" ]] && echo %q\n' '{"class":"code","title":"main.rs","at":[100,50],"size":[800,600]}' >"$S/hyprctl"
 chmod +x "$S"/*
 
 offline=(env -u HTTPS_PROXY -u HTTP_PROXY -u https_proxy -u http_proxy -u ALL_PROXY -u all_proxy
@@ -130,7 +132,9 @@ press ALT+SUPER+Y "explain this" "FAKE-MODEL-ANSWER: explain this*" \
   PRIMARY="error[E0308]: mismatched types: expected u32, found String"
 if grep -q "mismatched types" "$W/model.log"; then pass "ALT+SUPER+Y: the selection reached the model"
 else fail "ALT+SUPER+Y: the selected text never reached the model"; fi
-press CTRL+SUPER+Y "what is on my screen?" "FAKE-MODEL-ANSWER: what is on my screen? \[saw a [1-9]*-byte image/png\]"
+press CTRL+SUPER+Y "what is on my screen?" "FAKE-MODEL-ANSWER: what is on my screen? \[saw a [1-9]*-byte 1x1 image/png\]"
+if grep -qx 'grim -g 100,50 800x600 -' "$W/grim.log"; then pass "CTRL+SUPER+Y: captured just the focused window (grim -g 100,50 800x600)"
+else fail "CTRL+SUPER+Y: expected grim to capture the focused window, ran:"; sed 's/^/       /' "$W/grim.log"; fi
 
 if grep -q "panicked" "$W/daemon.log"; then fail "daemon panicked:"; grep -A1 panicked "$W/daemon.log" | head -4
 else pass "no panics"; fi

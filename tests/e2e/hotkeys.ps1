@@ -184,8 +184,23 @@ try {
     } else { Fail "Win+Alt+Y: Notepad did not come to the front (foreground: '$([Keys]::ForegroundTitle())')" }
     if ($notepad) { Stop-Process -Id $notepad.Id -Force -ErrorAction SilentlyContinue; $notepad = $null }
 
+    # The screen ask captures just the focused window: Notepad, not the desktop.
+    Set-Content "$work\window.txt" "FRIDAY should see only this window."
+    $notepad = Start-Process notepad.exe "`"$work\window.txt`"" -PassThru -WindowStyle Normal
+    if (-not (WaitFor { [Keys]::ForegroundTitle() -match 'window' } 15)) {
+        Fail "Win+Ctrl+Y: Notepad did not come to the front (foreground: '$([Keys]::ForegroundTitle())')"
+    }
     Ask "Win+Ctrl+Y" @((@($VK.WIN, $VK.CTRL), $VK.Y, "Win+Ctrl+Y"), (@($VK.CTRL, $VK.ALT, $VK.SHIFT), $VK.S, "Ctrl+Alt+Shift+S")) `
-        "what is on my screen" "FAKE-MODEL-ANSWER: what is on my screen \[saw a [1-9][0-9]*-byte image/png\]"
+        "what is on my screen" "FAKE-MODEL-ANSWER: what is on my screen \[saw a [1-9][0-9]*-byte [0-9]+x[0-9]+ image/png\]"
+    $saved = if (Test-Path "$state\last-answer.md") { Get-Content "$state\last-answer.md" -Raw } else { "" }
+    $desktop = [System.Windows.Forms.SystemInformation]::VirtualScreen
+    if ($saved -match '-byte (\d+)x(\d+) image/png') {
+        $w, $h = [int]$Matches[1], [int]$Matches[2]
+        if ($w -gt 0 -and $h -gt 0 -and $w -lt $desktop.Width -and $h -lt $desktop.Height) {
+            Pass "Win+Ctrl+Y: captured just the focused window (${w}x${h} of a $($desktop.Width)x$($desktop.Height) desktop)"
+        } else { Fail "Win+Ctrl+Y: the image (${w}x${h}) is not the focused window inside the $($desktop.Width)x$($desktop.Height) desktop" }
+    } else { Fail "Win+Ctrl+Y: no image size in the answer" }
+    if ($notepad) { Stop-Process -Id $notepad.Id -Force -ErrorAction SilentlyContinue; $notepad = $null }
 }
 catch { Fail $_ }
 finally {
