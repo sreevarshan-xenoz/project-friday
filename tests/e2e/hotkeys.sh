@@ -127,5 +127,25 @@ press CTRL+SUPER+Y "what is on my screen?" "FAKE-MODEL-ANSWER: what is on my scr
 if grep -q "panicked" "$W/daemon.log"; then fail "daemon panicked:"; grep -A1 panicked "$W/daemon.log" | head -4
 else pass "no panics"; fi
 
+# The same press when the user's only provider can't see images: refused,
+# and the screenshot goes nowhere (never to keyless OpenCode Zen instead).
+echo "screen ask without a vision model"
+kill $DAEMON 2>/dev/null; wait $DAEMON 2>/dev/null || true
+rm -f "$W/state.json"
+offline=("${offline[@]/LLAMACPP_VISION=1/LLAMACPP_VISION=0}")
+"${offline[@]}" "$DAEMON_BIN" >"$W/daemon2.log" 2>&1 &
+DAEMON=$!
+for _ in $(seq 120); do grep -q '"status": *"running"' "$W/state.json" 2>/dev/null && break; sleep 0.5; done
+lines_before=$(wc -l <"$W/model.log")
+: >"$W/notify.log"
+"${offline[@]}" PICK="what is on my screen?" timeout 150 setsid -w sh -c "friday ask --screen" </dev/null >>"$W/press.log" 2>&1 || true
+for _ in $(seq 50); do grep -qF 'FRIDAY ✗' "$W/notify.log" && break; sleep 0.2; done
+if grep -F 'FRIDAY ✗' "$W/notify.log" | grep -q "not sent anywhere"; then pass "refused: \"$(grep -oE 'None of your[^.]*\.' "$W/notify.log" | head -1)\""
+else fail "expected a refusal saying the screenshot was not sent:"; sed 's/^/       /' "$W/notify.log"; fi
+if [[ $(wc -l <"$W/model.log") -eq $lines_before ]]; then pass "no model was sent anything"
+else fail "a model was called for the refused screen ask"; tail -n +$((lines_before + 1)) "$W/model.log" | cut -c1-200; fi
+if grep -q "opencode.ai/zen/v1/chat" "$W/daemon2.log"; then fail "the daemon tried OpenCode Zen for the screen ask"
+else pass "OpenCode Zen was never tried"; fi
+
 if (( fails > 0 )); then echo "e2e hotkeys: $fails failure(s) (logs in $W)"; exit 1; fi
 echo "e2e hotkeys: ok"
