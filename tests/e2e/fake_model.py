@@ -8,7 +8,8 @@ LLAMACPP_BASE_URL=http://127.0.0.1:<port>/v1). It answers deterministically:
     user's request,
   - a request with an image (a screen ask) gets the question and the image's
     type and size,
-and appends every request to the log file, so a test can prove which model
+streams the reply (server-sent events, word by word) when asked to, and
+appends every request to the log file, so a test can prove which model
 calls a goal made and that its answer came from here.
 
 Usage: fake_model.py <port-file> <log-file>   (writes the chosen port, then serves)
@@ -18,10 +19,13 @@ import base64
 import json
 import re
 import sys
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 MARKER = "FAKE-MODEL-ANSWER"
+# Seconds between streamed pieces (FRIDAY publishes progress every 0.15 s).
+STREAM_PAUSE = 0.25
 
 
 def reply_for(prompt: str, images: list[str] | None = None) -> str:
@@ -96,6 +100,22 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _stream(self, reply: str) -> None:
+        """The reply as server-sent events, a word or so at a time with pauses
+        longer than FRIDAY's progress throttle, so a test can see it grow."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.end_headers()
+        words = reply.split(" ")
+        pieces = [w + " " for w in words[:-1]] + [words[-1]]
+        for piece in pieces:
+            event = {"choices": [{"index": 0, "delta": {"content": piece}}]}
+            self.wfile.write(f"data: {json.dumps(event)}\n\n".encode())
+            self.wfile.flush()
+            time.sleep(STREAM_PAUSE)
+        self.wfile.write(b"data: [DONE]\n\n")
+        self.wfile.flush()
+
     def do_GET(self) -> None:
         if self.path.rstrip("/").endswith("/models"):
             self._send(200, {"object": "list", "data": [{"id": "fake", "object": "model"}]})
@@ -115,8 +135,12 @@ class Handler(BaseHTTPRequestHandler):
                 "model": request.get("model"),
                 "prompt": prompt,
                 "images": images,
+                "stream": bool(request.get("stream")),
             }
             log.write(json.dumps(entry) + "\n")
+        if request.get("stream"):
+            self._stream(reply_for(prompt, images))
+            return
         self._send(
             200,
             {

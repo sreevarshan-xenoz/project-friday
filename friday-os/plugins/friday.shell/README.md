@@ -73,7 +73,9 @@ set into a UI-complete document: `plan.goal`/`goal.started` open a `current`
 goal; the terminal events (`goal.completed|failed|cancelled|paused|
 recoverable`) close it into `last_goal` carrying only the outcome detail the
 runtime attached (`phases`, `result`, `error`, `strategy`,
-`evidence_verified`). It never manufactures a field.
+`evidence_verified`). While the answer streams, `goal.progress` fills the
+`current` goal's `partial` with the answer so far; it is cleared when the goal
+ends and `result` holds the whole answer. It never manufactures a field.
 
 ## Layout
 

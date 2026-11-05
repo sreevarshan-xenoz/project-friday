@@ -30,6 +30,19 @@ pub trait InvestigationStrategy: Send + Sync {
 pub trait LlmStrategyClient: Send + Sync {
     /// Send one prompt and return the model's raw completion.
     async fn complete(&self, prompt: &str) -> Result<String, String>;
+
+    /// Like [`LlmStrategyClient::complete`], reporting the answer as it
+    /// arrives: `progress` gets the text so far each time it grows. A client
+    /// that can't stream reports the whole answer once.
+    async fn complete_with_progress(
+        &self,
+        prompt: &str,
+        progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+    ) -> Result<String, String> {
+        let text = self.complete(prompt).await?;
+        progress(&text);
+        Ok(text)
+    }
 }
 
 /// `Arc` passthrough so a client shared behind an `Arc` in an async runtime
@@ -39,5 +52,12 @@ pub trait LlmStrategyClient: Send + Sync {
 impl<T: LlmStrategyClient + ?Sized> LlmStrategyClient for std::sync::Arc<T> {
     async fn complete(&self, prompt: &str) -> Result<String, String> {
         (**self).complete(prompt).await
+    }
+    async fn complete_with_progress(
+        &self,
+        prompt: &str,
+        progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+    ) -> Result<String, String> {
+        (**self).complete_with_progress(prompt, progress).await
     }
 }

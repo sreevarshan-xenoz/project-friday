@@ -10,6 +10,8 @@
 //!   friday-ctl goal "List the files in this folder"
 //!   friday-ctl goal --wait "open chromium"   (block until the goal finishes;
 //!                                            exit status = its outcome)
+//!   friday-ctl goal --wait --stream "..."    (meanwhile print the answer so
+//!                                            far: {"partial": ...} lines)
 //!   friday-ctl system-info
 //!   friday-ctl cancel                  (cancel the goal in flight)
 //!   friday-ctl context screen          (interactive consent)
@@ -92,6 +94,7 @@ async fn main() -> std::process::ExitCode {
         .unwrap_or_else(|| "127.0.0.1:18432".to_string());
     let mut token = std::env::var("FRIDAY_CTL_TOKEN").ok().unwrap_or_default();
     let mut wait = false;
+    let mut stream = false;
     let mut question: Option<String> = None;
 
     // Scan ALL tokens for flags (`--addr`/`--token`/`--wait` may appear before
@@ -112,6 +115,9 @@ async fn main() -> std::process::ExitCode {
             i += 2;
         } else if w == "--wait" {
             wait = true;
+            i += 1;
+        } else if w == "--stream" {
+            stream = true;
             i += 1;
         } else {
             positional.push(w.clone());
@@ -184,7 +190,7 @@ async fn main() -> std::process::ExitCode {
     let submitted_ms = now_ms();
     let accepted = run(&addr_str, &cmd_token, &sub, goal_words).await;
     if sub == "goal" && wait && accepted == std::process::ExitCode::SUCCESS {
-        return wait_for_goal(&state_path, &goal, submitted_ms).await;
+        return wait_for_goal(&state_path, &goal, submitted_ms, stream).await;
     }
     accepted
 }
@@ -199,12 +205,17 @@ fn now_ms() -> u64 {
 /// `--wait`: follow the daemon's `state.json` until `goal` (submitted at
 /// `since_ms`) reaches a terminal phase, then print its outcome. Exits
 /// non-zero unless the goal completed. `FRIDAY_CTL_WAIT_SECS` bounds the wait
-/// (default 180 s).
+/// (default 180 s). With `stream` (`--stream`), the answer so far is printed
+/// as it grows, one compact `{"partial": "..."}` line each time, before the
+/// final outcome.
 async fn wait_for_goal(
     state_path: &std::path::Path,
     goal: &str,
     since_ms: u64,
+    stream: bool,
 ) -> std::process::ExitCode {
+    use std::io::Write;
+    let mut shown = String::new();
     let limit = std::env::var("FRIDAY_CTL_WAIT_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -214,6 +225,17 @@ async fn wait_for_goal(
         let state = std::fs::read_to_string(state_path)
             .ok()
             .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+        if stream {
+            if let Some(partial) = state.as_ref().and_then(|s| partial_answer(s, goal)) {
+                if partial != shown {
+                    let line = serde_json::json!({ "partial": partial });
+                    let mut out = std::io::stdout().lock();
+                    let _ = writeln!(out, "{line}");
+                    let _ = out.flush();
+                    shown = partial;
+                }
+            }
+        }
         if let Some(done) = state.and_then(|s| finished_goal(&s, goal, since_ms)) {
             let summary = serde_json::json!({
                 "outcome": done["outcome"],
@@ -230,7 +252,8 @@ async fn wait_for_goal(
                 std::process::ExitCode::FAILURE
             };
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        let poll = if stream { 100 } else { 300 };
+        tokio::time::sleep(Duration::from_millis(poll)).await;
     }
     eprintln!("timed out after {limit}s waiting for the goal to finish");
     std::process::ExitCode::FAILURE
@@ -251,6 +274,19 @@ fn finished_goal(
             .as_u64()
             .is_some_and(|ms| ms >= since_ms);
     finished.then(|| last.clone())
+}
+
+/// The answer so far of `goal` while it is in flight (state.json's
+/// `current.partial`).
+fn partial_answer(state: &serde_json::Value, goal: &str) -> Option<String> {
+    let cur = state.get("current")?;
+    if cur["goal"] != goal || cur["active"] != true {
+        return None;
+    }
+    cur["partial"]
+        .as_str()
+        .filter(|p| !p.trim().is_empty())
+        .map(str::to_string)
 }
 
 /// The id of the goal the daemon reports as in flight, if any.
@@ -385,6 +421,21 @@ mod tests {
             "goal": goal, "active": active, "completed_ms": completed_ms,
             "outcome": "completed", "result": "done", "error": null
         }})
+    }
+
+    #[test]
+    fn partial_answer_is_only_the_goal_in_flight() {
+        let st = serde_json::json!({
+            "current": {"goal": "q", "active": true, "partial": "The ans"}
+        });
+        assert_eq!(partial_answer(&st, "q").as_deref(), Some("The ans"));
+        assert_eq!(partial_answer(&st, "other"), None);
+        let done = serde_json::json!({
+            "current": {"goal": "q", "active": false, "partial": "The ans"}
+        });
+        assert_eq!(partial_answer(&done, "q"), None);
+        let none = serde_json::json!({ "current": {"goal": "q", "active": true} });
+        assert_eq!(partial_answer(&none, "q"), None);
     }
 
     #[test]

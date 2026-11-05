@@ -13,6 +13,18 @@ public class AskingTests
     }
 
     [Fact]
+    public void Partial_answer_is_only_the_goal_in_flight()
+    {
+        const string live = """{"current":{"goal":"q","active":true,"partial":"The ans"}}""";
+        Assert.Equal("The ans", Asking.PartialAnswer(live, "q"));
+        Assert.Null(Asking.PartialAnswer(live, "another question"));
+        Assert.Null(Asking.PartialAnswer("""{"current":{"goal":"q","active":false,"partial":"x"}}""", "q"));
+        Assert.Null(Asking.PartialAnswer("""{"current":{"goal":"q","active":true,"partial":null}}""", "q"));
+        Assert.Null(Asking.PartialAnswer("""{"current":null}""", "q"));
+        Assert.Null(Asking.PartialAnswer("{ half a file", "q"));
+    }
+
+    [Fact]
     public void Request_caps_context_length()
     {
         var r = Asking.BuildRequest("q", new string('x', 9000));

@@ -52,6 +52,25 @@ public static class Keys {
         return found.ToArray();
     }
     public static void Close(IntPtr h) { PostMessage(h, 0x0010, IntPtr.Zero, IntPtr.Zero); }
+    [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, EnumProc f, IntPtr l);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, StringBuilder l);
+    [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+    // The text of a window's first edit control (WM_GETTEXT works across
+    // processes; GetWindowText doesn't for another process's controls).
+    public static string EditText(IntPtr top) {
+        string found = null;
+        EnumChildWindows(top, (h, l) => {
+            var c = new StringBuilder(256); GetClassName(h, c, 256);
+            if (!c.ToString().ToUpperInvariant().Contains("EDIT")) return true;
+            int len = (int)SendMessage(h, 0x000E, IntPtr.Zero, IntPtr.Zero);
+            var sb = new StringBuilder(len + 1);
+            SendMessage(h, 0x000D, (IntPtr)(len + 1), sb);
+            found = sb.ToString();
+            return false;
+        }, IntPtr.Zero);
+        return found ?? "";
+    }
 }
 '@
 
@@ -90,8 +109,9 @@ try {
     } else { throw "the daemon never reported running (logs: $state\logs)" }
     Start-Sleep 2
 
-    # ask <label> <keys: list of (mods, key, name)> <question> <answer pattern>
-    function Ask($label, $chords, $question, $pattern) {
+    # ask <label> <keys: list of (mods, key, name)> <question> <answer pattern> [-Streams]
+    # -Streams: the answer window must fill in as the answer arrives.
+    function Ask($label, $chords, $question, $pattern, [switch]$Streams) {
         $used = $null
         foreach ($c in $chords) {
             [Keys]::Chord([uint16[]]$c[0], [uint16]$c[1])
@@ -104,7 +124,20 @@ try {
         $box = [Keys]::Find("Ask FRIDAY")[0]
         [Keys]::SetForegroundWindow($box) | Out-Null
         [System.Windows.Forms.SendKeys]::SendWait($question + "{ENTER}")
-        $answered = WaitFor { (Test-Path "$state\answers.md") -and ((Get-Content "$state\answers.md" -Raw) -match [regex]::Escape("# $question")) } 150
+        # Watch the answer window's text while waiting for the saved answer.
+        $seen = [System.Collections.Generic.List[string]]::new()
+        $answered = $false
+        $end = (Get-Date).AddSeconds(150)
+        while ((Get-Date) -lt $end) {
+            foreach ($h in [Keys]::Find("FRIDAY")) {
+                $t = [Keys]::EditText($h).Trim()
+                if ($t -and ($seen.Count -eq 0 -or $seen[$seen.Count - 1] -ne $t)) { $seen.Add($t) }
+            }
+            if ((Test-Path "$state\answers.md") -and ((Get-Content "$state\answers.md" -Raw) -match [regex]::Escape("# $question"))) {
+                $answered = $true; break
+            }
+            Start-Sleep -Milliseconds 100
+        }
         $window = WaitFor { [Keys]::Find("FRIDAY").Count -gt 0 } 10
         $saved = if (Test-Path "$state\last-answer.md") { Get-Content "$state\last-answer.md" -Raw } else { "" }
         if ($answered -and $window -and $saved -match $pattern) {
@@ -112,6 +145,20 @@ try {
         } else {
             Fail "${label}: expected an answer window with /$pattern/ (window: $window, saved answer below)"
             $saved -split "`n" | ForEach-Object { Write-Host "       $_" }
+        }
+        if ($Streams) {
+            # The window showed the answer growing: at least two different
+            # partial texts, each the start of the final answer.
+            Start-Sleep -Milliseconds 500
+            $final = ""
+            foreach ($h in [Keys]::Find("FRIDAY")) { $final = [Keys]::EditText($h).Trim() }
+            $partials = @($seen | Where-Object { $_ -like 'FAKE-MODEL-ANSWER*' -and $_ -ne $final })
+            $growing = $partials.Count -ge 2 -and -not ($partials | Where-Object { -not $final.StartsWith($_) })
+            if ($growing) { Pass "${label}: the answer window filled in ($($partials.Count) steps) before the end" }
+            else {
+                Fail "${label}: the answer window did not fill in as the answer streamed (seen below)"
+                $seen | ForEach-Object { Write-Host "       | $_" }
+            }
         }
         foreach ($h in [Keys]::Find("FRIDAY")) { [Keys]::Close($h) }
         foreach ($h in [Keys]::Find("Ask FRIDAY")) { [Keys]::Close($h) }
@@ -121,7 +168,7 @@ try {
     Write-Host "presses"
     $q = "What does the Rust error E0308 mean"
     Ask "Win+Y" @((@($VK.WIN), $VK.Y, "Win+Y"), (@($VK.CTRL, $VK.ALT), $VK.Y, "Ctrl+Alt+Y")) $q `
-        ("FAKE-MODEL-ANSWER: " + [regex]::Escape($q))
+        ("FAKE-MODEL-ANSWER: " + [regex]::Escape($q)) -Streams
 
     # Selected text in Notepad: the tray copies the selection itself.
     $selected = "error E0308 mismatched types expected u32 found String"
@@ -131,7 +178,7 @@ try {
         [Keys]::Chord([uint16[]]@($VK.CTRL), [uint16]$VK.A)
         Start-Sleep -Milliseconds 300
         Ask "Win+Alt+Y" @((@($VK.WIN, $VK.ALT), $VK.Y, "Win+Alt+Y"), (@($VK.CTRL, $VK.ALT, $VK.SHIFT), $VK.Y, "Ctrl+Alt+Shift+Y")) `
-            "explain this" "FAKE-MODEL-ANSWER: explain this"
+            "explain this" "FAKE-MODEL-ANSWER: explain this" -Streams
         if ((Get-Content "$work\model.log" -Raw) -match "mismatched types expected u32") { Pass "Win+Alt+Y: the selected text reached the model" }
         else { Fail "Win+Alt+Y: the selected text never reached the model" }
     } else { Fail "Win+Alt+Y: Notepad did not come to the front (foreground: '$([Keys]::ForegroundTitle())')" }

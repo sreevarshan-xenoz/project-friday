@@ -374,8 +374,27 @@ case "${1:-}" in
       out=$(friday-ctl context screen --yes --ask "$goal" 2>&1) || ok=false
       summary=$(jq -s 'map(select(type == "object")) | last // {} | {result: .response, error: .error}' <<<"$out" 2>/dev/null || echo '{}')
     else
-      notify "FRIDAY" "Working on: $goal"
-      out=$(friday-ctl goal --wait "$request" 2>&1) || ok=false
+      # One notification that fills in as the answer streams (-p gives its
+      # id, -r replaces it); the final answer replaces it too.
+      nid=$(notify-send -a FRIDAY -p "FRIDAY" "Working on: $goal" 2>/dev/null || true)
+      [[ "$nid" =~ ^[0-9]+$ ]] || nid=""
+      outf=$(mktemp)
+      friday-ctl goal --wait "$request" --stream >"$outf" 2>&1 &
+      ctl=$!
+      shown=""
+      while kill -0 "$ctl" 2>/dev/null; do
+        sleep 0.4
+        [ -n "$nid" ] || continue
+        partial=$(grep '^{"partial"' "$outf" | tail -n 1 | jq -r '.partial // empty' 2>/dev/null || true)
+        if [ -n "$partial" ] && [ "$partial" != "$shown" ]; then
+          view="$partial"
+          [ "${#view}" -le 280 ] || view="…${view: -279}"
+          notify-send -a FRIDAY -r "$nid" "FRIDAY · $goal" "$view" 2>/dev/null || true
+          shown="$partial"
+        fi
+      done
+      wait "$ctl" || ok=false
+      out=$(cat "$outf"); rm -f "$outf"
       # The final {outcome,result,error} object; keep every line of the answer.
       summary=$(jq -s 'map(select(type == "object" and .outcome? != null)) | last // {}' <<<"$out" 2>/dev/null || echo '{}')
     fi
@@ -418,6 +437,8 @@ case "${1:-}" in
     urgency=normal; $ok || urgency=critical
     actions=(-A open="Open full answer")
     [ "${daemon_down:-false}" = true ] && actions=(-A start="Start FRIDAY")
+    # Replace the streaming notification rather than add a second one.
+    [ -z "${nid:-}" ] || actions+=(-r "$nid")
     (
       action=$(notify-send -a FRIDAY -u "$urgency" "${actions[@]}" "$title" "$preview" 2>/dev/null || true)
       case "$action" in
