@@ -53,6 +53,42 @@ Run 'friday <group> --help' or 'omarchy --help' for full substrate routing.
 HELP_EOF
 }
 
+# `friday shell start`: run FRIDAY Shell and bring it back if it crashes, so
+# a QML or Wayland fault doesn't leave the desktop without a bar. A clean exit
+# or a gone session ends it; five crashes inside a minute stop the retries
+# (with a notification) rather than spin. $1 = shell dir, $2 = pid file.
+shell_supervise() {
+  local dir="$1" pidfile="$2" qs="" status stopping=0 starts=0 window=$SECONDS
+  echo $$ >"$pidfile"
+  rm -f "$pidfile.restart"
+  trap 'stopping=1; [ -n "$qs" ] && kill -TERM "$qs" 2>/dev/null' TERM INT HUP
+  while [ "$stopping" = 0 ]; do
+    quickshell -n -p "$dir" &
+    qs=$!
+    # (This script runs under set -e: a crash must not end the supervisor.)
+    status=0; wait "$qs" || status=$?
+    # A trapped signal interrupts wait; wait for the shell itself.
+    while kill -0 "$qs" 2>/dev/null; do status=0; wait "$qs" || status=$?; done
+    qs=""
+    [ "$stopping" = 1 ] && break
+    if [ -f "$pidfile.restart" ]; then rm -f "$pidfile.restart"; continue; fi
+    [ "$status" -eq 0 ] && break
+    # The session is gone (logout): nothing to draw on.
+    [ -e "${XDG_RUNTIME_DIR:-/nonexistent}/${WAYLAND_DISPLAY:-wayland-0}" ] || break
+    if (( SECONDS - window > 60 )); then starts=0; window=$SECONDS; fi
+    starts=$((starts + 1))
+    if (( starts > 5 )); then
+      notify-send -a FRIDAY -u critical "FRIDAY Shell keeps crashing" \
+        "Stopped restarting it. Run: friday shell restart" 2>/dev/null || true
+      echo "friday: FRIDAY Shell crashed $starts times in a minute; not restarting" >&2
+      break
+    fi
+    echo "friday: FRIDAY Shell exited with status $status; restarting" >&2
+    sleep "${FRIDAY_SHELL_BACKOFF:-$starts}"
+  done
+  rm -f "$pidfile" "$pidfile.restart"
+}
+
 # `friday doctor`: one screen answering "why isn't FRIDAY working?".
 # Read-only; never prints secrets. Exit 1 if any check fails.
 friday_doctor() {
@@ -441,11 +477,24 @@ case "${1:-}" in
     [ -f "$dir/shell.qml" ] || dir=/usr/share/friday/shell
     [ -f "$dir/shell.qml" ] || { echo "friday: FRIDAY Shell not found ($dir)" >&2; exit 1; }
     command -v quickshell >/dev/null 2>&1 || { echo "friday: quickshell is not installed" >&2; exit 1; }
+    pidfile="${XDG_RUNTIME_DIR:-/tmp}/friday-shell-$(id -u).pid"
+    supervisor=""
+    if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then supervisor=$(cat "$pidfile"); fi
     case "${1:-start}" in
-      start)   exec quickshell -n -p "$dir" ;;
-      restart) quickshell kill -p "$dir" >/dev/null 2>&1 || true
-               exec quickshell -n -d -p "$dir" ;;
-      stop)    exec quickshell kill -p "$dir" ;;
+      start)
+        if [ -n "$supervisor" ]; then echo "FRIDAY Shell is already running (pid $supervisor)"; exit 0; fi
+        shell_supervise "$dir" "$pidfile" ;;
+      restart)
+        if [ -n "$supervisor" ]; then
+          # The supervisor starts it again; the flag says this exit is wanted.
+          : >"$pidfile.restart"
+          quickshell kill -p "$dir" >/dev/null 2>&1 || true
+        else
+          quickshell kill -p "$dir" >/dev/null 2>&1 || true
+          setsid -f "$0" shell start >/dev/null 2>&1 </dev/null
+        fi ;;
+      stop)
+        if [ -n "$supervisor" ]; then kill -TERM "$supervisor"; else exec quickshell kill -p "$dir"; fi ;;
       close)   exec quickshell -p "$dir" ipc call shell close ;;
       ipc)     shift; exec quickshell -p "$dir" ipc call "$@" ;;
       friday|control|calendar|launcher|session)

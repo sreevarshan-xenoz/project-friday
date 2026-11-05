@@ -90,8 +90,18 @@ echo "Omarchy shell under the FRIDAY OS shell.json"
 OM="$AIROOTFS/usr/share/omarchy"
 if [[ -f "$OM/shell/shell.qml" ]] && need jq; then
   fresh_home omarchy
-  # A disposable copy with friday.bar added, as build-iso.sh ships it.
-  cp -a "$OM" "$W/omarchy/tree"; cp -r "$REPO_ROOT/friday-os/plugins/friday.bar" "$W/omarchy/tree/shell/plugins/"
+  # A disposable copy with FRIDAY's plugins from this tree, as build-iso.sh
+  # ships them, and the matte-black theme applied (Omarchy reads its colours
+  # from the generated shell.toml).
+  cp -a "$OM" "$W/omarchy/tree"; rm -rf "$W/omarchy/tree/shell/plugins/"friday.*
+  cp -r "$REPO_ROOT"/friday-os/plugins/friday.* "$W/omarchy/tree/shell/plugins/"
+  T="$XDG_STATE_HOME/omarchy/current/theme"; mkdir -p "$T"; cp "$OM/themes/matte-black/colors.toml" "$T/"
+  python3 - "$OM/default/themed/shell.toml.tpl" "$T/colors.toml" "$T/shell.toml" <<'PY'
+import re, sys
+tpl, colors, out = sys.argv[1:]
+c = dict(re.findall(r'^\s*([a-z_]+)\s*=\s*"([^"]*)"', open(colors).read(), re.M))
+open(out, "w").write(re.sub(r"\{\{\s*([a-z_]+)\s*\}\}", lambda m: c.get(m.group(1), "#000000"), open(tpl).read()))
+PY
   mkdir -p "$HOME/.config/omarchy"
   # The installer's filter, read from the installer so the two can't drift.
   filter=$(sed -n "/if jq '.bar.id/,/unique)'/p" "$AIROOTFS/root/installer" | sed -e "s/^.*jq '//" -e "s/' \\\\$//" -e "s/'.*$//")
@@ -107,6 +117,20 @@ if [[ -f "$OM/shell/shell.qml" ]] && need jq; then
     && pass "Omarchy's notifications and OSD are off" || fail "Omarchy's notifications or OSD are still on"
   [[ "$(st omarchy.lock enabled)" == true && "$(st omarchy.polkit enabled)" == true ]] \
     && pass "Omarchy's lock screen and polkit agent stay on" || fail "Omarchy's lock screen or polkit agent is off"
+  kill "$QS" 2>/dev/null; wait "$QS" 2>/dev/null; QS=""
+  # FRIDAY's own Omarchy plugins (the bar widget and the context dialog) must
+  # load cleanly too, for anyone who keeps Omarchy's bar: put the widget in
+  # Omarchy's default bar and require no warnings from either plugin.
+  jq '.bar.layout.right += [{"id": "friday.shell"}]' "$OM/config/omarchy/shell.json" >"$HOME/.config/omarchy/shell.json"
+  OMARCHY_PATH="$W/omarchy/tree" qs -p "$W/omarchy/tree/shell" >"$W/omarchy-bar.log" 2>&1 &
+  QS=$!
+  sleep "${SHELL_WAIT:-12}"
+  plugins=$(timeout 10 qs -p "$W/omarchy/tree/shell" ipc call shell listPlugins 2>/dev/null || true)
+  [[ "$(st friday.shell enabled)" == true ]] && pass "friday.shell widget is in Omarchy's bar" \
+    || fail "friday.shell widget did not register"
+  warns=$(sed 's/\x1b\[[0-9;]*m//g' "$W/omarchy-bar.log" | grep -E "plugins/friday\.|friday\.shell failed" | sort -u || true)
+  if [[ -z "$warns" ]]; then pass "FRIDAY's Omarchy plugins load without warnings"
+  else fail "FRIDAY's Omarchy plugins log warnings:"; sed 's/^/      /' <<<"$warns"; fi
   kill "$QS" 2>/dev/null; wait "$QS" 2>/dev/null; QS=""
 else
   skip "Omarchy shell (needs the staged Omarchy checkout and jq)"
