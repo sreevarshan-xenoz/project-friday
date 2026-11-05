@@ -237,13 +237,54 @@ where
 
 /// A [`ProviderSeam`] backed by the real [`friday_intelligence::InferenceFabric`].
 ///
+/// Where a routed screen ask may go.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScreenRoute {
+    /// The user configured no provider: FRIDAY's defaults are theirs.
+    Defaults,
+    /// Only these of the user's providers (the ones that can see images).
+    Among(Vec<String>),
+    /// None of the user's providers can see images: send nothing, say why.
+    Refuse(String),
+}
+
+/// A screenshot only goes to a provider the user chose. With providers
+/// configured, a screen ask uses the ones that can see images and never falls
+/// back to FRIDAY's defaults (keyless OpenCode Zen): if none can, it is
+/// refused with what to do instead.
+pub fn screen_route(user_providers: &[String], vision_providers: &[String]) -> ScreenRoute {
+    if user_providers.is_empty() {
+        return ScreenRoute::Defaults;
+    }
+    let allowed: Vec<String> = user_providers
+        .iter()
+        .filter(|p| vision_providers.contains(p))
+        .cloned()
+        .collect();
+    if !allowed.is_empty() {
+        return ScreenRoute::Among(allowed);
+    }
+    let mut msg = format!(
+        "None of your AI providers ({}) can see images, so the screenshot was not sent anywhere.",
+        user_providers.join(", ")
+    );
+    if user_providers.iter().any(|p| p == "llamacpp") {
+        msg.push_str(
+            " If your llama.cpp model can (llama-server --mmproj), set LLAMACPP_VISION=1.",
+        );
+    }
+    msg.push_str(
+        " To ask about the screen, add a provider that can see images \
+         (friday setup-ai, or Choose AI provider in the tray on Windows).",
+    );
+    ScreenRoute::Refuse(msg)
+}
+
 /// Sends the gated Screen payload to a model that can see images. With a
 /// provider named (FRIDAY_CONTEXT_PROVIDER), that provider's vision model;
-/// otherwise the fabric routes it like any ask, restricted to vision-capable
-/// models, so the provider the user configured is used before keyless OpenCode
-/// Zen. On a Windows dev host the daemon's tests drive [`FakeCommandRunner`] +
-/// a scripted seam instead, so a passing unit test is never mistaken for proof
-/// that real capture works.
+/// otherwise as [`screen_route`] decides. On a Windows dev host the daemon's
+/// tests drive [`FakeCommandRunner`] + a scripted seam instead, so a passing
+/// unit test is never mistaken for proof that real capture works.
 #[derive(Clone)]
 pub struct FabricProviderSeam {
     fabric: Arc<friday_intelligence::InferenceFabric>,
@@ -263,24 +304,41 @@ impl FabricProviderSeam {
 #[async_trait]
 impl ProviderSeam for FabricProviderSeam {
     async fn send(&self, payload: &str) -> Result<String, String> {
-        match &self.provider {
-            Some(provider) => {
+        if let Some(provider) = &self.provider {
+            return self
+                .fabric
+                .complete_tier(
+                    provider,
+                    friday_intelligence::CapabilityTier::VisionFree,
+                    payload,
+                    false,
+                )
+                .await;
+        }
+        let needs_vision = friday_intelligence::RequestRequirements {
+            vision: friday_intelligence::Requirement::Required,
+            ..Default::default()
+        };
+        let mut vision: Vec<String> = self
+            .fabric
+            .models
+            .iter()
+            .filter(|m| {
+                m.capabilities
+                    .contains(&friday_intelligence::ModelCapability::Vision)
+            })
+            .map(|m| m.provider.clone())
+            .collect();
+        vision.sort();
+        vision.dedup();
+        match screen_route(&self.fabric.user_providers(), &vision) {
+            ScreenRoute::Defaults => self.fabric.complete_with(&needs_vision, payload).await,
+            ScreenRoute::Among(providers) => {
                 self.fabric
-                    .complete_tier(
-                        provider,
-                        friday_intelligence::CapabilityTier::VisionFree,
-                        payload,
-                        false,
-                    )
+                    .complete_with_among(&needs_vision, &providers, payload)
                     .await
             }
-            None => {
-                let needs_vision = friday_intelligence::RequestRequirements {
-                    vision: friday_intelligence::Requirement::Required,
-                    ..Default::default()
-                };
-                self.fabric.complete_with(&needs_vision, payload).await
-            }
+            ScreenRoute::Refuse(why) => Err(why),
         }
     }
 }
@@ -458,6 +516,45 @@ mod tests {
     }
 
     /// Region support is delegated to the collector; a fullscreen read uses `grim -`.
+    fn names(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn screen_route_uses_defaults_only_without_a_user_provider() {
+        assert_eq!(
+            screen_route(&[], &names(&["opencode"])),
+            ScreenRoute::Defaults
+        );
+    }
+
+    #[test]
+    fn screen_route_keeps_to_the_users_vision_providers() {
+        let route = screen_route(
+            &names(&["gemini", "llamacpp"]),
+            &names(&["opencode", "gemini"]),
+        );
+        assert_eq!(route, ScreenRoute::Among(names(&["gemini"])));
+    }
+
+    #[test]
+    fn screen_route_refuses_rather_than_fall_back_to_zen() {
+        // A local model that can't see images: the screenshot must not go to
+        // keyless Zen just because Zen can.
+        match screen_route(&names(&["llamacpp"]), &names(&["opencode"])) {
+            ScreenRoute::Refuse(why) => {
+                assert!(why.contains("not sent anywhere"), "{why}");
+                assert!(why.contains("LLAMACPP_VISION=1"), "{why}");
+                assert!(why.contains("friday setup-ai"), "{why}");
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+        match screen_route(&names(&["openrouter"]), &names(&["opencode"])) {
+            ScreenRoute::Refuse(why) => assert!(!why.contains("LLAMACPP"), "{why}"),
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+    }
+
     #[test]
     fn fullscreen_read_builds_correct_payload() {
         let payload = screen_payload(&CapturedContext::Image {

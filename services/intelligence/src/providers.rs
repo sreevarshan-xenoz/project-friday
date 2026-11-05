@@ -1050,6 +1050,10 @@ pub struct InferenceFabric {
     /// egress.rs`). Attaching is one line — autonomy's "can this secret leave
     /// the machine?" prerequisite.
     pub egress: Option<Arc<EgressGate>>,
+    /// Providers FRIDAY registers without the user configuring anything (the
+    /// local Ollama probe, keyless OpenCode Zen). Everything else registered
+    /// is the user's choice: see [`InferenceFabric::user_providers`].
+    pub automatic: std::collections::BTreeSet<String>,
 }
 
 impl InferenceFabric {
@@ -1066,7 +1070,21 @@ impl InferenceFabric {
             request_timeout: None,
             health_state_path: std::path::PathBuf::from(".fabric/provider_health.json"),
             egress: None,
+            automatic: std::collections::BTreeSet::new(),
         }
+    }
+
+    /// The registered providers the user configured (a key, a local server
+    /// they enabled), sorted. Empty when FRIDAY runs on its defaults alone.
+    pub fn user_providers(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .providers
+            .keys()
+            .filter(|p| !self.automatic.contains(*p))
+            .cloned()
+            .collect();
+        names.sort();
+        names
     }
 
     /// Attach the egress gate: every routed outbound prompt is then scanned
@@ -1898,6 +1916,9 @@ impl InferenceFabric {
                 security_vault.store("provider", "opencode", key.clone());
             }
             let latency_ms = if key.is_empty() { 3_000 } else { 800 };
+            if key.is_empty() {
+                fabric.automatic.insert("opencode".to_string());
+            }
             fabric.register_provider(Box::new(OpenAiProvider {
                 name: "opencode".to_string(),
                 base_url: OPENCODE_ZEN_BASE_URL.to_string(),
@@ -2036,7 +2057,8 @@ impl InferenceFabric {
             }
         }
 
-        // Local Ollama
+        // Local Ollama (always probed, so not a choice the user made)
+        fabric.automatic.insert("ollama".to_string());
         fabric.register_provider(Box::new(OpenAiProvider {
             name: "ollama".to_string(),
             base_url: "http://localhost:11434/v1".to_string(),
@@ -2814,6 +2836,24 @@ impl InferenceFabric {
             req.latency_ms
         );
         let candidates = self.select_for(req);
+        self.complete_candidates(&request_id, candidates, prompt)
+            .await
+    }
+
+    /// [`InferenceFabric::complete_with`] restricted to `providers`: nothing
+    /// is sent to any other provider, even when every allowed one fails.
+    pub async fn complete_with_among(
+        &self,
+        req: &RequestRequirements,
+        providers: &[String],
+        prompt: &str,
+    ) -> Result<String, String> {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let candidates = self
+            .select_for(req)
+            .into_iter()
+            .filter(|(m, _)| providers.contains(&m.provider))
+            .collect();
         self.complete_candidates(&request_id, candidates, prompt)
             .await
     }
@@ -4126,6 +4166,46 @@ mod tests {
             ["opencode"],
             "without a local vision model only Zen's can see"
         );
+    }
+
+    #[test]
+    fn automatic_providers_are_not_the_users_choice() {
+        let mut fabric = InferenceFabric::new();
+        for name in ["opencode", "ollama", "llamacpp"] {
+            fabric.register_provider(Box::new(ScriptedProvider { name, fail: false }));
+        }
+        fabric.automatic.insert("opencode".to_string());
+        fabric.automatic.insert("ollama".to_string());
+        assert_eq!(fabric.user_providers(), ["llamacpp"]);
+    }
+
+    #[tokio::test]
+    async fn complete_with_among_never_leaves_the_allowed_providers() {
+        let mut fabric = InferenceFabric::new();
+        fabric.register_provider(Box::new(ScriptedProvider {
+            name: "llamacpp",
+            fail: true,
+        }));
+        fabric.register_provider(Box::new(ScriptedProvider {
+            name: "opencode",
+            fail: false,
+        }));
+        fabric.register_model(llamacpp_model("local".to_string(), true));
+        for m in opencode_static_models() {
+            fabric.register_model(m);
+        }
+        let req = RequestRequirements {
+            vision: Requirement::Required,
+            ..RequestRequirements::default()
+        };
+        let only_local = ["llamacpp".to_string()];
+        let out = fabric.complete_with_among(&req, &only_local, "p").await;
+        assert!(
+            out.is_err(),
+            "the allowed provider failed, so must the request: {out:?}"
+        );
+        let served = fabric.last_decision().and_then(|d| d.served);
+        assert_eq!(served, None, "nothing may be served by another provider");
     }
 
     #[test]
