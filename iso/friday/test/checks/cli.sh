@@ -124,6 +124,57 @@ contains "setup opens in a terminal" "$(cat "$LOG")" "foot -T FRIDAY setup"
 : >"$LOG"; bash "$F" welcome
 if [[ ! -s "$LOG" ]]; then pass "shown only once"; else fail "shown twice"; fi
 
+echo "shell supervision"
+# A stub quickshell: `-n -p DIR` starts it (crashing the first $QS_CRASHES
+# times), `kill` ends the running one cleanly, anything else is IPC.
+SH="$W/shell"; mkdir -p "$SH/run"; touch "$SH/shell.qml" "$SH/run/wayland-test"
+cat >"$S/quickshell" <<STUB
+#!/bin/bash
+case "\$1" in
+  kill) [[ -f "$SH/qs.pid" ]] && kill "\$(cat "$SH/qs.pid")" 2>/dev/null; exit 0 ;;
+  -n) ;;
+  *) echo "qs-ipc \$*" >> "$LOG"; exit 0 ;;
+esac
+n=\$(( \$(cat "$SH/count" 2>/dev/null || echo 0) + 1 )); echo \$n >"$SH/count"
+echo "qs-start \$n" >> "$LOG"
+(( n <= \${QS_CRASHES:-0} )) && exit 1
+echo \$\$ >"$SH/qs.pid"
+trap 'exit 0' TERM
+sleep 30 & wait
+STUB
+chmod +x "$S/quickshell"
+sh_env=(env FRIDAY_SHELL_DIR="$SH" XDG_RUNTIME_DIR="$SH/run" WAYLAND_DISPLAY=wayland-test FRIDAY_SHELL_BACKOFF=0)
+waitfor() { local i; for i in $(seq 50); do eval "$1" && return 0; sleep 0.1; done; return 1; }
+started() { [[ "$(cat "$SH/count" 2>/dev/null)" == "$1" ]] && [[ -f "$SH/qs.pid" ]] && kill -0 "$(cat "$SH/qs.pid")" 2>/dev/null; }
+
+: >"$LOG"; rm -f "$SH/count" "$SH/qs.pid"
+QS_CRASHES=2 "${sh_env[@]}" bash "$F" shell start 2>"$SH/err" &
+SUP=$!
+if waitfor "started 3"; then pass "restarts after crashes (2 crashes, 3rd start runs)"; else fail "did not restart after a crash"; fi
+contains "says why it restarted" "$(cat "$SH/err")" "exited with status 1; restarting"
+out=$("${sh_env[@]}" bash "$F" shell start 2>&1)
+contains "a second start is refused" "$out" "already running"
+"${sh_env[@]}" bash "$F" shell restart
+if waitfor "started 4"; then pass "restart: the supervisor starts it again"; else fail "restart did not bring it back"; fi
+qs_pid=$(cat "$SH/qs.pid")
+"${sh_env[@]}" bash "$F" shell stop
+if waitfor "! kill -0 $SUP 2>/dev/null"; then pass "stop ends the supervisor"; else fail "supervisor still running after stop"; kill "$SUP"; fi
+if [[ ! -e "$SH/run/friday-shell-$(id -u).pid" ]]; then pass "stop removes the pid file"; else fail "pid file left behind"; fi
+if waitfor "! kill -0 $qs_pid 2>/dev/null"; then pass "stop ends the shell"; else fail "shell still running after stop"; fi
+
+: >"$LOG"; rm -f "$SH/count" "$SH/qs.pid"
+QS_CRASHES=99 timeout 20 "${sh_env[@]}" bash "$F" shell start 2>/dev/null
+contains "a crash loop stops after 6 starts" "$(grep -c qs-start "$LOG")" "6"
+contains "and says so in a notification" "$(cat "$LOG")" "FRIDAY Shell keeps crashing"
+
+: >"$LOG"; rm -f "$SH/count" "$SH/qs.pid"
+QS_CRASHES=1 timeout 20 env FRIDAY_SHELL_DIR="$SH" XDG_RUNTIME_DIR="$SH/run" WAYLAND_DISPLAY=gone FRIDAY_SHELL_BACKOFF=0 \
+  bash "$F" shell start 2>/dev/null
+contains "no restart once the session is gone" "$(grep -c qs-start "$LOG")" "1"
+"${sh_env[@]}" bash "$F" shell control
+contains "drawer names go to IPC" "$(cat "$LOG")" "qs-ipc -p $SH ipc call shell toggle control"
+rm -f "$S/quickshell"
+
 echo "doctor"
 printf '{"status":"running","token":"s3cret-token"}' >"$state/state.json"
 printf 'GEMINI_API_KEY=abc123secret\n' >"$envf"
