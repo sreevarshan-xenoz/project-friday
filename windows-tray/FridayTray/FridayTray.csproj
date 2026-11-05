@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The FRIDAY tray app for Windows: tray icon, global hotkeys, the ask box,
+       and the supervisor that keeps friday-daemon and friday-windows-host
+       running for the signed-in user. Builds on Linux too (Windows targeting)
+       so it can be compiled and its logic tested anywhere. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>friday-tray</AssemblyName>
+    <RootNamespace>FridayTray</RootNamespace>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <!-- LibraryImport (source-generated P/Invoke) needs it. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Version>0.1.0</Version>
+    <Product>FRIDAY</Product>
+    <Company>Project FRIDAY</Company>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../FridayTray.Core/FridayTray.Core.csproj" />
+  </ItemGroup>
+</Project>

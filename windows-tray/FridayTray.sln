@@ -1,0 +1,34 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FridayTray.Core", "FridayTray.Core\FridayTray.Core.csproj", "{30E6B7E1-F521-4BC1-916B-4822A14AB0CD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FridayTray", "FridayTray\FridayTray.csproj", "{F77CD85F-65E4-4A85-9B95-3E2FFDA1DF1F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FridayTray.Tests", "FridayTray.Tests\FridayTray.Tests.csproj", "{F38E5D54-DE09-41DF-AFAA-C5B5411E0F97}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{30E6B7E1-F521-4BC1-916B-4822A14AB0CD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{30E6B7E1-F521-4BC1-916B-4822A14AB0CD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{30E6B7E1-F521-4BC1-916B-4822A14AB0CD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{30E6B7E1-F521-4BC1-916B-4822A14AB0CD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F77CD85F-65E4-4A85-9B95-3E2FFDA1DF1F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F77CD85F-65E4-4A85-9B95-3E2FFDA1DF1F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F77CD85F-65E4-4A85-9B95-3E2FFDA1DF1F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F77CD85F-65E4-4A85-9B95-3E2FFDA1DF1F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F38E5D54-DE09-41DF-AFAA-C5B5411E0F97}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F38E5D54-DE09-41DF-AFAA-C5B5411E0F97}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F38E5D54-DE09-41DF-AFAA-C5B5411E0F97}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F38E5D54-DE09-41DF-AFAA-C5B5411E0F97}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
