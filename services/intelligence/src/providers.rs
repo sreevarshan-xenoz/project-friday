@@ -1548,10 +1548,15 @@ impl InferenceFabric {
             self.log_health_change(&provider, health, health, "cooldown_elapsed", "probing");
         }
 
+        // Best score first; on a tie the faster model, which is how a provider
+        // the user configured outranks keyless OpenCode Zen (registered with
+        // a high latency for exactly that) when neither has a benchmark profile.
         candidates.sort_by(|a, b| {
             let sa = self.score_for(req, &a.0, a.1.name());
             let sb = self.score_for(req, &b.0, b.1.name());
-            sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
+            sb.partial_cmp(&sa)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.0.latency_ms.cmp(&b.0.latency_ms))
         });
 
         candidates
@@ -4078,6 +4083,48 @@ mod tests {
         assert!(
             providers.contains(&"groq") && providers.contains(&"openrouter"),
             "both free remotes present: {providers:?}"
+        );
+    }
+
+    /// A screen ask routes with `vision: Required`: a vision model the user
+    /// configured (here llama.cpp with LLAMACPP_VISION) must win over keyless
+    /// OpenCode Zen, and models that can't see images are never picked.
+    #[test]
+    fn vision_routing_prefers_the_users_model_over_keyless_default() {
+        let fabric_with = |local_vision: bool| {
+            let mut fabric = InferenceFabric::new();
+            for name in ["opencode", "llamacpp"] {
+                fabric.register_provider(Box::new(ScriptedProvider { name, fail: false }));
+            }
+            for mut m in opencode_static_models() {
+                m.latency_ms = 3_000; // keyless, as the default registration does
+                fabric.register_model(m);
+            }
+            fabric.register_model(llamacpp_model("local".to_string(), local_vision));
+            fabric
+        };
+        let req = RequestRequirements {
+            vision: Requirement::Required,
+            ..RequestRequirements::default()
+        };
+
+        let with_local = fabric_with(true);
+        let picks = with_local.select_for(&req);
+        assert_eq!(
+            picks[0].0.provider, "llamacpp",
+            "the user's vision model first"
+        );
+        assert!(picks
+            .iter()
+            .all(|(m, _)| m.capabilities.contains(&ModelCapability::Vision)));
+
+        let keyless_only = fabric_with(false);
+        let picks = keyless_only.select_for(&req);
+        let providers: Vec<&str> = picks.iter().map(|(m, _)| m.provider.as_str()).collect();
+        assert_eq!(
+            providers,
+            ["opencode"],
+            "without a local vision model only Zen's can see"
         );
     }
 
