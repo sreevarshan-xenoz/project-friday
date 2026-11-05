@@ -33,8 +33,9 @@ Top to bottom; don't start a later phase while an earlier one has known failures
    fake model) on Linux and Windows; not yet the hotkey flows.
 3. **Make the core use case excellent:** context, answer quality, actions,
    latency, clear failures.
-4. **Standalone packages:** `friday-git` and the per-user MSI exist; winget
-   needs a published release.
+4. **Standalone packages:** `friday-git` and the per-user MSI exist; a `vX.Y.Z`
+   tag publishes both as a GitHub release (`release.yml`), with winget
+   manifests ready to submit.
 5. **Deeper integration** through the interfaces above, each behind consent.
 6. **Only then** `docs/roadmap/ecosystem-backlog.md`.
 
@@ -67,6 +68,7 @@ Top to bottom; don't start a later phase while an earlier one has known failures
 | Test VM | `bash iso/friday/test/run-qemu.sh --headless --daemon --reset-disk`; drive with `python3 iso/friday/test/vm-control.py` |
 | Windows tray tests | `dotnet test windows-tray/FridayTray.Tests` (any OS) |
 | Windows MSI | `pwsh installer/windows/build.ps1` (Windows); smoke: `friday-tray.exe --smoke` |
+| Release | push a tag `vX.Y.Z` (≥ 0.2.0): `release.yml` builds, tests and publishes the package and MSI |
 | Health | `friday doctor` (Linux) |
 
 Gotcha: `vm-control.py wait-ready` reports SSH up before the guest is; poll a
