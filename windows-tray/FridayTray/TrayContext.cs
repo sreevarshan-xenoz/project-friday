@@ -96,20 +96,26 @@ internal sealed class TrayContext : ApplicationContext
 
             var request = Asking.BuildRequest(question, context);
             // The answer window opens now and fills in while the answer
-            // streams (state.json's current.partial); a screen answer comes
-            // whole, so it just says what is happening.
-            var answer = NewAnswerForm(kind, question,
-                kind == AskKind.Screen ? "Looking at your screen…" : "Thinking…");
+            // streams (state.json's current.partial). Not for a screen ask:
+            // FRIDAY captures the focused window, which must still be the one
+            // asked about, so that window opens with the answer.
+            AnswerForm? answer = null;
             using var poll = new System.Windows.Forms.Timer { Interval = 250 };
             string? shown = null;
-            if (kind != AskKind.Screen)
+            if (kind == AskKind.Screen)
             {
+                Notify("FRIDAY", "Looking at your screen: " + question, ToolTipIcon.None);
+            }
+            else
+            {
+                var form = NewAnswerForm(kind, question, "Thinking…");
+                answer = form;
                 poll.Tick += (_, _) =>
                 {
                     var partial = ReadPartial(request);
-                    if (partial != null && partial != shown && !answer.IsDisposed)
+                    if (partial != null && partial != shown && !form.IsDisposed)
                     {
-                        answer.ShowPartial(partial);
+                        form.ShowPartial(partial);
                         shown = partial;
                     }
                 };
@@ -120,8 +126,8 @@ internal sealed class TrayContext : ApplicationContext
             var outcome = Asking.Interpret(kind, question, ok, output);
             _log.Save(question, context, outcome, DateTime.Now);
 
-            // Closed while it was on its way: show the answer anyway.
-            if (answer.IsDisposed)
+            // A screen ask, or closed while it was on its way: show it now.
+            if (answer is null || answer.IsDisposed)
                 answer = NewAnswerForm(kind, question, "");
             answer.ShowOutcome(outcome);
             answer.Activate();
