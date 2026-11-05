@@ -259,8 +259,17 @@ pub fn apply_event(mut state: ShellState, ev: &Event) -> ShellState {
                     other => other.trim_start_matches("goal.").to_string(),
                 };
                 cur.outcome = Some(kind.trim_start_matches("goal.").to_string());
-                if let Some(r) = ev.payload.get("result").and_then(|v| v.as_str()) {
-                    cur.result = Some(r.to_string());
+                // `result` is a GoalResult object ({kind, text, ...}); older
+                // events carried a plain string. Either way the text is what
+                // friday-ctl --wait and `friday ask` show; an empty result
+                // stays None.
+                let text = match ev.payload.get("result") {
+                    Some(serde_json::Value::String(t)) => Some(t.as_str()),
+                    Some(v) => v.get("text").and_then(|t| t.as_str()),
+                    None => None,
+                };
+                if let Some(t) = text.filter(|t| !t.trim().is_empty()) {
+                    cur.result = Some(t.to_string());
                 }
                 // Genuine outcome detail — only when the runtime supplied it.
                 if let Some(p) = ev.payload.get("phases") {
@@ -502,5 +511,34 @@ mod tests {
         // (Git Bash and MSYS export one).
         let p = ShellState::path_from(env(&[("HOME", "/h"), ("LOCALAPPDATA", "C:/L")]), true);
         assert_eq!(p, PathBuf::from("C:/L").join("friday").join("state.json"));
+    }
+
+    /// The runner's real payload: `result` is a GoalResult object. Its text
+    /// must reach state.json (friday-ctl --wait and `friday ask` read it); the
+    /// test above only ever fed a plain string, which hid that it didn't.
+    #[test]
+    fn completed_goal_result_object_text_reaches_state() {
+        let done = Event::new(
+            "goal.completed",
+            "planner",
+            serde_json::json!({
+                "result": { "kind": "text", "text": "the answer", "tool": "answer", "success": true },
+            }),
+        );
+        let last = apply_event(apply_event(state(), &goal_event()), &done)
+            .last_goal
+            .expect("last goal preserved");
+        assert_eq!(last.result.as_deref(), Some("the answer"));
+
+        // An explicit empty result records no result, not an empty string.
+        let empty = Event::new(
+            "goal.completed",
+            "planner",
+            serde_json::json!({ "result": { "kind": "empty", "text": "" } }),
+        );
+        let last = apply_event(apply_event(state(), &goal_event()), &empty)
+            .last_goal
+            .expect("last goal preserved");
+        assert_eq!(last.result, None);
     }
 }
