@@ -3018,11 +3018,14 @@ impl InferenceFabric {
 
     /// [`InferenceFabric::complete_with`] restricted to `providers`: nothing
     /// is sent to any other provider, even when every allowed one fails.
+    /// With `progress`, the answer streams (as in
+    /// [`InferenceFabric::complete_with_progress`]).
     pub async fn complete_with_among(
         &self,
         req: &RequestRequirements,
         providers: &[String],
         prompt: &str,
+        progress: Option<&(dyn for<'s> Fn(&'s str) + Send + Sync)>,
     ) -> Result<String, String> {
         let request_id = uuid::Uuid::new_v4().to_string();
         let candidates = self
@@ -3030,7 +3033,7 @@ impl InferenceFabric {
             .into_iter()
             .filter(|(m, _)| providers.contains(&m.provider))
             .collect();
-        self.complete_candidates(&request_id, candidates, prompt)
+        self.complete_candidates_reporting(&request_id, candidates, prompt, progress)
             .await
     }
 
@@ -4550,7 +4553,9 @@ mod tests {
             ..RequestRequirements::default()
         };
         let only_local = ["llamacpp".to_string()];
-        let out = fabric.complete_with_among(&req, &only_local, "p").await;
+        let out = fabric
+            .complete_with_among(&req, &only_local, "p", None)
+            .await;
         assert!(
             out.is_err(),
             "the allowed provider failed, so must the request: {out:?}"

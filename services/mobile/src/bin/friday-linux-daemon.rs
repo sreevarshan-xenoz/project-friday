@@ -376,7 +376,27 @@ async fn main() {
                     .get("question")
                     .and_then(|v| v.as_str())
                     .map(str::to_string);
-                let (ok, result) = match context_reader.ask(question.as_deref()).await {
+                // The answer streams to the asking client as
+                // `context.progress` {id, partial} events (at most every
+                // 150 ms); the final CommandResult follows.
+                let progress_out = result_out.clone();
+                let progress_id = cmd.id.clone();
+                let last_sent = std::sync::Mutex::new(None::<std::time::Instant>);
+                let progress = move |partial: &str| {
+                    let mut last = last_sent.lock().unwrap();
+                    if last.is_some_and(|t| t.elapsed() < Duration::from_millis(150)) {
+                        return;
+                    }
+                    *last = Some(std::time::Instant::now());
+                    let _ = progress_out.send(friday_mobile::protocol::ServerMessage::Event {
+                        topic: "context.progress".to_string(),
+                        payload: serde_json::json!({ "id": progress_id, "partial": partial }),
+                    });
+                };
+                let asked = context_reader
+                    .ask_streaming(question.as_deref(), &progress)
+                    .await;
+                let (ok, result) = match asked {
                     Ok(response) => {
                         tracing::info!("[context.read] screen delivered to provider");
                         (true, serde_json::json!({ "response": response }))
