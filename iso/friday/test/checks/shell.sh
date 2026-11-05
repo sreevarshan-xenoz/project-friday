@@ -86,6 +86,32 @@ if kill -0 "$QS" 2>/dev/null; then pass "FRIDAY Shell still running"; else fail 
 kill "$QS" 2>/dev/null; wait "$QS" 2>/dev/null; QS=""
 [[ -s "$W/friday-bar.png" ]] && pass "screenshots: $W/friday-*.png"
 
+echo "Omarchy shell under the FRIDAY OS shell.json"
+OM="$AIROOTFS/usr/share/omarchy"
+if [[ -f "$OM/shell/shell.qml" ]] && need jq; then
+  fresh_home omarchy
+  # A disposable copy with friday.bar added, as build-iso.sh ships it.
+  cp -a "$OM" "$W/omarchy/tree"; cp -r "$REPO_ROOT/friday-os/plugins/friday.bar" "$W/omarchy/tree/shell/plugins/"
+  mkdir -p "$HOME/.config/omarchy"
+  # The installer's filter, read from the installer so the two can't drift.
+  filter=$(sed -n "/if jq '.bar.id/,/unique)'/p" "$AIROOTFS/root/installer" | sed -e "s/^.*jq '//" -e "s/' \\\\$//" -e "s/'.*$//")
+  jq "$filter" "$OM/config/omarchy/shell.json" >"$HOME/.config/omarchy/shell.json"
+  OMARCHY_PATH="$W/omarchy/tree" qs -p "$W/omarchy/tree/shell" >"$W/omarchy.log" 2>&1 &
+  QS=$!
+  sleep "${SHELL_WAIT:-12}"
+  plugins=$(timeout 10 qs -p "$W/omarchy/tree/shell" ipc call shell listPlugins 2>/dev/null || true)
+  st() { jq -r --arg id "$1" --arg k "$2" '.[] | select(.id == $id) | .[$k]' <<<"$plugins" 2>/dev/null; }
+  [[ "$(st friday.bar active)" == true && "$(st omarchy.bar active)" == false ]] \
+    && pass "Omarchy's bar is off (friday.bar selected)" || fail "Omarchy's bar is still active"
+  [[ "$(st omarchy.notifications enabled)" == false && "$(st omarchy.osd enabled)" == false ]] \
+    && pass "Omarchy's notifications and OSD are off" || fail "Omarchy's notifications or OSD are still on"
+  [[ "$(st omarchy.lock enabled)" == true && "$(st omarchy.polkit enabled)" == true ]] \
+    && pass "Omarchy's lock screen and polkit agent stay on" || fail "Omarchy's lock screen or polkit agent is off"
+  kill "$QS" 2>/dev/null; wait "$QS" 2>/dev/null; QS=""
+else
+  skip "Omarchy shell (needs the staged Omarchy checkout and jq)"
+fi
+
 echo "Dots-Hyprland ii shell (installer option)"
 fresh_home ii
 cp -a "$AIROOTFS/usr/share/friday/dots-hyprland/.config/quickshell" "$HOME/.config/"
