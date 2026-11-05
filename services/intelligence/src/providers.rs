@@ -1164,6 +1164,11 @@ pub struct InferenceFabric {
     /// `.fabric/provider_health.json` (cwd-relative). Chaos laboratory Phase 2
     /// scenarios point this at a controlled file so corruption is injectable.
     pub health_state_path: std::path::PathBuf,
+    /// Where the fabric keeps its files: request metrics and provider health
+    /// changes (and, by default, the health state above). `.fabric` in the
+    /// working directory unless the caller chooses (the daemon puts it next
+    /// to its state.json, so runs from different places never share it).
+    pub fabric_dir: std::path::PathBuf,
     /// The outbound-data gate (#12 egress policy): `None` = egress scanning
     /// is OFF (current behavior); `Some(gate)` = every routed prompt is
     /// scanned for registered secrets before it leaves to ANY provider, with
@@ -1190,6 +1195,7 @@ impl InferenceFabric {
             qualification_profiles: Arc::new(Mutex::new(HashMap::new())),
             request_timeout: None,
             health_state_path: std::path::PathBuf::from(".fabric/provider_health.json"),
+            fabric_dir: std::path::PathBuf::from(".fabric"),
             egress: None,
             automatic: std::collections::BTreeSet::new(),
         }
@@ -1770,11 +1776,11 @@ impl InferenceFabric {
             reason: reason.to_string(),
             decision: decision.to_string(),
         };
-        let _ = std::fs::create_dir_all(".fabric");
+        let _ = std::fs::create_dir_all(&self.fabric_dir);
         if let Ok(mut file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(".fabric/health-changes.jsonl")
+            .open(self.fabric_dir.join("health-changes.jsonl"))
         {
             use std::io::Write;
             if let Ok(line) = serde_json::to_string(&event) {
@@ -1886,11 +1892,11 @@ impl InferenceFabric {
 
     /// Logs request telemetry to a local JSON Lines file.
     pub fn log_metrics(&self, metrics: &InferenceMetrics) {
-        let _ = std::fs::create_dir_all(".fabric");
+        let _ = std::fs::create_dir_all(&self.fabric_dir);
         if let Ok(mut file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(".fabric/metrics.jsonl")
+            .open(self.fabric_dir.join("metrics.jsonl"))
         {
             use std::io::Write;
             if let Ok(line) = serde_json::to_string(metrics) {
@@ -1901,7 +1907,15 @@ impl InferenceFabric {
 
     /// Create default fabric configuration dynamically based on registry config file or env vars.
     pub fn default_from_env() -> Self {
+        Self::default_from_env_in(std::path::Path::new(".fabric"))
+    }
+
+    /// [`InferenceFabric::default_from_env`], keeping the fabric's files
+    /// (provider health, metrics) in `dir` instead of `./.fabric`.
+    pub fn default_from_env_in(dir: &std::path::Path) -> Self {
         let mut fabric = Self::new();
+        fabric.fabric_dir = dir.to_path_buf();
+        fabric.health_state_path = dir.join("provider_health.json");
         let security_vault = Arc::new(SecretsVault::new());
 
         // Attempt to load dynamic model registry from workspace config file

@@ -212,7 +212,14 @@ async fn main() {
 
     // Model-backed investigation + heuristic fallback. Bounded request avoids
     // a hung-local-model stall (same fabric tuning as the mobile daemon).
-    let mut fabric = InferenceFabric::default_from_env();
+    // Provider health and metrics live next to state.json (not in whatever
+    // directory the daemon happened to start in, where another run's open
+    // circuits would be inherited).
+    let fabric_dir = state_path
+        .parent()
+        .map(|d| d.join("fabric"))
+        .unwrap_or_else(|| std::path::PathBuf::from(".fabric"));
+    let mut fabric = InferenceFabric::default_from_env_in(&fabric_dir);
     fabric.request_timeout = Some(Duration::from_secs(15));
     // OpenCode Zen (the keyless default) rotates its free models: swap the
     // static fallback for the live free lineup. Bounded so a slow or offline
