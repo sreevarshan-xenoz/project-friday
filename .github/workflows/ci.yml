@@ -108,6 +108,73 @@ jobs:
           name: friday-arch-package
           path: packaging/arch/*.pkg.tar.zst
 
+  windows-installer:
+    # The per-user MSI, end to end on a clean Windows runner: build it,
+    # install it silently, check what it put where, run the tray's headless
+    # smoke test (daemon + host start, state.json says running, friday-ctl
+    # reaches the daemon), then uninstall and check it cleaned up.
+    name: Windows installer (build, install, smoke test)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # build.ps1 numbers the MSI by commit count.
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Tray logic tests
+        run: dotnet test windows-tray/FridayTray.Tests
+      - name: Build the MSI
+        id: build
+        env:
+          RUSTFLAGS: ""
+        run: installer/windows/build.ps1
+      - name: Install silently
+        run: |
+          $p = Start-Process msiexec -ArgumentList '/i', '${{ steps.build.outputs.msi }}', '/qn', '/l*v', "$env:RUNNER_TEMP\install.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /i exited with $($p.ExitCode)" }
+      - name: Check the install
+        run: |
+          $dir = "$env:LOCALAPPDATA\Programs\FRIDAY"
+          foreach ($f in 'friday-tray.exe', 'friday-daemon.exe', 'friday-ctl.exe', 'friday-windows-host.exe', 'LICENSE-MIT') {
+            if (-not (Test-Path "$dir\$f")) { throw "missing $dir\$f" }
+          }
+          $run = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run').FRIDAY
+          if ($run -notlike "*friday-tray.exe*") { throw "no start-at-login entry (got '$run')" }
+          $path = (Get-ItemProperty 'HKCU:\Environment').Path
+          if ($path -notlike "*Programs\FRIDAY*") { throw "install folder is not on the user PATH (got '$path')" }
+          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\FRIDAY.lnk")) { throw "no Start menu shortcut" }
+          Write-Host "installed to $dir with Run entry, PATH and shortcut"
+      - name: Smoke test (tray --smoke)
+        run: |
+          $p = Start-Process "$env:LOCALAPPDATA\Programs\FRIDAY\friday-tray.exe" -ArgumentList '--smoke' -Wait -PassThru
+          Get-Content "$env:LOCALAPPDATA\friday\logs\smoke.log" -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0) {
+            Get-ChildItem "$env:LOCALAPPDATA\friday\logs" -Filter *.log | ForEach-Object { Write-Host "--- $($_.Name)"; Get-Content $_.FullName -Tail 40 }
+            throw "smoke test failed ($($p.ExitCode))"
+          }
+      - name: Uninstall silently
+        run: |
+          $p = Start-Process msiexec -ArgumentList '/x', '${{ steps.build.outputs.msi }}', '/qn', '/l*v', "$env:RUNNER_TEMP\uninstall.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /x exited with $($p.ExitCode)" }
+          if (Test-Path "$env:LOCALAPPDATA\Programs\FRIDAY\friday-tray.exe") { throw "files left behind" }
+          if ((Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run').PSObject.Properties.Name -contains 'FRIDAY') { throw "start-at-login entry left behind" }
+          Write-Host "uninstalled cleanly"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: friday-windows-installer
+          path: |
+            installer/windows/out/*.msi
+            ${{ runner.temp }}/*.log
+          if-no-files-found: ignore
+
   python:
     name: Python (lint, type, test)
     runs-on: ubuntu-latest
