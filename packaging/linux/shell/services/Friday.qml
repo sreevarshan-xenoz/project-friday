@@ -41,9 +41,10 @@ Singleton {
   }
 
   // The daemon replaces the file atomically, which can drop the watch, and it
-  // may not exist yet when the shell starts first. A slow re-read covers both.
+  // may not exist yet when the shell starts first. A re-read covers both: slow
+  // when idle, quick while a goal runs so a streaming answer reads smoothly.
   Timer {
-    interval: 3000
+    interval: root.working ? 300 : 3000
     running: true
     repeat: true
     onTriggered: file.reload()
@@ -57,6 +58,8 @@ Singleton {
   readonly property bool working: running && current !== null && current.active === true
   readonly property string goal: current ? str(current.goal) : ""
   readonly property string phase: current ? str(current.phase) : ""
+  // The answer so far while it streams (state.json current.partial).
+  readonly property string partial: working ? str(current.partial) : ""
   readonly property int phaseIndex: phases.indexOf(phase)
 
   readonly property var last: obj(parsed.last_goal)

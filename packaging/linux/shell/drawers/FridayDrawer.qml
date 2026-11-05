@@ -83,6 +83,16 @@ FocusScope {
           }
         }
       }
+      // The answer as it arrives; the newest words stay in view.
+      Label {
+        Layout.fillWidth: true
+        visible: Friday.partial !== ""
+        text: Friday.partial.length > 400 ? "…" + Friday.partial.slice(-399) : Friday.partial
+        wrapMode: Text.Wrap
+        maximumLineCount: 8
+        color: Theme.text
+        font.pixelSize: Theme.fontS + 1
+      }
     }
 
     // Ask.
