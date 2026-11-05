@@ -409,8 +409,10 @@ async fn main() {
                         (true, serde_json::json!({ "response": response }))
                     }
                     Err(e) => {
+                        // The raw error stays in this log; the person gets a sentence.
                         tracing::warn!("[context.read] {e}");
-                        (false, serde_json::json!({ "error": e.to_string() }))
+                        let plain = friday_mobile::failures::plain_screen_error(&e);
+                        (false, serde_json::json!({ "error": plain }))
                     }
                 };
                 let mut st = state_cmd_lock.lock().await;

@@ -1501,13 +1501,18 @@ impl GoalRunner {
 
         // The answer step: the cycle ran a tool and gathered evidence; the
         // model now writes the reply from them. Only for a goal that ran to
-        // completion; any model failure keeps the cycle's own result.
+        // completion. If the model fails, the cycle's own result stands when
+        // it is a real result (a command ran, files were listed); when it is
+        // nothing to show (an empty memory lookup), the goal fails with why.
+        let mut answer_failure: Option<String> = None;
         if report.plan_executed && !report.cancelled && !report.paused && !report.recoverable {
             if let Some(answerer) = &self.answerer {
-                if let Some(answer) =
-                    compose_answer(answerer.as_ref(), &composed, &report, &self.bus, &id).await
-                {
-                    report.result = Some(answer);
+                match compose_answer(answerer.as_ref(), &composed, &report, &self.bus, &id).await {
+                    Ok(answer) => report.result = Some(answer),
+                    Err(e) if !stands_without_the_model(report.result.as_ref()) => {
+                        answer_failure = Some(crate::failures::plain_model_error(&e));
+                    }
+                    Err(_) => {}
                 }
             }
         }
@@ -1599,6 +1604,21 @@ impl GoalRunner {
                     }),
                 ))
                 .await;
+        } else if let Some(reason) = &answer_failure {
+            let _ = self
+                .bus
+                .publish(Event::new(
+                    "goal.failed",
+                    "planner",
+                    json!({
+                        "goal": goal,
+                        "id": id,
+                        "session_id": session_id,
+                        "session_turn": next_turn,
+                        "error": reason,
+                    }),
+                ))
+                .await;
         } else if report.plan_executed {
             // The fabric is called exactly once per goal (the investigation), so
             // its last routing decision is THIS goal's: `served` is
@@ -1641,6 +1661,8 @@ impl GoalRunner {
             "goal.paused"
         } else if report.recoverable {
             "goal.recoverable"
+        } else if answer_failure.is_some() {
+            "goal.failed"
         } else if report.plan_executed {
             "goal.completed"
         } else {
@@ -1653,6 +1675,21 @@ impl GoalRunner {
 /// How long the answer step waits for the model before keeping the tool's
 /// own result (friday-ctl --wait gives the whole goal 180 s).
 const ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// Whether the cycle's own result is worth showing when the model gave no
+/// answer: a tool that succeeded with something to say is; a failed tool, an
+/// empty memory lookup or nothing isn't.
+fn stands_without_the_model(result: Option<&GoalResult>) -> bool {
+    match result {
+        None => false,
+        Some(r) => {
+            let text = r.text.trim();
+            r.success
+                && !text.is_empty()
+                && !(r.tool.as_deref() == Some("memory") && text == "no memory matches yet")
+        }
+    }
+}
 
 /// How often a streaming answer is published as `goal.progress` (each one is
 /// a state.json write, so not on every token).
@@ -1745,7 +1782,7 @@ async fn compose_answer(
     report: &ExecutiveReport,
     bus: &EventBus,
     goal_id: &str,
-) -> Option<GoalResult> {
+) -> Result<GoalResult, String> {
     let prompt = answer_prompt(request, report);
     // The answer streams: the text so far goes out as `goal.progress` events
     // (at most every PROGRESS_EVERY), and the forwarder is drained before
@@ -1762,24 +1799,22 @@ async fn compose_answer(
     let reply = match outcome {
         Ok(Ok(text)) => text,
         Ok(Err(e)) => {
-            tracing::warn!("answer step: model error, keeping the tool result: {e}");
-            return None;
+            tracing::warn!("answer step: model error: {e}");
+            return Err(e);
         }
         Err(_) => {
-            tracing::warn!(
-                "answer step: model timed out after {ANSWER_TIMEOUT:?}, keeping the tool result"
-            );
-            return None;
+            tracing::warn!("answer step: model timed out after {ANSWER_TIMEOUT:?}");
+            return Err(format!("request timed out after {ANSWER_TIMEOUT:?}"));
         }
     };
     let text = reply.trim();
     if text.is_empty() {
-        return None;
+        return Err("the model returned an empty answer".to_string());
     }
     let source = report.result.as_ref().map(|r| {
         json!({ "tool": r.tool, "success": r.success, "text": truncate(&r.text, ANSWER_SOURCE_CHARS) })
     });
-    Some(GoalResult {
+    Ok(GoalResult {
         kind: GoalResultKind::Text,
         text: text.to_string(),
         structured: source.map(|s| json!({ "source": s })),
@@ -2138,18 +2173,69 @@ mod tests {
         );
     }
 
-    /// A model failure keeps the cycle's own result: the answer step never
-    /// turns a completed goal into a failed or empty one.
+    /// Run one goal and return its terminal event's (kind, payload).
+    async fn terminal_with_answerer(
+        goal: &str,
+        answerer: Arc<ScriptedAnswerer>,
+    ) -> (String, serde_json::Value) {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        GoalRunner::new(bus.clone()).with_answerer(answerer).start();
+        bus.publish(Event::new("plan.goal", "mobile", json!({ "goal": goal })))
+            .await
+            .expect("publish");
+        for _ in 0..40 {
+            let ev = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+                .await
+                .expect("a terminal event in time")
+                .expect("bus alive");
+            if ev.kind == "goal.completed" || ev.kind == "goal.failed" {
+                return (ev.kind, ev.payload);
+            }
+        }
+        panic!("no terminal event");
+    }
+
+    /// The model failed and the cycle has nothing to show (here its tool
+    /// failed): the goal fails, saying why in plain words, instead of
+    /// "completing" with a tool error or an empty lookup.
     #[tokio::test]
-    async fn answer_step_failure_keeps_the_tool_result() {
+    async fn model_failure_with_nothing_to_show_fails_plainly() {
         let answerer = Arc::new(ScriptedAnswerer {
-            reply: Err("provider down".to_string()),
+            reply: Err("HTTP request failed: error sending request for url \
+                (http://127.0.0.1:9/v1/chat/completions): Connection refused"
+                .to_string()),
             prompts: Mutex::new(Vec::new()),
         });
-        let payload =
-            run_with_answerer("What does the Rust error E0308 mean?", answerer.clone()).await;
-        assert_ne!(payload["result"]["tool"], "answer", "{payload}");
+        let (kind, payload) =
+            terminal_with_answerer("What does the Rust error E0308 mean?", answerer.clone()).await;
+        assert_eq!(kind, "goal.failed", "{payload}");
+        let error = payload["error"].as_str().unwrap_or_default();
+        assert!(
+            error.starts_with("Couldn't reach your AI provider"),
+            "{error}"
+        );
         assert_eq!(answerer.prompts.lock().unwrap().len(), 1);
+    }
+
+    /// A real tool result still stands when the model fails; nothing else does.
+    #[test]
+    fn only_a_real_tool_result_stands_without_the_model() {
+        let ok = |tool: &str, text: &str| {
+            GoalResult::from_tool_result(&ToolResult::success(text)).with_tool(tool)
+        };
+        assert!(stands_without_the_model(Some(&ok(
+            "terminal",
+            "42 tests passed"
+        ))));
+        assert!(!stands_without_the_model(Some(&ok(
+            "memory",
+            "no memory matches yet"
+        ))));
+        assert!(!stands_without_the_model(Some(&ok("terminal", "   "))));
+        let failed = GoalResult::from_tool_result(&ToolResult::error("no tool for capability"));
+        assert!(!stands_without_the_model(Some(&failed)));
+        assert!(!stands_without_the_model(None));
     }
 
     /// The prompt carries the request, what the tool produced, and evidence.
