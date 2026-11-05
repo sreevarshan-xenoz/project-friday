@@ -28,8 +28,9 @@ Top to bottom; don't start a later phase while an earlier one has known failures
    answers (checklist: `docs/HANDOFF-2026-11-04.md`). Windows: MSI on a clean
    machine → Win+Y → answer. Both still need a real-hardware pass.
 2. **Automate it.** Every bug found by hand becomes a test. CI covers the
-   desktop checks, the Arch package and the MSI (build, install, smoke,
-   uninstall); not yet an ask returning an answer, or the hotkey flows.
+   desktop checks, the Arch package, the MSI (build, install, smoke,
+   uninstall) and an ask answered end to end (`tests/e2e/ask.sh`: real daemon,
+   fake model) on Linux and Windows; not yet the hotkey flows.
 3. **Make the core use case excellent:** context, answer quality, actions,
    latency, clear failures.
 4. **Standalone packages:** `friday-git` and the per-user MSI exist; winget
@@ -59,6 +60,7 @@ Top to bottom; don't start a later phase while an earlier one has known failures
 | What | Command |
 |---|---|
 | Rust | `cargo test -p <crate>`; CI also runs fmt and clippy `-D warnings` |
+| End-to-end ask | `bash tests/e2e/ask.sh` (after `cargo build -p friday-mobile --bin friday-linux-daemon --bin friday-ctl`) |
 | Desktop/installer checks | `bash iso/friday/test/run-checks.sh` (Arch; deps in the script header) |
 | Arch package | `cd packaging/arch && makepkg -si`; smoke: `bash packaging/arch/check-package.sh <pkg>` |
 | ISO | `CLEAN_WORK=true bash iso/friday/build-iso.sh` (Arch, normal user; builds `friday-git`, then sudo mkarchiso) |
