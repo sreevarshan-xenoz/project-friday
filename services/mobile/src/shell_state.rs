@@ -144,22 +144,34 @@ impl ShellState {
     /// Build the default `state.json` path from the environment.
     ///
     /// Precedence: `FRIDAY_STATE_FILE` (explicit override), then
-    /// `$XDG_STATE_HOME/friday/state.json`, then
+    /// `$XDG_STATE_HOME/friday/state.json`, then on Windows
+    /// `%LOCALAPPDATA%\friday\state.json`, then
     /// `$HOME/.local/state/friday/state.json`. On Omarchy, `$XDG_STATE_HOME`
     /// is `~/.local/state`, so this lands alongside the Omarchy state dirs the
     /// shell already watches.
     pub fn default_path() -> std::path::PathBuf {
-        if let Ok(p) = std::env::var("FRIDAY_STATE_FILE") {
-            return std::path::PathBuf::from(p);
+        Self::path_from(|k| std::env::var(k).ok(), cfg!(windows))
+    }
+
+    /// The resolution behind [`Self::default_path`], with the environment and
+    /// the platform passed in so both platforms' rules are testable anywhere.
+    pub fn path_from(var: impl Fn(&str) -> Option<String>, windows: bool) -> std::path::PathBuf {
+        use std::path::PathBuf;
+        if let Some(p) = var("FRIDAY_STATE_FILE") {
+            return PathBuf::from(p);
         }
-        let base = std::env::var("XDG_STATE_HOME")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| {
-                std::env::var("HOME")
-                    .map(|h| std::path::PathBuf::from(h).join(".local/state"))
-                    .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"))
-            });
-        base.join("friday/state.json")
+        let base = if let Some(x) = var("XDG_STATE_HOME") {
+            PathBuf::from(x)
+        } else if let Some(local) = var("LOCALAPPDATA").filter(|_| windows) {
+            PathBuf::from(local)
+        } else if let Some(home) = var("HOME") {
+            PathBuf::from(home).join(".local").join("state")
+        } else if windows {
+            std::env::temp_dir()
+        } else {
+            PathBuf::from("/tmp")
+        };
+        base.join("friday").join("state.json")
     }
 
     /// Render the document as a JSON value with the updated timestamp stamped.
@@ -455,5 +467,40 @@ mod tests {
         assert_eq!(json["version"], 1);
         assert_eq!(json["token"], "tok");
         assert_eq!(json["telemetry"]["cpu_percent"], 12.0);
+    }
+
+    #[test]
+    fn state_path_follows_platform_conventions() {
+        use std::path::PathBuf;
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |k: &str| {
+                pairs
+                    .iter()
+                    .find(|(n, _)| *n == k)
+                    .map(|(_, v)| v.to_string())
+            }
+        };
+        // An explicit override wins everywhere.
+        let p = ShellState::path_from(
+            env(&[("FRIDAY_STATE_FILE", "/x/s.json"), ("LOCALAPPDATA", "C:/L")]),
+            true,
+        );
+        assert_eq!(p, PathBuf::from("/x/s.json"));
+        // Linux: XDG state home, then ~/.local/state; LOCALAPPDATA is ignored.
+        let p = ShellState::path_from(env(&[("XDG_STATE_HOME", "/s"), ("HOME", "/h")]), false);
+        assert_eq!(p, PathBuf::from("/s").join("friday").join("state.json"));
+        let p = ShellState::path_from(env(&[("HOME", "/h"), ("LOCALAPPDATA", "C:/L")]), false);
+        assert_eq!(
+            p,
+            PathBuf::from("/h")
+                .join(".local")
+                .join("state")
+                .join("friday")
+                .join("state.json")
+        );
+        // Windows: %LOCALAPPDATA%\friday\state.json, even with HOME set
+        // (Git Bash and MSYS export one).
+        let p = ShellState::path_from(env(&[("HOME", "/h"), ("LOCALAPPDATA", "C:/L")]), true);
+        assert_eq!(p, PathBuf::from("C:/L").join("friday").join("state.json"));
     }
 }

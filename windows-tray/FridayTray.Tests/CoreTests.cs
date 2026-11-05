@@ -1,0 +1,84 @@
+using FridayTray.Core;
+using Xunit;
+
+public class EnvFileTests
+{
+    [Fact]
+    public void Parses_keys_comments_and_quotes()
+    {
+        var v = EnvFile.Parse("# c\nGEMINI_API_KEY=abc123secret\r\nFRIDAY_CONTEXT_PROVIDER=\"gemini\"\n\nbad line\n");
+        Assert.Equal("abc123secret", v["GEMINI_API_KEY"]);
+        Assert.Equal("gemini", v["FRIDAY_CONTEXT_PROVIDER"]);
+        Assert.Equal(2, v.Count);
+    }
+
+    [Fact]
+    public void Choosing_a_provider_replaces_keys_and_keeps_other_settings()
+    {
+        var before = "# old\nGROQ_API_KEY=gsk_old123456\nFRIDAY_CONTEXT_PROVIDER=groq\nFRIDAY_LISTEN=127.0.0.1:1\n";
+        var after = EnvFile.Parse(EnvFile.WithProvider(before, Providers.Find("openrouter")!, "sk-or-12345678"));
+        Assert.Equal("sk-or-12345678", after["OPENROUTER_API_KEY"]);
+        Assert.Equal("127.0.0.1:1", after["FRIDAY_LISTEN"]);
+        Assert.False(after.ContainsKey("GROQ_API_KEY"));
+        // OpenRouter has no vision, so no context provider is set.
+        Assert.False(after.ContainsKey("FRIDAY_CONTEXT_PROVIDER"));
+    }
+
+    [Fact]
+    public void OpenCode_without_a_key_uses_the_free_models()
+    {
+        var after = EnvFile.Parse(EnvFile.WithProvider("GEMINI_API_KEY=x12345678\n", Providers.Find("opencode")!, ""));
+        Assert.False(after.ContainsKey("OPENCODE_API_KEY"));
+        Assert.False(after.ContainsKey("GEMINI_API_KEY"));
+        Assert.Equal("opencode", after["FRIDAY_CONTEXT_PROVIDER"]);
+    }
+
+    [Theory]
+    [InlineData("AIzaSyA-b_c.d:e", true)]
+    [InlineData("short", false)]
+    [InlineData("has space 12345", false)]
+    public void Key_shape_matches_setup_ai(string key, bool ok) => Assert.Equal(ok, Providers.LooksLikeKey(key));
+}
+
+public class RestartPolicyTests
+{
+    [Fact]
+    public void Backs_off_then_gives_up_after_five_crashes_in_a_minute()
+    {
+        var p = new RestartPolicy();
+        var t = new DateTime(2026, 1, 1, 12, 0, 0);
+        for (var i = 1; i <= 5; i++)
+            Assert.Equal(TimeSpan.FromSeconds(i), p.OnCrash(t.AddSeconds(i)));
+        Assert.Null(p.OnCrash(t.AddSeconds(10)));
+    }
+
+    [Fact]
+    public void Crashes_spread_over_time_keep_restarting()
+    {
+        var p = new RestartPolicy();
+        var t = new DateTime(2026, 1, 1, 12, 0, 0);
+        for (var i = 0; i < 20; i++)
+            Assert.Equal(TimeSpan.FromSeconds(1), p.OnCrash(t.AddMinutes(2 * i)));
+    }
+}
+
+public class AnswerLogTests
+{
+    [Fact]
+    public void History_is_newest_first_without_repeats_and_answers_are_kept()
+    {
+        var dir = Directory.CreateTempSubdirectory().FullName;
+        var paths = new Paths(Path.Combine(dir, "local"), Path.Combine(dir, "roaming"));
+        var log = new AnswerLog(paths);
+        log.Remember("a"); log.Remember("b"); log.Remember("a");
+        Assert.Equal(["a", "b"], log.History());
+
+        var when = new DateTime(2026, 11, 5, 9, 30, 0);
+        log.Save("why?", "some\ncontext", new AskOutcome(false, "plain message", "raw error", false), when);
+        var text = File.ReadAllText(paths.LastAnswerFile);
+        Assert.StartsWith("# why?\n\n_2026-11-05 09:30_\n\n> some context\n\nplain message\n", text);
+        Assert.Contains("```\nraw error\n```", text);
+        Assert.Contains("---", File.ReadAllText(paths.AnswersFile));
+        Assert.Equal(Path.Combine(dir, "local", "friday", "state.json"), paths.StateFile);
+    }
+}
