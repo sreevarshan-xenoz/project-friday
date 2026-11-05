@@ -62,6 +62,10 @@ pub struct CaptureOptions {
     /// `Screen` only: capture the whole focused monitor when `true` (defaults
     /// to `false`, which means a `region` must be supplied).
     pub fullscreen: bool,
+    /// `Screen` only: capture just the focused window, falling back to the
+    /// whole screen when there is none (or it can't be found). Takes
+    /// precedence over `region` and `fullscreen`.
+    pub focused_window: bool,
 }
 
 /// The raw OS-provided payload for one channel.
@@ -192,7 +196,9 @@ impl<R: CommandRunner> ContextCollector<R> {
 
     fn capture_screen(&self, options: &CaptureOptions) -> Result<CapturedContext, CaptureError> {
         let channel = ContextChannel::Screen;
-        let geometry = if options.fullscreen {
+        let geometry = if options.focused_window {
+            self.focused_window()
+        } else if options.fullscreen {
             None
         } else {
             Some(options.region.ok_or(CaptureError::InvalidOptions {
@@ -235,15 +241,27 @@ impl<R: CommandRunner> ContextCollector<R> {
 
     fn capture_app(&self) -> Result<CapturedContext, CaptureError> {
         let channel = ContextChannel::App;
-        let args = vec!["-j".to_string(), "activewindow".to_string()];
+        let (program, args) = window_command();
         let out =
-            self.run_capture(channel, "hyprctl", &args)
+            self.run_capture(channel, &program, &args)
                 .map_err(|e| CaptureError::Command {
                     channel,
                     message: e.to_string(),
                 })?;
         parse_activewindow(&out.stdout)
             .map_err(|message| CaptureError::Command { channel, message })
+    }
+
+    /// The focused window's rectangle, or `None` when there is no focused
+    /// window, the lookup fails, or it has no size (a screen ask then takes
+    /// the whole screen rather than failing).
+    pub fn focused_window(&self) -> Option<ScreenRegion> {
+        match self.capture_app() {
+            Ok(CapturedContext::AppInfo {
+                geometry: Some(r), ..
+            }) if r.width > 0 && r.height > 0 => Some(r),
+            _ => None,
+        }
     }
 
     fn capture_clipboard(&self) -> Result<CapturedContext, CaptureError> {
@@ -315,6 +333,29 @@ pub fn screen_capture_command(
     }
 }
 
+/// The program and arguments that print the focused window as JSON
+/// (`{"at": [x, y], "size": [w, h], "class": .., "title": ..}`):
+/// `hyprctl -j activewindow` on Hyprland, and on Windows FRIDAY's host
+/// (`friday-windows-host --active-window`), in the same shape.
+pub fn active_window_command(windows: bool, windows_host: &str) -> (String, Vec<String>) {
+    if windows {
+        (
+            windows_host.to_string(),
+            vec!["--active-window".to_string()],
+        )
+    } else {
+        (
+            "hyprctl".to_string(),
+            vec!["-j".to_string(), "activewindow".to_string()],
+        )
+    }
+}
+
+/// This platform's focused-window command (see [`active_window_command`]).
+pub fn window_command() -> (String, Vec<String>) {
+    active_window_command(cfg!(windows), &windows_host_program())
+}
+
 /// This platform's screen capture command (see [`screen_capture_command`]);
 /// tests script their fake capture with it so they hold on every platform.
 pub fn screen_command(region: Option<ScreenRegion>) -> (String, Vec<String>) {
@@ -373,6 +414,7 @@ mod tests {
     const EMPTY: CaptureOptions = CaptureOptions {
         region: None,
         fullscreen: false,
+        focused_window: false,
     };
 
     fn strs(v: &[String]) -> Vec<&str> {
@@ -391,8 +433,8 @@ mod tests {
                 "Quarterly revenue up 12%\n",
             )
             .script_stdout(
-                "hyprctl",
-                &["-j", "activewindow"],
+                &window_command().0,
+                &strs(&window_command().1),
                 br#"{"class":"kitty","title":"project-friday","at":[0,0],"size":[1920,1080]}"#,
             )
             .script_stdout("wl-paste", &["--no-newline"], "https://example.com/docs");
@@ -403,6 +445,7 @@ mod tests {
         CaptureOptions {
             region: Some(ScreenRegion::new(10, 20, 640, 480)),
             fullscreen: false,
+            focused_window: false,
         }
     }
 
@@ -426,6 +469,7 @@ mod tests {
         let opts = CaptureOptions {
             region: None,
             fullscreen: true,
+            focused_window: false,
         };
         let ctx = collector().capture(ContextChannel::Screen, &opts).unwrap();
         assert_eq!(
@@ -435,6 +479,80 @@ mod tests {
                 mime: "image/png",
                 geometry: None
             }
+        );
+    }
+
+    fn focused(window_json: Option<&[u8]>) -> ContextCollector<FakeCommandRunner> {
+        let region = ScreenRegion::new(100, 50, 800, 600);
+        let (rp, ra) = screen_command(Some(region));
+        let (fp, fa) = screen_command(None);
+        let mut runner = FakeCommandRunner::new()
+            .script_stdout(&rp, &strs(&ra), PNG)
+            .script_stdout(&fp, &strs(&fa), PNG);
+        if let Some(json) = window_json {
+            let (wp, wa) = window_command();
+            runner = runner.script_stdout(&wp, &strs(&wa), json);
+        }
+        ContextCollector::new(runner)
+    }
+
+    fn focused_window_options() -> CaptureOptions {
+        CaptureOptions {
+            focused_window: true,
+            ..EMPTY
+        }
+    }
+
+    #[test]
+    fn screen_takes_just_the_focused_window() {
+        let c = focused(Some(
+            br#"{"class":"code","title":"main.rs","at":[100,50],"size":[800,600]}"#,
+        ));
+        match c
+            .capture(ContextChannel::Screen, &focused_window_options())
+            .unwrap()
+        {
+            CapturedContext::Image { geometry, .. } => {
+                assert_eq!(geometry, Some(ScreenRegion::new(100, 50, 800, 600)))
+            }
+            other => panic!("expected an image, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn screen_falls_back_to_the_whole_screen_without_a_focused_window() {
+        // The lookup fails (no compositor answer, or not scripted at all) ...
+        for c in [focused(None), focused(Some(b"not json"))] {
+            match c
+                .capture(ContextChannel::Screen, &focused_window_options())
+                .unwrap()
+            {
+                CapturedContext::Image { geometry, .. } => assert_eq!(geometry, None),
+                other => panic!("expected an image, got {other:?}"),
+            }
+        }
+        // ... or the focused "window" has no size (an empty workspace).
+        let c = focused(Some(br#"{"at":[0,0],"size":[0,0]}"#));
+        match c
+            .capture(ContextChannel::Screen, &focused_window_options())
+            .unwrap()
+        {
+            CapturedContext::Image { geometry, .. } => assert_eq!(geometry, None),
+            other => panic!("expected an image, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn active_window_command_per_platform() {
+        let (p, a) = active_window_command(false, "host.exe");
+        assert_eq!(
+            (p.as_str(), strs(&a)),
+            ("hyprctl", vec!["-j", "activewindow"])
+        );
+        let (p, a) = active_window_command(true, "host.exe");
+        assert_eq!(
+            (p.as_str(), strs(&a)),
+            ("host.exe", vec!["--active-window"])
         );
     }
 

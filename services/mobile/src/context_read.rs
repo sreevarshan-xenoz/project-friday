@@ -185,6 +185,9 @@ where
                 &CaptureOptions {
                     region: None,
                     fullscreen: true,
+                    // Just the window being asked about; the whole screen
+                    // when there is none.
+                    focused_window: true,
                 },
             )
             .map_err(|e| ContextReadError::Capture(e.to_string()))?;
