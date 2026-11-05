@@ -58,8 +58,7 @@ Rectangle {
       IconImage {
         visible: !root.fromFriday && source != ""
         implicitSize: 16
-        source: root.notification && root.notification.appIcon
-          ? Quickshell.iconPath(root.notification.appIcon, true) : ""
+        source: root.notification ? AppIcons.source(root.notification.appIcon) : ""
         asynchronous: true
       }
       Label {

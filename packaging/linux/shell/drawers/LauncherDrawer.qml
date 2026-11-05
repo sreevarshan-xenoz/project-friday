@@ -125,7 +125,7 @@ FocusScope {
             implicitWidth: 26
             implicitHeight: 26
             readonly property bool isFriday: row.modelData.id === "friday" || row.modelData.name === "FRIDAY"
-            readonly property string iconSource: Quickshell.iconPath(row.modelData.icon, true)
+            readonly property string iconSource: AppIcons.source(row.modelData.icon)
             Orb { anchors.centerIn: parent; size: 22; visible: parent.isFriday }
             IconImage {
               anchors.fill: parent
