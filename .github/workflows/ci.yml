@@ -163,6 +163,9 @@ jobs:
             Get-ChildItem "$env:LOCALAPPDATA\friday\logs" -Filter *.log | ForEach-Object { Write-Host "--- $($_.Name)"; Get-Content $_.FullName -Tail 40 }
             throw "smoke test failed ($($p.ExitCode))"
           }
+      - name: End-to-end ask on the installed binaries (fake model, no network)
+        shell: bash
+        run: bash tests/e2e/ask.sh "$LOCALAPPDATA/Programs/FRIDAY"
       - name: Uninstall silently
         run: |
           $p = Start-Process msiexec -ArgumentList '/x', '${{ steps.build.outputs.msi }}', '/qn', '/l*v', "$env:RUNNER_TEMP\uninstall.log" -Wait -PassThru

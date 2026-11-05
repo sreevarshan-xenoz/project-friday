@@ -4,7 +4,8 @@
 The daemon is pointed at it as the llama.cpp provider (LLAMACPP_ENABLED=1,
 LLAMACPP_BASE_URL=http://127.0.0.1:<port>/v1). It answers deterministically:
   - the Investigation Engine's prompt gets {"requirements":[]} (no evidence),
-  - any other prompt gets "FAKE-MODEL-ANSWER: " plus the last user line,
+  - any other prompt (the answer step) gets "FAKE-MODEL-ANSWER: " plus the
+    user's request,
 and appends every request to the log file, so a test can prove which model
 calls a goal made and that its answer came from here.
 
@@ -51,8 +52,13 @@ class Handler(BaseHTTPRequestHandler):
         if "Investigation Engine" in text:
             content = '{"requirements":[]}'
         else:
-            last = [line for line in text.splitlines() if line.strip()][-1:] or [""]
-            content = f"{MARKER}: {last[0][:200]}"
+            # Echo the user's request (the line after "Request:" in the answer
+            # step's prompt), so a test can tell which question was answered.
+            lines = text.splitlines()
+            request = next((lines[i + 1] for i, l in enumerate(lines[:-1]) if l.strip() == "Request:"), "")
+            if not request:
+                request = ([l for l in lines if l.strip()][-1:] or [""])[0]
+            content = f"{MARKER}: {request[:200]}"
         self._send(200, {
             "id": "fake-1",
             "object": "chat.completion",
