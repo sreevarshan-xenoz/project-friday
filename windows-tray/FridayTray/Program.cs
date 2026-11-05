@@ -6,7 +6,8 @@ using FridayTray.Core;
 ///   (no arguments)  the tray app; one per user session
 ///   --smoke         headless check for CI and installers: start the daemon and
 ///                   host, wait until state.json reports "running" and
-///                   friday-ctl reaches the daemon, stop them, exit 0 (or 1)
+///                   friday-ctl reaches the daemon, stop them, exit 0 (or 1);
+///                   the steps go to %LOCALAPPDATA%\friday\logs\smoke.log
 /// </summary>
 internal static class Program
 {
@@ -27,7 +28,15 @@ internal static class Program
 
     private static async Task<int> Smoke(Install install)
     {
-        void Say(string s) => Console.WriteLine($"[smoke] {s}");
+        // A GUI-subsystem exe has no console, so the result also goes to a file.
+        Directory.CreateDirectory(install.Paths.LogDir);
+        var logFile = Path.Combine(install.Paths.LogDir, "smoke.log");
+        File.WriteAllText(logFile, "");
+        void Say(string s)
+        {
+            Console.WriteLine($"[smoke] {s}");
+            File.AppendAllText(logFile, $"[smoke] {s}{Environment.NewLine}");
+        }
         foreach (var exe in new[] { install.Daemon, install.Host, install.Ctl })
         {
             if (!File.Exists(exe)) { Say($"missing {exe}"); return 1; }
