@@ -44,7 +44,14 @@ if [[ "${SKIP_PACKAGE_BUILD:-false}" != "true" ]]; then
   echo "Building the FRIDAY package..."
   mkdir -p "$FRIDAY_REPO_DIR"
   find "$FRIDAY_REPO_DIR" -maxdepth 1 -name 'friday*' -type f -delete
-  (cd "$PROJECT_ROOT/packaging/arch" && PKGDEST="$FRIDAY_REPO_DIR" makepkg -f --noconfirm --syncdeps --nocheck)
+  # Build from a scratch copy of the recipe: makepkg writes the computed
+  # pkgver back into PKGBUILD and leaves src/ and pkg/ next to it, which would
+  # dirty the checkout (and block the next pull).
+  PKG_BUILD_DIR=$(mktemp -d)
+  cp "$PROJECT_ROOT/packaging/arch/PKGBUILD" "$PROJECT_ROOT/packaging/arch/friday.install" "$PKG_BUILD_DIR/"
+  (cd "$PKG_BUILD_DIR" && FRIDAY_REPO="file://$PROJECT_ROOT" PKGDEST="$FRIDAY_REPO_DIR" \
+    makepkg -f --noconfirm --syncdeps --nocheck)
+  rm -rf "$PKG_BUILD_DIR"
 fi
 FRIDAY_PKG=$(find "$FRIDAY_REPO_DIR" -maxdepth 1 -name 'friday-git-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1)
 if [[ -z "$FRIDAY_PKG" ]]; then
