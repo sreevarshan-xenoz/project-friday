@@ -367,21 +367,14 @@ case "${1:-}" in
     fi
 
     ok=true
-    if $use_screen; then
-      # Pressing the key and typing the question is the per-use consent;
-      # the daemon's ContextGate still enforces it.
-      notify "FRIDAY" "Looking at your screen: $goal"
-      out=$(friday-ctl context screen --yes --ask "$goal" 2>&1) || ok=false
-      summary=$(jq -s 'map(select(type == "object")) | last // {} | {result: .response, error: .error}' <<<"$out" 2>/dev/null || echo '{}')
-    else
-      # One notification that fills in as the answer streams (-p gives its
-      # id, -r replaces it); the final answer replaces it too.
-      nid=$(notify-send -a FRIDAY -p "FRIDAY" "Working on: $goal" 2>/dev/null || true)
-      [[ "$nid" =~ ^[0-9]+$ ]] || nid=""
+    # One notification that fills in as the answer streams (-p gives its id,
+    # -r replaces it); the final answer replaces it too. friday-ctl --stream
+    # prints the answer so far as {"partial": ...} lines.
+    stream_ctl() {
+      local outf ctl shown="" partial view
       outf=$(mktemp)
-      friday-ctl goal --wait "$request" --stream >"$outf" 2>&1 &
+      "$@" --stream >"$outf" 2>&1 &
       ctl=$!
-      shown=""
       while kill -0 "$ctl" 2>/dev/null; do
         sleep 0.4
         [ -n "$nid" ] || continue
@@ -395,6 +388,18 @@ case "${1:-}" in
       done
       wait "$ctl" || ok=false
       out=$(cat "$outf"); rm -f "$outf"
+    }
+    if $use_screen; then
+      # Pressing the key and typing the question is the per-use consent;
+      # the daemon's ContextGate still enforces it.
+      nid=$(notify-send -a FRIDAY -p "FRIDAY" "Looking at your screen: $goal" 2>/dev/null || true)
+      [[ "$nid" =~ ^[0-9]+$ ]] || nid=""
+      stream_ctl friday-ctl context screen --yes --ask "$goal"
+      summary=$(jq -s 'map(select(type == "object" and (has("partial") | not))) | last // {} | {result: .response, error: .error}' <<<"$out" 2>/dev/null || echo '{}')
+    else
+      nid=$(notify-send -a FRIDAY -p "FRIDAY" "Working on: $goal" 2>/dev/null || true)
+      [[ "$nid" =~ ^[0-9]+$ ]] || nid=""
+      stream_ctl friday-ctl goal --wait "$request"
       # The final {outcome,result,error} object; keep every line of the answer.
       summary=$(jq -s 'map(select(type == "object" and .outcome? != null)) | last // {}' <<<"$out" 2>/dev/null || echo '{}')
     fi
@@ -411,7 +416,9 @@ case "${1:-}" in
       case "$answer$out" in
         *FreeUsageLimitError*)
           answer="OpenCode Zen's free limit is used up for now. Try again later, or add your own key: friday setup-ai" ;;
-        *"no token found"*|*"cannot reach daemon"*|*"Connection refused"*)
+        # friday-ctl's own errors only: a provider's "Connection refused"
+        # (say, a local model server that isn't running) is not FRIDAY down.
+        *"no token found"*|*"cannot reach daemon"*)
           answer="FRIDAY isn't running, so I couldn't ask. Start it and try again."
           daemon_down=true ;;
         *"timed out after"*)

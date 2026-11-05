@@ -50,6 +50,18 @@ pub trait ProviderSeam: Send + Sync {
     /// Send a composed, gate-approved payload to the provider. Returns the
     /// provider's text response.
     async fn send(&self, payload: &str) -> Result<String, String>;
+
+    /// Like [`ProviderSeam::send`], reporting the answer so far as it
+    /// streams. A seam that can't stream reports the whole answer once.
+    async fn send_streaming(
+        &self,
+        payload: &str,
+        progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+    ) -> Result<String, String> {
+        let text = self.send(payload).await?;
+        progress(&text);
+        Ok(text)
+    }
 }
 
 /// Why an explicit Screen context read did not produce a provider response.
@@ -178,6 +190,15 @@ where
     /// the screen instead of describing it. The question travels inside the
     /// payload, so it goes through the same ContextGate / EgressGate.
     pub async fn ask(&self, question: Option<&str>) -> Result<String, ContextReadError> {
+        self.ask_streaming(question, &|_: &str| {}).await
+    }
+
+    /// [`ScreenReader::ask`], with the answer reported as it streams.
+    pub async fn ask_streaming(
+        &self,
+        question: Option<&str>,
+        progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+    ) -> Result<String, ContextReadError> {
         let captured = self
             .collector
             .capture(
@@ -185,6 +206,9 @@ where
                 &CaptureOptions {
                     region: None,
                     fullscreen: true,
+                    // Just the window being asked about; the whole screen
+                    // when there is none.
+                    focused_window: true,
                 },
             )
             .map_err(|e| ContextReadError::Capture(e.to_string()))?;
@@ -219,7 +243,7 @@ where
         };
 
         self.provider
-            .send(&composed)
+            .send_streaming(&composed, progress)
             .await
             .map_err(ContextReadError::Provider)
     }
@@ -301,11 +325,15 @@ impl FabricProviderSeam {
     }
 }
 
-#[async_trait]
-impl ProviderSeam for FabricProviderSeam {
-    async fn send(&self, payload: &str) -> Result<String, String> {
+impl FabricProviderSeam {
+    async fn route(
+        &self,
+        payload: &str,
+        progress: Option<&(dyn for<'s> Fn(&'s str) + Send + Sync)>,
+    ) -> Result<String, String> {
         if let Some(provider) = &self.provider {
-            return self
+            // A pinned provider's vision tier: answered whole.
+            let text = self
                 .fabric
                 .complete_tier(
                     provider,
@@ -313,7 +341,11 @@ impl ProviderSeam for FabricProviderSeam {
                     payload,
                     false,
                 )
-                .await;
+                .await?;
+            if let Some(p) = progress {
+                p(&text);
+            }
+            return Ok(text);
         }
         let needs_vision = friday_intelligence::RequestRequirements {
             vision: friday_intelligence::Requirement::Required,
@@ -332,14 +364,36 @@ impl ProviderSeam for FabricProviderSeam {
         vision.sort();
         vision.dedup();
         match screen_route(&self.fabric.user_providers(), &vision) {
-            ScreenRoute::Defaults => self.fabric.complete_with(&needs_vision, payload).await,
+            ScreenRoute::Defaults => match progress {
+                Some(p) => {
+                    self.fabric
+                        .complete_with_progress(&needs_vision, payload, p)
+                        .await
+                }
+                None => self.fabric.complete_with(&needs_vision, payload).await,
+            },
             ScreenRoute::Among(providers) => {
                 self.fabric
-                    .complete_with_among(&needs_vision, &providers, payload)
+                    .complete_with_among(&needs_vision, &providers, payload, progress)
                     .await
             }
             ScreenRoute::Refuse(why) => Err(why),
         }
+    }
+}
+
+#[async_trait]
+impl ProviderSeam for FabricProviderSeam {
+    async fn send(&self, payload: &str) -> Result<String, String> {
+        self.route(payload, None).await
+    }
+
+    async fn send_streaming(
+        &self,
+        payload: &str,
+        progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+    ) -> Result<String, String> {
+        self.route(payload, Some(progress)).await
     }
 }
 
@@ -348,6 +402,7 @@ mod tests {
     use super::*;
     use friday_context_collector::{FakeCommandRunner, ScreenRegion};
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
 
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\nreal-screen-bytes";
 
@@ -516,6 +571,51 @@ mod tests {
     }
 
     /// Region support is delegated to the collector; a fullscreen read uses `grim -`.
+    /// Answers in two steps through `send_streaming`.
+    #[derive(Clone)]
+    struct StreamingSeam;
+
+    #[async_trait]
+    impl ProviderSeam for StreamingSeam {
+        async fn send(&self, _payload: &str) -> Result<String, String> {
+            Ok("A terminal with an error.".to_string())
+        }
+        async fn send_streaming(
+            &self,
+            _payload: &str,
+            progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+        ) -> Result<String, String> {
+            progress("A terminal");
+            progress("A terminal with an error.");
+            Ok("A terminal with an error.".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn screen_answer_streams_through_the_reader() {
+        let reader = ScreenReader::new(fake_collector(), StreamingSeam, "fabric");
+        reader.consent();
+        let seen = Mutex::new(Vec::<String>::new());
+        let answer = reader
+            .ask_streaming(Some("what is this?"), &|t: &str| {
+                seen.lock().unwrap().push(t.to_string())
+            })
+            .await
+            .unwrap();
+        assert_eq!(answer, "A terminal with an error.");
+        assert_eq!(
+            seen.into_inner().unwrap(),
+            ["A terminal", "A terminal with an error."]
+        );
+        // Without consent nothing streams and nothing is sent.
+        let seen = Mutex::new(0);
+        let blocked = reader
+            .ask_streaming(None, &|_: &str| *seen.lock().unwrap() += 1)
+            .await;
+        assert!(blocked.is_err());
+        assert_eq!(seen.into_inner().unwrap(), 0);
+    }
+
     fn names(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
     }

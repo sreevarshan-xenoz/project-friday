@@ -1164,6 +1164,11 @@ pub struct InferenceFabric {
     /// `.fabric/provider_health.json` (cwd-relative). Chaos laboratory Phase 2
     /// scenarios point this at a controlled file so corruption is injectable.
     pub health_state_path: std::path::PathBuf,
+    /// Where the fabric keeps its files: request metrics and provider health
+    /// changes (and, by default, the health state above). `.fabric` in the
+    /// working directory unless the caller chooses (the daemon puts it next
+    /// to its state.json, so runs from different places never share it).
+    pub fabric_dir: std::path::PathBuf,
     /// The outbound-data gate (#12 egress policy): `None` = egress scanning
     /// is OFF (current behavior); `Some(gate)` = every routed prompt is
     /// scanned for registered secrets before it leaves to ANY provider, with
@@ -1190,6 +1195,7 @@ impl InferenceFabric {
             qualification_profiles: Arc::new(Mutex::new(HashMap::new())),
             request_timeout: None,
             health_state_path: std::path::PathBuf::from(".fabric/provider_health.json"),
+            fabric_dir: std::path::PathBuf::from(".fabric"),
             egress: None,
             automatic: std::collections::BTreeSet::new(),
         }
@@ -1770,11 +1776,11 @@ impl InferenceFabric {
             reason: reason.to_string(),
             decision: decision.to_string(),
         };
-        let _ = std::fs::create_dir_all(".fabric");
+        let _ = std::fs::create_dir_all(&self.fabric_dir);
         if let Ok(mut file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(".fabric/health-changes.jsonl")
+            .open(self.fabric_dir.join("health-changes.jsonl"))
         {
             use std::io::Write;
             if let Ok(line) = serde_json::to_string(&event) {
@@ -1886,11 +1892,11 @@ impl InferenceFabric {
 
     /// Logs request telemetry to a local JSON Lines file.
     pub fn log_metrics(&self, metrics: &InferenceMetrics) {
-        let _ = std::fs::create_dir_all(".fabric");
+        let _ = std::fs::create_dir_all(&self.fabric_dir);
         if let Ok(mut file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(".fabric/metrics.jsonl")
+            .open(self.fabric_dir.join("metrics.jsonl"))
         {
             use std::io::Write;
             if let Ok(line) = serde_json::to_string(metrics) {
@@ -1901,7 +1907,15 @@ impl InferenceFabric {
 
     /// Create default fabric configuration dynamically based on registry config file or env vars.
     pub fn default_from_env() -> Self {
+        Self::default_from_env_in(std::path::Path::new(".fabric"))
+    }
+
+    /// [`InferenceFabric::default_from_env`], keeping the fabric's files
+    /// (provider health, metrics) in `dir` instead of `./.fabric`.
+    pub fn default_from_env_in(dir: &std::path::Path) -> Self {
         let mut fabric = Self::new();
+        fabric.fabric_dir = dir.to_path_buf();
+        fabric.health_state_path = dir.join("provider_health.json");
         let security_vault = Arc::new(SecretsVault::new());
 
         // Attempt to load dynamic model registry from workspace config file
@@ -2826,6 +2840,39 @@ pub fn zhipu_models() -> Vec<ModelInfo> {
 /// candidate call so a hung or pathologically slow provider fails over (chaos
 /// laboratory Phase 1: hangs forever, extremely slow) instead of stalling the
 /// whole request. `None` preserves the pre-chaos wait-forever behavior.
+/// A streamed attempt under `deadline`: the deadline is how long the answer
+/// may go without new text (before the first words, or stalled midway), not
+/// how long the whole answer may take, so a long answer that keeps arriving
+/// is never cut off.
+async fn run_streaming_attempt(
+    deadline: Option<std::time::Duration>,
+    provider: &dyn Provider,
+    model_id: &str,
+    prompt: &str,
+    progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+) -> Result<String, String> {
+    let last = std::sync::Mutex::new(std::time::Instant::now());
+    let report = |text: &str| {
+        *last.lock().unwrap() = std::time::Instant::now();
+        progress(text);
+    };
+    let attempt = provider.complete_streaming(model_id, prompt, false, &report);
+    let Some(d) = deadline else {
+        return attempt.await;
+    };
+    tokio::pin!(attempt);
+    loop {
+        let quiet = last.lock().unwrap().elapsed();
+        if quiet >= d {
+            return Err(format!("request timed out: no answer for {:?}", d));
+        }
+        tokio::select! {
+            res = &mut attempt => return res,
+            _ = tokio::time::sleep(d - quiet) => {}
+        }
+    }
+}
+
 async fn run_attempt(
     deadline: Option<std::time::Duration>,
     fut: impl std::future::Future<Output = Result<String, String>>,
@@ -2985,11 +3032,14 @@ impl InferenceFabric {
 
     /// [`InferenceFabric::complete_with`] restricted to `providers`: nothing
     /// is sent to any other provider, even when every allowed one fails.
+    /// With `progress`, the answer streams (as in
+    /// [`InferenceFabric::complete_with_progress`]).
     pub async fn complete_with_among(
         &self,
         req: &RequestRequirements,
         providers: &[String],
         prompt: &str,
+        progress: Option<&(dyn for<'s> Fn(&'s str) + Send + Sync)>,
     ) -> Result<String, String> {
         let request_id = uuid::Uuid::new_v4().to_string();
         let candidates = self
@@ -2997,7 +3047,7 @@ impl InferenceFabric {
             .into_iter()
             .filter(|(m, _)| providers.contains(&m.provider))
             .collect();
-        self.complete_candidates(&request_id, candidates, prompt)
+        self.complete_candidates_reporting(&request_id, candidates, prompt, progress)
             .await
     }
 
@@ -3105,17 +3155,20 @@ impl InferenceFabric {
                     return Err(e);
                 }
             };
-            let attempt = async {
-                match progress {
-                    Some(p) => {
-                        provider
-                            .complete_streaming(&model.id, &prompt, false, p)
-                            .await
-                    }
-                    None => provider.complete(&model.id, &prompt, false).await,
+            let attempt = match progress {
+                Some(p) => {
+                    run_streaming_attempt(self.request_timeout, provider, &model.id, &prompt, p)
+                        .await
+                }
+                None => {
+                    run_attempt(
+                        self.request_timeout,
+                        provider.complete(&model.id, &prompt, false),
+                    )
+                    .await
                 }
             };
-            match run_attempt(self.request_timeout, attempt).await {
+            match attempt {
                 Ok(response) => {
                     let latency_ms = start.elapsed().as_millis() as u64;
                     tracing::info!(
@@ -4418,6 +4471,71 @@ mod tests {
         assert_eq!(seen.into_inner().unwrap(), ["whole answer"]);
     }
 
+    /// Streams `chunks` pieces, `gap` apart, after `first` of silence.
+    struct PacedProvider {
+        first: std::time::Duration,
+        gap: std::time::Duration,
+        chunks: usize,
+    }
+
+    #[async_trait]
+    impl Provider for PacedProvider {
+        fn name(&self) -> &str {
+            "paced"
+        }
+        async fn complete(&self, _m: &str, _p: &str, _j: bool) -> Result<String, String> {
+            Ok("x".repeat(self.chunks))
+        }
+        async fn complete_streaming(
+            &self,
+            _m: &str,
+            _p: &str,
+            _j: bool,
+            progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+        ) -> Result<String, String> {
+            tokio::time::sleep(self.first).await;
+            let mut text = String::new();
+            for _ in 0..self.chunks {
+                text.push('x');
+                progress(&text);
+                tokio::time::sleep(self.gap).await;
+            }
+            Ok(text)
+        }
+        async fn check_health(&self) -> bool {
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn a_long_streamed_answer_is_not_cut_off_by_the_attempt_deadline() {
+        let ms = std::time::Duration::from_millis;
+        // 10 pieces 40 ms apart: 400 ms in all, with a 150 ms deadline.
+        let steady = PacedProvider {
+            first: ms(20),
+            gap: ms(40),
+            chunks: 10,
+        };
+        let out = run_streaming_attempt(Some(ms(150)), &steady, "m", "p", &|_: &str| {}).await;
+        assert_eq!(out.unwrap(), "xxxxxxxxxx");
+        // Silence past the deadline before the first words: timed out.
+        let silent = PacedProvider {
+            first: ms(400),
+            gap: ms(1),
+            chunks: 1,
+        };
+        let out = run_streaming_attempt(Some(ms(150)), &silent, "m", "p", &|_: &str| {}).await;
+        assert!(out.unwrap_err().contains("timed out"));
+        // A stall midway: timed out too.
+        let stalls = PacedProvider {
+            first: ms(10),
+            gap: ms(400),
+            chunks: 3,
+        };
+        let out = run_streaming_attempt(Some(ms(150)), &stalls, "m", "p", &|_: &str| {}).await;
+        assert!(out.unwrap_err().contains("timed out"));
+    }
+
     #[test]
     fn automatic_providers_are_not_the_users_choice() {
         let mut fabric = InferenceFabric::new();
@@ -4449,7 +4567,9 @@ mod tests {
             ..RequestRequirements::default()
         };
         let only_local = ["llamacpp".to_string()];
-        let out = fabric.complete_with_among(&req, &only_local, "p").await;
+        let out = fabric
+            .complete_with_among(&req, &only_local, "p", None)
+            .await;
         assert!(
             out.is_err(),
             "the allowed provider failed, so must the request: {out:?}"

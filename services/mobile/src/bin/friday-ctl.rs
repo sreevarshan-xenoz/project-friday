@@ -11,7 +11,8 @@
 //!   friday-ctl goal --wait "open chromium"   (block until the goal finishes;
 //!                                            exit status = its outcome)
 //!   friday-ctl goal --wait --stream "..."    (meanwhile print the answer so
-//!                                            far: {"partial": ...} lines)
+//!                                            far: {"partial": ...} lines;
+//!                                            also for context screen)
 //!   friday-ctl system-info
 //!   friday-ctl cancel                  (cancel the goal in flight)
 //!   friday-ctl context screen          (interactive consent)
@@ -170,7 +171,7 @@ async fn main() -> std::process::ExitCode {
     };
 
     if sub == "context" {
-        return run_context(&addr_str, &cmd_token, question.as_deref()).await;
+        return run_context(&addr_str, &cmd_token, question.as_deref(), stream).await;
     }
     if sub == "cancel" {
         // Cancel the goal the daemon reports as in flight (state.json
@@ -183,6 +184,8 @@ async fn main() -> std::process::ExitCode {
             &addr_str,
             friday_mobile::method::TASK_CANCEL,
             serde_json::json!({ "token": cmd_token, "task_id": task_id }),
+            Duration::from_secs(10),
+            false,
         )
         .await;
     }
@@ -216,10 +219,7 @@ async fn wait_for_goal(
 ) -> std::process::ExitCode {
     use std::io::Write;
     let mut shown = String::new();
-    let limit = std::env::var("FRIDAY_CTL_WAIT_SECS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(180);
+    let limit = wait_secs();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(limit);
     while tokio::time::Instant::now() < deadline {
         let state = std::fs::read_to_string(state_path)
@@ -336,27 +336,68 @@ async fn run(addr: &str, token: &str, sub: &str, args: Vec<String>) -> std::proc
             return std::process::ExitCode::FAILURE;
         }
     };
-    send_command(addr, &method, params).await
+    send_command(addr, &method, params, Duration::from_secs(10), false).await
 }
 
 /// R5-2-5-3: send the Screen `context.read`. `main` has already presented
 /// disclosure and collected explicit consent; this only runs after the user
 /// answered `y`, so it sends with a per-use `consent: true`.
-async fn run_context(addr: &str, token: &str, question: Option<&str>) -> std::process::ExitCode {
+/// The model answers the screenshot before the result comes back, so this
+/// waits as long as `goal --wait` does (`FRIDAY_CTL_WAIT_SECS`, default 180 s),
+/// not a plain command's 10 s; `stream` prints the answer as it arrives.
+async fn run_context(
+    addr: &str,
+    token: &str,
+    question: Option<&str>,
+    stream: bool,
+) -> std::process::ExitCode {
     let mut params = serde_json::json!({ "token": token, "consent": true });
     if let Some(q) = question {
         params["question"] = serde_json::Value::String(q.to_string());
     }
-    send_command(addr, friday_mobile::method::CONTEXT_READ, params).await
+    let wait = Duration::from_secs(wait_secs());
+    send_command(
+        addr,
+        friday_mobile::method::CONTEXT_READ,
+        params,
+        wait,
+        stream,
+    )
+    .await
+}
+
+/// How long to wait for an answer: `FRIDAY_CTL_WAIT_SECS`, default 180 s.
+fn wait_secs() -> u64 {
+    std::env::var("FRIDAY_CTL_WAIT_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(180)
+}
+
+/// The partial answer a `context.progress` event carries for command `id`.
+fn context_progress(msg: &ServerMessage, id: &str) -> Option<String> {
+    match msg {
+        ServerMessage::Event { topic, payload }
+            if topic == "context.progress" && payload["id"] == id =>
+        {
+            payload["partial"].as_str().map(str::to_string)
+        }
+        _ => None,
+    }
 }
 
 /// Connect to the daemon, send one command, and await the matching
-/// `CommandResult`. Any welcome/events are consumed silently beforehand.
+/// `CommandResult` for up to `wait`. Other messages are skipped, except that
+/// with `stream` this command's `context.progress` answers are printed as
+/// `{"partial": ...}` lines as they arrive.
 async fn send_command(
     addr: &str,
     method: &str,
     params: serde_json::Value,
+    wait: Duration,
+    stream: bool,
 ) -> std::process::ExitCode {
+    use std::io::Write;
     let ws_url = format!("ws://{addr}");
     let (mut ws, _) = match tokio_tungstenite::connect_async(&ws_url).await {
         Ok(v) => v,
@@ -381,7 +422,7 @@ async fn send_command(
         .await;
 
     // Loop until we see our CommandResult (skipping welcome/events).
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let deadline = tokio::time::Instant::now() + wait;
     loop {
         if tokio::time::Instant::now() > deadline {
             eprintln!("timed out waiting for command result");
@@ -396,7 +437,17 @@ async fn send_command(
             _ => continue,
         };
         if let Message::Text(t) = msg {
-            if let Ok(ServerMessage::CommandResult { id, ok, result }) = decode_server(&t) {
+            let decoded = decode_server(&t);
+            if let (true, Ok(m)) = (stream, &decoded) {
+                if let Some(partial) = context_progress(m, &want_id) {
+                    let line = serde_json::json!({ "partial": partial });
+                    let mut out = std::io::stdout().lock();
+                    let _ = writeln!(out, "{line}");
+                    let _ = out.flush();
+                    continue;
+                }
+            }
+            if let Ok(ServerMessage::CommandResult { id, ok, result }) = decoded {
                 if id == want_id {
                     let json = serde_json::to_string_pretty(&result).unwrap_or_default();
                     println!("{json}");
@@ -421,6 +472,24 @@ mod tests {
             "goal": goal, "active": active, "completed_ms": completed_ms,
             "outcome": "completed", "result": "done", "error": null
         }})
+    }
+
+    #[test]
+    fn context_progress_is_only_this_commands() {
+        let ev = |id: &str| ServerMessage::Event {
+            topic: "context.progress".to_string(),
+            payload: json!({"id": id, "partial": "The screen sh"}),
+        };
+        assert_eq!(
+            context_progress(&ev("c1"), "c1").as_deref(),
+            Some("The screen sh")
+        );
+        assert_eq!(context_progress(&ev("other"), "c1"), None);
+        let other_topic = ServerMessage::Event {
+            topic: "goal.progress".to_string(),
+            payload: json!({"id": "c1", "partial": "x"}),
+        };
+        assert_eq!(context_progress(&other_topic, "c1"), None);
     }
 
     #[test]

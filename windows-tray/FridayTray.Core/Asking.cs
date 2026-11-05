@@ -31,7 +31,7 @@ public static partial class Asking
     public static string[] CtlArguments(AskKind kind, string question, string request) => kind == AskKind.Screen
         // Pressing the key and typing the question is the per-use consent;
         // the daemon's ContextGate still enforces it.
-        ? ["context", "screen", "--yes", "--ask", question]
+        ? ["context", "screen", "--yes", "--ask", question, "--stream"]
         : ["goal", "--wait", request];
 
     /// <summary>
@@ -56,6 +56,26 @@ public static partial class Asking
             return string.IsNullOrWhiteSpace(text) ? null : text;
         }
         catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The answer so far from one line of <c>friday-ctl --stream</c> output
+    /// (<c>{"partial": "..."}</c>), or null for any other line.
+    /// </summary>
+    public static string? PartialLine(string line)
+    {
+        if (!line.StartsWith("{\"partial\"", StringComparison.Ordinal))
+            return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(line);
+            var text = doc.RootElement.GetProperty("partial").GetString();
+            return string.IsNullOrWhiteSpace(text) ? null : text;
+        }
+        catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
         {
             return null;
         }
@@ -111,7 +131,8 @@ public static partial class Asking
         string? result, error;
         if (kind == AskKind.Screen)
         {
-            var last = objects.LastOrDefault();
+            // The result, not one of the {"partial": ...} lines before it.
+            var last = objects.LastOrDefault(o => !o.TryGetProperty("partial", out _));
             result = last.ValueKind == JsonValueKind.Object ? Str(last, "response") : null;
             error = last.ValueKind == JsonValueKind.Object ? Str(last, "error") : null;
         }
@@ -129,8 +150,9 @@ public static partial class Asking
         var all = raw + output;
         if (all.Contains("FreeUsageLimitError"))
             return new AskOutcome(false, "OpenCode Zen's free limit is used up for now. Try again later, or add your own key (tray menu: AI provider).", raw, false);
-        if (all.Contains("no token found") || all.Contains("cannot reach daemon") || all.Contains("Connection refused")
-            || all.Contains("actively refused"))
+        // friday-ctl's own errors only: a provider's "connection refused"
+        // (a local model server that isn't running) is not FRIDAY down.
+        if (all.Contains("no token found") || all.Contains("cannot reach daemon"))
             return new AskOutcome(false, "FRIDAY isn't running, so I couldn't ask. Start it and try again.", raw, true);
         if (all.Contains("timed out after"))
             return new AskOutcome(false, "This is taking longer than expected. FRIDAY may still be working on it: check the tray icon, or open the answers later.", raw, false);

@@ -26,6 +26,9 @@ public static class Program
         // Windows counterpart of `grim -`); not the pipe service.
         if (args.Length > 0 && args[0] == "--screenshot")
             return OperatingSystem.IsWindows() ? Screenshot.Run(args[1..]) : 2;
+        // The focused window's bounds, so a screen ask can capture just it.
+        if (args.Length > 0 && args[0] == "--active-window")
+            return OperatingSystem.IsWindows() ? ActiveWindow.Run() : 2;
 
         var session = Environment.GetEnvironmentVariable("FRIDAY_SESSION") ?? "default";
         var pipeName = $"friday-windows-{session}";

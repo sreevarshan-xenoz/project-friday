@@ -25,6 +25,7 @@ printf 'friday-ctl %q\n' "\$3" >> "$LOG"
 echo '{"accepted":true}'
 if [[ "\$3" == *nodaemon* ]]; then echo "no token found; daemon not running at /x/state.json (is friday-linux-daemon up?)" >&2; exit 1; fi
 if [[ "\$3" == *slowgoal* ]]; then echo '{"accepted":true}'; echo "timed out after 180s waiting for the goal to finish" >&2; exit 1; fi
+if [[ "\$3" == *refused* ]]; then printf '{\n "outcome": "failed",\n "error": "Couldn'"'"'t reach your AI provider. Check your internet connection (or that your local model server is running)."\n}\n'; echo "llamacpp: tcp connect error: Connection refused" >&2; exit 1; fi
 if [[ "\$3" == *limit* ]]; then printf '{\n "outcome": "failed",\n "error": "provider opencode: 429 FreeUsageLimitError"\n}\n'; exit 1; fi
 if [[ "\$3" == *fail* ]]; then printf '{\n "outcome": "failed",\n "error": "network unreachable"\n}\n'; exit 1; fi
 printf '{\n "outcome": "completed",\n "result": "Line one.\\\\nLine two.\\\\nLast line."\n}\n'
@@ -81,6 +82,10 @@ contains "daemon down: offers Start FRIDAY" "$(cat "$LOG")" "start=Start FRIDAY"
 contains "Start FRIDAY restarts the daemon" "$(cat "$LOG")" "systemctl --user restart friday-linux-daemon"
 bash "$F" ask "slowgoal test"; sleep 0.3
 contains "timeout: explains it may still be running" "$(cat "$state/last-answer.md")" "taking longer than expected"
+: >"$LOG"; bash "$F" ask "model refused test"; sleep 0.3
+contains "model server down: says so plainly" "$(cat "$state/last-answer.md")" "Couldn't reach your AI provider"
+if grep -q "start=Start FRIDAY" "$LOG"; then fail "a model server refusing was taken for FRIDAY being down"
+else pass "a model server refusing is not FRIDAY being down"; fi
 bash "$F" ask "this will fail"; sleep 0.3
 contains "failure is critical with the error" "$(cat "$LOG")" "-u critical"
 contains "failure shows the reason" "$(cat "$LOG")" "network unreachable"

@@ -57,15 +57,19 @@ def reply_for(prompt: str, images: list[str] | None = None) -> str:
 
 
 def describe_image(url: str) -> str:
-    """ "<bytes>-byte <mime>" for a data: URI, else "remote image"."""
+    """ "<bytes>-byte <W>x<H> <mime>" for a data: URI (the size from the PNG
+    header), else "remote image"."""
     match = re.match(r"data:([^;,]+);base64,(.*)$", url, re.S)
     if not match:
         return "remote image"
     try:
-        size = len(base64.b64decode(match.group(2), validate=True))
+        data = base64.b64decode(match.group(2), validate=True)
     except ValueError:
         return f"undecodable {match.group(1)}"
-    return f"{size}-byte {match.group(1)}"
+    dims = ""
+    if data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) >= 24:
+        dims = f"{int.from_bytes(data[16:20], 'big')}x{int.from_bytes(data[20:24], 'big')} "
+    return f"{len(data)}-byte {dims}{match.group(1)}"
 
 
 def prompt_of(request: dict[str, Any]) -> tuple[str, list[str]]:

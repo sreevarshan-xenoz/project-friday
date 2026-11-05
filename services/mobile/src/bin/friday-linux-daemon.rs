@@ -212,7 +212,14 @@ async fn main() {
 
     // Model-backed investigation + heuristic fallback. Bounded request avoids
     // a hung-local-model stall (same fabric tuning as the mobile daemon).
-    let mut fabric = InferenceFabric::default_from_env();
+    // Provider health and metrics live next to state.json (not in whatever
+    // directory the daemon happened to start in, where another run's open
+    // circuits would be inherited).
+    let fabric_dir = state_path
+        .parent()
+        .map(|d| d.join("fabric"))
+        .unwrap_or_else(|| std::path::PathBuf::from(".fabric"));
+    let mut fabric = InferenceFabric::default_from_env_in(&fabric_dir);
     fabric.request_timeout = Some(Duration::from_secs(15));
     // OpenCode Zen (the keyless default) rotates its free models: swap the
     // static fallback for the live free lineup. Bounded so a slow or offline
@@ -376,14 +383,36 @@ async fn main() {
                     .get("question")
                     .and_then(|v| v.as_str())
                     .map(str::to_string);
-                let (ok, result) = match context_reader.ask(question.as_deref()).await {
+                // The answer streams to the asking client as
+                // `context.progress` {id, partial} events (at most every
+                // 150 ms); the final CommandResult follows.
+                let progress_out = result_out.clone();
+                let progress_id = cmd.id.clone();
+                let last_sent = std::sync::Mutex::new(None::<std::time::Instant>);
+                let progress = move |partial: &str| {
+                    let mut last = last_sent.lock().unwrap();
+                    if last.is_some_and(|t| t.elapsed() < Duration::from_millis(150)) {
+                        return;
+                    }
+                    *last = Some(std::time::Instant::now());
+                    let _ = progress_out.send(friday_mobile::protocol::ServerMessage::Event {
+                        topic: "context.progress".to_string(),
+                        payload: serde_json::json!({ "id": progress_id, "partial": partial }),
+                    });
+                };
+                let asked = context_reader
+                    .ask_streaming(question.as_deref(), &progress)
+                    .await;
+                let (ok, result) = match asked {
                     Ok(response) => {
                         tracing::info!("[context.read] screen delivered to provider");
                         (true, serde_json::json!({ "response": response }))
                     }
                     Err(e) => {
+                        // The raw error stays in this log; the person gets a sentence.
                         tracing::warn!("[context.read] {e}");
-                        (false, serde_json::json!({ "error": e.to_string() }))
+                        let plain = friday_mobile::failures::plain_screen_error(&e);
+                        (false, serde_json::json!({ "error": plain }))
                     }
                 };
                 let mut st = state_cmd_lock.lock().await;

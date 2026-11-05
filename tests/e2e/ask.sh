@@ -82,5 +82,29 @@ else fail "expected an answer call per question (got $answers)"; fi
 if grep -q "panicked" "$W/daemon.log"; then fail "daemon panicked:"; grep -A1 panicked "$W/daemon.log" | head -4
 else pass "no panics"; fi
 
+# No model reachable at all (the local one down, and every remote one behind
+# a dead proxy): the ask fails and says why in plain words, instead of
+# "completing" with an empty memory lookup.
+echo "no model reachable"
+kill $DAEMON 2>/dev/null; wait $DAEMON 2>/dev/null || true
+rm -f "$W/state.json"
+down=(env -u HTTPS_PROXY -u HTTP_PROXY -u https_proxy -u http_proxy -u ALL_PROXY -u all_proxy
+  HTTPS_PROXY=http://127.0.0.1:9 NO_PROXY=127.0.0.1,localhost
+  FRIDAY_STATE_FILE="$W/state.json" FRIDAY_MEMORY_DIR="$W/memory2" FRIDAY_LISTEN=127.0.0.1:0
+  LLAMACPP_ENABLED=1 LLAMACPP_BASE_URL="http://127.0.0.1:9/v1")
+"${down[@]}" "$DAEMON_BIN" >"$W/daemon-down.log" 2>&1 &
+DAEMON=$!
+for _ in $(seq 120); do grep -q '"status": *"running"' "$W/state.json" 2>/dev/null && break; sleep 0.5; done
+out=$("${down[@]}" timeout 120 "$CTL_BIN" goal --wait "What does the Rust error E0308 mean?" 2>&1) || true
+error=$("$PY" -c 'import json,sys
+d=json.JSONDecoder(); s=sys.stdin.read(); i=0; last={}
+while (j := s.find("{", i)) >= 0:
+    try: o, n = d.raw_decode(s[j:]); i = j + n
+    except ValueError: i = j + 1; continue
+    if isinstance(o, dict) and "outcome" in o: last = o
+print(last.get("outcome", ""), "|", last.get("error") or "")' <<<"$out")
+if [[ "$error" == "failed | "*"reach"* && "$error" != *"HTTP request failed"* ]]; then pass "fails plainly: ${error#failed | }"
+else fail "expected a plain failure about reaching the AI provider, got: $error"; fi
+
 if (( fails > 0 )); then echo "e2e ask: $fails failure(s) (logs in $W)"; exit 1; fi
 echo "e2e ask: ok"

@@ -12,6 +12,7 @@ pub mod bridge;
 pub mod commands;
 pub mod context_read;
 pub mod error;
+pub mod failures;
 pub mod goal_runner;
 pub mod probe;
 pub mod protocol;
