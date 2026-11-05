@@ -9,9 +9,9 @@ import Quickshell.Io
 // The default palette is FRIDAY's own ("Ember on Ink"): warm near-black
 // surfaces, an ember accent for FRIDAY and anything it is doing, and a cool
 // signal teal for system state. With "palette": "omarchy" in shell.json the
-// colours follow the active Omarchy theme (~/.config/omarchy/current/theme/
-// colors.toml) and switch live with `omarchy-theme-set`; shapes, type and
-// motion stay FRIDAY's.
+// colours follow the active Omarchy theme ($XDG_STATE_HOME/omarchy/current/
+// theme/colors.toml, where omarchy-theme-set links it) and switch live;
+// shapes, type and motion stay FRIDAY's.
 Singleton {
   id: root
 
@@ -98,9 +98,9 @@ Singleton {
   readonly property int slow: 420
   readonly property int easing: Easing.OutCubic
 
-  // ~/.config/omarchy/current/theme/colors.toml: flat `key = "value"` lines.
+  // Omarchy's colors.toml: flat `key = "value"` lines.
   FileView {
-    path: (Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config")
+    path: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state")
       + "/omarchy/current/theme/colors.toml"
     watchChanges: true
     printErrors: false
