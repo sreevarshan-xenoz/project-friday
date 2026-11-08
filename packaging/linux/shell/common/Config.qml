@@ -9,8 +9,12 @@ import Quickshell.Io
 // default instead of erroring. Edits apply live.
 //
 //   {
-//     "palette": "friday",      // "friday" (FRIDAY's own colours) or "omarchy"
-//                               // (follow the current Omarchy theme)
+//     "style": "ember",         // "ember" (bar flush with the top edge),
+//                               // "island" (three floating pills) or "dock"
+//                               // (a floating bar at the bottom)
+//     "palette": "ember",       // FRIDAY's own: "ember", "frost", "moss",
+//                               // "dawn" (light); or "omarchy" (follow the
+//                               // current Omarchy theme). "friday" = "ember".
 //     "clock24h": true,
 //     "workspaces": 5,          // workspace slots always shown in the bar
 //     "notificationTimeout": 6  // seconds; FRIDAY's own answers stay longer
@@ -23,7 +27,10 @@ Singleton {
 
   property var settings: ({})
 
-  readonly property string palette: pick("palette", "friday")
+  readonly property var styles: ["ember", "island", "dock"]
+  readonly property var palettes: ["ember", "frost", "moss", "dawn", "omarchy"]
+  readonly property string style: styles.includes(pick("style", "ember")) ? pick("style", "ember") : "ember"
+  readonly property string palette: pick("palette", "ember") === "friday" ? "ember" : pick("palette", "ember")
   readonly property bool clock24h: pick("clock24h", true) === true
   readonly property int workspaces: Math.max(1, Math.min(10, Number(pick("workspaces", 5)) || 5))
   readonly property int notificationTimeout: Math.max(2, Number(pick("notificationTimeout", 6)) || 6)
@@ -33,10 +40,20 @@ Singleton {
     return (v === undefined || v === null) ? fallback : v;
   }
 
+  // Change one setting (the Look picker): merged into shell.json, which
+  // every accessor re-reads, so it applies live.
+  function set(key, value) {
+    const next = Object.assign({}, root.settings);
+    next[key] = value;
+    root.settings = next;
+    file.setText(JSON.stringify(next, null, 2) + "\n");
+  }
+
   FileView {
     id: file
     path: root.path
     watchChanges: true
+    atomicWrites: true
     printErrors: false
     onFileChanged: reload()
     onLoaded: {
@@ -49,5 +66,14 @@ Singleton {
       }
     }
     onLoadFailed: root.settings = {}
+  }
+
+  // A watch on a file that doesn't exist yet never fires when it appears, and
+  // an atomic replace (friday shell style …) can drop it: re-read now and then.
+  Timer {
+    interval: 2000
+    running: true
+    repeat: true
+    onTriggered: file.reload()
   }
 }

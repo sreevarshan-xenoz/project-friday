@@ -77,6 +77,29 @@ for d in friday control calendar launcher session; do
   fi
 done
 timeout 10 qs -p "$FS" ipc call shell close >/dev/null 2>&1 || true
+# Every style with a palette, switched live through shell.json as the Look
+# picker does: the bar, the FRIDAY drawer and the control drawer each time.
+mkdir -p "$HOME/.config/friday"
+# The bar must really show the look: enough of the palette's background in
+# the half of the screen the style puts the bar in (png_colour.py).
+declare -A look_bg=([ember]=0d0f13 [frost]=0e141b [moss]=0f120e [dawn]=f7f3ee)
+for look in island:frost dock:moss ember:dawn island:dawn dock:ember; do
+  style=${look%%:*} palette=${look##*:}
+  printf '{ "style": "%s", "palette": "%s" }\n' "$style" "$palette" >"$HOME/.config/friday/shell.json"
+  sleep 3; grim "$W/look-${look/:/-}-bar.png" 2>/dev/null || true
+  half=top; [[ $style == dock ]] && half=bottom
+  if [[ -s "$W/look-${look/:/-}-bar.png" ]] && need python3; then
+    n=$(python3 "$(dirname "$0")/png_colour.py" "$W/look-${look/:/-}-bar.png" "#${look_bg[$palette]}" "$half" 2>/dev/null || echo 0)
+    if (( n > 3000 )); then pass "$style/$palette: the bar shows it (${n} px of #${look_bg[$palette]} at the $half)"
+    else fail "$style/$palette: the bar doesn't show it (${n} px of #${look_bg[$palette]} at the $half)"; fi
+  fi
+  for d in friday control; do
+    timeout 10 qs -p "$FS" ipc call shell open "$d" >/dev/null 2>&1 && sleep 1.5 \
+      && grim "$W/look-${look/:/-}-$d.png" 2>/dev/null || true
+  done
+  timeout 10 qs -p "$FS" ipc call shell close >/dev/null 2>&1 || true
+  kill -0 "$QS" 2>/dev/null || { fail "FRIDAY Shell exited switching to ${look} (see $W/friday.log)"; break; }
+done
 timeout 10 qs -p "$FS" ipc call notifications dismissAll >/dev/null 2>&1 \
   && pass "notifications IPC answers" || fail "notifications IPC did not answer"
 # A malformed settings file must not break the shell.
@@ -84,7 +107,7 @@ mkdir -p "$HOME/.config/friday"; echo '{ not json' >"$HOME/.config/friday/shell.
 check_log "FRIDAY Shell" "$W/friday.log" strict
 if kill -0 "$QS" 2>/dev/null; then pass "FRIDAY Shell still running"; else fail "FRIDAY Shell exited (see $W/friday.log)"; fi
 kill "$QS" 2>/dev/null; wait "$QS" 2>/dev/null; QS=""
-[[ -s "$W/friday-bar.png" ]] && pass "screenshots: $W/friday-*.png"
+[[ -s "$W/friday-bar.png" ]] && pass "screenshots: $W/friday-*.png, $W/look-*.png"
 
 echo "Omarchy shell under the FRIDAY OS shell.json"
 OM="$AIROOTFS/usr/share/omarchy"

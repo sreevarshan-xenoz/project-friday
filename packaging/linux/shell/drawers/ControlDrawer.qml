@@ -93,6 +93,46 @@ FocusScope {
       onMoved: v => Brightness.set(v)
     }
 
+    // Look: the shell's style and palette, applied live (shell.json).
+    ColumnLayout {
+      Layout.fillWidth: true
+      spacing: 6
+      Label {
+        text: "Look"
+        font.pixelSize: Theme.fontS
+        font.weight: Font.DemiBold
+        color: Theme.subtext
+      }
+      Flow {
+        Layout.fillWidth: true
+        spacing: 6
+        Repeater {
+          model: Config.styles
+          Chip {
+            required property string modelData
+            text: modelData.charAt(0).toUpperCase() + modelData.slice(1)
+            primary: Config.style === modelData
+            implicitHeight: 28
+            onClicked: Config.set("style", modelData)
+          }
+        }
+      }
+      Flow {
+        Layout.fillWidth: true
+        spacing: 6
+        Repeater {
+          model: Config.palettes
+          Chip {
+            required property string modelData
+            text: modelData.charAt(0).toUpperCase() + modelData.slice(1)
+            primary: Config.palette === modelData
+            implicitHeight: 28
+            onClicked: Config.set("palette", modelData)
+          }
+        }
+      }
+    }
+
     // Now playing.
     Rectangle {
       Layout.fillWidth: true
