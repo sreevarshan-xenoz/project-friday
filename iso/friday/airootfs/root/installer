@@ -14,6 +14,7 @@ PASSWORD="${PASSWORD:-friday}"
 TIMEZONE="${TIMEZONE:-UTC}"
 THEME="${THEME:-FRIDAY Shell (Ember, made for FRIDAY)}"
 SHELL_STYLE="${SHELL_STYLE:-Ember (bar flush with the top edge)}"
+SESSION="${SESSION:-Hyprland (tiling, the FRIDAY OS default)}"
 SDDM_THEME="${SDDM_THEME:-SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)}"
 AUTO_REBOOT="${AUTO_REBOOT:-false}"
 # Skip the SDDM password screen at boot. Off by default: with it on, anyone
@@ -189,7 +190,7 @@ pacstrap_with_retry /mnt base linux linux-firmware sudo zsh hyprland sddm uwsm q
   matugen hypridle hyprlock fuzzel cliphist imagemagick libqalculate hyprsunset hyprpaper \
   qt6-5compat qt6-imageformats qt6-multimedia qt6-multimedia-ffmpeg qt6-virtualkeyboard qt6-quicktimeline qt6-svg qt6-wayland \
   qt6-positioning ttf-material-symbols-variable \
-  kirigami kdialog syntax-highlighting chromium libnotify
+  kirigami kdialog syntax-highlighting chromium libnotify niri xwayland-satellite
 live_status_stop
 
 genfstab -U /mnt >> /mnt/etc/fstab
@@ -452,14 +453,27 @@ EOF_SDDM_THEME
 cp -p /mnt/etc/sddm.conf.d/10-theme.conf /mnt/etc/sddm.conf
 
 rm -f /mnt/etc/sddm.conf.d/autologin.conf
+# The desktop to start: the chosen window manager (niri only with FRIDAY
+# Shell; the Dots-Hyprland desktop is Hyprland's). The other stays at the
+# login screen.
+SESSION_FILE=hyprland.desktop
+if [[ "$SESSION" == niri* && "$THEME" != *"Dots-Hyprland"* ]]; then SESSION_FILE=niri.desktop; fi
 if [[ "$AUTOLOGIN" == "true" ]]; then
   cat << EOF_SDDM_AUTO > /mnt/etc/sddm.conf.d/autologin.conf
 [Autologin]
 User=$USERNAME
-Session=hyprland.desktop
+Session=$SESSION_FILE
 Relogin=false
 EOF_SDDM_AUTO
 fi
+# SDDM preselects the last session: start it at the chosen one.
+mkdir -p /mnt/var/lib/sddm
+cat << EOF_SDDM_STATE > /mnt/var/lib/sddm/state.conf
+[Last]
+Session=/usr/share/wayland-sessions/$SESSION_FILE
+User=$USERNAME
+EOF_SDDM_STATE
+arch-chroot /mnt chown -R sddm:sddm /var/lib/sddm 2>/dev/null || true
 
 mkdir -p /mnt/var/lib/omarchy/provisioning
 cat << EOF_INFO > /mnt/var/lib/omarchy/provisioning/install-info.json

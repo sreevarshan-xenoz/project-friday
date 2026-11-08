@@ -89,6 +89,12 @@ for opt in "Island (floating pills along the top)" "Dock (floating bar along the
 done
 
 echo "FRIDAY OS on niri"
+grep -qF '"niri (scrollable tiling' "$AIROOTFS/root/configurator" \
+  && pass "installer offers niri" || fail "installer no longer offers niri"
+grep -qE 'pacstrap_with_retry .*' "$AIROOTFS/root/installer" && grep -A8 'pacstrap_with_retry /mnt base' "$AIROOTFS/root/installer" | grep -q 'niri xwayland-satellite' \
+  && pass "installer installs niri and xwayland-satellite" || fail "installer does not install niri and xwayland-satellite"
+grep -q 'SESSION_FILE=niri.desktop' "$AIROOTFS/root/installer" \
+  && pass "choosing niri starts niri (autologin and SDDM's preselected session)" || fail "choosing niri does not change the session"
 NIRI_CONF="$AIROOTFS/etc/skel/.config/niri/config.kdl"
 expect "the new user gets a default niri look" test -s "$AIROOTFS/etc/skel/.config/friday/niri-look.kdl"
 if need niri jq; then

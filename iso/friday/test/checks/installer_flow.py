@@ -42,6 +42,8 @@ STEPS = [
     (2, ENTER),  # keymap search
     (3, ENTER),  # desktop colours: FRIDAY Shell (default)
     (2, DOWN),
+    (1, ENTER),  # window manager: niri
+    (2, DOWN),
     (1, ENTER),  # style: Island
     (2, ENTER),  # login theme
     (6, ENTER),  # AI: OpenCode Zen (first, default)
@@ -117,6 +119,7 @@ for key, want in [
     ("autologin", "false"),
     ("encrypt", "true"),
     ("interactive", "1"),
+    ("session", "niri"),
     ("style", "Island"),
 ]:
     checks[f"spec {key}={want}"] = f"{key}={want}" in env
