@@ -49,6 +49,33 @@ if [[ -r /usr/share/systemd/kbd-model-map ]]; then
     || fail "systemd's map: uk $(sys uk), de-latin1 $(sys de-latin1), dvorak $(sys dvorak)"
 else skip "systemd's kbd-model-map (not installed)"; fi
 
+echo "keyboard: the installer applies it"
+# The installer's keyboard block, run against a scratch root.
+mkdir -p "$K/root/etc"
+awk '/^# Keyboard:/ {on = 1} on {print} on && /^EOF_XKB$/ {exit}' "$ROOT/installer" \
+  | sed "s#/mnt/#$K/root/#g" >"$K/apply.sh"
+if [[ -s "$K/apply.sh" ]] && KEYBOARD=uk bash -c "source '$ROOT/friday-tui.sh'; source '$K/apply.sh'"; then
+  vc=$(cat "$K/root/etc/vconsole.conf" 2>/dev/null)
+  contains "vconsole.conf keeps the console keymap" "$vc" "KEYMAP=uk"
+  contains "vconsole.conf has the desktop layout" "$vc" "XKBLAYOUT=gb"
+  contains "00-keyboard.conf has it for localed (niri, login screen)" \
+    "$(cat "$K/root/etc/X11/xorg.conf.d/00-keyboard.conf" 2>/dev/null)" 'Option "XkbLayout" "gb"'
+  if need lua; then
+    # Omarchy's input.lua (FRIDAY OS's Hyprland input) reading that vconsole.conf.
+    got=$(lua -e "
+      local real = io.open
+      io.open = function(p, m) if p == '/etc/vconsole.conf' then p = '$K/root/etc/vconsole.conf' end return real(p, m) end
+      hl = { config = function(t) print(t.input.kb_layout .. '/' .. t.input.kb_variant) end }
+      dofile('$AIROOTFS/usr/share/omarchy/default/hypr/input.lua')" 2>&1 | head -1)
+    [[ "$got" == "gb/" ]] && pass "Hyprland (Omarchy's input.lua) types gb" || fail "Hyprland's layout: $got"
+  else skip "Hyprland's layout (needs lua)"; fi
+else fail "the installer's keyboard block runs"; fi
+kb_line=$(grep -n '^# Keyboard:' "$ROOT/installer" | cut -d: -f1)
+initrd_line=$(grep -n 'mkinitcpio -P' "$ROOT/installer" | head -1 | cut -d: -f1)
+[[ -n "$kb_line" && -n "$initrd_line" ]] && (( kb_line < initrd_line )) \
+  && pass "the keymap is set before the initramfs (disk-unlock prompt)" \
+  || fail "vconsole.conf must be written before mkinitcpio -P"
+
 echo "disk encryption: mkinitcpio hook"
 C="$WORK/crypt"; mkdir -p "$C"
 printf 'MODULES=()\nHOOKS=(base systemd autodetect microcode modconf kms keyboard sd-vconsole block filesystems fsck)\n' >"$C/sd.conf"
