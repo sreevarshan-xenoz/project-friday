@@ -88,6 +88,35 @@ for opt in "Island (floating pills along the top)" "Dock (floating bar along the
   grep -qF "$opt" "$AIROOTFS/root/configurator" && pass "installer offers: $opt" || fail "installer no longer offers: $opt"
 done
 
+echo "FRIDAY OS on niri"
+NIRI_CONF="$AIROOTFS/etc/skel/.config/niri/config.kdl"
+expect "the new user gets a default niri look" test -s "$AIROOTFS/etc/skel/.config/friday/niri-look.kdl"
+if need niri jq; then
+  for look in default island:frost dock:omarchy; do
+    H=$(mktemp -d /tmp/friday-niri.XXXXXX)
+    mkdir -p "$H/.config/niri" "$H/.config/friday"
+    # The packaged FRIDAY snippet from this tree instead of /usr/share.
+    sed "s|include \"/usr/share/friday/niri/friday.kdl\"|include \"$REPO_ROOT/packaging/linux/niri/friday.kdl\"|" \
+      "$NIRI_CONF" >"$H/.config/niri/config.kdl"
+    if [[ $look == default ]]; then
+      cp "$AIROOTFS/etc/skel/.config/friday/niri-look.kdl" "$H/.config/friday/"
+    else
+      printf '{ "style": "%s", "palette": "%s" }\n' "${look%%:*}" "${look##*:}" >"$H/.config/friday/shell.json"
+      HOME="$H" XDG_CONFIG_HOME="" HYPRLAND_INSTANCE_SIGNATURE="" \
+        bash -c 'source <(sed -n "/^shell_window_look() {/,/^}/p" "$1"); shell_window_look' _ "$F_CLI"
+    fi
+    out=$(niri validate -c "$H/.config/niri/config.kdl" 2>&1)
+    if grep -q "config is valid" <<<"$out"; then pass "niri accepts FRIDAY OS's config with the ${look/:/\/} look"
+    else fail "niri rejects FRIDAY OS's config with the ${look/:/\/} look:"; grep -v DEBUG <<<"$out" | tail -n 6 | sed 's/^/      /'; fi
+    rm -rf "$H"
+  done
+  grep -q 'spawn-at-startup "friday" "shell"' "$REPO_ROOT/packaging/linux/niri/friday.kdl" \
+    && pass "niri starts FRIDAY Shell" || fail "niri does not start FRIDAY Shell"
+  for key in 'Mod+Y ' 'Mod+Alt+Y ' 'Mod+Ctrl+Y '; do
+    grep -q "^ *$key" "$REPO_ROOT/packaging/linux/niri/friday.kdl" && pass "niri binds $key" || fail "niri does not bind $key"
+  done
+else skip "niri config validation (needs niri, jq)"; fi
+
 echo "FRIDAY comes from its package, not loose files in airootfs"
 # pacman refuses to install over files it doesn't own, so these must not be in
 # airootfs (the friday-git package installs them).
