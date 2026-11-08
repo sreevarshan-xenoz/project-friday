@@ -6,36 +6,75 @@ import qs.common
 import qs.components
 import qs.services
 
-// The bar: flush with the top edge, flowing into the screen through two
-// concave corners. Left: launcher and workspaces. Centre: FRIDAY and the
-// clock. Right: tray, media, the status pill and power.
+// The bar. Left: launcher and workspaces. Centre: FRIDAY and the clock.
+// Right: tray, media, the status pill and power. Where it sits and its shape
+// follow the style (Theme.style):
+//   ember   flush with the top edge, flowing into the screen through two
+//           concave corners
+//   island  the three groups as separate floating pills along the top
+//   dock    one floating bar along the bottom
 PanelWindow {
   id: bar
 
   required property ShellScreen modelData
   screen: modelData
 
-  anchors { top: true; left: true; right: true }
-  implicitHeight: Theme.barHeight + Theme.fillet
-  exclusiveZone: Theme.barHeight
+  readonly property bool island: Theme.style === "island"
+
+  anchors { top: !Theme.barAtBottom; bottom: Theme.barAtBottom; left: true; right: true }
+  implicitHeight: Theme.floating ? Theme.barReach : Theme.barHeight + Theme.fillet
+  exclusiveZone: Theme.floating ? Theme.barReach : Theme.barHeight
   color: "transparent"
   WlrLayershell.namespace: "friday-bar"
   WlrLayershell.layer: WlrLayer.Top
 
-  // Only the bar strip takes input; the corners below it are decoration.
-  mask: Region { item: strip }
+  // Only the bar takes input: the strip, or in the island style just its
+  // pills, so clicks between them reach the windows below.
+  mask: Region {
+    item: bar.island ? null : strip
+    Region { item: bar.island ? leftPill : null }
+    Region { item: bar.island ? centrePill : null }
+    Region { item: bar.island ? rightPill : null }
+  }
 
   Rectangle {
     id: strip
-    anchors { top: parent.top; left: parent.left; right: parent.right }
+    anchors {
+      top: Theme.barAtBottom ? undefined : parent.top
+      bottom: Theme.barAtBottom ? parent.bottom : undefined
+      left: parent.left
+      right: parent.right
+      margins: Theme.barInset
+    }
     height: Theme.barHeight
-    color: Theme.bg
+    radius: Theme.floating ? height / 2 : 0
+    color: bar.island ? "transparent" : Theme.bg
+    border.width: Theme.style === "dock" ? 1 : 0
+    border.color: Theme.outline
   }
-  Corner { leftSide: true; anchors.top: strip.bottom; anchors.left: parent.left }
-  Corner { leftSide: false; anchors.top: strip.bottom; anchors.right: parent.right }
+  Corner { visible: !Theme.floating; leftSide: true; anchors.top: strip.bottom; anchors.left: parent.left }
+  Corner { visible: !Theme.floating; leftSide: false; anchors.top: strip.bottom; anchors.right: parent.right }
+
+  // The island style's pills: one behind each group.
+  component Pill: Rectangle {
+    required property Item group
+    visible: bar.island
+    x: group.x - 10
+    y: strip.y
+    width: group.width + 20
+    height: strip.height
+    radius: height / 2
+    color: Theme.bg
+    border.width: 1
+    border.color: Theme.outline
+  }
+  Pill { id: leftPill; group: leftGroup }
+  Pill { id: centrePill; group: centre }
+  Pill { id: rightPill; group: rightGroup }
 
   // Left.
   RowLayout {
+    id: leftGroup
     anchors { left: strip.left; leftMargin: 10; verticalCenter: strip.verticalCenter }
     spacing: 10
 
@@ -114,6 +153,7 @@ PanelWindow {
 
   // Right.
   RowLayout {
+    id: rightGroup
     anchors { right: strip.right; rightMargin: 10; verticalCenter: strip.verticalCenter }
     spacing: 12
 

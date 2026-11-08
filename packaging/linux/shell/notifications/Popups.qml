@@ -20,7 +20,11 @@ PanelWindow {
     && !((Shell.drawer === "control" || Shell.drawer === "session") && Shell.screen === modelData.name)
 
   anchors { top: true; right: true }
-  margins { top: Theme.barHeight + Theme.gap; right: Theme.gap + 4 }
+  // Below the bar, or from the top edge when the bar is a bottom dock.
+  margins {
+    top: Theme.barAtBottom ? Theme.gap + 4 : Theme.barReach + Theme.gap
+    right: Math.max(Theme.gap + 4, Theme.barInset)
+  }
   implicitWidth: 380
   implicitHeight: Math.max(1, stack.implicitHeight)
   exclusionMode: ExclusionMode.Ignore

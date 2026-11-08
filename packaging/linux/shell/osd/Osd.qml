@@ -19,7 +19,8 @@ PanelWindow {
   visible: shown || pill.opacity > 0.01
 
   anchors.bottom: true
-  margins.bottom: 64
+  // Clear of a bottom dock.
+  margins.bottom: 64 + (Theme.barAtBottom ? Theme.barReach : 0)
   implicitWidth: 260
   implicitHeight: 48
   exclusionMode: ExclusionMode.Ignore

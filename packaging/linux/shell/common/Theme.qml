@@ -4,14 +4,22 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 
-// FRIDAY Shell's look: one palette, one type scale, one motion curve.
+// FRIDAY Shell's look: a palette, a style, one type scale, one motion curve.
 //
-// The default palette is FRIDAY's own ("Ember on Ink"): warm near-black
-// surfaces, an ember accent for FRIDAY and anything it is doing, and a cool
-// signal teal for system state. With "palette": "omarchy" in shell.json the
-// colours follow the active Omarchy theme ($XDG_STATE_HOME/omarchy/current/
-// theme/colors.toml, where omarchy-theme-set links it) and switch live;
-// shapes, type and motion stay FRIDAY's.
+// Palettes (shell.json "palette"): FRIDAY's own, each with an accent for
+// FRIDAY and anything it is doing and a signal colour for system state:
+//   ember  warm near-black, ember accent, teal signal (the default)
+//   frost  cool slate, ice-blue accent, lilac signal
+//   moss   dark olive, lichen-green accent, amber signal
+//   dawn   light: warm paper, rust accent, deep-teal signal
+// or "omarchy": follow the active Omarchy theme ($XDG_STATE_HOME/omarchy/
+// current/theme/colors.toml, where omarchy-theme-set links it), live.
+//
+// Styles (shell.json "style") change where the bar sits and its shape:
+//   ember   flush with the top edge, flowing into the screen through
+//           concave corners; drawers grow out of it
+//   island  three floating pills along the top; drawers are floating cards
+//   dock    one floating bar along the bottom; drawers rise from it
 Singleton {
   id: root
 
@@ -32,12 +40,66 @@ Singleton {
     ok: "#8bd17c"
   })
 
+  readonly property var frost: ({
+    bg: "#0e141b",
+    surface: "#151d27",
+    raised: "#1c2633",
+    overlay: "#243142",
+    outline: "#2c3a4d",
+    text: "#e6eef6",
+    subtext: "#9fb0c2",
+    faint: "#64748a",
+    accent: "#7cc4ff",
+    onAccent: "#04121f",
+    signal: "#b29cff",
+    error: "#ff6b7a",
+    warn: "#f2c86b",
+    ok: "#7fd6a4"
+  })
+
+  readonly property var moss: ({
+    bg: "#0f120e",
+    surface: "#171b15",
+    raised: "#1f251c",
+    overlay: "#283024",
+    outline: "#323b2d",
+    text: "#e9ecdf",
+    subtext: "#a7ad99",
+    faint: "#6b715f",
+    accent: "#a8d46f",
+    onAccent: "#11190a",
+    signal: "#e0b458",
+    error: "#ef6a5a",
+    warn: "#e8c35a",
+    ok: "#8fd18a"
+  })
+
+  readonly property var dawn: ({
+    bg: "#f7f3ee",
+    surface: "#efe9e2",
+    raised: "#e6dfd6",
+    overlay: "#dcd3c8",
+    outline: "#d2c7ba",
+    text: "#2a2521",
+    subtext: "#5e554d",
+    faint: "#8d837a",
+    accent: "#d9622b",
+    onAccent: "#fff7f0",
+    signal: "#1f8f7a",
+    error: "#c8364a",
+    warn: "#b98100",
+    ok: "#3f8f3a"
+  })
+
+  readonly property var own: ({ ember: ember, frost: frost, moss: moss, dawn: dawn })
+  readonly property var palette: own[Config.palette] || ember
+
   property var omarchy: ({})
   readonly property bool followOmarchy: Config.palette === "omarchy" && omarchy.background !== undefined
 
   function c(key) {
     if (!root.followOmarchy)
-      return root.ember[key];
+      return root.palette[key];
     const o = root.omarchy;
     const map = {
       bg: o.background,
@@ -55,7 +117,7 @@ Singleton {
       warn: o.yellow,
       ok: o.green
     };
-    return map[key] || root.ember[key];
+    return map[key] || root.palette[key];
   }
 
   readonly property color bg: c("bg")
@@ -83,8 +145,17 @@ Singleton {
   readonly property int fontL: 16
   readonly property int fontXL: 22
 
-  // Geometry. The bar is flush with the top edge and flows into the screen
-  // through two concave corners; drawers grow out of it the same way.
+  // Style. `floating` styles keep the bar off the screen edge by `barInset`.
+  readonly property string style: Config.style
+  readonly property bool floating: style !== "ember"
+  readonly property bool barAtBottom: style === "dock"
+  readonly property int barInset: floating ? 10 : 0
+  // How far from its screen edge the bar's far side is (windows start there).
+  readonly property int barReach: barHeight + barInset
+
+  // Geometry. In the ember style the bar is flush with the top edge and
+  // flows into the screen through two concave corners; drawers grow out of
+  // it the same way.
   readonly property int barHeight: 36
   readonly property int fillet: 16
   readonly property int radius: 20
