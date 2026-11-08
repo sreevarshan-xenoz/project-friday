@@ -2,17 +2,30 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Hyprland
+import Quickshell.WindowManager
 import qs.common
 import qs.components
 
 // Workspace slots for this bar's monitor: the active one is a wide ember
 // bar, occupied ones a solid dot, empty ones a faint dot. Click to go there,
-// scroll to step. Hyprland only; elsewhere the row is hidden.
+// scroll to step. On Hyprland from its own IPC (fixed slots); elsewhere (niri,
+// and any compositor with the ext-workspace protocol) from Quickshell's
+// WindowManager, which lists the workspaces the compositor has. Hidden when
+// neither knows any.
 Item {
   id: root
 
   required property ShellScreen screen
   readonly property bool hyprland: !!Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")
+
+  // Not Hyprland: the compositor's workspaces for this screen, as it orders them.
+  readonly property var wsets: {
+    if (hyprland)
+      return [];
+    const proj = WindowManager.screenProjection(root.screen);
+    const list = (proj ? proj.windowsets : WindowManager.windowsets) || [];
+    return Array.from(list).filter(w => w && w.shouldDisplay);
+  }
   readonly property HyprlandMonitor monitor: hyprland ? Hyprland.monitorFor(screen) : null
   readonly property int activeId: monitor && monitor.activeWorkspace ? monitor.activeWorkspace.id : 1
 
@@ -30,12 +43,20 @@ Item {
     return Math.max(n, activeId);
   }
 
-  visible: hyprland
+  visible: hyprland || wsets.length > 0
   implicitWidth: row.implicitWidth + 16
   implicitHeight: 24
 
   function go(target) {
     Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.focus({ workspace = \"" + target + "\" })"]);
+  }
+
+  // Not Hyprland: step to the neighbouring workspace.
+  function step(by) {
+    const i = wsets.findIndex(w => w.active);
+    const next = wsets[Math.max(0, Math.min(wsets.length - 1, i + by))];
+    if (next && next.canActivate)
+      next.activate();
   }
 
   Rectangle {
@@ -50,13 +71,15 @@ Item {
     spacing: 5
 
     Repeater {
-      model: root.slots
+      model: root.hyprland ? root.slots : root.wsets.length
       Item {
         id: slot
         required property int index
         readonly property int wsId: index + 1
-        readonly property bool active: wsId === root.activeId
-        readonly property bool used: root.occupied[wsId] === true
+        readonly property var wset: root.hyprland ? null : root.wsets[index]
+        readonly property bool active: root.hyprland ? wsId === root.activeId : !!(wset && wset.active)
+        // The compositor lists only workspaces that exist, so all are in use.
+        readonly property bool used: root.hyprland ? root.occupied[wsId] === true : true
 
         implicitWidth: active ? 22 : 8
         implicitHeight: 8
@@ -72,7 +95,12 @@ Item {
           anchors.fill: parent
           anchors.margins: -4
           cursorShape: Qt.PointingHandCursor
-          onClicked: root.go(String(slot.wsId))
+          onClicked: {
+            if (root.hyprland)
+              root.go(String(slot.wsId));
+            else if (slot.wset && slot.wset.canActivate)
+              slot.wset.activate();
+          }
         }
       }
     }
@@ -81,6 +109,6 @@ Item {
   MouseArea {
     anchors.fill: parent
     acceptedButtons: Qt.NoButton
-    onWheel: w => root.go(w.angleDelta.y > 0 ? "e-1" : "e+1")
+    onWheel: w => root.hyprland ? root.go(w.angleDelta.y > 0 ? "e-1" : "e+1") : root.step(w.angleDelta.y > 0 ? -1 : 1)
   }
 }

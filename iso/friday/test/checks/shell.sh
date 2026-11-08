@@ -69,6 +69,13 @@ sleep "${SHELL_WAIT:-12}"
 if notify; then pass "notification accepted by FRIDAY Shell"; sleep 2
 else skip "notification popup (no D-Bus session; run under dbus-run-session)"; fi
 grim "$W/friday-bar.png" 2>/dev/null || true
+# Workspaces off Hyprland come from the ext-workspace protocol (as on niri):
+# sway has it, so its active workspace shows as an ember pill by the launcher.
+if [[ -s "$W/friday-bar.png" ]] && need python3; then
+  n=$(python3 "$(dirname "$0")/png_colour.py" "$W/friday-bar.png" "#ff8f4c" "36,6,120,30" 2>/dev/null || echo 0)
+  if (( n > 40 )); then pass "workspaces show off Hyprland (ext-workspace, as on niri)"
+  else fail "no workspace pill off Hyprland ($n ember px by the launcher)"; fi
+fi
 for d in friday control calendar launcher session; do
   if timeout 10 qs -p "$FS" ipc call shell open "$d" >/dev/null 2>&1; then
     sleep 1.5; grim "$W/friday-$d.png" 2>/dev/null || true; pass "drawer opens over IPC: $d"

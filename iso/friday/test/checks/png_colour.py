@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Count a colour's pixels in the top or bottom half of a PNG (grim output).
+"""Count a colour's pixels in part of a PNG (grim output).
 
-Usage: png_colour.py <file.png> <#rrggbb> <top|bottom>   prints the count
+Usage: png_colour.py <file.png> <#rrggbb> <top|bottom|x0,y0,x1,y1>
+  prints how many pixels of that colour are in the top or bottom half, or in
+  the box from (x0, y0) up to (x1, y1)
 
 Standard library only (the checks run on a bare Arch image): 8-bit RGB or
 RGBA, non-interlaced, the PNG filters 0-4. A pixel counts when each channel
@@ -60,14 +62,21 @@ def pixels(path: str) -> tuple[int, int, int, bytes]:
     return width, height, bpp, bytes(out)
 
 
-def count(path: str, colour: str, half: str) -> int:
+def count(path: str, colour: str, area: str) -> int:
     width, height, bpp, px = pixels(path)
     want = bytes.fromhex(colour.lstrip("#"))
-    rows = range(0, height // 2) if half == "top" else range(height // 2, height)
+    x0, x1 = 0, width
+    if area == "top":
+        y0, y1 = 0, height // 2
+    elif area == "bottom":
+        y0, y1 = height // 2, height
+    else:
+        x0, y0, x1, y1 = (int(v) for v in area.split(","))
+        x1, y1 = min(x1, width), min(y1, height)
     n = 0
-    for y in rows:
+    for y in range(y0, y1):
         base = y * width * bpp
-        for x in range(width):
+        for x in range(x0, x1):
             o = base + x * bpp
             if all(abs(px[o + k] - want[k]) <= 3 for k in range(3)):
                 n += 1
