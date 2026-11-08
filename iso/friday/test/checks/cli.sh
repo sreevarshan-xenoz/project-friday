@@ -178,6 +178,18 @@ QS_CRASHES=1 timeout 20 env FRIDAY_SHELL_DIR="$SH" XDG_RUNTIME_DIR="$SH/run" WAY
 contains "no restart once the session is gone" "$(grep -c qs-start "$LOG")" "1"
 "${sh_env[@]}" bash "$F" shell control
 contains "drawer names go to IPC" "$(cat "$LOG")" "qs-ipc -p $SH ipc call shell toggle control"
+conf="$HOME/.config/friday/shell.json"; rm -f "$conf"
+"${sh_env[@]}" bash "$F" shell style island >/dev/null
+"${sh_env[@]}" bash "$F" shell palette dawn >/dev/null
+if [[ "$(jq -c . "$conf" 2>/dev/null)" == '{"style":"island","palette":"dawn"}' ]]; then pass "style and palette merge into shell.json"
+else fail "shell.json after style/palette: $(cat "$conf" 2>/dev/null)"; fi
+contains "style lists the choices, marking the current one" "$("${sh_env[@]}" bash "$F" shell style)" "* island"
+if "${sh_env[@]}" bash "$F" shell style neon >/dev/null 2>&1; then fail "an unknown style was accepted"
+else pass "an unknown style is refused"; fi
+echo '{ "palette": "friday", "clock24h": false }' >"$conf"
+"${sh_env[@]}" bash "$F" shell style dock >/dev/null
+contains "other settings are kept" "$(cat "$conf")" '"clock24h": false'
+contains "the old \"friday\" palette lists as ember" "$("${sh_env[@]}" bash "$F" shell palette)" "* ember"
 rm -f "$S/quickshell"
 
 echo "doctor"
