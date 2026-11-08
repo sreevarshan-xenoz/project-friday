@@ -1,0 +1,13 @@
+// FRIDAY on niri: the FRIDAY keys and FRIDAY Shell. Add to your config.kdl:
+//   include "/usr/share/friday/niri/friday.kdl"
+// Same keys as on Hyprland (Mod is Super; Alt when niri runs nested).
+
+spawn-at-startup "friday" "shell"
+
+binds {
+    Mod+Y hotkey-overlay-title="FRIDAY: Ask" { spawn "friday" "ask"; }
+    Mod+Alt+Y hotkey-overlay-title="FRIDAY: Ask about selected text" { spawn "friday" "ask" "--selection"; }
+    Mod+Ctrl+Y hotkey-overlay-title="FRIDAY: Ask about the screen" { spawn "friday" "ask" "--screen"; }
+    Mod+A hotkey-overlay-title="FRIDAY Shell: FRIDAY" { spawn "friday" "shell" "friday"; }
+    Mod+N hotkey-overlay-title="FRIDAY Shell: Controls and notifications" { spawn "friday" "shell" "control"; }
+}

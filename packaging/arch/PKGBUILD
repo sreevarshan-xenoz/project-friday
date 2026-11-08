@@ -20,6 +20,7 @@ makedepends=('cargo' 'git')
 optdepends=(
   'grim: ask about the screen (friday ask --screen)'
   'hyprland: the bundled keybindings and window context'
+  'niri: the bundled keybindings (/usr/share/friday/niri/friday.kdl)'
   'foot: open full answers in a terminal'
   'gum: interactive provider picker in friday setup-ai'
   'quickshell: FRIDAY Shell (friday shell)'
@@ -78,6 +79,7 @@ package() {
 
   install -Dm644 "$lin/friday.desktop" -t "$pkgdir/usr/share/applications"
   install -Dm644 "$lin/hyprland/friday.lua" -t "$pkgdir/usr/share/friday/hyprland"
+  install -Dm644 "$lin/niri/friday.kdl" -t "$pkgdir/usr/share/friday/niri"
   # FRIDAY Shell (Quickshell config), run with `friday shell`.
   find "$lin/shell" -type f -name '*.qml' -print0 | while IFS= read -r -d '' f; do
     install -Dm644 "$f" "$pkgdir/usr/share/friday/shell/${f#"$lin/shell/"}"
