@@ -113,7 +113,12 @@ FocusScope {
             text: modelData.charAt(0).toUpperCase() + modelData.slice(1)
             primary: Config.style === modelData
             implicitHeight: 28
-            onClicked: Config.set("style", modelData)
+            // At once here; `friday shell style` also matches Hyprland's
+            // window gaps, rounding and borders to it.
+            onClicked: {
+              Config.set("style", modelData);
+              Quickshell.execDetached(["friday", "shell", "style", modelData]);
+            }
           }
         }
       }
@@ -127,7 +132,12 @@ FocusScope {
             text: modelData.charAt(0).toUpperCase() + modelData.slice(1)
             primary: Config.palette === modelData
             implicitHeight: 28
-            onClicked: Config.set("palette", modelData)
+            // At once here; `friday shell palette` also matches Hyprland's
+            // window gaps, rounding and borders to it.
+            onClicked: {
+              Config.set("palette", modelData);
+              Quickshell.execDetached(["friday", "shell", "palette", modelData]);
+            }
           }
         }
       }
