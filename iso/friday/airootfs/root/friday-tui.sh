@@ -137,6 +137,25 @@ friday_keymaps() {
 }
 friday_valid_keymap() { [[ -n "$1" ]] && friday_keymaps | grep -qxF -- "$1"; }
 
+# The desktop (XKB) layout for a console keymap, as systemd maps them
+# (localectl does the same): prints "layout model variant options", "-" for
+# none. Tries the keymap, then its base name (de-latin1-nodeadkeys -> de);
+# a keymap that is itself an XKB layout name stands for that layout; else us.
+#   friday_xkb_for_keymap <keymap> [kbd-model-map] [xkb base.lst]
+friday_xkb_for_keymap() {
+  local km=$1 map=${2:-/usr/share/systemd/kbd-model-map} lst=${3:-/usr/share/X11/xkb/rules/base.lst}
+  local try line
+  for try in "$km" "${km%%-*}"; do
+    line=$(awk -v k="$try" '!/^#/ && $1 == k { print $2, $3, $4, $5; exit }' "$map" 2>/dev/null)
+    if [[ -n "$line" ]]; then echo "$line"; return; fi
+  done
+  try=${km%%-*}
+  if [[ -n "$try" ]] && awk '/^! layout/ {on = 1; next} /^!/ {on = 0} on {print $1}' "$lst" 2>/dev/null | grep -qxF -- "$try"; then
+    echo "$try pc105 - -"; return
+  fi
+  echo "us pc105 - -"
+}
+
 # Add the LUKS unlock hook to an mkinitcpio.conf before `filesystems` and print
 # the kernel parameters that go with it. systemd-based initramfs (current Arch
 # default) uses sd-encrypt + rd.luks.name; busybox-based uses encrypt +

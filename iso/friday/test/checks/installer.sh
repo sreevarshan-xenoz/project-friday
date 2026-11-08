@@ -26,6 +26,29 @@ refuse "api key with space"          friday_valid_api_key "has space key"
 expect "timezone list never empty"   test -n "$(friday_timezones | head -n1)"
 expect "keymap list never empty"     test -n "$(friday_keymaps | head -n1)"
 
+echo "keyboard: console keymap to desktop layout"
+K="$WORK/kbd"; mkdir -p "$K"
+printf '# consolelayout\txlayout\txmodel\txvariant\txoptions\n' >"$K/map"
+printf 'uk\t\tgb\tpc105\t-\tterminate:ctrl_alt_bksp\n' >>"$K/map"
+printf 'dvorak\t\tus\tpc105\tdvorak\tterminate:ctrl_alt_bksp\n' >>"$K/map"
+printf 'de\t\tde\tpc105\t-\t-\n' >>"$K/map"
+printf 'ru\t\tru,us\tpc105\t-\tgrp:shifts_toggle\n' >>"$K/map"
+printf '! model\n  pc105  Generic\n\n! layout\n  us  English\n  pl  Polish\n\n! variant\n  zz  us: x\n' >"$K/base.lst"
+xkb() { friday_xkb_for_keymap "$1" "$K/map" "$K/base.lst"; }
+[[ $(xkb uk) == "gb pc105 - terminate:ctrl_alt_bksp" ]] && pass "uk types as gb" || fail "uk: $(xkb uk)"
+[[ $(xkb dvorak) == "us pc105 dvorak terminate:ctrl_alt_bksp" ]] && pass "dvorak keeps its variant" || fail "dvorak: $(xkb dvorak)"
+[[ $(xkb de-latin1-nodeadkeys) == "de pc105 - -" ]] && pass "a suffixed keymap falls back to its base" || fail "de-latin1-nodeadkeys: $(xkb de-latin1-nodeadkeys)"
+[[ $(xkb ru) == "ru,us pc105 - grp:shifts_toggle" ]] && pass "ru keeps a Latin layout to switch to" || fail "ru: $(xkb ru)"
+[[ $(xkb pl2) == "us pc105 - -" && $(xkb pl) == "pl pc105 - -" ]] && pass "an XKB layout name stands for itself" || fail "pl: $(xkb pl)"
+[[ $(xkb zz) == "us pc105 - -" ]] && pass "an unknown keymap types as us" || fail "zz: $(xkb zz)"
+[[ $(friday_xkb_for_keymap uk /nonexistent /nonexistent) == "us pc105 - -" ]] && pass "no map files: us" || fail "no map files"
+if [[ -r /usr/share/systemd/kbd-model-map ]]; then
+  sys() { friday_xkb_for_keymap "$1" | cut -d' ' -f1,3; }
+  [[ $(sys uk) == "gb -" && $(sys de-latin1) == "de -" && $(sys dvorak) == "us dvorak" ]] \
+    && pass "systemd's map: uk gb, de-latin1 de, dvorak us/dvorak" \
+    || fail "systemd's map: uk $(sys uk), de-latin1 $(sys de-latin1), dvorak $(sys dvorak)"
+else skip "systemd's kbd-model-map (not installed)"; fi
+
 echo "disk encryption: mkinitcpio hook"
 C="$WORK/crypt"; mkdir -p "$C"
 printf 'MODULES=()\nHOOKS=(base systemd autodetect microcode modconf kms keyboard sd-vconsole block filesystems fsck)\n' >"$C/sd.conf"
