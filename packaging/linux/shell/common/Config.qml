@@ -50,4 +50,13 @@ Singleton {
     }
     onLoadFailed: root.settings = {}
   }
+
+  // A watch on a file that doesn't exist yet never fires when it appears, and
+  // an atomic replace (friday shell style …) can drop it: re-read now and then.
+  Timer {
+    interval: 2000
+    running: true
+    repeat: true
+    onTriggered: file.reload()
+  }
 }
