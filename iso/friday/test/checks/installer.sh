@@ -70,6 +70,16 @@ if [[ -s "$K/apply.sh" ]] && KEYBOARD=uk bash -c "source '$ROOT/friday-tui.sh'; 
     [[ "$got" == "gb/" ]] && pass "Hyprland (Omarchy's input.lua) types gb" || fail "Hyprland's layout: $got"
   else skip "Hyprland's layout (needs lua)"; fi
 else fail "the installer's keyboard block runs"; fi
+if need lua; then
+  # The Dots-Hyprland option's custom file, as the installer appends it.
+  awk '/^-- FRIDAY OS: the system keyboard layout/ {on = 1} on && /^EOF_DOTS_KB$/ {exit} on {print}' "$ROOT/installer" >"$K/dots.lua"
+  got=$(lua -e "
+    local real = io.open
+    io.open = function(p, m) if p == '/etc/vconsole.conf' then p = '$K/root/etc/vconsole.conf' end return real(p, m) end
+    hl = { config = function(t) print(t.input.kb_layout .. '/' .. t.input.kb_variant) end }
+    dofile('$K/dots.lua')" 2>&1 | head -1)
+  [[ -s "$K/dots.lua" && "$got" == "gb/" ]] && pass "the Dots-Hyprland option types gb too" || fail "Dots-Hyprland's layout: $got"
+else skip "Dots-Hyprland's layout (needs lua)"; fi
 kb_line=$(grep -n '^# Keyboard:' "$ROOT/installer" | cut -d: -f1)
 initrd_line=$(grep -n 'mkinitcpio -P' "$ROOT/installer" | head -1 | cut -d: -f1)
 [[ -n "$kb_line" && -n "$initrd_line" ]] && (( kb_line < initrd_line )) \
