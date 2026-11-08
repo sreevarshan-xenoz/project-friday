@@ -13,6 +13,7 @@ USERNAME="${USERNAME:-friday}"
 PASSWORD="${PASSWORD:-friday}"
 TIMEZONE="${TIMEZONE:-UTC}"
 THEME="${THEME:-FRIDAY Shell (Ember, made for FRIDAY)}"
+SHELL_STYLE="${SHELL_STYLE:-Ember (bar flush with the top edge)}"
 SDDM_THEME="${SDDM_THEME:-SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)}"
 AUTO_REBOOT="${AUTO_REBOOT:-false}"
 # Skip the SDDM password screen at boot. Off by default: with it on, anyone
@@ -334,7 +335,10 @@ else
   # FRIDAY Shell from the Omarchy theme.
   THEME_SLUG="matte-black"; SHELL_PALETTE="omarchy"
   case "$THEME" in
-    *"FRIDAY Shell"*) THEME_SLUG="matte-black"; SHELL_PALETTE="friday" ;;
+    *"FRIDAY Shell Frost"*) THEME_SLUG="matte-black"; SHELL_PALETTE="frost" ;;
+    *"FRIDAY Shell Moss"*)  THEME_SLUG="matte-black"; SHELL_PALETTE="moss" ;;
+    *"FRIDAY Shell Dawn"*)  THEME_SLUG="matte-black"; SHELL_PALETTE="dawn" ;;
+    *"FRIDAY Shell"*) THEME_SLUG="matte-black"; SHELL_PALETTE="ember" ;;
     *"Tokyo Night"*)  THEME_SLUG="tokyo-night" ;;
     *"Catppuccin"*)   THEME_SLUG="catppuccin" ;;
     *"Nord"*)         THEME_SLUG="nord" ;;
@@ -360,7 +364,18 @@ else
     rm -f "/mnt$USER_HOME/.config/omarchy/shell.json.new"
     echo "warning: could not write Omarchy shell.json; Omarchy's bar stays on" >&2
   fi
-  printf '{\n  "palette": "%s"\n}\n' "$SHELL_PALETTE" >"/mnt$USER_HOME/.config/friday/shell.json"
+  case "$SHELL_STYLE" in
+    Island*) SHELL_STYLE_ID=island ;;
+    Dock*)   SHELL_STYLE_ID=dock ;;
+    *)       SHELL_STYLE_ID=ember ;;
+  esac
+  printf '{\n  "style": "%s",\n  "palette": "%s"\n}\n' "$SHELL_STYLE_ID" "$SHELL_PALETTE" \
+    >"/mnt$USER_HOME/.config/friday/shell.json"
+  # Windows' gaps, corners and borders to match (~/.config/friday/hypr-look.lua),
+  # written as the user, who must own the directory first.
+  arch-chroot /mnt chown -R "$USERNAME:$USERNAME" "$USER_HOME/.config/friday"
+  arch-chroot /mnt su - "$USERNAME" -c "friday shell style '$SHELL_STYLE_ID'" >/dev/null \
+    || echo "warning: could not write the window look (run friday shell style $SHELL_STYLE_ID after login)" >&2
 fi
 
 # FRIDAY AI provider credentials, loaded by friday-linux-daemon.service via

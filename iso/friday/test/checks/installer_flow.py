@@ -40,8 +40,10 @@ STEPS = [
     (2, ENTER),  # timezone search
     (4, "uk"),
     (2, ENTER),  # keymap search
-    (3, ENTER),
-    (2, ENTER),  # desktop, login theme
+    (3, ENTER),  # desktop colours: FRIDAY Shell (default)
+    (2, DOWN),
+    (1, ENTER),  # style: Island
+    (2, ENTER),  # login theme
     (6, ENTER),  # AI: OpenCode Zen (first, default)
     (3, ENTER),  # no key: free models
     (4, DOWN * 2),
@@ -115,6 +117,7 @@ for key, want in [
     ("autologin", "false"),
     ("encrypt", "true"),
     ("interactive", "1"),
+    ("style", "Island"),
 ]:
     checks[f"spec {key}={want}"] = f"{key}={want}" in env
 

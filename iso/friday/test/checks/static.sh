@@ -76,6 +76,18 @@ if need Hyprland runuser jq; then
     rm -rf "$H"
   done
 else skip "window look verification (needs Hyprland, jq)"; fi
+own_line=$(grep -n 'chown -R "$USERNAME:$USERNAME" "$USER_HOME/.config/friday"' "$AIROOTFS/root/installer" | head -1 | cut -d: -f1)
+style_line=$(grep -n "friday shell style '\$SHELL_STYLE_ID'" "$AIROOTFS/root/installer" | head -1 | cut -d: -f1)
+if [[ -n "$own_line" && -n "$style_line" ]] && (( own_line < style_line )) \
+   && grep -q '"style": "%s"' "$AIROOTFS/root/installer"; then
+  pass "installer saves the chosen style and writes the window look as the user"
+else
+  fail "installer doesn't save the style, or runs friday shell style before the user owns ~/.config/friday"
+fi
+for opt in "Island (floating pills along the top)" "Dock (floating bar along the bottom)" "FRIDAY Shell Dawn"; do
+  grep -qF "$opt" "$AIROOTFS/root/configurator" && pass "installer offers: $opt" || fail "installer no longer offers: $opt"
+done
+
 echo "FRIDAY comes from its package, not loose files in airootfs"
 # pacman refuses to install over files it doesn't own, so these must not be in
 # airootfs (the friday-git package installs them).
