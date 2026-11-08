@@ -41,6 +41,88 @@ if need Hyprland runuser; then
   done
 else skip "Hyprland config verification (needs Hyprland)"; fi
 
+echo "FRIDAY Shell's look reaches Hyprland"
+F_CLI="$REPO_ROOT/packaging/linux/friday"
+THEME_QML="$REPO_ROOT/packaging/linux/shell/common/Theme.qml"
+# The window borders use the palettes' accent and outline: the CLI's copy of
+# them must match Theme.qml.
+for pal in ember frost moss dawn; do
+  block=$(sed -n "/readonly property var $pal: ({/,/})/p" "$THEME_QML")
+  acc=$(grep -oE 'accent: "#[0-9a-f]{6}"' <<<"$block" | grep -oE '[0-9a-f]{6}')
+  out=$(grep -oE 'outline: "#[0-9a-f]{6}"' <<<"$block" | grep -oE '[0-9a-f]{6}')
+  line=$(grep -E "^ +(\*\)\s+palette=)?$pal\)? .*accent=" "$F_CLI" | head -1)
+  if [[ -n "$acc" && "$line" == *"accent=$acc outline=$out"* ]]; then pass "$pal: window borders match the shell ($acc / $out)"
+  else fail "$pal: friday's hypr-look colours ($line) differ from Theme.qml ($acc / $out)"; fi
+done
+grep -q 'dofile(friday_look)' "$AIROOTFS/etc/skel/.config/hypr/hyprland.lua" \
+  && pass "FRIDAY OS's hyprland.lua loads FRIDAY Shell's window look" \
+  || fail "FRIDAY OS's hyprland.lua does not load ~/.config/friday/hypr-look.lua"
+if need Hyprland runuser jq; then
+  for look in island:frost dock:omarchy; do
+    H=$(mktemp -d /tmp/friday-hypr-look.XXXXXX); chmod 755 "$H"
+    mkdir -p "$H/.config/friday"; cp -a "$AIROOTFS/etc/skel/.config/hypr" "$H/.config/hypr"
+    printf '{ "style": "%s", "palette": "%s" }\n' "${look%%:*}" "${look##*:}" >"$H/.config/friday/shell.json"
+    HOME="$H" XDG_CONFIG_HOME="" HYPRLAND_INSTANCE_SIGNATURE="" \
+      bash -c 'source <(sed -n "/^shell_window_look() {/,/^}/p" "$1"); shell_window_look' _ "$F_CLI"
+    chmod -R a+rwX "$H"
+    out=$(cd "$H" && runuser -u nobody -- env HOME="$H" XDG_RUNTIME_DIR="$H" \
+      OMARCHY_PATH="$AIROOTFS/usr/share/omarchy" timeout 60 \
+      Hyprland --verify-config -c "$H/.config/hypr/hyprland.lua" 2>&1)
+    if [[ -s "$H/.config/friday/hypr-look.lua" ]] && grep -q "config ok" <<<"$out"; then
+      pass "Hyprland accepts the ${look%%:*}/${look##*:} window look"
+    else
+      fail "${look%%:*}/${look##*:} window look:"; tail -n 5 <<<"$out" | sed 's/^/      /'
+    fi
+    rm -rf "$H"
+  done
+else skip "window look verification (needs Hyprland, jq)"; fi
+own_line=$(grep -n 'chown -R "$USERNAME:$USERNAME" "$USER_HOME/.config/friday"' "$AIROOTFS/root/installer" | head -1 | cut -d: -f1)
+style_line=$(grep -n "friday shell style '\$SHELL_STYLE_ID'" "$AIROOTFS/root/installer" | head -1 | cut -d: -f1)
+if [[ -n "$own_line" && -n "$style_line" ]] && (( own_line < style_line )) \
+   && grep -q '"style": "%s"' "$AIROOTFS/root/installer"; then
+  pass "installer saves the chosen style and writes the window look as the user"
+else
+  fail "installer doesn't save the style, or runs friday shell style before the user owns ~/.config/friday"
+fi
+for opt in "Island (floating pills along the top)" "Dock (floating bar along the bottom)" "FRIDAY Shell Dawn"; do
+  grep -qF "$opt" "$AIROOTFS/root/configurator" && pass "installer offers: $opt" || fail "installer no longer offers: $opt"
+done
+
+echo "FRIDAY OS on niri"
+grep -qF '"niri (scrollable tiling' "$AIROOTFS/root/configurator" \
+  && pass "installer offers niri" || fail "installer no longer offers niri"
+grep -qE 'pacstrap_with_retry .*' "$AIROOTFS/root/installer" && grep -A8 'pacstrap_with_retry /mnt base' "$AIROOTFS/root/installer" | grep -q 'niri xwayland-satellite' \
+  && pass "installer installs niri and xwayland-satellite" || fail "installer does not install niri and xwayland-satellite"
+grep -q 'SESSION_FILE=niri.desktop' "$AIROOTFS/root/installer" \
+  && pass "choosing niri starts niri (autologin and SDDM's preselected session)" || fail "choosing niri does not change the session"
+NIRI_CONF="$AIROOTFS/etc/skel/.config/niri/config.kdl"
+expect "the new user gets a default niri look" test -s "$AIROOTFS/etc/skel/.config/friday/niri-look.kdl"
+if need niri jq; then
+  for look in default island:frost dock:omarchy; do
+    H=$(mktemp -d /tmp/friday-niri.XXXXXX)
+    mkdir -p "$H/.config/niri" "$H/.config/friday"
+    # The packaged FRIDAY snippet from this tree instead of /usr/share.
+    sed "s|include \"/usr/share/friday/niri/friday.kdl\"|include \"$REPO_ROOT/packaging/linux/niri/friday.kdl\"|" \
+      "$NIRI_CONF" >"$H/.config/niri/config.kdl"
+    if [[ $look == default ]]; then
+      cp "$AIROOTFS/etc/skel/.config/friday/niri-look.kdl" "$H/.config/friday/"
+    else
+      printf '{ "style": "%s", "palette": "%s" }\n' "${look%%:*}" "${look##*:}" >"$H/.config/friday/shell.json"
+      HOME="$H" XDG_CONFIG_HOME="" HYPRLAND_INSTANCE_SIGNATURE="" \
+        bash -c 'source <(sed -n "/^shell_window_look() {/,/^}/p" "$1"); shell_window_look' _ "$F_CLI"
+    fi
+    out=$(niri validate -c "$H/.config/niri/config.kdl" 2>&1)
+    if grep -q "config is valid" <<<"$out"; then pass "niri accepts FRIDAY OS's config with the ${look/:/\/} look"
+    else fail "niri rejects FRIDAY OS's config with the ${look/:/\/} look:"; grep -v DEBUG <<<"$out" | tail -n 6 | sed 's/^/      /'; fi
+    rm -rf "$H"
+  done
+  grep -q 'spawn-at-startup "friday" "shell"' "$REPO_ROOT/packaging/linux/niri/friday.kdl" \
+    && pass "niri starts FRIDAY Shell" || fail "niri does not start FRIDAY Shell"
+  for key in 'Mod+Y ' 'Mod+Alt+Y ' 'Mod+Ctrl+Y '; do
+    grep -q "^ *$key" "$REPO_ROOT/packaging/linux/niri/friday.kdl" && pass "niri binds $key" || fail "niri does not bind $key"
+  done
+else skip "niri config validation (needs niri, jq)"; fi
+
 echo "FRIDAY comes from its package, not loose files in airootfs"
 # pacman refuses to install over files it doesn't own, so these must not be in
 # airootfs (the friday-git package installs them).

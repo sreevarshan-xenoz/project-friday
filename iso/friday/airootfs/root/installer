@@ -13,6 +13,8 @@ USERNAME="${USERNAME:-friday}"
 PASSWORD="${PASSWORD:-friday}"
 TIMEZONE="${TIMEZONE:-UTC}"
 THEME="${THEME:-FRIDAY Shell (Ember, made for FRIDAY)}"
+SHELL_STYLE="${SHELL_STYLE:-Ember (bar flush with the top edge)}"
+SESSION="${SESSION:-Hyprland (tiling, the FRIDAY OS default)}"
 SDDM_THEME="${SDDM_THEME:-SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)}"
 AUTO_REBOOT="${AUTO_REBOOT:-false}"
 # Skip the SDDM password screen at boot. Off by default: with it on, anyone
@@ -188,7 +190,7 @@ pacstrap_with_retry /mnt base linux linux-firmware sudo zsh hyprland sddm uwsm q
   matugen hypridle hyprlock fuzzel cliphist imagemagick libqalculate hyprsunset hyprpaper \
   qt6-5compat qt6-imageformats qt6-multimedia qt6-multimedia-ffmpeg qt6-virtualkeyboard qt6-quicktimeline qt6-svg qt6-wayland \
   qt6-positioning ttf-material-symbols-variable \
-  kirigami kdialog syntax-highlighting chromium libnotify
+  kirigami kdialog syntax-highlighting chromium libnotify niri xwayland-satellite
 live_status_stop
 
 genfstab -U /mnt >> /mnt/etc/fstab
@@ -334,7 +336,10 @@ else
   # FRIDAY Shell from the Omarchy theme.
   THEME_SLUG="matte-black"; SHELL_PALETTE="omarchy"
   case "$THEME" in
-    *"FRIDAY Shell"*) THEME_SLUG="matte-black"; SHELL_PALETTE="friday" ;;
+    *"FRIDAY Shell Frost"*) THEME_SLUG="matte-black"; SHELL_PALETTE="frost" ;;
+    *"FRIDAY Shell Moss"*)  THEME_SLUG="matte-black"; SHELL_PALETTE="moss" ;;
+    *"FRIDAY Shell Dawn"*)  THEME_SLUG="matte-black"; SHELL_PALETTE="dawn" ;;
+    *"FRIDAY Shell"*) THEME_SLUG="matte-black"; SHELL_PALETTE="ember" ;;
     *"Tokyo Night"*)  THEME_SLUG="tokyo-night" ;;
     *"Catppuccin"*)   THEME_SLUG="catppuccin" ;;
     *"Nord"*)         THEME_SLUG="nord" ;;
@@ -360,7 +365,18 @@ else
     rm -f "/mnt$USER_HOME/.config/omarchy/shell.json.new"
     echo "warning: could not write Omarchy shell.json; Omarchy's bar stays on" >&2
   fi
-  printf '{\n  "palette": "%s"\n}\n' "$SHELL_PALETTE" >"/mnt$USER_HOME/.config/friday/shell.json"
+  case "$SHELL_STYLE" in
+    Island*) SHELL_STYLE_ID=island ;;
+    Dock*)   SHELL_STYLE_ID=dock ;;
+    *)       SHELL_STYLE_ID=ember ;;
+  esac
+  printf '{\n  "style": "%s",\n  "palette": "%s"\n}\n' "$SHELL_STYLE_ID" "$SHELL_PALETTE" \
+    >"/mnt$USER_HOME/.config/friday/shell.json"
+  # Windows' gaps, corners and borders to match (~/.config/friday/hypr-look.lua),
+  # written as the user, who must own the directory first.
+  arch-chroot /mnt chown -R "$USERNAME:$USERNAME" "$USER_HOME/.config/friday"
+  arch-chroot /mnt su - "$USERNAME" -c "friday shell style '$SHELL_STYLE_ID'" >/dev/null \
+    || echo "warning: could not write the window look (run friday shell style $SHELL_STYLE_ID after login)" >&2
 fi
 
 # FRIDAY AI provider credentials, loaded by friday-linux-daemon.service via
@@ -437,14 +453,27 @@ EOF_SDDM_THEME
 cp -p /mnt/etc/sddm.conf.d/10-theme.conf /mnt/etc/sddm.conf
 
 rm -f /mnt/etc/sddm.conf.d/autologin.conf
+# The desktop to start: the chosen window manager (niri only with FRIDAY
+# Shell; the Dots-Hyprland desktop is Hyprland's). The other stays at the
+# login screen.
+SESSION_FILE=hyprland.desktop
+if [[ "$SESSION" == niri* && "$THEME" != *"Dots-Hyprland"* ]]; then SESSION_FILE=niri.desktop; fi
 if [[ "$AUTOLOGIN" == "true" ]]; then
   cat << EOF_SDDM_AUTO > /mnt/etc/sddm.conf.d/autologin.conf
 [Autologin]
 User=$USERNAME
-Session=hyprland.desktop
+Session=$SESSION_FILE
 Relogin=false
 EOF_SDDM_AUTO
 fi
+# SDDM preselects the last session: start it at the chosen one.
+mkdir -p /mnt/var/lib/sddm
+cat << EOF_SDDM_STATE > /mnt/var/lib/sddm/state.conf
+[Last]
+Session=/usr/share/wayland-sessions/$SESSION_FILE
+User=$USERNAME
+EOF_SDDM_STATE
+arch-chroot /mnt chown -R sddm:sddm /var/lib/sddm 2>/dev/null || true
 
 mkdir -p /mnt/var/lib/omarchy/provisioning
 cat << EOF_INFO > /mnt/var/lib/omarchy/provisioning/install-info.json

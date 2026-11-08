@@ -190,6 +190,17 @@ echo '{ "palette": "friday", "clock24h": false }' >"$conf"
 "${sh_env[@]}" bash "$F" shell style dock >/dev/null
 contains "other settings are kept" "$(cat "$conf")" '"clock24h": false'
 contains "the old \"friday\" palette lists as ember" "$("${sh_env[@]}" bash "$F" shell palette)" "* ember"
+look="$HOME/.config/friday/hypr-look.lua"
+printf '#!/bin/bash\necho "hyprctl $*" >> %q\n' "$LOG" >"$S/hyprctl"; chmod +x "$S/hyprctl"
+: >"$LOG"; HYPRLAND_INSTANCE_SIGNATURE=test "${sh_env[@]}" bash "$F" shell palette frost >/dev/null
+contains "windows follow the style (dock gaps)" "$(cat "$look")" "gaps_out = 16"
+contains "window borders follow the palette (frost accent)" "$(cat "$look")" 'active_border = "rgba(7cc4ffee)"'
+contains "Hyprland reloads to show it" "$(cat "$LOG")" "hyprctl reload"
+contains "niri's windows get the look too (dock gaps)" "$(cat "$HOME/.config/friday/niri-look.kdl")" "gaps 16"
+"${sh_env[@]}" bash "$F" shell palette omarchy >/dev/null
+if grep -q active_border "$look"; then fail "the omarchy palette still overrides Omarchy's border colours"
+else pass "the omarchy palette leaves border colours to Omarchy's theme"; fi
+rm -f "$S/hyprctl"
 rm -f "$S/quickshell"
 
 echo "doctor"

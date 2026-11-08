@@ -1,0 +1,14 @@
+// FRIDAY Shell's look for windows (style: ember, palette: ember).
+// Written by `friday shell style|palette`; edits are replaced on the next change.
+layout {
+    gaps 10
+    focus-ring {
+        width 2
+        active-color "#ff8f4c"
+        inactive-color "#323844"
+    }
+}
+window-rule {
+    geometry-corner-radius 10
+    clip-to-geometry true
+}

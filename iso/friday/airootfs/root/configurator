@@ -17,6 +17,8 @@ TARGET_DISK="" TARGET_LABEL=""
 HOSTNAME="friday" USERNAME="friday" PASSWORD=""
 KEYBOARD="us" TIMEZONE="UTC"
 THEME="FRIDAY Shell (Ember, made for FRIDAY)"
+SHELL_STYLE="Ember (bar flush with the top edge)"
+SESSION="Hyprland (tiling, the FRIDAY OS default)"
 SDDM_THEME="SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)"
 FRIDAY_AI_PROVIDER="" FRIDAY_AI_KEY=""
 AUTOLOGIN="false"
@@ -202,13 +204,34 @@ step_look() {
   screen 6
   friday_head "Desktop"
   local v
-  v=$(gum choose --cursor="❯ " --height=7 --selected="$THEME" \
+  friday_note "  Colours. Change them any time in the controls drawer (Look) or with friday shell palette."
+  v=$(gum choose --cursor="❯ " --height=10 --selected="$THEME" \
     "FRIDAY Shell (Ember, made for FRIDAY)" \
+    "FRIDAY Shell Frost (cool slate, ice blue)" \
+    "FRIDAY Shell Moss (dark olive, lichen green)" \
+    "FRIDAY Shell Dawn (light, warm paper)" \
     "FRIDAY Tokyo Night (Default Cybernetic Dark)" \
     "FRIDAY Catppuccin Mocha" \
     "FRIDAY Nord Arctic" \
     "end-4 Dots-Hyprland (Material You / Illogical Impulse)") && THEME="$v"
   friday_ok "$THEME"
+  if [[ "$THEME" != *"Dots-Hyprland"* ]]; then
+    echo
+    friday_head "Window manager"
+    friday_note "  Both are installed; pick the other one at the login screen any time."
+    v=$(gum choose --cursor="❯ " --height=4 --selected="$SESSION" \
+      "Hyprland (tiling, the FRIDAY OS default)" \
+      "niri (scrollable tiling: windows in an endless row)") && SESSION="$v"
+    friday_ok "$SESSION"
+    echo
+    friday_head "Style"
+    friday_note "  Where the bar sits and its shape; windows' gaps and corners follow it."
+    v=$(gum choose --cursor="❯ " --height=5 --selected="$SHELL_STYLE" \
+      "Ember (bar flush with the top edge)" \
+      "Island (floating pills along the top)" \
+      "Dock (floating bar along the bottom)") && SHELL_STYLE="$v"
+    friday_ok "$SHELL_STYLE"
+  fi
   echo
   friday_head "Login screen"
   v=$(gum choose --cursor="❯ " --height=8 --selected="$SDDM_THEME" \
@@ -278,7 +301,7 @@ review() {
       "Computer    $HOSTNAME" \
       "User        $USERNAME   (password set, $([[ $AUTOLOGIN == true ]] && echo "automatic login" || echo "asked at login"))" \
       "Region      $TIMEZONE · keyboard $KEYBOARD" \
-      "Desktop     $THEME" \
+      "Desktop     $THEME$([[ $THEME != *Dots-Hyprland* ]] && echo " · ${SHELL_STYLE%% (*} · ${SESSION%% (*}")" \
       "Login       $SDDM_THEME" \
       "AI          $FRIDAY_AI_LABEL"
     echo
@@ -316,7 +339,7 @@ review
 friday_banner
 friday_say "Thanks, $USERNAME. I'll take it from here."
 sleep 1
-export TARGET_DISK KEYBOARD HOSTNAME USERNAME PASSWORD TIMEZONE THEME SDDM_THEME FRIDAY_AI_PROVIDER FRIDAY_AI_KEY AUTOLOGIN ENCRYPT
+export TARGET_DISK KEYBOARD HOSTNAME USERNAME PASSWORD TIMEZONE THEME SHELL_STYLE SESSION SDDM_THEME FRIDAY_AI_PROVIDER FRIDAY_AI_KEY AUTOLOGIN ENCRYPT
 export FRIDAY_INTERACTIVE=1
 /root/installer || leave_menu "Something went wrong during the install. The full log is in /tmp/friday-installer.log."
 leave_menu ""
