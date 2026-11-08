@@ -20,6 +20,15 @@ require("hypr.monitors")
 require("hypr.input")
 require("hypr.bindings")
 require("hypr.looknfeel")
+-- FRIDAY Shell's look for windows (gaps, rounding, border colours), written
+-- by `friday shell style|palette` and the shell's Look picker. dofile, not
+-- require, so a `hyprctl reload` picks up a change.
+local friday_look = (os.getenv("HOME") or "") .. "/.config/friday/hypr-look.lua"
+local friday_look_file = io.open(friday_look, "r")
+if friday_look_file then
+  friday_look_file:close()
+  dofile(friday_look)
+end
 require("hypr.autostart")
 
 -- Toggle config flags dynamically.

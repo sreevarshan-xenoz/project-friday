@@ -41,6 +41,41 @@ if need Hyprland runuser; then
   done
 else skip "Hyprland config verification (needs Hyprland)"; fi
 
+echo "FRIDAY Shell's look reaches Hyprland"
+F_CLI="$REPO_ROOT/packaging/linux/friday"
+THEME_QML="$REPO_ROOT/packaging/linux/shell/common/Theme.qml"
+# The window borders use the palettes' accent and outline: the CLI's copy of
+# them must match Theme.qml.
+for pal in ember frost moss dawn; do
+  block=$(sed -n "/readonly property var $pal: ({/,/})/p" "$THEME_QML")
+  acc=$(grep -oE 'accent: "#[0-9a-f]{6}"' <<<"$block" | grep -oE '[0-9a-f]{6}')
+  out=$(grep -oE 'outline: "#[0-9a-f]{6}"' <<<"$block" | grep -oE '[0-9a-f]{6}')
+  line=$(grep -E "^ +(\*\)\s+palette=)?$pal\)? .*accent=" "$F_CLI" | head -1)
+  if [[ -n "$acc" && "$line" == *"accent=$acc outline=$out"* ]]; then pass "$pal: window borders match the shell ($acc / $out)"
+  else fail "$pal: friday's hypr-look colours ($line) differ from Theme.qml ($acc / $out)"; fi
+done
+grep -q 'dofile(friday_look)' "$AIROOTFS/etc/skel/.config/hypr/hyprland.lua" \
+  && pass "FRIDAY OS's hyprland.lua loads FRIDAY Shell's window look" \
+  || fail "FRIDAY OS's hyprland.lua does not load ~/.config/friday/hypr-look.lua"
+if need Hyprland runuser jq; then
+  for look in island:frost dock:omarchy; do
+    H=$(mktemp -d /tmp/friday-hypr-look.XXXXXX); chmod 755 "$H"
+    mkdir -p "$H/.config/friday"; cp -a "$AIROOTFS/etc/skel/.config/hypr" "$H/.config/hypr"
+    printf '{ "style": "%s", "palette": "%s" }\n' "${look%%:*}" "${look##*:}" >"$H/.config/friday/shell.json"
+    HOME="$H" XDG_CONFIG_HOME="" HYPRLAND_INSTANCE_SIGNATURE="" \
+      bash -c 'source <(sed -n "/^shell_window_look() {/,/^}/p" "$1"); shell_window_look' _ "$F_CLI"
+    chmod -R a+rwX "$H"
+    out=$(cd "$H" && runuser -u nobody -- env HOME="$H" XDG_RUNTIME_DIR="$H" \
+      OMARCHY_PATH="$AIROOTFS/usr/share/omarchy" timeout 60 \
+      Hyprland --verify-config -c "$H/.config/hypr/hyprland.lua" 2>&1)
+    if [[ -s "$H/.config/friday/hypr-look.lua" ]] && grep -q "config ok" <<<"$out"; then
+      pass "Hyprland accepts the ${look%%:*}/${look##*:} window look"
+    else
+      fail "${look%%:*}/${look##*:} window look:"; tail -n 5 <<<"$out" | sed 's/^/      /'
+    fi
+    rm -rf "$H"
+  done
+else skip "window look verification (needs Hyprland, jq)"; fi
 echo "FRIDAY comes from its package, not loose files in airootfs"
 # pacman refuses to install over files it doesn't own, so these must not be in
 # airootfs (the friday-git package installs them).
