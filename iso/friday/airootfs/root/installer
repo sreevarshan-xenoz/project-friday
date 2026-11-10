@@ -245,6 +245,34 @@ echo "LANG=en_US.UTF-8" > /mnt/etc/locale.conf
 echo "en_US.UTF-8 UTF-8" >> /mnt/etc/locale.gen
 arch-chroot /mnt locale-gen 2>/dev/null || true
 
+# Keyboard: the chosen console keymap and its desktop layout, as localectl
+# would set them. vconsole.conf serves the console, the disk-unlock prompt
+# (it is in place before mkinitcpio runs) and Hyprland (Omarchy's input.lua
+# reads XKBLAYOUT/XKBVARIANT); 00-keyboard.conf serves localed, so niri and
+# the login screen type the same.
+read -r XKB_LAYOUT XKB_MODEL XKB_VARIANT XKB_OPTIONS < <(friday_xkb_for_keymap "$KEYBOARD")
+[[ "$XKB_VARIANT" == "-" ]] && XKB_VARIANT=""
+[[ "$XKB_OPTIONS" == "-" ]] && XKB_OPTIONS=""
+cat << EOF_VCONSOLE > /mnt/etc/vconsole.conf
+KEYMAP=$KEYBOARD
+XKBLAYOUT=$XKB_LAYOUT
+XKBMODEL=$XKB_MODEL
+XKBVARIANT=$XKB_VARIANT
+XKBOPTIONS=$XKB_OPTIONS
+EOF_VCONSOLE
+mkdir -p /mnt/etc/X11/xorg.conf.d
+cat << EOF_XKB > /mnt/etc/X11/xorg.conf.d/00-keyboard.conf
+# Written by the FRIDAY OS installer; change it with localectl set-x11-keymap.
+Section "InputClass"
+        Identifier "system-keyboard"
+        MatchIsKeyboard "on"
+        Option "XkbLayout" "$XKB_LAYOUT"
+        Option "XkbModel" "$XKB_MODEL"
+        Option "XkbVariant" "$XKB_VARIANT"
+        Option "XkbOptions" "$XKB_OPTIONS"
+EndSection
+EOF_XKB
+
 # Timezone
 arch-chroot /mnt ln -sf "/usr/share/zoneinfo/$TIMEZONE" /etc/localtime 2>/dev/null || true
 
@@ -317,6 +345,33 @@ if [[ "$THEME" =~ "Dots-Hyprland" ]]; then
       rsync -a /mnt/usr/share/friday/dots-hyprland/.config/ /mnt/root/.config/ 2>/dev/null || true
       rsync -a /mnt/usr/share/friday/dots-hyprland/.local/ /mnt/root/.local/ 2>/dev/null || true
     fi
+    # Its Hyprland config says kb_layout "us": type with the system layout
+    # instead (vconsole.conf, set above and by localectl), in its custom file.
+    for dots_home in /mnt/etc/skel "/mnt$USER_HOME" /mnt/root; do
+      [[ -d "$dots_home/.config/hypr/custom" ]] || continue
+      cat << 'EOF_DOTS_KB' >> "$dots_home/.config/hypr/custom/general.lua"
+
+-- FRIDAY OS: the system keyboard layout (localectl set-keymap changes it).
+do
+    local kb = {}
+    local f = io.open("/etc/vconsole.conf", "r")
+    if f then
+        for line in f:lines() do
+            local k, v = line:match('^%s*([%w_]+)%s*=%s*"?([^"]*)"?%s*$')
+            if k then kb[k] = v end
+        end
+        f:close()
+    end
+    if kb.XKBLAYOUT and kb.XKBLAYOUT ~= "" then
+        hl.config({ input = {
+            kb_layout = kb.XKBLAYOUT,
+            kb_variant = kb.XKBVARIANT or "",
+            kb_options = kb.XKBOPTIONS or "",
+        } })
+    end
+end
+EOF_DOTS_KB
+    done
   fi
 
   cat << 'EOF_FRIDAY_SESSION' > /mnt/usr/share/wayland-sessions/friday.desktop

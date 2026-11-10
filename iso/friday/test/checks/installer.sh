@@ -26,6 +26,66 @@ refuse "api key with space"          friday_valid_api_key "has space key"
 expect "timezone list never empty"   test -n "$(friday_timezones | head -n1)"
 expect "keymap list never empty"     test -n "$(friday_keymaps | head -n1)"
 
+echo "keyboard: console keymap to desktop layout"
+K="$WORK/kbd"; mkdir -p "$K"
+printf '# consolelayout\txlayout\txmodel\txvariant\txoptions\n' >"$K/map"
+printf 'uk\t\tgb\tpc105\t-\tterminate:ctrl_alt_bksp\n' >>"$K/map"
+printf 'dvorak\t\tus\tpc105\tdvorak\tterminate:ctrl_alt_bksp\n' >>"$K/map"
+printf 'de\t\tde\tpc105\t-\t-\n' >>"$K/map"
+printf 'ru\t\tru,us\tpc105\t-\tgrp:shifts_toggle\n' >>"$K/map"
+printf '! model\n  pc105  Generic\n\n! layout\n  us  English\n  pl  Polish\n\n! variant\n  zz  us: x\n' >"$K/base.lst"
+xkb() { friday_xkb_for_keymap "$1" "$K/map" "$K/base.lst"; }
+[[ $(xkb uk) == "gb pc105 - terminate:ctrl_alt_bksp" ]] && pass "uk types as gb" || fail "uk: $(xkb uk)"
+[[ $(xkb dvorak) == "us pc105 dvorak terminate:ctrl_alt_bksp" ]] && pass "dvorak keeps its variant" || fail "dvorak: $(xkb dvorak)"
+[[ $(xkb de-latin1-nodeadkeys) == "de pc105 - -" ]] && pass "a suffixed keymap falls back to its base" || fail "de-latin1-nodeadkeys: $(xkb de-latin1-nodeadkeys)"
+[[ $(xkb ru) == "ru,us pc105 - grp:shifts_toggle" ]] && pass "ru keeps a Latin layout to switch to" || fail "ru: $(xkb ru)"
+[[ $(xkb pl2) == "us pc105 - -" && $(xkb pl) == "pl pc105 - -" ]] && pass "an XKB layout name stands for itself" || fail "pl: $(xkb pl)"
+[[ $(xkb zz) == "us pc105 - -" ]] && pass "an unknown keymap types as us" || fail "zz: $(xkb zz)"
+[[ $(friday_xkb_for_keymap uk /nonexistent /nonexistent) == "us pc105 - -" ]] && pass "no map files: us" || fail "no map files"
+if [[ -r /usr/share/systemd/kbd-model-map ]]; then
+  sys() { friday_xkb_for_keymap "$1" | cut -d' ' -f1,3; }
+  [[ $(sys uk) == "gb -" && $(sys de-latin1) == "de -" && $(sys dvorak) == "us dvorak" ]] \
+    && pass "systemd's map: uk gb, de-latin1 de, dvorak us/dvorak" \
+    || fail "systemd's map: uk $(sys uk), de-latin1 $(sys de-latin1), dvorak $(sys dvorak)"
+else skip "systemd's kbd-model-map (not installed)"; fi
+
+echo "keyboard: the installer applies it"
+# The installer's keyboard block, run against a scratch root.
+mkdir -p "$K/root/etc"
+awk '/^# Keyboard:/ {on = 1} on {print} on && /^EOF_XKB$/ {exit}' "$ROOT/installer" \
+  | sed "s#/mnt/#$K/root/#g" >"$K/apply.sh"
+if [[ -s "$K/apply.sh" ]] && KEYBOARD=uk bash -c "source '$ROOT/friday-tui.sh'; source '$K/apply.sh'"; then
+  vc=$(cat "$K/root/etc/vconsole.conf" 2>/dev/null)
+  contains "vconsole.conf keeps the console keymap" "$vc" "KEYMAP=uk"
+  contains "vconsole.conf has the desktop layout" "$vc" "XKBLAYOUT=gb"
+  contains "00-keyboard.conf has it for localed (niri, login screen)" \
+    "$(cat "$K/root/etc/X11/xorg.conf.d/00-keyboard.conf" 2>/dev/null)" 'Option "XkbLayout" "gb"'
+  if need lua; then
+    # Omarchy's input.lua (FRIDAY OS's Hyprland input) reading that vconsole.conf.
+    got=$(lua -e "
+      local real = io.open
+      io.open = function(p, m) if p == '/etc/vconsole.conf' then p = '$K/root/etc/vconsole.conf' end return real(p, m) end
+      hl = { config = function(t) print(t.input.kb_layout .. '/' .. t.input.kb_variant) end }
+      dofile('$AIROOTFS/usr/share/omarchy/default/hypr/input.lua')" 2>&1 | head -1)
+    [[ "$got" == "gb/" ]] && pass "Hyprland (Omarchy's input.lua) types gb" || fail "Hyprland's layout: $got"
+  else skip "Hyprland's layout (needs lua)"; fi
+else fail "the installer's keyboard block runs"; fi
+if need lua; then
+  # The Dots-Hyprland option's custom file, as the installer appends it.
+  awk '/^-- FRIDAY OS: the system keyboard layout/ {on = 1} on && /^EOF_DOTS_KB$/ {exit} on {print}' "$ROOT/installer" >"$K/dots.lua"
+  got=$(lua -e "
+    local real = io.open
+    io.open = function(p, m) if p == '/etc/vconsole.conf' then p = '$K/root/etc/vconsole.conf' end return real(p, m) end
+    hl = { config = function(t) print(t.input.kb_layout .. '/' .. t.input.kb_variant) end }
+    dofile('$K/dots.lua')" 2>&1 | head -1)
+  [[ -s "$K/dots.lua" && "$got" == "gb/" ]] && pass "the Dots-Hyprland option types gb too" || fail "Dots-Hyprland's layout: $got"
+else skip "Dots-Hyprland's layout (needs lua)"; fi
+kb_line=$(grep -n '^# Keyboard:' "$ROOT/installer" | cut -d: -f1)
+initrd_line=$(grep -n 'mkinitcpio -P' "$ROOT/installer" | head -1 | cut -d: -f1)
+[[ -n "$kb_line" && -n "$initrd_line" ]] && (( kb_line < initrd_line )) \
+  && pass "the keymap is set before the initramfs (disk-unlock prompt)" \
+  || fail "vconsole.conf must be written before mkinitcpio -P"
+
 echo "disk encryption: mkinitcpio hook"
 C="$WORK/crypt"; mkdir -p "$C"
 printf 'MODULES=()\nHOOKS=(base systemd autodetect microcode modconf kms keyboard sd-vconsole block filesystems fsck)\n' >"$C/sd.conf"
