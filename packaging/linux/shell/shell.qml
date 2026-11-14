@@ -10,6 +10,7 @@
 import QtQuick
 import Quickshell
 import qs.answer
+import qs.tour
 import qs.bar
 import qs.drawers
 import qs.notifications
@@ -26,11 +27,12 @@ ShellRoot {
       DrawerHost { modelData: perScreen.modelData }
       Popups { modelData: perScreen.modelData }
       AnswerPill { modelData: perScreen.modelData }
+      TourCard { modelData: perScreen.modelData }
       Osd { modelData: perScreen.modelData }
     }
   }
 
   // Touch the singletons that must run from the start: the notification
   // server has to own the bus name before anything notifies.
-  Component.onCompleted: [Notifs.dnd, Shell.drawer, Friday.mode, Answer.state, History.entries]
+  Component.onCompleted: [Notifs.dnd, Shell.drawer, Friday.mode, Answer.state, History.entries, Tour.active]
 }

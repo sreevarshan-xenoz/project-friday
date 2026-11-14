@@ -789,9 +789,16 @@ friday_welcome() {
   sleep "${FRIDAY_WELCOME_DELAY:-6}"   # let the notification daemon come up
   local name action
   name=$(getent passwd "${USER:-$(id -un)}" | cut -d: -f5 | cut -d, -f1 || true); name="${name:-${USER:-friend}}"
+  local free=true
+  grep -qE '^([A-Z_]+_API_KEY|FRIDAY_AGENT_CLIS)=.+' "$env_file" 2>/dev/null && free=false
+  # FRIDAY Shell walks through the keys (press each one); the notification
+  # below is for desktops without it.
+  if command -v quickshell >/dev/null 2>&1 \
+    && timeout 3 bash "$0" shell ipc tour begin "$name" "$free" >/dev/null 2>&1; then
+    return 0
+  fi
   local body="Press Super+Y to ask me anything, Super+Alt+Y about selected text, Super+Ctrl+Y about your screen."
-  grep -qE '^([A-Z_]+_API_KEY|FRIDAY_AGENT_CLIS)=.+' "$env_file" 2>/dev/null \
-    || body="$body I'm on free models (OpenCode Zen, then Kilo), which may keep what you send. Connect your own account or key for private work."
+  $free && body="$body I'm on free models (OpenCode Zen, then Kilo), which may keep what you send. Connect your own account or key for private work."
   action=$(notify-send -a FRIDAY -t 20000 -A keys="Show shortcuts" -A connect="Connect an account" -A setup="Choose AI provider" \
     "Hello, $name. I'm FRIDAY." "$body" 2>/dev/null || true)
   case "$action" in
