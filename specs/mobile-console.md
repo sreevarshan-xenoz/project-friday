@@ -86,7 +86,7 @@ QR Pair  →  Exchange Keys  →  Save Token  →  Reconnect
 - `SystemProbe` (`probe.rs`): real host CPU/RAM/Disk telemetry via `sysinfo`,
   published onto the bus (no fake numbers).
 - `CommandGateway` (`commands.rs`): structured commands
-  (`planner.goal`, `task.cancel`, `task.pause`, `task.approve`, `system.info`)
+  (`planner.goal` with optional `web: true`, `task.cancel`, `task.pause`, `task.approve`, `system.info`)
   → real bus `Event`s, not stubs.
 - `WsServer` now carries `sessions: Arc<SessionRegistry>`; inserts/updates/removes
   sessions on connect/auth/command/disconnect; tracks `active_tasks` /

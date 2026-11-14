@@ -58,6 +58,7 @@ use friday_windows::WindowsAdapter;
 use serde_json::json;
 
 use crate::voice::VoiceConfig;
+use crate::web_search::{append_sources, ChainedWebSearcher, SearchResponse, WebSearcher};
 
 /// Shared confirmation gate for gated side-effecting tools.
 #[derive(Debug, Default)]
@@ -1024,6 +1025,8 @@ pub struct GoalRunner {
     in_flight: Arc<Mutex<Option<InFlightGoal>>>,
     /// Shared confirmation gate for gated tools (terminal, windows.open, filesystem.write).
     confirmation_gate: Arc<Mutex<ConfirmationGate>>,
+    /// Pluggable web search provider for goals requesting web search.
+    web_searcher: Arc<dyn WebSearcher>,
 }
 
 /// The in-flight goal the control subscriber matches `task.cancel` /
@@ -1093,6 +1096,12 @@ impl GoalRunner {
     /// already use their fabric).
     pub fn with_answerer(mut self, client: Arc<dyn LlmStrategyClient>) -> Self {
         self.answerer = Some(client);
+        self
+    }
+
+    /// Override the web searcher (e.g. for hermetic testing).
+    pub fn with_web_searcher(mut self, searcher: Arc<dyn WebSearcher>) -> Self {
+        self.web_searcher = searcher;
         self
     }
 
@@ -1343,6 +1352,7 @@ impl GoalRunner {
             pause,
             in_flight: Arc::new(Mutex::new(None)),
             confirmation_gate,
+            web_searcher: Arc::new(ChainedWebSearcher::default_chain()),
         }
     }
 
@@ -1549,7 +1559,12 @@ impl GoalRunner {
                     .get("confirm")
                     .and_then(|c| c.as_str())
                     .map(|s| s.to_string());
-                self.run_goal(goal, session_id, confirm).await;
+                let web = ev
+                    .payload
+                    .get("web")
+                    .and_then(|w| w.as_bool())
+                    .unwrap_or(false);
+                self.run_goal(goal, session_id, confirm, web).await;
             }
         });
 
@@ -1561,7 +1576,7 @@ impl GoalRunner {
     /// composed into the goal text the Executive plans on (per-session
     /// continuity), and the finished turn is recorded for the next goal in the
     /// same session.
-    async fn run_goal(&self, goal: String, session_id: String, confirm: Option<String>) {
+    async fn run_goal(&self, goal: String, session_id: String, confirm: Option<String>, web: bool) {
         let (goal, masked_count) = friday_goal_execution::mask_secrets(&goal);
         let id = format!("goal-{}", uuid::Uuid::new_v4().simple());
         let egress_ctx = friday_intelligence::EgressContext {
@@ -1570,7 +1585,7 @@ impl GoalRunner {
         };
         friday_intelligence::with_egress_context(
             egress_ctx,
-            self.run_goal_inner(goal, id, masked_count, session_id, confirm),
+            self.run_goal_inner(goal, id, masked_count, session_id, confirm, web),
         )
         .await;
     }
@@ -1582,6 +1597,7 @@ impl GoalRunner {
         masked_count: usize,
         session_id: String,
         confirm: Option<String>,
+        web: bool,
     ) {
         // Lengths only: the question and any selected text (which can hold a
         // password or token) never go to the log.
@@ -1675,6 +1691,17 @@ impl GoalRunner {
             gate.pending.take()
         };
 
+        let (web_response, web_search_failed) = if web {
+            let search_query = friday_goal_execution::planning::goal_segment(&goal);
+            let (masked_query, _) = friday_goal_execution::mask_secrets(search_query);
+            match self.web_searcher.search(&masked_query).await {
+                Ok(resp) if !resp.results.is_empty() => (Some(resp), false),
+                _ => (None, true),
+            }
+        } else {
+            (None, false)
+        };
+
         // The answer step: the cycle ran a tool and gathered evidence; the
         // model now writes the reply from them. Only for a goal that ran to
         // completion. If the model fails, the cycle's own result stands when
@@ -1689,15 +1716,71 @@ impl GoalRunner {
             && !report.recoverable
         {
             if let Some(answerer) = &self.answerer {
-                match compose_answer(answerer.as_ref(), &composed, &report, &self.bus, &id).await {
-                    Ok(answer) => {
+                match compose_answer(
+                    answerer.as_ref(),
+                    &composed,
+                    &report,
+                    &self.bus,
+                    &id,
+                    web_response.as_ref(),
+                )
+                .await
+                {
+                    Ok(mut answer) => {
+                        if web {
+                            if web_search_failed {
+                                answer.text = format!(
+                                    "Web search failed, so this is from the model alone.\n\n{}",
+                                    answer.text.trim()
+                                );
+                            } else if let Some(resp) = &web_response {
+                                answer.text =
+                                    append_sources(&answer.text, &resp.backend, &resp.results);
+                            }
+                        }
                         report.result = Some(answer);
                         answered_by_model = true;
                     }
                     Err(e) if !stands_without_the_model(report.result.as_ref()) => {
-                        answer_failure = Some(crate::failures::plain_model_error(&e));
+                        if let (true, false, Some(resp)) = (web, web_search_failed, &web_response) {
+                            let mut text = format!("Web search results ({}):\n", resp.backend);
+                            for (i, s) in resp.results.iter().enumerate() {
+                                text.push_str(&format!("[{}] {}: {}\n", i + 1, s.title, s.snippet));
+                            }
+                            report.result = Some(GoalResult {
+                                kind: GoalResultKind::Text,
+                                text: append_sources(&text, &resp.backend, &resp.results),
+                                structured: None,
+                                tool: Some("web_search".to_string()),
+                                success: true,
+                            });
+                        } else {
+                            answer_failure = Some(crate::failures::plain_model_error(&e));
+                        }
                     }
                     Err(_) => {}
+                }
+            } else if web {
+                if web_search_failed {
+                    report.result = Some(GoalResult {
+                        kind: GoalResultKind::Text,
+                        text: "Web search failed, so this is from the model alone.".to_string(),
+                        structured: None,
+                        tool: Some("web_search".to_string()),
+                        success: false,
+                    });
+                } else if let Some(resp) = &web_response {
+                    let mut text = format!("Web search results ({}):\n", resp.backend);
+                    for (i, s) in resp.results.iter().enumerate() {
+                        text.push_str(&format!("[{}] {}: {}\n", i + 1, s.title, s.snippet));
+                    }
+                    report.result = Some(GoalResult {
+                        kind: GoalResultKind::Text,
+                        text: append_sources(&text, &resp.backend, &resp.results),
+                        structured: None,
+                        tool: Some("web_search".to_string()),
+                        success: true,
+                    });
                 }
             }
         }
@@ -1955,7 +2038,11 @@ const ANSWER_SOURCE_CHARS: usize = 6000;
 /// context and recalled memory the runner composed), then what FRIDAY did and
 /// found. The model answers from those; it is told not to invent beyond them
 /// for facts about the user's machine.
-fn answer_prompt(request: &str, report: &ExecutiveReport) -> String {
+fn answer_prompt(
+    request: &str,
+    report: &ExecutiveReport,
+    web_response: Option<&SearchResponse>,
+) -> String {
     let mut p = String::from(
         "You are FRIDAY, a desktop assistant. Answer the user's request directly and \
          concisely, in plain text. If the request includes text to work on (selected or \
@@ -1964,6 +2051,30 @@ fn answer_prompt(request: &str, report: &ExecutiveReport) -> String {
          on it, and say so when it doesn't contain the answer. If an action was taken, \
          say what happened.\n\n",
     );
+    if let Some(resp) = web_response {
+        if !resp.results.is_empty() {
+            let label = if resp.backend.is_empty() {
+                "Sources from the web:\n".to_string()
+            } else {
+                format!("Sources from the web ({}):\n", resp.backend)
+            };
+            p.push_str(&label);
+            for (i, s) in resp.results.iter().enumerate() {
+                p.push_str(&format!(
+                    "[{}] {} ({}): {}\n",
+                    i + 1,
+                    s.title,
+                    s.url,
+                    s.snippet.trim()
+                ));
+            }
+            if resp.backend.eq_ignore_ascii_case("wikipedia") {
+                p.push_str("\nThese are encyclopedia results that may not cover very recent events. Answer the request using the sources above when relevant. Cite sources as [1], [2], etc. If the sources do not contain enough information to answer the question, say so plainly.\n\n");
+            } else {
+                p.push_str("\nAnswer the request using the sources above when relevant. Cite sources as [1], [2], etc. If the sources do not contain enough information to answer the question, say so plainly.\n\n");
+            }
+        }
+    }
     p.push_str("Request:\n");
     p.push_str(request.trim());
     p.push('\n');
@@ -2008,8 +2119,9 @@ async fn compose_answer(
     report: &ExecutiveReport,
     bus: &EventBus,
     goal_id: &str,
+    web_response: Option<&SearchResponse>,
 ) -> Result<GoalResult, String> {
-    let prompt = answer_prompt(request, report);
+    let prompt = answer_prompt(request, report, web_response);
     // The answer streams: the text so far goes out as `goal.progress` events
     // (at most every PROGRESS_EVERY), and the forwarder is drained before
     // returning so no progress can land after the goal's terminal event.
@@ -2127,6 +2239,7 @@ fn completed_payload(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::web_search::SearchResult;
 
     /// A tiny canned search-results page in the endpoint's HTML shape.
     const MOCK_SEARCH_BODY: &str = r#"<html><body>
@@ -2436,6 +2549,244 @@ mod tests {
         }
     }
 
+    struct FakeWebSearcher {
+        calls: std::sync::atomic::AtomicUsize,
+        results: Result<SearchResponse, String>,
+    }
+
+    #[async_trait]
+    impl WebSearcher for FakeWebSearcher {
+        async fn search(&self, _query: &str) -> Result<SearchResponse, String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.results.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn goal_without_web_never_calls_search() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let answerer = Arc::new(ScriptedAnswerer {
+            reply: Ok("4".to_string()),
+            prompts: Mutex::new(Vec::new()),
+        });
+        let searcher = Arc::new(FakeWebSearcher {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            results: Ok(SearchResponse {
+                backend: "Wikipedia".to_string(),
+                results: vec![SearchResult {
+                    title: "T".to_string(),
+                    url: "https://example.com".to_string(),
+                    snippet: "S".to_string(),
+                }],
+            }),
+        });
+        GoalRunner::new(bus.clone())
+            .with_answerer(answerer)
+            .with_web_searcher(searcher.clone())
+            .start();
+
+        bus.publish(Event::new(
+            "plan.goal",
+            "mobile",
+            json!({ "goal": "what is 2+2" }),
+        ))
+        .await
+        .expect("publish");
+
+        for _ in 0..40 {
+            let ev = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+                .await
+                .expect("event")
+                .expect("bus");
+            if ev.kind == "goal.completed" || ev.kind == "goal.failed" {
+                break;
+            }
+        }
+
+        assert_eq!(
+            searcher.calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "must not search without web"
+        );
+    }
+
+    #[tokio::test]
+    async fn goal_with_web_calls_search_and_appends_sources() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let answerer = Arc::new(ScriptedAnswerer {
+            reply: Ok("The latest version is 1.100.0 according to [1].".to_string()),
+            prompts: Mutex::new(Vec::new()),
+        });
+        let searcher = Arc::new(FakeWebSearcher {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            results: Ok(SearchResponse {
+                backend: "DuckDuckGo".to_string(),
+                results: vec![
+                    SearchResult {
+                        title: "Rust Releases".to_string(),
+                        url: "https://doc.rust-lang.org/stable/releases.html".to_string(),
+                        snippet: "Rust 1.100.0 is released".to_string(),
+                    },
+                    SearchResult {
+                        title: "Rust Blog".to_string(),
+                        url: "https://blog.rust-lang.org/".to_string(),
+                        snippet: "Announcement".to_string(),
+                    },
+                ],
+            }),
+        });
+        GoalRunner::new(bus.clone())
+            .with_answerer(answerer.clone())
+            .with_web_searcher(searcher.clone())
+            .start();
+
+        bus.publish(Event::new(
+            "plan.goal",
+            "mobile",
+            json!({ "goal": "what is the latest rust", "web": true }),
+        ))
+        .await
+        .expect("publish");
+
+        let mut done = None;
+        for _ in 0..40 {
+            let ev = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+                .await
+                .expect("event")
+                .expect("bus");
+            if ev.kind == "goal.completed" || ev.kind == "goal.failed" {
+                done = Some(ev.payload);
+                break;
+            }
+        }
+
+        let done = done.expect("completed");
+        assert_eq!(
+            searcher.calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "must call search when web is true"
+        );
+        let result_text = done["result"]["text"].as_str().expect("result text");
+        assert!(result_text.contains("The latest version is 1.100.0 according to [1]."));
+        assert!(result_text.contains(
+            "Sources (DuckDuckGo):\n[1] Rust Releases — https://doc.rust-lang.org/stable/releases.html"
+        ));
+        // Source [2] was not cited
+        assert!(!result_text.contains("[2]"));
+
+        // Verify that sources were in the prompt
+        let prompts = answerer.prompts.lock().unwrap();
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].contains("Sources from the web (DuckDuckGo):"));
+        assert!(prompts[0].contains("[1] Rust Releases (https://doc.rust-lang.org/stable/releases.html): Rust 1.100.0 is released"));
+    }
+
+    #[tokio::test]
+    async fn goal_with_wikipedia_web_search_carries_encyclopedia_instruction() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let answerer = Arc::new(ScriptedAnswerer {
+            reply: Ok("Rust was created by Graydon Hoare [1].".to_string()),
+            prompts: Mutex::new(Vec::new()),
+        });
+        let searcher = Arc::new(FakeWebSearcher {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            results: Ok(SearchResponse {
+                backend: "Wikipedia".to_string(),
+                results: vec![SearchResult {
+                    title: "Rust (programming language)".to_string(),
+                    url: "https://en.wikipedia.org/wiki/Rust_(programming_language)".to_string(),
+                    snippet: "Rust is a general-purpose programming language.".to_string(),
+                }],
+            }),
+        });
+        GoalRunner::new(bus.clone())
+            .with_answerer(answerer.clone())
+            .with_web_searcher(searcher.clone())
+            .start();
+
+        bus.publish(Event::new(
+            "plan.goal",
+            "mobile",
+            json!({ "goal": "who created rust", "web": true }),
+        ))
+        .await
+        .expect("publish");
+
+        let mut done = None;
+        for _ in 0..40 {
+            let ev = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+                .await
+                .expect("event")
+                .expect("bus");
+            if ev.kind == "goal.completed" || ev.kind == "goal.failed" {
+                done = Some(ev.payload);
+                break;
+            }
+        }
+
+        let done = done.expect("completed");
+        let result_text = done["result"]["text"].as_str().expect("result text");
+        assert!(result_text.contains("Sources (Wikipedia):"));
+
+        let prompts = answerer.prompts.lock().unwrap();
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].contains("Sources from the web (Wikipedia):"));
+        assert!(prompts[0]
+            .contains("These are encyclopedia results that may not cover very recent events."));
+    }
+
+    #[tokio::test]
+    async fn web_search_failure_fallback_says_model_alone() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let answerer = Arc::new(ScriptedAnswerer {
+            reply: Ok("Rust is a programming language.".to_string()),
+            prompts: Mutex::new(Vec::new()),
+        });
+        let searcher = Arc::new(FakeWebSearcher {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            results: Err("network error".to_string()),
+        });
+        GoalRunner::new(bus.clone())
+            .with_answerer(answerer.clone())
+            .with_web_searcher(searcher.clone())
+            .start();
+
+        bus.publish(Event::new(
+            "plan.goal",
+            "mobile",
+            json!({ "goal": "what is rust", "web": true }),
+        ))
+        .await
+        .expect("publish");
+
+        let mut done = None;
+        for _ in 0..40 {
+            let ev = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+                .await
+                .expect("event")
+                .expect("bus");
+            if ev.kind == "goal.completed" || ev.kind == "goal.failed" {
+                done = Some(ev.payload);
+                break;
+            }
+        }
+
+        let done = done.expect("completed");
+        assert_eq!(searcher.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let result_text = done["result"]["text"].as_str().expect("result text");
+        assert!(result_text.contains("Web search failed, so this is from the model alone."));
+        assert!(result_text.contains("Rust is a programming language."));
+
+        // Prompt must NOT contain Sources from the web
+        let prompts = answerer.prompts.lock().unwrap();
+        assert_eq!(prompts.len(), 1);
+        assert!(!prompts[0].contains("Sources from the web:"));
+    }
+
     /// Run one goal and return its terminal event's (kind, payload).
     async fn terminal_with_answerer(
         goal: &str,
@@ -2514,6 +2865,7 @@ mod tests {
         let p = answer_prompt(
             "summarise the test run\n\n[memory]\nlast run failed",
             &report,
+            None,
         );
         assert!(p.contains("Request:\nsummarise the test run"));
         assert!(
@@ -4100,6 +4452,7 @@ mod tests {
                 "open notepad".to_string(),
                 DEFAULT_SESSION_ID.to_string(),
                 Some("notepad.exe".to_string()),
+                false,
             )
             .await;
 
@@ -4415,7 +4768,7 @@ mod tests {
 
         for run in 1..=4u32 {
             runner
-                .run_goal(goal.clone(), format!("s7-session-{run}"), None)
+                .run_goal(goal.clone(), format!("s7-session-{run}"), None, false)
                 .await;
             let mut terminal = None;
             for _ in 0..30 {
@@ -4599,7 +4952,12 @@ mod tests {
         let runner_clone = runner.clone();
         let task = tokio::spawn(async move {
             runner_clone
-                .run_goal("run echo ok".to_string(), "session-f".to_string(), None)
+                .run_goal(
+                    "run echo ok".to_string(),
+                    "session-f".to_string(),
+                    None,
+                    false,
+                )
                 .await;
         });
 
