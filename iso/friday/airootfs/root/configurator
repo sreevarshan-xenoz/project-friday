@@ -58,6 +58,11 @@ step_welcome() {
   friday_say "It usually takes 15 to 30 minutes, depending on your connection."
   echo
   gum confirm --affirmative="Let's begin" --negative="Not now" "Ready?" || leave_menu "Whenever you're ready."
+  # FRIDAY OS boots with systemd-boot, which needs UEFI: say so now, before
+  # any question, rather than after the disk has been erased.
+  if [[ ! -d /sys/firmware/efi && -z "${FRIDAY_ASSUME_UEFI:-}" ]]; then
+    leave_menu "This computer started in legacy BIOS mode, and FRIDAY OS needs UEFI. Turn on UEFI boot in the firmware settings, then start the USB again."
+  fi
 }
 
 connect_wifi() {
