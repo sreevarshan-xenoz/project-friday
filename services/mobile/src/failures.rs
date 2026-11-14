@@ -34,6 +34,18 @@ pub fn plain_model_error(raw: &str) -> String {
                 (on Windows: AI provider in the tray menu)."
             .to_string();
     }
+    if has(&[
+        " 429",
+        "too many requests",
+        "rate limit",
+        "rate_limit",
+        "quota",
+    ]) {
+        return "Your AI provider says there have been too many requests. Wait a minute and \
+                try again, or choose another provider with `friday setup-ai` (on Windows: AI \
+                provider in the tray menu)."
+            .to_string();
+    }
     if has(&["timed out", "timeout"]) {
         return "Your AI provider didn't answer in time. Try again in a moment.".to_string();
     }
@@ -108,6 +120,14 @@ mod tests {
         assert!(
             plain_model_error("Provider groq returned error status 401 Unauthorized: x")
                 .contains("turned the key down")
+        );
+        assert!(plain_model_error(
+            "Provider groq returned error status 429 Too Many Requests: rate limit reached"
+        )
+        .contains("too many requests"));
+        assert!(
+            plain_model_error("Provider gemini returned error status 429: quota exceeded")
+                .contains("too many requests")
         );
         let other = plain_model_error("something odd");
         assert_eq!(other, "Your AI provider couldn't answer (something odd).");
