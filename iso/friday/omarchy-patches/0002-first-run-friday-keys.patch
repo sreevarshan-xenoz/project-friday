@@ -1,0 +1,11 @@
+diff --git a/install/user/first-run/welcome.sh b/install/user/first-run/welcome.sh
+index 22e6629..65cc873 100644
+--- a/install/user/first-run/welcome.sh
++++ b/install/user/first-run/welcome.sh
+@@ -1,5 +1,5 @@
+ # Real newlines, not a literal \n: the card renders the body as it arrives, and
+ # elides past three lines.
+ omarchy-notification-send -u critical -g  "Learn Keybindings" \
+-  $'Super + K for cheatsheet.\nSuper + Space for Omarchy Menu.' \
++  $'Super + Y asks FRIDAY. Tap Super for apps.\nSuper + K for every key.' \
+   --exec omarchy-menu-keybindings

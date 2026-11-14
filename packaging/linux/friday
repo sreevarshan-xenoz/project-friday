@@ -715,7 +715,7 @@ friday_welcome() {
     setup) foot -T "FRIDAY setup" bash -c 'friday setup-ai; echo; read -rsn1 -p "Press any key to close."' ;;
     connect) foot -T "FRIDAY · connect an account" bash -c 'friday connect; echo; read -rsn1 -p "Press any key to close."' ;;
     keys)  notify-send -a FRIDAY -t 20000 "FRIDAY shortcuts" \
-             $'Super+Y  ask\nSuper+Alt+Y  ask about selected text\nSuper+Ctrl+Y  ask about the screen\nfriday doctor  check health\nfriday answers  past answers\nfriday sent  egress log' ;;
+             $'Super+Y  ask\nSuper+Alt+Y  ask about selected text\nSuper+Ctrl+Y  ask about the screen\nSuper  apps · Super+L  lock · Super+K  every key\nfriday doctor  check health\nfriday answers  past answers\nfriday sent  egress log' ;;
   esac
 }
 
