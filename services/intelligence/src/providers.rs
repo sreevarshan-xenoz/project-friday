@@ -351,6 +351,24 @@ fn openai_message_content(prompt: &str) -> serde_json::Value {
     }
 }
 
+/// Default connect timeout (5 seconds) for outgoing HTTP requests to LLM provider endpoints.
+/// Prevents an unreachable host from hanging indefinitely until the fabric's overall deadline.
+pub const HTTP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Reusable helper to build a `reqwest::ClientBuilder` configured with the default 5-second
+/// connect timeout.
+pub fn http_client_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder().connect_timeout(HTTP_CONNECT_TIMEOUT)
+}
+
+/// Reusable helper to build a `reqwest::Client` with a 5-second connect timeout,
+/// leaving per-request timeouts under fabric deadline control.
+pub fn http_client() -> reqwest::Client {
+    http_client_builder()
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 impl OpenAiProvider {
     /// POST one chat completion (headers, body); a non-2xx status is an error.
     async fn send_chat(
@@ -359,7 +377,7 @@ impl OpenAiProvider {
         prompt: &str,
         stream: bool,
     ) -> Result<reqwest::Response, String> {
-        let client = reqwest::Client::new();
+        let client = http_client();
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
 
         let mut headers = reqwest::header::HeaderMap::new();
@@ -539,7 +557,7 @@ impl Provider for OpenAiProvider {
     }
 
     async fn check_health(&self) -> bool {
-        let client = reqwest::Client::new();
+        let client = http_client();
         let url = format!("{}/models", self.base_url.trim_end_matches('/'));
         let res = client
             .get(&url)
@@ -558,7 +576,7 @@ impl Provider for OpenAiProvider {
         prompt: &str,
         _require_json: bool,
     ) -> Result<ProviderResponse, String> {
-        let client = reqwest::Client::new();
+        let client = http_client();
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
 
         let mut headers = reqwest::header::HeaderMap::new();
@@ -667,7 +685,7 @@ impl Provider for OmniRouteProvider {
         prompt: &str,
         _require_json: bool,
     ) -> Result<String, String> {
-        let client = reqwest::Client::new();
+        let client = http_client();
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
 
         let mut headers = reqwest::header::HeaderMap::new();
@@ -721,7 +739,7 @@ impl Provider for OmniRouteProvider {
     }
 
     async fn check_health(&self) -> bool {
-        let client = reqwest::Client::new();
+        let client = http_client();
         let url = format!("{}/models", self.base_url.trim_end_matches('/'));
         let res = client
             .get(&url)
@@ -740,7 +758,7 @@ impl Provider for OmniRouteProvider {
         prompt: &str,
         _require_json: bool,
     ) -> Result<ProviderResponse, String> {
-        let client = reqwest::Client::new();
+        let client = http_client();
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
 
         let mut headers = reqwest::header::HeaderMap::new();
@@ -1160,6 +1178,11 @@ pub struct InferenceFabric {
     /// request. Surfaced as a defect by the chaos laboratory (Phase 1: hangs,
     /// extreme latency) and confirmed to be a robustness knob, not a new layer.
     pub request_timeout: Option<std::time::Duration>,
+    /// Per-attempt deadline for screen asks (vision requests carrying large PNG
+    /// payloads). `None` falls back to [`request_timeout`]. When set (e.g. 45 s
+    /// in the daemon), gives vision models sufficient time to process multi-megabyte
+    /// screenshot payloads while keeping fast (15 s) text ask timeouts.
+    pub screen_request_timeout: Option<std::time::Duration>,
     /// Where provider health (scores + circuit state) persists. Defaults to
     /// `.fabric/provider_health.json` (cwd-relative). Chaos laboratory Phase 2
     /// scenarios point this at a controlled file so corruption is injectable.
@@ -1194,6 +1217,7 @@ impl InferenceFabric {
             last_decision: Arc::new(Mutex::new(None)),
             qualification_profiles: Arc::new(Mutex::new(HashMap::new())),
             request_timeout: None,
+            screen_request_timeout: None,
             health_state_path: std::path::PathBuf::from(".fabric/provider_health.json"),
             fabric_dir: std::path::PathBuf::from(".fabric"),
             egress: None,
@@ -1212,6 +1236,31 @@ impl InferenceFabric {
             .collect();
         names.sort();
         names
+    }
+
+    /// Effective timeout for a tier request: if the tier is [`CapabilityTier::VisionFree`]
+    /// or prompt is a [`ScreenCapture`], uses [`screen_request_timeout`] when set,
+    /// falling back to [`request_timeout`].
+    pub fn timeout_for_tier(
+        &self,
+        tier: CapabilityTier,
+        prompt: &str,
+    ) -> Option<std::time::Duration> {
+        if tier == CapabilityTier::VisionFree || parse_screen_capture(prompt).is_some() {
+            self.screen_request_timeout.or(self.request_timeout)
+        } else {
+            self.request_timeout
+        }
+    }
+
+    /// Effective timeout for a prompt: if prompt is a [`ScreenCapture`],
+    /// uses [`screen_request_timeout`] when set, falling back to [`request_timeout`].
+    pub fn timeout_for_prompt(&self, prompt: &str) -> Option<std::time::Duration> {
+        if parse_screen_capture(prompt).is_some() {
+            self.screen_request_timeout.or(self.request_timeout)
+        } else {
+            self.request_timeout
+        }
     }
 
     /// Attach the egress gate: every routed outbound prompt is then scanned
@@ -1257,7 +1306,7 @@ impl InferenceFabric {
     /// done inside the synchronous constructor (which must not block on I/O).
     /// The pure, deterministic parser is [`groq_catalog_models`].
     pub async fn refresh_groq_catalog(&mut self, api_key: &str) -> bool {
-        let client = reqwest::Client::new();
+        let client = http_client();
         let res = client
             .get("https://api.groq.com/openai/v1/models")
             .header(
@@ -1296,7 +1345,7 @@ impl InferenceFabric {
     /// (Zen rotates them, so static ids go stale). Works without a key.
     /// Returns `false` and keeps the existing models on any failure.
     pub async fn refresh_opencode_catalog(&mut self) -> bool {
-        let mut req = reqwest::Client::new().get(format!("{OPENCODE_ZEN_BASE_URL}/models"));
+        let mut req = http_client().get(format!("{OPENCODE_ZEN_BASE_URL}/models"));
         if let Ok(key) = std::env::var("OPENCODE_API_KEY") {
             if !key.is_empty() {
                 req = req.header(reqwest::header::AUTHORIZATION, format!("Bearer {key}"));
@@ -1484,7 +1533,7 @@ impl InferenceFabric {
             }
         };
         match run_attempt(
-            self.request_timeout,
+            self.timeout_for_tier(tier, &prompt),
             prov.complete(&model.id, &prompt, require_json),
         )
         .await
@@ -3155,18 +3204,10 @@ impl InferenceFabric {
                     return Err(e);
                 }
             };
+            let timeout = self.timeout_for_prompt(&prompt);
             let attempt = match progress {
-                Some(p) => {
-                    run_streaming_attempt(self.request_timeout, provider, &model.id, &prompt, p)
-                        .await
-                }
-                None => {
-                    run_attempt(
-                        self.request_timeout,
-                        provider.complete(&model.id, &prompt, false),
-                    )
-                    .await
-                }
+                Some(p) => run_streaming_attempt(timeout, provider, &model.id, &prompt, p).await,
+                None => run_attempt(timeout, provider.complete(&model.id, &prompt, false)).await,
             };
             match attempt {
                 Ok(response) => {
@@ -5304,7 +5345,7 @@ impl ProviderV2 for OmniRouteProviderV2 {
         prompt: &str,
         _require_json: bool,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<CompletionChunk, String>> + Send>>, String> {
-        let client = reqwest::Client::new();
+        let client = http_client();
         let url = format!(
             "{}/chat/completions",
             self.inner.base_url.trim_end_matches('/')
@@ -5404,7 +5445,7 @@ impl ProviderV2 for OmniRouteProviderV2 {
     }
 
     async fn list_models(&self) -> Result<Vec<ModelDescriptor>, String> {
-        let client = reqwest::Client::new();
+        let client = http_client();
         let url = format!("{}/models", self.inner.base_url.trim_end_matches('/'));
         let res = client
             .get(&url)
@@ -5447,7 +5488,7 @@ impl ProviderV2 for OmniRouteProviderV2 {
         model_id: &str,
         texts: &[String],
     ) -> Result<EmbeddingResult, String> {
-        let client = reqwest::Client::new();
+        let client = http_client();
         let url = format!("{}/embeddings", self.inner.base_url.trim_end_matches('/'));
 
         let mut headers = reqwest::header::HeaderMap::new();
@@ -5963,6 +6004,155 @@ mod v2_tests {
         assert!(
             d2.failures.is_empty(),
             "alpha was never attempted again: no new failure, no hidden retry"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_client_builder_has_5s_connect_timeout() {
+        assert_eq!(HTTP_CONNECT_TIMEOUT, std::time::Duration::from_secs(5));
+        let client = http_client();
+        drop(client);
+    }
+
+    #[tokio::test]
+    async fn complete_tier_honors_request_timeout_with_mock_server_that_never_answers() {
+        use tokio::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            if let Ok((socket, _)) = listener.accept().await {
+                // Accept connection and sleep: never reply
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                drop(socket);
+            }
+        });
+
+        let mut fabric = InferenceFabric::new();
+        fabric.request_timeout = Some(std::time::Duration::from_millis(150));
+        let provider_name = "mock_hang";
+        fabric.register_provider(Box::new(OpenAiProvider {
+            name: provider_name.to_string(),
+            base_url: format!("http://{addr}/v1"),
+            api_key: String::new(),
+        }));
+        fabric.register_model(ModelInfo {
+            id: "m_hang".to_string(),
+            family: "test".to_string(),
+            provider: provider_name.to_string(),
+            latency_ms: 10,
+            reliability: 1.0,
+            capabilities: vec![ModelCapability::Vision],
+            max_context: 4096,
+            tier: Some(CapabilityTier::VisionFree),
+        });
+
+        let start = std::time::Instant::now();
+        let res = fabric
+            .complete_tier(
+                provider_name,
+                CapabilityTier::VisionFree,
+                "test prompt",
+                false,
+            )
+            .await;
+        let elapsed = start.elapsed();
+
+        assert!(res.is_err(), "must fail on hung server");
+        let err = res.unwrap_err();
+        assert!(
+            err.contains("timed out"),
+            "expected timeout error, got: {err}"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "timeout must trigger around deadline (~150ms), took {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn screen_ask_deadline_honors_screen_request_timeout_over_request_timeout() {
+        use tokio::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                if let Ok((socket, _)) = listener.accept().await {
+                    tokio::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                        drop(socket);
+                    });
+                }
+            }
+        });
+
+        let mut fabric = InferenceFabric::new();
+        // Text ask deadline = 80ms; Screen ask deadline = 300ms
+        fabric.request_timeout = Some(std::time::Duration::from_millis(80));
+        fabric.screen_request_timeout = Some(std::time::Duration::from_millis(300));
+
+        let provider_name = "mock_hang_screen";
+        fabric.register_provider(Box::new(OpenAiProvider {
+            name: provider_name.to_string(),
+            base_url: format!("http://{addr}/v1"),
+            api_key: String::new(),
+        }));
+        fabric.register_model(ModelInfo {
+            id: "m_auto".to_string(),
+            family: "test".to_string(),
+            provider: provider_name.to_string(),
+            latency_ms: 10,
+            reliability: 1.0,
+            capabilities: vec![ModelCapability::Tools],
+            max_context: 4096,
+            tier: Some(CapabilityTier::Auto),
+        });
+        fabric.register_model(ModelInfo {
+            id: "m_vision".to_string(),
+            family: "test".to_string(),
+            provider: provider_name.to_string(),
+            latency_ms: 10,
+            reliability: 1.0,
+            capabilities: vec![ModelCapability::Vision],
+            max_context: 4096,
+            tier: Some(CapabilityTier::VisionFree),
+        });
+
+        // 1. Text ask: must time out near 80ms (< 220ms)
+        let start_text = std::time::Instant::now();
+        let res_text = fabric
+            .complete_tier(
+                provider_name,
+                CapabilityTier::Auto,
+                "plain text prompt",
+                false,
+            )
+            .await;
+        let elapsed_text = start_text.elapsed();
+        assert!(res_text.is_err());
+        assert!(res_text.unwrap_err().contains("timed out"));
+        assert!(
+            elapsed_text < std::time::Duration::from_millis(220),
+            "text ask should time out near 80ms, took {elapsed_text:?}"
+        );
+
+        // 2. Screen ask: must honor 300ms screen deadline (takes >= 250ms)
+        let start_screen = std::time::Instant::now();
+        let screen_prompt =
+            "SCREEN_CAPTURE mime=image/png geometry=fullscreen bytes=3 data=QUJD\nQUESTION: look";
+        let res_screen = fabric
+            .complete_tier(
+                provider_name,
+                CapabilityTier::VisionFree,
+                screen_prompt,
+                false,
+            )
+            .await;
+        let elapsed_screen = start_screen.elapsed();
+        assert!(res_screen.is_err());
+        assert!(res_screen.unwrap_err().contains("timed out"));
+        assert!(
+            elapsed_screen >= std::time::Duration::from_millis(250),
+            "screen ask should stay alive past 80ms text deadline up to ~300ms, took {elapsed_screen:?}"
         );
     }
 }

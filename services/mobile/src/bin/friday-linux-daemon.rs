@@ -192,6 +192,9 @@ async fn main() {
         .unwrap_or_else(|| std::path::PathBuf::from(".fabric"));
     let mut fabric = InferenceFabric::default_from_env_in(&fabric_dir);
     fabric.request_timeout = Some(Duration::from_secs(15));
+    // Vision models require extra transmission and token encoding time for large
+    // screenshot PNGs (2-8 MB), so screen asks get 45 s while text asks stay at 15 s.
+    fabric.screen_request_timeout = Some(Duration::from_secs(45));
     // OpenCode Zen (the keyless default) rotates its free models: swap the
     // static fallback for the live free lineup. Bounded so a slow or offline
     // network never delays startup.
