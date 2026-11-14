@@ -687,8 +687,8 @@ fn capability_for_description(description: &str) -> Capability {
     //    "execute …", or a goal that is itself a command line ("cargo test",
     //    "git status"). A question that merely mentions a tool ("why does my
     //    git push fail?") is answered, never run.
-    const PROGRAMS: [&str; 9] = [
-        "cargo", "git", "npm", "pnpm", "yarn", "dotnet", "pip", "rustc", "build",
+    const PROGRAMS: [&str; 8] = [
+        "cargo", "git", "npm", "pnpm", "yarn", "dotnet", "pip", "rustc",
     ];
     let first_word = d.split_whitespace().next().unwrap_or("");
     if d.starts_with("run ") || d.starts_with("execute ") || PROGRAMS.contains(&first_word) {
@@ -837,7 +837,12 @@ fn capabilities_overlap(a: &Capability, b: &Capability) -> bool {
 /// untrusted (it can come from any web page), so it never routes a goal or
 /// becomes part of a command.
 pub fn goal_segment(description: &str) -> &str {
-    const CONTEXT_MARKERS: [&str; 2] = ["\n\n[", "\n\nUse this text as context:"];
+    const CONTEXT_MARKERS: [&str; 4] = [
+        "\n\n[",
+        "\n\nUse this text as context:",
+        "\r\n\r\n[",
+        "\r\n\r\nUse this text as context:",
+    ];
     let end = CONTEXT_MARKERS
         .iter()
         .filter_map(|m| description.find(m))
@@ -1136,7 +1141,7 @@ mod tests {
     fn legacy_plan_prefers_high_confidence_policy_candidate() {
         let planning = Planning::new();
         let policy = Policy::sequence(Capability::ExecuteCommand, Capability::ReadFile, 0.8, 5);
-        let ctx = PlanningContext::new(Goal::new("build project")).with_policies(vec![policy]);
+        let ctx = PlanningContext::new(Goal::new("cargo build")).with_policies(vec![policy]);
         let actions = planning.plan(&ctx);
         assert_eq!(actions.len(), 2, "policy plan (2 actions) wins over direct");
         assert!(
@@ -1291,6 +1296,7 @@ mod tests {
             "explain this build error",
             "What does npm audit do?",
             "Check the git status of the workspace repository",
+            "build me a plan for my week",
         ] {
             assert_ne!(
                 capability_for_description(goal),
@@ -1298,7 +1304,7 @@ mod tests {
                 "'{goal}' must not route to the shell"
             );
         }
-        for goal in ["git status", "cargo test", "build the project", "run ls"] {
+        for goal in ["git status", "cargo test", "cargo build", "run ls"] {
             assert_eq!(
                 capability_for_description(goal),
                 Capability::ExecuteCommand,
@@ -1343,5 +1349,14 @@ mod tests {
             planning.infer_capability(composed, &[]),
             Capability::ExecuteCommand
         );
+    }
+
+    #[test]
+    fn goal_segment_handles_crlf_markers() {
+        let selection_crlf = "Explain this code\r\n\r\nUse this text as context:\r\nlet x = 42;\r\nprintln!(\"{x}\");";
+        assert_eq!(goal_segment(selection_crlf), "Explain this code");
+
+        let context_crlf = "Review this\r\n\r\n[session context]\r\nprevious goal: cargo test";
+        assert_eq!(goal_segment(context_crlf), "Review this");
     }
 }

@@ -112,7 +112,7 @@ fn planning_with_sequence_policy() {
     let policy = Policy::sequence(Capability::ExecuteCommand, Capability::ReadFile, 0.7, 10);
     let planning = Planning::new();
     let evaluator = PlanEvaluator::new();
-    let goal = Goal::new("build project");
+    let goal = Goal::new("cargo build");
     let ctx = PlanningContext::new(goal).with_policies(vec![policy]);
     let candidates = planning.think(&ctx);
     assert!(

@@ -1677,10 +1677,6 @@ impl GoalRunner {
             }
         }
 
-        // The run is over — no longer in flight (a stale task.cancel for this
-        // id must not stop the next goal).
-        *self.in_flight.lock().unwrap() = None;
-
         // Record the finished turn for the next goal in this session.
         {
             let mut sessions = self.sessions.lock().unwrap();
@@ -1851,6 +1847,10 @@ impl GoalRunner {
             "goal.failed"
         };
         tracing::info!(id = %id, session = %session_id, "goal terminal: {terminal}");
+
+        // The run is over — clear in_flight only AFTER the terminal event is
+        // published to the bus, so the upgrade watcher cannot exit between them.
+        *self.in_flight.lock().unwrap() = None;
     }
 }
 
@@ -4457,6 +4457,33 @@ mod tests {
 
         *handle.in_flight.lock().unwrap() = None;
         assert!(runner.is_idle());
+        assert!(handle.is_idle());
+    }
+
+    #[tokio::test]
+    async fn goal_in_flight_is_cleared_after_terminal_event() {
+        let bus = EventBus::new();
+        let mut sub = bus.subscribe();
+        let runner = Arc::new(GoalRunner::new(bus.clone()));
+        let handle = runner.handle();
+
+        let runner_clone = runner.clone();
+        let task = tokio::spawn(async move {
+            runner_clone
+                .run_goal("run echo ok".to_string(), "session-f".to_string(), None)
+                .await;
+        });
+
+        // The terminal event must arrive from the bus.
+        let mut received_terminal = false;
+        while let Ok(event) = sub.recv().await {
+            if event.kind == "goal.completed" || event.kind == "goal.failed" {
+                received_terminal = true;
+                break;
+            }
+        }
+        assert!(received_terminal, "must receive terminal event");
+        let _ = task.await;
         assert!(handle.is_idle());
     }
 }

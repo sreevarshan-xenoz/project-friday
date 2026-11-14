@@ -90,7 +90,23 @@ impl TerminalSession {
     }
 
     fn is_closed(&self) -> bool {
-        self.child.lock().map(|g| g.is_none()).unwrap_or(true)
+        let Ok(mut guard) = self.child.lock() else {
+            return true;
+        };
+        match guard.as_mut() {
+            None => true,
+            Some(child) => match child.try_wait() {
+                Ok(Some(_status)) => {
+                    *guard = None;
+                    true
+                }
+                Ok(None) => false,
+                Err(_) => {
+                    *guard = None;
+                    true
+                }
+            },
+        }
     }
 
     async fn run(&self, command: &str, timeout: Duration) -> ActionResult {
@@ -100,7 +116,10 @@ impl TerminalSession {
                 let mut guard = self.stdin.lock().await;
                 let stdin = match guard.as_mut() {
                     Some(s) => s,
-                    None => return ActionResult::error("terminal session closed"),
+                    None => {
+                        self.kill();
+                        return ActionResult::error("terminal session closed");
+                    }
                 };
                 let script = if cfg!(windows) {
                     format!("{command}\r\necho {sentinel}\r\n")
@@ -108,21 +127,29 @@ impl TerminalSession {
                     format!("{command}\necho {sentinel}\n")
                 };
                 if let Err(e) = stdin.write_all(script.as_bytes()).await {
+                    self.kill();
                     return ActionResult::error(format!("stdin write failed: {e}"));
                 }
                 if let Err(e) = stdin.flush().await {
+                    self.kill();
                     return ActionResult::error(format!("stdin flush failed: {e}"));
                 }
             }
 
             let mut out = String::new();
             let mut rx = self.rx.lock().await;
+            let mut seen_sentinel = false;
             while let Some(line) = rx.recv().await {
                 if line.trim() == sentinel {
+                    seen_sentinel = true;
                     break;
                 }
                 out.push_str(&line);
                 out.push('\n');
+            }
+            if !seen_sentinel {
+                self.kill();
+                return ActionResult::error("terminal session closed");
             }
             ActionResult::success(json!({ "stdout": out }))
         };
@@ -224,7 +251,7 @@ impl ActionAdapter for TerminalAdapter {
             requested.unwrap_or(DEFAULT_TIMEOUT).min(MAX_TIMEOUT)
         };
         let mut guard = self.session.lock().await;
-        if guard.is_none() {
+        if guard.as_ref().map(|s| s.is_closed()).unwrap_or(true) {
             let session = match TerminalSession::spawn() {
                 Ok(s) => s,
                 Err(e) => return ActionResult::error(format!("could not start shell: {e}")),
@@ -298,6 +325,43 @@ mod tests {
             next_res.error
         );
         let stdout = next_res.output["stdout"].as_str().unwrap_or_default();
+        assert!(
+            stdout.contains("ok"),
+            "expected 'ok' in stdout, got: {stdout}"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn terminal_exit_detects_closed_and_respawns_shell() {
+        let adapter = TerminalAdapter::new();
+
+        // 1. Run 'exit': shell exits, command returns an error and marks session closed
+        let exit_req = ActionRequest::new(
+            "terminal",
+            "run",
+            json!({
+                "command": "exit"
+            }),
+        );
+        let exit_res = adapter.execute(exit_req).await;
+        assert!(!exit_res.success, "exit command must report closed/error");
+
+        // 2. Run 'echo ok': session must be respawned and succeed instead of failing with BrokenPipe
+        let ok_req = ActionRequest::new(
+            "terminal",
+            "run",
+            json!({
+                "command": "echo ok"
+            }),
+        );
+        let ok_res = adapter.execute(ok_req).await;
+        assert!(
+            ok_res.success,
+            "next command after exit must succeed: {:?}",
+            ok_res.error
+        );
+        let stdout = ok_res.output["stdout"].as_str().unwrap_or_default();
         assert!(
             stdout.contains("ok"),
             "expected 'ok' in stdout, got: {stdout}"
