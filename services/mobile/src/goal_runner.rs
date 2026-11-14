@@ -1622,6 +1622,7 @@ impl GoalRunner {
             hits.iter().map(format_recalled_memory).collect()
         };
         let composed = compose_goal_with_context(&goal, &prior, &recalled);
+        let goal_start = std::time::Instant::now();
 
         let _ = self
             .bus
@@ -1660,6 +1661,7 @@ impl GoalRunner {
         // it is a real result (a command ran, files were listed); when it is
         // nothing to show (an empty memory lookup), the goal fails with why.
         let mut answer_failure: Option<String> = None;
+        let mut answered_by_model = false;
         if pending_confirmation.is_none()
             && report.plan_executed
             && !report.cancelled
@@ -1668,7 +1670,10 @@ impl GoalRunner {
         {
             if let Some(answerer) = &self.answerer {
                 match compose_answer(answerer.as_ref(), &composed, &report, &self.bus, &id).await {
-                    Ok(answer) => report.result = Some(answer),
+                    Ok(answer) => {
+                        report.result = Some(answer);
+                        answered_by_model = true;
+                    }
                     Err(e) if !stands_without_the_model(report.result.as_ref()) => {
                         answer_failure = Some(crate::failures::plain_model_error(&e));
                     }
@@ -1798,8 +1803,8 @@ impl GoalRunner {
                 ))
                 .await;
         } else if report.plan_executed {
-            // The fabric is called exactly once per goal (the investigation), so
-            // its last routing decision is THIS goal's: `served` is
+            // The fabric is called for the investigation and the answer step;
+            // its last routing decision is THIS goal's answer step: `served` is
             // Some((provider, model)) when the model answered, None when it
             // errored and the heuristic planned instead.
             let served = self
@@ -1807,7 +1812,19 @@ impl GoalRunner {
                 .as_ref()
                 .and_then(|f| f.last_decision())
                 .and_then(|d| d.served);
-            let mut payload = completed_payload(&goal, &id, &report, served.as_ref());
+            let elapsed_ms = goal_start.elapsed().as_millis() as u64;
+            let served_by = if answered_by_model {
+                served
+                    .as_ref()
+                    .map(|(provider, model)| crate::shell_state::ServedBy {
+                        provider: provider.clone(),
+                        model: model.clone(),
+                        ms: elapsed_ms,
+                    })
+            } else {
+                None
+            };
+            let mut payload = completed_payload(&goal, &id, &report, served.as_ref(), served_by);
             payload["session_id"] = json!(session_id);
             payload["session_turn"] = json!(next_turn);
             let _ = self
@@ -2019,6 +2036,7 @@ fn completed_payload(
     id: &str,
     report: &ExecutiveReport,
     served: Option<&(String, String)>,
+    served_by: Option<crate::shell_state::ServedBy>,
 ) -> serde_json::Value {
     let channels: Vec<serde_json::Value> = report
         .evidence_trail
@@ -2064,6 +2082,13 @@ fn completed_payload(
     if let Some((provider, model)) = served {
         payload["provider"] = json!(provider);
         payload["model"] = json!(model);
+    }
+    if let Some(sb) = served_by {
+        payload["served_by"] = json!({
+            "provider": sb.provider,
+            "model": sb.model,
+            "ms": sb.ms,
+        });
     }
     payload
 }
@@ -2704,7 +2729,7 @@ mod tests {
             "openrouter".to_string(),
             "openrouter/nvidia/nemotron:free".to_string(),
         );
-        let p = completed_payload("g", "id-1", &report, Some(&served));
+        let p = completed_payload("g", "id-1", &report, Some(&served), None);
         assert_eq!(p["strategy"], "llm");
         assert_eq!(p["provider"], "openrouter");
         assert_eq!(p["model"], "openrouter/nvidia/nemotron:free");
@@ -2719,12 +2744,37 @@ mod tests {
         assert!(p["result"]["text"].as_str().unwrap_or_default().is_empty());
 
         // The model errored / no provider → heuristic strategy, no provider key.
-        let p = completed_payload("g", "id-2", &report, None);
+        let p = completed_payload("g", "id-2", &report, None, None);
         assert_eq!(p["strategy"], "heuristic");
         assert!(p.get("provider").is_none());
         assert!(p.get("model").is_none());
         // The channels are still the evidence-gated plan's channels.
         assert_eq!(p["channels"][0]["channel"], "git");
+    }
+
+    #[test]
+    fn completed_payload_carries_served_by() {
+        let report = ExecutiveReport {
+            plan_executed: true,
+            ..ExecutiveReport::default()
+        };
+        let served = (
+            "opencode-zen".to_string(),
+            "inclusionai/ling-3.0-flash:free".to_string(),
+        );
+        let sb = crate::shell_state::ServedBy {
+            provider: "opencode-zen".to_string(),
+            model: "inclusionai/ling-3.0-flash:free".to_string(),
+            ms: 2300,
+        };
+        let p = completed_payload("g", "id-sb", &report, Some(&served), Some(sb));
+        assert_eq!(p["served_by"]["provider"], "opencode-zen");
+        assert_eq!(p["served_by"]["model"], "inclusionai/ling-3.0-flash:free");
+        assert_eq!(p["served_by"]["ms"], 2300);
+
+        // When absent, served_by is not in the payload
+        let p_none = completed_payload("g", "id-nosb", &report, Some(&served), None);
+        assert!(p_none.get("served_by").is_none());
     }
 
     /// The completed payload contract carries the goal's canonical result
@@ -2746,7 +2796,13 @@ mod tests {
             ..ExecutiveReport::default()
         };
 
-        let p = completed_payload("List the files in this project", "id-3", &report, None);
+        let p = completed_payload(
+            "List the files in this project",
+            "id-3",
+            &report,
+            None,
+            None,
+        );
         let result = p["result"].as_object().expect("result object");
         assert_eq!(result["kind"], "text");
         assert!(result["text"]

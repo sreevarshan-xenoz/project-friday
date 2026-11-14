@@ -63,6 +63,14 @@ done=[o for o in objs if isinstance(o, dict) and "outcome" in o]
 print((done[-1].get("result") or "") if done else "")' <<<"$out")
   if [[ "$answer" == "FAKE-MODEL-ANSWER: $q"* ]]; then pass "answered by the model: ${answer:0:70}"
   else fail "answer is not the model's reply to the question (got: '${answer:0:120}')"; fi
+  provider=$("$PY" -c 'import json,sys
+try:
+    with open(sys.argv[1]) as f: st = json.load(f)
+    print(st.get("last_goal", {}).get("served_by", {}).get("provider", ""))
+except Exception:
+    print("")' "$W/state.json")
+  if [[ -n "$provider" ]]; then pass "served_by.provider present in state.json: $provider"
+  else fail "served_by.provider missing from state.json"; fi
   # The {"partial": ...} lines: at least two, growing, each a start of the answer.
   steps=$("$PY" -c 'import json,sys
 answer=sys.argv[1]; parts=[]

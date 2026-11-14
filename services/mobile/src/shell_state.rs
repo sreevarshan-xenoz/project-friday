@@ -70,6 +70,17 @@ pub struct GoalState {
     /// The gated tool action requiring user confirmation, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub needs_confirmation: Option<NeedConfirmation>,
+    /// The AI provider and model that served the answer, plus total elapsed ms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub served_by: Option<ServedBy>,
+}
+
+/// Details of the provider and model that served the answer.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ServedBy {
+    pub provider: String,
+    pub model: String,
+    pub ms: u64,
 }
 
 /// A pending confirmation requirement for a gated action.
@@ -264,6 +275,7 @@ pub fn apply_event(mut state: ShellState, ev: &Event) -> ShellState {
                     evidence_verified: None,
                     partial: None,
                     needs_confirmation: None,
+                    served_by: None,
                 });
             }
         }
@@ -310,6 +322,9 @@ pub fn apply_event(mut state: ShellState, ev: &Event) -> ShellState {
                 }
                 if let Some(v) = ev.payload.get("evidence_verified") {
                     cur.evidence_verified = v.as_u64();
+                }
+                if let Some(sb) = ev.payload.get("served_by") {
+                    cur.served_by = serde_json::from_value(sb.clone()).ok();
                 }
             }
             if matches!(kind, "goal.completed" | "goal.failed" | "goal.cancelled") {
@@ -725,5 +740,58 @@ mod tests {
         // Progress after the end changes nothing.
         let st = apply_event(st, &progress("g1", "late"));
         assert!(st.current.is_none());
+    }
+
+    #[test]
+    fn completed_goal_records_served_by_in_last_goal_and_state_json() {
+        let s1 = apply_event(state(), &goal_event());
+        let done = Event::new(
+            "goal.completed",
+            "planner",
+            serde_json::json!({
+                "result": "did it",
+                "served_by": {
+                    "provider": "opencode-zen",
+                    "model": "inclusionai/ling-3.0-flash:free",
+                    "ms": 2300,
+                }
+            }),
+        );
+        let s2 = apply_event(s1, &done);
+        let last = s2.last_goal.as_ref().expect("last goal preserved");
+        let sb = last.served_by.as_ref().expect("served_by preserved");
+        assert_eq!(sb.provider, "opencode-zen");
+        assert_eq!(sb.model, "inclusionai/ling-3.0-flash:free");
+        assert_eq!(sb.ms, 2300);
+
+        // state.json output includes served_by
+        let rendered = render(&s2);
+        let last_rendered = &rendered["last_goal"];
+        assert_eq!(last_rendered["served_by"]["provider"], "opencode-zen");
+        assert_eq!(
+            last_rendered["served_by"]["model"],
+            "inclusionai/ling-3.0-flash:free"
+        );
+        assert_eq!(last_rendered["served_by"]["ms"], 2300);
+    }
+
+    #[test]
+    fn completed_goal_omits_served_by_when_absent() {
+        let s1 = apply_event(state(), &goal_event());
+        let done = Event::new(
+            "goal.completed",
+            "planner",
+            serde_json::json!({
+                "result": "did it",
+            }),
+        );
+        let s2 = apply_event(s1, &done);
+        let last = s2.last_goal.as_ref().expect("last goal preserved");
+        assert!(last.served_by.is_none());
+
+        // state.json output omits served_by
+        let rendered = render(&s2);
+        let last_rendered = &rendered["last_goal"];
+        assert!(last_rendered.get("served_by").is_none());
     }
 }

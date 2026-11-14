@@ -19,6 +19,7 @@ internal sealed class AnswerForm : Form
     private readonly string _question;
     private readonly Label _title;
     private readonly TextBox _body;
+    private readonly Label _footer;
     private readonly FlowLayoutPanel _buttons;
     private Color _border = Theme.Outline;
 
@@ -56,6 +57,17 @@ internal sealed class AnswerForm : Form
             Font = Theme.Body,
             Dock = DockStyle.Fill,
         };
+        _footer = new Label
+        {
+            Dock = DockStyle.Bottom,
+            Height = 20,
+            Font = Theme.Small,
+            ForeColor = Theme.Subtext,
+            BackColor = Theme.Bg,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Visible = false,
+            AutoEllipsis = true,
+        };
         _buttons = new FlowLayoutPanel
         {
             Dock = DockStyle.Bottom,
@@ -67,6 +79,7 @@ internal sealed class AnswerForm : Form
         _buttons.Controls.Add(CloseButton());
 
         Controls.Add(_body);
+        Controls.Add(_footer);
         Controls.Add(_buttons);
         Controls.Add(_title);
 
@@ -88,6 +101,8 @@ internal sealed class AnswerForm : Form
         _body.Font = Theme.Body;
         _body.ForeColor = Theme.Subtext;
         _body.Text = waiting;
+        _footer.Text = "";
+        _footer.Visible = false;
         _border = Theme.Outline;
         _buttons.Controls.Clear();
         var close = CloseButton();
@@ -116,6 +131,8 @@ internal sealed class AnswerForm : Form
 
         if (outcome.Confirmation is { } conf)
         {
+            _footer.Text = "";
+            _footer.Visible = false;
             _title.Text = "⚠  " + _question;
             _title.ForeColor = Theme.Warn;
             _body.Font = Theme.Monospace;
@@ -153,6 +170,17 @@ internal sealed class AnswerForm : Form
         _body.SelectionStart = 0;
         _body.ScrollToCaret();
         _border = outcome.Ok ? Theme.Outline : Theme.Error;
+
+        if (outcome.Ok && outcome.ServedBy is { } sb)
+        {
+            _footer.Text = Providers.FormatServedBy(sb.Provider, sb.Ms);
+            _footer.Visible = true;
+        }
+        else
+        {
+            _footer.Text = "";
+            _footer.Visible = false;
+        }
 
         var close = CloseButton();
         _buttons.Controls.Add(close);

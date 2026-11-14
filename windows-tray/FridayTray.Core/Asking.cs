@@ -9,13 +9,17 @@ public enum AskKind { Plain, Selection, Screen }
 /// <summary>A tool action pending explicit confirmation before execution.</summary>
 public sealed record NeedsConfirmation(string Tool, string Action);
 
+/// <summary>Details of the provider and model that served the answer.</summary>
+public sealed record ServedByInfo(string Provider, string Model, long Ms);
+
 /// <summary>What the tray shows after an ask.</summary>
 public sealed record AskOutcome(
     bool Ok,
     string Answer,
     string? Details,
     bool DaemonDown,
-    NeedsConfirmation? Confirmation = null)
+    NeedsConfirmation? Confirmation = null,
+    ServedByInfo? ServedBy = null)
 {
     public NeedsConfirmation? NeedsConfirmation => Confirmation;
 }
@@ -213,6 +217,7 @@ public static partial class Asking
     {
         var objects = JsonObjects(output);
         string? result, error;
+        ServedByInfo? servedBy = null;
         if (kind == AskKind.Screen)
         {
             // The result, not one of the {"partial": ...} lines before it.
@@ -225,10 +230,22 @@ public static partial class Asking
             var last = objects.LastOrDefault(o => o.TryGetProperty("outcome", out _));
             result = last.ValueKind == JsonValueKind.Object ? Str(last, "result") : null;
             error = last.ValueKind == JsonValueKind.Object ? Str(last, "error") ?? Str(last, "outcome") : null;
+            if (last.ValueKind == JsonValueKind.Object)
+            {
+                var sb = last.TryGetProperty("served_by", out var s) ? s : default;
+                if (sb.ValueKind == JsonValueKind.Object)
+                {
+                    var provider = Str(sb, "provider");
+                    var model = Str(sb, "model");
+                    var ms = sb.TryGetProperty("ms", out var m) && m.TryGetInt64(out var v) ? v : 0;
+                    if (!string.IsNullOrEmpty(provider))
+                        servedBy = new ServedByInfo(provider, model ?? "", ms);
+                }
+            }
         }
 
         if (exitOk)
-            return new AskOutcome(true, string.IsNullOrEmpty(result) ? $"Done: {question}" : result, null, false);
+            return new AskOutcome(true, string.IsNullOrEmpty(result) ? $"Done: {question}" : result, null, false, Confirmation: null, ServedBy: servedBy);
 
         var raw = string.IsNullOrEmpty(error) ? output.Trim() : error;
         var all = raw + output;

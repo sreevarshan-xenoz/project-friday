@@ -107,3 +107,68 @@ public class AnswerLogTests
         Assert.Equal(Path.Combine(dir, "local", "friday", "state.json"), paths.StateFile);
     }
 }
+
+public class ProviderMappingTests
+{
+    [Theory]
+    [InlineData("opencode-zen", "OpenCode Zen")]
+    [InlineData("kilo", "Kilo")]
+    [InlineData("claude-code", "Claude Code")]
+    [InlineData("codex", "Codex")]
+    [InlineData("antigravity", "Antigravity")]
+    [InlineData("cline", "Cline")]
+    [InlineData("llamacpp", "llamacpp")]
+    [InlineData("custom-provider", "custom-provider")]
+    public void Maps_provider_ids_to_readable_names(string id, string expected)
+    {
+        Assert.Equal(expected, Providers.DisplayName(id));
+    }
+
+    [Fact]
+    public void Formats_served_by_attribution_line()
+    {
+        Assert.Equal("via OpenCode Zen · 2.3 s", Providers.FormatServedBy("opencode-zen", 2300));
+        Assert.Equal("via Kilo · 0.5 s", Providers.FormatServedBy("kilo", 500));
+        Assert.Equal("via llamacpp · 0.0 s", Providers.FormatServedBy("llamacpp", 45));
+        Assert.Equal("via Codex · 2.0 s", Providers.FormatServedBy("codex", 2000));
+    }
+
+    [Fact]
+    public void Asking_interpret_parses_served_by()
+    {
+        var output = """
+            {
+              "outcome": "completed",
+              "result": "Hello world",
+              "error": null,
+              "served_by": {
+                "provider": "opencode-zen",
+                "model": "inclusionai/ling-3.0-flash:free",
+                "ms": 2300
+              }
+            }
+            """;
+        var outcome = Asking.Interpret(AskKind.Plain, "say hello", 0, output);
+        Assert.True(outcome.Ok);
+        Assert.Equal("Hello world", outcome.Answer);
+        Assert.NotNull(outcome.ServedBy);
+        Assert.Equal("opencode-zen", outcome.ServedBy.Provider);
+        Assert.Equal("inclusionai/ling-3.0-flash:free", outcome.ServedBy.Model);
+        Assert.Equal(2300, outcome.ServedBy.Ms);
+    }
+
+    [Fact]
+    public void Asking_interpret_leaves_served_by_null_when_absent()
+    {
+        var output = """
+            {
+              "outcome": "completed",
+              "result": "Hello world",
+              "error": null
+            }
+            """;
+        var outcome = Asking.Interpret(AskKind.Plain, "say hello", 0, output);
+        Assert.True(outcome.Ok);
+        Assert.Null(outcome.ServedBy);
+    }
+}
