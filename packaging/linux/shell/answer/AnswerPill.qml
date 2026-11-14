@@ -105,7 +105,9 @@ PanelWindow {
         }
         Label {
           Layout.fillWidth: true
-          text: win.answering ? Answer.goal : (Answer.goal ? "Working on: " + Answer.goal : "Working…")
+          text: win.answering ? Answer.goal
+            : Answer.state === "listening" ? "Listening… let go of Super+Y to ask"
+            : (Answer.goal ? "Working on: " + Answer.goal : "Working…")
           font.pixelSize: Theme.fontM
           font.weight: Font.DemiBold
           color: win.answering && !Answer.ok ? Theme.error : Theme.text

@@ -66,11 +66,15 @@ keymap() {
   if ! HOME="$home" OMARCHY_PATH="$A/usr/share/omarchy" "$LUA" tests/e2e/hypr_binds.lua "$entry" >"$map" 2>"$map.err"; then
     fail "$label: config did not load"; sed 's/^/       /' "$map.err" | head -5; return
   fi
-  local k got
+  local k got expect
   for k in "${keys[@]}"; do
-    got=$(awk -F'\t' -v k="$k" '$1 == k && $2 != ("global quickshell:searchToggleReleaseInterrupt") { print $2 }' "$map")
-    if [[ "$got" == "exec ${want[$k]}" ]]; then pass "$label: $k runs \`${want[$k]}\`"
-    else fail "$label: $k should run only \`${want[$k]}\`, runs:"; sed 's/^/       /' <<<"${got:-nothing}"; fi
+    got=$(awk -F'\t' -v k="$k" '$1 == k && $2 !~ /^(release )?global quickshell:searchToggleReleaseInterrupt$/ { print $2 }' "$map")
+    # Hyprland's Super+Y is a press and a release: a tap opens the prompt
+    # (`friday ask`), a hold records speech (friday voice).
+    expect="exec ${want[$k]}"
+    [[ "$k" == SUPER+Y ]] && expect=$'exec friday hold start\nrelease exec friday hold end'
+    if [[ "$got" == "$expect" ]]; then pass "$label: $k runs \`${expect//$'\n'/; }\`"
+    else fail "$label: $k should run only \`${expect//$'\n'/; }\`, runs:"; sed 's/^/       /' <<<"${got:-nothing}"; fi
   done
 }
 
@@ -137,6 +141,9 @@ press() {
   else
     cmd=$(awk -F'\t' -v k="$key" '$1 == k && $2 ~ /^exec / { sub(/^exec /, "", $2); print $2; exit }' "$OMARCHY_MAP")
     [[ -n "$cmd" ]] || { fail "$key: no command bound"; return; }
+    # A quick tap: the press, then the release bind if there is one.
+    local up; up=$(awk -F'\t' -v k="$key" '$1 == k && $2 ~ /^release exec / { sub(/^release exec /, "", $2); print $2; exit }' "$OMARCHY_MAP")
+    [[ -z "$up" ]] || cmd="$cmd; $up"
     runner=(sh -c "$cmd")
   fi
   : >"$W/notify.log"

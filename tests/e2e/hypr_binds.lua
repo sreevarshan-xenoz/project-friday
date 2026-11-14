@@ -4,7 +4,8 @@
 --                           modifiers, upper case), e.g. "ALT+SUPER+Y"
 -- An action is "exec <command>" (hl.dsp.exec_cmd), "global <name>"
 -- (hl.dsp.global) or "other"; a Lua-function bind is run to see what it
--- dispatches. Unbinds are honoured, so this is the effective keymap.
+-- dispatches. A bind that fires on the key's release ({ release = true })
+-- is prefixed "release ". Unbinds are honoured, so this is the effective keymap.
 --
 -- Usage: lua hypr_binds.lua <path/to/hyprland.lua>
 -- HOME must point at the home the config expects (~/.config/hypr is its dir).
@@ -56,8 +57,9 @@ local dsp = setmetatable({
 local dispatched -- collects dispatches while a function bind runs
 hl = setmetatable({
   dsp = dsp,
-  bind = function(keys, dispatcher)
-    local b = { keys = norm(keys), dispatcher = dispatcher, active = true }
+  bind = function(keys, dispatcher, opts)
+    local b = { keys = norm(keys), dispatcher = dispatcher, active = true,
+      release = type(opts) == "table" and opts.release == true }
     binds[#binds + 1] = b
     return { unbind = function() b.active = false end }
   end,
@@ -90,6 +92,6 @@ for _, b in ipairs(binds) do
     else
       actions[1] = describe(b.dispatcher)
     end
-    for _, a in ipairs(actions) do io.write(b.keys, "\t", a, "\n") end
+    for _, a in ipairs(actions) do io.write(b.keys, "\t", b.release and "release " or "", a, "\n") end
   end
 end

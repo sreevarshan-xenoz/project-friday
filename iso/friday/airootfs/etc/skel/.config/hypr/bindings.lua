@@ -6,7 +6,9 @@
 require("default.hypr.bindings.media")
 
 -- FRIDAY
-o.bind("SUPER + Y", "FRIDAY: Ask", "friday ask")
+-- Tap Super+Y to type a question; hold it and speak (friday voice setup).
+o.bind("SUPER + Y", "FRIDAY: Ask", "friday hold start")
+o.bind("SUPER + Y", "FRIDAY: Ask (let go)", "friday hold end", { release = true })
 o.bind("SUPER + ALT + Y", "FRIDAY: Ask about selected text", "friday ask --selection")
 o.bind("SUPER + CTRL + Y", "FRIDAY: Ask about the screen", "friday ask --screen")
 o.bind("SUPER + A", "FRIDAY: Open FRIDAY", "friday shell friday")

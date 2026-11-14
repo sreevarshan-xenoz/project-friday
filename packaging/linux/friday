@@ -42,6 +42,7 @@ Autonomous Agent & Cognitive Loop:
                                    a fallback after the free models unless --prefer
   friday disconnect <name>         Stop using a connected account
   friday face [status|setup|remove] Face unlock for the lock screen (Gaze)
+  friday voice [status|setup|remove] Hold Super+Y and speak (speech to text on this computer)
 
 Skill Forge:
   friday create-skill <id>         Create new skill template
@@ -698,6 +699,88 @@ friday_local_command() {
   fi
 }
 
+# Voice: hold Super+Y, speak, let go. Speech is turned into text on this
+# computer (whisper.cpp, Arch's whisper-cpp, with a small English model);
+# the text is then asked like a typed question. `friday hold start|end` are
+# Super+Y's press and release: a tap opens the prompt as before.
+friday_voice_model() { echo "${XDG_DATA_HOME:-$HOME/.local/share}/friday/whisper/ggml-base.en.bin"; }
+friday_whisper() { command -v whisper-cli 2>/dev/null || command -v whisper-cpp 2>/dev/null; }
+friday_voice_ready() { [ -s "$(friday_voice_model)" ] && [ -n "$(friday_whisper)" ] && command -v pw-record >/dev/null 2>&1; }
+
+friday_voice() {
+  local model; model=$(friday_voice_model)
+  case "${1:-status}" in
+    status)
+      if friday_voice_ready; then echo "Voice: on (hold Super+Y and speak)"
+      else echo "Voice: off (turn it on: friday voice setup)"; fi
+      ;;
+    setup)
+      echo "Voice: hold Super+Y, speak, let go. Speech becomes text on this computer;"
+      echo "only the text is asked, like a typed question. Needs whisper-cpp and a 142 MB model."
+      [ -n "$(friday_whisper)" ] || sudo pacman -S --needed --noconfirm whisper-cpp || return 1
+      if [ ! -s "$model" ]; then
+        mkdir -p "$(dirname "$model")"
+        curl -fL --progress-bar -o "$model.part" \
+          https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin || { rm -f "$model.part"; return 1; }
+        [ "$(stat -c %s "$model.part")" -gt 50000000 ] || { rm -f "$model.part"; echo "friday: the model download looks wrong" >&2; return 1; }
+        mv "$model.part" "$model"
+      fi
+      echo "Voice is on. Hold Super+Y and speak."
+      ;;
+    remove|off)
+      rm -f "$model"; echo "Voice is off (whisper-cpp stays installed)."
+      ;;
+    *) echo "Usage: friday voice [status|setup|remove]" >&2; return 1 ;;
+  esac
+}
+
+friday_hold() {
+  local d="${XDG_RUNTIME_DIR:-/tmp}/friday-hold-$(id -u)"
+  mkdir -p "$d" && chmod 700 "$d"
+  pill() { command -v quickshell >/dev/null 2>&1 && timeout 3 bash "$0" shell ipc answer "$@" >/dev/null 2>&1; }
+  case "${1:-}" in
+    start)
+      rm -f "$d/rec.pid" "$d/recording" "$d/rec.wav"
+      : >"$d/pressed"
+      friday_voice_ready || return 0
+      # Held past the delay: record until the release (or 30 s at most).
+      # SIGTERM stops the recorder: background jobs here start with SIGINT ignored.
+      (
+        sleep "${FRIDAY_HOLD_DELAY:-0.4}"
+        [ -e "$d/pressed" ] || exit 0
+        : >"$d/recording"
+        pill listening || true
+        timeout 30 pw-record --rate 16000 --channels 1 --format s16 "$d/rec.wav" &
+        echo $! >"$d/rec.pid"
+        [ -e "$d/pressed" ] || kill -TERM $! 2>/dev/null
+        wait
+      ) </dev/null >/dev/null 2>&1 &
+      disown 2>/dev/null || true
+      ;;
+    end)
+      rm -f "$d/pressed"
+      if [ -e "$d/recording" ]; then
+        local i text
+        for i in $(seq 10); do [ -s "$d/rec.pid" ] && break; sleep 0.05; done
+        kill -TERM "$(cat "$d/rec.pid" 2>/dev/null)" 2>/dev/null || true
+        for i in $(seq 20); do kill -0 "$(cat "$d/rec.pid" 2>/dev/null)" 2>/dev/null || break; sleep 0.05; done
+        rm -f "$d/recording" "$d/rec.pid"
+        text=$("$(friday_whisper)" -m "$(friday_voice_model)" -f "$d/rec.wav" -nt -np 2>/dev/null \
+          | tr '\n' ' ' | sed -e 's/\[[^]]*\]//g' -e 's/  */ /g' -e 's/^ //' -e 's/ $//')
+        rm -f "$d/rec.wav"
+        if [ -z "${text//[[:space:]]/}" ]; then
+          pill dismiss || true
+          notify-send -a FRIDAY "FRIDAY" "I didn't catch that. Hold Super+Y and speak, or tap it to type." 2>/dev/null || true
+          return 0
+        fi
+        exec bash "$0" ask "$text"
+      fi
+      exec bash "$0" ask
+      ;;
+    *) echo "Usage: friday hold start|end (Super+Y's press and release)" >&2; return 1 ;;
+  esac
+}
+
 friday_welcome() {
   local stamp="${XDG_STATE_HOME:-$HOME/.local/state}/friday/welcomed"
   local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
@@ -1172,6 +1255,14 @@ case "${1:-}" in
   welcome)
     shift
     friday_welcome "$@"
+    ;;
+  voice)
+    shift
+    friday_voice "$@"
+    ;;
+  hold)
+    shift
+    friday_hold "$@"
     ;;
   face)
     shift

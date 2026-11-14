@@ -250,6 +250,29 @@ contains "all three keys kept" "$(grep -c '_API_KEY=' "$envf")" "3"
 expect "--only replaces every key" bash -c "echo AIzaSyTestKey_12345 | bash '$F' setup-ai --only gemini"
 if [[ $(grep -c '_API_KEY=' "$envf") == 1 ]]; then pass "--only leaves one key"; else fail "--only kept other keys"; fi
 
+echo "voice (hold Super+Y)"
+export XDG_RUNTIME_DIR="$W/run"; mkdir -p "$XDG_RUNTIME_DIR"
+contains "voice status says it's off" "$(bash "$F" voice status)" "friday voice setup"
+: >"$LOG"; PICK="typed after a tap" bash "$F" hold start; PICK="typed after a tap" bash "$F" hold end; sleep 0.3
+contains "voice off: a tap opens the prompt and asks" "$(cat "$LOG")" "typed after a tap"
+# Voice on: a stand-in recorder (records until interrupted) and whisper.cpp.
+mkdir -p "$HOME/.local/share/friday/whisper"; head -c 100 /dev/zero >"$HOME/.local/share/friday/whisper/ggml-base.en.bin"
+printf '#!/bin/bash\necho "pw-record $*" >>"%s"\ntrap "exit 0" INT TERM\n: >"${@: -1}"\nwhile :; do sleep 0.05; done\n' "$LOG" >"$S/pw-record"
+printf '#!/bin/bash\n[ -n "$WHISPER_SILENT" ] && exit 0\necho " what time is it in Tokyo"\n' >"$S/whisper-cli"
+chmod +x "$S/pw-record" "$S/whisper-cli"
+contains "voice status says it's on" "$(bash "$F" voice status)" "hold Super+Y and speak"
+: >"$LOG"; PICK="tapped with voice on" bash "$F" hold start; PICK="tapped with voice on" bash "$F" hold end; sleep 0.3
+contains "voice on: a quick tap still opens the prompt" "$(cat "$LOG")" "tapped with voice on"
+if grep -q "pw-record" "$LOG"; then fail "a quick tap started recording"; else pass "a quick tap records nothing"; fi
+: >"$LOG"; bash "$F" hold start; sleep 0.9; bash "$F" hold end; sleep 0.3
+contains "hold: records 16 kHz mono" "$(cat "$LOG")" "pw-record --rate 16000 --channels 1"
+contains "hold: the spoken words are asked" "$(cat "$LOG")" "what time is it in Tokyo"
+if pgrep -f "$S/pw-record" >/dev/null; then fail "the recorder kept running after the release"; else pass "the recorder stops on release"; fi
+: >"$LOG"; bash "$F" hold start; sleep 0.9; WHISPER_SILENT=1 bash "$F" hold end; sleep 0.3
+contains "hold with no words: says so" "$(cat "$LOG")" "I didn't catch that"
+if grep -q "friday-ctl" "$LOG"; then fail "an empty recording was asked"; else pass "an empty recording asks nothing"; fi
+rm -f "$HOME/.local/share/friday/whisper/ggml-base.en.bin"
+
 echo "face unlock"
 contains "face status says it's off and how to turn it on" "$(bash "$F" face status 2>&1)" "friday face setup"
 expect "face setup changes nothing when declined" bash -c "printf 'n\\n' | bash '$F' face setup | grep -q 'Nothing changed'"

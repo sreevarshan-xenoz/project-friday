@@ -14,7 +14,7 @@ import Quickshell.Io
 Singleton {
   id: root
 
-  // idle | working | answer
+  // idle | listening | working | answer
   property string state: "idle"
   property bool ok: true
   property string goal: ""
@@ -68,6 +68,17 @@ Singleton {
 
   function dismiss() { root.state = "idle"; }
 
+  // Super+Y held with voice on: shown until the words are asked.
+  function listening() {
+    settle.stop();
+    root.ok = true;
+    root.goal = "";
+    root.body = "";
+    root.meta = "";
+    root.state = "listening";
+    root.serial++;
+  }
+
   function copy() { Quickshell.execDetached(["wl-copy", "--", root.body]); }
   // Types the answer into the window that had focus, replacing a selection
   // there; the short wait lets focus go back to it first.
@@ -87,6 +98,7 @@ Singleton {
     target: "answer"
     function present(ok: bool, goal: string, body: string, meta: string): void { root.show(ok, goal, body, meta); }
     function dismiss(): void { root.dismiss(); }
+    function listening(): void { root.listening(); }
     function state(): string { return root.state; }
   }
 }
