@@ -203,6 +203,11 @@ contains "all three keys kept" "$(grep -c '_API_KEY=' "$envf")" "3"
 expect "--only replaces every key" bash -c "echo AIzaSyTestKey_12345 | bash '$F' setup-ai --only gemini"
 if [[ $(grep -c '_API_KEY=' "$envf") == 1 ]]; then pass "--only leaves one key"; else fail "--only kept other keys"; fi
 
+echo "face unlock"
+contains "face status says it's off and how to turn it on" "$(bash "$F" face status 2>&1)" "friday face setup"
+expect "face setup changes nothing when declined" bash -c "printf 'n\\n' | bash '$F' face setup | grep -q 'Nothing changed'"
+expect "face rejects an unknown action" bash -c "! bash '$F' face bogus"
+
 echo "connect an account"
 # A stub Claude Code: answers only once signed in (its login makes the mark).
 cat >"$S/claude" <<EOF
