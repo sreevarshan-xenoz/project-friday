@@ -149,6 +149,13 @@ else fail "installer takes its hostname default from bash's \$HOSTNAME"; fi
 if grep -rqsE "^[[:space:]]*alias[[:space:]]+friday=" "$AIROOTFS/etc/skel"; then
   fail "etc/skel aliases friday, which shadows the friday CLI"
 else pass "etc/skel leaves the friday command alone"; fi
+# Hyprland 0.57 deprecates the on_created_empty workspace rule and shows a
+# banner on every login; omarchy-patches/ backports upstream's replacement.
+if [[ -d "$AIROOTFS/usr/share/omarchy/default/hypr" ]]; then
+  if grep -rqsE "on_created_empty[[:space:]]*=" "$AIROOTFS/usr/share/omarchy/default/hypr"; then
+    fail "staged Omarchy still uses the deprecated on_created_empty workspace rule"
+  else pass "staged Omarchy has no deprecated on_created_empty rule"; fi
+fi
 
 echo "scripts are stored executable in git"
 for f in packaging/linux/friday iso/friday/airootfs/root/configurator iso/friday/airootfs/root/installer; do
