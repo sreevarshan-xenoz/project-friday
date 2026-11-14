@@ -238,6 +238,11 @@ ln -sf friday /mnt/usr/bin/friday-os
 
 mkdir -p /mnt/usr/share/omarchy
 rsync -a /usr/share/omarchy/ /mnt/usr/share/omarchy/
+# The lock screen (friday.lock, like Omarchy's) authenticates through
+# /etc/pam.d/omarchy-lock-password and refuses to lock without it. Omarchy's
+# own installer writes it (install/config/lockscreen-pam.sh); this is that step.
+arch-chroot /mnt env OMARCHY_PATH=/usr/share/omarchy PATH=/usr/share/omarchy/bin:/usr/bin omarchy-apply-lock >/dev/null \
+  || echo "warning: could not set up lock screen authentication (run omarchy-apply-lock after login)" >&2
 
 # The FRIDAY OS desktop (the package owns the rest of /usr/share/friday).
 if [ -d /usr/share/friday/dots-hyprland ]; then
