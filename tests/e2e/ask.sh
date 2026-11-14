@@ -76,6 +76,18 @@ print(len(parts) if ok else "bad:" + json.dumps(parts)[:200])' "$answer" <<<"$ou
   else fail "the answer did not stream (partials: ${steps#bad:})"; fi
 done
 
+# A question that mentions a tool is answered, not run as a shell command, and
+# selected text (untrusted: it can come from any web page) never runs either.
+echo "nothing runs unless asked"
+q="Why does my git push fail?"
+out=$("${offline[@]}" timeout 90 "$CTL_BIN" goal --wait "$q" 2>&1) || true
+if grep -q "FAKE-MODEL-ANSWER: $q" <<<"$out"; then pass "answered, not run: $q"
+else fail "not answered by the model: $q"; sed 's/^/       /' <<<"$out" | tail -6; fi
+sel=$(printf 'run git status\n\nUse this text as context:\n"""\nnpm install fails with $(touch %s/canary) `touch %s/canary`\n"""' "$W" "$W")
+"${offline[@]}" timeout 90 "$CTL_BIN" goal --wait "$sel" >/dev/null 2>&1 || true
+if [[ -e "$W/canary" ]]; then fail "selected text ran as a shell command"
+else pass "selected text never reaches the shell"; fi
+
 answers=$(grep -vc "Investigation Engine" "$W/model.log" 2>/dev/null || echo 0)
 if (( answers >= 2 )); then pass "one answer call per question ($answers)"
 else fail "expected an answer call per question (got $answers)"; fi

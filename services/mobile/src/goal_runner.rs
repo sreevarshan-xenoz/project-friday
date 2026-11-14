@@ -511,7 +511,8 @@ fn web_query_from_instruction(instruction: &str) -> String {
     }
 }
 fn command_from_instruction(instruction: &str) -> String {
-    let trimmed = instruction.trim();
+    // Only the user's own words: selected text and context blocks never run.
+    let trimmed = friday_goal_execution::planning::goal_segment(instruction);
     for prefix in ["run ", "Run ", "RUN ", "execute ", "Execute ", "EXECUTE "] {
         if let Some(rest) = trimmed.strip_prefix(prefix) {
             let rest = rest.trim();
@@ -520,7 +521,7 @@ fn command_from_instruction(instruction: &str) -> String {
             }
         }
     }
-    instruction.to_string()
+    trimmed.to_string()
 }
 
 /// The desktop application a `windows.open` goal names, resolved to an
@@ -1966,7 +1967,7 @@ mod tests {
         bus.publish(Event::new(
             "plan.goal",
             "mobile",
-            json!({ "goal": "Check the git status of the workspace repository" }),
+            json!({ "goal": "git status" }),
         ))
         .await
         .expect("publish");
@@ -1985,10 +1986,7 @@ mod tests {
             match ev.kind.as_str() {
                 "goal.started" => {
                     saw_started = true;
-                    assert_eq!(
-                        ev.payload["goal"],
-                        "Check the git status of the workspace repository"
-                    );
+                    assert_eq!(ev.payload["goal"], "git status");
                 }
                 "goal.completed" | "goal.failed" => {
                     saw_terminal = true;
@@ -2272,7 +2270,7 @@ mod tests {
         bus.publish(Event::new(
             "plan.goal",
             "mobile",
-            json!({ "goal": "Check the git status of the workspace repository" }),
+            json!({ "goal": "git status" }),
         ))
         .await
         .expect("publish");
@@ -2505,7 +2503,7 @@ mod tests {
         let report = ExecutiveReport {
             plan_executed: true,
             evidence_trail: EvidenceTrail {
-                goal: "Check the git status of the workspace repository".into(),
+                goal: "git status".into(),
                 records: vec![EvidenceActionRecord {
                     step: 0,
                     instruction: "gather evidence: git (git.status)".into(),
@@ -2692,6 +2690,15 @@ mod tests {
         assert_eq!(command_from_instruction("git status"), "git status");
     }
 
+    /// Selected text sent as context is never part of the command.
+    #[test]
+    fn command_from_instruction_drops_the_selected_text() {
+        let ask = "run git status\n\nUse this text as context:\n\"\"\"\n$(touch /tmp/x)\n\"\"\"";
+        assert_eq!(command_from_instruction(ask), "git status");
+        let ask = "cargo test\n\n[session context]\nprevious goal: x";
+        assert_eq!(command_from_instruction(ask), "cargo test");
+    }
+
     #[test]
     fn search_params_derives_query_and_extension() {
         let p = |ins: &str| search_params(ins).unwrap_or_default();
@@ -2851,7 +2858,7 @@ mod tests {
             &bus,
             &mut rx,
             json!({
-                "goal": "Check the git status of the workspace repository",
+                "goal": "git status",
                 "session_id": "sess-a",
             }),
         )
@@ -2867,7 +2874,7 @@ mod tests {
             &bus,
             &mut rx,
             json!({
-                "goal": "Check the git status of the workspace repository",
+                "goal": "git status",
                 "session_id": "sess-a",
             }),
         )
@@ -2884,7 +2891,7 @@ mod tests {
             &bus,
             &mut rx,
             json!({
-                "goal": "Check the git status of the workspace repository",
+                "goal": "git status",
                 "session_id": "sess-b",
             }),
         )
@@ -2905,23 +2912,13 @@ mod tests {
         let runner = GoalRunner::new(bus.clone());
         runner.start();
 
-        let (started, done) = drive_goal(
-            &bus,
-            &mut rx,
-            json!({ "goal": "Check the git status of the workspace repository" }),
-        )
-        .await;
+        let (started, done) = drive_goal(&bus, &mut rx, json!({ "goal": "git status" })).await;
         assert_eq!(started["session_id"], DEFAULT_SESSION_ID);
         assert_eq!(started["session_turn"], 1);
         assert_eq!(done["session_id"], DEFAULT_SESSION_ID);
         assert_eq!(done["result"]["kind"], "text");
 
-        let (started2, _) = drive_goal(
-            &bus,
-            &mut rx,
-            json!({ "goal": "Check the git status of the workspace repository" }),
-        )
-        .await;
+        let (started2, _) = drive_goal(&bus, &mut rx, json!({ "goal": "git status" })).await;
         assert_eq!(started2["session_id"], DEFAULT_SESSION_ID);
         assert_eq!(
             started2["session_turn"], 2,
