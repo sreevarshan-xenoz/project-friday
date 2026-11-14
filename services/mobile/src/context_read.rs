@@ -40,6 +40,11 @@ use friday_intelligence::{
     compose, ContextChannel, ContextComposeError, ContextDecision, ContextGate, EgressGate,
     ProviderTarget, SecretsVault,
 };
+use tokio::sync::broadcast::Sender as BroadcastSender;
+
+use crate::protocol::ServerMessage;
+use crate::shell_state::{self, ContextReadRecord, ShellState};
+use crate::transport::Command;
 
 /// The real reasoning-provider boundary. `send` is the **only** way a captured
 /// payload reaches a provider in this slice. A test double recording whether
@@ -199,21 +204,30 @@ where
         question: Option<&str>,
         progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
     ) -> Result<String, ContextReadError> {
-        let captured = self
-            .collector
-            .capture(
-                ContextChannel::Screen,
-                &CaptureOptions {
-                    region: None,
-                    fullscreen: true,
-                    // Just the window being asked about; the whole screen
-                    // when there is none.
-                    focused_window: true,
-                },
-            )
-            .map_err(|e| ContextReadError::Capture(e.to_string()))?;
+        let captured = match self.collector.capture(
+            ContextChannel::Screen,
+            &CaptureOptions {
+                region: None,
+                fullscreen: true,
+                // Just the window being asked about; the whole screen
+                // when there is none.
+                focused_window: true,
+            },
+        ) {
+            Ok(c) => c,
+            Err(e) => {
+                self.revoke();
+                return Err(ContextReadError::Capture(e.to_string()));
+            }
+        };
 
-        let mut payload = screen_payload(&captured)?;
+        let mut payload = match screen_payload(&captured) {
+            Ok(p) => p,
+            Err(e) => {
+                self.revoke();
+                return Err(e);
+            }
+        };
         if let Some(q) = question.map(str::trim).filter(|q| !q.is_empty()) {
             // One line: the provider reads everything after `QUESTION: `.
             payload.push_str("\nQUESTION: ");
@@ -256,6 +270,185 @@ where
             .lock()
             .unwrap()
             .authorize(ContextChannel::Screen, self.target)
+    }
+}
+
+/// Manages asynchronous Screen context ask tasks, ensuring:
+/// - At most one screen ask runs at a time (concurrent asks get an immediate error)
+/// - The daemon's command loop remains unblocked to process other commands
+/// - In-flight screen asks can be cancelled via `task.cancel`
+#[derive(Clone)]
+pub struct ScreenAskManager<C, P>
+where
+    C: friday_context_collector::CommandRunner + 'static,
+    P: ProviderSeam + Clone + 'static,
+{
+    reader: Arc<ScreenReader<C, P>>,
+    active: Arc<tokio::sync::Mutex<Option<ActiveScreenAsk>>>,
+}
+
+struct ActiveScreenAsk {
+    id: String,
+    abort_handle: tokio::task::AbortHandle,
+}
+
+impl<C, P> ScreenAskManager<C, P>
+where
+    C: friday_context_collector::CommandRunner + 'static,
+    P: ProviderSeam + Clone + 'static,
+{
+    pub fn new(reader: Arc<ScreenReader<C, P>>) -> Self {
+        Self {
+            reader,
+            active: Arc::new(tokio::sync::Mutex::new(None)),
+        }
+    }
+
+    pub fn reader(&self) -> &Arc<ScreenReader<C, P>> {
+        &self.reader
+    }
+
+    pub async fn is_in_flight(&self) -> bool {
+        self.active.lock().await.is_some()
+    }
+
+    /// Try to start a screen ask. If another screen ask is already in flight,
+    /// returns an error CommandResult immediately without granting consent or queueing.
+    /// Otherwise, runs the ask in its own tokio task.
+    pub async fn try_start(
+        &self,
+        cmd: &Command,
+        result_out: BroadcastSender<ServerMessage>,
+        state_lock: Arc<tokio::sync::Mutex<ShellState>>,
+        state_path: std::path::PathBuf,
+    ) -> Result<(), ServerMessage> {
+        let mut active_guard = self.active.lock().await;
+        if active_guard.is_some() {
+            return Err(ServerMessage::CommandResult {
+                id: cmd.id.clone(),
+                ok: false,
+                result: serde_json::json!({ "error": "FRIDAY is already looking at your screen" }),
+            });
+        }
+
+        let want_consent = cmd
+            .params
+            .get("consent")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if want_consent {
+            self.reader.consent();
+        }
+
+        let question = cmd
+            .params
+            .get("question")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let cmd_id = cmd.id.clone();
+        let cmd_method = cmd.method.clone();
+
+        let reader = self.reader.clone();
+        let active = self.active.clone();
+        let task_cmd_id = cmd_id.clone();
+
+        let handle = tokio::spawn(async move {
+            let progress_out = result_out.clone();
+            let progress_id = task_cmd_id.clone();
+            let last_sent = std::sync::Mutex::new(None::<std::time::Instant>);
+            let progress = move |partial: &str| {
+                let mut last = last_sent.lock().unwrap();
+                if last.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(150)) {
+                    return;
+                }
+                *last = Some(std::time::Instant::now());
+                let _ = progress_out.send(ServerMessage::Event {
+                    topic: "context.progress".to_string(),
+                    payload: serde_json::json!({ "id": progress_id, "partial": partial }),
+                });
+            };
+
+            let asked = reader.ask_streaming(question.as_deref(), &progress).await;
+
+            let mut guard = active.lock().await;
+            if guard.as_ref().is_some_and(|a| a.id == task_cmd_id) {
+                *guard = None;
+
+                let (ok, result) = match asked {
+                    Ok(response) => {
+                        tracing::info!("[context.read] screen delivered to provider");
+                        (true, serde_json::json!({ "response": response }))
+                    }
+                    Err(e) => {
+                        tracing::warn!("[context.read] {e}");
+                        let plain = crate::failures::plain_screen_error(&e);
+                        (false, serde_json::json!({ "error": plain }))
+                    }
+                };
+
+                let mut st = state_lock.lock().await;
+                st.context_read = Some(ContextReadRecord {
+                    method: cmd_method,
+                    ms: shell_state::now_ms(),
+                    ok,
+                    channel: "screen".to_string(),
+                });
+                shell_state::write_state(&state_path, &shell_state::render(&st));
+                drop(st);
+
+                let _ = result_out.send(ServerMessage::CommandResult {
+                    id: task_cmd_id,
+                    ok,
+                    result,
+                });
+            }
+        });
+
+        *active_guard = Some(ActiveScreenAsk {
+            id: cmd_id,
+            abort_handle: handle.abort_handle(),
+        });
+
+        Ok(())
+    }
+
+    /// Cancel an in-flight screen ask if one is running and matches `task_id`.
+    /// Matches if `task_id` is empty, `"screen"`, or matches the in-flight command id.
+    /// Aborts the background task, revokes consent, and publishes the cancelled shape.
+    pub async fn cancel(
+        &self,
+        task_id: &str,
+        result_out: &BroadcastSender<ServerMessage>,
+        state_lock: &Arc<tokio::sync::Mutex<ShellState>>,
+        state_path: &std::path::Path,
+    ) -> bool {
+        let mut guard = self.active.lock().await;
+        let should_cancel = guard
+            .as_ref()
+            .is_some_and(|a| task_id.is_empty() || task_id == "screen" || a.id == task_id);
+        if !should_cancel {
+            return false;
+        }
+        let ask = guard.take().unwrap();
+        ask.abort_handle.abort();
+        self.reader.revoke();
+
+        let mut st = state_lock.lock().await;
+        st.context_read = Some(ContextReadRecord {
+            method: crate::commands::method::CONTEXT_READ.to_string(),
+            ms: shell_state::now_ms(),
+            ok: false,
+            channel: "screen".to_string(),
+        });
+        shell_state::write_state(state_path, &shell_state::render(&st));
+        drop(st);
+
+        let _ = result_out.send(ServerMessage::CommandResult {
+            id: ask.id,
+            ok: false,
+            result: serde_json::json!({ "error": "cancelled_by_human" }),
+        });
+        true
     }
 }
 
@@ -555,6 +748,38 @@ mod tests {
         assert_eq!(reader.provider.sent(), 0);
     }
 
+    #[tokio::test]
+    async fn unused_consent_is_revoked_after_capture_failure() {
+        let runner = FakeCommandRunner::new();
+        let reader = ScreenReader::new(
+            ContextCollector::new(runner),
+            RecordingSeam::default(),
+            "fabric",
+        );
+        reader.consent();
+        assert!(reader.is_consented());
+        let err = reader.read().await.unwrap_err();
+        assert!(matches!(err, ContextReadError::Capture(_)));
+        assert!(
+            !reader.is_consented(),
+            "capture failure must revoke unused consent"
+        );
+        assert_eq!(reader.provider.sent(), 0);
+
+        // A reader sharing the same gate with a working collector cannot reach the provider
+        let working_reader = ScreenReader {
+            collector: fake_collector(),
+            gate: reader.gate.clone(),
+            egress: reader.egress.clone(),
+            provider: reader.provider.clone(),
+            provider_name: reader.provider_name.clone(),
+            target: reader.target,
+        };
+        let second_err = working_reader.read().await.unwrap_err();
+        assert!(matches!(second_err, ContextReadError::NotAuthorized { .. }));
+        assert_eq!(working_reader.provider.sent(), 0);
+    }
+
     /// A provider refusal after an allowed payload surfaces as Provider error —
     /// but only after the gates allowed the read through.
     #[tokio::test]
@@ -665,5 +890,216 @@ mod tests {
         .unwrap();
         assert!(payload.contains("geometry=0,0 1920x1080"));
         assert!(payload.contains("mime=image/png"));
+    }
+
+    #[derive(Clone)]
+    struct BlockingSeam {
+        started: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    impl BlockingSeam {
+        fn new() -> (Self, Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>) {
+            let started = Arc::new(tokio::sync::Notify::new());
+            let release = Arc::new(tokio::sync::Notify::new());
+            (
+                Self {
+                    started: started.clone(),
+                    release: release.clone(),
+                },
+                started,
+                release,
+            )
+        }
+    }
+
+    #[async_trait]
+    impl ProviderSeam for BlockingSeam {
+        async fn send(&self, payload: &str) -> Result<String, String> {
+            self.send_streaming(payload, &|_| {}).await
+        }
+
+        async fn send_streaming(
+            &self,
+            _payload: &str,
+            progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+        ) -> Result<String, String> {
+            progress("analyzing screen...");
+            self.started.notify_one();
+            self.release.notified().await;
+            Ok("Screen analysis complete.".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn second_concurrent_screen_ask_is_refused() {
+        let (seam, started, release) = BlockingSeam::new();
+        let reader = Arc::new(ScreenReader::new(fake_collector(), seam, "fabric"));
+        let manager = ScreenAskManager::new(reader.clone());
+
+        let (tx, mut rx) = tokio::sync::broadcast::channel(32);
+        let state_path = std::env::temp_dir().join(format!("state-{}.json", uuid::Uuid::new_v4()));
+        let state = Arc::new(tokio::sync::Mutex::new(ShellState::starting("tok".into())));
+
+        let cmd1 = Command {
+            session_id: "s1".into(),
+            id: "cmd-1".into(),
+            method: crate::commands::method::CONTEXT_READ.into(),
+            params: serde_json::json!({ "consent": true, "question": "what is this?" }),
+        };
+
+        // Start ask 1
+        let res1 = manager
+            .try_start(&cmd1, tx.clone(), state.clone(), state_path.clone())
+            .await;
+        assert!(res1.is_ok());
+        assert!(manager.is_in_flight().await);
+
+        // Wait until ask 1 has started streaming
+        started.notified().await;
+
+        // Try to start concurrent ask 2
+        let cmd2 = Command {
+            session_id: "s2".into(),
+            id: "cmd-2".into(),
+            method: crate::commands::method::CONTEXT_READ.into(),
+            params: serde_json::json!({ "consent": true, "question": "second ask" }),
+        };
+        let res2 = manager
+            .try_start(&cmd2, tx.clone(), state.clone(), state_path.clone())
+            .await;
+        assert!(res2.is_err());
+        let err = res2.unwrap_err();
+        match err {
+            ServerMessage::CommandResult { id, ok, result } => {
+                assert_eq!(id, "cmd-2");
+                assert!(!ok);
+                assert_eq!(result["error"], "FRIDAY is already looking at your screen");
+            }
+            _ => panic!("expected CommandResult"),
+        }
+
+        // Release ask 1
+        release.notify_one();
+
+        // Drain messages from ask 1: progress then CommandResult
+        let mut got_result = false;
+        while let Ok(msg) = rx.recv().await {
+            match msg {
+                ServerMessage::Event { topic, payload } => {
+                    assert_eq!(topic, "context.progress");
+                    assert_eq!(payload["id"], "cmd-1");
+                }
+                ServerMessage::CommandResult { id, ok, result } => {
+                    assert_eq!(id, "cmd-1");
+                    assert!(ok);
+                    assert_eq!(result["response"], "Screen analysis complete.");
+                    got_result = true;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        assert!(got_result);
+        assert!(!manager.is_in_flight().await);
+        let _ = std::fs::remove_file(&state_path);
+    }
+
+    #[tokio::test]
+    async fn task_cancel_stops_in_flight_screen_ask() {
+        let (seam, started, _release) = BlockingSeam::new();
+        let reader = Arc::new(ScreenReader::new(fake_collector(), seam, "fabric"));
+        let manager = ScreenAskManager::new(reader.clone());
+
+        let (tx, mut rx) = tokio::sync::broadcast::channel(32);
+        let state_path = std::env::temp_dir().join(format!("state-{}.json", uuid::Uuid::new_v4()));
+        let state = Arc::new(tokio::sync::Mutex::new(ShellState::starting("tok".into())));
+
+        let cmd = Command {
+            session_id: "s1".into(),
+            id: "ask-to-cancel".into(),
+            method: crate::commands::method::CONTEXT_READ.into(),
+            params: serde_json::json!({ "consent": true, "question": "will be cancelled" }),
+        };
+
+        let res = manager
+            .try_start(&cmd, tx.clone(), state.clone(), state_path.clone())
+            .await;
+        assert!(res.is_ok());
+        assert!(manager.is_in_flight().await);
+
+        started.notified().await;
+
+        // Cancel the ask
+        let cancelled = manager
+            .cancel("ask-to-cancel", &tx, &state, &state_path)
+            .await;
+        assert!(cancelled);
+        assert!(!manager.is_in_flight().await);
+
+        // Verify CommandResult arrives with cancelled shape
+        let mut got_cancelled = false;
+        while let Ok(msg) = rx.recv().await {
+            if let ServerMessage::CommandResult { id, ok, result } = msg {
+                assert_eq!(id, "ask-to-cancel");
+                assert!(!ok);
+                assert_eq!(result["error"], "cancelled_by_human");
+                got_cancelled = true;
+                break;
+            }
+        }
+        assert!(got_cancelled);
+
+        // State was updated to ok: false
+        let st = state.lock().await;
+        let cr = st.context_read.as_ref().expect("context_read recorded");
+        assert!(!cr.ok);
+        assert_eq!(cr.channel, "screen");
+
+        // Consent was revoked
+        assert!(!reader.is_consented());
+        let _ = std::fs::remove_file(&state_path);
+    }
+
+    #[tokio::test]
+    async fn task_cancel_with_unmatched_id_does_not_cancel() {
+        let (seam, started, release) = BlockingSeam::new();
+        let reader = Arc::new(ScreenReader::new(fake_collector(), seam, "fabric"));
+        let manager = ScreenAskManager::new(reader.clone());
+
+        let (tx, mut rx) = tokio::sync::broadcast::channel(32);
+        let state_path = std::env::temp_dir().join(format!("state-{}.json", uuid::Uuid::new_v4()));
+        let state = Arc::new(tokio::sync::Mutex::new(ShellState::starting("tok".into())));
+
+        let cmd = Command {
+            session_id: "s1".into(),
+            id: "my-ask".into(),
+            method: crate::commands::method::CONTEXT_READ.into(),
+            params: serde_json::json!({ "consent": true }),
+        };
+
+        assert!(manager
+            .try_start(&cmd, tx.clone(), state.clone(), state_path.clone())
+            .await
+            .is_ok());
+        started.notified().await;
+
+        // Attempt cancel with mismatched id
+        let cancelled = manager
+            .cancel("unrelated-goal-id", &tx, &state, &state_path)
+            .await;
+        assert!(!cancelled);
+        assert!(manager.is_in_flight().await);
+
+        // Release and verify ask completes successfully
+        release.notify_one();
+        while let Ok(msg) = rx.recv().await {
+            if let ServerMessage::CommandResult { id, ok, .. } = msg {
+                assert_eq!(id, "my-ask");
+                assert!(ok);
+                break;
+            }
+        }
+        let _ = std::fs::remove_file(&state_path);
     }
 }

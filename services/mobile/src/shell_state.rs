@@ -201,6 +201,7 @@ impl ShellState {
             "voice": self.voice,
             "telemetry": self.telemetry,
             "command": self.command,
+            "context_read": self.context_read,
             "listen": self.listen,
             "token": self.token,
         })
@@ -335,11 +336,63 @@ pub fn apply_event(mut state: ShellState, ev: &Event) -> ShellState {
     state
 }
 
-fn now_ms() -> u64 {
+pub fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+pub fn now_utc() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+pub fn render(state: &ShellState) -> serde_json::Value {
+    state.to_json(now_ms(), now_utc())
+}
+
+/// Atomically write the state document (tmp + rename) so any inotify watch
+/// never observes a half-written file. Owner-only (0600): it carries the
+/// session token that authorizes commands.
+pub fn write_state(path: &std::path::Path, value: &serde_json::Value) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let tmp = path.with_extension("json.tmp");
+    let mut f = match std::fs::File::create(&tmp) {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::warn!("state: cannot open tmp {}: {e}", tmp.display());
+            return;
+        }
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) = f.set_permissions(std::fs::Permissions::from_mode(0o600)) {
+            tracing::warn!("state: cannot restrict {}: {e}", tmp.display());
+            return;
+        }
+    }
+    let bytes = match serde_json::to_vec_pretty(value) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!("state: serialize failed: {e}");
+            return;
+        }
+    };
+    use std::io::Write;
+    if let Err(e) = f.write_all(&bytes) {
+        tracing::warn!("state: write failed: {e}");
+        return;
+    }
+    if let Err(e) = f.sync_all() {
+        tracing::warn!("state: sync failed: {e}");
+    }
+    drop(f);
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        tracing::warn!("state: rename failed: {e}");
+    }
 }
 
 #[cfg(test)]
