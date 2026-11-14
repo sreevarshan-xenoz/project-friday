@@ -221,6 +221,7 @@ pacman refuses any package or database that key didn't sign. On Windows, install
 | `friday shell style\|palette` | FRIDAY Shell's look, matched on Hyprland or niri |
 | `friday doctor` | Why isn't FRIDAY working? |
 | `friday report` | A redacted bug report to read, then share |
+| `friday face setup` | Face unlock for the lock screen (Gaze, on this computer; `status`, `remove`) |
 
 ## Plan
 

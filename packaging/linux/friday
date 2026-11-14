@@ -38,6 +38,7 @@ Autonomous Agent & Cognitive Loop:
                                    Use an AI account you already have (signs in);
                                    a fallback after the free models unless --prefer
   friday disconnect <name>         Stop using a connected account
+  friday face [status|setup|remove] Face unlock for the lock screen (Gaze)
 
 Skill Forge:
   friday create-skill <id>         Create new skill template
@@ -591,6 +592,72 @@ friday_disconnect() {
 FRIDAY_FREE_NOTICE="Free models (OpenCode Zen, Kilo) may keep what you send them, including screenshots and selected text, and may use it for training. For anything private, use your own key (friday setup-ai) or account (friday connect)."
 
 # `friday welcome`: one-time first-login greeting (autostarted by Hyprland).
+# Face unlock for the lock screen (friday.lock), with Gaze: on-device face
+# recognition with a liveness check (gaze.gundulabs.com, GPL-3.0). Gaze is in
+# the AUR, not the Arch repos, so it's built here from the AUR package on
+# request. The lock screen runs its face flow when /etc/pam.d/friday-lock-face
+# exists; sudo and password prompts use it only if you say so. Lines FRIDAY
+# adds to other PAM files carry "# friday face" so remove takes only those.
+friday_face() {
+  local pam=/etc/pam.d/friday-lock-face mark="# friday face"
+  case "${1:-status}" in
+    status)
+      if [ -f "$pam" ]; then echo "Face unlock: on for the lock screen"; else echo "Face unlock: off (turn it on: friday face setup)"; fi
+      local f
+      for f in /etc/pam.d/sudo /etc/pam.d/polkit-1; do
+        grep -qs "pam_gaze.so.*$mark" "$f" && echo "  also for $(basename "$f")"
+      done
+      if command -v gaze >/dev/null 2>&1; then
+        echo "Gaze: installed ($(systemctl is-active gazed 2>/dev/null || echo inactive))"
+      else
+        echo "Gaze: not installed"
+      fi
+      ;;
+    setup)
+      local yes=false; [ "${2:-}" = "--yes" ] && yes=true
+      cat <<'EOF'
+Face unlock for the lock screen, with Gaze.
+  - Your face is checked on this computer; nothing is sent anywhere.
+  - Gaze comes from the AUR (gaze-bin) and is built here; it needs your password.
+  - Typing your password always works too.
+EOF
+      if ! $yes; then
+        read -r -p "Set it up now? [y/N] " a; [[ "$a" =~ ^[Yy] ]] || { echo "Nothing changed."; return 0; }
+      fi
+      if ! command -v gaze >/dev/null 2>&1; then
+        local tmp; tmp=$(mktemp -d)
+        sudo pacman -S --needed --noconfirm base-devel git || return 1
+        git clone --depth 1 https://aur.archlinux.org/gaze-bin.git "$tmp/gaze-bin" || { rm -rf "$tmp"; return 1; }
+        (cd "$tmp/gaze-bin" && makepkg -si --noconfirm) || { rm -rf "$tmp"; echo "friday: could not build Gaze" >&2; return 1; }
+        rm -rf "$tmp"
+      fi
+      sudo systemctl enable --now gazed || return 1
+      echo; echo "Now Gaze learns your face. Look at the camera and follow its prompts."
+      gaze add-face || { echo "friday: face enrolment did not finish; run friday face setup again" >&2; return 1; }
+      printf '%s\nauth required pam_gaze.so\n' "# FRIDAY lock screen: face unlock (friday face setup)" | sudo tee "$pam" >/dev/null || return 1
+      if ! $yes; then
+        read -r -p "Also use your face for sudo and password prompts? [y/N] " a
+        if [[ "$a" =~ ^[Yy] ]]; then
+          for f in /etc/pam.d/sudo /etc/pam.d/polkit-1; do
+            [ -f "$f" ] && ! grep -qs pam_gaze.so "$f" || continue
+            sudo sed -i "0,/^auth/s//auth       sufficient   pam_gaze.so $mark\n&/" "$f"
+          done
+        fi
+      fi
+      echo; echo "Face unlock is on. Lock with Super+L and look at the camera to try it."
+      ;;
+    remove|off)
+      sudo rm -f "$pam"
+      local f
+      for f in /etc/pam.d/sudo /etc/pam.d/polkit-1; do
+        grep -qs "$mark" "$f" && sudo sed -i "/$mark/d" "$f"
+      done
+      echo "Face unlock is off. Gaze stays installed; remove it with: gaze uninstall"
+      ;;
+    *) echo "Usage: friday face [status|setup|remove]" >&2; return 1 ;;
+  esac
+}
+
 friday_welcome() {
   local stamp="${XDG_STATE_HOME:-$HOME/.local/state}/friday/welcomed"
   local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
@@ -1000,6 +1067,10 @@ case "${1:-}" in
   welcome)
     shift
     friday_welcome "$@"
+    ;;
+  face)
+    shift
+    friday_face "$@"
     ;;
   answers)
     d="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
