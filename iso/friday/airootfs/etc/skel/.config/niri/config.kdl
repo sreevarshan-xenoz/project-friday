@@ -42,7 +42,9 @@ screenshot-path "~/Pictures/Screenshots/Screenshot %Y-%m-%d %H-%M-%S.png"
 hotkey-overlay { skip-at-startup; }
 
 spawn-at-startup "/usr/lib/polkit-kde-authentication-agent-1"
-spawn-at-startup "hyprpaper"
+// The wallpaper: the current Omarchy theme's background (Omarchy's own shell
+// draws it on Hyprland, and isn't started here).
+spawn-at-startup "sh" "-c" "exec swaybg -m fill -i \"$HOME/.local/state/omarchy/current/background\""
 
 binds {
     Mod+Shift+Slash { show-hotkey-overlay; }
