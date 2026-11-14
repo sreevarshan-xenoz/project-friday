@@ -2355,7 +2355,7 @@ mod tests {
 
         // Cycle 1: planning runs BEFORE this cycle's Learn → no policy applies
         // yet; the promotion lands in `policies_derived`.
-        executive.add_observation("build the project", 0.9);
+        executive.add_observation("cargo build", 0.9);
         let report1 = executive.cycle(&workspace).await;
         assert_eq!(
             report1.policies_applied, 0,
@@ -2373,7 +2373,7 @@ mod tests {
         // Cycle 2, same goal: the ExecuteCommand → ReadFile sequence policy is
         // now eligible (the goal classifies as ExecuteCommand) and its plan wins
         // the ranking, executes, and verifies.
-        executive.add_observation("build the project", 0.9);
+        executive.add_observation("cargo build", 0.9);
         let report2 = executive.cycle(&workspace).await;
         assert!(
             report2.policies_applied >= 1,
@@ -2558,7 +2558,7 @@ mod tests {
         );
 
         // (3) A shell goal stays Direct too — never hijacked by a web workflow.
-        executive.add_observation("build the project", 0.9);
+        executive.add_observation("cargo build", 0.9);
         let report3 = executive.cycle(&workspace).await;
         assert_eq!(
             report3.policies_applied, 0,
