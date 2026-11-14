@@ -37,8 +37,7 @@ use async_trait::async_trait;
 use base64::Engine as _;
 use friday_context_collector::{CaptureOptions, CapturedContext, ContextCollector};
 use friday_intelligence::{
-    compose, ContextChannel, ContextComposeError, ContextDecision, ContextGate, EgressGate,
-    ProviderTarget, SecretsVault,
+    ContextChannel, ContextDecision, ContextGate, EgressGate, ProviderTarget, SecretsVault,
 };
 use tokio::sync::broadcast::Sender as BroadcastSender;
 
@@ -204,6 +203,20 @@ where
         question: Option<&str>,
         progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
     ) -> Result<String, ContextReadError> {
+        // Check authorization BEFORE capturing the screen — with no consent,
+        // nothing is captured at all.
+        {
+            let mut gate = self.gate.lock().unwrap();
+            let decision = gate.authorize(ContextChannel::Screen, self.target);
+            if !decision.allowed() {
+                let ContextDecision::Block { reason } = decision else {
+                    unreachable!()
+                };
+                let disclosure = gate.disclosure_for(ContextChannel::Screen, self.target);
+                return Err(ContextReadError::NotAuthorized { reason, disclosure });
+            }
+        }
+
         let captured = match self.collector.capture(
             ContextChannel::Screen,
             &CaptureOptions {
@@ -234,27 +247,10 @@ where
             payload.push_str(&q.replace(['\n', '\r'], " "));
         }
 
-        let composed = {
-            let mut gate = self.gate.lock().unwrap();
-            compose(
-                &mut gate,
-                &self.egress,
-                ContextChannel::Screen,
-                &self.provider_name,
-                self.target,
-                &payload,
-            )
-        };
-
-        let composed = match composed {
-            Ok(c) => c,
-            Err(ContextComposeError::NotAuthorized { reason, disclosure }) => {
-                return Err(ContextReadError::NotAuthorized { reason, disclosure })
-            }
-            Err(ContextComposeError::EgressBlocked { reason }) => {
-                return Err(ContextReadError::EgressBlocked { reason })
-            }
-        };
+        let composed = self
+            .egress
+            .process(&self.provider_name, &payload)
+            .map_err(|reason| ContextReadError::EgressBlocked { reason })?;
 
         self.provider
             .send_streaming(&composed, progress)
@@ -290,6 +286,70 @@ where
 struct ActiveScreenAsk {
     id: String,
     abort_handle: tokio::task::AbortHandle,
+}
+
+/// Drop guard for the spawned screen-ask task.
+///
+/// If the spawned task panics before normal completion, this guard ensures
+/// that `active` is cleared and any pending screen consent is revoked.
+struct ScreenAskTaskGuard<C, P>
+where
+    C: friday_context_collector::CommandRunner + 'static,
+    P: ProviderSeam + Clone + 'static,
+{
+    active: Arc<tokio::sync::Mutex<Option<ActiveScreenAsk>>>,
+    task_cmd_id: String,
+    reader: Arc<ScreenReader<C, P>>,
+    disarmed: bool,
+}
+
+impl<C, P> ScreenAskTaskGuard<C, P>
+where
+    C: friday_context_collector::CommandRunner + 'static,
+    P: ProviderSeam + Clone + 'static,
+{
+    fn new(
+        active: Arc<tokio::sync::Mutex<Option<ActiveScreenAsk>>>,
+        task_cmd_id: String,
+        reader: Arc<ScreenReader<C, P>>,
+    ) -> Self {
+        Self {
+            active,
+            task_cmd_id,
+            reader,
+            disarmed: false,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.disarmed = true;
+    }
+}
+
+impl<C, P> Drop for ScreenAskTaskGuard<C, P>
+where
+    C: friday_context_collector::CommandRunner + 'static,
+    P: ProviderSeam + Clone + 'static,
+{
+    fn drop(&mut self) {
+        if !self.disarmed {
+            self.reader.revoke();
+            if let Ok(mut guard) = self.active.try_lock() {
+                if guard.as_ref().is_some_and(|a| a.id == self.task_cmd_id) {
+                    *guard = None;
+                }
+            } else {
+                let active = self.active.clone();
+                let task_cmd_id = self.task_cmd_id.clone();
+                tokio::spawn(async move {
+                    let mut guard = active.lock().await;
+                    if guard.as_ref().is_some_and(|a| a.id == task_cmd_id) {
+                        *guard = None;
+                    }
+                });
+            }
+        }
+    }
 }
 
 impl<C, P> ScreenAskManager<C, P>
@@ -353,6 +413,9 @@ where
         let task_cmd_id = cmd_id.clone();
 
         let handle = tokio::spawn(async move {
+            let mut panic_guard =
+                ScreenAskTaskGuard::new(active.clone(), task_cmd_id.clone(), reader.clone());
+
             let progress_out = result_out.clone();
             let progress_id = task_cmd_id.clone();
             let last_sent = std::sync::Mutex::new(None::<std::time::Instant>);
@@ -370,38 +433,43 @@ where
 
             let asked = reader.ask_streaming(question.as_deref(), &progress).await;
 
+            let (ok, result) = match asked {
+                Ok(response) => {
+                    tracing::info!("[context.read] screen delivered to provider");
+                    (true, serde_json::json!({ "response": response }))
+                }
+                Err(e) => {
+                    tracing::warn!("[context.read] {e}");
+                    let plain = crate::failures::plain_screen_error(&e);
+                    (false, serde_json::json!({ "error": plain }))
+                }
+            };
+
+            let mut st = state_lock.lock().await;
+            st.context_read = Some(ContextReadRecord {
+                method: cmd_method,
+                ms: shell_state::now_ms(),
+                ok,
+                channel: "screen".to_string(),
+            });
+            shell_state::write_state(&state_path, &shell_state::render(&st));
+            drop(st);
+
+            // Publish the terminal result message FIRST.
+            let _ = result_out.send(ServerMessage::CommandResult {
+                id: task_cmd_id.clone(),
+                ok,
+                result,
+            });
+
+            // Clear active only AFTER the terminal result is published,
+            // so the upgrade watcher cannot see idle and exit between them.
             let mut guard = active.lock().await;
             if guard.as_ref().is_some_and(|a| a.id == task_cmd_id) {
                 *guard = None;
-
-                let (ok, result) = match asked {
-                    Ok(response) => {
-                        tracing::info!("[context.read] screen delivered to provider");
-                        (true, serde_json::json!({ "response": response }))
-                    }
-                    Err(e) => {
-                        tracing::warn!("[context.read] {e}");
-                        let plain = crate::failures::plain_screen_error(&e);
-                        (false, serde_json::json!({ "error": plain }))
-                    }
-                };
-
-                let mut st = state_lock.lock().await;
-                st.context_read = Some(ContextReadRecord {
-                    method: cmd_method,
-                    ms: shell_state::now_ms(),
-                    ok,
-                    channel: "screen".to_string(),
-                });
-                shell_state::write_state(&state_path, &shell_state::render(&st));
-                drop(st);
-
-                let _ = result_out.send(ServerMessage::CommandResult {
-                    id: task_cmd_id,
-                    ok,
-                    result,
-                });
             }
+            drop(guard);
+            panic_guard.disarm();
         });
 
         *active_guard = Some(ActiveScreenAsk {
@@ -709,6 +777,60 @@ mod tests {
         assert!(reader.provider.last().is_none());
     }
 
+    #[derive(Clone, Default)]
+    struct RecordingCommandRunner {
+        inner: FakeCommandRunner,
+        call_count: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl friday_context_collector::CommandRunner for RecordingCommandRunner {
+        fn run(
+            &self,
+            program: &str,
+            args: &[String],
+        ) -> Result<friday_context_collector::CommandOutput, friday_context_collector::RunnerError>
+        {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
+            self.inner.run(program, args)
+        }
+    }
+
+    #[tokio::test]
+    async fn unconsented_screen_read_never_calls_capture() {
+        let full = friday_context_collector::screen_command(None);
+        let region =
+            friday_context_collector::screen_command(Some(ScreenRegion::new(0, 0, 1920, 1080)));
+        let inner = FakeCommandRunner::new()
+            .script_stdout(&full.0, &strs(&full.1), PNG)
+            .script_stdout(&region.0, &strs(&region.1), PNG);
+        let call_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let runner = RecordingCommandRunner {
+            inner,
+            call_count: call_count.clone(),
+        };
+        let collector = ContextCollector::new(runner);
+        let reader = ScreenReader::new(collector, RecordingSeam::default(), "fabric");
+
+        // Without consent, read must be refused BEFORE capturing
+        assert!(!reader.is_consented());
+        let err = reader.read().await.unwrap_err();
+        assert!(matches!(err, ContextReadError::NotAuthorized { .. }));
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            0,
+            "capture must NOT be called without consent"
+        );
+
+        // With consent, capture IS called
+        reader.consent();
+        let resp = reader.read().await.unwrap();
+        assert_eq!(resp, "FRIDAY: I can see your screen.");
+        assert!(
+            call_count.load(Ordering::SeqCst) > 0,
+            "capture must be called when consented"
+        );
+    }
+
     /// Consent is per-use: one read consumes it; a second read is blocked again.
     #[tokio::test]
     async fn consent_is_per_use_consumed_by_read() {
@@ -1006,6 +1128,104 @@ mod tests {
             }
         }
         assert!(got_result);
+        assert!(!manager.is_in_flight().await);
+        let _ = std::fs::remove_file(&state_path);
+    }
+
+    #[derive(Clone)]
+    struct PanickingSeam {
+        panic_on_first: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    #[async_trait]
+    impl ProviderSeam for PanickingSeam {
+        async fn send(&self, payload: &str) -> Result<String, String> {
+            self.send_streaming(payload, &|_| {}).await
+        }
+
+        async fn send_streaming(
+            &self,
+            _payload: &str,
+            _progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+        ) -> Result<String, String> {
+            if self.panic_on_first.swap(false, Ordering::SeqCst) {
+                panic!("simulated provider panic in screen ask");
+            }
+            Ok("Screen analysis after panic succeeded.".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn panicking_screen_ask_task_clears_active_and_revokes_consent() {
+        let seam = PanickingSeam {
+            panic_on_first: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        };
+        let reader = Arc::new(ScreenReader::new(fake_collector(), seam, "fabric"));
+        let manager = ScreenAskManager::new(reader.clone());
+
+        let (tx, mut rx) = tokio::sync::broadcast::channel(32);
+        let state_path = std::env::temp_dir().join(format!("state-{}.json", uuid::Uuid::new_v4()));
+        let state = Arc::new(tokio::sync::Mutex::new(ShellState::starting("tok".into())));
+
+        let cmd1 = Command {
+            session_id: "s1".into(),
+            id: "cmd-panic".into(),
+            method: crate::commands::method::CONTEXT_READ.into(),
+            params: serde_json::json!({ "consent": true, "question": "panic test" }),
+        };
+
+        // Start ask 1 which will panic inside the spawned task
+        let res1 = manager
+            .try_start(&cmd1, tx.clone(), state.clone(), state_path.clone())
+            .await;
+        assert!(res1.is_ok());
+
+        // Wait a short moment for the task to run, panic, and drop guard to execute
+        let mut cleared = false;
+        for _ in 0..100 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            if !manager.is_in_flight().await {
+                cleared = true;
+                break;
+            }
+        }
+        assert!(
+            cleared,
+            "manager.is_in_flight() must become false after task panic"
+        );
+        assert!(
+            !reader.is_consented(),
+            "consent must be revoked after task panic"
+        );
+
+        // Now a second ask MUST be accepted
+        let cmd2 = Command {
+            session_id: "s2".into(),
+            id: "cmd-success".into(),
+            method: crate::commands::method::CONTEXT_READ.into(),
+            params: serde_json::json!({ "consent": true, "question": "second ask" }),
+        };
+        let res2 = manager
+            .try_start(&cmd2, tx.clone(), state.clone(), state_path.clone())
+            .await;
+        assert!(
+            res2.is_ok(),
+            "second ask must be accepted after panic: {:?}",
+            res2.err()
+        );
+
+        // Drain until cmd-success result is received
+        let mut got_second = false;
+        while let Ok(msg) = rx.recv().await {
+            if let ServerMessage::CommandResult { id, ok, .. } = msg {
+                if id == "cmd-success" {
+                    assert!(ok);
+                    got_second = true;
+                    break;
+                }
+            }
+        }
+        assert!(got_second);
         assert!(!manager.is_in_flight().await);
         let _ = std::fs::remove_file(&state_path);
     }
