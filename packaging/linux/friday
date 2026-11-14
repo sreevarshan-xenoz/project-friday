@@ -404,9 +404,10 @@ case "${1:-}" in
     #                                   a screenshot goes to the AI provider, this once
     shift
     use_selection=false use_screen=false details="" daemon_down=false
+    ask_args=()
     case "${1:-}" in
-      --selection|-s) use_selection=true; shift ;;
-      --screen) use_screen=true; shift ;;
+      --selection|-s) use_selection=true; ask_args=(--selection); shift ;;
+      --screen) use_screen=true; ask_args=(--screen); shift ;;
     esac
     goal="$*"
     state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
@@ -535,16 +536,31 @@ case "${1:-}" in
       preview="$answer"
       [ "${#preview}" -le 220 ] || preview="${preview:0:217}…"
       urgency=normal; $ans_ok || urgency=critical
-      actions=(-A open="Open full answer")
-      [ "${daemon_down:-false}" = true ] && actions=(-A start="Start FRIDAY")
+      if $ans_ok; then
+        actions=(-A copy="Copy" -A again="Ask again" -A open="Open full answer")
+      else
+        actions=(-A open="Open full answer")
+        [ "${daemon_down:-false}" = true ] && actions=(-A start="Start FRIDAY")
+      fi
       # Replace the streaming notification rather than add a second one.
       [ -z "${nid:-}" ] || actions+=(-r "$nid")
       (
+        open_answer() {
+          foot -T "FRIDAY · $goal" less -R "$answer_file" 2>/dev/null \
+            || xdg-open "$answer_file" 2>/dev/null || true
+        }
         action=$(notify-send -a FRIDAY -u "$urgency" "${actions[@]}" "$title" "$preview" 2>/dev/null || true)
         case "$action" in
+          copy)
+            if command -v wl-copy >/dev/null 2>&1; then
+              printf '%s' "$answer" | wl-copy 2>/dev/null || true
+            else
+              open_answer
+            fi ;;
+          again)
+            [ -x "$0" ] && exec "$0" ask "${ask_args[@]}" || exec bash "$0" ask "${ask_args[@]}" ;;
           open)
-            foot -T "FRIDAY · $goal" less -R "$answer_file" 2>/dev/null \
-              || xdg-open "$answer_file" 2>/dev/null || true ;;
+            open_answer ;;
           start)
             systemctl --user restart friday-linux-daemon 2>/dev/null \
               && notify-send -a FRIDAY "FRIDAY" "Started. Ask again with Super+Y." 2>/dev/null || true ;;
