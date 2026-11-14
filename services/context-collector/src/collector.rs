@@ -260,8 +260,28 @@ impl<R: CommandRunner> ContextCollector<R> {
             Ok(CapturedContext::AppInfo {
                 geometry: Some(r), ..
             }) if r.width > 0 && r.height > 0 => Some(r),
+            Err(_) if !cfg!(windows) => self.niri_focused_window(),
             _ => None,
         }
+    }
+
+    /// The focused window on niri, which has no hyprctl (see
+    /// [`niri_window_region`]). `None` when niri isn't running or nothing is
+    /// focused.
+    fn niri_focused_window(&self) -> Option<ScreenRegion> {
+        let json = |what: &str| -> Option<serde_json::Value> {
+            let args = ["msg", "--json", what].map(String::from);
+            let out = self.runner.run("niri", &args).ok()?;
+            if out.status.is_some_and(|code| code != 0) {
+                return None;
+            }
+            serde_json::from_slice(&out.stdout).ok()
+        };
+        niri_window_region(
+            &json("focused-window")?,
+            &json("workspaces")?,
+            &json("outputs")?,
+        )
     }
 
     fn capture_clipboard(&self) -> Result<CapturedContext, CaptureError> {
@@ -388,6 +408,44 @@ fn parse_activewindow(stdout: &[u8]) -> Result<CapturedContext, String> {
         geometry,
         focused: true,
     })
+}
+
+/// A niri window's rectangle in global logical coordinates, as `grim -g`
+/// takes it: niri reports the tile's position in its workspace view and the
+/// window's offset in the tile, both relative to the output the workspace is
+/// on, so the output's logical position is added. `None` for a window that
+/// isn't in view or has no size.
+fn niri_window_region(
+    window: &serde_json::Value,
+    workspaces: &serde_json::Value,
+    outputs: &serde_json::Value,
+) -> Option<ScreenRegion> {
+    let pair = |v: &serde_json::Value, key: &str| -> Option<(f64, f64)> {
+        let a = v.get(key)?.as_array()?;
+        Some((a.first()?.as_f64()?, a.get(1)?.as_f64()?))
+    };
+    let layout = window.get("layout")?;
+    let (tile_x, tile_y) = pair(layout, "tile_pos_in_workspace_view")?;
+    let (off_x, off_y) = pair(layout, "window_offset_in_tile")?;
+    let (width, height) = pair(layout, "window_size")?;
+    if width < 1.0 || height < 1.0 {
+        return None;
+    }
+    let workspace_id = window.get("workspace_id")?.as_u64()?;
+    let output = workspaces
+        .as_array()?
+        .iter()
+        .find(|w| w.get("id").and_then(|id| id.as_u64()) == Some(workspace_id))?
+        .get("output")?
+        .as_str()?;
+    let logical = outputs.get(output)?.get("logical")?;
+    let (out_x, out_y) = (logical.get("x")?.as_f64()?, logical.get("y")?.as_f64()?);
+    Some(ScreenRegion::new(
+        (out_x + tile_x + off_x).round() as i32,
+        (out_y + tile_y + off_y).round() as i32,
+        width as u32,
+        height as u32,
+    ))
 }
 
 fn field(v: &serde_json::Value, key: &str) -> Option<String> {
@@ -539,6 +597,60 @@ mod tests {
         {
             CapturedContext::Image { geometry, .. } => assert_eq!(geometry, None),
             other => panic!("expected an image, got {other:?}"),
+        }
+    }
+
+    /// niri has no hyprctl: the window's rectangle comes from niri's IPC —
+    /// its tile in the workspace view plus its offset in the tile, moved onto
+    /// the output the workspace is on.
+    const NIRI_WINDOW: &[u8] = br#"{"id":7,"title":"main.rs","app_id":"code","workspace_id":3,
+        "layout":{"pos_in_scrolling_layout":[1,1],"tile_size":[804.0,604.0],"window_size":[800,600],
+        "tile_pos_in_workspace_view":[98.0,48.0],"window_offset_in_tile":[2.0,2.0]}}"#;
+    const NIRI_WORKSPACES: &[u8] =
+        br#"[{"id":1,"idx":1,"output":"HDMI-A-1"},{"id":3,"idx":1,"output":"DP-1"}]"#;
+    const NIRI_OUTPUTS: &[u8] = br#"{"DP-1":{"name":"DP-1","logical":{"x":1920,"y":0,"width":2560,"height":1440,"scale":1.0}},
+        "HDMI-A-1":{"name":"HDMI-A-1","logical":{"x":0,"y":0,"width":1920,"height":1080,"scale":1.0}}}"#;
+
+    fn on_niri(window: &[u8]) -> ContextCollector<FakeCommandRunner> {
+        let region = ScreenRegion::new(2020, 50, 800, 600);
+        let (rp, ra) = screen_command(Some(region));
+        let (fp, fa) = screen_command(None);
+        let (wp, wa) = window_command();
+        let runner = FakeCommandRunner::new()
+            .script_stdout(&rp, &strs(&ra), PNG)
+            .script_stdout(&fp, &strs(&fa), PNG)
+            .script_error(&wp, &strs(&wa), "HYPRLAND_INSTANCE_SIGNATURE not set", 1)
+            .script_stdout("niri", &["msg", "--json", "focused-window"], window)
+            .script_stdout("niri", &["msg", "--json", "workspaces"], NIRI_WORKSPACES)
+            .script_stdout("niri", &["msg", "--json", "outputs"], NIRI_OUTPUTS);
+        ContextCollector::new(runner)
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn screen_takes_just_the_focused_window_on_niri() {
+        match on_niri(NIRI_WINDOW)
+            .capture(ContextChannel::Screen, &focused_window_options())
+            .unwrap()
+        {
+            CapturedContext::Image { geometry, .. } => {
+                assert_eq!(geometry, Some(ScreenRegion::new(2020, 50, 800, 600)))
+            }
+            other => panic!("expected an image, got {other:?}"),
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn niri_without_a_focused_window_takes_the_whole_screen() {
+        for window in [&b"null"[..], br#"{"id":7,"workspace_id":3,"layout":{"window_size":[800,600],"window_offset_in_tile":[0.0,0.0],"tile_pos_in_workspace_view":null}}"#] {
+            match on_niri(window)
+                .capture(ContextChannel::Screen, &focused_window_options())
+                .unwrap()
+            {
+                CapturedContext::Image { geometry, .. } => assert_eq!(geometry, None),
+                other => panic!("expected an image, got {other:?}"),
+            }
         }
     }
 
