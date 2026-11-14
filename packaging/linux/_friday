@@ -10,6 +10,7 @@ _friday() {
     'answers:Show past answers'
     'status:Inspect daemon state and telemetry'
     'doctor:Check daemon, AI provider and desktop health'
+    'report:Write a redacted bug report to read and share'
     'setup-ai:Set or change the AI provider key'
     'connect:Use an AI account you already have'
     'disconnect:Stop using a connected account'
