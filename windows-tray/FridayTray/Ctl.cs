@@ -3,11 +3,27 @@ using System.Text;
 
 namespace FridayTray;
 
+internal readonly record struct CtlResult(bool Ok, string Output, int ExitCode)
+{
+    public void Deconstruct(out bool ok, out string output)
+    {
+        ok = Ok;
+        output = Output;
+    }
+
+    public void Deconstruct(out bool ok, out string output, out int exitCode)
+    {
+        ok = Ok;
+        output = Output;
+        exitCode = ExitCode;
+    }
+}
+
 /// <summary>Runs friday-ctl and collects everything it prints.</summary>
 internal static class Ctl
 {
     /// <param name="onLine">Called with each line friday-ctl prints, as it prints it.</param>
-    public static async Task<(bool ok, string output)> RunAsync(Install install, IEnumerable<string> args, TimeSpan timeout,
+    public static async Task<CtlResult> RunAsync(Install install, IEnumerable<string> args, TimeSpan timeout,
         Action<string>? onLine = null)
     {
         var psi = new ProcessStartInfo(install.Ctl)
@@ -31,7 +47,7 @@ internal static class Ctl
         }
         catch (Exception e)
         {
-            return (false, $"cannot reach daemon: could not start friday-ctl ({e.Message})");
+            return new CtlResult(false, $"cannot reach daemon: could not start friday-ctl ({e.Message})", -1);
         }
         var stdout = ReadLinesAsync(p.StandardOutput, onLine);
         var stderr = p.StandardError.ReadToEndAsync();
@@ -43,9 +59,9 @@ internal static class Ctl
         catch (OperationCanceledException)
         {
             try { p.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
-            return (false, (await stdout) + (await stderr) + $"\ntimed out after {(int)timeout.TotalSeconds}s waiting for friday-ctl");
+            return new CtlResult(false, (await stdout) + (await stderr) + $"\ntimed out after {(int)timeout.TotalSeconds}s waiting for friday-ctl", -1);
         }
-        return (p.ExitCode == 0, (await stdout) + (await stderr));
+        return new CtlResult(p.ExitCode == 0, (await stdout) + (await stderr), p.ExitCode);
     }
 
     private static async Task<string> ReadLinesAsync(StreamReader reader, Action<string>? onLine)

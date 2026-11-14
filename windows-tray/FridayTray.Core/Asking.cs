@@ -6,8 +6,19 @@ namespace FridayTray.Core;
 
 public enum AskKind { Plain, Selection, Screen }
 
+/// <summary>A tool action pending explicit confirmation before execution.</summary>
+public sealed record NeedsConfirmation(string Tool, string Action);
+
 /// <summary>What the tray shows after an ask.</summary>
-public sealed record AskOutcome(bool Ok, string Answer, string? Details, bool DaemonDown);
+public sealed record AskOutcome(
+    bool Ok,
+    string Answer,
+    string? Details,
+    bool DaemonDown,
+    NeedsConfirmation? Confirmation = null)
+{
+    public NeedsConfirmation? NeedsConfirmation => Confirmation;
+}
 
 /// <summary>
 /// The ask flow of `friday ask` (packaging/linux/friday), minus the desktop:
@@ -28,11 +39,18 @@ public static partial class Asking
     }
 
     /// <summary>friday-ctl's arguments for this ask.</summary>
-    public static string[] CtlArguments(AskKind kind, string question, string request) => kind == AskKind.Screen
-        // Pressing the key and typing the question is the per-use consent;
-        // the daemon's ContextGate still enforces it.
-        ? ["context", "screen", "--yes", "--ask", question, "--stream"]
-        : ["goal", "--wait", request];
+    public static string[] CtlArguments(AskKind kind, string question, string request) =>
+        CtlArguments(kind, question, request, null);
+
+    /// <summary>friday-ctl's arguments for this ask, optionally confirming an action.</summary>
+    public static string[] CtlArguments(AskKind kind, string question, string request, string? confirm) =>
+        kind == AskKind.Screen
+            // Pressing the key and typing the question is the per-use consent;
+            // the daemon's ContextGate still enforces it.
+            ? ["context", "screen", "--yes", "--ask", question, "--stream"]
+            : !string.IsNullOrEmpty(confirm)
+                ? ["goal", "--wait", "--confirm", confirm, request]
+                : ["goal", "--wait", request];
 
     /// <summary>
     /// The answer so far while <paramref name="request"/> is the goal in flight:
@@ -124,8 +142,74 @@ public static partial class Asking
     static string? Str(JsonElement o, string name) =>
         o.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 
+    /// <summary>
+    /// Parse friday-ctl output into a pending confirmation if the goal failed because
+    /// a gated tool requires explicit confirmation before executing.
+    /// </summary>
+    public static NeedsConfirmation? ParseConfirmation(string output)
+    {
+        var objects = JsonObjects(output);
+        foreach (var o in objects.AsEnumerable().Reverse())
+        {
+            if (o.TryGetProperty("needs_confirmation", out var nc) && nc.ValueKind == JsonValueKind.Object)
+            {
+                var tool = Str(nc, "tool");
+                var action = Str(nc, "action");
+                if (!string.IsNullOrEmpty(tool) && !string.IsNullOrEmpty(action))
+                    return new NeedsConfirmation(tool, action);
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Parse friday-ctl exit code and output into a pending confirmation.
+    /// Exit code 3 is distinct from failure 1 and indicates a tool needs confirmation.
+    /// </summary>
+    public static NeedsConfirmation? ParseConfirmation(int exitCode, string output)
+    {
+        // Only the daemon's structured needs_confirmation counts, never text.
+        return exitCode == 3 ? ParseConfirmation(output) : null;
+    }
+
+    private static string? ExtractRawError(AskKind kind, string output)
+    {
+        var objects = JsonObjects(output);
+        if (kind == AskKind.Screen)
+        {
+            var last = objects.LastOrDefault(o => !o.TryGetProperty("partial", out _));
+            return last.ValueKind == JsonValueKind.Object ? Str(last, "error") : null;
+        }
+        else
+        {
+            var last = objects.LastOrDefault(o => o.TryGetProperty("outcome", out _) || o.TryGetProperty("error", out _));
+            return last.ValueKind == JsonValueKind.Object ? Str(last, "error") ?? Str(last, "outcome") : null;
+        }
+    }
+
     /// <summary>Turn friday-ctl's exit status and output into what the user sees.</summary>
     public static AskOutcome Interpret(AskKind kind, string question, bool exitOk, string output)
+    {
+        if (!exitOk && ParseConfirmation(output) is { } conf)
+        {
+            var rawErr = ExtractRawError(kind, output);
+            return new AskOutcome(false, $"FRIDAY wants to run: {conf.Action}", rawErr, false, conf);
+        }
+        return InterpretCore(kind, question, exitOk, output);
+    }
+
+    /// <summary>Turn friday-ctl's exit code and output into what the user sees.</summary>
+    public static AskOutcome Interpret(AskKind kind, string question, int exitCode, string output)
+    {
+        if (exitCode == 3 && ParseConfirmation(exitCode, output) is { } conf)
+        {
+            var rawErr = ExtractRawError(kind, output);
+            return new AskOutcome(false, $"FRIDAY wants to run: {conf.Action}", rawErr, false, conf);
+        }
+        return InterpretCore(kind, question, exitCode == 0, output);
+    }
+
+    private static AskOutcome InterpretCore(AskKind kind, string question, bool exitOk, string output)
     {
         var objects = JsonObjects(output);
         string? result, error;
