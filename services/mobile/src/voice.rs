@@ -238,7 +238,10 @@ impl VoiceIntake {
                     }),
                 ))
                 .await;
-            tracing::info!("[voice] heard: \"{transcript}\" -> plan.goal");
+            tracing::info!(
+                "[voice] heard {} chars -> plan.goal",
+                transcript.chars().count()
+            );
             admitted.push(transcript.to_string());
         }
         admitted
