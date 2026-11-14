@@ -104,6 +104,7 @@ async fn main() -> std::process::ExitCode {
     let mut positional: Vec<String> = Vec::new();
     let mut i = 0;
     let mut confirm: Option<String> = None;
+    let mut region: Option<String> = None;
     while i < raw.len() {
         let w = &raw[i];
         if w == "--addr" && i + 1 < raw.len() {
@@ -114,6 +115,9 @@ async fn main() -> std::process::ExitCode {
             i += 2;
         } else if w == "--ask" && i + 1 < raw.len() {
             question = Some(raw[i + 1].clone());
+            i += 2;
+        } else if w == "--region" && i + 1 < raw.len() {
+            region = Some(raw[i + 1].clone());
             i += 2;
         } else if w == "--confirm" && i + 1 < raw.len() {
             confirm = Some(raw[i + 1].clone());
@@ -175,7 +179,17 @@ async fn main() -> std::process::ExitCode {
     };
 
     if sub == "context" {
-        return run_context(&addr_str, &cmd_token, question.as_deref(), stream).await;
+        let region = match region.as_deref().map(parse_region) {
+            None => None,
+            Some(Some(r)) => Some(r),
+            Some(None) => {
+                eprintln!(
+                    "friday-ctl: --region takes slurp's \"X,Y WxH\" (e.g. \"100,200 640x480\")"
+                );
+                return std::process::ExitCode::FAILURE;
+            }
+        };
+        return run_context(&addr_str, &cmd_token, question.as_deref(), region, stream).await;
     }
     if sub == "cancel" {
         // Cancel the goal the daemon reports as in flight (state.json
@@ -376,11 +390,15 @@ async fn run_context(
     addr: &str,
     token: &str,
     question: Option<&str>,
+    region: Option<serde_json::Value>,
     stream: bool,
 ) -> std::process::ExitCode {
     let mut params = serde_json::json!({ "token": token, "consent": true });
     if let Some(q) = question {
         params["question"] = serde_json::Value::String(q.to_string());
+    }
+    if let Some(r) = region {
+        params["region"] = r;
     }
     let wait = Duration::from_secs(wait_secs());
     send_command(
@@ -391,6 +409,16 @@ async fn run_context(
         stream,
     )
     .await
+}
+
+/// `--region`: slurp's "X,Y WxH" as the daemon's `{x, y, w, h}`.
+fn parse_region(s: &str) -> Option<serde_json::Value> {
+    let (pos, size) = s.trim().split_once(' ')?;
+    let (x, y) = pos.split_once(',')?;
+    let (w, h) = size.trim().split_once('x')?;
+    let n = |v: &str| v.trim().parse::<i64>().ok();
+    let (x, y, w, h) = (n(x)?, n(y)?, n(w)?, n(h)?);
+    (w > 0 && h > 0).then(|| serde_json::json!({ "x": x, "y": y, "w": w, "h": h }))
 }
 
 /// How long to wait for an answer: `FRIDAY_CTL_WAIT_SECS`, default 180 s.
@@ -569,5 +597,16 @@ mod tests {
             "another goal"
         );
         assert!(finished_goal(&json!({ "last_goal": null }), "open chromium", 100).is_none());
+    }
+
+    #[test]
+    fn region_from_slurp() {
+        assert_eq!(
+            parse_region("100,-20 640x480"),
+            Some(serde_json::json!({ "x": 100, "y": -20, "w": 640, "h": 480 }))
+        );
+        assert_eq!(parse_region("100,200 0x480"), None);
+        assert_eq!(parse_region("100 200 640x480"), None);
+        assert_eq!(parse_region(""), None);
     }
 }
