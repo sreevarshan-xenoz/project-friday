@@ -187,7 +187,19 @@ Per-user, no administrator rights: installs to `%LOCALAPPDATA%\Programs\FRIDAY`,
 CLEAN_WORK=true bash iso/friday/build-iso.sh
 ```
 
-Builds `friday-git` and an Arch ISO whose installer sets up the whole desktop.
+Builds `friday-git` and an Arch ISO whose installer sets up the whole desktop. Prebuilt ISOs are on the [releases page](https://github.com/sreevarshan-xenoz/project-friday/releases).
+
+### Updates
+
+Each release publishes `friday-git` to a pacman repo, so `sudo pacman -Syu` keeps FRIDAY current. FRIDAY OS installs from v0.2.2 on have it set up already. On Arch, or on an earlier FRIDAY OS install, add this to `/etc/pacman.conf` once:
+
+```ini
+[friday]
+SigLevel = Optional TrustAll
+Server = https://github.com/sreevarshan-xenoz/project-friday/releases/download/pacman
+```
+
+The packages aren't signed yet; they come over HTTPS from this repository's releases. On Windows, install the newer MSI over the old one.
 
 ## Commands
 
