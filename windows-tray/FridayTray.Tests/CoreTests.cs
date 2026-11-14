@@ -25,6 +25,31 @@ public class EnvFileTests
     }
 
     [Fact]
+    public void Keeping_other_keys_replaces_only_this_providers_key()
+    {
+        var before = "GEMINI_API_KEY=AIzaOld12345\nGROQ_API_KEY=gsk_old123456\nFRIDAY_CONTEXT_PROVIDER=gemini\nFRIDAY_LISTEN=127.0.0.1:1\n";
+        var after = EnvFile.Parse(EnvFile.WithProvider(before, Providers.Find("groq")!, "gsk_new123456", keepOthers: true));
+        Assert.Equal("AIzaOld12345", after["GEMINI_API_KEY"]);
+        Assert.Equal("gsk_new123456", after["GROQ_API_KEY"]);
+        Assert.Equal("groq", after["FRIDAY_CONTEXT_PROVIDER"]);
+        Assert.Equal("127.0.0.1:1", after["FRIDAY_LISTEN"]);
+
+        // A text-only provider leaves screen questions where they were.
+        var text = EnvFile.Parse(EnvFile.WithProvider(before, Providers.Find("openrouter")!, "sk-or-12345678", keepOthers: true));
+        Assert.Equal("gemini", text["FRIDAY_CONTEXT_PROVIDER"]);
+        Assert.Equal(3, text.Keys.Count(k => k.EndsWith("_API_KEY")));
+    }
+
+    [Fact]
+    public void Other_keys_lists_the_providers_besides_this_one()
+    {
+        var env = "GEMINI_API_KEY=a12345678\nGROQ_API_KEY=b12345678\nFRIDAY_LISTEN=x\n";
+        Assert.True(EnvFile.HasOtherKeys(env, Providers.Find("opencode")!));
+        Assert.False(EnvFile.HasOtherKeys("GROQ_API_KEY=b12345678\n", Providers.Find("groq")!));
+        Assert.False(EnvFile.HasOtherKeys("", Providers.Find("groq")!));
+    }
+
+    [Fact]
     public void OpenCode_without_a_key_uses_the_free_models()
     {
         var after = EnvFile.Parse(EnvFile.WithProvider("GEMINI_API_KEY=x12345678\n", Providers.Find("opencode")!, ""));

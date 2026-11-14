@@ -144,6 +144,20 @@ expect "opencode works with no key" bash -c "printf '\\n' | bash '$F' setup-ai o
 if grep -qE '_API_KEY=' "$envf"; then fail "opencode without key left an API key in the env file"
 else pass "switching to opencode free models clears the old key"; fi
 contains "opencode handles screen questions" "$(cat "$envf")" "FRIDAY_CONTEXT_PROVIDER=opencode"
+# --keep-others: the other providers' keys stay (FRIDAY can fall back to them);
+# only this provider's own key is replaced.
+printf 'FRIDAY_LOG=debug\nGEMINI_API_KEY=AIzaOldKey_12345\nGROQ_API_KEY=gsk_oldkey_123\nFRIDAY_CONTEXT_PROVIDER=gemini\n' >"$envf"
+expect "--keep-others accepts a key" bash -c "echo gsk_newkey_456 | bash '$F' setup-ai --keep-others groq"
+contains "--keep-others keeps the other provider's key" "$(cat "$envf")" "GEMINI_API_KEY=AIzaOldKey_12345"
+contains "--keep-others saves the new key" "$(cat "$envf")" "GROQ_API_KEY=gsk_newkey_456"
+if grep -q gsk_oldkey_123 "$envf"; then fail "--keep-others left the provider's old key"; else pass "--keep-others replaces that provider's own key"; fi
+contains "--keep-others: a vision provider takes screen questions" "$(cat "$envf")" "FRIDAY_CONTEXT_PROVIDER=groq"
+if [[ $(grep -c '^FRIDAY_CONTEXT_PROVIDER=' "$envf") == 1 ]]; then pass "one screen provider"; else fail "FRIDAY_CONTEXT_PROVIDER repeated"; fi
+expect "--keep-others with a text-only provider" bash -c "echo sk-or-key_789 | bash '$F' setup-ai --keep-others openrouter"
+contains "a text-only provider leaves screen questions where they were" "$(cat "$envf")" "FRIDAY_CONTEXT_PROVIDER=groq"
+contains "all three keys kept" "$(grep -c '_API_KEY=' "$envf")" "3"
+expect "--only replaces every key" bash -c "echo AIzaSyTestKey_12345 | bash '$F' setup-ai --only gemini"
+if [[ $(grep -c '_API_KEY=' "$envf") == 1 ]]; then pass "--only leaves one key"; else fail "--only kept other keys"; fi
 
 echo "welcome"
 : >"$LOG"; rm -f "$envf"
