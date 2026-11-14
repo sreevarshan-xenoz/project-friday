@@ -86,7 +86,7 @@ done
 timeout 10 qs -p "$FS" ipc call shell close >/dev/null 2>&1 || true
 # The answer pill, handed an answer the way `friday ask` does.
 answer=$'Your disk is mostly **photos** (41 GB) and the package cache (12 GB).\n\n- `~/Pictures`: 41 GB\n- `/var/cache/pacman`: 12 GB\n\nClear the cache with `sudo paccache -r`.'
-if timeout 10 qs -p "$FS" ipc call answer present true "What's using my disk?" "$answer" "via OpenCode Zen · 1.4 s" >/dev/null 2>&1; then
+if timeout 10 qs -p "$FS" ipc call answer present true "What's using my disk?" "$answer" "via OpenCode Zen · 1.4 s" "" >/dev/null 2>&1; then
   sleep 1.5; grim "$W/friday-answer.png" 2>/dev/null || true
   [[ "$(timeout 10 qs -p "$FS" ipc call answer state 2>/dev/null)" == answer ]] \
     && pass "answer pill shows an answer over IPC" || fail "answer pill did not take the answer"
@@ -104,7 +104,7 @@ fi
 timeout 10 qs -p "$FS" ipc call tour begin "Alex" true >/dev/null 2>&1 || true
 sleep 1.5; grim "$W/friday-tour.png" 2>/dev/null || true
 [[ "$(timeout 10 qs -p "$FS" ipc call tour step 2>/dev/null)" == 0 ]] && pass "tour begins at its first step" || fail "tour did not begin"
-timeout 10 qs -p "$FS" ipc call answer present true "q" "a" "" >/dev/null 2>&1 || true
+timeout 10 qs -p "$FS" ipc call answer present true "q" "a" "" "" >/dev/null 2>&1 || true
 sleep 0.5
 [[ "$(timeout 10 qs -p "$FS" ipc call tour step 2>/dev/null)" == 1 ]] && pass "tour moves on when FRIDAY answers" || fail "tour did not move on after an answer"
 timeout 10 qs -p "$FS" ipc call answer dismiss >/dev/null 2>&1 || true
@@ -118,6 +118,14 @@ sleep 1
   && pass "answer history reads past answers" || fail "answer history did not read answers.md"
 [[ "$(timeout 10 qs -p "$FS" ipc call history find "mismatched rust" 2>/dev/null)" == "explain rust error E0308" ]] \
   && pass "answer history finds an answer by its words" || fail "answer history search found nothing"
+# New entries carry a marker, so an answer with a "---" rule stays one entry.
+printf '<!-- friday answer -->\n# compare tabs and spaces\n\n_2026-11-15 01:00_\n\nTabs first.\n\n---\n\nThen spaces.\n\n---\n\n' \
+  >>"$XDG_STATE_HOME/friday/answers.md"
+sleep 1
+[[ "$(timeout 10 qs -p "$FS" ipc call history count 2>/dev/null)" == 3 ]] \
+  && pass "an answer containing --- stays one history entry" || fail "a --- inside an answer split it ($(timeout 10 qs -p "$FS" ipc call history count 2>/dev/null) entries)"
+[[ "$(timeout 10 qs -p "$FS" ipc call history find "then spaces" 2>/dev/null)" == "compare tabs and spaces" ]] \
+  && pass "the text after a --- is still found" || fail "the text after a --- was lost"
 # Every style with a palette, switched live through shell.json as the Look
 # picker does: the bar, the FRIDAY drawer and the control drawer each time.
 mkdir -p "$HOME/.config/friday"

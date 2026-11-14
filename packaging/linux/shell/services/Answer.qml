@@ -8,7 +8,7 @@ import Quickshell.Io
 // goal (state.json, via Friday), streaming the answer as it arrives; `friday
 // ask` then hands it the finished answer over IPC, with the same wording the
 // notification would have had:
-//   qs ipc call answer present <ok> <goal> <answer> <meta>
+//   qs ipc call answer present <ok> <goal> <answer> <meta> <mode>
 // (not `show`: the qs CLI reads that as its own `ipc show`)
 // `friday ask` falls back to a notification when nothing answers that call.
 Singleton {
@@ -20,6 +20,9 @@ Singleton {
   property string goal: ""
   property string body: ""
   property string meta: ""
+  // How it was asked (`--selection`, `--screen`, `--region`, or ""), so Ask
+  // again asks the same way.
+  property string mode: ""
   // Bumped on every new answer, so the pill restarts its timers.
   property int serial: 0
 
@@ -56,8 +59,9 @@ Singleton {
     }
   }
 
-  function show(ok, goal, body, meta) {
+  function show(ok, goal, body, meta, mode) {
     settle.stop();
+    root.mode = mode || "";
     root.ok = ok;
     root.goal = goal;
     root.body = body;
@@ -81,9 +85,10 @@ Singleton {
 
   function copy() { Quickshell.execDetached(["wl-copy", "--", root.body]); }
   // Types the answer into the window that had focus, replacing a selection
-  // there; the short wait lets focus go back to it first.
+  // there; the short wait lets focus go back to it first. Line breaks become
+  // spaces: typed, each one is an Enter (a terminal would run every line).
   function typeIt() {
-    const text = root.body;
+    const text = root.body.replace(/\s*\n\s*/g, " ").trim();
     root.dismiss();
     Quickshell.execDetached(["sh", "-c", "sleep 0.35; exec wtype -- \"$1\"", "sh", text]);
   }
@@ -91,12 +96,18 @@ Singleton {
     const q = String(question || "").trim();
     if (q) Quickshell.execDetached(["friday", "ask", "--follow-up", q]);
   }
-  function askAgain() { Quickshell.execDetached(["friday", "ask", root.goal]); }
+  function askAgain() {
+    const args = ["friday", "ask"];
+    if (["--selection", "--screen", "--region"].indexOf(root.mode) !== -1)
+      args.push(root.mode);
+    args.push(root.goal);
+    Quickshell.execDetached(args);
+  }
   function openFull() { Quickshell.execDetached(["foot", "-H", "-T", "FRIDAY · " + root.goal, "friday", "answers", "--last"]); }
 
   IpcHandler {
     target: "answer"
-    function present(ok: bool, goal: string, body: string, meta: string): void { root.show(ok, goal, body, meta); }
+    function present(ok: bool, goal: string, body: string, meta: string, mode: string): void { root.show(ok, goal, body, meta, mode); }
     function dismiss(): void { root.dismiss(); }
     function listening(): void { root.listening(); }
     function state(): string { return root.state; }
