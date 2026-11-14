@@ -106,7 +106,7 @@ via `composeOptions { kotlinCompilerExtensionVersion = "1.5.10" }` (the
    (listens on `0.0.0.0:18432` by default; set `FRIDAY_MOBILE_ADDR` to change).
 2. Install + run on the J7 (or any API 24+ device):
    `adb install -r app/build/outputs/apk/debug/app-debug.apk`. On first launch
-   enter the PC's LAN WebSocket URL, e.g. `ws://192.168.1.50:18432`.
+   enter the PC's LAN WebSocket URL, e.g. `ws://192.0.2.10:18432`.
 3. Pair, watch live CPU/RAM, send `Open Notepad`, and watch the task complete.
 
 ## Demo 001 (canonical Alpha demo)
