@@ -67,6 +67,16 @@ pub struct GoalState {
     /// goal ends (its `result` holds the whole answer) or before it starts.
     #[serde(default)]
     pub partial: Option<String>,
+    /// The gated tool action requiring user confirmation, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub needs_confirmation: Option<NeedConfirmation>,
+}
+
+/// A pending confirmation requirement for a gated action.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct NeedConfirmation {
+    pub tool: String,
+    pub action: String,
 }
 
 /// The live file-backed contract the shell reads.
@@ -252,6 +262,7 @@ pub fn apply_event(mut state: ShellState, ev: &Event) -> ShellState {
                     strategy: None,
                     evidence_verified: None,
                     partial: None,
+                    needs_confirmation: None,
                 });
             }
         }
@@ -289,6 +300,9 @@ pub fn apply_event(mut state: ShellState, ev: &Event) -> ShellState {
                     .or_else(|| ev.payload.get("reason").and_then(|v| v.as_str()))
                 {
                     cur.error = Some(e.to_string());
+                }
+                if let Some(nc) = ev.payload.get("needs_confirmation") {
+                    cur.needs_confirmation = serde_json::from_value(nc.clone()).ok();
                 }
                 if let Some(s) = ev.payload.get("strategy").and_then(|v| v.as_str()) {
                     cur.strategy = Some(s.to_string());
@@ -429,6 +443,61 @@ mod tests {
         assert_eq!(last.phases, Some(4));
         // A failed goal carries no fabricated result.
         assert_eq!(last.result, None);
+    }
+
+    #[test]
+    fn failed_goal_records_needs_confirmation() {
+        let s1 = apply_event(state(), &goal_event());
+        let failed = Event::new(
+            "goal.failed",
+            "planner",
+            serde_json::json!({
+                "error": "Confirm to run: git status",
+                "needs_confirmation": {
+                    "tool": "terminal",
+                    "action": "git status"
+                }
+            }),
+        );
+        let s2 = apply_event(s1, &failed);
+        let last = s2.last_goal.expect("failed goal preserved");
+        assert_eq!(last.outcome.as_deref(), Some("failed"));
+        let nc = last.needs_confirmation.expect("needs confirmation set");
+        assert_eq!(nc.tool, "terminal");
+        assert_eq!(nc.action, "git status");
+    }
+
+    #[test]
+    fn older_state_with_goal_lacking_needs_confirmation_parses() {
+        let old = r#"{
+            "status": "running",
+            "updated_ms": 1,
+            "updated_utc": "t",
+            "version": 1,
+            "current": null,
+            "last_goal": {
+                "id": "g-1",
+                "goal": "git status",
+                "phase": "failed",
+                "started_ms": 1,
+                "completed_ms": 2,
+                "result": null,
+                "outcome": "failed",
+                "active": false,
+                "phases": 1,
+                "error": "Confirm to run: git status",
+                "strategy": null,
+                "evidence_verified": null
+            },
+            "cognition": {},
+            "voice": "off",
+            "telemetry": null,
+            "command": null,
+            "token": "tok"
+        }"#;
+        let st: ShellState = serde_json::from_str(old).expect("older state.json parses");
+        let last = st.last_goal.expect("last goal present");
+        assert_eq!(last.needs_confirmation, None);
     }
 
     #[test]

@@ -59,6 +59,33 @@ use serde_json::json;
 
 use crate::voice::VoiceConfig;
 
+/// Shared confirmation gate for gated side-effecting tools.
+#[derive(Debug, Default)]
+struct ConfirmationGate {
+    confirm: Option<String>,
+    pending: Option<crate::shell_state::NeedConfirmation>,
+}
+
+impl ConfirmationGate {
+    fn check_or_record(&mut self, tool: &str, exact_action: &str) -> Result<(), ToolResult> {
+        if let Some(c) = &self.confirm {
+            if c.trim() == exact_action.trim() {
+                return Ok(());
+            }
+        }
+        if self.pending.is_none() {
+            self.pending = Some(crate::shell_state::NeedConfirmation {
+                tool: tool.to_string(),
+                action: exact_action.to_string(),
+            });
+        }
+        Err(ToolResult::error(format!(
+            "Confirm to run: {}",
+            exact_action
+        )))
+    }
+}
+
 /// Real terminal tool for the built-in `ExecuteCommand` capability (the
 /// planner's `infer_capability` classifies goals like "run cargo test" as
 /// execute-command; the evidence seam only advertises `terminal.run/exec`
@@ -66,6 +93,7 @@ use crate::voice::VoiceConfig;
 /// terminal adapter).
 struct TerminalCommandTool {
     adapter: TerminalAdapter,
+    gate: Arc<Mutex<ConfirmationGate>>,
 }
 
 /// Real filesystem tool for the built-in `ListDirectory` / `ReadFile` /
@@ -75,6 +103,7 @@ struct TerminalCommandTool {
 /// the built-in capabilities to the real filesystem adapter).
 struct FilesystemCapabilityTool {
     adapter: FilesystemAdapter,
+    gate: Arc<Mutex<ConfirmationGate>>,
 }
 
 #[async_trait]
@@ -92,12 +121,21 @@ impl Tool for TerminalCommandTool {
     }
 
     async fn execute(&self, action: &Action, _ctx: &ExecutionContext) -> ToolResult {
+        let exact = command_from_instruction(&action.instruction);
+        if let Err(err) = self
+            .gate
+            .lock()
+            .unwrap()
+            .check_or_record("terminal", &exact)
+        {
+            return err;
+        }
         let res = self
             .adapter
             .execute(ActionRequest::new(
                 "terminal",
                 "run",
-                json!({ "command": command_from_instruction(&action.instruction) }),
+                json!({ "command": exact }),
             ))
             .await;
         ToolResult {
@@ -165,8 +203,23 @@ impl Tool for FilesystemCapabilityTool {
                     Ok(p) => params["path"] = json!(p),
                     Err(e) => return ToolResult::error(e),
                 }
+            } else if verb == "write_file" {
+                let p = filename_token(&action.instruction).unwrap_or_else(|| cwd.clone());
+                params["path"] = json!(p);
             } else {
                 params["path"] = json!(cwd);
+            }
+        }
+        if verb == "write_file" {
+            let path = params.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            let exact = format!("write {}", path);
+            if let Err(err) = self
+                .gate
+                .lock()
+                .unwrap()
+                .check_or_record("filesystem.write", &exact)
+            {
+                return err;
             }
         }
         if verb == "search" {
@@ -304,6 +357,7 @@ impl Tool for DocsSearchCapabilityTool {
 /// failure, never a fake launch.
 struct WindowsOpenTool {
     adapter: WindowsAdapter,
+    gate: Arc<Mutex<ConfirmationGate>>,
 }
 
 #[async_trait]
@@ -321,12 +375,21 @@ impl Tool for WindowsOpenTool {
     }
 
     async fn execute(&self, action: &Action, _ctx: &ExecutionContext) -> ToolResult {
+        let exact = app_from_instruction(&action.instruction);
+        if let Err(err) = self
+            .gate
+            .lock()
+            .unwrap()
+            .check_or_record("windows.open", &exact)
+        {
+            return err;
+        }
         let res = self
             .adapter
             .execute(ActionRequest::new(
                 "windows",
                 "open",
-                json!({ "path": app_from_instruction(&action.instruction) }),
+                json!({ "path": exact }),
             ))
             .await;
         ToolResult {
@@ -950,6 +1013,8 @@ pub struct GoalRunner {
     /// subscriber to match `task.cancel`/`task.pause` against. `None` when no
     /// goal is in flight.
     in_flight: Arc<Mutex<Option<InFlightGoal>>>,
+    /// Shared confirmation gate for gated tools (terminal, windows.open, filesystem.write).
+    confirmation_gate: Arc<Mutex<ConfirmationGate>>,
 }
 
 /// The in-flight goal the control subscriber matches `task.cancel` /
@@ -1091,6 +1156,7 @@ impl GoalRunner {
         observer: Option<Observer>,
     ) -> Self {
         let workspace = CognitiveBlackboard::new();
+        let confirmation_gate = Arc::new(Mutex::new(ConfirmationGate::default()));
         let mut executive = Executive::new().with_investigation_engine(investigation);
         if let Some(observer) = observer {
             executive = executive.with_observer(observer);
@@ -1119,6 +1185,7 @@ impl GoalRunner {
         // claim.
         executive.register_tool(Box::new(FilesystemCapabilityTool {
             adapter: FilesystemAdapter::new(),
+            gate: confirmation_gate.clone(),
         }));
         // The built-in SearchWeb capability → the real read-only web adapter.
         // Registered with the other dedicated tools (ahead of `evidence:web`)
@@ -1179,6 +1246,7 @@ impl GoalRunner {
         // default) → the real terminal adapter.
         executive.register_tool(Box::new(TerminalCommandTool {
             adapter: TerminalAdapter::new(),
+            gate: confirmation_gate.clone(),
         }));
 
         // S4 live-kernel adapters: the Windows host (named-pipe to the C# host)
@@ -1188,7 +1256,10 @@ impl GoalRunner {
         let has_windows = windows.is_some();
         let has_browser = browser.is_some();
         if let Some(adapter) = windows {
-            executive.register_tool(Box::new(WindowsOpenTool { adapter }));
+            executive.register_tool(Box::new(WindowsOpenTool {
+                adapter,
+                gate: confirmation_gate.clone(),
+            }));
         }
         if let Some(adapter) = browser {
             executive.register_tool(Box::new(BrowserCapabilityTool { adapter }));
@@ -1245,6 +1316,7 @@ impl GoalRunner {
             abort,
             pause,
             in_flight: Arc::new(Mutex::new(None)),
+            confirmation_gate,
         }
     }
 
@@ -1420,7 +1492,12 @@ impl GoalRunner {
                     .filter(|s| !s.trim().is_empty())
                     .unwrap_or(DEFAULT_SESSION_ID)
                     .to_string();
-                self.run_goal(goal, session_id).await;
+                let confirm = ev
+                    .payload
+                    .get("confirm")
+                    .and_then(|c| c.as_str())
+                    .map(|s| s.to_string());
+                self.run_goal(goal, session_id, confirm).await;
             }
         });
     }
@@ -1430,7 +1507,7 @@ impl GoalRunner {
     /// composed into the goal text the Executive plans on (per-session
     /// continuity), and the finished turn is recorded for the next goal in the
     /// same session.
-    async fn run_goal(&self, goal: String, session_id: String) {
+    async fn run_goal(&self, goal: String, session_id: String, confirm: Option<String>) {
         let id = format!("goal-{}", uuid::Uuid::new_v4().simple());
         tracing::info!(id = %id, session = %session_id, "goal received: {goal}");
 
@@ -1441,6 +1518,11 @@ impl GoalRunner {
         // Register as in-flight so the control subscriber can match
         // `task.cancel`/`task.pause` against this run's real id.
         *self.in_flight.lock().unwrap() = Some(InFlightGoal { id: id.clone() });
+        {
+            let mut g = self.confirmation_gate.lock().unwrap();
+            g.confirm = confirm;
+            g.pending = None;
+        }
 
         // Read the session's prior turn (short lock) and reserve the next turn
         // number. `prior` is snapshotted BEFORE this turn is written back, so
@@ -1500,13 +1582,26 @@ impl GoalRunner {
             exec.cycle(&self.workspace).await
         };
 
+        // A confirmation is for this goal only: nothing that runs a tool later
+        // (another goal, a background cycle) may reuse it.
+        let pending_confirmation = {
+            let mut gate = self.confirmation_gate.lock().unwrap();
+            gate.confirm = None;
+            gate.pending.take()
+        };
+
         // The answer step: the cycle ran a tool and gathered evidence; the
         // model now writes the reply from them. Only for a goal that ran to
         // completion. If the model fails, the cycle's own result stands when
         // it is a real result (a command ran, files were listed); when it is
         // nothing to show (an empty memory lookup), the goal fails with why.
         let mut answer_failure: Option<String> = None;
-        if report.plan_executed && !report.cancelled && !report.paused && !report.recoverable {
+        if pending_confirmation.is_none()
+            && report.plan_executed
+            && !report.cancelled
+            && !report.paused
+            && !report.recoverable
+        {
             if let Some(answerer) = &self.answerer {
                 match compose_answer(answerer.as_ref(), &composed, &report, &self.bus, &id).await {
                     Ok(answer) => report.result = Some(answer),
@@ -1531,6 +1626,8 @@ impl GoalRunner {
                     "cancelled by human".to_string()
                 } else if report.paused {
                     "paused by human".to_string()
+                } else if let Some(nc) = &pending_confirmation {
+                    format!("needs confirmation: {}", nc.action)
                 } else {
                     report
                         .result
@@ -1574,6 +1671,26 @@ impl GoalRunner {
                         "session_id": session_id,
                         "session_turn": next_turn,
                         "reason": "paused_by_human",
+                        "phases": report.phases_completed.len(),
+                    }),
+                ))
+                .await;
+        } else if let Some(pending) = pending_confirmation {
+            let _ = self
+                .bus
+                .publish(Event::new(
+                    "goal.failed",
+                    "planner",
+                    json!({
+                        "goal": goal,
+                        "id": id,
+                        "session_id": session_id,
+                        "session_turn": next_turn,
+                        "error": format!("Confirm to run: {}", pending.action),
+                        "needs_confirmation": {
+                            "tool": pending.tool,
+                            "action": pending.action,
+                        },
                         "phases": report.phases_completed.len(),
                     }),
                 ))
@@ -1967,7 +2084,7 @@ mod tests {
         bus.publish(Event::new(
             "plan.goal",
             "mobile",
-            json!({ "goal": "git status" }),
+            json!({ "goal": "git status", "confirm": "git status" }),
         ))
         .await
         .expect("publish");
@@ -2270,7 +2387,7 @@ mod tests {
         bus.publish(Event::new(
             "plan.goal",
             "mobile",
-            json!({ "goal": "git status" }),
+            json!({ "goal": "git status", "confirm": "git status" }),
         ))
         .await
         .expect("publish");
@@ -2757,6 +2874,7 @@ mod tests {
         // The tool registry actually serves the custom ids it advertises.
         let tool = FilesystemCapabilityTool {
             adapter: FilesystemAdapter::new(),
+            gate: Arc::new(Mutex::new(ConfirmationGate::default())),
         };
         let caps = tool.capabilities();
         for id in ["filesystem.tree", "filesystem.search"] {
@@ -2816,6 +2934,15 @@ mod tests {
         rx: &mut tokio::sync::broadcast::Receiver<Event>,
         payload: serde_json::Value,
     ) -> (serde_json::Value, serde_json::Value) {
+        let (started, terminal) = drive_goal_event(bus, rx, payload).await;
+        (started.payload, terminal.payload)
+    }
+
+    async fn drive_goal_event(
+        bus: &EventBus,
+        rx: &mut tokio::sync::broadcast::Receiver<Event>,
+        payload: serde_json::Value,
+    ) -> (Event, Event) {
         bus.publish(Event::new("plan.goal", "mobile", payload))
             .await
             .expect("publish");
@@ -2829,9 +2956,9 @@ mod tests {
                 break;
             };
             match ev.kind.as_str() {
-                "goal.started" => started = Some(ev.payload),
+                "goal.started" => started = Some(ev),
                 "goal.completed" | "goal.failed" => {
-                    terminal = Some(ev.payload);
+                    terminal = Some(ev);
                     break;
                 }
                 _ => {}
@@ -2841,6 +2968,69 @@ mod tests {
             started.expect("goal.started must be published"),
             terminal.expect("a terminal event must be published"),
         )
+    }
+
+    #[tokio::test]
+    async fn unconfirmed_terminal_goal_publishes_goal_failed_with_needs_confirmation() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let runner = GoalRunner::new(bus.clone());
+        runner.start();
+
+        let (_started, terminal) =
+            drive_goal_event(&bus, &mut rx, json!({ "goal": "git status" })).await;
+
+        assert_eq!(terminal.kind, "goal.failed");
+        assert_eq!(
+            terminal.payload["needs_confirmation"],
+            json!({
+                "tool": "terminal",
+                "action": "git status"
+            })
+        );
+        assert_eq!(terminal.payload["error"], "Confirm to run: git status");
+    }
+
+    #[tokio::test]
+    async fn confirmed_terminal_goal_with_matching_action_runs() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let runner = GoalRunner::new(bus.clone());
+        runner.start();
+
+        let (_started, terminal) = drive_goal_event(
+            &bus,
+            &mut rx,
+            json!({ "goal": "git status", "confirm": "git status" }),
+        )
+        .await;
+
+        assert_eq!(terminal.kind, "goal.completed");
+    }
+
+    #[tokio::test]
+    async fn mismatched_confirm_string_runs_nothing_and_requests_confirmation() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let runner = GoalRunner::new(bus.clone());
+        runner.start();
+
+        let (_started, terminal) = drive_goal_event(
+            &bus,
+            &mut rx,
+            json!({ "goal": "git status", "confirm": "git log" }),
+        )
+        .await;
+
+        assert_eq!(terminal.kind, "goal.failed");
+        assert_eq!(
+            terminal.payload["needs_confirmation"],
+            json!({
+                "tool": "terminal",
+                "action": "git status"
+            })
+        );
+        assert_eq!(terminal.payload["error"], "Confirm to run: git status");
     }
 
     /// S1 acceptance: the session id survives ingress end-to-end (runner sees
@@ -2859,6 +3049,7 @@ mod tests {
             &mut rx,
             json!({
                 "goal": "git status",
+                "confirm": "git status",
                 "session_id": "sess-a",
             }),
         )
@@ -2875,6 +3066,7 @@ mod tests {
             &mut rx,
             json!({
                 "goal": "git status",
+                "confirm": "git status",
                 "session_id": "sess-a",
             }),
         )
@@ -2892,6 +3084,7 @@ mod tests {
             &mut rx,
             json!({
                 "goal": "git status",
+                "confirm": "git status",
                 "session_id": "sess-b",
             }),
         )
@@ -2912,13 +3105,23 @@ mod tests {
         let runner = GoalRunner::new(bus.clone());
         runner.start();
 
-        let (started, done) = drive_goal(&bus, &mut rx, json!({ "goal": "git status" })).await;
+        let (started, done) = drive_goal(
+            &bus,
+            &mut rx,
+            json!({ "goal": "git status", "confirm": "git status" }),
+        )
+        .await;
         assert_eq!(started["session_id"], DEFAULT_SESSION_ID);
         assert_eq!(started["session_turn"], 1);
         assert_eq!(done["session_id"], DEFAULT_SESSION_ID);
         assert_eq!(done["result"]["kind"], "text");
 
-        let (started2, _) = drive_goal(&bus, &mut rx, json!({ "goal": "git status" })).await;
+        let (started2, _) = drive_goal(
+            &bus,
+            &mut rx,
+            json!({ "goal": "git status", "confirm": "git status" }),
+        )
+        .await;
         assert_eq!(started2["session_id"], DEFAULT_SESSION_ID);
         assert_eq!(
             started2["session_turn"], 2,
@@ -3398,7 +3601,7 @@ mod tests {
         bus.publish(Event::new(
             "plan.goal",
             "mobile",
-            json!({ "goal": "open notepad" }),
+            json!({ "goal": "open notepad", "confirm": "notepad.exe" }),
         ))
         .await
         .expect("publish");
@@ -3497,7 +3700,7 @@ mod tests {
         bus.publish(Event::new(
             "plan.goal",
             "mobile",
-            json!({ "goal": "open notepad" }),
+            json!({ "goal": "open notepad", "confirm": "notepad.exe" }),
         ))
         .await
         .expect("publish");
@@ -3586,7 +3789,7 @@ mod tests {
         bus.publish(Event::new(
             "plan.goal",
             "mobile",
-            json!({ "goal": "open notepad" }),
+            json!({ "goal": "open notepad", "confirm": "notepad.exe" }),
         ))
         .await
         .expect("publish");
@@ -3700,7 +3903,11 @@ mod tests {
         );
 
         runner
-            .run_goal("open notepad".to_string(), DEFAULT_SESSION_ID.to_string())
+            .run_goal(
+                "open notepad".to_string(),
+                DEFAULT_SESSION_ID.to_string(),
+                Some("notepad.exe".to_string()),
+            )
             .await;
 
         // The Observe phase folded the sensor event into the blackboard WorldState.
@@ -3814,7 +4021,35 @@ mod tests {
         let admitted = voice.poll().await;
         assert_eq!(admitted, vec!["open Chrome".to_string()]);
 
-        // The goal loop answers: planning → execution → verification → terminal.
+        // The goal loop gates the unconfirmed action and requests confirmation.
+        let mut needs_confirm = false;
+        for _ in 0..30 {
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                .await
+                .map(|r| r.expect("bus alive"))
+            else {
+                break;
+            };
+            if ev.kind == "goal.failed" && ev.payload.get("needs_confirmation").is_some() {
+                needs_confirm = true;
+                break;
+            }
+        }
+        assert!(needs_confirm, "voice goal must require confirmation");
+
+        // The human confirms the action -> completes.
+        bus.publish(Event::new(
+            "plan.goal",
+            "mobile",
+            json!({
+                "goal": "open Chrome",
+                "confirm": "chrome.exe",
+                "session_id": VoiceIntake::DEFAULT_SESSION_ID,
+            }),
+        ))
+        .await
+        .expect("publish");
+
         let mut completed = None;
         for _ in 0..30 {
             let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
@@ -3987,7 +4222,7 @@ mod tests {
 
         for run in 1..=4u32 {
             runner
-                .run_goal(goal.clone(), format!("s7-session-{run}"))
+                .run_goal(goal.clone(), format!("s7-session-{run}"), None)
                 .await;
             let mut terminal = None;
             for _ in 0..30 {

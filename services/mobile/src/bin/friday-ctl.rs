@@ -103,6 +103,7 @@ async fn main() -> std::process::ExitCode {
     // non-flag token is the subcommand; the rest are goal words.
     let mut positional: Vec<String> = Vec::new();
     let mut i = 0;
+    let mut confirm: Option<String> = None;
     while i < raw.len() {
         let w = &raw[i];
         if w == "--addr" && i + 1 < raw.len() {
@@ -113,6 +114,9 @@ async fn main() -> std::process::ExitCode {
             i += 2;
         } else if w == "--ask" && i + 1 < raw.len() {
             question = Some(raw[i + 1].clone());
+            i += 2;
+        } else if w == "--confirm" && i + 1 < raw.len() {
+            confirm = Some(raw[i + 1].clone());
             i += 2;
         } else if w == "--wait" {
             wait = true;
@@ -191,7 +195,7 @@ async fn main() -> std::process::ExitCode {
     }
     let goal = goal_words.join(" ");
     let submitted_ms = now_ms();
-    let accepted = run(&addr_str, &cmd_token, &sub, goal_words).await;
+    let accepted = run(&addr_str, &cmd_token, &sub, goal_words, confirm.as_deref()).await;
     if sub == "goal" && wait && accepted == std::process::ExitCode::SUCCESS {
         return wait_for_goal(&state_path, &goal, submitted_ms, stream).await;
     }
@@ -237,17 +241,25 @@ async fn wait_for_goal(
             }
         }
         if let Some(done) = state.and_then(|s| finished_goal(&s, goal, since_ms)) {
-            let summary = serde_json::json!({
+            let mut summary = serde_json::json!({
                 "outcome": done["outcome"],
                 "result": done["result"],
                 "error": done["error"],
             });
+            if let Some(nc) = done.get("needs_confirmation").filter(|v| !v.is_null()) {
+                summary["needs_confirmation"] = nc.clone();
+            }
             println!(
                 "{}",
                 serde_json::to_string_pretty(&summary).unwrap_or_default()
             );
             return if done["outcome"] == "completed" {
                 std::process::ExitCode::SUCCESS
+            } else if done
+                .get("needs_confirmation")
+                .is_some_and(|nc| !nc.is_null())
+            {
+                std::process::ExitCode::from(3u8)
             } else {
                 std::process::ExitCode::FAILURE
             };
@@ -312,7 +324,13 @@ fn read_token(path: &std::path::Path) -> Option<String> {
     Some(st.token)
 }
 
-async fn run(addr: &str, token: &str, sub: &str, args: Vec<String>) -> std::process::ExitCode {
+async fn run(
+    addr: &str,
+    token: &str,
+    sub: &str,
+    args: Vec<String>,
+    confirm: Option<&str>,
+) -> std::process::ExitCode {
     // Build the command. Only `goal`, `system-info`, and `context` are wired
     // for now — the "one controlled command" surface.
     let (method, params) = match sub {
@@ -322,10 +340,11 @@ async fn run(addr: &str, token: &str, sub: &str, args: Vec<String>) -> std::proc
                 eprintln!("friday-ctl goal <text>: goal text required");
                 return std::process::ExitCode::FAILURE;
             }
-            (
-                friday_mobile::method::PLANNER_GOAL.to_string(),
-                serde_json::json!({ "goal": goal, "token": token }),
-            )
+            let mut p = serde_json::json!({ "goal": goal, "token": token });
+            if let Some(c) = confirm {
+                p["confirm"] = serde_json::json!(c);
+            }
+            (friday_mobile::method::PLANNER_GOAL.to_string(), p)
         }
         "system-info" => (
             friday_mobile::method::SYSTEM_INFO.to_string(),
