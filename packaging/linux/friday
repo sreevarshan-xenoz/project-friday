@@ -660,6 +660,43 @@ EOF
   esac
 }
 
+# Requests this computer handles itself, with no AI and nothing sent: prints
+# what it did and succeeds, or fails so the question goes to the model.
+#   volume 40 | mute | unmute | dnd on|off | battery | timer 5 min | wifi settings
+friday_local_command() {
+  local q n unit secs label
+  q=$(tr '[:upper:]' '[:lower:]' <<<"$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]?.!]*$//')
+  if [[ "$q" =~ ^(set\ )?(the\ )?volume\ (to\ )?([0-9]{1,3})\ ?%?$ ]]; then
+    n=${BASH_REMATCH[4]}; (( n > 150 )) && n=150
+    wpctl set-volume @DEFAULT_AUDIO_SINK@ "$n%" 2>/dev/null || return 1
+    echo "Volume set to $n%."
+  elif [[ "$q" =~ ^(mute|unmute)(\ (the\ )?(sound|audio|volume))?$ ]]; then
+    local on=1; [ "${BASH_REMATCH[1]}" = unmute ] && on=0
+    wpctl set-mute @DEFAULT_AUDIO_SINK@ "$on" 2>/dev/null || return 1
+    [ "$on" = 1 ] && echo "Sound muted." || echo "Sound unmuted."
+  elif [[ "$q" =~ ^(turn\ )?(dnd|do\ not\ disturb)\ (on|off)$ ]]; then
+    local want=true; [ "${BASH_REMATCH[3]}" = off ] && want=false
+    bash "$0" shell ipc notifications setDnd "$want" >/dev/null 2>&1 || return 1
+    $want && echo "Do not disturb is on." || echo "Do not disturb is off."
+  elif [[ "$q" =~ ^(battery|battery\ (level|status)|how\ much\ battery(\ is\ left|\ do\ i\ have)?)$ ]]; then
+    local b; b=$(ls -d /sys/class/power_supply/BAT* 2>/dev/null | head -n 1)
+    [ -n "$b" ] || { echo "This computer has no battery."; return 0; }
+    echo "Battery: $(cat "$b/capacity")% ($(tr '[:upper:]' '[:lower:]' <"$b/status"))."
+  elif [[ "$q" =~ ^(set\ )?(a\ )?timer\ (for\ )?([0-9]+)\ ?(s|sec|secs|seconds?|m|min|mins|minutes?|h|hr|hours?)$ ]]; then
+    n=${BASH_REMATCH[4]}; unit=${BASH_REMATCH[5]}
+    case "$unit" in s*) secs=$n; label="$n second" ;; m*) secs=$((n * 60)); label="$n minute" ;; *) secs=$((n * 3600)); label="$n hour" ;; esac
+    (( n == 1 )) || label="${label}s"
+    ( sleep "$secs"; notify-send -a FRIDAY -u critical "Timer" "$label is up." ) </dev/null >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+    echo "Timer set for $label."
+  elif [[ "$q" =~ ^(open\ )?(the\ )?(wi-?fi|network|bluetooth)\ (settings|controls)$ ]]; then
+    bash "$0" shell ipc shell open control >/dev/null 2>&1 || return 1
+    echo "Opened the controls (Wi-Fi, Bluetooth, sound)."
+  else
+    return 1
+  fi
+}
+
 friday_welcome() {
   local stamp="${XDG_STATE_HOME:-$HOME/.local/state}/friday/welcomed"
   local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
@@ -860,9 +897,15 @@ case "${1:-}" in
         goal=$(fuzzel --dmenu --prompt-only="FRIDAY 👁 " --width=70 \
           --placeholder="Ask about your screen (a screenshot goes to your AI provider)" </dev/null) || exit 0
       elif $use_selection; then
-        preview=$(tr '\n\t' '  ' <<<"$context" | cut -c1-50)
-        goal=$(fuzzel --dmenu --prompt-only="FRIDAY › " --width=70 \
-          --placeholder="$source_label: \"$preview…\" (e.g. summarise, explain, translate)" </dev/null) || exit 0
+        # Quick actions, then your own prompts (one per line in
+        # ~/.config/friday/prompts); Shift+Enter sends what you typed instead.
+        preview=$(tr '\n\t' '  ' <<<"$context" | cut -c1-40)
+        goal=$({
+          printf '%s\n' "Summarize this" "Explain this simply" "Translate this to English" \
+            "Fix the grammar and spelling; reply with only the corrected text"
+          sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "${XDG_CONFIG_HOME:-$HOME/.config}/friday/prompts" 2>/dev/null || true
+        } | fuzzel --dmenu --prompt="FRIDAY › " --width=70 --lines=8 \
+          --placeholder="$source_label: \"$preview…\" · pick or type (Shift+Enter sends it)") || exit 0
       elif [ -s "$history_file" ]; then
         # Recent asks, newest first. Enter re-runs the highlighted one;
         # Shift+Enter sends exactly what was typed (fuzzel execute-input).
@@ -875,6 +918,11 @@ case "${1:-}" in
       fi
     fi
     [ -n "${goal// /}" ] || exit 0
+    # Things this computer can answer or do itself go nowhere.
+    local_answer=""
+    if ! $use_selection && ! $use_screen && ! $use_followup; then
+      local_answer=$(friday_local_command "$goal") || local_answer=""
+    fi
     # Questions, selected text and answers are private: only you can open
     # this directory (also fixes one made world-readable by an older version).
     mkdir -p "$state_dir" && chmod 700 "$state_dir"
@@ -919,6 +967,7 @@ case "${1:-}" in
     show_answer() {
       local ans_ok="$1" summary_json="$2" raw_out="$3"
       local answer title details preview urgency actions meta=""
+      [ "$(jq -r '.local // false' <<<"$summary_json" 2>/dev/null)" = true ] && meta="On this computer · nothing was sent"
       if $ans_ok; then
         answer=$(jq -r '.result // empty' <<<"$summary_json")
         [ -n "$answer" ] || answer="Done: $goal"
@@ -957,6 +1006,7 @@ case "${1:-}" in
 
       preview="$answer"
       [ "${#preview}" -le 220 ] || preview="${preview:0:217}…"
+      [ -z "$meta" ] || preview="$preview\n$meta"
       if $ans_ok; then
         local served_p served_ms
         served_p=$(jq -r '.served_by.provider // empty' <<<"$summary_json" 2>/dev/null || true)
@@ -1027,6 +1077,11 @@ case "${1:-}" in
       ) </dev/null >/dev/null 2>&1 &
       disown 2>/dev/null || true
     }
+
+    if [ -n "$local_answer" ]; then
+      show_answer true "$(jq -n --arg r "$local_answer" '{result: $r, local: true}')" ""
+      exit 0
+    fi
 
     if $use_screen; then
       # Pressing the key and typing the question is the per-use consent;
