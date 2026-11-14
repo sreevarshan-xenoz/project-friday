@@ -20,6 +20,7 @@ require("default.hypr.omarchy")
 require("hypr.monitors")
 require("hypr.input")
 require("hypr.bindings")
+require("hypr.gamemode")
 require("hypr.looknfeel")
 -- FRIDAY Shell's look for windows (gaps, rounding, border colours), written
 -- by `friday shell style|palette` and the shell's Look picker. dofile, not
