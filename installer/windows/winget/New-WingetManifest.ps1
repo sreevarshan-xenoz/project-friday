@@ -80,11 +80,14 @@ ShortDescription: Press a key, ask about what's on screen or selected, get an an
 Description: |-
   FRIDAY is a desktop assistant. Press Win+Y to ask anything, Win+Alt+Y to ask about the
   selected text, or Win+Ctrl+Y to ask about the screen. It runs per user from the tray and
-  uses a free cloud model by default, or your own AI provider key.
+  uses free cloud models by default, or your own AI provider key, or an AI account you
+  connect (Claude Code, Codex, Antigravity, Cline).
 Tags:
 - assistant
 - ai
+- desktop-assistant
 - productivity
+- llm
 ManifestType: defaultLocale
 ManifestVersion: $schema
 "@ | Set-Content -Encoding utf8 "$dir\$id.locale.en-US.yaml"
