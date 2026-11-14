@@ -288,6 +288,7 @@ const SCREEN_QUESTION_PREFIX: &str = "QUESTION: ";
 struct ScreenCapture {
     mime: String,
     data: String,
+    bytes: usize,
     /// What the user asked about the screen, if anything.
     question: Option<String>,
 }
@@ -299,15 +300,23 @@ fn parse_screen_capture(prompt: &str) -> Option<ScreenCapture> {
     let (fields, tail) = rest.split_once('\n').unwrap_or((rest, ""));
     let mut mime = String::new();
     let mut data = String::new();
+    let mut bytes = 0usize;
     for field in fields.split_ascii_whitespace() {
         if let Some(v) = field.strip_prefix("mime=") {
             mime = v.to_string();
         } else if let Some(v) = field.strip_prefix("data=") {
             data = v.to_string();
+        } else if let Some(v) = field.strip_prefix("bytes=") {
+            if let Ok(b) = v.parse::<usize>() {
+                bytes = b;
+            }
         }
     }
     if mime.is_empty() || data.is_empty() {
         return None;
+    }
+    if bytes == 0 {
+        bytes = (data.len() * 3) / 4;
     }
     let question = tail
         .strip_prefix(SCREEN_QUESTION_PREFIX)
@@ -317,8 +326,23 @@ fn parse_screen_capture(prompt: &str) -> Option<ScreenCapture> {
     Some(ScreenCapture {
         mime,
         data,
+        bytes,
         question,
     })
+}
+
+/// Extract content kinds, text character count, and image byte count for egress logging.
+fn parse_payload_metadata(prompt: &str) -> (Vec<String>, usize, usize) {
+    if let Some(cap) = parse_screen_capture(prompt) {
+        let text_chars = screen_instruction(cap.question.as_deref()).chars().count();
+        (
+            vec!["text".to_string(), "image".to_string()],
+            text_chars,
+            cap.bytes,
+        )
+    } else {
+        (vec!["text".to_string()], prompt.chars().count(), 0)
+    }
 }
 
 /// The instruction sent alongside a screenshot.
@@ -1207,6 +1231,8 @@ pub struct InferenceFabric {
     /// egress.rs`). Attaching is one line — autonomy's "can this secret leave
     /// the machine?" prerequisite.
     pub egress: Option<Arc<EgressGate>>,
+    /// Where outbound requests are logged (`<state dir>/egress.jsonl`).
+    pub egress_log_path: std::path::PathBuf,
     /// Providers FRIDAY registers without the user configuring anything (the
     /// local Ollama probe, keyless OpenCode Zen). Everything else registered
     /// is the user's choice: see [`InferenceFabric::user_providers`].
@@ -1229,8 +1255,41 @@ impl InferenceFabric {
             health_state_path: std::path::PathBuf::from(".fabric/provider_health.json"),
             fabric_dir: std::path::PathBuf::from(".fabric"),
             egress: None,
+            // Unit tests never write to the developer's real state dir.
+            egress_log_path: if cfg!(test) {
+                std::env::temp_dir()
+                    .join(format!("friday-test-egress-{}.jsonl", std::process::id()))
+            } else {
+                crate::egress::default_egress_path()
+            },
             automatic: std::collections::BTreeSet::new(),
         }
+    }
+
+    /// Append one JSON line to `egress.jsonl` recording that a request was sent.
+    pub fn log_egress_attempt(
+        &self,
+        provider: &str,
+        model: &str,
+        prompt: &str,
+        is_local: bool,
+        outcome: &str,
+    ) {
+        let ctx = crate::egress::current_egress_context();
+        let (kinds, text_chars, image_bytes) = parse_payload_metadata(prompt);
+        let entry = crate::egress::EgressEntry {
+            ts: chrono::Utc::now().to_rfc3339(),
+            goal_id: ctx.goal_id,
+            provider: provider.to_string(),
+            model: model.to_string(),
+            kinds,
+            text_chars,
+            image_bytes,
+            masked: ctx.masked,
+            outcome: outcome.to_string(),
+            local: if is_local { Some(true) } else { None },
+        };
+        crate::egress::append_entry(&self.egress_log_path, &entry);
     }
 
     /// The registered providers the user configured (a key, a local server
@@ -1579,6 +1638,9 @@ impl InferenceFabric {
                 return Err(e);
             }
         };
+        let is_local = model.capabilities.contains(&ModelCapability::Local)
+            || provider == "ollama"
+            || provider == "llamacpp";
         match run_attempt(
             at_least(
                 self.timeout_for_tier(tier, &prompt),
@@ -1589,11 +1651,13 @@ impl InferenceFabric {
         .await
         {
             Ok(response) => {
+                self.log_egress_attempt(provider, &model.id, &prompt, is_local, "ok");
                 decision.served = Some((provider.to_string(), model.id.clone()));
                 self.record_decision(decision);
                 Ok(response)
             }
             Err(e) => {
+                self.log_egress_attempt(provider, &model.id, &prompt, is_local, "error");
                 decision.failures.push(CandidateFailure {
                     provider: provider.to_string(),
                     model: model.id.clone(),
@@ -3485,8 +3549,12 @@ impl InferenceFabric {
                 Some(p) => run_streaming_attempt(timeout, provider, &model.id, &prompt, p).await,
                 None => run_attempt(timeout, provider.complete(&model.id, &prompt, false)).await,
             };
+            let is_local = model.capabilities.contains(&ModelCapability::Local)
+                || provider.name() == "ollama"
+                || provider.name() == "llamacpp";
             match attempt {
                 Ok(response) => {
+                    self.log_egress_attempt(provider.name(), &model.id, &prompt, is_local, "ok");
                     let latency_ms = start.elapsed().as_millis() as u64;
                     tracing::info!(
                         "[Inference Request {}] Success on candidate {}/{} ({}ms)",
@@ -3550,6 +3618,7 @@ impl InferenceFabric {
                     return Ok(response);
                 }
                 Err(err) => {
+                    self.log_egress_attempt(provider.name(), &model.id, &prompt, is_local, "error");
                     tracing::warn!(
                         "[Inference Request {}] Candidate {}/{} failed: {}. Retrying next...",
                         request_id,
@@ -3668,8 +3737,13 @@ impl InferenceFabric {
             .await;
             let latency = start.elapsed().as_millis() as u64;
 
+            let is_local = model.capabilities.contains(&ModelCapability::Local)
+                || provider.name() == "ollama"
+                || provider.name() == "llamacpp";
+
             match result {
                 Ok(Ok(response)) => {
+                    self.log_egress_attempt(provider.name(), &model.id, prompt, is_local, "ok");
                     let metrics = InferenceMetrics {
                         request_id: request_id.to_string(),
                         timestamp: chrono::Utc::now(),
@@ -3710,6 +3784,7 @@ impl InferenceFabric {
                     return Ok(response);
                 }
                 Ok(Err(e)) => {
+                    self.log_egress_attempt(provider.name(), &model.id, prompt, is_local, "error");
                     last_err = e;
                     tracing::warn!(
                         "[Inference Request {}] Provider {} failed: {}",
@@ -3731,6 +3806,7 @@ impl InferenceFabric {
                     }
                 }
                 Err(_) => {
+                    self.log_egress_attempt(provider.name(), &model.id, prompt, is_local, "error");
                     last_err = format!("Provider {} timed out", provider.name());
                     tracing::warn!("[Inference Request {}] {}", request_id, last_err);
                     {
@@ -6723,5 +6799,125 @@ mod v2_tests {
             elapsed_screen >= std::time::Duration::from_millis(250),
             "screen ask should stay alive past 80ms text deadline up to ~300ms, took {elapsed_screen:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn egress_logging_records_text_ask_and_screen_ask_kinds() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                tokio::spawn(async move {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut buf = [0u8; 4096];
+                    let _ = socket.read(&mut buf).await;
+                    let body = r#"{"choices":[{"message":{"content":"mock answer"}}]}"#;
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = socket.write_all(resp.as_bytes()).await;
+                });
+            }
+        });
+
+        let dir = std::env::temp_dir().join(format!(
+            "egress_fabric_test_{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let egress_path = dir.join("egress.jsonl");
+
+        let mut fabric = InferenceFabric::new();
+        fabric.egress_log_path = egress_path.clone();
+
+        let provider_name = "mock_egress_test";
+        fabric.register_provider(Box::new(OpenAiProvider {
+            name: provider_name.to_string(),
+            base_url: format!("http://{addr}/v1"),
+            api_key: String::new(),
+        }));
+        fabric.register_model(ModelInfo {
+            id: "m_text".to_string(),
+            family: "test".to_string(),
+            provider: provider_name.to_string(),
+            latency_ms: 10,
+            reliability: 1.0,
+            capabilities: vec![ModelCapability::Tools],
+            max_context: 4096,
+            tier: Some(CapabilityTier::Auto),
+        });
+        fabric.register_model(ModelInfo {
+            id: "m_vision".to_string(),
+            family: "test".to_string(),
+            provider: provider_name.to_string(),
+            latency_ms: 10,
+            reliability: 1.0,
+            capabilities: vec![ModelCapability::Vision],
+            max_context: 4096,
+            tier: Some(CapabilityTier::VisionFree),
+        });
+
+        // 1. Text ask
+        let text_prompt = "What is the capital of France?";
+        let res = fabric
+            .complete_tier(provider_name, CapabilityTier::Auto, text_prompt, false)
+            .await;
+        assert!(
+            res.is_ok(),
+            "text completion should succeed: {:?}",
+            res.err()
+        );
+
+        let lines1: Vec<String> = std::fs::read_to_string(&egress_path)
+            .unwrap()
+            .lines()
+            .map(str::to_string)
+            .collect();
+        assert_eq!(lines1.len(), 1);
+        let entry1: crate::egress::EgressEntry = serde_json::from_str(&lines1[0]).unwrap();
+        assert_eq!(entry1.kinds, vec!["text"]);
+        assert_eq!(entry1.image_bytes, 0);
+        assert_eq!(entry1.text_chars, text_prompt.chars().count());
+        assert_eq!(entry1.outcome, "ok");
+        assert_eq!(entry1.provider, provider_name);
+        assert_eq!(entry1.model, "m_text");
+
+        // 2. Screen ask
+        let screen_prompt =
+            "SCREEN_CAPTURE mime=image/png geometry=fullscreen bytes=3 data=QUJD\nQUESTION: what is on screen?";
+        let res2 = fabric
+            .complete_tier(
+                provider_name,
+                CapabilityTier::VisionFree,
+                screen_prompt,
+                false,
+            )
+            .await;
+        assert!(
+            res2.is_ok(),
+            "screen completion should succeed: {:?}",
+            res2.err()
+        );
+
+        let lines2: Vec<String> = std::fs::read_to_string(&egress_path)
+            .unwrap()
+            .lines()
+            .map(str::to_string)
+            .collect();
+        assert_eq!(lines2.len(), 2);
+        let entry2: crate::egress::EgressEntry = serde_json::from_str(&lines2[1]).unwrap();
+        assert_eq!(entry2.kinds, vec!["text", "image"]);
+        assert_eq!(entry2.image_bytes, 3);
+        assert!(entry2.text_chars > 0);
+        assert_eq!(entry2.outcome, "ok");
+        assert_eq!(entry2.provider, provider_name);
+        assert_eq!(entry2.model, "m_vision");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

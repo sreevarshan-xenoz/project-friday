@@ -184,22 +184,10 @@ impl ShellState {
     /// The resolution behind [`Self::default_path`], with the environment and
     /// the platform passed in so both platforms' rules are testable anywhere.
     pub fn path_from(var: impl Fn(&str) -> Option<String>, windows: bool) -> std::path::PathBuf {
-        use std::path::PathBuf;
         if let Some(p) = var("FRIDAY_STATE_FILE") {
-            return PathBuf::from(p);
+            return std::path::PathBuf::from(p);
         }
-        let base = if let Some(x) = var("XDG_STATE_HOME") {
-            PathBuf::from(x)
-        } else if let Some(local) = var("LOCALAPPDATA").filter(|_| windows) {
-            PathBuf::from(local)
-        } else if let Some(home) = var("HOME") {
-            PathBuf::from(home).join(".local").join("state")
-        } else if windows {
-            std::env::temp_dir()
-        } else {
-            PathBuf::from("/tmp")
-        };
-        base.join("friday").join("state.json")
+        friday_intelligence::egress::state_dir_from(var, windows).join("state.json")
     }
 
     /// Render the document as a JSON value with the updated timestamp stamped.

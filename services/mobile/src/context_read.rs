@@ -241,9 +241,11 @@ where
                 return Err(e);
             }
         };
+        let mut masked_count = 0usize;
         if let Some(q) = question.map(str::trim).filter(|q| !q.is_empty()) {
             // One line: the provider reads everything after `QUESTION: `.
-            let (masked_q, _) = friday_goal_execution::mask_secrets(q);
+            let (masked_q, count) = friday_goal_execution::mask_secrets(q);
+            masked_count = count;
             payload.push_str("\nQUESTION: ");
             payload.push_str(&masked_q.replace(['\n', '\r'], " "));
         }
@@ -253,10 +255,22 @@ where
             .process(&self.provider_name, &payload)
             .map_err(|reason| ContextReadError::EgressBlocked { reason })?;
 
-        self.provider
-            .send_streaming(&composed, progress)
-            .await
-            .map_err(ContextReadError::Provider)
+        let current_ctx = friday_intelligence::current_egress_context();
+        let egress_ctx = if current_ctx.masked.is_none() {
+            friday_intelligence::EgressContext {
+                goal_id: current_ctx.goal_id,
+                masked: Some(masked_count),
+            }
+        } else {
+            current_ctx
+        };
+
+        friday_intelligence::with_egress_context(
+            egress_ctx,
+            self.provider.send_streaming(&composed, progress),
+        )
+        .await
+        .map_err(ContextReadError::Provider)
     }
 
     // --- Re-exposed authorize for library/test drivers that want the exact
@@ -432,7 +446,15 @@ where
                 });
             };
 
-            let asked = reader.ask_streaming(question.as_deref(), &progress).await;
+            let egress_ctx = friday_intelligence::EgressContext {
+                goal_id: Some(task_cmd_id.clone()),
+                masked: None,
+            };
+            let asked = friday_intelligence::with_egress_context(
+                egress_ctx,
+                reader.ask_streaming(question.as_deref(), &progress),
+            )
+            .await;
 
             let (ok, result) = match asked {
                 Ok(response) => {

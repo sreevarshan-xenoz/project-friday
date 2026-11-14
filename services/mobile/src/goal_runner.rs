@@ -1564,6 +1564,25 @@ impl GoalRunner {
     async fn run_goal(&self, goal: String, session_id: String, confirm: Option<String>) {
         let (goal, masked_count) = friday_goal_execution::mask_secrets(&goal);
         let id = format!("goal-{}", uuid::Uuid::new_v4().simple());
+        let egress_ctx = friday_intelligence::EgressContext {
+            goal_id: Some(id.clone()),
+            masked: Some(masked_count),
+        };
+        friday_intelligence::with_egress_context(
+            egress_ctx,
+            self.run_goal_inner(goal, id, masked_count, session_id, confirm),
+        )
+        .await;
+    }
+
+    async fn run_goal_inner(
+        &self,
+        goal: String,
+        id: String,
+        masked_count: usize,
+        session_id: String,
+        confirm: Option<String>,
+    ) {
         // Lengths only: the question and any selected text (which can hold a
         // password or token) never go to the log.
         let asked = friday_goal_execution::planning::goal_segment(&goal)
