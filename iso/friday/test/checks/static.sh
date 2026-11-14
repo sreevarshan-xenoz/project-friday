@@ -144,6 +144,20 @@ if grep -q '^Server = https://github.com/sreevarshan-xenoz/project-friday/releas
    && grep -q 'gh release upload pacman ' "$REPO_ROOT/.github/workflows/release.yml"; then
   pass "installed systems update FRIDAY from the release workflow's pacman repo"
 else fail "the installer's [friday] repo and release.yml's pacman release don't match"; fi
+# Updates are signed: installed systems require FRIDAY's release key, which
+# friday-git ships; the committed fingerprint must be that key's.
+if grep -q '^SigLevel = Required DatabaseRequired$' "$AIROOTFS/root/installer" \
+   && grep -q 'pacman-key --lsign-key' "$AIROOTFS/root/installer"; then
+  pass "installed systems require FRIDAY's signature on updates"
+else fail "the installer's [friday] repo doesn't require signatures"; fi
+key="$REPO_ROOT/packaging/arch/friday-signing-key.asc"
+if need gpg && [[ -f "$key" ]]; then
+  shown=$(gpg --batch --with-colons --show-keys "$key" 2>/dev/null | awk -F: '/^fpr/{print $10; exit}')
+  if [[ -n "$shown" && "$shown" == "$(cat "$REPO_ROOT/packaging/arch/friday-signing-key.fpr")" ]] \
+     && grep -q 'friday-signing-key.asc' "$REPO_ROOT/packaging/arch/PKGBUILD"; then
+    pass "the release key's fingerprint matches and friday-git ships the key"
+  else fail "packaging/arch/friday-signing-key.{asc,fpr} disagree or friday-git doesn't ship them"; fi
+else skip "release key check (needs gpg)"; fi
 # bash sets $HOSTNAME to the live system's name, so an unattended install that
 # defaulted from it was named "archiso" (found in a VM install, 2026-11-14).
 if (unset FRIDAY_HOSTNAME; HOSTNAME=archiso; eval "$(grep -m1 '^HOSTNAME=' "$AIROOTFS/root/installer")"; [[ $HOSTNAME == friday ]]); then
