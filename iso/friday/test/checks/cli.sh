@@ -297,6 +297,12 @@ contains "offers choosing a provider" "$(cat "$LOG")" "setup=Choose AI provider"
 contains "setup opens in a terminal" "$(cat "$LOG")" "foot -T FRIDAY setup"
 : >"$LOG"; bash "$F" welcome
 if [[ ! -s "$LOG" ]]; then pass "shown only once"; else fail "shown twice"; fi
+# With FRIDAY Shell running, the welcome is its tour instead of a notification.
+TOUR="$W/tour"; mkdir -p "$TOUR/bin" "$TOUR/shell"; : >"$TOUR/shell/shell.qml"
+printf '#!/bin/bash\necho "quickshell $*" >>"%s"\n' "$LOG" >"$TOUR/bin/quickshell"; chmod +x "$TOUR/bin/quickshell"
+: >"$LOG"; PATH="$TOUR/bin:$PATH" FRIDAY_SHELL_DIR="$TOUR/shell" bash "$F" welcome --force
+contains "with FRIDAY Shell, the welcome starts its tour" "$(cat "$LOG")" "ipc call tour begin"
+if grep -q "^notify " "$LOG"; then fail "the tour welcome also notified"; else pass "the tour replaces the welcome notification"; fi
 
 echo "shell supervision"
 # A stub quickshell: `-n -p DIR` starts it (crashing the first $QS_CRASHES
