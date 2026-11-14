@@ -25,5 +25,6 @@ public sealed class Paths
     public string HistoryFile => Path.Combine(StateDir, "ask-history");
     public string LastAnswerFile => Path.Combine(StateDir, "last-answer.md");
     public string AnswersFile => Path.Combine(StateDir, "answers.md");
+    public string EgressFile => Path.Combine(StateDir, "egress.jsonl");
     public string EnvFile => Path.Combine(ConfigDir, "friday.env");
 }

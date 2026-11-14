@@ -53,6 +53,7 @@ internal sealed class TrayContext : ApplicationContext
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Last answer", null, (_, _) => Open(install.Paths.LastAnswerFile));
         menu.Items.Add("All answers", null, (_, _) => Open(install.Paths.AnswersFile));
+        menu.Items.Add("What left this PC…", null, (_, _) => ShowEgress());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("AI provider…", null, (_, _) => ChooseProvider());
         menu.Items.Add(_startAtLogin);
@@ -257,6 +258,12 @@ internal sealed class TrayContext : ApplicationContext
             _daemon.Restart();
             Notify("FRIDAY", "Saved. FRIDAY restarted with the new provider.", ToolTipIcon.Info);
         }
+    }
+
+    private void ShowEgress()
+    {
+        var form = new EgressForm(_install.Paths);
+        form.Show();
     }
 
     private void ToggleStartAtLogin()
