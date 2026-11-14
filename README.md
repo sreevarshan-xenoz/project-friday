@@ -191,15 +191,23 @@ Builds `friday-git` and an Arch ISO whose installer sets up the whole desktop. P
 
 ### Updates
 
-Each release publishes `friday-git` to a pacman repo, so `sudo pacman -Syu` keeps FRIDAY current. FRIDAY OS installs from v0.2.2 on have it set up already. On Arch, or on an earlier FRIDAY OS install, add this to `/etc/pacman.conf` once:
+Each release publishes `friday-git` to a signed pacman repo, so `sudo pacman -Syu` keeps FRIDAY current. FRIDAY OS installs from v0.2.2 on have it set up already. On Arch, or on an earlier FRIDAY OS install, trust FRIDAY's release key once (fingerprint `8CC5 1D30 6AAE 9874 EB05 6A81 6954 E96E 5CA1 63C2`, also in [`packaging/arch/friday-signing-key.asc`](packaging/arch/friday-signing-key.asc)):
+
+```bash
+curl -fsSLo /tmp/friday-signing-key.asc https://raw.githubusercontent.com/sreevarshan-xenoz/project-friday/dev/packaging/arch/friday-signing-key.asc
+sudo pacman-key --add /tmp/friday-signing-key.asc
+sudo pacman-key --lsign-key 8CC51D306AAE9874EB056A816954E96E5CA163C2
+```
+
+then add this to `/etc/pacman.conf`:
 
 ```ini
 [friday]
-SigLevel = Optional TrustAll
+SigLevel = Required DatabaseRequired
 Server = https://github.com/sreevarshan-xenoz/project-friday/releases/download/pacman
 ```
 
-The packages aren't signed yet; they come over HTTPS from this repository's releases. On Windows, install the newer MSI over the old one.
+pacman refuses any package or database that key didn't sign. On Windows, install the newer MSI over the old one.
 
 ## Commands
 
