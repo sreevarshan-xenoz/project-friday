@@ -200,8 +200,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Only this workflow's release-* artifacts: the reused CI run uploads
+      # its own (screenshots, logs) to the same run.
       - uses: actions/download-artifact@v4
         with:
+          pattern: release-*
           path: dist
           merge-multiple: true
       - name: Checksums
@@ -216,6 +219,12 @@ jobs:
           } >>"$GITHUB_STEP_SUMMARY"
           for f in friday-git-*.pkg.tar.zst FRIDAY-*.msi winget-manifests-*.zip friday-os-*.iso SHA256SUMS; do
             compgen -G "$f" >/dev/null || { echo "::error::the release is missing $f"; exit 1; }
+          done
+          for f in *; do
+            case "$f" in
+              friday-git-*.pkg.tar.zst|FRIDAY-*.msi|winget-manifests-*.zip|friday-os-*.iso|SHA256SUMS) ;;
+              *) echo "::error::unexpected file in the release: $f"; exit 1 ;;
+            esac
           done
       - name: Create the GitHub release
         if: needs.version.outputs.publish == 'true'
