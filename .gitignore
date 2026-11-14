@@ -72,3 +72,6 @@ packaging/arch/pkg/
 # artifacts/android/build-debug-artifact.ps1 and check it against sha256.txt).
 *.apk
 .friday/
+
+# The daemon's default memory directory when run from the repo (FRIDAY_MEMORY_DIR).
+friday-data/
