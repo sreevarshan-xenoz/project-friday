@@ -13,7 +13,11 @@ pub use compiler::{ModelProvider, PromptAst, PromptCompiler};
 pub use context_gate::{
     compose, ContextChannel, ContextComposeError, ContextDecision, ContextGate, ProviderTarget,
 };
-pub use egress::{EgressAction, EgressGate, EgressMode, EgressVerdict};
+pub use egress::{
+    append_entry, append_entry_bounded, current_egress_context, default_egress_path,
+    default_state_dir, state_dir_from, with_egress_context, EgressAction, EgressContext,
+    EgressEntry, EgressGate, EgressMode, EgressVerdict,
+};
 pub use parser::{LlmResponse, ParsedTask, ResponseInterpreter};
 pub use planner_backend::InferenceBackend;
 pub use providers::{

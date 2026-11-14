@@ -93,4 +93,55 @@ sending to the AI provider, the `goal.completed` and `goal.failed` event payload
 Absent when no secrets were masked (count is 0). Raw secrets are replaced with
 `[secret masked]` and never leave the machine, appear in logs, or persist in state.json.
 
+## Egress Log: egress.jsonl
+
+The daemon maintains a local audit log of outbound AI requests at `<state dir>/egress.jsonl`
+(`~/.local/state/friday/egress.jsonl` on Linux, `%LOCALAPPDATA%\friday\egress.jsonl` on Windows,
+or `FRIDAY_EGRESS_FILE`), allowing the person to see exactly which AI provider received
+what kind of data from each ask — never the content itself.
+
+### Privacy Guarantee
+`egress.jsonl` records metadata and counts only. It **NEVER** records:
+- The prompt, question text, or selected text
+- The model answer or output text
+- API keys, credentials, or secrets
+- URLs with query parameters or secrets
+- Any raw user or system content
+
+### Fields
+Each line is a JSON object appended whenever a request attempt is made to a provider
+(including fallbacks and failures):
+
+```json
+{
+  "ts": "2026-11-14T18:00:00Z",
+  "goal_id": "goal-b1a9c3d4",
+  "provider": "opencode",
+  "model": "inclusionai/ling-3.0-flash:free",
+  "kinds": ["text"],
+  "text_chars": 1240,
+  "image_bytes": 0,
+  "masked": 0,
+  "outcome": "ok"
+}
+```
+
+- `ts`: RFC 3339 UTC timestamp of the attempt
+- `goal_id`: goal identifier string if known (omitted when unknown)
+- `provider`: provider identifier string (e.g. `opencode`, `kilo`, `claude-code`, `codex`, `antigravity`, `cline`, `ollama`, `llamacpp`)
+- `model`: vendor model identifier string
+- `kinds`: array of payload content kinds: `["text"]` or `["text", "image"]`
+- `text_chars`: count of text characters sent
+- `image_bytes`: count of image bytes sent (0 if none)
+- `masked`: secrets masked in that ask before transmission (integer count if known, omitted when unknown)
+- `outcome`: `"ok"` if the attempt succeeded, `"error"` if it failed or timed out
+- `local`: `true` for local providers (llama.cpp/Ollama on localhost); omitted for cloud providers
+
+Agent CLI providers (`claude-code`, `codex`, `antigravity`, `cline`) count as sent.
+
+### Bounding and Permissions
+- **File size bounds**: The file is bounded to ~1 MB (`DEFAULT_MAX_EGRESS_BYTES = 1,048,576`). When it exceeds this bound, the newest half of the lines is kept and atomically written.
+- **File mode**: Created with mode `0600` (`-rw-------`) on Unix so only the owning user can read it.
+- **Non-failing writes**: Writing to `egress.jsonl` must never fail an ask (any I/O error is logged as a warning and execution continues).
+
 

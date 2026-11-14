@@ -8,6 +8,7 @@ _friday() {
     'goal:Dispatch an autonomous goal'
     'cancel:Cancel the goal FRIDAY is working on'
     'answers:Show past answers'
+    'sent:Show what left this machine for AI providers'
     'status:Inspect daemon state and telemetry'
     'doctor:Check daemon, AI provider and desktop health'
     'report:Write a redacted bug report to read and share'
@@ -37,6 +38,7 @@ _friday() {
     ask)      _arguments '(-s --selection --screen)'{-s,--selection}'[ask about the selected/copied text]' \
                 '(-s --selection --screen)--screen[ask about what is on screen]' '*:question:' ;;
     answers)  _arguments '--last[show only the last answer]' ;;
+    sent)     _arguments '1:count:' ;;
     connect|disconnect) _values 'account' claude codex agy cline ;;
     setup-ai) _arguments '--keep-others[keep the other providers'"'"' keys]' '--only[use only this provider'"'"'s key]' '1:provider:(opencode gemini groq nvidia-nim openrouter cerebras)' ;;
     welcome)  _arguments '--force[show it even if already shown]' ;;

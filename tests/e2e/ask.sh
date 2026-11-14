@@ -84,6 +84,12 @@ ok = len(parts) >= 2 and all(answer.startswith(p) for p in parts) \
 print(len(parts) if ok else "bad:" + json.dumps(parts)[:200])' "$answer" <<<"$out")
   if [[ "$steps" =~ ^[0-9]+$ ]]; then pass "streamed: the answer grew in $steps steps"
   else fail "the answer did not stream (partials: ${steps#bad:})"; fi
+
+  # egress.jsonl gets an entry after the fake-model answer and does not contain the question text
+  if [[ -s "$W/egress.jsonl" ]]; then pass "egress.jsonl gets an entry after the answer"
+  else fail "egress.jsonl missing or empty after answer"; fi
+  if grep -qF "$q" "$W/egress.jsonl"; then fail "egress.jsonl contains question text: '$q'"
+  else pass "egress.jsonl does not contain the question text"; fi
 done
 
 # A question that mentions a tool is answered, not run as a shell command, and
@@ -143,6 +149,11 @@ if grep -q "$mask_key" "$W/model.log"; then
   fail "fake model server received the raw secret: $mask_key"
 else
   pass "fake model server never received the raw secret"
+fi
+if grep -q "$mask_key" "$W/egress.jsonl"; then
+  fail "egress.jsonl received the raw secret: $mask_key"
+else
+  pass "egress.jsonl never received the raw secret"
 fi
 
 answers=$(grep -vc "Investigation Engine" "$W/model.log" 2>/dev/null || echo 0)

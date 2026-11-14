@@ -24,6 +24,7 @@ Autonomous Agent & Cognitive Loop:
   friday ask --selection           Ask about the selected/copied text (Super+Alt+Y)
   friday ask --screen              Ask about what's on screen (Super+Ctrl+Y)
   friday answers                   Show past answers (last one: friday answers --last)
+  friday sent [N]                  Show what left this machine for AI providers (egress log)
   friday goal "<objective>"        Dispatch an autonomous goal to FRIDAY agent
   friday cancel                    Cancel the goal FRIDAY is working on
   friday status | system-info      Inspect daemon state, memory, and telemetry
@@ -607,8 +608,114 @@ friday_welcome() {
     setup) foot -T "FRIDAY setup" bash -c 'friday setup-ai; echo; read -rsn1 -p "Press any key to close."' ;;
     connect) foot -T "FRIDAY · connect an account" bash -c 'friday connect; echo; read -rsn1 -p "Press any key to close."' ;;
     keys)  notify-send -a FRIDAY -t 20000 "FRIDAY shortcuts" \
-             $'Super+Y  ask\nSuper+Alt+Y  ask about selected text\nSuper+Ctrl+Y  ask about the screen\nfriday doctor  check health\nfriday answers  past answers' ;;
+             $'Super+Y  ask\nSuper+Alt+Y  ask about selected text\nSuper+Ctrl+Y  ask about the screen\nfriday doctor  check health\nfriday answers  past answers\nfriday sent  egress log' ;;
   esac
+}
+
+friday_sent_map_provider() {
+  case "$1" in
+    opencode|opencode-zen) echo "OpenCode Zen" ;;
+    kilo) echo "Kilo" ;;
+    claude-code) echo "Claude Code" ;;
+    codex) echo "Codex" ;;
+    antigravity) echo "Antigravity" ;;
+    cline) echo "Cline" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+friday_sent_format_num() {
+  echo "$1" | sed -E ':a;s/([0-9])([0-9]{3}(\b|,))/\1,\2/;ta'
+}
+
+friday_sent() {
+  local n="${1:-20}"
+  local state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
+  local f="$state_dir/egress.jsonl"
+  if [ ! -f "$f" ] || [ ! -s "$f" ]; then
+    echo "Nothing has been sent yet."
+    return 0
+  fi
+
+  local now_sec cutoff_sec total=0 screenshots=0 masked_sum=0
+  now_sec=$(date +%s)
+  cutoff_sec=$(( now_sec - 7 * 86400 ))
+  declare -A prov_counts
+
+  while IFS=$'\t' read -r ts provider model text_chars image_bytes masked outcome; do
+    [ -z "$ts" ] && continue
+    local p_name ts_sec
+    p_name=$(friday_sent_map_provider "$provider")
+    ts_sec=$(date -d "$ts" +%s 2>/dev/null || echo 0)
+    if [ "$ts_sec" -ge "$cutoff_sec" ]; then
+      total=$(( total + 1 ))
+      prov_counts["$p_name"]=$(( ${prov_counts["$p_name"]:-0} + 1 ))
+      if [ "${image_bytes:-0}" -gt 0 ]; then
+        screenshots=$(( screenshots + 1 ))
+      fi
+      masked_sum=$(( masked_sum + ${masked:-0} ))
+    fi
+  done < <(jq -r '[.ts // "", .provider // "", .model // "", (.text_chars // 0), (.image_bytes // 0), (.masked // 0), .outcome // ""] | @tsv' "$f" 2>/dev/null)
+
+  local table_rows=""
+  while IFS=$'\t' read -r ts provider model text_chars image_bytes masked outcome; do
+    [ -z "$ts" ] && continue
+    local p_name local_time chars_fmt ib what
+    p_name=$(friday_sent_map_provider "$provider")
+    local_time=$(date -d "$ts" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$ts")
+    chars_fmt=$(friday_sent_format_num "${text_chars:-0}")
+    ib="${image_bytes:-0}"
+    if [ "$ib" -ge 1024 ]; then
+      local kb=$(( (ib + 512) / 1024 ))
+      what="text $chars_fmt chars + screenshot $(friday_sent_format_num "$kb") KB"
+    elif [ "$ib" -gt 0 ]; then
+      what="text $chars_fmt chars + screenshot $(friday_sent_format_num "$ib") B"
+    else
+      what="text $chars_fmt chars"
+    fi
+    table_rows+="$(printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$local_time" "$p_name" "$model" "$what" "${masked:-0}" "$outcome")"$'\n'
+  done < <(tail -n "$n" "$f" | jq -r '[.ts // "", .provider // "", .model // "", (.text_chars // 0), (.image_bytes // 0), (.masked // 0), .outcome // ""] | @tsv' 2>/dev/null)
+
+  if [ -n "$table_rows" ]; then
+    {
+      printf 'TIME\tPROVIDER\tMODEL\tWHAT\tMASKED\tOUTCOME\n'
+      printf '%s' "$table_rows"
+    } | column -t -s $'\t'
+    echo
+  fi
+
+  if [ "$total" -gt 0 ]; then
+    local prov_list=()
+    for p in "${!prov_counts[@]}"; do
+      prov_list+=("${prov_counts[$p]} $p")
+    done
+    IFS=$'\n' sorted_provs=($(sort -rn <<<"${prov_list[*]}"))
+    unset IFS
+    local prov_str=""
+    for sp in "${sorted_provs[@]}"; do
+      [ -z "$sp" ] && continue
+      if [ -n "$prov_str" ]; then
+        prov_str="$prov_str, $sp"
+      else
+        prov_str="$sp"
+      fi
+    done
+
+    local req_word="requests"
+    [ "$total" -eq 1 ] && req_word="request"
+    local summary="$total $req_word in the last 7 days: $prov_str"
+    if [ "$screenshots" -gt 0 ]; then
+      summary="$summary; $screenshots with a screenshot"
+    fi
+    if [ "$masked_sum" -gt 0 ]; then
+      local sec_word="secrets"
+      [ "$masked_sum" -eq 1 ] && sec_word="secret"
+      summary="$summary; $masked_sum $sec_word masked"
+    fi
+    echo "$summary"
+  else
+    echo "0 requests in the last 7 days."
+  fi
 }
 
 case "${1:-}" in
@@ -899,6 +1006,10 @@ case "${1:-}" in
     f="$d/answers.md"; [ "${2:-}" = "--last" ] && f="$d/last-answer.md"
     if [ ! -s "$f" ]; then echo "No answers yet. Try: friday ask \"what's using my disk?\""; exit 0; fi
     if [ -t 1 ]; then exec less -R +G "$f"; else cat "$f"; fi
+    ;;
+  sent)
+    shift
+    friday_sent "$@"
     ;;
   status|system-info)
     shift

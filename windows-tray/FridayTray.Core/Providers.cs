@@ -25,7 +25,7 @@ public static partial class Providers
     /// <summary>Map provider ids to readable display names.</summary>
     public static string DisplayName(string providerId) => providerId switch
     {
-        "opencode-zen" => "OpenCode Zen",
+        "opencode" or "opencode-zen" => "OpenCode Zen",
         "kilo" => "Kilo",
         "claude-code" => "Claude Code",
         "codex" => "Codex",
