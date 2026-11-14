@@ -70,6 +70,7 @@ internal sealed class TrayContext : ApplicationContext
         _asking = true;
         try
         {
+            var targetWindow = Native.GetForegroundWindow();
             string? context = null;
             string? preview = null;
             if (kind == AskKind.Selection)
@@ -93,6 +94,12 @@ internal sealed class TrayContext : ApplicationContext
                 question = form.Question;
             }
             _log.Remember(question);
+
+            if (kind == AskKind.Screen && targetWindow != IntPtr.Zero)
+            {
+                Native.RestoreForeground(targetWindow);
+                await FocusWait.WaitForForegroundAsync(targetWindow, Native.GetForegroundWindow);
+            }
 
             var request = Asking.BuildRequest(question, context);
             await RunRequestAsync(kind, question, context, request, confirm: null, answer: null);
