@@ -60,7 +60,10 @@ STEPS = [
 pid, fd = pty.fork()
 if pid == 0:
     os.environ.update(
-        TERM="xterm-256color", FRIDAY_FAST="1", PATH=stub_dir + ":" + os.environ["PATH"]
+        TERM="xterm-256color",
+        FRIDAY_FAST="1",
+        FRIDAY_ASSUME_UEFI="1",
+        PATH=stub_dir + ":" + os.environ["PATH"],
     )
     os.execv(configurator, [configurator])
 

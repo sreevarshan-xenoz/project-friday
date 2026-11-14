@@ -105,6 +105,12 @@ on_failure() {
 set -E
 trap on_failure ERR
 
+# systemd-boot needs UEFI: stop before touching the disk on a BIOS boot.
+if [[ ! -d /sys/firmware/efi && -z "${FRIDAY_ASSUME_UEFI:-}" ]]; then
+  { friday_err "This computer started in legacy BIOS mode; FRIDAY OS needs UEFI. Nothing was erased."; } >&3 2>&1
+  exit 1
+fi
+
 phase_msg 1 "Preparing $TARGET_DISK"
 if mountpoint -q /mnt; then fuser -km /mnt 2>/dev/null || true; fi
 umount -R /mnt 2>/dev/null || true
