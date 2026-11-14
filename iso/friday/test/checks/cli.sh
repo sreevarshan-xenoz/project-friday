@@ -38,12 +38,24 @@ if [[ "\$3" == *nodaemon* ]]; then echo "no token found; daemon not running at /
 if [[ "\$3" == *slowgoal* ]]; then echo '{"accepted":true}'; echo "timed out after 180s waiting for the goal to finish" >&2; exit 1; fi
 if [[ "\$3" == *refused* ]]; then printf '{\n "outcome": "failed",\n "error": "Couldn'"'"'t reach your AI provider. Check your internet connection (or that your local model server is running)."\n}\n'; echo "llamacpp: tcp connect error: Connection refused" >&2; exit 1; fi
 if [[ "\$3" == *limit* ]]; then printf '{\n "outcome": "failed",\n "error": "provider opencode: 429 FreeUsageLimitError"\n}\n'; exit 1; fi
+if [[ "\$3" == *bullets* ]]; then printf '{\n "outcome": "completed",\n "result": "- first point\\\\n- second point"\n}\n'; exit 0; fi
 if [[ "\$3" == *fail* ]]; then printf '{\n "outcome": "failed",\n "error": "network unreachable"\n}\n'; exit 1; fi
 printf '{\n "outcome": "completed",\n "result": "Line one.\\\\nLine two.\\\\nLast line."\n}\n'
 EOF
 cat >"$S/notify-send" <<EOF
 #!/bin/bash
 echo "notify \$*" >> "$LOG"
+# Like the real one: text that starts with "-" before "--" is an unknown option.
+args=("\$@"); i=0
+while (( i < \${#args[@]} )); do
+  case "\${args[i]}" in
+    --) break ;;
+    -a|-u|-t|-r|-A|-i|-c|-h|-e) i=\$((i + 2)) ;;
+    -p|--print-id|-w|--wait) i=\$((i + 1)) ;;
+    -*) echo "Unknown option \${args[i]}" >&2; exit 1 ;;
+    *) i=\$((i + 1)) ;;
+  esac
+done
 if [[ "\$*" == *again=* && -n "\$ACTION_AGAIN" ]]; then
   if [[ ! -f "$W/again_done" ]]; then
     touch "$W/again_done"
@@ -79,6 +91,9 @@ contains "notification offers Open" "$(cat "$LOG")" "open=Open full answer"
 contains "Open shows the answer" "$(cat "$LOG")" "foot -T FRIDAY · what is my uptime less -R"
 contains "notification offers Copy" "$(cat "$LOG")" "copy=Copy"
 contains "notification offers Ask again" "$(cat "$LOG")" "again=Ask again"
+: >"$LOG"; bash "$F" ask "list some bullets"; sleep 0.3
+contains "an answer that starts with '- ' is still notified" "$(cat "$LOG")" "-- FRIDAY ✓ - first point"
+if grep -q "Unknown option" "$W"/*.log 2>/dev/null; then fail "notify-send rejected an answer"; else pass "no notify-send option errors"; fi
 
 : >"$LOG"; ACTION_COPY=1 bash "$F" ask "copy answer test"; sleep 0.3
 contains "Copy runs wl-copy with the answer text" "$(cat "$LOG")" "wl-copy: Line one."

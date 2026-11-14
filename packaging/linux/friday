@@ -412,7 +412,7 @@ case "${1:-}" in
     goal="$*"
     state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
     history_file="$state_dir/ask-history"
-    notify() { notify-send -a FRIDAY "$@" 2>/dev/null || true; }
+    notify() { notify-send -a FRIDAY -- "$@" 2>/dev/null || true; }
 
     context=""
     if $use_selection; then
@@ -486,7 +486,7 @@ case "${1:-}" in
         if [ -n "$partial" ] && [ "$partial" != "$shown" ]; then
           view="$partial"
           [ "${#view}" -le 280 ] || view="…${view: -279}"
-          notify-send -a FRIDAY -r "$nid" "FRIDAY · $goal" "$view" 2>/dev/null || true
+          notify-send -a FRIDAY -r "$nid" -- "FRIDAY · $goal" "$view" 2>/dev/null || true
           shown="$partial"
         fi
       done
@@ -551,7 +551,7 @@ case "${1:-}" in
           foot -T "FRIDAY · $goal" less -R "$answer_file" 2>/dev/null \
             || xdg-open "$answer_file" 2>/dev/null || true
         }
-        action=$(notify-send -a FRIDAY -u "$urgency" "${actions[@]}" "$title" "$preview" 2>/dev/null || true)
+        action=$(notify-send -a FRIDAY -u "$urgency" "${actions[@]}" -- "$title" "$preview" 2>/dev/null || true)
         case "$action" in
           copy)
             if command -v wl-copy >/dev/null 2>&1; then
@@ -574,12 +574,12 @@ case "${1:-}" in
     if $use_screen; then
       # Pressing the key and typing the question is the per-use consent;
       # the daemon's ContextGate still enforces it.
-      nid=$(notify-send -a FRIDAY -p "FRIDAY" "Looking at your screen: $goal" 2>/dev/null || true)
+      nid=$(notify-send -a FRIDAY -p -- "FRIDAY" "Looking at your screen: $goal" 2>/dev/null || true)
       [[ "$nid" =~ ^[0-9]+$ ]] || nid=""
       stream_ctl friday-ctl context screen --yes --ask "$goal"
       summary=$(jq -s 'map(select(type == "object" and (has("partial") | not))) | last // {} | {result: .response, error: .error}' <<<"$out" 2>/dev/null || echo '{}')
     else
-      nid=$(notify-send -a FRIDAY -p "FRIDAY" "Working on: $goal" 2>/dev/null || true)
+      nid=$(notify-send -a FRIDAY -p -- "FRIDAY" "Working on: $goal" 2>/dev/null || true)
       [[ "$nid" =~ ^[0-9]+$ ]] || nid=""
       stream_ctl friday-ctl goal --wait "$request"
       # The final {outcome,result,error} object; keep every line of the answer.
@@ -591,7 +591,7 @@ case "${1:-}" in
       confirm_actions=(-A run="Run" -A cancel="Cancel")
       [ -z "${nid:-}" ] || confirm_actions+=(-r "$nid")
       (
-        action=$(notify-send -a FRIDAY -u normal "${confirm_actions[@]}" "FRIDAY wants to run" "$action_to_confirm" 2>/dev/null || true)
+        action=$(notify-send -a FRIDAY -u normal "${confirm_actions[@]}" -- "FRIDAY wants to run" "$action_to_confirm" 2>/dev/null || true)
         case "$action" in
           run)
             conf_ok=true
