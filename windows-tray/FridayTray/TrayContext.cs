@@ -238,7 +238,7 @@ internal sealed class TrayContext : ApplicationContext
 
     private void ChooseProvider()
     {
-        using var form = new ProviderForm(_install.Paths.EnvFile);
+        using var form = new ProviderForm(_install.Paths.EnvFile, () => _daemon.Restart());
         if (form.ShowDialog() == DialogResult.OK)
         {
             _daemon.Restart();
