@@ -21,7 +21,6 @@
 //! Linux-graphical pieces that were greenfield: goal ownership, `state.json`,
 //! SIGTERM shutdown, and systemd readiness.
 
-use std::io::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -80,68 +79,15 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn now_utc() -> String {
-    chrono::Utc::now().to_rfc3339()
-}
-
 /// Atomically write the state document (tmp + rename) so any inotify watch
 /// never observes a half-written file. Owner-only (0600): it carries the
 /// session token that authorizes commands.
 fn write_state(path: &std::path::Path, value: &serde_json::Value) {
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let tmp = path.with_extension("json.tmp");
-    let mut f = match std::fs::File::create(&tmp) {
-        Ok(f) => f,
-        Err(e) => {
-            tracing::warn!("state: cannot open tmp {}: {e}", tmp.display());
-            return;
-        }
-    };
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Err(e) = f.set_permissions(std::fs::Permissions::from_mode(0o600)) {
-            tracing::warn!("state: cannot restrict {}: {e}", tmp.display());
-            return;
-        }
-    }
-    let bytes = match serde_json::to_vec_pretty(value) {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::warn!("state: serialize failed: {e}");
-            return;
-        }
-    };
-    if let Err(e) = f.write_all(&bytes) {
-        tracing::warn!("state: write failed: {e}");
-        return;
-    }
-    if let Err(e) = f.sync_all() {
-        tracing::warn!("state: sync failed: {e}");
-    }
-    drop(f);
-    if let Err(e) = std::fs::rename(&tmp, path) {
-        tracing::warn!("state: rename failed: {e}");
-    }
+    friday_mobile::shell_state::write_state(path, value);
 }
 
 fn render(state: &ShellState) -> serde_json::Value {
-    state.to_json(now_ms(), now_utc())
-}
-
-struct ActiveGuard(Arc<AtomicBool>);
-impl ActiveGuard {
-    fn enter(flag: &Arc<AtomicBool>) -> Self {
-        flag.store(true, Ordering::SeqCst);
-        Self(flag.clone())
-    }
-}
-impl Drop for ActiveGuard {
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::SeqCst);
-    }
+    friday_mobile::shell_state::render(state)
 }
 
 #[tokio::main]
@@ -328,14 +274,14 @@ async fn main() {
     // real Executive with real evidence adapters.
     let goal_runner =
         GoalRunner::with_fabric_and_memory(bus.clone(), fabric, journal, voice).start();
-    let screen_ask_in_flight = Arc::new(AtomicBool::new(false));
+    let screen_ask = friday_mobile::context_read::ScreenAskManager::new(screen_reader.clone());
 
     // Watch for package upgrades: if the binary on disk was replaced (e.g. pacman -Syu)
     // and no goal or screen ask is in flight, restart the daemon so systemd starts
     // the new executable.
     if let (Some(exe_path), Some(initial_exe)) = (exe_path, initial_exe) {
         let goal_runner = goal_runner.clone();
-        let screen_ask_in_flight = screen_ask_in_flight.clone();
+        let screen_ask_watch = screen_ask.clone();
         let state_upgrade = state.clone();
         let state_upgrade_path = state_path.clone();
         let stopping_upgrade = stopping.clone();
@@ -353,8 +299,7 @@ async fn main() {
                 }
 
                 if friday_mobile::upgrade::is_self_replaced(&initial_exe, &exe_path) {
-                    let idle =
-                        goal_runner.is_idle() && !screen_ask_in_flight.load(Ordering::SeqCst);
+                    let idle = goal_runner.is_idle() && !screen_ask_watch.is_in_flight().await;
                     if idle {
                         tracing::info!("friday-linux-daemon was upgraded; restarting");
                         eprintln!("friday-linux-daemon was upgraded; restarting");
@@ -416,8 +361,33 @@ async fn main() {
     let result_out = outbound.clone();
     let state_cmd_lock = state.clone();
     let state_cmd_path = state_path.clone();
-    let context_reader = screen_reader.clone();
-    let screen_ask_ingress = screen_ask_in_flight.clone();
+
+    // Task cancellation listener from the bus (e.g. from mobile or other sources)
+    let mut cancel_bus = bus.subscribe();
+    let screen_ask_cancel = screen_ask.clone();
+    let result_out_cancel = outbound.clone();
+    let state_cancel_lock = state.clone();
+    let state_cancel_path = state_path.clone();
+    tokio::spawn(async move {
+        while let Ok(ev) = cancel_bus.recv().await {
+            if ev.kind == "task.cancel" {
+                let task_id = ev
+                    .payload
+                    .get("task_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                screen_ask_cancel
+                    .cancel(
+                        task_id,
+                        &result_out_cancel,
+                        &state_cancel_lock,
+                        &state_cancel_path,
+                    )
+                    .await;
+            }
+        }
+    });
+
     tokio::spawn(async move {
         while let Ok(cmd) = ingress.recv().await {
             // Token gate: reject commands that don't present the current token.
@@ -436,71 +406,30 @@ async fn main() {
             }
             // R5-2-5-2: explicit Screen context read. Scoped to `Screen` only;
             // never ambient. Consent is a per-use, request-attributable opt-in.
+            // Screen asks run in their own tokio task; at most one runs at a time.
             if cmd.method == friday_mobile::method::CONTEXT_READ {
-                let _screen_guard = ActiveGuard::enter(&screen_ask_ingress);
-                let want_consent = cmd
-                    .params
-                    .get("consent")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                if want_consent {
-                    // The user explicitly opted in for this request. Without it,
-                    // `read()` is blocked at the ContextGate and the provider
-                    // receives nothing.
-                    context_reader.consent();
+                if let Err(err_msg) = screen_ask
+                    .try_start(
+                        &cmd,
+                        result_out.clone(),
+                        state_cmd_lock.clone(),
+                        state_cmd_path.clone(),
+                    )
+                    .await
+                {
+                    let _ = result_out.send(err_msg);
                 }
-                // Optional: what the user wants to know about the screen.
-                let question = cmd
-                    .params
-                    .get("question")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string);
-                // The answer streams to the asking client as
-                // `context.progress` {id, partial} events (at most every
-                // 150 ms); the final CommandResult follows.
-                let progress_out = result_out.clone();
-                let progress_id = cmd.id.clone();
-                let last_sent = std::sync::Mutex::new(None::<std::time::Instant>);
-                let progress = move |partial: &str| {
-                    let mut last = last_sent.lock().unwrap();
-                    if last.is_some_and(|t| t.elapsed() < Duration::from_millis(150)) {
-                        return;
-                    }
-                    *last = Some(std::time::Instant::now());
-                    let _ = progress_out.send(friday_mobile::protocol::ServerMessage::Event {
-                        topic: "context.progress".to_string(),
-                        payload: serde_json::json!({ "id": progress_id, "partial": partial }),
-                    });
-                };
-                let asked = context_reader
-                    .ask_streaming(question.as_deref(), &progress)
-                    .await;
-                let (ok, result) = match asked {
-                    Ok(response) => {
-                        tracing::info!("[context.read] screen delivered to provider");
-                        (true, serde_json::json!({ "response": response }))
-                    }
-                    Err(e) => {
-                        // The raw error stays in this log; the person gets a sentence.
-                        tracing::warn!("[context.read] {e}");
-                        let plain = friday_mobile::failures::plain_screen_error(&e);
-                        (false, serde_json::json!({ "error": plain }))
-                    }
-                };
-                let mut st = state_cmd_lock.lock().await;
-                st.context_read = Some(friday_mobile::shell_state::ContextReadRecord {
-                    method: cmd.method.clone(),
-                    ms: now_ms(),
-                    ok,
-                    channel: "screen".to_string(),
-                });
-                write_state(&state_cmd_path, &render(&st));
-                let _ = result_out.send(friday_mobile::protocol::ServerMessage::CommandResult {
-                    id: cmd.id.clone(),
-                    ok,
-                    result,
-                });
                 continue;
+            }
+            if cmd.method == friday_mobile::method::TASK_CANCEL {
+                let task_id = cmd
+                    .params
+                    .get("task_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                screen_ask
+                    .cancel(task_id, &result_out, &state_cmd_lock, &state_cmd_path)
+                    .await;
             }
             let result = gateway.dispatch(&cmd).await;
             if cmd.method == friday_mobile::method::PLANNER_GOAL {
