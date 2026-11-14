@@ -20,9 +20,11 @@ Usage:
   friday <group> <command> [args...]
 
 Autonomous Agent & Cognitive Loop:
-  friday ask ["<objective>"]       Ask FRIDAY (prompts if no text); result as a notification
+  friday ask ["<objective>"]       Ask FRIDAY (prompts if no text); the answer opens in
+                                   FRIDAY Shell's answer pill, else a notification
   friday ask --selection           Ask about the selected/copied text (Super+Alt+Y)
   friday ask --screen              Ask about what's on screen (Super+Ctrl+Y)
+  friday ask --follow-up           Ask a follow-up about the last answer
   friday answers                   Show past answers (last one: friday answers --last)
   friday goal "<objective>"        Dispatch an autonomous goal to FRIDAY agent
   friday cancel                    Cancel the goal FRIDAY is working on
@@ -623,17 +625,35 @@ case "${1:-}" in
     #   friday ask --selection [text]   ask about the selected/copied text (SUPER+ALT+Y)
     #   friday ask --screen [text]      ask about what's on screen (SUPER+CTRL+Y);
     #                                   a screenshot goes to the AI provider, this once
+    #   friday ask --follow-up [text]   ask about the last answer (the answer pill's
+    #                                   Follow up)
+    # With FRIDAY Shell running, the answer opens in its answer pill (which also
+    # streams it); otherwise it arrives as a notification.
     shift
-    use_selection=false use_screen=false details="" daemon_down=false
+    use_selection=false use_screen=false use_followup=false details="" daemon_down=false
     ask_args=()
     case "${1:-}" in
       --selection|-s) use_selection=true; ask_args=(--selection); shift ;;
       --screen) use_screen=true; ask_args=(--screen); shift ;;
+      --follow-up|-f) use_followup=true; ask_args=(--follow-up); shift ;;
     esac
     goal="$*"
     state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
     history_file="$state_dir/ask-history"
     notify() { notify-send -a FRIDAY -- "$@" 2>/dev/null || true; }
+    # FRIDAY Shell's answer pill (services/Answer.qml); fails when it isn't running.
+    pill() { command -v quickshell >/dev/null 2>&1 && timeout 3 bash "$0" shell ipc answer "$@" >/dev/null 2>&1; }
+    use_pill=false
+    pill state && use_pill=true
+
+    if $use_followup; then
+      context=$(sed '/^<details>/,$d' "$state_dir/last-answer.md" 2>/dev/null || true)
+      if [ -z "${context//[[:space:]]/}" ]; then
+        notify "FRIDAY" "There's no answer to follow up on yet. Ask something with Super+Y first."
+        exit 0
+      fi
+      context="${context:0:6000}"
+    fi
 
     context=""
     if $use_selection; then
@@ -659,7 +679,10 @@ case "${1:-}" in
     fi
 
     if [ -z "$goal" ]; then
-      if $use_screen; then
+      if $use_followup; then
+        goal=$(fuzzel --dmenu --prompt-only="FRIDAY › " --width=70 \
+          --placeholder="Follow up on: $(head -n 1 <<<"$context" | sed 's/^# //' | cut -c1-50)" </dev/null) || exit 0
+      elif $use_screen; then
         goal=$(fuzzel --dmenu --prompt-only="FRIDAY 👁 " --width=70 \
           --placeholder="Ask about your screen (a screenshot goes to your AI provider)" </dev/null) || exit 0
       elif $use_selection; then
@@ -686,7 +709,9 @@ case "${1:-}" in
       | head -n 50 >"$history_file.tmp" && mv -f "$history_file.tmp" "$history_file"
 
     request="$goal"
-    if [ -n "$context" ]; then
+    if $use_followup; then
+      request=$(printf '%s\n\nThis follows up on my previous question and your answer:\n"""\n%s\n"""' "$goal" "$context")
+    elif [ -n "$context" ]; then
       request=$(printf '%s\n\nUse this text as context:\n"""\n%s\n"""' "$goal" "$context")
     fi
 
@@ -719,7 +744,7 @@ case "${1:-}" in
 
     show_answer() {
       local ans_ok="$1" summary_json="$2" raw_out="$3"
-      local answer title details preview urgency actions
+      local answer title details preview urgency actions meta=""
       if $ans_ok; then
         answer=$(jq -r '.result // empty' <<<"$summary_json")
         [ -n "$answer" ] || answer="Done: $goal"
@@ -779,12 +804,21 @@ case "${1:-}" in
             sec="$(( rounded / 10 )).$(( rounded % 10 ))"
           fi
           preview="$preview\nvia $p_name · ${sec} s"
+          meta="via $p_name · ${sec} s"
         fi
         local masked_count
         masked_count=$(jq -r '.masked // empty' <<<"$summary_json" 2>/dev/null || true)
         if [[ "$masked_count" =~ ^[0-9]+$ ]] && [ "$masked_count" -gt 0 ]; then
           preview="$preview\n$masked_count secret(s) masked before sending"
+          meta="${meta:+$meta · }$masked_count secret(s) masked before sending"
         fi
+      fi
+      # The pill shows the whole answer and its own buttons; a notification
+      # only when it isn't there, or for "Start FRIDAY", which only a
+      # notification offers.
+      if $use_pill && [ "${daemon_down:-false}" != true ] \
+        && pill present "$ans_ok" "$goal" "$answer" "$meta"; then
+        return 0
       fi
       urgency=normal; $ans_ok || urgency=critical
       if $ans_ok; then
@@ -823,12 +857,14 @@ case "${1:-}" in
     if $use_screen; then
       # Pressing the key and typing the question is the per-use consent;
       # the daemon's ContextGate still enforces it.
-      nid=$(notify-send -a FRIDAY -p -- "FRIDAY" "Looking at your screen: $goal" 2>/dev/null || true)
+      nid=""
+      $use_pill || nid=$(notify-send -a FRIDAY -p -- "FRIDAY" "Looking at your screen: $goal" 2>/dev/null || true)
       [[ "$nid" =~ ^[0-9]+$ ]] || nid=""
       stream_ctl friday-ctl context screen --yes --ask "$goal"
       summary=$(jq -s 'map(select(type == "object" and (has("partial") | not))) | last // {} | {result: .response, error: .error}' <<<"$out" 2>/dev/null || echo '{}')
     else
-      nid=$(notify-send -a FRIDAY -p -- "FRIDAY" "Working on: $goal" 2>/dev/null || true)
+      nid=""
+      $use_pill || nid=$(notify-send -a FRIDAY -p -- "FRIDAY" "Working on: $goal" 2>/dev/null || true)
       [[ "$nid" =~ ^[0-9]+$ ]] || nid=""
       stream_ctl friday-ctl goal --wait "$request"
       # The final {outcome,result,error} object; keep every line of the answer.
