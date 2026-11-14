@@ -241,3 +241,31 @@ pin=$(sed -n 's/^OMARCHY_PIN="\([0-9a-f]*\)"/\1/p' "$PROFILE_DIR/fetch-omarchy.s
 if [[ "$pin" =~ ^[0-9a-f]{40}$ ]]; then pass "pinned at ${pin:0:8}"; else fail "OMARCHY_PIN is not a 40-char SHA"; fi
 
 finish
+
+# Setup runs on the Linux console in Terminus: every glyph it draws there must
+# be in the font, or it shows as a box (the old wordmark's ╗║═ did). Glyphs
+# used only off the console (✓ ✗ ❯, rounded corners, the Braille spinner) are
+# exempt.
+font="/usr/share/kbd/consolefonts/ter-v24b.psf.gz"
+if need psfgettable python3 && [[ -f "$font" ]]; then
+  psf=$(mktemp); zcat "$font" >"$psf"
+  missing=$(python3 - "$psf" "$AIROOTFS/root" <<'PY'
+import re, subprocess, sys
+table = subprocess.run(["psfgettable", sys.argv[1]], capture_output=True, text=True).stdout
+have = {int(h, 16) for h in re.findall(r"U\+([0-9A-Fa-f]{4,5})", table)}
+exempt = set("✓✗❯╭╮╰╯") | {chr(c) for c in range(0x2800, 0x2900)}
+seen = {}
+for name in ("friday-tui.sh", "configurator", "installer"):
+    for n, line in enumerate(open(f"{sys.argv[2]}/{name}", encoding="utf-8"), 1):
+        if line.lstrip().startswith("#"):
+            continue
+        for ch in line:
+            if ord(ch) > 127 and ch not in exempt and ord(ch) not in have:
+                seen.setdefault(ch, f"{name}:{n}")
+print(" ".join(f"{c}({w})" for c, w in seen.items()))
+PY
+)
+  rm -f "$psf"
+  if [[ -z "$missing" ]]; then pass "setup draws only glyphs the console font (Terminus) has"
+  else fail "setup draws glyphs Terminus lacks: $missing"; fi
+else skip "console glyph check (needs psfgettable, python3, terminus-font)"; fi

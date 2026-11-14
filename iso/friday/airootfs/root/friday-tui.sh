@@ -12,11 +12,66 @@ FRIDAY_BORDER="#3B4261"      # Border Slate
 FRIDAY_TEXT="#C0CAF5"        # Soft White
 FRIDAY_BG="#1A1B26"          # Night
 
-# The Linux console has 16 colours: Muted Slate becomes dark VT blue, which
-# can't be read on black (hints, the step rail). Light grey there instead.
+FRIDAY_CYAN="#7DCFFF"        # Sky
+FRIDAY_SOFT="#9AA5CE"        # Soft Slate (readable muted text)
+
+# The Linux console (where setup runs) has 16 colour slots, so truecolor would
+# be rounded to the stock VGA colours. Instead each FRIDAY colour gets a slot,
+# the slot is redefined to that exact colour (friday_console_theme), and gum
+# is given slot numbers. Slot 0 is the background, so the screen is Night.
+FRIDAY_CONSOLE_PALETTE=(
+  "$FRIDAY_BG" "$FRIDAY_ERROR" "$FRIDAY_SUCCESS" "$FRIDAY_WARNING"
+  "$FRIDAY_ACCENT" "$FRIDAY_SECONDARY" "$FRIDAY_CYAN" "$FRIDAY_TEXT"
+  "#626A8E" "$FRIDAY_ERROR" "$FRIDAY_SUCCESS" "$FRIDAY_WARNING"
+  "#A9C1FF" "$FRIDAY_SECONDARY" "$FRIDAY_SOFT" "#FFFFFF"
+)
 if [[ "${TERM:-}" == linux ]]; then
-  FRIDAY_MUTED="#AAAAAA"
+  FRIDAY_BG=0 FRIDAY_ERROR=1 FRIDAY_SUCCESS=2 FRIDAY_WARNING=3 FRIDAY_ACCENT=4
+  FRIDAY_SECONDARY=5 FRIDAY_CYAN=6 FRIDAY_TEXT=7 FRIDAY_BORDER=8 FRIDAY_SOFT=14
+  FRIDAY_MUTED=14
 fi
+# Glyphs the console's Terminus font lacks (✓ ✗, rounded corners) have
+# stand-ins there.
+FRIDAY_OK_GLYPH="✓" FRIDAY_ERR_GLYPH="✗" FRIDAY_BORDER_STYLE=rounded FRIDAY_CURSOR="❯ "
+if [[ "${TERM:-}" == linux ]]; then
+  FRIDAY_OK_GLYPH="■" FRIDAY_ERR_GLYPH="×" FRIDAY_BORDER_STYLE=normal FRIDAY_CURSOR="> "
+fi
+
+# On the Linux console: the palette above and a Terminus font sized so the
+# screen is about 100 columns wide. A no-op anywhere else.
+friday_console_theme() {
+  [[ "${TERM:-}" == linux && -t 1 ]] || return 0
+  local i hex
+  for i in "${!FRIDAY_CONSOLE_PALETTE[@]}"; do
+    hex="${FRIDAY_CONSOLE_PALETTE[$i]#\#}"
+    printf '\e]P%X%s' "$i" "$hex"
+  done
+  local width font
+  width=$(cut -d, -f1 /sys/class/graphics/fb0/virtual_size 2>/dev/null || echo 0)
+  if (( width >= 2400 )); then font=ter-v32b
+  elif (( width >= 1800 )); then font=ter-v28b
+  elif (( width >= 1200 )); then font=ter-v24b
+  elif (( width >= 900 )); then font=ter-v20b
+  else font=ter-v16b; fi
+  setfont "$font" 2>/dev/null || true
+  printf '\e[0m'
+  clear 2>/dev/null || true
+  friday_layout
+}
+
+# Content sits in a centred column about 96 characters wide: FRIDAY_INDENT is
+# its left edge, given to every gum prompt and to FRIDAY's own lines.
+friday_layout() {
+  local cols
+  cols=$(tput cols 2>/dev/null || echo 80)
+  FRIDAY_INDENT=$(( cols > 100 ? (cols - 96) / 2 : 2 ))
+  FRIDAY_PAD=$(printf '%*s' "$FRIDAY_INDENT" '')
+  FRIDAY_WIDTH=$(( cols > 100 ? 96 : cols - 4 ))
+  local pad="0 0 0 $FRIDAY_INDENT"
+  export GUM_CHOOSE_PADDING="$pad" GUM_CONFIRM_PADDING="$pad" GUM_INPUT_PADDING="$pad" \
+    GUM_FILTER_PADDING="$pad" GUM_SPIN_PADDING="$pad" GUM_WRITE_PADDING="$pad"
+}
+friday_layout
 
 # Put every gum prompt in FRIDAY's palette (gum defaults to pink).
 export GUM_CHOOSE_CURSOR_FOREGROUND="$FRIDAY_ACCENT"
@@ -39,11 +94,6 @@ export GUM_FILTER_HEADER_FOREGROUND="$FRIDAY_SECONDARY"
 export GUM_SPIN_SPINNER_FOREGROUND="$FRIDAY_ACCENT"
 export GUM_SPIN_TITLE_FOREGROUND="$FRIDAY_TEXT"
 export GUM_CHOOSE_HEADER=""
-# The Linux console has 16 colours: the ice-blue button becomes dark VT blue
-# and its dark label black, which can't be read. Use white on it there.
-if [[ "${TERM:-}" == linux ]]; then
-  export GUM_CONFIRM_SELECTED_FOREGROUND="#FFFFFF"
-fi
 
 # FRIDAY_FAST=1 (or a non-tty) disables the typewriter effect.
 friday_is_tty() { [[ -t 1 && "${FRIDAY_FAST:-0}" != "1" ]]; }
@@ -56,26 +106,58 @@ friday_banner() {
   clear 2>/dev/null || true
   echo
   gum style --width "$cols" --foreground "$FRIDAY_ACCENT" --align center \
-" ██████╗ ██████╗ ██╗██████╗  █████╗ ██╗   ██╗" \
-" ██╔════╝██╔══██╗██║██╔══██╗██╔══██╗╚██╗ ██╔╝" \
-" █████╗  ██████╔╝██║██║  ██║███████║ ╚████╔╝ " \
-" ██╔══╝  ██╔══██╗██║██║  ██║██╔══██║  ╚██╔╝  " \
-" ██║     ██║  ██║██║██████╔╝██║  ██║   ██║   " \
-" ╚═╝     ╚═╝  ╚═╝╚═╝╚═════╝ ╚═╝  ╚═╝   ╚═╝   "
+"██████████  ████████    ██████  ████████      ██████    ██      ██" \
+"██          ██      ██    ██    ██      ██  ██      ██  ██      ██" \
+"████████    ████████      ██    ██      ██  ██████████    ██████  " \
+"██          ██    ██      ██    ██      ██  ██      ██      ██    " \
+"██          ██      ██  ██████  ████████    ██      ██      ██    "
   echo
   gum style --width "$cols" --foreground "$FRIDAY_SECONDARY" --bold --align center "$subtitle"
   gum style --width "$cols" --foreground "$FRIDAY_MUTED" --align center "────────────────────────────────────────────────────────────"
   echo
 }
 
+# The escape for a foreground colour: a console slot number or a #rrggbb.
+friday_fg() {
+  case "$1" in
+    \#*) printf '\e[38;2;%d;%d;%dm' "0x${1:1:2}" "0x${1:3:2}" "0x${1:5:2}" ;;
+    [0-7]) printf '\e[3%dm' "$1" ;;
+    *) printf '\e[9%dm' "$(( $1 - 8 ))" ;;
+  esac
+}
+
+friday_bg() {
+  case "$1" in
+    \#*) printf '\e[48;2;%d;%d;%dm' "0x${1:1:2}" "0x${1:3:2}" "0x${1:5:2}" ;;
+    [0-7]) printf '\e[4%dm' "$1" ;;
+    *) printf '\e[10%dm' "$(( $1 - 8 ))" ;;
+  esac
+}
+
+# A compact header for each step (the big wordmark is for the welcome and
+# finish screens): "FRIDAY · <subtitle>" over a rule, centred.
+friday_header() {
+  local subtitle="${1:-SETUP}" cols
+  cols=$(tput cols 2>/dev/null || echo 80)
+  clear 2>/dev/null || true
+  echo
+  local text="FRIDAY  ·  $subtitle" pad
+  pad=$(( (cols - ${#text}) / 2 )); (( pad < 0 )) && pad=0
+  printf '%*s\e[1m%sFRIDAY\e[0m  %s·  %s\e[0m\n' "$pad" '' "$(friday_fg "$FRIDAY_ACCENT")" \
+    "$(friday_fg "$FRIDAY_MUTED")" "$(friday_fg "$FRIDAY_SECONDARY")$subtitle"
+  local rule_w=$(( cols > 100 ? 96 : cols - 4 ))
+  printf '%*s%s%s\e[0m\n\n' "$(( (cols - rule_w) / 2 ))" '' "$(friday_fg "$FRIDAY_BORDER")" \
+    "$(printf '─%.0s' $(seq 1 "$rule_w"))"
+}
+
 # FRIDAY "speaks": a soft purple line typed out character by character.
 friday_say() {
   local text="$*"
   if ! friday_is_tty; then
-    printf '  FRIDAY › %s\n' "$text"
+    printf '%sFRIDAY › %s\n' "$FRIDAY_PAD" "$text"
     return
   fi
-  printf '  \e[38;2;187;154;247mFRIDAY ›\e[0m \e[38;2;192;202;245m'
+  printf '%s%sFRIDAY ›\e[0m %s' "$FRIDAY_PAD" "$(friday_fg "$FRIDAY_SECONDARY")" "$(friday_fg "$FRIDAY_TEXT")"
   local i ch
   for ((i = 0; i < ${#text}; i++)); do
     ch="${text:i:1}"
@@ -89,24 +171,33 @@ friday_say() {
   printf '\e[0m\n'
 }
 
-friday_ok()   { gum style --foreground "$FRIDAY_SUCCESS" "  ✓ $*"; }
-friday_warn() { gum style --foreground "$FRIDAY_WARNING" "  ! $*"; }
-friday_err()  { gum style --foreground "$FRIDAY_ERROR" "  ✗ $*"; }
-friday_head() { gum style --foreground "$FRIDAY_ACCENT" --bold "$*"; }
-friday_note() { gum style --foreground "$FRIDAY_MUTED" "$*"; }
+friday_ok()   { gum style --margin "0 0 0 $FRIDAY_INDENT" --foreground "$FRIDAY_SUCCESS" "$FRIDAY_OK_GLYPH $*"; }
+friday_warn() { gum style --margin "0 0 0 $FRIDAY_INDENT" --foreground "$FRIDAY_WARNING" "! $*"; }
+friday_err()  { gum style --margin "0 0 0 $FRIDAY_INDENT" --foreground "$FRIDAY_ERROR" "$FRIDAY_ERR_GLYPH $*"; }
+friday_head() { gum style --margin "0 0 0 $FRIDAY_INDENT" --foreground "$FRIDAY_ACCENT" --bold "$*"; }
+friday_note() { gum style --margin "0 0 0 $FRIDAY_INDENT" --width "$FRIDAY_WIDTH" --foreground "$FRIDAY_MUTED" "$*"; }
 
 # Progress rail: friday_rail <current-index> <label>...
+# Done steps are green squares, the current one an ice-blue pill, the rest
+# muted dots (glyphs the console's Terminus font has), centred.
 friday_rail() {
   local current="$1"; shift
-  local out="" i=1 label
+  local out="" plain="" i=1 label
   for label in "$@"; do
-    if (( i < current )); then out+="✓ $label   "
-    elif (( i == current )); then out+="● $label   "
-    else out+="○ $label   "; fi
+    if (( i < current )); then
+      out+="$(friday_fg "$FRIDAY_SUCCESS")■ $label\e[0m   "; plain+="■ $label   "
+    elif (( i == current )); then
+      # No bold: the console shows bold as the bright colour, a light label.
+      out+="$(friday_bg "$FRIDAY_ACCENT")$(friday_fg "$FRIDAY_BG") $label \e[0m   "; plain+=" $label    "
+    else
+      out+="$(friday_fg "$FRIDAY_MUTED")• $label\e[0m   "; plain+="• $label   "
+    fi
     i=$((i + 1))
   done
-  gum style --width "$(tput cols 2>/dev/null || echo 80)" --foreground "$FRIDAY_MUTED" --align center "${out%   }"
-  echo
+  local cols pad
+  cols=$(tput cols 2>/dev/null || echo 80)
+  pad=$(( (cols - ${#plain} + 3) / 2 )); (( pad < 0 )) && pad=0
+  printf '%*s%b\n\n' "$pad" '' "${out%   }"
 }
 
 # --- validators (pure; unit-testable) -------------------------------------
