@@ -98,17 +98,62 @@ jobs:
       # The update channel: a pacman repo (this package + its database) that
       # installed systems pull from with pacman -Syu (see the installer's
       # [friday] section). Checked with pacman itself before it is published.
+      # Packages and the database are signed: on a tag with FRIDAY's release
+      # key (the FRIDAY_SIGNING_KEY secret, which must match the committed
+      # packaging/arch/friday-signing-key.fpr); on a dry run with a throwaway
+      # key, so the whole path is tested without the secret.
+      - name: Signing key
+        env:
+          FRIDAY_SIGNING_KEY: ${{ secrets.FRIDAY_SIGNING_KEY }}
+          PUBLISH: ${{ needs.version.outputs.publish }}
+        run: |
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"; mkdir -m 700 -p "$GNUPGHOME"
+          if [[ "$PUBLISH" == true ]]; then
+            [[ -n "$FRIDAY_SIGNING_KEY" ]] || { echo "::error::FRIDAY_SIGNING_KEY is not set"; exit 1; }
+            printf '%s\n' "$FRIDAY_SIGNING_KEY" | gpg --batch --quiet --import
+            fpr=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^fpr/{print $10; exit}')
+            [[ "$fpr" == "$(cat packaging/arch/friday-signing-key.fpr)" ]] \
+              || { echo "::error::the signing secret is not the key in packaging/arch/friday-signing-key.fpr"; exit 1; }
+            cp packaging/arch/friday-signing-key.asc "$RUNNER_TEMP/signing-key.asc"
+          else
+            gpg --batch --quiet --pinentry-mode loopback --passphrase '' --quick-gen-key "FRIDAY dry run" ed25519 sign 1d
+            fpr=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^fpr/{print $10; exit}')
+            gpg --batch --armor --export "$fpr" >"$RUNNER_TEMP/signing-key.asc"
+          fi
+          { echo "GNUPGHOME=$GNUPGHOME"; echo "SIGNING_FPR=$fpr"; } >>"$GITHUB_ENV"
+      # The update channel: a pacman repo (this package + its database) that
+      # installed systems pull from with pacman -Syu (see the installer's
+      # [friday] section), checked with pacman itself before it is published:
+      # the signed repo installs, unsigned and tampered packages are refused.
       - name: Pacman repo
         run: |
           mkdir -p packaging/arch/repo && cp packaging/arch/friday-git-*.pkg.tar.zst packaging/arch/repo/
           cd packaging/arch/repo
-          repo-add -q friday.db.tar.gz friday-git-*.pkg.tar.zst
-          rm -f friday.db friday.files
-          cp friday.db.tar.gz friday.db && cp friday.files.tar.gz friday.files
-          printf '[options]\nArchitecture = auto\nSigLevel = Never\n[friday]\nServer = file://%s\n' "$PWD" > "$RUNNER_TEMP/repo.conf"
-          mkdir -p "$RUNNER_TEMP/repo-db"
-          pacman --config "$RUNNER_TEMP/repo.conf" --dbpath "$RUNNER_TEMP/repo-db" -Sy
-          pacman --config "$RUNNER_TEMP/repo.conf" --dbpath "$RUNNER_TEMP/repo-db" -Si friday-git | head -n 3
+          for pkg in friday-git-*.pkg.tar.zst; do
+            gpg --batch --pinentry-mode loopback --passphrase '' --local-user "$SIGNING_FPR" --detach-sign "$pkg"
+          done
+          repo-add -q --sign --key "$SIGNING_FPR" friday.db.tar.gz friday-git-*.pkg.tar.zst
+          rm -f friday.db friday.db.sig friday.files friday.files.sig
+          for f in db files; do
+            cp "friday.$f.tar.gz" "friday.$f" && cp "friday.$f.tar.gz.sig" "friday.$f.sig"
+          done
+          check() { # check <repo dir> <name>: pacman with SigLevel Required, trusting only the release key
+            local t="$RUNNER_TEMP/check-$2"; mkdir -p "$t/db" "$t/cache"
+            pacman-key --gpgdir "$t/gnupg" --init >/dev/null 2>&1
+            pacman-key --gpgdir "$t/gnupg" --add "$RUNNER_TEMP/signing-key.asc" >/dev/null 2>&1
+            pacman-key --gpgdir "$t/gnupg" --lsign-key "$SIGNING_FPR" >/dev/null 2>&1
+            printf '[options]\nArchitecture = auto\nGPGDir = %s\n[friday]\nSigLevel = Required DatabaseRequired\nServer = file://%s\n' \
+              "$t/gnupg" "$1" >"$t/pacman.conf"
+            pacman --config "$t/pacman.conf" --dbpath "$t/db" -Sy >/dev/null \
+              && pacman --config "$t/pacman.conf" --dbpath "$t/db" --cachedir "$t/cache" -Swdd --noconfirm friday-git >/dev/null
+          }
+          check "$PWD" signed || { echo "::error::pacman refused the signed repo"; exit 1; }
+          unsigned="$RUNNER_TEMP/unsigned"; mkdir -p "$unsigned"; cp friday.db friday.db.sig friday.files friday.files.sig friday-git-*.pkg.tar.zst "$unsigned/"
+          if check "$unsigned" unsigned; then echo "::error::pacman accepted a package without its signature"; exit 1; fi
+          tampered="$RUNNER_TEMP/tampered"; mkdir -p "$tampered"; cp friday.db* friday.files* friday-git-*.pkg.tar.zst* "$tampered/"
+          printf '\x00\xff' | dd of="$(ls "$tampered"/friday-git-*.pkg.tar.zst)" bs=1 seek=4096 conv=notrunc status=none
+          if check "$tampered" tampered; then echo "::error::pacman accepted a tampered package"; exit 1; fi
+          echo "signed repo accepted; unsigned and tampered packages refused"
           ls -l
       - uses: actions/upload-artifact@v4
         with:
@@ -274,6 +319,6 @@ jobs:
             --prerelease --title "FRIDAY pacman repo (rolling)" \
             --notes "The update channel for FRIDAY OS and Arch: each release replaces the friday-git package and database here. Add it with the [friday] section in the README."
           gh release upload pacman pacman-repo/* --repo "$repo" --clobber
-          new=$(cd pacman-repo && ls friday-git-*.pkg.tar.zst)
+          new=$(cd pacman-repo && ls friday-git-*.pkg.tar.zst friday-git-*.pkg.tar.zst.sig)
           gh release view pacman --repo "$repo" --json assets -q '.assets[].name' | grep '^friday-git-' | grep -vxF "$new" \
             | while read -r old; do gh release delete-asset pacman "$old" --repo "$repo" -y; done
