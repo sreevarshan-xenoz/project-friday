@@ -102,7 +102,9 @@ Rectangle {
         Label {
           Layout.fillWidth: true
           visible: text !== ""
-          text: root.notification ? root.notification.body : ""
+          // StyledText treats "\n" as a space; the spec allows newlines in
+          // bodies (FRIDAY's answers end with a "via …" line).
+          text: root.notification ? root.notification.body.replace(/\n/g, "<br>") : ""
           textFormat: Text.StyledText
           wrapMode: Text.Wrap
           maximumLineCount: root.compact ? 3 : root.fromFriday ? 10 : 4
