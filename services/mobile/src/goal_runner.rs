@@ -1021,8 +1021,25 @@ pub struct GoalRunner {
 /// `task.pause` against (the id flows in `goal.started`). Only the id is
 /// needed — it is unique per run, so a stale control command can never
 /// match a newer goal.
+#[derive(Debug)]
 struct InFlightGoal {
     id: String,
+}
+
+/// A handle to inspect the status of the [`GoalRunner`].
+#[derive(Clone, Debug)]
+pub struct GoalRunnerHandle {
+    in_flight: Arc<Mutex<Option<InFlightGoal>>>,
+}
+
+impl GoalRunnerHandle {
+    /// Returns true if no goal is currently in flight.
+    pub fn is_idle(&self) -> bool {
+        match self.in_flight.lock() {
+            Ok(g) => g.is_none(),
+            Err(p) => p.into_inner().is_none(),
+        }
+    }
 }
 
 impl GoalRunner {
@@ -1368,6 +1385,21 @@ impl GoalRunner {
         None
     }
 
+    /// Returns true if no goal is currently in flight.
+    pub fn is_idle(&self) -> bool {
+        match self.in_flight.lock() {
+            Ok(g) => g.is_none(),
+            Err(p) => p.into_inner().is_none(),
+        }
+    }
+
+    /// Obtain a handle to inspect this runner's runtime status.
+    pub fn handle(&self) -> GoalRunnerHandle {
+        GoalRunnerHandle {
+            in_flight: self.in_flight.clone(),
+        }
+    }
+
     /// Subscribe to `plan.goal` and run each goal through the Executive,
     /// publishing lifecycle events so the portal chat responds. A second,
     /// dedicated subscriber consumes the human-control events (`task.cancel` /
@@ -1378,7 +1410,8 @@ impl GoalRunner {
     /// spawned so a `plan.goal` / `task.*` published immediately after
     /// `start()` returns is never missed (broadcast receivers must exist
     /// before the send).
-    pub fn start(self) {
+    pub fn start(self) -> GoalRunnerHandle {
+        let handle = self.handle();
         let mut rx = self.bus.subscribe();
         let mut control_rx = self.bus.subscribe();
         let control_bus = self.bus.clone();
@@ -1500,6 +1533,8 @@ impl GoalRunner {
                 self.run_goal(goal, session_id, confirm).await;
             }
         });
+
+        handle
     }
 
     /// Run one goal through the Executive and publish its lifecycle events,
@@ -4384,5 +4419,25 @@ mod tests {
             Some("https://www.rust-lang.org")
         );
         assert_eq!(url_from_instruction("open notepad"), None);
+    }
+
+    #[test]
+    fn goal_runner_is_idle_reports_status() {
+        let bus = EventBus::new();
+        let runner = GoalRunner::new(bus.clone());
+        assert!(runner.is_idle());
+
+        let handle = runner.handle();
+        assert!(handle.is_idle());
+
+        *handle.in_flight.lock().unwrap() = Some(InFlightGoal {
+            id: "goal-test-1".to_string(),
+        });
+        assert!(!runner.is_idle());
+        assert!(!handle.is_idle());
+
+        *handle.in_flight.lock().unwrap() = None;
+        assert!(runner.is_idle());
+        assert!(handle.is_idle());
     }
 }

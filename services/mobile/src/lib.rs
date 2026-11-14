@@ -19,17 +19,19 @@ pub mod protocol;
 pub mod session;
 pub mod shell_state;
 pub mod transport;
+pub mod upgrade;
 pub mod voice;
 
 pub use auth::{sign_pairing, AuthError, AuthRegistry, PairingChallenge};
 pub use bridge::{translate, BusBridge};
 pub use commands::{method, CommandGateway};
 pub use error::MobileError;
-pub use goal_runner::GoalRunner;
+pub use goal_runner::{GoalRunner, GoalRunnerHandle};
 pub use probe::{SystemProbe, SystemSample};
 pub use protocol::{
     ClientInfo, ClientMessage, Health, ServerMessage, ServiceStatus, SystemHealth, Telemetry,
 };
 pub use session::{MobileSession, PhoneCapabilities, SessionRegistry};
 pub use transport::{Command, WsServer};
+pub use upgrade::{is_executable_replaced, is_self_replaced, ExeSnapshot};
 pub use voice::{VoiceConfig, VoiceIntake};

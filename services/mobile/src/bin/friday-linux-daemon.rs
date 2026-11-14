@@ -131,10 +131,35 @@ fn render(state: &ShellState) -> serde_json::Value {
     state.to_json(now_ms(), now_utc())
 }
 
+struct ActiveGuard(Arc<AtomicBool>);
+impl ActiveGuard {
+    fn enter(flag: &Arc<AtomicBool>) -> Self {
+        flag.store(true, Ordering::SeqCst);
+        Self(flag.clone())
+    }
+}
+impl Drop for ActiveGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
 #[tokio::main]
 async fn main() {
     friday_core::init_telemetry();
     tracing::info!("FRIDAY Linux daemon starting (R5-1-1)");
+
+    // Snapshot the running executable identity to detect on-disk binary upgrades (e.g. pacman -Syu).
+    let exe_path = match std::env::current_exe() {
+        Ok(p) => Some(p),
+        Err(e) => {
+            tracing::warn!("cannot determine current exe path: {e}");
+            None
+        }
+    };
+    let initial_exe = exe_path
+        .as_deref()
+        .and_then(|p| friday_mobile::upgrade::ExeSnapshot::from_path(p).ok());
 
     // Graceful-shutdown flag shared with the signal handler and the WS loop.
     let stopping = Arc::new(AtomicBool::new(false));
@@ -301,7 +326,52 @@ async fn main() {
 
     // The assistant loop. Consumes `plan.goal` and runs each goal through the
     // real Executive with real evidence adapters.
-    GoalRunner::with_fabric_and_memory(bus.clone(), fabric, journal, voice).start();
+    let goal_runner =
+        GoalRunner::with_fabric_and_memory(bus.clone(), fabric, journal, voice).start();
+    let screen_ask_in_flight = Arc::new(AtomicBool::new(false));
+
+    // Watch for package upgrades: if the binary on disk was replaced (e.g. pacman -Syu)
+    // and no goal or screen ask is in flight, restart the daemon so systemd starts
+    // the new executable.
+    if let (Some(exe_path), Some(initial_exe)) = (exe_path, initial_exe) {
+        let goal_runner = goal_runner.clone();
+        let screen_ask_in_flight = screen_ask_in_flight.clone();
+        let state_upgrade = state.clone();
+        let state_upgrade_path = state_path.clone();
+        let stopping_upgrade = stopping.clone();
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            // Skip the immediate initial tick so the first check runs after ~30 s.
+            interval.tick().await;
+
+            loop {
+                interval.tick().await;
+                if stopping_upgrade.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                if friday_mobile::upgrade::is_self_replaced(&initial_exe, &exe_path) {
+                    let idle =
+                        goal_runner.is_idle() && !screen_ask_in_flight.load(Ordering::SeqCst);
+                    if idle {
+                        tracing::info!("friday-linux-daemon was upgraded; restarting");
+                        eprintln!("friday-linux-daemon was upgraded; restarting");
+                        let mut st = state_upgrade.lock().await;
+                        st.status = "stopping".into();
+                        write_state(&state_upgrade_path, &render(&st));
+                        drop(st);
+                        std::process::exit(1);
+                    } else {
+                        tracing::debug!(
+                            "upgrade detected, but goal or screen ask is in flight; delaying restart"
+                        );
+                    }
+                }
+            }
+        });
+    }
 
     // State writer: keep `state.json` in step with bus lifecycle events and a
     // heartbeat so the shell always has fresh truth even when idle.
@@ -347,6 +417,7 @@ async fn main() {
     let state_cmd_lock = state.clone();
     let state_cmd_path = state_path.clone();
     let context_reader = screen_reader.clone();
+    let screen_ask_ingress = screen_ask_in_flight.clone();
     tokio::spawn(async move {
         while let Ok(cmd) = ingress.recv().await {
             // Token gate: reject commands that don't present the current token.
@@ -366,6 +437,7 @@ async fn main() {
             // R5-2-5-2: explicit Screen context read. Scoped to `Screen` only;
             // never ambient. Consent is a per-use, request-attributable opt-in.
             if cmd.method == friday_mobile::method::CONTEXT_READ {
+                let _screen_guard = ActiveGuard::enter(&screen_ask_ingress);
                 let want_consent = cmd
                     .params
                     .get("consent")
