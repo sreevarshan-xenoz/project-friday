@@ -215,12 +215,15 @@ FRIDAY_PKG=$(find /opt/friday/repo -maxdepth 1 -name 'friday-git-*.pkg.tar.zst' 
 [[ -n "$FRIDAY_PKG" ]] || { echo "the FRIDAY package is missing from /opt/friday/repo" >&2; exit 1; }
 pacstrap_with_retry -U /mnt "$FRIDAY_PKG"
 # Updates: each FRIDAY release publishes friday-git to this pacman repo, so
-# pacman -Syu keeps FRIDAY current. Unsigned for now (fetched over HTTPS from
-# the project's GitHub releases).
+# pacman -Syu keeps FRIDAY current. Packages and the database are signed with
+# FRIDAY's release key (shipped in friday-git); pacman trusts that one key and
+# refuses anything it didn't sign.
+arch-chroot /mnt pacman-key --add /usr/share/friday/friday-signing-key.asc
+arch-chroot /mnt pacman-key --lsign-key "$(cat /mnt/usr/share/friday/friday-signing-key.fpr)"
 cat >>/mnt/etc/pacman.conf <<'PACMAN'
 
 [friday]
-SigLevel = Optional TrustAll
+SigLevel = Required DatabaseRequired
 Server = https://github.com/sreevarshan-xenoz/project-friday/releases/download/pacman
 PACMAN
 mkdir -p /mnt/usr/bin
