@@ -98,12 +98,25 @@ impl ScreenChange {
 #[cfg(target_os = "windows")]
 pub struct WindowsScreenSensor {
     last: Option<ScreenObservation>,
+    /// Whether to read the client area's pixels for `content_hash` (off for
+    /// the live daemon unless the person opts in: screen capture needs consent).
+    pixels: bool,
 }
 
 #[cfg(target_os = "windows")]
 impl WindowsScreenSensor {
     pub fn new() -> Self {
-        Self { last: None }
+        Self {
+            last: None,
+            pixels: true,
+        }
+    }
+
+    /// Observe the foreground window's identity and geometry only: no BitBlt,
+    /// so `content_hash` is always `None`.
+    pub fn without_pixels(mut self) -> Self {
+        self.pixels = false;
+        self
     }
 }
 
@@ -126,7 +139,7 @@ impl Sensor for WindowsScreenSensor {
     }
 
     async fn poll(&mut self) -> Vec<WorkspaceEvent> {
-        let Some(observation) = capture_foreground_window() else {
+        let Some(observation) = capture_foreground_window(self.pixels) else {
             // No foreground window (e.g. the desktop/secure session): nothing
             // observable — do not invent one.
             return Vec::new();
@@ -201,7 +214,7 @@ pub fn fnv1a64(bytes: &[u8]) -> u64 {
 // ── Real capture (Windows only) ───────────────────────────────────
 
 #[cfg(target_os = "windows")]
-fn capture_foreground_window() -> Option<ScreenObservation> {
+fn capture_foreground_window(pixels: bool) -> Option<ScreenObservation> {
     use windows::Win32::UI::WindowsAndMessaging::{
         GetForegroundWindow, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
         GetWindowThreadProcessId, IsIconic, IsZoomed,
@@ -244,7 +257,11 @@ fn capture_foreground_window() -> Option<ScreenObservation> {
         // BitBlt the client area into a compatible bitmap, read the raw ARGB
         // pixels via GetDIBits, and FNV-1a them. Failure (composited/GPU
         // windows, zero-sized client) degrades to None — honest.
-        let content_hash = capture_client_hash(hwnd).ok().flatten();
+        let content_hash = if pixels {
+            capture_client_hash(hwnd).ok().flatten()
+        } else {
+            None
+        };
 
         Some(ScreenObservation {
             title,
