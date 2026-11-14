@@ -2228,8 +2228,10 @@ impl InferenceFabric {
 
         // Accounts the person already has (Claude Code, Codex, Antigravity,
         // Cline), connected with `friday connect`: each answers through its
-        // own CLI and sign-in, text only. After a provider with the person's
-        // own API key, ahead of the keyless free models.
+        // own CLI and sign-in, text only. A fallback after the free models
+        // unless FRIDAY_PREFER_ACCOUNTS=1 (see `account_latency_ms`).
+        let account_latency =
+            crate::agent_cli::account_latency_ms(crate::agent_cli::prefer_accounts());
         for cli in crate::agent_cli::agent_clis_from(
             &std::env::var("FRIDAY_AGENT_CLIS").unwrap_or_default(),
             crate::agent_cli::on_path,
@@ -2240,7 +2242,7 @@ impl InferenceFabric {
                     id: "account".to_string(),
                     family: format!("{}-account", cli.id()),
                     provider: cli.provider_name().to_string(),
-                    latency_ms: 1_500,
+                    latency_ms: account_latency,
                     reliability: 1.0,
                     capabilities: vec![],
                     max_context: 100_000,
@@ -4862,42 +4864,50 @@ mod tests {
     }
 
     #[test]
-    fn a_connected_account_is_a_candidate_in_free_mode_ahead_of_keyless_zen() {
-        let mut fabric = InferenceFabric::new();
-        fabric.register_provider(Box::new(crate::agent_cli::AgentCliProvider::new(
-            crate::agent_cli::AgentCli::Claude,
-        )));
-        fabric.register_model(ModelInfo {
-            id: "account".into(),
-            family: "claude-account".into(),
-            provider: "claude-code".into(),
-            latency_ms: 1_500,
-            reliability: 1.0,
-            capabilities: vec![],
-            max_context: 100_000,
-            tier: None,
-        });
-        fabric.register_provider(Box::new(OpenAiProvider {
-            name: "opencode".into(),
-            base_url: OPENCODE_ZEN_BASE_URL.into(),
-            api_key: String::new(),
-        }));
-        fabric.register_model(ModelInfo {
-            id: "big-pickle".into(),
-            family: "zen".into(),
-            provider: "opencode".into(),
-            latency_ms: 3_000,
-            reliability: 1.0,
-            capabilities: vec![],
-            max_context: 100_000,
-            tier: None,
-        });
-        let names: Vec<String> = fabric
-            .select_candidates(RoutingMode::Free)
-            .iter()
-            .map(|(m, _)| m.provider.clone())
-            .collect();
-        assert_eq!(names, ["claude-code", "opencode"]);
+    fn a_connected_account_is_a_fallback_after_the_free_models_unless_preferred() {
+        let fabric = |prefer: bool| {
+            let mut fabric = InferenceFabric::new();
+            fabric.register_provider(Box::new(crate::agent_cli::AgentCliProvider::new(
+                crate::agent_cli::AgentCli::Claude,
+            )));
+            fabric.register_model(ModelInfo {
+                id: "account".into(),
+                family: "claude-account".into(),
+                provider: "claude-code".into(),
+                latency_ms: crate::agent_cli::account_latency_ms(prefer),
+                reliability: 1.0,
+                capabilities: vec![],
+                max_context: 100_000,
+                tier: None,
+            });
+            fabric.register_provider(Box::new(OpenAiProvider {
+                name: "opencode".into(),
+                base_url: OPENCODE_ZEN_BASE_URL.into(),
+                api_key: String::new(),
+            }));
+            fabric.register_model(ModelInfo {
+                id: "big-pickle".into(),
+                family: "zen".into(),
+                provider: "opencode".into(),
+                latency_ms: 3_000,
+                reliability: 1.0,
+                capabilities: vec![],
+                max_context: 100_000,
+                tier: None,
+            });
+            fabric
+        };
+        let order = |f: &InferenceFabric| -> Vec<String> {
+            f.select_candidates(RoutingMode::Free)
+                .iter()
+                .map(|(m, _)| m.provider.clone())
+                .collect()
+        };
+        // By default the free models answer first; the account is the fallback.
+        assert_eq!(order(&fabric(false)), ["opencode", "claude-code"]);
+        // Asked for (FRIDAY_PREFER_ACCOUNTS=1), the account comes first.
+        assert_eq!(order(&fabric(true)), ["claude-code", "opencode"]);
+        let fabric = fabric(false);
         assert!(fabric
             .select_candidates(RoutingMode::Local)
             .iter()

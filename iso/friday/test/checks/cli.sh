@@ -219,6 +219,10 @@ expect "connect signs in when needed, then checks it answers" bash "$F" connect 
 contains "it ran the tool's own sign-in" "$(cat "$LOG")" "claude auth login"
 contains "it asked headless, with no tools" "$(cat "$LOG")" "claude -p Reply with the single word: ready --output-format text"
 contains "connected accounts are saved" "$(cat "$envf")" "FRIDAY_AGENT_CLIS=claude"
+if grep -q '^FRIDAY_PREFER_ACCOUNTS=' "$envf"; then fail "an account was preferred without --prefer"; else pass "by default an account is a fallback after the free models"; fi
+contains "connect says it's a fallback" "$(bash "$F" connect claude 2>&1)" "when the free models can't answer"
+expect "connect --prefer" bash "$F" connect --prefer claude
+contains "--prefer puts accounts first" "$(cat "$envf")" "FRIDAY_PREFER_ACCOUNTS=1"
 : >"$LOG"
 expect "connecting again needs no sign-in" bash "$F" connect claude
 if grep -q "auth login" "$LOG"; then fail "signed in twice"; else pass "an account that answers isn't signed in again"; fi

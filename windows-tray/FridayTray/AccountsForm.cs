@@ -163,7 +163,7 @@ internal sealed class AccountsForm : Form
         {
             _statusLabel.Text = "Status: Connected";
             _statusLabel.ForeColor = Theme.Signal;
-            _infoBox.Text = $"Connected {cli.Label}.\r\nFRIDAY answers with it first and falls back to the free models.";
+            _infoBox.Text = $"Connected {cli.Label}.\r\nFRIDAY uses it when the free models can't answer (it starts the app for each answer and counts against your plan).";
             _connectBtn.Text = "Check again";
             _disconnectBtn.Visible = true;
             _disconnectBtn.Enabled = true;
@@ -244,7 +244,7 @@ internal sealed class AccountsForm : Form
 
                 _statusLabel.Text = "Status: Connected";
                 _statusLabel.ForeColor = Theme.Signal;
-                _infoBox.Text = $"Connected {cli.Label}.\r\nFRIDAY answers with it first and falls back to the free models.";
+                _infoBox.Text = $"Connected {cli.Label}.\r\nFRIDAY uses it when the free models can't answer (it starts the app for each answer and counts against your plan).";
                 _connectBtn.Text = "Check again";
                 RefreshList();
             }
