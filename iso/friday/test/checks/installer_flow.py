@@ -26,6 +26,10 @@ UP, DOWN, ENTER, CTRL_U = "\x1b[A", "\x1b[B", "\r", "\x15"
 STEPS = [
     (6, ENTER),  # welcome: Let's begin
     (8, ENTER),  # disk: first (vda)
+    (4, "kolkata"),
+    (2, ENTER),  # timezone search
+    (4, "uk"),
+    (2, ENTER),  # keymap search: before any password, which is typed with it
     (3, CTRL_U + "My Box" + ENTER),  # invalid hostname (space)
     (2, CTRL_U + "mybox" + ENTER),
     (2, CTRL_U + "Bob" + ENTER),  # invalid username (uppercase)
@@ -36,10 +40,6 @@ STEPS = [
     (2, "secret1" + ENTER),
     (3, ENTER),  # autologin? default No
     (3, ENTER),  # encrypt the disk? default Yes
-    (4, "kolkata"),
-    (2, ENTER),  # timezone search
-    (4, "uk"),
-    (2, ENTER),  # keymap search
     (3, ENTER),  # desktop colours: FRIDAY Shell (default)
     (2, DOWN),
     (1, ENTER),  # window manager: niri
@@ -106,6 +106,9 @@ checks = {
     "review shows encryption": "(encrypted)" in text,
     "AI defaults to OpenCode Zen free models": "OpenCode Zen free models (no key)" in text,
     "installer received the spec": bool(env_lines),
+    "keyboard is chosen before the password": 0
+    <= text.find("Keyboard: uk")
+    < text.find("Choose a password"),
 }
 env = env_lines[-1] if env_lines else ""
 for key, want in [
