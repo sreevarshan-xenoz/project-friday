@@ -188,10 +188,40 @@ contains "all three keys kept" "$(grep -c '_API_KEY=' "$envf")" "3"
 expect "--only replaces every key" bash -c "echo AIzaSyTestKey_12345 | bash '$F' setup-ai --only gemini"
 if [[ $(grep -c '_API_KEY=' "$envf") == 1 ]]; then pass "--only leaves one key"; else fail "--only kept other keys"; fi
 
+echo "connect an account"
+# A stub Claude Code: answers only once signed in (its login makes the mark).
+cat >"$S/claude" <<EOF
+#!/bin/bash
+echo "claude \$*" >>"$LOG"
+case "\$1" in
+  auth) [ "\$2" = login ] && touch "$W/claude-signed-in"; exit 0 ;;
+  -p) [ -e "$W/claude-signed-in" ] && echo ready; exit 0 ;;
+esac
+EOF
+chmod +x "$S/claude"
+: >"$LOG"; rm -f "$W/claude-signed-in"
+expect "connect signs in when needed, then checks it answers" bash "$F" connect claude
+contains "it ran the tool's own sign-in" "$(cat "$LOG")" "claude auth login"
+contains "it asked headless, with no tools" "$(cat "$LOG")" "claude -p Reply with the single word: ready --output-format text"
+contains "connected accounts are saved" "$(cat "$envf")" "FRIDAY_AGENT_CLIS=claude"
+: >"$LOG"
+expect "connecting again needs no sign-in" bash "$F" connect claude
+if grep -q "auth login" "$LOG"; then fail "signed in twice"; else pass "an account that answers isn't signed in again"; fi
+if [[ $(grep -c '^FRIDAY_AGENT_CLIS=' "$envf") == 1 && "$(grep '^FRIDAY_AGENT_CLIS=' "$envf")" == "FRIDAY_AGENT_CLIS=claude" ]]; then pass "no duplicate entry"; else fail "FRIDAY_AGENT_CLIS: $(grep '^FRIDAY_AGENT_CLIS=' "$envf")"; fi
+refuse "a missing tool says how to install it" bash "$F" connect codex
+contains "install hint" "$(bash "$F" connect codex 2>&1)" "npm install -g @openai/codex"
+refuse "an unknown account is refused" bash "$F" connect bard
+expect "disconnect" bash "$F" disconnect claude
+if grep -q '^FRIDAY_AGENT_CLIS=' "$envf"; then fail "disconnect left FRIDAY_AGENT_CLIS"; else pass "disconnect removes it"; fi
+contains "keys survive connect/disconnect" "$(cat "$envf")" "_API_KEY="
+rm -f "$S/claude"
+
 echo "welcome"
 : >"$LOG"; rm -f "$envf"
 bash "$F" welcome
-contains "no key: still greets, mentions free models" "$(cat "$LOG")" "OpenCode Zen's free models"
+contains "no key: still greets, mentions free models" "$(cat "$LOG")" "free models (OpenCode Zen, then Kilo)"
+contains "the welcome says free models may keep what's sent" "$(cat "$LOG")" "may keep what you send"
+contains "offers connecting an account" "$(cat "$LOG")" "connect=Connect an account"
 contains "offers choosing a provider" "$(cat "$LOG")" "setup=Choose AI provider"
 contains "setup opens in a terminal" "$(cat "$LOG")" "foot -T FRIDAY setup"
 : >"$LOG"; bash "$F" welcome

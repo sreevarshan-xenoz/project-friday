@@ -11,6 +11,8 @@ _friday() {
     'status:Inspect daemon state and telemetry'
     'doctor:Check daemon, AI provider and desktop health'
     'setup-ai:Set or change the AI provider key'
+    'connect:Use an AI account you already have'
+    'disconnect:Stop using a connected account'
     'welcome:Show the first-login greeting again'
     'context:Share screen context with the assistant'
     'daemon:Control the friday-linux-daemon service'
@@ -34,6 +36,7 @@ _friday() {
     ask)      _arguments '(-s --selection --screen)'{-s,--selection}'[ask about the selected/copied text]' \
                 '(-s --selection --screen)--screen[ask about what is on screen]' '*:question:' ;;
     answers)  _arguments '--last[show only the last answer]' ;;
+    connect|disconnect) _values 'account' claude codex agy cline ;;
     setup-ai) _arguments '--keep-others[keep the other providers'"'"' keys]' '--only[use only this provider'"'"'s key]' '1:provider:(opencode gemini groq nvidia-nim openrouter cerebras)' ;;
     welcome)  _arguments '--force[show it even if already shown]' ;;
     daemon)   _values 'action' status start stop restart logs ;;

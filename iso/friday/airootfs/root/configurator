@@ -263,6 +263,9 @@ step_ai() {
   friday_head "Give FRIDAY a brain"
   friday_say "I think with a cloud language model. OpenCode Zen's free models work with no account."
   friday_note "  Prefer your own provider? Pick it and paste its key. Change it later with: friday setup-ai"
+  friday_note "  Use Claude Code, Codex, Antigravity or Cline? Connect it after you log in (it signs in"
+  friday_note "  in a browser): FRIDAY offers it when you first log in, or run: friday connect"
+  friday_note "  Free models may keep what you send them, screenshots included; use your own key or account for private work."
   echo
   local choice key
   choice=$(gum choose --cursor="❯ " --height=8 \

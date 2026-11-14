@@ -39,7 +39,9 @@ Hotkeys are managed by `friday-tray.exe`. If the primary Windows key combination
 
 ## AI Provider and Privacy
 
-- **Default AI:** OpenCode Zen free models work out of the box. A user key takes precedence (configured via `friday setup-ai` on Linux or via the tray UI on Windows).
+- **Default AI:** free models work out of the box, with no key or sign-in: OpenCode Zen first, then Kilo's free gateway as the fallback. A key of your own takes precedence (`friday setup-ai` on Linux, the tray's AI provider window on Windows).
+- **Your own account:** on Linux, `friday connect claude|codex|agy|cline` answers with Claude Code, Codex, Antigravity or Cline, through that tool's own app and sign-in (FRIDAY never sees the credentials, and runs it with no tools). Signing in needs a browser, so it happens after the first login, not in the ISO installer.
+- **Free models and your data:** free models may keep what you send them (questions, selected text, screenshots) and may use it for training. For anything private, use your own key or account.
 - **Per-use screen consent:** A screenshot is sent to the model only for a screen ask, and pressing the screen hotkey is that ask's consent.
 - **Action confirmation:** The daemon acts only on explicit request; actions ask before execution.
 - **Narrow contracts and secrets:** Interfaces are limited to narrow event bus and IPC contracts (`specs/ipc.md`, `specs/events.md`) and `state.json`. Secrets are never logged or printed.
