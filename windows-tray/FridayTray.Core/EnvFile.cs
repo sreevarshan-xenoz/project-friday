@@ -30,11 +30,18 @@ public static class EnvFile
     public static Dictionary<string, string> Load(string path) =>
         File.Exists(path) ? Parse(File.ReadAllText(path)) : new(StringComparer.Ordinal);
 
+    /// <summary>Whether the file holds a key for a provider other than <paramref name="provider"/>.</summary>
+    public static bool HasOtherKeys(string existing, Provider provider) =>
+        Parse(existing).Keys.Any(k => k.EndsWith("_API_KEY", StringComparison.Ordinal) && k != provider.KeyVar);
+
     /// <summary>
     /// The file after choosing <paramref name="provider"/>: other settings are
-    /// kept, every provider key and FRIDAY_CONTEXT_PROVIDER are replaced.
+    /// kept. Every provider key and FRIDAY_CONTEXT_PROVIDER are replaced, or,
+    /// with <paramref name="keepOthers"/>, only this provider's key (FRIDAY
+    /// falls back to the others) and the screen provider only when this one
+    /// can take screen questions. Same rules as `friday setup-ai --keep-others`.
     /// </summary>
-    public static string WithProvider(string existing, Provider provider, string key)
+    public static string WithProvider(string existing, Provider provider, string key, bool keepOthers = false)
     {
         var lines = new List<string> { "# FRIDAY AI provider credentials (FRIDAY tray: AI provider)." };
         foreach (var raw in existing.Split('\n'))
@@ -44,7 +51,10 @@ public static class EnvFile
             if (t.Length == 0 || t.StartsWith('#'))
                 continue;
             var name = t.Split('=', 2)[0].Trim();
-            if (name.EndsWith("_API_KEY", StringComparison.Ordinal) || name == "FRIDAY_CONTEXT_PROVIDER")
+            var drop = keepOthers
+                ? name == provider.KeyVar || (provider.Vision && name == "FRIDAY_CONTEXT_PROVIDER")
+                : name.EndsWith("_API_KEY", StringComparison.Ordinal) || name == "FRIDAY_CONTEXT_PROVIDER";
+            if (drop)
                 continue;
             lines.Add(line);
         }
