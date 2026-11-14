@@ -1,8 +1,13 @@
 name: Release
 
-# Push a tag vX.Y.Z to publish FRIDAY: the Arch package and the Windows MSI
-# are built, smoke-tested, and attached to a GitHub release with SHA-256
-# sums and the winget manifests for that MSI (ready for microsoft/winget-pkgs).
+# Push a tag vX.Y.Z to publish FRIDAY: the Arch package, the Windows MSI and
+# the FRIDAY OS ISO are built, smoke-tested, and attached to a GitHub release
+# with SHA-256 sums and the winget manifests for that MSI (ready for
+# microsoft/winget-pkgs).
+#
+# A tag with a suffix (v0.2.0-alpha, v0.2.0-rc.1) is published as a
+# pre-release; the MSI, the crate check and the ISO use the X.Y.Z part, and
+# the final X.Y.Z MSI installs over its pre-releases.
 #
 # Versions: the MSI takes X.Y.Z from the tag. CI builds number the MSI
 # 0.1.<commit count>, so a release must be newer than those (0.2.0 or later)
@@ -26,6 +31,9 @@ on:
       - .github/workflows/release.yml
       - installer/windows/**
       - packaging/arch/**
+      - iso/friday/build-iso.sh
+      - iso/friday/profiledef.sh
+      - iso/friday/packages.x86_64
   workflow_dispatch:
 
 permissions:
@@ -39,25 +47,27 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       tag: ${{ steps.v.outputs.tag }}
       publish: ${{ steps.v.outputs.publish }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
       - id: v
         run: |
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then
             tag="${GITHUB_REF_NAME}"
-            if [[ ! "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-              echo "::error::release tags look like v1.2.3 (got $tag)"; exit 1
+            if [[ ! "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-[0-9A-Za-z.]+)?$ ]]; then
+              echo "::error::release tags look like v1.2.3 or v1.2.3-alpha (got $tag)"; exit 1
             fi
-            version="${BASH_REMATCH[1]}" publish=true
+            version="${BASH_REMATCH[1]}" publish=true prerelease=false
+            [[ -n "${BASH_REMATCH[2]}" ]] && prerelease=true
             crate=$(sed -n 's/^version *= *"\(.*\)"/\1/p' services/mobile/Cargo.toml | head -n1)
             if [[ "$crate" != "$version" ]]; then
               echo "::error::tag $tag but services/mobile/Cargo.toml says $crate: bump the crate version first"; exit 1
             fi
           else
-            version="0.0.${GITHUB_RUN_NUMBER}" tag="v0.0.${GITHUB_RUN_NUMBER}" publish=false
+            version="0.0.${GITHUB_RUN_NUMBER}" tag="v0.0.${GITHUB_RUN_NUMBER}" publish=false prerelease=false
             echo "::notice::dry run: building $tag, nothing is published"
           fi
-          { echo "version=$version"; echo "tag=$tag"; echo "publish=$publish"; } >>"$GITHUB_OUTPUT"
+          { echo "version=$version"; echo "tag=$tag"; echo "publish=$publish"; echo "prerelease=$prerelease"; } >>"$GITHUB_OUTPUT"
 
   ci:
     name: CI
@@ -135,9 +145,57 @@ jobs:
             installer/windows/out/winget-manifests-*.zip
           if-no-files-found: error
 
+  iso:
+    name: FRIDAY OS ISO
+    needs: [version, ci]
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      # The image's work tree needs more room than the runner leaves free.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # mkarchiso needs root and mounts, so it runs in a privileged Arch
+      # container; build-iso.sh itself runs as a normal user (makepkg refuses
+      # root) with sudo for mkarchiso, as on a developer's machine.
+      - name: Build the ISO
+        run: |
+          mkdir -p "$RUNNER_TEMP/iso-work" "$RUNNER_TEMP/iso-out"
+          docker run --rm --privileged \
+            -v "$GITHUB_WORKSPACE:/src" -v "$RUNNER_TEMP/iso-work:/work" -v "$RUNNER_TEMP/iso-out:/out" \
+            -w /src archlinux:latest bash -euo pipefail -c '
+              pacman -Syu --noconfirm --needed archiso base-devel git rust sudo
+              git config --system --add safe.directory "*"
+              useradd -m builder
+              echo "builder ALL=(ALL) NOPASSWD: ALL" >/etc/sudoers.d/builder
+              chown -R builder /src /out
+              runuser -u builder -- env RUSTFLAGS= WORK_DIR=/work/w OUT_DIR=/out bash iso/friday/build-iso.sh
+            '
+      - name: Name and size check
+        run: |
+          iso=$(ls "$RUNNER_TEMP"/iso-out/*.iso | head -n1)
+          name="friday-os-${{ needs.version.outputs.version }}-x86_64.iso"
+          sudo mv "$iso" "$RUNNER_TEMP/iso-out/$name"
+          size=$(stat -c %s "$RUNNER_TEMP/iso-out/$name")
+          echo "$name: $((size / 1048576)) MiB" | tee -a "$GITHUB_STEP_SUMMARY"
+          # GitHub release assets are capped at 2 GiB.
+          if (( size >= 2147483648 )); then
+            echo "::error::the ISO is $((size / 1048576)) MiB, over GitHub's 2 GiB asset limit"; exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-iso
+          path: ${{ runner.temp }}/iso-out/friday-os-*.iso
+          if-no-files-found: error
+          compression-level: 0
+
   release:
     name: Publish the release
-    needs: [version, arch, windows]
+    needs: [version, arch, windows, iso]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -156,7 +214,7 @@ jobs:
             echo "### FRIDAY ${{ needs.version.outputs.version }} (${{ needs.version.outputs.publish == 'true' && 'published' || 'dry run, not published' }})"
             echo; echo '```'; ls -l; echo; cat SHA256SUMS; echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
-          for f in friday-git-*.pkg.tar.zst FRIDAY-*.msi winget-manifests-*.zip SHA256SUMS; do
+          for f in friday-git-*.pkg.tar.zst FRIDAY-*.msi winget-manifests-*.zip friday-os-*.iso SHA256SUMS; do
             compgen -G "$f" >/dev/null || { echo "::error::the release is missing $f"; exit 1; }
           done
       - name: Create the GitHub release
@@ -166,5 +224,6 @@ jobs:
         run: |
           gh release create "${{ needs.version.outputs.tag }}" dist/* \
             --repo "${{ github.repository }}" \
-            --title "FRIDAY ${{ needs.version.outputs.version }}" \
+            --title "FRIDAY ${{ needs.version.outputs.tag }}" \
+            ${{ needs.version.outputs.prerelease == 'true' && '--prerelease' || '' }} \
             --generate-notes

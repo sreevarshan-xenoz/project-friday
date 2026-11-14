@@ -125,58 +125,13 @@ xdg-utils
 xfsprogs
 xl2tpd
 zsh
-hyprland
-sddm
-uwsm
-quickshell
-waybar
-xdg-desktop-portal-hyprland
-xdg-desktop-portal-gtk
-grim
-slurp
-wl-clipboard
-pipewire
-pipewire-alsa
-pipewire-pulse
-wireplumber
-foot
-ttf-jetbrains-mono-nerd
-noto-fonts
+
+# The live session is only the text-mode setup (gum, jq) on tty1: setup
+# downloads the desktop onto the new system (the installer's pacstrap list),
+# so the desktop is not in the live image. Keeps the ISO under GitHub's 2 GiB
+# release-asset limit.
 gum
 jq
-socat
-fzf
-bc
-wtype
-fastfetch
-alacritty
-starship
-playerctl
-brightnessctl
-pavucontrol
-polkit-kde-agent
-matugen
-hypridle
-hyprlock
-fuzzel
-cliphist
-imagemagick
-libqalculate
-hyprsunset
-hyprpaper
-qt6-5compat
-qt6-imageformats
-qt6-multimedia
-qt6-multimedia-ffmpeg
-qt6-virtualkeyboard
-qt6-quicktimeline
-qt6-svg
-qt6-wayland
-kirigami
-kdialog
-syntax-highlighting
-chromium
-libnotify
 
 # FRIDAY itself (daemon, CLI, user service): built by build-iso.sh from
 # packaging/arch into the local [friday] repo, not from the Arch repos.
