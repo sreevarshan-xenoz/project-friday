@@ -8,7 +8,8 @@ export PATH="$OMARCHY_PATH/bin:$PATH"
 # Configuration parameters with resilient defaults
 TARGET_DISK="${TARGET_DISK:-/dev/sda}"
 KEYBOARD="${KEYBOARD:-us}"
-HOSTNAME="${HOSTNAME:-friday}"
+# Not $HOSTNAME: bash sets that to the live system's name ("archiso").
+HOSTNAME="${FRIDAY_HOSTNAME:-friday}"
 USERNAME="${USERNAME:-friday}"
 PASSWORD="${PASSWORD:-friday}"
 TIMEZONE="${TIMEZONE:-UTC}"

@@ -138,6 +138,11 @@ grep -qx 'friday-git' "$PROFILE_DIR/packages.x86_64" && pass "live ISO installs 
   || fail "friday-git is not in packages.x86_64"
 grep -q 'pacstrap_with_retry -U /mnt "$FRIDAY_PKG"' "$AIROOTFS/root/installer" \
   && pass "installer installs the friday-git package" || fail "installer does not install friday-git"
+# bash sets $HOSTNAME to the live system's name, so an unattended install that
+# defaulted from it was named "archiso" (found in a VM install, 2026-11-14).
+if (unset FRIDAY_HOSTNAME; HOSTNAME=archiso; eval "$(grep -m1 '^HOSTNAME=' "$AIROOTFS/root/installer")"; [[ $HOSTNAME == friday ]]); then
+  pass "unattended install names the computer friday, not the live system's hostname"
+else fail "installer takes its hostname default from bash's \$HOSTNAME"; fi
 
 echo "scripts are stored executable in git"
 for f in packaging/linux/friday iso/friday/airootfs/root/configurator iso/friday/airootfs/root/installer; do
