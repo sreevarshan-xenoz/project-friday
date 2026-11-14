@@ -82,6 +82,8 @@
 //! - CognitiveBlackboard is the cognitive state. Every engine reads from and writes to it. No engine talks directly to another.
 //! - Workspace changes broadcast so observers can react without direct coupling.
 
+pub mod mask;
+pub use mask::*;
 pub mod autonomy;
 pub use autonomy::*;
 pub mod confidence;

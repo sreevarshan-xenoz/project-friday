@@ -1562,6 +1562,7 @@ impl GoalRunner {
     /// continuity), and the finished turn is recorded for the next goal in the
     /// same session.
     async fn run_goal(&self, goal: String, session_id: String, confirm: Option<String>) {
+        let (goal, masked_count) = friday_goal_execution::mask_secrets(&goal);
         let id = format!("goal-{}", uuid::Uuid::new_v4().simple());
         // Lengths only: the question and any selected text (which can hold a
         // password or token) never go to the log.
@@ -1824,7 +1825,14 @@ impl GoalRunner {
             } else {
                 None
             };
-            let mut payload = completed_payload(&goal, &id, &report, served.as_ref(), served_by);
+            let mut payload = completed_payload(
+                &goal,
+                &id,
+                &report,
+                served.as_ref(),
+                served_by,
+                masked_count,
+            );
             payload["session_id"] = json!(session_id);
             payload["session_turn"] = json!(next_turn);
             let _ = self
@@ -1835,19 +1843,19 @@ impl GoalRunner {
             let reason = report
                 .error
                 .unwrap_or_else(|| "no plan executed — goal may be infeasible".to_string());
+            let mut payload = json!({
+                "goal": goal,
+                "id": id,
+                "session_id": session_id,
+                "session_turn": next_turn,
+                "error": reason,
+            });
+            if masked_count > 0 {
+                payload["masked"] = json!(masked_count);
+            }
             let _ = self
                 .bus
-                .publish(Event::new(
-                    "goal.failed",
-                    "planner",
-                    json!({
-                        "goal": goal,
-                        "id": id,
-                        "session_id": session_id,
-                        "session_turn": next_turn,
-                        "error": reason,
-                    }),
-                ))
+                .publish(Event::new("goal.failed", "planner", payload))
                 .await;
         }
         let terminal = if report.cancelled {
@@ -2037,6 +2045,7 @@ fn completed_payload(
     report: &ExecutiveReport,
     served: Option<&(String, String)>,
     served_by: Option<crate::shell_state::ServedBy>,
+    masked: usize,
 ) -> serde_json::Value {
     let channels: Vec<serde_json::Value> = report
         .evidence_trail
@@ -2089,6 +2098,9 @@ fn completed_payload(
             "model": sb.model,
             "ms": sb.ms,
         });
+    }
+    if masked > 0 {
+        payload["masked"] = json!(masked);
     }
     payload
 }
@@ -2375,6 +2387,34 @@ mod tests {
             "{}",
             prompts[0]
         );
+    }
+
+    #[tokio::test]
+    async fn goal_containing_secret_never_reaches_answerer_unmasked() {
+        let answerer = Arc::new(ScriptedAnswerer {
+            reply: Ok("I can explain this code safely.".to_string()),
+            prompts: Mutex::new(Vec::new()),
+        });
+        let raw_key = "sk-ant-api03-FAKEFAKEFAKEFAKEFAKEFAKE";
+        let goal = format!("Explain this code\n\nUse this text as context:\n\"\"\"\nlet key = \"{raw_key}\";\n\"\"\"");
+        let payload = run_with_answerer(&goal, answerer.clone()).await;
+        assert_eq!(payload["masked"], 1);
+
+        let prompts = answerer.prompts.lock().unwrap();
+        assert!(
+            !prompts.is_empty(),
+            "answerer must have received at least one prompt"
+        );
+        for p in prompts.iter() {
+            assert!(
+                !p.contains(raw_key),
+                "prompt must NEVER contain the raw secret: {p}"
+            );
+            assert!(
+                p.contains("[secret masked]"),
+                "prompt must contain the masked placeholder: {p}"
+            );
+        }
     }
 
     /// Run one goal and return its terminal event's (kind, payload).
@@ -2729,7 +2769,7 @@ mod tests {
             "openrouter".to_string(),
             "openrouter/nvidia/nemotron:free".to_string(),
         );
-        let p = completed_payload("g", "id-1", &report, Some(&served), None);
+        let p = completed_payload("g", "id-1", &report, Some(&served), None, 0);
         assert_eq!(p["strategy"], "llm");
         assert_eq!(p["provider"], "openrouter");
         assert_eq!(p["model"], "openrouter/nvidia/nemotron:free");
@@ -2744,7 +2784,7 @@ mod tests {
         assert!(p["result"]["text"].as_str().unwrap_or_default().is_empty());
 
         // The model errored / no provider → heuristic strategy, no provider key.
-        let p = completed_payload("g", "id-2", &report, None, None);
+        let p = completed_payload("g", "id-2", &report, None, None, 0);
         assert_eq!(p["strategy"], "heuristic");
         assert!(p.get("provider").is_none());
         assert!(p.get("model").is_none());
@@ -2767,14 +2807,27 @@ mod tests {
             model: "inclusionai/ling-3.0-flash:free".to_string(),
             ms: 2300,
         };
-        let p = completed_payload("g", "id-sb", &report, Some(&served), Some(sb));
+        let p = completed_payload("g", "id-sb", &report, Some(&served), Some(sb), 0);
         assert_eq!(p["served_by"]["provider"], "opencode-zen");
         assert_eq!(p["served_by"]["model"], "inclusionai/ling-3.0-flash:free");
         assert_eq!(p["served_by"]["ms"], 2300);
 
         // When absent, served_by is not in the payload
-        let p_none = completed_payload("g", "id-nosb", &report, Some(&served), None);
+        let p_none = completed_payload("g", "id-nosb", &report, Some(&served), None, 0);
         assert!(p_none.get("served_by").is_none());
+    }
+
+    #[test]
+    fn completed_payload_carries_masked_count() {
+        let report = ExecutiveReport {
+            plan_executed: true,
+            ..ExecutiveReport::default()
+        };
+        let p = completed_payload("g", "id-masked", &report, None, None, 3);
+        assert_eq!(p["masked"], 3);
+
+        let p_zero = completed_payload("g", "id-nomasked", &report, None, None, 0);
+        assert!(p_zero.get("masked").is_none());
     }
 
     /// The completed payload contract carries the goal's canonical result
@@ -2802,6 +2855,7 @@ mod tests {
             &report,
             None,
             None,
+            0,
         );
         let result = p["result"].as_object().expect("result object");
         assert_eq!(result["kind"], "text");

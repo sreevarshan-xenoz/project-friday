@@ -114,6 +114,37 @@ fi
 if [[ -e "$W/canary" ]]; then fail "confirmed git status created canary"
 else pass "confirmed git status created no canary"; fi
 
+echo "secret masking"
+mask_key="sk-ant-api03-FAKEFAKEFAKEFAKEFAKEFAKE"
+mask_sel=$(printf 'Explain this code\n\nUse this text as context:\n"""\nlet api_key = "%s";\n"""' "$mask_key")
+out_mask=$("${offline[@]}" timeout 90 "$CTL_BIN" goal --wait "$mask_sel" 2>&1) || true
+if grep -q '"outcome": *"completed"' <<<"$out_mask"; then
+  pass "secret ask completes"
+else
+  fail "secret ask did not complete: $out_mask"
+fi
+if grep -q '"masked": *1' <<<"$out_mask"; then
+  pass "result reports masked: 1"
+else
+  fail "result missing masked count: $out_mask"
+fi
+masked_st=$("$PY" -c 'import json,sys
+try:
+    with open(sys.argv[1]) as f: st = json.load(f)
+    print(st.get("last_goal", {}).get("masked", ""))
+except Exception:
+    print("")' "$W/state.json")
+if [[ "$masked_st" == "1" ]]; then
+  pass "last_goal.masked present in state.json: $masked_st"
+else
+  fail "last_goal.masked missing or wrong in state.json (got: '$masked_st')"
+fi
+if grep -q "$mask_key" "$W/model.log"; then
+  fail "fake model server received the raw secret: $mask_key"
+else
+  pass "fake model server never received the raw secret"
+fi
+
 answers=$(grep -vc "Investigation Engine" "$W/model.log" 2>/dev/null || echo 0)
 if (( answers >= 2 )); then pass "one answer call per question ($answers)"
 else fail "expected an answer call per question (got $answers)"; fi

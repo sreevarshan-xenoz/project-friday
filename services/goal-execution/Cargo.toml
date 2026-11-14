@@ -26,6 +26,7 @@ uuid.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
 futures.workspace = true
+regex = "1"
 
 [dev-dependencies]
 # Skill compounding (#11): the end-to-end acceptance proves a verified

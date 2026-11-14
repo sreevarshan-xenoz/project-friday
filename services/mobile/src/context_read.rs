@@ -243,8 +243,9 @@ where
         };
         if let Some(q) = question.map(str::trim).filter(|q| !q.is_empty()) {
             // One line: the provider reads everything after `QUESTION: `.
+            let (masked_q, _) = friday_goal_execution::mask_secrets(q);
             payload.push_str("\nQUESTION: ");
-            payload.push_str(&q.replace(['\n', '\r'], " "));
+            payload.push_str(&masked_q.replace(['\n', '\r'], " "));
         }
 
         let composed = self

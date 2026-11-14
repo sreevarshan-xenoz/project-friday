@@ -171,9 +171,10 @@ internal sealed class AnswerForm : Form
         _body.ScrollToCaret();
         _border = outcome.Ok ? Theme.Outline : Theme.Error;
 
-        if (outcome.Ok && outcome.ServedBy is { } sb)
+        var footerText = Providers.FormatFooter(outcome.Ok ? outcome.ServedBy : null, outcome.Masked);
+        if (!string.IsNullOrEmpty(footerText))
         {
-            _footer.Text = Providers.FormatServedBy(sb.Provider, sb.Ms);
+            _footer.Text = footerText;
             _footer.Visible = true;
         }
         else

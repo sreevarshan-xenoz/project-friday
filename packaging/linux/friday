@@ -697,6 +697,11 @@ case "${1:-}" in
           fi
           preview="$preview\nvia $p_name · ${sec} s"
         fi
+        local masked_count
+        masked_count=$(jq -r '.masked // empty' <<<"$summary_json" 2>/dev/null || true)
+        if [[ "$masked_count" =~ ^[0-9]+$ ]] && [ "$masked_count" -gt 0 ]; then
+          preview="$preview\n$masked_count secret(s) masked before sending"
+        fi
       fi
       urgency=normal; $ans_ok || urgency=critical
       if $ans_ok; then
