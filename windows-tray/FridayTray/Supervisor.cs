@@ -42,31 +42,37 @@ internal sealed class Supervised : IDisposable
         lock (_lock)
         {
             _stopping = false;
-            if (_process is { HasExited: false })
-                return;
-            OpenLog();
-            var psi = new ProcessStartInfo(_exe)
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                WorkingDirectory = Path.GetDirectoryName(_exe)!,
-            };
-            foreach (var (k, v) in _env())
-                psi.Environment[k] = v;
-            var p = new Process { StartInfo = psi, EnableRaisingEvents = true };
-            p.OutputDataReceived += (_, e) => Write(e.Data);
-            p.ErrorDataReceived += (_, e) => Write(e.Data);
-            p.Exited += (_, _) => OnExited(p);
-            p.Start();
-            if (Job.Value != IntPtr.Zero)
-                Native.AssignProcessToJobObject(Job.Value, p.Handle);
-            p.BeginOutputReadLine();
-            p.BeginErrorReadLine();
-            _process = p;
-            Write($"--- {_name} started (pid {p.Id}) {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            StartLocked();
         }
+    }
+
+    // Callers hold _lock.
+    private void StartLocked()
+    {
+        if (_process is { HasExited: false })
+            return;
+        OpenLog();
+        var psi = new ProcessStartInfo(_exe)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            WorkingDirectory = Path.GetDirectoryName(_exe)!,
+        };
+        foreach (var (k, v) in _env())
+            psi.Environment[k] = v;
+        var p = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        p.OutputDataReceived += (_, e) => Write(e.Data);
+        p.ErrorDataReceived += (_, e) => Write(e.Data);
+        p.Exited += (_, _) => OnExited(p);
+        p.Start();
+        if (Job.Value != IntPtr.Zero)
+            Native.AssignProcessToJobObject(Job.Value, p.Handle);
+        p.BeginOutputReadLine();
+        p.BeginErrorReadLine();
+        _process = p;
+        Write($"--- {_name} started (pid {p.Id}) {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
     }
 
     /// <summary>Stop on purpose (quit, restart, new AI key): no restart follows.</summary>
@@ -109,14 +115,16 @@ internal sealed class Supervised : IDisposable
             GaveUp?.Invoke(_name);
             return;
         }
+        // Check and start under one lock: a Stop() (quit, new AI key) that
+        // lands while the restart waits must win, and Start() would clear it.
         Task.Delay(delay.Value).ContinueWith(_ =>
         {
             lock (_lock)
             {
                 if (_stopping)
                     return;
+                try { StartLocked(); } catch (Exception e) { Write($"--- restart failed: {e.Message}"); }
             }
-            try { Start(); } catch (Exception e) { Write($"--- restart failed: {e.Message}"); }
         });
     }
 

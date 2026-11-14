@@ -35,8 +35,11 @@ internal sealed class TrayContext : ApplicationContext
         _log = new AnswerLog(install.Paths);
         _daemon = new Supervised("friday-daemon", install.Daemon, install.ChildEnvironment, install.Paths.LogDir);
         _host = new Supervised("friday-windows-host", install.Host, install.ChildEnvironment, install.Paths.LogDir);
-        _daemon.GaveUp += name => Notify("FRIDAY keeps crashing", $"Stopped restarting {name}. Logs: {install.Paths.LogDir}", ToolTipIcon.Error);
-        _host.GaveUp += name => Notify("FRIDAY keeps crashing", $"Stopped restarting {name}. Logs: {install.Paths.LogDir}", ToolTipIcon.Error);
+        // GaveUp fires on the exited process's thread; the tray icon belongs to this one.
+        var ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+        void GaveUp(string name) => ui.Post(_ => Notify("FRIDAY keeps crashing", $"Stopped restarting {name}. Logs: {install.Paths.LogDir}", ToolTipIcon.Error), null);
+        _daemon.GaveUp += GaveUp;
+        _host.GaveUp += GaveUp;
 
         _hotkeys.Pressed += kind => _ = AskAsync(kind);
         _hotkeys.RegisterAll();
