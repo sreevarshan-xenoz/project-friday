@@ -252,6 +252,9 @@ async fn wait_for_goal(
             if let Some(sb) = done.get("served_by").filter(|v| !v.is_null()) {
                 summary["served_by"] = sb.clone();
             }
+            if let Some(m) = done.get("masked").filter(|v| !v.is_null()) {
+                summary["masked"] = m.clone();
+            }
             println!(
                 "{}",
                 serde_json::to_string_pretty(&summary).unwrap_or_default()
@@ -283,7 +286,8 @@ fn finished_goal(
     since_ms: u64,
 ) -> Option<serde_json::Value> {
     let last = state.get("last_goal")?;
-    let finished = last["goal"] == goal
+    let (masked_goal, _) = friday_goal_execution::mask_secrets(goal);
+    let finished = (last["goal"] == goal || last["goal"] == masked_goal)
         && last["active"] != true
         && last["completed_ms"]
             .as_u64()
@@ -295,7 +299,8 @@ fn finished_goal(
 /// `current.partial`).
 fn partial_answer(state: &serde_json::Value, goal: &str) -> Option<String> {
     let cur = state.get("current")?;
-    if cur["goal"] != goal || cur["active"] != true {
+    let (masked_goal, _) = friday_goal_execution::mask_secrets(goal);
+    if (cur["goal"] != goal && cur["goal"] != masked_goal) || cur["active"] != true {
         return None;
     }
     cur["partial"]

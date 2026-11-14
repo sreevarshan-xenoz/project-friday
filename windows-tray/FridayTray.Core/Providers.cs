@@ -42,6 +42,20 @@ public static partial class Providers
         return $"via {name} · {seconds} s";
     }
 
+    /// <summary>Format the masked secrets notification line.</summary>
+    public static string FormatMasked(int count) => $"{count} secret(s) masked before sending";
+
+    /// <summary>Format footer line with attribution and masked secrets if any.</summary>
+    public static string FormatFooter(ServedByInfo? servedBy, int masked)
+    {
+        var parts = new List<string>();
+        if (servedBy is { } sb)
+            parts.Add(FormatServedBy(sb.Provider, sb.Ms));
+        if (masked > 0)
+            parts.Add(FormatMasked(masked));
+        return string.Join(" · ", parts);
+    }
+
     [GeneratedRegex(@"^[A-Za-z0-9._:-]{8,}$")]
     private static partial Regex KeyShape();
 }

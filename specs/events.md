@@ -77,3 +77,20 @@ event payload and `last_goal` in `state.json` carry an optional `served_by` obje
 
 Absent when unknown (heuristic answer, local action). Never includes keys or URLs with secrets.
 
+### `masked` secret count (optional)
+
+When one or more secrets (private keys, bearer tokens, passwords in connection strings,
+credential assignments, or well-known API keys) are masked in the goal text before
+sending to the AI provider, the `goal.completed` and `goal.failed` event payloads and
+`last_goal` in `state.json` carry an optional `masked` count:
+
+```json
+"masked": 1
+```
+
+- `masked`: integer count of secrets masked before planning and model inference
+
+Absent when no secrets were masked (count is 0). Raw secrets are replaced with
+`[secret masked]` and never leave the machine, appear in logs, or persist in state.json.
+
+

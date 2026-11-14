@@ -171,4 +171,48 @@ public class ProviderMappingTests
         Assert.True(outcome.Ok);
         Assert.Null(outcome.ServedBy);
     }
+
+    [Fact]
+    public void Asking_interpret_parses_masked()
+    {
+        var output = """
+            {
+              "outcome": "completed",
+              "result": "Hello world",
+              "error": null,
+              "masked": 2
+            }
+            """;
+        var outcome = Asking.Interpret(AskKind.Plain, "say hello", 0, output);
+        Assert.True(outcome.Ok);
+        Assert.Equal(2, outcome.Masked);
+    }
+
+    [Fact]
+    public void Asking_interpret_leaves_masked_zero_when_absent()
+    {
+        var output = """
+            {
+              "outcome": "completed",
+              "result": "Hello world",
+              "error": null
+            }
+            """;
+        var outcome = Asking.Interpret(AskKind.Plain, "say hello", 0, output);
+        Assert.True(outcome.Ok);
+        Assert.Equal(0, outcome.Masked);
+    }
+
+    [Fact]
+    public void Formats_masked_footer_line()
+    {
+        Assert.Equal("1 secret(s) masked before sending", Providers.FormatMasked(1));
+        Assert.Equal("3 secret(s) masked before sending", Providers.FormatMasked(3));
+
+        var sb = new ServedByInfo("opencode-zen", "model", 2300);
+        Assert.Equal("via OpenCode Zen · 2.3 s · 1 secret(s) masked before sending", Providers.FormatFooter(sb, 1));
+        Assert.Equal("via OpenCode Zen · 2.3 s", Providers.FormatFooter(sb, 0));
+        Assert.Equal("2 secret(s) masked before sending", Providers.FormatFooter(null, 2));
+        Assert.Equal("", Providers.FormatFooter(null, 0));
+    }
 }

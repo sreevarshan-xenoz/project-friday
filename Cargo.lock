@@ -1347,6 +1347,7 @@ dependencies = [
  "friday-sensors",
  "friday-skills",
  "futures",
+ "regex",
  "serde",
  "serde_json",
  "tokio",

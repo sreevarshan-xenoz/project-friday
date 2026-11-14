@@ -19,7 +19,8 @@ public sealed record AskOutcome(
     string? Details,
     bool DaemonDown,
     NeedsConfirmation? Confirmation = null,
-    ServedByInfo? ServedBy = null)
+    ServedByInfo? ServedBy = null,
+    int Masked = 0)
 {
     public NeedsConfirmation? NeedsConfirmation => Confirmation;
 }
@@ -218,6 +219,7 @@ public static partial class Asking
         var objects = JsonObjects(output);
         string? result, error;
         ServedByInfo? servedBy = null;
+        int masked = 0;
         if (kind == AskKind.Screen)
         {
             // The result, not one of the {"partial": ...} lines before it.
@@ -232,6 +234,8 @@ public static partial class Asking
             error = last.ValueKind == JsonValueKind.Object ? Str(last, "error") ?? Str(last, "outcome") : null;
             if (last.ValueKind == JsonValueKind.Object)
             {
+                if (last.TryGetProperty("masked", out var mk) && mk.TryGetInt32(out var mc))
+                    masked = mc;
                 var sb = last.TryGetProperty("served_by", out var s) ? s : default;
                 if (sb.ValueKind == JsonValueKind.Object)
                 {
@@ -245,18 +249,18 @@ public static partial class Asking
         }
 
         if (exitOk)
-            return new AskOutcome(true, string.IsNullOrEmpty(result) ? $"Done: {question}" : result, null, false, Confirmation: null, ServedBy: servedBy);
+            return new AskOutcome(true, string.IsNullOrEmpty(result) ? $"Done: {question}" : result, null, false, Confirmation: null, ServedBy: servedBy, Masked: masked);
 
         var raw = string.IsNullOrEmpty(error) ? output.Trim() : error;
         var all = raw + output;
         if (all.Contains("FreeUsageLimitError"))
-            return new AskOutcome(false, "OpenCode Zen's free limit is used up for now. Try again later, or add your own key (tray menu: AI provider).", raw, false);
+            return new AskOutcome(false, "OpenCode Zen's free limit is used up for now. Try again later, or add your own key (tray menu: AI provider).", raw, false, Masked: masked);
         // friday-ctl's own errors only: a provider's "connection refused"
         // (a local model server that isn't running) is not FRIDAY down.
         if (all.Contains("no token found") || all.Contains("cannot reach daemon"))
-            return new AskOutcome(false, "FRIDAY isn't running, so I couldn't ask. Start it and try again.", raw, true);
+            return new AskOutcome(false, "FRIDAY isn't running, so I couldn't ask. Start it and try again.", raw, true, Masked: masked);
         if (all.Contains("timed out after"))
-            return new AskOutcome(false, "This is taking longer than expected. FRIDAY may still be working on it: check the tray icon, or open the answers later.", raw, false);
-        return new AskOutcome(false, raw.Length > 0 ? raw : "FRIDAY couldn't answer that.", null, false);
+            return new AskOutcome(false, "This is taking longer than expected. FRIDAY may still be working on it: check the tray icon, or open the answers later.", raw, false, Masked: masked);
+        return new AskOutcome(false, raw.Length > 0 ? raw : "FRIDAY couldn't answer that.", null, false, Masked: masked);
     }
 }
