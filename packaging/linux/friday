@@ -30,7 +30,8 @@ Autonomous Agent & Cognitive Loop:
   friday context screen [--yes]    Share screen context with assistant
   friday daemon <status|restart|logs> Control friday-linux-daemon service
   friday doctor                    Check daemon, AI provider and desktop health
-  friday setup-ai [provider]       Set or change the AI provider key
+  friday setup-ai [--keep-others|--only] [provider]
+                                   Set or change the AI provider key
 
 Skill Forge:
   friday create-skill <id>         Create new skill template
@@ -282,7 +283,17 @@ friday_doctor() {
 # ~/.config/friday/friday.env (0600), restart the daemon. The key is read
 # from the terminal (hidden) or from stdin, never from argv.
 friday_setup_ai() {
-  local provider="${1:-}" key="" var="" vision=false choice
+  # --keep-others: keep the other providers' keys (FRIDAY can fall back to
+  # them); --only: this provider's key is the only one. Asked when unset.
+  local keep="" key="" var="" vision=false choice
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --keep-others) keep=true; shift ;;
+      --only) keep=false; shift ;;
+      *) break ;;
+    esac
+  done
+  local provider="${1:-}"
   if [ -z "$provider" ]; then
     command -v gum >/dev/null || { echo "usage: echo KEY | friday setup-ai <opencode|gemini|groq|nvidia-nim|openrouter|cerebras>" >&2; return 1; }
     echo "FRIDAY thinks with a cloud language model. Pick a provider:"
@@ -321,11 +332,29 @@ friday_setup_ai() {
   fi
   local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
   mkdir -p "$(dirname "$env_file")"
+  if [ -z "$keep" ]; then
+    keep=false
+    if [ -t 0 ] && command -v gum >/dev/null \
+      && grep -qE "^[A-Z_]+_API_KEY=" "$env_file" 2>/dev/null \
+      && grep -vqE "^($var=|#|[^=]*$)" <(grep -E '^[A-Z_]+_API_KEY=' "$env_file"); then
+      choice=$(gum choose --cursor="❯ " "Use only $provider" \
+        "Keep my other keys too (FRIDAY falls back to them)") || return 1
+      [[ "$choice" == Keep* ]] && keep=true
+    fi
+  fi
+  # What to drop from the old file: every key and the screen provider, or
+  # (keeping the others) just this provider's key, and the screen provider
+  # only when this one can take screen questions.
+  local drop='^(#|[A-Z_]+_API_KEY=|FRIDAY_CONTEXT_PROVIDER=)'
+  if $keep; then
+    drop="^(#|$var=)"
+    $vision && drop="^(#|$var=|FRIDAY_CONTEXT_PROVIDER=)"
+  fi
   (
     umask 077
     {
       echo "# FRIDAY AI provider credentials (friday setup-ai)."
-      grep -vE '^(#|[A-Z_]+_API_KEY=|FRIDAY_CONTEXT_PROVIDER=)' "$env_file" 2>/dev/null || true
+      grep -vE "$drop" "$env_file" 2>/dev/null || true
       [ -z "$key" ] || printf '%s=%s\n' "$var" "$key"
       if $vision; then echo "FRIDAY_CONTEXT_PROVIDER=$provider"; fi
     } >"$env_file.tmp"
