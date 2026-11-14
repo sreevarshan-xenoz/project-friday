@@ -675,6 +675,29 @@ case "${1:-}" in
 
       preview="$answer"
       [ "${#preview}" -le 220 ] || preview="${preview:0:217}…"
+      if $ans_ok; then
+        local served_p served_ms
+        served_p=$(jq -r '.served_by.provider // empty' <<<"$summary_json" 2>/dev/null || true)
+        served_ms=$(jq -r '.served_by.ms // empty' <<<"$summary_json" 2>/dev/null || true)
+        if [ -n "$served_p" ]; then
+          local p_name
+          case "$served_p" in
+            opencode-zen) p_name="OpenCode Zen" ;;
+            kilo) p_name="Kilo" ;;
+            claude-code) p_name="Claude Code" ;;
+            codex) p_name="Codex" ;;
+            antigravity) p_name="Antigravity" ;;
+            cline) p_name="Cline" ;;
+            *) p_name="$served_p" ;;
+          esac
+          local sec="0.0"
+          if [[ "$served_ms" =~ ^[0-9]+$ ]]; then
+            local rounded=$(( (served_ms + 50) / 100 ))
+            sec="$(( rounded / 10 )).$(( rounded % 10 ))"
+          fi
+          preview="$preview\nvia $p_name · ${sec} s"
+        fi
+      fi
       urgency=normal; $ans_ok || urgency=critical
       if $ans_ok; then
         actions=(-A copy="Copy" -A again="Ask again" -A open="Open full answer")

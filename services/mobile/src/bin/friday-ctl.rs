@@ -249,6 +249,9 @@ async fn wait_for_goal(
             if let Some(nc) = done.get("needs_confirmation").filter(|v| !v.is_null()) {
                 summary["needs_confirmation"] = nc.clone();
             }
+            if let Some(sb) = done.get("served_by").filter(|v| !v.is_null()) {
+                summary["served_by"] = sb.clone();
+            }
             println!(
                 "{}",
                 serde_json::to_string_pretty(&summary).unwrap_or_default()

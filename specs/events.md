@@ -51,3 +51,29 @@ The inner payload schema is unchanged; the envelope adds distributed tracing,
 replay, and correlation. This is the preferred path over editing locked event
 types, and is how the Simulation `report` (M4.7) and Context Builder (M4.10) attach
 correlation without breaking the contract.
+
+## Goal lifecycle events & state.json
+
+The daemon publishes goal lifecycle events (`goal.started`, `goal.progress`, `goal.completed`,
+`goal.failed`, `goal.cancelled`, `goal.paused`, `goal.recoverable`) and reflects the finished
+goal in `state.json` (`last_goal`).
+
+### `served_by` attribution (optional)
+
+When a goal completes with an answer served by an AI provider/model, the `goal.completed`
+event payload and `last_goal` in `state.json` carry an optional `served_by` object:
+
+```json
+"served_by": {
+  "provider": "opencode-zen",
+  "model": "inclusionai/ling-3.0-flash:free",
+  "ms": 2300
+}
+```
+
+- `provider`: provider identifier string (e.g. `opencode-zen`, `kilo`, `claude-code`, `codex`, `antigravity`, `cline`, `llamacpp`)
+- `model`: vendor model identifier string
+- `ms`: total answer elapsed time in milliseconds
+
+Absent when unknown (heuristic answer, local action). Never includes keys or URLs with secrets.
+
