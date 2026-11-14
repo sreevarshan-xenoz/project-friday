@@ -64,6 +64,8 @@ echo "ask"
 bash "$F" ask "what is my uptime"; sleep 0.3
 contains "multi-line answer kept whole in the notification" "$(cat "$LOG")" $'Line one.\nLine two.\nLast line.'
 contains "full answer saved" "$(cat "$state/last-answer.md")" "Last line."
+if [[ "$(stat -c %a "$state")" == 700 ]]; then pass "questions and answers are private (0700)"
+else fail "state dir mode $(stat -c %a "$state")"; fi
 contains "notification offers Open" "$(cat "$LOG")" "open=Open full answer"
 contains "Open shows the answer" "$(cat "$LOG")" "foot -T FRIDAY · what is my uptime less -R"
 

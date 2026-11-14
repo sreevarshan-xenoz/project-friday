@@ -456,7 +456,9 @@ case "${1:-}" in
       fi
     fi
     [ -n "${goal// /}" ] || exit 0
-    mkdir -p "$state_dir"
+    # Questions, selected text and answers are private: only you can open
+    # this directory (also fixes one made world-readable by an older version).
+    mkdir -p "$state_dir" && chmod 700 "$state_dir"
     # Remember the question (not the pasted context): newest first, no dups, last 50.
     { printf '%s\n' "$goal"; grep -vxF -- "$goal" "$history_file" 2>/dev/null || true; } \
       | head -n 50 >"$history_file.tmp" && mv -f "$history_file.tmp" "$history_file"
