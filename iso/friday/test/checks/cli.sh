@@ -32,14 +32,23 @@ if [[ "\$*" == *gated* ]]; then
   printf '{\n "outcome": "failed",\n "error": "Confirm to run: git status",\n "needs_confirmation": {\n   "tool": "terminal",\n   "action": "git status"\n }\n}\n'
   exit 3
 fi
-printf 'friday-ctl %q\n' "\$3" >> "$LOG"
+target_arg="\$3"
+for arg in "\$@"; do
+  if [[ "\$arg" != "goal" && "\$arg" != "--wait" && "\$arg" != "--web" && "\$arg" != "--stream" && "\$arg" != friday* ]]; then
+    target_arg="\$arg"
+  fi
+done
+printf 'friday-ctl %q\n' "\$target_arg" >> "$LOG"
+if [[ "\$*" == *"--web"* ]]; then
+  printf 'friday-ctl-web %s\n' "\$*" >> "$LOG"
+fi
 echo '{"accepted":true}'
-if [[ "\$3" == *nodaemon* ]]; then echo "no token found; daemon not running at /x/state.json (is friday-linux-daemon up?)" >&2; exit 1; fi
-if [[ "\$3" == *slowgoal* ]]; then echo '{"accepted":true}'; echo "timed out after 180s waiting for the goal to finish" >&2; exit 1; fi
-if [[ "\$3" == *refused* ]]; then printf '{\n "outcome": "failed",\n "error": "Couldn'"'"'t reach your AI provider. Check your internet connection (or that your local model server is running)."\n}\n'; echo "llamacpp: tcp connect error: Connection refused" >&2; exit 1; fi
-if [[ "\$3" == *limit* ]]; then printf '{\n "outcome": "failed",\n "error": "provider opencode: 429 FreeUsageLimitError"\n}\n'; exit 1; fi
-if [[ "\$3" == *bullets* ]]; then printf '{\n "outcome": "completed",\n "result": "- first point\\\\n- second point"\n}\n'; exit 0; fi
-if [[ "\$3" == *fail* ]]; then printf '{\n "outcome": "failed",\n "error": "network unreachable"\n}\n'; exit 1; fi
+if [[ "\$target_arg" == *nodaemon* ]]; then echo "no token found; daemon not running at /x/state.json (is friday-linux-daemon up?)" >&2; exit 1; fi
+if [[ "\$target_arg" == *slowgoal* ]]; then echo '{"accepted":true}'; echo "timed out after 180s waiting for the goal to finish" >&2; exit 1; fi
+if [[ "\$target_arg" == *refused* ]]; then printf '{\n "outcome": "failed",\n "error": "Couldn'"'"'t reach your AI provider. Check your internet connection (or that your local model server is running)."\n}\n'; echo "llamacpp: tcp connect error: Connection refused" >&2; exit 1; fi
+if [[ "\$target_arg" == *limit* ]]; then printf '{\n "outcome": "failed",\n "error": "provider opencode: 429 FreeUsageLimitError"\n}\n'; exit 1; fi
+if [[ "\$target_arg" == *bullets* ]]; then printf '{\n "outcome": "completed",\n "result": "- first point\\\\n- second point"\n}\n'; exit 0; fi
+if [[ "\$target_arg" == *fail* ]]; then printf '{\n "outcome": "failed",\n "error": "network unreachable"\n}\n'; exit 1; fi
 printf '{\n "outcome": "completed",\n "result": "Line one.\\\\nLine two.\\\\nLast line."\n}\n'
 EOF
 cat >"$S/notify-send" <<EOF
@@ -98,6 +107,23 @@ if grep -q "Unknown option" "$W"/*.log 2>/dev/null; then fail "notify-send rejec
 : >"$LOG"; ACTION_COPY=1 bash "$F" ask "copy answer test"; sleep 0.3
 contains "Copy runs wl-copy with the answer text" "$(cat "$LOG")" "wl-copy: Line one."
 if grep -q "wl-copy: # " "$LOG"; then fail "Copy included markdown header"; else pass "Copy copies answer body only"; fi
+
+: >"$LOG"; bash "$F" ask --web "what is the latest stable rust"; sleep 0.3
+contains "ask --web passes --web flag" "$(cat "$LOG")" "friday-ctl-web"
+contains "ask --web passes the question" "$(cat "$LOG")" "what is the latest stable rust"
+
+: >"$LOG"; bash "$F" ask "search what is the latest stable rust"; sleep 0.3
+contains "ask 'search q' passes --web flag" "$(cat "$LOG")" "friday-ctl-web"
+contains "ask 'search q' strips prefix" "$(cat "$LOG")" "what is the latest stable rust"
+if grep -q "search what is" "$LOG"; then fail "prefix was not stripped"; else pass "prefix was stripped"; fi
+
+: >"$LOG"; bash "$F" ask "search the web for rust releases"; sleep 0.3
+contains "ask 'search the web for q' passes --web flag" "$(cat "$LOG")" "friday-ctl-web"
+contains "ask 'search the web for q' strips prefix" "$(cat "$LOG")" "rust releases"
+
+: >"$LOG"; bash "$F" ask "look up rust documentation"; sleep 0.3
+contains "ask 'look up q' passes --web flag" "$(cat "$LOG")" "friday-ctl-web"
+contains "ask 'look up q' strips prefix" "$(cat "$LOG")" "rust documentation"
 
 : >"$LOG"; rm -f "$W/again_done"
 ACTION_AGAIN=1 PICK="re-asked question" bash "$F" ask "first question"; sleep 0.5
@@ -377,6 +403,11 @@ printf '{"status":"running","token":"s3cret-token"}' >"$state/state.json"
 printf 'GEMINI_API_KEY=abc123secret\n' >"$envf"
 out=$(bash "$F" doctor 2>&1 || true)
 contains "reads daemon status" "$out" "state.json reports: running"
+contains "doctor reports configured search backends" "$out" "search backends: DuckDuckGo, Wikipedia"
+printf 'BRAVE_SEARCH_API_KEY=testbravesecret123\nFRIDAY_SEARXNG_URL=http://localhost:8888\n' >>"$envf"
+out=$(bash "$F" doctor 2>&1 || true)
+contains "doctor reports SearXNG and Brave in search backends" "$out" "search backends: SearXNG, Brave, DuckDuckGo, Wikipedia"
+if [[ "$out" == *testbravesecret123* ]]; then fail "doctor printed search key"; else pass "doctor never prints search keys"; fi
 printf '{"status":"running","token":"t","listen":"127.0.0.1:1"}' >"$state/state.json"
 out=$(bash "$F" doctor 2>&1 || true)
 contains "probes the address the daemon published" "$out" "nothing listening on 127.0.0.1:1"

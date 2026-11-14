@@ -39,7 +39,8 @@ _friday() {
     ask)      _arguments '(-s --selection --screen -r --region -f --follow-up)'{-s,--selection}'[ask about the selected/copied text]' \
                 '(-s --selection --screen -r --region -f --follow-up)--screen[ask about what is on screen]' \
                 '(-s --selection --screen -r --region -f --follow-up)'{-r,--region}'[drag out an area of the screen and ask about it]' \
-                '(-s --selection --screen -r --region -f --follow-up)'{-f,--follow-up}'[ask about the last answer]' '*:question:' ;;
+                '(-s --selection --screen -r --region -f --follow-up)'{-f,--follow-up}'[ask about the last answer]' \
+                '--web[search the web for facts and cite sources]' '*:question:' ;;
     answers)  _arguments '--last[show only the last answer]' ;;
     sent)     _arguments '1:count:' ;;
     connect|disconnect) _values 'account' claude codex agy cline ;;

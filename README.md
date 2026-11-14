@@ -214,7 +214,7 @@ pacman refuses any package or database that key didn't sign. On Windows, install
 
 | Command | What it does |
 |---|---|
-| `friday ask [--selection\|--screen] [text]` | Ask (what the hotkeys run) |
+| `friday ask [--selection\|--screen\|--web] [text]` | Ask (what the hotkeys run; `--web` searches the web) |
 | `friday setup-ai [--keep-others\|--only] [provider]` | Use your own API key |
 | `friday connect [--prefer] [claude\|codex\|agy\|cline]` / `friday disconnect <name>` | Use an account you already have (a fallback unless `--prefer`) |
 | `friday answers [--last]` | Past answers (kept private, in `~/.local/state/friday`) |
@@ -223,6 +223,8 @@ pacman refuses any package or database that key didn't sign. On Windows, install
 | `friday doctor` | Why isn't FRIDAY working? |
 | `friday report` | A redacted bug report to read, then share |
 | `friday face setup` | Face unlock for the lock screen (Gaze, on this computer; `status`, `remove`) |
+
+Web search (`--web`) queries an ordered chain of backends: SearXNG (`FRIDAY_SEARXNG_URL`), Brave Search (`BRAVE_SEARCH_API_KEY`), DuckDuckGo, and Wikipedia.
 
 ## Plan
 
