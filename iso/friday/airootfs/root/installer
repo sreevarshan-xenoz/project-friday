@@ -439,11 +439,12 @@ else
   fi
 
   # FRIDAY Shell draws the bar, notifications and OSD, so Omarchy's shell turns
-  # those off (friday.bar is an empty bar option). Its user shell.json replaces
+  # those off (friday.bar is an empty bar option), and friday.lock replaces
+  # Omarchy's lock screen. Its user shell.json replaces
   # the defaults wholesale, so start from the pinned defaults.
   mkdir -p "/mnt$USER_HOME/.config/omarchy" "/mnt$USER_HOME/.config/friday"
   if jq '.bar.id = "friday.bar"
-         | .disabledPlugins = (((.disabledPlugins // []) + ["omarchy.notifications", "omarchy.osd"]) | unique)' \
+         | .disabledPlugins = (((.disabledPlugins // []) + ["omarchy.notifications", "omarchy.osd", "omarchy.lock"]) | unique)' \
        /mnt/usr/share/omarchy/config/omarchy/shell.json >"/mnt$USER_HOME/.config/omarchy/shell.json.new"; then
     mv "/mnt$USER_HOME/.config/omarchy/shell.json.new" "/mnt$USER_HOME/.config/omarchy/shell.json"
   else

@@ -78,6 +78,7 @@ mkdir -p "$PROFILE_DIR/airootfs/usr/share/omarchy/shell/plugins"
 cp -r "$PROJECT_ROOT/friday-os/plugins/friday.shell" "$PROFILE_DIR/airootfs/usr/share/omarchy/shell/plugins/"
 cp -r "$PROJECT_ROOT/friday-os/plugins/friday.context" "$PROFILE_DIR/airootfs/usr/share/omarchy/shell/plugins/"
 cp -r "$PROJECT_ROOT/friday-os/plugins/friday.bar" "$PROFILE_DIR/airootfs/usr/share/omarchy/shell/plugins/"
+cp -r "$PROJECT_ROOT/friday-os/plugins/friday.lock" "$PROFILE_DIR/airootfs/usr/share/omarchy/shell/plugins/"
 
 # Ensure executable permissions on all omarchy binaries
 chmod -R +x "$PROFILE_DIR/airootfs/usr/share/omarchy/bin" 2>/dev/null || true
