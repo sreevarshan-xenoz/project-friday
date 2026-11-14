@@ -13,6 +13,11 @@ use crate::context_read::ContextReadError;
 /// in its own words (where to add a key differs).
 pub fn plain_model_error(raw: &str) -> String {
     if raw.contains("FreeUsageLimitError") {
+        if raw.to_ascii_lowercase().contains("kilo") {
+            return "Kilo's free models are busy right now. Wait a minute and try again, \
+                    or add a key with `friday setup-ai` (on Windows: AI provider in the tray menu)."
+                .to_string();
+        }
         return raw.to_string();
     }
     let r = raw.to_ascii_lowercase();
@@ -40,7 +45,14 @@ pub fn plain_model_error(raw: &str) -> String {
         "rate limit",
         "rate_limit",
         "quota",
+        "free limit",
+        "free_limit",
     ]) {
+        if r.contains("kilo") {
+            return "Kilo's free models are busy right now. Wait a minute and try again, \
+                    or add a key with `friday setup-ai` (on Windows: AI provider in the tray menu)."
+                .to_string();
+        }
         return "Your AI provider says there have been too many requests. Wait a minute and \
                 try again, or choose another provider with `friday setup-ai` (on Windows: AI \
                 provider in the tray menu)."
@@ -139,6 +151,15 @@ mod tests {
         assert_eq!(plain_model_error(limit), limit);
         let refusal = "None of your AI providers (llamacpp) can see images, so ...";
         assert_eq!(plain_model_error(refusal), refusal);
+    }
+
+    #[test]
+    fn kilo_429_explains_free_models_busy() {
+        let err = "Provider kilo returned error status 429 Too Many Requests: rate limited";
+        let plain = plain_model_error(err);
+        assert!(plain.contains("free models are busy"));
+        assert!(plain.contains("try again"));
+        assert!(plain.contains("add a key"));
     }
 
     #[test]
