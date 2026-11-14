@@ -8,7 +8,8 @@ export PATH="$OMARCHY_PATH/bin:$PATH"
 # Configuration parameters with resilient defaults
 TARGET_DISK="${TARGET_DISK:-/dev/sda}"
 KEYBOARD="${KEYBOARD:-us}"
-HOSTNAME="${HOSTNAME:-friday}"
+# Not $HOSTNAME: bash sets that to the live system's name ("archiso").
+HOSTNAME="${FRIDAY_HOSTNAME:-friday}"
 USERNAME="${USERNAME:-friday}"
 PASSWORD="${PASSWORD:-friday}"
 TIMEZONE="${TIMEZONE:-UTC}"
@@ -198,7 +199,8 @@ pacstrap_with_retry /mnt base linux linux-firmware sudo zsh hyprland sddm uwsm q
   matugen hypridle hyprlock fuzzel cliphist imagemagick libqalculate hyprsunset hyprpaper swaybg \
   qt6-5compat qt6-imageformats qt6-multimedia qt6-multimedia-ffmpeg qt6-virtualkeyboard qt6-quicktimeline qt6-svg qt6-wayland \
   qt6-positioning ttf-material-symbols-variable \
-  kirigami kdialog syntax-highlighting chromium libnotify niri xwayland-satellite
+  kirigami kdialog syntax-highlighting chromium libnotify niri xwayland-satellite \
+  udiskie inotify-tools
 live_status_stop
 
 genfstab -U /mnt >> /mnt/etc/fstab
