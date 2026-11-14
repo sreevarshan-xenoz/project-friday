@@ -5,12 +5,13 @@ name: Release
 # with SHA-256 sums and the winget manifests for that MSI (ready for
 # microsoft/winget-pkgs).
 #
-# A tag with a suffix (v0.1.0-alpha, v0.2.0-rc.1) is published as a
-# pre-release; the MSI, the crate check and the ISO use the X.Y.Z part.
+# A tag with a suffix (v0.2.0-alpha, v0.2.0-rc.1) is published as a
+# pre-release; the MSI, the crate check and the ISO use the X.Y.Z part, and
+# the final X.Y.Z MSI installs over its pre-releases.
 #
 # Versions: the MSI takes X.Y.Z from the tag. CI builds number the MSI
-# 0.1.<commit count>, so a machine with a CI build installed must uninstall
-# it before installing a 0.1.x release; from 0.2.0 on, releases upgrade it.
+# 0.1.<commit count>, so a release must be newer than those (0.2.0 or later)
+# for an installed CI build to upgrade to it.
 #
 # A release is only built from a commit that passes the whole of CI (ci.yml
 # runs first, as a required job), and the tag must match the version in

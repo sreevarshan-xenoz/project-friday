@@ -70,7 +70,7 @@ Top to bottom; don't start a later phase while an earlier one has known failures
 | Test VM | `bash iso/friday/test/run-qemu.sh --headless --daemon --reset-disk`; drive with `python3 iso/friday/test/vm-control.py` |
 | Windows tray tests | `dotnet test windows-tray/FridayTray.Tests` (any OS) |
 | Windows MSI | `pwsh installer/windows/build.ps1` (Windows); smoke: `friday-tray.exe --smoke` |
-| Release | push a tag `vX.Y.Z` (or `vX.Y.Z-alpha` for a pre-release): `release.yml` builds, tests and publishes the package, MSI and ISO |
+| Release | push a tag `vX.Y.Z` (≥ 0.2.0; `vX.Y.Z-alpha` for a pre-release): `release.yml` builds, tests and publishes the package, MSI and ISO |
 | Health | `friday doctor` (Linux) |
 
 Gotcha: `vm-control.py wait-ready` reports SSH up before the guest is; poll a
