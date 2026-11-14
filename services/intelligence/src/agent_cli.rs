@@ -22,6 +22,25 @@ use crate::providers::{sanitize_candidate_error, Provider};
 /// answers, far slower than an HTTP call.
 pub const AGENT_CLI_TIMEOUT: Duration = Duration::from_secs(90);
 
+/// Where a connected account ranks (the fabric tries lower latency first).
+/// By default after the free models (OpenCode Zen 3000 ms, Kilo 3500 ms):
+/// a connected tool starts a whole app per answer (seconds slower) and every
+/// ask counts against the person's plan, so it is a fallback. With
+/// `FRIDAY_PREFER_ACCOUNTS=1` it comes first, still after the person's own
+/// API keys (800 ms).
+pub fn account_latency_ms(prefer: bool) -> u64 {
+    if prefer {
+        1_500
+    } else {
+        4_000
+    }
+}
+
+/// Whether the person asked for connected accounts ahead of the free models.
+pub fn prefer_accounts() -> bool {
+    std::env::var("FRIDAY_PREFER_ACCOUNTS").is_ok_and(|v| v == "1" || v == "true")
+}
+
 /// The account tools FRIDAY can answer through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentCli {
