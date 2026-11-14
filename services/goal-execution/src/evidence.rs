@@ -42,6 +42,29 @@ use serde::{Deserialize, Serialize};
 use crate::common::{Action, Capability, ExecutionContext};
 use crate::verification::{ExecutionState, Tool, ToolRegistry, ToolResult};
 
+/// Whether an action `(tool, verb)` is on the read-only evidence allowlist.
+///
+/// Evidence actions run automatically as part of evidence-gated execution,
+/// bypassing human confirmation gates. They must only read data (filesystem
+/// list/read/tree/search, git status/log/diff, web search/fetch, docs search/read/parse,
+/// codeintel understand, memory recall, webagent ask/read, reasoning consult/stats).
+/// Mutating verbs such as terminal run/exec and filesystem write/delete are strictly refused.
+pub fn is_allowed_evidence_verb(tool: &str, verb: &str) -> bool {
+    matches!(
+        (tool, verb),
+        (
+            "filesystem",
+            "list_directory" | "read_file" | "tree" | "search"
+        ) | ("git", "status" | "log" | "diff")
+            | ("web", "search" | "fetch")
+            | ("docs", "search" | "read" | "parse")
+            | ("codeintel", "understand")
+            | ("memory", "recall")
+            | ("webagent", "ask" | "read")
+            | ("reasoning", "consult" | "stats")
+    )
+}
+
 /// Extract `(tool, verb)` from an evidence action instruction.
 ///
 /// The planner emits `gather evidence: <channel> (<cap_id>)`, where `cap_id`
@@ -87,6 +110,7 @@ impl AdapterTool {
         let capabilities = adapter
             .actions()
             .into_iter()
+            .filter(|verb| is_allowed_evidence_verb(&tool, verb))
             .map(|verb| Capability::Custom(format!("{tool}.{verb}")))
             .collect();
         Self {
@@ -147,6 +171,12 @@ impl Tool for AdapterTool {
                 action.capability
             ));
         };
+        if !is_allowed_evidence_verb(&tool, &verb) {
+            return ToolResult::error(format!(
+                "{} cannot execute evidence action '{tool}.{verb}': not on read-only evidence allowlist",
+                self.name
+            ));
+        }
         let req = self.route(&tool, &verb, action, context);
         let result = self.adapter.execute(req).await;
         // The adapter may attach its own latency measurement (`with_latency_ms`)
@@ -379,6 +409,110 @@ mod tests {
         assert!(!result.success);
         let err = result.error.expect("error");
         assert!(err.contains("not an evidence action"), "err: {err}");
+    }
+
+    #[tokio::test]
+    async fn evidence_refuses_mutating_verbs_and_allows_read_verbs() {
+        let temp = std::env::temp_dir().join(format!("friday-ev-refuse-{}", uuid_lite()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let target_file = temp.join("victim.txt");
+        std::fs::write(&target_file, "original content").unwrap();
+
+        let ctx = ExecutionContext::for_goal("g1");
+
+        // 1. Filesystem write/delete must be refused and not run
+        let fs_tool = AdapterTool::for_evidence(Arc::new(friday_actions::FilesystemAdapter::new()));
+
+        let delete_act = Action::single(
+            "gather evidence: filesystem (filesystem.delete_file)",
+            Capability::Custom("filesystem.delete_file".into()),
+            "g1",
+        )
+        .with_parameters(json!({ "path": target_file.to_str().unwrap() }));
+        let del_res = fs_tool.execute(&delete_act, &ctx).await;
+        assert!(!del_res.success);
+        assert!(
+            del_res
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("read-only evidence allowlist"),
+            "unexpected error: {:?}",
+            del_res.error
+        );
+        assert!(target_file.exists(), "delete_file must not have executed");
+
+        let write_act = Action::single(
+            "gather evidence: filesystem (filesystem.write_file)",
+            Capability::Custom("filesystem.write_file".into()),
+            "g1",
+        )
+        .with_parameters(json!({ "path": target_file.to_str().unwrap(), "content": "mutated" }));
+        let write_res = fs_tool.execute(&write_act, &ctx).await;
+        assert!(!write_res.success);
+        assert!(
+            write_res
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("read-only evidence allowlist"),
+            "unexpected error: {:?}",
+            write_res.error
+        );
+        assert_eq!(
+            std::fs::read_to_string(&target_file).unwrap(),
+            "original content",
+            "write_file must not have executed"
+        );
+
+        // 2. Terminal run/exec must be refused and not run
+        let term_tool = AdapterTool::for_evidence(Arc::new(friday_actions::TerminalAdapter::new()));
+        let can_flag = temp.join("terminal_ran.flag");
+        let term_act = Action::single(
+            "gather evidence: terminal (terminal.run)",
+            Capability::Custom("terminal.run".into()),
+            "g1",
+        )
+        .with_parameters(json!({ "command": format!("touch {}", can_flag.display()) }));
+        let term_res = term_tool.execute(&term_act, &ctx).await;
+        assert!(!term_res.success);
+        assert!(
+            term_res
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("read-only evidence allowlist"),
+            "unexpected error: {:?}",
+            term_res.error
+        );
+        assert!(!can_flag.exists(), "terminal.run must not have executed");
+
+        // 3. Read verbs still work
+        let read_act = Action::single(
+            "gather evidence: filesystem (filesystem.read_file)",
+            Capability::Custom("filesystem.read_file".into()),
+            "g1",
+        )
+        .with_parameters(json!({ "path": target_file.to_str().unwrap() }));
+        let read_res = fs_tool.execute(&read_act, &ctx).await;
+        assert!(read_res.success, "read_file failed: {:?}", read_res.error);
+        assert!(read_res.output.contains("original content"));
+
+        let list_act = Action::single(
+            "gather evidence: filesystem (filesystem.list_directory)",
+            Capability::Custom("filesystem.list_directory".into()),
+            "g1",
+        )
+        .with_parameters(json!({ "path": temp.to_str().unwrap() }));
+        let list_res = fs_tool.execute(&list_act, &ctx).await;
+        assert!(
+            list_res.success,
+            "list_directory failed: {:?}",
+            list_res.error
+        );
+        assert!(list_res.output.contains("victim.txt"));
+
+        let _ = std::fs::remove_dir_all(&temp);
     }
 
     // ── Real git.status via the action-runtime adapter ───────────────
