@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "FRIDAY Mobile Transport (M6.1): WebSocket gateway, QR-pair auth, event/command relay"
+description = "FRIDAY daemon (friday-linux-daemon, friday-daemon.exe on Windows) and friday-ctl: runs asks, publishes state.json, token-gated loopback ingress"
 
 [dependencies]
 friday-core = { path = "../../core" }
