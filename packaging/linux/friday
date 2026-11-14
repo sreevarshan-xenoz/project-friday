@@ -388,10 +388,10 @@ case "${1:-}" in
     if $use_selection; then
       # Primary selection (highlighted text) first, then the clipboard.
       source_label="Selected"
-      context=$(wl-paste --primary --no-newline 2>/dev/null || true)
+      context=$(timeout 2 wl-paste --primary --no-newline 2>/dev/null || true)
       if [ -z "${context//[[:space:]]/}" ]; then
         source_label="Clipboard"
-        context=$(wl-paste --no-newline 2>/dev/null || true)
+        context=$(timeout 2 wl-paste --no-newline 2>/dev/null || true)
         # The clipboard often holds a just-copied password or token. Never
         # send something shaped like one (a single long token mixing letters
         # and digits) to a cloud model by accident.
