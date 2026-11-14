@@ -32,6 +32,9 @@ Autonomous Agent & Cognitive Loop:
   friday doctor                    Check daemon, AI provider and desktop health
   friday setup-ai [--keep-others|--only] [provider]
                                    Set or change the AI provider key
+  friday connect [claude|codex|agy|cline]
+                                   Use an AI account you already have (signs in)
+  friday disconnect <name>         Stop using a connected account
 
 Skill Forge:
   friday create-skill <id>         Create new skill template
@@ -298,11 +301,13 @@ friday_setup_ai() {
     command -v gum >/dev/null || { echo "usage: echo KEY | friday setup-ai <opencode|gemini|groq|nvidia-nim|openrouter|cerebras>" >&2; return 1; }
     echo "FRIDAY thinks with a cloud language model. Pick a provider:"
     choice=$(gum choose --cursor="❯ " \
-      "OpenCode Zen (free, no key needed)" \
+      "Free models: OpenCode Zen, then Kilo (no key, no sign-in)" \
+      "Connect an account you already have (Claude Code, Codex, Antigravity, Cline)" \
       "Google Gemini (vision, free tier)" "Groq (fast, vision)" "NVIDIA NIM (vision)" \
       "OpenRouter (many models, no screen context)" "Cerebras (fast, no screen context)") || return 1
     case "$choice" in
-      "OpenCode Zen"*) provider=opencode ;;
+      "Free models"*) provider=opencode; echo; echo "Note: $FRIDAY_FREE_NOTICE"; echo ;;
+      "Connect an account"*) friday_connect; return ;;
       "Google Gemini"*) provider=gemini ;; "Groq"*) provider=groq ;; "NVIDIA NIM"*) provider=nvidia-nim ;;
       "OpenRouter"*) provider=openrouter ;; "Cerebras"*) provider=cerebras ;;
     esac
@@ -369,6 +374,126 @@ friday_setup_ai() {
   fi
 }
 
+# `friday connect [claude|codex|agy|cline]`: answer with an AI account the
+# person already has, through that tool's own CLI and sign-in (Claude Code,
+# Codex, Antigravity, Cline). FRIDAY never sees the credentials: the daemon
+# runs the CLI with no tools, and FRIDAY_AGENT_CLIS in friday.env lists the
+# connected ones. Run it in the desktop session: signing in opens a browser,
+# which the ISO installer (root, before the first login) can't do.
+friday_agent_cli_info() { # <name> -> sets AC_BIN AC_LABEL AC_INSTALL
+  case "$1" in
+    claude) AC_BIN=claude; AC_LABEL="Claude Code (your Anthropic account)"
+            AC_INSTALL="curl -fsSL https://claude.ai/install.sh | bash" ;;
+    codex)  AC_BIN=codex; AC_LABEL="Codex (your OpenAI / ChatGPT account)"
+            AC_INSTALL="npm install -g @openai/codex" ;;
+    agy)    AC_BIN=agy; AC_LABEL="Antigravity (your Google account)"
+            AC_INSTALL="install the Antigravity CLI (agy) from antigravity.google" ;;
+    cline)  AC_BIN=cline; AC_LABEL="Cline (your Cline account, incl. its free models)"
+            AC_INSTALL="npm install -g cline" ;;
+    *) return 1 ;;
+  esac
+}
+
+# The tool's own sign-in, interactive.
+friday_agent_cli_login() {
+  case "$1" in
+    claude) claude auth login ;;
+    codex)  codex login ;;
+    agy)    echo "Antigravity opens; sign in, then type /exit (or press Ctrl+C twice)."; agy ;;
+    cline)  cline auth ;;
+  esac
+}
+
+# One headless answer, no tools: the same way the daemon asks (prints it).
+friday_agent_cli_ask() { # <name> <prompt>
+  local dir; dir=$(mktemp -d)
+  (
+    cd "$dir" || exit 1
+    case "$1" in
+      claude) timeout 120 claude -p "$2" --output-format text ;;
+      codex)  timeout 120 codex exec --skip-git-repo-check --sandbox read-only "$2" ;;
+      agy)    timeout 120 agy -p "$2" --mode plan ;;
+      cline)  timeout 120 cline -p --auto-approve false "$2" ;;
+    esac
+  ) </dev/null
+  local rc=$?
+  rm -rf "$dir"
+  return $rc
+}
+
+friday_agent_clis_write() { # <comma list>: rewrite FRIDAY_AGENT_CLIS in friday.env
+  local list="$1" env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
+  mkdir -p "$(dirname "$env_file")"
+  (
+    umask 077
+    {
+      grep -v '^FRIDAY_AGENT_CLIS=' "$env_file" 2>/dev/null || true
+      [ -z "$list" ] || echo "FRIDAY_AGENT_CLIS=$list"
+    } >"$env_file.tmp"
+    mv -f "$env_file.tmp" "$env_file"
+  )
+}
+
+friday_agent_clis_current() {
+  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
+  sed -n 's/^FRIDAY_AGENT_CLIS=//p' "$env_file" 2>/dev/null | tail -n1
+}
+
+friday_connect() {
+  local name="${1:-}" choice reply list
+  if [ -z "$name" ]; then
+    command -v gum >/dev/null || { echo "usage: friday connect <claude|codex|agy|cline>" >&2; return 1; }
+    echo "Use an AI account you already have. FRIDAY asks through its own app,"
+    echo "with your sign-in; it never sees your password or token."
+    choice=$(gum choose --cursor="❯ " \
+      "Claude Code (Anthropic account)" "Codex (OpenAI / ChatGPT account)" \
+      "Antigravity (Google account)" "Cline (Cline account, incl. its free models)") || return 1
+    case "$choice" in
+      Claude*) name=claude ;; Codex*) name=codex ;; Antigravity*) name=agy ;; Cline*) name=cline ;;
+    esac
+  fi
+  friday_agent_cli_info "$name" || { echo "unknown account '$name' (claude, codex, agy, cline)" >&2; return 1; }
+  if ! command -v "$AC_BIN" >/dev/null; then
+    echo "$AC_LABEL needs its app, '$AC_BIN', which isn't installed. Install it with:" >&2
+    echo "  $AC_INSTALL" >&2
+    echo "then run: friday connect $name" >&2
+    return 1
+  fi
+  echo "Checking $AC_LABEL…"
+  if ! reply=$(friday_agent_cli_ask "$name" "Reply with the single word: ready" 2>/dev/null) || [ -z "${reply// /}" ]; then
+    echo "Not signed in yet: signing in to $AC_LABEL."
+    friday_agent_cli_login "$name" || true
+    if ! reply=$(friday_agent_cli_ask "$name" "Reply with the single word: ready" 2>/dev/null) || [ -z "${reply// /}" ]; then
+      echo "$AC_LABEL didn't answer, so it isn't connected. Sign in with '$AC_BIN', then run: friday connect $name" >&2
+      return 1
+    fi
+  fi
+  list=$(friday_agent_clis_current)
+  case ",$list," in *",$name,"*) ;; *) list="${list:+$list,}$name" ;; esac
+  friday_agent_clis_write "$list"
+  echo "Connected $AC_LABEL. FRIDAY answers with it first and falls back to the free models."
+  echo "What you ask through it follows that account's own terms."
+  if systemctl --user restart friday-linux-daemon 2>/dev/null; then
+    echo "Restarted FRIDAY. Press Super+Y to ask something."
+  else
+    echo "Saved, but could not restart the daemon; run: friday daemon restart" >&2
+  fi
+}
+
+friday_disconnect() {
+  local name="${1:-}" list=""
+  friday_agent_cli_info "$name" || { echo "usage: friday disconnect <claude|codex|agy|cline>" >&2; return 1; }
+  local item
+  IFS=, read -ra items <<<"$(friday_agent_clis_current)"
+  for item in "${items[@]}"; do [ -n "$item" ] && [ "$item" != "$name" ] && list="${list:+$list,}$item"; done
+  friday_agent_clis_write "$list"
+  echo "FRIDAY no longer uses $AC_LABEL (you stay signed in to it; sign out there if you want)."
+  systemctl --user restart friday-linux-daemon 2>/dev/null || true
+}
+
+# Free models keep what they're sent, more often than not.
+FRIDAY_FREE_NOTICE="Free models (OpenCode Zen, Kilo) may keep what you send them, including screenshots and selected text, and may use it for training. For anything private, use your own key (friday setup-ai) or account (friday connect)."
+
 # `friday welcome`: one-time first-login greeting (autostarted by Hyprland).
 friday_welcome() {
   local stamp="${XDG_STATE_HOME:-$HOME/.local/state}/friday/welcomed"
@@ -379,12 +504,13 @@ friday_welcome() {
   local name action
   name=$(getent passwd "${USER:-$(id -un)}" | cut -d: -f5 | cut -d, -f1 || true); name="${name:-${USER:-friend}}"
   local body="Press Super+Y to ask me anything, Super+Alt+Y about selected text, Super+Ctrl+Y about your screen."
-  grep -qE '^[A-Z_]+_API_KEY=.+' "$env_file" 2>/dev/null \
-    || body="$body I'm on OpenCode Zen's free models; add your own key any time."
-  action=$(notify-send -a FRIDAY -t 20000 -A keys="Show shortcuts" -A setup="Choose AI provider" \
+  grep -qE '^([A-Z_]+_API_KEY|FRIDAY_AGENT_CLIS)=.+' "$env_file" 2>/dev/null \
+    || body="$body I'm on free models (OpenCode Zen, then Kilo), which may keep what you send. Connect your own account or key for private work."
+  action=$(notify-send -a FRIDAY -t 20000 -A keys="Show shortcuts" -A connect="Connect an account" -A setup="Choose AI provider" \
     "Hello, $name. I'm FRIDAY." "$body" 2>/dev/null || true)
   case "$action" in
     setup) foot -T "FRIDAY setup" bash -c 'friday setup-ai; echo; read -rsn1 -p "Press any key to close."' ;;
+    connect) foot -T "FRIDAY · connect an account" bash -c 'friday connect; echo; read -rsn1 -p "Press any key to close."' ;;
     keys)  notify-send -a FRIDAY -t 20000 "FRIDAY shortcuts" \
              $'Super+Y  ask\nSuper+Alt+Y  ask about selected text\nSuper+Ctrl+Y  ask about the screen\nfriday doctor  check health\nfriday answers  past answers' ;;
   esac
@@ -628,6 +754,14 @@ case "${1:-}" in
   setup-ai)
     shift
     friday_setup_ai "$@"
+    ;;
+  connect)
+    shift
+    friday_connect "$@"
+    ;;
+  disconnect)
+    shift
+    friday_disconnect "$@"
     ;;
   welcome)
     shift
