@@ -497,6 +497,11 @@ pub fn screen_route(user_providers: &[String], vision_providers: &[String]) -> S
     ScreenRoute::Refuse(msg)
 }
 
+/// Default deadline for screen context requests (45 s). Vision requests carrying
+/// large PNG base64 payloads require extra transmission and visual token processing
+/// time, whereas text asks use the daemon's 15 s deadline.
+pub const DEFAULT_SCREEN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(45);
+
 /// Sends the gated Screen payload to a model that can see images. With a
 /// provider named (FRIDAY_CONTEXT_PROVIDER), that provider's vision model;
 /// otherwise as [`screen_route`] decides. On a Windows dev host the daemon's
@@ -1101,5 +1106,57 @@ mod tests {
             }
         }
         let _ = std::fs::remove_file(&state_path);
+    }
+
+    #[tokio::test]
+    async fn fabric_provider_seam_pinned_provider_honors_timeout_with_mock_server_that_never_answers(
+    ) {
+        use tokio::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            if let Ok((socket, _)) = listener.accept().await {
+                // Accept connection and sleep: never reply
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                drop(socket);
+            }
+        });
+
+        let mut fabric = friday_intelligence::InferenceFabric::new();
+        fabric.request_timeout = Some(std::time::Duration::from_millis(150));
+        let provider_name = "mock_pinned_vision";
+        fabric.register_provider(Box::new(friday_intelligence::OpenAiProvider {
+            name: provider_name.to_string(),
+            base_url: format!("http://{addr}/v1"),
+            api_key: String::new(),
+        }));
+        fabric.register_model(friday_intelligence::ModelInfo {
+            id: "mock_model".to_string(),
+            family: "vision".to_string(),
+            provider: provider_name.to_string(),
+            latency_ms: 10,
+            reliability: 1.0,
+            capabilities: vec![friday_intelligence::ModelCapability::Vision],
+            max_context: 4096,
+            tier: Some(friday_intelligence::CapabilityTier::VisionFree),
+        });
+
+        let seam = FabricProviderSeam::new(Arc::new(fabric), Some(provider_name));
+        let payload = "SCREEN_CAPTURE mime=image/png geometry=fullscreen bytes=3 data=QUJD\nQUESTION: what is this?";
+        let start = std::time::Instant::now();
+        let err = seam
+            .send(payload)
+            .await
+            .expect_err("must timeout when server hangs");
+        let elapsed = start.elapsed();
+
+        assert!(
+            err.contains("timed out"),
+            "expected timeout error message, got: {err}"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "call must fail within deadline (~150ms), took {elapsed:?}"
+        );
     }
 }
