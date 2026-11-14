@@ -32,9 +32,9 @@ if [[ "${TERM:-}" == linux ]]; then
 fi
 # Glyphs the console's Terminus font lacks (✓ ✗, rounded corners) have
 # stand-ins there.
-FRIDAY_OK_GLYPH="✓" FRIDAY_ERR_GLYPH="✗" FRIDAY_BORDER_STYLE=rounded
+FRIDAY_OK_GLYPH="✓" FRIDAY_ERR_GLYPH="✗" FRIDAY_BORDER_STYLE=rounded FRIDAY_CURSOR="❯ "
 if [[ "${TERM:-}" == linux ]]; then
-  FRIDAY_OK_GLYPH="■" FRIDAY_ERR_GLYPH="×" FRIDAY_BORDER_STYLE=normal
+  FRIDAY_OK_GLYPH="■" FRIDAY_ERR_GLYPH="×" FRIDAY_BORDER_STYLE=normal FRIDAY_CURSOR="> "
 fi
 
 # On the Linux console: the palette above and a Terminus font sized so the

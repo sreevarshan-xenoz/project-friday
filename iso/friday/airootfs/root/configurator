@@ -38,7 +38,7 @@ leave_menu() {
     friday_banner "SETUP PAUSED"
     [[ -n "$why" ]] && friday_say "$why"
     echo
-    case "$(gum choose --cursor="❯ " "Start setup again" "Open a shell" "Reboot" "Power off")" in
+    case "$(gum choose --cursor="$FRIDAY_CURSOR" "Start setup again" "Open a shell" "Reboot" "Power off")" in
       "Start setup again") exec "$0" ;;
       "Open a shell")
         friday_note "Type 'exit' to come back to setup."
@@ -102,7 +102,7 @@ step_network() {
     fi
     friday_warn "I can't reach the package mirrors, and I need them to install."
     echo
-    case "$(gum choose --cursor="❯ " "Connect to Wi-Fi" "Check again (I plugged in a cable)" "Open a shell to fix it" "Quit setup")" in
+    case "$(gum choose --cursor="$FRIDAY_CURSOR" "Connect to Wi-Fi" "Check again (I plugged in a cable)" "Open a shell to fix it" "Quit setup")" in
       "Connect to Wi-Fi") connect_wifi || true ;;
       "Check again"*) ;;
       "Open a shell"*) friday_note "Type 'exit' when done."; bash -l || true ;;
@@ -137,7 +137,7 @@ step_disk() {
   [[ -n "$boot_dev" ]] && friday_note "  Your boot USB ($boot_dev) is protected and not listed."
   friday_head "Where should FRIDAY live?"
   friday_note "  The whole disk will be erased."
-  TARGET_LABEL=$(printf '%s\n' "${labels[@]}" | gum choose --cursor="❯ " --height=8) || leave_menu
+  TARGET_LABEL=$(printf '%s\n' "${labels[@]}" | gum choose --cursor="$FRIDAY_CURSOR" --height=8) || leave_menu
   TARGET_DISK=$(awk -F'│' '{print $1}' <<<"$TARGET_LABEL" | xargs)
 }
 
@@ -220,7 +220,7 @@ step_look() {
   friday_head "Desktop"
   local v
   friday_note "  Colours. Change them any time in the controls drawer (Look) or with friday shell palette."
-  v=$(gum choose --cursor="❯ " --height=10 --selected="$THEME" \
+  v=$(gum choose --cursor="$FRIDAY_CURSOR" --height=10 --selected="$THEME" \
     "FRIDAY Shell (Ember, made for FRIDAY)" \
     "FRIDAY Shell Frost (cool slate, ice blue)" \
     "FRIDAY Shell Moss (dark olive, lichen green)" \
@@ -234,14 +234,14 @@ step_look() {
     echo
     friday_head "Window manager"
     friday_note "  Both are installed; pick the other one at the login screen any time."
-    v=$(gum choose --cursor="❯ " --height=4 --selected="$SESSION" \
+    v=$(gum choose --cursor="$FRIDAY_CURSOR" --height=4 --selected="$SESSION" \
       "Hyprland (tiling, the FRIDAY OS default)" \
       "niri (scrollable tiling: windows in an endless row)") && SESSION="$v"
     friday_ok "$SESSION"
     echo
     friday_head "Style"
     friday_note "  Where the bar sits and its shape; windows' gaps and corners follow it."
-    v=$(gum choose --cursor="❯ " --height=5 --selected="$SHELL_STYLE" \
+    v=$(gum choose --cursor="$FRIDAY_CURSOR" --height=5 --selected="$SHELL_STYLE" \
       "Ember (bar flush with the top edge)" \
       "Island (floating pills along the top)" \
       "Dock (floating bar along the bottom)") && SHELL_STYLE="$v"
@@ -249,7 +249,7 @@ step_look() {
   fi
   echo
   friday_head "Login screen"
-  v=$(gum choose --cursor="❯ " --height=8 --selected="$SDDM_THEME" \
+  v=$(gum choose --cursor="$FRIDAY_CURSOR" --height=8 --selected="$SDDM_THEME" \
     "SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)" \
     "SilentSDDM Classic (Minimal Dark Smoky)" \
     "SilentSDDM Rei (Animated Cyberpunk)" \
@@ -269,7 +269,7 @@ step_ai() {
   friday_note "  Free models may keep what you send them, screenshots included; use your own key or account for private work."
   echo
   local choice key
-  choice=$(gum choose --cursor="❯ " --height=8 \
+  choice=$(gum choose --cursor="$FRIDAY_CURSOR" --height=8 \
     "OpenCode Zen (free, no key needed)" \
     "Google Gemini (vision, free tier)" \
     "Groq (fast, vision)" \
@@ -325,7 +325,7 @@ review() {
     echo
     gum style --margin "0 0 0 $FRIDAY_INDENT" --foreground "$FRIDAY_WARNING" --bold "Installing erases everything on $TARGET_DISK."
     echo
-    case "$(gum choose --cursor="❯ " \
+    case "$(gum choose --cursor="$FRIDAY_CURSOR" \
         "Install FRIDAY OS" "Change disk" "Change names" "Change password" \
         "Change region" "Change desktop" "Change AI" "Quit setup")" in
       "Install FRIDAY OS")
