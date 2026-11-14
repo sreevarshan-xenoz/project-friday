@@ -9,7 +9,7 @@ public static partial class Providers
 {
     public static readonly IReadOnlyList<Provider> All =
     [
-        new("opencode", "OpenCode Zen (free, no key needed)", "OPENCODE_API_KEY", true, true),
+        new("opencode", "Free models: OpenCode Zen, then Kilo (no key, no sign-in)", "OPENCODE_API_KEY", true, true),
         new("gemini", "Google Gemini (vision, free tier)", "GEMINI_API_KEY", true, false),
         new("groq", "Groq (fast, vision)", "GROQ_API_KEY", true, false),
         new("nvidia-nim", "NVIDIA NIM (vision)", "NVIDIA_NIM_API_KEY", true, false),
