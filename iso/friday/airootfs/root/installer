@@ -202,7 +202,8 @@ pacstrap_with_retry /mnt base linux linux-firmware sudo zsh hyprland sddm uwsm q
   qt6-positioning ttf-material-symbols-variable \
   kirigami kdialog syntax-highlighting chromium libnotify niri xwayland-satellite \
   udiskie inotify-tools xdg-terminal-exec nautilus hyprpicker power-profiles-daemon \
-  bluez bluez-utils sof-firmware alsa-utils noto-fonts-emoji wireless-regdb less
+  bluez bluez-utils sof-firmware alsa-utils noto-fonts-emoji wireless-regdb less \
+  btop xdg-user-dirs
 live_status_stop
 
 genfstab -U /mnt >> /mnt/etc/fstab
