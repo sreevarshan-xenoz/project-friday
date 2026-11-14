@@ -251,7 +251,7 @@ pub fn capabilities() -> Vec<friday_capabilities::model::Capability> {
     friday_capabilities::builtins::terminal()
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::time::Duration;
