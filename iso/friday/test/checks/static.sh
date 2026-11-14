@@ -121,6 +121,8 @@ if need niri jq; then
   for key in 'Mod+Y ' 'Mod+Alt+Y ' 'Mod+Ctrl+Y '; do
     grep -q "^ *$key" "$REPO_ROOT/packaging/linux/niri/friday.kdl" && pass "niri binds $key" || fail "niri does not bind $key"
   done
+elif [[ "${CI:-}" == "true" ]]; then
+  fail "niri config validation (needs niri, jq)"
 else skip "niri config validation (needs niri, jq)"; fi
 
 echo "FRIDAY comes from its package, not loose files in airootfs"
