@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using WindowsHost.IPC;
 using WindowsHost.Model;
@@ -44,13 +45,42 @@ public class TypeHandler : IActionHandler
         Native.SetForegroundWindow(hwnd);
         Thread.Sleep(50);
 
-        // Send each character through the active keyboard layout.
-        foreach (var c in text)
+        var inputs = BuildInputs(text);
+        if (inputs.Length > 0)
         {
-            Native.keybd_event((byte)c, 0, 0, UIntPtr.Zero);
-            Native.keybd_event((byte)c, 0, Native.KEYEVENTF_KEYUP, UIntPtr.Zero);
+            Native.SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Native.INPUT>());
         }
         return new BridgeResponse { Ok = true, Output = Serde.ToElement(new { ok = true }) };
+    }
+
+    public static Native.INPUT[] BuildInputs(string text)
+    {
+        var inputs = new Native.INPUT[text.Length * 2];
+        for (var i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+            inputs[2 * i] = new Native.INPUT
+            {
+                type = Native.INPUT_KEYBOARD,
+                ki = new Native.KEYBDINPUT
+                {
+                    wVk = 0,
+                    wScan = c,
+                    dwFlags = Native.KEYEVENTF_UNICODE,
+                },
+            };
+            inputs[2 * i + 1] = new Native.INPUT
+            {
+                type = Native.INPUT_KEYBOARD,
+                ki = new Native.KEYBDINPUT
+                {
+                    wVk = 0,
+                    wScan = c,
+                    dwFlags = Native.KEYEVENTF_UNICODE | Native.KEYEVENTF_KEYUP,
+                },
+            };
+        }
+        return inputs;
     }
 }
 
