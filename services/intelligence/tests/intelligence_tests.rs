@@ -343,11 +343,15 @@ async fn test_inference_fabric_advanced_features() {
 async fn test_inference_fabric_persistence_and_telemetry() {
     use friday_intelligence::{InferenceFabric, ModelClient, ModelInfo, RoutingMode};
 
-    // Clean up before test
-    let _ = std::fs::remove_dir_all(".fabric");
+    // Its own directory: other tests in this binary run in parallel and use
+    // the default `.fabric/` in the working directory.
+    let dir = std::env::temp_dir().join(format!("friday-fabric-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
 
     let mut fabric = InferenceFabric::new();
     fabric.default_mode = RoutingMode::Free;
+    fabric.fabric_dir = dir.clone();
+    fabric.health_state_path = dir.join("provider_health.json");
 
     let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     fabric.register_provider(Box::new(TestProvider {
@@ -372,16 +376,16 @@ async fn test_inference_fabric_persistence_and_telemetry() {
     assert_eq!(res, "Metric Response");
 
     // Assert files are created
-    assert!(std::path::Path::new(".fabric/provider_health.json").exists());
-    assert!(std::path::Path::new(".fabric/metrics.jsonl").exists());
+    assert!(dir.join("provider_health.json").exists());
+    assert!(dir.join("metrics.jsonl").exists());
 
     // Assert metrics.jsonl contains valid JSON
-    let metrics_content = std::fs::read_to_string(".fabric/metrics.jsonl").unwrap();
+    let metrics_content = std::fs::read_to_string(dir.join("metrics.jsonl")).unwrap();
     assert!(metrics_content.contains("request_id"));
     assert!(metrics_content.contains("model-1"));
 
     // Clean up after test
-    let _ = std::fs::remove_dir_all(".fabric");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 // ======================================================================
