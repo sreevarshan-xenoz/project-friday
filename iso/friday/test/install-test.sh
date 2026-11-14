@@ -147,6 +147,23 @@ check "omarchy-* commands are on a login shell's PATH" 'bash -lc "command -v oma
 check "friday in zsh is the FRIDAY CLI, not an alias" 'w=$(zsh -c "source ~/.zshrc >/dev/null 2>&1; whence -w friday"); echo "$w"; [ "$w" = "friday: command" ]'
 check "friday doctor finds no problems" 'friday doctor'
 
+# The lock screen locks, takes the password typed on the VM's keyboard, and
+# locks again after that (a stale lock state once made the second lock a no-op).
+lock_state() { vm friday "$session_env; bash -lc 'omarchy-shell lock isLocked'" 2>/dev/null; }
+lock_round() {
+  vm friday "$session_env; bash -lc 'omarchy-shell lock lock'" >/dev/null 2>&1; sleep 3
+  [[ "$(lock_state)" == true ]] || { echo "did not lock"; return 1; }
+  for k in f r i d a y ret; do monitor "sendkey $k 60" >/dev/null; sleep 0.2; done
+  sleep 6
+  [[ "$(lock_state)" == false ]] || { echo "the password did not unlock it"; return 1; }
+}
+if out=$(vm friday 'test -f /etc/pam.d/omarchy-lock-password' 2>&1); then echo "  ok   the lock screen has its PAM service"
+else echo "  FAIL the lock screen has no /etc/pam.d/omarchy-lock-password"; FAILS=$((FAILS + 1)); fi
+for round in 1 2; do
+  if out=$(lock_round 2>&1); then echo "  ok   lock screen round $round: locks, then the password unlocks it"
+  else echo "  FAIL lock screen round $round: $out"; FAILS=$((FAILS + 1)); fi
+done
+
 log "saving a screenshot and logs"
 monitor "screendump $WORK/desktop.ppm" || true
 sleep 2
