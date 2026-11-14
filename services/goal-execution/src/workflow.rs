@@ -882,8 +882,13 @@ impl WorkflowEngine {
         for wave_start in (0..stage.children.len()).step_by(stage.max_parallel) {
             let wave_end = (wave_start + stage.max_parallel).min(stage.children.len());
             let mut jobs: Vec<StageChildJob> = Vec::new();
-            for sub in wave_start..wave_end {
-                let child = &stage.children[sub];
+            for (sub, child) in stage
+                .children
+                .iter()
+                .enumerate()
+                .take(wave_end)
+                .skip(wave_start)
+            {
                 // Idempotent replay: a child that verified in a prior run is
                 // never re-dispatched — its evidence is already durable.
                 if cp.journal.iter().any(|e| {
