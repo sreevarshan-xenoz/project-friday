@@ -6,6 +6,8 @@ import qs.services
 
 // FRIDAY's own drawer: what it is doing, a place to ask, and what it said
 // last. Opening it sends nothing; a question goes out only on Enter or Send.
+// While you type, past answers that match show under the box; picking one
+// opens it in the answer pill (nothing is asked again).
 FocusScope {
   id: root
 
@@ -135,6 +137,64 @@ FocusScope {
           iconSize: 18
           active: input.text.trim() !== ""
           onClicked: root.send()
+        }
+      }
+    }
+
+    // Past answers matching what's typed, newest first.
+    ColumnLayout {
+      Layout.fillWidth: true
+      visible: matches.count > 0
+      spacing: 4
+
+      Label {
+        text: "Earlier answers"
+        color: Theme.subtext
+        font.pixelSize: Theme.fontS
+      }
+      Repeater {
+        id: matches
+        model: History.search(input.text, 4)
+        Rectangle {
+          required property var modelData
+          Layout.fillWidth: true
+          implicitHeight: 52
+          radius: Theme.radiusS
+          color: hit.containsMouse ? Theme.raised : Theme.surface
+
+          ColumnLayout {
+            anchors { fill: parent; leftMargin: 12; rightMargin: 12; topMargin: 6; bottomMargin: 6 }
+            spacing: 2
+            RowLayout {
+              Layout.fillWidth: true
+              Label {
+                Layout.fillWidth: true
+                text: modelData.goal
+                font.weight: Font.DemiBold
+              }
+              Label {
+                text: modelData.when
+                color: Theme.faint
+                font.pixelSize: Theme.fontS
+              }
+            }
+            Label {
+              Layout.fillWidth: true
+              text: modelData.body.replace(/\s+/g, " ")
+              color: Theme.subtext
+              font.pixelSize: Theme.fontS + 1
+            }
+          }
+          MouseArea {
+            id: hit
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: {
+              Answer.show(true, modelData.goal, modelData.body, "From " + modelData.when);
+              root.done();
+            }
+          }
         }
       }
     }
