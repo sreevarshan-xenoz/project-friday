@@ -70,14 +70,31 @@ fn pid_of(client: &Value) -> u32 {
 pub struct HyprlandScreenSensor {
     run: CommandFn,
     last: Option<ScreenObservation>,
+    /// Whether to read the window's pixels for `content_hash` (off for the
+    /// live daemon unless the person opts in: screen capture needs consent).
+    pixels: bool,
 }
 
 impl HyprlandScreenSensor {
     pub fn new(run: CommandFn) -> Self {
-        Self { run, last: None }
+        Self {
+            run,
+            last: None,
+            pixels: true,
+        }
+    }
+
+    /// Observe the focused window's identity and geometry only: no `grim`,
+    /// so `content_hash` is always `None`.
+    pub fn without_pixels(mut self) -> Self {
+        self.pixels = false;
+        self
     }
 
     fn content_hash(&self, client: &Value) -> Option<u64> {
+        if !self.pixels {
+            return None;
+        }
         let (x, y) = (client["at"][0].as_i64()?, client["at"][1].as_i64()?);
         let (w, h) = (client["size"][0].as_i64()?, client["size"][1].as_i64()?);
         if w <= 0 || h <= 0 {
@@ -225,6 +242,28 @@ mod tests {
             .lock()
             .unwrap()
             .contains(&"grim -s 0.25 -t ppm -g 10,20 800x600 -".to_string()));
+    }
+
+    #[tokio::test]
+    async fn screen_sensor_without_pixels_never_runs_grim() {
+        let grim_ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = grim_ran.clone();
+        let run: CommandFn = Arc::new(move |program: &str, _args: &[&str]| match program {
+            "hyprctl" => Some(
+                br#"{"address":"0x1","class":"kitty","title":"t","at":[0,0],"size":[100,100]}"#
+                    .to_vec(),
+            ),
+            "grim" => {
+                flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                Some(b"P6 pixels".to_vec())
+            }
+            _ => None,
+        });
+        let mut sensor = HyprlandScreenSensor::new(run).without_pixels();
+        let events = sensor.poll().await;
+        assert_eq!(events.len(), 1, "identity and geometry are still observed");
+        assert!(events[0].payload["content_hash"].is_null());
+        assert!(!grim_ran.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[tokio::test]

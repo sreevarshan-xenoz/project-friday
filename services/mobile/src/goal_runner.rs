@@ -573,6 +573,15 @@ fn web_query_from_instruction(instruction: &str) -> String {
         q
     }
 }
+/// Whether the Observe phase may read the focused window's pixels (to notice
+/// that its content changed). Off unless the person opts in with
+/// `FRIDAY_OBSERVE_PIXELS=1`: screen capture needs consent, and the window's
+/// title and geometry are observed either way.
+#[cfg(any(windows, target_os = "linux"))]
+fn observe_pixels() -> bool {
+    std::env::var("FRIDAY_OBSERVE_PIXELS").is_ok_and(|v| v == "1")
+}
+
 fn command_from_instruction(instruction: &str) -> String {
     // Only the user's own words: selected text and context blocks never run.
     let trimmed = friday_goal_execution::planning::goal_segment(instruction);
@@ -1330,7 +1339,12 @@ impl GoalRunner {
     #[cfg(windows)]
     fn live_observer(voice: &VoiceConfig) -> Option<Observer> {
         let mut loop_ = SensorLoop::new();
-        loop_.add(Box::new(WindowsScreenSensor::new()));
+        let screen = WindowsScreenSensor::new();
+        loop_.add(Box::new(if observe_pixels() {
+            screen
+        } else {
+            screen.without_pixels()
+        }));
         loop_.add(Box::new(WindowsFocusSensor::new()));
         if let Some(mic) = voice.sensor() {
             loop_.add(Box::new(mic));
@@ -1355,7 +1369,12 @@ impl GoalRunner {
             (out.status == Some(0)).then_some(out.stdout)
         });
         let mut loop_ = SensorLoop::new();
-        loop_.add(Box::new(HyprlandScreenSensor::new(run.clone())));
+        let screen = HyprlandScreenSensor::new(run.clone());
+        loop_.add(Box::new(if observe_pixels() {
+            screen
+        } else {
+            screen.without_pixels()
+        }));
         loop_.add(Box::new(HyprlandFocusSensor::new(run)));
         if let Some(mic) = voice.sensor() {
             loop_.add(Box::new(mic));
