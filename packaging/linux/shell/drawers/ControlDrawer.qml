@@ -178,14 +178,14 @@ FocusScope {
             color: Theme.subtext
           }
         }
-        IconButton { icon: Icons.previous; size: 30; onClicked: root.player.previous() }
+        IconButton { icon: Icons.previous; size: 30; onClicked: if (root.player) root.player.previous() }
         IconButton {
           icon: root.player && root.player.isPlaying ? Icons.pause : Icons.play
           size: 34
           active: true
-          onClicked: root.player.togglePlaying()
+          onClicked: if (root.player) root.player.togglePlaying()
         }
-        IconButton { icon: Icons.next; size: 30; onClicked: root.player.next() }
+        IconButton { icon: Icons.next; size: 30; onClicked: if (root.player) root.player.next() }
       }
     }
 
