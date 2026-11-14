@@ -182,6 +182,18 @@ out1=$(bash "$F" sent 1 2>&1 || true)
 contains "limit N prints last entry" "$out1" "Kilo"
 if grep -q "1,240 chars" <<<"$out1"; then fail "sent 1 printed older entries"; else pass "sent 1 limits table to last entry"; fi
 
+echo "local commands (no AI)"
+printf '#!/bin/sh\necho "wpctl $*" >>"%s"\n' "$LOG" >"$S/wpctl"; chmod +x "$S/wpctl"
+: >"$LOG"; bash "$F" ask "Volume 40"; sleep 0.3
+contains "volume: set on this computer" "$(cat "$LOG")" "wpctl set-volume @DEFAULT_AUDIO_SINK@ 40%"
+contains "volume: says what it did" "$(cat "$state/last-answer.md")" "Volume set to 40%."
+contains "local command says nothing was sent" "$(cat "$LOG")" "nothing was sent"
+if grep -q "friday-ctl" "$LOG"; then fail "a local command went to the daemon"; else pass "a local command never reaches the daemon"; fi
+: >"$LOG"; bash "$F" ask "timer 1 min"; sleep 0.3
+contains "timer: set" "$(cat "$state/last-answer.md")" "Timer set for 1 minute."
+: >"$LOG"; bash "$F" ask "what is the volume of a sphere"; sleep 0.3
+contains "a real question about volume still goes to the model" "$(cat "$LOG")" "friday-ctl"
+
 echo "confirm"
 : >"$LOG"; bash "$F" ask "gated action"; sleep 0.4
 contains "confirms before running action" "$(cat "$LOG")" "run=Run"
