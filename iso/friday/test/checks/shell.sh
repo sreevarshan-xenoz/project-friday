@@ -97,6 +97,14 @@ if timeout 10 qs -p "$FS" ipc call answer present true "What's using my disk?" "
 else
   fail "nothing answers the answer pill's IPC target"
 fi
+# Past answers, as friday ask writes them, are searchable.
+printf '# what is using my disk\n\n_2026-11-14 21:10_\n\nMostly photos.\n\n---\n\n# explain rust error E0308\n\n_2026-11-14 22:30_\n\n> fn main\n\nMismatched types.\n\n---\n\n' \
+  >"$XDG_STATE_HOME/friday/answers.md"
+sleep 1
+[[ "$(timeout 10 qs -p "$FS" ipc call history count 2>/dev/null)" == 2 ]] \
+  && pass "answer history reads past answers" || fail "answer history did not read answers.md"
+[[ "$(timeout 10 qs -p "$FS" ipc call history find "mismatched rust" 2>/dev/null)" == "explain rust error E0308" ]] \
+  && pass "answer history finds an answer by its words" || fail "answer history search found nothing"
 # Every style with a palette, switched live through shell.json as the Look
 # picker does: the bar, the FRIDAY drawer and the control drawer each time.
 mkdir -p "$HOME/.config/friday"
