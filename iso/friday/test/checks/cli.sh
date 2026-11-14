@@ -351,4 +351,44 @@ rm -rf "$HOME/.config/hypr"
 mkdir -p "$HOME/.config/quickshell/ii"; out=$(bash "$F" doctor 2>&1 || true)
 contains "FRIDAY OS (ii shell): checks the bar" "$out" "Quickshell bar"
 
+echo "report"
+mkdir -p "$HOME/.local/state/friday" "$HOME/.config/friday"
+printf '{"status":"running","last_goal":{"goal":"my private question","result":"my private answer","outcome":"completed","served_by":{"provider":"kilo","model":"m","ms":900}}}' \
+  >"$HOME/.local/state/friday/state.json"
+printf 'OPENCODE_API_KEY=s3cretvalue123456\nFRIDAY_AGENT_CLIS=agy\n' >"$HOME/.config/friday/friday.env"
+cat >"$S/journalctl" <<STUBLOG
+#!/bin/bash
+cat <<'LOG'
+daemon: provider error: Authorization: Bearer abcdefabcdef1234567890
+daemon: request api_key=sk-live-0123456789abcdefXYZ failed
+daemon: github token ghp_abcdefghijklmnopqrstuvwxyz0123456789 in env
+daemon: connect 192.0.2.44:443 from fe80::5054:ff:fe12:3456 mac 52:54:00:12:34:56
+daemon: mail person@example.com, file $HOME/notes/todo.txt
+daemon: listening on 127.0.0.1:18432 at 12:34:56
+-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ
+-----END OPENSSH PRIVATE KEY-----
+LOG
+STUBLOG
+chmod +x "$S/journalctl"
+out=$(bash "$F" report "$W/report.txt" 2>&1 || true)
+contains "report: says where it wrote" "$out" "Wrote $W/report.txt" || echo "$out" | head -n 20
+rep=$(cat "$W/report.txt" 2>/dev/null)
+for sec in Versions Session Doctor "AI providers" "Daemon state" "Daemon log"; do
+  contains "report: has the $sec section" "$rep" "== $sec"
+done
+for leak in s3cretvalue123456 abcdefabcdef1234567890 sk-live-0123456789abcdefXYZ ghp_abcdefghijklmnopqrstuvwxyz \
+            192.0.2.44 fe80::5054 52:54:00:12:34:56 person@example.com "$HOME/notes" b3BlbnNzaC1rZXkt \
+            "my private question" "my private answer"; do
+  if [[ "$rep" == *"$leak"* ]]; then fail "report: leaks '$leak'"; else pass "report: no '${leak:0:24}'"; fi
+done
+contains "report: names the configured key, not its value" "$rep" "key set: OPENCODE_API_KEY"
+contains "report: keeps who answered" "$rep" '"provider": "kilo"'
+contains "report: keeps loopback addresses" "$rep" "127.0.0.1:18432"
+contains "report: keeps timestamps" "$rep" "12:34:56"
+contains "report: private keys are replaced" "$rep" "<private key redacted>"
+contains "report: home path becomes ~" "$rep" "~/notes/todo.txt"
+mode=$(stat -c %a "$W/report.txt" 2>/dev/null)
+[[ "$mode" == 600 ]] && pass "report: written 0600" || fail "report: mode is $mode, not 600"
+
 finish

@@ -211,6 +211,7 @@ The packages aren't signed yet; they come over HTTPS from this repository's rele
 | `friday answers [--last]` | Past answers (kept private, in `~/.local/state/friday`) |
 | `friday shell style\|palette` | FRIDAY Shell's look, matched on Hyprland or niri |
 | `friday doctor` | Why isn't FRIDAY working? |
+| `friday report` | A redacted bug report to read, then share |
 
 ## Plan
 
