@@ -10,7 +10,7 @@ export PATH="$OMARCHY_PATH/bin:$PATH"
 # shellcheck source=friday-tui.sh
 source "$(dirname "$(readlink -f "$0")")/friday-tui.sh"
 
-STEPS=(NETWORK DISK IDENTITY SECURITY REGION LOOK AI REVIEW)
+STEPS=(NETWORK DISK REGION IDENTITY SECURITY LOOK AI REVIEW)
 
 # Defaults (also what an unattended run would use).
 TARGET_DISK="" TARGET_LABEL=""
@@ -130,7 +130,7 @@ step_disk() {
 }
 
 step_identity() {
-  screen 3
+  screen 4
   friday_head "Name your machine and yourself"
   local v
   while true; do
@@ -150,7 +150,7 @@ step_identity() {
 }
 
 step_security() {
-  screen 4
+  screen 5
   friday_head "Choose a password for $USERNAME"
   friday_note "  It's also used for sudo."
   local p1 p2
@@ -187,7 +187,7 @@ step_security() {
 }
 
 step_region() {
-  screen 5
+  screen 3
   friday_head "Region"
   local v
   friday_note "  Type to search, e.g. 'kolkata', 'berlin', 'new_york'."
@@ -197,6 +197,9 @@ step_region() {
   friday_note "  Keyboard layout, e.g. 'us', 'uk', 'de', 'fr'."
   v=$(friday_keymaps | gum filter --height=10 --placeholder="Keyboard (current: $KEYBOARD)") || true
   if friday_valid_keymap "${v:-}"; then KEYBOARD="$v"; fi
+  # Type the passwords that follow with this layout: the disk-unlock prompt
+  # and the login use it, so a password typed with another one wouldn't match.
+  loadkeys "$KEYBOARD" >/dev/null 2>&1 || true
   friday_ok "Keyboard: $KEYBOARD"
 }
 
@@ -316,7 +319,13 @@ review() {
       "Change disk") step_disk ;;
       "Change names") step_identity ;;
       "Change password") step_security ;;
-      "Change region") step_region ;;
+      "Change region")
+        local kb_before="$KEYBOARD"
+        step_region
+        if [[ "$KEYBOARD" != "$kb_before" ]]; then
+          friday_note "  The keyboard changed, so type your password again with it."
+          step_security
+        fi ;;
       "Change desktop") step_look ;;
       "Change AI") step_ai ;;
       *) leave_menu "Nothing was written to disk." ;;
@@ -329,9 +338,9 @@ review() {
 step_welcome
 step_network
 step_disk
+step_region
 step_identity
 step_security
-step_region
 step_look
 step_ai
 review
