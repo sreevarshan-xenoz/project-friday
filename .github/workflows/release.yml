@@ -8,6 +8,11 @@ name: Release
 # 0.1.<commit count>, so a release must be newer than those (0.2.0 or later)
 # for an installed CI build to upgrade to it.
 #
+# A release is only built from a commit that passes the whole of CI (ci.yml
+# runs first, as a required job), and the tag must match the version in
+# services/mobile/Cargo.toml, which the binaries and the Arch package report:
+# bump it in its own commit before tagging.
+#
 # Dry run: a pull request that changes this workflow or the packaging, or a
 # manual run, does everything above as version 0.0.<run number> except
 # publish; the run summary lists what the release would carry. So the first
@@ -35,6 +40,7 @@ jobs:
       tag: ${{ steps.v.outputs.tag }}
       publish: ${{ steps.v.outputs.publish }}
     steps:
+      - uses: actions/checkout@v4
       - id: v
         run: |
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then
@@ -43,15 +49,23 @@ jobs:
               echo "::error::release tags look like v1.2.3 (got $tag)"; exit 1
             fi
             version="${BASH_REMATCH[1]}" publish=true
+            crate=$(sed -n 's/^version *= *"\(.*\)"/\1/p' services/mobile/Cargo.toml | head -n1)
+            if [[ "$crate" != "$version" ]]; then
+              echo "::error::tag $tag but services/mobile/Cargo.toml says $crate: bump the crate version first"; exit 1
+            fi
           else
             version="0.0.${GITHUB_RUN_NUMBER}" tag="v0.0.${GITHUB_RUN_NUMBER}" publish=false
             echo "::notice::dry run: building $tag, nothing is published"
           fi
           { echo "version=$version"; echo "tag=$tag"; echo "publish=$publish"; } >>"$GITHUB_OUTPUT"
 
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
   arch:
     name: Arch package
-    needs: version
+    needs: [version, ci]
     runs-on: ubuntu-latest
     container: archlinux:latest
     steps:
@@ -79,7 +93,7 @@ jobs:
 
   windows:
     name: Windows MSI
-    needs: version
+    needs: [version, ci]
     runs-on: windows-latest
     defaults:
       run:

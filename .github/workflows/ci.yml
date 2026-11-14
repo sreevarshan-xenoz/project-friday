@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, dev]
   pull_request:
+  workflow_call: # release.yml runs all of CI before building a release
 
 env:
   CARGO_TERM_COLOR: always
