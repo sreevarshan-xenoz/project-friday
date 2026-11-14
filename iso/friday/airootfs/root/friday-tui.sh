@@ -33,6 +33,11 @@ export GUM_FILTER_HEADER_FOREGROUND="$FRIDAY_SECONDARY"
 export GUM_SPIN_SPINNER_FOREGROUND="$FRIDAY_ACCENT"
 export GUM_SPIN_TITLE_FOREGROUND="$FRIDAY_TEXT"
 export GUM_CHOOSE_HEADER=""
+# The Linux console has 16 colours: the ice-blue button becomes dark VT blue
+# and its dark label black, which can't be read. Use white on it there.
+if [[ "${TERM:-}" == linux ]]; then
+  export GUM_CONFIRM_SELECTED_FOREGROUND="#FFFFFF"
+fi
 
 # FRIDAY_FAST=1 (or a non-tty) disables the typewriter effect.
 friday_is_tty() { [[ -t 1 && "${FRIDAY_FAST:-0}" != "1" ]]; }
