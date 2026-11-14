@@ -32,5 +32,5 @@ ShellRoot {
 
   // Touch the singletons that must run from the start: the notification
   // server has to own the bus name before anything notifies.
-  Component.onCompleted: [Notifs.dnd, Shell.drawer, Friday.mode, Answer.state]
+  Component.onCompleted: [Notifs.dnd, Shell.drawer, Friday.mode, Answer.state, History.entries]
 }
