@@ -235,6 +235,14 @@ else
 fi
 grep -q 'friday-os/plugins/friday.bar' "$PROFILE_DIR/build-iso.sh" \
   && pass "build-iso.sh ships the friday.bar plugin" || fail "build-iso.sh does not ship friday.bar"
+grep -q 'friday-os/plugins/friday.lock' "$PROFILE_DIR/build-iso.sh" \
+  && pass "build-iso.sh ships the friday.lock plugin" || fail "build-iso.sh does not ship friday.lock"
+grep -q '"omarchy.lock"' "$AIROOTFS/root/installer" \
+  && pass "installer turns off Omarchy's lock screen for friday.lock" || fail "installer leaves omarchy.lock on next to friday.lock"
+if need jq; then
+  expect "friday.lock manifest is valid JSON" jq -e '.id == "friday.lock" and (.kinds | index("service"))' \
+    "$REPO_ROOT/friday-os/plugins/friday.lock/manifest.json"
+fi
 
 echo "Omarchy commands stay executable in the ISO"
 if [[ -x "$AIROOTFS/usr/share/omarchy/bin/omarchy-theme-set" ]]; then

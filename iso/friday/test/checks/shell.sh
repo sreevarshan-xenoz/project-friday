@@ -145,8 +145,22 @@ PY
     && pass "Omarchy's bar is off (friday.bar selected)" || fail "Omarchy's bar is still active"
   [[ "$(st omarchy.notifications enabled)" == false && "$(st omarchy.osd enabled)" == false ]] \
     && pass "Omarchy's notifications and OSD are off" || fail "Omarchy's notifications or OSD are still on"
-  [[ "$(st omarchy.lock enabled)" == true && "$(st omarchy.polkit enabled)" == true ]] \
-    && pass "Omarchy's lock screen and polkit agent stay on" || fail "Omarchy's lock screen or polkit agent is off"
+  [[ "$(st omarchy.lock enabled)" == false && "$(st friday.lock enabled)" == true ]] \
+    && pass "FRIDAY's lock screen replaces Omarchy's" || fail "lock screen plugins: omarchy.lock=$(st omarchy.lock enabled) friday.lock=$(st friday.lock enabled)"
+  [[ "$(st omarchy.polkit enabled)" == true ]] \
+    && pass "Omarchy's polkit agent stays on" || fail "Omarchy's polkit agent is off"
+  # friday.lock answers the lock IPC target that omarchy-system-lock, idle and
+  # lid close call; a load error would leave the session with no lock screen.
+  locked=$(timeout 10 qs -p "$W/omarchy/tree/shell" ipc call lock isLocked 2>/dev/null || true)
+  [[ "$locked" == false ]] && pass "friday.lock answers the lock IPC target" \
+    || fail "nothing answers the lock IPC target (got: ${locked:-nothing})"
+  # The lock screen as it looks, without locking the test session.
+  timeout 10 qs -p "$W/omarchy/tree/shell" ipc call lock preview >/dev/null 2>&1 && sleep 2 \
+    && grim "$W/lock-preview.png" 2>/dev/null || true
+  timeout 10 qs -p "$W/omarchy/tree/shell" ipc call lock hidePreview >/dev/null 2>&1 || true
+  warns=$(sed 's/\x1b\[[0-9;]*m//g' "$W/omarchy.log" | grep -E "plugins/friday\.lock" | sort -u || true)
+  if [[ -z "$warns" ]]; then pass "friday.lock loads without warnings"
+  else fail "friday.lock logs warnings:"; sed 's/^/      /' <<<"$warns"; fi
   kill "$QS" 2>/dev/null; wait "$QS" 2>/dev/null; QS=""
   # FRIDAY's own Omarchy plugins (the bar widget and the context dialog) must
   # load cleanly too, for anyone who keeps Omarchy's bar: put the widget in
