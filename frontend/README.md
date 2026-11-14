@@ -173,7 +173,7 @@ npm run build    # Production build to dist/
 Set `VITE_FRIDAY_WS` to point at a running `friday-mobile-daemon`:
 
 ```bash
-$env:VITE_FRIDAY_WS = "ws://192.168.1.50:18432"
+$env:VITE_FRIDAY_WS = "ws://192.0.2.10:18432"
 npm run dev
 ```
 
