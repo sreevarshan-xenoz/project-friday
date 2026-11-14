@@ -67,3 +67,8 @@ packaging/arch/*.pkg.tar.*
 packaging/arch/friday/
 packaging/arch/src/
 packaging/arch/pkg/
+
+# Build output and runtime state: never committed (rebuild the APK with
+# artifacts/android/build-debug-artifact.ps1 and check it against sha256.txt).
+*.apk
+.friday/

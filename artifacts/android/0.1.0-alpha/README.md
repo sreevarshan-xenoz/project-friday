@@ -6,7 +6,7 @@ engineering record is reproducible. This folder holds one released artifact.
 ## Layout
 ```
 0.1.0-alpha/
-   app-debug.apk     # the exact binary shown in the demo
+   app-debug.apk     # the exact binary shown in the demo (not in git: rebuild it and check sha256.txt)
    sha256.txt        # sha256 of app-debug.apk (verify before install)
    build-info.json   # provenance: git sha, timestamp, toolchain
    README.md         # this file
