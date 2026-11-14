@@ -171,6 +171,13 @@ pub fn discover_session_env(
         }
     }
 
+    let live_niri = current("NIRI_SOCKET").filter(|s| Path::new(s).exists());
+    if live_niri.is_none() {
+        if let Some(socket) = newest_niri_socket(dir) {
+            env.push(("NIRI_SOCKET".to_string(), socket));
+        }
+    }
+
     let live_display = current("WAYLAND_DISPLAY").filter(|d| dir.join(d).exists());
     if live_display.is_none() {
         if let Some(display) = first_wayland_display(dir) {
@@ -197,6 +204,27 @@ fn newest_hyprland_instance(hypr_dir: &Path) -> Option<String> {
         })
         .max()
         .map(|(_, sig)| sig)
+}
+
+/// The niri IPC socket (`niri.<display>.<pid>.sock`) touched most recently.
+fn newest_niri_socket(dir: &Path) -> Option<String> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            name.starts_with("niri.") && name.ends_with(".sock")
+        })
+        .filter_map(|entry| {
+            let modified = entry
+                .metadata()
+                .ok()?
+                .modified()
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            Some((modified, entry.path().display().to_string()))
+        })
+        .max()
+        .map(|(_, path)| path)
 }
 
 /// The lowest-numbered `wayland-N` socket in the runtime dir.
@@ -375,6 +403,30 @@ mod tests {
                 ("WAYLAND_DISPLAY".to_string(), "wayland-0".to_string()),
             ]
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// niri's socket (`niri.<display>.<pid>.sock`) is found the same way, so
+    /// `niri msg` works from a daemon started without NIRI_SOCKET.
+    #[test]
+    fn session_env_discovers_niri() {
+        let dir = runtime_dir(
+            "niri",
+            &["ended"],
+            &[],
+            &["wayland-1", "niri.wayland-1.4242.sock"],
+        );
+        let env = discover_session_env(Some(&dir), |_| None);
+        let sock = dir.join("niri.wayland-1.4242.sock").display().to_string();
+        assert!(
+            env.contains(&("NIRI_SOCKET".to_string(), sock.clone())),
+            "{env:?}"
+        );
+        // A live NIRI_SOCKET is kept.
+        let live = |k: &str| (k == "NIRI_SOCKET").then(|| sock.clone());
+        assert!(!discover_session_env(Some(&dir), live)
+            .iter()
+            .any(|(k, _)| k == "NIRI_SOCKET"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
