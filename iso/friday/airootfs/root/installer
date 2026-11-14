@@ -214,7 +214,12 @@ FRIDAY_PKG=$(find /opt/friday/repo -maxdepth 1 -name 'friday-git-*.pkg.tar.zst' 
 [[ -n "$FRIDAY_PKG" ]] || { echo "the FRIDAY package is missing from /opt/friday/repo" >&2; exit 1; }
 pacstrap_with_retry -U /mnt "$FRIDAY_PKG"
 mkdir -p /mnt/usr/bin
-ln -sf /usr/share/omarchy/bin/omarchy /mnt/usr/bin/omarchy
+# Omarchy's scripts expect /usr/bin/omarchy-* (its package's layout): its
+# env-bootstrap only adds /usr/share/omarchy/bin to PATH in dev-link mode, so
+# without these login shells (a console, SSH) can't find omarchy-* commands.
+for f in /usr/share/omarchy/bin/omarchy*; do
+  ln -sf "/usr/share/omarchy/bin/${f##*/}" "/mnt/usr/bin/${f##*/}"
+done
 ln -sf friday /mnt/usr/bin/friday-os
 
 mkdir -p /mnt/usr/share/omarchy
