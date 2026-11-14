@@ -90,52 +90,123 @@ pub trait CommandRunner: Send + Sync {
 /// `providers.rs:719/827/4007`), with an optional timeout. On a Windows dev host
 /// these tools are absent and calls fail loudly — tests must use
 /// [`FakeCommandRunner`].
-#[derive(Debug, Clone, Copy, Default)]
+/// Default timeout applied to commands run via [`RealCommandRunner`].
+pub const DEFAULT_RUNNER_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Real implementation: spawns `program` as a subprocess (the same pattern the
+/// Copilot CLI provider already uses in `friday-intelligence`, sources
+/// `providers.rs:719/827/4007`), with a timeout (default 10 s). On a Windows dev host
+/// these tools are absent and calls fail loudly — tests must use
+/// [`FakeCommandRunner`].
+#[derive(Debug, Clone, Copy)]
 pub struct RealCommandRunner {
     pub timeout: Option<Duration>,
 }
 
+impl Default for RealCommandRunner {
+    fn default() -> Self {
+        Self {
+            timeout: Some(DEFAULT_RUNNER_TIMEOUT),
+        }
+    }
+}
+
 impl CommandRunner for RealCommandRunner {
     fn run(&self, program: &str, args: &[String]) -> Result<CommandOutput, RunnerError> {
-        let program = program.to_string();
-        let args = args.to_vec();
-        let timeout = self.timeout;
-        let name = program.clone();
+        let timeout = self.timeout.unwrap_or(DEFAULT_RUNNER_TIMEOUT);
+        let name = program.to_string();
 
-        let run_once = move || {
-            let child = Command::new(&program)
-                .args(&args)
-                .envs(session_env())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .stdin(std::process::Stdio::null())
-                .spawn()
-                .map_err(|e| RunnerError::Io(format!("spawn '{program}': {e}")))?;
+        let mut cmd = Command::new(program);
+        cmd.args(args)
+            .envs(session_env())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .stdin(std::process::Stdio::null());
 
-            let output = child
-                .wait_with_output()
-                .map_err(|e| RunnerError::Io(format!("wait '{program}': {e}")))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
 
-            Ok::<_, RunnerError>(CommandOutput {
-                stdout: output.stdout,
-                stderr: output.stderr,
-                status: output.status.code(),
-            })
-        };
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| RunnerError::Io(format!("spawn '{program}': {e}")))?;
 
-        match timeout {
-            None => run_once(),
-            Some(d) => {
-                let (tx, rx) = std::sync::mpsc::channel();
-                std::thread::spawn(move || {
-                    let _ = tx.send(run_once());
-                });
-                // The worker always sends run_once's own Result; a failure to
-                // start the program (e.g. hyprctl not installed) is an Err to
-                // return, never a panic: it took the whole goal down with it.
-                rx.recv_timeout(d)
-                    .map_err(|_| RunnerError::Timeout(format!("'{name}' exceeded {d:?}")))?
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+
+        let stdout_thread = std::thread::spawn(move || {
+            let mut out = Vec::new();
+            if let Some(mut r) = stdout {
+                use std::io::Read;
+                let _ = r.read_to_end(&mut out);
             }
+            out
+        });
+
+        let stderr_thread = std::thread::spawn(move || {
+            let mut err = Vec::new();
+            if let Some(mut r) = stderr {
+                use std::io::Read;
+                let _ = r.read_to_end(&mut err);
+            }
+            err
+        });
+
+        let start = std::time::Instant::now();
+        let mut poll_interval = Duration::from_millis(5);
+
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let stdout = stdout_thread.join().unwrap_or_default();
+                    let stderr = stderr_thread.join().unwrap_or_default();
+                    return Ok(CommandOutput {
+                        stdout,
+                        stderr,
+                        status: status.code(),
+                    });
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = stdout_thread.join();
+                    let _ = stderr_thread.join();
+                    return Err(RunnerError::Io(format!("wait '{program}': {e}")));
+                }
+            }
+
+            if start.elapsed() >= timeout {
+                #[cfg(unix)]
+                {
+                    let pid = child.id();
+                    unsafe {
+                        libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
+                    }
+                }
+                #[cfg(windows)]
+                {
+                    let _ = std::process::Command::new("taskkill")
+                        .args(["/PID", &child.id().to_string(), "/T", "/F"])
+                        .status();
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(RunnerError::Timeout(format!(
+                    "'{name}' exceeded {timeout:?}"
+                )));
+            }
+
+            let remaining = timeout.saturating_sub(start.elapsed());
+            let sleep_dur = poll_interval.min(remaining);
+            if sleep_dur > Duration::ZERO {
+                std::thread::sleep(sleep_dur);
+            }
+            poll_interval = (poll_interval * 2).min(Duration::from_millis(50));
         }
     }
 }
@@ -286,6 +357,34 @@ mod tests {
                 "timeout={timeout:?}: {err:?}"
             );
         }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn real_command_runner_default_has_timeout() {
+        let runner = RealCommandRunner::default();
+        assert_eq!(runner.timeout, Some(Duration::from_secs(10)));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn real_command_runner_times_out_and_kills_child() {
+        let runner = RealCommandRunner {
+            timeout: Some(Duration::from_millis(100)),
+        };
+        let start = std::time::Instant::now();
+        let err = runner
+            .run("sleep", &["30".to_string()])
+            .expect_err("sleep 30 should time out");
+        let elapsed = start.elapsed();
+        assert!(
+            matches!(err, RunnerError::Timeout(_)),
+            "expected Timeout error, got {err:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(3),
+            "command should time out quickly, took {elapsed:?}"
+        );
     }
 
     #[test]

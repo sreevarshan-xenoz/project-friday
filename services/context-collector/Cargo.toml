@@ -11,3 +11,6 @@ description = "FRIDAY OS Context Collector (R5-2-5-1): pure OS capability that c
 [dependencies]
 friday-intelligence = { path = "../intelligence" }
 serde_json = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
