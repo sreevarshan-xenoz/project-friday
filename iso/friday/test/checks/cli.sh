@@ -44,6 +44,14 @@ EOF
 cat >"$S/notify-send" <<EOF
 #!/bin/bash
 echo "notify \$*" >> "$LOG"
+if [[ "\$*" == *again=* && -n "\$ACTION_AGAIN" ]]; then
+  if [[ ! -f "$W/again_done" ]]; then
+    touch "$W/again_done"
+    echo again
+    exit 0
+  fi
+fi
+[[ "\$*" == *copy=* && -n "\$ACTION_COPY" ]] && { echo copy; exit 0; }
 [[ "\$*" == *open=* ]] && echo open
 [[ "\$*" == *setup=* ]] && echo setup
 [[ "\$*" == *start=* ]] && echo start
@@ -51,6 +59,7 @@ echo "notify \$*" >> "$LOG"
 [[ "\$*" == *cancel=* && -n "\$CANCEL_CONFIRM" ]] && echo cancel
 true
 EOF
+printf '#!/bin/bash\necho "wl-copy: $(cat)" >> %q\n' "$LOG" >"$S/wl-copy"
 printf '#!/bin/bash\necho "foot $*" >> %q\n' "$LOG" >"$S/foot"
 printf '#!/bin/bash\necho "systemctl $*" >> %q\n[[ "$*" == *is-active* && -n "$STUB_INACTIVE" ]] && exit 3\nexit 0\n' "$LOG" >"$S/systemctl"
 printf '#!/bin/bash\n[[ "$*" == *--primary* ]] && { printf %%s "$PRIMARY"; exit 0; }\nprintf %%s "$CLIP"\n' >"$S/wl-paste"
@@ -66,6 +75,16 @@ contains "multi-line answer kept whole in the notification" "$(cat "$LOG")" $'Li
 contains "full answer saved" "$(cat "$state/last-answer.md")" "Last line."
 contains "notification offers Open" "$(cat "$LOG")" "open=Open full answer"
 contains "Open shows the answer" "$(cat "$LOG")" "foot -T FRIDAY · what is my uptime less -R"
+contains "notification offers Copy" "$(cat "$LOG")" "copy=Copy"
+contains "notification offers Ask again" "$(cat "$LOG")" "again=Ask again"
+
+: >"$LOG"; ACTION_COPY=1 bash "$F" ask "copy answer test"; sleep 0.3
+contains "Copy runs wl-copy with the answer text" "$(cat "$LOG")" "wl-copy: Line one."
+if grep -q "wl-copy: # " "$LOG"; then fail "Copy included markdown header"; else pass "Copy copies answer body only"; fi
+
+: >"$LOG"; rm -f "$W/again_done"
+ACTION_AGAIN=1 PICK="re-asked question" bash "$F" ask "first question"; sleep 0.5
+contains "Ask again re-invokes the ask" "$(cat "$LOG")" "friday-ctl re-asked\\ question"
 
 PRIMARY=$'error: E0308 mismatched types' PICK="explain this" bash "$F" ask --selection; sleep 0.3
 contains "selection sent as context" "$(cat "$LOG")" "Use this text as context"
@@ -80,12 +99,18 @@ else pass "password-shaped clipboard is never sent"; fi
 contains "and the user is told why" "$(cat "$LOG")" "looks like a password or token"
 : >"$LOG"; PRIMARY="hunter2SecretToken99" PICK="explain" bash "$F" ask -s; sleep 0.3
 contains "highlighted text is sent as chosen" "$(cat "$LOG")" "hunter2SecretToken99"
+: >"$LOG"; rm -f "$W/again_done"
+PRIMARY="selection context text" ACTION_AGAIN=1 PICK="explain more" bash "$F" ask --selection; sleep 0.5
+contains "Ask again: selection preserves --selection kind" "$(cat "$LOG")" "selection context text"
 : >"$LOG"; PRIMARY="" CLIP="" bash "$F" ask -s
 contains "empty selection explains what to do" "$(cat "$LOG")" "Select or copy some text first"
 PICK="what does this error mean" bash "$F" ask --screen; sleep 0.3
 contains "screen: asks the daemon with consent and the question" "$(cat "$LOG")" "friday-ctl-context context screen --yes --ask what does this error mean"
 contains "screen: prompt says a screenshot is shared" "$(cat "$LOG")" "a screenshot goes to your AI provider"
 contains "screen: full answer saved" "$(cat "$state/last-answer.md")" $'The error says E0308.\nFix the type.'
+: >"$LOG"; rm -f "$W/again_done"
+ACTION_AGAIN=1 PICK="screen follow-up" bash "$F" ask --screen; sleep 0.5
+contains "Ask again: screen preserves --screen kind" "$(cat "$LOG")" "friday-ctl-context context screen --yes --ask screen follow-up"
 bash "$F" ask "hit the limit"; sleep 0.3
 contains "free-limit error explained with a way out" "$(cat "$state/last-answer.md")" "free limit is used up for now"
 : >"$LOG"; bash "$F" ask "nodaemon test"; sleep 0.5
@@ -102,6 +127,8 @@ else pass "a model server refusing is not FRIDAY being down"; fi
 bash "$F" ask "this will fail"; sleep 0.3
 contains "failure is critical with the error" "$(cat "$LOG")" "-u critical"
 contains "failure shows the reason" "$(cat "$LOG")" "network unreachable"
+if grep -q "copy=Copy" "$LOG"; then fail "failure offered copy"; else pass "failure does not offer copy"; fi
+if grep -q "again=Ask again" "$LOG"; then fail "failure offered ask again"; else pass "failure does not offer ask again"; fi
 
 history=$(cat "$state/ask-history")
 if [[ "$(head -n1 <<<"$history")" == "this will fail" && "$history" != *Bonjour* ]]; then
