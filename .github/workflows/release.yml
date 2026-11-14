@@ -95,10 +95,30 @@ jobs:
           runuser -u builder -- env RUSTFLAGS= makepkg --noconfirm
       - name: Smoke test the package
         run: bash packaging/arch/check-package.sh packaging/arch/friday-git-*.pkg.tar.zst
+      # The update channel: a pacman repo (this package + its database) that
+      # installed systems pull from with pacman -Syu (see the installer's
+      # [friday] section). Checked with pacman itself before it is published.
+      - name: Pacman repo
+        run: |
+          mkdir -p packaging/arch/repo && cp packaging/arch/friday-git-*.pkg.tar.zst packaging/arch/repo/
+          cd packaging/arch/repo
+          repo-add -q friday.db.tar.gz friday-git-*.pkg.tar.zst
+          rm -f friday.db friday.files
+          cp friday.db.tar.gz friday.db && cp friday.files.tar.gz friday.files
+          printf '[options]\nArchitecture = auto\nSigLevel = Never\n[friday]\nServer = file://%s\n' "$PWD" > "$RUNNER_TEMP/repo.conf"
+          mkdir -p "$RUNNER_TEMP/repo-db"
+          pacman --config "$RUNNER_TEMP/repo.conf" --dbpath "$RUNNER_TEMP/repo-db" -Sy
+          pacman --config "$RUNNER_TEMP/repo.conf" --dbpath "$RUNNER_TEMP/repo-db" -Si friday-git | head -n 3
+          ls -l
       - uses: actions/upload-artifact@v4
         with:
           name: release-arch
           path: packaging/arch/friday-git-*.pkg.tar.zst
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pacman-repo
+          path: packaging/arch/repo/
           if-no-files-found: error
 
   windows:
@@ -226,6 +246,10 @@ jobs:
               *) echo "::error::unexpected file in the release: $f"; exit 1 ;;
             esac
           done
+      - uses: actions/download-artifact@v4
+        with:
+          name: pacman-repo
+          path: pacman-repo
       - name: Create the GitHub release
         if: needs.version.outputs.publish == 'true'
         env:
@@ -236,3 +260,20 @@ jobs:
             --title "FRIDAY ${{ needs.version.outputs.tag }}" \
             ${{ needs.version.outputs.prerelease == 'true' && '--prerelease' || '' }} \
             --generate-notes
+      # A fixed tag, so installed systems have one URL to update from (a
+      # pre-release is never "latest", so releases/latest wouldn't do). The
+      # new package and database go up first; the old package goes after, so
+      # the database never names a file that isn't there.
+      - name: Update the pacman repo
+        if: needs.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          repo="${{ github.repository }}"
+          gh release view pacman --repo "$repo" >/dev/null 2>&1 || gh release create pacman --repo "$repo" \
+            --prerelease --title "FRIDAY pacman repo (rolling)" \
+            --notes "The update channel for FRIDAY OS and Arch: each release replaces the friday-git package and database here. Add it with the [friday] section in the README."
+          gh release upload pacman pacman-repo/* --repo "$repo" --clobber
+          new=$(cd pacman-repo && ls friday-git-*.pkg.tar.zst)
+          gh release view pacman --repo "$repo" --json assets -q '.assets[].name' | grep '^friday-git-' | grep -vxF "$new" \
+            | while read -r old; do gh release delete-asset pacman "$old" --repo "$repo" -y; done

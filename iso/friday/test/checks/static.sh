@@ -138,6 +138,12 @@ grep -qx 'friday-git' "$PROFILE_DIR/packages.x86_64" && pass "live ISO installs 
   || fail "friday-git is not in packages.x86_64"
 grep -q 'pacstrap_with_retry -U /mnt "$FRIDAY_PKG"' "$AIROOTFS/root/installer" \
   && pass "installer installs the friday-git package" || fail "installer does not install friday-git"
+# The update channel: the installer's [friday] repo must be where release.yml
+# publishes (the rolling "pacman" release).
+if grep -q '^Server = https://github.com/sreevarshan-xenoz/project-friday/releases/download/pacman$' "$AIROOTFS/root/installer" \
+   && grep -q 'gh release upload pacman ' "$REPO_ROOT/.github/workflows/release.yml"; then
+  pass "installed systems update FRIDAY from the release workflow's pacman repo"
+else fail "the installer's [friday] repo and release.yml's pacman release don't match"; fi
 # bash sets $HOSTNAME to the live system's name, so an unattended install that
 # defaulted from it was named "archiso" (found in a VM install, 2026-11-14).
 if (unset FRIDAY_HOSTNAME; HOSTNAME=archiso; eval "$(grep -m1 '^HOSTNAME=' "$AIROOTFS/root/installer")"; [[ $HOSTNAME == friday ]]); then
