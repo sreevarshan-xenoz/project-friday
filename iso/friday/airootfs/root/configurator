@@ -108,13 +108,19 @@ step_network() {
 step_disk() {
   screen 2
   local boot_dev="" name type size model fstypes
-  if findmnt -n -o SOURCE /run/archiso/bootmnt >/dev/null 2>&1; then
-    boot_dev=$(findmnt -n -o SOURCE /run/archiso/bootmnt | sed 's/p\?[0-9]*$//')
+  # The disk the live system booted from: the parent of the partition mounted
+  # at bootmnt, resolved through any /dev/disk/by-* link.
+  local boot_src
+  if boot_src=$(findmnt -n -o SOURCE /run/archiso/bootmnt 2>/dev/null) && [[ -n "$boot_src" ]]; then
+    boot_src=$(readlink -f "$boot_src")
+    boot_dev=$(lsblk -n -d -o PKNAME "$boot_src" 2>/dev/null | head -n1)
+    boot_dev=${boot_dev:+/dev/$boot_dev}
+    [[ -n "$boot_dev" ]] || boot_dev="$boot_src"
   fi
   local labels=()
   while read -r name type size model; do
     [[ "$type" == "disk" && ! "$name" =~ ^(fd|loop|ram|sr|zram) ]] || continue
-    [[ -n "$boot_dev" && "/dev/$name" == "$boot_dev"* ]] && continue
+    [[ -n "$boot_dev" && "/dev/$name" == "$boot_dev" ]] && continue
     fstypes=$(lsblk -n -o FSTYPE "/dev/$name" 2>/dev/null | grep -v '^$' | sort -u | paste -sd, -)
     labels+=("/dev/$name │ $size │ ${model:-unknown model}${fstypes:+ │ has: $fstypes}")
   done < <(lsblk -d -n -o NAME,TYPE,SIZE,MODEL)
