@@ -212,6 +212,15 @@ phase_msg 4 "Installing FRIDAY and the Omarchy desktop layer"
 FRIDAY_PKG=$(find /opt/friday/repo -maxdepth 1 -name 'friday-git-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1)
 [[ -n "$FRIDAY_PKG" ]] || { echo "the FRIDAY package is missing from /opt/friday/repo" >&2; exit 1; }
 pacstrap_with_retry -U /mnt "$FRIDAY_PKG"
+# Updates: each FRIDAY release publishes friday-git to this pacman repo, so
+# pacman -Syu keeps FRIDAY current. Unsigned for now (fetched over HTTPS from
+# the project's GitHub releases).
+cat >>/mnt/etc/pacman.conf <<'PACMAN'
+
+[friday]
+SigLevel = Optional TrustAll
+Server = https://github.com/sreevarshan-xenoz/project-friday/releases/download/pacman
+PACMAN
 mkdir -p /mnt/usr/bin
 ln -sf /usr/share/omarchy/bin/omarchy /mnt/usr/bin/omarchy
 ln -sf friday /mnt/usr/bin/friday-os
