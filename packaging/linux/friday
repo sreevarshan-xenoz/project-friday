@@ -438,6 +438,7 @@ case "${1:-}" in
     fi
 
     ok=true
+    ctl_rc=0
     # One notification that fills in as the answer streams (-p gives its id,
     # -r replaces it); the final answer replaces it too. friday-ctl --stream
     # prints the answer so far as {"partial": ...} lines.
@@ -457,9 +458,72 @@ case "${1:-}" in
           shown="$partial"
         fi
       done
-      wait "$ctl" || ok=false
+      ctl_rc=0
+      wait "$ctl" || ctl_rc=$?
+      [ "$ctl_rc" -eq 0 ] || ok=false
       out=$(cat "$outf"); rm -f "$outf"
     }
+
+    show_answer() {
+      local ans_ok="$1" summary_json="$2" raw_out="$3"
+      local answer title details preview urgency actions
+      if $ans_ok; then
+        answer=$(jq -r '.result // empty' <<<"$summary_json")
+        [ -n "$answer" ] || answer="Done: $goal"
+        title="FRIDAY ✓"
+      else
+        answer=$(jq -r '.error // .outcome // empty' <<<"$summary_json")
+        [ -n "$answer" ] || answer="$raw_out"
+        # Plain-language messages for the failures people actually hit; the raw
+        # error stays in the saved answer for debugging.
+        details="$answer"
+        case "$answer$raw_out" in
+          *FreeUsageLimitError*)
+            answer="OpenCode Zen's free limit is used up for now. Try again later, or add your own key: friday setup-ai" ;;
+          # friday-ctl's own errors only: a provider's "Connection refused"
+          # (say, a local model server that isn't running) is not FRIDAY down.
+          *"no token found"*|*"cannot reach daemon"*)
+            answer="FRIDAY isn't running, so I couldn't ask. Start it and try again."
+            daemon_down=true ;;
+          *"timed out after"*)
+            answer="This is taking longer than expected. FRIDAY may still be working on it: check the bar icon, or run friday answers --last later." ;;
+          *) details="" ;;
+        esac
+        title="FRIDAY ✗ $goal"
+      fi
+
+      # Full answer on disk; the notification shows a preview with an Open button.
+      answer_file="$state_dir/last-answer.md"
+      {
+        printf '# %s\n\n_%s_\n\n' "$goal" "$(date '+%Y-%m-%d %H:%M')"
+        [ -n "$context" ] && printf '> %s\n\n' "$(head -c 300 <<<"$context" | tr '\n' ' ')"
+        printf '%s\n' "$answer"
+        [ -z "${details:-}" ] || printf '\n<details>\n\n```\n%s\n```\n' "$details"
+      } >"$answer_file"
+      cat "$answer_file" >>"$state_dir/answers.md"
+      printf '\n---\n\n' >>"$state_dir/answers.md"
+
+      preview="$answer"
+      [ "${#preview}" -le 220 ] || preview="${preview:0:217}…"
+      urgency=normal; $ans_ok || urgency=critical
+      actions=(-A open="Open full answer")
+      [ "${daemon_down:-false}" = true ] && actions=(-A start="Start FRIDAY")
+      # Replace the streaming notification rather than add a second one.
+      [ -z "${nid:-}" ] || actions+=(-r "$nid")
+      (
+        action=$(notify-send -a FRIDAY -u "$urgency" "${actions[@]}" "$title" "$preview" 2>/dev/null || true)
+        case "$action" in
+          open)
+            foot -T "FRIDAY · $goal" less -R "$answer_file" 2>/dev/null \
+              || xdg-open "$answer_file" 2>/dev/null || true ;;
+          start)
+            systemctl --user restart friday-linux-daemon 2>/dev/null \
+              && notify-send -a FRIDAY "FRIDAY" "Started. Ask again with Super+Y." 2>/dev/null || true ;;
+        esac
+      ) </dev/null >/dev/null 2>&1 &
+      disown 2>/dev/null || true
+    }
+
     if $use_screen; then
       # Pressing the key and typing the question is the per-use consent;
       # the daemon's ContextGate still enforces it.
@@ -474,61 +538,29 @@ case "${1:-}" in
       # The final {outcome,result,error} object; keep every line of the answer.
       summary=$(jq -s 'map(select(type == "object" and .outcome? != null)) | last // {}' <<<"$out" 2>/dev/null || echo '{}')
     fi
-    if $ok; then
-      answer=$(jq -r '.result // empty' <<<"$summary")
-      [ -n "$answer" ] || answer="Done: $goal"
-      title="FRIDAY ✓"
-    else
-      answer=$(jq -r '.error // .outcome // empty' <<<"$summary")
-      [ -n "$answer" ] || answer="$out"
-      # Plain-language messages for the failures people actually hit; the raw
-      # error stays in the saved answer for debugging.
-      details="$answer"
-      case "$answer$out" in
-        *FreeUsageLimitError*)
-          answer="OpenCode Zen's free limit is used up for now. Try again later, or add your own key: friday setup-ai" ;;
-        # friday-ctl's own errors only: a provider's "Connection refused"
-        # (say, a local model server that isn't running) is not FRIDAY down.
-        *"no token found"*|*"cannot reach daemon"*)
-          answer="FRIDAY isn't running, so I couldn't ask. Start it and try again."
-          daemon_down=true ;;
-        *"timed out after"*)
-          answer="This is taking longer than expected. FRIDAY may still be working on it: check the bar icon, or run friday answers --last later." ;;
-        *) details="" ;;
-      esac
-      title="FRIDAY ✗ $goal"
+
+    action_to_confirm=$(jq -r '.needs_confirmation.action // empty' <<<"$summary" 2>/dev/null || true)
+    if [ "$ctl_rc" -eq 3 ] && [ -n "$action_to_confirm" ]; then
+      confirm_actions=(-A run="Run" -A cancel="Cancel")
+      [ -z "${nid:-}" ] || confirm_actions+=(-r "$nid")
+      (
+        action=$(notify-send -a FRIDAY -u normal "${confirm_actions[@]}" "FRIDAY wants to run" "$action_to_confirm" 2>/dev/null || true)
+        case "$action" in
+          run)
+            conf_ok=true
+            conf_out=$(friday-ctl goal --wait --confirm "$action_to_confirm" "$request" 2>&1) || conf_ok=false
+            conf_summary=$(jq -s 'map(select(type == "object" and .outcome? != null)) | last // {}' <<<"$conf_out" 2>/dev/null || echo '{}')
+            show_answer "$conf_ok" "$conf_summary" "$conf_out"
+            ;;
+          cancel|*)
+            ;;
+        esac
+      ) </dev/null >/dev/null 2>&1 &
+      disown 2>/dev/null || true
+      exit 0
     fi
 
-    # Full answer on disk; the notification shows a preview with an Open button.
-    answer_file="$state_dir/last-answer.md"
-    {
-      printf '# %s\n\n_%s_\n\n' "$goal" "$(date '+%Y-%m-%d %H:%M')"
-      [ -n "$context" ] && printf '> %s\n\n' "$(head -c 300 <<<"$context" | tr '\n' ' ')"
-      printf '%s\n' "$answer"
-      [ -z "${details:-}" ] || printf '\n<details>\n\n```\n%s\n```\n' "$details"
-    } >"$answer_file"
-    cat "$answer_file" >>"$state_dir/answers.md"
-    printf '\n---\n\n' >>"$state_dir/answers.md"
-
-    preview="$answer"
-    [ "${#preview}" -le 220 ] || preview="${preview:0:217}…"
-    urgency=normal; $ok || urgency=critical
-    actions=(-A open="Open full answer")
-    [ "${daemon_down:-false}" = true ] && actions=(-A start="Start FRIDAY")
-    # Replace the streaming notification rather than add a second one.
-    [ -z "${nid:-}" ] || actions+=(-r "$nid")
-    (
-      action=$(notify-send -a FRIDAY -u "$urgency" "${actions[@]}" "$title" "$preview" 2>/dev/null || true)
-      case "$action" in
-        open)
-          foot -T "FRIDAY · $goal" less -R "$answer_file" 2>/dev/null \
-            || xdg-open "$answer_file" 2>/dev/null || true ;;
-        start)
-          systemctl --user restart friday-linux-daemon 2>/dev/null \
-            && notify-send -a FRIDAY "FRIDAY" "Started. Ask again with Super+Y." 2>/dev/null || true ;;
-      esac
-    ) </dev/null >/dev/null 2>&1 &
-    disown 2>/dev/null || true
+    show_answer "$ok" "$summary" "$out"
     ;;
   goal)
     shift

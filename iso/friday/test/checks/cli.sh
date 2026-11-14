@@ -21,6 +21,17 @@ if [[ "\$1" == context ]]; then
   printf 'friday-ctl-context %s\n' "\$*" >> "$LOG"
   printf '{\n "response": "The error says E0308.\\\\nFix the type."\n}\n'; exit 0
 fi
+if [[ "\$*" == *"--confirm"* ]]; then
+  printf 'friday-ctl-confirm %s\n' "\$*" >> "$LOG"
+  echo '{"accepted":true}'
+  printf '{\n "outcome": "completed",\n "result": "Confirmed and done."\n}\n'
+  exit 0
+fi
+if [[ "\$*" == *gated* ]]; then
+  echo '{"accepted":true}'
+  printf '{\n "outcome": "failed",\n "error": "Confirm to run: git status",\n "needs_confirmation": {\n   "tool": "terminal",\n   "action": "git status"\n }\n}\n'
+  exit 3
+fi
 printf 'friday-ctl %q\n' "\$3" >> "$LOG"
 echo '{"accepted":true}'
 if [[ "\$3" == *nodaemon* ]]; then echo "no token found; daemon not running at /x/state.json (is friday-linux-daemon up?)" >&2; exit 1; fi
@@ -36,6 +47,8 @@ echo "notify \$*" >> "$LOG"
 [[ "\$*" == *open=* ]] && echo open
 [[ "\$*" == *setup=* ]] && echo setup
 [[ "\$*" == *start=* ]] && echo start
+[[ "\$*" == *run=* && -z "\$CANCEL_CONFIRM" ]] && echo run
+[[ "\$*" == *cancel=* && -n "\$CANCEL_CONFIRM" ]] && echo cancel
 true
 EOF
 printf '#!/bin/bash\necho "foot $*" >> %q\n' "$LOG" >"$S/foot"
@@ -95,6 +108,18 @@ if [[ "$(head -n1 <<<"$history")" == "this will fail" && "$history" != *Bonjour*
   pass "history: newest first, questions only"
 else fail "history order/content: $(tr '\n' '|' <<<"$history")"; fi
 expect "friday answers --last prints the last answer" bash -c "bash '$F' answers --last | grep -q 'this will fail'"
+
+echo "confirm"
+: >"$LOG"; bash "$F" ask "gated action"; sleep 0.4
+contains "confirms before running action" "$(cat "$LOG")" "run=Run"
+contains "confirm notification mentions exact action" "$(cat "$LOG")" "git status"
+contains "run re-sends with confirm" "$(cat "$LOG")" "friday-ctl-confirm"
+contains "confirmed answer saved" "$(cat "$state/last-answer.md")" "Confirmed and done."
+
+: >"$LOG"; CANCEL_CONFIRM=1 bash "$F" ask "gated action"; sleep 0.4
+contains "cancel option presented" "$(cat "$LOG")" "cancel=Cancel"
+if grep -q "friday-ctl-confirm" "$LOG"; then fail "cancel still ran confirmed goal"
+else pass "cancel does not re-send or run action"; fi
 
 echo "cancel"
 : >"$LOG"

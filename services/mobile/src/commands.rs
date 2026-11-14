@@ -51,16 +51,21 @@ impl CommandGateway {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
+                let confirm = cmd
+                    .params
+                    .get("confirm")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
                 // The GoalRunner subscribes to `plan.goal` and runs the goal.
                 // The session id rides along so the runner keeps this
                 // conversation continuous (per-session context, S1).
+                let mut payload = json!({ "goal": goal, "session_id": cmd.session_id });
+                if let Some(c) = confirm {
+                    payload["confirm"] = json!(c);
+                }
                 let _ = self
                     .bus
-                    .publish(Event::new(
-                        "plan.goal",
-                        "mobile",
-                        json!({ "goal": goal, "session_id": cmd.session_id }),
-                    ))
+                    .publish(Event::new("plan.goal", "mobile", payload))
                     .await;
                 json!({ "accepted": true })
             }
@@ -218,5 +223,24 @@ mod tests {
         assert_eq!(ev.kind, "plan.goal");
         assert_eq!(ev.payload["goal"], "Check the git status");
         assert_eq!(ev.payload["session_id"], "sess-abc");
+        assert!(ev.payload.get("confirm").is_none());
+
+        // With confirm param
+        let cmd_with_confirm = Command {
+            id: "cmd-2".into(),
+            method: method::PLANNER_GOAL.into(),
+            params: json!({ "goal": "Check the git status", "confirm": "git status" }),
+            session_id: "sess-abc".into(),
+        };
+        let r = g.dispatch(&cmd_with_confirm).await;
+        match r {
+            ServerMessage::CommandResult { ok, .. } => assert!(ok),
+            _ => panic!(),
+        }
+        let ev = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await
+            .expect("plan.goal must be published")
+            .expect("bus alive");
+        assert_eq!(ev.payload["confirm"], "git status");
     }
 }

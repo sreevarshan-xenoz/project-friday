@@ -13,6 +13,7 @@ internal sealed class AnswerForm : Form
 {
     public event Action? AskAgain;
     public event Action? StartFriday;
+    public event Action<string>? ConfirmRun;
 
     private readonly string _question;
     private readonly Label _title;
@@ -78,18 +79,72 @@ internal sealed class AnswerForm : Form
     /// <summary>A window showing a finished answer.</summary>
     public AnswerForm(string question, AskOutcome outcome) : this(question) => ShowOutcome(outcome);
 
+    /// <summary>Reset the form back to waiting state (e.g. when confirming and re-running).</summary>
+    public void ShowWaiting(string waiting = "Thinking…")
+    {
+        _title.Text = "…  " + _question;
+        _title.ForeColor = Theme.Accent;
+        _body.Font = Theme.Body;
+        _body.ForeColor = Theme.Subtext;
+        _body.Text = waiting;
+        _border = Theme.Outline;
+        _buttons.Controls.Clear();
+        var close = CloseButton();
+        _buttons.Controls.Add(close);
+        AcceptButton = null;
+        CancelButton = close;
+        Invalidate();
+    }
+
     /// <summary>The answer so far, while it streams; the newest text stays in view.</summary>
     public void ShowPartial(string text)
     {
+        _body.Font = Theme.Body;
         _body.ForeColor = Theme.Text;
         _body.Text = Lines(text);
         _body.SelectionStart = _body.TextLength;
         _body.ScrollToCaret();
     }
 
-    /// <summary>The final answer or failure, with its buttons.</summary>
+    /// <summary>The final answer, confirmation prompt, or failure, with its buttons.</summary>
     public void ShowOutcome(AskOutcome outcome)
     {
+        _buttons.Controls.Clear();
+        AcceptButton = null;
+        CancelButton = null;
+
+        if (outcome.Confirmation is { } conf)
+        {
+            _title.Text = "⚠  " + _question;
+            _title.ForeColor = Theme.Warn;
+            _body.Font = Theme.Monospace;
+            _body.ForeColor = Theme.Text;
+            _body.Text = Lines(outcome.Answer);
+            _body.SelectionStart = 0;
+            _body.ScrollToCaret();
+            _border = Theme.Warn;
+
+            var cancel = Theme.Button("Cancel");
+            cancel.Click += (_, _) => Close();
+
+            var run = Theme.Button("Run", primary: true);
+            run.Click += (_, _) => ConfirmRun?.Invoke(conf.Action);
+
+            // FlowDirection is RightToLeft: adding cancel first puts it on the right,
+            // adding run second puts it to the left of cancel: [Run] [Cancel].
+            _buttons.Controls.Add(cancel);
+            _buttons.Controls.Add(run);
+
+            // Cancel is the default / Escape
+            CancelButton = cancel;
+            AcceptButton = cancel;
+            cancel.Select();
+
+            Invalidate();
+            return;
+        }
+
+        _body.Font = Theme.Body;
         _title.Text = (outcome.Ok ? "●  " : "✕  ") + _question;
         _title.ForeColor = outcome.Ok ? Theme.Accent : Theme.Error;
         _body.ForeColor = Theme.Text;
@@ -98,8 +153,9 @@ internal sealed class AnswerForm : Form
         _body.ScrollToCaret();
         _border = outcome.Ok ? Theme.Outline : Theme.Error;
 
-        _buttons.Controls.Clear();
-        _buttons.Controls.Add(CloseButton());
+        var close = CloseButton();
+        _buttons.Controls.Add(close);
+        CancelButton = close;
         if (outcome.DaemonDown)
         {
             var start = Theme.Button("Start FRIDAY", primary: true);

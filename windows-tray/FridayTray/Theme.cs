@@ -25,6 +25,7 @@ internal static class Theme
     public static readonly Font Small = new("Segoe UI", 9f);
     public static readonly Font Title = new("Segoe UI Semibold", 11f);
     public static readonly Font Input = new("Segoe UI", 13f);
+    public static readonly Font Monospace = new(FontFamily.GenericMonospace, 10f);
 
     /// <summary>The orb: a ring with a core. Ready = ember core, working = ember
     /// core with a signal arc, stopped = amber core, offline = an empty ring.</summary>

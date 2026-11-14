@@ -136,4 +136,138 @@ public class AskingTests
         var o = Asking.Interpret(AskKind.Screen, "q", true, "{\n \"response\": \"The error says E0308.\\nFix the type.\"\n}");
         Assert.Equal("The error says E0308.\nFix the type.", o.Answer);
     }
+
+    [Fact]
+    public void Output_parsing_with_needs_confirmation()
+    {
+        const string terminalOutput = """
+            submitting goal
+            {"accepted":true}
+            waiting...
+            {
+              "outcome": "failed",
+              "error": "Confirm to run: git status",
+              "needs_confirmation": {
+                "tool": "terminal",
+                "action": "git status"
+              }
+            }
+            """;
+        var conf = Asking.ParseConfirmation(terminalOutput);
+        Assert.NotNull(conf);
+        Assert.Equal("terminal", conf.Tool);
+        Assert.Equal("git status", conf.Action);
+
+        const string openOutput = """
+            {
+              "outcome": "failed",
+              "error": "Confirm to run: notepad.exe",
+              "needs_confirmation": {
+                "tool": "windows.open",
+                "action": "notepad.exe"
+              }
+            }
+            """;
+        var openConf = Asking.ParseConfirmation(openOutput);
+        Assert.NotNull(openConf);
+        Assert.Equal("windows.open", openConf.Tool);
+        Assert.Equal("notepad.exe", openConf.Action);
+
+        const string writeOutput = """
+            {
+              "outcome": "failed",
+              "error": "Confirm to run: write C:\\notes.txt",
+              "needs_confirmation": {
+                "tool": "filesystem.write",
+                "action": "write C:\\notes.txt"
+              }
+            }
+            """;
+        var writeConf = Asking.ParseConfirmation(writeOutput);
+        Assert.NotNull(writeConf);
+        Assert.Equal("filesystem.write", writeConf.Tool);
+        Assert.Equal("write C:\\notes.txt", writeConf.Action);
+    }
+
+    [Fact]
+    public void Output_parsing_without_needs_confirmation()
+    {
+        Assert.Null(Asking.ParseConfirmation("{\"outcome\":\"completed\",\"result\":\"All good\"}"));
+        Assert.Null(Asking.ParseConfirmation("{\"outcome\":\"failed\",\"error\":\"Some other failure\"}"));
+        Assert.Null(Asking.ParseConfirmation("plain log line without json"));
+        Assert.Null(Asking.ParseConfirmation(""));
+    }
+
+    [Fact]
+    public void Exit_code_3_maps_to_needs_confirmation()
+    {
+        const string output = """
+            {
+              "outcome": "failed",
+              "error": "Confirm to run: git push --force",
+              "needs_confirmation": {
+                "tool": "terminal",
+                "action": "git push --force"
+              }
+            }
+            """;
+
+        // Exit code 3 maps to confirmation
+        var conf3 = Asking.ParseConfirmation(3, output);
+        Assert.NotNull(conf3);
+        Assert.Equal("terminal", conf3.Tool);
+        Assert.Equal("git push --force", conf3.Action);
+
+        var outcome3 = Asking.Interpret(AskKind.Plain, "push changes", 3, output);
+        Assert.False(outcome3.Ok);
+        Assert.NotNull(outcome3.Confirmation);
+        Assert.Equal("terminal", outcome3.Confirmation.Tool);
+        Assert.Equal("git push --force", outcome3.Confirmation.Action);
+        Assert.Equal("FRIDAY wants to run: git push --force", outcome3.Answer);
+
+        // Exit code 1 does not map to confirmation
+        var conf1 = Asking.ParseConfirmation(1, output);
+        Assert.Null(conf1);
+
+        var outcome1 = Asking.Interpret(AskKind.Plain, "push changes", 1, output);
+        Assert.False(outcome1.Ok);
+        Assert.Null(outcome1.Confirmation);
+
+        // Exit code 0 does not map to confirmation
+        var conf0 = Asking.ParseConfirmation(0, output);
+        Assert.Null(conf0);
+
+        var outcome0 = Asking.Interpret(AskKind.Plain, "push changes", 0, "{\"outcome\":\"completed\",\"result\":\"Pushed\"}");
+        Assert.True(outcome0.Ok);
+        Assert.Null(outcome0.Confirmation);
+    }
+
+    [Fact]
+    public void CtlArguments_with_confirm_adds_flag()
+    {
+        var args = Asking.CtlArguments(AskKind.Plain, "list files", "list files", "dir");
+        Assert.Equal(["goal", "--wait", "--confirm", "dir", "list files"], args);
+
+        var argsNull = Asking.CtlArguments(AskKind.Plain, "list files", "list files", null);
+        Assert.Equal(["goal", "--wait", "list files"], argsNull);
+    }
+
+    [Fact]
+    public void CtlArguments_with_confirm_action_containing_quotes_and_spaces_stays_one_argument()
+    {
+        const string action = "git commit -m \"fix(tray): add confirmation\"";
+        var args = Asking.CtlArguments(AskKind.Plain, "commit changes", "commit my changes", action);
+
+        Assert.Equal(5, args.Length);
+        Assert.Equal("goal", args[0]);
+        Assert.Equal("--wait", args[1]);
+        Assert.Equal("--confirm", args[2]);
+        Assert.Equal(action, args[3]);
+        Assert.Equal("commit my changes", args[4]);
+
+        const string actionWithComplexQuotes = "cmd /c \"echo 'hello world' && exit 1\"";
+        var args2 = Asking.CtlArguments(AskKind.Plain, "run script", "run script", actionWithComplexQuotes);
+        Assert.Equal(5, args2.Length);
+        Assert.Equal(actionWithComplexQuotes, args2[3]);
+    }
 }

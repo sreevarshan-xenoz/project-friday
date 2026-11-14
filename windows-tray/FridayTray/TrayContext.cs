@@ -95,57 +95,94 @@ internal sealed class TrayContext : ApplicationContext
             _log.Remember(question);
 
             var request = Asking.BuildRequest(question, context);
-            // The answer window opens now and fills in while the answer
-            // streams (state.json's current.partial). Not for a screen ask:
-            // FRIDAY captures the focused window, which must still be the one
-            // asked about, so that window opens with the first words.
-            AnswerForm? answer = null;
-            using var poll = new System.Windows.Forms.Timer { Interval = 250 };
-            string? shown = null;
-            if (kind == AskKind.Screen)
-            {
-                Notify("FRIDAY", "Looking at your screen: " + question, ToolTipIcon.None);
-            }
-            else
-            {
-                var form = NewAnswerForm(kind, question, "Thinking…");
-                answer = form;
-                poll.Tick += (_, _) =>
-                {
-                    var partial = ReadPartial(request);
-                    if (partial != null && partial != shown && !form.IsDisposed)
-                    {
-                        form.ShowPartial(partial);
-                        shown = partial;
-                    }
-                };
-                poll.Start();
-            }
-            // A screen answer streams through friday-ctl's own output; its
-            // window opens with the first words (the capture is done by then).
-            var ui = SynchronizationContext.Current;
-            Action<string>? onLine = kind != AskKind.Screen || ui is null ? null : line =>
-            {
-                if (Asking.PartialLine(line) is not { } partial)
-                    return;
-                ui.Post(_ =>
-                {
-                    if (answer is null || answer.IsDisposed)
-                        answer = NewAnswerForm(kind, question, "");
-                    answer.ShowPartial(partial);
-                }, null);
-            };
-            var (ok, output) = await Ctl.RunAsync(_install, Asking.CtlArguments(kind, question, request),
-                TimeSpan.FromSeconds(240), onLine);
-            poll.Stop();
-            var outcome = Asking.Interpret(kind, question, ok, output);
-            _log.Save(question, context, outcome, DateTime.Now);
+            await RunRequestAsync(kind, question, context, request, confirm: null, answer: null);
+        }
+        finally
+        {
+            _asking = false;
+        }
+    }
 
-            // A screen ask, or closed while it was on its way: show it now.
+    private async Task RunRequestAsync(AskKind kind, string question, string? context, string request, string? confirm, AnswerForm? answer)
+    {
+        // The answer window opens now and fills in while the answer
+        // streams (state.json's current.partial). Not for a screen ask:
+        // FRIDAY captures the focused window, which must still be the one
+        // asked about, so that window opens with the first words.
+        using var poll = new System.Windows.Forms.Timer { Interval = 250 };
+        string? shown = null;
+        if (kind == AskKind.Screen)
+        {
+            Notify("FRIDAY", "Looking at your screen: " + question, ToolTipIcon.None);
+        }
+        else
+        {
             if (answer is null || answer.IsDisposed)
-                answer = NewAnswerForm(kind, question, "");
-            answer.ShowOutcome(outcome);
-            answer.Activate();
+                answer = NewAnswerForm(kind, question, "Thinking…");
+            else
+                answer.ShowWaiting("Thinking…");
+
+            poll.Tick += (_, _) =>
+            {
+                var partial = ReadPartial(request);
+                if (partial != null && partial != shown && !answer.IsDisposed)
+                {
+                    answer.ShowPartial(partial);
+                    shown = partial;
+                }
+            };
+            poll.Start();
+        }
+        // A screen answer streams through friday-ctl's own output; its
+        // window opens with the first words (the capture is done by then).
+        var ui = SynchronizationContext.Current;
+        Action<string>? onLine = kind != AskKind.Screen || ui is null ? null : line =>
+        {
+            if (Asking.PartialLine(line) is not { } partial)
+                return;
+            ui.Post(_ =>
+            {
+                if (answer is null || answer.IsDisposed)
+                    answer = NewAnswerForm(kind, question, "");
+                answer.ShowPartial(partial);
+            }, null);
+        };
+        var (ok, output, exitCode) = await Ctl.RunAsync(
+            _install,
+            Asking.CtlArguments(kind, question, request, confirm),
+            TimeSpan.FromSeconds(240),
+            onLine);
+        poll.Stop();
+        var outcome = Asking.Interpret(kind, question, exitCode, output);
+        _log.Save(question, context, outcome, DateTime.Now);
+
+        // A screen ask, or closed while it was on its way: show it now.
+        if (answer is null || answer.IsDisposed)
+            answer = NewAnswerForm(kind, question, "");
+
+        if (outcome.Confirmation is { } nextConf)
+        {
+            Action<string>? onConfirm = null;
+            onConfirm = action =>
+            {
+                answer.ConfirmRun -= onConfirm;
+                _ = ExecuteConfirmedAsync(kind, question, context, request, action, answer);
+            };
+            answer.ConfirmRun += onConfirm;
+        }
+
+        answer.ShowOutcome(outcome);
+        answer.Activate();
+    }
+
+    private async Task ExecuteConfirmedAsync(AskKind kind, string question, string? context, string request, string confirmAction, AnswerForm answer)
+    {
+        if (_asking)
+            return;
+        _asking = true;
+        try
+        {
+            await RunRequestAsync(kind, question, context, request, confirmAction, answer);
         }
         finally
         {
