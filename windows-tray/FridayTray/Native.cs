@@ -23,6 +23,94 @@ internal static partial class Native
     [LibraryImport("user32.dll")]
     public static partial uint GetClipboardSequenceNumber();
 
+    [LibraryImport("user32.dll")]
+    public static partial IntPtr GetForegroundWindow();
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool SetForegroundWindow(IntPtr hWnd);
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool AllowSetForegroundWindow(uint dwProcessId);
+
+    public const uint ASFW_ANY = unchecked((uint)-1);
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    public static partial uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    [LibraryImport("kernel32.dll")]
+    public static partial uint GetCurrentThreadId();
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool AttachThreadInput(uint idAttach, uint idAttachTo, [MarshalAs(UnmanagedType.Bool)] bool fAttach);
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool BringWindowToTop(IntPtr hWnd);
+
+    [LibraryImport("user32.dll", EntryPoint = "GetClassNameW", SetLastError = true)]
+    public static unsafe partial int GetClassName(IntPtr hWnd, char* lpClassName, int nMaxCount);
+
+    public static unsafe string GetClassName(IntPtr hWnd)
+    {
+        if (hWnd == IntPtr.Zero)
+            return string.Empty;
+        const int maxCount = 256;
+        char* buf = stackalloc char[maxCount];
+        int len = GetClassName(hWnd, buf, maxCount);
+        return len > 0 ? new string(buf, 0, len) : string.Empty;
+    }
+
+    /// <summary>
+    /// Restores focus to the specified window, using AllowSetForegroundWindow and
+    /// AttachThreadInput workarounds if standard SetForegroundWindow is restricted.
+    /// </summary>
+    public static bool RestoreForeground(IntPtr hWnd)
+    {
+        if (hWnd == IntPtr.Zero)
+            return false;
+
+        if (GetForegroundWindow() == hWnd)
+            return true;
+
+        uint currentThreadId = GetCurrentThreadId();
+        IntPtr fg = GetForegroundWindow();
+        uint fgThreadId = fg != IntPtr.Zero ? GetWindowThreadProcessId(fg, out _) : 0;
+        uint targetThreadId = GetWindowThreadProcessId(hWnd, out uint targetProcId);
+
+        if (targetProcId != 0)
+            AllowSetForegroundWindow(targetProcId);
+        else
+            AllowSetForegroundWindow(ASFW_ANY);
+
+        if (SetForegroundWindow(hWnd))
+            return true;
+
+        bool attachedFg = false;
+        bool attachedTarget = false;
+        try
+        {
+            if (fgThreadId != 0 && fgThreadId != currentThreadId)
+                attachedFg = AttachThreadInput(currentThreadId, fgThreadId, true);
+            if (targetThreadId != 0 && targetThreadId != currentThreadId && targetThreadId != fgThreadId)
+                attachedTarget = AttachThreadInput(currentThreadId, targetThreadId, true);
+
+            SetForegroundWindow(hWnd);
+            BringWindowToTop(hWnd);
+        }
+        finally
+        {
+            if (attachedTarget)
+                AttachThreadInput(currentThreadId, targetThreadId, false);
+            if (attachedFg)
+                AttachThreadInput(currentThreadId, fgThreadId, false);
+        }
+
+        return GetForegroundWindow() == hWnd;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     public struct KEYBDINPUT
     {

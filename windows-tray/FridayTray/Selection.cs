@@ -15,18 +15,30 @@ internal static class Selection
 
     public static async Task<Result> CaptureAsync()
     {
+        var fg = Native.GetForegroundWindow();
+        var className = Native.GetClassName(fg);
+        if (Terminals.IsTerminalClass(className))
+        {
+            string? text = Clipboard.ContainsText() ? Clipboard.GetText() : null;
+            if (string.IsNullOrWhiteSpace(text))
+                return new Result(null, "", "Select or copy some text first, then press the hotkey again.");
+            if (Asking.LooksLikeSecret(text))
+                return new Result(null, "", "The clipboard looks like a password or token, so I won't send it. Select the text you mean instead.");
+            return new Result(text, "Clipboard", null);
+        }
+
         await WaitForModifiersUpAsync();
+        var savedClipboard = SnapshotClipboard();
         string? before = Clipboard.ContainsText() ? Clipboard.GetText() : null;
         var seq = Native.GetClipboardSequenceNumber();
         SendCtrlC();
         for (var i = 0; i < 20 && Native.GetClipboardSequenceNumber() == seq; i++)
             await Task.Delay(25);
 
-        if (Native.GetClipboardSequenceNumber() != seq && Clipboard.ContainsText())
+        if (Native.GetClipboardSequenceNumber() != seq)
         {
-            var selected = Clipboard.GetText();
-            if (before != null)
-                Clipboard.SetText(before);
+            var selected = Clipboard.ContainsText() ? Clipboard.GetText() : null;
+            RestoreClipboard(savedClipboard);
             if (!string.IsNullOrWhiteSpace(selected))
                 return new Result(selected, "Selected", null);
         }
@@ -36,6 +48,55 @@ internal static class Selection
         if (Asking.LooksLikeSecret(before))
             return new Result(null, "", "The clipboard looks like a password or token, so I won't send it. Select the text you mean instead.");
         return new Result(before, "Clipboard", null);
+    }
+
+    private static IDataObject? SnapshotClipboard()
+    {
+        try
+        {
+            var dataObj = Clipboard.GetDataObject();
+            if (dataObj == null)
+                return null;
+
+            var formats = dataObj.GetFormats();
+            if (formats == null || formats.Length == 0)
+                return null;
+
+            var copy = new DataObject();
+            foreach (var format in formats)
+            {
+                try
+                {
+                    var data = dataObj.GetData(format);
+                    if (data != null)
+                        copy.SetData(format, data);
+                }
+                catch
+                {
+                    // Ignore formats that cannot be retrieved or cloned
+                }
+            }
+            return copy.GetFormats().Length > 0 ? copy : dataObj;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void RestoreClipboard(IDataObject? saved)
+    {
+        try
+        {
+            if (saved != null)
+                Clipboard.SetDataObject(saved, copy: true, retryTimes: 10, retryDelay: 50);
+            else
+                Clipboard.Clear();
+        }
+        catch
+        {
+            // Best effort restoration
+        }
     }
 
     private static async Task WaitForModifiersUpAsync()
