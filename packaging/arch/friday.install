@@ -8,12 +8,14 @@ post_install() {
     Hyprland keys (Super+Y ask, Super+Alt+Y selection, Super+Ctrl+Y screen),
     add to ~/.config/hypr/hyprland.lua:
       dofile("/usr/share/friday/hyprland/friday.lua")
+    niri keys, add to ~/.config/niri/config.kdl:
+      include "/usr/share/friday/niri/friday.kdl"
     Other desktops: bind a key to `friday ask`, or use the "FRIDAY" launcher.
 MSG
 }
 
 post_upgrade() {
-  echo "==> Restart FRIDAY to use the new version: systemctl --user restart friday-linux-daemon"
+  echo "==> FRIDAY restarts itself within a minute when idle (or: systemctl --user restart friday-linux-daemon)"
 }
 
 post_remove() {
