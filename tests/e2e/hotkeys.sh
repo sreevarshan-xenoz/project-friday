@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # The Linux hotkeys end to end, without a GPU. Super+Y, Super+Alt+Y and
-# Super+Ctrl+Y as the shipped Hyprland configs bind them, run the way
-# Hyprland runs a bind (sh -c, no terminal), through the real `friday` CLI,
-# friday-ctl and daemon, with fake_model.py as the AI and the desktop tools
-# stubbed: fuzzel "types" the question, wl-paste holds the selection, grim
-# takes a PNG, notify-send records the notification. Requires, per key:
+# Super+Ctrl+Y (and their niri equivalents Mod+Y, Mod+Alt+Y, Mod+Ctrl+Y) as the
+# shipped Hyprland and niri configs bind them, run the way each compositor runs
+# a bind (sh -c for Hyprland, direct spawn argv for niri), through the real
+# `friday` CLI, friday-ctl and daemon, with fake_model.py as the AI and the
+# desktop tools stubbed: fuzzel "types" the question, wl-paste holds the
+# selection, grim takes a PNG, notify-send records the notification. Requires,
+# per key:
 #   - every shipped config binds it to exactly its command and nothing else
 #     (Super+Y once also opened ii's search overview),
 #   - pressing it ends in a notification with the model's answer to that
 #     question (for the screen, an answer about the screenshot it was sent).
-# Hyprland itself can't run on a GPU-less runner (no GBM allocator), so the
-# keymap comes from loading the configs with hypr_binds.lua.
+# Neither compositor can run on a GPU-less runner (no GBM allocator), so the
+# keymap comes from loading the configs with hypr_binds.lua and niri_binds.lua.
 #
 # Usage: tests/e2e/hotkeys.sh [bin-dir]   (default target/debug; needs lua, jq, python3)
 set -euo pipefail
@@ -42,10 +44,25 @@ fail() { echo "  FAIL $*"; fails=$((fails + 1)); }
 declare -A want=([SUPER+Y]="friday ask" [ALT+SUPER+Y]="friday ask --selection"
   [CTRL+SUPER+Y]="friday ask --screen")
 keys=(SUPER+Y ALT+SUPER+Y CTRL+SUPER+Y)
+declare -A niri_to_hypr=([Mod+Y]=SUPER+Y [Mod+Alt+Y]=ALT+SUPER+Y [Mod+Ctrl+Y]=CTRL+SUPER+Y)
+niri_keys=(Mod+Y Mod+Alt+Y Mod+Ctrl+Y)
 
 # keymap <label> <config entry> [home]: the effective binds, checked per key.
 keymap() {
   local label=$1 entry=$2 home=${3:-$W} map="$W/keymap-${1//[^a-zA-Z]/}"
+  if [[ "$entry" == *.kdl ]]; then
+    if ! FRIDAY_SHARE="$REPO/packaging/linux" "$LUA" tests/e2e/niri_binds.lua "$entry" >"$map" 2>"$map.err"; then
+      fail "$label: config did not load"; sed 's/^/       /' "$map.err" | head -5; return
+    fi
+    local k hk got
+    for k in "${niri_keys[@]}"; do
+      hk="${niri_to_hypr[$k]}"
+      got=$(awk -F'\t' -v k="$k" '$1 == k { print $2 }' "$map")
+      if [[ "$got" == "spawn ${want[$hk]}" ]]; then pass "$label: $k runs \`${want[$hk]}\`"
+      else fail "$label: $k should run only \`${want[$hk]}\`, runs:"; sed 's/^/       /' <<<"${got:-nothing}"; fi
+    done
+    return
+  fi
   if ! HOME="$home" OMARCHY_PATH="$A/usr/share/omarchy" "$LUA" tests/e2e/hypr_binds.lua "$entry" >"$map" 2>"$map.err"; then
     fail "$label: config did not load"; sed 's/^/       /' "$map.err" | head -5; return
   fi
@@ -65,6 +82,9 @@ H="$W/home-dots"; mkdir -p "$H/.config"
 cp -a "$A/usr/share/friday/dots-hyprland/.config/hypr" "$H/.config/hypr"
 keymap "Dots-Hyprland" "$H/.config/hypr/hyprland.lua" "$H"
 keymap "friday-git friday.lua" "$REPO/packaging/linux/hyprland/friday.lua"
+keymap "FRIDAY OS (niri)" "$A/etc/skel/.config/niri/config.kdl"
+NIRI_MAP="$W/keymap-FRIDAYOSniri"
+keymap "friday-git friday.kdl" "$REPO/packaging/linux/niri/friday.kdl"
 
 echo "presses"
 python3 tests/e2e/fake_model.py "$W/port" "$W/model.log" &
@@ -100,14 +120,25 @@ if grep -q '"status": *"running"' "$W/state.json" 2>/dev/null; then pass "daemon
 else fail "daemon never reported running"; tail -20 "$W/daemon.log"; exit 1; fi
 
 # press <key> <question> <expected answer (glob)> [env...]: run the key's
-# command from the FRIDAY OS keymap as Hyprland would, then wait for the
+# command from the FRIDAY OS keymap as Hyprland or niri would, then wait for the
 # answer notification.
 press() {
   local key=$1 question=$2 expect=$3; shift 3
-  local cmd; cmd=$(awk -F'\t' -v k="$key" '$1 == k && $2 ~ /^exec / { sub(/^exec /, "", $2); print $2; exit }' "$OMARCHY_MAP")
-  [[ -n "$cmd" ]] || { fail "$key: no command bound"; return; }
+  local cmd runner=()
+  if [[ "$key" == Mod+* ]]; then
+    local line fields
+    line=$(awk -F'\t' -v k="$key" '$1 == k && $2 ~ /^spawn / { print; exit }' "$NIRI_MAP")
+    [[ -n "$line" ]] || { fail "$key: no command bound"; return; }
+    IFS=$'\t' read -r -a fields <<<"$line"
+    cmd="${fields[1]#spawn }"
+    runner=("${fields[@]:2}")
+  else
+    cmd=$(awk -F'\t' -v k="$key" '$1 == k && $2 ~ /^exec / { sub(/^exec /, "", $2); print $2; exit }' "$OMARCHY_MAP")
+    [[ -n "$cmd" ]] || { fail "$key: no command bound"; return; }
+    runner=(sh -c "$cmd")
+  fi
   : >"$W/notify.log"
-  "${offline[@]}" PICK="$question" "$@" timeout 150 setsid -w sh -c "$cmd" </dev/null >>"$W/press.log" 2>&1 \
+  "${offline[@]}" PICK="$question" "$@" timeout 150 setsid -w "${runner[@]}" </dev/null >>"$W/press.log" 2>&1 \
     || { fail "$key (\`$cmd\`) exited non-zero"; tail -5 "$W/press.log" | sed 's/^/       /'; return; }
   local line=""
   for _ in $(seq 50); do
@@ -133,6 +164,16 @@ else fail "ALT+SUPER+Y: the selected text never reached the model"; fi
 press CTRL+SUPER+Y "what is on my screen?" "FAKE-MODEL-ANSWER: what is on my screen? \[saw a [1-9]*-byte 1x1 image/png\]"
 if grep -qx 'grim -g 100,50 800x600 -' "$W/grim.log"; then pass "CTRL+SUPER+Y: captured just the focused window (grim -g 100,50 800x600)"
 else fail "CTRL+SUPER+Y: expected grim to capture the focused window, ran:"; sed 's/^/       /' "$W/grim.log"; fi
+
+press Mod+Y "What does the Rust error E0308 mean?" "FAKE-MODEL-ANSWER: What does the Rust error E0308 mean?*"
+press Mod+Alt+Y "explain this" "FAKE-MODEL-ANSWER: explain this*" \
+  PRIMARY="error[E0308]: mismatched types in niri: expected u32, found String"
+if grep -q "mismatched types in niri" "$W/model.log"; then pass "Mod+Alt+Y: the selection reached the model"
+else fail "Mod+Alt+Y: the selected text never reached the model"; fi
+: >"$W/grim.log"
+# The window crop isn't checked here: the stubbed hyprctl answers on niri too,
+# and real niri has no hyprctl, so the crop needs its own niri test.
+press Mod+Ctrl+Y "what is on my screen?" "FAKE-MODEL-ANSWER: what is on my screen? \[saw a [1-9]*-byte 1x1 image/png\]"
 
 if grep -q "panicked" "$W/daemon.log"; then fail "daemon panicked:"; grep -A1 panicked "$W/daemon.log" | head -4
 else pass "no panics"; fi
