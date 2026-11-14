@@ -204,6 +204,14 @@ async fn main() {
             "[providers] OpenCode Zen catalog unavailable; using built-in free models"
         ),
     }
+    // Kilo (keyless fallback) also rotates its free lineup: swap static
+    // models for live ones when registered.
+    if fabric.providers.contains_key("kilo") {
+        match tokio::time::timeout(Duration::from_secs(8), fabric.refresh_kilo_catalog()).await {
+            Ok(true) => tracing::info!("[providers] Kilo: live free models loaded"),
+            _ => tracing::warn!("[providers] Kilo catalog unavailable; using built-in free models"),
+        }
+    }
     let fabric = Arc::new(fabric);
     tracing::info!(
         "[Investigation] fabric: {} providers / {} models registered",

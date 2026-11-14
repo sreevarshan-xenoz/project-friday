@@ -20,13 +20,14 @@ use crate::secrets::SecretsVault;
 /// [`crate::secrets::SecretsVault::seed_from_env`] to register production
 /// keys into the vault (so the egress gate can scan for them and nothing
 /// auto-prints them). Mirrors the provider-qual environment matrix.
-pub const PROVIDER_ENV_VARS: [(&str, &str); 12] = [
+pub const PROVIDER_ENV_VARS: [(&str, &str); 13] = [
     ("OMNIROUTE_API_KEY", "omniroute"),
     ("OPENROUTER_API_KEY", "openrouter"),
     ("GROQ_API_KEY", "groq"),
     ("CEREBRAS_API_KEY", "cerebras"),
     ("GEMINI_API_KEY", "gemini"),
     ("OPENCODE_API_KEY", "opencode"),
+    ("KILO_API_KEY", "kilo"),
     ("NVIDIA_NIM_API_KEY", "nvidia-nim"),
     ("OPENGATEWAY_API_KEY", "opengateway"),
     ("SAMBA_API_KEY", "sambanova"),
@@ -381,7 +382,7 @@ impl OpenAiProvider {
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
 
         let mut headers = reqwest::header::HeaderMap::new();
-        // Keyless providers (OpenCode Zen's free tier) get no Authorization.
+        // Keyless providers (OpenCode Zen and Kilo free tiers) get no Authorization.
         if !self.api_key.is_empty() {
             headers.insert(
                 reqwest::header::AUTHORIZATION,
@@ -580,7 +581,7 @@ impl Provider for OpenAiProvider {
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
 
         let mut headers = reqwest::header::HeaderMap::new();
-        // Keyless providers (OpenCode Zen's free tier) get no Authorization.
+        // Keyless providers (OpenCode Zen and Kilo free tiers) get no Authorization.
         if !self.api_key.is_empty() {
             headers.insert(
                 reqwest::header::AUTHORIZATION,
@@ -1377,6 +1378,45 @@ impl InferenceFabric {
         true
     }
 
+    /// Pull Kilo's live catalog and register its current free models
+    /// (Kilo rotates free models, so static ids go stale). Works without a key.
+    /// Returns `false` and keeps the existing models on any failure.
+    pub async fn refresh_kilo_catalog(&mut self) -> bool {
+        if !self.providers.contains_key("kilo") {
+            return false;
+        }
+        let mut req = http_client().get(format!("{KILO_GATEWAY_BASE_URL}/models"));
+        if let Ok(key) = std::env::var("KILO_API_KEY") {
+            if !key.is_empty() {
+                req = req.header(reqwest::header::AUTHORIZATION, format!("Bearer {key}"));
+            }
+        }
+        let json = match req.send().await {
+            Ok(res) if res.status().is_success() => match res.json::<serde_json::Value>().await {
+                Ok(j) => j,
+                Err(_) => return false,
+            },
+            _ => return false,
+        };
+        let fresh = kilo_free_models(&json);
+        if fresh.is_empty() {
+            return false;
+        }
+        // Keep the routing latency the constructor chose (keyless = fallback).
+        let latency = self
+            .models
+            .iter()
+            .find(|m| m.provider == "kilo")
+            .map(|m| m.latency_ms)
+            .unwrap_or(800);
+        self.models.retain(|m| m.provider != "kilo");
+        for mut m in fresh {
+            m.latency_ms = latency;
+            self.register_model(m);
+        }
+        true
+    }
+
     /// Resolve a FRIDAY capability tier to the concrete registered model for a
     /// provider. Callers name capabilities (`CapabilityTier`), never vendor IDs;
     /// when the provider renames a model, only the catalog changes.
@@ -2116,6 +2156,37 @@ impl InferenceFabric {
             }
         }
 
+        // Kilo AI gateway (OpenAI-compatible) — keyless fallback provider
+        // right after OpenCode Zen. Its free models need no auth, so FRIDAY can
+        // fall back to it without a key. KILO_API_KEY is optional (paid models /
+        // higher limits). Keyless latency is 3500 ms so Zen (3000 ms) is tried
+        // first, while user-keyed providers win over both. Allow disabling with
+        // FRIDAY_KILO=off.
+        if !std::env::var("FRIDAY_KILO")
+            .map(|v| v.trim().eq_ignore_ascii_case("off"))
+            .unwrap_or(false)
+        {
+            let key = std::env::var("KILO_API_KEY").unwrap_or_default();
+            if !key.is_empty() {
+                security_vault.store("provider", "kilo", key.clone());
+            }
+            let latency_ms = if key.is_empty() { 3_500 } else { 800 };
+            if key.is_empty() {
+                fabric.automatic.insert("kilo".to_string());
+            }
+            fabric.register_provider(Box::new(OpenAiProvider {
+                name: "kilo".to_string(),
+                base_url: KILO_GATEWAY_BASE_URL.to_string(),
+                api_key: key,
+            }));
+            if !registry_loaded {
+                for mut m in kilo_static_models() {
+                    m.latency_ms = latency_ms;
+                    fabric.register_model(m);
+                }
+            }
+        }
+
         // GitHub Copilot account-auth provider — the subscription seam. Opt-in
         // ONLY (`COPILOT_CLI_ENABLED=true|1`): `copilot`/`gh` are commonly on CI
         // and dev boxes, so a bare detection must never silently add a cloud
@@ -2521,6 +2592,7 @@ fn is_free_provider(name: &str) -> bool {
             | "zhipu"
             | "groq"
             | "opencode"
+            | "kilo"
             | "nvidia-nim"
     )
 }
@@ -2653,6 +2725,147 @@ pub fn opencode_free_models(catalog: &serde_json::Value) -> Vec<ModelInfo> {
     let mut out = Vec::new();
     if let Some(text) = chat_free.first() {
         out.push(to_info(text, false));
+    }
+    if let Some(vision) = chat_free.iter().find(|m| accepts_images(m)) {
+        out.push(to_info(vision, true));
+    }
+    out
+}
+
+/// Kilo AI gateway's OpenAI-compatible endpoint (keyless fallback provider).
+pub const KILO_GATEWAY_BASE_URL: &str = "https://ai-gateway.kilo.ai/api/v1";
+
+/// Boot-time fallback for Kilo's free models. The live catalog replaces these
+/// at warm-up because Kilo rotates free models.
+pub fn kilo_static_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "nvidia/nemotron-3.5-lightning:free".to_string(),
+            family: "nemotron-3.5-lightning".to_string(),
+            provider: "kilo".to_string(),
+            latency_ms: 800,
+            reliability: 0.8,
+            capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
+            max_context: 128_000,
+            tier: None,
+        },
+        ModelInfo {
+            id: "nvidia/nemotron-3.5-super-vl:free".to_string(),
+            family: "nemotron-3.5-super-vl".to_string(),
+            provider: "kilo".to_string(),
+            latency_ms: 800,
+            reliability: 0.8,
+            capabilities: vec![
+                ModelCapability::Json,
+                ModelCapability::Tools,
+                ModelCapability::Vision,
+            ],
+            max_context: 128_000,
+            tier: Some(CapabilityTier::VisionFree),
+        },
+    ]
+}
+
+/// Pick FRIDAY's models from a live Kilo `/models` response: only named free
+/// ones (an id ending in `:free`). Never `kilo-auto/free`, which routes to any
+/// free model, nor `stealth/…` ones: unnamed, pre-release models are the most
+/// likely to keep and train on what they're sent. The primary text model
+/// becomes the general model; the first that accepts image input becomes
+/// the `VisionFree` tier. Pure and deterministic; returns an empty list when
+/// nothing free is offered.
+pub fn kilo_free_models(catalog: &serde_json::Value) -> Vec<ModelInfo> {
+    let Some(data) = catalog.get("data").and_then(|d| d.as_array()) else {
+        return Vec::new();
+    };
+    let is_free = |m: &serde_json::Value| {
+        let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        if id.is_empty() {
+            return false;
+        }
+        let price_nonzero = |field: &str| {
+            m.pointer(&format!("/pricing/{field}")).is_some_and(|v| {
+                if let Some(s) = v.as_str() {
+                    s.parse::<f64>().map(|f| f > 0.0).unwrap_or(false)
+                } else if let Some(n) = v.as_f64() {
+                    n > 0.0
+                } else {
+                    false
+                }
+            })
+        };
+        if price_nonzero("prompt") || price_nonzero("completion") {
+            return false;
+        }
+        id.ends_with(":free") && !id.starts_with("stealth/")
+    };
+    let accepts_images = |m: &serde_json::Value| {
+        let in_arch = m
+            .pointer("/architecture/input_modalities")
+            .and_then(|v| v.as_array())
+            .is_some_and(|ins| {
+                ins.iter()
+                    .filter_map(|i| i.as_str())
+                    .any(|i| i == "image" || i.starts_with("image/"))
+            });
+        let in_mod = m
+            .pointer("/modalities/input")
+            .and_then(|v| v.as_array())
+            .is_some_and(|ins| {
+                ins.iter()
+                    .filter_map(|i| i.as_str())
+                    .any(|i| i == "image" || i.starts_with("image/"))
+            });
+        in_arch || in_mod
+    };
+    let to_info = |m: &serde_json::Value, vision: bool| {
+        let id = m
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let ctx = m
+            .get("context_length")
+            .and_then(|v| v.as_u64())
+            .or_else(|| m.pointer("/limit/context").and_then(|v| v.as_u64()))
+            .unwrap_or(128_000) as usize;
+        let mut caps = vec![ModelCapability::Json];
+        if m.pointer("/capabilities/tools/supported")
+            .and_then(|v| v.as_bool())
+            != Some(false)
+        {
+            caps.push(ModelCapability::Tools);
+        }
+        if vision {
+            caps.push(ModelCapability::Vision);
+        }
+        ModelInfo {
+            family: m
+                .get("family")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&id)
+                .to_string(),
+            id,
+            provider: "kilo".to_string(),
+            latency_ms: 800,
+            reliability: 0.8,
+            capabilities: caps,
+            max_context: ctx,
+            tier: vision.then_some(CapabilityTier::VisionFree),
+        }
+    };
+    let chat_free: Vec<&serde_json::Value> = data
+        .iter()
+        .filter(|m| m.get("type").and_then(|v| v.as_str()).unwrap_or("chat") == "chat")
+        .filter(|m| is_free(m))
+        .collect();
+    let mut out = Vec::new();
+    let text = chat_free
+        .iter()
+        .find(|m| !accepts_images(m))
+        .copied()
+        .or_else(|| chat_free.first().copied());
+    if let Some(t) = text {
+        out.push(to_info(t, false));
     }
     if let Some(vision) = chat_free.iter().find(|m| accepts_images(m)) {
         out.push(to_info(vision, true));
@@ -3518,6 +3731,14 @@ impl Default for InferenceFabric {
 
 #[cfg(test)]
 mod tests {
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct EnvVarGuard(&'static str);
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            std::env::remove_var(self.0);
+        }
+    }
 
     fn zen_catalog() -> serde_json::Value {
         serde_json::json!({"object": "list", "data": [
@@ -3565,6 +3786,8 @@ mod tests {
 
     #[test]
     fn opencode_is_registered_without_a_key() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _zen_guard = EnvVarGuard("OPENCODE_API_KEY");
         std::env::remove_var("OPENCODE_API_KEY");
         let fabric = InferenceFabric::default_from_env();
         assert!(
@@ -3577,6 +3800,229 @@ mod tests {
                 .is_some(),
             "screen questions work out of the box"
         );
+    }
+
+    fn kilo_catalog() -> serde_json::Value {
+        serde_json::json!({"object": "list", "data": [
+            {
+                "id": "openai/gpt-4o",
+                "type": "chat",
+                "pricing": {"prompt": "0.000005", "completion": "0.000015"},
+                "architecture": {"input_modalities": ["text", "image"]},
+                "context_length": 128000
+            },
+            {
+                "id": "meta-llama/llama-3.3-70b-instruct",
+                "type": "chat",
+                "architecture": {"input_modalities": ["text"]},
+                "context_length": 131072
+            },
+            {
+                "id": "kilo-auto/free",
+                "type": "chat",
+                "family": "kilo-auto",
+                "pricing": {"prompt": "0", "completion": "0"},
+                "architecture": {"input_modalities": ["text"]},
+                "context_length": 128000
+            },
+            {
+                "id": "stealth/glyph-cluster:free",
+                "type": "chat",
+                "pricing": {"prompt": "0", "completion": "0"},
+                "architecture": {"input_modalities": ["text"]},
+                "context_length": 128000
+            },
+            {
+                "id": "nvidia/nemotron-3.5-super-vl:free",
+                "type": "chat",
+                "pricing": {"prompt": "0", "completion": "0"},
+                "architecture": {"input_modalities": ["text", "image"]},
+                "context_length": 128000
+            },
+            {
+                "id": "nvidia/nemotron-3.5-lightning:free",
+                "type": "chat",
+                "pricing": {"prompt": "0", "completion": "0"},
+                "architecture": {"input_modalities": ["text"]},
+                "context_length": 1000000
+            },
+            {
+                "id": "some-embed:free",
+                "type": "embedding"
+            }
+        ]})
+    }
+
+    #[test]
+    fn kilo_catalog_picks_only_free_models() {
+        let models = kilo_free_models(&kilo_catalog());
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "nvidia/nemotron-3.5-lightning:free",
+                "nvidia/nemotron-3.5-super-vl:free"
+            ],
+            "paid, non-chat, kilo-auto and stealth models excluded"
+        );
+        assert!(models.iter().all(|m| m.provider == "kilo"));
+    }
+
+    #[test]
+    fn kilo_catalog_marks_the_image_model_as_vision_tier() {
+        let models = kilo_free_models(&kilo_catalog());
+        assert_eq!(models[0].tier, None);
+        assert!(models[0].capabilities.contains(&ModelCapability::Tools));
+        assert_eq!(models[0].max_context, 1_000_000);
+        assert_eq!(models[1].tier, Some(CapabilityTier::VisionFree));
+        assert!(models[1].capabilities.contains(&ModelCapability::Vision));
+        assert!(models[1].capabilities.contains(&ModelCapability::Tools));
+    }
+
+    #[test]
+    fn kilo_catalog_without_free_models_is_empty() {
+        assert!(kilo_free_models(&serde_json::json!({"data": []})).is_empty());
+        assert!(kilo_free_models(&serde_json::json!({"oops": 1})).is_empty());
+    }
+
+    #[test]
+    fn keyless_kilo_is_registered_after_opencode_with_higher_latency() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _kilo_guard = EnvVarGuard("KILO_API_KEY");
+        let _zen_guard = EnvVarGuard("OPENCODE_API_KEY");
+        let _off_guard = EnvVarGuard("FRIDAY_KILO");
+        std::env::remove_var("KILO_API_KEY");
+        std::env::remove_var("OPENCODE_API_KEY");
+        std::env::remove_var("FRIDAY_KILO");
+
+        let fabric = InferenceFabric::default_from_env();
+        assert!(
+            fabric.providers.contains_key("kilo"),
+            "keyless fallback provider"
+        );
+        assert!(
+            fabric.providers.contains_key("opencode"),
+            "keyless default provider"
+        );
+        assert!(
+            fabric
+                .resolve_tier("kilo", CapabilityTier::VisionFree)
+                .is_some(),
+            "kilo vision tier registered"
+        );
+
+        let zen_latency = fabric
+            .models
+            .iter()
+            .find(|m| m.provider == "opencode")
+            .map(|m| m.latency_ms)
+            .expect("opencode model registered");
+        let kilo_latency = fabric
+            .models
+            .iter()
+            .find(|m| m.provider == "kilo")
+            .map(|m| m.latency_ms)
+            .expect("kilo model registered");
+
+        assert_eq!(zen_latency, 3_000, "opencode keyless latency is 3000ms");
+        assert_eq!(kilo_latency, 3_500, "kilo keyless latency is 3500ms");
+        assert!(
+            kilo_latency > zen_latency,
+            "kilo latency must be higher than opencode so zen is tried first"
+        );
+
+        let cands = fabric.select_for(&RequestRequirements::default());
+        let opencode_pos = cands.iter().position(|(m, _)| m.provider == "opencode");
+        let kilo_pos = cands.iter().position(|(m, _)| m.provider == "kilo");
+        assert!(
+            opencode_pos.is_some() && kilo_pos.is_some(),
+            "both providers are candidates"
+        );
+        assert!(
+            opencode_pos.unwrap() < kilo_pos.unwrap(),
+            "opencode must be tried before kilo fallback"
+        );
+    }
+
+    #[test]
+    fn friday_kilo_off_removes_it() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _off_guard = EnvVarGuard("FRIDAY_KILO");
+        std::env::set_var("FRIDAY_KILO", "off");
+
+        let fabric = InferenceFabric::default_from_env();
+        assert!(
+            !fabric.providers.contains_key("kilo"),
+            "FRIDAY_KILO=off must remove kilo provider"
+        );
+        assert!(
+            !fabric.models.iter().any(|m| m.provider == "kilo"),
+            "no kilo models registered when FRIDAY_KILO=off"
+        );
+        assert!(
+            !fabric.automatic.contains("kilo"),
+            "kilo not in automatic set when disabled"
+        );
+    }
+
+    #[test]
+    fn user_key_on_another_provider_still_outranks_both() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _kilo_guard = EnvVarGuard("KILO_API_KEY");
+        let _zen_guard = EnvVarGuard("OPENCODE_API_KEY");
+        let _off_guard = EnvVarGuard("FRIDAY_KILO");
+        let _groq_guard = EnvVarGuard("GROQ_API_KEY");
+        std::env::remove_var("KILO_API_KEY");
+        std::env::remove_var("OPENCODE_API_KEY");
+        std::env::remove_var("FRIDAY_KILO");
+        std::env::set_var("GROQ_API_KEY", "test-groq-key");
+
+        let fabric = InferenceFabric::default_from_env();
+        assert!(fabric.providers.contains_key("groq"));
+        assert!(fabric.providers.contains_key("opencode"));
+        assert!(fabric.providers.contains_key("kilo"));
+
+        let groq_latency = fabric
+            .models
+            .iter()
+            .find(|m| m.provider == "groq")
+            .map(|m| m.latency_ms)
+            .unwrap();
+        let zen_latency = fabric
+            .models
+            .iter()
+            .find(|m| m.provider == "opencode")
+            .map(|m| m.latency_ms)
+            .unwrap();
+        let kilo_latency = fabric
+            .models
+            .iter()
+            .find(|m| m.provider == "kilo")
+            .map(|m| m.latency_ms)
+            .unwrap();
+
+        assert!(groq_latency < zen_latency);
+        assert!(zen_latency < kilo_latency);
+
+        let cands = fabric.select_for(&RequestRequirements::default());
+        let groq_pos = cands
+            .iter()
+            .position(|(m, _)| m.provider == "groq")
+            .unwrap();
+        let zen_pos = cands
+            .iter()
+            .position(|(m, _)| m.provider == "opencode")
+            .unwrap();
+        let kilo_pos = cands
+            .iter()
+            .position(|(m, _)| m.provider == "kilo")
+            .unwrap();
+
+        assert!(groq_pos < zen_pos, "user-keyed groq outranks opencode");
+        assert!(zen_pos < kilo_pos, "opencode outranks kilo fallback");
+        assert!(fabric.user_providers().contains(&"groq".to_string()));
+        assert!(!fabric.user_providers().contains(&"opencode".to_string()));
+        assert!(!fabric.user_providers().contains(&"kilo".to_string()));
     }
 
     #[test]
