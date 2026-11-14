@@ -107,10 +107,9 @@ pub fn on_path(binary: &str) -> bool {
     std::env::split_paths(&path).any(|dir| {
         let candidate = dir.join(binary);
         if cfg!(windows) {
-            ["exe", "cmd", "bat"]
-                .iter()
-                .any(|ext| candidate.with_extension(ext).is_file())
-                || candidate.is_file()
+            // Only a native .exe: the question goes in as an argument, which
+            // Windows can't hand safely to an npm .cmd/.bat shim.
+            candidate.with_extension("exe").is_file()
         } else {
             is_executable(&candidate)
         }
