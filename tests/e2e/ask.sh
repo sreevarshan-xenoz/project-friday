@@ -24,8 +24,8 @@ fi
 PY=$(command -v python3 || command -v python)
 
 W=$(mktemp -d)
-FAKE="" DAEMON=""
-cleanup() { kill $DAEMON $FAKE 2>/dev/null || true; wait 2>/dev/null || true; }
+FAKE="" DAEMON="" CLOUD_FAKE=""
+cleanup() { kill $DAEMON $FAKE $CLOUD_FAKE 2>/dev/null || true; wait 2>/dev/null || true; }
 trap cleanup EXIT
 fails=0
 pass() { echo "  ok   $*"; }
@@ -161,6 +161,71 @@ if (( answers >= 2 )); then pass "one answer call per question ($answers)"
 else fail "expected an answer call per question (got $answers)"; fi
 if grep -q "panicked" "$W/daemon.log"; then fail "daemon panicked:"; grep -A1 panicked "$W/daemon.log" | head -4
 else pass "no panics"; fi
+
+echo "private mode"
+"$PY" tests/e2e/fake_model.py "$W/cloud_port" "$W/cloud_model.log" &
+CLOUD_FAKE=$!
+for _ in $(seq 300); do [[ -s "$W/cloud_port" ]] && break; sleep 0.1; done
+[[ -s "$W/cloud_port" ]] || { echo "fake cloud model never started" >&2; exit 1; }
+CLOUD_PORT=$(cat "$W/cloud_port")
+
+kill $DAEMON 2>/dev/null; wait $DAEMON 2>/dev/null || true
+rm -f "$W/state-priv.json" "$W/cloud_model.log"
+touch "$W/cloud_model.log"
+
+priv=(env -u HTTPS_PROXY -u HTTP_PROXY -u https_proxy -u http_proxy -u ALL_PROXY -u all_proxy
+  FRIDAY_STATE_FILE="$W/state-priv.json" FRIDAY_MEMORY_DIR="$W/memory-priv" FRIDAY_LISTEN=127.0.0.1:0
+  FRIDAY_PRIVATE=1
+  LLAMACPP_ENABLED=1 LLAMACPP_BASE_URL="http://127.0.0.1:$PORT/v1" LLAMACPP_MODEL="gemma3:4b"
+  OPENGATEWAY_API_KEY="test-cloud-key" OPENGATEWAY_BASE_URL="http://127.0.0.1:$CLOUD_PORT/v1")
+"${priv[@]}" "$DAEMON_BIN" >"$W/daemon-priv.log" 2>&1 &
+DAEMON=$!
+for _ in $(seq 120); do grep -q '"status": *"running"' "$W/state-priv.json" 2>/dev/null && break; sleep 0.5; done
+if grep -q '"status": *"running"' "$W/state-priv.json" 2>/dev/null; then pass "private daemon running"
+else fail "private daemon never reported running"; tail -20 "$W/daemon-priv.log"; exit 1; fi
+
+# state.json gets "private": true
+is_priv=$("$PY" -c 'import json,sys
+try:
+    with open(sys.argv[1]) as f: st = json.load(f)
+    print(st.get("private", False))
+except Exception:
+    print(False)' "$W/state-priv.json")
+if [[ "$is_priv" == "True" ]]; then pass "state.json reports private: true"
+else fail "state.json missing private: true (got $is_priv)"; fi
+
+priv_q="What is the speed of light in vacuum?"
+out_priv=$("${priv[@]}" timeout 90 "$CTL_BIN" goal --wait "$priv_q" 2>&1) || true
+if grep -q '"outcome": *"completed"' <<<"$out_priv"; then pass "private ask completes"
+else fail "private ask did not complete: $out_priv"; fi
+
+priv_answer=$("$PY" -c 'import json,sys
+objs=[]; d=json.JSONDecoder(); s=sys.stdin.read(); i=0
+while (j := s.find("{", i)) >= 0:
+    try: o, n = d.raw_decode(s[j:]); objs.append(o); i = j + n
+    except ValueError: i = j + 1
+done=[o for o in objs if isinstance(o, dict) and "outcome" in o]
+print((done[-1].get("result") or "") if done else "")' <<<"$out_priv")
+if [[ "$priv_answer" == "FAKE-MODEL-ANSWER: $priv_q"* ]]; then pass "answered by fake local model: ${priv_answer:0:60}"
+else fail "answer not from fake local model: '$priv_answer'"; fi
+
+priv_provider=$("$PY" -c 'import json,sys
+try:
+    with open(sys.argv[1]) as f: st = json.load(f)
+    print(st.get("last_goal", {}).get("served_by", {}).get("provider", ""))
+except Exception:
+    print("")' "$W/state-priv.json")
+if [[ "$priv_provider" == "llamacpp" ]]; then pass "served_by.provider is llamacpp"
+else fail "served_by.provider is '$priv_provider', expected llamacpp"; fi
+
+if [[ -s "$W/cloud_model.log" ]]; then
+  fail "cloud provider was contacted in private mode: $(cat "$W/cloud_model.log")"
+else
+  pass "cloud provider was never contacted"
+fi
+
+kill $CLOUD_FAKE 2>/dev/null; wait $CLOUD_FAKE 2>/dev/null || true
+CLOUD_FAKE=""
 
 # No model reachable at all (the local one down, and every remote one behind
 # a dead proxy): the ask fails and says why in plain words, instead of

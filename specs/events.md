@@ -93,6 +93,16 @@ sending to the AI provider, the `goal.completed` and `goal.failed` event payload
 Absent when no secrets were masked (count is 0). Raw secrets are replaced with
 `[secret masked]` and never leave the machine, appear in logs, or persist in state.json.
 
+### `private` mode flag
+
+The root of `state.json` carries a boolean `private` field (`true` | `false`) indicating
+whether FRIDAY is operating in private mode (`FRIDAY_PRIVATE=1|true`). When `true`, FRIDAY
+uses local models exclusively and answers stay on the machine.
+
+```json
+"private": true
+```
+
 ## Egress Log: egress.jsonl
 
 The daemon maintains a local audit log of outbound AI requests at `<state dir>/egress.jsonl`
