@@ -213,6 +213,10 @@ async fn main() {
         }
     }
     let fabric = Arc::new(fabric);
+    {
+        let mut st = state.lock().await;
+        st.r#private = fabric.private_mode;
+    }
     tracing::info!(
         "[Investigation] fabric: {} providers / {} models registered",
         fabric.providers.len(),

@@ -42,6 +42,8 @@ Autonomous Agent & Cognitive Loop:
                                    Use an AI account you already have (signs in);
                                    a fallback after the free models unless --prefer
   friday disconnect <name>         Stop using a connected account
+  friday private [status|on [model]|off]
+                                   Local model only; nothing leaves the machine
   friday face [status|setup|remove] Face unlock for the lock screen (Gaze)
   friday voice [status|setup|remove] Hold Super+Y and speak (speech to text on this computer)
 
@@ -224,6 +226,21 @@ friday_doctor() {
 
   echo
   echo "AI provider"
+  local is_priv=false priv_model=""
+  if [ -r "$env_file" ] && grep -qE '^FRIDAY_PRIVATE=(1|true)' "$env_file" 2>/dev/null; then
+    is_priv=true
+    priv_model=$(sed -n 's/^LLAMACPP_MODEL=//p' "$env_file" 2>/dev/null | tail -n1)
+    priv_model="${priv_model:-gemma3:4b}"
+  fi
+  if $is_priv; then
+    if curl -s -f -o /dev/null "http://127.0.0.1:11434/" 2>/dev/null; then
+      ok "private mode: on ($priv_model, Ollama reachable)"
+    else
+      bad "private mode: on ($priv_model, Ollama unreachable)" "start it: sudo systemctl start ollama"
+    fi
+  else
+    ok "private mode: off"
+  fi
   local key_var=""
   if [ -r "$env_file" ]; then
     key_var=$(grep -oE '^[A-Z_]+_API_KEY=.+' "$env_file" | head -n1 | cut -d= -f1 || true)
@@ -945,6 +962,118 @@ friday_sent() {
   fi
 }
 
+friday_private() {
+  local sub="${1:-status}"
+  case "$sub" in
+    on)
+      shift
+      local model="${1:-}"
+      local vision=1
+      echo "Answers stay on this computer — nothing leaves this machine."
+      echo "Slower than cloud models and uses your computer's CPU or GPU."
+      echo "Needs ~3–5 GB of disk space for the local model."
+      if [ -z "$model" ]; then
+        local total_kb=0
+        if [ -r /proc/meminfo ]; then
+          total_kb=$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+        fi
+        if [ "$total_kb" -gt 0 ] && [ "$total_kb" -lt 8000000 ]; then
+          model="qwen3:1.7b"
+          vision=0
+        else
+          model="gemma3:4b"
+          vision=1
+        fi
+      else
+        case "$model" in
+          *gemma3*|*vision*|*llava*|*minicpm*|*moondream*) vision=1 ;;
+          *) vision=0 ;;
+        esac
+      fi
+      sudo pacman -S --needed --noconfirm ollama
+      sudo systemctl enable --now ollama
+      local i=0
+      while [ "$i" -lt 20 ]; do
+        if curl -s -f -o /dev/null "http://127.0.0.1:11434/" 2>/dev/null; then
+          break
+        fi
+        sleep 1
+        i=$((i + 1))
+      done
+      if ! curl -s -f -o /dev/null "http://127.0.0.1:11434/" 2>/dev/null; then
+        echo "Timed out waiting for Ollama at http://127.0.0.1:11434" >&2
+        return 1
+      fi
+      ollama pull "$model"
+      local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
+      mkdir -p "$(dirname "$env_file")"
+      (
+        umask 077
+        {
+          grep -vE '^(FRIDAY_PRIVATE|LLAMACPP_ENABLED|LLAMACPP_BASE_URL|LLAMACPP_MODEL|LLAMACPP_VISION)=' "$env_file" 2>/dev/null || true
+          echo "FRIDAY_PRIVATE=1"
+          echo "LLAMACPP_ENABLED=1"
+          echo "LLAMACPP_BASE_URL=http://127.0.0.1:11434/v1"
+          echo "LLAMACPP_MODEL=$model"
+          echo "LLAMACPP_VISION=$vision"
+        } >"$env_file.tmp"
+        chmod 0600 "$env_file.tmp"
+        mv -f "$env_file.tmp" "$env_file"
+      )
+      systemctl --user restart friday-linux-daemon 2>/dev/null || true
+      echo "Private mode is on: $model on this computer."
+      ;;
+    off)
+      local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
+      local old_model="<model>"
+      if [ -f "$env_file" ]; then
+        old_model=$(sed -n 's/^LLAMACPP_MODEL=//p' "$env_file" 2>/dev/null | tail -n1)
+        old_model="${old_model:-<model>}"
+        (
+          umask 077
+          grep -vE '^(FRIDAY_PRIVATE|LLAMACPP_ENABLED|LLAMACPP_BASE_URL|LLAMACPP_MODEL|LLAMACPP_VISION)=' "$env_file" >"$env_file.tmp" 2>/dev/null || true
+          chmod 0600 "$env_file.tmp"
+          mv -f "$env_file.tmp" "$env_file"
+        )
+      fi
+      systemctl --user restart friday-linux-daemon 2>/dev/null || true
+      echo "Private mode is off."
+      echo "Ollama stays installed (sudo pacman -Rns ollama to remove it, ollama rm $old_model to free space)."
+      ;;
+    status)
+      local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
+      local is_on=false
+      local model=""
+      if [ -f "$env_file" ]; then
+        if grep -qE '^FRIDAY_PRIVATE=(1|true)' "$env_file" 2>/dev/null; then
+          is_on=true
+        fi
+        model=$(sed -n 's/^LLAMACPP_MODEL=//p' "$env_file" 2>/dev/null | tail -n1)
+      fi
+      local ollama_running=false
+      if curl -s -f -o /dev/null "http://127.0.0.1:11434/" 2>/dev/null; then
+        ollama_running=true
+      fi
+      if $is_on; then
+        echo "Private mode: on"
+        [ -n "$model" ] && echo "Model: $model"
+      else
+        echo "Private mode: off"
+        [ -n "$model" ] && echo "Model: $model"
+      fi
+      if $ollama_running; then
+        echo "Ollama: running"
+      else
+        echo "Ollama: not running"
+      fi
+      ;;
+    *)
+      echo "Usage: friday private [status|on [model]|off]" >&2
+      return 1
+      ;;
+  esac
+}
+
 case "${1:-}" in
   ""|"-h"|"--help"|"help")
     show_help
@@ -1161,10 +1290,19 @@ case "${1:-}" in
       [ "${#preview}" -le 220 ] || preview="${preview:0:217}…"
       [ -z "$meta" ] || preview="$preview\n$meta"
       if $ans_ok; then
+        local is_private=false
+        local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
+        if [ "$(jq -r '.private // false' "$state_dir/state.json" 2>/dev/null || true)" = "true" ] \
+           || { [ -r "$env_file" ] && grep -qE '^FRIDAY_PRIVATE=(1|true)' "$env_file" 2>/dev/null; }; then
+          is_private=true
+        fi
         local served_p served_ms
         served_p=$(jq -r '.served_by.provider // empty' <<<"$summary_json" 2>/dev/null || true)
         served_ms=$(jq -r '.served_by.ms // empty' <<<"$summary_json" 2>/dev/null || true)
-        if [ -n "$served_p" ]; then
+        if $is_private; then
+          preview="$preview\nPrivate · on this computer"
+          meta="Private · on this computer"
+        elif [ -n "$served_p" ]; then
           local p_name
           case "$served_p" in
             opencode-zen) p_name="OpenCode Zen" ;;
@@ -1313,6 +1451,10 @@ case "${1:-}" in
   disconnect)
     shift
     friday_disconnect "$@"
+    ;;
+  private)
+    shift
+    friday_private "$@"
     ;;
   welcome)
     shift

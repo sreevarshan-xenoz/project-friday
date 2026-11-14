@@ -1237,6 +1237,8 @@ pub struct InferenceFabric {
     /// local Ollama probe, keyless OpenCode Zen). Everything else registered
     /// is the user's choice: see [`InferenceFabric::user_providers`].
     pub automatic: std::collections::BTreeSet<String>,
+    /// When true, only local models are selected and no request ever leaves the machine.
+    pub private_mode: bool,
 }
 
 impl InferenceFabric {
@@ -1263,6 +1265,21 @@ impl InferenceFabric {
                 crate::egress::default_egress_path()
             },
             automatic: std::collections::BTreeSet::new(),
+            private_mode: false,
+        }
+    }
+
+    /// Builder method to enable or disable private mode.
+    pub fn with_private_mode(mut self, enabled: bool) -> Self {
+        self.set_private_mode(enabled);
+        self
+    }
+
+    /// Set private mode. When enabled, sets default routing mode to [`RoutingMode::Local`].
+    pub fn set_private_mode(&mut self, enabled: bool) {
+        self.private_mode = enabled;
+        if enabled {
+            self.default_mode = RoutingMode::Local;
         }
     }
 
@@ -1596,41 +1613,62 @@ impl InferenceFabric {
         prompt: &str,
         require_json: bool,
     ) -> Result<String, String> {
-        let model = self
-            .resolve_tier(provider, tier)
-            .ok_or_else(|| format!("no model registered for {provider} tier {}", tier.tag()))?;
-        let prov = self
-            .providers
-            .get(provider)
-            .ok_or_else(|| format!("provider {provider} not registered"))?;
+        let (provider_name, model) = if self.private_mode {
+            let requested = self.resolve_tier(provider, tier);
+            if let Some(m) = requested.filter(|m| m.capabilities.contains(&ModelCapability::Local))
+            {
+                (provider.to_string(), m.clone())
+            } else if let Some(m) = self.models.iter().find(|m| {
+                m.tier == Some(tier)
+                    && m.capabilities.contains(&ModelCapability::Local)
+                    && self.providers.contains_key(&m.provider)
+            }) {
+                (m.provider.clone(), m.clone())
+            } else {
+                return Err("Private mode is on and no local model is running (start it: friday private on)".to_string());
+            }
+        } else {
+            let m = self
+                .resolve_tier(provider, tier)
+                .ok_or_else(|| format!("no model registered for {provider} tier {}", tier.tag()))?;
+            (provider.to_string(), m.clone())
+        };
+        let prov = self.providers.get(&provider_name).ok_or_else(|| {
+            if self.private_mode {
+                "Private mode is on and no local model is running (start it: friday private on)"
+                    .to_string()
+            } else {
+                format!("provider {provider_name} not registered")
+            }
+        })?;
 
         let reliability = self
             .health_scores
             .lock()
             .unwrap()
-            .get(provider)
+            .get(&provider_name)
             .copied()
             .unwrap_or(1.0);
         let mut decision = self.start_decision(
             Some(tier),
             vec![CandidateConsideration {
-                provider: provider.to_string(),
+                provider: provider_name.clone(),
                 model: model.id.clone(),
                 reliability,
                 latency_ms: model.latency_ms,
             }],
-            Some((provider.to_string(), model.id.clone())),
+            Some((provider_name.clone(), model.id.clone())),
         );
 
         // Egress gate (#12): scan the prompt before it leaves to this
         // provider. `Err` = blocked — the payload never leaves. The block is
         // recorded on the routing decision FIRST so it stays auditable
         // ("which provider was receiving it?"), then propagated.
-        let prompt = match self.egress_process(provider, prompt) {
+        let prompt = match self.egress_process(&provider_name, prompt) {
             Ok(prompt) => prompt,
             Err(e) => {
                 decision.failures.push(CandidateFailure {
-                    provider: provider.to_string(),
+                    provider: provider_name.clone(),
                     model: model.id.clone(),
                     error: sanitize_candidate_error(&e),
                 });
@@ -1639,8 +1677,8 @@ impl InferenceFabric {
             }
         };
         let is_local = model.capabilities.contains(&ModelCapability::Local)
-            || provider == "ollama"
-            || provider == "llamacpp";
+            || provider_name == "ollama"
+            || provider_name == "llamacpp";
         match run_attempt(
             at_least(
                 self.timeout_for_tier(tier, &prompt),
@@ -1651,15 +1689,15 @@ impl InferenceFabric {
         .await
         {
             Ok(response) => {
-                self.log_egress_attempt(provider, &model.id, &prompt, is_local, "ok");
-                decision.served = Some((provider.to_string(), model.id.clone()));
+                self.log_egress_attempt(&provider_name, &model.id, &prompt, is_local, "ok");
+                decision.served = Some((provider_name.clone(), model.id.clone()));
                 self.record_decision(decision);
                 Ok(response)
             }
             Err(e) => {
-                self.log_egress_attempt(provider, &model.id, &prompt, is_local, "error");
+                self.log_egress_attempt(&provider_name, &model.id, &prompt, is_local, "error");
                 decision.failures.push(CandidateFailure {
-                    provider: provider.to_string(),
+                    provider: provider_name.clone(),
                     model: model.id.clone(),
                     error: sanitize_candidate_error(&e),
                 });
@@ -1676,6 +1714,10 @@ impl InferenceFabric {
         let mut probe_entered = None;
 
         for model in &self.models {
+            if self.private_mode && !model.capabilities.contains(&ModelCapability::Local) {
+                continue;
+            }
+
             // Check capability match
             let has_caps = self
                 .required_capabilities
@@ -1697,34 +1739,39 @@ impl InferenceFabric {
             }
 
             // An account the person connected (`friday connect`) is theirs to
-            // use in every mode but local-only.
-            let matches = is_account_provider(&model.provider) && mode != RoutingMode::Local
-                || match mode {
-                    RoutingMode::Fast => {
-                        model.provider == "groq"
-                            || model.provider == "cerebras"
-                            || model.provider == "nvidia-nim"
+            // use in every mode but local-only. In private mode, the fabric is
+            // local-only across every routing mode.
+            let matches = if self.private_mode {
+                model.capabilities.contains(&ModelCapability::Local)
+            } else {
+                is_account_provider(&model.provider) && mode != RoutingMode::Local
+                    || match mode {
+                        RoutingMode::Fast => {
+                            model.provider == "groq"
+                                || model.provider == "cerebras"
+                                || model.provider == "nvidia-nim"
+                        }
+                        RoutingMode::Quality => {
+                            model.provider == "gemini"
+                                || model.provider == "groq"
+                                || model.provider == "cerebras"
+                                || model.provider == "nvidia-nim"
+                                || model.provider == "copilot"
+                        }
+                        RoutingMode::Free => is_free_provider(&model.provider),
+                        RoutingMode::Local => model.capabilities.contains(&ModelCapability::Local),
+                        RoutingMode::Hybrid => {
+                            model.capabilities.contains(&ModelCapability::Local)
+                                || model.provider == "openrouter"
+                                || model.provider == "omniroute"
+                                || model.provider == "nvidia-nim"
+                                || model.provider == "opengateway"
+                                || model.provider == "sambanova"
+                                || model.provider == "github-models"
+                                || model.provider == "copilot"
+                        }
                     }
-                    RoutingMode::Quality => {
-                        model.provider == "gemini"
-                            || model.provider == "groq"
-                            || model.provider == "cerebras"
-                            || model.provider == "nvidia-nim"
-                            || model.provider == "copilot"
-                    }
-                    RoutingMode::Free => is_free_provider(&model.provider),
-                    RoutingMode::Local => model.capabilities.contains(&ModelCapability::Local),
-                    RoutingMode::Hybrid => {
-                        model.capabilities.contains(&ModelCapability::Local)
-                            || model.provider == "openrouter"
-                            || model.provider == "omniroute"
-                            || model.provider == "nvidia-nim"
-                            || model.provider == "opengateway"
-                            || model.provider == "sambanova"
-                            || model.provider == "github-models"
-                            || model.provider == "copilot"
-                    }
-                };
+            };
 
             if matches {
                 if let Some(prov) = self.providers.get(&model.provider) {
@@ -1821,6 +1868,9 @@ impl InferenceFabric {
         let mut probe_entered = None;
 
         for model in &self.models {
+            if self.private_mode && !model.capabilities.contains(&ModelCapability::Local) {
+                continue;
+            }
             if !Self::requirements_met(req, model) {
                 continue;
             }
@@ -2084,6 +2134,12 @@ impl InferenceFabric {
         let mut fabric = Self::new();
         fabric.fabric_dir = dir.to_path_buf();
         fabric.health_state_path = dir.join("provider_health.json");
+        let is_private = std::env::var("FRIDAY_PRIVATE")
+            .map(|v| v == "true" || v == "1")
+            .unwrap_or(false);
+        if is_private {
+            fabric.set_private_mode(true);
+        }
         let security_vault = Arc::new(SecretsVault::new());
 
         // Attempt to load dynamic model registry from workspace config file
@@ -3473,7 +3529,12 @@ impl InferenceFabric {
         progress: Option<&(dyn for<'s> Fn(&'s str) + Send + Sync)>,
     ) -> Result<String, String> {
         if candidates.is_empty() {
-            let err_msg = "No eligible providers for this request.".to_string();
+            let err_msg = if self.private_mode {
+                "Private mode is on and no local model is running (start it: friday private on)"
+                    .to_string()
+            } else {
+                "No eligible providers for this request.".to_string()
+            };
             let metrics = InferenceMetrics {
                 request_id: request_id.to_string(),
                 timestamp: chrono::Utc::now(),
@@ -3709,7 +3770,12 @@ impl InferenceFabric {
         prompt: &str,
     ) -> Result<ProviderResponse, String> {
         if candidates.is_empty() {
-            let err_msg = "No eligible providers for this request.".to_string();
+            let err_msg = if self.private_mode {
+                "Private mode is on and no local model is running (start it: friday private on)"
+                    .to_string()
+            } else {
+                "No eligible providers for this request.".to_string()
+            };
             tracing::error!("[Inference Request {}] {}", request_id, err_msg);
             return Err(err_msg);
         }
@@ -6919,5 +6985,184 @@ mod v2_tests {
         assert_eq!(entry2.model, "m_vision");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    struct TestReplyProvider {
+        name: &'static str,
+        reply: &'static str,
+    }
+
+    #[async_trait]
+    impl Provider for TestReplyProvider {
+        fn name(&self) -> &str {
+            self.name
+        }
+        async fn complete(
+            &self,
+            _model_id: &str,
+            _prompt: &str,
+            _require_json: bool,
+        ) -> Result<String, String> {
+            Ok(self.reply.to_string())
+        }
+        async fn check_health(&self) -> bool {
+            true
+        }
+    }
+
+    fn test_model(
+        id: &str,
+        provider: &str,
+        latency_ms: u64,
+        caps: &[ModelCapability],
+        tier: Option<CapabilityTier>,
+    ) -> ModelInfo {
+        ModelInfo {
+            id: id.to_string(),
+            family: id.to_string(),
+            provider: provider.to_string(),
+            latency_ms,
+            reliability: 1.0,
+            capabilities: caps.to_vec(),
+            max_context: 4096,
+            tier,
+        }
+    }
+
+    #[tokio::test]
+    async fn private_mode_selects_only_local_models_and_excludes_cloud_and_account() {
+        let mut fabric = InferenceFabric::new();
+        // Register local provider
+        fabric.register_provider(Box::new(TestReplyProvider {
+            name: "llamacpp",
+            reply: "local reply",
+        }));
+        fabric.register_model(test_model(
+            "local-gemma",
+            "llamacpp",
+            50,
+            &[ModelCapability::Json, ModelCapability::Local],
+            None,
+        ));
+
+        // Register cloud provider
+        fabric.register_provider(Box::new(TestReplyProvider {
+            name: "gemini",
+            reply: "cloud reply",
+        }));
+        fabric.register_model(test_model(
+            "gemini-2.5-flash",
+            "gemini",
+            10,
+            &[ModelCapability::Json, ModelCapability::Vision],
+            None,
+        ));
+
+        // Register account provider (Copilot)
+        fabric.register_provider(Box::new(CopilotCliProvider::new(None)));
+        fabric.register_model(test_model(
+            "auto",
+            "copilot",
+            50,
+            &[ModelCapability::Tools],
+            None,
+        ));
+
+        // Enable private mode via constructor/setter
+        fabric.set_private_mode(true);
+        assert_eq!(fabric.default_mode, RoutingMode::Local);
+        assert!(fabric.private_mode);
+
+        // In any routing mode, only local models match
+        for mode in [
+            RoutingMode::Free,
+            RoutingMode::Quality,
+            RoutingMode::Fast,
+            RoutingMode::Hybrid,
+            RoutingMode::Local,
+        ] {
+            let candidates = fabric.select_candidates(mode);
+            assert_eq!(candidates.len(), 1, "only 1 candidate in mode {:?}", mode);
+            assert_eq!(candidates[0].0.provider, "llamacpp");
+        }
+
+        // Requirements-driven select_for also only returns local models
+        let req_candidates = fabric.select_for(&RequestRequirements::default());
+        assert_eq!(req_candidates.len(), 1);
+        assert_eq!(req_candidates[0].0.provider, "llamacpp");
+
+        // Text completion uses local model
+        let res = fabric.complete("test prompt").await;
+        assert_eq!(res.unwrap(), "local reply");
+    }
+
+    #[tokio::test]
+    async fn private_mode_fails_plainly_when_no_local_model_available() {
+        let mut fabric = InferenceFabric::new().with_private_mode(true);
+        // Only cloud providers registered
+        fabric.register_provider(Box::new(TestReplyProvider {
+            name: "gemini",
+            reply: "cloud reply",
+        }));
+        fabric.register_model(test_model(
+            "gemini-flash",
+            "gemini",
+            10,
+            &[ModelCapability::Json, ModelCapability::Vision],
+            Some(CapabilityTier::VisionFree),
+        ));
+
+        // Text completion should fail with exact message
+        let text_res = fabric.complete("test prompt").await;
+        assert_eq!(
+            text_res.unwrap_err(),
+            "Private mode is on and no local model is running (start it: friday private on)"
+        );
+
+        // complete_tier (vision) should also fail with exact message and never contact cloud
+        let vision_res = fabric
+            .complete_tier("gemini", CapabilityTier::VisionFree, "look at this", false)
+            .await;
+        assert_eq!(
+            vision_res.unwrap_err(),
+            "Private mode is on and no local model is running (start it: friday private on)"
+        );
+    }
+
+    #[tokio::test]
+    async fn private_mode_vision_complete_tier_uses_local_model_only() {
+        let mut fabric = InferenceFabric::new().with_private_mode(true);
+
+        // Cloud vision provider
+        fabric.register_provider(Box::new(TestReplyProvider {
+            name: "gemini",
+            reply: "cloud vision reply",
+        }));
+        fabric.register_model(test_model(
+            "gemini-flash",
+            "gemini",
+            10,
+            &[ModelCapability::Vision],
+            Some(CapabilityTier::VisionFree),
+        ));
+
+        // Local vision provider
+        fabric.register_provider(Box::new(TestReplyProvider {
+            name: "llamacpp",
+            reply: "local vision reply",
+        }));
+        fabric.register_model(test_model(
+            "gemma3-4b",
+            "llamacpp",
+            100,
+            &[ModelCapability::Local, ModelCapability::Vision],
+            Some(CapabilityTier::VisionFree),
+        ));
+
+        // complete_tier("gemini") in private mode must redirect to local vision model
+        let res = fabric
+            .complete_tier("gemini", CapabilityTier::VisionFree, "look at this", false)
+            .await;
+        assert_eq!(res.unwrap(), "local vision reply");
     }
 }

@@ -644,6 +644,22 @@ impl FabricProviderSeam {
         payload: &str,
         progress: Option<&(dyn for<'s> Fn(&'s str) + Send + Sync)>,
     ) -> Result<String, String> {
+        if self.fabric.private_mode {
+            let provider = self.provider.as_deref().unwrap_or("llamacpp");
+            let text = self
+                .fabric
+                .complete_tier(
+                    provider,
+                    friday_intelligence::CapabilityTier::VisionFree,
+                    payload,
+                    false,
+                )
+                .await?;
+            if let Some(p) = progress {
+                p(&text);
+            }
+            return Ok(text);
+        }
         if let Some(provider) = &self.provider {
             // A pinned provider's vision tier: answered whole.
             let text = self
@@ -1470,5 +1486,18 @@ mod tests {
             .await
             .unwrap();
         assert!(reader.provider.last().unwrap().contains("SCREEN_CAPTURE"));
+    }
+
+    #[tokio::test]
+    async fn fabric_provider_seam_private_mode_fails_when_no_local_vision_model() {
+        let fabric = friday_intelligence::InferenceFabric::new().with_private_mode(true);
+        let seam = FabricProviderSeam::new(Arc::new(fabric), None);
+        let payload =
+            "SCREEN_CAPTURE mime=image/png geometry=fullscreen bytes=3 data=QUJD\nQUESTION: test";
+        let err = seam.send(payload).await.unwrap_err();
+        assert_eq!(
+            err,
+            "Private mode is on and no local model is running (start it: friday private on)"
+        );
     }
 }

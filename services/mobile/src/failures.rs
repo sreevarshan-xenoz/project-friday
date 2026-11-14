@@ -22,8 +22,8 @@ pub fn plain_model_error(raw: &str) -> String {
     }
     let r = raw.to_ascii_lowercase();
     let has = |needles: &[&str]| needles.iter().any(|n| r.contains(n));
-    if has(&["none of your ai providers"]) {
-        // Already written for people (the screen-route refusal).
+    if has(&["none of your ai providers", "private mode is on"]) {
+        // Already written for people (the screen-route refusal or private mode).
         return raw.to_string();
     }
     if has(&["no eligible providers"]) {

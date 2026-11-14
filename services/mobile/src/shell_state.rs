@@ -128,6 +128,9 @@ pub struct ShellState {
     /// over the WebSocket ingress (loopback is the coarse trust boundary; this
     /// token is the fine-grained one, mirroring Omarchy shell validation).
     pub token: String,
+    /// Whether FRIDAY is running in private mode (local models only).
+    #[serde(default, rename = "private")]
+    pub r#private: bool,
 }
 
 /// A record of a command the daemon accepted from the shell.
@@ -152,6 +155,9 @@ pub struct ContextReadRecord {
 impl ShellState {
     /// A starting-state document with a freshly generated session token.
     pub fn starting(token: String) -> Self {
+        let is_private = std::env::var("FRIDAY_PRIVATE")
+            .map(|v| v == "true" || v == "1")
+            .unwrap_or(false);
         Self {
             status: "starting".into(),
             updated_ms: 0,
@@ -166,6 +172,7 @@ impl ShellState {
             context_read: None,
             listen: String::new(),
             token,
+            r#private: is_private,
         }
     }
 
@@ -197,6 +204,7 @@ impl ShellState {
             "updated_ms": now_ms,
             "updated_utc": now_utc,
             "version": self.version,
+            "private": self.r#private,
             "current": self.current,
             "last_goal": self.last_goal,
             "cognition": self.cognition,
@@ -830,5 +838,30 @@ mod tests {
         let rendered = render(&s2);
         let last_rendered = &rendered["last_goal"];
         assert!(last_rendered.get("masked").is_none());
+    }
+
+    #[test]
+    fn state_json_private_field() {
+        // Default starting state
+        let mut st = ShellState::starting("token-123".into());
+        assert!(!st.r#private);
+        let rendered = render(&st);
+        assert_eq!(rendered["private"], false);
+
+        // Explicitly private
+        st.r#private = true;
+        let rendered_priv = render(&st);
+        assert_eq!(rendered_priv["private"], true);
+
+        // Deserializing JSON without "private" defaults to false
+        let older = r#"{"status":"running","updated_ms":0,"updated_utc":"","version":1,"cognition":{},"voice":"off","listen":"","token":"abc"}"#;
+        let parsed: ShellState = serde_json::from_str(older).expect("older state.json parses");
+        assert!(!parsed.r#private);
+
+        // Deserializing JSON with "private": true
+        let priv_json = r#"{"status":"running","updated_ms":0,"updated_utc":"","version":1,"private":true,"cognition":{},"voice":"off","listen":"","token":"abc"}"#;
+        let parsed_priv: ShellState =
+            serde_json::from_str(priv_json).expect("private state.json parses");
+        assert!(parsed_priv.r#private);
     }
 }
