@@ -1122,6 +1122,7 @@ dependencies = [
  "friday-planner",
  "friday-skills",
  "futures",
+ "libc",
  "reqwest 0.11.27",
  "serde",
  "serde_json",
@@ -1266,6 +1267,7 @@ name = "friday-context-collector"
 version = "0.1.0"
 dependencies = [
  "friday-intelligence",
+ "libc",
  "serde_json",
 ]
 

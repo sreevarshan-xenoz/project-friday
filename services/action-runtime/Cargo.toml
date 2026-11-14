@@ -28,6 +28,9 @@ chromiumoxide = "0.7"
 futures = { workspace = true }
 tokio = { version = "1", features = ["full"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 zip.workspace = true
 friday-knowledge = { path = "../knowledge" }
