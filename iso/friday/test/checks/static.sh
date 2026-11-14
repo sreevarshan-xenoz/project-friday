@@ -143,6 +143,19 @@ grep -q 'pacstrap_with_retry -U /mnt "$FRIDAY_PKG"' "$AIROOTFS/root/installer" \
 if (unset FRIDAY_HOSTNAME; HOSTNAME=archiso; eval "$(grep -m1 '^HOSTNAME=' "$AIROOTFS/root/installer")"; [[ $HOSTNAME == friday ]]); then
   pass "unattended install names the computer friday, not the live system's hostname"
 else fail "installer takes its hostname default from bash's \$HOSTNAME"; fi
+# `friday` is the CLI (packaging/linux/friday); an alias to friday-ctl in the
+# default shell config sent `friday connect` / `setup-ai` / `doctor` typed in a
+# terminal to the wrong program (found recording a demo, 2026-11-14).
+if grep -rqsE "^[[:space:]]*alias[[:space:]]+friday=" "$AIROOTFS/etc/skel"; then
+  fail "etc/skel aliases friday, which shadows the friday CLI"
+else pass "etc/skel leaves the friday command alone"; fi
+# Hyprland 0.57 deprecates the on_created_empty workspace rule and shows a
+# banner on every login; omarchy-patches/ backports upstream's replacement.
+if [[ -d "$AIROOTFS/usr/share/omarchy/default/hypr" ]]; then
+  if grep -rqsE "on_created_empty[[:space:]]*=" "$AIROOTFS/usr/share/omarchy/default/hypr"; then
+    fail "staged Omarchy still uses the deprecated on_created_empty workspace rule"
+  else pass "staged Omarchy has no deprecated on_created_empty rule"; fi
+fi
 
 echo "scripts are stored executable in git"
 for f in packaging/linux/friday iso/friday/airootfs/root/configurator iso/friday/airootfs/root/installer; do

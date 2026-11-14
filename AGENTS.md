@@ -53,7 +53,8 @@ Top to bottom; don't start a later phase while an earlier one has known failures
   packages go in `packages.x86_64` and/or the installer's pacstrap list and
   must exist in the Arch repos.
 - **Upstreams are pinned:** Omarchy at the commit in `fetch-omarchy.sh`; bump
-  a pin on purpose, in its own commit.
+  a pin on purpose, in its own commit. A fix the pin needs before then is a
+  patch in `iso/friday/omarchy-patches/` (applied on top, in order).
 - **No build output in git:** ISOs, `target/`, `bin/`, `obj/`, packages, MSIs,
   `airootfs/opt/friday/repo/`.
 

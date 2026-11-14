@@ -12,6 +12,12 @@ FRIDAY_BORDER="#3B4261"      # Border Slate
 FRIDAY_TEXT="#C0CAF5"        # Soft White
 FRIDAY_BG="#1A1B26"          # Night
 
+# The Linux console has 16 colours: Muted Slate becomes dark VT blue, which
+# can't be read on black (hints, the step rail). Light grey there instead.
+if [[ "${TERM:-}" == linux ]]; then
+  FRIDAY_MUTED="#AAAAAA"
+fi
+
 # Put every gum prompt in FRIDAY's palette (gum defaults to pink).
 export GUM_CHOOSE_CURSOR_FOREGROUND="$FRIDAY_ACCENT"
 export GUM_CHOOSE_SELECTED_FOREGROUND="$FRIDAY_ACCENT"

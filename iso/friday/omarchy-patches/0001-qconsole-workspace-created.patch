@@ -1,0 +1,29 @@
+diff --git a/default/hypr/qconsole.lua b/default/hypr/qconsole.lua
+index d3a36ae..9411c2d 100644
+--- a/default/hypr/qconsole.lua
++++ b/default/hypr/qconsole.lua
+@@ -11,8 +11,13 @@ local share = 0.5
+ -- from while misc.initial_workspace_tracking is on, and looknfeel turns it off.
+ -- Omarchy ships without a default agent, and omarchy-agent exits without
+ -- opening anything when none is set, so until one is picked this just opens an
+--- empty console.
+-local seed = "[workspace special:scratchpad silent] omarchy-agent"
++-- empty console. (Hyprland 0.57 deprecates the workspace rule's
++-- on_created_empty for this event; backported from upstream #17077.)
++hl.on("workspace.created", function(ws)
++  if ws and ws.name == "special:scratchpad" and ws.is_empty then
++    hl.exec_cmd("omarchy-agent", { workspace = "special:scratchpad silent" })
++  end
++end)
+ 
+ -- Dimming only applies while a special workspace is open, so the console gets
+ -- its separation from the workspace underneath without costing anything the
+@@ -44,8 +49,6 @@ local function cover(bottom)
+     -- open, and the active border reads as a stray frame around a panel that
+     -- is already set apart by the dimming behind it.
+     no_border = true,
+-
+-    on_created_empty = seed,
+   })
+ end
+ 

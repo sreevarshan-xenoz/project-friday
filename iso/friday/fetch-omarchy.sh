@@ -7,6 +7,10 @@
 # it in. It never follows a branch: moving to a newer Omarchy means changing
 # the pin below on purpose.
 #
+# omarchy-patches/*.patch are applied on top, in order: small fixes the pin
+# needs for today's Arch packages (e.g. a Hyprland deprecation), backported
+# from upstream until the pin moves past them.
+#
 #   OMARCHY_REF=<sha>        override the pin (full 40-char SHA)
 #   OMARCHY_FORCE=true       replace an unstamped/hand-made copy too
 #   OMARCHY_SKIP_FETCH=true  do nothing
@@ -20,6 +24,10 @@ PROFILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST="${OMARCHY_DEST:-$PROFILE_DIR/airootfs/usr/share/omarchy}"
 CACHE="${OMARCHY_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/friday-iso/omarchy}"
 STAMP="$DEST/.friday-omarchy-ref"
+PATCHES=("$PROFILE_DIR"/omarchy-patches/*.patch)
+[[ -e "${PATCHES[0]}" ]] || PATCHES=()
+# The stamp records the pin and the patches, so changing either restages.
+WANT="$OMARCHY_REF $( ((${#PATCHES[@]})) && cat "${PATCHES[@]}" | sha256sum | cut -c1-16)"
 
 log() { echo "[omarchy] $*"; }
 
@@ -33,7 +41,7 @@ if [[ ! "$OMARCHY_REF" =~ ^[0-9a-f]{40}$ ]]; then
   exit 1
 fi
 
-if [[ -f "$STAMP" && "$(cat "$STAMP")" == "$OMARCHY_REF" && -x "$DEST/bin/omarchy" ]]; then
+if [[ -f "$STAMP" && "$(cat "$STAMP")" == "$WANT" && -x "$DEST/bin/omarchy" ]]; then
   log "already staged at ${OMARCHY_REF:0:8}"
   exit 0
 fi
@@ -61,6 +69,10 @@ if [[ "$got" != "$OMARCHY_REF" ]]; then
   echo "[omarchy] fetched $got, expected $OMARCHY_REF; refusing to stage it" >&2
   exit 1
 fi
+for p in "${PATCHES[@]}"; do
+  git -C "$CACHE" apply "$p" || { echo "[omarchy] ${p##*/} does not apply to ${OMARCHY_REF:0:8}" >&2; exit 1; }
+  log "applied ${p##*/}"
+done
 
 # Replace the tree but keep FRIDAY's own plugins, which build-iso.sh copies
 # in from friday-os/plugins/ afterwards anyway.
@@ -71,5 +83,5 @@ if [[ -d "$DEST/shell" ]]; then
   find "$DEST/shell/plugins" -mindepth 1 -maxdepth 1 ! -name 'friday.*' -exec rm -rf {} + 2>/dev/null || true
 fi
 tar -C "$CACHE" --exclude=.git -cf - . | tar -C "$DEST" -xf -
-echo "$OMARCHY_REF" > "$STAMP"
+echo "$WANT" > "$STAMP"
 log "staged ${OMARCHY_REF:0:8} into $DEST"

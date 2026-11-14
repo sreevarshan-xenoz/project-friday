@@ -25,7 +25,6 @@ alias ls='ls --color=auto'
 alias grep='grep --color=auto'
 alias diff='diff --color=auto'
 alias update='sudo pacman -Syu'
-alias friday='friday-ctl'
 
 # Prompt initialization (Starship)
 if command -v starship >/dev/null 2>&1; then

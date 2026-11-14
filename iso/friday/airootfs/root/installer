@@ -200,7 +200,8 @@ pacstrap_with_retry /mnt base linux linux-firmware sudo zsh hyprland sddm uwsm q
   qt6-5compat qt6-imageformats qt6-multimedia qt6-multimedia-ffmpeg qt6-virtualkeyboard qt6-quicktimeline qt6-svg qt6-wayland \
   qt6-positioning ttf-material-symbols-variable \
   kirigami kdialog syntax-highlighting chromium libnotify niri xwayland-satellite \
-  udiskie inotify-tools
+  udiskie inotify-tools xdg-terminal-exec nautilus hyprpicker power-profiles-daemon \
+  bluez bluez-utils sof-firmware alsa-utils noto-fonts-emoji wireless-regdb less
 live_status_stop
 
 genfstab -U /mnt >> /mnt/etc/fstab
@@ -213,7 +214,12 @@ FRIDAY_PKG=$(find /opt/friday/repo -maxdepth 1 -name 'friday-git-*.pkg.tar.zst' 
 [[ -n "$FRIDAY_PKG" ]] || { echo "the FRIDAY package is missing from /opt/friday/repo" >&2; exit 1; }
 pacstrap_with_retry -U /mnt "$FRIDAY_PKG"
 mkdir -p /mnt/usr/bin
-ln -sf /usr/share/omarchy/bin/omarchy /mnt/usr/bin/omarchy
+# Omarchy's scripts expect /usr/bin/omarchy-* (its package's layout): its
+# env-bootstrap only adds /usr/share/omarchy/bin to PATH in dev-link mode, so
+# without these login shells (a console, SSH) can't find omarchy-* commands.
+for f in /usr/share/omarchy/bin/omarchy*; do
+  ln -sf "/usr/share/omarchy/bin/${f##*/}" "/mnt/usr/bin/${f##*/}"
+done
 ln -sf friday /mnt/usr/bin/friday-os
 
 mkdir -p /mnt/usr/share/omarchy
@@ -291,6 +297,7 @@ mkdir -p /mnt/etc/systemd/system
 ln -sf /usr/lib/systemd/system/sddm.service /mnt/etc/systemd/system/display-manager.service
 arch-chroot /mnt systemctl enable NetworkManager 2>/dev/null || true
 arch-chroot /mnt systemctl enable sddm 2>/dev/null || true
+arch-chroot /mnt systemctl enable bluetooth 2>/dev/null || true
 
 # FRIDAY systemd user daemon
 # (enabled for every user, like `systemctl --global enable`)
