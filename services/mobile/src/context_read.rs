@@ -35,7 +35,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use base64::Engine as _;
-use friday_context_collector::{CaptureOptions, CapturedContext, ContextCollector};
+use friday_context_collector::{CaptureOptions, CapturedContext, ContextCollector, ScreenRegion};
 use friday_intelligence::{
     ContextChannel, ContextDecision, ContextGate, EgressGate, ProviderTarget, SecretsVault,
 };
@@ -203,6 +203,17 @@ where
         question: Option<&str>,
         progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
     ) -> Result<String, ContextReadError> {
+        self.ask_region_streaming(question, None, progress).await
+    }
+
+    /// [`ScreenReader::ask_streaming`] about one area of the screen (the
+    /// person dragged it out), instead of the focused window.
+    pub async fn ask_region_streaming(
+        &self,
+        question: Option<&str>,
+        region: Option<ScreenRegion>,
+        progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+    ) -> Result<String, ContextReadError> {
         // Check authorization BEFORE capturing the screen — with no consent,
         // nothing is captured at all.
         {
@@ -220,11 +231,11 @@ where
         let captured = match self.collector.capture(
             ContextChannel::Screen,
             &CaptureOptions {
-                region: None,
-                fullscreen: true,
-                // Just the window being asked about; the whole screen
-                // when there is none.
-                focused_window: true,
+                fullscreen: region.is_none(),
+                // Just the window being asked about (the whole screen when
+                // there is none), unless an area was picked.
+                focused_window: region.is_none(),
+                region,
             },
         ) {
             Ok(c) => c,
@@ -420,6 +431,19 @@ where
             .get("question")
             .and_then(|v| v.as_str())
             .map(str::to_string);
+        let region = match cmd.params.get("region") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(v) => match region_param(v) {
+                Some(r) => Some(r),
+                None => {
+                    return Err(ServerMessage::CommandResult {
+                        id: cmd.id.clone(),
+                        ok: false,
+                        result: serde_json::json!({ "error": "region must be {x, y, w, h} with w and h above 0" }),
+                    })
+                }
+            },
+        };
         let cmd_id = cmd.id.clone();
         let cmd_method = cmd.method.clone();
 
@@ -452,7 +476,7 @@ where
             };
             let asked = friday_intelligence::with_egress_context(
                 egress_ctx,
-                reader.ask_streaming(question.as_deref(), &progress),
+                reader.ask_region_streaming(question.as_deref(), region, &progress),
             )
             .await;
 
@@ -686,10 +710,22 @@ impl ProviderSeam for FabricProviderSeam {
     }
 }
 
+/// A `context.read` request's `region`: `{x, y, w, h}` in desktop pixels
+/// (slurp's coordinates, so any monitor), with a non-empty size.
+fn region_param(v: &serde_json::Value) -> Option<ScreenRegion> {
+    let int = |k: &str| v.get(k).and_then(|n| n.as_i64());
+    let (x, y, w, h) = (int("x")?, int("y")?, int("w")?, int("h")?);
+    let fits = |n: i64| (-100_000..=100_000).contains(&n);
+    if !(fits(x) && fits(y)) || !(1..=100_000).contains(&w) || !(1..=100_000).contains(&h) {
+        return None;
+    }
+    Some(ScreenRegion::new(x as i32, y as i32, w as u32, h as u32))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use friday_context_collector::{FakeCommandRunner, ScreenRegion};
+    use friday_context_collector::FakeCommandRunner;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
 
@@ -1401,5 +1437,38 @@ mod tests {
             elapsed < std::time::Duration::from_secs(2),
             "call must fail within deadline (~150ms), took {elapsed:?}"
         );
+    }
+
+    #[test]
+    fn region_param_takes_a_box_and_refuses_nonsense() {
+        let r =
+            region_param(&serde_json::json!({"x": -1920, "y": 40, "w": 640, "h": 360})).unwrap();
+        assert_eq!((r.x, r.y, r.width, r.height), (-1920, 40, 640, 360));
+        for bad in [
+            serde_json::json!({"x": 0, "y": 0, "w": 0, "h": 10}),
+            serde_json::json!({"x": 0, "y": 0, "w": 10}),
+            serde_json::json!({"x": "a", "y": 0, "w": 10, "h": 10}),
+            serde_json::json!({"x": 0, "y": 0, "w": -5, "h": 10}),
+        ] {
+            assert!(region_param(&bad).is_none(), "{bad}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_picked_area_is_captured_instead_of_the_window() {
+        let area = ScreenRegion::new(10, 20, 300, 200);
+        let cmd = friday_context_collector::screen_command(Some(area));
+        let runner = FakeCommandRunner::new().script_stdout(&cmd.0, &strs(&cmd.1), PNG);
+        let reader = ScreenReader::new(
+            ContextCollector::new(runner),
+            RecordingSeam::default(),
+            "fabric",
+        );
+        reader.consent();
+        reader
+            .ask_region_streaming(Some("what is this?"), Some(area), &|_: &str| {})
+            .await
+            .unwrap();
+        assert!(reader.provider.last().unwrap().contains("SCREEN_CAPTURE"));
     }
 }
