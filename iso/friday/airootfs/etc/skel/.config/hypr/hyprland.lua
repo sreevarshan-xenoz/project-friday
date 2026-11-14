@@ -3,8 +3,9 @@
 -- Omarchy's bootstrap keeps path setup out of this user config.
 dofile((os.getenv("OMARCHY_PATH") or "/usr/share/omarchy") .. "/default/hypr/bootstrap.lua")
 
--- Disable all Omarchy default bindings. Add your own in hypr/bindings.lua.
--- omarchy_default_bindings = false
+-- FRIDAY OS has its own keymap (hypr/bindings.lua), so Omarchy's default
+-- bindings are off. Delete this line to get them back.
+omarchy_default_bindings = false
 --
 -- Or disable only bindings for Omarchy's preinstalled apps/web apps while
 -- keeping core window-manager bindings:
@@ -19,6 +20,7 @@ require("default.hypr.omarchy")
 require("hypr.monitors")
 require("hypr.input")
 require("hypr.bindings")
+require("hypr.gamemode")
 require("hypr.looknfeel")
 -- FRIDAY Shell's look for windows (gaps, rounding, border colours), written
 -- by `friday shell style|palette` and the shell's Look picker. dofile, not
