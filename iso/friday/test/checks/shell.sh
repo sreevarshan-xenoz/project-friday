@@ -168,6 +168,8 @@ PY
     && pass "Omarchy's notifications and OSD are off" || fail "Omarchy's notifications or OSD are still on"
   [[ "$(st omarchy.lock enabled)" == false && "$(st friday.lock enabled)" == true ]] \
     && pass "FRIDAY's lock screen replaces Omarchy's" || fail "lock screen plugins: omarchy.lock=$(st omarchy.lock enabled) friday.lock=$(st friday.lock enabled)"
+  [[ "$(jq -r '.idle.screensaver' "$HOME/.config/omarchy/shell.json")" == 86400 ]] \
+    && pass "Omarchy's screensaver (needs ttfx, not in Arch) is put a day out" || fail "Omarchy's screensaver still runs at idle"
   [[ "$(st omarchy.polkit enabled)" == true ]] \
     && pass "Omarchy's polkit agent stays on" || fail "Omarchy's polkit agent is off"
   # friday.lock answers the lock IPC target that omarchy-system-lock, idle and

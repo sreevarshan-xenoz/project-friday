@@ -44,7 +44,16 @@ Item {
   property bool strandedLock: false
   property bool strandedLockResolved: false
 
-  readonly property bool locked: lockRequested || sessionLock.locked || sessionLock.secure
+  // Kept up to date by refreshLocked() rather than a binding: the session
+  // lock's `secure` can turn false without a change signal, which left a
+  // binding stuck at true after the first unlock, so the next lock request
+  // was skipped (Omarchy's lock service has the same binding).
+  property bool locked: false
+  onLockRequestedChanged: refreshLocked()
+
+  function refreshLocked() {
+    locked = lockRequested || sessionLock.locked || sessionLock.secure
+  }
   readonly property bool authenticating: authenticatingPassword || fingerprintAuthenticating || faceAuthenticating
 
   function realScreenCount() {
@@ -171,6 +180,8 @@ Item {
     resetAuthenticationState()
     idleBlankTimer.stop()
     sessionLock.locked = false
+    refreshLocked()
+    Qt.callLater(refreshLocked)
     logEvent("unlocked")
     runWake()
   }
@@ -273,6 +284,7 @@ Item {
     locked: false
 
     onSecureStateChanged: {
+      root.refreshLocked()
       root.logEvent("secure=" + secure)
       if (secure) {
         root.pendingSessionLock = false
@@ -284,6 +296,7 @@ Item {
     }
 
     onLockStateChanged: {
+      root.refreshLocked()
       root.logEvent("session-locked=" + locked)
 
       if (locked) {
@@ -422,6 +435,14 @@ Item {
       root.faceAuthenticating = false
       if (root.lockRequested) root.faceMessage = ""
     }
+  }
+
+  // Belt and braces for a missed signal while locked.
+  Timer {
+    interval: 2000
+    running: root.locked
+    repeat: true
+    onTriggered: root.refreshLocked()
   }
 
   Timer {

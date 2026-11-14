@@ -238,6 +238,11 @@ ln -sf friday /mnt/usr/bin/friday-os
 
 mkdir -p /mnt/usr/share/omarchy
 rsync -a /usr/share/omarchy/ /mnt/usr/share/omarchy/
+# The lock screen (friday.lock, like Omarchy's) authenticates through
+# /etc/pam.d/omarchy-lock-password and refuses to lock without it. Omarchy's
+# own installer writes it (install/config/lockscreen-pam.sh); this is that step.
+arch-chroot /mnt env OMARCHY_PATH=/usr/share/omarchy PATH=/usr/share/omarchy/bin:/usr/bin omarchy-apply-lock >/dev/null \
+  || echo "warning: could not set up lock screen authentication (run omarchy-apply-lock after login)" >&2
 
 # The FRIDAY OS desktop (the package owns the rest of /usr/share/friday).
 if [ -d /usr/share/friday/dots-hyprland ]; then
@@ -444,7 +449,11 @@ else
   # Omarchy's lock screen. Its user shell.json replaces
   # the defaults wholesale, so start from the pinned defaults.
   mkdir -p "/mnt$USER_HOME/.config/omarchy" "/mnt$USER_HOME/.config/friday"
-  if jq '.bar.id = "friday.bar"
+  # Omarchy's screensaver needs ttfx, which is in Omarchy's package repo,
+  # not Arch's; without it the screen fills with "command not found". Put it
+  # a day out, so the 5-minute lock always comes first (and it's skipped
+  # while locked).
+  if jq '.bar.id = "friday.bar" | .idle.screensaver = 86400
          | .disabledPlugins = (((.disabledPlugins // []) + ["omarchy.notifications", "omarchy.osd", "omarchy.lock"]) | unique)' \
        /mnt/usr/share/omarchy/config/omarchy/shell.json >"/mnt$USER_HOME/.config/omarchy/shell.json.new"; then
     mv "/mnt$USER_HOME/.config/omarchy/shell.json.new" "/mnt$USER_HOME/.config/omarchy/shell.json"

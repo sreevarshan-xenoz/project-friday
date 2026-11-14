@@ -237,6 +237,8 @@ grep -q 'friday-os/plugins/friday.bar' "$PROFILE_DIR/build-iso.sh" \
   && pass "build-iso.sh ships the friday.bar plugin" || fail "build-iso.sh does not ship friday.bar"
 grep -q 'friday-os/plugins/friday.lock' "$PROFILE_DIR/build-iso.sh" \
   && pass "build-iso.sh ships the friday.lock plugin" || fail "build-iso.sh does not ship friday.lock"
+grep -q 'omarchy-apply-lock' "$AIROOTFS/root/installer" \
+  && pass "installer sets up the lock screen's PAM service" || fail "installer never writes /etc/pam.d/omarchy-lock-password (the lock screen refuses to lock)"
 grep -q '"omarchy.lock"' "$AIROOTFS/root/installer" \
   && pass "installer turns off Omarchy's lock screen for friday.lock" || fail "installer leaves omarchy.lock on next to friday.lock"
 if need jq; then
