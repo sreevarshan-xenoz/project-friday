@@ -1027,6 +1027,9 @@ pub struct GoalRunner {
     confirmation_gate: Arc<Mutex<ConfirmationGate>>,
     /// Pluggable web search provider for goals requesting web search.
     web_searcher: Arc<dyn WebSearcher>,
+    /// Private mode (FRIDAY_PRIVATE): nothing leaves the machine, so a web
+    /// search is never made.
+    private_mode: bool,
 }
 
 /// The in-flight goal the control subscriber matches `task.cancel` /
@@ -1100,6 +1103,11 @@ impl GoalRunner {
     }
 
     /// Override the web searcher (e.g. for hermetic testing).
+    pub fn with_private_mode(mut self, enabled: bool) -> Self {
+        self.private_mode = enabled;
+        self
+    }
+
     pub fn with_web_searcher(mut self, searcher: Arc<dyn WebSearcher>) -> Self {
         self.web_searcher = searcher;
         self
@@ -1353,6 +1361,9 @@ impl GoalRunner {
             in_flight: Arc::new(Mutex::new(None)),
             confirmation_gate,
             web_searcher: Arc::new(ChainedWebSearcher::default_chain()),
+            private_mode: std::env::var("FRIDAY_PRIVATE")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
         }
     }
 
@@ -1691,7 +1702,17 @@ impl GoalRunner {
             gate.pending.take()
         };
 
-        let (web_response, web_search_failed) = if web {
+        // Private mode: a web search would send the question out, so none is
+        // made; the answer says so.
+        let web_blocked = web && self.private_mode;
+        let web_note = if web_blocked {
+            "Private mode is on, so FRIDAY didn't search the web; this is from the local model alone."
+        } else {
+            "Web search failed, so this is from the model alone."
+        };
+        let (web_response, web_search_failed) = if web_blocked {
+            (None, true)
+        } else if web {
             let search_query = friday_goal_execution::planning::goal_segment(&goal);
             let (masked_query, _) = friday_goal_execution::mask_secrets(search_query);
             match self.web_searcher.search(&masked_query).await {
@@ -1729,10 +1750,7 @@ impl GoalRunner {
                     Ok(mut answer) => {
                         if web {
                             if web_search_failed {
-                                answer.text = format!(
-                                    "Web search failed, so this is from the model alone.\n\n{}",
-                                    answer.text.trim()
-                                );
+                                answer.text = format!("{web_note}\n\n{}", answer.text.trim());
                             } else if let Some(resp) = &web_response {
                                 answer.text =
                                     append_sources(&answer.text, &resp.backend, &resp.results);
@@ -1764,7 +1782,7 @@ impl GoalRunner {
                 if web_search_failed {
                     report.result = Some(GoalResult {
                         kind: GoalResultKind::Text,
-                        text: "Web search failed, so this is from the model alone.".to_string(),
+                        text: web_note.to_string(),
                         structured: None,
                         tool: Some("web_search".to_string()),
                         success: false,
@@ -2785,6 +2803,59 @@ mod tests {
         let prompts = answerer.prompts.lock().unwrap();
         assert_eq!(prompts.len(), 1);
         assert!(!prompts[0].contains("Sources from the web:"));
+    }
+
+    #[tokio::test]
+    async fn private_mode_never_searches_the_web() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let answerer = Arc::new(ScriptedAnswerer {
+            reply: Ok("From the local model.".to_string()),
+            prompts: Mutex::new(Vec::new()),
+        });
+        let searcher = Arc::new(FakeWebSearcher {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            results: Ok(SearchResponse {
+                backend: "Wikipedia".to_string(),
+                results: vec![SearchResult {
+                    title: "T".to_string(),
+                    url: "https://example.com".to_string(),
+                    snippet: "S".to_string(),
+                }],
+            }),
+        });
+        GoalRunner::new(bus.clone())
+            .with_answerer(answerer)
+            .with_web_searcher(searcher.clone())
+            .with_private_mode(true)
+            .start();
+
+        bus.publish(Event::new(
+            "plan.goal",
+            "mobile",
+            json!({ "goal": "what is rust", "web": true }),
+        ))
+        .await
+        .expect("publish");
+
+        let mut done = None;
+        for _ in 0..40 {
+            let ev = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+                .await
+                .expect("event")
+                .expect("bus");
+            if ev.kind == "goal.completed" || ev.kind == "goal.failed" {
+                done = Some(ev.payload);
+                break;
+            }
+        }
+        let done = done.expect("completed");
+        assert_eq!(searcher.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let text = done["result"]["text"].as_str().expect("result text");
+        assert!(
+            text.contains("Private mode is on, so FRIDAY didn't search the web"),
+            "{text}"
+        );
     }
 
     /// Run one goal and return its terminal event's (kind, payload).
