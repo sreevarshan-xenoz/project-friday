@@ -140,7 +140,9 @@ local function friday(cmd)
     end
 end
 hl.bind("SUPER + SHIFT + CTRL + A", friday("friday ask"), { description = "FRIDAY: Ask" })
-hl.bind("SUPER + Y", friday("friday ask"), { description = "FRIDAY: Ask" })
+-- Tap Super+Y to type a question; hold it and speak (friday voice setup).
+hl.bind("SUPER + Y", friday("friday hold start"), { description = "FRIDAY: Ask" })
+hl.bind("SUPER + Y", friday("friday hold end"), { description = "FRIDAY: Ask (let go)", release = true })
 hl.bind("SUPER + ALT + Y", friday("friday ask --selection"), { description = "FRIDAY: Ask about selected text" })
 hl.bind("SUPER + CTRL + Y", friday("friday ask --screen"), { description = "FRIDAY: Ask about the screen" })
 hl.bind("SUPER + CTRL + F", hl.dsp.exec_cmd("friday status || omarchy-state"), { description = "FRIDAY: System State" })
