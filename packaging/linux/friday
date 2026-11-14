@@ -326,6 +326,9 @@ friday_report() {
   local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
   section() { printf '\n== %s ==\n' "$1"; }
   (
+    # Gather what is there: a missing or failing tool (no niri, a quickshell
+    # that won't print a version) must not cut the report short.
+    set +e +o pipefail
     umask 077
     {
       echo "FRIDAY report, $(date -u +%Y-%m-%dT%H:%M:%SZ)"

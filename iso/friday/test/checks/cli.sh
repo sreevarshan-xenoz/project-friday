@@ -372,7 +372,7 @@ LOG
 STUBLOG
 chmod +x "$S/journalctl"
 out=$(bash "$F" report "$W/report.txt" 2>&1 || true)
-contains "report: says where it wrote" "$out" "Wrote $W/report.txt"
+contains "report: says where it wrote" "$out" "Wrote $W/report.txt" || echo "$out" | head -n 20
 rep=$(cat "$W/report.txt" 2>/dev/null)
 for sec in Versions Session Doctor "AI providers" "Daemon state" "Daemon log"; do
   contains "report: has the $sec section" "$rep" "== $sec"
