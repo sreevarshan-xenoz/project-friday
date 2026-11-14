@@ -986,6 +986,7 @@ case "${1:-}" in
     use_pill=false
     pill state && use_pill=true
 
+    context=""
     if $use_followup; then
       context=$(sed '/^<details>/,$d' "$state_dir/last-answer.md" 2>/dev/null || true)
       if [ -z "${context//[[:space:]]/}" ]; then
@@ -995,7 +996,6 @@ case "${1:-}" in
       context="${context:0:6000}"
     fi
 
-    context=""
     if $use_selection; then
       # Primary selection (highlighted text) first, then the clipboard.
       source_label="Selected"
@@ -1153,8 +1153,9 @@ case "${1:-}" in
         printf '%s\n' "$answer"
         [ -z "${details:-}" ] || printf '\n<details>\n\n```\n%s\n```\n' "$details"
       } >"$answer_file"
-      cat "$answer_file" >>"$state_dir/answers.md"
-      printf '\n---\n\n' >>"$state_dir/answers.md"
+      # Each entry opens with a marker line, so a "---" inside an answer
+      # never splits it (FRIDAY Shell's answer history reads these).
+      { printf '<!-- friday answer -->\n'; cat "$answer_file"; printf '\n---\n\n'; } >>"$state_dir/answers.md"
 
       preview="$answer"
       [ "${#preview}" -le 220 ] || preview="${preview:0:217}…"
@@ -1193,7 +1194,7 @@ case "${1:-}" in
       # only when it isn't there, or for "Start FRIDAY", which only a
       # notification offers.
       if $use_pill && [ "${daemon_down:-false}" != true ] \
-        && pill present "$ans_ok" "$goal" "$answer" "$meta"; then
+        && pill present "$ans_ok" "$goal" "$answer" "$meta" "${ask_args[0]:-}"; then
         return 0
       fi
       urgency=normal; $ans_ok || urgency=critical
