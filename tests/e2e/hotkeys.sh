@@ -89,7 +89,9 @@ keymap "friday-git friday.kdl" "$REPO/packaging/linux/niri/friday.kdl"
 echo "presses"
 python3 tests/e2e/fake_model.py "$W/port" "$W/model.log" &
 FAKE=$!
-for _ in $(seq 50); do [[ -s "$W/port" ]] && break; sleep 0.1; done
+# Up to 30 s: Python can take several seconds to start on a cold Windows runner.
+for _ in $(seq 300); do [[ -s "$W/port" ]] && break; sleep 0.1; done
+[[ -s "$W/port" ]] || { echo "the fake model never started (no port file after 30 s)" >&2; exit 1; }
 PORT=$(cat "$W/port")
 
 # Desktop stand-ins. The `friday` CLI itself is the packaged one.
