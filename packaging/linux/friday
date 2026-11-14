@@ -32,8 +32,9 @@ Autonomous Agent & Cognitive Loop:
   friday doctor                    Check daemon, AI provider and desktop health
   friday setup-ai [--keep-others|--only] [provider]
                                    Set or change the AI provider key
-  friday connect [claude|codex|agy|cline]
-                                   Use an AI account you already have (signs in)
+  friday connect [--prefer] [claude|codex|agy|cline]
+                                   Use an AI account you already have (signs in);
+                                   a fallback after the free models unless --prefer
   friday disconnect <name>         Stop using a connected account
 
 Skill Forge:
@@ -440,6 +441,10 @@ friday_agent_clis_current() {
 }
 
 friday_connect() {
+  # --prefer: use connected accounts before the free models (slower: each
+  # answer starts the app, and counts against the account's plan).
+  local prefer=false
+  [ "${1:-}" = "--prefer" ] && { prefer=true; shift; }
   local name="${1:-}" choice reply list
   if [ -z "$name" ]; then
     command -v gum >/dev/null || { echo "usage: friday connect <claude|codex|agy|cline>" >&2; return 1; }
@@ -471,7 +476,14 @@ friday_connect() {
   list=$(friday_agent_clis_current)
   case ",$list," in *",$name,"*) ;; *) list="${list:+$list,}$name" ;; esac
   friday_agent_clis_write "$list"
-  echo "Connected $AC_LABEL. FRIDAY answers with it first and falls back to the free models."
+  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
+  if $prefer; then
+    ( umask 077; { grep -v '^FRIDAY_PREFER_ACCOUNTS=' "$env_file" 2>/dev/null || true; echo "FRIDAY_PREFER_ACCOUNTS=1"; } >"$env_file.tmp" && mv -f "$env_file.tmp" "$env_file" )
+    echo "Connected $AC_LABEL. FRIDAY uses it first, then the free models."
+  else
+    echo "Connected $AC_LABEL. FRIDAY uses it when the free models can't answer."
+    echo "To use it first (slower: it starts the app for each answer): friday connect --prefer $name"
+  fi
   echo "What you ask through it follows that account's own terms."
   if systemctl --user restart friday-linux-daemon 2>/dev/null; then
     echo "Restarted FRIDAY. Press Super+Y to ask something."
