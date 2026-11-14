@@ -128,6 +128,12 @@ contains "screen: full answer saved" "$(cat "$state/last-answer.md")" $'The erro
 : >"$LOG"; rm -f "$W/again_done"
 ACTION_AGAIN=1 PICK="screen follow-up" bash "$F" ask --screen; sleep 0.5
 contains "Ask again: screen preserves --screen kind" "$(cat "$LOG")" "friday-ctl-context context screen --yes --ask screen follow-up"
+echo "region ask"
+printf '#!/bin/sh\n[ -n "$SLURP_CANCEL" ] && exit 1\necho "10,20 300x200"\n' >"$S/slurp"; chmod +x "$S/slurp"
+: >"$LOG"; PICK="what is this chart" bash "$F" ask --region; sleep 0.3
+contains "region: the picked area goes with the question" "$(cat "$LOG")" "context screen --yes --ask what is this chart --region 10,20 300x200"
+: >"$LOG"; SLURP_CANCEL=1 PICK="never asked" bash "$F" ask --region; sleep 0.3
+if grep -q "never asked" "$LOG"; then fail "region: Esc while dragging still asked"; else pass "region: Esc while dragging sends nothing"; fi
 bash "$F" ask "hit the limit"; sleep 0.3
 contains "free-limit error explained with a way out" "$(cat "$state/last-answer.md")" "free limit is used up for now"
 : >"$LOG"; bash "$F" ask "nodaemon test"; sleep 0.5

@@ -24,6 +24,7 @@ Autonomous Agent & Cognitive Loop:
                                    FRIDAY Shell's answer pill, else a notification
   friday ask --selection           Ask about the selected/copied text (Super+Alt+Y)
   friday ask --screen              Ask about what's on screen (Super+Ctrl+Y)
+  friday ask --region              Drag out an area of the screen and ask about it
   friday ask --follow-up           Ask a follow-up about the last answer
   friday answers                   Show past answers (last one: friday answers --last)
   friday sent [N]                  Show what left this machine for AI providers (egress log)
@@ -799,16 +800,19 @@ case "${1:-}" in
     #   friday ask --selection [text]   ask about the selected/copied text (SUPER+ALT+Y)
     #   friday ask --screen [text]      ask about what's on screen (SUPER+CTRL+Y);
     #                                   a screenshot goes to the AI provider, this once
+    #   friday ask --region [text]      drag out an area of the screen and ask about
+    #                                   just that (any monitor)
     #   friday ask --follow-up [text]   ask about the last answer (the answer pill's
     #                                   Follow up)
     # With FRIDAY Shell running, the answer opens in its answer pill (which also
     # streams it); otherwise it arrives as a notification.
     shift
-    use_selection=false use_screen=false use_followup=false details="" daemon_down=false
+    use_selection=false use_screen=false use_region=false use_followup=false details="" daemon_down=false
     ask_args=()
     case "${1:-}" in
       --selection|-s) use_selection=true; ask_args=(--selection); shift ;;
       --screen) use_screen=true; ask_args=(--screen); shift ;;
+      --region|-r) use_screen=true; use_region=true; ask_args=(--region); shift ;;
       --follow-up|-f) use_followup=true; ask_args=(--follow-up); shift ;;
     esac
     goal="$*"
@@ -852,8 +856,18 @@ case "${1:-}" in
       context="${context:0:4000}"
     fi
 
+    region=""
+    if $use_region; then
+      # Esc while dragging cancels; nothing is captured or sent.
+      region=$(slurp 2>/dev/null) || exit 0
+      [ -n "$region" ] || exit 0
+    fi
+
     if [ -z "$goal" ]; then
-      if $use_followup; then
+      if $use_region; then
+        goal=$(fuzzel --dmenu --prompt-only="FRIDAY ⬚ " --width=70 \
+          --placeholder="Ask about the area you picked (a screenshot of it goes to your AI provider)" </dev/null) || exit 0
+      elif $use_followup; then
         goal=$(fuzzel --dmenu --prompt-only="FRIDAY › " --width=70 \
           --placeholder="Follow up on: $(head -n 1 <<<"$context" | sed 's/^# //' | cut -c1-50)" </dev/null) || exit 0
       elif $use_screen; then
@@ -1034,7 +1048,7 @@ case "${1:-}" in
       nid=""
       $use_pill || nid=$(notify-send -a FRIDAY -p -- "FRIDAY" "Looking at your screen: $goal" 2>/dev/null || true)
       [[ "$nid" =~ ^[0-9]+$ ]] || nid=""
-      stream_ctl friday-ctl context screen --yes --ask "$goal"
+      stream_ctl friday-ctl context screen --yes --ask "$goal" ${region:+--region "$region"}
       summary=$(jq -s 'map(select(type == "object" and (has("partial") | not))) | last // {} | {result: .response, error: .error}' <<<"$out" 2>/dev/null || echo '{}')
     else
       nid=""
