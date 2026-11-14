@@ -1509,7 +1509,17 @@ impl GoalRunner {
     /// same session.
     async fn run_goal(&self, goal: String, session_id: String, confirm: Option<String>) {
         let id = format!("goal-{}", uuid::Uuid::new_v4().simple());
-        tracing::info!(id = %id, session = %session_id, "goal received: {goal}");
+        // Lengths only: the question and any selected text (which can hold a
+        // password or token) never go to the log.
+        let asked = friday_goal_execution::planning::goal_segment(&goal)
+            .chars()
+            .count();
+        tracing::info!(
+            id = %id,
+            session = %session_id,
+            "goal received ({asked} chars asked, {} chars in all)",
+            goal.chars().count()
+        );
 
         // A fresh goal always starts with the control flags clear — a
         // previously cancelled/paused goal must not bleed into the next one.
