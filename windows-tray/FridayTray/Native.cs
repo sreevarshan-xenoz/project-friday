@@ -48,6 +48,10 @@ internal static partial class Native
 
     [LibraryImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool DestroyIcon(IntPtr hIcon);
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool BringWindowToTop(IntPtr hWnd);
 
     [LibraryImport("user32.dll", EntryPoint = "GetClassNameW", SetLastError = true)]
