@@ -36,8 +36,9 @@ _friday() {
   fi
 
   case "$words[2]" in
-    ask)      _arguments '(-s --selection --screen)'{-s,--selection}'[ask about the selected/copied text]' \
-                '(-s --selection --screen)--screen[ask about what is on screen]' '*:question:' ;;
+    ask)      _arguments '(-s --selection --screen -f --follow-up)'{-s,--selection}'[ask about the selected/copied text]' \
+                '(-s --selection --screen -f --follow-up)--screen[ask about what is on screen]' \
+                '(-s --selection --screen -f --follow-up)'{-f,--follow-up}'[ask about the last answer]' '*:question:' ;;
     answers)  _arguments '--last[show only the last answer]' ;;
     sent)     _arguments '1:count:' ;;
     connect|disconnect) _values 'account' claude codex agy cline ;;

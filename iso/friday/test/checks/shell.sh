@@ -84,6 +84,19 @@ for d in friday control calendar launcher session; do
   fi
 done
 timeout 10 qs -p "$FS" ipc call shell close >/dev/null 2>&1 || true
+# The answer pill, handed an answer the way `friday ask` does.
+answer=$'Your disk is mostly **photos** (41 GB) and the package cache (12 GB).\n\n- `~/Pictures`: 41 GB\n- `/var/cache/pacman`: 12 GB\n\nClear the cache with `sudo paccache -r`.'
+if timeout 10 qs -p "$FS" ipc call answer present true "What's using my disk?" "$answer" "via OpenCode Zen · 1.4 s" >/dev/null 2>&1; then
+  sleep 1.5; grim "$W/friday-answer.png" 2>/dev/null || true
+  [[ "$(timeout 10 qs -p "$FS" ipc call answer state 2>/dev/null)" == answer ]] \
+    && pass "answer pill shows an answer over IPC" || fail "answer pill did not take the answer"
+  timeout 10 qs -p "$FS" ipc call answer dismiss >/dev/null 2>&1 || true
+  sleep 1
+  [[ "$(timeout 10 qs -p "$FS" ipc call answer state 2>/dev/null)" == idle ]] \
+    && pass "answer pill dismisses" || fail "answer pill did not dismiss"
+else
+  fail "nothing answers the answer pill's IPC target"
+fi
 # Every style with a palette, switched live through shell.json as the Look
 # picker does: the bar, the FRIDAY drawer and the control drawer each time.
 mkdir -p "$HOME/.config/friday"
