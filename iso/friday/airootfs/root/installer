@@ -122,7 +122,9 @@ parted -s "$TARGET_DISK" mkpart ESP fat32 1MiB 1024MiB
 parted -s "$TARGET_DISK" set 1 esp on
 parted -s "$TARGET_DISK" mkpart primary ext4 1024MiB 100%
 
-if [[ "$TARGET_DISK" =~ nvme || "$TARGET_DISK" =~ mmcblk ]]; then
+# The kernel's rule: a disk whose name ends in a digit (nvme0n1, mmcblk0,
+# md0, nbd0) names its partitions with a "p".
+if [[ "$TARGET_DISK" =~ [0-9]$ ]]; then
   BOOT_PART="${TARGET_DISK}p1"
   ROOT_PART="${TARGET_DISK}p2"
 else
