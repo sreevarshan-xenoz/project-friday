@@ -412,7 +412,7 @@ friday_agent_cli_ask() { # <name> <prompt>
     case "$1" in
       claude) timeout 120 claude -p "$2" --output-format text ;;
       codex)  timeout 120 codex exec --skip-git-repo-check --sandbox read-only "$2" ;;
-      agy)    timeout 120 agy -p "$2" --mode plan ;;
+      agy)    timeout 120 agy -p "$2" --mode plan --effort low ;;
       cline)  timeout 120 cline -p --auto-approve false "$2" ;;
     esac
   ) </dev/null
