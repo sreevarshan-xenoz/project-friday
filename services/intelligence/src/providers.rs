@@ -146,6 +146,13 @@ pub trait Provider: Send + Sync {
         require_json: bool,
     ) -> Result<String, String>;
 
+    /// The least time one attempt needs, when that is more than the fabric's
+    /// request deadline: a provider that starts a whole app per answer (an
+    /// account CLI, see `agent_cli`) can't answer in an HTTP call's time.
+    fn min_request_timeout(&self) -> Option<std::time::Duration> {
+        None
+    }
+
     /// Complete with usage metadata. The default delegates to `complete` and
     /// returns `None` for usage — providers that can extract token counts from
     /// the API response should override this.
@@ -1533,7 +1540,10 @@ impl InferenceFabric {
             }
         };
         match run_attempt(
-            self.timeout_for_tier(tier, &prompt),
+            at_least(
+                self.timeout_for_tier(tier, &prompt),
+                prov.min_request_timeout(),
+            ),
             prov.complete(&model.id, &prompt, require_json),
         )
         .await
@@ -1582,32 +1592,35 @@ impl InferenceFabric {
                 }
             }
 
-            let matches = match mode {
-                RoutingMode::Fast => {
-                    model.provider == "groq"
-                        || model.provider == "cerebras"
-                        || model.provider == "nvidia-nim"
-                }
-                RoutingMode::Quality => {
-                    model.provider == "gemini"
-                        || model.provider == "groq"
-                        || model.provider == "cerebras"
-                        || model.provider == "nvidia-nim"
-                        || model.provider == "copilot"
-                }
-                RoutingMode::Free => is_free_provider(&model.provider),
-                RoutingMode::Local => model.capabilities.contains(&ModelCapability::Local),
-                RoutingMode::Hybrid => {
-                    model.capabilities.contains(&ModelCapability::Local)
-                        || model.provider == "openrouter"
-                        || model.provider == "omniroute"
-                        || model.provider == "nvidia-nim"
-                        || model.provider == "opengateway"
-                        || model.provider == "sambanova"
-                        || model.provider == "github-models"
-                        || model.provider == "copilot"
-                }
-            };
+            // An account the person connected (`friday connect`) is theirs to
+            // use in every mode but local-only.
+            let matches = is_account_provider(&model.provider) && mode != RoutingMode::Local
+                || match mode {
+                    RoutingMode::Fast => {
+                        model.provider == "groq"
+                            || model.provider == "cerebras"
+                            || model.provider == "nvidia-nim"
+                    }
+                    RoutingMode::Quality => {
+                        model.provider == "gemini"
+                            || model.provider == "groq"
+                            || model.provider == "cerebras"
+                            || model.provider == "nvidia-nim"
+                            || model.provider == "copilot"
+                    }
+                    RoutingMode::Free => is_free_provider(&model.provider),
+                    RoutingMode::Local => model.capabilities.contains(&ModelCapability::Local),
+                    RoutingMode::Hybrid => {
+                        model.capabilities.contains(&ModelCapability::Local)
+                            || model.provider == "openrouter"
+                            || model.provider == "omniroute"
+                            || model.provider == "nvidia-nim"
+                            || model.provider == "opengateway"
+                            || model.provider == "sambanova"
+                            || model.provider == "github-models"
+                            || model.provider == "copilot"
+                    }
+                };
 
             if matches {
                 if let Some(prov) = self.providers.get(&model.provider) {
@@ -1653,7 +1666,9 @@ impl InferenceFabric {
     /// Whether a model is eligible under the free budget: a free-tier provider
     /// or a local model (running local costs nothing).
     fn free_eligible(model: &ModelInfo) -> bool {
-        is_free_provider(&model.provider) || model.capabilities.contains(&ModelCapability::Local)
+        is_free_provider(&model.provider)
+            || is_account_provider(&model.provider)
+            || model.capabilities.contains(&ModelCapability::Local)
     }
 
     /// Whether `model` can serve `req` at all. Hard filters only: budget
@@ -2140,6 +2155,29 @@ impl InferenceFabric {
             }
         }
 
+        // Accounts the person already has (Claude Code, Codex, Antigravity,
+        // Cline), connected with `friday connect`: each answers through its
+        // own CLI and sign-in, text only. After a provider with the person's
+        // own API key, ahead of the keyless free models.
+        for cli in crate::agent_cli::agent_clis_from(
+            &std::env::var("FRIDAY_AGENT_CLIS").unwrap_or_default(),
+            crate::agent_cli::on_path,
+        ) {
+            fabric.register_provider(Box::new(crate::agent_cli::AgentCliProvider::new(cli)));
+            if !registry_loaded {
+                fabric.register_model(ModelInfo {
+                    id: "account".to_string(),
+                    family: format!("{}-account", cli.id()),
+                    provider: cli.provider_name().to_string(),
+                    latency_ms: 1_500,
+                    reliability: 1.0,
+                    capabilities: vec![],
+                    max_context: 100_000,
+                    tier: None,
+                });
+            }
+        }
+
         // Cerebras Cloud (Tier 1 Fast)
         if let Ok(key) = std::env::var("CEREBRAS_API_KEY") {
             fabric.register_provider(Box::new(OpenAiProvider {
@@ -2508,6 +2546,15 @@ fn collect_qual_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) 
 /// free (OpenRouter/Gemini/OpenGateway/OmniRoute/SambaNova/GitHub Models) or
 /// when it is a free-models-only CN-hosted tier (SiliconFlow/Zhipu — which stay
 /// Free-mode-only by the privacy stance, never silent Hybrid failovers).
+/// An account the person connected with `friday connect` (Claude Code,
+/// Codex, Antigravity, Cline): no cost to FRIDAY beyond the plan they have,
+/// and opted into, so it is eligible wherever free models are.
+fn is_account_provider(name: &str) -> bool {
+    crate::agent_cli::AgentCli::ALL
+        .iter()
+        .any(|c| c.provider_name() == name)
+}
+
 fn is_free_provider(name: &str) -> bool {
     matches!(
         name,
@@ -2922,6 +2969,17 @@ async fn run_streaming_attempt(
     }
 }
 
+/// The fabric's deadline, raised to a provider's minimum (no deadline stays none).
+fn at_least(
+    deadline: Option<std::time::Duration>,
+    floor: Option<std::time::Duration>,
+) -> Option<std::time::Duration> {
+    match (deadline, floor) {
+        (Some(d), Some(f)) => Some(d.max(f)),
+        (d, _) => d,
+    }
+}
+
 async fn run_attempt(
     deadline: Option<std::time::Duration>,
     fut: impl std::future::Future<Output = Result<String, String>>,
@@ -3204,7 +3262,10 @@ impl InferenceFabric {
                     return Err(e);
                 }
             };
-            let timeout = self.timeout_for_prompt(&prompt);
+            let timeout = at_least(
+                self.timeout_for_prompt(&prompt),
+                provider.min_request_timeout(),
+            );
             let attempt = match progress {
                 Some(p) => run_streaming_attempt(timeout, provider, &model.id, &prompt, p).await,
                 None => run_attempt(timeout, provider.complete(&model.id, &prompt, false)).await,
@@ -4352,6 +4413,58 @@ mod tests {
             vec!["github-models"],
             "global gate must apply to select_for: {providers:?}"
         );
+    }
+
+    #[test]
+    fn a_connected_account_is_a_candidate_in_free_mode_ahead_of_keyless_zen() {
+        let mut fabric = InferenceFabric::new();
+        fabric.register_provider(Box::new(crate::agent_cli::AgentCliProvider::new(
+            crate::agent_cli::AgentCli::Claude,
+        )));
+        fabric.register_model(ModelInfo {
+            id: "account".into(),
+            family: "claude-account".into(),
+            provider: "claude-code".into(),
+            latency_ms: 1_500,
+            reliability: 1.0,
+            capabilities: vec![],
+            max_context: 100_000,
+            tier: None,
+        });
+        fabric.register_provider(Box::new(OpenAiProvider {
+            name: "opencode".into(),
+            base_url: OPENCODE_ZEN_BASE_URL.into(),
+            api_key: String::new(),
+        }));
+        fabric.register_model(ModelInfo {
+            id: "big-pickle".into(),
+            family: "zen".into(),
+            provider: "opencode".into(),
+            latency_ms: 3_000,
+            reliability: 1.0,
+            capabilities: vec![],
+            max_context: 100_000,
+            tier: None,
+        });
+        let names: Vec<String> = fabric
+            .select_candidates(RoutingMode::Free)
+            .iter()
+            .map(|(m, _)| m.provider.clone())
+            .collect();
+        assert_eq!(names, ["claude-code", "opencode"]);
+        assert!(fabric
+            .select_candidates(RoutingMode::Local)
+            .iter()
+            .all(|(m, _)| m.provider != "claude-code"));
+        // The answer step asks for a free budget: the account still qualifies.
+        let req = RequestRequirements {
+            budget: Budget::Free,
+            ..RequestRequirements::default()
+        };
+        assert!(fabric
+            .select_for(&req)
+            .iter()
+            .any(|(m, _)| m.provider == "claude-code"));
     }
 
     #[test]

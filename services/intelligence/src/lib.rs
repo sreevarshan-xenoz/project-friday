@@ -1,3 +1,4 @@
+pub mod agent_cli;
 pub mod compiler;
 pub mod context_gate;
 pub mod egress;
