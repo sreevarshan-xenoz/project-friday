@@ -217,6 +217,7 @@ pacman refuses any package or database that key didn't sign. On Windows, install
 | `friday ask [--selection\|--screen\|--web] [text]` | Ask (what the hotkeys run; `--web` searches the web) |
 | `friday setup-ai [--keep-others\|--only] [provider]` | Use your own API key |
 | `friday connect [--prefer] [claude\|codex\|agy\|cline]` / `friday disconnect <name>` | Use an account you already have (a fallback unless `--prefer`) |
+| `friday private [status\|on [model]\|off]` | Local model only; nothing leaves the machine |
 | `friday answers [--last]` | Past answers (kept private, in `~/.local/state/friday`) |
 | `friday sent [N]` | What left this machine for AI providers (egress log) |
 | `friday shell style\|palette` | FRIDAY Shell's look, matched on Hyprland or niri |

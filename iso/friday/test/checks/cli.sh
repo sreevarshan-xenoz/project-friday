@@ -86,6 +86,9 @@ printf '#!/bin/bash\necho "systemctl $*" >> %q\n[[ "$*" == *is-active* && -n "$S
 printf '#!/bin/bash\n[[ "$*" == *--primary* ]] && { printf %%s "$PRIMARY"; exit 0; }\nprintf %%s "$CLIP"\n' >"$S/wl-paste"
 printf '#!/bin/bash\necho "fuzzel $*" >> %q\necho "$PICK"\n' "$LOG" >"$S/fuzzel"
 printf '#!/bin/bash\necho "curl $*" >> %q\n[[ -n "$OFFLINE" ]] && exit 6\nexit 0\n' "$LOG" >"$S/curl"
+printf '#!/bin/bash\necho "sudo $*" >> %q\n"$@"\n' "$LOG" >"$S/sudo"
+printf '#!/bin/bash\necho "pacman $*" >> %q\nexit 0\n' "$LOG" >"$S/pacman"
+printf '#!/bin/bash\necho "ollama $*" >> %q\nexit 0\n' "$LOG" >"$S/ollama"
 chmod +x "$S"/*
 export PATH="$S:$PATH"
 state="$HOME/.local/state/friday"
@@ -335,6 +338,60 @@ expect "disconnect" bash "$F" disconnect claude
 if grep -q '^FRIDAY_AGENT_CLIS=' "$envf"; then fail "disconnect left FRIDAY_AGENT_CLIS"; else pass "disconnect removes it"; fi
 contains "keys survive connect/disconnect" "$(cat "$envf")" "_API_KEY="
 rm -f "$S/claude"
+
+echo "private mode"
+: >"$LOG"
+mkdir -p "$(dirname "$envf")"
+printf 'FRIDAY_LOG=debug\nOTHER_VAR=keepme\n' >"$envf"
+chmod 600 "$envf"
+
+out=$(bash "$F" private on 2>&1)
+contains "explains answers stay on computer" "$out" "Answers stay on this computer"
+contains "explains slower than cloud" "$out" "Slower than cloud models"
+contains "explains disk space needed" "$out" "Needs ~3–5 GB of disk space"
+contains "says private mode is on" "$out" "Private mode is on: gemma3:4b on this computer."
+contains "pacman installed ollama" "$(cat "$LOG")" "pacman -S --needed --noconfirm ollama"
+contains "ollama service enabled" "$(cat "$LOG")" "systemctl enable --now ollama"
+contains "pulled model" "$(cat "$LOG")" "ollama pull gemma3:4b"
+contains "daemon restarted" "$(cat "$LOG")" "systemctl --user restart friday-linux-daemon"
+mode=$(stat -c %a "$envf")
+[[ "$mode" == 600 ]] && pass "env file mode 0600 after private on" || fail "env file mode is $mode, not 600"
+contains "private on sets FRIDAY_PRIVATE" "$(cat "$envf")" "FRIDAY_PRIVATE=1"
+contains "private on sets LLAMACPP_ENABLED" "$(cat "$envf")" "LLAMACPP_ENABLED=1"
+contains "private on sets LLAMACPP_BASE_URL" "$(cat "$envf")" "LLAMACPP_BASE_URL=http://127.0.0.1:11434/v1"
+contains "private on sets LLAMACPP_MODEL" "$(cat "$envf")" "LLAMACPP_MODEL=gemma3:4b"
+contains "private on sets LLAMACPP_VISION" "$(cat "$envf")" "LLAMACPP_VISION=1"
+contains "keeps other lines" "$(cat "$envf")" "FRIDAY_LOG=debug"
+contains "keeps other vars" "$(cat "$envf")" "OTHER_VAR=keepme"
+
+# Status reports on, model, and ollama running
+out_status=$(bash "$F" private status 2>&1)
+contains "status reports on" "$out_status" "Private mode: on"
+contains "status reports model" "$out_status" "Model: gemma3:4b"
+contains "status reports ollama" "$out_status" "Ollama: running"
+
+# In private mode, friday ask notification meta says "Private · on this computer"
+: >"$LOG"
+bash "$F" ask "private ask test"; sleep 0.3
+contains "notification says Private · on this computer" "$(cat "$LOG")" "Private · on this computer"
+if grep -q "via llamacpp" "$LOG"; then fail "notification included via line in private mode"; else pass "no via line in private mode"; fi
+
+# Turn private mode off
+out_off=$(bash "$F" private off 2>&1)
+contains "says private mode is off" "$out_off" "Private mode is off."
+contains "says ollama stays installed" "$out_off" "Ollama stays installed (sudo pacman -Rns ollama to remove it, ollama rm gemma3:4b to free space)."
+if grep -qE '^(FRIDAY_PRIVATE|LLAMACPP_ENABLED|LLAMACPP_BASE_URL|LLAMACPP_MODEL|LLAMACPP_VISION)=' "$envf"; then
+  fail "private off left private lines in friday.env"
+else
+  pass "private off removed exactly the 5 lines"
+fi
+contains "private off keeps other lines" "$(cat "$envf")" "FRIDAY_LOG=debug"
+contains "private off keeps other vars" "$(cat "$envf")" "OTHER_VAR=keepme"
+mode_off=$(stat -c %a "$envf")
+[[ "$mode_off" == 600 ]] && pass "env file mode 0600 after private off" || fail "env file mode is $mode_off, not 600"
+
+out_status_off=$(bash "$F" private status 2>&1)
+contains "status reports off" "$out_status_off" "Private mode: off"
 
 echo "welcome"
 : >"$LOG"; rm -f "$envf"
