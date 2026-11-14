@@ -184,6 +184,11 @@ if [[ "$(head -n1 <<<"$history")" == "this will fail" && "$history" != *Bonjour*
   pass "history: newest first, questions only"
 else fail "history order/content: $(tr '\n' '|' <<<"$history")"; fi
 expect "friday answers --last prints the last answer" bash -c "bash '$F' answers --last | grep -q 'this will fail'"
+contains "each saved answer opens with a marker line (history stays whole)" "$(cat "$state/answers.md")" "<!-- friday answer -->"
+printf '# what is a monad\n\n_2026-11-14 22:00_\n\nA monad wraps a value with a bind operation.\n' >"$state/last-answer.md"
+: >"$LOG"; bash "$F" ask --follow-up "give an example"; sleep 0.3
+contains "follow-up: the question is asked" "$(cat "$LOG")" "give an example"
+contains "follow-up: the previous answer goes with it" "$(cat "$LOG")" "A monad wraps a value"
 
 echo "sent"
 rm -f "$state/egress.jsonl"

@@ -77,13 +77,14 @@ PanelWindow {
 
     // Put the answer away after a quiet minute; never while it's being read.
     Timer {
+      id: quiet
       interval: Answer.ok ? 60000 : 90000
       running: win.answering && !hover.hovered && !followUp.activeFocus
       onTriggered: Answer.dismiss()
     }
     Connections {
       target: Answer
-      function onSerialChanged() { card.followUpOpen = false; followUp.text = ""; }
+      function onSerialChanged() { card.followUpOpen = false; followUp.text = ""; quiet.restart(); }
     }
 
     ColumnLayout {

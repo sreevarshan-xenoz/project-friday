@@ -17,7 +17,11 @@ Singleton {
 
   function parse(text) {
     const out = [];
-    const blocks = String(text || "").split(/\n---\n/);
+    const all = String(text || "");
+    // Entries open with a marker line, so a "---" inside an answer is kept.
+    let blocks = all.split(/^<!-- friday answer -->\n/m);
+    // Entries written before the marker (the head of the file) split on "---".
+    blocks = blocks[0].split(/\n---\n/).concat(blocks.slice(1));
     for (let i = blocks.length - 1; i >= 0 && out.length < 300; i--) {
       const lines = blocks[i].trim().split("\n");
       if (lines.length < 1 || !lines[0].startsWith("# "))
@@ -31,6 +35,7 @@ Singleton {
       let body = lines.slice(k).join("\n");
       const details = body.indexOf("\n<details>");
       if (details !== -1) body = body.slice(0, details);
+      body = body.replace(/\n---\s*$/, "");
       out.push({ goal: lines[0].slice(2), when: when, body: body.trim() });
     }
     return out;
