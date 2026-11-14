@@ -124,6 +124,7 @@ flowchart TD
 - **Your own account** (`friday connect claude|codex|agy|cline` on Linux, **Connect an account** in the tray on Windows) is optional, and by default only a fallback when the free models can't answer: it starts the tool's app for each answer (seconds slower) and counts against your plan. `friday connect --prefer <name>` (or `FRIDAY_PREFER_ACCOUNTS=1`) uses it before the free models instead, still after your own key. It answers through that tool's own app and sign-in. FRIDAY never sees the credentials, and runs the tool with no tools of its own, in an empty folder. These are text only: a screenshot never goes to them. On Windows only a native `.exe` can be used (Claude Code, Antigravity, Codex's native build); Cline is Linux-only for now.
 - **Screen asks** go only to models that can see images: your vision provider, or the free ones.
 - **Timeouts:** 5 s to connect, 15 s per text attempt, 45 s for a screenshot, 90 s for a connected account (it starts a whole app).
+- **Weekly model check:** Free models rotate and disappear upstream without notice. A scheduled CI workflow checks the built-in free models weekly against keyless endpoints and reports catalog drift (`cargo test -p friday-intelligence -- --ignored model_check`).
 
 > **Free models and your data.** Free models may keep what you send them (questions, selected text, screenshots) and may use it for training. For anything private, use your own key or account.
 
@@ -258,6 +259,7 @@ specs/, docs/    specifications and documentation
 | An ask end to end | `bash tests/e2e/ask.sh` |
 | The hotkeys end to end | `bash tests/e2e/hotkeys.sh`; Windows: `pwsh tests/e2e/hotkeys.ps1` |
 | Desktop, installer and CLI checks | `bash iso/friday/test/run-checks.sh` |
+| Built-in free AI models | `cargo test -p friday-intelligence -- --ignored model_check` |
 | Windows tray | `dotnet test windows-tray/FridayTray.Tests` |
 | Windows MSI | `pwsh installer/windows/build.ps1` |
 | Arch package | `cd packaging/arch && makepkg -si` |
