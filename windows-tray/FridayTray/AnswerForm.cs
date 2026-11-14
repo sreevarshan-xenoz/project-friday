@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using FridayTray.Core;
 
 namespace FridayTray;
@@ -168,7 +169,23 @@ internal sealed class AnswerForm : Form
             again.Click += (_, _) => { AskAgain?.Invoke(); Close(); };
             _buttons.Controls.Add(again);
             var copy = Theme.Button("Copy", primary: outcome.Ok);
-            copy.Click += (_, _) => { Clipboard.SetText(outcome.Answer); copy.Text = "Copied"; };
+            copy.Click += (_, _) =>
+            {
+                if (string.IsNullOrEmpty(outcome.Answer))
+                {
+                    copy.Text = "Nothing to copy";
+                    return;
+                }
+                try
+                {
+                    Clipboard.SetDataObject(outcome.Answer, copy: true, retryTimes: 10, retryDelay: 50);
+                    copy.Text = "Copied";
+                }
+                catch (ExternalException)
+                {
+                    copy.Text = "Clipboard busy";
+                }
+            };
             _buttons.Controls.Add(copy);
         }
         Invalidate();

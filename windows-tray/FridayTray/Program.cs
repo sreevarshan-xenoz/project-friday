@@ -22,6 +22,7 @@ internal static class Program
         if (!first)
             return 0;
         ApplicationConfiguration.Initialize();
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         Application.Run(new TrayContext(install));
         return 0;
     }

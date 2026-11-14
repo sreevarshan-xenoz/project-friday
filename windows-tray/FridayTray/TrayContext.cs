@@ -22,6 +22,16 @@ internal sealed class TrayContext : ApplicationContext
     public TrayContext(Install install)
     {
         _install = install;
+
+        // Last-resort unhandled exception handlers so an unexpected UI or background
+        // exception is logged and keeps the tray alive rather than terminating.
+        Application.ThreadException += (_, e) => LogUnhandledException("ThreadException", e.Exception);
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            if (e.ExceptionObject is Exception ex)
+                LogUnhandledException("UnhandledException", ex);
+        };
+
         _log = new AnswerLog(install.Paths);
         _daemon = new Supervised("friday-daemon", install.Daemon, install.ChildEnvironment, install.Paths.LogDir);
         _host = new Supervised("friday-windows-host", install.Host, install.ChildEnvironment, install.Paths.LogDir);
@@ -272,6 +282,19 @@ internal sealed class TrayContext : ApplicationContext
 
     private void Notify(string title, string text, ToolTipIcon icon) =>
         _icon.ShowBalloonTip(5000, title, text.Length > 250 ? text[..250] : text, icon);
+
+    private void LogUnhandledException(string source, Exception ex)
+    {
+        try
+        {
+            Directory.CreateDirectory(_install.Paths.LogDir);
+            var logPath = Path.Combine(_install.Paths.LogDir, "friday-tray.log");
+            File.AppendAllText(logPath, $"[{DateTime.UtcNow:O}] [{source}] {ex}{Environment.NewLine}");
+        }
+        catch
+        {
+        }
+    }
 
     protected override void ExitThreadCore()
     {

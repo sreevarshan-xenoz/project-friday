@@ -60,10 +60,14 @@
       <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
     </Component>
 
-    <!-- End the running tray before files are replaced or removed (its
-         windows are hidden, so a close message alone would not do it); its job
-         object takes the daemon and host with it. -->
+    <!-- End the running tray, daemon, and host before files are replaced or
+         removed (their windows are hidden, so a close message alone would not do
+         it), so upgrade/uninstall never leaves them running or files locked. -->
     <util:CloseApplication Id="CloseTray" Target="friday-tray.exe" CloseMessage="yes" TerminateProcess="1"
+                           RebootPrompt="no" />
+    <util:CloseApplication Id="CloseDaemon" Target="friday-daemon.exe" TerminateProcess="1"
+                           RebootPrompt="no" />
+    <util:CloseApplication Id="CloseHost" Target="friday-windows-host.exe" TerminateProcess="1"
                            RebootPrompt="no" />
 
     <!-- Start the tray after an interactive install (not for /quiet, which CI

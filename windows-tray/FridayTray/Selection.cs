@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using FridayTray.Core;
 
 namespace FridayTray;
@@ -15,39 +16,64 @@ internal static class Selection
 
     public static async Task<Result> CaptureAsync()
     {
-        var fg = Native.GetForegroundWindow();
-        var className = Native.GetClassName(fg);
-        if (Terminals.IsTerminalClass(className))
+        try
         {
-            string? text = Clipboard.ContainsText() ? Clipboard.GetText() : null;
-            if (string.IsNullOrWhiteSpace(text))
+            var fg = Native.GetForegroundWindow();
+            var className = Native.GetClassName(fg);
+            if (Terminals.IsTerminalClass(className))
+            {
+                string? text = TryGetClipboardText();
+                if (string.IsNullOrWhiteSpace(text))
+                    return new Result(null, "", "Select or copy some text first, then press the hotkey again.");
+                if (Asking.LooksLikeSecret(text))
+                    return new Result(null, "", "The clipboard looks like a password or token, so I won't send it. Select the text you mean instead.");
+                return new Result(text, "Clipboard", null);
+            }
+
+            await WaitForModifiersUpAsync();
+            var savedClipboard = SnapshotClipboard();
+            string? before = TryGetClipboardText();
+            var seq = Native.GetClipboardSequenceNumber();
+            SendCtrlC();
+            for (var i = 0; i < 20 && Native.GetClipboardSequenceNumber() == seq; i++)
+                await Task.Delay(25);
+
+            if (Native.GetClipboardSequenceNumber() != seq)
+            {
+                var selected = TryGetClipboardText();
+                RestoreClipboard(savedClipboard);
+                if (!string.IsNullOrWhiteSpace(selected))
+                    return new Result(selected, "Selected", null);
+            }
+
+            if (string.IsNullOrWhiteSpace(before))
                 return new Result(null, "", "Select or copy some text first, then press the hotkey again.");
-            if (Asking.LooksLikeSecret(text))
+            if (Asking.LooksLikeSecret(before))
                 return new Result(null, "", "The clipboard looks like a password or token, so I won't send it. Select the text you mean instead.");
-            return new Result(text, "Clipboard", null);
+            return new Result(before, "Clipboard", null);
         }
-
-        await WaitForModifiersUpAsync();
-        var savedClipboard = SnapshotClipboard();
-        string? before = Clipboard.ContainsText() ? Clipboard.GetText() : null;
-        var seq = Native.GetClipboardSequenceNumber();
-        SendCtrlC();
-        for (var i = 0; i < 20 && Native.GetClipboardSequenceNumber() == seq; i++)
-            await Task.Delay(25);
-
-        if (Native.GetClipboardSequenceNumber() != seq)
+        catch (ExternalException)
         {
-            var selected = Clipboard.ContainsText() ? Clipboard.GetText() : null;
-            RestoreClipboard(savedClipboard);
-            if (!string.IsNullOrWhiteSpace(selected))
-                return new Result(selected, "Selected", null);
+            return new Result(null, "", "The clipboard is busy. Try again.");
         }
+    }
 
-        if (string.IsNullOrWhiteSpace(before))
-            return new Result(null, "", "Select or copy some text first, then press the hotkey again.");
-        if (Asking.LooksLikeSecret(before))
-            return new Result(null, "", "The clipboard looks like a password or token, so I won't send it. Select the text you mean instead.");
-        return new Result(before, "Clipboard", null);
+    private static string? TryGetClipboardText()
+    {
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            try
+            {
+                return Clipboard.ContainsText() ? Clipboard.GetText() : null;
+            }
+            catch (ExternalException)
+            {
+                if (attempt == 9)
+                    throw;
+                Thread.Sleep(50);
+            }
+        }
+        return null;
     }
 
     private static IDataObject? SnapshotClipboard()

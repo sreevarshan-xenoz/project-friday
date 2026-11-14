@@ -52,7 +52,16 @@ internal static class Theme
                 g.FillEllipse(core, size / 2f - r, size / 2f - r, 2 * r, 2 * r);
             }
         }
-        return Icon.FromHandle(bmp.GetHicon());
+        var hIcon = bmp.GetHicon();
+        try
+        {
+            using var icon = Icon.FromHandle(hIcon);
+            return (Icon)icon.Clone();
+        }
+        finally
+        {
+            Native.DestroyIcon(hIcon);
+        }
     }
 
     /// <summary>A flat button in the theme.</summary>
