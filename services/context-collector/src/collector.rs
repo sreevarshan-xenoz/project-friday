@@ -603,14 +603,18 @@ mod tests {
     /// niri has no hyprctl: the window's rectangle comes from niri's IPC —
     /// its tile in the workspace view plus its offset in the tile, moved onto
     /// the output the workspace is on.
+    #[cfg(not(windows))]
     const NIRI_WINDOW: &[u8] = br#"{"id":7,"title":"main.rs","app_id":"code","workspace_id":3,
         "layout":{"pos_in_scrolling_layout":[1,1],"tile_size":[804.0,604.0],"window_size":[800,600],
         "tile_pos_in_workspace_view":[98.0,48.0],"window_offset_in_tile":[2.0,2.0]}}"#;
+    #[cfg(not(windows))]
     const NIRI_WORKSPACES: &[u8] =
         br#"[{"id":1,"idx":1,"output":"HDMI-A-1"},{"id":3,"idx":1,"output":"DP-1"}]"#;
+    #[cfg(not(windows))]
     const NIRI_OUTPUTS: &[u8] = br#"{"DP-1":{"name":"DP-1","logical":{"x":1920,"y":0,"width":2560,"height":1440,"scale":1.0}},
         "HDMI-A-1":{"name":"HDMI-A-1","logical":{"x":0,"y":0,"width":1920,"height":1080,"scale":1.0}}}"#;
 
+    #[cfg(not(windows))]
     fn on_niri(window: &[u8]) -> ContextCollector<FakeCommandRunner> {
         let region = ScreenRegion::new(2020, 50, 800, 600);
         let (rp, ra) = screen_command(Some(region));
