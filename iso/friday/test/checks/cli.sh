@@ -153,6 +153,35 @@ if [[ "$(head -n1 <<<"$history")" == "this will fail" && "$history" != *Bonjour*
 else fail "history order/content: $(tr '\n' '|' <<<"$history")"; fi
 expect "friday answers --last prints the last answer" bash -c "bash '$F' answers --last | grep -q 'this will fail'"
 
+echo "sent"
+rm -f "$state/egress.jsonl"
+out=$(bash "$F" sent 2>&1 || true)
+contains "empty case says nothing sent yet" "$out" "Nothing has been sent yet."
+
+now_sec=$(date +%s)
+ts1=$(date -u -d "@$(( now_sec - 3600 ))" "+%Y-%m-%dT%H:%M:%SZ")
+ts2=$(date -u -d "@$(( now_sec - 7200 ))" "+%Y-%m-%dT%H:%M:%SZ")
+ts3=$(date -u -d "@$(( now_sec - 10800 ))" "+%Y-%m-%dT%H:%M:%SZ")
+cat >"$state/egress.jsonl" <<EOF
+{"ts":"$ts1","provider":"opencode","model":"m1","kinds":["text"],"text_chars":1240,"image_bytes":0,"masked":0,"outcome":"ok"}
+{"ts":"$ts2","provider":"opencode","model":"m2","kinds":["text","image"],"text_chars":310,"image_bytes":186368,"masked":1,"outcome":"ok"}
+{"ts":"$ts3","provider":"kilo","model":"m3","kinds":["text"],"text_chars":500,"image_bytes":0,"masked":4,"outcome":"error"}
+EOF
+
+out=$(bash "$F" sent 2>&1 || true)
+contains "table header present" "$out" "PROVIDER"
+contains "table maps opencode to OpenCode Zen" "$out" "OpenCode Zen"
+contains "table formats text only" "$out" "text 1,240 chars"
+contains "table formats text + screenshot" "$out" "text 310 chars + screenshot 182 KB"
+contains "table outcome present" "$out" "ok"
+contains "summary includes request count and 7 days" "$out" "3 requests in the last 7 days: 2 OpenCode Zen, 1 Kilo"
+contains "summary includes screenshot count" "$out" "1 with a screenshot"
+contains "summary includes masked secrets count" "$out" "5 secrets masked"
+
+out1=$(bash "$F" sent 1 2>&1 || true)
+contains "limit N prints last entry" "$out1" "Kilo"
+if grep -q "1,240 chars" <<<"$out1"; then fail "sent 1 printed older entries"; else pass "sent 1 limits table to last entry"; fi
+
 echo "confirm"
 : >"$LOG"; bash "$F" ask "gated action"; sleep 0.4
 contains "confirms before running action" "$(cat "$LOG")" "run=Run"
