@@ -9,6 +9,7 @@ OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
 export PATH="$OMARCHY_PATH/bin:$PATH"
 # shellcheck source=friday-tui.sh
 source "$(dirname "$(readlink -f "$0")")/friday-tui.sh"
+friday_console_theme
 
 STEPS=(NETWORK DISK REGION IDENTITY SECURITY LOOK AI REVIEW)
 
@@ -26,7 +27,7 @@ ENCRYPT="true"
 FRIDAY_AI_LABEL="OpenCode Zen free models (no key)"
 
 screen() { # screen <step-index> [subtitle]
-  friday_banner "${2:-COGNITIVE OPERATING SYSTEM}"
+  friday_header "${2:-SETUP}"
   friday_rail "$1" "${STEPS[@]}"
 }
 
@@ -312,8 +313,8 @@ step_ai() {
 review() {
   while true; do
     screen 8 "REVIEW"
-    gum style --foreground "$FRIDAY_ACCENT" --border rounded --border-foreground "$FRIDAY_BORDER" \
-      --padding "1 2" --width 90 \
+    gum style --foreground "$FRIDAY_ACCENT" --border "$FRIDAY_BORDER_STYLE" --border-foreground "$FRIDAY_BORDER" \
+      --margin "0 0 0 $FRIDAY_INDENT" --padding "1 2" --width "$FRIDAY_WIDTH" \
       "Disk        $TARGET_LABEL$([[ $ENCRYPT == true ]] && echo "  (encrypted)")" \
       "Computer    $HOSTNAME" \
       "User        $USERNAME   (password set, $([[ $AUTOLOGIN == true ]] && echo "automatic login" || echo "asked at login"))" \
@@ -322,7 +323,7 @@ review() {
       "Login       $SDDM_THEME" \
       "AI          $FRIDAY_AI_LABEL"
     echo
-    gum style --foreground "$FRIDAY_WARNING" --bold "  Installing erases everything on $TARGET_DISK."
+    gum style --margin "0 0 0 $FRIDAY_INDENT" --foreground "$FRIDAY_WARNING" --bold "Installing erases everything on $TARGET_DISK."
     echo
     case "$(gum choose --cursor="❯ " \
         "Install FRIDAY OS" "Change disk" "Change names" "Change password" \

@@ -42,11 +42,11 @@ elapsed() { printf '%02d:%02d' $(((SECONDS - INSTALL_STARTED) / 60)) $(((SECONDS
 # phase_msg <step 1-6> <what FRIDAY is doing>
 phase_msg() {
   {
-    friday_banner "SYSTEM ASSEMBLY"
+    friday_header "INSTALLING"
     friday_rail "$1" "${INSTALL_STEPS[@]}"
     friday_note "  $USERNAME@$HOSTNAME  ·  $TARGET_DISK  ·  elapsed $(elapsed)"
     echo
-    gum style --foreground "$FRIDAY_SUCCESS" --bold "  Step $1 of 6 · $2"
+    gum style --margin "0 0 0 $FRIDAY_INDENT" --foreground "$FRIDAY_SUCCESS" --bold "Step $1 of 6 · $2"
     echo
     friday_note "  Full log: $LOG_FILE  (Alt+F2 for a shell: tail -f it)"
     echo
@@ -62,13 +62,14 @@ live_status_start() {
   (
     trap - ERR EXIT
     set +e
-    frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'; i=0
+    # The console font has no Braille; half blocks spin there instead.
+    frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'; [[ "${TERM:-}" == linux ]] && frames='▀▐▄▌▀▐▄▌▀▐'; i=0
     while true; do
       line=$(tail -n 40 "$LOG_FILE" 2>/dev/null | tr '\r' '\n' \
         | grep -oE '\(\s*[0-9]+/[0-9]+\) (installing|upgrading|checking|downloading|loading|resolving)[^ ]* ?[^ ]*|downloading [^ ]+|:: [A-Za-z ]+\.\.\.' \
         | tail -n 1)
-      printf '\r\e[2K  \e[38;2;122;162;247m%s\e[0m %s  \e[38;2;86;95;137m%s\e[0m' \
-        "${frames:i%10:1}" "$(elapsed)" "${line:0:60}" >&3
+      printf '\r\e[2K%s%s%s\e[0m %s  %s%s\e[0m' "$FRIDAY_PAD" "$(friday_fg "$FRIDAY_ACCENT")" \
+        "${frames:i%10:1}" "$(elapsed)" "$(friday_fg "$FRIDAY_MUTED")" "${line:0:60}" >&3
       i=$((i + 1))
       sleep 0.15
     done
@@ -603,8 +604,8 @@ live_status_stop
 
 friday_banner "SYSTEM ASSEMBLY COMPLETE"
 friday_rail 7 "${INSTALL_STEPS[@]}"
-gum style --foreground "$FRIDAY_SUCCESS" --border rounded --border-foreground "$FRIDAY_BORDER" \
-  --align center --width 64 --padding "1 2" \
+gum style --foreground "$FRIDAY_SUCCESS" --border "$FRIDAY_BORDER_STYLE" --border-foreground "$FRIDAY_BORDER" \
+  --align center --width 64 --padding "1 2" --margin "0 0 0 $(( ($(tput cols 2>/dev/null || echo 80) - 64) / 2 ))" \
   "FRIDAY OS is installed on $TARGET_DISK" \
   "in $(elapsed)." \
   "" \
