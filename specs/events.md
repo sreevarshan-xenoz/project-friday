@@ -128,14 +128,14 @@ Each line is a JSON object appended whenever a request attempt is made to a prov
 
 - `ts`: RFC 3339 UTC timestamp of the attempt
 - `goal_id`: goal identifier string if known (omitted when unknown)
-- `provider`: provider identifier string (e.g. `opencode`, `kilo`, `claude-code`, `codex`, `antigravity`, `cline`, `ollama`, `llamacpp`)
+- `provider`: provider identifier string (e.g. `opencode`, `kilo`, `claude-code`, `codex`, `antigravity`, `cline`, `ollama`, `llamacpp`, or search backends `searxng`, `brave`, `duckduckgo`, `wikipedia`)
 - `model`: vendor model identifier string
-- `kinds`: array of payload content kinds: `["text"]` or `["text", "image"]`
+- `kinds`: array of payload content kinds: `["text"]`, `["text", "image"]`, or `["search"]`
 - `text_chars`: count of text characters sent
 - `image_bytes`: count of image bytes sent (0 if none)
 - `masked`: secrets masked in that ask before transmission (integer count if known, omitted when unknown)
 - `outcome`: `"ok"` if the attempt succeeded, `"error"` if it failed or timed out
-- `local`: `true` for local providers (llama.cpp/Ollama on localhost); omitted for cloud providers
+- `local`: `true` for local providers (llama.cpp/Ollama on localhost, or local SearXNG); omitted for cloud providers
 
 Agent CLI providers (`claude-code`, `codex`, `antigravity`, `cline`) count as sent.
 
@@ -143,5 +143,20 @@ Agent CLI providers (`claude-code`, `codex`, `antigravity`, `cline`) count as se
 - **File size bounds**: The file is bounded to ~1 MB (`DEFAULT_MAX_EGRESS_BYTES = 1,048,576`). When it exceeds this bound, the newest half of the lines is kept and atomically written.
 - **File mode**: Created with mode `0600` (`-rw-------`) on Unix so only the owning user can read it.
 - **Non-failing writes**: Writing to `egress.jsonl` must never fail an ask (any I/O error is logged as a warning and execution continues).
+
+### `web` search request flag (optional)
+
+On goal ingress commands (`planner.goal`) and bus intake events (`plan.goal`), an optional
+boolean `web` requests web search augmentation:
+
+```json
+{
+  "goal": "what is the latest stable Rust version",
+  "web": true
+}
+```
+
+- `web`: boolean (`true` queries an ordered chain of search backends — SearXNG, Brave Search API, DuckDuckGo HTML, Wikipedia API — uses the first returning results, injects them into the prompt as numbered sources with citation instructions, and appends a verified `Sources (<Backend>):` list to the final answer; absent or `false` leaves web search disabled).
+- Privacy: web searches happen ONLY on explicit user request (`friday ask --web`, `friday-ctl goal --web`, or explicit prefixes like "search " / "search the web for " / "look up "). Never automatically. Egress log records provider as the backend contacted with `kinds: ["search"]`, one entry per attempted backend.
 
 

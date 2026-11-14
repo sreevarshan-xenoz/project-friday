@@ -26,6 +26,7 @@ Autonomous Agent & Cognitive Loop:
   friday ask --screen              Ask about what's on screen (Super+Ctrl+Y)
   friday ask --region              Drag out an area of the screen and ask about it
   friday ask --follow-up           Ask a follow-up about the last answer
+  friday ask --web ["<objective>"] Ask with web search results and cited sources
   friday answers                   Show past answers (last one: friday answers --last)
   friday sent [N]                  Show what left this machine for AI providers (egress log)
   friday goal "<objective>"        Dispatch an autonomous goal to FRIDAY agent
@@ -246,6 +247,29 @@ friday_doctor() {
   else
     bad "can't reach $api_host" "check the network (Wi-Fi, firewall, captive portal); asks fail until it's reachable"
   fi
+
+  echo
+  echo "Web search"
+  local searxng_val="${FRIDAY_SEARXNG_URL:-}"
+  local brave_val="${BRAVE_SEARCH_API_KEY:-}"
+  if [ -r "$env_file" ]; then
+    [ -z "$searxng_val" ] && searxng_val=$(grep -E '^FRIDAY_SEARXNG_URL=.+' "$env_file" | head -n1 | cut -d= -f2- || true)
+    [ -z "$brave_val" ] && brave_val=$(grep -E '^BRAVE_SEARCH_API_KEY=.+' "$env_file" | head -n1 | cut -d= -f2- || true)
+  fi
+  searxng_val="${searxng_val%\"}"
+  searxng_val="${searxng_val#\"}"
+  brave_val="${brave_val%\"}"
+  brave_val="${brave_val#\"}"
+  local backends=()
+  [ -n "$searxng_val" ] && backends+=("SearXNG")
+  [ -n "$brave_val" ] && backends+=("Brave")
+  backends+=("DuckDuckGo" "Wikipedia")
+  local b_str=""
+  for b in "${backends[@]}"; do
+    [ -n "$b_str" ] && b_str="$b_str, "
+    b_str="$b_str$b"
+  done
+  ok "search backends: $b_str"
 
   echo
   echo "Desktop"
@@ -817,6 +841,10 @@ friday_sent_map_provider() {
     codex) echo "Codex" ;;
     antigravity) echo "Antigravity" ;;
     cline) echo "Cline" ;;
+    searxng) echo "SearXNG" ;;
+    brave) echo "Brave" ;;
+    duckduckgo) echo "DuckDuckGo" ;;
+    wikipedia) echo "Wikipedia" ;;
     *) echo "$1" ;;
   esac
 }
@@ -855,14 +883,16 @@ friday_sent() {
   done < <(jq -r '[.ts // "", .provider // "", .model // "", (.text_chars // 0), (.image_bytes // 0), (.masked // 0), .outcome // ""] | @tsv' "$f" 2>/dev/null)
 
   local table_rows=""
-  while IFS=$'\t' read -r ts provider model text_chars image_bytes masked outcome; do
+  while IFS=$'\t' read -r ts provider model text_chars image_bytes masked outcome kinds; do
     [ -z "$ts" ] && continue
     local p_name local_time chars_fmt ib what
     p_name=$(friday_sent_map_provider "$provider")
     local_time=$(date -d "$ts" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$ts")
     chars_fmt=$(friday_sent_format_num "${text_chars:-0}")
     ib="${image_bytes:-0}"
-    if [ "$ib" -ge 1024 ]; then
+    if [[ "$kinds" == *"search"* ]]; then
+      what="search $chars_fmt chars"
+    elif [ "$ib" -ge 1024 ]; then
       local kb=$(( (ib + 512) / 1024 ))
       what="text $chars_fmt chars + screenshot $(friday_sent_format_num "$kb") KB"
     elif [ "$ib" -gt 0 ]; then
@@ -871,7 +901,7 @@ friday_sent() {
       what="text $chars_fmt chars"
     fi
     table_rows+="$(printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$local_time" "$p_name" "$model" "$what" "${masked:-0}" "$outcome")"$'\n'
-  done < <(tail -n "$n" "$f" | jq -r '[.ts // "", .provider // "", .model // "", (.text_chars // 0), (.image_bytes // 0), (.masked // 0), .outcome // ""] | @tsv' 2>/dev/null)
+  done < <(tail -n "$n" "$f" | jq -r '[.ts // "", .provider // "", .model // "", (.text_chars // 0), (.image_bytes // 0), (.masked // 0), .outcome // "", ((.kinds // []) | join(","))] | @tsv' 2>/dev/null)
 
   if [ -n "$table_rows" ]; then
     {
@@ -931,17 +961,22 @@ case "${1:-}" in
     #                                   just that (any monitor)
     #   friday ask --follow-up [text]   ask about the last answer (the answer pill's
     #                                   Follow up)
+    #   friday ask --web [text]         ask with web search results and cited sources
     # With FRIDAY Shell running, the answer opens in its answer pill (which also
     # streams it); otherwise it arrives as a notification.
     shift
-    use_selection=false use_screen=false use_region=false use_followup=false details="" daemon_down=false
+    use_selection=false use_screen=false use_region=false use_followup=false use_web=false details="" daemon_down=false
     ask_args=()
-    case "${1:-}" in
-      --selection|-s) use_selection=true; ask_args=(--selection); shift ;;
-      --screen) use_screen=true; ask_args=(--screen); shift ;;
-      --region|-r) use_screen=true; use_region=true; ask_args=(--region); shift ;;
-      --follow-up|-f) use_followup=true; ask_args=(--follow-up); shift ;;
-    esac
+    while [ $# -gt 0 ]; do
+      case "${1:-}" in
+        --selection|-s) use_selection=true; ask_args+=(--selection); shift ;;
+        --screen) use_screen=true; ask_args+=(--screen); shift ;;
+        --region|-r) use_screen=true; use_region=true; ask_args+=(--region); shift ;;
+        --follow-up|-f) use_followup=true; ask_args+=(--follow-up); shift ;;
+        --web) use_web=true; ask_args+=(--web); shift ;;
+        *) break ;;
+      esac
+    done
     goal="$*"
     state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
     history_file="$state_dir/ask-history"
@@ -1021,6 +1056,19 @@ case "${1:-}" in
           --placeholder="Ask anything" </dev/null) || exit 0
       fi
     fi
+    # Privacy rule: web search happens ONLY when explicitly asked (--web, or question prefixes)
+    shopt -s nocasematch
+    if [[ "$goal" =~ ^search[[:space:]]+the[[:space:]]+web[[:space:]]+for[[:space:]]+(.*)$ ]]; then
+      use_web=true
+      goal="${BASH_REMATCH[1]}"
+    elif [[ "$goal" =~ ^search[[:space:]]+(.*)$ ]]; then
+      use_web=true
+      goal="${BASH_REMATCH[1]}"
+    elif [[ "$goal" =~ ^look[[:space:]]+up[[:space:]]+(.*)$ ]]; then
+      use_web=true
+      goal="${BASH_REMATCH[1]}"
+    fi
+    shopt -u nocasematch
     [ -n "${goal// /}" ] || exit 0
     # Things this computer can answer or do itself go nowhere.
     local_answer=""
@@ -1199,7 +1247,10 @@ case "${1:-}" in
       nid=""
       $use_pill || nid=$(notify-send -a FRIDAY -p -- "FRIDAY" "Working on: $goal" 2>/dev/null || true)
       [[ "$nid" =~ ^[0-9]+$ ]] || nid=""
-      stream_ctl friday-ctl goal --wait "$request"
+      ctl_args=(goal --wait)
+      $use_web && ctl_args+=(--web)
+      ctl_args+=("$request")
+      stream_ctl friday-ctl "${ctl_args[@]}"
       # The final {outcome,result,error} object; keep every line of the answer.
       summary=$(jq -s 'map(select(type == "object" and .outcome? != null)) | last // {}' <<<"$out" 2>/dev/null || echo '{}')
     fi
@@ -1213,7 +1264,10 @@ case "${1:-}" in
         case "$action" in
           run)
             conf_ok=true
-            conf_out=$(friday-ctl goal --wait --confirm "$action_to_confirm" "$request" 2>&1) || conf_ok=false
+            conf_args=(goal --wait --confirm "$action_to_confirm")
+            $use_web && conf_args+=(--web)
+            conf_args+=("$request")
+            conf_out=$(friday-ctl "${conf_args[@]}" 2>&1) || conf_ok=false
             conf_summary=$(jq -s 'map(select(type == "object" and .outcome? != null)) | last // {}' <<<"$conf_out" 2>/dev/null || echo '{}')
             show_answer "$conf_ok" "$conf_summary" "$conf_out"
             ;;

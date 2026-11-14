@@ -21,6 +21,7 @@ pub mod shell_state;
 pub mod transport;
 pub mod upgrade;
 pub mod voice;
+pub mod web_search;
 
 pub use auth::{sign_pairing, AuthError, AuthRegistry, PairingChallenge};
 pub use bridge::{translate, BusBridge};

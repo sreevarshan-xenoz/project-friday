@@ -56,12 +56,20 @@ impl CommandGateway {
                     .get("confirm")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
+                let web = cmd
+                    .params
+                    .get("web")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 // The GoalRunner subscribes to `plan.goal` and runs the goal.
                 // The session id rides along so the runner keeps this
                 // conversation continuous (per-session context, S1).
                 let mut payload = json!({ "goal": goal, "session_id": cmd.session_id });
                 if let Some(c) = confirm {
                     payload["confirm"] = json!(c);
+                }
+                if web {
+                    payload["web"] = json!(true);
                 }
                 let _ = self
                     .bus
