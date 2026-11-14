@@ -10,11 +10,16 @@ namespace FridayTray;
 internal sealed class Hotkeys : NativeWindow, IDisposable
 {
     private readonly Dictionary<int, AskKind> _ids = new();
+    private readonly Action<TimeSpan>? _delay;
     public Dictionary<AskKind, string> Labels { get; } = new();
 
     public event Action<AskKind>? Pressed;
 
-    public Hotkeys() => CreateHandle(new CreateParams());
+    public Hotkeys(Action<TimeSpan>? delay = null)
+    {
+        _delay = delay;
+        CreateHandle(new CreateParams());
+    }
 
     public void RegisterAll()
     {
@@ -30,14 +35,15 @@ internal sealed class Hotkeys : NativeWindow, IDisposable
 
     private void Register(int id, AskKind kind, params (uint mods, char key, string label)[] choices)
     {
-        foreach (var (mods, key, label) in choices)
+        var (ok, chosen) = HotkeyRegistration.RegisterWithRetry(
+            choices,
+            c => Native.RegisterHotKey(Handle, id, c.mods | Native.MOD_NOREPEAT, c.key),
+            delay: _delay);
+
+        if (ok)
         {
-            if (Native.RegisterHotKey(Handle, id, mods | Native.MOD_NOREPEAT, key))
-            {
-                _ids[id] = kind;
-                Labels[kind] = label;
-                return;
-            }
+            _ids[id] = kind;
+            Labels[kind] = chosen.label;
         }
     }
 
