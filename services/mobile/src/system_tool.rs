@@ -197,6 +197,7 @@ impl HelperLink for DbusHelper {
 }
 
 /// What the person is told when a call to the helper fails.
+#[cfg(any(target_os = "linux", test))]
 fn plain_dbus_error(raw: &str) -> String {
     let lower = raw.to_lowercase();
     if lower.contains("not authorized") || lower.contains("denied") || lower.contains("dismissed") {
