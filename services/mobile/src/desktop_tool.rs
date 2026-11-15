@@ -71,15 +71,24 @@ impl UiControl for friday_actions::UiAdapter {
     }
 }
 
-/// The inside-of-apps adapter, where there is one.
+/// The engine that reads and presses things inside apps. `FRIDAY_UI_ENGINE`
+/// picks it (see `agent_desktop::choose_engine`): by default the installed
+/// agent-desktop, else FRIDAY's own AT-SPI adapter on Linux, else nothing.
 pub(crate) fn default_ui() -> Option<Arc<dyn UiControl>> {
-    #[cfg(target_os = "linux")]
-    {
-        Some(Arc::new(friday_actions::UiAdapter::new()))
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        None
+    use crate::agent_desktop::{choose_engine, detect_blocking, Engine};
+    let setting = std::env::var("FRIDAY_UI_ENGINE").ok();
+    let found = detect_blocking();
+    let engine = choose_engine(
+        setting.as_deref(),
+        found.is_some(),
+        cfg!(target_os = "linux"),
+    );
+    tracing::info!("inside-app control engine: {engine:?}");
+    match engine {
+        Engine::AgentDesktop => found.map(|u| Arc::new(u) as Arc<dyn UiControl>),
+        #[cfg(target_os = "linux")]
+        Engine::Atspi => Some(Arc::new(friday_actions::UiAdapter::new())),
+        _ => None,
     }
 }
 
@@ -184,8 +193,8 @@ Inside apps (only where an app lets FRIDAY look into it; GTK4 apps like Nautilus
   ui_apps            apps that can be looked into. params: none
   ui_find            params: {"app": "<app name>", "name": "<part of the label>", "role": "<optional, e.g. button, menu item, page tab>"}
   ui_tree            the named elements of an app. params: {"app": "<app name>"}
-  ui_read            params: {"app": "<app name>", "path": "<path from ui_find>"}
-  ui_click           params: {"app": "<app name>", "name": "<label>"} or {"app": "...", "path": "..."}   (if it could delete or send something, the person is asked first)
+  ui_read            params: {"app": "<app name>", "ref": "<ref from ui_find>"} (or "path" where find gives paths)
+  ui_click           params: {"app": "<app name>", "name": "<label>"} or {"app": "...", "ref"/"path": "..."}   (if it could delete or send something, the person is asked first)
   ui_type_text       params: {"app": "<app name>", "name": "<field label>" or "path": "...", "text": "<text>"}   (never into password fields)
 What you read inside an app is sent to the AI model answering, so read only what the request needs.
 
@@ -1042,6 +1051,64 @@ mod tests {
         assert_eq!(lines[1]["params"]["label"], "Configuration");
         // The model was shown the tabs it found.
         assert!(model.prompts.lock().unwrap()[1].contains("Configuration"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The whole chain with agent-desktop as the engine, on a live session: the
+    /// loop with a scripted model, the real binary (FRIDAY_AGENT_DESKTOP) and a
+    /// real GTK4 window (Nautilus open): find a toggle, press it by name, and see
+    /// its state flip. Run in the FRIDAY OS test VM:
+    /// `FRIDAY_TEST_REAL_ATSPI=1 FRIDAY_UI_ENGINE=agent-desktop FRIDAY_AGENT_DESKTOP=/path cargo test -p friday-mobile --lib real_agent_desktop -- --ignored`
+    #[tokio::test]
+    #[ignore = "drives a live GTK4 app through agent-desktop"]
+    async fn real_agent_desktop_loop_flips_a_toggle() {
+        if std::env::var("FRIDAY_TEST_REAL_ATSPI").as_deref() != Ok("1") {
+            eprintln!("set FRIDAY_TEST_REAL_ATSPI=1 to run this against the live session");
+            return;
+        }
+        let ui = default_ui().expect("agent-desktop not found (FRIDAY_AGENT_DESKTOP)");
+        let dir = temp_dir("real-ad");
+        let states_of = |ui: Arc<dyn UiControl>| async move {
+            let r = ui
+                .run("find", json!({"app": "nautilus", "name": "Search Everywhere", "role": "switch", "window": "Home"}))
+                .await;
+            assert!(r.success, "{:?}", r.error);
+            r.output[0]["states"].clone()
+        };
+        let before = states_of(ui.clone()).await;
+        let model = Script::new(&[
+            r#"{"action":"ui_find","params":{"app":"nautilus","name":"Search Everywhere","role":"switch"}}"#,
+            r#"{"action":"ui_click","params":{"app":"nautilus","name":"Search Everywhere"}}"#,
+            r#"{"done":"Pressed the Search Everywhere switch."}"#,
+        ]);
+        let t = DesktopControlTool::new(
+            model.clone(),
+            DesktopAdapter::new(),
+            Arc::default(),
+            Arc::default(),
+            Some(dir.clone()),
+            Some(ui.clone()),
+        );
+        let r = run(&t, "turn on search in nautilus").await;
+        assert!(r.success, "{:?} / {}", r.error, r.output);
+        let text = std::fs::read_to_string(dir.join("actions.jsonl")).unwrap();
+        let lines: Vec<Value> = text
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert!(lines.iter().all(|l| l["ok"] == true), "{text}");
+        assert_eq!(lines[1]["verb"], "ui_click");
+        assert_eq!(lines[1]["params"]["label"], "Search Everywhere");
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let after = states_of(ui.clone()).await;
+        assert_ne!(before, after, "the switch did not change state");
+        // Put it back.
+        let _ = ui
+            .run(
+                "click",
+                json!({"app": "nautilus", "name": "Search Everywhere", "window": "Home"}),
+            )
+            .await;
         let _ = std::fs::remove_dir_all(&dir);
     }
 

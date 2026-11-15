@@ -61,6 +61,11 @@ limit per task, and an audit log (`friday actions`) of every action taken.
    (Delete, Send, Pay, Install, Allow...) is refused unless the caller has
    confirmed it. Wired into the control loop as `ui_*` actions: a click is resolved first,
    so the consent decision uses the button's own label and the confirmation names it.
+   A second engine, [agent-desktop](https://github.com/vercel-labs/agent-desktop) (Apache-2.0,
+   accessibility trees on Linux, Windows and macOS), sits behind the same seam: used when a
+   supported 1.x binary is found, with our AT-SPI adapter as the fallback. Compact snapshots
+   (about 6 KB for Nautilus) instead of long paths; it presses what the app lets it and fails
+   closed otherwise (GTK4 rows still can't be pressed on Hyprland). Not packaged yet.
 4. **The system helper.** `friday-os-helper`: root, a D-Bus API, polkit prompt
    per sensitive call. Install and remove packages, enable services, change
    network settings, update the system ("update everything and tell me").

@@ -55,7 +55,7 @@ worked, never what was on your screen). Questions ("how do I change the
 volume?") are answered, not acted on. `FRIDAY_DESKTOP=0` in
 `~/.config/friday/friday.env` turns this off.
 
-It can also look inside apps and press their controls: "click the Save button
+It can also look inside apps and press their controls (with [agent-desktop](https://github.com/vercel-labs/agent-desktop) when it is installed, else FRIDAY's own reader; `FRIDAY_UI_ENGINE=atspi|agent-desktop|auto` in `~/.config/friday/friday.env` chooses): "click the Save button
 in gedit", "what tabs does pavucontrol have". This works with apps that offer
 accessibility actions (GTK3, Qt, Electron). GTK4 apps such as Nautilus can be
 read but their buttons can't be pressed from here, and FRIDAY says so. A button
