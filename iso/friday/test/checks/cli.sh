@@ -332,6 +332,8 @@ export XDG_RUNTIME_DIR="$W/run"; mkdir -p "$XDG_RUNTIME_DIR"
 contains "voice status says it's off" "$(bash "$F" voice status)" "friday voice setup"
 : >"$LOG"; PICK="typed after a tap" bash "$F" hold start; PICK="typed after a tap" bash "$F" hold end; sleep 0.3
 contains "voice off: a tap opens the prompt and asks" "$(cat "$LOG")" "typed after a tap"
+: >"$LOG"; PICK="toggled with voice off" bash "$F" hold toggle; sleep 0.3
+contains "toggle with voice off is a plain ask" "$(cat "$LOG")" "toggled with voice off"
 # Voice on: a stand-in recorder (records until interrupted) and whisper.cpp.
 mkdir -p "$HOME/.local/share/friday/whisper"; head -c 100 /dev/zero >"$HOME/.local/share/friday/whisper/ggml-base.en.bin"
 printf '#!/bin/bash\necho "pw-record $*" >>"%s"\ntrap "exit 0" INT TERM\n: >"${@: -1}"\nwhile :; do sleep 0.05; done\n' "$LOG" >"$S/pw-record"
@@ -348,6 +350,13 @@ if pgrep -f "$S/pw-record" >/dev/null; then fail "the recorder kept running afte
 : >"$LOG"; bash "$F" hold start; sleep 0.9; WHISPER_SILENT=1 bash "$F" hold end; sleep 0.3
 contains "hold with no words: says so" "$(cat "$LOG")" "I didn't catch that"
 if grep -q "friday-ctl" "$LOG"; then fail "an empty recording was asked"; else pass "an empty recording asks nothing"; fi
+# niri has no release bind: one press listens, the next one asks.
+: >"$LOG"; bash "$F" hold toggle; sleep 0.5
+contains "toggle: the first press records" "$(cat "$LOG")" "pw-record --rate 16000 --channels 1"
+if grep -q "friday-ctl" "$LOG"; then fail "the first toggle press asked"; else pass "the first toggle press only listens"; fi
+bash "$F" hold toggle; sleep 0.3
+contains "toggle: the second press asks the spoken words" "$(cat "$LOG")" "what time is it in Tokyo"
+if pgrep -f "$S/pw-record" >/dev/null; then fail "the recorder kept running after the second press"; else pass "the recorder stops on the second press"; fi
 rm -f "$HOME/.local/share/friday/whisper/ggml-base.en.bin"
 
 echo "face unlock"

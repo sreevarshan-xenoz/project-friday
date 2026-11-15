@@ -16,7 +16,7 @@ Ask again, Follow up and Try another model, and web search ("search ..." or
 | Super+Ctrl+Y | your screen | the question and one screenshot |
 
 Hold Super+Y instead of tapping it to talk (`friday voice setup` first). The
-speech is turned into text on your computer; only the text is sent.
+speech is turned into text on your computer; only the text is sent. On niri, which can't see a key being released, press Mod+Y once to speak and again to ask.
 
 With a selection, the box offers quick actions (Summarize, Explain, Translate,
 Fix the grammar) and your own prompts, one per line in
