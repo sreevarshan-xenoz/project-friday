@@ -1,0 +1,22 @@
+[Unit]
+Description=FRIDAY OS Root Helper
+Documentation=https://github.com/sreevarshan-xenoz/project-friday
+
+[Service]
+Type=dbus
+BusName=org.friday.Helper1
+ExecStart=/usr/bin/friday-os-helper
+Restart=on-failure
+RestartSec=3
+
+# Hardening compatible with running pacman:
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectKernelModules=yes
+RestrictRealtime=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

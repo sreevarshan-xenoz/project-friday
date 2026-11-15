@@ -64,6 +64,16 @@ limit per task, and an audit log (`friday actions`) of every action taken.
 4. **The system helper.** `friday-os-helper`: root, a D-Bus API, polkit prompt
    per sensitive call. Install and remove packages, enable services, change
    network settings, update the system ("update everything and tell me").
+   *Built (service, not yet enabled anywhere):* `friday-os-helper`, a root service
+   on the system bus (`org.friday.Helper1`) with fixed methods only: update the
+   system, install a package, remove a package, read a job. Each call is checked
+   three ways: the caller must be FRIDAY's daemon (by the program behind the bus
+   connection), polkit must approve (the prompt names the package, and only an
+   active local session can be asked), and the arguments must pass (valid name,
+   in the repos, never a protected package). It runs `/usr/bin/pacman` with a
+   fixed argument list, one job at a time, with timeouts. The files ship
+   inert under `packaging/linux/helper/`; nothing starts it until an explicit
+   opt-in, which is not built and not enabled in the ISO yet.
 5. **Standing tasks.** "Every morning...", "when the battery drops below 20%...":
    list, pause and delete them from the FRIDAY drawer; each runs under the
    same consent classes.

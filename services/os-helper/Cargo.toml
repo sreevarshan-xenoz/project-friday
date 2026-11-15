@@ -1,0 +1,28 @@
+[package]
+name = "friday-os-helper"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "FRIDAY OS root helper service: gated package management and system update over D-Bus"
+
+[[bin]]
+name = "friday-os-helper"
+path = "src/main.rs"
+
+[dependencies]
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = "2"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "sync", "io-util"] }
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "sync", "io-util", "test-util"] }
