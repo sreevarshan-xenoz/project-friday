@@ -2,8 +2,10 @@
 
 Press a key, ask about what you're looking at, get an answer. This page is the
 short tour of what FRIDAY does on Linux and where its data goes. Windows has the
-same three hotkeys (Win+Y, Win+Alt+Y, Win+Ctrl+Y); the pill, quick actions, voice
-and the commands below are Linux only so far.
+same three hotkeys (Win+Y, Win+Alt+Y, Win+Ctrl+Y), an answer window with Copy,
+Ask again, Follow up and Try another model, and web search ("search ..." or
+"look up ..."). The pill, quick actions, voice, local commands and the
+`friday` commands below are Linux only so far.
 
 ## The three keys
 

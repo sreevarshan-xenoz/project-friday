@@ -12,6 +12,60 @@ public class AskingTests
         Assert.Equal("summarise\n\nUse this text as context:\n\"\"\"\nline one\nline two\n\"\"\"", r);
     }
 
+    [Theory]
+    [InlineData("search the web for rust releases", "rust releases")]
+    [InlineData("Search the Web For rust releases", "rust releases")]
+    [InlineData("search latest stable rust", "latest stable rust")]
+    [InlineData("look up rust docs", "rust docs")]
+    public void Web_questions_are_asked_with_a_search_and_lose_the_prefix(string typed, string asked)
+    {
+        Assert.Equal((asked, true), Asking.WebQuestion(typed));
+    }
+
+    [Theory]
+    [InlineData("what is rust")]
+    [InlineData("searching for meaning")]
+    [InlineData("research this")]
+    [InlineData("search")]
+    [InlineData("look up")]
+    public void Other_questions_never_search_the_web(string typed)
+    {
+        Assert.Equal((typed, false), Asking.WebQuestion(typed));
+    }
+
+    [Fact]
+    public void Ctl_arguments_carry_the_web_flag_and_the_retry_options()
+    {
+        Assert.Equal(["goal", "--wait", "q"], Asking.CtlArguments(AskKind.Plain, "q", "q"));
+        Assert.Equal(["goal", "--wait", "--web", "q"],
+            Asking.CtlArguments(AskKind.Plain, "q", "q", null, new AskOptions(Web: true)));
+        Assert.Equal(["goal", "--wait", "--thorough", "--avoid", "opencode/big-pickle", "q"],
+            Asking.CtlArguments(AskKind.Plain, "q", "q", null, new AskOptions(Thorough: true, Avoid: "opencode/big-pickle")));
+        // No model to avoid (or a malformed one): still thorough, nothing avoided.
+        Assert.Equal(["goal", "--wait", "--thorough", "q"],
+            Asking.CtlArguments(AskKind.Plain, "q", "q", null, new AskOptions(Thorough: true, Avoid: "nonsense")));
+        Assert.Equal(["goal", "--wait", "--confirm", "git status", "--web", "q"],
+            Asking.CtlArguments(AskKind.Plain, "q", "q", "git status", new AskOptions(Web: true)));
+        // A screen ask goes through the screen path, whatever the options.
+        Assert.Equal(["context", "screen", "--yes", "--ask", "q", "--stream"],
+            Asking.CtlArguments(AskKind.Screen, "q", "q", null, new AskOptions(Thorough: true)));
+    }
+
+    [Fact]
+    public void A_follow_up_carries_the_answer_it_follows_capped()
+    {
+        var r = Asking.BuildFollowUp("give an example", "A monad wraps a value.");
+        Assert.Equal("give an example\n\nThis follows up on my previous question and your answer:\n\"\"\"\nA monad wraps a value.\n\"\"\"", r);
+        Assert.DoesNotContain(new string('x', Asking.MaxFollowUpContextChars + 1), Asking.BuildFollowUp("q", new string('x', 9000)));
+    }
+
+    [Fact]
+    public void The_model_to_avoid_comes_from_who_answered()
+    {
+        Assert.Equal("kilo/some/model", Asking.AvoidFor(new ServedByInfo("kilo", "some/model", 900)));
+        Assert.Null(Asking.AvoidFor(null));
+    }
+
     [Fact]
     public void Partial_answer_is_only_the_goal_in_flight()
     {
