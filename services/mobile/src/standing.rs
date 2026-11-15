@@ -1,0 +1,820 @@
+//! Standing tasks: "every morning at 8, tell me what's on my calendar",
+//! "when the battery drops below 20%, tell me".
+//!
+//! A task is a goal plus a trigger, kept in `standing.json` beside
+//! `state.json` (owner-readable only). The daemon checks the file every
+//! [`TICK`], and when a task is due it runs the goal the way the person's own
+//! ask runs: through `friday ask`, so it gets the same consent classes,
+//! secret masking, egress log, notification and answer history. A destructive
+//! step still stops and asks; nobody has said yes to it in advance.
+//!
+//! `friday tasks` lists, pauses, resumes and deletes by editing the same file.
+
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use async_trait::async_trait;
+use chrono::{Datelike, Duration as Span, Local, NaiveDateTime, TimeZone, Weekday};
+use serde::{Deserialize, Serialize};
+
+/// How often the daemon looks for a due task.
+pub const TICK: Duration = Duration::from_secs(20);
+/// Most tasks one person can have.
+pub const MAX_TASKS: usize = 20;
+/// Longest goal, in characters.
+pub const MAX_GOAL: usize = 300;
+/// Shortest repeat interval, in minutes.
+pub const MIN_EVERY_MINUTES: u32 = 5;
+/// A daily task missed while the computer was off still runs if it is at most
+/// this late; later than that it waits for tomorrow.
+const CATCH_UP: Span = Span::hours(6);
+
+/// When a task runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Trigger {
+    /// Every day (or weekday) at a local time.
+    Daily {
+        hour: u8,
+        minute: u8,
+        #[serde(default)]
+        weekdays_only: bool,
+    },
+    /// Every so many minutes, counted from the last run.
+    Every { minutes: u32 },
+    /// Once each time the battery falls under `percent` while unplugged.
+    BatteryBelow { percent: u8 },
+}
+
+impl Trigger {
+    /// A short phrase for lists: "every day at 08:00".
+    pub fn describe(&self) -> String {
+        match self {
+            Trigger::Daily {
+                hour,
+                minute,
+                weekdays_only,
+            } => format!(
+                "every {} at {hour:02}:{minute:02}",
+                if *weekdays_only { "weekday" } else { "day" }
+            ),
+            Trigger::Every { minutes } if minutes % 60 == 0 => match minutes / 60 {
+                1 => "every hour".to_string(),
+                h => format!("every {h} hours"),
+            },
+            Trigger::Every { minutes } => format!("every {minutes} minutes"),
+            Trigger::BatteryBelow { percent } => format!("when the battery is under {percent}%"),
+        }
+    }
+
+    fn valid(&self) -> Result<(), String> {
+        match self {
+            Trigger::Daily { hour, minute, .. } if *hour > 23 || *minute > 59 => {
+                Err("that is not a time of day".into())
+            }
+            Trigger::Every { minutes } if *minutes < MIN_EVERY_MINUTES => Err(format!(
+                "the shortest repeat is every {MIN_EVERY_MINUTES} minutes"
+            )),
+            Trigger::Every { minutes } if *minutes > 7 * 24 * 60 => {
+                Err("the longest repeat is once a week".into())
+            }
+            Trigger::BatteryBelow { percent } if !(1..=99).contains(percent) => {
+                Err("the battery level must be between 1 and 99%".into())
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+/// One standing task.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Task {
+    pub id: String,
+    pub goal: String,
+    pub trigger: Trigger,
+    #[serde(default)]
+    pub paused: bool,
+    /// Unix seconds.
+    pub created: i64,
+    #[serde(default)]
+    pub last_run: Option<i64>,
+    #[serde(default)]
+    pub runs: u32,
+    /// Battery tasks: false after firing until the battery recovers.
+    #[serde(default = "yes")]
+    pub armed: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// The battery as the system reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Battery {
+    pub percent: u8,
+    pub charging: bool,
+}
+
+/// All tasks, as stored.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Store {
+    #[serde(default)]
+    pub tasks: Vec<Task>,
+}
+
+/// Where the tasks live: beside `state.json`.
+pub fn store_path() -> PathBuf {
+    crate::shell_state::ShellState::default_path().with_file_name("standing.json")
+}
+
+impl Store {
+    /// A missing or unreadable file is an empty list: nothing runs by accident.
+    pub fn load(path: &Path) -> Store {
+        std::fs::read(path)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default()
+    }
+
+    /// Writes the file whole, owner-only, replacing it in one step.
+    pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let tmp = path.with_extension("json.tmp");
+        let mut opts = std::fs::OpenOptions::new();
+        opts.create(true).write(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        {
+            use std::io::Write;
+            let mut f = opts.open(&tmp)?;
+            f.write_all(serde_json::to_string_pretty(self)?.as_bytes())?;
+        }
+        std::fs::rename(tmp, path)
+    }
+
+    /// Adds a task. The goal must be something to do, not another schedule.
+    pub fn add(&mut self, goal: &str, trigger: Trigger, now: i64) -> Result<&Task, String> {
+        let goal = goal.split_whitespace().collect::<Vec<_>>().join(" ");
+        if goal.is_empty() {
+            return Err("say what FRIDAY should do".into());
+        }
+        if goal.chars().count() > MAX_GOAL {
+            return Err(format!("keep it under {MAX_GOAL} characters"));
+        }
+        if looks_like_schedule(&goal) {
+            return Err("a standing task can't create another one; say only what to do".into());
+        }
+        trigger.valid()?;
+        if self.tasks.len() >= MAX_TASKS {
+            return Err(format!(
+                "there are already {MAX_TASKS} standing tasks; delete one first (friday tasks)"
+            ));
+        }
+        let id = (1..)
+            .map(|n| format!("t{n}"))
+            .find(|id| self.tasks.iter().all(|t| &t.id != id))
+            .expect("some id is free");
+        self.tasks.push(Task {
+            id,
+            goal,
+            trigger,
+            paused: false,
+            created: now,
+            last_run: None,
+            runs: 0,
+            armed: true,
+        });
+        Ok(self.tasks.last().expect("just pushed"))
+    }
+}
+
+/// Whether a goal is itself a schedule ("every day ...", "when my battery ...").
+fn looks_like_schedule(goal: &str) -> bool {
+    let g = goal.to_lowercase();
+    g.starts_with("every ")
+        || g.starts_with("each ")
+        || g.starts_with("when ")
+        || g.contains(" every day")
+        || g.contains(" every morning")
+        || g.contains(" every hour")
+        || g.starts_with("remind me every")
+}
+
+fn local_naive(ts: i64) -> NaiveDateTime {
+    Local
+        .timestamp_opt(ts, 0)
+        .single()
+        .map(|d| d.naive_local())
+        .unwrap_or_default()
+}
+
+/// Whether `task` is due. `now` is local wall-clock time, `now_ts` the same
+/// moment in unix seconds. Pure: nothing is changed.
+pub fn due(task: &Task, now: NaiveDateTime, now_ts: i64, battery: Option<Battery>) -> bool {
+    if task.paused {
+        return false;
+    }
+    let last = task.last_run.unwrap_or(task.created);
+    match &task.trigger {
+        Trigger::Daily {
+            hour,
+            minute,
+            weekdays_only,
+        } => {
+            if *weekdays_only && matches!(now.weekday(), Weekday::Sat | Weekday::Sun) {
+                return false;
+            }
+            let Some(at) = now.date().and_hms_opt(*hour as u32, *minute as u32, 0) else {
+                return false;
+            };
+            now >= at && now < at + CATCH_UP && local_naive(last) < at
+        }
+        Trigger::Every { minutes } => now_ts - last >= i64::from(*minutes) * 60,
+        Trigger::BatteryBelow { percent } => {
+            task.armed && battery.is_some_and(|b| !b.charging && b.percent < *percent)
+        }
+    }
+}
+
+/// Re-arms battery tasks whose battery has recovered, marks the due tasks as
+/// run, and returns their `(id, goal)`. The caller saves the store.
+pub fn tick(
+    store: &mut Store,
+    now: NaiveDateTime,
+    now_ts: i64,
+    battery: Option<Battery>,
+) -> Vec<(String, String)> {
+    let mut run = Vec::new();
+    for t in &mut store.tasks {
+        if let Trigger::BatteryBelow { percent } = t.trigger {
+            let low = battery.is_some_and(|b| !b.charging && b.percent < percent);
+            if !low && battery.is_some() {
+                t.armed = true;
+            }
+        }
+        if due(t, now, now_ts, battery) {
+            t.last_run = Some(now_ts);
+            t.runs += 1;
+            if matches!(t.trigger, Trigger::BatteryBelow { .. }) {
+                t.armed = false;
+            }
+            run.push((t.id.clone(), t.goal.clone()));
+        }
+    }
+    run
+}
+
+/// The battery from `/sys/class/power_supply` (the first one that reports a
+/// capacity); `None` on a machine without one.
+pub fn read_battery() -> Option<Battery> {
+    let dir = std::fs::read_dir("/sys/class/power_supply").ok()?;
+    for entry in dir.flatten() {
+        let p = entry.path();
+        let kind = std::fs::read_to_string(p.join("type")).unwrap_or_default();
+        if kind.trim() != "Battery" {
+            continue;
+        }
+        let percent: u8 = std::fs::read_to_string(p.join("capacity"))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()?;
+        let status = std::fs::read_to_string(p.join("status")).unwrap_or_default();
+        return Some(Battery {
+            percent,
+            charging: matches!(status.trim(), "Charging" | "Full"),
+        });
+    }
+    None
+}
+
+/// Runs a due task's goal.
+#[async_trait]
+pub trait Runner: Send + Sync {
+    async fn run(&self, goal: &str);
+}
+
+/// Runs the goal with `friday ask`, as the person's own ask would run.
+pub struct FridayAsk;
+
+#[async_trait]
+impl Runner for FridayAsk {
+    async fn run(&self, goal: &str) {
+        let child = tokio::process::Command::new("friday")
+            .arg("ask")
+            .arg(goal)
+            .env("FRIDAY_STANDING", "1")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn();
+        match child {
+            Ok(mut c) => {
+                let _ = tokio::time::timeout(Duration::from_secs(10 * 60), c.wait()).await;
+            }
+            Err(e) => tracing::warn!("[standing] couldn't run friday ask: {e}"),
+        }
+    }
+}
+
+/// Checks the file every [`TICK`] and runs what is due, one task at a time.
+/// The file is read each time, so `friday tasks` changes apply at once.
+pub async fn run_loop(path: PathBuf, runner: std::sync::Arc<dyn Runner>) {
+    let mut interval = tokio::time::interval(TICK);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        interval.tick().await;
+        let mut store = Store::load(&path);
+        if store.tasks.is_empty() {
+            continue;
+        }
+        let before = store.clone();
+        let now = Local::now();
+        let due = tick(
+            &mut store,
+            now.naive_local(),
+            now.timestamp(),
+            read_battery(),
+        );
+        if store != before {
+            // Saved before running, so a slow or crashing run is never repeated.
+            // The file is re-read first: `friday tasks` may have just edited it.
+            let mut latest = Store::load(&path);
+            for t in &store.tasks {
+                if let Some(l) = latest.tasks.iter_mut().find(|l| l.id == t.id) {
+                    l.last_run = t.last_run;
+                    l.runs = t.runs;
+                    l.armed = t.armed;
+                }
+            }
+            if let Err(e) = latest.save(&path) {
+                tracing::warn!("[standing] couldn't save {}: {e}", path.display());
+                continue;
+            }
+        }
+        for (id, goal) in due {
+            tracing::info!("[standing] running {id}");
+            runner.run(&goal).await;
+        }
+    }
+}
+
+/// The capability the planner routes "every morning ..." goals to.
+pub const CAPABILITY: &str = "standing.tasks";
+
+/// Whether this machine can run standing tasks: Linux with the `friday` CLI
+/// (which runs them), and the owner hasn't turned them off
+/// (`FRIDAY_STANDING_TASKS=0`).
+pub fn enabled() -> bool {
+    cfg!(target_os = "linux")
+        && std::env::var("FRIDAY_STANDING_TASKS")
+            .map(|v| v != "0")
+            .unwrap_or(true)
+}
+
+const MODEL_TIMEOUT: Duration = Duration::from_secs(45);
+
+const GUIDE: &str = r#"Turn the person's request into a standing task: something FRIDAY does again and again on a schedule.
+Reply with ONLY one JSON object, nothing else:
+  {"op": "add", "goal": "<what to do, as a short instruction, without the schedule>", "when": <trigger>}
+  {"op": "list"}                      the person asked what standing tasks they have
+  {"op": "none", "say": "<why not>"}  the request is not a standing task
+A trigger is one of:
+  {"kind": "daily", "hour": 8, "minute": 0}                       every day at that local time (24-hour); add "weekdays_only": true for Monday to Friday
+  {"kind": "every", "minutes": 90}                                 repeat every so many minutes (at least 5)
+  {"kind": "battery_below", "percent": 20}                         once each time the battery falls under that level while unplugged
+"morning" is 8:00, "noon" 12:00, "evening" 18:00, "night" 21:00 unless a time is given.
+The goal must not mention the schedule: "every morning tell me the weather" -> goal "tell me the weather"."#;
+
+fn first_json(reply: &str) -> Option<serde_json::Value> {
+    let start = reply.find('{')?;
+    let end = reply.rfind('}')?;
+    serde_json::from_str(reply.get(start..=end)?).ok()
+}
+
+/// Creates and lists standing tasks. Making one is the person's own explicit
+/// request, so it needs no extra confirmation; what it later does runs under
+/// the usual consent classes.
+pub struct StandingTool {
+    model: std::sync::Arc<dyn friday_investigation::LlmStrategyClient>,
+    path: PathBuf,
+}
+
+impl StandingTool {
+    pub fn new(
+        model: std::sync::Arc<dyn friday_investigation::LlmStrategyClient>,
+        path: PathBuf,
+    ) -> Self {
+        Self { model, path }
+    }
+}
+
+fn describe_all(store: &Store) -> String {
+    if store.tasks.is_empty() {
+        return "No standing tasks yet. Ask for one, like \"every morning at 8 tell me the weather\".".into();
+    }
+    store
+        .tasks
+        .iter()
+        .map(|t| {
+            format!(
+                "{} {} · {}{}",
+                t.id,
+                t.trigger.describe(),
+                t.goal,
+                if t.paused { " (paused)" } else { "" }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[async_trait]
+impl friday_goal_execution::Tool for StandingTool {
+    fn name(&self) -> &str {
+        "standing"
+    }
+
+    fn description(&self) -> &str {
+        "Creates and lists standing tasks that run on a schedule or a battery level (standing.tasks)"
+    }
+
+    fn capabilities(&self) -> Vec<friday_goal_execution::Capability> {
+        vec![friday_goal_execution::Capability::Custom(CAPABILITY.into())]
+    }
+
+    async fn execute(
+        &self,
+        action: &friday_goal_execution::Action,
+        _ctx: &friday_goal_execution::ExecutionContext,
+    ) -> friday_goal_execution::ToolResult {
+        use friday_goal_execution::ToolResult;
+        let goal = friday_goal_execution::planning::goal_segment(&action.instruction)
+            .trim()
+            .to_string();
+        let prompt = format!("{GUIDE}\n\nThe person's request: {goal}\n\nYour reply (JSON only):");
+        let reply = match tokio::time::timeout(MODEL_TIMEOUT, self.model.complete(&prompt)).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => return ToolResult::error(format!("couldn't ask the model: {e}")),
+            Err(_) => {
+                return ToolResult::error("the model took too long to understand the request")
+            }
+        };
+        let Some(choice) = first_json(&reply) else {
+            return ToolResult::error("couldn't tell what schedule was meant");
+        };
+        match choice.get("op").and_then(serde_json::Value::as_str) {
+            Some("list") => ToolResult::success(describe_all(&Store::load(&self.path))),
+            Some("add") => {
+                let what = choice
+                    .get("goal")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                let Some(trigger) = choice
+                    .get("when")
+                    .cloned()
+                    .and_then(|w| serde_json::from_value::<Trigger>(w).ok())
+                else {
+                    return ToolResult::error(
+                        "couldn't tell when that should run; say a time, an interval or a battery level",
+                    );
+                };
+                let mut store = Store::load(&self.path);
+                let made = match store.add(what, trigger, chrono::Utc::now().timestamp()) {
+                    Ok(t) => format!("{}: {} · {}", t.id, t.trigger.describe(), t.goal),
+                    Err(e) => return ToolResult::error(e),
+                };
+                if let Err(e) = store.save(&self.path) {
+                    return ToolResult::error(format!("couldn't save the task: {e}"));
+                }
+                ToolResult::success(format!(
+                    "Done. Standing task {made}\nSee, pause or delete your tasks with: friday tasks"
+                ))
+            }
+            _ => {
+                let say = choice
+                    .get("say")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                ToolResult::error(if say.is_empty() {
+                    "That is not a standing task.".to_string()
+                } else {
+                    say.chars().take(300).collect()
+                })
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    fn at(y: i32, m: u32, d: u32, h: u32, mi: u32) -> NaiveDateTime {
+        NaiveDate::from_ymd_opt(y, m, d)
+            .unwrap()
+            .and_hms_opt(h, mi, 0)
+            .unwrap()
+    }
+
+    fn ts(n: NaiveDateTime) -> i64 {
+        Local
+            .from_local_datetime(&n)
+            .earliest()
+            .unwrap()
+            .timestamp()
+    }
+
+    fn task(trigger: Trigger, created: NaiveDateTime) -> Task {
+        Task {
+            id: "t1".into(),
+            goal: "tell me the weather".into(),
+            trigger,
+            paused: false,
+            created: ts(created),
+            last_run: None,
+            runs: 0,
+            armed: true,
+        }
+    }
+
+    fn daily(h: u8, m: u8) -> Trigger {
+        Trigger::Daily {
+            hour: h,
+            minute: m,
+            weekdays_only: false,
+        }
+    }
+
+    // 2026-11-16 is a Monday.
+    #[test]
+    fn a_daily_task_runs_once_when_its_time_comes() {
+        let mut t = task(daily(8, 0), at(2026, 11, 15, 20, 0));
+        assert!(!due(&t, at(2026, 11, 16, 7, 59), 0, None));
+        let now = at(2026, 11, 16, 8, 0);
+        assert!(due(&t, now, ts(now), None));
+        t.last_run = Some(ts(now));
+        assert!(!due(&t, at(2026, 11, 16, 8, 20), 0, None));
+        assert!(due(&t, at(2026, 11, 17, 8, 1), 0, None));
+    }
+
+    #[test]
+    fn a_task_made_after_todays_time_waits_for_tomorrow() {
+        let t = task(daily(8, 0), at(2026, 11, 16, 9, 0));
+        assert!(!due(&t, at(2026, 11, 16, 9, 5), 0, None));
+        assert!(due(&t, at(2026, 11, 17, 8, 0), 0, None));
+    }
+
+    #[test]
+    fn a_missed_morning_runs_late_but_not_in_the_evening() {
+        let t = task(daily(8, 0), at(2026, 11, 14, 12, 0));
+        assert!(due(&t, at(2026, 11, 16, 11, 59), 0, None));
+        assert!(!due(&t, at(2026, 11, 16, 14, 1), 0, None));
+    }
+
+    #[test]
+    fn weekday_tasks_skip_the_weekend() {
+        let t = task(
+            Trigger::Daily {
+                hour: 9,
+                minute: 0,
+                weekdays_only: true,
+            },
+            at(2026, 11, 10, 0, 0),
+        );
+        assert!(!due(&t, at(2026, 11, 14, 9, 5), 0, None)); // Saturday
+        assert!(!due(&t, at(2026, 11, 15, 9, 5), 0, None)); // Sunday
+        assert!(due(&t, at(2026, 11, 16, 9, 5), 0, None)); // Monday
+    }
+
+    #[test]
+    fn a_repeat_counts_from_the_last_run() {
+        let created = at(2026, 11, 16, 8, 0);
+        let mut t = task(Trigger::Every { minutes: 60 }, created);
+        assert!(!due(&t, created, ts(created) + 59 * 60, None));
+        assert!(due(&t, created, ts(created) + 60 * 60, None));
+        t.last_run = Some(ts(created) + 3600);
+        assert!(!due(&t, created, ts(created) + 3600 + 59 * 60, None));
+    }
+
+    #[test]
+    fn a_battery_task_fires_once_per_drop_and_rearms_when_it_recovers() {
+        let now = at(2026, 11, 16, 8, 0);
+        let mut store = Store::default();
+        store
+            .add(
+                "tell me the battery is low",
+                Trigger::BatteryBelow { percent: 20 },
+                ts(now),
+            )
+            .unwrap();
+        let low = Some(Battery {
+            percent: 15,
+            charging: false,
+        });
+        assert_eq!(tick(&mut store, now, ts(now), low).len(), 1);
+        assert!(
+            tick(&mut store, now, ts(now), low).is_empty(),
+            "not again while low"
+        );
+        let plugged = Some(Battery {
+            percent: 15,
+            charging: true,
+        });
+        assert!(tick(&mut store, now, ts(now), plugged).is_empty());
+        assert_eq!(
+            tick(&mut store, now, ts(now), low).len(),
+            1,
+            "plugging in re-armed it"
+        );
+        // No battery reading (a desktop): nothing fires.
+        assert!(tick(&mut store, now, ts(now), None).is_empty());
+        let high = Some(Battery {
+            percent: 80,
+            charging: false,
+        });
+        assert!(tick(&mut store, now, ts(now), high).is_empty());
+    }
+
+    #[test]
+    fn a_paused_task_never_runs() {
+        let mut t = task(Trigger::Every { minutes: 5 }, at(2026, 11, 16, 8, 0));
+        t.paused = true;
+        assert!(!due(
+            &t,
+            at(2026, 11, 16, 9, 0),
+            ts(at(2026, 11, 16, 9, 0)),
+            None
+        ));
+    }
+
+    #[test]
+    fn tick_marks_what_it_returns_as_run() {
+        let created = at(2026, 11, 16, 7, 0);
+        let mut store = Store::default();
+        store
+            .add("play the news", daily(8, 0), ts(created))
+            .unwrap();
+        let now = at(2026, 11, 16, 8, 1);
+        assert_eq!(
+            tick(&mut store, now, ts(now), None),
+            vec![("t1".into(), "play the news".into())]
+        );
+        assert_eq!(store.tasks[0].runs, 1);
+        assert!(tick(&mut store, now, ts(now), None).is_empty());
+    }
+
+    #[test]
+    fn adding_checks_the_goal_and_the_trigger() {
+        let mut s = Store::default();
+        assert!(s.add("  ", daily(8, 0), 0).is_err());
+        assert!(s.add(&"x".repeat(MAX_GOAL + 1), daily(8, 0), 0).is_err());
+        assert!(s.add("every day tell me", daily(8, 0), 0).is_err());
+        assert!(s
+            .add("when my battery is low tell me", daily(8, 0), 0)
+            .is_err());
+        assert!(s.add("hi", daily(24, 0), 0).is_err());
+        assert!(s.add("hi", Trigger::Every { minutes: 1 }, 0).is_err());
+        assert!(s
+            .add("hi", Trigger::BatteryBelow { percent: 0 }, 0)
+            .is_err());
+        assert!(s.tasks.is_empty());
+        for _ in 0..MAX_TASKS {
+            s.add("hi", daily(8, 0), 0).unwrap();
+        }
+        assert!(s
+            .add("hi", daily(8, 0), 0)
+            .unwrap_err()
+            .contains("delete one"));
+        let ids: std::collections::HashSet<_> = s.tasks.iter().map(|t| t.id.clone()).collect();
+        assert_eq!(ids.len(), MAX_TASKS);
+    }
+
+    #[test]
+    fn a_deleted_id_is_reused_not_duplicated() {
+        let mut s = Store::default();
+        s.add("a", daily(8, 0), 0).unwrap();
+        s.add("b", daily(9, 0), 0).unwrap();
+        s.tasks.retain(|t| t.id != "t1");
+        assert_eq!(s.add("c", daily(10, 0), 0).unwrap().id, "t1");
+    }
+
+    #[test]
+    fn the_file_round_trips_is_private_and_a_bad_file_is_empty() {
+        let dir = std::env::temp_dir().join(format!("friday-standing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("standing.json");
+        assert_eq!(Store::load(&path), Store::default());
+        let mut s = Store::default();
+        s.add("tell me the weather", daily(8, 30), 5).unwrap();
+        s.save(&path).unwrap();
+        assert_eq!(Store::load(&path), s);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        std::fs::write(&path, "not json").unwrap();
+        assert_eq!(Store::load(&path), Store::default());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_cli_can_edit_the_file_with_plain_json() {
+        // `friday tasks` writes this shape with jq: keep it stable.
+        let text = r#"{"tasks":[{"id":"t1","goal":"hi","trigger":{"kind":"daily","hour":8,"minute":0},"created":1}]}"#;
+        let s: Store = serde_json::from_str(text).unwrap();
+        assert!(!s.tasks[0].paused && s.tasks[0].armed && s.tasks[0].last_run.is_none());
+        let b: Trigger = serde_json::from_str(r#"{"kind":"battery_below","percent":20}"#).unwrap();
+        assert_eq!(b.describe(), "when the battery is under 20%");
+        assert_eq!(Trigger::Every { minutes: 120 }.describe(), "every 2 hours");
+        assert_eq!(daily(8, 5).describe(), "every day at 08:05");
+    }
+
+    struct Model(std::sync::Mutex<Option<String>>);
+
+    #[async_trait]
+    impl friday_investigation::LlmStrategyClient for Model {
+        async fn complete(&self, _: &str) -> Result<String, String> {
+            self.0
+                .lock()
+                .unwrap()
+                .take()
+                .ok_or_else(|| "none left".into())
+        }
+    }
+
+    async fn ask_tool(reply: &str, path: &Path) -> friday_goal_execution::ToolResult {
+        use friday_goal_execution::Tool;
+        let tool = StandingTool::new(
+            std::sync::Arc::new(Model(std::sync::Mutex::new(Some(reply.into())))),
+            path.to_path_buf(),
+        );
+        let action = friday_goal_execution::Action::single(
+            "every morning tell me the weather",
+            friday_goal_execution::Capability::Custom(CAPABILITY.into()),
+            "g1",
+        );
+        tool.execute(
+            &action,
+            &friday_goal_execution::ExecutionContext::for_goal("g1"),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn the_tool_makes_a_task_and_lists_it() {
+        let dir = std::env::temp_dir().join(format!("friday-standing-tool-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("standing.json");
+        let made = ask_tool(
+            r#"{"op":"add","goal":"tell me the weather","when":{"kind":"daily","hour":8,"minute":0}}"#,
+            &path,
+        )
+        .await;
+        assert!(made.success, "{:?}", made.error);
+        assert!(made.output.contains("every day at 08:00") && made.output.contains("friday tasks"));
+        let store = Store::load(&path);
+        assert_eq!(store.tasks.len(), 1);
+        assert_eq!(store.tasks[0].goal, "tell me the weather");
+
+        let listed = ask_tool(r#"{"op":"list"}"#, &path).await;
+        assert!(listed
+            .output
+            .contains("t1 every day at 08:00 · tell me the weather"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn the_tool_refuses_bad_schedules_and_changes_nothing() {
+        let dir = std::env::temp_dir().join(format!("friday-standing-bad-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("standing.json");
+        for reply in [
+            "no json",
+            r#"{"op":"add","goal":"hi"}"#,
+            r#"{"op":"add","goal":"hi","when":{"kind":"every","minutes":1}}"#,
+            r#"{"op":"add","goal":"hi","when":{"kind":"hourly"}}"#,
+            r#"{"op":"add","goal":"every day say hi","when":{"kind":"daily","hour":8,"minute":0}}"#,
+            r#"{"op":"add","goal":"","when":{"kind":"daily","hour":8,"minute":0}}"#,
+            r#"{"op":"none","say":"that isn't a schedule"}"#,
+        ] {
+            let res = ask_tool(reply, &path).await;
+            assert!(!res.success, "{reply}");
+        }
+        assert!(!path.exists());
+        let empty = ask_tool(r#"{"op":"list"}"#, &path).await;
+        assert!(empty.output.contains("No standing tasks yet"));
+    }
+}

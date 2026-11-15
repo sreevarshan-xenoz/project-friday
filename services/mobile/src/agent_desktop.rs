@@ -352,6 +352,135 @@ pub fn flatten_snapshot_tree(tree: &Value, max_nodes: usize) -> Vec<Value> {
     out
 }
 
+/// Roles whose name is already the text, or just a container's label (not a
+/// control to describe).
+const TEXT_ROLES: &[&str] = &[
+    "text",
+    "statictext",
+    "static_text",
+    "label",
+    "heading",
+    "paragraph",
+    "link",
+    "listitem",
+    "list_item",
+    "cell",
+    "document",
+    "title",
+    "window",
+    "group",
+    "frame",
+    "panel",
+    "pane",
+    "section",
+];
+
+/// The readable text of an accessibility snapshot, one line per named node,
+/// at most `max_chars` long. Password fields and anything marked protected
+/// are left out entirely; text-like nodes give their text, controls give
+/// `role: name`, and a field's own text follows its name.
+pub fn tree_text(tree: &Value, max_chars: usize) -> String {
+    fn lower(node: &Value, key: &str) -> String {
+        node.get(key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_lowercase()
+    }
+    fn secret(node: &Value) -> bool {
+        let role = lower(node, "role");
+        if role.contains("password") || role.contains("secret") {
+            return true;
+        }
+        node.get("states")
+            .and_then(Value::as_array)
+            .is_some_and(|s| {
+                s.iter().filter_map(Value::as_str).any(|x| {
+                    x.eq_ignore_ascii_case("protected") || x.eq_ignore_ascii_case("password")
+                })
+            })
+    }
+    fn walk(node: &Value, out: &mut String, last: &mut String, max: usize) {
+        if out.len() >= max || secret(node) {
+            return;
+        }
+        let role = lower(node, "role");
+        let name = node
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let value = node
+            .get("value")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let mut line = String::new();
+        if !name.is_empty() {
+            if TEXT_ROLES.contains(&role.as_str()) || role.is_empty() {
+                line.push_str(name);
+            } else {
+                line.push_str(&format!("{role}: {name}"));
+            }
+        }
+        if !value.is_empty() && value != name {
+            if line.is_empty() {
+                line.push_str(value);
+            } else {
+                line.push_str(&format!(" = {value}"));
+            }
+        }
+        let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !line.is_empty() && line != *last {
+            out.push_str(&line);
+            out.push('\n');
+            *last = line;
+        }
+        if let Some(children) = node.get("children").and_then(Value::as_array) {
+            for child in children {
+                walk(child, out, last, max);
+            }
+        }
+    }
+    let mut out = String::new();
+    walk(tree, &mut out, &mut String::new(), max_chars);
+    if out.len() > max_chars {
+        let mut cut = max_chars;
+        while !out.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        out.truncate(cut);
+    }
+    out.trim_end().to_string()
+}
+
+/// Which of `apps` is the window class `class` (a compositor's name for the
+/// focused app, like `org.gnome.Nautilus` or `firefox`). An exact match
+/// first, then the class's last dotted part; a part that only appears inside
+/// another app's name, or in several, picks nothing.
+pub fn pick_app(apps: &[String], class: &str) -> Option<String> {
+    let squash = |s: &str| {
+        s.chars()
+            .filter(|c| c.is_alphanumeric())
+            .collect::<String>()
+            .to_lowercase()
+    };
+    let full = squash(class);
+    let tail = squash(class.rsplit('.').next().unwrap_or(class));
+    if full.is_empty() {
+        return None;
+    }
+    for want in [&full, &tail] {
+        if want.is_empty() {
+            continue;
+        }
+        let hits: Vec<&String> = apps.iter().filter(|a| squash(a) == *want).collect();
+        if hits.len() == 1 {
+            return Some(hits[0].clone());
+        }
+    }
+    None
+}
+
 /// Converts an error envelope into a plain English error message.
 pub fn parse_error_envelope(envelope: &Value) -> String {
     let err_obj = envelope.get("error").filter(|v| v.is_object());
@@ -1266,6 +1395,45 @@ pub async fn detect() -> Option<AgentDesktopUi> {
         Some(AgentDesktopUi::new(spawn))
     } else {
         None
+    }
+}
+
+/// Not much to say about a window whose tree gives less than this: ask with a
+/// screenshot instead.
+const MIN_SCREEN_TEXT: usize = 200;
+/// The most text of one window sent to a model.
+const MAX_SCREEN_TEXT: usize = 12_000;
+
+#[async_trait]
+impl crate::context_read::ScreenText for AgentDesktopUi {
+    async fn window_text(&self, class: &str) -> Option<String> {
+        let listed = self
+            .run_cli_envelope(&["list-apps".to_string()], None)
+            .await
+            .ok()?;
+        let names: Vec<String> = listed
+            .get("data")
+            .and_then(|d| d.get("apps"))
+            .and_then(Value::as_array)?
+            .iter()
+            .filter_map(|a| a.get("name").and_then(Value::as_str).map(str::to_string))
+            .collect();
+        let app = pick_app(&names, class)?;
+        validate_app(&app).ok()?;
+        let snap = self
+            .run_cli_envelope(
+                &[
+                    "snapshot".to_string(),
+                    "--app".to_string(),
+                    app,
+                    "--compact".to_string(),
+                ],
+                None,
+            )
+            .await
+            .ok()?;
+        let text = tree_text(snap.get("data")?.get("tree")?, MAX_SCREEN_TEXT);
+        (text.chars().count() >= MIN_SCREEN_TEXT).then_some(text)
     }
 }
 
@@ -2204,5 +2372,84 @@ mod tests {
         assert!(res.success);
         let text = res.output["text"].as_str().unwrap();
         assert_eq!(text.len(), 2000);
+    }
+
+    #[test]
+    fn tree_text_reads_words_and_leaves_secrets_out() {
+        let tree = json!({
+            "role": "window", "name": "Mail",
+            "children": [
+                {"role": "heading", "name": "Inbox"},
+                {"role": "statictext", "name": "Lunch at noon?"},
+                {"role": "statictext", "name": "Lunch at noon?"},
+                {"role": "button", "name": "Reply"},
+                {"role": "textfield", "name": "To", "value": "someone@example.com"},
+                {"role": "passwordtext", "name": "Password", "value": "hunter2"},
+                {"role": "textfield", "name": "PIN", "states": ["protected"], "value": "1234"},
+                {"role": "group", "children": [{"role": "link", "name": "Settings"}]}
+            ]
+        });
+        let text = tree_text(&tree, 10_000);
+        assert_eq!(
+            text,
+            "Mail\nInbox\nLunch at noon?\nbutton: Reply\ntextfield: To = someone@example.com\nSettings"
+        );
+        assert!(!text.contains("hunter2") && !text.contains("1234"));
+        assert!(tree_text(&tree, 20).len() <= 20);
+    }
+
+    #[test]
+    fn pick_app_needs_one_clear_match() {
+        let apps: Vec<String> = ["Nautilus", "firefox", "Files", "foot", "foot-server"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            pick_app(&apps, "org.gnome.Nautilus").as_deref(),
+            Some("Nautilus")
+        );
+        assert_eq!(pick_app(&apps, "firefox").as_deref(), Some("firefox"));
+        assert_eq!(pick_app(&apps, "foot").as_deref(), Some("foot"));
+        assert_eq!(pick_app(&apps, "foo"), None);
+        assert_eq!(pick_app(&apps, "kitty"), None);
+        assert_eq!(pick_app(&apps, ""), None);
+    }
+
+    #[tokio::test]
+    async fn window_text_is_none_for_a_thin_tree_and_some_for_a_full_one() {
+        use crate::context_read::ScreenText;
+        let apps = json!({"ok": true, "data": {"apps": [{"name": "Nautilus"}]}});
+        let thin = json!({"ok": true, "data": {"tree": {"role": "window", "name": "Home"}}});
+        let long = "word ".repeat(80);
+        let full = json!({"ok": true, "data": {"tree": {"role": "window", "children":
+            [{"role": "statictext", "name": long}]}}});
+
+        let stub = StubSpawn::new();
+        stub.push_response("list-apps", Ok(apps.to_string()));
+        stub.push_response("snapshot", Ok(thin.to_string()));
+        assert_eq!(
+            AgentDesktopUi::new(stub.clone())
+                .window_text("nautilus")
+                .await,
+            None
+        );
+
+        let stub = StubSpawn::new();
+        stub.push_response("list-apps", Ok(apps.to_string()));
+        stub.push_response("snapshot", Ok(full.to_string()));
+        let got = AgentDesktopUi::new(stub.clone())
+            .window_text("org.gnome.Nautilus")
+            .await;
+        assert!(got.unwrap().contains("word word"));
+        let calls = stub.calls();
+        assert_eq!(calls[1].0, ["snapshot", "--app", "Nautilus", "--compact"]);
+
+        let stub = StubSpawn::new();
+        stub.push_response("list-apps", Ok(apps.to_string()));
+        assert_eq!(
+            AgentDesktopUi::new(stub.clone()).window_text("kitty").await,
+            None
+        );
+        assert_eq!(stub.calls().len(), 1);
     }
 }
