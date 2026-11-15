@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FRIDAY: press a key, ask your screen</title>
+<meta name="description" content="A desktop assistant for Linux and Windows. Press a key, ask about what you're looking at, get an answer. Free by default, and it tells you what it sent.">
+<style>
+  :root { --bg:#0e0f11; --panel:#16181c; --line:#262a30; --text:#e8e9eb; --dim:#9aa0a8; --accent:#ff9a4d; }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#faf9f7; --panel:#fff; --line:#e3e0db; --text:#1b1c1e; --dim:#5f646b; --accent:#c4540a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:17px/1.6 system-ui, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 0 16px 64px; }
+  header { padding: 72px 0 32px; }
+  h1 { font-size: clamp(2.2rem, 6vw, 3.6rem); line-height:1.1; margin:0 0 16px; letter-spacing:-0.02em; }
+  h2 { font-size: 1.5rem; margin: 56px 0 12px; }
+  p { margin: 0 0 14px; }
+  .lead { font-size: 1.25rem; color: var(--dim); max-width: 36em; }
+  .buttons { display:flex; flex-wrap:wrap; gap:12px; margin-top:28px; }
+  a.btn { display:inline-block; padding:12px 22px; border-radius:999px; border:1px solid var(--line); color:var(--text); text-decoration:none; font-weight:600; background:var(--panel); }
+  a.btn.primary { background:var(--accent); border-color:var(--accent); color:#111; }
+  a { color: var(--accent); }
+  .note { color: var(--dim); font-size: .95rem; }
+  img.shot { width:100%; max-width:660px; height:auto; display:block; margin:32px 0 0; border-radius:20px; border:1px solid var(--line); }
+  table { border-collapse: collapse; width:100%; margin: 8px 0 0; }
+  th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align: top; }
+  th { color: var(--dim); font-weight:600; font-size:.9rem; }
+  kbd { font: .9em ui-monospace, monospace; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:2px 7px; white-space:nowrap; }
+  pre { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px 16px; overflow-x:auto; font-size:.9rem; line-height:1.5; }
+  code { font-family: ui-monospace, monospace; font-size:.92em; }
+  ol.steps { padding-left: 1.2em; } ol.steps li { margin-bottom: 14px; }
+  .cols { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:16px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:18px 20px; }
+  .card h3 { margin:0 0 6px; font-size:1.05rem; }
+  .card p { margin:0; color:var(--dim); font-size:.97rem; }
+  footer { margin-top:64px; color:var(--dim); font-size:.9rem; }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>Press a key.<br>Ask what you're looking at.</h1>
+  <p class="lead">FRIDAY is a desktop assistant for Linux and Windows. Select some text or point at your screen, press a key, and get an answer in a small card, without opening a browser or switching windows.</p>
+  <div class="buttons">
+    <a class="btn primary" href="https://github.com/sreevarshan-xenoz/project-friday/releases">Download</a>
+    <a class="btn" href="https://github.com/sreevarshan-xenoz/project-friday">Source on GitHub</a>
+    <a class="btn" href="https://github.com/sreevarshan-xenoz/project-friday/blob/dev/docs/USING.md">How to use it</a>
+  </div>
+  <p class="note" style="margin-top:18px">Alpha. It runs and is tested in virtual machines and in CI; it hasn't had a pass on real hardware yet, so expect rough edges.</p>
+  <img class="shot" src="pill.png" alt="FRIDAY's answer card: a question about disk usage, a short answer, and the buttons Copy, Type it, Follow up, Full answer and Ask again.">
+</header>
+
+<h2>Three keys</h2>
+<table>
+  <tr><th>Key (Linux / Windows)</th><th>Asks about</th></tr>
+  <tr><td><kbd>Super+Y</kbd> / <kbd>Win+Y</kbd></td><td>whatever you type. On Linux, hold it and speak instead.</td></tr>
+  <tr><td><kbd>Super+Alt+Y</kbd> / <kbd>Win+Alt+Y</kbd></td><td>the text you selected: explain it, summarize it, translate it, fix it.</td></tr>
+  <tr><td><kbd>Super+Ctrl+Y</kbd> / <kbd>Win+Ctrl+Y</kbd></td><td>your screen, with a screenshot sent for that one question.</td></tr>
+</table>
+
+<div class="cols" style="margin-top:32px">
+  <div class="card"><h3>Act on the answer</h3><p>Copy it, type it into the window you were in, follow up, or ask a different model.</p></div>
+  <div class="card"><h3>Quick things stay home</h3><p>Volume, timers and battery are handled on your computer. Nothing is sent.</p></div>
+  <div class="card"><h3>Sources when you ask</h3><p>Web search with links, only when you say so.</p></div>
+</div>
+
+<h2>Free to start</h2>
+<p>FRIDAY uses free models by default, so there is no account and no key to set up. If you have a key or a Claude Code, Codex, Antigravity or Cline account, FRIDAY will use that instead. Or run a local model with private mode and nothing leaves your computer.</p>
+
+<h2>What it sends, and when</h2>
+<div class="cols">
+  <div class="card"><h3>Only when you ask</h3><p>FRIDAY does nothing in the background. A screenshot is sent only for a screen question, and only that once.</p></div>
+  <div class="card"><h3>Secrets masked</h3><p>Keys, passwords and tokens in what you send are masked first, and the answer tells you how many.</p></div>
+  <div class="card"><h3>A log you can read</h3><p><code>friday sent</code> lists which provider got what. <code>friday forget</code> wipes it.</p></div>
+</div>
+
+<h2>Install in three steps</h2>
+<ol class="steps">
+  <li><b>Pick your system.</b>
+    <p><b>FRIDAY OS</b> is an Arch-based desktop with FRIDAY built in: download the ISO from the releases page and boot it. <b>Windows</b>: download the MSI. <b>Arch Linux</b>: build the package from the repository.</p></li>
+  <li><b>Install.</b>
+    <pre>msiexec /i FRIDAY-&lt;version&gt;-x64.msi     # Windows, no admin rights needed
+
+git clone https://github.com/sreevarshan-xenoz/project-friday
+cd project-friday/packaging/arch &amp;&amp; makepkg -si   # Arch Linux
+systemctl --user enable --now friday-linux-daemon</pre></li>
+  <li><b>Press Super+Y</b> (Win+Y on Windows) and ask something. <code>friday doctor</code> checks that everything is running.</li>
+</ol>
+
+<footer>
+  FRIDAY is open source. <a href="https://github.com/sreevarshan-xenoz/project-friday">github.com/sreevarshan-xenoz/project-friday</a>
+</footer>
+</main>
+</body>
+</html>
