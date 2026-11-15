@@ -14,10 +14,12 @@ files=$(bsdtar -tf "$pkg")
 for f in usr/bin/pocketdesk usr/bin/pocketdesk-app usr/bin/pocketdesk-tray \
   usr/lib/pocketdesk/pocketdesk-pam-ask usr/lib/systemd/user/pocketdesk.service \
   usr/share/applications/dev.pocketdesk.Pocketdesk.desktop \
-  usr/share/icons/hicolor/scalable/apps/pocketdesk.svg usr/share/man/man1/pocketdesk.1 \
+  usr/share/icons/hicolor/scalable/apps/pocketdesk.svg \
   usr/share/licenses/pocketdesk/LICENSE-MIT usr/share/licenses/pocketdesk/LICENSE-APACHE; do
   grep -qx "$f" <<<"$files" && ok "$f" || bad "missing $f"
 done
+# makepkg compresses man pages, so the file may end in .gz.
+grep -qE '^usr/share/man/man1/pocketdesk\.1(\.gz)?$' <<<"$files" && ok "the man page" || bad "missing the man page"
 # Installed, not running: nothing may switch the service on, or touch PAM.
 if grep -E '^(etc/|usr/lib/systemd/user/.*\.wants/|usr/lib/systemd/user-preset|usr/lib/pam\.d|usr/lib/security)' <<<"$files" >/dev/null; then
   bad "the package enables the service or touches /etc or PAM"

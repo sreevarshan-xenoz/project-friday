@@ -16,9 +16,23 @@ for f in usr/bin/friday usr/bin/friday-linux-daemon usr/bin/friday-ctl \
   usr/share/friday/hyprland/friday.lua usr/share/friday/niri/friday.kdl \
   usr/share/licenses/friday-git/LICENSE-MIT usr/share/licenses/friday-git/agent-desktop-LICENSE \
   usr/lib/friday/agent-desktop usr/lib/friday/agent-desktop-linux-clipboard-owner \
-  usr/share/friday/shell/shell.qml usr/share/friday/shell/services/Friday.qml; do
+  usr/share/friday/shell/shell.qml usr/share/friday/shell/services/Friday.qml \
+  usr/share/friday/helper/friday-os-helper.service \
+  usr/share/friday/helper/org.friday.Helper1.service \
+  usr/share/friday/helper/org.friday.Helper1.conf \
+  usr/share/friday/helper/org.friday.helper.policy; do
   grep -qx "$f" <<<"$files" && ok "$f" || bad "missing $f"
 done
+if bsdtar -tvf "$pkg" | grep -E '^-[rwx-]*x[rwx-]* .*usr/lib/friday/friday-os-helper$' >/dev/null; then
+  ok "usr/lib/friday/friday-os-helper (executable)"
+else
+  bad "usr/lib/friday/friday-os-helper missing or not executable"
+fi
+if grep -E '^(etc/dbus-1|usr/share/dbus-1|usr/share/polkit-1|etc/systemd|usr/lib/systemd/system)/.*(helper|Helper)' <<<"$files"; then
+  bad "package contains active helper files (must stay inert)"
+else
+  ok "helper is inert (no files in active system directories)"
+fi
 # Every FRIDAY Shell file in the tree is in the package.
 src=$(cd "$(dirname "$0")/../linux/shell" && find . -name '*.qml' | wc -l)
 pkgd=$(grep -c '^usr/share/friday/shell/.*\.qml$' <<<"$files")

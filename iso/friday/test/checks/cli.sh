@@ -438,6 +438,18 @@ contains "confirm: the phone is asked the exact action" "$(cat "$PD_LOG")" "FRID
 rm -f "$CS/pocketdesk"
 [[ "$(NS_ANSWER=run conf)" == run ]] && pass "confirm: works with no Pocketdesk at all" || fail "confirm: no Pocketdesk"
 unset PD_LOG
+echo "helper"
+contains "help lists helper" "$(bash "$F" help 2>&1)" "helper"
+expect "helper status exits 0" bash "$F" helper status
+h_status=$(bash "$F" helper status 2>&1)
+if [[ "$h_status" =~ ^System\ helper: ]]; then
+  pass "helper status prints a line starting with System helper:"
+else
+  fail "helper status did not start with System helper: ($h_status)"
+fi
+if [[ -f /usr/lib/friday/friday-os-helper ]]; then
+  contains "helper status reports off when package is installed" "$h_status" "System helper: off"
+fi
 
 echo "connect an account"
 # A stub Claude Code: answers only once signed in (its login makes the mark).

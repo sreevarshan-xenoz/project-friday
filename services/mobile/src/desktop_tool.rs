@@ -160,9 +160,17 @@ impl DesktopControlTool {
     /// fails never stops the action.
     fn record(&self, verb: &str, params: &Value, ok: bool, goal: &str) {
         let Some(dir) = &self.audit_dir else { return };
-        let risk = friday_actions::desktop_risk_of(verb)
-            .map(|r| format!("{r:?}").to_lowercase())
-            .unwrap_or_else(|| "unknown".into());
+        let risk = match verb.strip_prefix("ui_") {
+            // Inside-of-apps verbs: looking is a read; a click that was
+            // confirmed was a destructive one (only those ask first).
+            Some("apps" | "tree" | "find" | "read") => "read".to_string(),
+            Some("click") if goal == "(confirmed)" => "destructive".to_string(),
+            Some("click" | "type_text") => "reversible".to_string(),
+            Some(_) => "unknown".to_string(),
+            None => friday_actions::desktop_risk_of(verb)
+                .map(|r| format!("{r:?}").to_lowercase())
+                .unwrap_or_else(|| "unknown".into()),
+        };
         let line = json!({
             "ts": chrono::Utc::now().to_rfc3339(),
             "verb": verb,
@@ -941,6 +949,37 @@ mod tests {
             ran[1].1.get("confirmed").is_none(),
             "no confirmation was needed or claimed"
         );
+    }
+
+    #[tokio::test]
+    async fn inside_app_actions_are_audited_with_their_real_risk() {
+        let dir = temp_dir("ui-audit");
+        let model = Script::new(&[
+            r#"{"action":"ui_find","params":{"app":"gedit","name":"save"}}"#,
+            r#"{"action":"ui_click","params":{"app":"gedit","name":"Save"}}"#,
+            r#"{"done":"Saved the file."}"#,
+        ]);
+        let t = DesktopControlTool::new(
+            model,
+            DesktopAdapter::with_exec(Arc::new(Stub::default())),
+            Arc::default(),
+            Arc::default(),
+            Some(dir.clone()),
+            Some(StubUi::new(&[("Save", "0/1")])),
+        );
+        assert!(run(&t, "save the file in gedit").await.success);
+        let log = std::fs::read_to_string(dir.join("actions.jsonl")).unwrap();
+        let risks: Vec<String> = log
+            .lines()
+            .map(|l| {
+                serde_json::from_str::<Value>(l).unwrap()["risk"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(risks, ["read", "reversible"]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

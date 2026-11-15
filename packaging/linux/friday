@@ -52,6 +52,8 @@ Autonomous Agent & Cognitive Loop:
   friday face [status|setup|remove] Face unlock for the lock screen (Gaze)
   friday voice [status|setup|remove] Hold Super+Y and speak (speech to text on this computer)
   friday phone [status|on|off]     Pair a phone with Pocketdesk; answer FRIDAY's questions from it
+  friday helper [status|enable|disable]
+                                   System helper for package updates and installs
 
 Skill Forge:
   friday create-skill <id>         Create new skill template
@@ -805,6 +807,112 @@ EOF
       echo "Face unlock is off. Gaze stays installed; remove it with: gaze uninstall"
       ;;
     *) echo "Usage: friday face [status|setup|remove]" >&2; return 1 ;;
+  esac
+}
+
+# Root D-Bus helper (org.friday.Helper1) for system updates and package operations.
+# Shipped inert in the package; enabled only on explicit user request.
+friday_helper_status() {
+  local bin=/usr/lib/friday/friday-os-helper
+  if [ ! -f "$bin" ]; then
+    echo "System helper: not installed"
+    return 0
+  fi
+
+  local conf=/etc/dbus-1/system.d/org.friday.Helper1.conf
+  local dbus_svc=/usr/share/dbus-1/system-services/org.friday.Helper1.service
+  local policy=/usr/share/polkit-1/actions/org.friday.helper.policy
+  local unit=/etc/systemd/system/friday-os-helper.service
+
+  if [ -f "$conf" ] && [ -f "$dbus_svc" ] && [ -f "$policy" ] && [ -f "$unit" ] && \
+     { busctl --system list 2>/dev/null | grep -q org.friday.Helper1 || \
+       busctl --system list --activatable 2>/dev/null | grep -q org.friday.Helper1; }; then
+    echo "System helper: on"
+  else
+    echo "System helper: off (turn it on: friday helper enable)"
+  fi
+  return 0
+}
+
+friday_helper_enable() {
+  local bin=/usr/lib/friday/friday-os-helper
+  if [ ! -f "$bin" ]; then
+    echo "friday: system helper binary not found ($bin); install the friday-git package first" >&2
+    return 1
+  fi
+
+  local src=/usr/share/friday/helper
+  local yes=false
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --yes|-y) yes=true ;;
+    esac
+  done
+
+  cat <<'EOF'
+FRIDAY system helper (org.friday.Helper1).
+What this allows:
+  FRIDAY may, only after you approve each one in a system prompt,
+  update the system, install or remove a package.
+
+What this will do (with sudo):
+  Copy four files from /usr/share/friday/helper into /etc/dbus-1/system.d,
+  /usr/share/dbus-1/system-services, /usr/share/polkit-1/actions and
+  /etc/systemd/system. Nothing runs until FRIDAY first calls the helper.
+EOF
+
+  if ! $yes; then
+    local a
+    read -r -p "Enable the system helper now? [y/N] " a || a=n
+    [[ "$a" =~ ^[Yy] ]] || { echo "Nothing changed."; return 0; }
+  fi
+
+  sudo install -Dm644 "$src/org.friday.Helper1.conf" /etc/dbus-1/system.d/org.friday.Helper1.conf || return 1
+  sudo install -Dm644 "$src/org.friday.Helper1.service" /usr/share/dbus-1/system-services/org.friday.Helper1.service || return 1
+  sudo install -Dm644 "$src/org.friday.helper.policy" /usr/share/polkit-1/actions/org.friday.helper.policy || return 1
+  sudo install -Dm644 "$src/friday-os-helper.service" /etc/systemd/system/friday-os-helper.service || return 1
+
+  sudo systemctl daemon-reload || return 1
+  sudo systemctl reload dbus || echo "friday: warning: could not reload dbus (it will reload automatically or on next reboot)" >&2
+
+  echo
+  echo "System helper is on (activates on demand)."
+  echo "Turn it off anytime with: friday helper disable"
+}
+
+friday_helper_disable() {
+  local conf=/etc/dbus-1/system.d/org.friday.Helper1.conf
+  local dbus_svc=/usr/share/dbus-1/system-services/org.friday.Helper1.service
+  local policy=/usr/share/polkit-1/actions/org.friday.helper.policy
+  local unit=/etc/systemd/system/friday-os-helper.service
+
+  sudo systemctl stop friday-os-helper.service 2>/dev/null || true
+  sudo rm -f "$conf" "$dbus_svc" "$policy" "$unit"
+  sudo systemctl daemon-reload || true
+  sudo systemctl reload dbus 2>/dev/null || true
+
+  echo "System helper: off"
+}
+
+friday_helper() {
+  case "${1:-status}" in
+    status)
+      shift 2>/dev/null || true
+      friday_helper_status "$@"
+      ;;
+    enable)
+      shift
+      friday_helper_enable "$@"
+      ;;
+    disable|off)
+      shift
+      friday_helper_disable "$@"
+      ;;
+    *)
+      echo "Usage: friday helper [status|enable|disable]" >&2
+      return 1
+      ;;
   esac
 }
 
@@ -1769,6 +1877,10 @@ case "${1:-}" in
   phone)
     shift
     friday_phone "$@"
+    ;;
+  helper)
+    shift
+    friday_helper "$@"
     ;;
   answers)
     d="${XDG_STATE_HOME:-$HOME/.local/state}/friday"

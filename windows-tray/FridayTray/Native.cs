@@ -67,6 +67,36 @@ internal static partial class Native
         return len > 0 ? new string(buf, 0, len) : string.Empty;
     }
 
+    [LibraryImport("user32.dll", EntryPoint = "GetWindowTextW", SetLastError = true)]
+    private static unsafe partial int GetWindowText(IntPtr hWnd, char* lpString, int nMaxCount);
+
+    public static unsafe string GetWindowTitle(IntPtr hWnd)
+    {
+        if (hWnd == IntPtr.Zero)
+            return string.Empty;
+        const int maxCount = 256;
+        char* buf = stackalloc char[maxCount];
+        int len = GetWindowText(hWnd, buf, maxCount);
+        return len > 0 ? new string(buf, 0, len) : string.Empty;
+    }
+
+    /// <summary>The program a window belongs to, without ".exe"; null when it can't be read.</summary>
+    public static string? ProcessNameOf(IntPtr hWnd)
+    {
+        if (hWnd == IntPtr.Zero)
+            return null;
+        GetWindowThreadProcessId(hWnd, out var pid);
+        try
+        {
+            using var p = System.Diagnostics.Process.GetProcessById((int)pid);
+            return p.ProcessName;
+        }
+        catch (Exception e) when (e is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return null;
+        }
+    }
+
     /// <summary>
     /// Restores focus to the specified window, using AllowSetForegroundWindow and
     /// AttachThreadInput workarounds if standard SetForegroundWindow is restricted.

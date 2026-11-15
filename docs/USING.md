@@ -5,8 +5,11 @@ short tour of what FRIDAY does on Linux and where its data goes. Windows has the
 same three hotkeys (Win+Y, Win+Alt+Y, Win+Ctrl+Y), an answer window with Copy,
 Ask again, Follow up and Try another model, and web search ("search ..." or
 "look up ..."), plus "What left this PC" and "Forget saved data" in the tray
-menu. The pill, quick actions, voice, local commands and the `friday` commands
-below are Linux only so far.
+menu. Three more work on Windows: "battery", "timer 5 min" and "wifi settings"
+(also Bluetooth and sound) are answered on the PC with nothing sent, and a
+question about selected text names the app and window title it came from (turn
+that off in the tray menu). The pill, quick actions, voice, volume and do not
+disturb, and the `friday` commands below are Linux only so far.
 
 ## The three keys
 
@@ -90,6 +93,14 @@ Web search happens only when you ask for it, and never in private mode.
 FRIDAY OS has its own keymap (Super+K lists it), Super+L locks (with face unlock
 after `friday face setup`), and Super+Alt+G switches game mode. `friday doctor`
 checks that everything is running; `friday report` writes a redacted bug report.
+
+## System helper
+
+FRIDAY can update the system, install, or remove packages, but only if you
+turn this on: `friday helper enable`. Even with it on, every action still asks
+for your approval in a system prompt before anything changes.
+Check whether it is on with `friday helper status`, or turn it off anytime with
+`friday helper disable`.
 
 ## Standing tasks
 
