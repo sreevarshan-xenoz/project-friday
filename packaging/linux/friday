@@ -51,6 +51,8 @@ Autonomous Agent & Cognitive Loop:
                                    Local model only; nothing leaves the machine
   friday face [status|setup|remove] Face unlock for the lock screen (Gaze)
   friday voice [status|setup|remove] Hold Super+Y and speak (speech to text on this computer)
+  friday screen-text [status|on|off]
+                                   Ask about the screen with the window's text, not a screenshot
   friday phone [status|on|off]     Pair a phone with Pocketdesk; answer FRIDAY's questions from it
   friday helper [status|enable|disable]
                                    System helper for package updates and installs
@@ -656,6 +658,49 @@ friday_disconnect() {
 
 # Free models keep what they're sent, more often than not.
 FRIDAY_FREE_NOTICE="Free models (OpenCode Zen, Kilo) may keep what you send them, including screenshots and selected text, and may use it for training. For anything private, use your own key (friday setup-ai) or account (friday connect)."
+
+# Screen asks send one screenshot by default. With this on, a window whose app
+# exposes enough text (its accessibility tree) is asked about as that text
+# instead: up to 12,000 characters, which can include text scrolled out of
+# view, and it can go to any provider you use, not only ones that see images.
+friday_screen_text() {
+  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" want
+  case "${1:-status}" in
+    status)
+      if grep -qE '^FRIDAY_SCREEN_TEXT=(1|true)$' "$env_file" 2>/dev/null; then
+        echo "Screen text: on (Super+Ctrl+Y sends the window's text when the app offers enough, else a screenshot). Turn off: friday screen-text off"
+      else
+        echo "Screen text: off (Super+Ctrl+Y sends one screenshot). Turn on: friday screen-text on"
+      fi
+      return 0 ;;
+    on)
+      if [ "${2:-}" != "--yes" ]; then
+        cat <<'EOF2'
+With this on, asking about your screen sends the focused window's text instead
+of a screenshot when the app offers enough of it. That text can include parts
+you can't see (a long page scrolled out of view). It goes to any provider you
+use, including free ones that may keep it. Password fields are left out and
+key-like secrets are masked; ordinary private text is not.
+EOF2
+        local a
+        read -r -p "Turn it on? [y/N] " a || a=n
+        [[ "$a" =~ ^[Yy] ]] || { echo "Nothing changed."; return 0; }
+      fi
+      want=1 ;;
+    off) want="" ;;
+    *) echo "Usage: friday screen-text [status|on|off]" >&2; return 1 ;;
+  esac
+  mkdir -p "$(dirname "$env_file")"
+  (
+    umask 077
+    { grep -vE '^FRIDAY_SCREEN_TEXT=' "$env_file" 2>/dev/null || true
+      [ -z "$want" ] || echo "FRIDAY_SCREEN_TEXT=1"; } >"$env_file.tmp"
+    chmod 0600 "$env_file.tmp"
+    mv -f "$env_file.tmp" "$env_file"
+  )
+  systemctl --user restart friday-linux-daemon 2>/dev/null || true
+  [ -n "$want" ] && echo "Screen text: on" || echo "Screen text: off"
+}
 
 # Pocketdesk (the phone as a screen, keyboard and remote): FRIDAY OS installs
 # it but leaves it off. `friday phone on` starts its server for this session
@@ -1877,6 +1922,10 @@ case "${1:-}" in
   phone)
     shift
     friday_phone "$@"
+    ;;
+  screen-text)
+    shift
+    friday_screen_text "$@"
     ;;
   helper)
     shift

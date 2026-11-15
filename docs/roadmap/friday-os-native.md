@@ -70,10 +70,11 @@ limit per task, and an audit log (`friday actions`) of every action taken.
    a weekly job (`agent-desktop-bump.yml`) verifies each new release (checksum, the same bytes
    as the signed npm package, npm's provenance, the flags the engine uses) and reports it in an
    issue, and the pin moves only through a pull request that CI's package build must pass.
-   "Ask about my screen" (Super+Ctrl+Y) uses it too: when the focused app's tree has at least 200
+   "Ask about my screen" (Super+Ctrl+Y) can use it too, but only after `friday screen-text on`
+   (off by default: a window's text can include parts that aren't on screen, and goes to any
+   provider, not only ones that see images). Then, when the focused app's tree has at least 200
    characters of text, that text (secrets masked, password fields left out) goes to the model
-   instead of a screenshot, to any model the person's providers offer, and nothing is captured;
-   otherwise a screenshot as before. `FRIDAY_SCREEN_TEXT=0` forces screenshots.
+   instead of a screenshot and nothing is captured; otherwise a screenshot as before.
 4. **The system helper.** `friday-os-helper`: root, a D-Bus API, polkit prompt
    per sensitive call. Install and remove packages, enable services, change
    network settings, update the system ("update everything and tell me").

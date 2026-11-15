@@ -285,9 +285,11 @@ async fn main() {
         ),
         context_label,
     );
-    // A window whose app exposes its words (accessibility tree) is asked
-    // about as text; FRIDAY_SCREEN_TEXT=0 always uses a screenshot.
-    if std::env::var("FRIDAY_SCREEN_TEXT").map_or(true, |v| v.trim() != "0") {
+    // Off unless the person turned it on (`friday screen-text on`): a window's
+    // words can include text that isn't on screen, so the default stays the
+    // one screenshot they consented to. When on, a window whose app exposes
+    // enough words is asked about as text instead.
+    if std::env::var("FRIDAY_SCREEN_TEXT").is_ok_and(|v| matches!(v.trim(), "1" | "true")) {
         if let Some(ui) = friday_mobile::agent_desktop::detect().await {
             screen_reader = screen_reader.with_text(Arc::new(ui));
         }
