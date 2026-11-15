@@ -51,6 +51,15 @@ limit per task, and an audit log (`friday actions`) of every action taken.
 3. **Inside apps.** AT-SPI (read the interface tree, press buttons, type) for
    GTK, Qt and Electron apps that expose it; the browser organ (CDP) already
    exists; per-app D-Bus where an app offers it.
+   *Built (adapter):* `ui` verbs `apps`, `tree`, `find`, `read`, `click`,
+   `type_text` over AT-SPI. It reads real GTK4 and GTK3 apps (found deep under
+   GTK4's unnamed wrapper panels) and presses elements that offer an action
+   (GTK3, Qt, Electron: checked on pavucontrol, a tab pressed and selected).
+   GTK4 buttons expose no press action at all, which the adapter says plainly;
+   pressing those needs keyboard input, not built yet. Password fields are
+   never read or typed into; a button that could lose or send something
+   (Delete, Send, Pay, Install, Allow...) is refused unless the caller has
+   confirmed it. Not yet wired into the control loop.
 4. **The system helper.** `friday-os-helper`: root, a D-Bus API, polkit prompt
    per sensitive call. Install and remove packages, enable services, change
    network settings, update the system ("update everything and tell me").
