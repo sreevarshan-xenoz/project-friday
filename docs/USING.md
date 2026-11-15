@@ -91,6 +91,14 @@ FRIDAY OS has its own keymap (Super+K lists it), Super+L locks (with face unlock
 after `friday face setup`), and Super+Alt+G switches game mode. `friday doctor`
 checks that everything is running; `friday report` writes a redacted bug report.
 
+## System helper
+
+FRIDAY can update the system, install, or remove packages, but only if you
+turn this on: `friday helper enable`. Even with it on, every action still asks
+for your approval in a system prompt before anything changes.
+Check whether it is on with `friday helper status`, or turn it off anytime with
+`friday helper disable`.
+
 ## Standing tasks
 
 Ask for something to happen again and again: `friday ask "every morning at 8 tell me the weather"`, `"every weekday at 9 summarize my unread notes"`, `"when my battery drops below 20% tell me"`. FRIDAY runs each one the way it runs your own ask, so the same rules apply: nothing is sent that a normal ask wouldn't send, and anything that deletes or sends stops and asks you first (you'll see the usual confirmation). Answers arrive as a notification and in `friday answers`.
