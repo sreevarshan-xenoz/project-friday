@@ -234,6 +234,7 @@ fn first_json(reply: &str) -> Option<Value> {
 }
 
 impl SystemTool {
+    #[cfg(any(target_os = "linux", test))]
     pub(crate) fn new(
         model: Arc<dyn LlmStrategyClient>,
         link: Arc<dyn HelperLink>,
