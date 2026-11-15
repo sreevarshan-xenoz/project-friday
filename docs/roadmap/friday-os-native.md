@@ -115,8 +115,9 @@ limit per task, and an audit log (`friday actions`) of every action taken.
    in the signed pacman repo. `friday phone [status|on|off]` turns it on after a yes and
    prints a pairing PIN; the first-login tour has a phone step when it is installed; and
    a confirmation is asked on the screen and, if a paired phone is set to answer, on the
-   phone through `pocketdesk ask` (first answer wins, cancel on silence). Not built yet: a
-   deck button that asks FRIDAY.
+   phone through `pocketdesk ask` (first answer wins, cancel on silence). A phone deck
+   button that presses Super+Y asks FRIDAY (set up in Pocketdesk's Settings; documented in
+   USING.md, nothing to build).
 7. **Checks for all of it.** Scripted scenarios in the VM per verb, an e2e where
    the fake model drives the loop, and an owner pass on real hardware.
 
