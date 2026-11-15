@@ -5,8 +5,11 @@ short tour of what FRIDAY does on Linux and where its data goes. Windows has the
 same three hotkeys (Win+Y, Win+Alt+Y, Win+Ctrl+Y), an answer window with Copy,
 Ask again, Follow up and Try another model, and web search ("search ..." or
 "look up ..."), plus "What left this PC" and "Forget saved data" in the tray
-menu. The pill, quick actions, voice, local commands and the `friday` commands
-below are Linux only so far.
+menu. Three more work on Windows: "battery", "timer 5 min" and "wifi settings"
+(also Bluetooth and sound) are answered on the PC with nothing sent, and a
+question about selected text names the app and window title it came from (turn
+that off in the tray menu). The pill, quick actions, voice, volume and do not
+disturb, and the `friday` commands below are Linux only so far.
 
 ## The three keys
 
