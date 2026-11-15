@@ -82,7 +82,8 @@ jobs:
       - name: Install build dependencies
         run: |
           pacman -Syu --noconfirm --needed base-devel git rust namcap desktop-file-utils \
-            jq fuzzel libnotify wl-clipboard curl openssl
+            jq fuzzel libnotify wl-clipboard curl openssl \
+            hicolor-icon-theme libdrm libpipewire libxcb mesa wayland
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -95,6 +96,13 @@ jobs:
           runuser -u builder -- env RUSTFLAGS= makepkg --noconfirm
       - name: Smoke test the package
         run: bash packaging/arch/check-package.sh packaging/arch/friday-git-*.pkg.tar.zst
+      # Pocketdesk, pinned: FRIDAY OS ships it and the [friday] repo carries it.
+      - name: Build Pocketdesk
+        run: |
+          cd packaging/arch/pocketdesk
+          runuser -u builder -- makepkg --noconfirm
+      - name: Smoke test Pocketdesk
+        run: bash packaging/arch/check-pocketdesk.sh packaging/arch/pocketdesk/pocketdesk-*.pkg.tar.zst
       # The update channel: a pacman repo (this package + its database) that
       # installed systems pull from with pacman -Syu (see the installer's
       # [friday] section). Checked with pacman itself before it is published.
@@ -127,12 +135,13 @@ jobs:
       # the signed repo installs, unsigned and tampered packages are refused.
       - name: Pacman repo
         run: |
-          mkdir -p packaging/arch/repo && cp packaging/arch/friday-git-*.pkg.tar.zst packaging/arch/repo/
+          mkdir -p packaging/arch/repo
+          cp packaging/arch/friday-git-*.pkg.tar.zst packaging/arch/pocketdesk/pocketdesk-*.pkg.tar.zst packaging/arch/repo/
           cd packaging/arch/repo
-          for pkg in friday-git-*.pkg.tar.zst; do
+          for pkg in *.pkg.tar.zst; do
             gpg --batch --pinentry-mode loopback --passphrase '' --local-user "$SIGNING_FPR" --detach-sign "$pkg"
           done
-          repo-add -q --sign --key "$SIGNING_FPR" friday.db.tar.gz friday-git-*.pkg.tar.zst
+          repo-add -q --sign --key "$SIGNING_FPR" friday.db.tar.gz *.pkg.tar.zst
           rm -f friday.db friday.db.sig friday.files friday.files.sig
           for f in db files; do
             cp "friday.$f.tar.gz" "friday.$f" && cp "friday.$f.tar.gz.sig" "friday.$f.sig"
@@ -145,12 +154,12 @@ jobs:
             printf '[options]\nArchitecture = auto\nGPGDir = %s\n[friday]\nSigLevel = Required DatabaseRequired\nServer = file://%s\n' \
               "$t/gnupg" "$1" >"$t/pacman.conf"
             pacman --config "$t/pacman.conf" --dbpath "$t/db" -Sy >/dev/null \
-              && pacman --config "$t/pacman.conf" --dbpath "$t/db" --cachedir "$t/cache" -Swdd --noconfirm friday-git >/dev/null
+              && pacman --config "$t/pacman.conf" --dbpath "$t/db" --cachedir "$t/cache" -Swdd --noconfirm friday-git pocketdesk >/dev/null
           }
           check "$PWD" signed || { echo "::error::pacman refused the signed repo"; exit 1; }
-          unsigned="$RUNNER_TEMP/unsigned"; mkdir -p "$unsigned"; cp friday.db friday.db.sig friday.files friday.files.sig friday-git-*.pkg.tar.zst "$unsigned/"
+          unsigned="$RUNNER_TEMP/unsigned"; mkdir -p "$unsigned"; cp friday.db friday.db.sig friday.files friday.files.sig *.pkg.tar.zst "$unsigned/"
           if check "$unsigned" unsigned; then echo "::error::pacman accepted a package without its signature"; exit 1; fi
-          tampered="$RUNNER_TEMP/tampered"; mkdir -p "$tampered"; cp friday.db* friday.files* friday-git-*.pkg.tar.zst* "$tampered/"
+          tampered="$RUNNER_TEMP/tampered"; mkdir -p "$tampered"; cp friday.db* friday.files* *.pkg.tar.zst* "$tampered/"
           printf '\x00\xff' | dd of="$(ls "$tampered"/friday-git-*.pkg.tar.zst)" bs=1 seek=4096 conv=notrunc status=none
           if check "$tampered" tampered; then echo "::error::pacman accepted a tampered package"; exit 1; fi
           echo "signed repo accepted; unsigned and tampered packages refused"
@@ -317,8 +326,8 @@ jobs:
           repo="${{ github.repository }}"
           gh release view pacman --repo "$repo" >/dev/null 2>&1 || gh release create pacman --repo "$repo" \
             --prerelease --title "FRIDAY pacman repo (rolling)" \
-            --notes "The update channel for FRIDAY OS and Arch: each release replaces the friday-git package and database here. Add it with the [friday] section in the README."
+            --notes "The update channel for FRIDAY OS and Arch: each release replaces the friday-git and pocketdesk packages and the database here. Add it with the [friday] section in the README."
           gh release upload pacman pacman-repo/* --repo "$repo" --clobber
-          new=$(cd pacman-repo && ls friday-git-*.pkg.tar.zst friday-git-*.pkg.tar.zst.sig)
-          gh release view pacman --repo "$repo" --json assets -q '.assets[].name' | grep '^friday-git-' | grep -vxF "$new" \
+          new=$(cd pacman-repo && ls friday-git-*.pkg.tar.zst friday-git-*.pkg.tar.zst.sig pocketdesk-*.pkg.tar.zst pocketdesk-*.pkg.tar.zst.sig)
+          gh release view pacman --repo "$repo" --json assets -q '.assets[].name' | grep -E '^(friday-git|pocketdesk)-' | grep -vxF "$new" \
             | while read -r old; do gh release delete-asset pacman "$old" --repo "$repo" -y; done

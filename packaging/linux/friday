@@ -51,6 +51,7 @@ Autonomous Agent & Cognitive Loop:
                                    Local model only; nothing leaves the machine
   friday face [status|setup|remove] Face unlock for the lock screen (Gaze)
   friday voice [status|setup|remove] Hold Super+Y and speak (speech to text on this computer)
+  friday phone [status|on|off]     Pair a phone with Pocketdesk; answer FRIDAY's questions from it
   friday helper [status|enable|disable]
                                    System helper for package updates and installs
 
@@ -656,6 +657,92 @@ friday_disconnect() {
 # Free models keep what they're sent, more often than not.
 FRIDAY_FREE_NOTICE="Free models (OpenCode Zen, Kilo) may keep what you send them, including screenshots and selected text, and may use it for training. For anything private, use your own key (friday setup-ai) or account (friday connect)."
 
+# Pocketdesk (the phone as a screen, keyboard and remote): FRIDAY OS installs
+# it but leaves it off. `friday phone on` starts its server for this session
+# (after a yes) and prints a pairing PIN; once a phone is paired and has
+# "Answer my questions" on, FRIDAY's confirmations also go to it.
+friday_phone() {
+  case "${1:-status}" in
+    status)
+      if ! command -v pocketdesk >/dev/null 2>&1; then
+        echo "Phone: Pocketdesk is not installed (sudo pacman -S pocketdesk)"
+      elif ! systemctl --user is-active --quiet pocketdesk 2>/dev/null; then
+        echo "Phone: off (pair a phone: friday phone on)"
+      else
+        local n
+        n=$(pocketdesk devices --json 2>/dev/null | jq 'length' 2>/dev/null || echo "?")
+        echo "Phone: on, $n paired (answer FRIDAY from it: turn on \"Answer my questions\" on the phone's Devices page)"
+      fi
+      ;;
+    on|pair)
+      command -v pocketdesk >/dev/null 2>&1 || { echo "friday: Pocketdesk is not installed (sudo pacman -S pocketdesk)" >&2; return 1; }
+      if [ "${2:-}" != "--yes" ]; then
+        cat <<'EOF2'
+Pocketdesk lets your phone see and control this computer, and answer FRIDAY's
+questions. Turning it on starts its server in your session (it starts at every
+sign-in until you run: friday phone off). Only phones you pair with a PIN shown
+here can connect.
+EOF2
+        local a
+        read -r -p "Turn Pocketdesk on? [y/N] " a || a=n
+        [[ "$a" =~ ^[Yy] ]] || { echo "Nothing changed."; return 0; }
+      fi
+      systemctl --user enable --now pocketdesk || return 1
+      echo
+      echo "Pocketdesk is on. On the phone, open the Pocketdesk app, tap Pair, and enter:"
+      pocketdesk pair || return 1
+      echo "The PIN is good for 5 minutes. Pocketdesk's own app is in the app menu."
+      ;;
+    off)
+      systemctl --user disable --now pocketdesk 2>/dev/null || true
+      echo "Phone: off"
+      ;;
+    *)
+      echo "Usage: friday phone [status|on|off]" >&2
+      return 1
+      ;;
+  esac
+}
+
+# A confirmation, asked on the screen and, if a paired phone is set to answer
+# FRIDAY's questions, on the phone too: the first answer wins. Prints run or
+# cancel (cancel when nobody answered). The phone's Yes needs its fingerprint
+# or screen lock; with no phone set up, `pocketdesk ask` says so at once.
+friday_confirm() {
+  local action="$1" nid="${2:-}" t desk_pid phone_pid="" got=""
+  t=$(mktemp -d) || return 1
+  local acts=(-A run="Run" -A cancel="Cancel")
+  [ -z "$nid" ] || acts+=(-r "$nid")
+  notify-send -a FRIDAY -u normal "${acts[@]}" -- "FRIDAY wants to run" "$action" >"$t/desk" 2>/dev/null &
+  desk_pid=$!
+  if command -v pocketdesk >/dev/null 2>&1; then
+    (
+      case "$(pocketdesk ask --wait 120 "FRIDAY wants to run: $action" 2>/dev/null)" in
+        yes) echo run ;;
+        no) echo cancel ;;
+      esac
+    ) >"$t/phone" 2>/dev/null &
+    phone_pid=$!
+  fi
+  local alive
+  while :; do
+    got=$(cat "$t/desk" "$t/phone" 2>/dev/null | grep -m1 -xE 'run|cancel' || true)
+    [ -z "$got" ] || break
+    alive=false
+    kill -0 "$desk_pid" 2>/dev/null && alive=true
+    [ -z "$phone_pid" ] || ! kill -0 "$phone_pid" 2>/dev/null || alive=true
+    if ! $alive; then
+      # Both are done: read once more, an answer may have landed just now.
+      got=$(cat "$t/desk" "$t/phone" 2>/dev/null | grep -m1 -xE 'run|cancel' || true)
+      break
+    fi
+    sleep 0.3
+  done
+  kill "$desk_pid" ${phone_pid:+"$phone_pid"} 2>/dev/null || true
+  rm -rf "$t"
+  printf '%s\n' "${got:-cancel}"
+}
+
 # `friday welcome`: one-time first-login greeting (autostarted by Hyprland).
 # Face unlock for the lock screen (friday.lock), with Gaze: on-device face
 # recognition with a liveness check (gaze.gundulabs.com, GPL-3.0). Gaze is in
@@ -969,17 +1056,22 @@ friday_welcome() {
   name=$(getent passwd "${USER:-$(id -un)}" | cut -d: -f5 | cut -d, -f1 || true); name="${name:-${USER:-friend}}"
   local free=true
   grep -qE '^([A-Z_]+_API_KEY|FRIDAY_AGENT_CLIS)=.+' "$env_file" 2>/dev/null && free=false
+  local phone=false
+  command -v pocketdesk >/dev/null 2>&1 && phone=true
   # FRIDAY Shell walks through the keys (press each one); the notification
   # below is for desktops without it.
   if command -v quickshell >/dev/null 2>&1 \
-    && timeout 3 bash "$0" shell ipc tour begin "$name" "$free" >/dev/null 2>&1; then
+    && timeout 3 bash "$0" shell ipc tour begin "$name" "$free" "$phone" >/dev/null 2>&1; then
     return 0
   fi
   local body="Press Super+Y to ask me anything, Super+Alt+Y about selected text, Super+Ctrl+Y about your screen."
   $free && body="$body I'm on free models (OpenCode Zen, then Kilo), which may keep what you send. Connect your own account or key for private work."
-  action=$(notify-send -a FRIDAY -t 20000 -A keys="Show shortcuts" -A connect="Connect an account" -A setup="Choose AI provider" \
+  local phone_action=()
+  $phone && phone_action=(-A phone="Pair your phone")
+  action=$(notify-send -a FRIDAY -t 20000 -A keys="Show shortcuts" -A connect="Connect an account" -A setup="Choose AI provider" "${phone_action[@]}" \
     "Hello, $name. I'm FRIDAY." "$body" 2>/dev/null || true)
   case "$action" in
+    phone) foot -T "FRIDAY · pair your phone" bash -c 'friday phone on; echo; read -rsn1 -p "Press any key to close."' ;;
     setup) foot -T "FRIDAY setup" bash -c 'friday setup-ai; echo; read -rsn1 -p "Press any key to close."' ;;
     connect) foot -T "FRIDAY · connect an account" bash -c 'friday connect; echo; read -rsn1 -p "Press any key to close."' ;;
     keys)  notify-send -a FRIDAY -t 20000 "FRIDAY shortcuts" \
@@ -1708,10 +1800,8 @@ case "${1:-}" in
 
     action_to_confirm=$(jq -r '.needs_confirmation.action // empty' <<<"$summary" 2>/dev/null || true)
     if [ "$ctl_rc" -eq 3 ] && [ -n "$action_to_confirm" ]; then
-      confirm_actions=(-A run="Run" -A cancel="Cancel")
-      [ -z "${nid:-}" ] || confirm_actions+=(-r "$nid")
       (
-        action=$(notify-send -a FRIDAY -u normal "${confirm_actions[@]}" -- "FRIDAY wants to run" "$action_to_confirm" 2>/dev/null || true)
+        action=$(friday_confirm "$action_to_confirm" "${nid:-}")
         case "$action" in
           run)
             conf_ok=true
@@ -1783,6 +1873,10 @@ case "${1:-}" in
   face)
     shift
     friday_face "$@"
+    ;;
+  phone)
+    shift
+    friday_phone "$@"
     ;;
   helper)
     shift
