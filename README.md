@@ -13,6 +13,8 @@ System integration, not kernel code: UI Automation, ETW and Win32 on Windows; AT
 | Windows | `friday-tray.exe` (`windows-tray/`, .NET 8): per-user tray app with the hotkeys, the ask box and the answer window; supervises the daemon and `windows-host/` (C#: UI Automation, Win32, screenshots). Per-user MSI in `installer/windows/`. |
 | FRIDAY OS | `iso/friday/`: the reference Arch ISO. FRIDAY Shell on Omarchy's pinned Hyprland configuration, or on niri. |
 
+New here? [Using FRIDAY](docs/USING.md) is the short tour: the keys, the answer pill and where your data goes.
+
 ## How it fits together
 
 ```mermaid
