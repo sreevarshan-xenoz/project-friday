@@ -1,0 +1,65 @@
+name: Check for a new agent-desktop
+
+# FRIDAY ships a pinned agent-desktop (packaging/arch/PKGBUILD). Weekly, look
+# for a newer release in the same major version and verify it: its checksum,
+# that it is byte-identical to the npm package, npm's signature and build
+# provenance for that package, and that the binary still has everything
+# FRIDAY's engine uses (packaging/arch/bump-agent-desktop.sh). The result goes
+# to an issue; the pin is then moved with the same script, through a pull
+# request that CI's package build and smoke test have to pass.
+
+on:
+  schedule:
+    - cron: "17 6 * * 3"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Check this version instead of the latest (X.Y.Z)"
+        required: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    name: Verify the latest agent-desktop release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the release
+        id: bump
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+          SUMMARY_FILE: ${{ runner.temp }}/summary.md
+        run: |
+          set +e
+          args=()
+          [ -n "$VERSION" ] && args+=(--version "$VERSION")
+          bash packaging/arch/bump-agent-desktop.sh "${args[@]}"
+          rc=$?
+          set -e
+          echo "rc=$rc" >>"$GITHUB_OUTPUT"
+          [ -f "$SUMMARY_FILE" ] && cat "$SUMMARY_FILE" >>"$GITHUB_STEP_SUMMARY" || true
+      - name: Report
+        if: steps.bump.outputs.rc != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RC: ${{ steps.bump.outputs.rc }}
+          SUMMARY_FILE: ${{ runner.temp }}/summary.md
+        run: |
+          case "$RC" in
+            10) title="agent-desktop has a verified update"
+                lead="A newer agent-desktop release passed every check below. To move the pin: \`bash packaging/arch/bump-agent-desktop.sh\`, commit \`packaging/arch/PKGBUILD\`, open a pull request, and let CI's package build and smoke test decide." ;;
+            3)  title="agent-desktop has a new major version"
+                lead="A new major version needs a person: FRIDAY's engine reads the 1.x output format. Read the release notes and the engine's parser before changing the pin." ;;
+            *)  title="agent-desktop update check failed"
+                lead="The weekly check could not verify a newer release. Treat this as a possible supply-chain problem until proven otherwise: do not move the pin." ;;
+          esac
+          body="$lead"$'\n\n'"$(cat "$SUMMARY_FILE" 2>/dev/null)"$'\n\n'"Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          issue=$(gh issue list --repo "${{ github.repository }}" --state open --json number,title --jq ".[] | select(.title == \"$title\") | .number" | head -n1)
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --repo "${{ github.repository }}" --body "$body"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "$title" --body "$body"
+          fi

@@ -14,7 +14,8 @@ for f in usr/bin/friday usr/bin/friday-linux-daemon usr/bin/friday-ctl \
   usr/lib/friday/friday-skill-forge usr/lib/systemd/user/friday-linux-daemon.service \
   usr/share/zsh/site-functions/_friday usr/share/applications/friday.desktop \
   usr/share/friday/hyprland/friday.lua usr/share/friday/niri/friday.kdl \
-  usr/share/licenses/friday-git/LICENSE-MIT \
+  usr/share/licenses/friday-git/LICENSE-MIT usr/share/licenses/friday-git/agent-desktop-LICENSE \
+  usr/lib/friday/agent-desktop usr/lib/friday/agent-desktop-linux-clipboard-owner \
   usr/share/friday/shell/shell.qml usr/share/friday/shell/services/Friday.qml; do
   grep -qx "$f" <<<"$files" && ok "$f" || bad "missing $f"
 done
@@ -33,6 +34,11 @@ fi
 echo "install"
 pacman -U --noconfirm "$pkg" >/dev/null && ok "pacman -U" || bad "pacman -U failed"
 friday --help | grep -q "friday ask" && ok "friday --help" || bad "friday --help"
+# The pinned agent-desktop starts and is a version FRIDAY accepts (1.x, >= 1.3).
+ad=$(/usr/lib/friday/agent-desktop version 2>/dev/null || true)
+grep -q '"ok":true' <<<"$ad" && grep -qE '"version":"1\.([3-9]|[1-9][0-9])\.' <<<"$ad" \
+  && ok "agent-desktop runs: $(sed -n 's/.*"data":{[^}]*"version":"\([^"]*\)".*/\1/p' <<<"$ad")" \
+  || bad "agent-desktop did not start, or is a version FRIDAY does not accept"
 command -v desktop-file-validate >/dev/null \
   && { desktop-file-validate /usr/share/applications/friday.desktop && ok "launcher entry is valid" || bad "launcher entry invalid"; }
 systemd-analyze verify --user /usr/lib/systemd/user/friday-linux-daemon.service 2>/dev/null \
