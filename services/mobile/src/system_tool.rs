@@ -669,4 +669,18 @@ mod tests {
         assert!(res.error.unwrap().contains("Stopped waiting"));
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// Against the real system bus, with `friday helper enable` done: the
+    /// helper is there, and it refuses this test program as a caller (only
+    /// the FRIDAY daemon may call), in words a person can read.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[ignore = "needs the root helper enabled on the system bus (the VM)"]
+    async fn real_helper_is_present_and_refuses_an_unknown_caller() {
+        let link = DbusHelper;
+        assert!(link.present().await, "run `friday helper enable` first");
+        let err = link.start(&SysOp::Update).await.unwrap_err();
+        println!("refusal: {err}");
+        assert!(!err.is_empty() && !err.contains("job-"));
+    }
 }
