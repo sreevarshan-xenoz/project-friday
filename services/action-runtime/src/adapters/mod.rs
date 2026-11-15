@@ -31,7 +31,8 @@ pub mod webagent;
 pub use browser::{browser_capability_specs, register_browser_capabilities, BrowserAdapter};
 pub use codeintel::CodeIntelAdapter;
 pub use desktop::{
-    risk_of as desktop_risk_of, DesktopAdapter, Exec as DesktopExec, Risk as DesktopRisk,
+    hypr_signature, risk_of as desktop_risk_of, DesktopAdapter, Exec as DesktopExec,
+    Risk as DesktopRisk,
 };
 pub use docs::DocsAdapter;
 pub use document::{

@@ -50,10 +50,34 @@ pub trait Exec: Send + Sync {
 /// Runs the real program.
 pub struct SystemExec;
 
+/// The running Hyprland session's signature: the environment's, or (for a
+/// daemon started by systemd, which doesn't inherit it) the newest instance
+/// in `$XDG_RUNTIME_DIR/hypr`. `None` when there is no Hyprland to talk to.
+pub fn hypr_signature() -> Option<String> {
+    if let Ok(sig) = std::env::var("HYPRLAND_INSTANCE_SIGNATURE") {
+        if !sig.is_empty() {
+            return Some(sig);
+        }
+    }
+    let dir = std::path::Path::new(&std::env::var("XDG_RUNTIME_DIR").ok()?).join("hypr");
+    std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().join(".socket.sock").exists())
+        .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())
+        .and_then(|e| e.file_name().into_string().ok())
+}
+
 impl Exec for SystemExec {
     fn run(&self, program: &str, args: &[String]) -> Result<String, String> {
-        let out = std::process::Command::new(program)
-            .args(args)
+        let mut cmd = std::process::Command::new(program);
+        cmd.args(args);
+        if program == "hyprctl" {
+            if let Some(sig) = hypr_signature() {
+                cmd.env("HYPRLAND_INSTANCE_SIGNATURE", sig);
+            }
+        }
+        let out = cmd
             .output()
             .map_err(|e| format!("couldn't run {program}: {e}"))?;
         if out.status.success() {
@@ -67,6 +91,7 @@ impl Exec for SystemExec {
 
 pub struct DesktopAdapter {
     exec: Arc<dyn Exec>,
+    lua: std::sync::OnceLock<bool>,
 }
 
 impl Default for DesktopAdapter {
@@ -90,7 +115,82 @@ impl DesktopAdapter {
     }
 
     pub fn with_exec(exec: Arc<dyn Exec>) -> Self {
-        Self { exec }
+        Self {
+            exec,
+            lua: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Hyprland 0.55 and newer takes `hyprctl dispatch` in Lua
+    /// (`hl.dsp.focus({ ... })`); older ones take the classic
+    /// `focuswindow address:0x...`. An unreadable version means the newer.
+    fn lua_dispatch(&self) -> bool {
+        *self.lua.get_or_init(|| {
+            let out = self
+                .exec
+                .run("hyprctl", &["version".into()])
+                .unwrap_or_default();
+            let version = out.split_whitespace().nth(1).unwrap_or("");
+            let mut nums = version.split('.').map(|n| n.parse::<u32>().unwrap_or(0));
+            let (major, minor) = (nums.next().unwrap_or(0), nums.next().unwrap_or(0));
+            version.is_empty() || (major, minor) >= (0, 55)
+        })
+    }
+
+    fn focus(&self, address: &str) -> Result<String, String> {
+        if self.lua_dispatch() {
+            self.hypr_lua(&format!(
+                "hl.dsp.focus({{ window = \"address:{address}\" }})"
+            ))
+        } else {
+            self.dispatch(&["focuswindow", &format!("address:{address}")])
+        }
+    }
+
+    fn move_to_workspace(&self, address: &str, ws: &str) -> Result<String, String> {
+        if self.lua_dispatch() {
+            self.hypr_lua(&format!(
+                "hl.dsp.window.move({{ workspace = \"{}\", follow = false, window = \"address:{address}\" }})",
+                lua_workspace(ws)
+            ))
+        } else {
+            self.dispatch(&["movetoworkspacesilent", &format!("{ws},address:{address}")])
+        }
+    }
+
+    fn close(&self, address: &str) -> Result<String, String> {
+        if self.lua_dispatch() {
+            self.hypr_lua(&format!(
+                "hl.dsp.window.close({{ window = \"address:{address}\" }})"
+            ))
+        } else {
+            self.dispatch(&["closewindow", &format!("address:{address}")])
+        }
+    }
+
+    fn goto_workspace(&self, ws: &str) -> Result<String, String> {
+        if self.lua_dispatch() {
+            self.hypr_lua(&format!(
+                "hl.dsp.focus({{ workspace = \"{}\" }})",
+                lua_workspace(ws)
+            ))
+        } else {
+            self.dispatch(&["workspace", ws])
+        }
+    }
+
+    fn exec_app(&self, app: &str) -> Result<String, String> {
+        if self.lua_dispatch() {
+            self.hypr_lua(&format!("hl.dsp.exec_cmd(\"{app}\")"))
+        } else {
+            self.dispatch(&["exec", app])
+        }
+    }
+
+    /// `hyprctl dispatch <lua expression>`. Every value in it was validated
+    /// (hex address, bare name, workspace charset), so none can hold a quote.
+    fn hypr_lua(&self, expression: &str) -> Result<String, String> {
+        self.dispatch(&[expression])
     }
 
     fn windows(&self) -> Result<Vec<Window>, String> {
@@ -160,7 +260,13 @@ impl DesktopAdapter {
     fn dispatch(&self, args: &[&str]) -> Result<String, String> {
         let mut v: Vec<String> = vec!["dispatch".into()];
         v.extend(args.iter().map(|a| a.to_string()));
-        self.exec.run("hyprctl", &v)
+        // Hyprland answers "ok"; anything else is it refusing the request
+        // (it still exits 0).
+        let out = self.exec.run("hyprctl", &v)?;
+        match out.trim() {
+            "" | "ok" => Ok(out),
+            other => Err(format!("Hyprland refused it: {other}")),
+        }
     }
 
     fn run_verb(&self, req: &ActionRequest) -> Result<Value, String> {
@@ -201,26 +307,23 @@ impl DesktopAdapter {
             }
             "focus_window" => {
                 let w = self.pick(p("target").ok_or("name the window to focus")?)?;
-                self.dispatch(&["focuswindow", &format!("address:{}", w.address)])?;
+                self.focus(&w.address)?;
                 Ok(json!({"focused": w.class, "title": w.title}))
             }
             "move_window" => {
                 let w = self.pick(p("target").ok_or("name the window to move")?)?;
                 let ws = workspace_arg(p("workspace").ok_or("name the workspace")?)?;
-                self.dispatch(&[
-                    "movetoworkspacesilent",
-                    &format!("{ws},address:{}", w.address),
-                ])?;
+                self.move_to_workspace(&w.address, &ws)?;
                 Ok(json!({"moved": w.class, "workspace": ws}))
             }
             "switch_workspace" => {
                 let ws = workspace_arg(p("workspace").ok_or("name the workspace")?)?;
-                self.dispatch(&["workspace", &ws])?;
+                self.goto_workspace(&ws)?;
                 Ok(json!({"workspace": ws}))
             }
             "close_window" => {
                 let w = self.pick(p("target").ok_or("name the window to close")?)?;
-                self.dispatch(&["closewindow", &format!("address:{}", w.address)])?;
+                self.close(&w.address)?;
                 Ok(json!({"closed": w.class, "title": w.title}))
             }
             "launch_app" => {
@@ -314,8 +417,17 @@ impl DesktopAdapter {
         if self.exec.run("gtk-launch", &[app.into()]).is_ok() {
             return Ok(json!({"launched": app}));
         }
-        self.dispatch(&["exec", app])?;
+        self.exec_app(app)?;
         Ok(json!({"launched": app}))
+    }
+}
+
+/// A relative workspace in Lua dispatch is `r+1` / `r-1` (as in our bindings).
+fn lua_workspace(ws: &str) -> String {
+    if ws.starts_with('+') || ws.starts_with('-') {
+        format!("r{ws}")
+    } else {
+        ws.to_string()
     }
 }
 
@@ -393,7 +505,7 @@ impl ActionAdapter for DesktopAdapter {
         };
         // The commands block briefly (hyprctl answers in milliseconds).
         let exec = self.exec.clone();
-        let adapter = DesktopAdapter { exec };
+        let adapter = DesktopAdapter::with_exec(exec);
         let result = tokio::task::spawn_blocking(move || adapter.run_verb(&req)).await;
         let result = match result {
             Ok(r) => r,
@@ -420,22 +532,48 @@ mod tests {
       {"address":"0xddd4","mapped":false,"class":"ghost","title":"unmapped","workspace":{"id":3,"name":"3"}}
     ]"#;
 
-    /// Answers `hyprctl -j clients` with CLIENTS, fails `gtk-launch` for
-    /// names in `no_entry`, and records every command.
+    /// Answers the compositor's queries, fails `gtk-launch` for names in
+    /// `no_entry`, and records every command.
     struct Stub {
         calls: Mutex<Vec<String>>,
         no_entry: Vec<&'static str>,
+        version: &'static str,
+        dispatch_reply: &'static str,
     }
 
     impl Stub {
+        /// Hyprland's current Lua dispatch (what an unreadable version means).
         fn new(no_entry: &[&'static str]) -> Arc<Self> {
             Arc::new(Self {
                 calls: Mutex::new(Vec::new()),
                 no_entry: no_entry.to_vec(),
+                version: "",
+                dispatch_reply: "ok",
+            })
+        }
+        /// An older Hyprland, which takes the classic dispatch syntax.
+        fn classic(no_entry: &[&'static str]) -> Arc<Self> {
+            Arc::new(Self {
+                calls: Mutex::new(Vec::new()),
+                no_entry: no_entry.to_vec(),
+                version: "Hyprland 0.50.1 built from branch v0.50.1",
+                dispatch_reply: "ok",
+            })
+        }
+        /// A Hyprland that refuses every dispatch.
+        fn refusing() -> Arc<Self> {
+            Arc::new(Self {
+                calls: Mutex::new(Vec::new()),
+                no_entry: Vec::new(),
+                version: "",
+                dispatch_reply: "error: no such window",
             })
         }
         fn calls(&self) -> Vec<String> {
             self.calls.lock().unwrap().clone()
+        }
+        fn last(&self) -> String {
+            self.calls().last().cloned().unwrap_or_default()
         }
     }
 
@@ -443,6 +581,12 @@ mod tests {
         fn run(&self, program: &str, args: &[String]) -> Result<String, String> {
             let line = format!("{program} {}", args.join(" "));
             self.calls.lock().unwrap().push(line.clone());
+            if line == "hyprctl version" {
+                return Ok(self.version.into());
+            }
+            if program == "hyprctl" && args[0] == "dispatch" {
+                return Ok(self.dispatch_reply.into());
+            }
             if line == "hyprctl -j clients" {
                 return Ok(CLIENTS.into());
             }
@@ -505,15 +649,15 @@ mod tests {
         let r = run(&stub, "focus_window", json!({"target": "Firefox"})).await;
         assert!(r.success, "{:?}", r.error);
         assert_eq!(
-            stub.calls().last().unwrap(),
-            "hyprctl dispatch focuswindow address:0xaaa1"
+            stub.last(),
+            r#"hyprctl dispatch hl.dsp.focus({ window = "address:0xaaa1" })"#
         );
         // A part of the title is enough.
         let r = run(&stub, "focus_window", json!({"target": "btop"})).await;
         assert!(r.success);
         assert_eq!(
-            stub.calls().last().unwrap(),
-            "hyprctl dispatch focuswindow address:0xccc3"
+            stub.last(),
+            r#"hyprctl dispatch hl.dsp.focus({ window = "address:0xccc3" })"#
         );
     }
 
@@ -548,8 +692,8 @@ mod tests {
             .success
         );
         assert_eq!(
-            stub.calls().last().unwrap(),
-            "hyprctl dispatch movetoworkspacesilent 3,address:0xaaa1"
+            stub.last(),
+            r#"hyprctl dispatch hl.dsp.window.move({ workspace = "3", follow = false, window = "address:0xaaa1" })"#
         );
         assert!(
             run(&stub, "switch_workspace", json!({"workspace": "+1"}))
@@ -557,22 +701,75 @@ mod tests {
                 .success
         );
         assert_eq!(
-            stub.calls().last().unwrap(),
-            "hyprctl dispatch workspace +1"
+            stub.last(),
+            r#"hyprctl dispatch hl.dsp.focus({ workspace = "r+1" })"#
         );
         let r = run(&stub, "close_window", json!({"target": "btop"})).await;
         assert!(r.success);
         assert_eq!(
-            stub.calls().last().unwrap(),
-            "hyprctl dispatch closewindow address:0xccc3"
+            stub.last(),
+            r#"hyprctl dispatch hl.dsp.window.close({ window = "address:0xccc3" })"#
         );
         assert_eq!(r.metadata["risk"], json!("destructive"));
     }
 
     #[tokio::test]
+    async fn an_older_hyprland_gets_the_classic_dispatch_syntax() {
+        let stub = Stub::classic(&["btop"]);
+        assert!(
+            run(&stub, "focus_window", json!({"target": "firefox"}))
+                .await
+                .success
+        );
+        assert_eq!(stub.last(), "hyprctl dispatch focuswindow address:0xaaa1");
+        assert!(
+            run(
+                &stub,
+                "move_window",
+                json!({"target": "firefox", "workspace": "3"})
+            )
+            .await
+            .success
+        );
+        assert_eq!(
+            stub.last(),
+            "hyprctl dispatch movetoworkspacesilent 3,address:0xaaa1"
+        );
+        assert!(
+            run(&stub, "switch_workspace", json!({"workspace": "+1"}))
+                .await
+                .success
+        );
+        assert_eq!(stub.last(), "hyprctl dispatch workspace +1");
+        assert!(
+            run(&stub, "close_window", json!({"target": "btop"}))
+                .await
+                .success
+        );
+        assert_eq!(stub.last(), "hyprctl dispatch closewindow address:0xccc3");
+        assert!(
+            run(&stub, "launch_app", json!({"app": "btop"}))
+                .await
+                .success
+        );
+        assert_eq!(stub.last(), "hyprctl dispatch exec btop");
+    }
+
+    #[tokio::test]
+    async fn a_refused_dispatch_is_an_error_not_a_success() {
+        let stub = Stub::refusing();
+        let r = run(&stub, "close_window", json!({"target": "btop"})).await;
+        assert!(!r.success);
+        assert!(r
+            .error
+            .unwrap()
+            .contains("Hyprland refused it: error: no such window"));
+    }
+
+    #[tokio::test]
     async fn workspace_names_cannot_carry_extra_dispatch_arguments() {
         let stub = Stub::new(&[]);
-        for bad in ["1;exec rm -rf ~", "2,address:0x1", "a b", ""] {
+        for bad in ["1;exec rm -rf ~", "2,address:0x1", "a b", "1\")", ""] {
             let r = run(&stub, "switch_workspace", json!({"workspace": bad})).await;
             assert!(!r.success, "{bad:?} was accepted");
         }
@@ -587,19 +784,20 @@ mod tests {
                 .await
                 .success
         );
-        assert_eq!(stub.calls().last().unwrap(), "gtk-launch firefox");
+        assert_eq!(stub.last(), "gtk-launch firefox");
         assert!(
             run(&stub, "launch_app", json!({"app": "btop"}))
                 .await
                 .success
         );
-        assert_eq!(stub.calls().last().unwrap(), "hyprctl dispatch exec btop");
+        assert_eq!(stub.last(), r#"hyprctl dispatch hl.dsp.exec_cmd("btop")"#);
         for bad in [
             "firefox --private-window",
             "sh -c 'x'",
             "a;b",
             "$(x)",
             "../bin/x",
+            "a\")",
             "",
         ] {
             let r = run(&stub, "launch_app", json!({"app": bad})).await;
@@ -615,7 +813,7 @@ mod tests {
                 .await
                 .success
         );
-        assert_eq!(stub.calls().last().unwrap(), "playerctl next");
+        assert_eq!(stub.last(), "playerctl next");
         assert!(
             !run(&stub, "media", json!({"command": "open-url"}))
                 .await
@@ -623,39 +821,27 @@ mod tests {
         );
 
         assert!(run(&stub, "volume", json!({"level": 40})).await.success);
-        assert_eq!(
-            stub.calls().last().unwrap(),
-            "wpctl set-volume @DEFAULT_AUDIO_SINK@ 40%"
-        );
+        assert_eq!(stub.last(), "wpctl set-volume @DEFAULT_AUDIO_SINK@ 40%");
         assert!(run(&stub, "volume", json!({"level": "25%"})).await.success);
-        assert_eq!(
-            stub.calls().last().unwrap(),
-            "wpctl set-volume @DEFAULT_AUDIO_SINK@ 25%"
-        );
+        assert_eq!(stub.last(), "wpctl set-volume @DEFAULT_AUDIO_SINK@ 25%");
         assert!(!run(&stub, "volume", json!({"level": 150})).await.success);
         assert!(
             run(&stub, "volume", json!({"mute": "toggle"}))
                 .await
                 .success
         );
-        assert_eq!(
-            stub.calls().last().unwrap(),
-            "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"
-        );
+        assert_eq!(stub.last(), "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle");
 
         // Brightness never goes to 0 (a black screen can't be undone by looking).
         assert!(run(&stub, "brightness", json!({"level": 0})).await.success);
-        assert_eq!(stub.calls().last().unwrap(), "brightnessctl set 1%");
+        assert_eq!(stub.last(), "brightnessctl set 1%");
 
         assert!(
             run(&stub, "power_profile", json!({"profile": "power-saver"}))
                 .await
                 .success
         );
-        assert_eq!(
-            stub.calls().last().unwrap(),
-            "powerprofilesctl set power-saver"
-        );
+        assert_eq!(stub.last(), "powerprofilesctl set power-saver");
         assert!(
             !run(&stub, "power_profile", json!({"profile": "turbo"}))
                 .await

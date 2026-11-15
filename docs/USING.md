@@ -39,6 +39,19 @@ Some things FRIDAY does itself and sends nowhere: volume, mute, do not disturb,
 battery, timers, opening Wi-Fi settings. The answer says
 "On this computer · nothing was sent".
 
+## Control the desktop (FRIDAY OS)
+
+On FRIDAY OS, tell FRIDAY what to do with your windows and apps and it does it:
+"put Firefox on workspace 2", "switch to workspace 3", "set the volume to 30",
+"pause the music", "open Firefox and move it to workspace 4", "what's playing".
+It looks at your windows, takes the steps one at a time and tells you what it did.
+
+Looking and reversible changes (focus, move, launch, volume, media, brightness)
+just happen, because you asked. Closing a window always asks first and shows
+the exact action. It stops after 8 steps. Questions ("how do I change the
+volume?") are answered, not acted on. `FRIDAY_DESKTOP=0` in
+`~/.config/friday/friday.env` turns this off.
+
 ## Other ways to ask
 
 ```
