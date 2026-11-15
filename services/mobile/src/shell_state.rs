@@ -373,6 +373,27 @@ pub fn render(state: &ShellState) -> serde_json::Value {
 /// Atomically write the state document (tmp + rename) so any inotify watch
 /// never observes a half-written file. Owner-only (0600): it carries the
 /// session token that authorizes commands.
+/// Where the daemon keeps its memory journal: `FRIDAY_MEMORY_DIR` when set;
+/// otherwise `memory` beside `state.json`. An older install wrote `friday-data`
+/// in whatever directory the daemon started in (the home folder, under
+/// systemd): that one stays in use while it exists, so nothing is lost.
+pub fn memory_dir(
+    env_dir: Option<String>,
+    state_file: &std::path::Path,
+    legacy: &std::path::Path,
+) -> std::path::PathBuf {
+    if let Some(dir) = env_dir.filter(|d| !d.trim().is_empty()) {
+        return dir.into();
+    }
+    if legacy.join("episodes.jsonl").exists() {
+        return legacy.to_path_buf();
+    }
+    state_file
+        .parent()
+        .map(|d| d.join("memory"))
+        .unwrap_or_else(|| legacy.to_path_buf())
+}
+
 pub fn write_state(path: &std::path::Path, value: &serde_json::Value) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -636,6 +657,33 @@ mod tests {
         assert_eq!(json["version"], 1);
         assert_eq!(json["token"], "tok");
         assert_eq!(json["telemetry"]["cpu_percent"], 12.0);
+    }
+
+    #[test]
+    fn memory_lives_beside_state_json_unless_told_or_already_elsewhere() {
+        let tmp = std::env::temp_dir().join(format!("friday-mem-{}", std::process::id()));
+        let legacy = tmp.join("friday-data");
+        let state = tmp.join("state/friday/state.json");
+        let _ = std::fs::remove_dir_all(&tmp);
+        // Nothing yet: beside state.json.
+        assert_eq!(
+            memory_dir(None, &state, &legacy),
+            tmp.join("state/friday/memory")
+        );
+        // An explicit directory always wins; a blank one is no setting.
+        assert_eq!(
+            memory_dir(Some("/data/mem".into()), &state, &legacy),
+            std::path::PathBuf::from("/data/mem")
+        );
+        assert_eq!(
+            memory_dir(Some("  ".into()), &state, &legacy),
+            tmp.join("state/friday/memory")
+        );
+        // An older install's journal stays where it is.
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("episodes.jsonl"), "").unwrap();
+        assert_eq!(memory_dir(None, &state, &legacy), legacy);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

@@ -29,6 +29,7 @@ Autonomous Agent & Cognitive Loop:
   friday ask --web ["<objective>"] Ask with web search results and cited sources
   friday answers                   Show past answers (last one: friday answers --last)
   friday app-context [on|off]      Whether a question about selected text names the app it came from
+  friday forget [what]             Show what FRIDAY keeps on this computer, or wipe it
   friday sent [N]                  Show what left this machine for AI providers (egress log)
   friday goal "<objective>"        Dispatch an autonomous goal to FRIDAY agent
   friday cancel                    Cancel the goal FRIDAY is working on
@@ -901,6 +902,65 @@ friday_app_context_cmd() {
   esac
 }
 
+# What FRIDAY keeps on this computer, and a way to wipe it. Counts only: the
+# contents are never printed here.
+friday_forget() {
+  local state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
+  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
+  local mem_dir=""
+  [ -r "$env_file" ] && mem_dir=$(sed -n 's/^FRIDAY_MEMORY_DIR=//p' "$env_file" | tail -n 1 | tr -d '"'"'")
+  if [ -z "$mem_dir" ]; then
+    mem_dir="$state_dir/memory"
+    [ -e "$mem_dir/episodes.jsonl" ] || ! [ -e "$HOME/friday-data/episodes.jsonl" ] || mem_dir="$HOME/friday-data"
+  fi
+  local what="" yes=false arg
+  for arg in "$@"; do
+    case "$arg" in
+      --yes|-y) yes=true ;;
+      answers|sent|memory|all) what="$arg" ;;
+      *) echo "usage: friday forget [answers|sent|memory|all] [--yes]" >&2; return 2 ;;
+    esac
+  done
+  local n_answers n_asks n_sent n_mem
+  n_answers=$(grep -c '^<!-- friday answer -->' "$state_dir/answers.md" 2>/dev/null || true)
+  n_asks=$(wc -l <"$state_dir/ask-history" 2>/dev/null || true)
+  n_sent=$(wc -l <"$state_dir/egress.jsonl" 2>/dev/null || true)
+  n_mem=$(wc -l <"$mem_dir/episodes.jsonl" 2>/dev/null || true)
+  if [ -z "$what" ]; then
+    echo "FRIDAY keeps this on your computer:"
+    echo "  answers  ${n_answers:-0} saved answers, ${n_asks:-0} remembered questions   ($state_dir)"
+    echo "  sent     ${n_sent:-0} entries in the log of what was sent to AI providers"
+    echo "  memory   ${n_mem:-0} things FRIDAY remembered between questions   ($mem_dir)"
+    echo "Wipe some:  friday forget answers|sent|memory|all   (add --yes to skip the question)"
+    return 0
+  fi
+  if ! $yes; then
+    if [ ! -t 0 ]; then echo "Say yes with --yes: friday forget $what --yes" >&2; return 2; fi
+    local reply
+    read -r -p "Delete FRIDAY's $what? This can't be undone. [y/N] " reply
+    [[ "$reply" =~ ^[Yy]$ ]] || { echo "Nothing deleted."; return 0; }
+  fi
+  if [ "$what" = answers ] || [ "$what" = all ]; then
+    rm -f "$state_dir/answers.md" "$state_dir/last-answer.md" "$state_dir/ask-history"
+    echo "Deleted ${n_answers:-0} saved answers and ${n_asks:-0} remembered questions."
+  fi
+  if [ "$what" = sent ] || [ "$what" = all ]; then
+    rm -f "$state_dir/egress.jsonl"
+    echo "Deleted ${n_sent:-0} entries from the log of what was sent."
+  fi
+  if [ "$what" = memory ] || [ "$what" = all ]; then
+    # The daemon holds the journal open, so it stops while it is deleted.
+    local was_up=false
+    if systemctl --user is-active --quiet friday-linux-daemon 2>/dev/null; then
+      was_up=true; systemctl --user stop friday-linux-daemon 2>/dev/null || true
+    fi
+    rm -f "$mem_dir/episodes.jsonl"
+    if $was_up; then systemctl --user start friday-linux-daemon 2>/dev/null || true; fi
+    echo "Deleted ${n_mem:-0} remembered things."
+  fi
+  return 0
+}
+
 friday_sent() {
   local n="${1:-20}"
   local state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
@@ -1530,6 +1590,10 @@ case "${1:-}" in
   app-context)
     shift
     friday_app_context_cmd "$@"
+    ;;
+  forget)
+    shift
+    friday_forget "$@"
     ;;
   status|system-info)
     shift

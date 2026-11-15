@@ -225,13 +225,17 @@ async fn main() {
 
     // Persistent memory: one durable journal backs the Executive's admission
     // gate + memory tools. Episodes survive restarts.
-    let memory_dir =
-        std::env::var("FRIDAY_MEMORY_DIR").unwrap_or_else(|_| "friday-data".to_string());
-    let journal = MemoryJournal::open(std::path::Path::new(&memory_dir).join("episodes.jsonl"))
-        .expect("open memory journal");
+    let memory_dir = friday_mobile::shell_state::memory_dir(
+        std::env::var("FRIDAY_MEMORY_DIR").ok(),
+        &state_path,
+        std::path::Path::new("friday-data"),
+    );
+    let _ = std::fs::create_dir_all(&memory_dir);
+    let journal =
+        MemoryJournal::open(memory_dir.join("episodes.jsonl")).expect("open memory journal");
     tracing::info!(
         "persistent memory journal at {}/episodes.jsonl: {} episode(s) replayed",
-        memory_dir,
+        memory_dir.display(),
         journal.len()
     );
 
