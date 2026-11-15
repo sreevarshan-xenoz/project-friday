@@ -97,7 +97,8 @@ jobs:
       - name: Install build dependencies
         run: |
           pacman -Syu --noconfirm --needed base-devel git rust namcap desktop-file-utils \
-            jq fuzzel libnotify wl-clipboard curl openssl
+            jq fuzzel libnotify wl-clipboard curl openssl \
+            hicolor-icon-theme libdrm libpipewire libxcb mesa wayland
       - uses: actions/checkout@v4
         with:
           # makepkg clones the checkout and counts commits for pkgver.
