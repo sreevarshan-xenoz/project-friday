@@ -14,7 +14,7 @@ below are Linux only so far.
 |---|---|---|
 | Super+Y | whatever you type | your question |
 | Super+Alt+Y | the text you selected (or copied) | the question, the text, the app name and window title |
-| Super+Ctrl+Y | your screen | the question and one screenshot |
+| Super+Ctrl+Y | your screen | the question and one screenshot, or, when the app has an accessibility tree with enough text (and agent-desktop is installed), that text instead and no screenshot (`FRIDAY_SCREEN_TEXT=0` always uses the screenshot) |
 
 Hold Super+Y instead of tapping it to talk (`friday voice setup` first). The
 speech is turned into text on your computer; only the text is sent. On niri, which can't see a key being released, press Mod+Y once to speak and again to ask.
