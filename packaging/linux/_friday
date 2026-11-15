@@ -18,6 +18,7 @@ _friday() {
     'private:Private mode with a local model only'
     'face:Face unlock for the lock screen'
     'voice:Hold Super+Y and speak'
+    'helper:System helper for package updates and installs'
     'welcome:Show the first-login greeting again'
     'app-context:Whether selected-text questions name the app they came from'
     'forget:Show what FRIDAY keeps, or wipe it'
@@ -56,6 +57,7 @@ _friday() {
     app-context) _values 'action' status on off ;;
     face)     _values 'action' status setup remove ;;
     voice)    _values 'action' status setup remove ;;
+    helper)   _values 'action' status enable disable ;;
     setup-ai) _arguments '--keep-others[keep the other providers'"'"' keys]' '--only[use only this provider'"'"'s key]' '1:provider:(opencode gemini groq nvidia-nim openrouter cerebras)' ;;
     welcome)  _arguments '--force[show it even if already shown]' ;;
     daemon)   _values 'action' status start stop restart logs ;;

@@ -90,3 +90,11 @@ Web search happens only when you ask for it, and never in private mode.
 FRIDAY OS has its own keymap (Super+K lists it), Super+L locks (with face unlock
 after `friday face setup`), and Super+Alt+G switches game mode. `friday doctor`
 checks that everything is running; `friday report` writes a redacted bug report.
+
+## System helper
+
+FRIDAY can update the system, install, or remove packages, but only if you
+turn this on: `friday helper enable`. Even with it on, every action still asks
+for your approval in a system prompt before anything changes.
+Check whether it is on with `friday helper status`, or turn it off anytime with
+`friday helper disable`.

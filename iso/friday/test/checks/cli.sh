@@ -381,6 +381,19 @@ contains "face status says it's off and how to turn it on" "$(bash "$F" face sta
 expect "face setup changes nothing when declined" bash -c "printf 'n\\n' | bash '$F' face setup | grep -q 'Nothing changed'"
 expect "face rejects an unknown action" bash -c "! bash '$F' face bogus"
 
+echo "helper"
+contains "help lists helper" "$(bash "$F" help 2>&1)" "helper"
+expect "helper status exits 0" bash "$F" helper status
+h_status=$(bash "$F" helper status 2>&1)
+if [[ "$h_status" =~ ^System\ helper: ]]; then
+  pass "helper status prints a line starting with System helper:"
+else
+  fail "helper status did not start with System helper: ($h_status)"
+fi
+if [[ -f /usr/lib/friday/friday-os-helper ]]; then
+  contains "helper status reports off when package is installed" "$h_status" "System helper: off"
+fi
+
 echo "connect an account"
 # A stub Claude Code: answers only once signed in (its login makes the mark).
 cat >"$S/claude" <<EOF
