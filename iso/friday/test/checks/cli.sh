@@ -398,6 +398,47 @@ contains "face status says it's off and how to turn it on" "$(bash "$F" face sta
 expect "face setup changes nothing when declined" bash -c "printf 'n\\n' | bash '$F' face setup | grep -q 'Nothing changed'"
 expect "face rejects an unknown action" bash -c "! bash '$F' face bogus"
 
+echo "phone"
+# `friday phone`, without Pocketdesk installed.
+if ! command -v pocketdesk >/dev/null 2>&1; then
+  contains "phone status says Pocketdesk is not installed" "$(bash "$F" phone status 2>&1)" "not installed"
+  expect "phone on needs Pocketdesk" bash -c "! bash '$F' phone on </dev/null"
+fi
+# With a stub Pocketdesk: declining changes nothing.
+CS="$W/confirm-stub"; mkdir -p "$CS"
+printf '#!/bin/sh\nexit 0\n' >"$CS/pocketdesk"; chmod +x "$CS/pocketdesk"
+contains "phone on asks first and declining changes nothing" "$(printf 'n\n' | PATH="$CS:$PATH" bash "$F" phone on 2>&1)" "Nothing changed"
+rm -f "$CS/pocketdesk"
+# A confirmation goes to the screen and, with a paired phone set to answer, the
+# phone too: the first answer wins; no answer is a cancel.
+eval "$(sed -n '/^friday_confirm() {/,/^}/p' "$F")"
+cat >"$CS/notify-send" <<'EOF2'
+#!/bin/sh
+# NS_ANSWER after NS_DELAY seconds, as a clicked action prints its key.
+sleep "${NS_DELAY:-0}"
+[ -z "${NS_ANSWER:-}" ] || echo "$NS_ANSWER"
+EOF2
+cat >"$CS/pocketdesk" <<'EOF2'
+#!/bin/sh
+# `pocketdesk ask`: PD_ANSWER (yes|no|none) after PD_DELAY seconds; the question is logged.
+echo "$*" >>"${PD_LOG:-/dev/null}"
+sleep "${PD_DELAY:-0}"
+case "${PD_ANSWER:-none}" in yes) echo yes; exit 0 ;; no) echo no; exit 1 ;; *) exit 2 ;; esac
+EOF2
+chmod +x "$CS/notify-send" "$CS/pocketdesk"
+conf() { PATH="$CS:$PATH" friday_confirm "git push origin main" ""; }
+export PD_LOG="$W/pd.log"; : >"$PD_LOG"
+[[ "$(NS_ANSWER=run PD_ANSWER=none conf)" == run ]] && pass "confirm: the screen's Run runs it (phone has no answer)" || fail "confirm: screen Run"
+[[ "$(NS_ANSWER=cancel PD_ANSWER=none conf)" == cancel ]] && pass "confirm: the screen's Cancel cancels" || fail "confirm: screen Cancel"
+start=$SECONDS; r=$(NS_ANSWER=run NS_DELAY=5 PD_ANSWER=yes conf)
+[[ "$r" == run && $((SECONDS - start)) -lt 4 ]] && pass "confirm: the phone's Yes runs it without waiting for the screen" || fail "confirm: phone Yes ($r after $((SECONDS - start))s)"
+[[ "$(NS_ANSWER=run NS_DELAY=5 PD_ANSWER=no conf)" == cancel ]] && pass "confirm: the phone's No cancels" || fail "confirm: phone No"
+[[ "$(NS_ANSWER= PD_ANSWER=none conf)" == cancel ]] && pass "confirm: no answer anywhere is a cancel" || fail "confirm: no answer"
+contains "confirm: the phone is asked the exact action" "$(cat "$PD_LOG")" "FRIDAY wants to run: git push origin main"
+rm -f "$CS/pocketdesk"
+[[ "$(NS_ANSWER=run conf)" == run ]] && pass "confirm: works with no Pocketdesk at all" || fail "confirm: no Pocketdesk"
+unset PD_LOG
+
 echo "connect an account"
 # A stub Claude Code: answers only once signed in (its login makes the mark).
 cat >"$S/claude" <<EOF

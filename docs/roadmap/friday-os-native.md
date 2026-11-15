@@ -92,6 +92,14 @@ limit per task, and an audit log (`friday actions`) of every action taken.
    pacman repo, paired in the first-login tour. Then it joins FRIDAY:
    confirmations for gated actions can be answered on the phone
    (`pocketdesk ask`), and a phone deck button can ask FRIDAY.
+   *Built:* the pinned Pocketdesk 0.9.0 Linux release is repackaged as `pocketdesk`
+   (`packaging/arch/pocketdesk`, checksum-pinned, no compile; the service is installed
+   but off), built into the ISO's local repo, pacstrapped by the installer and published
+   in the signed pacman repo. `friday phone [status|on|off]` turns it on after a yes and
+   prints a pairing PIN; the first-login tour has a phone step when it is installed; and
+   a confirmation is asked on the screen and, if a paired phone is set to answer, on the
+   phone through `pocketdesk ask` (first answer wins, cancel on silence). Not built yet: a
+   deck button that asks FRIDAY.
 7. **Checks for all of it.** Scripted scenarios in the VM per verb, an e2e where
    the fake model drives the loop, and an owner pass on real hardware.
 

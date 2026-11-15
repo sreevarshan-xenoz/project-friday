@@ -1,0 +1,8 @@
+post_install() {
+  echo ">>> Pair your phone: friday phone   (or open Pocketdesk from the app menu)"
+}
+
+post_upgrade() {
+  echo ">>> Restart the server to run the new version:"
+  echo ">>>   systemctl --user restart pocketdesk"
+}

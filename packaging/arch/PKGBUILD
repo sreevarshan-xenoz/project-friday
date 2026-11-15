@@ -38,6 +38,7 @@ optdepends=(
   'noto-fonts: FRIDAY Shell text'
   'brightnessctl: brightness slider in FRIDAY Shell'
   'networkmanager: network status in FRIDAY Shell'
+  'pocketdesk: pair a phone (friday phone) and answer FRIDAY from it'
 )
 provides=("$_name")
 conflicts=("$_name")

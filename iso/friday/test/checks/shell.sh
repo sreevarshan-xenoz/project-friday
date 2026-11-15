@@ -101,7 +101,7 @@ else
   fail "nothing answers the answer pill's IPC target"
 fi
 # The first-login tour: begins, moves on when FRIDAY answers, can be skipped.
-timeout 10 qs -p "$FS" ipc call tour begin "Alex" true >/dev/null 2>&1 || true
+timeout 10 qs -p "$FS" ipc call tour begin "Alex" true false >/dev/null 2>&1 || true
 sleep 1.5; grim "$W/friday-tour.png" 2>/dev/null || true
 [[ "$(timeout 10 qs -p "$FS" ipc call tour step 2>/dev/null)" == 0 ]] && pass "tour begins at its first step" || fail "tour did not begin"
 timeout 10 qs -p "$FS" ipc call answer present true "q" "a" "" "" "" >/dev/null 2>&1 || true
@@ -110,6 +110,11 @@ sleep 0.5
 timeout 10 qs -p "$FS" ipc call answer dismiss >/dev/null 2>&1 || true
 timeout 10 qs -p "$FS" ipc call tour finish >/dev/null 2>&1 || true
 [[ "$(timeout 10 qs -p "$FS" ipc call tour step 2>/dev/null)" == -1 ]] && pass "tour can be skipped" || fail "tour did not finish"
+# With Pocketdesk installed the tour has a last step about the phone.
+timeout 10 qs -p "$FS" ipc call tour begin "Alex" true true >/dev/null 2>&1 || true
+for _ in 1 2 3 4; do timeout 10 qs -p "$FS" ipc call tour next >/dev/null 2>&1 || true; done
+[[ "$(timeout 10 qs -p "$FS" ipc call tour step 2>/dev/null)" == 4 ]] && pass "tour has a phone step when Pocketdesk is installed" || fail "tour has no phone step"
+timeout 10 qs -p "$FS" ipc call tour finish >/dev/null 2>&1 || true
 # Past answers, as friday ask writes them, are searchable.
 printf '# what is using my disk\n\n_2026-11-14 21:10_\n\nMostly photos.\n\n---\n\n# explain rust error E0308\n\n_2026-11-14 22:30_\n\n> fn main\n\nMismatched types.\n\n---\n\n' \
   >"$XDG_STATE_HOME/friday/answers.md"

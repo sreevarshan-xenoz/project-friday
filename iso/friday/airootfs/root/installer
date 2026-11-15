@@ -214,7 +214,9 @@ phase_msg 4 "Installing FRIDAY and the Omarchy desktop layer"
 # package upgrade work on the installed system.
 FRIDAY_PKG=$(find /opt/friday/repo -maxdepth 1 -name 'friday-git-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1)
 [[ -n "$FRIDAY_PKG" ]] || { echo "the FRIDAY package is missing from /opt/friday/repo" >&2; exit 1; }
-pacstrap_with_retry -U /mnt "$FRIDAY_PKG"
+POCKETDESK_PKG=$(find /opt/friday/repo -maxdepth 1 -name 'pocketdesk-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1)
+[[ -n "$POCKETDESK_PKG" ]] || { echo "the Pocketdesk package is missing from /opt/friday/repo" >&2; exit 1; }
+pacstrap_with_retry -U /mnt "$FRIDAY_PKG" "$POCKETDESK_PKG"
 # Updates: each FRIDAY release publishes friday-git to this pacman repo, so
 # pacman -Syu keeps FRIDAY current. Packages and the database are signed with
 # FRIDAY's release key (shipped in friday-git); pacman trusts that one key and
