@@ -695,6 +695,13 @@ fn capability_for_description(description: &str) -> Capability {
         return Capability::ExecuteCommand;
     }
 
+    // 1b. System packages (FRIDAY OS): update the system, install or remove
+    //     a package. An instruction only, never a question, and not a
+    //     project's own dependencies.
+    if is_system_intent(&d) {
+        return Capability::Custom("system.packages".into());
+    }
+
     // 2. Filesystem tree — the whole structure, not a flat listing.
     if has_word(&d, "tree")
         || has_word(&d, "structure")
@@ -792,6 +799,64 @@ fn capability_for_description(description: &str) -> Capability {
     // as a command — an unclassified goal answers from what FRIDAY already
     // knows, or reports honestly that it has no answer yet.
     Capability::SearchMemory
+}
+
+/// An instruction to update the system or install or remove a package of it.
+/// "update my system", "install htop", "uninstall vlc". Not "how do I install
+/// htop", not "install the dependencies" (a project's, run as a command), and
+/// not a file ("remove old.txt").
+fn is_system_intent(d: &str) -> bool {
+    let d = [
+        "please ",
+        "can you ",
+        "could you ",
+        "would you ",
+        "will you ",
+    ]
+    .iter()
+    .find_map(|p| d.strip_prefix(p))
+    .unwrap_or(d)
+    .trim();
+    let mut words = d.split_whitespace();
+    let first = words.next().unwrap_or("");
+    let rest: Vec<&str> = words.collect();
+    let system = ["system", "everything", "packages", "arch", "linux", "os"];
+    match first {
+        "update" | "upgrade" => {
+            rest.iter()
+                .any(|w| system.contains(w) || *w == "computer" || *w == "machine")
+                && !rest
+                    .iter()
+                    .any(|w| ["app", "apps", "dependencies", "deps"].contains(w))
+        }
+        "install" | "uninstall" => {
+            const PROJECT: [&str; 14] = [
+                "dependencies",
+                "deps",
+                "requirements",
+                "project",
+                "npm",
+                "pip",
+                "cargo",
+                "gem",
+                "crate",
+                "extension",
+                "plugin",
+                "from",
+                "locally",
+                "globally",
+            ];
+            !rest.is_empty()
+                && rest.len() <= 4
+                && !rest
+                    .iter()
+                    .any(|w| PROJECT.contains(w) || w.contains('/') || w.contains('.'))
+        }
+        "remove" => rest
+            .first()
+            .is_some_and(|w| *w == "package" || *w == "the" && rest.get(1) == Some(&"package")),
+        _ => false,
+    }
 }
 
 /// An instruction to change the desktop. It starts like an instruction (not
@@ -1511,6 +1576,36 @@ mod tests {
             planning.infer_capability(composed, &[]),
             Capability::ExecuteCommand
         );
+    }
+
+    #[test]
+    fn system_package_goals_route_to_the_system_tool() {
+        let sys = Capability::Custom("system.packages".into());
+        for yes in [
+            "update my system",
+            "Please update everything",
+            "upgrade the system",
+            "install htop",
+            "can you install vlc",
+            "uninstall firefox",
+            "remove package htop",
+            "remove the package vlc",
+        ] {
+            assert_eq!(capability_for_description(yes), sys, "{yes}");
+        }
+        for no in [
+            "how do I install htop",
+            "what packages are installed",
+            "install the dependencies",
+            "install npm packages for this project",
+            "install it from https://example.com/x.sh",
+            "remove old.txt",
+            "update the readme",
+            "update my apps",
+            "install the rust toolchain locally",
+        ] {
+            assert_ne!(capability_for_description(no), sys, "{no}");
+        }
     }
 
     #[test]
