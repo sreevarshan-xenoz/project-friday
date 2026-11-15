@@ -165,7 +165,10 @@ FD="$HOME/.local/state/friday"; mkdir -p "$FD/memory"
 printf '<!-- friday answer -->\n# q1\n\nA\n\n---\n\n<!-- friday answer -->\n# q2\n\nB\n\n---\n\n' >"$FD/answers.md"
 printf 'q2\nq1\n' >"$FD/ask-history"; printf '{"a":1}\n{"a":2}\n{"a":3}\n' >"$FD/egress.jsonl"
 printf '{"e":1}\n' >"$FD/memory/episodes.jsonl"
+printf '%s\n' '{"ts":"2026-11-15T08:12:03.123+00:00","verb":"move_window","params":{"target":"firefox","workspace":"2"},"risk":"reversible","ok":true,"goal":"put firefox on workspace 2"}' \
+  '{"ts":"2026-11-15T08:12:04+00:00","verb":"close_window","params":{"target":"gimp"},"risk":"destructive","ok":false,"goal":"close gimp"}' >"$FD/actions.jsonl"
 out=$(bash "$F" forget </dev/null)
+contains "forget lists the desktop actions" "$out" "2 things FRIDAY did on your desktop"
 contains "forget lists the saved answers" "$out" "2 saved answers, 2 remembered questions"
 contains "forget lists the sent log" "$out" "3 entries in the log"
 contains "forget lists the memory" "$out" "1 things FRIDAY remembered"
@@ -177,6 +180,20 @@ contains "forget answers reports counts" "$(bash "$F" forget answers --yes)" "De
 bash "$F" forget all --yes >/dev/null
 [[ ! -e "$FD/egress.jsonl" && ! -e "$FD/memory/episodes.jsonl" ]] && pass "forget all deletes the rest" || fail "forget all left files"
 if bash "$F" forget nonsense >/dev/null 2>&1; then fail "forget took an unknown thing"; else pass "forget refuses an unknown thing"; fi
+
+# `friday actions`: what FRIDAY did on the desktop, readable, newest last.
+printf '%s\n' '{"ts":"2026-11-15T08:12:03.123+00:00","verb":"move_window","params":{"target":"firefox","workspace":"2"},"risk":"reversible","ok":true,"goal":"put firefox on workspace 2"}' \
+  '{"ts":"2026-11-15T08:12:04+00:00","verb":"close_window","params":{"target":"gimp"},"risk":"destructive","ok":false,"goal":"close gimp"}' >"$FD/actions.jsonl"
+acts=$(bash "$F" actions)
+contains "actions shows the verb and its parameters" "$acts" 'move_window  {"target":"firefox","workspace":"2"}  (reversible)'
+contains "actions marks a failure" "$acts" "failed"
+contains "actions shows the time without fractions" "$acts" "2026-11-15 08:12:03"
+[[ $(bash "$F" actions 1 | wc -l) == 1 ]] && pass "actions N limits to the last N" || fail "actions 1 printed more than one line"
+contains "actions 1 is the newest" "$(bash "$F" actions 1)" "close_window"
+if bash "$F" actions oops >/dev/null 2>&1; then fail "actions took a non-number"; else pass "actions refuses a non-number"; fi
+contains "forget actions reports counts" "$(bash "$F" forget actions --yes)" "Deleted 2 entries from the log of desktop actions"
+[[ ! -e "$FD/actions.jsonl" ]] && pass "forget actions deletes the log" || fail "forget actions left the log"
+contains "actions with no log says so" "$(bash "$F" actions)" "hasn't done anything on your desktop yet"
 
 PRIMARY="" CLIP="Bonjour" bash "$F" ask -s "translate"; sleep 0.3
 contains "falls back to the clipboard" "$(cat "$LOG")" "Bonjour"

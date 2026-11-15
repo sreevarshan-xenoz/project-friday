@@ -10,6 +10,7 @@ binds {
     Mod+Y hotkey-overlay-title="FRIDAY: Ask" { spawn "friday" "hold" "toggle"; }
     Mod+Alt+Y hotkey-overlay-title="FRIDAY: Ask about selected text" { spawn "friday" "ask" "--selection"; }
     Mod+Ctrl+Y hotkey-overlay-title="FRIDAY: Ask about the screen" { spawn "friday" "ask" "--screen"; }
+    Mod+Ctrl+Escape hotkey-overlay-title="FRIDAY: Stop what it is doing" { spawn "friday" "cancel"; }
     Mod+A hotkey-overlay-title="FRIDAY Shell: FRIDAY" { spawn "friday" "shell" "friday"; }
     Mod+N hotkey-overlay-title="FRIDAY Shell: Controls and notifications" { spawn "friday" "shell" "control"; }
 }

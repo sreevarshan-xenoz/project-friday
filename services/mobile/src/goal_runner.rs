@@ -1319,6 +1319,8 @@ impl GoalRunner {
                     f.clone() as Arc<dyn LlmStrategyClient>,
                     friday_actions::DesktopAdapter::new(),
                     confirmation_gate.clone(),
+                    executive.abort_token(),
+                    crate::desktop_tool::audit_dir(),
                 )));
                 true
             }

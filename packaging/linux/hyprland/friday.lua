@@ -6,3 +6,5 @@ hl.bind("SUPER + Y", hl.dsp.exec_cmd("friday hold start"), { description = "FRID
 hl.bind("SUPER + Y", hl.dsp.exec_cmd("friday hold end"), { description = "FRIDAY: Ask (let go)", release = true })
 hl.bind("SUPER + ALT + Y", hl.dsp.exec_cmd("friday ask --selection"), { description = "FRIDAY: Ask about selected text" })
 hl.bind("SUPER + CTRL + Y", hl.dsp.exec_cmd("friday ask --screen"), { description = "FRIDAY: Ask about the screen" })
+-- The kill key: stops whatever FRIDAY is doing on your desktop, at once.
+hl.bind("SUPER + CTRL + Escape", hl.dsp.exec_cmd("friday cancel"), { description = "FRIDAY: Stop what it is doing" })

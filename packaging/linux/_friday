@@ -21,6 +21,7 @@ _friday() {
     'welcome:Show the first-login greeting again'
     'app-context:Whether selected-text questions name the app they came from'
     'forget:Show what FRIDAY keeps, or wipe it'
+    'actions:Show what FRIDAY did on your desktop'
     'context:Share screen context with the assistant'
     'daemon:Control the friday-linux-daemon service'
     'create-skill:Create a new skill template'
@@ -48,7 +49,8 @@ _friday() {
                 '--another[ask again, answered with more care by a different model]:model (provider/model):' '*:question:' ;;
     answers)  _arguments '--last[show only the last answer]' ;;
     sent)     _arguments '1:count:' ;;
-    forget)   _values 'what' answers sent memory all ;;
+    forget)   _values 'what' answers sent memory actions all ;;
+    actions)  _arguments '1:count:' ;;
     connect|disconnect) _values 'account' claude codex agy cline ;;
     private)  _values 'action' status on off ;;
     app-context) _values 'action' status on off ;;

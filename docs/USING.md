@@ -48,7 +48,10 @@ It looks at your windows, takes the steps one at a time and tells you what it di
 
 Looking and reversible changes (focus, move, launch, volume, media, brightness)
 just happen, because you asked. Closing a window always asks first and shows
-the exact action. It stops after 8 steps. Questions ("how do I change the
+the exact action. It stops after 8 steps. Super+Ctrl+Esc (Mod+Ctrl+Esc on niri)
+stops whatever it is doing at once, as does Stop on the answer card, and
+`friday actions` lists everything it did (which action, with what, whether it
+worked, never what was on your screen). Questions ("how do I change the
 volume?") are answered, not acted on. `FRIDAY_DESKTOP=0` in
 `~/.config/friday/friday.env` turns this off.
 
