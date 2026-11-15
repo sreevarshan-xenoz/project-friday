@@ -25,6 +25,8 @@ pub mod reasoning;
 pub mod sim;
 pub mod telemetry;
 pub mod terminal;
+#[cfg(target_os = "linux")]
+pub mod ui;
 pub mod web;
 pub mod webagent;
 
@@ -52,6 +54,11 @@ pub use reasoning::{
 };
 pub use telemetry::{MeasuredOutcome, ProviderStats, ProviderTelemetry};
 pub use terminal::TerminalAdapter;
+#[cfg(target_os = "linux")]
+pub use ui::{
+    is_password_role, label_is_dangerous, ui_risk_of, validate_path, AppInfo, AtspiBackend,
+    NodeDetails, ResolvedTarget, UiAdapter, UiBackend, UiRisk,
+};
 pub use web::{urlencode, WebAdapter};
 pub use webagent::{
     agent_for_site, register_webagent_capabilities, webagent_capability_specs, ChatGPTAdapter,

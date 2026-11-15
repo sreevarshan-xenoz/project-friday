@@ -32,6 +32,11 @@ pub use adapters::{
     ProviderStats, ProviderTelemetry, ReasoningAdapter, ReasoningProvider, TerminalAdapter,
     Transport, WebAdapter, WebAgent, WebAgentAdapter, WebAgentResponse,
 };
+#[cfg(target_os = "linux")]
+pub use adapters::{
+    is_password_role, label_is_dangerous, ui_risk_of, validate_path, AppInfo, AtspiBackend,
+    NodeDetails, ResolvedTarget, UiAdapter, UiBackend, UiRisk,
+};
 pub use audit::{AuditEngine, AuditEntry};
 pub use egress::{EgressDecision, EgressDenyReason, EgressPolicy};
 pub use kernel::{
