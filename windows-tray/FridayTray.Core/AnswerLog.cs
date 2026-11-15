@@ -44,6 +44,6 @@ public sealed class AnswerLog
         Directory.CreateDirectory(_paths.StateDir);
         var text = Render(question, context, outcome, when);
         File.WriteAllText(_paths.LastAnswerFile, text);
-        File.AppendAllText(_paths.AnswersFile, text + "\n---\n\n");
+        File.AppendAllText(_paths.AnswersFile, SavedData.AnswerMarker + "\n" + text + "\n---\n\n");
     }
 }
