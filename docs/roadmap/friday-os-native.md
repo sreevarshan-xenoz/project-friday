@@ -70,6 +70,10 @@ limit per task, and an audit log (`friday actions`) of every action taken.
    a weekly job (`agent-desktop-bump.yml`) verifies each new release (checksum, the same bytes
    as the signed npm package, npm's provenance, the flags the engine uses) and reports it in an
    issue, and the pin moves only through a pull request that CI's package build must pass.
+   "Ask about my screen" (Super+Ctrl+Y) uses it too: when the focused app's tree has at least 200
+   characters of text, that text (secrets masked, password fields left out) goes to the model
+   instead of a screenshot, to any model the person's providers offer, and nothing is captured;
+   otherwise a screenshot as before. `FRIDAY_SCREEN_TEXT=0` forces screenshots.
 4. **The system helper.** `friday-os-helper`: root, a D-Bus API, polkit prompt
    per sensitive call. Install and remove packages, enable services, change
    network settings, update the system ("update everything and tell me").
@@ -80,12 +84,25 @@ limit per task, and an audit log (`friday actions`) of every action taken.
    connection), polkit must approve (the prompt names the package, and only an
    active local session can be asked), and the arguments must pass (valid name,
    in the repos, never a protected package). It runs `/usr/bin/pacman` with a
-   fixed argument list, one job at a time, with timeouts. The files ship
-   inert under `packaging/linux/helper/`; nothing starts it until an explicit
-   opt-in, which is not built and not enabled in the ISO yet.
+   fixed argument list, one job at a time, with timeouts. The binary and files ship
+   inert in `friday-git` (`/usr/lib/friday/friday-os-helper`, `/usr/share/friday/helper/`);
+   `friday helper enable` (after a yes, with sudo) installs the four files and
+   `disable` removes them. It is off on every install and in the ISO. The daemon's system
+   tool ("update my system", "install htop", "remove package vlc") turns the request into
+   one of three typed operations, always stops and asks with the exact action, and only
+   then calls the helper (which asks again through polkit) and reads the job back; with the
+   helper off it says how to turn it on. Checked in the VM with a real model: the
+   confirmation, the off-helper message, and the real D-Bus client against an enabled
+   helper (which refuses a caller that isn't the daemon).
 5. **Standing tasks.** "Every morning...", "when the battery drops below 20%...":
-   list, pause and delete them from the FRIDAY drawer; each runs under the
-   same consent classes.
+   list, pause and delete them; each runs under the same consent classes.
+   *Built:* ask for one in words (`friday ask "every weekday at 9 tell me the news"`); the
+   model turns it into a typed task (daily at a time, every N minutes, battery under N%) kept
+   in `standing.json`; the daemon checks every 20 s and runs a due task through `friday ask`,
+   so it has the same masking, egress log, notification and answer history, and a destructive
+   step still asks. `friday tasks [list|pause|resume|delete <id>]` manages them. Checked in
+   the VM with a real model (creation, and a due task firing and answering). Not built: a list
+   in the FRIDAY drawer, and Windows.
 6. **Pocketdesk on FRIDAY OS.** [Pocketdesk](https://github.com/sreevarshan-xenoz/Pocketdesk)
    (the phone as a screen, keyboard and remote for this computer, KDE Connect
    features, no account) ships with FRIDAY OS: packaged into the ISO and the
