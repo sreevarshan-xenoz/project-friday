@@ -4,9 +4,11 @@ name: Check for a new agent-desktop
 # for a newer release in the same major version and verify it: its checksum,
 # that it is byte-identical to the npm package, npm's signature and build
 # provenance for that package, and that the binary still has everything
-# FRIDAY's engine uses (packaging/arch/bump-agent-desktop.sh). The result goes
-# to an issue; the pin is then moved with the same script, through a pull
-# request that CI's package build and smoke test have to pass.
+# FRIDAY's engine uses (packaging/arch/bump-agent-desktop.sh). A release that
+# passes becomes a pull request that moves only the three pin lines, and CI
+# is started on its branch (a push by the workflow's token doesn't start it
+# by itself); the package build and smoke test decide, and a person merges.
+# Anything else (a new major version, a failed check) goes to an issue.
 
 on:
   schedule:
@@ -18,8 +20,10 @@ on:
         required: false
 
 permissions:
-  contents: read
+  contents: write
   issues: write
+  pull-requests: write
+  actions: write
 
 jobs:
   check:
@@ -41,8 +45,33 @@ jobs:
           set -e
           echo "rc=$rc" >>"$GITHUB_OUTPUT"
           [ -f "$SUMMARY_FILE" ] && cat "$SUMMARY_FILE" >>"$GITHUB_STEP_SUMMARY" || true
+      - name: Open the pull request
+        if: steps.bump.outputs.rc == '10'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SUMMARY_FILE: ${{ runner.temp }}/summary.md
+        run: |
+          new=$(sed -n 's/^_ad_ver=\(.*\)$/\1/p' packaging/arch/PKGBUILD | head -n1)
+          [[ "$new" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::can't read the new version"; exit 1; }
+          branch="bump/agent-desktop-$new"
+          if gh pr list --repo "${{ github.repository }}" --head "$branch" --state open --json number --jq '.[0].number' | grep -q .; then
+            echo "A pull request for $branch is already open."; exit 0
+          fi
+          # Only the pin may change.
+          changed=$(git diff --name-only)
+          [ "$changed" = "packaging/arch/PKGBUILD" ] || { echo "::error::unexpected changes: $changed"; exit 1; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add packaging/arch/PKGBUILD
+          git commit -q -m "chore(package): agent-desktop $new" -m "Verified by the weekly check (checksum, npm signature and provenance, the flags FRIDAY uses)."
+          git push -q origin "$branch"
+          body="The weekly check verified agent-desktop $new and moved the pin: \`packaging/arch/PKGBUILD\`, the version and two checksums, nothing else."$'\n\n'"$(cat "$SUMMARY_FILE" 2>/dev/null)"$'\n\n'"CI was started on the branch by the workflow; merge when the package build and smoke test are green. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          gh pr create --repo "${{ github.repository }}" --base dev --head "$branch" \
+            --title "chore(package): agent-desktop $new" --body "$body"
+          gh workflow run ci.yml --repo "${{ github.repository }}" --ref "$branch"
       - name: Report
-        if: steps.bump.outputs.rc != '0'
+        if: steps.bump.outputs.rc != '0' && steps.bump.outputs.rc != '10'
         env:
           GH_TOKEN: ${{ github.token }}
           RC: ${{ steps.bump.outputs.rc }}
