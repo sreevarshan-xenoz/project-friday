@@ -62,13 +62,17 @@ use crate::web_search::{append_sources, ChainedWebSearcher, SearchResponse, WebS
 
 /// Shared confirmation gate for gated side-effecting tools.
 #[derive(Debug, Default)]
-struct ConfirmationGate {
-    confirm: Option<String>,
-    pending: Option<crate::shell_state::NeedConfirmation>,
+pub(crate) struct ConfirmationGate {
+    pub(crate) confirm: Option<String>,
+    pub(crate) pending: Option<crate::shell_state::NeedConfirmation>,
 }
 
 impl ConfirmationGate {
-    fn check_or_record(&mut self, tool: &str, exact_action: &str) -> Result<(), ToolResult> {
+    pub(crate) fn check_or_record(
+        &mut self,
+        tool: &str,
+        exact_action: &str,
+    ) -> Result<(), ToolResult> {
         if let Some(c) = &self.confirm {
             if c.trim() == exact_action.trim() {
                 return Ok(());
@@ -1307,6 +1311,19 @@ impl GoalRunner {
         if let Some(adapter) = browser {
             executive.register_tool(Box::new(BrowserCapabilityTool { adapter }));
         }
+        // FRIDAY OS: native control of windows, apps and media, when there is
+        // a Hyprland session to drive and a model to choose the steps.
+        let has_desktop = match &fabric {
+            Some(f) if crate::desktop_tool::enabled() => {
+                executive.register_tool(Box::new(crate::desktop_tool::DesktopControlTool::new(
+                    f.clone() as Arc<dyn LlmStrategyClient>,
+                    friday_actions::DesktopAdapter::new(),
+                    confirmation_gate.clone(),
+                )));
+                true
+            }
+            _ => false,
+        };
 
         // Advertise the same surface to the evaluator/simulator so evidence
         // plans are judged feasible and actually execute.
@@ -1339,6 +1356,10 @@ impl GoalRunner {
         }
         if has_browser {
             world_state = world_state.with_tool(Capability::Custom("web.open".into()));
+        }
+        if has_desktop {
+            world_state =
+                world_state.with_tool(Capability::Custom(crate::desktop_tool::CAPABILITY.into()));
         }
         workspace.set_world_state(world_state);
 

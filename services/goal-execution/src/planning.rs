@@ -758,6 +758,13 @@ fn capability_for_description(description: &str) -> Capability {
         return Capability::Custom("web.open".into());
     }
 
+    // 9b. Control the desktop: windows, workspaces, volume, brightness, media
+    //     and the power profile (FRIDAY OS). Only an instruction ("put it on
+    //     workspace 2", "pause the music"), never a question about them.
+    if is_desktop_intent(&d) {
+        return Capability::Custom("desktop.control".into());
+    }
+
     // 10. Open a desktop application via the Windows host — an explicit
     //     open/launch with no file target, URL, or web framing, so "open
     //     notepad" / "launch chrome" route to the WindowsAdapter instead of
@@ -785,6 +792,93 @@ fn capability_for_description(description: &str) -> Capability {
     // as a command — an unclassified goal answers from what FRIDAY already
     // knows, or reports honestly that it has no answer yet.
     Capability::SearchMemory
+}
+
+/// An instruction to change the desktop. It starts like an instruction (not
+/// "how do I…" or "what is…"), and names something the desktop adapter
+/// controls. "Open notepad" alone stays an app launch; "open Firefox and put
+/// it on workspace 2" is desktop control. What is playing is a look, so it
+/// may be asked.
+fn is_desktop_intent(d: &str) -> bool {
+    if d.contains("what's playing") || d.contains("what is playing") || d.starts_with("now playing")
+    {
+        return true;
+    }
+    let d = [
+        "please ",
+        "can you ",
+        "could you ",
+        "would you ",
+        "will you ",
+    ]
+    .iter()
+    .find_map(|p| d.strip_prefix(p))
+    .unwrap_or(d);
+    const INSTRUCTION: [&str; 26] = [
+        "set",
+        "turn",
+        "mute",
+        "unmute",
+        "pause",
+        "play",
+        "skip",
+        "resume",
+        "switch",
+        "move",
+        "focus",
+        "close",
+        "put",
+        "raise",
+        "lower",
+        "increase",
+        "decrease",
+        "bring",
+        "fullscreen",
+        "maximize",
+        "minimize",
+        "go",
+        "change",
+        "make",
+        "open",
+        "launch",
+    ];
+    let first = d.split_whitespace().next().unwrap_or("");
+    if !INSTRUCTION.contains(&first) {
+        return false;
+    }
+    const THINGS: [&str; 9] = [
+        "workspace",
+        "window",
+        "windows",
+        "volume",
+        "brightness",
+        "mute",
+        "unmute",
+        "screen brightness",
+        "sound",
+    ];
+    if THINGS.iter().any(|t| has_word(d, t)) {
+        return true;
+    }
+    if [
+        "power profile",
+        "performance mode",
+        "power saver",
+        "power-saver",
+        "battery saver",
+    ]
+    .iter()
+    .any(|t| d.contains(t))
+    {
+        return true;
+    }
+    let media = [
+        "music", "song", "track", "playback", "spotify", "podcast", "playlist",
+    ];
+    let media_verb = [
+        "play", "pause", "skip", "resume", "stop", "next", "previous",
+    ];
+    media.iter().any(|m| has_word(d, m)) && media_verb.iter().any(|v| has_word(d, v))
 }
 
 /// Whether two capabilities denote the same skill — the S7 relevance matcher.
@@ -1248,6 +1342,52 @@ mod tests {
                 planning.infer_capability(goal, &[]),
                 expected,
                 "'{goal}' routed wrong"
+            );
+        }
+    }
+
+    /// FRIDAY OS: instructions about windows, workspaces, volume, media and
+    /// the like are desktop control; questions about them, and a plain app
+    /// launch, are not.
+    #[test]
+    fn desktop_instructions_route_to_desktop_control_and_questions_do_not() {
+        let planning = Planning::new();
+        let desktop = Capability::Custom("desktop.control".into());
+        for goal in [
+            "put firefox on workspace 2",
+            "Open Firefox and put it on workspace 2",
+            "switch to workspace 3",
+            "move the terminal window to workspace 4",
+            "close the firefox window",
+            "set the volume to 30",
+            "mute the sound",
+            "turn the brightness down",
+            "pause the music",
+            "skip this song",
+            "please play the next track",
+            "can you pause the music",
+            "switch to performance mode",
+            "what's playing",
+        ] {
+            assert_eq!(
+                planning.infer_capability(goal, &[]),
+                desktop,
+                "'{goal}' should be desktop control"
+            );
+        }
+        for goal in [
+            "how do I change the volume in linux?",
+            "what is a workspace in hyprland",
+            "why is my window blurry",
+            "explain how to set up brightness control",
+            "open notepad",
+            "launch spotify",
+            "summarize this song review",
+        ] {
+            assert_ne!(
+                planning.infer_capability(goal, &[]),
+                desktop,
+                "'{goal}' should not be desktop control"
             );
         }
     }

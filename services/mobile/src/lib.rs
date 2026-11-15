@@ -11,6 +11,7 @@ pub mod auth;
 pub mod bridge;
 pub mod commands;
 pub mod context_read;
+pub mod desktop_tool;
 pub mod error;
 pub mod failures;
 pub mod goal_runner;
