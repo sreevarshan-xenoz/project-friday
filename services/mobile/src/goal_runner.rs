@@ -2520,7 +2520,7 @@ mod tests {
             .await
             .expect("publish");
         for _ in 0..40 {
-            let ev = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+            let ev = tokio::time::timeout(SLOW_RUNNER_WAIT, rx.recv())
                 .await
                 .expect("a terminal event in time")
                 .expect("bus alive");
@@ -2632,7 +2632,7 @@ mod tests {
         .expect("publish");
         let (mut id, mut partials, mut done) = (String::new(), Vec::new(), None);
         for _ in 0..200 {
-            let ev = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+            let ev = tokio::time::timeout(SLOW_RUNNER_WAIT, rx.recv())
                 .await
                 .expect("an event in time")
                 .expect("bus open");
@@ -2670,7 +2670,7 @@ mod tests {
             .await
             .expect("publish");
         for _ in 0..40 {
-            let ev = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+            let ev = tokio::time::timeout(SLOW_RUNNER_WAIT, rx.recv())
                 .await
                 .expect("a terminal event in time")
                 .expect("bus alive");
@@ -2782,7 +2782,7 @@ mod tests {
         .expect("publish");
 
         for _ in 0..40 {
-            let ev = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+            let ev = tokio::time::timeout(SLOW_RUNNER_WAIT, rx.recv())
                 .await
                 .expect("event")
                 .expect("bus");
@@ -2839,7 +2839,7 @@ mod tests {
 
         let mut done = None;
         for _ in 0..40 {
-            let ev = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+            let ev = tokio::time::timeout(SLOW_RUNNER_WAIT, rx.recv())
                 .await
                 .expect("event")
                 .expect("bus");
@@ -2904,7 +2904,7 @@ mod tests {
 
         let mut done = None;
         for _ in 0..40 {
-            let ev = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+            let ev = tokio::time::timeout(SLOW_RUNNER_WAIT, rx.recv())
                 .await
                 .expect("event")
                 .expect("bus");
@@ -2952,7 +2952,7 @@ mod tests {
 
         let mut done = None;
         for _ in 0..40 {
-            let ev = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+            let ev = tokio::time::timeout(SLOW_RUNNER_WAIT, rx.recv())
                 .await
                 .expect("event")
                 .expect("bus");
@@ -3009,7 +3009,7 @@ mod tests {
 
         let mut done = None;
         for _ in 0..40 {
-            let ev = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+            let ev = tokio::time::timeout(SLOW_RUNNER_WAIT, rx.recv())
                 .await
                 .expect("event")
                 .expect("bus");
@@ -3039,7 +3039,7 @@ mod tests {
             .await
             .expect("publish");
         for _ in 0..40 {
-            let ev = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+            let ev = tokio::time::timeout(SLOW_RUNNER_WAIT, rx.recv())
                 .await
                 .expect("a terminal event in time")
                 .expect("bus alive");
