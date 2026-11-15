@@ -112,6 +112,23 @@ pub fn audit_dir() -> Option<PathBuf> {
         .map(|d| d.to_path_buf())
 }
 
+/// Appends one line to `actions.jsonl` in `dir`, owner-readable only. A write
+/// that fails never stops the action it records.
+pub(crate) fn append_audit(dir: &std::path::Path, line: &Value) {
+    let _ = std::fs::create_dir_all(dir);
+    let mut opts = std::fs::OpenOptions::new();
+    opts.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    if let Ok(mut f) = opts.open(dir.join("actions.jsonl")) {
+        use std::io::Write;
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 impl DesktopControlTool {
     pub(crate) fn new(
         model: Arc<dyn LlmStrategyClient>,
@@ -154,18 +171,7 @@ impl DesktopControlTool {
             "ok": ok,
             "goal": goal.chars().take(120).collect::<String>(),
         });
-        let _ = std::fs::create_dir_all(dir);
-        let mut opts = std::fs::OpenOptions::new();
-        opts.create(true).append(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.mode(0o600);
-        }
-        if let Ok(mut f) = opts.open(dir.join("actions.jsonl")) {
-            use std::io::Write;
-            let _ = writeln!(f, "{line}");
-        }
+        append_audit(dir, &line);
     }
 }
 
