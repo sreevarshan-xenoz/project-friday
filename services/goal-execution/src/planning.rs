@@ -695,6 +695,12 @@ fn capability_for_description(description: &str) -> Capability {
         return Capability::ExecuteCommand;
     }
 
+    // 1a. Standing tasks: "every morning ...", "when my battery drops below
+    //     20% ...", "what are my standing tasks".
+    if is_standing_intent(&d) {
+        return Capability::Custom("standing.tasks".into());
+    }
+
     // 2. Filesystem tree — the whole structure, not a flat listing.
     if has_word(&d, "tree")
         || has_word(&d, "structure")
@@ -792,6 +798,88 @@ fn capability_for_description(description: &str) -> Capability {
     // as a command — an unclassified goal answers from what FRIDAY already
     // knows, or reports honestly that it has no answer yet.
     Capability::SearchMemory
+}
+
+/// A request for something to happen on a schedule or a battery level, or to
+/// see the ones already set. "every morning at 8 tell me the weather", "when
+/// my battery drops below 20% tell me". Not a question about schedules.
+fn is_standing_intent(d: &str) -> bool {
+    let d = [
+        "please ",
+        "can you ",
+        "could you ",
+        "would you ",
+        "will you ",
+    ]
+    .iter()
+    .find_map(|p| d.strip_prefix(p))
+    .unwrap_or(d)
+    .trim();
+    if ["standing task", "scheduled task", "recurring task"]
+        .iter()
+        .any(|t| d.contains(t))
+    {
+        return d.starts_with("list ")
+            || d.starts_with("show ")
+            || d.starts_with("what are my ")
+            || d.starts_with("what standing ");
+    }
+    let first = d.split_whitespace().next().unwrap_or("");
+    if [
+        "what", "how", "why", "who", "which", "where", "do", "does", "did", "is", "are",
+    ]
+    .contains(&first)
+    {
+        return false;
+    }
+    const EVERY: [&str; 18] = [
+        "day",
+        "morning",
+        "evening",
+        "night",
+        "noon",
+        "weekday",
+        "hour",
+        "minute",
+        "minutes",
+        "hours",
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+        "weekend",
+    ];
+    let schedule_word = |after: &str| {
+        let mut w = after.split_whitespace();
+        let first = w.next().unwrap_or("");
+        // "every 20 minutes" is a schedule too.
+        let first = if !first.is_empty() && first.chars().all(|c| c.is_ascii_digit()) {
+            w.next().unwrap_or("")
+        } else {
+            first
+        };
+        EVERY.contains(&first.trim_end_matches(','))
+    };
+    for lead in ["every ", "each "] {
+        if let Some(rest) = d.strip_prefix(lead) {
+            return schedule_word(rest);
+        }
+        if let Some(i) = d.find(&format!(" {lead}")) {
+            if schedule_word(&d[i + 1 + lead.len()..]) {
+                return true;
+            }
+        }
+    }
+    if let Some(rest) = d.strip_prefix("when ") {
+        return rest.contains("battery")
+            && ["below", "under", "drops", "falls"]
+                .iter()
+                .any(|w| rest.contains(w));
+    }
+    false
 }
 
 /// An instruction to change the desktop. It starts like an instruction (not
@@ -1511,6 +1599,35 @@ mod tests {
             planning.infer_capability(composed, &[]),
             Capability::ExecuteCommand
         );
+    }
+
+    #[test]
+    fn schedule_goals_route_to_standing_tasks() {
+        let st = Capability::Custom("standing.tasks".into());
+        for yes in [
+            "every morning at 8 tell me the weather",
+            "Every day at 9am summarize my notes",
+            "every weekday play the news",
+            "tell me the news every morning",
+            "every 20 minutes check the battery",
+            "each evening remind me to stretch",
+            "when my battery drops below 20% tell me",
+            "when the battery is under 15 percent warn me",
+            "list my standing tasks",
+            "what are my scheduled tasks",
+        ] {
+            assert_eq!(capability_for_description(yes), st, "{yes}");
+        }
+        for no in [
+            "what do I do every morning",
+            "how often is every day",
+            "when is the next release",
+            "when my friend arrives tell me a joke",
+            "what is a standing desk",
+            "tell me about battery drops",
+        ] {
+            assert_ne!(capability_for_description(no), st, "{no}");
+        }
     }
 
     #[test]

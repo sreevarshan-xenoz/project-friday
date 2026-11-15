@@ -297,6 +297,15 @@ async fn main() {
         "[context.read] Screen reader armed (collector=Real, provider={context_label}); no ambient capture"
     );
 
+    // Standing tasks: run what is due ("every morning ...") through
+    // `friday ask`, as the person's own ask would run.
+    if friday_mobile::standing::enabled() {
+        tokio::spawn(friday_mobile::standing::run_loop(
+            friday_mobile::standing::store_path(),
+            Arc::new(friday_mobile::standing::FridayAsk),
+        ));
+    }
+
     // The assistant loop. Consumes `plan.goal` and runs each goal through the
     // real Executive with real evidence adapters.
     let goal_runner =

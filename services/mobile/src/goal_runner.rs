@@ -1328,6 +1328,19 @@ impl GoalRunner {
             _ => false,
         };
 
+        // Standing tasks ("every morning ..."): made from an ask, run by the
+        // daemon's scheduler through `friday ask`.
+        let has_standing = match &fabric {
+            Some(f) if crate::standing::enabled() => {
+                executive.register_tool(Box::new(crate::standing::StandingTool::new(
+                    f.clone() as Arc<dyn LlmStrategyClient>,
+                    crate::standing::store_path(),
+                )));
+                true
+            }
+            _ => false,
+        };
+
         // Advertise the same surface to the evaluator/simulator so evidence
         // plans are judged feasible and actually execute.
         let mut world_state = WorldState::new()
@@ -1363,6 +1376,10 @@ impl GoalRunner {
         if has_desktop {
             world_state =
                 world_state.with_tool(Capability::Custom(crate::desktop_tool::CAPABILITY.into()));
+        }
+        if has_standing {
+            world_state =
+                world_state.with_tool(Capability::Custom(crate::standing::CAPABILITY.into()));
         }
         workspace.set_world_state(world_state);
 
