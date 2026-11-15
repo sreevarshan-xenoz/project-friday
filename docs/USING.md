@@ -114,3 +114,5 @@ FRIDAY OS installs Pocketdesk, which shows this computer on your Android phone a
 
 Once a phone is paired and has "Answer my questions" turned on (its Devices page; it is off by default), FRIDAY's questions before it does anything that deletes or sends also go to the phone as a notification. Answer on either one: the first answer wins. No on the phone is one tap; Yes needs the phone's fingerprint or screen lock, so a phone without one can only say No. With no phone set up, nothing changes.
 
+To ask FRIDAY from the phone, add a deck button in Pocketdesk's Settings ("Deck buttons"): a label like "Ask FRIDAY" that presses `super+y`. A tap on the phone opens FRIDAY's ask box on the computer, as if you had pressed the key.
+
