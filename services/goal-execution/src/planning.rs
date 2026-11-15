@@ -967,6 +967,11 @@ fn is_desktop_intent(d: &str) -> bool {
     .iter()
     .find_map(|p| d.strip_prefix(p))
     .unwrap_or(d);
+    // "in nautilus, press the Search switch": the app first, then the instruction.
+    let d = match d.strip_prefix("in ").and_then(|r| r.split_once(", ")) {
+        Some((app, rest)) if app.split_whitespace().count() <= 3 => rest.trim(),
+        _ => d,
+    };
     const INSTRUCTION: [&str; 32] = [
         "set",
         "turn",
@@ -1005,7 +1010,7 @@ fn is_desktop_intent(d: &str) -> bool {
     if !INSTRUCTION.contains(&first) {
         return false;
     }
-    const THINGS: [&str; 16] = [
+    const THINGS: [&str; 17] = [
         "workspace",
         "window",
         "windows",
@@ -1022,6 +1027,7 @@ fn is_desktop_intent(d: &str) -> bool {
         "dropdown",
         "toggle",
         "field",
+        "switch",
     ];
     if THINGS.iter().any(|t| has_word(d, t)) {
         return true;
@@ -1537,6 +1543,9 @@ mod tests {
             "type hello into the search field",
             "select the second tab",
             "switch to performance mode",
+            "in nautilus, press the Search Everywhere switch",
+            "in the settings app, turn on the dark mode switch",
+            "press the Search Everywhere switch",
             "what's playing",
         ] {
             assert_eq!(
@@ -1558,6 +1567,9 @@ mod tests {
             "tap water temperature",
             "select all rows where the age is over 30",
             "how do I press a key in vim",
+            "in rust, what is a switch statement",
+            "in my opinion the list of options is long",
+            "what is a network switch",
         ] {
             assert_ne!(
                 planning.infer_capability(goal, &[]),
