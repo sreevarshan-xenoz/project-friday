@@ -59,7 +59,8 @@ limit per task, and an audit log (`friday actions`) of every action taken.
    pressing those needs keyboard input, not built yet. Password fields are
    never read or typed into; a button that could lose or send something
    (Delete, Send, Pay, Install, Allow...) is refused unless the caller has
-   confirmed it. Not yet wired into the control loop.
+   confirmed it. Wired into the control loop as `ui_*` actions: a click is resolved first,
+   so the consent decision uses the button's own label and the confirmation names it.
 4. **The system helper.** `friday-os-helper`: root, a D-Bus API, polkit prompt
    per sensitive call. Install and remove packages, enable services, change
    network settings, update the system ("update everything and tell me").

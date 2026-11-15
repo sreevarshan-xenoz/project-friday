@@ -1321,6 +1321,7 @@ impl GoalRunner {
                     confirmation_gate.clone(),
                     executive.abort_token(),
                     crate::desktop_tool::audit_dir(),
+                    crate::desktop_tool::default_ui(),
                 )));
                 true
             }

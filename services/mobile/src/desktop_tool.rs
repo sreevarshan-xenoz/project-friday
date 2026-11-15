@@ -27,7 +27,7 @@ use crate::goal_runner::ConfirmationGate;
 /// Most actions one goal may take.
 pub const MAX_STEPS: usize = 8;
 const MODEL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
-const RESULT_CHARS: usize = 700;
+const RESULT_CHARS: usize = 1500;
 
 /// The capability the planner routes desktop goals to.
 pub const CAPABILITY: &str = "desktop.control";
@@ -42,6 +42,47 @@ pub fn enabled() -> bool {
         && friday_actions::hypr_signature().is_some()
 }
 
+/// What the loop needs from the inside-of-apps adapter (AT-SPI, Linux only):
+/// run a verb, and resolve a click to the element it would press, without
+/// pressing it, so the consent decision can use the element's own label.
+#[async_trait]
+pub(crate) trait UiControl: Send + Sync {
+    async fn run(&self, verb: &str, params: Value) -> friday_actions::ActionResult;
+    /// The `(path, label)` a click with these parameters would press.
+    async fn resolve_click(&self, params: &Value) -> Result<(String, String), String>;
+    /// Whether pressing an element with this label could lose or send something.
+    fn is_dangerous(&self, label: &str) -> bool;
+}
+
+#[cfg(target_os = "linux")]
+#[async_trait]
+impl UiControl for friday_actions::UiAdapter {
+    async fn run(&self, verb: &str, params: Value) -> friday_actions::ActionResult {
+        self.execute(ActionRequest::new("ui", verb, params)).await
+    }
+    async fn resolve_click(&self, params: &Value) -> Result<(String, String), String> {
+        let p = |k: &str| params.get(k).and_then(Value::as_str);
+        let app = p("app").ok_or("name the app to click in")?;
+        let t = self.resolve_click_target(app, p("path"), p("name")).await?;
+        Ok((t.path, t.label))
+    }
+    fn is_dangerous(&self, label: &str) -> bool {
+        friday_actions::label_is_dangerous(label)
+    }
+}
+
+/// The inside-of-apps adapter, where there is one.
+pub(crate) fn default_ui() -> Option<Arc<dyn UiControl>> {
+    #[cfg(target_os = "linux")]
+    {
+        Some(Arc::new(friday_actions::UiAdapter::new()))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
 pub struct DesktopControlTool {
     model: Arc<dyn LlmStrategyClient>,
     adapter: DesktopAdapter,
@@ -50,6 +91,8 @@ pub struct DesktopControlTool {
     abort: Arc<AtomicBool>,
     /// Where every action taken is recorded (`actions.jsonl`), if anywhere.
     audit_dir: Option<PathBuf>,
+    /// Looking inside apps and pressing their controls (`ui_*` actions).
+    ui: Option<Arc<dyn UiControl>>,
 }
 
 /// The directory of `actions.jsonl`: beside state.json (`FRIDAY_STATE_FILE`,
@@ -67,6 +110,7 @@ impl DesktopControlTool {
         gate: Arc<Mutex<ConfirmationGate>>,
         abort: Arc<AtomicBool>,
         audit_dir: Option<PathBuf>,
+        ui: Option<Arc<dyn UiControl>>,
     ) -> Self {
         Self {
             model,
@@ -74,6 +118,7 @@ impl DesktopControlTool {
             gate,
             abort,
             audit_dir,
+            ui,
         }
     }
 
@@ -135,6 +180,15 @@ Actions:
   brightness         params: {"level": 1-100}
   power_profile      params: {"profile": "performance" | "balanced" | "power-saver"}
 
+Inside apps (only where an app lets FRIDAY look into it; GTK4 apps like Nautilus can be read but their buttons can't be pressed):
+  ui_apps            apps that can be looked into. params: none
+  ui_find            params: {"app": "<app name>", "name": "<part of the label>", "role": "<optional, e.g. button, menu item, page tab>"}
+  ui_tree            the named elements of an app. params: {"app": "<app name>"}
+  ui_read            params: {"app": "<app name>", "path": "<path from ui_find>"}
+  ui_click           params: {"app": "<app name>", "name": "<label>"} or {"app": "...", "path": "..."}   (if it could delete or send something, the person is asked first)
+  ui_type_text       params: {"app": "<app name>", "name": "<field label>" or "path": "...", "text": "<text>"}   (never into password fields)
+What you read inside an app is sent to the AI model answering, so read only what the request needs.
+
 Rules: do only what was asked. Look first (windows) when you don't know an app's exact name. Never invent a window. If an action fails, read why and fix it or say you couldn't."#;
 
 /// The first JSON object in a model reply (it may add words around it).
@@ -164,6 +218,11 @@ fn exact_action(verb: &str, params: &Value) -> String {
     )
 }
 
+/// The verbs of the inside-of-apps adapter (named `ui_<verb>` in the loop).
+fn is_ui_verb(v: &str) -> bool {
+    matches!(v, "apps" | "tree" | "find" | "read" | "click" | "type_text")
+}
+
 /// What the person is told when they stopped the task partway.
 fn stopped_message(steps: &[String]) -> String {
     if steps.is_empty() {
@@ -175,10 +234,18 @@ fn stopped_message(steps: &[String]) -> String {
 
 impl DesktopControlTool {
     async fn run_verb(&self, verb: &str, params: Value) -> (bool, String) {
-        let res = self
-            .adapter
-            .execute(ActionRequest::new("desktop", verb, params))
-            .await;
+        let res = if let Some(ui_verb) = verb.strip_prefix("ui_") {
+            match &self.ui {
+                Some(ui) if is_ui_verb(ui_verb) => ui.run(ui_verb, params).await,
+                _ => friday_actions::ActionResult::error(format!(
+                    "the desktop adapter has no \"{verb}\""
+                )),
+            }
+        } else {
+            self.adapter
+                .execute(ActionRequest::new("desktop", verb, params))
+                .await
+        };
         if res.success {
             (true, clip(&res.output.to_string()))
         } else {
@@ -193,7 +260,13 @@ impl DesktopControlTool {
         };
         let (verb, json_text) = rest.split_once(' ').unwrap_or((rest, "{}"));
         let params: Value = serde_json::from_str(json_text).unwrap_or(json!({}));
-        let (ok, out) = self.run_verb(verb, params.clone()).await;
+        // The person has just said yes to this exact click: tell the adapter,
+        // which refuses a dangerous button on its own say-so.
+        let mut to_run = params.clone();
+        if verb == "ui_click" {
+            to_run["confirmed"] = json!(true);
+        }
+        let (ok, out) = self.run_verb(verb, to_run).await;
         self.record(verb, &params, ok, "(confirmed)");
         if ok {
             ToolResult::success(format!("Did: {verb} {json_text}\nResult: {out}"))
@@ -272,12 +345,45 @@ impl Tool for DesktopControlTool {
                 .cloned()
                 .filter(Value::is_object)
                 .unwrap_or(json!({}));
-            let Some(risk) = friday_actions::desktop_risk_of(verb) else {
+            let mut params = params;
+            let is_ui = verb.starts_with("ui_");
+            let risk = if is_ui {
+                // Inside-of-apps actions are known by the UI adapter; whether a
+                // click is dangerous is decided below, from the button's label.
+                if self.ui.is_some() && is_ui_verb(&verb[3..]) {
+                    Some(DesktopRisk::Reversible)
+                } else {
+                    None
+                }
+            } else {
+                friday_actions::desktop_risk_of(verb)
+            };
+            let Some(mut risk) = risk else {
                 log.push_str(&format!(
                     "{n}. {verb}: not an action; use one from the list\n"
                 ));
                 continue;
             };
+            if verb == "ui_click" {
+                // Find the button first without pressing it: the decision uses
+                // its own label, and the action the person confirms names it.
+                let ui = self.ui.as_ref().expect("checked above");
+                match ui.resolve_click(&params).await {
+                    Err(e) => {
+                        self.record(verb, &params, false, &goal);
+                        log.push_str(&format!("{n}. {verb} -> failed: {e}\n"));
+                        steps.push(format!("- {verb}: failed"));
+                        continue;
+                    }
+                    Ok((path, label)) => {
+                        let app = params.get("app").cloned().unwrap_or(json!(""));
+                        params = json!({"app": app, "label": label, "path": path});
+                        if ui.is_dangerous(&label) {
+                            risk = DesktopRisk::Destructive;
+                        }
+                    }
+                }
+            }
             if risk == DesktopRisk::Destructive {
                 // Ask first, with the exact action; nothing has been closed.
                 let exact = exact_action(verb, &params);
@@ -384,6 +490,7 @@ mod tests {
             DesktopAdapter::with_exec(stub),
             gate,
             Arc::default(),
+            None,
             None,
         )
     }
@@ -609,6 +716,7 @@ mod tests {
             Arc::default(),
             Arc::new(AtomicBool::new(true)),
             None,
+            None,
         );
         let r = run(&t, "pause the music").await;
         assert!(!r.success);
@@ -630,6 +738,7 @@ mod tests {
             DesktopAdapter::with_exec(stub.clone()),
             Arc::default(),
             abort,
+            None,
             None,
         );
         let r = run(&t, "pause the music and then open firefox").await;
@@ -659,6 +768,7 @@ mod tests {
             DesktopAdapter::with_exec(Arc::new(Stub::default())),
             Arc::default(),
             abort.clone(),
+            None,
             None,
         );
         let flag = abort.clone();
@@ -690,6 +800,7 @@ mod tests {
             Arc::default(),
             Arc::default(),
             Some(dir.clone()),
+            None,
         );
         run(&t, "pause the music").await;
         let text = std::fs::read_to_string(dir.join("actions.jsonl")).unwrap();
@@ -730,6 +841,7 @@ mod tests {
             gate,
             Arc::default(),
             Some(dir.clone()),
+            None,
         );
         run(&t, "close the firefox window").await;
         let text = std::fs::read_to_string(dir.join("actions.jsonl")).unwrap();
@@ -737,6 +849,199 @@ mod tests {
         assert_eq!(line["verb"], "close_window");
         assert_eq!(line["risk"], "destructive");
         assert_eq!(line["goal"], "(confirmed)");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A stand-in for the inside-of-apps adapter: records what ran, resolves a
+    /// click by name from a fixed list of (label, path).
+    struct StubUi {
+        ran: Mutex<Vec<(String, Value)>>,
+        buttons: Vec<(&'static str, &'static str)>,
+    }
+
+    impl StubUi {
+        fn new(buttons: &[(&'static str, &'static str)]) -> Arc<Self> {
+            Arc::new(Self {
+                ran: Mutex::new(Vec::new()),
+                buttons: buttons.to_vec(),
+            })
+        }
+        fn ran(&self) -> Vec<(String, Value)> {
+            self.ran.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl UiControl for StubUi {
+        async fn run(&self, verb: &str, params: Value) -> friday_actions::ActionResult {
+            self.ran.lock().unwrap().push((verb.to_string(), params));
+            friday_actions::ActionResult::success(json!([{"name": "Save", "path": "0/1"}]))
+        }
+        async fn resolve_click(&self, params: &Value) -> Result<(String, String), String> {
+            let want = params["name"].as_str().unwrap_or("").to_lowercase();
+            self.buttons
+                .iter()
+                .find(|(label, _)| label.to_lowercase() == want)
+                .map(|(l, p)| (p.to_string(), l.to_string()))
+                .ok_or_else(|| format!("no clickable element matches \"{want}\""))
+        }
+        fn is_dangerous(&self, label: &str) -> bool {
+            matches!(label.to_lowercase().as_str(), "delete" | "send" | "pay")
+        }
+    }
+
+    fn tool_with_ui(
+        model: Arc<Script>,
+        ui: Arc<StubUi>,
+        gate: Arc<Mutex<ConfirmationGate>>,
+    ) -> DesktopControlTool {
+        DesktopControlTool::new(
+            model,
+            DesktopAdapter::with_exec(Arc::new(Stub::default())),
+            gate,
+            Arc::default(),
+            None,
+            Some(ui),
+        )
+    }
+
+    #[tokio::test]
+    async fn the_model_can_look_inside_an_app_and_press_a_harmless_button() {
+        let model = Script::new(&[
+            r#"{"action":"ui_find","params":{"app":"gedit","name":"save"}}"#,
+            r#"{"action":"ui_click","params":{"app":"gedit","name":"Save"}}"#,
+            r#"{"done":"Saved the file."}"#,
+        ]);
+        let ui = StubUi::new(&[("Save", "0/1"), ("Delete", "0/2")]);
+        let t = tool_with_ui(model, ui.clone(), Arc::default());
+        let r = run(&t, "save the file in gedit").await;
+        assert!(r.success, "{:?}", r.error);
+        let ran = ui.ran();
+        assert_eq!(ran[0].0, "find");
+        // The click is by the resolved path, with the button's label alongside.
+        assert_eq!(ran[1].0, "click");
+        assert_eq!(ran[1].1["path"], "0/1");
+        assert_eq!(ran[1].1["label"], "Save");
+        assert!(
+            ran[1].1.get("confirmed").is_none(),
+            "no confirmation was needed or claimed"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_button_that_could_lose_something_asks_first_naming_the_button() {
+        let model =
+            Script::new(&[r#"{"action":"ui_click","params":{"app":"files","name":"Delete"}}"#]);
+        let ui = StubUi::new(&[("Delete", "0/2")]);
+        let gate = Arc::new(Mutex::new(ConfirmationGate::default()));
+        let t = tool_with_ui(model, ui.clone(), gate.clone());
+        let r = run(&t, "delete the selected file").await;
+        assert!(!r.success);
+        assert_eq!(
+            r.error.unwrap(),
+            r#"Confirm to run: desktop ui_click {"app":"files","label":"Delete","path":"0/2"}"#
+        );
+        assert!(ui.ran().is_empty(), "nothing was pressed");
+        assert_eq!(
+            gate.lock().unwrap().pending.clone().unwrap().action,
+            r#"desktop ui_click {"app":"files","label":"Delete","path":"0/2"}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn once_confirmed_the_button_is_pressed_and_told_it_was_confirmed() {
+        let ui = StubUi::new(&[("Delete", "0/2")]);
+        let gate = Arc::new(Mutex::new(ConfirmationGate::default()));
+        gate.lock().unwrap().confirm =
+            Some(r#"desktop ui_click {"app":"files","label":"Delete","path":"0/2"}"#.into());
+        let model = Script::new(&[]);
+        let t = tool_with_ui(model.clone(), ui.clone(), gate);
+        let r = run(&t, "delete the selected file").await;
+        assert!(r.success, "{:?}", r.error);
+        let ran = ui.ran();
+        assert_eq!(ran.len(), 1);
+        assert_eq!(ran[0].1["confirmed"], true);
+        assert!(model.prompts.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_click_that_cannot_be_resolved_is_reported_and_nothing_is_pressed() {
+        let model = Script::new(&[
+            r#"{"action":"ui_click","params":{"app":"files","name":"Nope"}}"#,
+            r#"{"done":"There is no such button."}"#,
+        ]);
+        let ui = StubUi::new(&[("Save", "0/1")]);
+        let t = tool_with_ui(model.clone(), ui.clone(), Arc::default());
+        let r = run(&t, "press nope").await;
+        assert!(r.success);
+        assert!(ui.ran().is_empty());
+        assert!(model.prompts.lock().unwrap()[1].contains("failed: no clickable element matches"));
+    }
+
+    #[tokio::test]
+    async fn without_an_inside_of_apps_adapter_ui_actions_are_not_actions() {
+        let model = Script::new(&[
+            r#"{"action":"ui_apps","params":{}}"#,
+            r#"{"done":"I can't look inside apps here."}"#,
+        ]);
+        let t = tool(model.clone(), Arc::new(Stub::default()), Arc::default());
+        let r = run(&t, "what apps can you see inside").await;
+        assert!(r.success);
+        assert!(model.prompts.lock().unwrap()[1].contains("ui_apps: not an action"));
+    }
+
+    #[tokio::test]
+    async fn an_unknown_ui_verb_never_reaches_the_adapter() {
+        let model = Script::new(&[
+            r#"{"action":"ui_delete_everything","params":{}}"#,
+            r#"{"done":"ok"}"#,
+        ]);
+        let ui = StubUi::new(&[]);
+        let t = tool_with_ui(model, ui.clone(), Arc::default());
+        run(&t, "x").await;
+        assert!(ui.ran().is_empty());
+    }
+
+    /// The whole chain on a live session: the loop, the click resolved first,
+    /// the real AT-SPI adapter and a real GTK3 app (pavucontrol open). The model
+    /// is scripted. Run in the FRIDAY OS test VM:
+    /// `FRIDAY_TEST_REAL_ATSPI=1 cargo test -p friday-mobile --lib real_ui_loop -- --ignored`
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[ignore = "drives a live GTK3 app over the accessibility bus"]
+    async fn real_ui_loop_presses_a_tab_in_a_live_app() {
+        if std::env::var("FRIDAY_TEST_REAL_ATSPI").as_deref() != Ok("1") {
+            eprintln!("set FRIDAY_TEST_REAL_ATSPI=1 to run this against the live session");
+            return;
+        }
+        let dir = temp_dir("real-ui");
+        let model = Script::new(&[
+            r#"{"action":"ui_find","params":{"app":"pavucontrol","name":"","role":"page tab"}}"#,
+            r#"{"action":"ui_click","params":{"app":"pavucontrol","name":"Configuration"}}"#,
+            r#"{"action":"ui_click","params":{"app":"pavucontrol","name":"Playback"}}"#,
+            r#"{"done":"Looked at the tabs and pressed Configuration, then Playback."}"#,
+        ]);
+        let t = DesktopControlTool::new(
+            model.clone(),
+            DesktopAdapter::new(),
+            Arc::default(),
+            Arc::default(),
+            Some(dir.clone()),
+            default_ui(),
+        );
+        let r = run(&t, "show me pavucontrol's configuration tab, then playback").await;
+        assert!(r.success, "{:?} / {}", r.error, r.output);
+        let text = std::fs::read_to_string(dir.join("actions.jsonl")).unwrap();
+        let lines: Vec<Value> = text
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 3, "{text}");
+        assert!(lines.iter().all(|l| l["ok"] == true), "{text}");
+        assert_eq!(lines[1]["verb"], "ui_click");
+        assert_eq!(lines[1]["params"]["label"], "Configuration");
+        // The model was shown the tabs it found.
+        assert!(model.prompts.lock().unwrap()[1].contains("Configuration"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

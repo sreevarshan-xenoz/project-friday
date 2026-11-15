@@ -55,6 +55,15 @@ worked, never what was on your screen). Questions ("how do I change the
 volume?") are answered, not acted on. `FRIDAY_DESKTOP=0` in
 `~/.config/friday/friday.env` turns this off.
 
+It can also look inside apps and press their controls: "click the Save button
+in gedit", "what tabs does pavucontrol have". This works with apps that offer
+accessibility actions (GTK3, Qt, Electron). GTK4 apps such as Nautilus can be
+read but their buttons can't be pressed from here, and FRIDAY says so. A button
+that could delete or send something (Delete, Send, Pay, Install, Allow...) asks
+first and shows the button's name. Passwords are never read or typed into. What
+it reads inside an app goes to the AI model answering you; in private mode that
+model is on your computer.
+
 ## Other ways to ask
 
 ```

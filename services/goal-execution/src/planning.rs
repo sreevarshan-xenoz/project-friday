@@ -814,7 +814,7 @@ fn is_desktop_intent(d: &str) -> bool {
     .iter()
     .find_map(|p| d.strip_prefix(p))
     .unwrap_or(d);
-    const INSTRUCTION: [&str; 26] = [
+    const INSTRUCTION: [&str; 32] = [
         "set",
         "turn",
         "mute",
@@ -841,12 +841,18 @@ fn is_desktop_intent(d: &str) -> bool {
         "make",
         "open",
         "launch",
+        "click",
+        "press",
+        "tap",
+        "select",
+        "type",
+        "fill",
     ];
     let first = d.split_whitespace().next().unwrap_or("");
     if !INSTRUCTION.contains(&first) {
         return false;
     }
-    const THINGS: [&str; 9] = [
+    const THINGS: [&str; 16] = [
         "workspace",
         "window",
         "windows",
@@ -856,6 +862,13 @@ fn is_desktop_intent(d: &str) -> bool {
         "unmute",
         "screen brightness",
         "sound",
+        "button",
+        "menu",
+        "tab",
+        "checkbox",
+        "dropdown",
+        "toggle",
+        "field",
     ];
     if THINGS.iter().any(|t| has_word(d, t)) {
         return true;
@@ -1366,6 +1379,10 @@ mod tests {
             "skip this song",
             "please play the next track",
             "can you pause the music",
+            "click the save button in gedit",
+            "press the play button",
+            "type hello into the search field",
+            "select the second tab",
             "switch to performance mode",
             "what's playing",
         ] {
@@ -1383,6 +1400,11 @@ mod tests {
             "open notepad",
             "launch spotify",
             "summarize this song review",
+            "what does the save button do",
+            "type of rust numbers",
+            "tap water temperature",
+            "select all rows where the age is over 30",
+            "how do I press a key in vim",
         ] {
             assert_ne!(
                 planning.infer_capability(goal, &[]),
