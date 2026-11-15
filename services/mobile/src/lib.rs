@@ -20,6 +20,7 @@ pub mod probe;
 pub mod protocol;
 pub mod session;
 pub mod shell_state;
+pub mod standing;
 pub mod transport;
 pub mod upgrade;
 pub mod voice;
