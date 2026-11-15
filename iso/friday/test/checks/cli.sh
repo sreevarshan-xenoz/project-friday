@@ -149,6 +149,24 @@ contains "app-context status says off" "$(bash "$F" app-context status)" "Off"
 bash "$F" app-context on >/dev/null
 contains "app-context status says on" "$(bash "$F" app-context status)" "On"
 rm -f "$S/hyprctl"
+# `friday forget` shows counts, asks before deleting, and wipes only what was named.
+FD="$HOME/.local/state/friday"; mkdir -p "$FD/memory"
+printf '<!-- friday answer -->\n# q1\n\nA\n\n---\n\n<!-- friday answer -->\n# q2\n\nB\n\n---\n\n' >"$FD/answers.md"
+printf 'q2\nq1\n' >"$FD/ask-history"; printf '{"a":1}\n{"a":2}\n{"a":3}\n' >"$FD/egress.jsonl"
+printf '{"e":1}\n' >"$FD/memory/episodes.jsonl"
+out=$(bash "$F" forget </dev/null)
+contains "forget lists the saved answers" "$out" "2 saved answers, 2 remembered questions"
+contains "forget lists the sent log" "$out" "3 entries in the log"
+contains "forget lists the memory" "$out" "1 things FRIDAY remembered"
+if bash "$F" forget answers </dev/null >/dev/null 2>&1; then fail "forget deleted without a yes"; else pass "forget wants --yes when it can't ask"; fi
+[[ -f "$FD/answers.md" ]] && pass "and nothing was deleted" || fail "answers.md vanished without a yes"
+contains "forget answers reports counts" "$(bash "$F" forget answers --yes)" "Deleted 2 saved answers and 2 remembered questions"
+[[ ! -e "$FD/answers.md" && ! -e "$FD/ask-history" ]] && pass "forget answers deletes them" || fail "forget answers left files"
+[[ -f "$FD/egress.jsonl" && -f "$FD/memory/episodes.jsonl" ]] && pass "and only them" || fail "forget answers deleted more than asked"
+bash "$F" forget all --yes >/dev/null
+[[ ! -e "$FD/egress.jsonl" && ! -e "$FD/memory/episodes.jsonl" ]] && pass "forget all deletes the rest" || fail "forget all left files"
+if bash "$F" forget nonsense >/dev/null 2>&1; then fail "forget took an unknown thing"; else pass "forget refuses an unknown thing"; fi
+
 PRIMARY="" CLIP="Bonjour" bash "$F" ask -s "translate"; sleep 0.3
 contains "falls back to the clipboard" "$(cat "$LOG")" "Bonjour"
 : >"$LOG"; PRIMARY="" CLIP="Bonjour tout le monde" PICK="translate" bash "$F" ask -s; sleep 0.3
