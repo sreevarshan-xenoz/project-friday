@@ -92,6 +92,9 @@ New-Item -ItemType Directory -Force $work, $config | Out-Null
 $py = Get-Command python, python3 -CommandType Application -ErrorAction SilentlyContinue |
     Where-Object { $_.Source -notmatch 'WindowsApps' } | Select-Object -First 1
 if (-not $py) { throw "needs Python (for the fake model)" }
+# Slower streaming: the window is sampled from outside, and a slow runner
+# missed the answer growing when the steps came every 0.25 s.
+$env:FAKE_MODEL_PAUSE = "0.7"
 $fake = Start-Process $py.Source -ArgumentList "`"$repo\tests\e2e\fake_model.py`"", "`"$work\port`"", "`"$work\model.log`"" -PassThru -WindowStyle Hidden
 $tray = $null
 $notepad = $null
