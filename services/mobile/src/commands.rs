@@ -71,6 +71,12 @@ impl CommandGateway {
                 if web {
                     payload["web"] = json!(true);
                 }
+                if cmd.params.get("thorough").and_then(|v| v.as_bool()) == Some(true) {
+                    payload["thorough"] = json!(true);
+                }
+                if let Some(avoid) = cmd.params.get("avoid").filter(|v| v.is_object()) {
+                    payload["avoid"] = avoid.clone();
+                }
                 let _ = self
                     .bus
                     .publish(Event::new("plan.goal", "mobile", payload))

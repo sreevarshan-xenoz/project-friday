@@ -169,4 +169,16 @@ boolean `web` requests web search augmentation:
 - `web`: boolean (`true` queries an ordered chain of search backends — SearXNG, Brave Search API, DuckDuckGo HTML, Wikipedia API — uses the first returning results, injects them into the prompt as numbered sources with citation instructions, and appends a verified `Sources (<Backend>):` list to the final answer; absent or `false` leaves web search disabled).
 - Privacy: web searches happen ONLY on explicit user request (`friday ask --web`, `friday-ctl goal --web`, or explicit prefixes like "search " / "search the web for " / "look up "). Never automatically. Egress log records provider as the backend contacted with `kinds: ["search"]`, one entry per attempted backend.
 
+### `thorough` and `avoid` goal fields (optional)
+
+On the same goal ingress commands and `plan.goal` events, an optional boolean `thorough` asks for a second, more careful answer (the answer pill's "Try another model"), and an optional object `avoid` names the model that gave the answer being retried:
+
+```json
+{ "goal": "explain E0308", "thorough": true, "avoid": { "provider": "opencode", "model": "big-pickle" } }
+```
+
+- `thorough`: the answer step ranks models for quality (a connected account, then a provider with the person's own key, then free reasoning-tier models, then the rest), puts a take-more-care note first in the prompt, and routes by the same privacy rules as any ask (private mode stays local).
+- `avoid`: `{provider, model}`, both required. That model is tried last, never excluded, so a single-model setup still answers. FRIDAY has no model quality ratings, so "another model" is the honest claim; the order is a preference, not a measurement.
+
+
 

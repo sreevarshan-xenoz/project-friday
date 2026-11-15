@@ -2712,6 +2712,19 @@ impl friday_investigation::LlmStrategyClient for InferenceFabric {
         self.complete_with_progress(&RequestRequirements::default(), prompt, progress)
             .await
     }
+    async fn complete_thorough_with_progress(
+        &self,
+        prompt: &str,
+        avoid: Option<(&str, &str)>,
+        progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+    ) -> Result<String, String> {
+        let req = RequestRequirements {
+            reasoning: crate::qualification::Requirement::Preferred,
+            ..RequestRequirements::default()
+        };
+        self.complete_thorough(&req, prompt, avoid, Some(progress))
+            .await
+    }
 }
 
 /// Recursively collect every `qualification.json` under `dir` (missing or
@@ -3489,6 +3502,50 @@ impl InferenceFabric {
             .into_iter()
             .filter(|(m, _)| providers.contains(&m.provider))
             .collect();
+        self.complete_candidates_reporting(&request_id, candidates, prompt, progress)
+            .await
+    }
+
+    /// Candidates for a thorough answer (the person asked for a better
+    /// model): the requirement-driven ranking, reordered for answer quality
+    /// rather than speed — an account they connected first, then a provider
+    /// they gave a key, then the free reasoning tier, then the rest (the
+    /// usual order breaks ties). `avoid`, the `(provider, model)` that gave
+    /// the last answer, goes to the back: tried only when nothing else is up.
+    pub fn select_thorough(
+        &self,
+        req: &RequestRequirements,
+        avoid: Option<(&str, &str)>,
+    ) -> Vec<(ModelInfo, &dyn Provider)> {
+        let mut candidates = self.select_for(req);
+        let rank = |m: &ModelInfo| -> u8 {
+            if avoid == Some((m.provider.as_str(), m.id.as_str())) {
+                4
+            } else if is_account_provider(&m.provider) {
+                0
+            } else if !self.automatic.contains(&m.provider) {
+                1
+            } else if m.tier == Some(CapabilityTier::ReasoningFree) {
+                2
+            } else {
+                3
+            }
+        };
+        candidates.sort_by_key(|(m, _)| rank(m));
+        candidates
+    }
+
+    /// [`InferenceFabric::complete_with_progress`] over
+    /// [`InferenceFabric::select_thorough`]'s ranking.
+    pub async fn complete_thorough(
+        &self,
+        req: &RequestRequirements,
+        prompt: &str,
+        avoid: Option<(&str, &str)>,
+        progress: Option<&(dyn for<'s> Fn(&'s str) + Send + Sync)>,
+    ) -> Result<String, String> {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let candidates = self.select_thorough(req, avoid);
         self.complete_candidates_reporting(&request_id, candidates, prompt, progress)
             .await
     }
@@ -4853,6 +4910,48 @@ mod tests {
             &[ModelCapability::Tools, ModelCapability::Local],
         ));
         fabric
+    }
+
+    /// A thorough answer ranks for quality: a connected account, then a
+    /// provider with the person's key, then the free reasoning tier, then the
+    /// automatic free models; the model being retried goes last, not away.
+    #[test]
+    fn select_thorough_ranks_for_quality_and_puts_the_retried_model_last() {
+        let mut fabric = InferenceFabric::new();
+        for name in ["opencode", "kilo", "groq", "claude-code"] {
+            fabric.register_provider(Box::new(OpenAiProvider {
+                name: name.to_string(),
+                base_url: "http://localhost/v1".to_string(),
+                api_key: String::new(),
+            }));
+        }
+        fabric.automatic.insert("opencode".to_string());
+        fabric.automatic.insert("kilo".to_string());
+        fabric.register_model(mi("big-pickle", "opencode", 100, &[ModelCapability::Tools]));
+        let mut reasoning = mi("deep-think", "kilo", 900, &[ModelCapability::Tools]);
+        reasoning.tier = Some(CapabilityTier::ReasoningFree);
+        fabric.register_model(reasoning);
+        fabric.register_model(mi("llama-3.3-70b", "groq", 200, &[ModelCapability::Tools]));
+        fabric.register_model(mi("sonnet", "claude-code", 3000, &[ModelCapability::Tools]));
+
+        let req = RequestRequirements::default();
+        let order = |avoid| -> Vec<String> {
+            fabric
+                .select_thorough(&req, avoid)
+                .iter()
+                .map(|(m, _)| m.provider.clone())
+                .collect()
+        };
+        assert_eq!(order(None), ["claude-code", "groq", "kilo", "opencode"]);
+        assert_eq!(
+            order(Some(("claude-code", "sonnet"))),
+            ["groq", "kilo", "opencode", "claude-code"]
+        );
+        // Only the same provider with a different model is not avoided.
+        assert_eq!(
+            order(Some(("claude-code", "opus"))),
+            ["claude-code", "groq", "kilo", "opencode"]
+        );
     }
 
     #[test]

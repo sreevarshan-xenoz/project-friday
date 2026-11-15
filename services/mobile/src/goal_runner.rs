@@ -1570,12 +1570,8 @@ impl GoalRunner {
                     .get("confirm")
                     .and_then(|c| c.as_str())
                     .map(|s| s.to_string());
-                let web = ev
-                    .payload
-                    .get("web")
-                    .and_then(|w| w.as_bool())
-                    .unwrap_or(false);
-                self.run_goal(goal, session_id, confirm, web).await;
+                let opts = AskOptions::from_payload(&ev.payload);
+                self.run_goal(goal, session_id, confirm, opts).await;
             }
         });
 
@@ -1587,7 +1583,13 @@ impl GoalRunner {
     /// composed into the goal text the Executive plans on (per-session
     /// continuity), and the finished turn is recorded for the next goal in the
     /// same session.
-    async fn run_goal(&self, goal: String, session_id: String, confirm: Option<String>, web: bool) {
+    async fn run_goal(
+        &self,
+        goal: String,
+        session_id: String,
+        confirm: Option<String>,
+        opts: AskOptions,
+    ) {
         let (goal, masked_count) = friday_goal_execution::mask_secrets(&goal);
         let id = format!("goal-{}", uuid::Uuid::new_v4().simple());
         let egress_ctx = friday_intelligence::EgressContext {
@@ -1596,7 +1598,7 @@ impl GoalRunner {
         };
         friday_intelligence::with_egress_context(
             egress_ctx,
-            self.run_goal_inner(goal, id, masked_count, session_id, confirm, web),
+            self.run_goal_inner(goal, id, masked_count, session_id, confirm, opts),
         )
         .await;
     }
@@ -1608,8 +1610,9 @@ impl GoalRunner {
         masked_count: usize,
         session_id: String,
         confirm: Option<String>,
-        web: bool,
+        opts: AskOptions,
     ) {
+        let web = opts.web;
         // Lengths only: the question and any selected text (which can hold a
         // password or token) never go to the log.
         let asked = friday_goal_execution::planning::goal_segment(&goal)
@@ -1744,6 +1747,7 @@ impl GoalRunner {
                     &self.bus,
                     &id,
                     web_response.as_ref(),
+                    &opts,
                 )
                 .await
                 {
@@ -2127,6 +2131,43 @@ fn answer_prompt(
     p
 }
 
+/// How a goal was asked, beyond its words (`plan.goal`'s optional fields).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AskOptions {
+    /// Search the web and answer from the results, with sources.
+    pub web: bool,
+    /// Ask again for a better answer: a model ranked for quality, told to
+    /// take more care, and not `avoid`.
+    pub thorough: bool,
+    /// The `(provider, model)` that gave the answer being retried.
+    pub avoid: Option<(String, String)>,
+}
+
+impl AskOptions {
+    pub fn from_payload(payload: &serde_json::Value) -> Self {
+        let flag = |k: &str| payload.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+        let avoid = payload.get("avoid").and_then(|a| {
+            let field = |k: &str| {
+                a.get(k)
+                    .and_then(|v| v.as_str())
+                    .filter(|v| !v.trim().is_empty())
+                    .map(str::to_string)
+            };
+            Some((field("provider")?, field("model")?))
+        });
+        Self {
+            web: flag("web"),
+            thorough: flag("thorough"),
+            avoid,
+        }
+    }
+}
+
+/// Put first in a thorough answer's prompt.
+const THOROUGH_NOTE: &str = "The person asked again for a better answer than the last one. \
+Take more care this time: think the question through, check facts, numbers and steps, \
+and cover what matters, while staying as short as a complete answer allows.\n\n";
+
 /// The answer step: ask the model to reply to `request` from what the cycle
 /// produced. Returns the reply as a `Text` result (the tool's own output is
 /// kept in `structured.source`), or `None` when the model errors, times out or
@@ -2138,8 +2179,12 @@ async fn compose_answer(
     bus: &EventBus,
     goal_id: &str,
     web_response: Option<&SearchResponse>,
+    opts: &AskOptions,
 ) -> Result<GoalResult, String> {
-    let prompt = answer_prompt(request, report, web_response);
+    let mut prompt = answer_prompt(request, report, web_response);
+    if opts.thorough {
+        prompt.insert_str(0, THOROUGH_NOTE);
+    }
     // The answer streams: the text so far goes out as `goal.progress` events
     // (at most every PROGRESS_EVERY), and the forwarder is drained before
     // returning so no progress can land after the goal's terminal event.
@@ -2148,8 +2193,14 @@ async fn compose_answer(
     let progress = move |text: &str| {
         let _ = tx.send(text.to_string());
     };
-    let call = client.complete_with_progress(&prompt, &progress);
-    let outcome = tokio::time::timeout(ANSWER_TIMEOUT, call).await;
+    let outcome = if opts.thorough {
+        let avoid = opts.avoid.as_ref().map(|(p, m)| (p.as_str(), m.as_str()));
+        let call = client.complete_thorough_with_progress(&prompt, avoid, &progress);
+        tokio::time::timeout(ANSWER_TIMEOUT, call).await
+    } else {
+        let call = client.complete_with_progress(&prompt, &progress);
+        tokio::time::timeout(ANSWER_TIMEOUT, call).await
+    };
     drop(progress);
     let _ = forwarder.await;
     let reply = match outcome {
@@ -2420,6 +2471,120 @@ mod tests {
             self.prompts.lock().unwrap().push(prompt.to_string());
             self.reply.clone()
         }
+    }
+
+    /// Records which call the answer step made: a normal answer, or a
+    /// thorough one and the model it was told to avoid.
+    /// (which call, the model to avoid, the prompt)
+    type AnswerCall = (String, Option<(String, String)>, String);
+
+    #[derive(Default)]
+    struct RetryAnswerer {
+        calls: Mutex<Vec<AnswerCall>>,
+    }
+
+    #[async_trait]
+    impl LlmStrategyClient for RetryAnswerer {
+        async fn complete(&self, prompt: &str) -> Result<String, String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(("normal".into(), None, prompt.to_string()));
+            Ok("quick answer".to_string())
+        }
+        async fn complete_thorough_with_progress(
+            &self,
+            prompt: &str,
+            avoid: Option<(&str, &str)>,
+            progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+        ) -> Result<String, String> {
+            self.calls.lock().unwrap().push((
+                "thorough".into(),
+                avoid.map(|(p, m)| (p.to_string(), m.to_string())),
+                prompt.to_string(),
+            ));
+            progress("careful answer");
+            Ok("careful answer".to_string())
+        }
+    }
+
+    async fn run_payload(
+        payload: serde_json::Value,
+        answerer: Arc<RetryAnswerer>,
+    ) -> serde_json::Value {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let runner = GoalRunner::new(bus.clone()).with_answerer(answerer);
+        runner.start();
+        bus.publish(Event::new("plan.goal", "mobile", payload))
+            .await
+            .expect("publish");
+        for _ in 0..40 {
+            let ev = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+                .await
+                .expect("a terminal event in time")
+                .expect("bus alive");
+            if ev.kind == "goal.completed" || ev.kind == "goal.failed" {
+                return ev.payload;
+            }
+        }
+        panic!("no terminal event");
+    }
+
+    /// "Try a better model": a thorough goal takes the thorough call, with
+    /// the model to avoid and the take-more-care note; a plain goal doesn't.
+    #[tokio::test]
+    async fn thorough_goal_asks_for_a_careful_answer_from_another_model() {
+        let answerer = Arc::new(RetryAnswerer::default());
+        let payload = run_payload(
+            json!({
+                "goal": "What does the Rust error E0308 mean?",
+                "thorough": true,
+                "avoid": { "provider": "opencode", "model": "big-pickle" },
+            }),
+            answerer.clone(),
+        )
+        .await;
+        assert_eq!(payload["result"]["text"], "careful answer", "{payload}");
+        {
+            let calls = answerer.calls.lock().unwrap();
+            assert_eq!(calls.len(), 1, "{calls:?}");
+            assert_eq!(calls[0].0, "thorough");
+            assert_eq!(
+                calls[0].1,
+                Some(("opencode".to_string(), "big-pickle".to_string()))
+            );
+            assert!(calls[0].2.starts_with(THOROUGH_NOTE), "{}", calls[0].2);
+        }
+
+        let plain = Arc::new(RetryAnswerer::default());
+        let payload = run_payload(
+            json!({ "goal": "What does the Rust error E0308 mean?" }),
+            plain.clone(),
+        )
+        .await;
+        assert_eq!(payload["result"]["text"], "quick answer", "{payload}");
+        let calls = plain.calls.lock().unwrap();
+        assert_eq!(calls[0].0, "normal");
+        assert!(!calls[0].2.contains(THOROUGH_NOTE));
+    }
+
+    #[test]
+    fn ask_options_read_from_the_goal_payload() {
+        assert_eq!(
+            AskOptions::from_payload(&json!({ "goal": "x" })),
+            AskOptions::default()
+        );
+        let o = AskOptions::from_payload(&json!({
+            "web": true,
+            "thorough": true,
+            "avoid": { "provider": "kilo", "model": "a/b" },
+        }));
+        assert!(o.web && o.thorough);
+        assert_eq!(o.avoid, Some(("kilo".to_string(), "a/b".to_string())));
+        // Half an `avoid` is no `avoid`.
+        let o = AskOptions::from_payload(&json!({ "avoid": { "provider": "kilo" } }));
+        assert_eq!(o.avoid, None);
     }
 
     /// Streams its reply in words, with pauses longer than the progress
@@ -4527,7 +4692,7 @@ mod tests {
                 "open notepad".to_string(),
                 DEFAULT_SESSION_ID.to_string(),
                 Some("notepad.exe".to_string()),
-                false,
+                AskOptions::default(),
             )
             .await;
 
@@ -4843,7 +5008,12 @@ mod tests {
 
         for run in 1..=4u32 {
             runner
-                .run_goal(goal.clone(), format!("s7-session-{run}"), None, false)
+                .run_goal(
+                    goal.clone(),
+                    format!("s7-session-{run}"),
+                    None,
+                    AskOptions::default(),
+                )
                 .await;
             let mut terminal = None;
             for _ in 0..30 {
@@ -5031,7 +5201,7 @@ mod tests {
                     "run echo ok".to_string(),
                     "session-f".to_string(),
                     None,
-                    false,
+                    AskOptions::default(),
                 )
                 .await;
         });

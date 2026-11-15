@@ -43,6 +43,21 @@ pub trait LlmStrategyClient: Send + Sync {
         progress(&text);
         Ok(text)
     }
+
+    /// A second, more careful answer (the person asked for a better model):
+    /// like [`LlmStrategyClient::complete_with_progress`], but ranked for
+    /// answer quality rather than speed, and not on `avoid` (the
+    /// `(provider, model)` that gave the last answer) while another model
+    /// can take it. A client with one model just answers again.
+    async fn complete_thorough_with_progress(
+        &self,
+        prompt: &str,
+        avoid: Option<(&str, &str)>,
+        progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+    ) -> Result<String, String> {
+        let _ = avoid;
+        self.complete_with_progress(prompt, progress).await
+    }
 }
 
 /// `Arc` passthrough so a client shared behind an `Arc` in an async runtime
@@ -59,5 +74,15 @@ impl<T: LlmStrategyClient + ?Sized> LlmStrategyClient for std::sync::Arc<T> {
         progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
     ) -> Result<String, String> {
         (**self).complete_with_progress(prompt, progress).await
+    }
+    async fn complete_thorough_with_progress(
+        &self,
+        prompt: &str,
+        avoid: Option<(&str, &str)>,
+        progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+    ) -> Result<String, String> {
+        (**self)
+            .complete_thorough_with_progress(prompt, avoid, progress)
+            .await
     }
 }
