@@ -1,0 +1,5 @@
+[D-BUS Service]
+Name=org.friday.Helper1
+Exec=/bin/false
+User=root
+SystemdService=friday-os-helper.service
