@@ -568,6 +568,20 @@ printf 'BRAVE_SEARCH_API_KEY=testbravesecret123\nFRIDAY_SEARXNG_URL=http://local
 out=$(bash "$F" doctor 2>&1 || true)
 contains "doctor reports SearXNG and Brave in search backends" "$out" "search backends: SearXNG, Brave, DuckDuckGo, Wikipedia"
 if [[ "$out" == *testbravesecret123* ]]; then fail "doctor printed search key"; else pass "doctor never prints search keys"; fi
+# The inside-app engine doctor reports: agent-desktop when a 1.x copy is there.
+fake_ad() { printf '#!/bin/bash\necho %q\n' '{"version":"2.6","ok":true,"command":"version","data":{"os":"linux","version":"'"$1"'"}}' >"$W/agent-desktop"; chmod +x "$W/agent-desktop"; }
+fake_ad 1.3.1
+out=$(FRIDAY_AGENT_DESKTOP="$W/agent-desktop" bash "$F" doctor 2>&1 || true)
+contains "doctor names agent-desktop and its version" "$out" "inside-app control: agent-desktop 1.3.1"
+fake_ad 2.0.0
+out=$(FRIDAY_AGENT_DESKTOP="$W/agent-desktop" bash "$F" doctor 2>&1 || true)
+contains "doctor warns about a version FRIDAY does not accept" "$out" "agent-desktop 2.0.0 is not a version FRIDAY accepts"
+fake_ad 1.2.9
+out=$(FRIDAY_AGENT_DESKTOP="$W/agent-desktop" bash "$F" doctor 2>&1 || true)
+contains "doctor warns about too old a version" "$out" "agent-desktop 1.2.9 is not a version FRIDAY accepts"
+out=$(FRIDAY_AGENT_DESKTOP="" PATH="$S:/usr/bin:/bin" bash "$F" doctor 2>&1 || true)
+contains "without agent-desktop doctor says FRIDAY's own reader is used" "$out" "inside-app control: FRIDAY's own reader"
+rm -f "$W/agent-desktop"
 printf '{"status":"running","token":"t","listen":"127.0.0.1:1"}' >"$state/state.json"
 out=$(bash "$F" doctor 2>&1 || true)
 contains "probes the address the daemon published" "$out" "nothing listening on 127.0.0.1:1"

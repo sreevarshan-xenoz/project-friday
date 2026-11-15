@@ -65,7 +65,11 @@ limit per task, and an audit log (`friday actions`) of every action taken.
    accessibility trees on Linux, Windows and macOS), sits behind the same seam: used when a
    supported 1.x binary is found, with our AT-SPI adapter as the fallback. Compact snapshots
    (about 6 KB for Nautilus) instead of long paths; it presses what the app lets it and fails
-   closed otherwise (GTK4 rows still can't be pressed on Hyprland). Not packaged yet.
+   closed otherwise (GTK4 rows still can't be pressed on Hyprland). Shipped pinned
+   inside the `friday-git` package (`/usr/lib/friday/`, so `pacman -Syu` updates it with FRIDAY);
+   a weekly job (`agent-desktop-bump.yml`) verifies each new release (checksum, the same bytes
+   as the signed npm package, npm's provenance, the flags the engine uses) and reports it in an
+   issue, and the pin moves only through a pull request that CI's package build must pass.
 4. **The system helper.** `friday-os-helper`: root, a D-Bus API, polkit prompt
    per sensitive call. Install and remove packages, enable services, change
    network settings, update the system ("update everything and tell me").
