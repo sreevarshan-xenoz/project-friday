@@ -2270,6 +2270,10 @@ mod tests {
     /// execution when a test's control command lands — deterministic control
     /// tests without timing races. Serves up to `max` requests, then exits
     /// after a short idle window.
+    /// How long a test waits for the next event on a loaded CI runner (the
+    /// Windows one is slow); a healthy run is well under a second.
+    const SLOW_RUNNER_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
     fn mock_search_endpoint(delay_ms: u64, max: usize) -> (String, std::thread::JoinHandle<()>) {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind mock server");
@@ -4057,7 +4061,7 @@ mod tests {
     /// and a `task.approve` for that id admits the episode into memory and
     /// publishes `goal.approved` — the approve control request produces a real
     /// state transition, not a silent ack.
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn task_approve_admits_a_held_episode_and_publishes_goal_approved() {
         let (endpoint, server) = mock_search_endpoint(0, 2);
 
@@ -4079,7 +4083,7 @@ mod tests {
         let mut saw_terminal = false;
         let mut pending_approval_id = None;
         for _ in 0..30 {
-            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            let Ok(ev) = tokio::time::timeout(SLOW_RUNNER_WAIT, rx.recv())
                 .await
                 .map(|r| r.expect("bus alive"))
             else {
@@ -4100,7 +4104,7 @@ mod tests {
                 break;
             }
         }
-        let _ = server.join();
+        let _ = tokio::task::spawn_blocking(move || server.join()).await;
 
         assert!(saw_terminal, "the sensitive goal must complete");
         let pending_id = pending_approval_id.expect("pending_approval_id in the payload");
@@ -4116,7 +4120,7 @@ mod tests {
 
         let mut saw_approved = false;
         for _ in 0..30 {
-            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            let Ok(ev) = tokio::time::timeout(SLOW_RUNNER_WAIT, rx.recv())
                 .await
                 .map(|r| r.expect("bus alive"))
             else {
