@@ -820,7 +820,18 @@ friday_hold() {
       fi
       exec bash "$0" ask
       ;;
-    *) echo "Usage: friday hold start|end (Super+Y's press and release)" >&2; return 1 ;;
+    toggle)
+      # For desktops whose binds can't see a key release (niri): press to
+      # start listening, press again to ask. Without voice it is a plain ask.
+      if [ -e "$d/recording" ]; then
+        friday_hold end
+      elif friday_voice_ready; then
+        FRIDAY_HOLD_DELAY=0 friday_hold start
+      else
+        exec bash "$0" ask
+      fi
+      ;;
+    *) echo "Usage: friday hold start|end|toggle (start and end are Super+Y's press and release; toggle is for desktops without release binds)" >&2; return 1 ;;
   esac
 }
 

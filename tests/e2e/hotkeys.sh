@@ -58,8 +58,11 @@ keymap() {
     for k in "${niri_keys[@]}"; do
       hk="${niri_to_hypr[$k]}"
       got=$(awk -F'\t' -v k="$k" '$1 == k { print $2 }' "$map")
-      if [[ "$got" == "spawn ${want[$hk]}" ]]; then pass "$label: $k runs \`${want[$hk]}\`"
-      else fail "$label: $k should run only \`${want[$hk]}\`, runs:"; sed 's/^/       /' <<<"${got:-nothing}"; fi
+      # niri's binds see only the press, so Mod+Y toggles listening (a plain
+      # ask when voice is off) where Hyprland's Super+Y has press and release.
+      local cmd="${want[$hk]}"; [[ "$k" == Mod+Y ]] && cmd="friday hold toggle"
+      if [[ "$got" == "spawn $cmd" ]]; then pass "$label: $k runs \`$cmd\`"
+      else fail "$label: $k should run only \`$cmd\`, runs:"; sed 's/^/       /' <<<"${got:-nothing}"; fi
     done
     return
   fi
@@ -166,6 +169,7 @@ press() {
 }
 
 press SUPER+Y "What does the Rust error E0308 mean?" "FAKE-MODEL-ANSWER: What does the Rust error E0308 mean?*"
+press Mod+Y "What does the Rust error E0308 mean in niri?" "FAKE-MODEL-ANSWER: What does the Rust error E0308 mean in niri?*"
 press ALT+SUPER+Y "explain this" "FAKE-MODEL-ANSWER: explain this*" \
   PRIMARY="error[E0308]: mismatched types: expected u32, found String"
 if grep -q "mismatched types" "$W/model.log"; then pass "ALT+SUPER+Y: the selection reached the model"
