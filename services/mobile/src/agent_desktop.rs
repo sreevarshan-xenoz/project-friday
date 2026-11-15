@@ -2452,4 +2452,25 @@ mod tests {
         );
         assert_eq!(stub.calls().len(), 1);
     }
+
+    /// Against a live desktop: the words of one running app, read the way a
+    /// screen ask reads them. `FRIDAY_LIVE_APP_CLASS` is the window class
+    /// (for example `org.pulseaudio.pavucontrol`). Prints only counts.
+    #[tokio::test]
+    #[ignore = "needs a live desktop with agent-desktop and the app running (the VM)"]
+    async fn real_window_text_reads_a_running_app() {
+        use crate::context_read::ScreenText;
+        let class = std::env::var("FRIDAY_LIVE_APP_CLASS").expect("set FRIDAY_LIVE_APP_CLASS");
+        let ui = detect().await.expect("agent-desktop is not installed");
+        let text = ui.window_text(&class).await;
+        println!(
+            "window text for {class}: {} chars, {} lines",
+            text.as_ref().map_or(0, |t| t.chars().count()),
+            text.as_ref().map_or(0, |t| t.lines().count())
+        );
+        assert!(
+            text.is_some(),
+            "no usable text (a thin tree, or no such app)"
+        );
+    }
 }
