@@ -8,7 +8,8 @@ import Quickshell.Io
 // goal (state.json, via Friday), streaming the answer as it arrives; `friday
 // ask` then hands it the finished answer over IPC, with the same wording the
 // notification would have had:
-//   qs ipc call answer present <ok> <goal> <answer> <meta> <mode>
+//   qs ipc call answer present <ok> <goal> <answer> <meta> <mode> <served>
+//   (`served` is the provider/model that answered; "" when unknown)
 // (not `show`: the qs CLI reads that as its own `ipc show`)
 // `friday ask` falls back to a notification when nothing answers that call.
 Singleton {
@@ -23,6 +24,8 @@ Singleton {
   // How it was asked (`--selection`, `--screen`, `--region`, or ""), so Ask
   // again asks the same way.
   property string mode: ""
+  // The provider/model that gave this answer, so Try another model skips it.
+  property string served: ""
   // Bumped on every new answer, so the pill restarts its timers.
   property int serial: 0
 
@@ -59,9 +62,10 @@ Singleton {
     }
   }
 
-  function show(ok, goal, body, meta, mode) {
+  function show(ok, goal, body, meta, mode, served) {
     settle.stop();
     root.mode = mode || "";
+    root.served = served || "";
     root.ok = ok;
     root.goal = goal;
     root.body = body;
@@ -103,11 +107,21 @@ Singleton {
     args.push(root.goal);
     Quickshell.execDetached(args);
   }
+  // Whether another model can be asked: a question about text, not a
+  // screenshot (those go through the screen-reading path).
+  readonly property bool canTryAnother: root.goal !== "" && root.mode !== "--screen" && root.mode !== "--region"
+  // The same question again, answered with more care by a different model.
+  function tryAnother() {
+    const args = ["friday", "ask"];
+    if (root.mode === "--selection") args.push("--selection");
+    args.push("--another", root.served || "none/none", root.goal);
+    Quickshell.execDetached(args);
+  }
   function openFull() { Quickshell.execDetached(["foot", "-H", "-T", "FRIDAY · " + root.goal, "friday", "answers", "--last"]); }
 
   IpcHandler {
     target: "answer"
-    function present(ok: bool, goal: string, body: string, meta: string, mode: string): void { root.show(ok, goal, body, meta, mode); }
+    function present(ok: bool, goal: string, body: string, meta: string, mode: string, served: string): void { root.show(ok, goal, body, meta, mode, served); }
     function dismiss(): void { root.dismiss(); }
     function listening(): void { root.listening(); }
     function state(): string { return root.state; }

@@ -1091,10 +1091,14 @@ case "${1:-}" in
     #   friday ask --follow-up [text]   ask about the last answer (the answer pill's
     #                                   Follow up)
     #   friday ask --web [text]         ask with web search results and cited sources
+    #   friday ask --another provider/model [text]
+    #                                   ask again, answered with more care by a
+    #                                   different model (the answer pill's
+    #                                   Try another model)
     # With FRIDAY Shell running, the answer opens in its answer pill (which also
     # streams it); otherwise it arrives as a notification.
     shift
-    use_selection=false use_screen=false use_region=false use_followup=false use_web=false details="" daemon_down=false
+    use_selection=false use_screen=false use_region=false use_followup=false use_web=false another="" details="" daemon_down=false
     ask_args=()
     while [ $# -gt 0 ]; do
       case "${1:-}" in
@@ -1103,6 +1107,7 @@ case "${1:-}" in
         --region|-r) use_screen=true; use_region=true; ask_args+=(--region); shift ;;
         --follow-up|-f) use_followup=true; ask_args+=(--follow-up); shift ;;
         --web) use_web=true; ask_args+=(--web); shift ;;
+        --another) another="${2:-}"; shift; [ $# -eq 0 ] || shift ;;
         *) break ;;
       esac
     done
@@ -1289,6 +1294,7 @@ case "${1:-}" in
       preview="$answer"
       [ "${#preview}" -le 220 ] || preview="${preview:0:217}…"
       [ -z "$meta" ] || preview="$preview\n$meta"
+      local served_model=""
       if $ans_ok; then
         local is_private=false
         local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
@@ -1298,6 +1304,7 @@ case "${1:-}" in
         fi
         local served_p served_ms
         served_p=$(jq -r '.served_by.provider // empty' <<<"$summary_json" 2>/dev/null || true)
+        served_model=$(jq -r 'select(.served_by.provider != null) | .served_by.provider + "/" + (.served_by.model // "")' <<<"$summary_json" 2>/dev/null || true)
         served_ms=$(jq -r '.served_by.ms // empty' <<<"$summary_json" 2>/dev/null || true)
         if $is_private; then
           preview="$preview\nPrivate · on this computer"
@@ -1332,7 +1339,7 @@ case "${1:-}" in
       # only when it isn't there, or for "Start FRIDAY", which only a
       # notification offers.
       if $use_pill && [ "${daemon_down:-false}" != true ] \
-        && pill present "$ans_ok" "$goal" "$answer" "$meta" "${ask_args[0]:-}"; then
+        && pill present "$ans_ok" "$goal" "$answer" "$meta" "${ask_args[0]:-}" "${served_model:-}"; then
         return 0
       fi
       urgency=normal; $ans_ok || urgency=critical
@@ -1388,6 +1395,7 @@ case "${1:-}" in
       [[ "$nid" =~ ^[0-9]+$ ]] || nid=""
       ctl_args=(goal --wait)
       $use_web && ctl_args+=(--web)
+      [ -z "$another" ] || ctl_args+=(--thorough --avoid "$another")
       ctl_args+=("$request")
       stream_ctl friday-ctl "${ctl_args[@]}"
       # The final {outcome,result,error} object; keep every line of the answer.

@@ -96,7 +96,8 @@ async fn main() -> std::process::ExitCode {
     let mut token = std::env::var("FRIDAY_CTL_TOKEN").ok().unwrap_or_default();
     let mut wait = false;
     let mut stream = false;
-    let mut web = false;
+    // Optional goal fields: `--web`, `--thorough`, `--avoid <provider>/<model>`.
+    let mut ask_opts = serde_json::Map::new();
     let mut question: Option<String> = None;
 
     // Scan ALL tokens for flags (`--addr`/`--token`/`--wait` may appear before
@@ -130,8 +131,20 @@ async fn main() -> std::process::ExitCode {
             stream = true;
             i += 1;
         } else if w == "--web" {
-            web = true;
+            ask_opts.insert("web".into(), serde_json::json!(true));
             i += 1;
+        } else if w == "--thorough" {
+            ask_opts.insert("thorough".into(), serde_json::json!(true));
+            i += 1;
+        } else if w == "--avoid" && i + 1 < raw.len() {
+            // `provider/model`; the model id may itself hold a `/`.
+            if let Some((provider, model)) = raw[i + 1].split_once('/') {
+                ask_opts.insert(
+                    "avoid".into(),
+                    serde_json::json!({ "provider": provider, "model": model }),
+                );
+            }
+            i += 2;
         } else {
             positional.push(w.clone());
             i += 1;
@@ -139,7 +152,7 @@ async fn main() -> std::process::ExitCode {
     }
 
     let Some(sub) = positional.first() else {
-        eprintln!("usage: friday-ctl <goal|cancel|system-info|context screen> [goal text] [--web] [--addr <host:port>] [--token <tok>]");
+        eprintln!("usage: friday-ctl <goal|cancel|system-info|context screen> [goal text] [--web] [--thorough [--avoid <provider>/<model>]] [--addr <host:port>] [--token <tok>]");
         return std::process::ExitCode::FAILURE;
     };
     let sub = sub.clone();
@@ -219,7 +232,7 @@ async fn main() -> std::process::ExitCode {
         &sub,
         goal_words,
         confirm.as_deref(),
-        web,
+        &ask_opts,
     )
     .await;
     if sub == "goal" && wait && accepted == std::process::ExitCode::SUCCESS {
@@ -364,7 +377,7 @@ async fn run(
     sub: &str,
     args: Vec<String>,
     confirm: Option<&str>,
-    web: bool,
+    ask_opts: &serde_json::Map<String, serde_json::Value>,
 ) -> std::process::ExitCode {
     // Build the command. Only `goal`, `system-info`, and `context` are wired
     // for now — the "one controlled command" surface.
@@ -379,8 +392,8 @@ async fn run(
             if let Some(c) = confirm {
                 p["confirm"] = serde_json::json!(c);
             }
-            if web {
-                p["web"] = serde_json::json!(true);
+            for (k, v) in ask_opts {
+                p[k] = v.clone();
             }
             (friday_mobile::method::PLANNER_GOAL.to_string(), p)
         }

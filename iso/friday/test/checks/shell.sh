@@ -86,7 +86,7 @@ done
 timeout 10 qs -p "$FS" ipc call shell close >/dev/null 2>&1 || true
 # The answer pill, handed an answer the way `friday ask` does.
 answer=$'Your disk is mostly **photos** (41 GB) and the package cache (12 GB).\n\n- `~/Pictures`: 41 GB\n- `/var/cache/pacman`: 12 GB\n\nClear the cache with `sudo paccache -r`.'
-if timeout 10 qs -p "$FS" ipc call answer present true "What's using my disk?" "$answer" "via OpenCode Zen · 1.4 s" "" >/dev/null 2>&1; then
+if timeout 10 qs -p "$FS" ipc call answer present true "What's using my disk?" "$answer" "via OpenCode Zen · 1.4 s" "" "opencode/big-pickle" >/dev/null 2>&1; then
   sleep 1.5; grim "$W/friday-answer.png" 2>/dev/null || true
   [[ "$(timeout 10 qs -p "$FS" ipc call answer state 2>/dev/null)" == answer ]] \
     && pass "answer pill shows an answer over IPC" || fail "answer pill did not take the answer"
@@ -104,7 +104,7 @@ fi
 timeout 10 qs -p "$FS" ipc call tour begin "Alex" true >/dev/null 2>&1 || true
 sleep 1.5; grim "$W/friday-tour.png" 2>/dev/null || true
 [[ "$(timeout 10 qs -p "$FS" ipc call tour step 2>/dev/null)" == 0 ]] && pass "tour begins at its first step" || fail "tour did not begin"
-timeout 10 qs -p "$FS" ipc call answer present true "q" "a" "" "" >/dev/null 2>&1 || true
+timeout 10 qs -p "$FS" ipc call answer present true "q" "a" "" "" "" >/dev/null 2>&1 || true
 sleep 0.5
 [[ "$(timeout 10 qs -p "$FS" ipc call tour step 2>/dev/null)" == 1 ]] && pass "tour moves on when FRIDAY answers" || fail "tour did not move on after an answer"
 timeout 10 qs -p "$FS" ipc call answer dismiss >/dev/null 2>&1 || true

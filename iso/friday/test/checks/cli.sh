@@ -42,6 +42,9 @@ printf 'friday-ctl %q\n' "\$target_arg" >> "$LOG"
 if [[ "\$*" == *"--web"* ]]; then
   printf 'friday-ctl-web %s\n' "\$*" >> "$LOG"
 fi
+if [[ "\$*" == *"--thorough"* ]]; then
+  printf 'friday-ctl-thorough %s\n' "\$*" >> "$LOG"
+fi
 echo '{"accepted":true}'
 if [[ "\$target_arg" == *nodaemon* ]]; then echo "no token found; daemon not running at /x/state.json (is friday-linux-daemon up?)" >&2; exit 1; fi
 if [[ "\$target_arg" == *slowgoal* ]]; then echo '{"accepted":true}'; echo "timed out after 180s waiting for the goal to finish" >&2; exit 1; fi
@@ -110,6 +113,14 @@ if grep -q "Unknown option" "$W"/*.log 2>/dev/null; then fail "notify-send rejec
 : >"$LOG"; ACTION_COPY=1 bash "$F" ask "copy answer test"; sleep 0.3
 contains "Copy runs wl-copy with the answer text" "$(cat "$LOG")" "wl-copy: Line one."
 if grep -q "wl-copy: # " "$LOG"; then fail "Copy included markdown header"; else pass "Copy copies answer body only"; fi
+
+: >"$LOG"; bash "$F" ask --another opencode/big-pickle "explain E0308"; sleep 0.3
+contains "ask --another asks for a thorough answer" "$(cat "$LOG")" "friday-ctl-thorough"
+contains "ask --another names the model to skip" "$(cat "$LOG")" "--avoid opencode/big-pickle"
+contains "ask --another still asks the question" "$(cat "$LOG")" "explain E0308"
+
+: >"$LOG"; bash "$F" ask "explain E0308"; sleep 0.3
+if grep -q "friday-ctl-thorough" "$LOG"; then fail "a plain ask went thorough"; else pass "a plain ask is not thorough"; fi
 
 : >"$LOG"; bash "$F" ask --web "what is the latest stable rust"; sleep 0.3
 contains "ask --web passes --web flag" "$(cat "$LOG")" "friday-ctl-web"
