@@ -670,7 +670,7 @@ friday_phone() {
         echo "Phone: off (pair a phone: friday phone on)"
       else
         local n
-        n=$(pocketdesk devices --json 2>/dev/null | jq 'length' 2>/dev/null || echo "?")
+        n=$(pocketdesk devices --json 2>/dev/null | jq '.devices | length' 2>/dev/null || echo "?")
         echo "Phone: on, $n paired (answer FRIDAY from it: turn on \"Answer my questions\" on the phone's Devices page)"
       fi
       ;;
