@@ -1634,7 +1634,7 @@ mod tests {
 
     fn collector_with_window() -> ContextCollector<FakeCommandRunner> {
         let full = friday_context_collector::screen_command(None);
-        let win = friday_context_collector::active_window_command(cfg!(windows), "friday-host");
+        let win = friday_context_collector::window_command();
         let shot =
             friday_context_collector::screen_command(Some(ScreenRegion::new(0, 0, 800, 600)));
         let runner = FakeCommandRunner::new()
