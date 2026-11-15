@@ -16,6 +16,7 @@ internal sealed class TrayContext : ApplicationContext
     private readonly Supervised _host;
     private readonly System.Windows.Forms.Timer _poll = new() { Interval = 2000 };
     private readonly ToolStripMenuItem _startAtLogin;
+    private readonly ToolStripMenuItem _appContext;
     private string _mode = "";
     private bool _asking;
 
@@ -55,6 +56,9 @@ internal sealed class TrayContext : ApplicationContext
         menu.Items.Add("All answers", null, (_, _) => Open(install.Paths.AnswersFile));
         menu.Items.Add("What left this PC…", null, (_, _) => ShowEgress());
         menu.Items.Add("Forget saved data…", null, (_, _) => ForgetSavedData());
+        _appContext = new ToolStripMenuItem("Name the app when asking about a selection", null, (_, _) => ToggleAppContext())
+            { Checked = SourceApp.Enabled(install.Paths) };
+        menu.Items.Add(_appContext);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("AI provider…", null, (_, _) => ChooseProvider());
         menu.Items.Add(_startAtLogin);
@@ -88,6 +92,7 @@ internal sealed class TrayContext : ApplicationContext
             var targetWindow = Native.GetForegroundWindow();
             string? context = null;
             string? preview = null;
+            string? appLine = null;
             if (kind == AskKind.Selection)
             {
                 var sel = await Selection.CaptureAsync();
@@ -99,6 +104,9 @@ internal sealed class TrayContext : ApplicationContext
                 context = sel.Text!.Length > Asking.MaxContextChars ? sel.Text[..Asking.MaxContextChars] : sel.Text;
                 preview = $"{sel.Source}: {context.ReplaceLineEndings(" ")}";
                 preview = preview.Length > 60 ? preview[..60] : preview;
+                // Read now, while the window the text came from is still in front.
+                if (SourceApp.Enabled(_install.Paths))
+                    appLine = SourceApp.Line(Native.ProcessNameOf(targetWindow), Native.GetWindowTitle(targetWindow));
             }
 
             string question;
@@ -110,6 +118,13 @@ internal sealed class TrayContext : ApplicationContext
             }
             _log.Remember(question);
 
+            // The battery, a timer, a settings page: answered here, nothing sent.
+            if (kind == AskKind.Plain && LocalCommands.Parse(question) is { } local)
+            {
+                RunLocal(question, local);
+                return;
+            }
+
             if (kind == AskKind.Screen && targetWindow != IntPtr.Zero)
             {
                 Native.RestoreForeground(targetWindow);
@@ -118,13 +133,57 @@ internal sealed class TrayContext : ApplicationContext
 
             // "search ..." and "look up ..." ask for a web search, and only they do.
             var (asked, web) = Asking.WebQuestion(question);
-            var request = Asking.BuildRequest(asked, context);
+            var request = SourceApp.Append(Asking.BuildRequest(asked, context), appLine);
             await RunRequestAsync(kind, asked, context, request, confirm: null, answer: null, new AskOptions(Web: web));
         }
         finally
         {
             _asking = false;
         }
+    }
+
+    /// <summary>Does a <see cref="LocalCommand"/> and shows what it did, like any answer.</summary>
+    private void RunLocal(string question, LocalCommand cmd)
+    {
+        string text;
+        try
+        {
+            switch (cmd.Kind)
+            {
+                case LocalKind.Battery:
+                    var power = SystemInformation.PowerStatus;
+                    var noBattery = power.BatteryChargeStatus.HasFlag(BatteryChargeStatus.NoSystemBattery)
+                        || power.BatteryLifePercent > 1;
+                    text = LocalCommands.BatteryAnswer(
+                        noBattery ? null : (int)Math.Round(power.BatteryLifePercent * 100),
+                        power.PowerLineStatus == PowerLineStatus.Online,
+                        power.BatteryChargeStatus.HasFlag(BatteryChargeStatus.Charging));
+                    break;
+                case LocalKind.Timer:
+                    var label = cmd.Label;
+                    var ui = SynchronizationContext.Current;
+                    _ = Task.Delay(TimeSpan.FromSeconds(cmd.Seconds)).ContinueWith(
+                        _ => ui?.Post(_ => Notify("Timer", $"{label} is up.", ToolTipIcon.Info), null),
+                        TaskScheduler.Default);
+                    text = LocalCommands.TimerAnswer(cmd);
+                    break;
+                default:
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(cmd.Uri) { UseShellExecute = true });
+                    text = LocalCommands.SettingsAnswer(cmd);
+                    break;
+            }
+        }
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            text = "Couldn't do that: " + e.Message;
+        }
+        var outcome = new AskOutcome(!text.StartsWith("Couldn't"), text, null, false);
+        _log.Save(question, null, outcome, DateTime.Now);
+        var answer = NewAnswerForm(AskKind.Plain, question, "");
+        answer.CanAskAnother = false;
+        answer.FollowUp += () => _ = FollowUpAsync(outcome.Answer);
+        answer.ShowOutcome(outcome);
+        answer.Activate();
     }
 
     private async Task RunRequestAsync(AskKind kind, string question, string? context, string request, string? confirm, AnswerForm? answer, AskOptions options)
@@ -327,6 +386,12 @@ internal sealed class TrayContext : ApplicationContext
     {
         var form = new EgressForm(_install.Paths);
         form.Show();
+    }
+
+    private void ToggleAppContext()
+    {
+        SourceApp.SetEnabled(_install.Paths, !SourceApp.Enabled(_install.Paths));
+        _appContext.Checked = SourceApp.Enabled(_install.Paths);
     }
 
     private void ToggleStartAtLogin()
