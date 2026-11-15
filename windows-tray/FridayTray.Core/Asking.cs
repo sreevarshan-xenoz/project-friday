@@ -6,6 +6,13 @@ namespace FridayTray.Core;
 
 public enum AskKind { Plain, Selection, Screen }
 
+/// <summary>
+/// How a question is asked beyond its words: search the web first, or answer
+/// again with more care from a model other than <see cref="Avoid"/> (the
+/// "provider/model" that gave the answer being retried).
+/// </summary>
+public sealed record AskOptions(bool Web = false, bool Thorough = false, string? Avoid = null);
+
 /// <summary>A tool action pending explicit confirmation before execution.</summary>
 public sealed record NeedsConfirmation(string Tool, string Action);
 
@@ -49,13 +56,58 @@ public static partial class Asking
 
     /// <summary>friday-ctl's arguments for this ask, optionally confirming an action.</summary>
     public static string[] CtlArguments(AskKind kind, string question, string request, string? confirm) =>
-        kind == AskKind.Screen
-            // Pressing the key and typing the question is the per-use consent;
-            // the daemon's ContextGate still enforces it.
-            ? ["context", "screen", "--yes", "--ask", question, "--stream"]
-            : !string.IsNullOrEmpty(confirm)
-                ? ["goal", "--wait", "--confirm", confirm, request]
-                : ["goal", "--wait", request];
+        CtlArguments(kind, question, request, confirm, null);
+
+    /// <summary>friday-ctl's arguments for this ask, with its confirmation and options.</summary>
+    public static string[] CtlArguments(AskKind kind, string question, string request, string? confirm, AskOptions? options)
+    {
+        // Pressing the key and typing the question is the per-use consent;
+        // the daemon's ContextGate still enforces it.
+        if (kind == AskKind.Screen)
+            return ["context", "screen", "--yes", "--ask", question, "--stream"];
+        var args = new List<string> { "goal", "--wait" };
+        if (!string.IsNullOrEmpty(confirm))
+            args.AddRange(["--confirm", confirm]);
+        if (options?.Web == true)
+            args.Add("--web");
+        if (options?.Thorough == true)
+        {
+            args.Add("--thorough");
+            if (!string.IsNullOrEmpty(options.Avoid) && options.Avoid.Contains('/'))
+                args.AddRange(["--avoid", options.Avoid]);
+        }
+        args.Add(request);
+        return [.. args];
+    }
+
+    /// <summary>
+    /// A question that starts with "search the web for", "search" or "look up"
+    /// asks for a web search (and only then: FRIDAY never searches on its
+    /// own). Returns the question without that prefix.
+    /// </summary>
+    public static (string Question, bool Web) WebQuestion(string question)
+    {
+        var m = WebPrefix().Match(question.Trim());
+        if (!m.Success || string.IsNullOrWhiteSpace(m.Groups[1].Value))
+            return (question, false);
+        return (m.Groups[1].Value.Trim(), true);
+    }
+
+    [GeneratedRegex(@"^(?:search\s+the\s+web\s+for|search|look\s+up)\s+(.+)$", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex WebPrefix();
+
+    public const int MaxFollowUpContextChars = 6000;
+
+    /// <summary>The request for a follow-up: the question, with the answer it follows.</summary>
+    public static string BuildFollowUp(string question, string previousAnswer)
+    {
+        var prev = previousAnswer.Length > MaxFollowUpContextChars ? previousAnswer[..MaxFollowUpContextChars] : previousAnswer;
+        return $"{question}\n\nThis follows up on my previous question and your answer:\n\"\"\"\n{prev}\n\"\"\"";
+    }
+
+    /// <summary>The "provider/model" to avoid when asking again, from who answered.</summary>
+    public static string? AvoidFor(ServedByInfo? served) =>
+        served is null || string.IsNullOrEmpty(served.Provider) ? null : $"{served.Provider}/{served.Model}";
 
     /// <summary>
     /// The answer so far while <paramref name="request"/> is the goal in flight:

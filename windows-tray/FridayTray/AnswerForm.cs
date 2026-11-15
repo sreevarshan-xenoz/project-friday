@@ -13,8 +13,13 @@ namespace FridayTray;
 internal sealed class AnswerForm : Form
 {
     public event Action? AskAgain;
+    public event Action? TryAnother;
+    public event Action? FollowUp;
     public event Action? StartFriday;
     public event Action<string>? ConfirmRun;
+
+    /// <summary>Whether "Try another model" applies (a text ask, not a screen one).</summary>
+    public bool CanAskAnother { get; set; }
 
     private readonly string _question;
     private readonly Label _title;
@@ -197,6 +202,18 @@ internal sealed class AnswerForm : Form
             var again = Theme.Button("Ask again");
             again.Click += (_, _) => { AskAgain?.Invoke(); Close(); };
             _buttons.Controls.Add(again);
+            if (outcome.Ok && CanAskAnother)
+            {
+                var another = Theme.Button("Try another model");
+                another.Click += (_, _) => { TryAnother?.Invoke(); Close(); };
+                _buttons.Controls.Add(another);
+            }
+            if (outcome.Ok)
+            {
+                var follow = Theme.Button("Follow up");
+                follow.Click += (_, _) => { FollowUp?.Invoke(); Close(); };
+                _buttons.Controls.Add(follow);
+            }
             var copy = Theme.Button("Copy", primary: outcome.Ok);
             copy.Click += (_, _) =>
             {

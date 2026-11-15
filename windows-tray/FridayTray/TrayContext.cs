@@ -115,8 +115,10 @@ internal sealed class TrayContext : ApplicationContext
                 await FocusWait.WaitForForegroundAsync(targetWindow, Native.GetForegroundWindow);
             }
 
-            var request = Asking.BuildRequest(question, context);
-            await RunRequestAsync(kind, question, context, request, confirm: null, answer: null);
+            // "search ..." and "look up ..." ask for a web search, and only they do.
+            var (asked, web) = Asking.WebQuestion(question);
+            var request = Asking.BuildRequest(asked, context);
+            await RunRequestAsync(kind, asked, context, request, confirm: null, answer: null, new AskOptions(Web: web));
         }
         finally
         {
@@ -124,7 +126,7 @@ internal sealed class TrayContext : ApplicationContext
         }
     }
 
-    private async Task RunRequestAsync(AskKind kind, string question, string? context, string request, string? confirm, AnswerForm? answer)
+    private async Task RunRequestAsync(AskKind kind, string question, string? context, string request, string? confirm, AnswerForm? answer, AskOptions options)
     {
         // The answer window opens now and fills in while the answer
         // streams (state.json's current.partial). Not for a screen ask:
@@ -170,7 +172,7 @@ internal sealed class TrayContext : ApplicationContext
         };
         var (ok, output, exitCode) = await Ctl.RunAsync(
             _install,
-            Asking.CtlArguments(kind, question, request, confirm),
+            Asking.CtlArguments(kind, question, request, confirm, options),
             TimeSpan.FromSeconds(240),
             onLine);
         poll.Stop();
@@ -187,23 +189,62 @@ internal sealed class TrayContext : ApplicationContext
             onConfirm = action =>
             {
                 answer.ConfirmRun -= onConfirm;
-                _ = ExecuteConfirmedAsync(kind, question, context, request, action, answer);
+                _ = ExecuteConfirmedAsync(kind, question, context, request, action, answer, options);
             };
             answer.ConfirmRun += onConfirm;
         }
 
+        answer.CanAskAnother = kind != AskKind.Screen;
+        if (outcome.Ok)
+        {
+            // Another model, told to take more care and not the one that just answered.
+            answer.TryAnother += () => _ = RunAgainAsync(() =>
+                RunRequestAsync(kind, question, context, request, confirm: null, answer: null,
+                    options with { Thorough = true, Avoid = Asking.AvoidFor(outcome.ServedBy) }));
+            answer.FollowUp += () => _ = FollowUpAsync(outcome.Answer);
+        }
         answer.ShowOutcome(outcome);
         answer.Activate();
     }
 
-    private async Task ExecuteConfirmedAsync(AskKind kind, string question, string? context, string request, string confirmAction, AnswerForm answer)
+    private async Task RunAgainAsync(Func<Task> run)
     {
         if (_asking)
             return;
         _asking = true;
         try
         {
-            await RunRequestAsync(kind, question, context, request, confirmAction, answer);
+            await run();
+        }
+        finally
+        {
+            _asking = false;
+        }
+    }
+
+    private Task FollowUpAsync(string previousAnswer) => RunAgainAsync(async () =>
+    {
+        string question;
+        var preview = previousAnswer.ReplaceLineEndings(" ");
+        using (var form = new AskForm(AskKind.Plain, "Follow up on: " + (preview.Length > 50 ? preview[..50] : preview), []))
+        {
+            if (form.ShowDialog() != DialogResult.OK)
+                return;
+            question = form.Question;
+        }
+        _log.Remember(question);
+        await RunRequestAsync(AskKind.Plain, question, null, Asking.BuildFollowUp(question, previousAnswer),
+            confirm: null, answer: null, new AskOptions());
+    });
+
+    private async Task ExecuteConfirmedAsync(AskKind kind, string question, string? context, string request, string confirmAction, AnswerForm answer, AskOptions options)
+    {
+        if (_asking)
+            return;
+        _asking = true;
+        try
+        {
+            await RunRequestAsync(kind, question, context, request, confirmAction, answer, options);
         }
         finally
         {
@@ -214,6 +255,7 @@ internal sealed class TrayContext : ApplicationContext
     private AnswerForm NewAnswerForm(AskKind kind, string question, string waiting)
     {
         var form = new AnswerForm(question, waiting);
+        form.CanAskAnother = kind != AskKind.Screen;
         form.AskAgain += () => _ = AskAsync(kind);
         form.StartFriday += RestartChildren;
         form.Show();
