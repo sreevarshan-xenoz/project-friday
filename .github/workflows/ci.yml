@@ -5,6 +5,7 @@ on:
     branches: [main, dev]
   pull_request:
   workflow_call: # release.yml runs all of CI before building a release
+  workflow_dispatch: # the weekly agent-desktop check starts CI on its pull request's branch
 
 env:
   CARGO_TERM_COLOR: always
