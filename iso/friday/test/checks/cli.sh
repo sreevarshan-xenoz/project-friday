@@ -435,6 +435,11 @@ start=$SECONDS; r=$(NS_ANSWER=run NS_DELAY=5 PD_ANSWER=yes conf)
 [[ "$(NS_ANSWER=run NS_DELAY=5 PD_ANSWER=no conf)" == cancel ]] && pass "confirm: the phone's No cancels" || fail "confirm: phone No"
 [[ "$(NS_ANSWER= PD_ANSWER=none conf)" == cancel ]] && pass "confirm: no answer anywhere is a cancel" || fail "confirm: no answer"
 contains "confirm: the phone is asked the exact action" "$(cat "$PD_LOG")" "FRIDAY wants to run: git push origin main"
+# `friday phone status` counts the paired phones from `pocketdesk devices --json`.
+printf '#!/bin/sh\necho "{\\"api\\":1,\\"devices\\":[{\\"id\\":\\"a\\"},{\\"id\\":\\"b\\"}],\\"server_running\\":true}"\n' >"$CS/pocketdesk"; chmod +x "$CS/pocketdesk"
+printf '#!/bin/sh\nexit 0\n' >"$CS/systemctl"; chmod +x "$CS/systemctl"
+contains "phone status counts the paired phones" "$(PATH="$CS:$PATH" bash "$F" phone status)" "on, 2 paired"
+rm -f "$CS/systemctl"
 rm -f "$CS/pocketdesk"
 [[ "$(NS_ANSWER=run conf)" == run ]] && pass "confirm: works with no Pocketdesk at all" || fail "confirm: no Pocketdesk"
 unset PD_LOG
