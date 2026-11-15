@@ -41,8 +41,9 @@ limit per task, and an audit log (`friday actions`) of every action taken.
    `hyprctl` and D-Bus, then in the VM.
    *Built:* the adapter, and the loop as a tool the planner routes to (a goal that
    is an instruction about windows, workspaces, volume, media or the power
-   profile). Checked on a real Hyprland in the VM. Still to do: the indicator
-   with Stop, the kill key and the audit log.
+   profile). Checked on a real Hyprland in the VM. The Stop button
+   on the answer card, the kill key (Super+Ctrl+Esc) and the audit log
+   (`friday actions`) are in too.
 2. **The control loop.** For a goal that needs the desktop, the model picks
    the next typed action, FRIDAY runs it, observes (window list, optionally a
    screenshot with consent), and repeats until done or the step limit. The

@@ -30,6 +30,7 @@ Autonomous Agent & Cognitive Loop:
   friday answers                   Show past answers (last one: friday answers --last)
   friday app-context [on|off]      Whether a question about selected text names the app it came from
   friday forget [what]             Show what FRIDAY keeps on this computer, or wipe it
+  friday actions [N]               Show what FRIDAY did on your desktop (windows, apps, media)
   friday sent [N]                  Show what left this machine for AI providers (egress log)
   friday goal "<objective>"        Dispatch an autonomous goal to FRIDAY agent
   friday cancel                    Cancel the goal FRIDAY is working on
@@ -928,11 +929,12 @@ friday_forget() {
   for arg in "$@"; do
     case "$arg" in
       --yes|-y) yes=true ;;
-      answers|sent|memory|all) what="$arg" ;;
-      *) echo "usage: friday forget [answers|sent|memory|all] [--yes]" >&2; return 2 ;;
+      answers|sent|memory|actions|all) what="$arg" ;;
+      *) echo "usage: friday forget [answers|sent|memory|actions|all] [--yes]" >&2; return 2 ;;
     esac
   done
-  local n_answers n_asks n_sent n_mem
+  local n_answers n_asks n_sent n_mem n_actions
+  n_actions=$(wc -l <"$state_dir/actions.jsonl" 2>/dev/null || true)
   n_answers=$(grep -c '^<!-- friday answer -->' "$state_dir/answers.md" 2>/dev/null || true)
   n_asks=$(wc -l <"$state_dir/ask-history" 2>/dev/null || true)
   n_sent=$(wc -l <"$state_dir/egress.jsonl" 2>/dev/null || true)
@@ -942,7 +944,8 @@ friday_forget() {
     echo "  answers  ${n_answers:-0} saved answers, ${n_asks:-0} remembered questions   ($state_dir)"
     echo "  sent     ${n_sent:-0} entries in the log of what was sent to AI providers"
     echo "  memory   ${n_mem:-0} things FRIDAY remembered between questions   ($mem_dir)"
-    echo "Wipe some:  friday forget answers|sent|memory|all   (add --yes to skip the question)"
+    echo "  actions  ${n_actions:-0} things FRIDAY did on your desktop (friday actions)"
+    echo "Wipe some:  friday forget answers|sent|memory|actions|all   (add --yes to skip the question)"
     return 0
   fi
   if ! $yes; then
@@ -959,6 +962,10 @@ friday_forget() {
     rm -f "$state_dir/egress.jsonl"
     echo "Deleted ${n_sent:-0} entries from the log of what was sent."
   fi
+  if [ "$what" = actions ] || [ "$what" = all ]; then
+    rm -f "$state_dir/actions.jsonl"
+    echo "Deleted ${n_actions:-0} entries from the log of desktop actions."
+  fi
   if [ "$what" = memory ] || [ "$what" = all ]; then
     # The daemon holds the journal open, so it stops while it is deleted.
     local was_up=false
@@ -970,6 +977,22 @@ friday_forget() {
     echo "Deleted ${n_mem:-0} remembered things."
   fi
   return 0
+}
+
+# What FRIDAY did on your desktop (actions.jsonl), newest last. Which
+# action, with what, whether it worked: never what was on your screen.
+friday_actions() {
+  local n="${1:-20}"
+  local f="${XDG_STATE_HOME:-$HOME/.local/state}/friday/actions.jsonl"
+  [[ "$n" =~ ^[0-9]+$ ]] || { echo "usage: friday actions [N]" >&2; return 2; }
+  if [ ! -s "$f" ]; then
+    echo "FRIDAY hasn't done anything on your desktop yet."
+    echo "Try: friday ask \"put firefox on workspace 2\""
+    return 0
+  fi
+  tail -n "$n" "$f" | jq -r '[(.ts | sub("\\.[0-9]+"; "") | sub("T"; " ") | sub("Z"; "")),
+    (if .ok then "ok    " else "failed" end), .verb, (.params | tojson), "(" + .risk + ")"] | join("  ")' 2>/dev/null \
+    || tail -n "$n" "$f"
 }
 
 friday_sent() {
@@ -1597,6 +1620,10 @@ case "${1:-}" in
   sent)
     shift
     friday_sent "$@"
+    ;;
+  actions)
+    shift
+    friday_actions "$@"
     ;;
   app-context)
     shift

@@ -12,6 +12,8 @@
 //! stops the loop and asks first, through the same confirmation flow as a
 //! command or a file write; once confirmed, only that exact action runs.
 
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -44,6 +46,18 @@ pub struct DesktopControlTool {
     model: Arc<dyn LlmStrategyClient>,
     adapter: DesktopAdapter,
     gate: Arc<Mutex<ConfirmationGate>>,
+    /// Set by `task.cancel` (the Stop button, `friday cancel`, the kill key).
+    abort: Arc<AtomicBool>,
+    /// Where every action taken is recorded (`actions.jsonl`), if anywhere.
+    audit_dir: Option<PathBuf>,
+}
+
+/// The directory of `actions.jsonl`: beside state.json (`FRIDAY_STATE_FILE`,
+/// else `$XDG_STATE_HOME/friday`).
+pub fn audit_dir() -> Option<PathBuf> {
+    crate::shell_state::ShellState::default_path()
+        .parent()
+        .map(|d| d.to_path_buf())
 }
 
 impl DesktopControlTool {
@@ -51,11 +65,52 @@ impl DesktopControlTool {
         model: Arc<dyn LlmStrategyClient>,
         adapter: DesktopAdapter,
         gate: Arc<Mutex<ConfirmationGate>>,
+        abort: Arc<AtomicBool>,
+        audit_dir: Option<PathBuf>,
     ) -> Self {
         Self {
             model,
             adapter,
             gate,
+            abort,
+            audit_dir,
+        }
+    }
+
+    /// Resolves when the goal is cancelled.
+    async fn cancelled(&self) {
+        while !self.abort.load(Ordering::SeqCst) {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+
+    /// One line in `actions.jsonl` for an action that ran: when, what, how it
+    /// went. Never the output (window titles can be private). A write that
+    /// fails never stops the action.
+    fn record(&self, verb: &str, params: &Value, ok: bool, goal: &str) {
+        let Some(dir) = &self.audit_dir else { return };
+        let risk = friday_actions::desktop_risk_of(verb)
+            .map(|r| format!("{r:?}").to_lowercase())
+            .unwrap_or_else(|| "unknown".into());
+        let line = json!({
+            "ts": chrono::Utc::now().to_rfc3339(),
+            "verb": verb,
+            "params": params,
+            "risk": risk,
+            "ok": ok,
+            "goal": goal.chars().take(120).collect::<String>(),
+        });
+        let _ = std::fs::create_dir_all(dir);
+        let mut opts = std::fs::OpenOptions::new();
+        opts.create(true).append(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        if let Ok(mut f) = opts.open(dir.join("actions.jsonl")) {
+            use std::io::Write;
+            let _ = writeln!(f, "{line}");
         }
     }
 }
@@ -109,6 +164,15 @@ fn exact_action(verb: &str, params: &Value) -> String {
     )
 }
 
+/// What the person is told when they stopped the task partway.
+fn stopped_message(steps: &[String]) -> String {
+    if steps.is_empty() {
+        "Stopped. Nothing was changed.".to_string()
+    } else {
+        format!("Stopped after these steps:\n{}", steps.join("\n"))
+    }
+}
+
 impl DesktopControlTool {
     async fn run_verb(&self, verb: &str, params: Value) -> (bool, String) {
         let res = self
@@ -129,7 +193,8 @@ impl DesktopControlTool {
         };
         let (verb, json_text) = rest.split_once(' ').unwrap_or((rest, "{}"));
         let params: Value = serde_json::from_str(json_text).unwrap_or(json!({}));
-        let (ok, out) = self.run_verb(verb, params).await;
+        let (ok, out) = self.run_verb(verb, params.clone()).await;
+        self.record(verb, &params, ok, "(confirmed)");
         if ok {
             ToolResult::success(format!("Did: {verb} {json_text}\nResult: {out}"))
         } else {
@@ -168,18 +233,23 @@ impl Tool for DesktopControlTool {
         let mut steps: Vec<String> = Vec::new();
         let mut log = String::new();
         for n in 1..=MAX_STEPS {
+            if self.abort.load(Ordering::SeqCst) {
+                return ToolResult::error(stopped_message(&steps));
+            }
             let prompt = format!(
                 "{GUIDE}\n\nThe person's request: {goal}\n\nSteps so far:\n{}\n\nYour next reply (JSON only):",
                 if log.is_empty() { "(none yet)" } else { log.trim_end() }
             );
-            let reply =
-                match tokio::time::timeout(MODEL_TIMEOUT, self.model.complete(&prompt)).await {
+            let reply = tokio::select! {
+                _ = self.cancelled() => return ToolResult::error(stopped_message(&steps)),
+                r = tokio::time::timeout(MODEL_TIMEOUT, self.model.complete(&prompt)) => match r {
                     Ok(Ok(r)) => r,
                     Ok(Err(e)) => return ToolResult::error(format!("couldn't ask the model: {e}")),
                     Err(_) => {
                         return ToolResult::error("the model took too long to choose the next step")
                     }
-                };
+                },
+            };
             let Some(choice) = first_json(&reply) else {
                 log.push_str(&format!(
                     "{n}. (your reply wasn't a JSON object; reply with JSON only)\n"
@@ -217,6 +287,7 @@ impl Tool for DesktopControlTool {
                 }
             }
             let (ok, out) = self.run_verb(verb, params.clone()).await;
+            self.record(verb, &params, ok, &goal);
             let line = format!(
                 "{n}. {verb} {} -> {}{}",
                 serde_json::to_string(&params).unwrap_or_default(),
@@ -308,7 +379,13 @@ mod tests {
         stub: Arc<Stub>,
         gate: Arc<Mutex<ConfirmationGate>>,
     ) -> DesktopControlTool {
-        DesktopControlTool::new(model, DesktopAdapter::with_exec(stub), gate)
+        DesktopControlTool::new(
+            model,
+            DesktopAdapter::with_exec(stub),
+            gate,
+            Arc::default(),
+            None,
+        )
     }
 
     async fn run(t: &DesktopControlTool, goal: &str) -> ToolResult {
@@ -488,6 +565,179 @@ mod tests {
         let r = run(&t, "pause the music").await;
         assert!(!r.success);
         assert!(r.error.unwrap().contains("couldn't ask the model"));
+    }
+
+    /// Sets the abort flag as it answers its first question, like a Stop
+    /// pressed while FRIDAY is partway through.
+    struct StopsAfterFirst {
+        abort: Arc<AtomicBool>,
+        asked: Mutex<usize>,
+    }
+
+    #[async_trait]
+    impl LlmStrategyClient for StopsAfterFirst {
+        async fn complete(&self, _prompt: &str) -> Result<String, String> {
+            *self.asked.lock().unwrap() += 1;
+            self.abort.store(true, Ordering::SeqCst);
+            Ok(r#"{"action":"media","params":{"command":"pause"}}"#.into())
+        }
+    }
+
+    /// Never answers.
+    struct Silent;
+
+    #[async_trait]
+    impl LlmStrategyClient for Silent {
+        async fn complete(&self, _prompt: &str) -> Result<String, String> {
+            std::future::pending().await
+        }
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("friday-desktop-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        d
+    }
+
+    #[tokio::test]
+    async fn a_stop_before_the_first_step_changes_nothing_and_asks_no_model() {
+        let model = Script::new(&[r#"{"action":"media","params":{"command":"pause"}}"#]);
+        let stub = Arc::new(Stub::default());
+        let t = DesktopControlTool::new(
+            model.clone(),
+            DesktopAdapter::with_exec(stub.clone()),
+            Arc::default(),
+            Arc::new(AtomicBool::new(true)),
+            None,
+        );
+        let r = run(&t, "pause the music").await;
+        assert!(!r.success);
+        assert_eq!(r.error.unwrap(), "Stopped. Nothing was changed.");
+        assert!(model.prompts.lock().unwrap().is_empty());
+        assert!(stub.calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_stop_partway_ends_the_loop_after_the_step_in_flight() {
+        let abort = Arc::new(AtomicBool::new(false));
+        let model = Arc::new(StopsAfterFirst {
+            abort: abort.clone(),
+            asked: Mutex::new(0),
+        });
+        let stub = Arc::new(Stub::default());
+        let t = DesktopControlTool::new(
+            model.clone(),
+            DesktopAdapter::with_exec(stub.clone()),
+            Arc::default(),
+            abort,
+            None,
+        );
+        let r = run(&t, "pause the music and then open firefox").await;
+        assert!(!r.success);
+        let e = r.error.unwrap();
+        assert!(
+            e.starts_with("Stopped after these steps:") && e.contains("- media"),
+            "{e}"
+        );
+        assert_eq!(
+            *model.asked.lock().unwrap(),
+            1,
+            "no second question after the stop"
+        );
+        assert!(stub.calls().contains(&"playerctl pause".to_string()));
+        assert!(!stub
+            .calls()
+            .iter()
+            .any(|c| c.contains("exec_cmd") || c.contains("gtk-launch")));
+    }
+
+    #[tokio::test]
+    async fn a_stop_while_the_model_is_thinking_does_not_wait_for_it() {
+        let abort = Arc::new(AtomicBool::new(false));
+        let t = DesktopControlTool::new(
+            Arc::new(Silent),
+            DesktopAdapter::with_exec(Arc::new(Stub::default())),
+            Arc::default(),
+            abort.clone(),
+            None,
+        );
+        let flag = abort.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            flag.store(true, Ordering::SeqCst);
+        });
+        let started = std::time::Instant::now();
+        let r = run(&t, "pause the music").await;
+        assert_eq!(r.error.unwrap(), "Stopped. Nothing was changed.");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "waited for the model"
+        );
+    }
+
+    #[tokio::test]
+    async fn every_action_taken_is_recorded_without_its_output() {
+        let dir = temp_dir("audit");
+        let model = Script::new(&[
+            r#"{"action":"windows","params":{}}"#,
+            r#"{"action":"focus_window","params":{"target":"gimp"}}"#,
+            r#"{"action":"media","params":{"command":"pause"}}"#,
+            r#"{"done":"ok"}"#,
+        ]);
+        let t = DesktopControlTool::new(
+            model,
+            DesktopAdapter::with_exec(Arc::new(Stub::default())),
+            Arc::default(),
+            Arc::default(),
+            Some(dir.clone()),
+        );
+        run(&t, "pause the music").await;
+        let text = std::fs::read_to_string(dir.join("actions.jsonl")).unwrap();
+        let lines: Vec<Value> = text
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 3, "{text}");
+        assert_eq!(lines[0]["verb"], "windows");
+        assert_eq!(lines[0]["ok"], true);
+        assert_eq!(lines[1]["verb"], "focus_window");
+        assert_eq!(lines[1]["ok"], false);
+        assert_eq!(lines[2]["risk"], "reversible");
+        assert_eq!(lines[2]["goal"], "pause the music");
+        assert!(lines[0]["ts"].as_str().unwrap().contains('T'));
+        // Window titles are in the adapter's output: not in the log.
+        assert!(!text.contains("Docs") && !text.contains("zsh"), "{text}");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(dir.join("actions.jsonl"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_confirmed_close_is_recorded_as_confirmed() {
+        let dir = temp_dir("confirmed");
+        let gate = Arc::new(Mutex::new(ConfirmationGate::default()));
+        gate.lock().unwrap().confirm = Some(r#"desktop close_window {"target":"firefox"}"#.into());
+        let t = DesktopControlTool::new(
+            Script::new(&[]),
+            DesktopAdapter::with_exec(Arc::new(Stub::default())),
+            gate,
+            Arc::default(),
+            Some(dir.clone()),
+        );
+        run(&t, "close the firefox window").await;
+        let text = std::fs::read_to_string(dir.join("actions.jsonl")).unwrap();
+        let line: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+        assert_eq!(line["verb"], "close_window");
+        assert_eq!(line["risk"], "destructive");
+        assert_eq!(line["goal"], "(confirmed)");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
