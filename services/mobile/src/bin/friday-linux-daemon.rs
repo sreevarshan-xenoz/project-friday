@@ -277,17 +277,34 @@ async fn main() {
         .ok()
         .filter(|p| !p.trim().is_empty());
     let context_label = context_provider.as_deref().unwrap_or("routed");
-    let screen_reader = Arc::new(friday_mobile::context_read::ScreenReader::new(
+    let mut screen_reader = friday_mobile::context_read::ScreenReader::new(
         ContextCollector::new(RealCommandRunner::default()),
         friday_mobile::context_read::FabricProviderSeam::new(
             fabric.clone(),
             context_provider.as_deref(),
         ),
         context_label,
-    ));
+    );
+    // A window whose app exposes its words (accessibility tree) is asked
+    // about as text; FRIDAY_SCREEN_TEXT=0 always uses a screenshot.
+    if std::env::var("FRIDAY_SCREEN_TEXT").map_or(true, |v| v.trim() != "0") {
+        if let Some(ui) = friday_mobile::agent_desktop::detect().await {
+            screen_reader = screen_reader.with_text(Arc::new(ui));
+        }
+    }
+    let screen_reader = Arc::new(screen_reader);
     tracing::info!(
         "[context.read] Screen reader armed (collector=Real, provider={context_label}); no ambient capture"
     );
+
+    // Standing tasks: run what is due ("every morning ...") through
+    // `friday ask`, as the person's own ask would run.
+    if friday_mobile::standing::enabled() {
+        tokio::spawn(friday_mobile::standing::run_loop(
+            friday_mobile::standing::store_path(),
+            Arc::new(friday_mobile::standing::FridayAsk),
+        ));
+    }
 
     // The assistant loop. Consumes `plan.goal` and runs each goal through the
     // real Executive with real evidence adapters.

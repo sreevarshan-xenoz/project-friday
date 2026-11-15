@@ -34,6 +34,8 @@ Autonomous Agent & Cognitive Loop:
   friday sent [N]                  Show what left this machine for AI providers (egress log)
   friday goal "<objective>"        Dispatch an autonomous goal to FRIDAY agent
   friday cancel                    Cancel the goal FRIDAY is working on
+  friday tasks [pause|resume|delete <id>]
+                                   Standing tasks ("every morning ..."): list, pause, delete
   friday status | system-info      Inspect daemon state, memory, and telemetry
   friday context screen [--yes]    Share screen context with assistant
   friday daemon <status|restart|logs> Control friday-linux-daemon service
@@ -1116,6 +1118,56 @@ friday_actions() {
     || tail -n "$n" "$f"
 }
 
+# Standing tasks ("every morning at 8 tell me the weather"): the file the
+# daemon runs them from. Made by asking; managed here.
+friday_tasks() {
+  local f="${XDG_STATE_HOME:-$HOME/.local/state}/friday/standing.json"
+  local cmd="${1:-list}" id="${2:-}"
+  case "$cmd" in
+    list|--json)
+      if [ "$cmd" = "--json" ]; then
+        [ -s "$f" ] && jq -c '.tasks // []' "$f" 2>/dev/null || echo '[]'
+        return 0
+      fi
+      if [ ! -s "$f" ] || [ "$(jq '.tasks | length' "$f" 2>/dev/null || echo 0)" = 0 ]; then
+        echo "No standing tasks yet."
+        echo "Try: friday ask \"every morning at 8 tell me the weather\""
+        return 0
+      fi
+      jq -r '.tasks[] | [.id,
+        (if .trigger.kind == "daily" then
+           "every " + (if .trigger.weekdays_only then "weekday" else "day" end) + " at " +
+           ("0" + (.trigger.hour | tostring))[-2:] + ":" + ("0" + (.trigger.minute | tostring))[-2:]
+         elif .trigger.kind == "every" then
+           (if .trigger.minutes % 60 == 0 then "every " + ((.trigger.minutes / 60) | tostring) + " h"
+            else "every " + (.trigger.minutes | tostring) + " min" end)
+         else "battery under " + (.trigger.percent | tostring) + "%" end),
+        .goal, (if .paused then "(paused)" else "" end)] | join("  ")' "$f" 2>/dev/null \
+        | sed 's/[[:space:]]*$//' \
+        || { echo "FRIDAY couldn't read $f" >&2; return 1; }
+      ;;
+    pause|resume|delete)
+      [[ "$id" =~ ^t[0-9]+$ ]] || { echo "usage: friday tasks $cmd <id>   (ids are in: friday tasks)" >&2; return 2; }
+      [ -s "$f" ] && jq -e --arg id "$id" '.tasks | any(.id == $id)' "$f" >/dev/null 2>&1 \
+        || { echo "No standing task $id. See: friday tasks" >&2; return 1; }
+      local edit
+      case "$cmd" in
+        pause)  edit='.tasks |= map(if .id == $id then .paused = true else . end)' ;;
+        resume) edit='.tasks |= map(if .id == $id then .paused = false else . end)' ;;
+        delete) edit='.tasks |= map(select(.id != $id))' ;;
+      esac
+      local tmp="$f.tmp.$$"
+      ( umask 077; jq --arg id "$id" "$edit" "$f" >"$tmp" ) && mv -f "$tmp" "$f" \
+        || { rm -f "$tmp"; echo "FRIDAY couldn't change $f" >&2; return 1; }
+      echo "Standing task $id: $cmd done."
+      ;;
+    *)
+      echo "usage: friday tasks [list|--json|pause <id>|resume <id>|delete <id>]" >&2
+      return 2
+      ;;
+  esac
+}
+
 friday_sent() {
   local n="${1:-20}"
   local state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
@@ -1749,6 +1801,10 @@ case "${1:-}" in
   actions)
     shift
     friday_actions "$@"
+    ;;
+  tasks)
+    shift
+    friday_tasks "$@"
     ;;
   app-context)
     shift

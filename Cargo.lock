@@ -1581,6 +1581,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "zbus",
 ]
 
 [[package]]

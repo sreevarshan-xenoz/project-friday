@@ -14,7 +14,7 @@ below are Linux only so far.
 |---|---|---|
 | Super+Y | whatever you type | your question |
 | Super+Alt+Y | the text you selected (or copied) | the question, the text, the app name and window title |
-| Super+Ctrl+Y | your screen | the question and one screenshot |
+| Super+Ctrl+Y | your screen | the question and one screenshot, or, when the app has an accessibility tree with enough text (and agent-desktop is installed), that text instead and no screenshot (`FRIDAY_SCREEN_TEXT=0` always uses the screenshot) |
 
 Hold Super+Y instead of tapping it to talk (`friday voice setup` first). The
 speech is turned into text on your computer; only the text is sent. On niri, which can't see a key being released, press Mod+Y once to speak and again to ask.
@@ -98,3 +98,9 @@ turn this on: `friday helper enable`. Even with it on, every action still asks
 for your approval in a system prompt before anything changes.
 Check whether it is on with `friday helper status`, or turn it off anytime with
 `friday helper disable`.
+
+## Standing tasks
+
+Ask for something to happen again and again: `friday ask "every morning at 8 tell me the weather"`, `"every weekday at 9 summarize my unread notes"`, `"when my battery drops below 20% tell me"`. FRIDAY runs each one the way it runs your own ask, so the same rules apply: nothing is sent that a normal ask wouldn't send, and anything that deletes or sends stops and asks you first (you'll see the usual confirmation). Answers arrive as a notification and in `friday answers`.
+
+`friday tasks` lists them; `friday tasks pause t1`, `resume t1` and `delete t1` change one. A morning task missed while the computer was off still runs if it's less than six hours late. Up to 20 tasks, at least 5 minutes apart. `FRIDAY_STANDING_TASKS=0` turns them off.

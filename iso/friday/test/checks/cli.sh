@@ -190,6 +190,23 @@ contains "actions marks a failure" "$acts" "failed"
 contains "actions shows the time without fractions" "$acts" "2026-11-15 08:12:03"
 [[ $(bash "$F" actions 1 | wc -l) == 1 ]] && pass "actions N limits to the last N" || fail "actions 1 printed more than one line"
 contains "actions 1 is the newest" "$(bash "$F" actions 1)" "close_window"
+
+# `friday tasks`: standing tasks, listed and edited without the daemon.
+contains "tasks with none says how to make one" "$(bash "$F" tasks)" "every morning at 8"
+printf '%s\n' '{"tasks":[{"id":"t1","goal":"tell me the weather","trigger":{"kind":"daily","hour":8,"minute":5},"created":1},{"id":"t2","goal":"say hi","trigger":{"kind":"battery_below","percent":20},"created":1}]}' >"$FD/standing.json"
+tl=$(bash "$F" tasks)
+contains "tasks lists a daily task" "$tl" "t1  every day at 08:05  tell me the weather"
+contains "tasks lists a battery task" "$tl" "t2  battery under 20%  say hi"
+bash "$F" tasks pause t1 >/dev/null
+contains "tasks pause marks it" "$(bash "$F" tasks)" "(paused)"
+bash "$F" tasks resume t1 >/dev/null
+[[ "$(bash "$F" tasks)" != *"(paused)"* ]] && pass "tasks resume clears it" || fail "tasks resume left it paused"
+bash "$F" tasks delete t2 >/dev/null
+[[ "$(bash "$F" tasks --json | jq length)" == 1 ]] && pass "tasks delete removes only that task" || fail "tasks delete removed the wrong number"
+bash "$F" tasks delete t9 >/dev/null 2>&1 && fail "tasks delete of a missing id succeeded" || pass "tasks delete of a missing id fails"
+bash "$F" tasks delete 'x; rm' >/dev/null 2>&1 && fail "tasks delete accepted a bad id" || pass "tasks delete refuses a bad id"
+[[ "$(stat -c %a "$FD/standing.json")" == 600 ]] && pass "tasks keeps the file private" || fail "standing.json is not 0600"
+rm -f "$FD/standing.json"
 if bash "$F" actions oops >/dev/null 2>&1; then fail "actions took a non-number"; else pass "actions refuses a non-number"; fi
 contains "forget actions reports counts" "$(bash "$F" forget actions --yes)" "Deleted 2 entries from the log of desktop actions"
 [[ ! -e "$FD/actions.jsonl" ]] && pass "forget actions deletes the log" || fail "forget actions left the log"

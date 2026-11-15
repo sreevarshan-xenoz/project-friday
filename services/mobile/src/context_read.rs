@@ -66,6 +66,25 @@ pub trait ProviderSeam: Send + Sync {
         progress(&text);
         Ok(text)
     }
+
+    /// Send a plain-text prompt (no image) to any model that can answer it.
+    /// A seam with one route sends it the same way as a screenshot.
+    async fn send_text_streaming(
+        &self,
+        payload: &str,
+        progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+    ) -> Result<String, String> {
+        self.send_streaming(payload, progress).await
+    }
+}
+
+/// The words in the focused window, read from its accessibility tree, for a
+/// screen ask that needs no screenshot. `class` is the compositor's name for
+/// the app. `None` when there is no tree worth sending (the ask then uses a
+/// screenshot).
+#[async_trait]
+pub trait ScreenText: Send + Sync {
+    async fn window_text(&self, class: &str) -> Option<String>;
 }
 
 /// Why an explicit Screen context read did not produce a provider response.
@@ -143,6 +162,7 @@ where
     provider: P,
     provider_name: String,
     target: ProviderTarget,
+    text: Option<Arc<dyn ScreenText>>,
 }
 
 impl<C, P> ScreenReader<C, P>
@@ -162,7 +182,15 @@ where
             provider,
             provider_name: provider_name.to_string(),
             target: ProviderTarget::FreeTier,
+            text: None,
         }
+    }
+
+    /// Answer from the focused window's accessibility text, when it has
+    /// enough, instead of a screenshot.
+    pub fn with_text(mut self, text: Arc<dyn ScreenText>) -> Self {
+        self.text = Some(text);
+        self
     }
 
     /// Record explicit per-use consent for a Screen capture (the shell / user
@@ -228,6 +256,12 @@ where
             }
         }
 
+        if region.is_none() {
+            if let Some(answer) = self.ask_from_text(question, progress).await {
+                return answer;
+            }
+        }
+
         let captured = match self.collector.capture(
             ContextChannel::Screen,
             &CaptureOptions {
@@ -282,6 +316,62 @@ where
         )
         .await
         .map_err(ContextReadError::Provider)
+    }
+
+    /// The focused window's words, when its app has an accessibility tree
+    /// with enough in it: they go to the model as text (secrets masked, then
+    /// the same egress check), and nothing is captured. `None` means use a
+    /// screenshot.
+    async fn ask_from_text(
+        &self,
+        question: Option<&str>,
+        progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+    ) -> Option<Result<String, ContextReadError>> {
+        let source = self.text.as_ref()?;
+        let CapturedContext::AppInfo { class, title, .. } = self
+            .collector
+            .capture(ContextChannel::App, &CaptureOptions::default())
+            .ok()?
+        else {
+            return None;
+        };
+        let words = source.window_text(&class).await?;
+        let (words, masked_words) = friday_goal_execution::mask_secrets(&words);
+        let question = question.map(str::trim).filter(|q| !q.is_empty());
+        let (task, masked_q) = match question {
+            Some(q) => {
+                let (m, n) = friday_goal_execution::mask_secrets(q);
+                (m.replace(['\n', '\r'], " "), n)
+            }
+            None => ("Describe what the person is looking at.".to_string(), 0),
+        };
+        let title = title.replace(['\n', '\r'], " ");
+        let payload = format!(
+            "The person asked about the window they are looking at ({class}: {title}). \
+             Its text, read from the app's accessibility tree, follows between the lines.\n\
+             ---\n{words}\n---\nQUESTION: {task}"
+        );
+        let composed = match self.egress.process(&self.provider_name, &payload) {
+            Ok(c) => c,
+            Err(reason) => return Some(Err(ContextReadError::EgressBlocked { reason })),
+        };
+        let current = friday_intelligence::current_egress_context();
+        let ctx = if current.masked.is_none() {
+            friday_intelligence::EgressContext {
+                goal_id: current.goal_id,
+                masked: Some(masked_words + masked_q),
+            }
+        } else {
+            current
+        };
+        Some(
+            friday_intelligence::with_egress_context(
+                ctx,
+                self.provider.send_text_streaming(&composed, progress),
+            )
+            .await
+            .map_err(ContextReadError::Provider),
+        )
     }
 
     // --- Re-exposed authorize for library/test drivers that want the exact
@@ -724,6 +814,36 @@ impl ProviderSeam for FabricProviderSeam {
     ) -> Result<String, String> {
         self.route(payload, Some(progress)).await
     }
+
+    /// Words only: any model the person's providers (or FRIDAY's defaults)
+    /// offer can answer, whether or not it can see images.
+    async fn send_text_streaming(
+        &self,
+        payload: &str,
+        progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+    ) -> Result<String, String> {
+        if self.fabric.private_mode || self.provider.is_some() {
+            let provider = self.provider.as_deref().unwrap_or("llamacpp");
+            let text = self
+                .fabric
+                .complete_tier(
+                    provider,
+                    friday_intelligence::CapabilityTier::ConversationFast,
+                    payload,
+                    false,
+                )
+                .await?;
+            progress(&text);
+            return Ok(text);
+        }
+        self.fabric
+            .complete_with_progress(
+                &friday_intelligence::RequestRequirements::default(),
+                payload,
+                progress,
+            )
+            .await
+    }
 }
 
 /// A `context.read` request's `region`: `{x, y, w, h}` in desktop pixels
@@ -976,6 +1096,7 @@ mod tests {
             provider: reader.provider.clone(),
             provider_name: reader.provider_name.clone(),
             target: reader.target,
+            text: None,
         };
         let second_err = working_reader.read().await.unwrap_err();
         assert!(matches!(second_err, ContextReadError::NotAuthorized { .. }));
@@ -1499,5 +1620,97 @@ mod tests {
             err,
             "Private mode is on and no local model is running (start it: friday private on)"
         );
+    }
+
+    struct FakeText(Option<String>);
+
+    #[async_trait]
+    impl ScreenText for FakeText {
+        async fn window_text(&self, class: &str) -> Option<String> {
+            assert_eq!(class, "nautilus");
+            self.0.clone()
+        }
+    }
+
+    fn collector_with_window() -> ContextCollector<FakeCommandRunner> {
+        let full = friday_context_collector::screen_command(None);
+        let win = friday_context_collector::window_command();
+        let shot =
+            friday_context_collector::screen_command(Some(ScreenRegion::new(0, 0, 800, 600)));
+        let runner = FakeCommandRunner::new()
+            .script_stdout(&full.0, &strs(&full.1), PNG)
+            .script_stdout(&shot.0, &strs(&shot.1), PNG)
+            .script_stdout(
+                &win.0,
+                &strs(&win.1),
+                br#"{"class":"nautilus","title":"Home","at":[0,0],"size":[800,600]}"#,
+            );
+        ContextCollector::new(runner)
+    }
+
+    #[tokio::test]
+    async fn a_window_with_words_is_asked_about_as_text_with_no_capture() {
+        let reader = ScreenReader::new(collector_with_window(), RecordingSeam::default(), "fabric")
+            .with_text(Arc::new(FakeText(Some("Report.pdf\nbutton: Open".into()))));
+        reader.consent();
+        let answer = reader.ask(Some("what files are here?")).await.unwrap();
+        assert!(answer.contains("FRIDAY"));
+        let sent = reader.provider.last().unwrap();
+        assert!(sent.contains("Report.pdf"), "{sent}");
+        assert!(sent.contains("QUESTION: what files are here?"), "{sent}");
+        assert!(sent.contains("nautilus: Home"), "{sent}");
+        assert!(!sent.contains("SCREEN_CAPTURE"), "no screenshot: {sent}");
+    }
+
+    #[tokio::test]
+    async fn text_with_a_secret_is_masked_before_it_leaves() {
+        let secret = format!("sk-{}", "a1B2c3D4e5F6g7H8i9J0k1L2");
+        let reader = ScreenReader::new(collector_with_window(), RecordingSeam::default(), "fabric")
+            .with_text(Arc::new(FakeText(Some(format!("token {secret} shown")))));
+        reader.consent();
+        reader.ask(Some("hi")).await.unwrap();
+        let sent = reader.provider.last().unwrap();
+        assert!(!sent.contains(&secret), "{sent}");
+    }
+
+    #[tokio::test]
+    async fn a_window_without_words_falls_back_to_the_screenshot() {
+        let reader = ScreenReader::new(collector_with_window(), RecordingSeam::default(), "fabric")
+            .with_text(Arc::new(FakeText(None)));
+        reader.consent();
+        reader.ask(Some("what is this?")).await.unwrap();
+        let sent = reader.provider.last().unwrap();
+        assert!(sent.starts_with("SCREEN_CAPTURE"), "{sent}");
+    }
+
+    #[tokio::test]
+    async fn a_picked_region_is_always_a_screenshot() {
+        let reader = ScreenReader::new(collector_with_window(), RecordingSeam::default(), "fabric")
+            .with_text(Arc::new(FakeText(Some("words".into()))));
+        reader.consent();
+        let region = Some(ScreenRegion::new(0, 0, 1920, 1080));
+        // Not scripted for this region: the capture fails, proving the text
+        // path was not taken.
+        let _ = reader
+            .ask_region_streaming(None, region, &|_: &str| {})
+            .await;
+        assert_eq!(
+            reader
+                .provider
+                .last()
+                .filter(|p| !p.starts_with("SCREEN_CAPTURE")),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn text_without_consent_reads_nothing() {
+        let reader = ScreenReader::new(collector_with_window(), RecordingSeam::default(), "fabric")
+            .with_text(Arc::new(FakeText(Some("words".into()))));
+        assert!(matches!(
+            reader.ask(Some("x")).await,
+            Err(ContextReadError::NotAuthorized { .. })
+        ));
+        assert_eq!(reader.provider.sent(), 0);
     }
 }
