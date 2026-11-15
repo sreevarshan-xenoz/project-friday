@@ -17,6 +17,7 @@ Usage: fake_model.py <port-file> <log-file>   (writes the chosen port, then serv
 
 import base64
 import json
+import os
 import re
 import sys
 import time
@@ -25,7 +26,9 @@ from typing import Any
 
 MARKER = "FAKE-MODEL-ANSWER"
 # Seconds between streamed pieces (FRIDAY publishes progress every 0.15 s).
-STREAM_PAUSE = 0.25
+# FAKE_MODEL_PAUSE slows it for a test that samples the window from outside
+# (the Windows hotkeys run, on a slow runner).
+STREAM_PAUSE = float(os.environ.get("FAKE_MODEL_PAUSE", "0.25"))
 
 
 def reply_for(prompt: str, images: list[str] | None = None) -> str:
