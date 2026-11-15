@@ -14,6 +14,7 @@ use crate::request::{ActionRequest, ActionResult};
 
 pub mod browser;
 pub mod codeintel;
+pub mod desktop;
 pub mod docs;
 pub mod document;
 pub mod filesystem;
@@ -29,6 +30,9 @@ pub mod webagent;
 
 pub use browser::{browser_capability_specs, register_browser_capabilities, BrowserAdapter};
 pub use codeintel::CodeIntelAdapter;
+pub use desktop::{
+    risk_of as desktop_risk_of, DesktopAdapter, Exec as DesktopExec, Risk as DesktopRisk,
+};
 pub use docs::DocsAdapter;
 pub use document::{
     parse_document, Document, DocumentAsset, DocumentId, DocumentMetadata, DocumentSource,
