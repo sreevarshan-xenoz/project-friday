@@ -54,6 +54,7 @@ internal sealed class TrayContext : ApplicationContext
         menu.Items.Add("Last answer", null, (_, _) => Open(install.Paths.LastAnswerFile));
         menu.Items.Add("All answers", null, (_, _) => Open(install.Paths.AnswersFile));
         menu.Items.Add("What left this PC…", null, (_, _) => ShowEgress());
+        menu.Items.Add("Forget saved data…", null, (_, _) => ForgetSavedData());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("AI provider…", null, (_, _) => ChooseProvider());
         menu.Items.Add(_startAtLogin);
@@ -300,6 +301,26 @@ internal sealed class TrayContext : ApplicationContext
             _daemon.Restart();
             Notify("FRIDAY", "Saved. FRIDAY restarted with the new provider.", ToolTipIcon.Info);
         }
+    }
+
+    private void ForgetSavedData()
+    {
+        var c = SavedData.Count(_install.Paths);
+        if (!c.Any)
+        {
+            MessageBox.Show("FRIDAY has nothing saved on this PC.", "FRIDAY", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        var ask = $"FRIDAY keeps {c.Answers} saved answers, {c.Questions} remembered questions, " +
+            $"{c.Sent} entries in the log of what was sent, and {c.Memory} things it remembered between questions.\n\n" +
+            "Delete all of it? This can't be undone.";
+        if (MessageBox.Show(ask, "Forget saved data", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+            return;
+        // The daemon holds its memory open: stop it while it is deleted.
+        _daemon.Stop();
+        var failed = SavedData.Forget(_install.Paths);
+        _daemon.Start();
+        Notify("FRIDAY", failed.Count == 0 ? "Deleted." : "Couldn't delete: " + string.Join(", ", failed), failed.Count == 0 ? ToolTipIcon.Info : ToolTipIcon.Warning);
     }
 
     private void ShowEgress()
