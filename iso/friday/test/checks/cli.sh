@@ -135,6 +135,20 @@ contains "Ask again re-invokes the ask" "$(cat "$LOG")" "friday-ctl re-asked\\ q
 PRIMARY=$'error: E0308 mismatched types' PICK="explain this" bash "$F" ask --selection; sleep 0.3
 contains "selection sent as context" "$(cat "$LOG")" "Use this text as context"
 contains "selection text included" "$(cat "$LOG")" "E0308 mismatched types"
+# The app the selected text came from rides along; off means it doesn't.
+printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s %q\n' '{"class":"firefox","title":"Rust \"E0308\" - docs"}' >"$S/hyprctl"; chmod +x "$S/hyprctl"
+: >"$LOG"; PRIMARY="some text" PICK="explain" bash "$F" ask --selection; sleep 0.3
+contains "selection names the app it came from" "$(cat "$LOG")" 'The text came from the app "firefox"'
+contains "and the window title, without quotes in it" "$(cat "$LOG")" 'window title: "Rust E0308 - docs"'
+: >"$LOG"; bash "$F" ask "what is rust"; sleep 0.3
+if grep -q "The text came from" "$LOG"; then fail "a typed question named an app"; else pass "a typed question names no app"; fi
+bash "$F" app-context off >/dev/null
+: >"$LOG"; PRIMARY="some text" PICK="explain" bash "$F" ask --selection; sleep 0.3
+if grep -q "The text came from" "$LOG"; then fail "app-context off still named the app"; else pass "app-context off sends no app name"; fi
+contains "app-context status says off" "$(bash "$F" app-context status)" "Off"
+bash "$F" app-context on >/dev/null
+contains "app-context status says on" "$(bash "$F" app-context status)" "On"
+rm -f "$S/hyprctl"
 PRIMARY="" CLIP="Bonjour" bash "$F" ask -s "translate"; sleep 0.3
 contains "falls back to the clipboard" "$(cat "$LOG")" "Bonjour"
 : >"$LOG"; PRIMARY="" CLIP="Bonjour tout le monde" PICK="translate" bash "$F" ask -s; sleep 0.3
