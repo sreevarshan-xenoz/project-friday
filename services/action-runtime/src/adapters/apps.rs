@@ -192,7 +192,7 @@ mod tests {
             ("firefox.desktop", FIREFOX),
         ]);
         let ids = |q: &str| {
-            find_apps(&[dir.clone()], q, 5)
+            find_apps(std::slice::from_ref(&dir), q, 5)
                 .into_iter()
                 .map(|e| e.id)
                 .collect::<Vec<_>>()
