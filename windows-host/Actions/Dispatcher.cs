@@ -31,6 +31,8 @@ public class Dispatcher
         Register(new MediaHandler());
         Register(new NowPlayingHandler());
         Register(new VolumeHandler());
+        Register(new BrightnessHandler());
+        Register(new DesktopsHandler());
     }
 
     private void Register(IActionHandler handler)

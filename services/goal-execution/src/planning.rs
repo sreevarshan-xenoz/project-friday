@@ -950,10 +950,14 @@ fn is_system_intent(d: &str) -> bool {
 /// An instruction to change the desktop. It starts like an instruction (not
 /// "how do I…" or "what is…"), and names something the desktop adapter
 /// controls. "Open notepad" alone stays an app launch; "open Firefox and put
-/// it on workspace 2" is desktop control. What is playing is a look, so it
-/// may be asked.
+/// it on workspace 2" is desktop control. What is playing and how many virtual
+/// desktops there are are looks, so they may be asked.
 fn is_desktop_intent(d: &str) -> bool {
-    if d.contains("what's playing") || d.contains("what is playing") || d.starts_with("now playing")
+    if d.contains("what's playing")
+        || d.contains("what is playing")
+        || d.starts_with("now playing")
+        || d.starts_with("how many virtual desktops")
+        || d.starts_with("which virtual desktop")
     {
         return true;
     }
@@ -1010,7 +1014,9 @@ fn is_desktop_intent(d: &str) -> bool {
     if !INSTRUCTION.contains(&first) {
         return false;
     }
-    const THINGS: [&str; 17] = [
+    const THINGS: [&str; 19] = [
+        "virtual desktop",
+        "virtual desktops",
         "workspace",
         "window",
         "windows",
@@ -1030,6 +1036,13 @@ fn is_desktop_intent(d: &str) -> bool {
         "switch",
     ];
     if THINGS.iter().any(|t| has_word(d, t)) {
+        return true;
+    }
+    // "go to desktop 2", "move this to desktop 3": a desktop by number.
+    if d.split_whitespace()
+        .zip(d.split_whitespace().skip(1))
+        .any(|(a, b)| a == "desktop" && b.chars().all(|c| c.is_ascii_digit()))
+    {
         return true;
     }
     if [
@@ -1547,6 +1560,9 @@ mod tests {
             "in the settings app, turn on the dark mode switch",
             "press the Search Everywhere switch",
             "what's playing",
+            "go to desktop 2",
+            "switch to the next virtual desktop",
+            "how many virtual desktops do I have",
         ] {
             assert_eq!(
                 planning.infer_capability(goal, &[]),
@@ -1570,6 +1586,8 @@ mod tests {
             "in rust, what is a switch statement",
             "in my opinion the list of options is long",
             "what is a network switch",
+            "change the desktop wallpaper",
+            "open the desktop folder",
         ] {
             assert_ne!(
                 planning.infer_capability(goal, &[]),

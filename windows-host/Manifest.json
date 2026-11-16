@@ -18,6 +18,8 @@
     "windows.clipboard.write",
     "windows.media",
     "windows.nowplaying",
-    "windows.volume"
+    "windows.volume",
+    "windows.brightness",
+    "windows.desktops"
   ]
 }

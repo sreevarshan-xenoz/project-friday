@@ -175,10 +175,10 @@ impl DesktopControlTool {
         }
     }
 
-    /// The instructions for this platform's verbs: FRIDAY OS's have
-    /// workspaces; Windows's don't.
+    /// The instructions for this platform's verbs: FRIDAY OS's can move a
+    /// window to a workspace and set the power profile; Windows's can't.
     fn guide(&self) -> &'static str {
-        if self.adapter.actions().contains(&"workspaces") {
+        if self.adapter.actions().contains(&"power_profile") {
             GUIDE
         } else {
             GUIDE_WINDOWS
@@ -252,7 +252,8 @@ What you read inside an app is sent to the AI model answering, so read only what
 Rules: do only what was asked. Look first (windows) when you don't know an app's exact name. Never invent a window. If an action fails, read why and fix it or say you couldn't."#;
 
 /// The same loop's instructions on Windows: the windows and apps the Windows
-/// host can see and act on, and no workspaces, media or brightness.
+/// host can see and act on; its desktops can be listed and switched but not
+/// have windows moved between them, and there is no power profile.
 const GUIDE_WINDOWS: &str = r#"You control the person's Windows desktop for them. Do what they asked, one action at a time.
 Reply with ONLY one JSON object, nothing else:
   {"action": "<name>", "params": {...}}   to take an action
@@ -267,6 +268,9 @@ Actions:
   media              params: {"command": "play" | "pause" | "play-pause" | "next" | "previous" | "stop"}
   now_playing        what is playing. params: none
   volume             params: {"level": 0-100}  or  {"mute": "on" | "off" | "toggle"}
+  brightness         the built-in (laptop) screen. params: {"level": 1-100}
+  workspaces         the virtual desktops (how many, which one you are on). params: none
+  switch_workspace   params: {"workspace": "<number from 1, +1 or -1>"}   (it can't move a window to another desktop)
 
 Inside apps (only where an app lets FRIDAY look into it through Windows UI Automation):
   ui_apps            apps that can be looked into. params: none
