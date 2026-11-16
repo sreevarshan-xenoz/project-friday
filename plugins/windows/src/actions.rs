@@ -18,6 +18,9 @@ pub const ACTIONS: &[&str] = &[
     "scroll",
     "clipboard.read",
     "clipboard.write",
+    "media",
+    "nowplaying",
+    "volume",
 ];
 
 /// Build the capability intent string for an adapter verb.

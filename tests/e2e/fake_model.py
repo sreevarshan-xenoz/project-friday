@@ -9,7 +9,8 @@ LLAMACPP_BASE_URL=http://127.0.0.1:<port>/v1). It answers deterministically:
   - a request with an image (a screen ask) gets the question and the image's
     type and size,
   - the desktop control loop's prompt (it begins "You control the person's")
-    gets one scripted action, listing the windows, and then says it is done,
+    gets one scripted action chosen by the request (the volume, the music,
+    what is playing, else listing the windows), and then says it is done,
 streams the reply (server-sent events, word by word) when asked to, and
 appends every request to the log file, so a test can prove which model
 calls a goal made and that its answer came from here.
@@ -43,6 +44,13 @@ def reply_for(prompt: str, images: list[str] | None = None) -> str:
         return '{"requirements":[]}'
     if "You control the person's" in prompt:
         if "(none yet)" in prompt:
+            request = prompt.split("The person's request:", 1)[1].splitlines()[0].lower()
+            if "volume" in request:
+                return '{"action": "volume", "params": {"level": 30}}'
+            if "playing" in request:
+                return '{"action": "now_playing", "params": {}}'
+            if "music" in request:
+                return '{"action": "media", "params": {"command": "pause"}}'
             return '{"action": "windows", "params": {}}'
         return '{"done": "Listed the open windows."}'
     lines = prompt.splitlines()

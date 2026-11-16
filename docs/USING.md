@@ -60,9 +60,12 @@ volume?") are answered, not acted on. `FRIDAY_DESKTOP=0` in
 
 On Windows the same works for windows and programs: "focus Notepad", "open
 calc", "close the Firefox window" (asks first, with the exact action), "what
-windows are open". It uses FRIDAY's Windows helper (the one the tray runs), so
-FRIDAY must be running from its tray icon. Workspaces, volume, media and
-brightness are FRIDAY OS only for now. Launching takes a program name that
+windows are open", and the volume and music: "set the volume to 30", "mute",
+"pause the music", "next song", "what's playing". It uses FRIDAY's Windows
+helper (the one the tray runs), so FRIDAY must be running from its tray icon.
+Media controls reach whatever app is playing through Windows' media session
+(browsers, Spotify, the media player); volume is the default speakers'.
+Virtual desktops and brightness are FRIDAY OS only for now. Launching takes a program name that
 Windows can find (`notepad`, `calc`, `mspaint`), not a path or a command line.
 `FRIDAY_DESKTOP=0` in `%APPDATA%\friday\friday.env` turns it off. Looking
 inside apps (below) uses the agent-desktop the installer bundles.

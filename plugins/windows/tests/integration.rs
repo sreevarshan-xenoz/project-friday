@@ -264,7 +264,7 @@ async fn clipboard_round_trip() {
 fn manifest_declares_all_intents() {
     assert_eq!(CAPABILITY_MANIFEST.bridge, "windows");
     assert_eq!(CAPABILITY_MANIFEST.protocol_version, 1);
-    assert_eq!(CAPABILITY_MANIFEST.capabilities.len(), 13);
+    assert_eq!(CAPABILITY_MANIFEST.capabilities.len(), 16);
     assert!(CAPABILITY_MANIFEST.capabilities.contains(&"windows.click"));
 }
 
