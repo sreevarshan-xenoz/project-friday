@@ -5,13 +5,16 @@ namespace FridayTray;
 /// <summary>
 /// The ask box: a slim dark bar near the top of the screen the mouse is on.
 /// Enter asks, Escape or clicking away closes, Up/Down walks the history.
-/// For selection and screen asks a line above says what goes with it.
+/// For selection and screen asks a line above says what goes with it; with a
+/// selection, the quick actions are listed under the box (click one, or walk
+/// them with Up/Down; what you typed instead is sent as typed).
 /// </summary>
 internal sealed class AskForm : Form
 {
     private readonly TextBox _input;
     private readonly IReadOnlyList<string> _history;
     private int _historyIndex = -1;
+    private readonly ListBox? _quick;
 
     public string Question => _input.Text.Trim();
 
@@ -30,7 +33,7 @@ internal sealed class AskForm : Form
 
         var hint = kind switch
         {
-            AskKind.Selection => $"About: “{contextPreview}…”   (e.g. summarise, explain, translate)",
+            AskKind.Selection => $"About: “{contextPreview}…”   (pick one below or type your own)",
             AskKind.Screen => "About your screen: a screenshot goes to your AI provider, this once.",
             _ => "Ask anything · Up/Down for recent questions",
         };
@@ -53,10 +56,37 @@ internal sealed class AskForm : Form
             ForeColor = Theme.Text,
             Font = Theme.Input,
         };
+        var extra = 0;
+        if (kind == AskKind.Selection && history.Count > 0)
+        {
+            _quick = new ListBox
+            {
+                Dock = DockStyle.Top,
+                BorderStyle = BorderStyle.None,
+                BackColor = Theme.Bg,
+                ForeColor = Theme.Subtext,
+                Font = Theme.Small,
+                IntegralHeight = false,
+                Height = Math.Min(history.Count, 8) * 20 + 6,
+            };
+            foreach (var action in history)
+                _quick.Items.Add(action);
+            // A click picks one and asks it straight away.
+            _quick.MouseUp += (_, e) =>
+            {
+                var i = _quick.IndexFromPoint(e.Location);
+                if (i < 0) return;
+                SetText(history[i]);
+                DialogResult = DialogResult.OK;
+                Close();
+            };
+            extra = _quick.Height + 6;
+            panel.Controls.Add(_quick);
+        }
         panel.Controls.Add(_input);
         panel.Controls.Add(label);
         Controls.Add(panel);
-        Height = 22 + _input.PreferredHeight + 26;
+        Height = 22 + _input.PreferredHeight + 26 + extra;
 
         var screen = Screen.FromPoint(Cursor.Position).WorkingArea;
         Location = new Point(screen.Left + (screen.Width - Width) / 2, screen.Top + screen.Height / 4);
@@ -92,10 +122,12 @@ internal sealed class AskForm : Form
             case Keys.Up when _history.Count > 0:
                 _historyIndex = Math.Min(_history.Count - 1, _historyIndex + 1);
                 SetText(_history[_historyIndex]);
+                if (_quick != null) _quick.SelectedIndex = _historyIndex;
                 break;
             case Keys.Down when _historyIndex > 0:
                 _historyIndex--;
                 SetText(_history[_historyIndex]);
+                if (_quick != null) _quick.SelectedIndex = _historyIndex;
                 break;
             default:
                 base.OnKeyDown(e);

@@ -110,7 +110,12 @@ internal sealed class TrayContext : ApplicationContext
             }
 
             string question;
-            using (var form = new AskForm(kind, preview, kind == AskKind.Plain ? _log.History() : []))
+            using (var form = new AskForm(kind, preview, kind switch
+            {
+                AskKind.Plain => _log.History(),
+                AskKind.Selection => QuickActions.All(_install.Paths.PromptsFile),
+                _ => [],
+            }))
             {
                 if (form.ShowDialog() != DialogResult.OK)
                     return;
