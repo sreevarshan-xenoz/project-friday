@@ -128,9 +128,12 @@ Linux without FRIDAY OS's pieces) as those steps land.
 
 Windows today: the desktop control loop runs there (list, focus, close with
 confirmation, launch by program name, media through Windows' media session,
-now playing, volume and mute through Core Audio) through the Windows host's
+now playing, volume and mute through Core Audio, a laptop screen's brightness through
+WMI, virtual desktops listed and switched) through the Windows host's
 pipe, and agent-desktop reads and presses controls through UI Automation. An
 e2e in CI drives the real daemon and host with a scripted model; a CI runner
 has no speakers or music, so it checks the host's plain "no audio output" and
-"nothing is playing" answers and an owner pass on real hardware checks the
-rest. Not yet: workspaces (virtual desktops), brightness.
+"nothing is playing" and "no built-in screen" answers and an owner pass on real hardware
+checks the rest. Desktops are counted from Explorer's registry keys and switched with
+Win+Ctrl+Left/Right, since Windows has no public API. Not on Windows: moving a window to
+another desktop (no stable route) and the power profile.

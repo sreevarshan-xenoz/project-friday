@@ -21,6 +21,8 @@ pub const ACTIONS: &[&str] = &[
     "media",
     "nowplaying",
     "volume",
+    "brightness",
+    "desktops",
 ];
 
 /// Build the capability intent string for an adapter verb.

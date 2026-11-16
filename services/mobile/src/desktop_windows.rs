@@ -11,8 +11,8 @@ use async_trait::async_trait;
 use friday_actions::{ActionAdapter, ActionRequest, ActionResult};
 use serde_json::{json, Value};
 
-/// The verbs this adapter has (a subset of FRIDAY OS's: no workspaces,
-/// brightness or power profile on Windows).
+/// The verbs this adapter has (a subset of FRIDAY OS's: no moving a window
+/// to another desktop and no power profile on Windows).
 const VERBS: &[&str] = &[
     "windows",
     "active_window",
@@ -22,6 +22,9 @@ const VERBS: &[&str] = &[
     "media",
     "now_playing",
     "volume",
+    "brightness",
+    "workspaces",
+    "switch_workspace",
 ];
 
 /// Windows that are the shell itself, not something a person asks about.
@@ -214,6 +217,39 @@ impl WindowsDesktop {
                 let now = self.call("volume", json!({ "level": level })).await?;
                 Ok(json!({"volume": now["level"], "muted": now["muted"]}))
             }
+            "brightness" => {
+                let level = percent(&req.parameters, "level")?;
+                if level == 0 {
+                    return Err("brightness is a number from 1 to 100".into());
+                }
+                let now = self.call("brightness", json!({ "level": level })).await?;
+                Ok(json!({"brightness": now["level"]}))
+            }
+            "workspaces" => {
+                let now = self.call("desktops", json!({})).await?;
+                Ok(json!({"desktops": now["count"], "current": now["current"]}))
+            }
+            "switch_workspace" => {
+                let want = p("workspace")
+                    .map(str::to_string)
+                    .or_else(|| {
+                        req.parameters
+                            .get("workspace")
+                            .and_then(Value::as_u64)
+                            .map(|n| n.to_string())
+                    })
+                    .ok_or("say which desktop: a number, +1 or -1")?;
+                let params = match want.to_lowercase().trim_start_matches("desktop ").trim() {
+                    "+1" | "next" => json!({ "by": 1 }),
+                    "-1" | "previous" | "prev" => json!({ "by": -1 }),
+                    n => match n.parse::<u32>() {
+                        Ok(n) if n >= 1 => json!({ "to": n }),
+                        _ => return Err("a desktop is a number from 1, or +1 or -1".into()),
+                    },
+                };
+                let now = self.call("desktops", params).await?;
+                Ok(json!({"desktops": now["count"], "current": now["current"]}))
+            }
             other => Err(format!("unknown desktop action \"{other}\"")),
         }
     }
@@ -327,6 +363,8 @@ mod tests {
                     json!({"playing": true, "status": "playing", "title": "Blue in Green", "artist": "Miles Davis"}),
                 ),
                 "volume" => ActionResult::success(json!({"level": 30, "muted": false})),
+                "brightness" => ActionResult::success(json!({"level": req.parameters["level"]})),
+                "desktops" => ActionResult::success(json!({"count": 3, "current": 2})),
                 _ => ActionResult::success(json!({"ok": true})),
             }
         }
@@ -451,13 +489,7 @@ mod tests {
     #[tokio::test]
     async fn a_verb_windows_does_not_have_is_refused() {
         let host = Host::new(sample());
-        for v in [
-            "workspaces",
-            "move_window",
-            "switch_workspace",
-            "brightness",
-            "power_profile",
-        ] {
+        for v in ["move_window", "power_profile"] {
             assert!(!run(&host, v, json!({})).await.success, "{v}");
         }
         assert!(host.calls().is_empty());
@@ -513,6 +545,58 @@ mod tests {
         assert_eq!(host.calls().len(), before, "a bad volume reached the host");
         let r = run(&host, "volume", json!({"level": 30})).await;
         assert_eq!(r.output, json!({"volume": 30, "muted": false}));
+    }
+
+    #[tokio::test]
+    async fn brightness_takes_a_level_from_1_to_100() {
+        let host = Host::new(sample());
+        let r = run(&host, "brightness", json!({"level": "60%"})).await;
+        assert_eq!(r.output, json!({"brightness": 60}));
+        assert_eq!(
+            host.calls().last().unwrap(),
+            &("brightness".to_string(), json!({"level": 60}))
+        );
+        let before = host.calls().len();
+        for bad in [json!({"level": 0}), json!({"level": 101}), json!({})] {
+            assert!(
+                !run(&host, "brightness", bad.clone()).await.success,
+                "{bad}"
+            );
+        }
+        assert_eq!(host.calls().len(), before, "a bad level reached the host");
+    }
+
+    #[tokio::test]
+    async fn desktops_are_listed_and_switched_by_number_or_step() {
+        let host = Host::new(sample());
+        let r = run(&host, "workspaces", json!({})).await;
+        assert_eq!(r.output, json!({"desktops": 3, "current": 2}));
+        for (ask, sent) in [
+            (json!("3"), json!({"to": 3})),
+            (json!(1), json!({"to": 1})),
+            (json!("Desktop 2"), json!({"to": 2})),
+            (json!("+1"), json!({"by": 1})),
+            (json!("-1"), json!({"by": -1})),
+            (json!("previous"), json!({"by": -1})),
+        ] {
+            let r = run(&host, "switch_workspace", json!({"workspace": ask.clone()})).await;
+            assert!(r.success, "{ask}: {:?}", r.error);
+            assert_eq!(
+                host.calls().last().unwrap(),
+                &("desktops".to_string(), sent)
+            );
+        }
+        let before = host.calls().len();
+        for bad in [json!("0"), json!("work"), json!("1; calc"), json!(-3)] {
+            assert!(
+                !run(&host, "switch_workspace", json!({"workspace": bad.clone()}))
+                    .await
+                    .success,
+                "{bad}"
+            );
+        }
+        assert!(!run(&host, "switch_workspace", json!({})).await.success);
+        assert_eq!(host.calls().len(), before, "a bad desktop reached the host");
     }
 
     #[tokio::test]

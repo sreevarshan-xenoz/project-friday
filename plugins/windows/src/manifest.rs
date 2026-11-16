@@ -35,5 +35,7 @@ pub const CAPABILITY_MANIFEST: CapabilityManifest = CapabilityManifest {
         "windows.media",
         "windows.nowplaying",
         "windows.volume",
+        "windows.brightness",
+        "windows.desktops",
     ],
 };
