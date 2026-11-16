@@ -51,6 +51,7 @@ internal sealed class TrayContext : ApplicationContext
         menu.Items.Add(new ToolStripMenuItem("Ask FRIDAY" + Key(AskKind.Plain), null, (_, _) => _ = AskAsync(AskKind.Plain)) { Font = new Font(menu.Font, FontStyle.Bold) });
         menu.Items.Add("Ask about selection" + Key(AskKind.Selection), null, (_, _) => _ = AskAsync(AskKind.Selection));
         menu.Items.Add("Ask about the screen" + Key(AskKind.Screen), null, (_, _) => _ = AskAsync(AskKind.Screen));
+        menu.Items.Add("Ask about an area…", null, (_, _) => _ = AskAsync(AskKind.Screen, pickArea: true));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Last answer", null, (_, _) => Open(install.Paths.LastAnswerFile));
         menu.Items.Add("All answers", null, (_, _) => Open(install.Paths.AnswersFile));
@@ -82,13 +83,22 @@ internal sealed class TrayContext : ApplicationContext
             Notify("FRIDAY is running", $"Press {_hotkeys.Labels[AskKind.Plain]} to ask anything.", ToolTipIcon.Info);
     }
 
-    private async Task AskAsync(AskKind kind)
+    private async Task AskAsync(AskKind kind, bool pickArea = false)
     {
         if (_asking)
             return;
         _asking = true;
         try
         {
+            // Drag out the area first: only that part of the screen is captured.
+            PickedRegion? area = null;
+            if (pickArea)
+            {
+                using var picker = new RegionForm();
+                if (picker.ShowDialog() != DialogResult.OK)
+                    return;
+                area = picker.Picked;
+            }
             var targetWindow = Native.GetForegroundWindow();
             string? context = null;
             string? preview = null;
@@ -139,7 +149,7 @@ internal sealed class TrayContext : ApplicationContext
             // "search ..." and "look up ..." ask for a web search, and only they do.
             var (asked, web) = Asking.WebQuestion(question);
             var request = SourceApp.Append(Asking.BuildRequest(asked, context), appLine);
-            await RunRequestAsync(kind, asked, context, request, confirm: null, answer: null, new AskOptions(Web: web));
+            await RunRequestAsync(kind, asked, context, request, confirm: null, answer: null, new AskOptions(Web: web, Region: area?.Arg));
         }
         finally
         {
