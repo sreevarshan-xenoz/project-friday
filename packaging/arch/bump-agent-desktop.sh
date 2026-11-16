@@ -12,6 +12,8 @@
 #   3. the Linux binary and its helper are byte-identical to the ones in the
 #      npm package, and npm verifies that package's registry signature and
 #      its build provenance (attestation): two channels, one of them signed;
+#      The Windows build the MSI bundles gets the first two checks too, and
+#      must be byte-identical to the npm package's .exe;
 #   4. the binary runs, speaks the output format FRIDAY reads (schema 2.x),
 #      and still has every subcommand and flag FRIDAY's engine passes it.
 # Exit status: 0 nothing to do, 10 the PKGBUILD was changed, 3 a new major
@@ -57,15 +59,23 @@ work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
 base="https://github.com/$repo/releases/download/v$want"
 tar_name="agent-desktop-v$want-x86_64-unknown-linux-gnu.tar.gz"
 curl -fsSL "$base/$tar_name" -o "$work/$tar_name" || fail "couldn't download $tar_name"
+win_name="agent-desktop-v$want-x86_64-pc-windows-msvc.tar.gz"
+curl -fsSL "$base/$win_name" -o "$work/$win_name" || fail "couldn't download $win_name"
 curl -fsSL "$base/checksums.txt" -o "$work/checksums.txt" || fail "couldn't download checksums.txt"
 curl -fsSL "https://raw.githubusercontent.com/$repo/v$want/LICENSE" -o "$work/LICENSE" || fail "couldn't download LICENSE"
 
 # 2. the release's own checksum
-listed=$(awk -v f="$tar_name" '$2 == f { print $1 }' "$work/checksums.txt")
+listed=$(awk -v f="$tar_name" '{ sub(/\r$/, "", $2) } $2 == f { print $1 }' "$work/checksums.txt")
 actual=$(sha256sum "$work/$tar_name" | awk '{print $1}')
 [ -n "$listed" ] || fail "checksums.txt doesn't list $tar_name"
 [ "$listed" = "$actual" ] || fail "the tarball doesn't match checksums.txt"
 say "- release tarball matches checksums.txt ($actual)"
+
+win_listed=$(awk -v f="$win_name" '{ sub(/\r$/, "", $2) } $2 == f { print $1 }' "$work/checksums.txt")
+win_actual=$(sha256sum "$work/$win_name" | awk '{print $1}')
+[ -n "$win_listed" ] || fail "checksums.txt doesn't list $win_name"
+[ "$win_listed" = "$win_actual" ] || fail "the Windows tarball doesn't match checksums.txt"
+say "- Windows tarball matches checksums.txt ($win_actual)"
 
 # 3. npm: same bytes, signed registry package, verified provenance
 mkdir "$work/rel" "$work/npm"
@@ -77,6 +87,11 @@ cmp -s "$work/rel/agent-desktop" "$work/npm/package/bin/agent-desktop-linux-x64"
 cmp -s "$work/rel/agent-desktop-linux-clipboard-owner" "$work/npm/package/bin/agent-desktop-linux-clipboard-owner-linux-x64" \
   || fail "the GitHub release helper is NOT the npm package's helper"
 say "- the binary and helper are byte-identical to the npm package's"
+mkdir "$work/win"
+tar -xzf "$work/$win_name" -C "$work/win"
+cmp -s "$work/win/agent-desktop.exe" "$work/npm/package/bin/agent-desktop-win32-x64.exe" \
+  || fail "the GitHub release's Windows binary is NOT the npm package's"
+say "- the Windows binary is byte-identical to the npm package's"
 mkdir "$work/inst"
 audit=$(cd "$work/inst" && npm init -y >/dev/null 2>&1 && npm install --ignore-scripts --no-audit --no-fund "agent-desktop@$want" >/dev/null 2>&1 && npm audit signatures 2>&1) \
   || fail "npm could not verify the package's signatures: $audit"
@@ -107,6 +122,6 @@ new_license=$(sha256sum "$work/LICENSE" | awk '{print $1}')
 old_license=$(sed -n 's/^_ad_sha256_license=\(.*\)$/\1/p' "$pkgbuild" | head -n1)
 if [ "$new_license" != "$old_license" ]; then say "- NOTE: the licence text changed; read it before merging"; fi
 
-sed -i "s/^_ad_ver=.*/_ad_ver=$want/; s/^_ad_sha256_tar=.*/_ad_sha256_tar=$actual/; s/^_ad_sha256_license=.*/_ad_sha256_license=$new_license/" "$pkgbuild"
+sed -i "s/^_ad_ver=.*/_ad_ver=$want/; s/^_ad_sha256_tar=.*/_ad_sha256_tar=$actual/; s/^_ad_sha256_windows=.*/_ad_sha256_windows=$win_actual/; s/^_ad_sha256_license=.*/_ad_sha256_license=$new_license/" "$pkgbuild"
 say "Pin moved to $want in $(basename "$pkgbuild"). CI's package build and smoke test are the last gate."
 exit 10

@@ -62,10 +62,36 @@ foreach ($project in @("$repo\windows-tray\FridayTray\FridayTray.csproj", "$repo
         '-p:PublishSingleFile=false', '-o', $stage)
 }
 Copy-Item "$repo\LICENSE-MIT", "$repo\LICENSE-APACHE" $stage
+
+# agent-desktop (Apache-2.0), the pinned Windows release: it reads what an app
+# shows through UI Automation. The version and checksums are the Arch package's
+# pins (packaging\arch\PKGBUILD), so one place moves them; a download that
+# doesn't match its checksum stops the build. FRIDAY looks for it beside the daemon.
+$pins = Get-Content "$repo\packaging\arch\PKGBUILD" -Raw
+function Pin([string]$name) {
+    $m = [regex]::Match($pins, "(?m)^$name=(\S+)\s*$")
+    if (-not $m.Success) { throw "PKGBUILD has no $name" }
+    $m.Groups[1].Value.Trim('"')
+}
+$adVersion = Pin '_ad_ver'
+$adBase = "https://github.com/vercel-labs/agent-desktop"
+$adDir = Join-Path $OutDir 'agent-desktop'
+New-Item -ItemType Directory -Force $adDir | Out-Null
+$adTar = "agent-desktop-v$adVersion-x86_64-pc-windows-msvc.tar.gz"
+foreach ($dl in @(
+    @{ Url = "$adBase/releases/download/v$adVersion/$adTar"; File = $adTar; Sha = (Pin '_ad_sha256_windows') },
+    @{ Url = "https://raw.githubusercontent.com/vercel-labs/agent-desktop/v$adVersion/LICENSE"; File = 'LICENSE'; Sha = (Pin '_ad_sha256_license') })) {
+    Invoke-WebRequest -Uri $dl.Url -OutFile (Join-Path $adDir $dl.File)
+    $got = (Get-FileHash (Join-Path $adDir $dl.File) -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($got -ne $dl.Sha) { throw "$($dl.File) from agent-desktop $adVersion is $got, not the pinned $($dl.Sha)" }
+}
+Run tar @('-xzf', (Join-Path $adDir $adTar), '-C', $stage, 'agent-desktop.exe')
+Copy-Item (Join-Path $adDir 'LICENSE') "$stage\agent-desktop-LICENSE"
+
 # Debug symbols stay out of the installer.
 Get-ChildItem $stage -Filter *.pdb -Recurse | Remove-Item
 
-foreach ($exe in 'friday-tray.exe', 'friday-daemon.exe', 'friday-ctl.exe', 'friday-windows-host.exe') {
+foreach ($exe in 'friday-tray.exe', 'friday-daemon.exe', 'friday-ctl.exe', 'friday-windows-host.exe', 'agent-desktop.exe') {
     if (-not (Test-Path "$stage\$exe")) { throw "staging is missing $exe" }
 }
 

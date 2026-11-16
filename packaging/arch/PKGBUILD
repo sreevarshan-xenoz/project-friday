@@ -13,10 +13,13 @@ _name=friday
 # agent-desktop (Vercel Labs, Apache-2.0): reads and operates apps through the
 # accessibility tree. FRIDAY uses it, when present, to look inside apps. The
 # release is pinned here by version and checksum; the weekly bump job
-# (.github/workflows/agent-desktop-bump.yml) changes only these three lines,
+# (.github/workflows/agent-desktop-bump.yml) changes only these four lines,
 # after checking the new release, and a person or CI merges the result.
+# _ad_sha256_windows pins the Windows build the MSI bundles
+# (installer/windows/build.ps1); makepkg does not use it.
 _ad_ver=1.3.1
 _ad_sha256_tar=ca77b6b75034eeb12e537dd8c0a4f2a3424119253f38b7e6bd79ba0d2fef1264
+_ad_sha256_windows=6ee4b1e078f4e78792e79f16e32e4a78b9919464aa3c55629b7e27ed53a08c13
 _ad_sha256_license=cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30
 _ad_url="https://github.com/vercel-labs/agent-desktop"
 pkgver=0.1.0.r0.g0000000

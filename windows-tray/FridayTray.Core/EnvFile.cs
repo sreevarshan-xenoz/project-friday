@@ -64,4 +64,20 @@ public static class EnvFile
             lines.Add($"FRIDAY_CONTEXT_PROVIDER={provider.Id}");
         return string.Join('\n', lines) + "\n";
     }
+
+    /// <summary>
+    /// The file with <paramref name="name"/> set to <paramref name="value"/>
+    /// (or removed, when null); every other line stays as it was.
+    /// </summary>
+    public static string WithSetting(string existing, string name, string? value)
+    {
+        var lines = existing.Split('\n').Select(l => l.TrimEnd('\r'))
+            .Where(l => l.Trim().Split('=', 2)[0].Trim() != name)
+            .ToList();
+        while (lines.Count > 0 && lines[^1].Trim().Length == 0)
+            lines.RemoveAt(lines.Count - 1);
+        if (value != null)
+            lines.Add($"{name}={value}");
+        return lines.Count == 0 ? "" : string.Join('\n', lines) + "\n";
+    }
 }

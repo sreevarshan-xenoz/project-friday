@@ -159,7 +159,7 @@ jobs:
       - name: Check the install
         run: |
           $dir = "$env:LOCALAPPDATA\Programs\FRIDAY"
-          foreach ($f in 'friday-tray.exe', 'friday-daemon.exe', 'friday-ctl.exe', 'friday-windows-host.exe', 'LICENSE-MIT') {
+          foreach ($f in 'friday-tray.exe', 'friday-daemon.exe', 'friday-ctl.exe', 'friday-windows-host.exe', 'agent-desktop.exe', 'agent-desktop-LICENSE', 'LICENSE-MIT') {
             if (-not (Test-Path "$dir\$f")) { throw "missing $dir\$f" }
           }
           $run = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run').FRIDAY
@@ -187,6 +187,16 @@ jobs:
           $sig = [byte[]](0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
           if ($bytes.Length -lt 100 -or (Compare-Object $bytes[0..7] $sig)) { throw "not a PNG ($($bytes.Length) bytes)" }
           Write-Host "captured a $($bytes.Length)-byte PNG of the desktop"
+      - name: agent-desktop (bundled; reads what an app shows through UI Automation)
+        run: |
+          $exe = "$env:LOCALAPPDATA\Programs\FRIDAY\agent-desktop.exe"
+          $v = & $exe version | ConvertFrom-Json
+          if (-not $v.ok -or $v.version -notlike '2.*') { throw "agent-desktop version gave: $($v | ConvertTo-Json -Compress)" }
+          Write-Host "agent-desktop $($v.data.version), output format $($v.version)"
+          # What the runner's desktop shows is informational: a headless
+          # session may list nothing, and that is not a failure here.
+          $apps = & $exe list-apps | ConvertFrom-Json
+          Write-Host "list-apps ok=$($apps.ok), $(@($apps.data.apps).Count) app(s)"
       - name: End-to-end ask on the installed binaries (fake model, no network)
         shell: bash
         run: bash tests/e2e/ask.sh "$LOCALAPPDATA/Programs/FRIDAY"
