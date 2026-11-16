@@ -51,6 +51,9 @@ Autonomous Agent & Cognitive Loop:
                                    Local model only; nothing leaves the machine
   friday face [status|setup|remove] Face unlock for the lock screen (Gaze)
   friday voice [status|setup|remove] Hold Super+Y and speak (speech to text on this computer)
+  friday voice speak [setup|on|off|voice N|status]
+                                   FRIDAY answers out loud, in a voice made on this computer
+  friday say "text"                Say something now (friday say --stop to stop)
   friday screen-text [status|on|off]
                                    Ask about the screen with the window's text, not a screenshot
   friday phone [status|on|off]     Pair a phone with Pocketdesk; answer FRIDAY's questions from it
@@ -1058,6 +1061,62 @@ friday_voice() {
   esac
 }
 
+# FRIDAY's voice out: a small voice made on this computer (the sherpa-onnx
+# engine, run on the CPU), nothing sent anywhere. The downloads are pinned by
+# checksum (the hashes GitHub publishes for these release files).
+friday_speak_dir() { echo "${FRIDAY_VOICE_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/friday/voice}"; }
+friday_speak_flag() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/speak"; }
+friday_speak_ready() { [ -x "$(friday_speak_dir)/bin/sherpa-onnx-offline-tts" ] && [ -d "$(friday_speak_dir)/model" ]; }
+
+friday_voice_speak() {
+  local dir flag; dir=$(friday_speak_dir); flag=$(friday_speak_flag)
+  case "${1:-status}" in
+    status)
+      if friday_speak_ready; then
+        if [ -e "$flag" ]; then echo "Spoken answers: on (turn off: friday voice speak off)"
+        else echo "Spoken answers: installed, off (turn on: friday voice speak on)"; fi
+      else echo "Spoken answers: not installed (friday voice speak setup)"; fi
+      ;;
+    setup)
+      local kind=${2:-supertonic} base=https://github.com/k2-fsa/sherpa-onnx/releases/download model sha
+      local engine=sherpa-onnx-v1.13.8-linux-x64-shared.tar.bz2
+      local engine_sha=c0bdb7907d3a74bba1d55d22bf4d9fa75586cf1530614ebe88a27b9118e015c4
+      case "$kind" in
+        supertonic) model=sherpa-onnx-supertonic-tts-int8-2026-03-06.tar.bz2
+                    sha=8c74359f63edd5045d47747f65331f0f6dbcbc91d7e898dd756d631295fe3259 ;;
+        kitten)     model=kitten-nano-en-v0_8-int8.tar.bz2
+                    sha=6fa5be852612ce761094ba74ee6123b4fc4acfefa79bf64dc63acae4a83af2fd ;;
+        *) echo "Usage: friday voice speak setup [supertonic|kitten]" >&2; return 1 ;;
+      esac
+      echo "FRIDAY's voice is made on this computer: about 100 MB to download once."
+      local tmp; tmp=$(mktemp -d) || return 1
+      fetch() { # fetch <tag> <file> <sha256>
+        curl -fL --progress-bar -o "$tmp/$2" "$base/$1/$2" || return 1
+        [ "$(sha256sum "$tmp/$2" | cut -d' ' -f1)" = "$3" ] || { echo "friday: $2 doesn't match its checksum; not installing" >&2; return 1; }
+      }
+      fetch v1.13.8 "$engine" "$engine_sha" && fetch tts-models "$model" "$sha" || { rm -rf "$tmp"; return 1; }
+      rm -rf "${dir:?}/bin" "${dir:?}/lib" "${dir:?}/model"; mkdir -p "$dir/bin" "$dir/lib" "$dir/model"
+      tar xjf "$tmp/$engine" -C "$dir" --strip-components=1 --wildcards '*/bin/sherpa-onnx-offline-tts' '*/lib/*' \
+        && tar xjf "$tmp/$model" -C "$dir/model" --strip-components=1 || { rm -rf "$tmp"; return 1; }
+      rm -rf "$tmp"
+      printf '{"kind": "%s", "speaker": 0}\n' "$kind" >"$dir/settings.json"
+      echo "Voice installed. Turn it on: friday voice speak on   (try it: friday say \"Hello, I'm FRIDAY.\")"
+      ;;
+    on)
+      friday_speak_ready || { echo "friday: the voice isn't installed yet (friday voice speak setup)" >&2; return 1; }
+      mkdir -p "$(dirname "$flag")" && : >"$flag"; echo "FRIDAY will read its answers out loud. Stop it any time with friday say --stop."
+      ;;
+    off) rm -f "$flag"; echo "FRIDAY answers in text only." ;;
+    voice)
+      friday_speak_ready || { echo "friday: the voice isn't installed yet (friday voice speak setup)" >&2; return 1; }
+      [[ "${2:-}" =~ ^[0-9]+$ ]] || { echo "Usage: friday voice speak voice <number>   (try a few: friday say \"Hello\")" >&2; return 1; }
+      jq --argjson n "$2" '.speaker = $n' "$dir/settings.json" >"$dir/settings.json.tmp" && mv "$dir/settings.json.tmp" "$dir/settings.json"
+      echo "Voice $2."
+      ;;
+    *) echo "Usage: friday voice speak [setup|on|off|voice N|status]" >&2; return 1 ;;
+  esac
+}
+
 friday_hold() {
   local d="${XDG_RUNTIME_DIR:-/tmp}/friday-hold-$(id -u)"
   mkdir -p "$d" && chmod 700 "$d"
@@ -1753,6 +1812,13 @@ case "${1:-}" in
       # never splits it (FRIDAY Shell's answer history reads these).
       { printf '<!-- friday answer -->\n'; cat "$answer_file"; printf '\n---\n\n'; } >>"$state_dir/answers.md"
 
+      # Spoken answers (friday voice speak on): the answer is read aloud while
+      # the card shows it; a new answer, or friday say --stop, ends it.
+      if $ans_ok && [ -e "$(friday_speak_flag)" ] && friday_speak_ready; then
+        ( printf '%s' "$answer" | friday-ctl say - ) </dev/null >/dev/null 2>&1 &
+        disown 2>/dev/null || true
+      fi
+
       preview="$answer"
       [ "${#preview}" -le 220 ] || preview="${preview:0:217}…"
       [ -z "$meta" ] || preview="$preview\n$meta"
@@ -1934,7 +2000,11 @@ case "${1:-}" in
     ;;
   voice)
     shift
-    friday_voice "$@"
+    if [ "${1:-}" = speak ]; then shift; friday_voice_speak "$@"; else friday_voice "$@"; fi
+    ;;
+  say)
+    shift
+    exec friday-ctl say "$@"
     ;;
   hold)
     shift
