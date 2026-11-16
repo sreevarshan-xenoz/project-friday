@@ -47,14 +47,22 @@ internal sealed class TrayContext : ApplicationContext
 
         _hotkeys.Pressed += kind => _ = AskAsync(kind);
         _hotkeys.RegisterAll();
-        string Key(AskKind k) => _hotkeys.Labels.TryGetValue(k, out var l) ? $"\t{l}" : "";
+        // The hotkey is drawn right-aligned by the menu (a tab in the text would
+        // not be expanded and ran into the name).
+        ToolStripMenuItem Ask(string text, AskKind kind, bool pickArea = false) =>
+            new(text, null, (_, _) => _ = AskAsync(kind, pickArea))
+            {
+                ShortcutKeyDisplayString = !pickArea && _hotkeys.Labels.TryGetValue(kind, out var l) ? l : null,
+            };
 
         _startAtLogin = new ToolStripMenuItem("Start at login", null, (_, _) => ToggleStartAtLogin()) { Checked = install.StartsAtLogin };
         var menu = new ContextMenuStrip();
-        menu.Items.Add(new ToolStripMenuItem("Ask FRIDAY" + Key(AskKind.Plain), null, (_, _) => _ = AskAsync(AskKind.Plain)) { Font = new Font(menu.Font, FontStyle.Bold) });
-        menu.Items.Add("Ask about selection" + Key(AskKind.Selection), null, (_, _) => _ = AskAsync(AskKind.Selection));
-        menu.Items.Add("Ask about the screen" + Key(AskKind.Screen), null, (_, _) => _ = AskAsync(AskKind.Screen));
-        menu.Items.Add("Ask about an area…", null, (_, _) => _ = AskAsync(AskKind.Screen, pickArea: true));
+        var askItem = Ask("Ask FRIDAY", AskKind.Plain);
+        askItem.Font = new Font(menu.Font, FontStyle.Bold);
+        menu.Items.Add(askItem);
+        menu.Items.Add(Ask("Ask about selection", AskKind.Selection));
+        menu.Items.Add(Ask("Ask about the screen", AskKind.Screen));
+        menu.Items.Add(Ask("Ask about an area…", AskKind.Screen, pickArea: true));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Last answer", null, (_, _) => Open(install.Paths.LastAnswerFile));
         menu.Items.Add("All answers", null, (_, _) => Open(install.Paths.AnswersFile));
