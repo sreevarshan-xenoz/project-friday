@@ -153,13 +153,32 @@ shell_window_look() {
   if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then hyprctl reload >/dev/null 2>&1 || true; fi
 }
 
+# Whether FRIDAY Shell should draw in software: FRIDAY_SHELL_RENDER=software,
+# or (the default, auto) in VirtualBox, VMware and Parallels, whose virtual
+# graphics make Quickshell die with "Wayland connection ... fatal error".
+# gpu never; a QT_QUICK_BACKEND the person set is left alone.
+shell_software_render() {
+  [ -z "${QT_QUICK_BACKEND:-}" ] || return 1
+  case "${FRIDAY_SHELL_RENDER:-auto}" in
+    software) return 0 ;;
+    gpu) return 1 ;;
+  esac
+  case "$(systemd-detect-virt --vm 2>/dev/null || true)" in
+    oracle|vmware|parallels) return 0 ;;
+  esac
+  return 1
+}
+
 shell_supervise() {
-  local dir="$1" pidfile="$2" qs="" status stopping=0 starts=0 window=$SECONDS
+  local dir="$1" pidfile="$2" qs="" status stopping=0 starts=0 window=$SECONDS software=0
   echo $$ >"$pidfile"
   rm -f "$pidfile.restart"
   trap 'stopping=1; [ -n "$qs" ] && kill -TERM "$qs" 2>/dev/null' TERM INT HUP
+  if shell_software_render; then software=1; echo "friday: drawing FRIDAY Shell in software (virtual machine graphics)" >&2; fi
   while [ "$stopping" = 0 ]; do
-    quickshell -n -p "$dir" &
+    if [ "$software" = 1 ]; then QT_QUICK_BACKEND=software quickshell -n -p "$dir" &
+    else quickshell -n -p "$dir" &
+    fi
     qs=$!
     # (This script runs under set -e: a crash must not end the supervisor.)
     status=0; wait "$qs" || status=$?
@@ -173,6 +192,12 @@ shell_supervise() {
     [ -e "${XDG_RUNTIME_DIR:-/nonexistent}/${WAYLAND_DISPLAY:-wayland-0}" ] || break
     if (( SECONDS - window > 60 )); then starts=0; window=$SECONDS; fi
     starts=$((starts + 1))
+    # Crashing twice on the graphics card: try software before giving up
+    # (unless the person chose gpu, or already set a Qt backend).
+    if [ "$software" = 0 ] && (( starts >= 2 )) && [ "${FRIDAY_SHELL_RENDER:-auto}" != gpu ] && [ -z "${QT_QUICK_BACKEND:-}" ]; then
+      software=1
+      echo "friday: FRIDAY Shell crashed twice; drawing it in software from now on" >&2
+    fi
     if (( starts > 5 )); then
       notify-send -a FRIDAY -u critical "FRIDAY Shell keeps crashing" \
         "Stopped restarting it. Run: friday shell restart" 2>/dev/null || true
