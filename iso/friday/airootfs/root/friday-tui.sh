@@ -182,22 +182,54 @@ friday_note() { gum style --margin "0 0 0 $FRIDAY_INDENT" --width "$FRIDAY_WIDTH
 # muted dots (glyphs the console's Terminus font has), centred.
 friday_rail() {
   local current="$1"; shift
-  local out="" plain="" i=1 label
-  for label in "$@"; do
+  local cols; cols=$(tput cols 2>/dev/null || echo 80)
+  local labels=("$@") total=0 label
+  for label in "${labels[@]}"; do total=$((total + ${#label} + 5)); done
+  # Too wide for the screen: only the current step keeps its name, the rest
+  # show their number, so the rail never wraps onto a second line.
+  local short=false
+  (( total > cols - 4 )) && short=true
+  local out="" plain="" i=1 shown
+  for label in "${labels[@]}"; do
+    shown="$label"
+    if $short && (( i != current )); then shown="$i"; fi
     if (( i < current )); then
-      out+="$(friday_fg "$FRIDAY_SUCCESS")■ $label\e[0m   "; plain+="■ $label   "
+      out+="$(friday_fg "$FRIDAY_SUCCESS")■ $shown\e[0m   "; plain+="■ $shown   "
     elif (( i == current )); then
       # No bold: the console shows bold as the bright colour, a light label.
-      out+="$(friday_bg "$FRIDAY_ACCENT")$(friday_fg "$FRIDAY_BG") $label \e[0m   "; plain+=" $label    "
+      out+="$(friday_bg "$FRIDAY_ACCENT")$(friday_fg "$FRIDAY_BG") $shown \e[0m   "; plain+=" $shown    "
     else
-      out+="$(friday_fg "$FRIDAY_MUTED")• $label\e[0m   "; plain+="• $label   "
+      out+="$(friday_fg "$FRIDAY_MUTED")• $shown\e[0m   "; plain+="• $shown   "
     fi
     i=$((i + 1))
   done
-  local cols pad
-  cols=$(tput cols 2>/dev/null || echo 80)
+  local pad
   pad=$(( (cols - ${#plain} + 3) / 2 )); (( pad < 0 )) && pad=0
   printf '%*s%b\n\n' "$pad" '' "${out%   }"
+}
+
+# What the person lets FRIDAY do (the FEATURES step). Everything defaults to
+# what an unattended install gets: all on except sending a window's text.
+FEAT_DESKTOP="${FEAT_DESKTOP:-true}"       # control windows, apps, volume, media
+FEAT_TASKS="${FEAT_TASKS:-true}"           # standing tasks ("every morning at 8 ...")
+FEAT_APPNAME="${FEAT_APPNAME:-true}"       # name the app a selection came from
+FEAT_SCREENTEXT="${FEAT_SCREENTEXT:-false}" # send a window's text, not a screenshot
+
+# friday_write_features <config-dir>: the chosen settings, in the files the
+# `friday` CLI and the daemon already read. Only what differs from the
+# defaults is written, so a default install changes nothing.
+friday_write_features() {
+  local dir="$1" env="$1/friday.env"
+  mkdir -p "$dir"
+  (
+    umask 077
+    touch "$env"
+    [[ "$FEAT_DESKTOP" == true ]] || echo "FRIDAY_DESKTOP=0" >>"$env"
+    [[ "$FEAT_TASKS" == true ]] || echo "FRIDAY_STANDING_TASKS=0" >>"$env"
+    [[ "$FEAT_SCREENTEXT" != true ]] || echo "FRIDAY_SCREEN_TEXT=1" >>"$env"
+    [[ -s "$env" ]] || rm -f "$env"
+  )
+  [[ "$FEAT_APPNAME" == true ]] || : >"$dir/no-app-context"
 }
 
 # --- validators (pure; unit-testable) -------------------------------------

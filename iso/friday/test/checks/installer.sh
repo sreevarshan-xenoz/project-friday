@@ -114,6 +114,31 @@ if need cryptsetup && [[ $EUID -eq 0 ]]; then
 else skip "LUKS round trip (needs root + cryptsetup)"; fi
 
 echo "unattended runs (no terminal)"
+# The FEATURES step's settings: a default install writes nothing; each choice
+# lands in the file the CLI or daemon already reads.
+feat() { # feat <dir> VAR=value...  → runs friday_write_features with those choices
+  local d="$1"; shift
+  env "$@" bash -c "source '$ROOT/friday-tui.sh'; friday_write_features '$d'"
+}
+FD="$WORK/features"; rm -rf "$FD"
+feat "$FD/default"
+if [[ -z "$(ls -A "$FD/default")" ]]; then pass "default features write nothing"; else fail "default features wrote: $(ls "$FD/default")"; fi
+feat "$FD/off" FEAT_DESKTOP=false FEAT_TASKS=false FEAT_APPNAME=false FEAT_SCREENTEXT=true
+contains "desktop control off is written"   "$(cat "$FD/off/friday.env")" "FRIDAY_DESKTOP=0"
+contains "scheduled tasks off is written"   "$(cat "$FD/off/friday.env")" "FRIDAY_STANDING_TASKS=0"
+contains "window text on is written"        "$(cat "$FD/off/friday.env")" "FRIDAY_SCREEN_TEXT=1"
+expect  "app name off leaves the flag file" test -e "$FD/off/no-app-context"
+[[ "$(stat -c %a "$FD/off/friday.env")" == 600 ]] && pass "friday.env is owner-only" || fail "friday.env permissions are $(stat -c %a "$FD/off/friday.env")"
+mkdir -p "$FD/keep"; printf 'GEMINI_API_KEY=k\n' >"$FD/keep/friday.env"
+feat "$FD/keep" FEAT_SCREENTEXT=true
+contains "an existing provider key is kept" "$(cat "$FD/keep/friday.env")" "GEMINI_API_KEY=k"
+contains "and the choice is added"          "$(cat "$FD/keep/friday.env")" "FRIDAY_SCREEN_TEXT=1"
+# The rail keeps to one line on a narrow screen, naming only the current step.
+narrow=$(COLUMNS=60 TERM=linux bash -c "source '$ROOT/friday-tui.sh'; tput() { echo 60; }; friday_rail 7 NETWORK DISK REGION IDENTITY SECURITY LOOK FEATURES AI REVIEW" | sed 's/\x1b\[[0-9;]*m//g' | grep -v '^$')
+if [[ $(wc -l <<<"$narrow") == 1 && "$narrow" == *FEATURES* && "$narrow" != *NETWORK* ]]; then pass "the rail shortens on a narrow screen"; else fail "the rail on 60 columns: $narrow"; fi
+wide=$(TERM=linux bash -c "source '$ROOT/friday-tui.sh'; tput() { echo 120; }; friday_rail 7 NETWORK DISK REGION IDENTITY SECURITY LOOK FEATURES AI REVIEW" | sed 's/\x1b\[[0-9;]*m//g' | grep -v '^$')
+[[ "$wide" == *NETWORK* && "$wide" == *REVIEW* ]] && pass "the rail names every step when it fits" || fail "the rail on 120 columns: $wide"
+
 expect "banner and rail work without TERM" env -u TERM bash -c \
   "source '$ROOT/friday-tui.sh'; set -e; friday_banner TEST; friday_rail 2 A B C; friday_say hi" </dev/null
 
@@ -137,7 +162,7 @@ EOF
   printf '#!/bin/bash\nexit 0\n' >"$W/stub/curl"   # pretend we're online
   cat >"$W/stub/installer" <<'EOF'
 #!/bin/bash
-echo "INSTALLER-ENV disk=$TARGET_DISK host=$FRIDAY_HOSTNAME user=$USERNAME pw=$PASSWORD tz=$TIMEZONE kb=$KEYBOARD ai=[$FRIDAY_AI_PROVIDER] autologin=$AUTOLOGIN encrypt=$ENCRYPT interactive=$FRIDAY_INTERACTIVE session=$SESSION style=$SHELL_STYLE"
+echo "INSTALLER-ENV disk=$TARGET_DISK host=$FRIDAY_HOSTNAME user=$USERNAME pw=$PASSWORD tz=$TIMEZONE kb=$KEYBOARD ai=[$FRIDAY_AI_PROVIDER] autologin=$AUTOLOGIN encrypt=$ENCRYPT interactive=$FRIDAY_INTERACTIVE session=$SESSION style=$SHELL_STYLE desktop=$FEAT_DESKTOP tasks=$FEAT_TASKS appname=$FEAT_APPNAME screentext=$FEAT_SCREENTEXT"
 EOF
   chmod +x "$W"/stub/* "$W/configurator"
   if python3 "$CHECKS/installer_flow.py" "$W/configurator" "$W/stub"; then :; else FAILS=$((FAILS + 1)); fi

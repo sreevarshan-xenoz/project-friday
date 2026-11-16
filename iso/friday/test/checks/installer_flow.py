@@ -46,6 +46,10 @@ STEPS = [
     (2, DOWN),
     (1, ENTER),  # style: Island
     (2, ENTER),  # login theme
+    (4, "x"),  # features: desktop control off
+    (1, DOWN * 3),
+    (1, "x"),  # window text on
+    (1, ENTER),
     (6, ENTER),  # AI: OpenCode Zen (first, default)
     (3, ENTER),  # no key: free models
     (4, DOWN * 2),
@@ -107,6 +111,7 @@ checks = {
     "autologin defaults to off": "Password required at login" in text,
     "encryption defaults to on": "Disk will be encrypted (LUKS2)" in text,
     "review shows encryption": "(encrypted)" in text,
+    "review lists what FRIDAY may do": "Allowed" in text and "window text" in text,
     "AI defaults to OpenCode Zen free models": "OpenCode Zen free models (no key)" in text,
     "installer received the spec": bool(env_lines),
     "keyboard is chosen before the password": 0
@@ -127,6 +132,10 @@ for key, want in [
     ("interactive", "1"),
     ("session", "niri"),
     ("style", "Island"),
+    ("desktop", "false"),
+    ("tasks", "true"),
+    ("appname", "true"),
+    ("screentext", "true"),
 ]:
     checks[f"spec {key}={want}"] = f"{key}={want}" in env
 
