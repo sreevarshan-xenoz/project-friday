@@ -6,9 +6,11 @@ nothing outside the user's profile.
 | What | Where |
 |---|---|
 | Programs | `%LOCALAPPDATA%\Programs\FRIDAY` (`friday-tray.exe`, `friday-daemon.exe`, `friday-ctl.exe`, `friday-windows-host.exe`, and their .NET runtime) |
-| Starts at login | `HKCU\...\CurrentVersion\Run\FRIDAY` (the tray's "Start at login" toggles it) |
+| Starts at login (option, on) | `HKCU\...\CurrentVersion\Run\FRIDAY` (the tray's "Start at login" toggles it) |
 | Start menu | `FRIDAY` |
-| `friday-ctl` in terminals | the install folder is added to the user `PATH` |
+| `friday-ctl` in terminals (option, on) | the install folder is added to the user `PATH` |
+| Desktop shortcut (option, off) | `FRIDAY` on the desktop |
+| Read a window's text for screen questions (option, off) | the tray turns it on at its first start (`FRIDAY_SCREEN_TEXT=1` in `friday.env`) |
 | State, answers, logs | `%LOCALAPPDATA%\friday` (kept on uninstall) |
 | AI provider key | `%APPDATA%\friday\friday.env` (kept on uninstall) |
 
@@ -18,6 +20,23 @@ capture the screen, hold a hotkey or show a window. The tray app
 (`windows-tray/`) starts at login, owns the hotkeys and the ask box, and
 keeps `friday-daemon` and `friday-windows-host` running. If they crash it
 restarts them, and they never outlive it.
+
+## Options on the first install
+
+Running the MSI shows a Welcome page, a **Customize** page and a last page with
+"Start FRIDAY now". The Customize page lists the options above with a switch and
+a description each. A silent install shows nothing and takes the defaults (what
+winget does); to choose on the command line, list the features to install:
+
+```powershell
+# everything on by default, plus the desktop shortcut
+msiexec /i FRIDAY-<version>-x64.msi /qn ADDLOCAL=Main,StartAtLogin,PathEntry,DesktopShortcut
+# only the program: no start at login, no PATH change
+msiexec /i FRIDAY-<version>-x64.msi /qn ADDLOCAL=Main
+```
+
+Features: `Main` (required), `StartAtLogin`, `PathEntry`, `DesktopShortcut`,
+`ScreenText`. The dialog images are drawn by `assets/make-assets.py`.
 
 ## Build
 
@@ -43,7 +62,8 @@ msiexec /x FRIDAY-<version>-x64.msi /qn
 
 CI (`windows-installer` job) does exactly this on every push: build, silent
 install, check files, Run entry, PATH and shortcut, smoke test, uninstall,
-and check it cleaned up.
+and check it cleaned up; then a second install with only some options
+(`ADDLOCAL`) to check that an option left out is left out.
 
 ## Releases
 

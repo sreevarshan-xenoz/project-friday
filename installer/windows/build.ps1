@@ -100,9 +100,11 @@ if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
     $env:PATH += ";$env:USERPROFILE\.dotnet\tools"
 }
 Run wix @('extension', 'add', '--global', "WixToolset.Util.wixext/$wixVersion")
+Run wix @('extension', 'add', '--global', "WixToolset.UI.wixext/$wixVersion")
 
 $msi = Join-Path $OutDir "FRIDAY-$version-x64.msi"
-Run wix @('build', "$PSScriptRoot\FRIDAY.wxs", '-arch', 'x64', '-ext', 'WixToolset.Util.wixext',
+Run wix @('build', "$PSScriptRoot\FRIDAY.wxs", '-arch', 'x64', '-ext', 'WixToolset.Util.wixext', '-ext', 'WixToolset.UI.wixext',
+    '-d', "AssetsDir=$PSScriptRoot\assets",
     '-bindpath', "stage=$stage", '-d', "Version=$version", '-o', $msi)
 Write-Host "MSI: $msi"
 "msi=$msi" | Out-File -Append -Encoding utf8 ($env:GITHUB_OUTPUT ?? 'NUL')

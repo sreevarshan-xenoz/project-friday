@@ -167,7 +167,10 @@ jobs:
           $path = (Get-ItemProperty 'HKCU:\Environment').Path
           if ($path -notlike "*Programs\FRIDAY*") { throw "install folder is not on the user PATH (got '$path')" }
           if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\FRIDAY.lnk")) { throw "no Start menu shortcut" }
-          Write-Host "installed to $dir with Run entry, PATH and shortcut"
+          # The options that are off unless asked for.
+          if (Test-Path "$env:USERPROFILE\Desktop\FRIDAY.lnk") { throw "a default install made a desktop shortcut" }
+          if (Test-Path 'HKCU:\Software\FRIDAY\Options') { throw "a default install turned on screen text" }
+          Write-Host "installed to $dir with Run entry, PATH and shortcut (no desktop shortcut, no screen text)"
       - name: Smoke test (tray --smoke)
         run: |
           $p = Start-Process "$env:LOCALAPPDATA\Programs\FRIDAY\friday-tray.exe" -ArgumentList '--smoke' -Wait -PassThru
@@ -215,6 +218,23 @@ jobs:
           $run = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue
           if ($run -and ($run.PSObject.Properties.Name -contains 'FRIDAY')) { throw "start-at-login entry left behind" }
           Write-Host "uninstalled cleanly"
+      - name: Custom install (options chosen on the command line)
+        run: |
+          # What the Customize page does, without the page: only the listed features.
+          $msi = '${{ steps.build.outputs.msi }}'
+          $p = Start-Process msiexec -ArgumentList '/i', $msi, '/qn', 'ADDLOCAL=Main,DesktopShortcut,ScreenText', '/l*v', "$env:RUNNER_TEMP\custom.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /i ADDLOCAL exited with $($p.ExitCode)" }
+          $run = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue
+          if ($run -and ($run.PSObject.Properties.Name -contains 'FRIDAY')) { throw "start-at-login was left on though it was not chosen" }
+          $path = (Get-ItemProperty 'HKCU:\Environment').Path
+          if ($path -like "*Programs\FRIDAY*") { throw "PATH was changed though it was not chosen" }
+          if (-not (Test-Path "$env:USERPROFILE\Desktop\FRIDAY.lnk")) { throw "the chosen desktop shortcut is missing" }
+          if ((Get-ItemProperty 'HKCU:\Software\FRIDAY\Options').ScreenText -ne 1) { throw "the chosen screen-text option was not recorded" }
+          Write-Host "custom install: desktop shortcut and screen text on; start-at-login and PATH off"
+          $p = Start-Process msiexec -ArgumentList '/x', $msi, '/qn' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /x exited with $($p.ExitCode)" }
+          if (Test-Path "$env:USERPROFILE\Desktop\FRIDAY.lnk") { throw "the desktop shortcut was left behind" }
+          if (Test-Path 'HKCU:\Software\FRIDAY') { throw "installer registry values were left behind" }
       - name: winget manifests
         run: |
           $msi = '${{ steps.build.outputs.msi }}'

@@ -1,3 +1,4 @@
+using Microsoft.Win32;
 using FridayTray.Core;
 
 namespace FridayTray;
@@ -35,6 +36,7 @@ internal sealed class TrayContext : ApplicationContext
         };
 
         _log = new AnswerLog(install.Paths);
+        ApplyInstallerChoices();
         _daemon = new Supervised("friday-daemon", install.Daemon, install.ChildEnvironment, install.Paths.LogDir);
         _host = new Supervised("friday-windows-host", install.Host, install.ChildEnvironment, install.Paths.LogDir);
         // GaveUp fires on the exited process's thread; the tray icon belongs to this one.
@@ -432,14 +434,42 @@ internal sealed class TrayContext : ApplicationContext
             _screenText.Checked = false;
             return;
         }
-        var path = _install.Paths.EnvFile;
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var tmp = path + ".tmp";
-        File.WriteAllText(tmp, EnvFile.WithSetting(File.Exists(path) ? File.ReadAllText(path) : "", "FRIDAY_SCREEN_TEXT", turnOn ? "1" : null));
-        File.Move(tmp, path, overwrite: true);
+        WriteScreenText(turnOn);
         _daemon.Restart();
         _screenText.Checked = turnOn;
         Notify("FRIDAY", turnOn ? "Screen asks may now send a window's text." : "Screen asks send one screenshot again.", ToolTipIcon.Info);
+    }
+
+    private void WriteScreenText(bool on)
+    {
+        var path = _install.Paths.EnvFile;
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var tmp = path + ".tmp";
+        File.WriteAllText(tmp, EnvFile.WithSetting(File.Exists(path) ? File.ReadAllText(path) : "", "FRIDAY_SCREEN_TEXT", on ? "1" : null));
+        File.Move(tmp, path, overwrite: true);
+    }
+
+    /// <summary>
+    /// The installer's "read a window's text" option (off unless ticked, with
+    /// the same explanation as the tray's own toggle) leaves a one-shot marker
+    /// in the registry; apply it once, before the daemon starts, and remove it
+    /// so the tray's toggle stays the only switch afterwards.
+    /// </summary>
+    private void ApplyInstallerChoices()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(@"Software\FRIDAY\Options", writable: true);
+            if (key?.GetValue("ScreenText") is 1)
+            {
+                WriteScreenText(true);
+                key.DeleteValue("ScreenText");
+            }
+        }
+        catch (Exception e)
+        {
+            LogUnhandledException("InstallerChoices", e);
+        }
     }
 
     private void ToggleStartAtLogin()
