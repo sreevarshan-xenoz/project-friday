@@ -184,6 +184,8 @@ jobs:
           $r = & $host_exe --resolve "no-such-app-12345"
           if ($LASTEXITCODE -eq 0) { throw "an unknown app resolved to: $r" }
           Write-Host "unknown app -> $r (exit $LASTEXITCODE)"
+          # The last command failed on purpose; don't let it fail the step.
+          exit 0
       - name: Smoke test (tray --smoke)
         run: |
           $p = Start-Process "$env:LOCALAPPDATA\Programs\FRIDAY\friday-tray.exe" -ArgumentList '--smoke' -Wait -PassThru
