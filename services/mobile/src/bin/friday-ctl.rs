@@ -18,6 +18,8 @@
 //!                                      computer; "-" reads the text from stdin;
 //!                                      a new say replaces the one speaking)
 //!   friday-ctl say --stop              (stop speaking)
+//!   friday-ctl say --setup [kitten]    (download and install the voice, checked
+//!                                      against pinned checksums)
 //!   friday-ctl cancel                  (cancel the goal in flight)
 //!   friday-ctl context screen          (interactive consent)
 //!   friday-ctl context screen --yes    (consent already collected by the shell panel)
@@ -81,6 +83,24 @@ fn confirm_context_consent() -> bool {
 
 /// `friday-ctl say`: no daemon needed, the voice runs here.
 fn say(args: &[String]) -> std::process::ExitCode {
+    if let Some(at) = args.iter().position(|a| a == "--setup") {
+        let name = args.get(at + 1).map(String::as_str).unwrap_or("supertonic");
+        let Some(kind) = friday_mobile::speech::kind_from_name(name) else {
+            eprintln!("friday-ctl: unknown voice \"{name}\" (supertonic or kitten)");
+            return std::process::ExitCode::from(2);
+        };
+        println!("Downloading FRIDAY's voice (about 100 MB, once)...");
+        return match friday_mobile::speech::setup(&friday_mobile::speech::voice_dir(), kind) {
+            Ok(()) => {
+                println!("Voice installed.");
+                std::process::ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("friday-ctl: {e}");
+                std::process::ExitCode::from(1)
+            }
+        };
+    }
     if args.iter().any(|a| a == "--stop") {
         friday_mobile::speech::stop_running();
         return std::process::ExitCode::SUCCESS;

@@ -593,6 +593,8 @@ contains "the chosen voice is kept" "$(cat "$VD/settings.json")" '"speaker": 4'
 if bash "$F" voice speak voice loud >/dev/null 2>&1; then fail "a voice that isn't a number was accepted"; else pass "a voice must be a number"; fi
 : >"$LOG"; bash "$F" say "hello there"
 contains "friday say speaks through friday-ctl" "$(cat "$LOG")" "friday-ctl-say hello there"
+: >"$LOG"; bash "$F" voice speak setup kitten >/dev/null
+contains "setup installs the chosen voice through friday-ctl" "$(cat "$LOG")" "friday-ctl-say --setup kitten"
 bash "$F" voice speak off >/dev/null
 if [[ -e "$SPK" ]]; then fail "off left the switch on"; else pass "off removes the switch"; fi
 

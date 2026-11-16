@@ -684,6 +684,172 @@ pub fn say(text: &str) -> Result<Spoken, String> {
     result
 }
 
+// ---------------------------------------------------------------- installing
+
+/// What gets downloaded, pinned by sha256 (the digests GitHub publishes for these
+/// release files of the Apache-2.0 sherpa-onnx project).
+const RELEASES: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download";
+#[cfg(not(windows))]
+const ENGINE: (&str, &str, &str) = (
+    "v1.13.8",
+    "sherpa-onnx-v1.13.8-linux-x64-shared.tar.bz2",
+    "c0bdb7907d3a74bba1d55d22bf4d9fa75586cf1530614ebe88a27b9118e015c4",
+);
+#[cfg(windows)]
+const ENGINE: (&str, &str, &str) = (
+    "v1.13.8",
+    "sherpa-onnx-v1.13.8-win-x64-shared-MT-Release.tar.bz2",
+    "6dffdc715a4465b989446a6105265d2cb345e7101591a17d35534b6758f6e8df",
+);
+
+fn model_pin(kind: Kind) -> (&'static str, &'static str, &'static str) {
+    match kind {
+        Kind::Supertonic => (
+            "tts-models",
+            "sherpa-onnx-supertonic-tts-int8-2026-03-06.tar.bz2",
+            "8c74359f63edd5045d47747f65331f0f6dbcbc91d7e898dd756d631295fe3259",
+        ),
+        Kind::Kitten => (
+            "tts-models",
+            "kitten-nano-en-v0_8-int8.tar.bz2",
+            "6fa5be852612ce761094ba74ee6123b4fc4acfefa79bf64dc63acae4a83af2fd",
+        ),
+    }
+}
+
+fn sha256_hex(path: &Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let mut f = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut h = Sha256::new();
+    std::io::copy(&mut f, &mut h).map_err(|e| e.to_string())?;
+    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Downloads one pinned file with `curl` and refuses it unless it matches.
+fn fetch(pin: (&str, &str, &str), into: &Path) -> Result<PathBuf, String> {
+    let (tag, file, sha) = pin;
+    let dest = into.join(file);
+    let status = Command::new("curl")
+        .args(["-fL", "--silent", "--show-error", "-o"])
+        .arg(&dest)
+        .arg(format!("{RELEASES}/{tag}/{file}"))
+        .status()
+        .map_err(|e| format!("couldn't run curl: {e}"))?;
+    if !status.success() {
+        return Err(format!("couldn't download {file}"));
+    }
+    if sha256_hex(&dest)? != sha {
+        let _ = std::fs::remove_file(&dest);
+        return Err(format!(
+            "{file} doesn't match its checksum; not installing it"
+        ));
+    }
+    Ok(dest)
+}
+
+fn untar(archive: &Path, into: &Path) -> Result<(), String> {
+    let status = Command::new("tar")
+        .arg("xjf")
+        .arg(archive)
+        .arg("-C")
+        .arg(into)
+        .status()
+        .map_err(|e| format!("couldn't run tar: {e}"))?;
+    status
+        .success()
+        .then_some(())
+        .ok_or_else(|| "couldn't unpack the download".to_string())
+}
+
+/// The one folder an unpacked archive contains.
+fn only_dir(of: &Path) -> Result<PathBuf, String> {
+    let mut dirs = std::fs::read_dir(of)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir());
+    dirs.next()
+        .ok_or_else(|| "the download held no folder".to_string())
+}
+
+fn copy_files(from: &Path, to: &Path, keep: impl Fn(&str) -> bool) -> Result<(), String> {
+    std::fs::create_dir_all(to).map_err(|e| e.to_string())?;
+    let Ok(read) = std::fs::read_dir(from) else {
+        return Ok(());
+    };
+    for entry in read.filter_map(|e| e.ok()) {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if entry.path().is_file() && keep(&name) {
+            std::fs::copy(entry.path(), to.join(&name)).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// Installs the voice into `dir`: the pinned engine and the chosen model, then
+/// `settings.json`. Anything already there is replaced; a failure leaves the old
+/// voice as it was.
+pub fn setup(dir: &Path, kind: Kind) -> Result<(), String> {
+    let work = std::env::temp_dir().join(format!("friday-voice-setup-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
+    let result = (|| {
+        let engine_tar = fetch(ENGINE, &work)?;
+        let model_tar = fetch(model_pin(kind), &work)?;
+        let (engine_out, model_out) = (work.join("engine"), work.join("model"));
+        std::fs::create_dir_all(&engine_out).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&model_out).map_err(|e| e.to_string())?;
+        untar(&engine_tar, &engine_out)?;
+        untar(&model_tar, &model_out)?;
+        let engine_root = only_dir(&engine_out)?;
+        let model_root = only_dir(&model_out)?;
+        let new = work.join("new");
+        // The engine program, and what it loads: the DLLs beside it on Windows, lib/ on Linux.
+        copy_files(&engine_root.join("bin"), &new.join("bin"), |n| {
+            n == engine_name() || n.ends_with(".dll")
+        })?;
+        copy_files(&engine_root.join("lib"), &new.join("lib"), |n| {
+            n.contains(".so")
+        })?;
+        std::fs::rename(&model_root, new.join("model")).map_err(|e| e.to_string())?;
+        if !new.join("bin").join(engine_name()).is_file() {
+            return Err("the engine download held no speech program".into());
+        }
+        let kind_name = if kind == Kind::Kitten {
+            "kitten"
+        } else {
+            "supertonic"
+        };
+        std::fs::write(
+            new.join("settings.json"),
+            format!("{{\"kind\": \"{kind_name}\", \"speaker\": 0}}\n"),
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        for part in ["bin", "lib", "model"] {
+            let _ = std::fs::remove_dir_all(dir.join(part));
+            if new.join(part).exists() {
+                std::fs::rename(new.join(part), dir.join(part)).map_err(|e| e.to_string())?;
+            }
+        }
+        std::fs::copy(new.join("settings.json"), dir.join("settings.json"))
+            .map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let exe = dir.join("bin").join(engine_name());
+            let _ = std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755));
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&work);
+    result
+}
+
+pub fn kind_from_name(name: &str) -> Option<Kind> {
+    Kind::parse(name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -998,6 +1164,33 @@ mod tests {
         .unwrap();
         assert_eq!(late.sentences, 1, "what was said stays said");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_download_is_accepted_only_when_it_matches_its_pin() {
+        let dir = work();
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("x.bin");
+        std::fs::write(&file, b"abc").unwrap();
+        // sha256("abc")
+        assert_eq!(
+            sha256_hex(&file).unwrap(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_pins_are_full_sha256_digests_for_every_model() {
+        for kind in [Kind::Supertonic, Kind::Kitten] {
+            let (_, file, sha) = model_pin(kind);
+            assert!(file.ends_with(".tar.bz2"));
+            assert!(
+                sha.len() == 64 && sha.chars().all(|c| c.is_ascii_hexdigit()),
+                "{file}"
+            );
+        }
+        assert_eq!(ENGINE.2.len(), 64);
     }
 
     #[test]
