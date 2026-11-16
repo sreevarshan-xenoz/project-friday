@@ -171,6 +171,25 @@ jobs:
           if (Test-Path "$env:USERPROFILE\Desktop\FRIDAY.lnk") { throw "a default install made a desktop shortcut" }
           if (Test-Path 'HKCU:\Software\FRIDAY\Options') { throw "a default install turned on screen text" }
           Write-Host "installed to $dir with Run entry, PATH and shortcut (no desktop shortcut, no screen text)"
+      - name: Administrator start-up task (the elevated half of the Settings switch)
+        run: |
+          # The runner is an administrator, so the tray's --apply-elevated mode
+          # (what Settings runs through one Windows prompt) can run directly.
+          $tray = "$env:LOCALAPPDATA\Programs\FRIDAY\friday-tray.exe"
+          $me = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+          $p = Start-Process $tray -ArgumentList '--apply-elevated', 'on', "`"$me`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "--apply-elevated on exited $($p.ExitCode)" }
+          $xml = schtasks /Query /TN FRIDAY /XML | Out-String
+          if ($LASTEXITCODE -ne 0 -or $xml -notmatch 'HighestAvailable' -or $xml -notmatch 'LogonTrigger') { throw "the FRIDAY task is not as expected:`n$xml" }
+          if ($xml -notmatch [regex]::Escape($tray)) { throw "the task does not start $tray" }
+          Write-Host "task FRIDAY: logon, highest available, starts $tray"
+          $p = Start-Process $tray -ArgumentList '--apply-elevated', 'off', "`"$me`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "--apply-elevated off exited $($p.ExitCode)" }
+          schtasks /Query /TN FRIDAY 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw "the FRIDAY task is still there after turning it off" }
+          Write-Host "task removed"
+          # The last query failed on purpose; don't let it fail the step.
+          exit 0
       - name: Opening an app by name (PATH, App Paths, the Start menu)
         run: |
           $host_exe = "$env:LOCALAPPDATA\Programs\FRIDAY\friday-windows-host.exe"
@@ -237,7 +256,7 @@ jobs:
         run: |
           # What the Customize page does, without the page: only the listed features.
           $msi = '${{ steps.build.outputs.msi }}'
-          $p = Start-Process msiexec -ArgumentList '/i', $msi, '/qn', 'ADDLOCAL=Main,DesktopShortcut,ScreenText', '/l*v', "$env:RUNNER_TEMP\custom.log" -Wait -PassThru
+          $p = Start-Process msiexec -ArgumentList '/i', $msi, '/qn', 'ADDLOCAL=Main,DesktopShortcut,ScreenText,AdminAccess', '/l*v', "$env:RUNNER_TEMP\custom.log" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "msiexec /i ADDLOCAL exited with $($p.ExitCode)" }
           $run = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue
           if ($run -and ($run.PSObject.Properties.Name -contains 'FRIDAY')) { throw "start-at-login was left on though it was not chosen" }
@@ -245,6 +264,7 @@ jobs:
           if ($path -like "*Programs\FRIDAY*") { throw "PATH was changed though it was not chosen" }
           if (-not (Test-Path "$env:USERPROFILE\Desktop\FRIDAY.lnk")) { throw "the chosen desktop shortcut is missing" }
           if ((Get-ItemProperty 'HKCU:\Software\FRIDAY\Options').ScreenText -ne 1) { throw "the chosen screen-text option was not recorded" }
+          if ((Get-ItemProperty 'HKCU:\Software\FRIDAY\Options').AdminAccess -ne 1) { throw "the chosen administrator option was not recorded" }
           Write-Host "custom install: desktop shortcut and screen text on; start-at-login and PATH off"
           $p = Start-Process msiexec -ArgumentList '/x', $msi, '/qn' -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "msiexec /x exited with $($p.ExitCode)" }
