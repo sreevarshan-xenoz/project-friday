@@ -17,7 +17,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use friday_actions::{ActionAdapter, ActionRequest, DesktopAdapter, DesktopRisk};
+#[cfg(test)]
+use friday_actions::DesktopAdapter;
+use friday_actions::{ActionAdapter, ActionRequest, DesktopRisk};
 use friday_goal_execution::{Action, Capability, ExecutionContext, Tool, ToolResult};
 use friday_investigation::LlmStrategyClient;
 use serde_json::{json, Value};
@@ -51,7 +53,7 @@ pub(crate) fn default_adapter() -> Arc<dyn ActionAdapter> {
     }
     #[cfg(not(windows))]
     {
-        Arc::new(DesktopAdapter::new())
+        Arc::new(friday_actions::DesktopAdapter::new())
     }
 }
 
