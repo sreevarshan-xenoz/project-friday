@@ -11,7 +11,7 @@ export PATH="$OMARCHY_PATH/bin:$PATH"
 source "$(dirname "$(readlink -f "$0")")/friday-tui.sh"
 friday_console_theme
 
-STEPS=(NETWORK DISK REGION IDENTITY SECURITY LOOK AI REVIEW)
+STEPS=(NETWORK DISK REGION IDENTITY SECURITY LOOK FEATURES AI REVIEW)
 
 # Defaults (also what an unattended run would use).
 TARGET_DISK="" TARGET_LABEL=""
@@ -259,8 +259,44 @@ step_look() {
   friday_ok "$SDDM_THEME"
 }
 
-step_ai() {
+step_features() {
   screen 7
+  friday_head "What may FRIDAY do?"
+  friday_say "FRIDAY only acts when you ask. Pick what it may do; change any of it later."
+  friday_note "  Press x to turn a line on or off, Enter to confirm. Closing a window and anything that"
+  friday_note "  deletes or sends always asks you first, whatever you pick here."
+  echo
+  local a="Handle my windows and apps plus volume and music when I ask"
+  local b="Run tasks I schedule (\"every morning at 8 ...\")"
+  local c="Tell the AI which app a selected text came from"
+  local d="Send a window's text instead of a screenshot (it can include text you can't see)"
+  local picks
+  picks=$(printf '%s\n' "$a" "$b" "$c" "$d" \
+    | gum choose --no-limit --cursor="$FRIDAY_CURSOR" --height=6 \
+        --selected="$a,$b,$c") || return 0
+  FEAT_DESKTOP=false FEAT_TASKS=false FEAT_APPNAME=false FEAT_SCREENTEXT=false
+  [[ $picks == *"$a"* ]] && FEAT_DESKTOP=true
+  [[ $picks == *"$b"* ]] && FEAT_TASKS=true
+  [[ $picks == *"$c"* ]] && FEAT_APPNAME=true
+  [[ $picks == *"window's text"* ]] && FEAT_SCREENTEXT=true
+  friday_ok "$(friday_features_label)"
+}
+
+# One line for the review screen.
+friday_features_label() {
+  local on=()
+  [[ $FEAT_DESKTOP == true ]] && on+=("desktop control")
+  [[ $FEAT_TASKS == true ]] && on+=("scheduled tasks")
+  [[ $FEAT_APPNAME == true ]] && on+=("app name")
+  [[ $FEAT_SCREENTEXT == true ]] && on+=("window text")
+  if ((${#on[@]} == 0)); then echo "nothing (questions only)"; return; fi
+  local out="${on[0]}" item
+  for item in "${on[@]:1}"; do out+=", $item"; done
+  echo "$out"
+}
+
+step_ai() {
+  screen 8
   friday_head "Give FRIDAY a brain"
   friday_say "I think with a cloud language model. OpenCode Zen's free models work with no account."
   friday_note "  Prefer your own provider? Pick it and paste its key. Change it later with: friday setup-ai"
@@ -312,7 +348,7 @@ step_ai() {
 
 review() {
   while true; do
-    screen 8 "REVIEW"
+    screen 9 "REVIEW"
     gum style --foreground "$FRIDAY_ACCENT" --border "$FRIDAY_BORDER_STYLE" --border-foreground "$FRIDAY_BORDER" \
       --margin "0 0 0 $FRIDAY_INDENT" --padding "1 2" --width "$FRIDAY_WIDTH" \
       "Disk        $TARGET_LABEL$([[ $ENCRYPT == true ]] && echo "  (encrypted)")" \
@@ -321,13 +357,14 @@ review() {
       "Region      $TIMEZONE · keyboard $KEYBOARD" \
       "Desktop     $THEME$([[ $THEME != *Dots-Hyprland* ]] && echo " · ${SHELL_STYLE%% (*} · ${SESSION%% (*}")" \
       "Login       $SDDM_THEME" \
+      "Allowed     $(friday_features_label)" \
       "AI          $FRIDAY_AI_LABEL"
     echo
     gum style --margin "0 0 0 $FRIDAY_INDENT" --foreground "$FRIDAY_WARNING" --bold "Installing erases everything on $TARGET_DISK."
     echo
     case "$(gum choose --cursor="$FRIDAY_CURSOR" \
         "Install FRIDAY OS" "Change disk" "Change names" "Change password" \
-        "Change region" "Change desktop" "Change AI" "Quit setup")" in
+        "Change region" "Change desktop" "Change what FRIDAY may do" "Change AI" "Quit setup")" in
       "Install FRIDAY OS")
         gum confirm --default=false --affirmative="Erase and install" --negative="Back" \
           "Last check: erase $TARGET_DISK and install?" && return 0 ;;
@@ -342,6 +379,7 @@ review() {
           step_security
         fi ;;
       "Change desktop") step_look ;;
+      "Change what FRIDAY may do") step_features ;;
       "Change AI") step_ai ;;
       *) leave_menu "Nothing was written to disk." ;;
     esac
@@ -357,6 +395,7 @@ step_region
 step_identity
 step_security
 step_look
+step_features
 step_ai
 review
 
@@ -364,7 +403,7 @@ friday_banner
 friday_say "Thanks, $USERNAME. I'll take it from here."
 sleep 1
 FRIDAY_HOSTNAME="$HOSTNAME"
-export TARGET_DISK KEYBOARD HOSTNAME FRIDAY_HOSTNAME USERNAME PASSWORD TIMEZONE THEME SHELL_STYLE SESSION SDDM_THEME FRIDAY_AI_PROVIDER FRIDAY_AI_KEY AUTOLOGIN ENCRYPT
+export TARGET_DISK KEYBOARD HOSTNAME FRIDAY_HOSTNAME USERNAME PASSWORD TIMEZONE THEME SHELL_STYLE SESSION SDDM_THEME FRIDAY_AI_PROVIDER FRIDAY_AI_KEY AUTOLOGIN ENCRYPT FEAT_DESKTOP FEAT_TASKS FEAT_APPNAME FEAT_SCREENTEXT
 export FRIDAY_INTERACTIVE=1
 /root/installer || leave_menu "Something went wrong during the install. The full log is in /tmp/friday-installer.log."
 leave_menu ""

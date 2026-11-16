@@ -368,6 +368,10 @@ fi
 # rsync -a ran as root and copied skel's own ownership, home directory
 # included. Hand the home to the user now: the theme step below runs as
 # the user and cannot write to a root-owned home.
+# What the person let FRIDAY do (setup's FEATURES step); defaults write nothing.
+friday_write_features "/mnt$USER_HOME/.config/friday"
+echo "FRIDAY features: desktop=$FEAT_DESKTOP tasks=$FEAT_TASKS appname=$FEAT_APPNAME screentext=$FEAT_SCREENTEXT"
+
 if [ "$USERNAME" != "root" ]; then
   arch-chroot /mnt chown -R "$USERNAME:$USERNAME" "$USER_HOME"
 fi

@@ -100,6 +100,13 @@ Web search happens only when you ask for it, and never in private mode.
 - `friday forget` shows what FRIDAY keeps (counts only) and wipes it:
   `friday forget answers|sent|memory|all`.
 
+Setup asks what FRIDAY may do (FRIDAY OS: the "What may FRIDAY do?" step; Windows:
+the installer's Customize page and the tray menu): control windows, apps, volume
+and music; run scheduled tasks; name the app a selection came from; send a
+window's text instead of a screenshot. Everything is on except the last, and each
+can be changed later (`FRIDAY_DESKTOP=0`, `FRIDAY_STANDING_TASKS=0`,
+`friday app-context off`, `friday screen-text on` or the Windows tray menu).
+
 ## The desktop
 
 FRIDAY OS has its own keymap (Super+K lists it), Super+L locks (with face unlock
