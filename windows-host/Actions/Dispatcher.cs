@@ -28,6 +28,9 @@ public class Dispatcher
         Register(new ScrollHandler());
         Register(new ClipboardReadHandler());
         Register(new ClipboardWriteHandler());
+        Register(new MediaHandler());
+        Register(new NowPlayingHandler());
+        Register(new VolumeHandler());
     }
 
     private void Register(IActionHandler handler)

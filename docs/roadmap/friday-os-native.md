@@ -127,7 +127,10 @@ platform exposes (UI Automation on Windows; no helper, no standing tasks on
 Linux without FRIDAY OS's pieces) as those steps land.
 
 Windows today: the desktop control loop runs there (list, focus, close with
-confirmation, launch by program name) through the Windows host's pipe, and
-agent-desktop reads and presses controls through UI Automation. An e2e in CI
-drives the real daemon and host with a scripted model. Not yet: media keys,
-volume, workspaces (virtual desktops), brightness.
+confirmation, launch by program name, media through Windows' media session,
+now playing, volume and mute through Core Audio) through the Windows host's
+pipe, and agent-desktop reads and presses controls through UI Automation. An
+e2e in CI drives the real daemon and host with a scripted model; a CI runner
+has no speakers or music, so it checks the host's plain "no audio output" and
+"nothing is playing" answers and an owner pass on real hardware checks the
+rest. Not yet: workspaces (virtual desktops), brightness.

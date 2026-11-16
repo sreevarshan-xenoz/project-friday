@@ -264,6 +264,9 @@ Actions:
   focus_window       params: {"target": "<app or part of its title>"}
   close_window       params: {"target": "<app or part of its title>"}   (the person is asked to confirm)
   launch_app         params: {"app": "<program name, e.g. notepad, calc, mspaint>"}
+  media              params: {"command": "play" | "pause" | "play-pause" | "next" | "previous" | "stop"}
+  now_playing        what is playing. params: none
+  volume             params: {"level": 0-100}  or  {"mute": "on" | "off" | "toggle"}
 
 Inside apps (only where an app lets FRIDAY look into it through Windows UI Automation):
   ui_apps            apps that can be looked into. params: none

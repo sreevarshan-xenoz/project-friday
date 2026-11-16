@@ -32,5 +32,8 @@ pub const CAPABILITY_MANIFEST: CapabilityManifest = CapabilityManifest {
         "windows.scroll",
         "windows.clipboard.read",
         "windows.clipboard.write",
+        "windows.media",
+        "windows.nowplaying",
+        "windows.volume",
     ],
 };

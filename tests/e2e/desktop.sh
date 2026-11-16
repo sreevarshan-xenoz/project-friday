@@ -8,6 +8,10 @@
 #     actions.jsonl as a successful read (the audit trail),
 #   - the model was given the Windows instructions (not FRIDAY OS's).
 #
+# It also asks for the volume, the music and what is playing. A runner has no
+# speakers and nothing playing, so the host must answer each with its own plain
+# sentence (or succeed, on a machine that has them), never an exception.
+#
 # Usage: tests/e2e/desktop.sh <install-dir>   (the MSI's folder; Git Bash on
 # Windows, in a desktop session)
 set -euo pipefail
@@ -67,6 +71,21 @@ else
   fail "no successful windows action in actions.jsonl"; cat "$audit" 2>/dev/null | sed 's/^/       /' | head -5
   tail -15 "$W/daemon.log" | sed 's/^/       /'
 fi
+# The result of the first step the model took for a goal, as the model saw it.
+first_step() { "$PY" -c 'import json,sys
+for l in open(sys.argv[1], encoding="utf-8"):
+    for line in json.loads(l).get("prompt", "").splitlines():
+        if line.startswith("1. " + sys.argv[2] + " "): print(line); sys.exit(0)' "$W/model.log" "$1"; }
+for case in "volume|turn the volume to 30|no audio output" "media|pause the music|Nothing is playing" "now_playing|what's playing|"; do
+  IFS='|' read -r verb goal plain <<<"$case"
+  out=$("${offline[@]}" timeout 120 "$CTL_BIN" goal --wait "$goal" 2>&1) || true
+  grep -q '"outcome": *"completed"' <<<"$out" && pass "completes: $goal" || { fail "did not complete: $goal"; sed 's/^/       /' <<<"$out" | tail -6; }
+  step=$(first_step "$verb")
+  if [[ -z "$step" ]]; then fail "$verb: the model never got a result for it"
+  elif grep -qiE "Exception|InvalidCast|Unknown:|COMException|0x[0-9A-F]{8}" <<<"$step"; then fail "$verb: the host leaked an error: ${step:0:200}"
+  elif grep -q -- "-> ok: " <<<"$step" || { [[ -n "$plain" ]] && grep -qi -- "$plain" <<<"$step"; }; then pass "$verb: ${step:0:150}"
+  else fail "$verb: neither a result nor the expected sentence: ${step:0:200}"; fi
+done
 if grep -qi "panicked" "$W/daemon.log"; then fail "the daemon panicked"; else pass "the daemon did not panic"; fi
 
 echo

@@ -19,6 +19,9 @@ const VERBS: &[&str] = &[
     "focus_window",
     "close_window",
     "launch_app",
+    "media",
+    "now_playing",
+    "volume",
 ];
 
 /// Windows that are the shell itself, not something a person asks about.
@@ -68,7 +71,7 @@ impl WindowsDesktop {
                         .to_string()
                 }
                 Some("WindowNotFound") => "that window is gone".to_string(),
-                Some(other) => other.to_string(),
+                Some(other) => other.strip_prefix("Unknown:").unwrap_or(other).to_string(),
                 None => "failed".to_string(),
             })
         }
@@ -168,8 +171,70 @@ impl WindowsDesktop {
                 self.call("open", json!({ "path": app })).await?;
                 Ok(json!({"launched": app}))
             }
+            "media" => {
+                let command = match p("command")
+                    .ok_or("say what to do: play, pause, play-pause, next, previous or stop")?
+                {
+                    c @ ("play" | "pause" | "play-pause" | "next" | "previous" | "stop") => c,
+                    other => return Err(format!("unknown media command \"{other}\"")),
+                };
+                self.call("media", json!({ "command": command })).await?;
+                Ok(json!({"media": command}))
+            }
+            "now_playing" => {
+                let now = self.call("nowplaying", json!({})).await?;
+                let text = |k: &str| {
+                    now.get(k)
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|t| !t.is_empty())
+                };
+                Ok(match (text("artist"), text("title")) {
+                    (Some(a), Some(t)) => {
+                        json!({"now_playing": format!("{a} - {t}"), "status": now["status"]})
+                    }
+                    (None, Some(t)) => json!({"now_playing": t, "status": now["status"]}),
+                    _ => json!({"now_playing": Value::Null}),
+                })
+            }
+            "volume" => {
+                if let Some(mute) = p("mute") {
+                    let mute = match mute {
+                        "on" | "true" => "on",
+                        "off" | "false" => "off",
+                        "toggle" => "toggle",
+                        other => return Err(format!("mute is on, off or toggle, not \"{other}\"")),
+                    };
+                    let now = self.call("volume", json!({ "mute": mute })).await?;
+                    return Ok(
+                        json!({"mute": mute, "muted": now["muted"], "volume": now["level"]}),
+                    );
+                }
+                let level = percent(&req.parameters, "level")?;
+                let now = self.call("volume", json!({ "level": level })).await?;
+                Ok(json!({"volume": now["level"], "muted": now["muted"]}))
+            }
             other => Err(format!("unknown desktop action \"{other}\"")),
         }
+    }
+}
+
+/// A 0 to 100 percentage from a number or a "40" / "40%" string.
+fn percent(params: &Value, key: &str) -> Result<u32, String> {
+    let raw = params
+        .get(key)
+        .ok_or_else(|| format!("give a {key} from 0 to 100"))?;
+    let n = raw
+        .as_u64()
+        .or_else(|| {
+            raw.as_str()
+                .and_then(|t| t.trim().trim_end_matches('%').parse().ok())
+        })
+        .ok_or_else(|| format!("{key} is a number from 0 to 100"))?;
+    if n > 100 {
+        Err(format!("{key} is a number from 0 to 100"))
+    } else {
+        Ok(n as u32)
     }
 }
 
@@ -258,6 +323,10 @@ mod tests {
             match req.action.as_str() {
                 "list" => ActionResult::success(self.windows.clone()),
                 "foreground" => ActionResult::success(self.windows[0].clone()),
+                "nowplaying" => ActionResult::success(
+                    json!({"playing": true, "status": "playing", "title": "Blue in Green", "artist": "Miles Davis"}),
+                ),
+                "volume" => ActionResult::success(json!({"level": 30, "muted": false})),
                 _ => ActionResult::success(json!({"ok": true})),
             }
         }
@@ -382,10 +451,103 @@ mod tests {
     #[tokio::test]
     async fn a_verb_windows_does_not_have_is_refused() {
         let host = Host::new(sample());
-        for v in ["workspaces", "move_window", "brightness", "media"] {
+        for v in [
+            "workspaces",
+            "move_window",
+            "switch_workspace",
+            "brightness",
+            "power_profile",
+        ] {
             assert!(!run(&host, v, json!({})).await.success, "{v}");
         }
         assert!(host.calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn media_commands_are_checked_and_sent_to_the_host() {
+        let host = Host::new(sample());
+        for c in ["play", "pause", "play-pause", "next", "previous", "stop"] {
+            assert!(
+                run(&host, "media", json!({"command": c})).await.success,
+                "{c}"
+            );
+            assert_eq!(
+                host.calls().last().unwrap(),
+                &("media".to_string(), json!({"command": c}))
+            );
+        }
+        let before = host.calls().len();
+        for bad in [
+            json!({"command": "rewind"}),
+            json!({}),
+            json!({"command": "play; calc"}),
+        ] {
+            assert!(!run(&host, "media", bad).await.success);
+        }
+        assert_eq!(host.calls().len(), before, "a bad command reached the host");
+    }
+
+    #[tokio::test]
+    async fn volume_takes_a_level_or_a_mute_and_nothing_else() {
+        let host = Host::new(sample());
+        for (params, sent) in [
+            (json!({"level": 40}), json!({"level": 40})),
+            (json!({"level": "55%"}), json!({"level": 55})),
+            (json!({"mute": "toggle"}), json!({"mute": "toggle"})),
+            (json!({"mute": "true"}), json!({"mute": "on"})),
+            (json!({"mute": "off"}), json!({"mute": "off"})),
+        ] {
+            let r = run(&host, "volume", params).await;
+            assert!(r.success, "{:?}", r.error);
+            assert_eq!(host.calls().last().unwrap(), &("volume".to_string(), sent));
+        }
+        let before = host.calls().len();
+        for bad in [
+            json!({"level": 101}),
+            json!({"level": "loud"}),
+            json!({"mute": "maybe"}),
+            json!({}),
+        ] {
+            assert!(!run(&host, "volume", bad.clone()).await.success, "{bad}");
+        }
+        assert_eq!(host.calls().len(), before, "a bad volume reached the host");
+        let r = run(&host, "volume", json!({"level": 30})).await;
+        assert_eq!(r.output, json!({"volume": 30, "muted": false}));
+    }
+
+    #[tokio::test]
+    async fn now_playing_names_the_artist_and_title_or_nothing() {
+        let host = Host::new(sample());
+        let r = run(&host, "now_playing", json!({})).await;
+        assert_eq!(r.output["now_playing"], "Miles Davis - Blue in Green");
+    }
+
+    #[tokio::test]
+    async fn a_host_message_comes_through_without_its_internal_prefix() {
+        struct Quiet;
+        #[async_trait]
+        impl ActionAdapter for Quiet {
+            fn tool(&self) -> &str {
+                "windows"
+            }
+            fn actions(&self) -> Vec<&str> {
+                vec![]
+            }
+            async fn execute(&self, _: ActionRequest) -> ActionResult {
+                ActionResult::error("Unknown:There is no audio output device to control")
+            }
+        }
+        let r = WindowsDesktop::new(Arc::new(Quiet))
+            .execute(ActionRequest::new(
+                "desktop",
+                "volume",
+                json!({"level": 10}),
+            ))
+            .await;
+        assert_eq!(
+            r.error.unwrap(),
+            "There is no audio output device to control"
+        );
     }
 
     #[test]

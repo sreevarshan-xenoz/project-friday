@@ -15,6 +15,9 @@
     "windows.type",
     "windows.scroll",
     "windows.clipboard.read",
-    "windows.clipboard.write"
+    "windows.clipboard.write",
+    "windows.media",
+    "windows.nowplaying",
+    "windows.volume"
   ]
 }
