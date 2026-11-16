@@ -6,7 +6,9 @@ The committed BMPs are the output; run this to change them:
 WiX uses them as WixUIBannerBmp (493x58, the strip above the inner pages) and
 WixUIDialogBmp (493x312, the welcome and finish pages; the left 164 px show).
 """
+
 import os
+
 from PIL import Image, ImageDraw, ImageFont
 
 NIGHT, ACCENT, SECONDARY, TEXT = (26, 27, 38), (122, 162, 247), (187, 154, 247), (192, 202, 245)
