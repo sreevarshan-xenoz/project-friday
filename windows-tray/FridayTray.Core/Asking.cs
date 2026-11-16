@@ -11,7 +11,7 @@ public enum AskKind { Plain, Selection, Screen }
 /// again with more care from a model other than <see cref="Avoid"/> (the
 /// "provider/model" that gave the answer being retried).
 /// </summary>
-public sealed record AskOptions(bool Web = false, bool Thorough = false, string? Avoid = null);
+public sealed record AskOptions(bool Web = false, bool Thorough = false, string? Avoid = null, string? Region = null);
 
 /// <summary>A tool action pending explicit confirmation before execution.</summary>
 public sealed record NeedsConfirmation(string Tool, string Action);
@@ -64,7 +64,13 @@ public static partial class Asking
         // Pressing the key and typing the question is the per-use consent;
         // the daemon's ContextGate still enforces it.
         if (kind == AskKind.Screen)
-            return ["context", "screen", "--yes", "--ask", question, "--stream"];
+        {
+            var screen = new List<string> { "context", "screen", "--yes", "--ask", question, "--stream" };
+            // An area the user dragged out: only that goes to the provider.
+            if (!string.IsNullOrEmpty(options?.Region))
+                screen.AddRange(["--region", options.Region]);
+            return [.. screen];
+        }
         var args = new List<string> { "goal", "--wait" };
         if (!string.IsNullOrEmpty(confirm))
             args.AddRange(["--confirm", confirm]);
