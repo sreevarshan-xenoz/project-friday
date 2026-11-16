@@ -15,13 +15,16 @@ public static class Brightness
     public sealed class NoPanelException()
         : Exception("There is no built-in screen whose brightness Windows can set (it works on laptop screens)");
 
-    private static ManagementObjectCollection Query(string cls)
+    // The query is lazy: WMI reports "Not supported" (no built-in screen) while
+    // the results are enumerated, so they are collected inside the try.
+    private static List<ManagementObject> Query(string cls)
     {
         try
         {
             var scope = new ManagementScope(@"\\.\root\wmi");
             scope.Connect();
-            return new ManagementObjectSearcher(scope, new ObjectQuery($"SELECT * FROM {cls}")).Get();
+            return new ManagementObjectSearcher(scope, new ObjectQuery($"SELECT * FROM {cls}"))
+                .Get().Cast<ManagementObject>().ToList();
         }
         catch (ManagementException)
         {
@@ -32,7 +35,7 @@ public static class Brightness
     /// <summary>The brightness now (0 to 100).</summary>
     public static int Read()
     {
-        foreach (ManagementObject panel in Query("WmiMonitorBrightness"))
+        foreach (var panel in Query("WmiMonitorBrightness"))
             return Convert.ToInt32(panel["CurrentBrightness"]);
         throw new NoPanelException();
     }
@@ -41,7 +44,7 @@ public static class Brightness
     public static int Set(int percent)
     {
         var any = false;
-        foreach (ManagementObject panel in Query("WmiMonitorBrightnessMethods"))
+        foreach (var panel in Query("WmiMonitorBrightnessMethods"))
         {
             panel.InvokeMethod("WmiSetBrightness", new object[] { 1u, (byte)Math.Clamp(percent, 1, 100) });
             any = true;

@@ -77,7 +77,7 @@ first_step() { "$PY" -c 'import json,sys
 for l in open(sys.argv[1], encoding="utf-8"):
     for line in json.loads(l).get("prompt", "").splitlines():
         if line.startswith("1. " + sys.argv[2] + " "): print(line); sys.exit(0)' "$W/model.log" "$1"; }
-for case in "volume|turn the volume to 30|no audio output" "media|pause the music|Nothing is playing" "now_playing|what's playing|" "brightness|set the brightness to 40|no built-in screen" "workspaces|how many desktops are there|"; do
+for case in "volume|turn the volume to 30|no audio output" "media|pause the music|Nothing is playing" "now_playing|what's playing|" "brightness|set the brightness to 40|no built-in screen" "workspaces|how many virtual desktops do I have|"; do
   IFS='|' read -r verb goal plain <<<"$case"
   out=$("${offline[@]}" timeout 120 "$CTL_BIN" goal --wait "$goal" 2>&1) || true
   grep -q '"outcome": *"completed"' <<<"$out" && pass "completes: $goal" || { fail "did not complete: $goal"; sed 's/^/       /' <<<"$out" | tail -6; }
