@@ -1343,34 +1343,35 @@ impl GoalRunner {
         // a real pipe or launches Chrome.
         let has_windows = windows.is_some();
         let has_browser = browser.is_some();
+        // Native control of windows, apps and media: FRIDAY OS (a Hyprland
+        // session to drive) and Windows (through FRIDAY's host), with a model
+        // to choose the steps. When it is there it also serves a plain "open
+        // <app>" goal (the model finds the program), so the fixed
+        // name-to-program tool is registered only without it.
+        let has_desktop = fabric.is_some() && crate::desktop_tool::enabled();
+        if let (Some(f), true) = (&fabric, has_desktop) {
+            executive.register_tool(Box::new(
+                crate::desktop_tool::DesktopControlTool::with_adapter(
+                    crate::desktop_tool::default_adapter(),
+                    f.clone() as Arc<dyn LlmStrategyClient>,
+                    confirmation_gate.clone(),
+                    executive.abort_token(),
+                    crate::desktop_tool::audit_dir(),
+                    crate::desktop_tool::default_ui(),
+                ),
+            ));
+        }
         if let Some(adapter) = windows {
-            executive.register_tool(Box::new(WindowsOpenTool {
-                adapter,
-                gate: confirmation_gate.clone(),
-            }));
+            if !has_desktop {
+                executive.register_tool(Box::new(WindowsOpenTool {
+                    adapter,
+                    gate: confirmation_gate.clone(),
+                }));
+            }
         }
         if let Some(adapter) = browser {
             executive.register_tool(Box::new(BrowserCapabilityTool { adapter }));
         }
-        // Native control of windows, apps and media: FRIDAY OS (a Hyprland
-        // session to drive) and Windows (through FRIDAY's host), with a model
-        // to choose the steps.
-        let has_desktop = match &fabric {
-            Some(f) if crate::desktop_tool::enabled() => {
-                executive.register_tool(Box::new(
-                    crate::desktop_tool::DesktopControlTool::with_adapter(
-                        crate::desktop_tool::default_adapter(),
-                        f.clone() as Arc<dyn LlmStrategyClient>,
-                        confirmation_gate.clone(),
-                        executive.abort_token(),
-                        crate::desktop_tool::audit_dir(),
-                        crate::desktop_tool::default_ui(),
-                    ),
-                ));
-                true
-            }
-            _ => false,
-        };
 
         // FRIDAY OS: system packages through the root helper. Registered
         // wherever the helper could be; every operation asks first, and with
