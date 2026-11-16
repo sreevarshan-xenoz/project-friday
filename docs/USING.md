@@ -24,7 +24,7 @@ speech is turned into text on your computer; only the text is sent. On niri, whi
 
 With a selection, the box offers quick actions (Summarize, Explain, Translate,
 Fix the grammar) and your own prompts, one per line in
-`~/.config/friday/prompts`. Shift+Enter sends what you typed instead.
+`~/.config/friday/prompts` (on Windows `%APPDATA%\friday\prompts`). Shift+Enter sends what you typed instead (on Windows, type your own and press Enter).
 
 ## The answer pill
 
