@@ -45,7 +45,7 @@ internal sealed class SettingsForm : Form
         var side = new Panel { Dock = DockStyle.Left, Width = 190, BackColor = Theme.Surface, Padding = new Padding(10, 18, 10, 10) };
         var brand = new Label { Text = "FRIDAY", Font = Theme.Title, ForeColor = Theme.Accent, Dock = DockStyle.Top, Height = 34 };
         var items = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, BackColor = Theme.Surface };
-        foreach (var name in new[] { "General", "Privacy", "AI", "Desktop control", "Shortcuts", "About" })
+        foreach (var name in new[] { "General", "Privacy", "AI", "Voice", "Desktop control", "Shortcuts", "About" })
         {
             var b = new Button
             {
@@ -92,6 +92,7 @@ internal sealed class SettingsForm : Form
             "General" => General(),
             "Privacy" => Privacy(),
             "AI" => Ai(),
+            "Voice" => Voice(),
             "Desktop control" => Desktop(),
             "Shortcuts" => Shortcuts(),
             _ => About(),
@@ -158,6 +159,55 @@ internal sealed class SettingsForm : Form
         yield return Note("FRIDAY thinks with a language model. Free models work with no account; for anything private use your own key or account. Your key is stored only on this PC, in your profile.");
         yield return Row(Theme.Button("Choose a provider and key…", primary: true), _do.ChooseProvider);
         yield return Row(Theme.Button("Connect an account…"), _do.ConnectAccounts);
+    }
+
+    private IEnumerable<Control> Voice()
+    {
+        var paths = _install.Paths;
+        if (!Speaking.Installed(paths))
+        {
+            yield return Note("FRIDAY can read its answers out loud in a voice that is made on this PC: nothing is sent anywhere to speak. " +
+                "It downloads once (about 100 MB, checked against a fixed checksum) and runs on the CPU with little memory.");
+            var install = Theme.Button("Download FRIDAY's voice", primary: true);
+            install.Click += async (_, _) =>
+            {
+                install.Enabled = false;
+                Said("Downloading the voice…");
+                var (ok, output) = await Ctl.RunAsync(_install, ["say", "--setup"], TimeSpan.FromMinutes(15));
+                if (ok)
+                    Show("Voice");
+                else
+                {
+                    install.Enabled = true;
+                    Said("");
+                    MessageBox.Show(this, "The voice wasn't installed:\n\n" + output.Trim(), "FRIDAY", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            };
+            yield return install;
+            yield break;
+        }
+        yield return Switch(
+            "Read answers out loud",
+            "FRIDAY reads each answer as it appears, a sentence at a time. Closing the answer stops it. Code is skipped.",
+            Speaking.Enabled(paths),
+            on => Speaking.SetEnabled(paths, on));
+        var picker = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Width = 220,
+            BackColor = Theme.Surface,
+            ForeColor = Theme.Text,
+            FlatStyle = FlatStyle.Flat,
+            Margin = new Padding(0, 0, 0, 10),
+        };
+        for (var i = 0; i < Speaking.Voices; i++)
+            picker.Items.Add($"Voice {i + 1}");
+        picker.SelectedIndex = Speaking.Speaker(paths);
+        picker.SelectedIndexChanged += (_, _) => Speaking.SetSpeaker(paths, picker.SelectedIndex);
+        yield return Pair("Voice", "");
+        yield return picker;
+        yield return Row(Theme.Button("Hear it"), () => Ctl.Say(_install, "Hi, I'm FRIDAY. This is how I sound."));
+        yield return Row(Theme.Button("Stop"), () => Ctl.StopSaying(_install));
     }
 
     private IEnumerable<Control> Desktop()

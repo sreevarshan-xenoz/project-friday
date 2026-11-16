@@ -557,8 +557,12 @@ impl Synth for EngineSynth {
 }
 
 /// Plays through the system's audio: PipeWire, PulseAudio or ALSA on Linux,
-/// Windows' own sound player on Windows.
-pub struct SystemPlayer;
+/// Windows' own sound player on Windows. With `dump` set (`FRIDAY_SAY_DUMP`
+/// names a folder), each sentence is saved there instead of played, which is
+/// how the speech is checked on a machine with no speakers.
+pub struct SystemPlayer {
+    pub dump: Option<PathBuf>,
+}
 
 fn play_command(wav: &Path) -> Option<Command> {
     #[cfg(windows)]
@@ -594,6 +598,19 @@ fn play_command(wav: &Path) -> Option<Command> {
 
 impl Player for SystemPlayer {
     fn play(&self, wav: &Path, cancel: &AtomicBool) -> Result<(), String> {
+        if let Some(dir) = &self.dump {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            let name = format!(
+                "{}-{}",
+                std::process::id(),
+                wav.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("part.wav")
+            );
+            return std::fs::copy(wav, dir.join(name))
+                .map(|_| ())
+                .map_err(|e| e.to_string());
+        }
         let mut cmd =
             play_command(wav).ok_or("no audio player found (pw-play, paplay or aplay)")?;
         let mut child: Child = cmd
@@ -664,13 +681,16 @@ pub fn say(text: &str) -> Result<Spoken, String> {
         let _ = write!(f, "{}", std::process::id());
     }
     let cancel = Arc::new(AtomicBool::new(false));
+    let player = SystemPlayer {
+        dump: std::env::var_os("FRIDAY_SAY_DUMP").map(PathBuf::from),
+    };
     let result = speak(
         text,
         Arc::new(EngineSynth {
             voice,
             work_dir: work.clone(),
         }),
-        &SystemPlayer,
+        &player,
         &work,
         cancel,
     );
@@ -1191,6 +1211,27 @@ mod tests {
             );
         }
         assert_eq!(ENGINE.2.len(), 64);
+    }
+
+    #[test]
+    fn with_a_dump_folder_the_sentences_are_saved_not_played() {
+        let (dir, out) = (work(), work());
+        std::fs::create_dir_all(&dir).unwrap();
+        let wav = dir.join("part-0.wav");
+        std::fs::write(&wav, write_wav(&tone(24000, 0.05, 0.3))).unwrap();
+        SystemPlayer {
+            dump: Some(out.clone()),
+        }
+        .play(&wav, &AtomicBool::new(false))
+        .unwrap();
+        let saved: Vec<_> = std::fs::read_dir(&out)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert_eq!(saved.len(), 1);
+        assert!(read_wav(&std::fs::read(saved[0].path()).unwrap()).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&out);
     }
 
     #[test]

@@ -64,6 +64,42 @@ internal static class Ctl
         return new CtlResult(p.ExitCode == 0, (await stdout) + (await stderr), p.ExitCode);
     }
 
+    /// <summary>Reads <paramref name="text"/> aloud (a new one replaces the one being read). Doesn't wait.</summary>
+    public static void Say(Install install, string text)
+    {
+        var psi = new ProcessStartInfo(install.Ctl)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardInput = true,
+            StandardInputEncoding = new UTF8Encoding(false),
+        };
+        psi.ArgumentList.Add("say");
+        psi.ArgumentList.Add("-");
+        foreach (var (k, v) in install.ChildEnvironment())
+            psi.Environment[k] = v;
+        try
+        {
+            var p = Process.Start(psi);
+            p?.StandardInput.Write(text);
+            p?.StandardInput.Close();
+        }
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception or IOException)
+        {
+            // No voice is not worth interrupting an answer for.
+        }
+    }
+
+    /// <summary>Stops whatever FRIDAY is reading aloud.</summary>
+    public static void StopSaying(Install install)
+    {
+        var psi = new ProcessStartInfo(install.Ctl, "say --stop") { UseShellExecute = false, CreateNoWindow = true };
+        foreach (var (k, v) in install.ChildEnvironment())
+            psi.Environment[k] = v;
+        try { Process.Start(psi); }
+        catch (System.ComponentModel.Win32Exception) { }
+    }
+
     private static async Task<string> ReadLinesAsync(StreamReader reader, Action<string>? onLine)
     {
         var all = new StringBuilder();
