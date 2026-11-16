@@ -582,7 +582,7 @@ case "\$1" in
   *) echo "qs-ipc \$*" >> "$LOG"; exit 0 ;;
 esac
 n=\$(( \$(cat "$SH/count" 2>/dev/null || echo 0) + 1 )); echo \$n >"$SH/count"
-echo "qs-start \$n" >> "$LOG"
+echo "qs-start \$n backend=\${QT_QUICK_BACKEND:-gpu}" >> "$LOG"
 (( n <= \${QS_CRASHES:-0} )) && exit 1
 echo \$\$ >"$SH/qs.pid"
 trap 'exit 0' TERM
@@ -607,6 +607,31 @@ qs_pid=$(cat "$SH/qs.pid")
 if waitfor "! kill -0 $SUP 2>/dev/null"; then pass "stop ends the supervisor"; else fail "supervisor still running after stop"; kill "$SUP"; fi
 if [[ ! -e "$SH/run/friday-shell-$(id -u).pid" ]]; then pass "stop removes the pid file"; else fail "pid file left behind"; fi
 if waitfor "! kill -0 $qs_pid 2>/dev/null"; then pass "stop ends the shell"; else fail "shell still running after stop"; fi
+
+# Software rendering: in VirtualBox from the first start; elsewhere after the
+# second crash; never when asked for gpu.
+vm() { printf '#!/bin/bash\n[ "$1" = --vm ] && echo %s\n' "$1" >"$S/systemd-detect-virt"; chmod +x "$S/systemd-detect-virt"; }
+run_shell() { : >"$LOG"; rm -f "$SH/count" "$SH/qs.pid"; QS_CRASHES=${QS_CRASHES:-0} timeout 20 "${sh_env[@]}" "$@" bash "$F" shell start 2>/dev/null & }
+vm oracle
+: >"$LOG"; rm -f "$SH/count" "$SH/qs.pid"
+"${sh_env[@]}" bash "$F" shell start 2>/dev/null &
+SUP=$!; waitfor "started 1"
+contains "in VirtualBox the shell starts in software rendering" "$(cat "$LOG")" "qs-start 1 backend=software"
+"${sh_env[@]}" bash "$F" shell stop; waitfor "! kill -0 $SUP 2>/dev/null"
+: >"$LOG"; rm -f "$SH/count" "$SH/qs.pid"
+FRIDAY_SHELL_RENDER=gpu "${sh_env[@]}" bash "$F" shell start 2>/dev/null &
+SUP=$!; waitfor "started 1"
+contains "FRIDAY_SHELL_RENDER=gpu keeps the graphics card" "$(cat "$LOG")" "qs-start 1 backend=gpu"
+"${sh_env[@]}" bash "$F" shell stop; waitfor "! kill -0 $SUP 2>/dev/null"
+vm none
+: >"$LOG"; rm -f "$SH/count" "$SH/qs.pid"
+QS_CRASHES=2 "${sh_env[@]}" bash "$F" shell start 2>"$SH/err" &
+SUP=$!; waitfor "started 3"
+contains "on real hardware the first start uses the graphics card" "$(cat "$LOG")" "qs-start 1 backend=gpu"
+contains "two crashes in a row switch to software" "$(cat "$LOG")" "qs-start 3 backend=software"
+contains "and it says so" "$(cat "$SH/err")" "drawing it in software"
+"${sh_env[@]}" bash "$F" shell stop; waitfor "! kill -0 $SUP 2>/dev/null"
+rm -f "$S/systemd-detect-virt"
 
 : >"$LOG"; rm -f "$SH/count" "$SH/qs.pid"
 QS_CRASHES=99 timeout 20 "${sh_env[@]}" bash "$F" shell start 2>/dev/null
