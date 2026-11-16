@@ -188,6 +188,8 @@ jobs:
           schtasks /Query /TN FRIDAY 2>$null | Out-Null
           if ($LASTEXITCODE -eq 0) { throw "the FRIDAY task is still there after turning it off" }
           Write-Host "task removed"
+          # The last query failed on purpose; don't let it fail the step.
+          exit 0
       - name: Smoke test (tray --smoke)
         run: |
           $p = Start-Process "$env:LOCALAPPDATA\Programs\FRIDAY\friday-tray.exe" -ArgumentList '--smoke' -Wait -PassThru
