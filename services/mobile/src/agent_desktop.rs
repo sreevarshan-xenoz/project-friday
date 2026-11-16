@@ -90,6 +90,18 @@ impl Spawn for SystemSpawn {
             "HYPRLAND_INSTANCE_SIGNATURE",
             "PATH",
             "LANG",
+            // Windows: without these a process can't find its system files,
+            // profile or temp folder (none of them holds a secret).
+            "SystemRoot",
+            "SystemDrive",
+            "windir",
+            "ComSpec",
+            "PATHEXT",
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "TEMP",
+            "TMP",
         ];
         for &key in ALLOWED_ENV {
             if let Ok(val) = std::env::var(key) {
@@ -1299,7 +1311,15 @@ impl UiControl for AgentDesktopUi {
     }
 }
 
-/// Where the CLI is: `FRIDAY_AGENT_DESKTOP`, FRIDAY's own copy, then PATH.
+/// The CLI's file name here.
+const BINARY_NAME: &str = if cfg!(windows) {
+    "agent-desktop.exe"
+} else {
+    "agent-desktop"
+};
+
+/// Where the CLI is: `FRIDAY_AGENT_DESKTOP`, FRIDAY's own copy (the package's
+/// on Linux, the one the MSI puts beside the daemon on Windows), then PATH.
 fn locate_binary() -> Option<PathBuf> {
     let from_env = std::env::var("FRIDAY_AGENT_DESKTOP")
         .ok()
@@ -1307,7 +1327,18 @@ fn locate_binary() -> Option<PathBuf> {
         .filter(|p| p.is_file());
     from_env
         .or_else(|| Some(PathBuf::from("/usr/lib/friday/agent-desktop")).filter(|p| p.is_file()))
-        .or_else(|| find_on_path("agent-desktop"))
+        .or_else(|| beside_this_program(BINARY_NAME))
+        .or_else(|| find_on_path(BINARY_NAME))
+}
+
+/// A file in the folder this program was started from (the MSI's install folder).
+fn beside_this_program(name: &str) -> Option<PathBuf> {
+    cfg!(windows)
+        .then(|| std::env::current_exe().ok())
+        .flatten()?
+        .parent()
+        .map(|dir| dir.join(name))
+        .filter(|p| p.is_file())
 }
 
 /// The same check as [`detect`] for a synchronous caller (the goal runner is

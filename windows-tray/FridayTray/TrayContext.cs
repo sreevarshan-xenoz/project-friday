@@ -17,6 +17,7 @@ internal sealed class TrayContext : ApplicationContext
     private readonly System.Windows.Forms.Timer _poll = new() { Interval = 2000 };
     private readonly ToolStripMenuItem _startAtLogin;
     private readonly ToolStripMenuItem _appContext;
+    private readonly ToolStripMenuItem _screenText;
     private string _mode = "";
     private bool _asking;
 
@@ -60,6 +61,9 @@ internal sealed class TrayContext : ApplicationContext
         _appContext = new ToolStripMenuItem("Name the app when asking about a selection", null, (_, _) => ToggleAppContext())
             { Checked = SourceApp.Enabled(install.Paths) };
         menu.Items.Add(_appContext);
+        _screenText = new ToolStripMenuItem("Read a window's text for screen asks", null, (_, _) => ToggleScreenText())
+            { Checked = ScreenTextOn() };
+        menu.Items.Add(_screenText);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("AI provider…", null, (_, _) => ChooseProvider());
         menu.Items.Add(_startAtLogin);
@@ -407,6 +411,35 @@ internal sealed class TrayContext : ApplicationContext
     {
         SourceApp.SetEnabled(_install.Paths, !SourceApp.Enabled(_install.Paths));
         _appContext.Checked = SourceApp.Enabled(_install.Paths);
+    }
+
+    private bool ScreenTextOn() =>
+        EnvFile.Load(_install.Paths.EnvFile).TryGetValue("FRIDAY_SCREEN_TEXT", out var v) && v is "1" or "true";
+
+    /// <summary>
+    /// Off unless the person turns it on here: a window's text can include
+    /// words that are not on screen, and goes to the AI provider they use.
+    /// </summary>
+    private void ToggleScreenText()
+    {
+        var turnOn = !ScreenTextOn();
+        if (turnOn && MessageBox.Show(
+                "When you ask about your screen, FRIDAY can send the window's text instead of a screenshot, when the app offers enough of it.\n\n" +
+                "That text can include words you can't see (scrolled out of view, in other tabs) and goes to whichever AI provider you use. Password fields are skipped and key-like secrets are masked.\n\n" +
+                "Turn it on?",
+                "Read a window's text", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+        {
+            _screenText.Checked = false;
+            return;
+        }
+        var path = _install.Paths.EnvFile;
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var tmp = path + ".tmp";
+        File.WriteAllText(tmp, EnvFile.WithSetting(File.Exists(path) ? File.ReadAllText(path) : "", "FRIDAY_SCREEN_TEXT", turnOn ? "1" : null));
+        File.Move(tmp, path, overwrite: true);
+        _daemon.Restart();
+        _screenText.Checked = turnOn;
+        Notify("FRIDAY", turnOn ? "Screen asks may now send a window's text." : "Screen asks send one screenshot again.", ToolTipIcon.Info);
     }
 
     private void ToggleStartAtLogin()

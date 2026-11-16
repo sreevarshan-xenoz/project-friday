@@ -17,7 +17,7 @@ disturb, and the `friday` commands below are Linux only so far.
 |---|---|---|
 | Super+Y | whatever you type | your question |
 | Super+Alt+Y | the text you selected (or copied) | the question, the text, the app name and window title |
-| Super+Ctrl+Y | your screen | the question and one screenshot. After `friday screen-text on`, the window's text instead when the app offers enough of it (it can include text you can't see, and goes to any provider you use) |
+| Super+Ctrl+Y | your screen | the question and one screenshot. After `friday screen-text on` (Windows: the tray menu's "Read a window's text for screen asks"), the window's text instead when the app offers enough of it (it can include text you can't see, and goes to any provider you use) |
 
 Hold Super+Y instead of tapping it to talk (`friday voice setup` first). The
 speech is turned into text on your computer; only the text is sent. On niri, which can't see a key being released, press Mod+Y once to speak and again to ask.
