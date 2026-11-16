@@ -73,6 +73,50 @@ public static class AppResolver
         return null;
     }
 
+    /// <summary>The Start menu shortcuts that best match <paramref name="query"/> (best first, at most <paramref name="limit"/>).</summary>
+    public static List<string> Search(string query, int limit)
+    {
+        var words = query.ToLowerInvariant()
+            .Split([' ', '-', '_', '.'], StringSplitOptions.RemoveEmptyEntries)
+            .Where(w => w.Length >= 2 && w is not ("an" or "the" or "app" or "another" or "new" or "my"))
+            .ToArray();
+        var scored = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in StartMenuShortcuts())
+        {
+            var name = Path.GetFileNameWithoutExtension(file);
+            if (Noise.Any(n => name.Contains(n, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            var total = words.Sum(w => Score(name, w));
+            if (total > 0 && (!scored.TryGetValue(name, out var best) || total > best))
+                scored[name] = total;
+        }
+        return scored.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key).Take(limit).Select(kv => kv.Key).ToList();
+    }
+
+    private static IEnumerable<string> StartMenuShortcuts()
+    {
+        foreach (var root in new[]
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms),
+            Environment.GetFolderPath(Environment.SpecialFolder.Programs),
+        })
+        {
+            if (root.Length == 0 || !Directory.Exists(root))
+                continue;
+            IEnumerable<string> files;
+            try
+            {
+                files = Directory.EnumerateFiles(root, "*.lnk", SearchOption.AllDirectories).ToList();
+            }
+            catch (Exception e) when (e is UnauthorizedAccessException or IOException)
+            {
+                continue;
+            }
+            foreach (var f in files)
+                yield return f;
+        }
+    }
+
     private static Target? StartMenu(string name)
     {
         var roots = new[]

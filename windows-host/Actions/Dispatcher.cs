@@ -33,6 +33,7 @@ public class Dispatcher
         Register(new VolumeHandler());
         Register(new BrightnessHandler());
         Register(new DesktopsHandler());
+        Register(new FindAppHandler());
     }
 
     private void Register(IActionHandler handler)

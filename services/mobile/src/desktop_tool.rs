@@ -233,7 +233,8 @@ Actions:
   move_window        params: {"target": "<app or part of its title>", "workspace": "<number or name>"}
   switch_workspace   params: {"workspace": "<number, +1, -1 or name>"}
   close_window       params: {"target": "<app or part of its title>"}   (the person is asked to confirm)
-  launch_app         params: {"app": "<desktop entry or program name, e.g. firefox>"}
+  find_app           look up installed apps by name or by what they do. params: {"query": "<e.g. brave, terminal, text editor>"}
+  launch_app         params: {"app": "<an entry id from find_app, or a program name>"}
   media              params: {"command": "play" | "pause" | "play-pause" | "next" | "previous" | "stop"}
   now_playing        what is playing. params: none
   volume             params: {"level": 0-100}  or  {"mute": "on" | "off" | "toggle"}
@@ -249,7 +250,7 @@ Inside apps (only where an app lets FRIDAY look into it; GTK4 apps like Nautilus
   ui_type_text       params: {"app": "<app name>", "name": "<field label>" or "path": "...", "text": "<text>"}   (never into password fields)
 What you read inside an app is sent to the AI model answering, so read only what the request needs.
 
-Rules: do only what was asked. Look first (windows) when you don't know an app's exact name. Never invent a window. If an action fails, read why and fix it or say you couldn't."#;
+Rules: do only what was asked. To open an app you are not sure of the exact name of, call find_app first and launch what it returns. Look first (windows) when you don't know a window's exact name. Never invent a window. If an action fails, read why and fix it or say you couldn't."#;
 
 /// The same loop's instructions on Windows: the windows and apps the Windows
 /// host can see and act on; its desktops can be listed and switched but not
@@ -264,7 +265,8 @@ Actions:
   active_window      the focused window. params: none
   focus_window       params: {"target": "<app or part of its title>"}
   close_window       params: {"target": "<app or part of its title>"}   (the person is asked to confirm)
-  launch_app         params: {"app": "<program name, e.g. notepad, calc, mspaint>"}
+  find_app           look up installed apps by name or by what they do. params: {"query": "<e.g. brave, terminal, text editor>"}
+  launch_app         params: {"app": "<a name from find_app, or a program name like notepad>"}
   media              params: {"command": "play" | "pause" | "play-pause" | "next" | "previous" | "stop"}
   now_playing        what is playing. params: none
   volume             params: {"level": 0-100}  or  {"mute": "on" | "off" | "toggle"}
@@ -281,7 +283,7 @@ Inside apps (only where an app lets FRIDAY look into it through Windows UI Autom
   ui_type_text       params: {"app": "<app name>", "name": "<field label>", "text": "<text>"}   (never into password fields)
 What you read inside an app is sent to the AI model answering, so read only what the request needs.
 
-Rules: do only what was asked. Look first (windows) when you don't know an app's exact name. Never invent a window. If an action fails, read why and fix it or say you couldn't."#;
+Rules: do only what was asked. To open an app you are not sure of the exact name of, call find_app first and launch what it returns. Look first (windows) when you don't know a window's exact name. Never invent a window. If an action fails, read why and fix it or say you couldn't."#;
 
 /// The first JSON object in a model reply (it may add words around it).
 fn first_json(reply: &str) -> Option<Value> {
@@ -379,7 +381,13 @@ impl Tool for DesktopControlTool {
     }
 
     fn capabilities(&self) -> Vec<Capability> {
-        vec![Capability::Custom(CAPABILITY.into())]
+        // Also serves a plain "open <app>" goal: the model looks the app up and
+        // launches it, which a fixed name-to-program rule cannot do ("another
+        // terminal", "brave browser").
+        vec![
+            Capability::Custom(CAPABILITY.into()),
+            Capability::Custom("windows.open".into()),
+        ]
     }
 
     async fn execute(&self, action: &Action, _ctx: &ExecutionContext) -> ToolResult {

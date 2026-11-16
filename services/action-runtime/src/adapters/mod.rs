@@ -12,6 +12,7 @@ use async_trait::async_trait;
 
 use crate::request::{ActionRequest, ActionResult};
 
+pub mod apps;
 pub mod browser;
 pub mod codeintel;
 pub mod desktop;

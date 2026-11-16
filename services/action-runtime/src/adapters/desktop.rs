@@ -34,7 +34,7 @@ pub enum Risk {
 /// The risk class of a desktop verb; `None` for a verb this adapter lacks.
 pub fn risk_of(action: &str) -> Option<Risk> {
     Some(match action {
-        "windows" | "active_window" | "workspaces" | "now_playing" => Risk::Read,
+        "windows" | "active_window" | "workspaces" | "now_playing" | "find_app" => Risk::Read,
         "focus_window" | "move_window" | "switch_workspace" | "launch_app" | "media" | "volume"
         | "brightness" | "power_profile" => Risk::Reversible,
         "close_window" => Risk::Destructive,
@@ -330,6 +330,14 @@ impl DesktopAdapter {
                 let app = p("app").ok_or("name the app to launch")?;
                 self.launch(app)
             }
+            "find_app" => {
+                let query =
+                    p("query").ok_or("say what to look for (an app name or what it does)")?;
+                let apps = super::apps::find_apps(&super::apps::app_dirs(), query, 8);
+                Ok(
+                    json!({"apps": apps.iter().map(|a| json!({"id": a.id, "name": a.name})).collect::<Vec<_>>()}),
+                )
+            }
             "media" => {
                 let cmd = match p("command")
                     .ok_or("say what to do: play, pause, play-pause, next, previous or stop")?
@@ -484,6 +492,7 @@ impl ActionAdapter for DesktopAdapter {
             "switch_workspace",
             "close_window",
             "launch_app",
+            "find_app",
             "media",
             "now_playing",
             "volume",
