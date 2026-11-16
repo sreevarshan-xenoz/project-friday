@@ -400,7 +400,7 @@ impl Tool for WindowsOpenTool {
         ToolResult {
             success: res.success,
             output: serde_json::to_string_pretty(&res.output).unwrap_or_default(),
-            error: res.error,
+            error: res.error.as_deref().map(|e| open_failure(&exact, e)),
             duration_ms: res
                 .metadata
                 .get("latency_ms")
@@ -607,12 +607,33 @@ fn command_from_instruction(instruction: &str) -> String {
 /// appended. "Open the calculator app" → `calc.exe`; "launch chrome" →
 /// `chrome.exe`; "open notepad" → `notepad.exe`.
 fn app_from_instruction(instruction: &str) -> String {
-    let trimmed = instruction.trim();
+    // The goal's own line: a session-context block may follow it.
+    let trimmed = instruction.lines().next().unwrap_or("").trim();
+    let polite = trimmed
+        .strip_prefix("please ")
+        .or_else(|| trimmed.strip_prefix("Please "))
+        .unwrap_or(trimmed);
     let rest = ["open ", "Open ", "launch ", "Launch "]
         .iter()
-        .find_map(|p| trimmed.strip_prefix(p))
-        .unwrap_or(trimmed);
+        .find_map(|p| polite.strip_prefix(p))
+        .unwrap_or(polite);
     let mut name = rest.trim().to_lowercase();
+    // "open brave on this device", "open notepad for me please"
+    for tail in [
+        " please",
+        " for me",
+        " on this device",
+        " on this computer",
+        " on this pc",
+        " on this laptop",
+        " on this machine",
+        " on my computer",
+        " on my pc",
+    ] {
+        if let Some(stripped) = name.strip_suffix(tail) {
+            name = stripped.trim().to_string();
+        }
+    }
     for prefix in ["the ", "a ", "an ", "my "] {
         if let Some(stripped) = name.strip_prefix(prefix) {
             name = stripped.to_string();
@@ -625,30 +646,50 @@ fn app_from_instruction(instruction: &str) -> String {
             break;
         }
     }
-    let name = name.split_whitespace().next().unwrap_or("").to_string();
-    let resolved = match name.as_str() {
-        "notepad" | "text editor" => "notepad.exe".to_string(),
-        "chrome" | "google chrome" | "browser" => "chrome.exe".to_string(),
-        "edge" | "microsoft edge" => "msedge.exe".to_string(),
-        "explorer" | "file explorer" => "explorer.exe".to_string(),
-        "cmd" | "command prompt" => "cmd.exe".to_string(),
-        "powershell" => "powershell.exe".to_string(),
-        "terminal" | "windows terminal" => "wt.exe".to_string(),
-        "calculator" | "calc" => "calc.exe".to_string(),
-        "vscode" | "visual studio code" | "vs code" => "code.exe".to_string(),
-        "word" | "microsoft word" => "winword.exe".to_string(),
-        "excel" | "microsoft excel" => "excel.exe".to_string(),
-        other => {
-            if other.ends_with(".exe") {
-                other.to_string()
-            } else if other.is_empty() {
-                trimmed.to_string()
-            } else {
-                format!("{other}.exe")
-            }
-        }
+    let known = match name.as_str() {
+        "notepad" | "text editor" => Some("notepad.exe"),
+        "chrome" | "google chrome" | "browser" | "web browser" => Some("chrome.exe"),
+        "edge" | "microsoft edge" => Some("msedge.exe"),
+        "explorer" | "file explorer" => Some("explorer.exe"),
+        "cmd" | "command prompt" => Some("cmd.exe"),
+        "powershell" => Some("powershell.exe"),
+        "terminal" | "windows terminal" => Some("wt.exe"),
+        "calculator" | "calc" => Some("calc.exe"),
+        "vscode" | "visual studio code" | "vs code" => Some("code.exe"),
+        "word" | "microsoft word" => Some("winword.exe"),
+        "excel" | "microsoft excel" => Some("excel.exe"),
+        _ => None,
     };
-    resolved
+    if let Some(exe) = known {
+        return exe.to_string();
+    }
+    // "brave browser" is the program "brave"; the host looks the name up in
+    // App Paths and the Start menu, so a longer name ("microsoft teams") is
+    // passed whole instead of cut to its first word.
+    if let Some(stripped) = name.strip_suffix(" browser") {
+        name = stripped.trim().to_string();
+    }
+    if name.is_empty() {
+        trimmed.to_string()
+    } else if name.ends_with(".exe") || name.contains(' ') {
+        name
+    } else {
+        format!("{name}.exe")
+    }
+}
+
+/// What to tell the person when the host could not open `app`.
+fn open_failure(app: &str, error: &str) -> String {
+    match error {
+        "AppNotFound" => format!(
+            "I couldn't find an app called \"{}\" on this PC. Try its name as it appears in the Start menu.",
+            app.trim_end_matches(".exe")
+        ),
+        "HostUnavailable" => {
+            "FRIDAY's Windows helper isn't running (restart FRIDAY from its tray icon)".to_string()
+        }
+        other => other.strip_prefix("Unknown:").unwrap_or(other).to_string(),
+    }
 }
 
 /// The URL a `web.open` goal names: a scheme, a `www.` host, or a bare domain
@@ -5216,6 +5257,41 @@ mod tests {
         assert_eq!(app_from_instruction("Open the calculator app"), "calc.exe");
         assert_eq!(app_from_instruction("open notepad.exe"), "notepad.exe");
         assert_eq!(app_from_instruction("open edge"), "msedge.exe");
+    }
+
+    /// An app that is not in the table: its name goes to the host whole (or
+    /// as `<name>.exe` for one word), without the words around it.
+    #[test]
+    fn app_from_instruction_keeps_unknown_names_and_drops_filler() {
+        assert_eq!(
+            app_from_instruction("open brave browser on this device"),
+            "brave.exe"
+        );
+        assert_eq!(app_from_instruction("open brave"), "brave.exe");
+        assert_eq!(
+            app_from_instruction("launch microsoft teams"),
+            "microsoft teams"
+        );
+        assert_eq!(app_from_instruction("open Visual Studio Code"), "code.exe");
+        assert_eq!(
+            app_from_instruction("please open spotify for me"),
+            "spotify.exe"
+        );
+        assert_eq!(
+            app_from_instruction("open the google chrome app"),
+            "chrome.exe"
+        );
+    }
+
+    #[test]
+    fn a_failed_open_says_what_happened_in_words() {
+        let msg = open_failure("brave.exe", "AppNotFound");
+        assert!(
+            msg.contains("couldn't find an app called \"brave\""),
+            "{msg}"
+        );
+        assert!(open_failure("x.exe", "HostUnavailable").contains("isn't running"));
+        assert_eq!(open_failure("x.exe", "Unknown:boom"), "boom");
     }
 
     #[test]

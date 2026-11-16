@@ -190,6 +190,21 @@ jobs:
           Write-Host "task removed"
           # The last query failed on purpose; don't let it fail the step.
           exit 0
+      - name: Opening an app by name (PATH, App Paths, the Start menu)
+        run: |
+          $host_exe = "$env:LOCALAPPDATA\Programs\FRIDAY\friday-windows-host.exe"
+          # --resolve says what "open <name>" would start, without starting it.
+          $r = & $host_exe --resolve notepad
+          if ($LASTEXITCODE -ne 0 -or $r -notlike "*notepad.exe") { throw "notepad did not resolve: $r" }
+          Write-Host "notepad -> $r"
+          $r = & $host_exe --resolve "windows powershell"
+          if ($LASTEXITCODE -ne 0) { throw "a Start menu shortcut name did not resolve: $r" }
+          Write-Host "windows powershell -> $r"
+          $r = & $host_exe --resolve "no-such-app-12345"
+          if ($LASTEXITCODE -eq 0) { throw "an unknown app resolved to: $r" }
+          Write-Host "unknown app -> $r (exit $LASTEXITCODE)"
+          # The last command failed on purpose; don't let it fail the step.
+          exit 0
       - name: Smoke test (tray --smoke)
         run: |
           $p = Start-Process "$env:LOCALAPPDATA\Programs\FRIDAY\friday-tray.exe" -ArgumentList '--smoke' -Wait -PassThru
