@@ -75,6 +75,7 @@ internal sealed class TrayContext : ApplicationContext
             { Checked = ScreenTextOn() };
         menu.Items.Add(_screenText);
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Settings…", null, (_, _) => OpenSettings());
         menu.Items.Add("AI provider…", null, (_, _) => ChooseProvider());
         menu.Items.Add(_startAtLogin);
         menu.Items.Add("Restart FRIDAY", null, (_, _) => RestartChildren());
@@ -82,6 +83,13 @@ internal sealed class TrayContext : ApplicationContext
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Quit FRIDAY", null, (_, _) => ExitThread());
 
+        // The Settings window can change these; show what is true when the menu opens.
+        menu.Opening += (_, _) =>
+        {
+            _appContext.Checked = SourceApp.Enabled(install.Paths);
+            _screenText.Checked = ScreenTextOn();
+            _startAtLogin.Checked = install.StartsAtLogin;
+        };
         _icon = new NotifyIcon { ContextMenuStrip = menu, Visible = true, Text = "FRIDAY" };
         _icon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) _ = AskAsync(AskKind.Plain); };
         UpdateStatus();
@@ -91,7 +99,9 @@ internal sealed class TrayContext : ApplicationContext
         _host.Start();
         _daemon.Start();
 
-        if (!_hotkeys.Labels.ContainsKey(AskKind.Plain))
+        if (_askForAdministrator && !Elevation.Enabled())
+            AskForAdministrator();
+        else if (!_hotkeys.Labels.ContainsKey(AskKind.Plain))
             Notify("FRIDAY", "Another program owns FRIDAY's hotkeys. Click the tray icon to ask.", ToolTipIcon.Warning);
         else
             Notify("FRIDAY is running", $"Press {_hotkeys.Labels[AskKind.Plain]} to ask anything.", ToolTipIcon.Info);
@@ -448,6 +458,29 @@ internal sealed class TrayContext : ApplicationContext
         Notify("FRIDAY", turnOn ? "Screen asks may now send a window's text." : "Screen asks send one screenshot again.", ToolTipIcon.Info);
     }
 
+    private bool _askForAdministrator;
+
+    /// <summary>
+    /// The installer's "start with administrator rights": one Windows prompt,
+    /// then FRIDAY restarts the way it will start at every sign-in. Declining
+    /// leaves everything as it was.
+    /// </summary>
+    private void AskForAdministrator()
+    {
+        Notify("FRIDAY", "Windows will ask once for permission to start FRIDAY as administrator.", ToolTipIcon.Info);
+        var ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+        Task.Run(() => Elevation.Apply(_install, true)).ContinueWith(t => ui.Post(_ =>
+        {
+            if (t.IsCompletedSuccessfully && t.Result)
+            {
+                _install.StartsAtLogin = false;
+                RestartTray();
+            }
+            else
+                Notify("FRIDAY", "Administrator start-up was not turned on. You can turn it on in Settings.", ToolTipIcon.Warning);
+        }, null));
+    }
+
     private void WriteScreenText(bool on)
     {
         var path = _install.Paths.EnvFile;
@@ -473,6 +506,13 @@ internal sealed class TrayContext : ApplicationContext
                 WriteScreenText(true);
                 key.DeleteValue("ScreenText");
             }
+            // The administrator choice needs a Windows prompt, so it waits until
+            // the tray is up (see AskForAdministrator); once is enough.
+            if (key?.GetValue("AdminAccess") is 1)
+            {
+                key.DeleteValue("AdminAccess");
+                _askForAdministrator = true;
+            }
         }
         catch (Exception e)
         {
@@ -484,6 +524,39 @@ internal sealed class TrayContext : ApplicationContext
     {
         _install.StartsAtLogin = !_install.StartsAtLogin;
         _startAtLogin.Checked = _install.StartsAtLogin;
+    }
+
+    private SettingsForm? _settings;
+
+    private void OpenSettings(string? section = null)
+    {
+        if (_settings is { IsDisposed: false })
+        {
+            _settings.Activate();
+            return;
+        }
+        _settings = new SettingsForm(_install, new SettingsActions(
+            RestartDaemon: () => _daemon.Restart(),
+            ChooseProvider: ChooseProvider,
+            ConnectAccounts: () =>
+            {
+                using var dlg = new AccountsForm(_install.Paths.EnvFile, () => _daemon.Restart());
+                dlg.ShowDialog();
+            },
+            ShowEgress: ShowEgress,
+            ForgetSavedData: ForgetSavedData,
+            OpenLogs: () => Open(_install.Paths.LogDir),
+            OpenDataFolder: () => Open(Path.GetDirectoryName(_install.Paths.EnvFile)!),
+            RestartIntoAdministrator: RestartTray,
+            Hotkeys: _hotkeys.Labels), section);
+        _settings.Show();
+    }
+
+    /// <summary>Starts FRIDAY again the way it will start at sign-in (through its task when administrator start-up is on) and quits this one.</summary>
+    private void RestartTray()
+    {
+        Elevation.RestartSoon(_install);
+        ExitThread();
     }
 
     private void RestartChildren()

@@ -36,7 +36,10 @@ msiexec /i FRIDAY-<version>-x64.msi /qn ADDLOCAL=Main
 ```
 
 Features: `Main` (required), `StartAtLogin`, `PathEntry`, `DesktopShortcut`,
-`ScreenText`. The dialog images are drawn by `assets/make-assets.py`.
+`ScreenText`, `AdminAccess`. The last starts FRIDAY with administrator rights (so it can
+control apps that run as administrator): a per-user install can't elevate itself, so
+the tray asks Windows once when it first starts after setup and creates a sign-in
+task; it can be turned on or off any time in Settings. The dialog images are drawn by `assets/make-assets.py`.
 
 ## Build
 

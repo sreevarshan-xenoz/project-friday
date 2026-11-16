@@ -4,6 +4,9 @@ using FridayTray.Core;
 /// <summary>
 /// friday-tray.exe: FRIDAY on Windows for the signed-in user.
 ///   (no arguments)  the tray app; one per user session
+///   --apply-elevated on|off <DOMAIN\user>
+///                   (run through one UAC prompt) create or remove the
+///                   scheduled task that starts FRIDAY as administrator
 ///   --smoke         headless check for CI and installers: start the daemon and
 ///                   host, wait until state.json reports "running" and
 ///                   friday-ctl reaches the daemon, stop them, exit 0 (or 1);
@@ -17,6 +20,11 @@ internal static class Program
         var install = new Install(Paths.ForCurrentUser());
         if (args.Contains("--smoke"))
             return Smoke(install).GetAwaiter().GetResult();
+        // The elevated half of "Start with administrator rights": run with the
+        // person's one Windows prompt, do the one thing, exit.
+        var apply = Array.IndexOf(args, "--apply-elevated");
+        if (apply >= 0 && args.Length > apply + 2)
+            return Elevation.ApplyElevated(install, args[apply + 1] == "on", args[apply + 2]);
 
         using var single = new Mutex(true, @"Local\FRIDAY.Tray", out var first);
         if (!first)
