@@ -10,7 +10,8 @@ LLAMACPP_BASE_URL=http://127.0.0.1:<port>/v1). It answers deterministically:
     type and size,
   - the desktop control loop's prompt (it begins "You control the person's")
     gets one scripted action chosen by the request (the volume, the music,
-    what is playing, the brightness, the virtual desktops, else listing the windows), and then says it is done,
+    what is playing, the brightness, the virtual desktops, else listing the
+    windows), and then says it is done,
 streams the reply (server-sent events, word by word) when asked to, and
 appends every request to the log file, so a test can prove which model
 calls a goal made and that its answer came from here.
