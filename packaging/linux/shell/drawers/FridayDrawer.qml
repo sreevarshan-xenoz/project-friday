@@ -199,6 +199,70 @@ FocusScope {
       }
     }
 
+    // Standing tasks: what FRIDAY does on a schedule or a trigger, with the
+    // two things you may want to do to one. Only shown when there are some.
+    ColumnLayout {
+      Layout.fillWidth: true
+      visible: Tasks.entries.length > 0
+      spacing: 4
+
+      Label {
+        text: "Standing tasks"
+        color: Theme.subtext
+        font.pixelSize: Theme.fontS
+      }
+      Repeater {
+        model: Tasks.entries.slice(0, 4)
+        Rectangle {
+          required property var modelData
+          Layout.fillWidth: true
+          implicitHeight: 48
+          radius: Theme.radiusS
+          color: Theme.surface
+          opacity: modelData.paused ? 0.6 : 1
+
+          RowLayout {
+            anchors { fill: parent; leftMargin: 12; rightMargin: 6 }
+            spacing: 6
+            ColumnLayout {
+              Layout.fillWidth: true
+              spacing: 1
+              Label {
+                Layout.fillWidth: true
+                text: modelData.goal
+                elide: Text.ElideRight
+                font.weight: Font.DemiBold
+              }
+              Label {
+                Layout.fillWidth: true
+                text: modelData.when + (modelData.paused ? " · paused" : "")
+                color: Theme.faint
+                font.pixelSize: Theme.fontS
+              }
+            }
+            IconButton {
+              icon: modelData.paused ? Icons.play : Icons.pause
+              size: 28
+              iconSize: 14
+              onClicked: Tasks.setPaused(modelData.id, !modelData.paused)
+            }
+            IconButton {
+              icon: Icons.close
+              size: 28
+              iconSize: 14
+              onClicked: Tasks.remove(modelData.id)
+            }
+          }
+        }
+      }
+      Label {
+        visible: Tasks.entries.length > 4
+        text: "and " + (Tasks.entries.length - 4) + " more: friday tasks"
+        color: Theme.faint
+        font.pixelSize: Theme.fontS
+      }
+    }
+
     // One-press questions about what's in front of you.
     RowLayout {
       Layout.fillWidth: true

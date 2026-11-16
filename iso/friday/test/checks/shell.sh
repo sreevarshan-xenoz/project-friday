@@ -131,6 +131,19 @@ sleep 1
   && pass "an answer containing --- stays one history entry" || fail "a --- inside an answer split it ($(timeout 10 qs -p "$FS" ipc call history count 2>/dev/null) entries)"
 [[ "$(timeout 10 qs -p "$FS" ipc call history find "then spaces" 2>/dev/null)" == "compare tabs and spaces" ]] \
   && pass "the text after a --- is still found" || fail "the text after a --- was lost"
+# Standing tasks, as the daemon keeps them, listed in the FRIDAY drawer.
+printf '%s' '{"tasks":[{"id":"t1","goal":"tell me the weather","trigger":{"kind":"daily","hour":8,"minute":0,"weekdays_only":true},"paused":true,"created":1},{"id":"t2","goal":"say when the battery is low","trigger":{"kind":"battery_below","percent":20},"created":2}]}' \
+  >"$XDG_STATE_HOME/friday/standing.json"
+sleep 1
+[[ "$(timeout 10 qs -p "$FS" ipc call tasks count 2>/dev/null)" == 2 ]] \
+  && pass "standing tasks are read from standing.json" || fail "standing tasks were not read"
+[[ "$(timeout 10 qs -p "$FS" ipc call tasks first 2>/dev/null)" == "every weekday at 08:00 | tell me the weather | paused" ]] \
+  && pass "a standing task shows its schedule, goal and paused state" || fail "standing task text wrong: $(timeout 10 qs -p "$FS" ipc call tasks first 2>/dev/null)"
+printf '%s' 'not json' >"$XDG_STATE_HOME/friday/standing.json"
+sleep 1
+[[ "$(timeout 10 qs -p "$FS" ipc call tasks count 2>/dev/null)" == 0 ]] \
+  && pass "an unreadable standing.json lists nothing" || fail "an unreadable standing.json broke the list"
+rm -f "$XDG_STATE_HOME/friday/standing.json"
 # Every style with a palette, switched live through shell.json as the Look
 # picker does: the bar, the FRIDAY drawer and the control drawer each time.
 mkdir -p "$HOME/.config/friday"
