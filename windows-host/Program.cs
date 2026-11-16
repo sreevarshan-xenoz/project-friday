@@ -30,6 +30,15 @@ public static class Program
         if (args.Length > 0 && args[0] == "--active-window")
             return OperatingSystem.IsWindows() ? ActiveWindow.Run() : 2;
 
+        // What "open <name>" would start, without starting it (used by CI and
+        // for "why can't FRIDAY open X").
+        if (args.Length > 1 && args[0] == "--resolve")
+        {
+            var found = OperatingSystem.IsWindows() ? AppResolver.Resolve(args[1]) : null;
+            Console.WriteLine(found is null ? "not found" : $"{found.Via}: {found.FileName}");
+            return found is null ? 1 : 0;
+        }
+
         var session = Environment.GetEnvironmentVariable("FRIDAY_SESSION") ?? "default";
         var pipeName = $"friday-windows-{session}";
         var dispatcher = new Dispatcher();

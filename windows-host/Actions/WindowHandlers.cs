@@ -15,10 +15,16 @@ public class OpenApplicationHandler : IActionHandler
 
     public BridgeResponse Handle(JsonElement payload, WindowRegistry registry)
     {
-        var path = payload.GetProperty("path").GetString()
+        var name = payload.GetProperty("path").GetString()
             ?? throw new ArgumentException("missing path");
         var args = payload.TryGetProperty("args", out var a) ? a.GetString() : null;
-        var targetName = Path.GetFileNameWithoutExtension(path).ToLowerInvariant();
+        // A name ("brave", "microsoft teams") is looked up where Windows looks;
+        // a path is used as it is.
+        var target = AppResolver.Resolve(name);
+        if (target is null)
+            return new BridgeResponse { Ok = false, Error = "AppNotFound" };
+        var targetName = Path.GetFileNameWithoutExtension(
+            target.Shell ? name : target.FileName).ToLowerInvariant();
 
         // Snapshot windows matching the target BEFORE launch. This lets us tell
         // a newly-created instance from an already-running one that is simply
@@ -27,19 +33,39 @@ public class OpenApplicationHandler : IActionHandler
         // of spawning a new window, so the launched pid never owns a window.
         var before = MatchingWindows(targetName);
 
-        var start = new ProcessStartInfo(path, args ?? "")
+        var start = new ProcessStartInfo(target.FileName, string.IsNullOrEmpty(args) ? target.Arguments : args)
         {
             // UseShellExecute = false keeps the child on the host's own window
-            // station/desktop so its window is enumerable here.
-            UseShellExecute = false,
+            // station/desktop so its window is enumerable here; a shortcut we
+            // could not read is the one case left to the shell.
+            UseShellExecute = target.Shell,
             WindowStyle = ProcessWindowStyle.Normal,
         };
-        using var process = Process.Start(start)
-            ?? throw new Win32Exception(2, "failed to start process");
-
-        var (hwnd, resolution) = AcquireWindow(process.Id, targetName, before);
+        Process? process;
+        try
+        {
+            process = Process.Start(start);
+        }
+        catch (Win32Exception e) when (e.NativeErrorCode == 2)
+        {
+            return new BridgeResponse { Ok = false, Error = "AppNotFound" };
+        }
+        // The shell may start it without giving us a process; the app still ran.
+        var (hwnd, resolution) = process is null
+            ? (IntPtr.Zero, "Failed")
+            : AcquireWindow(process.Id, targetName, before);
+        process?.Dispose();
         if (hwnd == IntPtr.Zero)
-            throw new Win32Exception(2, "process started but no window");
+        {
+            // It started, it just has no window we can see (a slow starter, a
+            // tray app): that is a launch, not a failure.
+            return new BridgeResponse
+            {
+                Ok = true,
+                Output = Serde.ToElement(new { launched = name, window = (string?)null }),
+                Meta = new Dictionary<string, string> { ["launch_resolution"] = "No Window", ["resolved_via"] = target.Via },
+            };
+        }
 
         // Resolve the real owning process for the window we return — for an
         // existing instance this differs from the launched pid.
@@ -49,7 +75,7 @@ public class OpenApplicationHandler : IActionHandler
         {
             Ok = true,
             Output = Serde.ToElement(win),
-            Meta = new Dictionary<string, string> { ["launch_resolution"] = resolution },
+            Meta = new Dictionary<string, string> { ["launch_resolution"] = resolution, ["resolved_via"] = target.Via },
         };
     }
 

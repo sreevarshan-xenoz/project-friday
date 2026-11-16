@@ -74,6 +74,10 @@ impl WindowsDesktop {
                         .to_string()
                 }
                 Some("WindowNotFound") => "that window is gone".to_string(),
+                Some("AppNotFound") => {
+                    "no installed app matches that name (try its name as in the Start menu)"
+                        .to_string()
+                }
                 Some(other) => other.strip_prefix("Unknown:").unwrap_or(other).to_string(),
                 None => "failed".to_string(),
             })
