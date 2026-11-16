@@ -5,10 +5,17 @@
   friday-ctl, friday-windows-host and their .NET runtime) into
   %LOCALAPPDATA%\Programs\FRIDAY, and:
     - a Start menu shortcut,
-    - starts the tray at login (HKCU Run, the same entry the tray's
-      "Start at login" toggles),
-    - puts the install folder on the user's PATH (friday-ctl in terminals),
-    - starts the tray when an interactive install finishes,
+  and, as options the person can turn on or off on the Customize page (or
+  with ADDLOCAL on the command line; a silent install takes the defaults):
+    - StartAtLogin (on): starts the tray at login (HKCU Run, the same entry
+      the tray's "Start at login" toggles),
+    - PathEntry (on): puts the install folder on the user's PATH
+      (friday-ctl in terminals),
+    - DesktopShortcut (off),
+    - ScreenText (off): lets screen questions send a window's text instead
+      of a screenshot (the tray applies it on first start),
+  and it starts the tray when an interactive install finishes, if the
+  "Start FRIDAY now" box on the last page is ticked,
     - closes the tray (and with it the daemon and host) before an upgrade
       or uninstall replaces its files.
   User data in %LOCALAPPDATA%\friday and %APPDATA%\friday is left alone.
@@ -16,7 +23,8 @@
   Build: installer\windows\build.ps1 (wix build ... -bindpath stage=<dir>)
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
-     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
   <Package Name="FRIDAY"
            Manufacturer="Project FRIDAY"
            Version="$(var.Version)"
@@ -40,27 +48,69 @@
       </Directory>
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="DesktopFolder" />
 
-    <Feature Id="Main" Title="FRIDAY">
+    <!-- Level 1 features are on by default, level 2 ones off (INSTALLLEVEL is
+         1). The Customize page shows each with its description. -->
+    <Feature Id="Main" Title="FRIDAY" Level="1" AllowAbsent="no" AllowAdvertise="no"
+             Description="The tray app, the daemon, the Windows helper and the friday-ctl command.">
       <ComponentGroupRef Id="Payload" />
       <ComponentRef Id="Integration" />
+      <Feature Id="StartAtLogin" Title="Start FRIDAY when I sign in" Level="1" AllowAdvertise="no"
+               Description="FRIDAY waits in the tray so Win+Y works right away. You can also switch this in the tray menu.">
+        <ComponentRef Id="StartAtLoginEntry" />
+      </Feature>
+      <Feature Id="PathEntry" Title="Use friday-ctl from any terminal" Level="1" AllowAdvertise="no"
+               Description="Adds the FRIDAY folder to your PATH (your account only).">
+        <ComponentRef Id="PathEntryVariable" />
+      </Feature>
+      <Feature Id="DesktopShortcut" Title="Desktop shortcut" Level="2" AllowAdvertise="no"
+               Description="A FRIDAY icon on the desktop (there is always one in the Start menu).">
+        <ComponentRef Id="DesktopShortcutIcon" />
+      </Feature>
+      <Feature Id="ScreenText" Title="Read a window's text for screen questions" Level="2" AllowAdvertise="no"
+               Description="Off unless you tick it. When you ask about your screen, FRIDAY may send the window's text (it can include words you can't see) instead of a screenshot to the AI provider you use. Change it later in the tray menu.">
+        <ComponentRef Id="ScreenTextChoice" />
+      </Feature>
     </Feature>
 
     <ComponentGroup Id="Payload" Directory="INSTALLFOLDER">
       <Files Include="!(bindpath.stage)\**" />
     </ComponentGroup>
 
-    <!-- Everything outside the install folder, keyed on one HKCU value so a
-         per-user install validates. -->
+    <!-- What always happens, keyed on one HKCU value so a per-user install
+         validates. -->
     <Component Id="Integration" Directory="INSTALLFOLDER" Guid="9a0d2f64-5f0a-4f39-8f87-4d1c2a7b6e01">
       <RegistryValue Root="HKCU" Key="Software\FRIDAY" Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
-      <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="FRIDAY" Type="string"
-                     Value="&quot;[INSTALLFOLDER]friday-tray.exe&quot;" />
       <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="FRIDAY"
                 Description="Ask FRIDAY (Win+Y)" Target="[INSTALLFOLDER]friday-tray.exe" WorkingDirectory="INSTALLFOLDER" />
-      <Environment Id="UserPath" Name="PATH" Value="[INSTALLFOLDER]" Part="last" Action="set" System="no" />
       <RemoveFolder Id="RemoveProgramsDir" Directory="ProgramsDir" On="uninstall" />
       <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+    </Component>
+
+    <Component Id="StartAtLoginEntry" Directory="INSTALLFOLDER" Guid="1c7e4b88-2d3a-4a8e-9b51-7f06a3c2d902">
+      <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="FRIDAY" Type="string"
+                     Value="&quot;[INSTALLFOLDER]friday-tray.exe&quot;" KeyPath="yes" />
+    </Component>
+
+    <Component Id="PathEntryVariable" Directory="INSTALLFOLDER" Guid="5e2a9c14-8b60-4d77-a3f2-0c91d4e7b303">
+      <RegistryValue Root="HKCU" Key="Software\FRIDAY\Setup" Name="PathEntry" Type="integer" Value="1" KeyPath="yes" />
+      <Environment Id="UserPath" Name="PATH" Value="[INSTALLFOLDER]" Part="last" Action="set" System="no" />
+    </Component>
+
+    <Component Id="DesktopShortcutIcon" Directory="INSTALLFOLDER" Guid="b84d0e63-9c1f-4f25-8e7a-3a5b6d1c2404">
+      <RegistryValue Root="HKCU" Key="Software\FRIDAY\Setup" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
+      <Shortcut Id="DesktopShortcutLink" Directory="DesktopFolder" Name="FRIDAY"
+                Description="Ask FRIDAY (Win+Y)" Target="[INSTALLFOLDER]friday-tray.exe" WorkingDirectory="INSTALLFOLDER" />
+    </Component>
+
+    <!-- The tray reads ScreenText once on its first start, turns the setting
+         on in friday.env and deletes the value, so the tray menu's toggle is
+         the only switch afterwards. ScreenTextChoice (the one the installer
+         tracks) stays so uninstall removes the keys. -->
+    <Component Id="ScreenTextChoice" Directory="INSTALLFOLDER" Guid="d3f6a1b9-4e82-4c0d-b7a5-6e19f2c8a505">
+      <RegistryValue Root="HKCU" Key="Software\FRIDAY\Setup" Name="ScreenText" Type="integer" Value="1" KeyPath="yes" />
+      <RegistryValue Root="HKCU" Key="Software\FRIDAY\Options" Name="ScreenText" Type="integer" Value="1" />
     </Component>
 
     <!-- End the running tray, daemon, and host before files are replaced or
@@ -73,12 +123,22 @@
     <util:CloseApplication Id="CloseHost" Target="friday-windows-host.exe" TerminateProcess="1"
                            RebootPrompt="no" />
 
-    <!-- Start the tray after an interactive install (not for /quiet, which CI
-         and winget use). -->
+    <!-- The install screens: Welcome, Customize (the options above), the
+         progress page, then a last page with "Start FRIDAY now" ticked.
+         No licence page (the licences are in the install folder); a silent
+         install (/quiet, which CI and winget use) shows nothing. -->
+    <WixVariable Id="WixUIBannerBmp" Value="$(var.AssetsDir)\banner.bmp" />
+    <WixVariable Id="WixUIDialogBmp" Value="$(var.AssetsDir)\dialog.bmp" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Start FRIDAY now" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <ui:WixUI Id="WixUI_FeatureTree" />
+    <UI>
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="CustomizeDlg" Order="99" Condition="NOT Installed" />
+      <Publish Dialog="CustomizeDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="99" Condition="NOT Installed" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchTray" Order="999"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+    </UI>
     <CustomAction Id="LaunchTray" Directory="INSTALLFOLDER" ExeCommand="&quot;[INSTALLFOLDER]friday-tray.exe&quot;"
                   Return="asyncNoWait" Impersonate="yes" />
-    <InstallExecuteSequence>
-      <Custom Action="LaunchTray" After="InstallFinalize" Condition="NOT REMOVE AND UILevel &gt; 3" />
-    </InstallExecuteSequence>
   </Package>
 </Wix>
