@@ -24,11 +24,17 @@ def font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
-def lerp(a, b, t):
-    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
+def lerp(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[int, int, int]:
+    return (
+        int(a[0] + (b[0] - a[0]) * t),
+        int(a[1] + (b[1] - a[1]) * t),
+        int(a[2] + (b[2] - a[2]) * t),
+    )
 
 
-def gradient(w, h, top, bottom):
+def gradient(
+    w: int, h: int, top: tuple[int, int, int], bottom: tuple[int, int, int]
+) -> Image.Image:
     img = Image.new("RGB", (w, h))
     d = ImageDraw.Draw(img)
     for y in range(h):
@@ -36,7 +42,7 @@ def gradient(w, h, top, bottom):
     return img
 
 
-def mark(d, x, y, size):
+def mark(d: ImageDraw.ImageDraw, x: int, y: int, size: int) -> None:
     """FRIDAY's mark: a ring with a bright dot."""
     d.ellipse([x, y, x + size, y + size], outline=ACCENT, width=max(2, size // 9))
     r = size // 5
@@ -44,7 +50,7 @@ def mark(d, x, y, size):
     d.ellipse([c[0] - r, c[1] - r, c[0] + r, c[1] + r], fill=SECONDARY)
 
 
-def dialog():
+def dialog() -> Image.Image:
     img = Image.new("RGB", (493, 312), (255, 255, 255))
     img.paste(gradient(164, 312, NIGHT, (44, 36, 78)), (0, 0))
     d = ImageDraw.Draw(img)
@@ -60,7 +66,7 @@ def dialog():
     return img
 
 
-def banner():
+def banner() -> Image.Image:
     img = Image.new("RGB", (493, 58), (255, 255, 255))
     d = ImageDraw.Draw(img)
     mark(d, 493 - 50, 9, 40)
