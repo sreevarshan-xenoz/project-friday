@@ -117,6 +117,7 @@ internal sealed class SettingsForm : Form
         yield return Switch(
             "Start with administrator rights",
             "Lets FRIDAY control apps that run as administrator (an app like that ignores keys and clicks from a normal program). " +
+            "Everything FRIDAY does then runs with those rights, so only turn it on if you need it. " +
             "Windows asks for permission once, now; after that FRIDAY starts at every sign-in without asking. " +
             (Elevation.IsElevated() ? "FRIDAY is running as administrator now." : "Takes effect the next time FRIDAY starts."),
             admin,
@@ -265,7 +266,9 @@ internal sealed class SettingsForm : Form
     {
         if (on && MessageBox.Show(this,
                 "FRIDAY will start with administrator rights at every sign-in, so it can control apps that run as administrator.\n\n" +
-                "Windows will ask for permission once now. Turn it off here any time.\n\nContinue?",
+                "Everything FRIDAY does will then run with administrator rights. FRIDAY acts on what an AI model decides, so a misread request, " +
+                "or text on your screen that tricks it, would act with those rights too. Closing a window and anything that deletes or sends still asks you first.\n\n" +
+                "Only turn this on if you need to control administrator apps. Windows will ask for permission once now; you can turn it off here any time.\n\nContinue?",
                 "Start with administrator rights", MessageBoxButtons.OKCancel, MessageBoxIcon.Information) != DialogResult.OK)
         {
             Show("General");

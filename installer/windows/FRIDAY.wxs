@@ -78,7 +78,7 @@
         <ComponentRef Id="ScreenTextChoice" />
       </Feature>
       <Feature Id="AdminAccess" Title="Start with administrator rights" Level="2" AllowAdvertise="no"
-               Description="Off unless you tick it. Lets FRIDAY control apps that run as administrator (they ignore keys and clicks from a normal program). Windows asks for permission once, right after setup; FRIDAY then starts at every sign-in without asking. Change it later in Settings.">
+               Description="Off unless you tick it. Lets FRIDAY control apps that run as administrator, but everything FRIDAY does then runs with those rights. Windows asks for permission once, right after setup. Change it later in Settings.">
         <ComponentRef Id="AdminAccessChoice" />
       </Feature>
     </Feature>
