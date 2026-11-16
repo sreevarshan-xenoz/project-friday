@@ -8,6 +8,8 @@ LLAMACPP_BASE_URL=http://127.0.0.1:<port>/v1). It answers deterministically:
     user's request,
   - a request with an image (a screen ask) gets the question and the image's
     type and size,
+  - the desktop control loop's prompt (it begins "You control the person's")
+    gets one scripted action, listing the windows, and then says it is done,
 streams the reply (server-sent events, word by word) when asked to, and
 appends every request to the log file, so a test can prove which model
 calls a goal made and that its answer came from here.
@@ -39,6 +41,10 @@ def reply_for(prompt: str, images: list[str] | None = None) -> str:
     size, so a test can tell the screenshot itself reached the model."""
     if "Investigation Engine" in prompt:
         return '{"requirements":[]}'
+    if "You control the person's" in prompt:
+        if "(none yet)" in prompt:
+            return '{"action": "windows", "params": {}}'
+        return '{"done": "Listed the open windows."}'
     lines = prompt.splitlines()
     if images:
         # FRIDAY's screen instruction puts the question after "asks:".

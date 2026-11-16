@@ -200,6 +200,9 @@ jobs:
       - name: End-to-end ask on the installed binaries (fake model, no network)
         shell: bash
         run: bash tests/e2e/ask.sh "$LOCALAPPDATA/Programs/FRIDAY"
+      - name: End-to-end desktop control (the real daemon and Windows host; fake model lists the windows)
+        shell: bash
+        run: bash tests/e2e/desktop.sh "$LOCALAPPDATA/Programs/FRIDAY"
       - name: End-to-end hotkeys (the tray, keys pressed on the desktop)
         run: pwsh tests/e2e/hotkeys.ps1
       - name: Uninstall silently
