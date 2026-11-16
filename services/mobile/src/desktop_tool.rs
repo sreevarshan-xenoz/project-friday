@@ -17,7 +17,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use friday_actions::{ActionAdapter, ActionRequest, DesktopAdapter, DesktopRisk};
+#[cfg(test)]
+use friday_actions::DesktopAdapter;
+use friday_actions::{ActionAdapter, ActionRequest, DesktopRisk};
 use friday_goal_execution::{Action, Capability, ExecutionContext, Tool, ToolResult};
 use friday_investigation::LlmStrategyClient;
 use serde_json::{json, Value};
@@ -32,14 +34,27 @@ const RESULT_CHARS: usize = 1500;
 /// The capability the planner routes desktop goals to.
 pub const CAPABILITY: &str = "desktop.control";
 
-/// Whether this machine has a desktop FRIDAY can drive: a Hyprland session,
-/// and the owner hasn't turned it off (`FRIDAY_DESKTOP=0`).
+/// Whether this machine has a desktop FRIDAY can drive: a Hyprland session on
+/// Linux, or Windows (through FRIDAY's host), and the owner hasn't turned it
+/// off (`FRIDAY_DESKTOP=0`).
 pub fn enabled() -> bool {
-    cfg!(target_os = "linux")
-        && std::env::var("FRIDAY_DESKTOP")
-            .map(|v| v != "0")
-            .unwrap_or(true)
-        && friday_actions::hypr_signature().is_some()
+    std::env::var("FRIDAY_DESKTOP")
+        .map(|v| v != "0")
+        .unwrap_or(true)
+        && ((cfg!(target_os = "linux") && friday_actions::hypr_signature().is_some())
+            || cfg!(windows))
+}
+
+/// The adapter for this platform's windows, apps and media.
+pub(crate) fn default_adapter() -> Arc<dyn ActionAdapter> {
+    #[cfg(windows)]
+    {
+        Arc::new(crate::desktop_windows::WindowsDesktop::for_current_session())
+    }
+    #[cfg(not(windows))]
+    {
+        Arc::new(friday_actions::DesktopAdapter::new())
+    }
 }
 
 /// What the loop needs from the inside-of-apps adapter (AT-SPI, Linux only):
@@ -94,7 +109,7 @@ pub(crate) fn default_ui() -> Option<Arc<dyn UiControl>> {
 
 pub struct DesktopControlTool {
     model: Arc<dyn LlmStrategyClient>,
-    adapter: DesktopAdapter,
+    adapter: Arc<dyn ActionAdapter>,
     gate: Arc<Mutex<ConfirmationGate>>,
     /// Set by `task.cancel` (the Stop button, `friday cancel`, the kill key).
     abort: Arc<AtomicBool>,
@@ -130,9 +145,21 @@ pub(crate) fn append_audit(dir: &std::path::Path, line: &Value) {
 }
 
 impl DesktopControlTool {
+    #[cfg(test)]
     pub(crate) fn new(
         model: Arc<dyn LlmStrategyClient>,
-        adapter: DesktopAdapter,
+        adapter: impl ActionAdapter + 'static,
+        gate: Arc<Mutex<ConfirmationGate>>,
+        abort: Arc<AtomicBool>,
+        audit_dir: Option<PathBuf>,
+        ui: Option<Arc<dyn UiControl>>,
+    ) -> Self {
+        Self::with_adapter(Arc::new(adapter), model, gate, abort, audit_dir, ui)
+    }
+
+    pub(crate) fn with_adapter(
+        adapter: Arc<dyn ActionAdapter>,
+        model: Arc<dyn LlmStrategyClient>,
         gate: Arc<Mutex<ConfirmationGate>>,
         abort: Arc<AtomicBool>,
         audit_dir: Option<PathBuf>,
@@ -145,6 +172,16 @@ impl DesktopControlTool {
             abort,
             audit_dir,
             ui,
+        }
+    }
+
+    /// The instructions for this platform's verbs: FRIDAY OS's have
+    /// workspaces; Windows's don't.
+    fn guide(&self) -> &'static str {
+        if self.adapter.actions().contains(&"workspaces") {
+            GUIDE
+        } else {
+            GUIDE_WINDOWS
         }
     }
 
@@ -210,6 +247,31 @@ Inside apps (only where an app lets FRIDAY look into it; GTK4 apps like Nautilus
   ui_read            params: {"app": "<app name>", "ref": "<ref from ui_find>"} (or "path" where find gives paths)
   ui_click           params: {"app": "<app name>", "name": "<label>"} or {"app": "...", "ref"/"path": "..."}   (if it could delete or send something, the person is asked first)
   ui_type_text       params: {"app": "<app name>", "name": "<field label>" or "path": "...", "text": "<text>"}   (never into password fields)
+What you read inside an app is sent to the AI model answering, so read only what the request needs.
+
+Rules: do only what was asked. Look first (windows) when you don't know an app's exact name. Never invent a window. If an action fails, read why and fix it or say you couldn't."#;
+
+/// The same loop's instructions on Windows: the windows and apps the Windows
+/// host can see and act on, and no workspaces, media or brightness.
+const GUIDE_WINDOWS: &str = r#"You control the person's Windows desktop for them. Do what they asked, one action at a time.
+Reply with ONLY one JSON object, nothing else:
+  {"action": "<name>", "params": {...}}   to take an action
+  {"done": "<one short sentence saying what you did, or why you couldn't>"}   when finished
+
+Actions:
+  windows            list open windows (app, title, state). params: none
+  active_window      the focused window. params: none
+  focus_window       params: {"target": "<app or part of its title>"}
+  close_window       params: {"target": "<app or part of its title>"}   (the person is asked to confirm)
+  launch_app         params: {"app": "<program name, e.g. notepad, calc, mspaint>"}
+
+Inside apps (only where an app lets FRIDAY look into it through Windows UI Automation):
+  ui_apps            apps that can be looked into. params: none
+  ui_find            params: {"app": "<app name>", "name": "<part of the label>", "role": "<optional, e.g. button, menu item>"}
+  ui_tree            the named elements of an app. params: {"app": "<app name>"}
+  ui_read            params: {"app": "<app name>", "ref": "<ref from ui_find>"}
+  ui_click           params: {"app": "<app name>", "name": "<label>"} or {"app": "...", "ref": "..."}   (if it could delete or send something, the person is asked first)
+  ui_type_text       params: {"app": "<app name>", "name": "<field label>", "text": "<text>"}   (never into password fields)
 What you read inside an app is sent to the AI model answering, so read only what the request needs.
 
 Rules: do only what was asked. Look first (windows) when you don't know an app's exact name. Never invent a window. If an action fails, read why and fix it or say you couldn't."#;
@@ -333,7 +395,8 @@ impl Tool for DesktopControlTool {
                 return ToolResult::error(stopped_message(&steps));
             }
             let prompt = format!(
-                "{GUIDE}\n\nThe person's request: {goal}\n\nSteps so far:\n{}\n\nYour next reply (JSON only):",
+                "{}\n\nThe person's request: {goal}\n\nSteps so far:\n{}\n\nYour next reply (JSON only):",
+                self.guide(),
                 if log.is_empty() { "(none yet)" } else { log.trim_end() }
             );
             let reply = tokio::select! {
@@ -1165,5 +1228,45 @@ mod tests {
         );
         assert_eq!(first_json("no json here"), None);
         assert_eq!(first_json("[1,2]"), None);
+    }
+
+    /// Every action a guide offers is one its adapter has, and the other way
+    /// round, so a verb can't be taught to the model that doesn't run (or run
+    /// without being taught).
+    #[test]
+    fn each_guide_teaches_exactly_its_adapters_verbs() {
+        fn offered(guide: &str) -> Vec<String> {
+            guide
+                .lines()
+                .skip_while(|l| !l.starts_with("Actions:"))
+                .skip(1)
+                .take_while(|l| !l.trim().is_empty())
+                .filter_map(|l| l.split_whitespace().next().map(str::to_string))
+                .collect()
+        }
+        let mut linux: Vec<String> = DesktopAdapter::new()
+            .actions()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let mut linux_guide = offered(GUIDE);
+        linux.sort();
+        linux_guide.sort();
+        assert_eq!(linux_guide, linux);
+
+        let windows_adapter = crate::desktop_windows::WindowsDesktop::new(Arc::new(
+            friday_windows::WindowsAdapter::new(Arc::new(friday_windows::ipc::MockTransport::new(
+                Arc::new(|_| friday_windows::protocol::BridgeResponse::ok(json!([]))),
+            ))),
+        ));
+        let mut windows: Vec<String> = windows_adapter
+            .actions()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let mut windows_guide = offered(GUIDE_WINDOWS);
+        windows.sort();
+        windows_guide.sort();
+        assert_eq!(windows_guide, windows);
     }
 }

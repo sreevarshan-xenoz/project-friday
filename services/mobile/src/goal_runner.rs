@@ -1311,18 +1311,21 @@ impl GoalRunner {
         if let Some(adapter) = browser {
             executive.register_tool(Box::new(BrowserCapabilityTool { adapter }));
         }
-        // FRIDAY OS: native control of windows, apps and media, when there is
-        // a Hyprland session to drive and a model to choose the steps.
+        // Native control of windows, apps and media: FRIDAY OS (a Hyprland
+        // session to drive) and Windows (through FRIDAY's host), with a model
+        // to choose the steps.
         let has_desktop = match &fabric {
             Some(f) if crate::desktop_tool::enabled() => {
-                executive.register_tool(Box::new(crate::desktop_tool::DesktopControlTool::new(
-                    f.clone() as Arc<dyn LlmStrategyClient>,
-                    friday_actions::DesktopAdapter::new(),
-                    confirmation_gate.clone(),
-                    executive.abort_token(),
-                    crate::desktop_tool::audit_dir(),
-                    crate::desktop_tool::default_ui(),
-                )));
+                executive.register_tool(Box::new(
+                    crate::desktop_tool::DesktopControlTool::with_adapter(
+                        crate::desktop_tool::default_adapter(),
+                        f.clone() as Arc<dyn LlmStrategyClient>,
+                        confirmation_gate.clone(),
+                        executive.abort_token(),
+                        crate::desktop_tool::audit_dir(),
+                        crate::desktop_tool::default_ui(),
+                    ),
+                ));
                 true
             }
             _ => false,

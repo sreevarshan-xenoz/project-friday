@@ -13,6 +13,7 @@ pub mod bridge;
 pub mod commands;
 pub mod context_read;
 pub mod desktop_tool;
+pub mod desktop_windows;
 pub mod error;
 pub mod failures;
 pub mod goal_runner;

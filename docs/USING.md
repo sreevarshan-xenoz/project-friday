@@ -58,6 +58,15 @@ worked, never what was on your screen). Questions ("how do I change the
 volume?") are answered, not acted on. `FRIDAY_DESKTOP=0` in
 `~/.config/friday/friday.env` turns this off.
 
+On Windows the same works for windows and programs: "focus Notepad", "open
+calc", "close the Firefox window" (asks first, with the exact action), "what
+windows are open". It uses FRIDAY's Windows helper (the one the tray runs), so
+FRIDAY must be running from its tray icon. Workspaces, volume, media and
+brightness are FRIDAY OS only for now. Launching takes a program name that
+Windows can find (`notepad`, `calc`, `mspaint`), not a path or a command line.
+`FRIDAY_DESKTOP=0` in `%APPDATA%\friday\friday.env` turns it off. Looking
+inside apps (below) uses the agent-desktop the installer bundles.
+
 It can also look inside apps and press their controls (with [agent-desktop](https://github.com/vercel-labs/agent-desktop) when it is installed, else FRIDAY's own reader; `FRIDAY_UI_ENGINE=atspi|agent-desktop|auto` in `~/.config/friday/friday.env` chooses): "click the Save button
 in gedit", "what tabs does pavucontrol have". This works with apps that offer
 accessibility actions (GTK3, Qt, Electron). GTK4 apps such as Nautilus can be
