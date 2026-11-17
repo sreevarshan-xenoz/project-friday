@@ -1005,14 +1005,12 @@ mod tests {
     fn each_model_gets_its_own_flags_and_the_text_comes_last() {
         let s = engine_args(&voice(Kind::Supertonic), "hello there", Path::new("/o.wav"));
         assert!(s.contains(&"--sid=3".to_string()) && s.contains(&"--speed=1.25".to_string()));
-        assert!(s
-            .iter()
-            .any(|a| a.starts_with("--supertonic-vocoder=/m/vocoder")));
+        let vocoder = Path::new("/m").join("vocoder.int8.onnx");
+        assert!(s.contains(&format!("--supertonic-vocoder={}", vocoder.display())));
         assert_eq!(s.last().unwrap(), "hello there");
         let k = engine_args(&voice(Kind::Kitten), "hi", Path::new("/o.wav"));
-        assert!(k
-            .iter()
-            .any(|a| a.starts_with("--kitten-model=/m/model.int8.onnx")));
+        let model = Path::new("/m").join("model.int8.onnx");
+        assert!(k.contains(&format!("--kitten-model={}", model.display())));
         assert!(
             k.contains(&"--kitten-length-scale=0.8".to_string()),
             "{k:?}"
