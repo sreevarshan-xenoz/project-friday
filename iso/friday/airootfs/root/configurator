@@ -274,7 +274,7 @@ step_look() {
     "SilentSDDM Rei (Animated Cyberpunk)" \
     "SilentSDDM Ken (Animated Synthwave)" \
     "SilentSDDM Nord (Arctic Frost)" \
-    "Omarchy Classic SDDM") && SDDM_THEME="$v"
+    "Classic SDDM (plain dark)") && SDDM_THEME="$v"
   friday_ok "$SDDM_THEME"
 }
 
