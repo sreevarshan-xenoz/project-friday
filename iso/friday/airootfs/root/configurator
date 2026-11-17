@@ -289,15 +289,17 @@ step_features() {
   local b="Run tasks I schedule (\"every morning at 8 ...\")"
   local c="Tell the AI which app a selected text came from"
   local d="Send a window's text instead of a screenshot (it can include text you can't see)"
+  local e="Offer to pair my Android phone at first login (Pocketdesk; it stays off until I pair)"
   local picks
-  picks=$(printf '%s\n' "$a" "$b" "$c" "$d" \
-    | gum choose --no-limit --cursor="$FRIDAY_CURSOR" --height=6 \
+  picks=$(printf '%s\n' "$a" "$b" "$c" "$d" "$e" \
+    | gum choose --no-limit --cursor="$FRIDAY_CURSOR" --height=7 \
         --selected="$a,$b,$c") || return 0
-  FEAT_DESKTOP=false FEAT_TASKS=false FEAT_APPNAME=false FEAT_SCREENTEXT=false
+  FEAT_DESKTOP=false FEAT_TASKS=false FEAT_APPNAME=false FEAT_SCREENTEXT=false FEAT_PHONE=false
   [[ $picks == *"$a"* ]] && FEAT_DESKTOP=true
   [[ $picks == *"$b"* ]] && FEAT_TASKS=true
   [[ $picks == *"$c"* ]] && FEAT_APPNAME=true
   [[ $picks == *"window's text"* ]] && FEAT_SCREENTEXT=true
+  [[ $picks == *"pair my Android phone"* ]] && FEAT_PHONE=true
   friday_ok "$(friday_features_label)"
 }
 
@@ -308,6 +310,7 @@ friday_features_label() {
   [[ $FEAT_TASKS == true ]] && on+=("scheduled tasks")
   [[ $FEAT_APPNAME == true ]] && on+=("app name")
   [[ $FEAT_SCREENTEXT == true ]] && on+=("window text")
+  [[ $FEAT_PHONE == true ]] && on+=("phone pairing")
   if ((${#on[@]} == 0)); then echo "nothing (questions only)"; return; fi
   local out="${on[0]}" item
   for item in "${on[@]:1}"; do out+=", $item"; done
@@ -422,7 +425,7 @@ friday_banner
 friday_say "Thanks, $USERNAME. I'll take it from here."
 sleep 1
 FRIDAY_HOSTNAME="$HOSTNAME"
-export TARGET_DISK KEYBOARD HOSTNAME FRIDAY_HOSTNAME USERNAME PASSWORD TIMEZONE THEME SHELL_STYLE SESSION SDDM_THEME FRIDAY_AI_PROVIDER FRIDAY_AI_KEY AUTOLOGIN ENCRYPT FEAT_DESKTOP FEAT_TASKS FEAT_APPNAME FEAT_SCREENTEXT
+export TARGET_DISK KEYBOARD HOSTNAME FRIDAY_HOSTNAME USERNAME PASSWORD TIMEZONE THEME SHELL_STYLE SESSION SDDM_THEME FRIDAY_AI_PROVIDER FRIDAY_AI_KEY AUTOLOGIN ENCRYPT FEAT_DESKTOP FEAT_TASKS FEAT_APPNAME FEAT_SCREENTEXT FEAT_PHONE
 export FRIDAY_INTERACTIVE=1
 /root/installer || leave_menu "Something went wrong during the install. The full log is in /tmp/friday-installer.log."
 leave_menu ""
