@@ -5,6 +5,7 @@ import qs.common
 import qs.components
 
 ColumnLayout {
+  id: page
   spacing: 16
 
   Toggle {
@@ -25,15 +26,58 @@ ColumnLayout {
   }
 
   Cmd { id: sent; args: ["sent", "20"] }
+  Cmd { id: forget; onFinished: confirming = "" }
+
+  // What the person is being asked to confirm ("" = nothing).
+  property string confirming: ""
+  readonly property var forgettable: [
+    ["Forget my answers", "answers", "all saved answers"],
+    ["Forget what left this computer", "sent", "the list of what was sent to AI providers"],
+    ["Forget everything", "all", "answers, that list, memory and the desktop action log"]
+  ]
+
   Flow {
     Layout.fillWidth: true
     spacing: 8
     Chip { text: sent.running ? "Looking…" : "What left this computer"; onClicked: sent.run() }
-    Chip {
-      text: "Forget my saved data"
-      onClicked: Quickshell.execDetached(["foot", "-T", "FRIDAY · forget", "bash", "-c",
-        "friday forget; echo; read -rsn1 -p 'Press any key to close.'"])
+    Repeater {
+      model: page.forgettable
+      Chip {
+        required property var modelData
+        text: modelData[0]
+        onClicked: page.confirming = modelData[1]
+      }
     }
   }
-  Output { text: sent.output }
+
+  Rectangle {
+    visible: confirming !== ""
+    Layout.fillWidth: true
+    implicitHeight: ask.implicitHeight + 24
+    radius: Theme.radiusS
+    color: Theme.surface
+    border.width: 1
+    border.color: Theme.warn
+    ColumnLayout {
+      id: ask
+      anchors.fill: parent
+      anchors.margins: 12
+      spacing: 10
+      Label {
+        Layout.fillWidth: true
+        text: {
+          for (const f of forgettable) if (f[1] === confirming) return "Really forget " + f[2] + "? This can't be undone.";
+          return "";
+        }
+        wrapMode: Text.Wrap
+        elide: Text.ElideNone
+      }
+      Row {
+        spacing: 8
+        Chip { primary: true; text: forget.running ? "Forgetting…" : "Yes, forget"; onClicked: { forget.args = ["forget", confirming, "--yes"]; forget.run(); } }
+        Chip { text: "Cancel"; onClicked: confirming = "" }
+      }
+    }
+  }
+  Output { text: forget.output !== "" ? forget.output : sent.output }
 }

@@ -1,0 +1,112 @@
+import QtQuick
+import QtQuick.Layouts
+import Quickshell
+import qs.common
+import qs.components
+
+ColumnLayout {
+  id: page
+  spacing: 16
+
+  // [label, provider id]
+  readonly property var providers: [
+    ["Free models", "opencode"], ["Google Gemini", "gemini"], ["Groq", "groq"],
+    ["NVIDIA NIM", "nvidia-nim"], ["OpenRouter", "openrouter"], ["Cerebras", "cerebras"]
+  ]
+  property string provider: "opencode"
+  readonly property bool free: provider === "opencode"
+
+  function inTerminal(title, cmd) {
+    Quickshell.execDetached(["foot", "-T", "FRIDAY · " + title, "bash", "-c",
+      cmd + "; echo; read -rsn1 -p 'Press any key to close.'"]);
+  }
+
+  Label {
+    Layout.fillWidth: true
+    text: "FRIDAY thinks with a language model. Free models work with no account, but they may keep what you send. For anything private, use your own key, an account you already have, or keep everything on this computer."
+    wrapMode: Text.Wrap
+    elide: Text.ElideNone
+    color: Theme.subtext
+  }
+
+  Label { text: "Choose the AI"; font.weight: Font.DemiBold }
+  Flow {
+    Layout.fillWidth: true
+    spacing: 8
+    Repeater {
+      model: page.providers
+      Chip {
+        required property var modelData
+        text: modelData[0]
+        primary: page.provider === modelData[1]
+        onClicked: page.provider = modelData[1]
+      }
+    }
+  }
+
+  Rectangle {
+    visible: !page.free
+    Layout.fillWidth: true
+    implicitHeight: 38
+    radius: Theme.radiusS
+    color: Theme.surface
+    border.width: 1
+    border.color: key.activeFocus ? Theme.accent : Theme.outline
+    TextInput {
+      id: key
+      anchors.fill: parent
+      anchors.margins: 10
+      echoMode: TextInput.Password
+      color: Theme.text
+      font.family: Theme.sans
+      font.pixelSize: Theme.fontM
+      clip: true
+      Text {
+        visible: key.text === "" && !key.activeFocus
+        text: "Paste your key here"
+        color: Theme.faint
+        font: key.font
+      }
+    }
+  }
+
+  Cmd {
+    id: save
+    onFinished: key.text = ""
+  }
+  Flow {
+    Layout.fillWidth: true
+    spacing: 8
+    Chip {
+      primary: true
+      text: save.running ? "Saving…" : (page.free ? "Use the free models" : "Save my key")
+      onClicked: {
+        save.args = ["setup-ai", "--only", page.provider];
+        save.run([], page.free ? "" : key.text);
+      }
+    }
+  }
+  Output { text: save.output }
+  Label {
+    Layout.fillWidth: true
+    text: "Your key is stored only on this computer and is never shown again."
+    color: Theme.faint
+    font.pixelSize: Theme.fontS + 1
+  }
+
+  Label { text: "More ways"; font.weight: Font.DemiBold; Layout.topMargin: 8 }
+  Flow {
+    Layout.fillWidth: true
+    spacing: 8
+    Chip { text: "Use an account I already have"; onClicked: page.inTerminal("connect an account", "friday connect") }
+    Chip { text: "Keep everything on this computer"; onClicked: page.inTerminal("private mode", "friday private on") }
+  }
+  Label {
+    Layout.fillWidth: true
+    text: "These two open a small window: signing in to an account happens there, and private mode installs a local model and asks for your computer password."
+    wrapMode: Text.Wrap
+    elide: Text.ElideNone
+    color: Theme.faint
+    font.pixelSize: Theme.fontS + 1
+  }
+}
