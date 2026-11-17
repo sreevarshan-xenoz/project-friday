@@ -600,10 +600,10 @@ if bash "$F" voice speak voice loud >/dev/null 2>&1; then fail "a voice that isn
 contains "friday say speaks through friday-ctl" "$(cat "$LOG")" "friday-ctl-say hello there"
 : >"$LOG"; bash "$F" voice speak setup kitten >/dev/null
 contains "setup installs the chosen voice through friday-ctl" "$(cat "$LOG")" "friday-ctl-say --setup kitten"
-: >"$LOG"; bash "$F" voice speak setup tinyvoca >/dev/null
-contains "setup tinyvoca installs the small voice" "$(cat "$LOG")" "friday-ctl-say --setup tinyvoca"
+: >"$LOG"; bash "$F" voice speak setup kokoro >/dev/null
+contains "setup kokoro installs the expressive voice" "$(cat "$LOG")" "friday-ctl-say --setup kokoro"
 : >"$LOG"; bash "$F" voice speak setup >/dev/null
-contains "setup with no name installs Kokoro, the default voice" "$(cat "$LOG")" "friday-ctl-say --setup kokoro"
+contains "setup with no name installs tiny voca, the default voice" "$(cat "$LOG")" "friday-ctl-say --setup tinyvoca"
 : >"$LOG"; bash "$F" voice speak voices >/dev/null
 contains "voices asks friday-ctl for the installed voice's names" "$(cat "$LOG")" "friday-ctl-say --voices"
 bash "$F" voice speak off >/dev/null

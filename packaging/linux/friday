@@ -51,7 +51,7 @@ Autonomous Agent & Cognitive Loop:
                                    Local model only; nothing leaves the machine
   friday face [status|setup|remove] Face unlock for the lock screen (Gaze)
   friday voice [status|setup|remove] Hold Super+Y and speak (speech to text on this computer)
-  friday voice speak [setup [kokoro|tinyvoca|kitten|supertonic]|on|off|voices|voice N|status]
+  friday voice speak [setup [tinyvoca|kokoro|kitten|supertonic]|on|off|voices|voice N|status]
                                    FRIDAY answers out loud, in a voice made on this computer
   friday say "text"                Say something now (friday say --stop to stop)
   friday app                       Open FRIDAY Settings (a window for all of this, no terminal)
@@ -1080,7 +1080,7 @@ friday_voice_speak() {
       else echo "Spoken answers: not installed (friday voice speak setup)"; fi
       ;;
     setup)
-      friday-ctl say --setup "${2:-kokoro}" || return 1
+      friday-ctl say --setup "${2:-tinyvoca}" || return 1
       echo "Turn it on: friday voice speak on   (try it: friday say \"Hello, I'm FRIDAY.\")"
       ;;
     on)

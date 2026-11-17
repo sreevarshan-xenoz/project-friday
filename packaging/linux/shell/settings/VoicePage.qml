@@ -10,7 +10,7 @@ ColumnLayout {
 
   Label {
     Layout.fillWidth: true
-    text: "FRIDAY can read its answers out loud, in a voice made on this computer. Nothing is sent anywhere to speak. It downloads once (about 150 MB; the small voice is 50 MB and quicker to start) and needs no graphics card."
+    text: "FRIDAY can read its answers out loud, in a voice made on this computer. Nothing is sent anywhere to speak. It downloads once (about 50 MB) and needs no graphics card. Kokoro is a bigger, more expressive voice (about 150 MB)."
     wrapMode: Text.Wrap
     elide: Text.ElideNone
     color: Theme.subtext
@@ -33,7 +33,7 @@ ColumnLayout {
   }
   Cmd {
     id: small
-    args: ["voice", "speak", "setup", "tinyvoca"]
+    args: ["voice", "speak", "setup", "kokoro"]
     onFinished: { speak.refresh(); voices.run(); }
   }
   Flow {
@@ -45,7 +45,7 @@ ColumnLayout {
       onClicked: setup.run()
     }
     Chip {
-      text: small.running ? "Downloading…" : "Small voice (50 MB)"
+      text: small.running ? "Downloading…" : "Kokoro, more expressive (150 MB)"
       onClicked: small.run()
     }
     Chip { text: "Hear it"; onClicked: Quickshell.execDetached(["friday", "say", "Hi, I'm FRIDAY. This is how I sound."]) }

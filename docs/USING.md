@@ -89,9 +89,9 @@ FRIDAY can read its answers out loud in a small voice that is made on your compu
 anywhere to speak, and it needs no GPU.
 
 ```
-friday voice speak setup     download the voice once (about 150 MB, checked against a pinned checksum)
+friday voice speak setup     download the voice once (about 50 MB, checked against a pinned checksum)
 friday voice speak on        read every answer aloud (off: friday voice speak off)
-friday voice speak voices    the installed voice's names (Bella, Heart, ...); pick one: friday voice speak voice 1
+friday voice speak voices    the installed voice's names (Female, Male, ...); pick one: friday voice speak voice 1
 friday say "Hello"           say something now;  friday say --stop  stops it
 ```
 
@@ -99,17 +99,17 @@ The installer can talk you through the install too: after the network check it a
 voice into memory for that session only; nothing is kept on the new system.
 
 It speaks a sentence at a time, so you hear the start while the rest is still being made, and skips code
-blocks. A new answer replaces the one being read. The default is **Kokoro** (Apache-2.0), with Bella as the
-default voice and seven more to choose from (Heart, Nicole, Sarah, Sky, Nova, Emma, Isabella). It is the most
-natural and expressive of the voices that run on a laptop, and also the heaviest: it makes speech at about real
-time on a typical CPU, so FRIDAY works on three sentences at once (about 1 GB of memory while it speaks, and a few
-seconds before the first words). For something lighter and faster:
+blocks. A new answer replaces the one being read. The default is **tiny voca** (Apache-2.0, about 50 MB): a
+4.5-million-parameter voice (Female or Male) that runs inside FRIDAY itself, several times faster than real time
+on a laptop CPU, so speech starts at once. It is clear and natural. FRIDAY's own Rust port of its phonemizer
+(dizione, Apache-2.0) reads numbers, dates, money, units and web addresses aloud, and the tests check it against
+the original Python code. For something more expressive:
 
-- `friday voice speak setup tinyvoca` installs **tiny voca** (Apache-2.0, about 50 MB): a 4.5-million-parameter
-  voice (Female or Male) that runs inside FRIDAY itself, several times faster than real time on a laptop CPU, so
-  speech starts at once. It is clear and natural, a little less expressive than Kokoro. FRIDAY's own Rust port of
-  its phonemizer (dizione, Apache-2.0) reads numbers, dates, money, units and web addresses aloud, and the
-  tests check it against the original Python code.
+- `friday voice speak setup kokoro` installs **Kokoro** (Apache-2.0, about 150 MB), with Bella as the default
+  voice and seven more to choose from (Heart, Nicole, Sarah, Sky, Nova, Emma, Isabella). It is the most
+  expressive of the voices that run on a laptop, and also the heaviest: it makes speech at about real time on a
+  typical CPU, so FRIDAY works on three sentences at once (about 1 GB of memory while it speaks, and a few seconds
+  before the first words).
 - `friday voice speak setup kitten` installs Kitten TTS nano (Apache-2.0), and `friday voice speak setup supertonic`
   installs Supertonic 2 (weights under the [OpenRAIL-M licence](https://huggingface.co/Supertone/supertonic-2)).
 
