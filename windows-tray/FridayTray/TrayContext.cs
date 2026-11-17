@@ -75,6 +75,7 @@ internal sealed class TrayContext : ApplicationContext
             { Checked = ScreenTextOn() };
         menu.Items.Add(_screenText);
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Welcome…", null, (_, _) => ShowWelcome());
         menu.Items.Add("Settings…", null, (_, _) => OpenSettings());
         menu.Items.Add("AI provider…", null, (_, _) => ChooseProvider());
         menu.Items.Add(_startAtLogin);
@@ -103,8 +104,25 @@ internal sealed class TrayContext : ApplicationContext
             AskForAdministrator();
         else if (!_hotkeys.Labels.ContainsKey(AskKind.Plain))
             Notify("FRIDAY", "Another program owns FRIDAY's hotkeys. Click the tray icon to ask.", ToolTipIcon.Warning);
+        else if (Welcome.Pending(install.Paths))
+            ShowWelcome();
         else
             Notify("FRIDAY is running", $"Press {_hotkeys.Labels[AskKind.Plain]} to ask anything.", ToolTipIcon.Info);
+    }
+
+    private WelcomeForm? _welcome;
+
+    private void ShowWelcome()
+    {
+        if (_welcome is { IsDisposed: false })
+        {
+            _welcome.Activate();
+            return;
+        }
+        Welcome.MarkShown(_install.Paths);
+        _welcome = new WelcomeForm(_hotkeys.Labels, ChooseProvider, () => OpenSettings(), () => _ = AskAsync(AskKind.Plain));
+        _welcome.FormClosed += (_, _) => _welcome = null;
+        _welcome.Show();
     }
 
     private async Task AskAsync(AskKind kind, bool pickArea = false)

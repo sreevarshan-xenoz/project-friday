@@ -105,6 +105,8 @@ try {
     # LLAMACPP_VISION: the screen ask must stay on this local model too.
     Set-Content "$config\friday.env" "LLAMACPP_ENABLED=1`nLLAMACPP_BASE_URL=http://127.0.0.1:$port/v1`nLLAMACPP_VISION=1`n"
     Remove-Item "$state\answers.md", "$state\state.json" -ErrorAction SilentlyContinue
+    # The first-run welcome window would take the focus the hotkey checks depend on.
+    Set-Content "$state\welcomed" ""
 
     $tray = Start-Process "$InstallDir\friday-tray.exe" -PassThru
     if (WaitFor { (Test-Path "$state\state.json") -and ((Get-Content "$state\state.json" -Raw) -match '"status":\s*"running"') } 90) {
