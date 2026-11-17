@@ -52,6 +52,13 @@ jobs:
         run: cargo clippy --all-targets --all -- -D warnings
       - name: Test
         run: cargo test --all
+      - name: tiny-voca (pinned download, phonemes against the Python original, the real model)
+        run: |
+          cargo build -p friday-mobile --bin friday-ctl
+          export FRIDAY_VOICE_DIR="$RUNNER_TEMP/voice"
+          target/debug/friday-ctl say --setup tinyvoca
+          FRIDAY_TINYVOCA_DATA="$FRIDAY_VOICE_DIR/model" FRIDAY_TINYVOCA_RUNTIME="$FRIDAY_VOICE_DIR/lib/libonnxruntime.so" \
+            cargo test -p friday-mobile --lib tinyvoca
       - name: End-to-end ask (real daemon, fake model, no network)
         run: |
           cargo build -p friday-mobile --bin friday-linux-daemon --bin friday-ctl
@@ -233,6 +240,18 @@ jobs:
           if ($wavs.Count -lt 3) { throw "default voice: expected 3 spoken sentences, got $($wavs.Count)" }
           foreach ($w in $wavs) { if ($w.Length -lt 20000) { throw "default voice: $($w.Name) is too small ($($w.Length) bytes)" } }
           Write-Host "the default voice spoke $($wavs.Count) sentences"
+          # The small voice (tiny voca) runs inside friday-ctl on the ONNX Runtime that ships with the engine package.
+          & $ctl say --setup tinyvoca
+          if ($LASTEXITCODE -ne 0) { throw "friday-ctl say --setup tinyvoca exited $LASTEXITCODE" }
+          $names = (& $ctl say --voices) -join "`n"
+          if ($names -notmatch '0 Female') { throw "the small voice should start with Female, got: $names" }
+          Remove-Item $dump -Recurse -Force
+          & $ctl say "Hello from FRIDAY. This is a test of the voice. Nothing is played."
+          if ($LASTEXITCODE -ne 0) { throw "friday-ctl say (small voice) exited $LASTEXITCODE" }
+          $wavs = @(Get-ChildItem $dump -Filter *.wav)
+          if ($wavs.Count -lt 3) { throw "small voice: expected 3 spoken sentences, got $($wavs.Count)" }
+          foreach ($w in $wavs) { if ($w.Length -lt 20000) { throw "small voice: $($w.Name) is too small ($($w.Length) bytes)" } }
+          Write-Host "the small voice spoke $($wavs.Count) sentences"
           exit 0
       - name: Smoke test (tray --smoke)
         run: |

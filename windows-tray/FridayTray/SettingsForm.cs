@@ -214,6 +214,26 @@ internal sealed class SettingsForm : Form
         yield return Row(Theme.Button("Connect an account…"), _do.ConnectAccounts);
     }
 
+    private Button Download(string text, bool primary, string[] setup)
+    {
+        var button = Theme.Button(text, primary: primary);
+        button.Click += async (_, _) =>
+        {
+            button.Enabled = false;
+            Said("Downloading the voice…");
+            var (ok, output) = await Ctl.RunAsync(_install, setup, TimeSpan.FromMinutes(15));
+            if (ok)
+                Show("Voice");
+            else
+            {
+                button.Enabled = true;
+                Said("");
+                MessageBox.Show(this, "The voice wasn't installed:\n\n" + output.Trim(), "FRIDAY", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        };
+        return button;
+    }
+
     private IEnumerable<Control> Voice()
     {
         var paths = _install.Paths;
@@ -221,22 +241,9 @@ internal sealed class SettingsForm : Form
         {
             yield return Note("FRIDAY can read its answers out loud in a voice that is made on this PC: nothing is sent anywhere to speak. " +
                 "It downloads once (about 150 MB, checked against a fixed checksum) and runs on the CPU. The voice (Bella, and seven more to choose from) is natural and expressive; it takes a few seconds before the first words and about 1 GB of memory while it speaks.");
-            var install = Theme.Button("Download FRIDAY's voice", primary: true);
-            install.Click += async (_, _) =>
-            {
-                install.Enabled = false;
-                Said("Downloading the voice…");
-                var (ok, output) = await Ctl.RunAsync(_install, ["say", "--setup"], TimeSpan.FromMinutes(15));
-                if (ok)
-                    Show("Voice");
-                else
-                {
-                    install.Enabled = true;
-                    Said("");
-                    MessageBox.Show(this, "The voice wasn't installed:\n\n" + output.Trim(), "FRIDAY", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                }
-            };
-            yield return install;
+            yield return Download("Download FRIDAY's voice", primary: true, setup: ["say", "--setup"]);
+            yield return Note("Short on disk or memory? The small voice (tiny voca) is about 50 MB, starts at once and sounds clear, a little less expressive.");
+            yield return Download("Download the small voice", primary: false, setup: ["say", "--setup", "tinyvoca"]);
             yield break;
         }
         yield return Switch(

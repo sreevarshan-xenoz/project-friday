@@ -103,9 +103,15 @@ blocks. A new answer replaces the one being read. The default is **Kokoro** (Apa
 default voice and seven more to choose from (Heart, Nicole, Sarah, Sky, Nova, Emma, Isabella). It is the most
 natural and expressive of the voices that run on a laptop, and also the heaviest: it makes speech at about real
 time on a typical CPU, so FRIDAY works on three sentences at once (about 1 GB of memory while it speaks, and a few
-seconds before the first words). For something lighter and faster, `friday voice speak setup kitten` installs
-Kitten TTS nano (Apache-2.0) and `friday voice speak setup supertonic` installs Supertonic 2 (weights under the
-[OpenRAIL-M licence](https://huggingface.co/Supertone/supertonic-2)).
+seconds before the first words). For something lighter and faster:
+
+- `friday voice speak setup tinyvoca` installs **tiny voca** (Apache-2.0, about 50 MB): a 4.5-million-parameter
+  voice (Female or Male) that runs inside FRIDAY itself, several times faster than real time on a laptop CPU, so
+  speech starts at once. It is clear and natural, a little less expressive than Kokoro. FRIDAY's own Rust port of
+  its phonemizer (dizione, Apache-2.0) reads numbers, dates, money, units and web addresses aloud, and the
+  tests check it against the original Python code.
+- `friday voice speak setup kitten` installs Kitten TTS nano (Apache-2.0), and `friday voice speak setup supertonic`
+  installs Supertonic 2 (weights under the [OpenRAIL-M licence](https://huggingface.co/Supertone/supertonic-2)).
 
 ## How is my computer doing?
 

@@ -20,13 +20,15 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-/// Which model the engine is running. Supertonic is recognised by its files;
-/// Kitten and Kokoro are named in `settings.json`.
+/// Which model is speaking. Supertonic is recognised by its files; the others
+/// are named in `settings.json`. TinyVoca runs in this process (the sherpa-onnx
+/// engine package only lends it ONNX Runtime); the rest run the engine program.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Supertonic,
     Kitten,
     Kokoro,
+    TinyVoca,
 }
 
 /// Kokoro's English female voices as (name, speaker id in the model). The
@@ -53,6 +55,7 @@ pub fn voice_names(kind: Kind) -> Vec<String> {
         .map(String::from)
         .into(),
         Kind::Supertonic => (1..=10).map(|n| format!("Voice {n}")).collect(),
+        Kind::TinyVoca => crate::tinyvoca::VOICES.map(String::from).into(),
     }
 }
 
@@ -62,6 +65,7 @@ impl Kind {
             "supertonic" => Some(Kind::Supertonic),
             "kitten" => Some(Kind::Kitten),
             "kokoro" => Some(Kind::Kokoro),
+            "tinyvoca" | "tiny-voca" => Some(Kind::TinyVoca),
             _ => None,
         }
     }
@@ -197,6 +201,8 @@ pub fn engine_args(v: &Voice, text: &str, out: &Path) -> Vec<String> {
             format!("--kokoro-lexicon={}", m("lexicon-us-en.txt")),
             format!("--kokoro-length-scale={}", 1.0 / v.speed),
         ]),
+        // Spoken in this process: there is no command line.
+        Kind::TinyVoca => {}
     }
     a.push(text.to_string());
     a
@@ -652,6 +658,48 @@ impl Synth for EngineSynth {
     }
 }
 
+/// tiny-voca, run in this process (no program to start per sentence).
+pub struct TinyVocaSynth {
+    voca: crate::tinyvoca::Voca,
+    voice: usize,
+    speed: f32,
+}
+
+impl TinyVocaSynth {
+    pub fn load(v: &Voice) -> Result<Self, String> {
+        let root = v
+            .engine
+            .parent()
+            .and_then(Path::parent)
+            .unwrap_or(Path::new("."));
+        // The ONNX Runtime that comes with the engine package: bin/ on Windows, lib/ elsewhere.
+        let runtime = if cfg!(windows) {
+            root.join("bin").join("onnxruntime.dll")
+        } else {
+            root.join("lib").join("libonnxruntime.so")
+        };
+        Ok(Self {
+            voca: crate::tinyvoca::Voca::load(&v.model, &runtime, v.threads as usize)?,
+            voice: v.speaker as usize,
+            speed: v.speed,
+        })
+    }
+}
+
+impl Synth for TinyVocaSynth {
+    fn synth(&self, text: &str) -> Result<Pcm, String> {
+        let mut samples = self.voca.speak(text, self.voice, self.speed)?;
+        if samples.is_empty() {
+            // Nothing to read in this sentence: a moment of silence keeps the WAV valid for the player.
+            samples = vec![0; crate::tinyvoca::SAMPLE_RATE as usize / 20];
+        }
+        Ok(Pcm {
+            rate: crate::tinyvoca::SAMPLE_RATE,
+            samples,
+        })
+    }
+}
+
 /// Plays through the system's audio: PipeWire, PulseAudio or ALSA on Linux,
 /// Windows' own sound player on Windows. With `dump` set (`FRIDAY_SAY_DUMP`
 /// names a folder), each sentence is saved there instead of played, which is
@@ -770,8 +818,16 @@ pub fn stop_running() -> bool {
 pub fn say(text: &str) -> Result<Spoken, String> {
     let dir = voice_dir();
     let voice = detect(&dir).ok_or("FRIDAY's voice isn't installed (friday voice speak setup)")?;
-    stop_running();
     let work = std::env::temp_dir().join(format!("friday-say-{}", std::process::id()));
+    // Loaded before anything is written, so a voice that can't load leaves nothing behind.
+    let synth: Arc<dyn Synth> = match voice.kind {
+        Kind::TinyVoca => Arc::new(TinyVocaSynth::load(&voice)?),
+        _ => Arc::new(EngineSynth {
+            voice,
+            work_dir: work.clone(),
+        }),
+    };
+    stop_running();
     std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
     if let Ok(mut f) = std::fs::File::create(pid_file()) {
         let _ = write!(f, "{}", std::process::id());
@@ -780,16 +836,7 @@ pub fn say(text: &str) -> Result<Spoken, String> {
     let player = SystemPlayer {
         dump: std::env::var_os("FRIDAY_SAY_DUMP").map(PathBuf::from),
     };
-    let result = speak(
-        text,
-        Arc::new(EngineSynth {
-            voice,
-            work_dir: work.clone(),
-        }),
-        &player,
-        &work,
-        cancel,
-    );
+    let result = speak(text, synth, &player, &work, cancel);
     let _ = std::fs::remove_dir_all(&work);
     if std::fs::read_to_string(pid_file())
         .ok()
@@ -818,8 +865,70 @@ const ENGINE: (&str, &str, &str) = (
     "6dffdc715a4465b989446a6105265d2cb345e7101591a17d35534b6758f6e8df",
 );
 
+/// tiny-voca's files (Apache-2.0, n4ze3m/tiny-voca on Hugging Face) at one
+/// revision: (path, sha256). The phonemizer folder holds CMUdict and the
+/// Wikipedia homograph data with their licences.
+const TINYVOCA: &str =
+    "https://huggingface.co/n4ze3m/tiny-voca/resolve/d94d2a0338fd1e0eab7dd896ec0ad23d8cdf7c14";
+const TINYVOCA_FILES: [(&str, &str); 9] = [
+    (
+        "onnx/model.onnx",
+        "fe6d918791a15b82e37465981d7f27a070e46b46635e5a3482fc8dff87a1ae46",
+    ),
+    (
+        "phonemizer/align.json",
+        "864763dbd558a864950266b2c30627f1cad203e75062ee842ee63c653e823b75",
+    ),
+    (
+        "phonemizer/g2p.json",
+        "c518fd839ea0109c0b2b4f778c17506bf0d7653557b8b8c97a4c8dd9883d4432",
+    ),
+    (
+        "phonemizer/g2p.npz",
+        "eb3fd519ff00e72d850928d2fccb968adc36134bca2f3bda09de7e794c2ed01b",
+    ),
+    (
+        "phonemizer/homographs.json",
+        "9c3a96fcdf79fa27d1b3686dc6a507c37e4f754966928608ee9ddb617ba39192",
+    ),
+    (
+        "phonemizer/lexicon.tsv",
+        "3fc930345c6b3cabc533981c4b212fa309eec83913fcdbd42919338270d64b06",
+    ),
+    (
+        "phonemizer/LICENSE.cmudict",
+        "bd4ce8e44170a5f9f481310ca85c51de3c4f851a65e679b40e603b143bd3542a",
+    ),
+    (
+        "phonemizer/LICENSE.homograph-data",
+        "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    ),
+    (
+        "LICENSE",
+        "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    ),
+];
+
+/// The model folder of tiny-voca: `model.onnx`, `phonemizer/` and the licences.
+fn fetch_tinyvoca(into: &Path) -> Result<(), String> {
+    for (path, sha) in TINYVOCA_FILES {
+        let name = Path::new(path).file_name().unwrap_or_default();
+        let dest = into
+            .join(path.rsplit_once('/').map_or("", |(dir, _)| dir))
+            .join(name);
+        std::fs::create_dir_all(dest.parent().unwrap_or(into)).map_err(|e| e.to_string())?;
+        download(&format!("{TINYVOCA}/{path}"), &dest, sha)?;
+    }
+    // The model sits at the top, as `Voca::load` looks for it.
+    std::fs::rename(into.join("onnx/model.onnx"), into.join("model.onnx"))
+        .map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_dir(into.join("onnx"));
+    Ok(())
+}
+
 fn model_pin(kind: Kind) -> (&'static str, &'static str, &'static str) {
     match kind {
+        Kind::TinyVoca => unreachable!("tiny-voca is not an engine model archive"),
         Kind::Supertonic => (
             "tts-models",
             "sherpa-onnx-supertonic-tts-int8-2026-03-06.tar.bz2",
@@ -850,22 +959,29 @@ fn sha256_hex(path: &Path) -> Result<String, String> {
 fn fetch(pin: (&str, &str, &str), into: &Path) -> Result<PathBuf, String> {
     let (tag, file, sha) = pin;
     let dest = into.join(file);
+    download(&format!("{RELEASES}/{tag}/{file}"), &dest, sha)?;
+    Ok(dest)
+}
+
+/// Downloads `url` to `dest` with `curl` and removes it unless it matches `sha`.
+fn download(url: &str, dest: &Path, sha: &str) -> Result<(), String> {
+    let file = dest.file_name().unwrap_or_default().to_string_lossy();
     let status = Command::new("curl")
         .args(["-fL", "--silent", "--show-error", "-o"])
-        .arg(&dest)
-        .arg(format!("{RELEASES}/{tag}/{file}"))
+        .arg(dest)
+        .arg(url)
         .status()
         .map_err(|e| format!("couldn't run curl: {e}"))?;
     if !status.success() {
         return Err(format!("couldn't download {file}"));
     }
-    if sha256_hex(&dest)? != sha {
-        let _ = std::fs::remove_file(&dest);
+    if sha256_hex(dest)? != sha {
+        let _ = std::fs::remove_file(dest);
         return Err(format!(
             "{file} doesn't match its checksum; not installing it"
         ));
     }
-    Ok(dest)
+    Ok(())
 }
 
 fn untar(archive: &Path, into: &Path) -> Result<(), String> {
@@ -911,19 +1027,27 @@ fn copy_files(from: &Path, to: &Path, keep: impl Fn(&str) -> bool) -> Result<(),
 /// `settings.json`. Anything already there is replaced; a failure leaves the old
 /// voice as it was.
 pub fn setup(dir: &Path, kind: Kind) -> Result<(), String> {
+    // A voice being read aloud holds the engine's libraries open (on Windows that blocks replacing them).
+    stop_running();
     let work = std::env::temp_dir().join(format!("friday-voice-setup-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&work);
     std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
     let result = (|| {
         let engine_tar = fetch(ENGINE, &work)?;
-        let model_tar = fetch(model_pin(kind), &work)?;
         let (engine_out, model_out) = (work.join("engine"), work.join("model"));
         std::fs::create_dir_all(&engine_out).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&model_out).map_err(|e| e.to_string())?;
         untar(&engine_tar, &engine_out)?;
-        untar(&model_tar, &model_out)?;
         let engine_root = only_dir(&engine_out)?;
-        let model_root = only_dir(&model_out)?;
+        // tiny-voca is a set of files; the others are one archive with a folder in it.
+        let model_root = if kind == Kind::TinyVoca {
+            let root = model_out.join("tiny-voca");
+            fetch_tinyvoca(&root)?;
+            root
+        } else {
+            untar(&fetch(model_pin(kind), &work)?, &model_out)?;
+            only_dir(&model_out)?
+        };
         let new = work.join("new");
         // The engine program, and what it loads: the DLLs beside it on Windows, lib/ on Linux.
         copy_files(&engine_root.join("bin"), &new.join("bin"), |n| {
@@ -940,6 +1064,7 @@ pub fn setup(dir: &Path, kind: Kind) -> Result<(), String> {
             Kind::Kitten => "kitten",
             Kind::Kokoro => "kokoro",
             Kind::Supertonic => "supertonic",
+            Kind::TinyVoca => "tinyvoca",
         };
         std::fs::write(
             new.join("settings.json"),
@@ -1139,6 +1264,34 @@ mod tests {
         assert_eq!(voice_names(Kind::Kitten).len(), 8);
         assert_eq!(voice_names(Kind::Supertonic).len(), 10);
         assert_eq!(kind_from_name("Kokoro"), Some(Kind::Kokoro));
+        assert_eq!(voice_names(Kind::TinyVoca), ["Female", "Male"]);
+        assert_eq!(kind_from_name("tinyvoca"), Some(Kind::TinyVoca));
+        assert_eq!(kind_from_name("tiny-voca"), Some(Kind::TinyVoca));
+    }
+
+    #[test]
+    fn tiny_voca_runs_in_this_process_and_is_chosen_in_settings() {
+        // It has no engine command line: the text is all there is.
+        assert_eq!(
+            engine_args(&voice(Kind::TinyVoca), "hi", Path::new("/o.wav"))
+                .iter()
+                .filter(|a| a.starts_with("--kokoro") || a.starts_with("--kitten"))
+                .count(),
+            0
+        );
+        let dir = std::env::temp_dir().join(format!("friday-tiny-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        std::fs::create_dir_all(dir.join("model")).unwrap();
+        std::fs::write(dir.join("bin").join(engine_name()), "").unwrap();
+        std::fs::write(
+            dir.join("settings.json"),
+            r#"{"kind":"tinyvoca","speaker":1}"#,
+        )
+        .unwrap();
+        let v = detect(&dir).unwrap();
+        assert_eq!((v.kind, v.speaker), (Kind::TinyVoca, 1));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
