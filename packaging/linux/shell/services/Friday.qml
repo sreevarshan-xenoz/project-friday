@@ -50,6 +50,23 @@ Singleton {
     onTriggered: file.reload()
   }
 
+  // FRIDAY is speaking while `friday-ctl say` holds its pid file
+  // ($XDG_RUNTIME_DIR/friday-say.pid, removed when it finishes).
+  property bool speaking: false
+  FileView {
+    id: sayFile
+    path: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/friday-say.pid"
+    printErrors: false
+    onLoaded: root.speaking = text().trim() !== ""
+    onLoadFailed: root.speaking = false
+  }
+  Timer {
+    interval: 500
+    running: true
+    repeat: true
+    onTriggered: sayFile.reload()
+  }
+
   readonly property string status: str(parsed.status)
   readonly property bool present: status !== ""
   readonly property bool running: status === "running"
