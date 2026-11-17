@@ -20,6 +20,11 @@ public static class AppSettings
     public static bool ScreenTextOn(IReadOnlyDictionary<string, string> env) =>
         env.TryGetValue(ScreenText, out var v) && v is "1" or "true";
 
+    /// <summary>No key or agent account in friday.env: FRIDAY is on the free models.</summary>
+    public static bool UsingFreeModels(IReadOnlyDictionary<string, string> env) =>
+        !env.Any(kv => !string.IsNullOrWhiteSpace(kv.Value)
+            && (kv.Key.EndsWith("_API_KEY", StringComparison.Ordinal) || kv.Key == "FRIDAY_AGENT_CLIS"));
+
     public static string WithDesktopControl(string existing, bool on) =>
         EnvFile.WithSetting(existing, DesktopControl, on ? null : "0");
 

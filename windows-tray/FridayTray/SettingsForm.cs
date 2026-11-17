@@ -12,6 +12,8 @@ internal sealed record SettingsActions(
     Action OpenLogs,
     Action OpenDataFolder,
     Action RestartIntoAdministrator,
+    Action<string> AskText,
+    Action ShowWelcome,
     IReadOnlyDictionary<AskKind, string> Hotkeys);
 
 /// <summary>
@@ -45,7 +47,7 @@ internal sealed class SettingsForm : Form
         var side = new Panel { Dock = DockStyle.Left, Width = 190, BackColor = Theme.Surface, Padding = new Padding(10, 18, 10, 10) };
         var brand = new Label { Text = "FRIDAY", Font = Theme.Title, ForeColor = Theme.Accent, Dock = DockStyle.Top, Height = 34 };
         var items = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, BackColor = Theme.Surface };
-        foreach (var name in new[] { "General", "Privacy", "AI", "Voice", "Desktop control", "Shortcuts", "About" })
+        foreach (var name in new[] { "Home", "General", "Privacy", "AI", "Voice", "Desktop control", "Shortcuts", "Health & updates", "About" })
         {
             var b = new Button
             {
@@ -72,7 +74,7 @@ internal sealed class SettingsForm : Form
         Controls.Add(_page);
         Controls.Add(side);
         Controls.Add(_status);
-        Show(section is not null && _nav.ContainsKey(section) ? section : "General");
+        Show(section is not null && _nav.ContainsKey(section) ? section : "Home");
     }
 
     private void Show(string name)
@@ -89,12 +91,14 @@ internal sealed class SettingsForm : Form
         column.Controls.Add(new Label { Text = name, Font = new Font("Segoe UI Semibold", 15f), ForeColor = Theme.Text, AutoSize = true, Margin = new Padding(0, 0, 0, 14) });
         foreach (var c in name switch
         {
+            "Home" => Home(),
             "General" => General(),
             "Privacy" => Privacy(),
             "AI" => Ai(),
             "Voice" => Voice(),
             "Desktop control" => Desktop(),
             "Shortcuts" => Shortcuts(),
+            "Health & updates" => HealthAndUpdates(),
             _ => About(),
         })
             column.Controls.Add(c);
@@ -103,6 +107,55 @@ internal sealed class SettingsForm : Form
     }
 
     // ---- pages ----
+
+    private IEnumerable<Control> Home()
+    {
+        var env = EnvFile.Load(_install.Paths.EnvFile);
+        yield return Pair("FRIDAY", DaemonState.Read(_install.Paths.StateFile).Detail);
+        yield return Pair("AI", AppSettings.UsingFreeModels(env)
+            ? "Free models (they may keep what you send)"
+            : "Your own account or key");
+        yield return Pair("Voice", !Speaking.Installed(_install.Paths) ? "Not set up"
+            : Speaking.Enabled(_install.Paths) ? "On" : "Off");
+        yield return Note("Press " + (_do.Hotkeys.TryGetValue(AskKind.Plain, out var k) ? k : "the tray icon") + " any time to ask FRIDAY anything.");
+        yield return Row(Theme.Button("Ask FRIDAY something", primary: true), () => _do.AskText(""));
+        yield return Row(Theme.Button("How is my computer doing?"), () => _do.AskText("How is my computer doing?"));
+        yield return Row(Theme.Button("Show the welcome again"), _do.ShowWelcome);
+    }
+
+    private IEnumerable<Control> HealthAndUpdates()
+    {
+        var v = typeof(SettingsForm).Assembly.GetName().Version;
+        yield return Pair("This version", $"{v?.Major}.{v?.Minor}.{v?.Build}");
+        yield return Note("FRIDAY doesn't update itself. To get the newest version, download it and run it over this one; your settings and data are kept.");
+        yield return Row(Theme.Button("Open the download page", primary: true),
+            () => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                "https://github.com/sreevarshan-xenoz/project-friday/releases/latest") { UseShellExecute = true }));
+        yield return Row(Theme.Button("Check my computer's health"), () => _do.AskText("How is my computer doing?"));
+        yield return Row(Theme.Button("Restart FRIDAY"), () => { _do.RestartDaemon(); Said("FRIDAY restarted."); });
+        yield return Note("Something wrong? Save a short report to your desktop to send to whoever is helping. It has versions and which switches are on; no questions, answers, logs or keys.");
+        yield return Row(Theme.Button("Save a support report"), SaveReport);
+    }
+
+    private void SaveReport()
+    {
+        var env = EnvFile.Load(_install.Paths.EnvFile);
+        var v = typeof(SettingsForm).Assembly.GetName().Version;
+        var voice = !Speaking.Installed(_install.Paths) ? "not set up" : Speaking.Enabled(_install.Paths) ? "on" : "off";
+        var text = SupportReport.Build($"{v?.Major}.{v?.Minor}.{v?.Build}", Environment.OSVersion.VersionString,
+            DaemonState.Read(_install.Paths.StateFile).Detail, AppSettings.UsingFreeModels(env),
+            AppSettings.DesktopControlOn(env), AppSettings.ScreenTextOn(env), voice);
+        var file = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "FRIDAY support report.txt");
+        try
+        {
+            File.WriteAllText(file, text);
+            Said("Saved to your desktop: FRIDAY support report.txt");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(this, "Couldn't save the report: " + e.Message, "FRIDAY", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
 
     private IEnumerable<Control> General()
     {
