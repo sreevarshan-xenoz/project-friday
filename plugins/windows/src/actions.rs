@@ -24,6 +24,7 @@ pub const ACTIONS: &[&str] = &[
     "brightness",
     "desktops",
     "findapp",
+    "health",
 ];
 
 /// Build the capability intent string for an adapter verb.

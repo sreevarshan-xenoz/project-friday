@@ -21,6 +21,7 @@
     "windows.volume",
     "windows.brightness",
     "windows.desktops",
-    "windows.findapp"
+    "windows.findapp",
+    "windows.health"
   ]
 }

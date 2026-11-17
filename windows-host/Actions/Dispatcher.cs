@@ -34,6 +34,7 @@ public class Dispatcher
         Register(new BrightnessHandler());
         Register(new DesktopsHandler());
         Register(new FindAppHandler());
+        Register(new HealthHandler());
     }
 
     private void Register(IActionHandler handler)

@@ -34,7 +34,8 @@ pub enum Risk {
 /// The risk class of a desktop verb; `None` for a verb this adapter lacks.
 pub fn risk_of(action: &str) -> Option<Risk> {
     Some(match action {
-        "windows" | "active_window" | "workspaces" | "now_playing" | "find_app" => Risk::Read,
+        "windows" | "active_window" | "workspaces" | "now_playing" | "find_app"
+        | "system_health" => Risk::Read,
         "focus_window" | "move_window" | "switch_workspace" | "launch_app" | "media" | "volume"
         | "brightness" | "power_profile" => Risk::Reversible,
         "close_window" => Risk::Destructive,
@@ -348,6 +349,36 @@ impl DesktopAdapter {
                 self.exec.run("playerctl", &[cmd.into()])?;
                 Ok(json!({"media": cmd}))
             }
+            "system_health" => {
+                // Looks only. Each part is best effort: a missing tool is a
+                // blank, not a failure, so one broken part never hides the rest.
+                let cmd = |program: &str, args: &[&str]| {
+                    let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+                    self.exec.run(program, &args).unwrap_or_default()
+                };
+                let lines = |text: String, n: usize| -> Vec<String> {
+                    text.lines()
+                        .map(|l| l.chars().take(200).collect::<String>())
+                        .filter(|l| !l.trim().is_empty())
+                        .take(n)
+                        .collect()
+                };
+                let battery = |file: &str| {
+                    cmd("cat", &[&format!("/sys/class/power_supply/BAT0/{file}")])
+                        .trim()
+                        .to_string()
+                };
+                Ok(json!({
+                    "failed_services": lines(cmd("systemctl", &["--failed", "--no-legend", "--plain"]), 10),
+                    "failed_user_services": lines(cmd("systemctl", &["--user", "--failed", "--no-legend", "--plain"]), 10),
+                    "errors_this_boot": lines(cmd("journalctl", &["-b", "-p", "3", "--no-pager", "-q", "-n", "8", "-o", "cat"]), 8),
+                    "disk_root": lines(cmd("df", &["-hP", "/"]), 2),
+                    "memory": lines(cmd("free", &["-m"]), 3),
+                    "load": cmd("cat", &["/proc/loadavg"]).trim(),
+                    "uptime": cmd("uptime", &["-p"]).trim(),
+                    "battery": {"percent": battery("capacity"), "status": battery("status")},
+                }))
+            }
             "now_playing" => {
                 let out = self
                     .exec
@@ -495,6 +526,7 @@ impl ActionAdapter for DesktopAdapter {
             "find_app",
             "media",
             "now_playing",
+            "system_health",
             "volume",
             "brightness",
             "power_profile",
@@ -608,6 +640,14 @@ mod tests {
             if program == "gtk-launch" && self.no_entry.contains(&args[0].as_str()) {
                 return Err("no such entry".into());
             }
+            if line == "systemctl --failed --no-legend --plain" {
+                return Ok("friday-shell.service loaded failed failed FRIDAY Shell\n".into());
+            }
+            if line == "df -hP /" {
+                return Ok(
+                    "Filesystem Size Used Avail Use% Mounted on\n/dev/x 100G 97G 3G 97% /\n".into(),
+                );
+            }
             if program == "playerctl" && args[0] == "metadata" {
                 return Ok("Some Artist - A Song\n".into());
             }
@@ -619,6 +659,26 @@ mod tests {
         DesktopAdapter::with_exec(stub.clone())
             .execute(ActionRequest::new("desktop", action, params))
             .await
+    }
+
+    #[tokio::test]
+    async fn system_health_reports_what_is_wrong_and_changes_nothing() {
+        let stub = Stub::new(&[]);
+        let r = run(&stub, "system_health", json!({})).await;
+        assert!(r.success, "{:?}", r.error);
+        let text = r.output.to_string();
+        assert!(text.contains("friday-shell.service"), "{text}");
+        assert!(text.contains("97%"), "{text}");
+        assert!(stub.calls().iter().all(|c| [
+            "systemctl",
+            "journalctl",
+            "df",
+            "free",
+            "cat",
+            "uptime"
+        ]
+        .iter()
+        .any(|p| c.starts_with(p))));
     }
 
     #[test]
