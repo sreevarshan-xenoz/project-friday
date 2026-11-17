@@ -100,6 +100,12 @@ if timeout 10 qs -p "$FS" ipc call answer present true "What's using my disk?" "
 else
   fail "nothing answers the answer pill's IPC target"
 fi
+# The Settings AI page must never delete saved keys by itself: saving keeps the
+# others, and the one --only (back to the free models) sits behind a confirm.
+AI_PAGE="$FS/settings/AIPage.qml"
+if grep -q -- '--keep-others' "$AI_PAGE" && [[ "$(grep -c -- '--only' "$AI_PAGE")" == 1 ]] && grep -q 'confirmingFree' "$AI_PAGE"; then
+  pass "Settings AI page keeps saved keys unless the free-models confirm is accepted"
+else fail "Settings AI page may delete saved keys without asking"; fi
 # FRIDAY Settings: opens on a page, shows it, closes.
 timeout 10 qs -p "$FS" ipc call settings open Voice >/dev/null 2>&1 || true
 sleep 1.5; grim "$W/friday-settings.png" 2>/dev/null || true

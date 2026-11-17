@@ -72,8 +72,11 @@ ColumnLayout {
 
   Cmd {
     id: save
-    onFinished: key.text = ""
+    onFinished: { key.text = ""; page.confirmingFree = false; }
   }
+  // Saving a key adds it: the keys already saved stay, and FRIDAY can fall back
+  // to them. Going back to the free models removes them, so it asks first.
+  property bool confirmingFree: false
   Flow {
     Layout.fillWidth: true
     spacing: 8
@@ -81,15 +84,46 @@ ColumnLayout {
       primary: true
       text: save.running ? "Saving…" : (page.free ? "Use the free models" : "Save my key")
       onClicked: {
-        save.args = ["setup-ai", "--only", page.provider];
-        save.run([], page.free ? "" : key.text);
+        if (page.free) { page.confirmingFree = true; return; }
+        save.args = ["setup-ai", "--keep-others", page.provider];
+        save.run([], key.text);
+      }
+    }
+  }
+  Rectangle {
+    visible: page.confirmingFree
+    Layout.fillWidth: true
+    implicitHeight: freeAsk.implicitHeight + 24
+    radius: Theme.radiusS
+    color: Theme.surface
+    border.width: 1
+    border.color: Theme.warn
+    ColumnLayout {
+      id: freeAsk
+      anchors.fill: parent
+      anchors.margins: 12
+      spacing: 10
+      Label {
+        Layout.fillWidth: true
+        text: "Use only the free models? Any AI keys you saved are removed from this computer (you can add them again later)."
+        wrapMode: Text.Wrap
+        elide: Text.ElideNone
+      }
+      Row {
+        spacing: 8
+        Chip {
+          primary: true
+          text: "Yes, free models only"
+          onClicked: { save.args = ["setup-ai", "--only", "opencode"]; save.run([], ""); }
+        }
+        Chip { text: "Cancel"; onClicked: page.confirmingFree = false }
       }
     }
   }
   Output { text: save.output }
   Label {
     Layout.fillWidth: true
-    text: "Your key is stored only on this computer and is never shown again."
+    text: "A saved key is added to the ones you already have; FRIDAY can fall back to them. It is stored only on this computer and never shown again."
     color: Theme.faint
     font.pixelSize: Theme.fontS + 1
   }
