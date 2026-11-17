@@ -13,8 +13,9 @@ import Quickshell.Io
 //                               // "island" (three floating pills) or "dock"
 //                               // (a floating bar at the bottom)
 //     "palette": "ember",       // FRIDAY's own: "ember", "frost", "moss",
-//                               // "dawn" (light); or "omarchy" (follow the
-//                               // current Omarchy theme). "friday" = "ember".
+//                               // "dawn" (light); or "classic" (follow the
+//                               // desktop theme). "friday" = "ember"; the old
+//                               // name "omarchy" = "classic".
 //     "clock24h": true,
 //     "workspaces": 5,          // workspace slots always shown in the bar
 //     "notificationTimeout": 6  // seconds; FRIDAY's own answers stay longer
@@ -28,9 +29,9 @@ Singleton {
   property var settings: ({})
 
   readonly property var styles: ["ember", "island", "dock"]
-  readonly property var palettes: ["ember", "frost", "moss", "dawn", "omarchy"]
+  readonly property var palettes: ["ember", "frost", "moss", "dawn", "classic"]
   readonly property string style: styles.includes(pick("style", "ember")) ? pick("style", "ember") : "ember"
-  readonly property string palette: pick("palette", "ember") === "friday" ? "ember" : pick("palette", "ember")
+  readonly property string palette: pick("palette", "ember") === "friday" ? "ember" : pick("palette", "ember") === "omarchy" ? "classic" : pick("palette", "ember")
   readonly property bool clock24h: pick("clock24h", true) === true
   readonly property int workspaces: Math.max(1, Math.min(10, Number(pick("workspaces", 5)) || 5))
   readonly property int notificationTimeout: Math.max(2, Number(pick("notificationTimeout", 6)) || 6)

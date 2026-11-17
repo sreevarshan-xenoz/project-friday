@@ -12,7 +12,7 @@ import Quickshell.Io
 //   frost  cool slate, ice-blue accent, lilac signal
 //   moss   dark olive, lichen-green accent, amber signal
 //   dawn   light: warm paper, rust accent, deep-teal signal
-// or "omarchy": follow the active Omarchy theme ($XDG_STATE_HOME/omarchy/
+// or "classic": follow the active desktop theme ($XDG_STATE_HOME/omarchy/
 // current/theme/colors.toml, where omarchy-theme-set links it), live.
 //
 // Styles (shell.json "style") change where the bar sits and its shape:
@@ -95,7 +95,7 @@ Singleton {
   readonly property var palette: own[Config.palette] || ember
 
   property var omarchy: ({})
-  readonly property bool followOmarchy: Config.palette === "omarchy" && omarchy.background !== undefined
+  readonly property bool followOmarchy: Config.palette === "classic" && omarchy.background !== undefined
 
   function c(key) {
     if (!root.followOmarchy)
