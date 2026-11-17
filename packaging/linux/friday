@@ -1672,6 +1672,15 @@ case "${1:-}" in
       use_web=true
       goal="${BASH_REMATCH[1]}"
     fi
+    # Asking about the screen in words is asking to look at it, the same as
+    # Super+Ctrl+Y: never answer "I can't see your screen" to that. Narrow on
+    # purpose ("how do I change my screen brightness" is not a look).
+    if ! $use_screen && ! $use_selection && ! $use_followup && ! $use_web &&
+      [[ ! "$goal" =~ ^(how|why)[[:space:]]+(do|to|can|should|would|does) ]] &&
+      [[ "$goal" =~ (on|at|in)[[:space:]]+(my|the|this)[[:space:]]+(screen|window|display)|what[[:space:]]+am[[:space:]]+i[[:space:]]+(looking|looking[[:space:]]+at)|what.s[[:space:]]+on[[:space:]]+(my[[:space:]]+)?screen|look[[:space:]]+at[[:space:]]+(my|this)[[:space:]]+screen ]]; then
+      use_screen=true
+      ask_args+=(--screen)
+    fi
     shopt -u nocasematch
     [ -n "${goal// /}" ] || exit 0
     # Things this computer can answer or do itself go nowhere.

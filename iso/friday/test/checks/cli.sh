@@ -231,6 +231,11 @@ PICK="what does this error mean" bash "$F" ask --screen; sleep 0.3
 contains "screen: asks the daemon with consent and the question" "$(cat "$LOG")" "friday-ctl-context context screen --yes --ask what does this error mean"
 contains "screen: prompt says a screenshot is shared" "$(cat "$LOG")" "a screenshot goes to your AI provider"
 contains "screen: full answer saved" "$(cat "$state/last-answer.md")" $'The error says E0308.\nFix the type.'
+# Asking about the screen in words looks at it; a how-to about the screen does not.
+: >"$LOG"; bash "$F" ask "what is on my screen right now" >/dev/null 2>&1; sleep 0.4
+contains "screen by words: 'what is on my screen' looks at the screen" "$(cat "$LOG")" "context screen --yes --ask what is on my screen right now"
+: >"$LOG"; bash "$F" ask "how do I change my screen brightness" >/dev/null 2>&1; sleep 0.4
+if grep -q "context screen" "$LOG"; then fail "a how-to about the screen captured it"; else pass "a how-to about the screen does not capture it"; fi
 : >"$LOG"; rm -f "$W/again_done"
 ACTION_AGAIN=1 PICK="screen follow-up" bash "$F" ask --screen; sleep 0.5
 contains "Ask again: screen preserves --screen kind" "$(cat "$LOG")" "friday-ctl-context context screen --yes --ask screen follow-up"
