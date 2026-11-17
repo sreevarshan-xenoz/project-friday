@@ -275,6 +275,8 @@ rsync -a /usr/share/fonts/ /mnt/usr/share/fonts/ 2>/dev/null || true
 
 mkdir -p /mnt/usr/share/plymouth/themes
 cp -r /usr/share/plymouth/themes/omarchy /mnt/usr/share/plymouth/themes/ 2>/dev/null || true
+# Omarchy's splash (progress bar and disk-password prompt) with FRIDAY's mark.
+cp -f /usr/share/friday-installer/plymouth-logo.png /mnt/usr/share/plymouth/themes/omarchy/logo.png 2>/dev/null || true
 
 phase_msg 5 "Creating $USERNAME and applying your theme"
 # Hostname & Locales

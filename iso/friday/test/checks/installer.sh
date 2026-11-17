@@ -151,6 +151,10 @@ speak; [[ ! -e "$SV/said" ]] && pass "no voice requested: nothing is spoken" || 
 : >"$SV/voice/on"; speak; grep -qx "say hello" "$SV/said" 2>/dev/null && pass "voice on: the line goes to friday-ctl say" || fail "voice on but nothing was said"
 rm -rf "$SV"
 
+echo "boot splash"
+[[ -s "$ROOT/../usr/share/friday-installer/plymouth-logo.png" ]] && pass "FRIDAY's splash logo ships in the ISO" || fail "plymouth-logo.png is missing"
+grep -q 'friday-installer/plymouth-logo.png /mnt/usr/share/plymouth/themes/omarchy/logo.png' "$ROOT/installer" && pass "the installer puts it into the installed splash theme" || fail "the installer does not use the splash logo"
+
 echo "login security"
 guarded=$(awk '/if \[\[ "\$AUTOLOGIN" == "true" \]\]/ {g=1} /EOF_SDDM_AUTO > \/mnt\/etc\/sddm.conf.d\/autologin.conf/ {print (g ? "guarded" : "unguarded"); exit}' "$ROOT/installer")
 if [[ "$guarded" == guarded ]]; then pass "SDDM autologin is only written when AUTOLOGIN=true"
