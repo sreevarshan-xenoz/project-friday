@@ -62,7 +62,7 @@ step_welcome() {
   # FRIDAY OS boots with systemd-boot, which needs UEFI: say so now, before
   # any question, rather than after the disk has been erased.
   if [[ ! -d /sys/firmware/efi && -z "${FRIDAY_ASSUME_UEFI:-}" ]]; then
-    leave_menu "This computer started in legacy BIOS mode, and FRIDAY OS needs UEFI. Turn on UEFI boot in the firmware settings, then start the USB again."
+    leave_menu "This computer started in legacy BIOS mode, and FRIDAY OS needs UEFI. Turn on UEFI boot in the firmware settings, then start the installer again."
   fi
 }
 
@@ -91,12 +91,31 @@ connect_wifi() {
   sleep 3
 }
 
+# Optional: FRIDAY talks through the install. The voice (about 100 MB) is
+# downloaded into RAM for this session only; nothing is kept on the new system.
+offer_voice() {
+  [[ -e "$FRIDAY_LIVE_VOICE/on" ]] && return 0
+  command -v friday-ctl >/dev/null || return 0
+  gum confirm --default=No --affirmative="Yes, talk to me" --negative="No, stay quiet" \
+    "Want me to talk you through the install? (downloads a small voice, about 100 MB)" || return 0
+  livecd-sound -u >/dev/null 2>&1 || true
+  mkdir -p "$FRIDAY_LIVE_VOICE"
+  if gum spin --spinner dot --title "Getting my voice…" -- \
+    env FRIDAY_VOICE_DIR="$FRIDAY_LIVE_VOICE" friday-ctl say --setup kitten; then
+    : >"$FRIDAY_LIVE_VOICE/on"
+    friday_say "That's me. I'll keep you posted as we go."
+  else
+    friday_warn "I couldn't get the voice. Carrying on quietly."
+  fi
+}
+
 step_network() {
   while true; do
     screen 1
     friday_head "Network"
     if gum spin --spinner dot --title "Checking the internet connection…" -- bash -c "$(declare -f friday_online); friday_online"; then
       friday_ok "Online. I'll download the latest packages during install."
+      offer_voice
       sleep 1
       return
     fi
