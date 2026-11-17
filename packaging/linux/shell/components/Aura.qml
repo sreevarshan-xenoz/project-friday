@@ -5,6 +5,7 @@ import QtQuick
 // cross (colours add up). Drawn on a 2D canvas so it looks the same on the
 // software renderer used in VMs.
 //   listening  slow, wide swells, breathing like someone speaking
+//   speaking   steady, lively swells while FRIDAY talks
 //   working    quick, tight, shimmering
 // Colours come in as properties so the component stands alone.
 Item {
@@ -23,7 +24,7 @@ Item {
 
   // Time in seconds, advanced by the frame timer; the energy eases between modes.
   property real t: 0
-  property real energy: fast ? 1.0 : 0.55
+  property real energy: fast ? 1.0 : mode === "speaking" ? 0.8 : 0.55
   Behavior on energy { NumberAnimation { duration: 600; easing.type: Easing.InOutSine } }
 
   Timer {

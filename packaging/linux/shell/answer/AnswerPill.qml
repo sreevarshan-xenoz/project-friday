@@ -101,15 +101,15 @@ PanelWindow {
         spacing: 10
 
         Orb {
-          visible: win.answering
+          visible: win.answering && !Friday.speaking
           size: 20
           mode: Answer.ok ? "ready" : "stopped"
         }
-        // Listening and thinking: ribbons of light that flow like a voice.
+        // Listening, thinking and speaking: ribbons of light that flow like a voice.
         Aura {
-          visible: !win.answering
+          visible: !win.answering || Friday.speaking
           size: 30
-          mode: Answer.state === "listening" ? "listening" : "working"
+          mode: win.answering ? "speaking" : Answer.state === "listening" ? "listening" : "working"
           primary: Theme.accent
           secondary: Theme.signal
         }
