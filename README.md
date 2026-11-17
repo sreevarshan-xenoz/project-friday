@@ -15,6 +15,15 @@ System integration, not kernel code: UI Automation, ETW and Win32 on Windows; AT
 
 New here? [Using FRIDAY](docs/USING.md) is the short tour: the keys, the answer pill and where your data goes.
 
+**What you get**
+
+- **Ask about your screen or selection**, with one-time consent for a screenshot; "what is on my screen" in words works too.
+- **Answers out loud, made on your computer**: a small CPU voice (Kitten or Supertonic), no GPU, nothing sent anywhere to speak. FRIDAY can talk you through the install, too.
+- **Control apps and windows** by name on both platforms (open, focus, volume, media, desktops); anything that deletes or sends asks first.
+- **"How is my computer doing?"**: a read-only look at services, errors, disk, memory and battery, in plain words.
+- **A settings app on each platform** for people who don't use a terminal ([the pages](docs/SETTINGS-PAGES.md)), and a first-login tour (a welcome window on Windows).
+- **Private by default where it counts**: free models are the starting point and are labelled as such; your own key, an account you already have, or a local model are one click away; a log shows what left the machine.
+
 ## How it fits together
 
 ```mermaid
@@ -139,10 +148,11 @@ flowchart LR
     I2 --> I3["names, password,<br/>disk encryption"]
     I3 --> I4["desktop: Hyprland or niri,<br/>look"]
     I4 --> I5["AI: free models,<br/>or paste a key"]
-    I5 --> I6["install friday-git"]
+    I5 --> I5b["optional: talk me through it,<br/>offer phone pairing"]
+    I5b --> I6["install friday-git"]
   end
   subgraph Login["first login (your session)"]
-    W["welcome notification"] --> W1["Connect an account<br/>(signs in in a browser)"]
+    W["first-login tour"] --> W1["Connect an account<br/>(signs in in a browser)"]
     W --> W2["Choose AI provider"]
     W --> W3["Show shortcuts"]
   end
@@ -184,6 +194,8 @@ msiexec /i FRIDAY-<version>-x64.msi        # add /qn for a silent install
 ```
 
 Per-user, no administrator rights: installs to `%LOCALAPPDATA%\Programs\FRIDAY`, starts the tray at login, adds the tools to the user `PATH` and the Start menu, and runs entirely in your desktop session (it needs the desktop for UI Automation, screenshots and hotkeys). Upgrades and uninstalls close the tray, daemon and host first.
+
+**First run and settings.** The first launch opens a welcome window (the keys, which AI is in use, "Choose my AI…", Settings, "Try it now"). Settings opens on a Home page; the Start menu entry opens it too, and it has Health & updates and a "Save a support report" button. The installer has an options page (start at login, administrator start-up, read a window's text, desktop shortcut).
 
 ### FRIDAY OS
 
@@ -228,6 +240,12 @@ pacman refuses any package or database that key didn't sign. On Windows, install
 | `friday report` | A redacted bug report to read, then share |
 | `friday face setup` | Face unlock for the lock screen (Gaze, on this computer; `status`, `remove`) |
 | `friday voice setup` | Hold Super+Y and speak; speech becomes text on this computer (whisper.cpp) |
+| `friday voice speak [setup\|on\|off\|voice N\|status]` / `friday say "text"` | FRIDAY reads answers aloud in a voice made on this computer (`friday say --stop` stops it) |
+| `friday app [page]` | Open FRIDAY Settings (a window for voice, AI, privacy and health; no terminal needed) |
+| `friday tour` | Take the first-login tour again |
+| `friday screen-text [on\|off]` / `friday app-context [on\|off]` | What a screen or selection ask sends: the window's text instead of a screenshot; the app's name |
+| `friday forget [what] [--yes]` | Show what FRIDAY keeps on this computer, or wipe it |
+| `friday phone [on\|off]` | Pair a phone with Pocketdesk (it asks first) |
 
 Web search (`--web`) queries an ordered chain of backends: SearXNG (`FRIDAY_SEARXNG_URL`), Brave Search (`BRAVE_SEARCH_API_KEY`), DuckDuckGo, and Wikipedia.
 
@@ -278,6 +296,7 @@ More in the Commands table of [AGENTS.md](AGENTS.md), including the test VM.
 ## Documentation
 
 - [AGENTS.md](AGENTS.md): guide for contributors and agents: rules, plan, commands
+- [docs/USING.md](docs/USING.md): using FRIDAY day to day; [docs/SETTINGS-PAGES.md](docs/SETTINGS-PAGES.md): the Settings pages on both platforms
 - [docs/HANDOFF-2026-11-04.md](docs/HANDOFF-2026-11-04.md): the Linux first-hour checklist
 - [docs/Architecture.md](docs/Architecture.md), [docs/Security.md](docs/Security.md)
 - [specs/README.md](specs/README.md), [specs/ipc.md](specs/ipc.md), [specs/events.md](specs/events.md)
