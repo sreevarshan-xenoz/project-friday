@@ -100,6 +100,17 @@ if timeout 10 qs -p "$FS" ipc call answer present true "What's using my disk?" "
 else
   fail "nothing answers the answer pill's IPC target"
 fi
+# FRIDAY Settings: opens on a page, shows it, closes.
+timeout 10 qs -p "$FS" ipc call settings open Voice >/dev/null 2>&1 || true
+sleep 1.5; grim "$W/friday-settings.png" 2>/dev/null || true
+[[ "$(timeout 10 qs -p "$FS" ipc call settings page 2>/dev/null)" == Voice ]] && pass "FRIDAY Settings opens on the Voice page" || fail "FRIDAY Settings did not open"
+for p in Home AI Privacy Health; do
+  timeout 10 qs -p "$FS" ipc call settings open "$p" >/dev/null 2>&1 || true
+  sleep 0.5
+  [[ "$(timeout 10 qs -p "$FS" ipc call settings page 2>/dev/null)" == "$p" ]] || fail "FRIDAY Settings page $p did not open"
+done
+timeout 10 qs -p "$FS" ipc call settings close >/dev/null 2>&1 || true
+[[ -z "$(timeout 10 qs -p "$FS" ipc call settings page 2>/dev/null)" ]] && pass "FRIDAY Settings closes" || fail "FRIDAY Settings did not close"
 # The first-login tour: begins, moves on when FRIDAY answers, can be skipped.
 timeout 10 qs -p "$FS" ipc call tour begin "Alex" true false >/dev/null 2>&1 || true
 sleep 1.5; grim "$W/friday-tour.png" 2>/dev/null || true

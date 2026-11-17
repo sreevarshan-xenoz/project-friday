@@ -15,6 +15,7 @@ import qs.bar
 import qs.drawers
 import qs.notifications
 import qs.osd
+import qs.settings
 import qs.services
 
 ShellRoot {
@@ -32,7 +33,9 @@ ShellRoot {
     }
   }
 
+  SettingsWindow {}
+
   // Touch the singletons that must run from the start: the notification
   // server has to own the bus name before anything notifies.
-  Component.onCompleted: [Notifs.dnd, Shell.drawer, Friday.mode, Answer.state, History.entries, Tour.active]
+  Component.onCompleted: [Notifs.dnd, Shell.drawer, Friday.mode, Answer.state, History.entries, Tour.active, Settings.open]
 }
