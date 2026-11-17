@@ -101,8 +101,17 @@ PanelWindow {
         spacing: 10
 
         Orb {
+          visible: win.answering
           size: 20
-          mode: win.answering ? (Answer.ok ? "ready" : "stopped") : "working"
+          mode: Answer.ok ? "ready" : "stopped"
+        }
+        // Listening and thinking: ribbons of light that flow like a voice.
+        Aura {
+          visible: !win.answering
+          size: 30
+          mode: Answer.state === "listening" ? "listening" : "working"
+          primary: Theme.accent
+          secondary: Theme.signal
         }
         Label {
           Layout.fillWidth: true
