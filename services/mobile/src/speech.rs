@@ -688,7 +688,11 @@ impl TinyVocaSynth {
 
 impl Synth for TinyVocaSynth {
     fn synth(&self, text: &str) -> Result<Pcm, String> {
-        let samples = self.voca.speak(text, self.voice, self.speed)?;
+        let mut samples = self.voca.speak(text, self.voice, self.speed)?;
+        if samples.is_empty() {
+            // Nothing to read in this sentence: a moment of silence keeps the WAV valid for the player.
+            samples = vec![0; crate::tinyvoca::SAMPLE_RATE as usize / 20];
+        }
         Ok(Pcm {
             rate: crate::tinyvoca::SAMPLE_RATE,
             samples,
@@ -814,8 +818,16 @@ pub fn stop_running() -> bool {
 pub fn say(text: &str) -> Result<Spoken, String> {
     let dir = voice_dir();
     let voice = detect(&dir).ok_or("FRIDAY's voice isn't installed (friday voice speak setup)")?;
-    stop_running();
     let work = std::env::temp_dir().join(format!("friday-say-{}", std::process::id()));
+    // Loaded before anything is written, so a voice that can't load leaves nothing behind.
+    let synth: Arc<dyn Synth> = match voice.kind {
+        Kind::TinyVoca => Arc::new(TinyVocaSynth::load(&voice)?),
+        _ => Arc::new(EngineSynth {
+            voice,
+            work_dir: work.clone(),
+        }),
+    };
+    stop_running();
     std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
     if let Ok(mut f) = std::fs::File::create(pid_file()) {
         let _ = write!(f, "{}", std::process::id());
@@ -823,13 +835,6 @@ pub fn say(text: &str) -> Result<Spoken, String> {
     let cancel = Arc::new(AtomicBool::new(false));
     let player = SystemPlayer {
         dump: std::env::var_os("FRIDAY_SAY_DUMP").map(PathBuf::from),
-    };
-    let synth: Arc<dyn Synth> = match voice.kind {
-        Kind::TinyVoca => Arc::new(TinyVocaSynth::load(&voice)?),
-        _ => Arc::new(EngineSynth {
-            voice,
-            work_dir: work.clone(),
-        }),
     };
     let result = speak(text, synth, &player, &work, cancel);
     let _ = std::fs::remove_dir_all(&work);
@@ -1022,6 +1027,8 @@ fn copy_files(from: &Path, to: &Path, keep: impl Fn(&str) -> bool) -> Result<(),
 /// `settings.json`. Anything already there is replaced; a failure leaves the old
 /// voice as it was.
 pub fn setup(dir: &Path, kind: Kind) -> Result<(), String> {
+    // A voice being read aloud holds the engine's libraries open (on Windows that blocks replacing them).
+    stop_running();
     let work = std::env::temp_dir().join(format!("friday-voice-setup-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&work);
     std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
