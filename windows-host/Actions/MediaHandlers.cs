@@ -161,3 +161,16 @@ public class DesktopsHandler : IActionHandler
         }
     }
 }
+
+[SupportedOSPlatform("windows")]
+public class FindAppHandler : IActionHandler
+{
+    public string Intent => "windows.findapp";
+
+    public BridgeResponse Handle(JsonElement payload, WindowRegistry registry)
+    {
+        var query = payload.GetProperty("query").GetString() ?? "";
+        var apps = AppResolver.Search(query, 8);
+        return new BridgeResponse { Ok = true, Output = Serde.ToElement(new { apps }) };
+    }
+}

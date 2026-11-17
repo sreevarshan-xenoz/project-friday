@@ -19,6 +19,7 @@ const VERBS: &[&str] = &[
     "focus_window",
     "close_window",
     "launch_app",
+    "find_app",
     "media",
     "now_playing",
     "volume",
@@ -177,6 +178,12 @@ impl WindowsDesktop {
                 }
                 self.call("open", json!({ "path": app })).await?;
                 Ok(json!({"launched": app}))
+            }
+            "find_app" => {
+                let query =
+                    p("query").ok_or("say what to look for (an app name or what it does)")?;
+                let found = self.call("findapp", json!({ "query": query })).await?;
+                Ok(json!({"apps": found["apps"]}))
             }
             "media" => {
                 let command = match p("command")
@@ -369,6 +376,7 @@ mod tests {
                 "volume" => ActionResult::success(json!({"level": 30, "muted": false})),
                 "brightness" => ActionResult::success(json!({"level": req.parameters["level"]})),
                 "desktops" => ActionResult::success(json!({"count": 3, "current": 2})),
+                "findapp" => ActionResult::success(json!({"apps": ["Brave", "Brave Beta"]})),
                 _ => ActionResult::success(json!({"ok": true})),
             }
         }
@@ -601,6 +609,19 @@ mod tests {
         }
         assert!(!run(&host, "switch_workspace", json!({})).await.success);
         assert_eq!(host.calls().len(), before, "a bad desktop reached the host");
+    }
+
+    #[tokio::test]
+    async fn find_app_asks_the_host_and_returns_the_names() {
+        let host = Host::new(sample());
+        let r = run(&host, "find_app", json!({"query": "brave browser"})).await;
+        assert!(r.success, "{:?}", r.error);
+        assert_eq!(r.output, json!({"apps": ["Brave", "Brave Beta"]}));
+        assert_eq!(
+            host.calls().last().unwrap(),
+            &("findapp".to_string(), json!({"query": "brave browser"}))
+        );
+        assert!(!run(&host, "find_app", json!({})).await.success);
     }
 
     #[tokio::test]

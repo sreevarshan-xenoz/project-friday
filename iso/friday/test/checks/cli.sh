@@ -597,6 +597,21 @@ contains "friday say speaks through friday-ctl" "$(cat "$LOG")" "friday-ctl-say 
 contains "setup installs the chosen voice through friday-ctl" "$(cat "$LOG")" "friday-ctl-say --setup kitten"
 bash "$F" voice speak off >/dev/null
 if [[ -e "$SPK" ]]; then fail "off left the switch on"; else pass "off removes the switch"; fi
+: >"$LOG"; PATH="$TOUR/bin:$PATH" FRIDAY_SHELL_DIR="$TOUR/shell" bash "$F" tour
+contains "friday tour starts the tour again, even after the first login" "$(cat "$LOG")" "ipc call tour begin"
+# A shell that is slow to start: the tour keeps asking, then starts; it is not given up on or doubled with a notification.
+SLOW="$W/slowtour"; mkdir -p "$SLOW/bin" "$SLOW/shell"; : >"$SLOW/shell/shell.qml"; rm -f "$SLOW/count"
+printf '#!/bin/bash\nn=$(( $(cat "%s/count" 2>/dev/null || echo 0) + 1 )); echo $n >"%s/count"\necho "quickshell try $n $*" >>"%s"\n[ "$n" -ge 3 ]\n' "$SLOW" "$SLOW" "$LOG" >"$SLOW/bin/quickshell"; chmod +x "$SLOW/bin/quickshell"
+: >"$LOG"; PATH="$SLOW/bin:$PATH" FRIDAY_SHELL_DIR="$SLOW/shell" FRIDAY_WELCOME_WAIT=5 FRIDAY_WELCOME_RETRY_TENTHS=1 bash "$F" welcome --force
+contains "a slow shell: the tour keeps asking until it answers" "$(cat "$LOG")" "quickshell try 3"
+if grep -q "^notify " "$LOG"; then fail "a slow shell also got the fallback notification"; else pass "no fallback once the tour started"; fi
+# A shell that never comes up: the notification instead, and the welcome counts as shown.
+rm -f "$SLOW/count" "${XDG_STATE_HOME:-$HOME/.local/state}/friday/welcomed"
+printf '#!/bin/bash\necho "quickshell never" >>"%s"\nexit 1\n' "$LOG" >"$SLOW/bin/quickshell"
+: >"$LOG"; PATH="$SLOW/bin:$PATH" FRIDAY_SHELL_DIR="$SLOW/shell" FRIDAY_WELCOME_WAIT=1 FRIDAY_WELCOME_RETRY_TENTHS=2 bash "$F" welcome
+contains "no shell at all: the notification is shown" "$(cat "$LOG")" "Hello,"
+: >"$LOG"; PATH="$SLOW/bin:$PATH" FRIDAY_SHELL_DIR="$SLOW/shell" FRIDAY_WELCOME_WAIT=1 bash "$F" welcome
+if [[ ! -s "$LOG" ]]; then pass "and it is not shown again"; else fail "shown again after the fallback"; fi
 
 echo "shell supervision"
 # A stub quickshell: `-n -p DIR` starts it (crashing the first $QS_CRASHES

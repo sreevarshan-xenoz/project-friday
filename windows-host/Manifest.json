@@ -20,6 +20,7 @@
     "windows.nowplaying",
     "windows.volume",
     "windows.brightness",
-    "windows.desktops"
+    "windows.desktops",
+    "windows.findapp"
   ]
 }

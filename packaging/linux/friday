@@ -54,6 +54,7 @@ Autonomous Agent & Cognitive Loop:
   friday voice speak [setup|on|off|voice N|status]
                                    FRIDAY answers out loud, in a voice made on this computer
   friday say "text"                Say something now (friday say --stop to stop)
+  friday tour                      Take the first-login tour again
   friday screen-text [status|on|off]
                                    Ask about the screen with the window's text, not a screenshot
   friday phone [status|on|off]     Pair a phone with Pocketdesk; answer FRIDAY's questions from it
@@ -1158,7 +1159,6 @@ friday_welcome() {
   local stamp="${XDG_STATE_HOME:-$HOME/.local/state}/friday/welcomed"
   local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
   [ "${1:-}" = "--force" ] || [ ! -e "$stamp" ] || return 0
-  mkdir -p "$(dirname "$stamp")"; : >"$stamp"
   sleep "${FRIDAY_WELCOME_DELAY:-6}"   # let the notification daemon come up
   local name action
   name=$(getent passwd "${USER:-$(id -un)}" | cut -d: -f5 | cut -d, -f1 || true); name="${name:-${USER:-friend}}"
@@ -1167,11 +1167,20 @@ friday_welcome() {
   local phone=false
   command -v pocketdesk >/dev/null 2>&1 && phone=true
   # FRIDAY Shell walks through the keys (press each one); the notification
-  # below is for desktops without it.
-  if command -v quickshell >/dev/null 2>&1 \
-    && timeout 3 bash "$0" shell ipc tour begin "$name" "$free" "$phone" >/dev/null 2>&1; then
-    return 0
+  # below is for desktops without it. The shell can take a while to come up
+  # (slow disks, software rendering), so keep asking until it answers, and only
+  # count the welcome as done once something was shown.
+  mkdir -p "$(dirname "$stamp")"
+  if command -v quickshell >/dev/null 2>&1; then
+    local tries=$(( ${FRIDAY_WELCOME_WAIT:-60} * 10 / ${FRIDAY_WELCOME_RETRY_TENTHS:-20} )) i
+    for (( i = 0; i <= tries; i++ )); do
+      if timeout 3 bash "$0" shell ipc tour begin "$name" "$free" "$phone" >/dev/null 2>&1; then
+        : >"$stamp"; return 0
+      fi
+      sleep "$(awk -v t="${FRIDAY_WELCOME_RETRY_TENTHS:-20}" 'BEGIN{print t/10}')"
+    done
   fi
+  : >"$stamp"
   local body="Press Super+Y to ask me anything, Super+Alt+Y about selected text, Super+Ctrl+Y about your screen."
   $free && body="$body I'm on free models (OpenCode Zen, then Kilo), which may keep what you send. Connect your own account or key for private work."
   local phone_action=()
@@ -1972,6 +1981,9 @@ case "${1:-}" in
   private)
     shift
     friday_private "$@"
+    ;;
+  tour)
+    FRIDAY_WELCOME_DELAY=0 friday_welcome --force
     ;;
   welcome)
     shift
