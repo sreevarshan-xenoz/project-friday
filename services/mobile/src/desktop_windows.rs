@@ -20,6 +20,7 @@ const VERBS: &[&str] = &[
     "close_window",
     "launch_app",
     "find_app",
+    "system_health",
     "media",
     "now_playing",
     "volume",
@@ -185,6 +186,7 @@ impl WindowsDesktop {
                 let found = self.call("findapp", json!({ "query": query })).await?;
                 Ok(json!({"apps": found["apps"]}))
             }
+            "system_health" => self.call("health", json!({})).await,
             "media" => {
                 let command = match p("command")
                     .ok_or("say what to do: play, pause, play-pause, next, previous or stop")?
@@ -377,6 +379,7 @@ mod tests {
                 "brightness" => ActionResult::success(json!({"level": req.parameters["level"]})),
                 "desktops" => ActionResult::success(json!({"count": 3, "current": 2})),
                 "findapp" => ActionResult::success(json!({"apps": ["Brave", "Brave Beta"]})),
+                "health" => ActionResult::success(json!({"memory": "1.0 GB free of 16.0 GB"})),
                 _ => ActionResult::success(json!({"ok": true})),
             }
         }
@@ -609,6 +612,15 @@ mod tests {
         }
         assert!(!run(&host, "switch_workspace", json!({})).await.success);
         assert_eq!(host.calls().len(), before, "a bad desktop reached the host");
+    }
+
+    #[tokio::test]
+    async fn system_health_asks_the_host() {
+        let host = Host::new(sample());
+        let r = run(&host, "system_health", json!({})).await;
+        assert!(r.success, "{:?}", r.error);
+        assert_eq!(r.output["memory"], "1.0 GB free of 16.0 GB");
+        assert_eq!(host.calls().last().unwrap().0, "health");
     }
 
     #[tokio::test]

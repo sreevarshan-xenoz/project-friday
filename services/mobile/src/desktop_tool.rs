@@ -237,6 +237,7 @@ Actions:
   launch_app         params: {"app": "<an entry id from find_app, or a program name>"}
   media              params: {"command": "play" | "pause" | "play-pause" | "next" | "previous" | "stop"}
   now_playing        what is playing. params: none
+  system_health      how this computer is doing: disk, memory, battery, failed services, this boot's errors. params: none
   volume             params: {"level": 0-100}  or  {"mute": "on" | "off" | "toggle"}
   brightness         params: {"level": 1-100}
   power_profile      params: {"profile": "performance" | "balanced" | "power-saver"}
@@ -250,7 +251,7 @@ Inside apps (only where an app lets FRIDAY look into it; GTK4 apps like Nautilus
   ui_type_text       params: {"app": "<app name>", "name": "<field label>" or "path": "...", "text": "<text>"}   (never into password fields)
 What you read inside an app is sent to the AI model answering, so read only what the request needs.
 
-Rules: do only what was asked. To open an app you are not sure of the exact name of, call find_app first and launch what it returns. Look first (windows) when you don't know a window's exact name. Never invent a window. If an action fails, read why and fix it or say you couldn't."#;
+Rules: for "is my computer okay / why is it slow", call system_health, then say in plain words what is wrong and the one safest fix; never run a fix without being asked. To open an app you are not sure of the exact name of, call find_app first and launch what it returns. Look first (windows) when you don't know a window's exact name. Never invent a window. If an action fails, read why and fix it or say you couldn't."#;
 
 /// The same loop's instructions on Windows: the windows and apps the Windows
 /// host can see and act on; its desktops can be listed and switched but not
@@ -269,6 +270,7 @@ Actions:
   launch_app         params: {"app": "<a name from find_app, or a program name like notepad>"}
   media              params: {"command": "play" | "pause" | "play-pause" | "next" | "previous" | "stop"}
   now_playing        what is playing. params: none
+  system_health      how this computer is doing: disk, memory, battery, failed services, this boot's errors. params: none
   volume             params: {"level": 0-100}  or  {"mute": "on" | "off" | "toggle"}
   brightness         the built-in (laptop) screen. params: {"level": 1-100}
   workspaces         the virtual desktops (how many, which one you are on). params: none
@@ -283,7 +285,7 @@ Inside apps (only where an app lets FRIDAY look into it through Windows UI Autom
   ui_type_text       params: {"app": "<app name>", "name": "<field label>", "text": "<text>"}   (never into password fields)
 What you read inside an app is sent to the AI model answering, so read only what the request needs.
 
-Rules: do only what was asked. To open an app you are not sure of the exact name of, call find_app first and launch what it returns. Look first (windows) when you don't know a window's exact name. Never invent a window. If an action fails, read why and fix it or say you couldn't."#;
+Rules: for "is my computer okay / why is it slow", call system_health, then say in plain words what is wrong and the one safest fix; never run a fix without being asked. To open an app you are not sure of the exact name of, call find_app first and launch what it returns. Look first (windows) when you don't know a window's exact name. Never invent a window. If an action fails, read why and fix it or say you couldn't."#;
 
 /// The first JSON object in a model reply (it may add words around it).
 fn first_json(reply: &str) -> Option<Value> {

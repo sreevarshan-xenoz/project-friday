@@ -38,5 +38,6 @@ pub const CAPABILITY_MANIFEST: CapabilityManifest = CapabilityManifest {
         "windows.brightness",
         "windows.desktops",
         "windows.findapp",
+        "windows.health",
     ],
 };

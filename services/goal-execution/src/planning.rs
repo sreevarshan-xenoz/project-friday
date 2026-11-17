@@ -947,6 +947,35 @@ fn is_system_intent(d: &str) -> bool {
     }
 }
 
+/// "How is my computer doing?": a look at the machine's health.
+fn is_health_question(d: &str) -> bool {
+    const OF_THE_MACHINE: [&str; 6] = [
+        "my computer",
+        "my system",
+        "my pc",
+        "my laptop",
+        "this computer",
+        "this machine",
+    ];
+    d.contains("system health")
+        || d.contains("diagnose my")
+        || d.contains("self diagnos")
+        || d.contains("self-diagnos")
+        || (OF_THE_MACHINE.iter().any(|m| d.contains(m))
+            && [
+                "healthy",
+                "health",
+                "okay",
+                "ok?",
+                "running slow",
+                "so slow",
+                "is slow",
+                "doing",
+            ]
+            .iter()
+            .any(|w| d.contains(w)))
+}
+
 /// An instruction to change the desktop. It starts like an instruction (not
 /// "how do I…" or "what is…"), and names something the desktop adapter
 /// controls. "Open notepad" alone stays an app launch; "open Firefox and put
@@ -958,6 +987,7 @@ fn is_desktop_intent(d: &str) -> bool {
         || d.starts_with("now playing")
         || d.starts_with("how many virtual desktops")
         || d.starts_with("which virtual desktop")
+        || is_health_question(d)
     {
         return true;
     }
@@ -1563,6 +1593,10 @@ mod tests {
             "go to desktop 2",
             "switch to the next virtual desktop",
             "how many virtual desktops do I have",
+            "how is my computer doing",
+            "is my system healthy",
+            "why is my laptop so slow",
+            "how is my system health",
         ] {
             assert_eq!(
                 planning.infer_capability(goal, &[]),

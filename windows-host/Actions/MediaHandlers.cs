@@ -174,3 +174,61 @@ public class FindAppHandler : IActionHandler
         return new BridgeResponse { Ok = true, Output = Serde.ToElement(new { apps }) };
     }
 }
+
+/// <summary>
+/// How the computer is doing, for "is my PC okay?": disk, memory, uptime, the
+/// battery, services that should be running and are not, and this boot's
+/// critical errors. Looks only; each part is best effort so one failing part
+/// never hides the rest.
+/// </summary>
+[SupportedOSPlatform("windows")]
+public class HealthHandler : IActionHandler
+{
+    public string Intent => "windows.health";
+
+    // A fixed script (nothing from the request is put into it).
+    private const string Script = @"
+$ErrorActionPreference = 'SilentlyContinue'
+$os = Get-CimInstance Win32_OperatingSystem
+$bat = Get-CimInstance Win32_Battery | Select-Object -First 1
+$boot = $os.LastBootUpTime
+[pscustomobject]@{
+  disks = @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | ForEach-Object { '{0} {1:N0} GB free of {2:N0} GB' -f $_.DeviceID, ($_.FreeSpace/1GB), ($_.Size/1GB) })
+  memory = '{0:N1} GB free of {1:N1} GB' -f ($os.FreePhysicalMemory/1MB), ($os.TotalVisibleMemorySize/1MB)
+  uptime_hours = [math]::Round(((Get-Date) - $boot).TotalHours, 1)
+  battery = if ($bat) { '{0}% (status {1})' -f $bat.EstimatedChargeRemaining, $bat.BatteryStatus } else { $null }
+  stopped_automatic_services = @(Get-CimInstance Win32_Service -Filter ""StartMode='Auto' AND State<>'Running'"" | Select-Object -First 10 -ExpandProperty DisplayName)
+  critical_errors_since_boot = @(Get-WinEvent -FilterHashtable @{LogName='System'; Level=1,2; StartTime=$boot} -MaxEvents 8 | ForEach-Object { ($_.ProviderName + ': ' + ($_.Message -split ""`n"")[0]) })
+} | ConvertTo-Json -Compress -Depth 4
+";
+
+    public BridgeResponse Handle(JsonElement payload, WindowRegistry registry)
+    {
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo(
+                "powershell.exe",
+                "-NoProfile -NonInteractive -EncodedCommand "
+                    + Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(Script)))
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                CreateNoWindow = true,
+            };
+            using var p = System.Diagnostics.Process.Start(psi)
+                ?? throw new InvalidOperationException("PowerShell did not start");
+            var text = p.StandardOutput.ReadToEnd();
+            if (!p.WaitForExit(30000))
+            {
+                p.Kill();
+                return new BridgeResponse { Ok = false, Error = "reading the system's health took too long" };
+            }
+            using var doc = JsonDocument.Parse(text);
+            return new BridgeResponse { Ok = true, Output = doc.RootElement.Clone() };
+        }
+        catch (Exception e) when (e is JsonException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return new BridgeResponse { Ok = false, Error = "could not read the system's health: " + e.Message };
+        }
+    }
+}
