@@ -434,7 +434,7 @@ else
   # Every other option is FRIDAY Shell on Omarchy's Hyprland config. The
   # FRIDAY Shell option uses FRIDAY's own colours; the named themes colour
   # FRIDAY Shell from the Omarchy theme.
-  THEME_SLUG="matte-black"; SHELL_PALETTE="omarchy"
+  THEME_SLUG="matte-black"; SHELL_PALETTE="classic"
   case "$THEME" in
     *"FRIDAY Shell Frost"*) THEME_SLUG="matte-black"; SHELL_PALETTE="frost" ;;
     *"FRIDAY Shell Moss"*)  THEME_SLUG="matte-black"; SHELL_PALETTE="moss" ;;

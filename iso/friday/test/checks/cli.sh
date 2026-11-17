@@ -711,9 +711,13 @@ contains "windows follow the style (dock gaps)" "$(cat "$look")" "gaps_out = 16"
 contains "window borders follow the palette (frost accent)" "$(cat "$look")" 'active_border = "rgba(7cc4ffee)"'
 contains "Hyprland reloads to show it" "$(cat "$LOG")" "hyprctl reload"
 contains "niri's windows get the look too (dock gaps)" "$(cat "$HOME/.config/friday/niri-look.kdl")" "gaps 16"
+"${sh_env[@]}" bash "$F" shell palette classic >/dev/null
+if grep -q active_border "$look"; then fail "the classic palette still overrides the desktop theme's border colours"
+else pass "the classic palette leaves border colours to the desktop theme"; fi
+# The palette's old name still works and is stored under the new one.
+"${sh_env[@]}" bash "$F" shell palette frost >/dev/null
 "${sh_env[@]}" bash "$F" shell palette omarchy >/dev/null
-if grep -q active_border "$look"; then fail "the omarchy palette still overrides Omarchy's border colours"
-else pass "the omarchy palette leaves border colours to Omarchy's theme"; fi
+contains "the old palette name is saved as classic" "$(cat "$HOME/.config/friday/shell.json")" '"palette": "classic"'
 rm -f "$S/hyprctl"
 rm -f "$S/quickshell"
 
