@@ -19,6 +19,9 @@ disturb, and the `friday` commands below are Linux only so far.
 | Super+Alt+Y | the text you selected (or copied) | the question, the text, the app name and window title |
 | Super+Ctrl+Y | your screen | the question and one screenshot. After `friday screen-text on` (Windows: the tray menu's "Read a window's text for screen asks"), the window's text instead when the app offers enough of it (it can include text you can't see, and goes to any provider you use) |
 
+You can also just say it in the question: "what is on my screen" or "what am I looking at" takes the screen path
+(same one-screenshot rule as Super+Ctrl+Y), while a how-to like "how do I change my screen brightness" does not.
+
 Hold Super+Y instead of tapping it to talk (`friday voice setup` first). The
 speech is turned into text on your computer; only the text is sent. On niri, which can't see a key being released, press Mod+Y once to speak and again to ask.
 
@@ -28,7 +31,8 @@ Fix the grammar) and your own prompts, one per line in
 
 ## The answer pill
 
-The answer opens in a pill under the bar and grows as it streams in.
+The answer opens in a pill under the bar and grows as it streams in. While FRIDAY listens, thinks or speaks,
+the pill shows ribbons of light that flow like a voice (slow while listening, quick while thinking).
 
 - **Copy**, or **Type it** into the window you were in (replacing the selection).
 - **Follow up** asks about that answer; **Ask again** repeats the question the
@@ -91,10 +95,27 @@ friday voice speak voice 3   try another voice (0-9)
 friday say "Hello"           say something now;  friday say --stop  stops it
 ```
 
+The installer can talk you through the install too: after the network check it asks (default No) and downloads the
+voice into memory for that session only; nothing is kept on the new system.
+
 It speaks a sentence at a time, so you hear the start while the rest is still being made, and skips code
 blocks. A new answer replaces the one being read. The default voice is Supertonic 2 (weights under the
 [OpenRAIL-M licence](https://huggingface.co/Supertone/supertonic-2)); `friday voice speak setup kitten` installs
 the smaller Kitten TTS nano (Apache-2.0) instead.
+
+## How is my computer doing?
+
+Ask "how is my computer doing", "is my system healthy" or "why is my laptop so slow". FRIDAY looks (read-only) at
+failed services, this boot's errors, disk, memory, load and battery (on Windows: disks, memory, uptime, battery,
+stopped automatic services and this boot's critical errors), says in plain words what is wrong and the one safest
+fix, and never runs a fix unless you ask. `friday doctor` checks FRIDAY itself.
+
+## The first-login tour
+
+FRIDAY OS walks you through the keys the first time you log in: each key is shown as a keycap, you try it, and it
+moves on. The steps offer buttons for turning on a voice and pairing a phone. Take it again any time with
+`friday tour`. On Windows the first run opens a welcome window with the same idea (reopen it from the tray menu's
+"Welcome…").
 
 ## Other ways to ask
 
@@ -151,7 +172,7 @@ The FRIDAY drawer lists them (up to four) with pause/resume and delete buttons. 
 
 ## Your phone (Pocketdesk)
 
-FRIDAY OS installs Pocketdesk, which shows this computer on your Android phone and lets the phone act as its screen, keyboard and remote. It stays off until you turn it on: `friday phone on` asks first, starts it in your session and prints a PIN to enter in the Pocketdesk app on the phone; `friday phone off` stops it and `friday phone status` says where it stands.
+The installer asks, off by default, whether to offer pairing at first login. FRIDAY OS installs Pocketdesk, which shows this computer on your Android phone and lets the phone act as its screen, keyboard and remote. It stays off until you turn it on: `friday phone on` asks first, starts it in your session and prints a PIN to enter in the Pocketdesk app on the phone; `friday phone off` stops it and `friday phone status` says where it stands.
 
 Once a phone is paired and has "Answer my questions" turned on (its Devices page; it is off by default), FRIDAY's questions before it does anything that deletes or sends also go to the phone as a notification. Answer on either one: the first answer wins. No on the phone is one tap; Yes needs the phone's fingerprint or screen lock, so a phone without one can only say No. With no phone set up, nothing changes.
 
