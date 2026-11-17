@@ -69,6 +69,30 @@ PanelWindow {
         }
       }
 
+      // The keys, drawn as keycaps.
+      Row {
+        visible: Tour.current.keys !== ""
+        spacing: 6
+        Repeater {
+          model: Tour.current.keys.split("+")
+          Rectangle {
+            required property string modelData
+            width: keyLabel.implicitWidth + 18
+            height: 28
+            radius: 6
+            color: Theme.overlay
+            border.width: 1
+            border.color: Theme.alpha(Theme.accent, 0.5)
+            Label {
+              id: keyLabel
+              anchors.centerIn: parent
+              text: parent.modelData.trim()
+              font.weight: Font.DemiBold
+            }
+          }
+        }
+      }
+
       Label {
         Layout.fillWidth: true
         text: Tour.current.body
@@ -97,7 +121,15 @@ PanelWindow {
           onClicked: Quickshell.execDetached(["foot", "-T", "FRIDAY · connect an account", "bash", "-c",
             "friday connect; echo; read -rsn1 -p 'Press any key to close.'"])
         }
+        Chip {
+          visible: Tour.current.action !== undefined
+          icon: Icons.settings
+          text: Tour.current.action ? Tour.current.action.label : ""
+          onClicked: Quickshell.execDetached(["foot", "-T", "FRIDAY · " + Tour.current.action.label, "bash", "-c",
+            Tour.current.action.command + "; echo; read -rsn1 -p 'Press any key to close.'"])
+        }
         Item { Layout.fillWidth: true }
+        Chip { visible: Tour.step > 0; text: "Back"; onClicked: Tour.back() }
         Chip { visible: !Tour.last; text: "Skip tour"; onClicked: Tour.finish() }
         Chip {
           primary: true
