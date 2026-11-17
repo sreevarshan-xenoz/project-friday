@@ -600,6 +600,10 @@ if bash "$F" voice speak voice loud >/dev/null 2>&1; then fail "a voice that isn
 contains "friday say speaks through friday-ctl" "$(cat "$LOG")" "friday-ctl-say hello there"
 : >"$LOG"; bash "$F" voice speak setup kitten >/dev/null
 contains "setup installs the chosen voice through friday-ctl" "$(cat "$LOG")" "friday-ctl-say --setup kitten"
+: >"$LOG"; bash "$F" voice speak setup >/dev/null
+contains "setup with no name installs Kokoro, the default voice" "$(cat "$LOG")" "friday-ctl-say --setup kokoro"
+: >"$LOG"; bash "$F" voice speak voices >/dev/null
+contains "voices asks friday-ctl for the installed voice's names" "$(cat "$LOG")" "friday-ctl-say --voices"
 bash "$F" voice speak off >/dev/null
 if [[ -e "$SPK" ]]; then fail "off left the switch on"; else pass "off removes the switch"; fi
 : >"$LOG"; PATH="$TOUR/bin:$PATH" FRIDAY_SHELL_DIR="$TOUR/shell" bash "$F" tour

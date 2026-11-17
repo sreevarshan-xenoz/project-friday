@@ -221,6 +221,18 @@ jobs:
             if ($head -ne 'RIFF' -or $w.Length -lt 20000) { throw "$($w.Name) is not audio ($($w.Length) bytes)" }
           }
           Write-Host "the voice spoke $($wavs.Count) sentences ($(($wavs | Measure-Object Length -Sum).Sum) bytes of audio)"
+          # The default voice (Kokoro): installs, names its voices (Bella first) and speaks.
+          & $ctl say --setup
+          if ($LASTEXITCODE -ne 0) { throw "friday-ctl say --setup (the default voice) exited $LASTEXITCODE" }
+          $names = (& $ctl say --voices) -join "`n"
+          if ($names -notmatch '0 Bella') { throw "the default voice should start with Bella, got: $names" }
+          Remove-Item $dump -Recurse -Force
+          & $ctl say "Hello from FRIDAY. This is a test of the voice. Nothing is played."
+          if ($LASTEXITCODE -ne 0) { throw "friday-ctl say (default voice) exited $LASTEXITCODE" }
+          $wavs = @(Get-ChildItem $dump -Filter *.wav)
+          if ($wavs.Count -lt 3) { throw "default voice: expected 3 spoken sentences, got $($wavs.Count)" }
+          foreach ($w in $wavs) { if ($w.Length -lt 20000) { throw "default voice: $($w.Name) is too small ($($w.Length) bytes)" } }
+          Write-Host "the default voice spoke $($wavs.Count) sentences"
           exit 0
       - name: Smoke test (tray --smoke)
         run: |

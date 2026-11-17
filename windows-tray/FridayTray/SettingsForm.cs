@@ -220,7 +220,7 @@ internal sealed class SettingsForm : Form
         if (!Speaking.Installed(paths))
         {
             yield return Note("FRIDAY can read its answers out loud in a voice that is made on this PC: nothing is sent anywhere to speak. " +
-                "It downloads once (about 100 MB, checked against a fixed checksum) and runs on the CPU with little memory.");
+                "It downloads once (about 150 MB, checked against a fixed checksum) and runs on the CPU. The voice (Bella, and seven more to choose from) is natural and expressive; it takes a few seconds before the first words and about 1 GB of memory while it speaks.");
             var install = Theme.Button("Download FRIDAY's voice", primary: true);
             install.Click += async (_, _) =>
             {
@@ -256,7 +256,31 @@ internal sealed class SettingsForm : Form
         for (var i = 0; i < Speaking.Voices; i++)
             picker.Items.Add($"Voice {i + 1}");
         picker.SelectedIndex = Speaking.Speaker(paths);
-        picker.SelectedIndexChanged += (_, _) => Speaking.SetSpeaker(paths, picker.SelectedIndex);
+        var loading = false;
+        picker.SelectedIndexChanged += (_, _) =>
+        {
+            if (loading || picker.SelectedIndex < 0)
+                return;
+            Speaking.SetSpeaker(paths, picker.SelectedIndex);
+            Ctl.Say(_install, "Hi, I'm FRIDAY. This is how I sound.");
+        };
+        // The installed voice's own names (Bella, Heart, ...) replace "Voice 1, 2, ...".
+        _ = Task.Run(async () =>
+        {
+            var (ok, output) = await Ctl.RunAsync(_install, ["say", "--voices"], TimeSpan.FromSeconds(15));
+            var names = ok ? Speaking.ParseVoices(output) : [];
+            if (names.Count == 0 || picker.IsDisposed)
+                return;
+            picker.BeginInvoke(() =>
+            {
+                loading = true;
+                var keep = Math.Min(Speaking.Speaker(paths), names.Count - 1);
+                picker.Items.Clear();
+                picker.Items.AddRange(names.Cast<object>().ToArray());
+                picker.SelectedIndex = keep;
+                loading = false;
+            });
+        });
         yield return Pair("Voice", "");
         yield return picker;
         yield return Row(Theme.Button("Hear it"), () => Ctl.Say(_install, "Hi, I'm FRIDAY. This is how I sound."));

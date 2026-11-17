@@ -24,6 +24,13 @@ public class SpeakingTests : IDisposable
     }
 
     [Fact]
+    public void The_voice_names_are_read_from_the_numbered_lines()
+    {
+        Assert.Equal(["Bella", "Heart", "Voice 3"], Speaking.ParseVoices("0 Bella\r\n1 Heart\n2 Voice 3\n"));
+        Assert.Empty(Speaking.ParseVoices("friday-ctl: FRIDAY's voice isn't installed"));
+    }
+
+    [Fact]
     public void Nothing_is_spoken_until_the_voice_is_installed_even_if_turned_on()
     {
         Speaking.SetEnabled(_paths, true);
