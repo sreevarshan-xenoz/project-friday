@@ -14,6 +14,8 @@ using FridayTray.Core;
 /// </summary>
 internal static class Program
 {
+    public const string OpenEventName = @"Local\FRIDAY.Tray.Open";
+
     [STAThread]
     private static int Main(string[] args)
     {
@@ -28,7 +30,12 @@ internal static class Program
 
         using var single = new Mutex(true, @"Local\FRIDAY.Tray", out var first);
         if (!first)
+        {
+            // FRIDAY is already running: ask it to open its window (the Start menu entry).
+            try { System.Threading.EventWaitHandle.OpenExisting(OpenEventName).Set(); }
+            catch (Exception e) when (e is System.Threading.WaitHandleCannotBeOpenedException or UnauthorizedAccessException) { }
             return 0;
+        }
         ApplicationConfiguration.Initialize();
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         Application.Run(new TrayContext(install));

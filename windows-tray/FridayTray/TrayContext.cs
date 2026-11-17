@@ -92,6 +92,14 @@ internal sealed class TrayContext : ApplicationContext
             _startAtLogin.Checked = install.StartsAtLogin;
         };
         _icon = new NotifyIcon { ContextMenuStrip = menu, Visible = true, Text = "FRIDAY" };
+        // Opening FRIDAY again (the Start menu entry) opens its window instead of doing nothing.
+        var openWindow = new System.Threading.EventWaitHandle(false, System.Threading.EventResetMode.AutoReset, Program.OpenEventName);
+        var uiContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+        new System.Threading.Thread(() =>
+        {
+            while (openWindow.WaitOne())
+                uiContext.Post(_ => OpenSettings(), null);
+        }) { IsBackground = true, Name = "FRIDAY open-window listener" }.Start();
         _icon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) _ = AskAsync(AskKind.Plain); };
         UpdateStatus();
         _poll.Tick += (_, _) => UpdateStatus();
@@ -192,6 +200,24 @@ internal sealed class TrayContext : ApplicationContext
             var (asked, web) = Asking.WebQuestion(question);
             var request = SourceApp.Append(Asking.BuildRequest(asked, context), appLine);
             await RunRequestAsync(kind, asked, context, request, confirm: null, answer: null, new AskOptions(Web: web, Region: area?.Arg));
+        }
+        finally
+        {
+            _asking = false;
+        }
+    }
+
+    /// <summary>Asks a ready-made question (from a button) and shows the answer like any other.</summary>
+    private async Task AskTextAsync(string question)
+    {
+        if (_asking)
+            return;
+        _asking = true;
+        try
+        {
+            _log.Remember(question);
+            var (asked, web) = Asking.WebQuestion(question);
+            await RunRequestAsync(AskKind.Plain, asked, null, Asking.BuildRequest(asked, null), confirm: null, answer: null, new AskOptions(Web: web));
         }
         finally
         {
@@ -577,6 +603,8 @@ internal sealed class TrayContext : ApplicationContext
             OpenLogs: () => Open(_install.Paths.LogDir),
             OpenDataFolder: () => Open(Path.GetDirectoryName(_install.Paths.EnvFile)!),
             RestartIntoAdministrator: RestartTray,
+            AskText: text => _ = string.IsNullOrWhiteSpace(text) ? AskAsync(AskKind.Plain) : AskTextAsync(text),
+            ShowWelcome: ShowWelcome,
             Hotkeys: _hotkeys.Labels), section);
         _settings.Show();
     }
