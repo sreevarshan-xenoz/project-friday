@@ -78,7 +78,12 @@ internal static class Theme
             Padding = new Padding(10, 4, 10, 4),
             Cursor = Cursors.Hand,
         };
-        b.FlatAppearance.BorderSize = 0;
+        // A visible edge and a hover colour, so a button never looks disabled
+        // against the dark surface.
+        b.FlatAppearance.BorderSize = primary ? 0 : 1;
+        b.FlatAppearance.BorderColor = Outline;
+        b.FlatAppearance.MouseOverBackColor = primary ? ControlPaint.Light(Accent, 0.2f) : ColorTranslator.FromHtml("#2a2f39");
+        b.FlatAppearance.MouseDownBackColor = primary ? ControlPaint.Dark(Accent, 0.1f) : Surface;
         return b;
     }
 }

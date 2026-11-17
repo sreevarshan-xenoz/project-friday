@@ -76,10 +76,13 @@ internal sealed class AnswerForm : Form
         _buttons = new FlowLayoutPanel
         {
             Dock = DockStyle.Bottom,
-            Height = 38,
+            // As tall as the buttons need (a fixed height clipped them, and more so
+            // at larger display scaling), growing a row when they wrap.
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
             FlowDirection = FlowDirection.RightToLeft,
             BackColor = Theme.Bg,
-            Padding = new Padding(0, 6, 0, 0),
+            Padding = new Padding(0, 8, 0, 4),
         };
         _buttons.Controls.Add(CloseButton());
 
