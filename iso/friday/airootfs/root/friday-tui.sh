@@ -150,9 +150,19 @@ friday_header() {
     "$(printf '─%.0s' $(seq 1 "$rule_w"))"
 }
 
+# Spoken lines: only once the person has asked for the voice (step_network
+# downloads it into RAM and creates the `on` marker). A new line replaces the
+# one being said.
+FRIDAY_LIVE_VOICE=/run/friday-voice
+friday_speak() {
+  [[ -e "$FRIDAY_LIVE_VOICE/on" ]] || return 0
+  FRIDAY_VOICE_DIR="$FRIDAY_LIVE_VOICE" friday-ctl say "$*" >/dev/null 2>&1 &
+}
+
 # FRIDAY "speaks": a soft purple line typed out character by character.
 friday_say() {
   local text="$*"
+  friday_speak "$text"
   if ! friday_is_tty; then
     printf '%sFRIDAY › %s\n' "$FRIDAY_PAD" "$text"
     return

@@ -41,6 +41,7 @@ elapsed() { printf '%02d:%02d' $(((SECONDS - INSTALL_STARTED) / 60)) $(((SECONDS
 
 # phase_msg <step 1-6> <what FRIDAY is doing>
 phase_msg() {
+  friday_speak "Step $1 of 6. $2"
   {
     friday_header "INSTALLING"
     friday_rail "$1" "${INSTALL_STEPS[@]}"
@@ -641,6 +642,7 @@ if [[ "$AUTO_REBOOT" == "true" ]]; then
   umount -R /mnt 2>/dev/null || true
   reboot
 elif [[ "${FRIDAY_INTERACTIVE:-0}" == "1" ]]; then
+  friday_speak "FRIDAY OS is installed. Restart whenever you're ready."
   if gum confirm --affirmative="Reboot now" --negative="Stay in the live system" "Restart into FRIDAY OS?"; then
     umount -R /mnt 2>/dev/null || true
     systemctl reboot

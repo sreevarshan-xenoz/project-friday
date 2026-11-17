@@ -142,6 +142,13 @@ wide=$(TERM=linux bash -c "source '$ROOT/friday-tui.sh'; tput() { echo 120; }; f
 expect "banner and rail work without TERM" env -u TERM bash -c \
   "source '$ROOT/friday-tui.sh'; set -e; friday_banner TEST; friday_rail 2 A B C; friday_say hi" </dev/null
 
+# Spoken lines: silent unless the person asked for the voice.
+SV=$(mktemp -d); mkdir -p "$SV/bin" "$SV/voice"; printf '#!/bin/sh\necho "$*" >>"%s/said"\n' "$SV" >"$SV/bin/friday-ctl"; chmod +x "$SV/bin/friday-ctl"
+speak() { PATH="$SV/bin:$PATH" bash -c "source '$ROOT/friday-tui.sh'; FRIDAY_LIVE_VOICE='$SV/voice'; friday_speak hello; wait" </dev/null; sleep 0.3; }
+speak; [[ ! -e "$SV/said" ]] && pass "no voice requested: nothing is spoken" || fail "spoke without being asked"
+: >"$SV/voice/on"; speak; grep -qx "say hello" "$SV/said" 2>/dev/null && pass "voice on: the line goes to friday-ctl say" || fail "voice on but nothing was said"
+rm -rf "$SV"
+
 echo "login security"
 guarded=$(awk '/if \[\[ "\$AUTOLOGIN" == "true" \]\]/ {g=1} /EOF_SDDM_AUTO > \/mnt\/etc\/sddm.conf.d\/autologin.conf/ {print (g ? "guarded" : "unguarded"); exit}' "$ROOT/installer")
 if [[ "$guarded" == guarded ]]; then pass "SDDM autologin is only written when AUTOLOGIN=true"
