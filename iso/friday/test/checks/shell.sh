@@ -112,8 +112,11 @@ timeout 10 qs -p "$FS" ipc call tour finish >/dev/null 2>&1 || true
 [[ "$(timeout 10 qs -p "$FS" ipc call tour step 2>/dev/null)" == -1 ]] && pass "tour can be skipped" || fail "tour did not finish"
 # With Pocketdesk installed the tour has a last step about the phone.
 timeout 10 qs -p "$FS" ipc call tour begin "Alex" true true >/dev/null 2>&1 || true
-for _ in 1 2 3 4; do timeout 10 qs -p "$FS" ipc call tour next >/dev/null 2>&1 || true; done
-[[ "$(timeout 10 qs -p "$FS" ipc call tour step 2>/dev/null)" == 4 ]] && pass "tour has a phone step when Pocketdesk is installed" || fail "tour has no phone step"
+for _ in 1 2 3 4 5; do timeout 10 qs -p "$FS" ipc call tour next >/dev/null 2>&1 || true; done
+[[ "$(timeout 10 qs -p "$FS" ipc call tour step 2>/dev/null)" == 5 ]] && pass "tour has a phone step when Pocketdesk is installed" || fail "tour has no phone step"
+sleep 1; grim "$W/friday-tour-phone.png" 2>/dev/null || true
+timeout 10 qs -p "$FS" ipc call tour back >/dev/null 2>&1 || true
+[[ "$(timeout 10 qs -p "$FS" ipc call tour step 2>/dev/null)" == 4 ]] && pass "tour can go back a step" || fail "tour did not go back"
 timeout 10 qs -p "$FS" ipc call tour finish >/dev/null 2>&1 || true
 # Past answers, as friday ask writes them, are searchable.
 printf '# what is using my disk\n\n_2026-11-14 21:10_\n\nMostly photos.\n\n---\n\n# explain rust error E0308\n\n_2026-11-14 22:30_\n\n> fn main\n\nMismatched types.\n\n---\n\n' \

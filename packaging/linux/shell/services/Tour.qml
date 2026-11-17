@@ -17,22 +17,34 @@ Singleton {
   property bool freeModels: false
   property bool phone: false
 
+  // keys: shown as keycaps. action: a button that runs `command` in a terminal.
   readonly property var steps: [
     { title: "Hello" + (root.name ? ", " + root.name : "") + ". I'm FRIDAY.",
-      body: "Press Super+Y now and ask me anything. Tap it to type; once voice is set up, hold it and speak.",
+      keys: "Super+Y",
+      body: "Press it now and ask me anything. Tap to type; once voice is set up, hold it and speak.",
       waits: true },
     { title: "Ask about what you're reading",
-      body: "Select some text anywhere, then press Super+Alt+Y and pick Summarize or Explain.",
+      keys: "Super+Alt+Y",
+      body: "Select some text anywhere, then press this and pick Summarize or Explain.",
       waits: true },
     { title: "Ask about your screen",
-      body: "Super+Ctrl+Y asks about the window in front of you. A screenshot goes to your AI provider only when you press it.",
+      keys: "Super+Ctrl+Y",
+      body: "Ask about the window in front of you, like \"what does this error mean?\". A screenshot goes to your AI provider only when you press it.",
+      waits: true },
+    { title: "Let me talk",
+      keys: "",
+      body: "I can read my answers out loud, in a voice made on this computer (about 100 MB, nothing is sent anywhere). Skip this if you prefer quiet.",
+      action: { label: "Give me a voice", command: "friday voice speak setup; friday voice speak on" },
       waits: false },
     { title: "The rest of your desktop",
-      body: "Tap Super for apps · Super+N for controls and notifications · Super+L to lock · Super+K for every key.",
+      keys: "",
+      body: "Tap Super for apps · Super+N for controls and notifications · Super+L to lock · Super+K for every key. Take this tour again any time with: friday tour",
       waits: false }
   ].concat(root.phone ? [
     { title: "Your phone",
-      body: "Pocketdesk shows this computer on your phone and lets it answer FRIDAY's questions. To pair one, run: friday phone on",
+      keys: "",
+      body: "Pocketdesk shows this computer on your phone and lets it answer FRIDAY's questions. Pairing shows a PIN to type on the phone.",
+      action: { label: "Pair my phone", command: "friday phone on" },
       waits: false }
   ] : [])
   readonly property var current: steps[Math.min(step, steps.length - 1)]
@@ -46,6 +58,7 @@ Singleton {
     root.active = true;
   }
   function next() { if (root.last) root.finish(); else root.step++; }
+  function back() { if (root.step > 0) root.step--; }
   function finish() { root.active = false; }
 
   // A step that waits moves on once FRIDAY has answered.
@@ -62,6 +75,7 @@ Singleton {
     function begin(name: string, freeModels: bool, phone: bool): void { root.begin(name, freeModels, phone); }
     function step(): int { return root.active ? root.step : -1; }
     function next(): void { root.next(); }
+    function back(): void { root.back(); }
     function finish(): void { root.finish(); }
   }
 }
