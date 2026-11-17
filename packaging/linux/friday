@@ -54,6 +54,7 @@ Autonomous Agent & Cognitive Loop:
   friday voice speak [setup|on|off|voice N|status]
                                    FRIDAY answers out loud, in a voice made on this computer
   friday say "text"                Say something now (friday say --stop to stop)
+  friday app                       Open FRIDAY Settings (a window for all of this, no terminal)
   friday tour                      Take the first-login tour again
   friday screen-text [status|on|off]
                                    Ask about the screen with the window's text, not a screenshot
@@ -1993,6 +1994,19 @@ case "${1:-}" in
     ;;
   tour)
     FRIDAY_WELCOME_DELAY=0 friday_welcome --force
+    ;;
+  app|settings)
+    # FRIDAY Settings is a window of FRIDAY Shell: start the shell if it isn't up.
+    shift
+    if ! timeout 3 "$0" shell ipc settings open "${1:-Home}" >/dev/null 2>&1; then
+      "$0" shell start >/dev/null 2>&1 || true
+      for _ in 1 2 3 4 5 6 7 8 9 10; do
+        sleep 1
+        timeout 3 "$0" shell ipc settings open "${1:-Home}" >/dev/null 2>&1 && exit 0
+      done
+      echo "friday: FRIDAY Shell isn't running here, so there is no settings window (try: friday --help)" >&2
+      exit 1
+    fi
     ;;
   welcome)
     shift

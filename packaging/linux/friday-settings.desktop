@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=FRIDAY Settings
+GenericName=Settings
+Comment=Turn FRIDAY's voice, AI, privacy and health checks on and off
+Exec=friday app
+Icon=preferences-system
+Terminal=false
+Categories=Settings;Utility;
+Keywords=friday;settings;voice;privacy;ai;assistant;

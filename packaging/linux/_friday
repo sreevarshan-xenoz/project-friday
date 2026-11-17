@@ -22,6 +22,7 @@ _friday() {
     'phone:Pair a phone with Pocketdesk'
     'helper:System helper for package updates and installs'
     'welcome:Show the first-login greeting again'
+    'app:Open FRIDAY Settings'
     'app-context:Whether selected-text questions name the app they came from'
     'forget:Show what FRIDAY keeps, or wipe it'
     'actions:Show what FRIDAY did on your desktop'

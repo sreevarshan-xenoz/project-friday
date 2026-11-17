@@ -100,6 +100,29 @@ if timeout 10 qs -p "$FS" ipc call answer present true "What's using my disk?" "
 else
   fail "nothing answers the answer pill's IPC target"
 fi
+# The Settings AI page must never delete saved keys by itself: saving keeps the
+# others, and the one --only (back to the free models) sits behind a confirm.
+AI_PAGE="$FS/settings/AIPage.qml"
+if grep -q -- '--keep-others' "$AI_PAGE" && [[ "$(grep -c -- '--only' "$AI_PAGE")" == 1 ]] && grep -q 'confirmingFree' "$AI_PAGE"; then
+  pass "Settings AI page keeps saved keys unless the free-models confirm is accepted"
+else fail "Settings AI page may delete saved keys without asking"; fi
+# FRIDAY Settings: opens on a page, shows it, closes.
+timeout 10 qs -p "$FS" ipc call settings open Voice >/dev/null 2>&1 || true
+sleep 1.5; grim "$W/friday-settings.png" 2>/dev/null || true
+[[ "$(timeout 10 qs -p "$FS" ipc call settings page 2>/dev/null)" == Voice ]] && pass "FRIDAY Settings opens on the Voice page" || fail "FRIDAY Settings did not open"
+timeout 10 qs -p "$FS" ipc call settings open AI >/dev/null 2>&1 || true
+sleep 1; grim "$W/friday-settings-ai.png" 2>/dev/null || true
+timeout 10 qs -p "$FS" ipc call settings open Privacy >/dev/null 2>&1 || true
+sleep 1; grim "$W/friday-settings-privacy.png" 2>/dev/null || true
+for p in Home AI Privacy Health; do
+  timeout 10 qs -p "$FS" ipc call settings open "$p" >/dev/null 2>&1 || true
+  sleep 0.5
+  [[ "$(timeout 10 qs -p "$FS" ipc call settings page 2>/dev/null)" == "$p" ]] || fail "FRIDAY Settings page $p did not open"
+done
+if grep -q "settings/.*File not found" "$W/friday.log"; then fail "a FRIDAY Settings page file is missing: $(grep -h 'settings/.*File not found' "$W/friday.log" | head -1)"
+else pass "every FRIDAY Settings page file loads"; fi
+timeout 10 qs -p "$FS" ipc call settings close >/dev/null 2>&1 || true
+[[ -z "$(timeout 10 qs -p "$FS" ipc call settings page 2>/dev/null)" ]] && pass "FRIDAY Settings closes" || fail "FRIDAY Settings did not close"
 # The first-login tour: begins, moves on when FRIDAY answers, can be skipped.
 timeout 10 qs -p "$FS" ipc call tour begin "Alex" true false >/dev/null 2>&1 || true
 sleep 1.5; grim "$W/friday-tour.png" 2>/dev/null || true

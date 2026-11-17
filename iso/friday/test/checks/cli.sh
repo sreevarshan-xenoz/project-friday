@@ -604,6 +604,9 @@ bash "$F" voice speak off >/dev/null
 if [[ -e "$SPK" ]]; then fail "off left the switch on"; else pass "off removes the switch"; fi
 : >"$LOG"; PATH="$TOUR/bin:$PATH" FRIDAY_SHELL_DIR="$TOUR/shell" bash "$F" tour
 contains "friday tour starts the tour again, even after the first login" "$(cat "$LOG")" "ipc call tour begin"
+# `friday app` opens FRIDAY Settings on a page through the shell.
+: >"$LOG"; PATH="$TOUR/bin:$PATH" FRIDAY_SHELL_DIR="$TOUR/shell" bash "$F" app Voice
+contains "friday app opens FRIDAY Settings on the page asked for" "$(cat "$LOG")" "ipc call settings open Voice"
 # A shell that is slow to start: the tour keeps asking, then starts; it is not given up on or doubled with a notification.
 SLOW="$W/slowtour"; mkdir -p "$SLOW/bin" "$SLOW/shell"; : >"$SLOW/shell/shell.qml"; rm -f "$SLOW/count"
 printf '#!/bin/bash\nn=$(( $(cat "%s/count" 2>/dev/null || echo 0) + 1 )); echo $n >"%s/count"\necho "quickshell try $n $*" >>"%s"\n[ "$n" -ge 3 ]\n' "$SLOW" "$SLOW" "$LOG" >"$SLOW/bin/quickshell"; chmod +x "$SLOW/bin/quickshell"
