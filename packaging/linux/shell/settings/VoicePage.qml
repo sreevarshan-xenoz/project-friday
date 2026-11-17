@@ -10,7 +10,7 @@ ColumnLayout {
 
   Label {
     Layout.fillWidth: true
-    text: "FRIDAY can read its answers out loud, in a voice made on this computer. Nothing is sent anywhere to speak. It downloads once (about 150 MB) and needs no graphics card."
+    text: "FRIDAY can read its answers out loud, in a voice made on this computer. Nothing is sent anywhere to speak. It downloads once (about 150 MB; the small voice is 50 MB and quicker to start) and needs no graphics card."
     wrapMode: Text.Wrap
     elide: Text.ElideNone
     color: Theme.subtext
@@ -31,6 +31,11 @@ ColumnLayout {
     args: ["voice", "speak", "setup"]
     onFinished: { speak.refresh(); voices.run(); }
   }
+  Cmd {
+    id: small
+    args: ["voice", "speak", "setup", "tinyvoca"]
+    onFinished: { speak.refresh(); voices.run(); }
+  }
   Flow {
     Layout.fillWidth: true
     spacing: 8
@@ -39,10 +44,14 @@ ColumnLayout {
       text: setup.running ? "Downloading…" : "Download the voice"
       onClicked: setup.run()
     }
+    Chip {
+      text: small.running ? "Downloading…" : "Small voice (50 MB)"
+      onClicked: small.run()
+    }
     Chip { text: "Hear it"; onClicked: Quickshell.execDetached(["friday", "say", "Hi, I'm FRIDAY. This is how I sound."]) }
     Chip { text: "Stop"; onClicked: Quickshell.execDetached(["friday", "say", "--stop"]) }
   }
-  Output { text: setup.output }
+  Output { text: setup.output + small.output }
 
   // The installed voice's names, as `friday voice speak voices` prints them ("0 Bella").
   property var names: []

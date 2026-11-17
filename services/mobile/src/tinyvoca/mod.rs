@@ -12,17 +12,19 @@ mod numbers;
 mod sentence;
 mod symbols;
 mod tables;
+mod voice;
 
 pub use engine::Phonemizer;
 pub use symbols::Phonemized;
+pub use voice::{Voca, SAMPLE_RATE, VOICES};
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    /// The phonemizer files of the model (`phonemizer/` in tiny-voca); the tests
-    /// that need them are skipped when `FRIDAY_TINYVOCA_DATA` is not set.
+    /// The model folder (`model.onnx` and `phonemizer/`, as tiny-voca ships them);
+    /// the tests that need it are skipped when `FRIDAY_TINYVOCA_DATA` is not set.
     fn data() -> Option<PathBuf> {
         std::env::var_os("FRIDAY_TINYVOCA_DATA").map(PathBuf::from)
     }
@@ -36,7 +38,7 @@ mod tests {
         let gold: Vec<serde_json::Value> =
             serde_json::from_str(include_str!("testdata/gold.json")).unwrap();
         assert!(gold.len() > 200, "the gold file is missing sentences");
-        let phonemizer = Phonemizer::new(&dir).unwrap();
+        let phonemizer = Phonemizer::new(&dir.join("phonemizer")).unwrap();
         let mut wrong = Vec::new();
         for g in &gold {
             let text = g["text"].as_str().unwrap();
@@ -71,5 +73,36 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n")
         );
+    }
+
+    /// Needs `FRIDAY_TINYVOCA_RUNTIME` too: the ONNX Runtime library to load.
+    #[test]
+    fn speaks_a_sentence_with_the_model() {
+        let (Some(dir), Some(runtime)) = (data(), std::env::var_os("FRIDAY_TINYVOCA_RUNTIME"))
+        else {
+            return;
+        };
+        let voca = Voca::load(&dir, std::path::Path::new(&runtime), 2).unwrap();
+        for voice in 0..VOICES.len() {
+            let samples = voca.speak("Hello! This is tiny voca.", voice, 1.0).unwrap();
+            let seconds = samples.len() as f32 / 24_000.0;
+            assert!((1.0..8.0).contains(&seconds), "{seconds} s of speech");
+            assert!(
+                samples.iter().any(|s| s.unsigned_abs() > 3000),
+                "the audio is silent"
+            );
+            if let Some(out) = std::env::var_os("FRIDAY_TINYVOCA_WAV") {
+                let wav = crate::speech::write_wav(&crate::speech::Pcm {
+                    rate: 24_000,
+                    samples,
+                });
+                std::fs::write(
+                    std::path::Path::new(&out).join(format!("voice-{voice}.wav")),
+                    wav,
+                )
+                .unwrap();
+            }
+        }
+        assert!(voca.speak("   ", 0, 1.0).unwrap().is_empty());
     }
 }

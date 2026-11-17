@@ -18,7 +18,7 @@ New here? [Using FRIDAY](docs/USING.md) is the short tour: the keys, the answer 
 **What you get**
 
 - **Ask about your screen or selection**, with one-time consent for a screenshot; "what is on my screen" in words works too.
-- **Answers out loud, made on your computer**: a CPU voice (Kokoro, with Bella as the default and seven more to choose from; lighter Kitten and Supertonic voices are options), no GPU, nothing sent anywhere to speak. FRIDAY can talk you through the install, too.
+- **Answers out loud, made on your computer**: a CPU voice (Kokoro, with Bella as the default and seven more to choose from; tiny voca, a 50 MB voice that starts at once, and the lighter Kitten and Supertonic voices are options), no GPU, nothing sent anywhere to speak. FRIDAY can talk you through the install, too.
 - **Control apps and windows** by name on both platforms (open, focus, volume, media, desktops); anything that deletes or sends asks first.
 - **"How is my computer doing?"**: a read-only look at services, errors, disk, memory and battery, in plain words.
 - **A settings app on each platform** for people who don't use a terminal ([the pages](docs/SETTINGS-PAGES.md)), and a first-login tour (a welcome window on Windows).

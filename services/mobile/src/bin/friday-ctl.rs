@@ -86,10 +86,17 @@ fn say(args: &[String]) -> std::process::ExitCode {
     if let Some(at) = args.iter().position(|a| a == "--setup") {
         let name = args.get(at + 1).map(String::as_str).unwrap_or("kokoro");
         let Some(kind) = friday_mobile::speech::kind_from_name(name) else {
-            eprintln!("friday-ctl: unknown voice \"{name}\" (kokoro, supertonic or kitten)");
+            eprintln!(
+                "friday-ctl: unknown voice \"{name}\" (kokoro, tinyvoca, supertonic or kitten)"
+            );
             return std::process::ExitCode::from(2);
         };
-        println!("Downloading FRIDAY's voice (about 150 MB, once)...");
+        let size = if kind == friday_mobile::speech::Kind::TinyVoca {
+            "about 50 MB"
+        } else {
+            "about 150 MB"
+        };
+        println!("Downloading FRIDAY's voice ({size}, once)...");
         return match friday_mobile::speech::setup(&friday_mobile::speech::voice_dir(), kind) {
             Ok(()) => {
                 println!("Voice installed.");
