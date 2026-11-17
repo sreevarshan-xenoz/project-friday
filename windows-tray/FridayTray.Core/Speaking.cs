@@ -1,0 +1,62 @@
+using System.Text.Json.Nodes;
+
+namespace FridayTray.Core;
+
+/// <summary>
+/// FRIDAY's spoken answers: whether the voice is installed (by `friday-ctl say
+/// --setup`), whether it is turned on, and which of its voices is chosen. The
+/// speaking itself is `friday-ctl say`; these are the files it and the tray share.
+/// </summary>
+public static class Speaking
+{
+    public const int Voices = 10;
+
+    public static string VoiceDir(Paths p) => Path.Combine(p.StateDir, "voice");
+    public static string FlagFile(Paths p) => Path.Combine(p.ConfigDir, "speak");
+    private static string SettingsFile(Paths p) => Path.Combine(VoiceDir(p), "settings.json");
+
+    public static bool Installed(Paths p) =>
+        File.Exists(Path.Combine(VoiceDir(p), "bin", "sherpa-onnx-offline-tts.exe"))
+        && Directory.Exists(Path.Combine(VoiceDir(p), "model"));
+
+    /// <summary>On only when the person turned it on and the voice is there to speak.</summary>
+    public static bool Enabled(Paths p) => File.Exists(FlagFile(p)) && Installed(p);
+
+    public static void SetEnabled(Paths p, bool on)
+    {
+        if (on)
+        {
+            Directory.CreateDirectory(p.ConfigDir);
+            File.WriteAllText(FlagFile(p), "");
+        }
+        else
+        {
+            try { File.Delete(FlagFile(p)); } catch (IOException) { }
+        }
+    }
+
+    /// <summary>The chosen voice, 0 to <see cref="Voices"/> - 1 (0 when none was chosen).</summary>
+    public static int Speaker(Paths p)
+    {
+        try
+        {
+            var n = (int?)JsonNode.Parse(File.ReadAllText(SettingsFile(p)))?["speaker"] ?? 0;
+            return Math.Clamp(n, 0, Voices - 1);
+        }
+        catch (Exception e) when (e is IOException or System.Text.Json.JsonException or InvalidCastException)
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>Chooses a voice, keeping the other settings (which model is installed).</summary>
+    public static void SetSpeaker(Paths p, int speaker)
+    {
+        JsonNode settings;
+        try { settings = JsonNode.Parse(File.ReadAllText(SettingsFile(p))) ?? new JsonObject(); }
+        catch (Exception e) when (e is IOException or System.Text.Json.JsonException) { settings = new JsonObject(); }
+        settings["speaker"] = Math.Clamp(speaker, 0, Voices - 1);
+        Directory.CreateDirectory(VoiceDir(p));
+        File.WriteAllText(SettingsFile(p), settings.ToJsonString());
+    }
+}

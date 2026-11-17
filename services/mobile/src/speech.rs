@@ -1,0 +1,1269 @@
+//! FRIDAY's voice out: answers spoken on this computer, nothing sent anywhere.
+//!
+//! A small neural voice (Supertonic or Kitten, run by the pinned sherpa-onnx
+//! engine on the CPU) turns text into speech one sentence at a time, so the
+//! first sentence is heard while the next is still being made. Everything that
+//! decides anything is pure and tested without audio: what is worth saying
+//! (`clean_for_speech`), where to break it (`sentences`), how loud it comes out
+//! (`normalize`), and the order of work (`speak` with a fake engine and
+//! player). The engine and the player are two thin process calls.
+//!
+//! Nothing here plays sound unless `say` is asked to; tests never do.
+
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::sync::Arc;
+use std::time::Duration;
+
+use serde_json::Value;
+
+/// Which model the engine is running. Supertonic is recognised by its files;
+/// Kitten is named in `settings.json`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Supertonic,
+    Kitten,
+}
+
+impl Kind {
+    fn parse(s: &str) -> Option<Kind> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "supertonic" => Some(Kind::Supertonic),
+            "kitten" => Some(Kind::Kitten),
+            _ => None,
+        }
+    }
+}
+
+/// A voice that can speak: the engine, its model and the person's choices.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Voice {
+    pub engine: PathBuf,
+    pub model: PathBuf,
+    pub kind: Kind,
+    /// The speaker (a Kitten name's number, a Supertonic style) in the model.
+    pub speaker: u32,
+    /// 1.0 is the model's own pace.
+    pub speed: f32,
+    pub threads: u32,
+}
+
+/// Where the voice lives: `FRIDAY_VOICE_DIR`, else `friday/voice` in the user's data folder.
+pub fn voice_dir() -> PathBuf {
+    if let Ok(d) = std::env::var("FRIDAY_VOICE_DIR") {
+        if !d.is_empty() {
+            return PathBuf::from(d);
+        }
+    }
+    #[cfg(windows)]
+    {
+        let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".into());
+        PathBuf::from(base).join("friday").join("voice")
+    }
+    #[cfg(not(windows))]
+    {
+        let base = std::env::var("XDG_DATA_HOME")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var("HOME")
+                    .ok()
+                    .map(|h| PathBuf::from(h).join(".local/share"))
+            })
+            .unwrap_or_else(|| PathBuf::from("."));
+        base.join("friday").join("voice")
+    }
+}
+
+fn engine_name() -> &'static str {
+    if cfg!(windows) {
+        "sherpa-onnx-offline-tts.exe"
+    } else {
+        "sherpa-onnx-offline-tts"
+    }
+}
+
+/// The voice installed in `dir`, if there is one: `dir/bin/<engine>`, the model in
+/// `dir/model`, and `dir/settings.json` naming its kind (and, optionally, the
+/// speaker, speed and threads). A model that looks like Supertonic's is
+/// recognised without a settings file.
+pub fn detect(dir: &Path) -> Option<Voice> {
+    let engine = dir.join("bin").join(engine_name());
+    let model = dir.join("model");
+    if !engine.is_file() || !model.is_dir() {
+        return None;
+    }
+    let settings: Value = std::fs::read_to_string(dir.join("settings.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or(Value::Null);
+    let kind = settings["kind"]
+        .as_str()
+        .and_then(Kind::parse)
+        .or_else(|| {
+            model
+                .join("duration_predictor.int8.onnx")
+                .is_file()
+                .then_some(Kind::Supertonic)
+        })?;
+    Some(Voice {
+        engine,
+        model,
+        kind,
+        speaker: settings["speaker"].as_u64().unwrap_or(0).min(63) as u32,
+        speed: settings["speed"].as_f64().unwrap_or(1.0).clamp(0.6, 1.6) as f32,
+        threads: settings["threads"].as_u64().unwrap_or(2).clamp(1, 8) as u32,
+    })
+}
+
+/// The engine's command line for one piece of text.
+pub fn engine_args(v: &Voice, text: &str, out: &Path) -> Vec<String> {
+    let m = |f: &str| v.model.join(f).to_string_lossy().into_owned();
+    let mut a = vec![
+        format!("--num-threads={}", v.threads),
+        format!("--sid={}", v.speaker),
+        format!("--output-filename={}", out.display()),
+    ];
+    match v.kind {
+        Kind::Supertonic => a.extend([
+            format!(
+                "--supertonic-duration-predictor={}",
+                m("duration_predictor.int8.onnx")
+            ),
+            format!("--supertonic-text-encoder={}", m("text_encoder.int8.onnx")),
+            format!(
+                "--supertonic-vector-estimator={}",
+                m("vector_estimator.int8.onnx")
+            ),
+            format!("--supertonic-vocoder={}", m("vocoder.int8.onnx")),
+            format!("--supertonic-tts-json={}", m("tts.json")),
+            format!("--supertonic-unicode-indexer={}", m("unicode_indexer.bin")),
+            format!("--supertonic-voice-style={}", m("voice.bin")),
+            "--lang=en".into(),
+            "--num-steps=8".into(),
+            format!("--speed={}", v.speed),
+        ]),
+        Kind::Kitten => a.extend([
+            format!("--kitten-model={}", m("model.int8.onnx")),
+            format!("--kitten-voices={}", m("voices.bin")),
+            format!("--kitten-tokens={}", m("tokens.txt")),
+            format!("--kitten-data-dir={}", m("espeak-ng-data")),
+            format!("--kitten-length-scale={}", 1.0 / v.speed),
+        ]),
+    }
+    a.push(text.to_string());
+    a
+}
+
+// ---------------------------------------------------------------- text
+
+/// What is worth saying aloud from an answer written for the eye: code blocks
+/// and bare links are skipped or named, markdown marks and emoji dropped,
+/// symbols spoken as words.
+pub fn clean_for_speech(text: &str) -> String {
+    let mut out = String::new();
+    let mut in_code = false;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.starts_with("```") {
+            if in_code {
+                in_code = false;
+            } else {
+                in_code = true;
+                out.push_str("There is some code on screen. ");
+            }
+            continue;
+        }
+        if in_code || line.is_empty() {
+            out.push(' ');
+            continue;
+        }
+        let line = line
+            .trim_start_matches(|c: char| {
+                matches!(c, '#' | '>' | '-' | '*' | '•' | '+') || c.is_whitespace()
+            })
+            .to_string();
+        // A numbered list marker "3. " is not a sentence of its own.
+        let line = match line.split_once(". ") {
+            Some((n, rest))
+                if !n.is_empty() && n.len() <= 2 && n.chars().all(|c| c.is_ascii_digit()) =>
+            {
+                rest.to_string()
+            }
+            _ => line,
+        };
+        out.push_str(&line);
+        // A line without end punctuation is still a pause.
+        if !line_ends_sentence(&out) {
+            out.push('.');
+        }
+        out.push(' ');
+    }
+    let mut s = strip_markdown_links(&out);
+    s = replace_urls(&s);
+    s = s.replace(['`', '*', '_', '~', '|'], "");
+    s = s.replace('&', " and ").replace('%', " percent");
+    let s: String = s.chars().filter(|c| !is_emoji(*c)).collect();
+    let spaced = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    // Where a symbol or emoji was dropped it leaves a space before the mark.
+    spaced
+        .replace(" .", ".")
+        .replace(" ,", ",")
+        .replace(" !", "!")
+        .replace(" ?", "?")
+}
+
+fn line_ends_sentence(s: &str) -> bool {
+    matches!(
+        s.trim_end().chars().last(),
+        Some('.' | '!' | '?' | ':' | ';' | '…')
+    )
+}
+
+fn strip_markdown_links(s: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(open) = rest.find('[') {
+        let after = &rest[open + 1..];
+        match (after.find("]("), after.find(')')) {
+            (Some(mid), Some(close)) if mid < close => {
+                out.push_str(&rest[..open]);
+                out.push_str(&after[..mid]);
+                rest = &after[close + 1..];
+            }
+            _ => {
+                out.push_str(&rest[..=open]);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn replace_urls(s: &str) -> String {
+    s.split(' ')
+        .map(|w| {
+            let bare = w.trim_matches(|c: char| matches!(c, '(' | ')' | ',' | '.' | '"' | '\''));
+            if bare.starts_with("http://")
+                || bare.starts_with("https://")
+                || bare.starts_with("www.")
+            {
+                "a link"
+            } else {
+                w
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn is_emoji(c: char) -> bool {
+    matches!(c as u32, 0x1F300..=0x1FAFF | 0x2600..=0x27BF | 0xFE0F | 0x200D | 0x2B50 | 0x2B06..=0x2B07)
+}
+
+/// Pieces to speak one after another: sentences, each at most `max` characters
+/// (a long one is cut at a comma or space), so the first is ready quickly.
+pub fn sentences(text: &str, max: usize) -> Vec<String> {
+    const ABBREV: &[&str] = &["e.g", "i.e", "mr", "mrs", "ms", "dr", "vs", "etc", "no"];
+    let chars: Vec<char> = text.chars().collect();
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for (i, &c) in chars.iter().enumerate() {
+        cur.push(c);
+        if matches!(c, '.' | '!' | '?' | '…') {
+            let next = chars.get(i + 1).copied();
+            let ends = next.is_none_or(|n| n.is_whitespace());
+            let word = cur
+                .trim_end_matches(['.', '!', '?'])
+                .rsplit(' ')
+                .next()
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let digit_before = cur
+                .trim_end_matches('.')
+                .chars()
+                .last()
+                .is_some_and(|d| d.is_ascii_digit());
+            let is_abbrev = c == '.'
+                && (ABBREV.contains(&word.as_str())
+                    || (digit_before && next.is_some_and(|n| n.is_ascii_digit())));
+            if ends && !is_abbrev {
+                out.push(std::mem::take(&mut cur));
+            }
+        }
+    }
+    if !cur.trim().is_empty() {
+        out.push(cur);
+    }
+    let mut pieces = Vec::new();
+    for s in out {
+        let mut s = s.trim().to_string();
+        while s.chars().count() > max {
+            let head: String = s.chars().take(max).collect();
+            let cut = head
+                .rfind(", ")
+                .map(|p| p + 1)
+                .or_else(|| head.rfind(' '))
+                .unwrap_or(head.len());
+            let (a, b) = s.split_at(cut);
+            pieces.push(a.trim().to_string());
+            s = b.trim().to_string();
+        }
+        if !s.is_empty() {
+            pieces.push(s);
+        }
+    }
+    pieces
+        .into_iter()
+        .filter(|p| p.chars().any(char::is_alphanumeric))
+        .collect()
+}
+
+// ---------------------------------------------------------------- audio
+
+/// 16-bit PCM mono samples and their rate, as read from a WAV.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pcm {
+    pub rate: u32,
+    pub samples: Vec<i16>,
+}
+
+pub fn read_wav(bytes: &[u8]) -> Result<Pcm, String> {
+    if bytes.len() < 44 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return Err("not a WAV file".into());
+    }
+    let (mut rate, mut channels, mut bits, mut data): (u32, u16, u16, Option<&[u8]>) =
+        (0, 0, 0, None);
+    let mut at = 12;
+    while at + 8 <= bytes.len() {
+        let id = &bytes[at..at + 4];
+        let len = u32::from_le_bytes(bytes[at + 4..at + 8].try_into().unwrap()) as usize;
+        let body = bytes
+            .get(at + 8..(at + 8 + len).min(bytes.len()))
+            .unwrap_or(&[]);
+        match id {
+            b"fmt " if body.len() >= 16 => {
+                channels = u16::from_le_bytes([body[2], body[3]]);
+                rate = u32::from_le_bytes(body[4..8].try_into().unwrap());
+                bits = u16::from_le_bytes([body[14], body[15]]);
+            }
+            b"data" => data = Some(body),
+            _ => {}
+        }
+        at += 8 + len + (len & 1);
+    }
+    let data = data.ok_or("the WAV has no audio")?;
+    if bits != 16 || channels == 0 || rate == 0 {
+        return Err(format!("expected 16-bit PCM, got {bits}-bit"));
+    }
+    let all: Vec<i16> = data
+        .chunks_exact(2)
+        .map(|b| i16::from_le_bytes([b[0], b[1]]))
+        .collect();
+    // Mono: the first channel.
+    let samples = all.chunks(channels as usize).map(|f| f[0]).collect();
+    Ok(Pcm { rate, samples })
+}
+
+pub fn write_wav(p: &Pcm) -> Vec<u8> {
+    let data_len = (p.samples.len() * 2) as u32;
+    let mut b = Vec::with_capacity(44 + data_len as usize);
+    b.extend_from_slice(b"RIFF");
+    b.extend_from_slice(&(36 + data_len).to_le_bytes());
+    b.extend_from_slice(b"WAVEfmt ");
+    b.extend_from_slice(&16u32.to_le_bytes());
+    b.extend_from_slice(&1u16.to_le_bytes());
+    b.extend_from_slice(&1u16.to_le_bytes());
+    b.extend_from_slice(&p.rate.to_le_bytes());
+    b.extend_from_slice(&(p.rate * 2).to_le_bytes());
+    b.extend_from_slice(&2u16.to_le_bytes());
+    b.extend_from_slice(&16u16.to_le_bytes());
+    b.extend_from_slice(b"data");
+    b.extend_from_slice(&data_len.to_le_bytes());
+    for s in &p.samples {
+        b.extend_from_slice(&s.to_le_bytes());
+    }
+    b
+}
+
+/// Brings a sentence to a steady, comfortable level: its speech (not its
+/// silences) at `target_rms` of full scale, never so much gain that the peak
+/// passes `peak_limit`, with a few milliseconds of fade so a sentence never
+/// clicks. Engines differ a lot (one peaks at full scale, another at a quarter).
+pub fn normalize(p: &mut Pcm, target_rms: f32, peak_limit: f32) {
+    let full = i16::MAX as f32;
+    let loud: Vec<f32> = p
+        .samples
+        .iter()
+        .map(|&s| s as f32 / full)
+        .filter(|s| s.abs() > 0.01)
+        .collect();
+    if loud.is_empty() {
+        return;
+    }
+    let rms = (loud.iter().map(|s| s * s).sum::<f32>() / loud.len() as f32).sqrt();
+    let peak = p
+        .samples
+        .iter()
+        .map(|&s| (s as f32 / full).abs())
+        .fold(0.0, f32::max);
+    let gain = (target_rms / rms).min(peak_limit / peak).clamp(0.05, 8.0);
+    let fade = (p.rate as usize / 100).max(1);
+    let n = p.samples.len();
+    for (i, s) in p.samples.iter_mut().enumerate() {
+        let edge = (i.min(n - 1 - i) as f32 / fade as f32).min(1.0);
+        *s = (*s as f32 * gain * edge).round().clamp(-full, full) as i16;
+    }
+}
+
+// ---------------------------------------------------------------- the work
+
+/// Makes the audio for one sentence (the engine, in production).
+pub trait Synth: Send + Sync {
+    fn synth(&self, text: &str) -> Result<Pcm, String>;
+}
+
+/// Plays one prepared WAV file; `cancel` stops it early.
+pub trait Player: Send + Sync {
+    fn play(&self, wav: &Path, cancel: &AtomicBool) -> Result<(), String>;
+}
+
+/// What happened: how many sentences were spoken and whether it was stopped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Spoken {
+    pub sentences: usize,
+    pub stopped: bool,
+}
+
+/// Speaks `text` sentence by sentence: the next sentence is made while the
+/// current one plays, so speech starts after one sentence's work, not the whole
+/// answer's. Stops at once when `cancel` is set.
+pub fn speak(
+    text: &str,
+    synth: Arc<dyn Synth>,
+    player: &dyn Player,
+    work_dir: &Path,
+    cancel: Arc<AtomicBool>,
+) -> Result<Spoken, String> {
+    let parts = sentences(&clean_for_speech(text), 220);
+    if parts.is_empty() {
+        return Ok(Spoken {
+            sentences: 0,
+            stopped: false,
+        });
+    }
+    std::fs::create_dir_all(work_dir).map_err(|e| e.to_string())?;
+    // One sentence ahead of the one playing.
+    let (tx, rx) = mpsc::sync_channel::<Result<PathBuf, String>>(1);
+    let producer = {
+        let (cancel, dir) = (cancel.clone(), work_dir.to_path_buf());
+        std::thread::spawn(move || {
+            for (i, part) in parts.iter().enumerate() {
+                if cancel.load(Ordering::SeqCst) {
+                    break;
+                }
+                let made = synth.synth(part).map(|mut pcm| {
+                    normalize(&mut pcm, 0.10, 0.89);
+                    pcm
+                });
+                let item = made.and_then(|pcm| {
+                    let path = dir.join(format!("part-{i}.wav"));
+                    std::fs::write(&path, write_wav(&pcm)).map_err(|e| e.to_string())?;
+                    Ok(path)
+                });
+                let failed = item.is_err();
+                if tx.send(item).is_err() || failed {
+                    break;
+                }
+            }
+        })
+    };
+    let (mut spoken, mut error) = (0, None);
+    for item in rx {
+        match item {
+            Ok(path) => {
+                if !cancel.load(Ordering::SeqCst) {
+                    if let Err(e) = player.play(&path, &cancel) {
+                        error = Some(e);
+                        cancel.store(true, Ordering::SeqCst);
+                    } else {
+                        spoken += 1;
+                    }
+                }
+                let _ = std::fs::remove_file(path);
+            }
+            Err(e) => {
+                error = Some(e);
+                cancel.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+    let _ = producer.join();
+    match error {
+        Some(e) if spoken == 0 => Err(e),
+        _ => Ok(Spoken {
+            sentences: spoken,
+            stopped: cancel.load(Ordering::SeqCst),
+        }),
+    }
+}
+
+// ---------------------------------------------------------------- the real engine and player
+
+/// The sherpa-onnx engine, one process per sentence (it loads in well under a second).
+pub struct EngineSynth {
+    pub voice: Voice,
+    pub work_dir: PathBuf,
+}
+
+impl Synth for EngineSynth {
+    fn synth(&self, text: &str) -> Result<Pcm, String> {
+        let out = self.work_dir.join(format!(
+            "engine-{}-{}.wav",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
+        let mut cmd = Command::new(&self.voice.engine);
+        cmd.args(engine_args(&self.voice, text, &out))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        if let Some(lib) = self
+            .voice
+            .engine
+            .parent()
+            .and_then(Path::parent)
+            .map(|d| d.join("lib"))
+        {
+            if lib.is_dir() {
+                #[cfg(not(windows))]
+                cmd.env("LD_LIBRARY_PATH", &lib);
+            }
+        }
+        let status = cmd
+            .status()
+            .map_err(|e| format!("couldn't run the voice engine: {e}"))?;
+        let bytes = std::fs::read(&out).map_err(|_| "the voice engine made no audio".to_string());
+        let _ = std::fs::remove_file(&out);
+        if !status.success() {
+            return Err("the voice engine failed".into());
+        }
+        read_wav(&bytes?)
+    }
+}
+
+/// Plays through the system's audio: PipeWire, PulseAudio or ALSA on Linux,
+/// Windows' own sound player on Windows. With `dump` set (`FRIDAY_SAY_DUMP`
+/// names a folder), each sentence is saved there instead of played, which is
+/// how the speech is checked on a machine with no speakers.
+pub struct SystemPlayer {
+    pub dump: Option<PathBuf>,
+}
+
+fn play_command(wav: &Path) -> Option<Command> {
+    #[cfg(windows)]
+    {
+        let path = wav.to_string_lossy().replace('\'', "''");
+        let mut c = Command::new("powershell");
+        c.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &format!("(New-Object Media.SoundPlayer '{path}').PlaySync()"),
+        ]);
+        Some(c)
+    }
+    #[cfg(not(windows))]
+    {
+        for (tool, args) in [
+            ("pw-play", vec![]),
+            ("paplay", vec![]),
+            ("aplay", vec!["-q"]),
+        ] {
+            let found = std::env::var_os("PATH")
+                .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(tool).is_file()));
+            if found {
+                let mut c = Command::new(tool);
+                c.args(args).arg(wav);
+                return Some(c);
+            }
+        }
+        None
+    }
+}
+
+impl Player for SystemPlayer {
+    fn play(&self, wav: &Path, cancel: &AtomicBool) -> Result<(), String> {
+        if let Some(dir) = &self.dump {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            let name = format!(
+                "{}-{}",
+                std::process::id(),
+                wav.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("part.wav")
+            );
+            return std::fs::copy(wav, dir.join(name))
+                .map(|_| ())
+                .map_err(|e| e.to_string());
+        }
+        let mut cmd =
+            play_command(wav).ok_or("no audio player found (pw-play, paplay or aplay)")?;
+        let mut child: Child = cmd
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        loop {
+            if cancel.load(Ordering::SeqCst) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Ok(());
+            }
+            match child.try_wait() {
+                Ok(Some(_)) => return Ok(()),
+                Ok(None) => std::thread::sleep(Duration::from_millis(40)),
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+    }
+}
+
+/// One speaker at a time: where the running `say` records its process id, so a
+/// new one (or `--stop`) can end it.
+pub fn pid_file() -> PathBuf {
+    let base = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("friday-say.pid")
+}
+
+/// Ends a running `say` (a new answer replaces the old one; Stop and a key press end it).
+pub fn stop_running() -> bool {
+    let path = pid_file();
+    let Some(pid) = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| t.trim().parse::<u32>().ok())
+    else {
+        return false;
+    };
+    let _ = std::fs::remove_file(&path);
+    if pid == std::process::id() {
+        return false;
+    }
+    #[cfg(windows)]
+    let ok = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success());
+    #[cfg(not(windows))]
+    let ok = Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status()
+        .is_ok_and(|s| s.success());
+    ok
+}
+
+/// Speaks `text` with the installed voice. Replaces whatever is being said.
+pub fn say(text: &str) -> Result<Spoken, String> {
+    let dir = voice_dir();
+    let voice = detect(&dir).ok_or("FRIDAY's voice isn't installed (friday voice speak setup)")?;
+    stop_running();
+    let work = std::env::temp_dir().join(format!("friday-say-{}", std::process::id()));
+    std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
+    if let Ok(mut f) = std::fs::File::create(pid_file()) {
+        let _ = write!(f, "{}", std::process::id());
+    }
+    let cancel = Arc::new(AtomicBool::new(false));
+    let player = SystemPlayer {
+        dump: std::env::var_os("FRIDAY_SAY_DUMP").map(PathBuf::from),
+    };
+    let result = speak(
+        text,
+        Arc::new(EngineSynth {
+            voice,
+            work_dir: work.clone(),
+        }),
+        &player,
+        &work,
+        cancel,
+    );
+    let _ = std::fs::remove_dir_all(&work);
+    if std::fs::read_to_string(pid_file())
+        .ok()
+        .is_some_and(|t| t.trim() == std::process::id().to_string())
+    {
+        let _ = std::fs::remove_file(pid_file());
+    }
+    result
+}
+
+// ---------------------------------------------------------------- installing
+
+/// What gets downloaded, pinned by sha256 (the digests GitHub publishes for these
+/// release files of the Apache-2.0 sherpa-onnx project).
+const RELEASES: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download";
+#[cfg(not(windows))]
+const ENGINE: (&str, &str, &str) = (
+    "v1.13.8",
+    "sherpa-onnx-v1.13.8-linux-x64-shared.tar.bz2",
+    "c0bdb7907d3a74bba1d55d22bf4d9fa75586cf1530614ebe88a27b9118e015c4",
+);
+#[cfg(windows)]
+const ENGINE: (&str, &str, &str) = (
+    "v1.13.8",
+    "sherpa-onnx-v1.13.8-win-x64-shared-MT-Release.tar.bz2",
+    "6dffdc715a4465b989446a6105265d2cb345e7101591a17d35534b6758f6e8df",
+);
+
+fn model_pin(kind: Kind) -> (&'static str, &'static str, &'static str) {
+    match kind {
+        Kind::Supertonic => (
+            "tts-models",
+            "sherpa-onnx-supertonic-tts-int8-2026-03-06.tar.bz2",
+            "8c74359f63edd5045d47747f65331f0f6dbcbc91d7e898dd756d631295fe3259",
+        ),
+        Kind::Kitten => (
+            "tts-models",
+            "kitten-nano-en-v0_8-int8.tar.bz2",
+            "6fa5be852612ce761094ba74ee6123b4fc4acfefa79bf64dc63acae4a83af2fd",
+        ),
+    }
+}
+
+fn sha256_hex(path: &Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let mut f = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut h = Sha256::new();
+    std::io::copy(&mut f, &mut h).map_err(|e| e.to_string())?;
+    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Downloads one pinned file with `curl` and refuses it unless it matches.
+fn fetch(pin: (&str, &str, &str), into: &Path) -> Result<PathBuf, String> {
+    let (tag, file, sha) = pin;
+    let dest = into.join(file);
+    let status = Command::new("curl")
+        .args(["-fL", "--silent", "--show-error", "-o"])
+        .arg(&dest)
+        .arg(format!("{RELEASES}/{tag}/{file}"))
+        .status()
+        .map_err(|e| format!("couldn't run curl: {e}"))?;
+    if !status.success() {
+        return Err(format!("couldn't download {file}"));
+    }
+    if sha256_hex(&dest)? != sha {
+        let _ = std::fs::remove_file(&dest);
+        return Err(format!(
+            "{file} doesn't match its checksum; not installing it"
+        ));
+    }
+    Ok(dest)
+}
+
+fn untar(archive: &Path, into: &Path) -> Result<(), String> {
+    let status = Command::new("tar")
+        .arg("xjf")
+        .arg(archive)
+        .arg("-C")
+        .arg(into)
+        .status()
+        .map_err(|e| format!("couldn't run tar: {e}"))?;
+    status
+        .success()
+        .then_some(())
+        .ok_or_else(|| "couldn't unpack the download".to_string())
+}
+
+/// The one folder an unpacked archive contains.
+fn only_dir(of: &Path) -> Result<PathBuf, String> {
+    let mut dirs = std::fs::read_dir(of)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir());
+    dirs.next()
+        .ok_or_else(|| "the download held no folder".to_string())
+}
+
+fn copy_files(from: &Path, to: &Path, keep: impl Fn(&str) -> bool) -> Result<(), String> {
+    std::fs::create_dir_all(to).map_err(|e| e.to_string())?;
+    let Ok(read) = std::fs::read_dir(from) else {
+        return Ok(());
+    };
+    for entry in read.filter_map(|e| e.ok()) {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if entry.path().is_file() && keep(&name) {
+            std::fs::copy(entry.path(), to.join(&name)).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// Installs the voice into `dir`: the pinned engine and the chosen model, then
+/// `settings.json`. Anything already there is replaced; a failure leaves the old
+/// voice as it was.
+pub fn setup(dir: &Path, kind: Kind) -> Result<(), String> {
+    let work = std::env::temp_dir().join(format!("friday-voice-setup-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
+    let result = (|| {
+        let engine_tar = fetch(ENGINE, &work)?;
+        let model_tar = fetch(model_pin(kind), &work)?;
+        let (engine_out, model_out) = (work.join("engine"), work.join("model"));
+        std::fs::create_dir_all(&engine_out).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&model_out).map_err(|e| e.to_string())?;
+        untar(&engine_tar, &engine_out)?;
+        untar(&model_tar, &model_out)?;
+        let engine_root = only_dir(&engine_out)?;
+        let model_root = only_dir(&model_out)?;
+        let new = work.join("new");
+        // The engine program, and what it loads: the DLLs beside it on Windows, lib/ on Linux.
+        copy_files(&engine_root.join("bin"), &new.join("bin"), |n| {
+            n == engine_name() || n.ends_with(".dll")
+        })?;
+        copy_files(&engine_root.join("lib"), &new.join("lib"), |n| {
+            n.contains(".so")
+        })?;
+        std::fs::rename(&model_root, new.join("model")).map_err(|e| e.to_string())?;
+        if !new.join("bin").join(engine_name()).is_file() {
+            return Err("the engine download held no speech program".into());
+        }
+        let kind_name = if kind == Kind::Kitten {
+            "kitten"
+        } else {
+            "supertonic"
+        };
+        std::fs::write(
+            new.join("settings.json"),
+            format!("{{\"kind\": \"{kind_name}\", \"speaker\": 0}}\n"),
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        for part in ["bin", "lib", "model"] {
+            let _ = std::fs::remove_dir_all(dir.join(part));
+            if new.join(part).exists() {
+                std::fs::rename(new.join(part), dir.join(part)).map_err(|e| e.to_string())?;
+            }
+        }
+        std::fs::copy(new.join("settings.json"), dir.join("settings.json"))
+            .map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let exe = dir.join("bin").join(engine_name());
+            let _ = std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755));
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&work);
+    result
+}
+
+pub fn kind_from_name(name: &str) -> Option<Kind> {
+    Kind::parse(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    fn tone(rate: u32, secs: f32, amp: f32) -> Pcm {
+        let n = (rate as f32 * secs) as usize;
+        Pcm {
+            rate,
+            samples: (0..n)
+                .map(|i| ((i as f32 * 0.2).sin() * amp * 32767.0) as i16)
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn markdown_code_links_and_symbols_become_speakable() {
+        let t = "## Result\n- Battery is at **40%** & charging\n- See [the docs](https://example.com/x) or https://example.org now\n```rust\nlet x = 1;\n```\nDone 🎉";
+        let s = clean_for_speech(t);
+        assert!(s.contains("Battery is at 40 percent and charging"), "{s}");
+        assert!(s.contains("See the docs or a link now"), "{s}");
+        assert!(s.contains("There is some code on screen."), "{s}");
+        assert!(!s.contains("let x"), "code is not read out: {s}");
+        assert!(
+            !s.contains('*') && !s.contains('#') && !s.contains('🎉'),
+            "{s}"
+        );
+        assert!(s.ends_with("Done."), "{s}");
+    }
+
+    #[test]
+    fn a_numbered_list_marker_is_not_a_sentence() {
+        let s = clean_for_speech("1. Open the app\n2. Press play");
+        assert_eq!(s, "Open the app. Press play.");
+    }
+
+    #[test]
+    fn sentences_break_at_ends_but_not_at_abbreviations_or_decimals() {
+        let v = sentences(
+            "It is 3.5 volts, e.g. low. Is that fine? Yes! Dr. Smith agrees.",
+            220,
+        );
+        assert_eq!(
+            v,
+            [
+                "It is 3.5 volts, e.g. low.",
+                "Is that fine?",
+                "Yes!",
+                "Dr. Smith agrees."
+            ]
+        );
+    }
+
+    #[test]
+    fn a_long_sentence_is_cut_at_a_comma_or_space_and_nothing_is_lost() {
+        let long = "word ".repeat(80).trim().to_string() + ".";
+        let v = sentences(&long, 100);
+        assert!(v.len() >= 4, "{}", v.len());
+        assert!(v.iter().all(|p| p.chars().count() <= 100));
+        assert_eq!(v.join(" ").split_whitespace().count(), 80);
+        let commas = "alpha beta gamma delta, epsilon zeta eta theta iota kappa lambda mu, nu xi omicron pi rho sigma tau.";
+        let v = sentences(commas, 60);
+        assert!(v[0].ends_with(','), "{v:?}");
+    }
+
+    #[test]
+    fn pieces_with_nothing_to_say_are_dropped() {
+        assert!(sentences("... !!! ", 100).is_empty());
+        assert!(sentences("   ", 100).is_empty());
+    }
+
+    #[test]
+    fn wav_round_trips_and_other_formats_are_refused() {
+        let p = tone(24000, 0.1, 0.5);
+        assert_eq!(read_wav(&write_wav(&p)).unwrap(), p);
+        assert!(read_wav(b"nope").is_err());
+        let mut bad = write_wav(&p);
+        bad[34] = 8; // 8-bit
+        assert!(read_wav(&bad).is_err());
+    }
+
+    #[test]
+    fn engines_that_come_out_loud_or_quiet_end_at_the_same_comfortable_level() {
+        let level = |p: &Pcm| {
+            let loud: Vec<f32> = p
+                .samples
+                .iter()
+                .map(|&s| s as f32 / 32767.0)
+                .filter(|s| s.abs() > 0.01)
+                .collect();
+            (loud.iter().map(|s| s * s).sum::<f32>() / loud.len() as f32).sqrt()
+        };
+        let peak = |p: &Pcm| {
+            p.samples
+                .iter()
+                .map(|&s| (s as f32 / 32767.0).abs())
+                .fold(0.0, f32::max)
+        };
+        let (mut hot, mut quiet) = (tone(24000, 0.5, 1.0), tone(44100, 0.5, 0.1));
+        normalize(&mut hot, 0.10, 0.89);
+        normalize(&mut quiet, 0.10, 0.89);
+        for p in [&hot, &quiet] {
+            assert!((level(p) - 0.10).abs() < 0.02, "rms {}", level(p));
+            assert!(peak(p) <= 0.9, "peak {}", peak(p));
+        }
+        // A sentence fades in and out: no click at either edge.
+        assert_eq!(hot.samples[0], 0);
+        assert!(hot.samples[hot.samples.len() - 1].abs() < 400);
+    }
+
+    #[test]
+    fn silence_is_left_alone() {
+        let mut p = Pcm {
+            rate: 24000,
+            samples: vec![0; 1000],
+        };
+        normalize(&mut p, 0.1, 0.89);
+        assert!(p.samples.iter().all(|&s| s == 0));
+    }
+
+    fn voice(kind: Kind) -> Voice {
+        Voice {
+            engine: "/e/bin/x".into(),
+            model: "/m".into(),
+            kind,
+            speaker: 3,
+            speed: 1.25,
+            threads: 2,
+        }
+    }
+
+    #[test]
+    fn each_model_gets_its_own_flags_and_the_text_comes_last() {
+        let s = engine_args(&voice(Kind::Supertonic), "hello there", Path::new("/o.wav"));
+        assert!(s.contains(&"--sid=3".to_string()) && s.contains(&"--speed=1.25".to_string()));
+        let vocoder = Path::new("/m").join("vocoder.int8.onnx");
+        assert!(s.contains(&format!("--supertonic-vocoder={}", vocoder.display())));
+        assert_eq!(s.last().unwrap(), "hello there");
+        let k = engine_args(&voice(Kind::Kitten), "hi", Path::new("/o.wav"));
+        let model = Path::new("/m").join("model.int8.onnx");
+        assert!(k.contains(&format!("--kitten-model={}", model.display())));
+        assert!(
+            k.contains(&"--kitten-length-scale=0.8".to_string()),
+            "{k:?}"
+        );
+    }
+
+    #[test]
+    fn a_voice_is_found_by_its_files_and_settings() {
+        let dir = std::env::temp_dir().join(format!("friday-voice-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(detect(&dir).is_none());
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        std::fs::create_dir_all(dir.join("model")).unwrap();
+        std::fs::write(dir.join("bin").join(engine_name()), "").unwrap();
+        // A model of unknown kind is not guessed at.
+        assert!(detect(&dir).is_none());
+        std::fs::write(dir.join("model/duration_predictor.int8.onnx"), "").unwrap();
+        assert_eq!(detect(&dir).unwrap().kind, Kind::Supertonic);
+        std::fs::write(
+            dir.join("settings.json"),
+            r#"{"kind":"kitten","speaker":5,"speed":9,"threads":99}"#,
+        )
+        .unwrap();
+        let v = detect(&dir).unwrap();
+        assert_eq!((v.kind, v.speaker, v.threads), (Kind::Kitten, 5, 8));
+        assert!(
+            (v.speed - 1.6).abs() < 1e-6,
+            "speed is kept within a natural range"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    struct FakeSynth {
+        made: Mutex<Vec<String>>,
+        fail_on: Option<&'static str>,
+    }
+    impl Synth for FakeSynth {
+        fn synth(&self, text: &str) -> Result<Pcm, String> {
+            if self.fail_on.is_some_and(|f| text.contains(f)) {
+                return Err("engine broke".into());
+            }
+            self.made.lock().unwrap().push(text.to_string());
+            Ok(tone(24000, 0.05, 0.3))
+        }
+    }
+    struct FakePlayer {
+        played: Mutex<Vec<String>>,
+        stop_after: Option<usize>,
+    }
+    impl Player for FakePlayer {
+        fn play(&self, wav: &Path, cancel: &AtomicBool) -> Result<(), String> {
+            assert!(wav.is_file(), "the file exists while it plays");
+            let mut played = self.played.lock().unwrap();
+            played.push(wav.file_name().unwrap().to_string_lossy().into_owned());
+            if self.stop_after == Some(played.len()) {
+                cancel.store(true, Ordering::SeqCst);
+            }
+            Ok(())
+        }
+    }
+    fn work() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "friday-speak-test-{}-{}",
+            std::process::id(),
+            rand::random::<u32>()
+        ))
+    }
+
+    #[test]
+    fn an_answer_is_spoken_in_order_a_sentence_at_a_time_and_cleaned_up() {
+        let (synth, player, dir) = (
+            Arc::new(FakeSynth {
+                made: Mutex::new(vec![]),
+                fail_on: None,
+            }),
+            FakePlayer {
+                played: Mutex::new(vec![]),
+                stop_after: None,
+            },
+            work(),
+        );
+        let r = speak(
+            "First one. Second one! Third one?",
+            synth.clone(),
+            &player,
+            &dir,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+        assert_eq!(
+            r,
+            Spoken {
+                sentences: 3,
+                stopped: false
+            }
+        );
+        assert_eq!(
+            *synth.made.lock().unwrap(),
+            ["First one.", "Second one!", "Third one?"]
+        );
+        assert_eq!(
+            *player.played.lock().unwrap(),
+            ["part-0.wav", "part-1.wav", "part-2.wav"]
+        );
+        assert_eq!(
+            std::fs::read_dir(&dir).unwrap().count(),
+            0,
+            "no audio files are left behind"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stopping_ends_the_rest_of_the_answer() {
+        let (synth, player, dir) = (
+            Arc::new(FakeSynth {
+                made: Mutex::new(vec![]),
+                fail_on: None,
+            }),
+            FakePlayer {
+                played: Mutex::new(vec![]),
+                stop_after: Some(1),
+            },
+            work(),
+        );
+        let r = speak(
+            "One. Two. Three. Four. Five.",
+            synth,
+            &player,
+            &dir,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+        assert!(r.stopped);
+        assert_eq!(r.sentences, 1);
+        assert_eq!(player.played.lock().unwrap().len(), 1);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_engine_failure_is_an_error_only_when_nothing_was_said() {
+        let player = FakePlayer {
+            played: Mutex::new(vec![]),
+            stop_after: None,
+        };
+        let dir = work();
+        let early = speak(
+            "Boom now. After.",
+            Arc::new(FakeSynth {
+                made: Mutex::new(vec![]),
+                fail_on: Some("Boom"),
+            }),
+            &player,
+            &dir,
+            Arc::new(AtomicBool::new(false)),
+        );
+        assert_eq!(early.unwrap_err(), "engine broke");
+        let late = speak(
+            "Fine. Boom later.",
+            Arc::new(FakeSynth {
+                made: Mutex::new(vec![]),
+                fail_on: Some("Boom"),
+            }),
+            &player,
+            &dir,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+        assert_eq!(late.sentences, 1, "what was said stays said");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_download_is_accepted_only_when_it_matches_its_pin() {
+        let dir = work();
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("x.bin");
+        std::fs::write(&file, b"abc").unwrap();
+        // sha256("abc")
+        assert_eq!(
+            sha256_hex(&file).unwrap(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_pins_are_full_sha256_digests_for_every_model() {
+        for kind in [Kind::Supertonic, Kind::Kitten] {
+            let (_, file, sha) = model_pin(kind);
+            assert!(file.ends_with(".tar.bz2"));
+            assert!(
+                sha.len() == 64 && sha.chars().all(|c| c.is_ascii_hexdigit()),
+                "{file}"
+            );
+        }
+        assert_eq!(ENGINE.2.len(), 64);
+    }
+
+    #[test]
+    fn with_a_dump_folder_the_sentences_are_saved_not_played() {
+        let (dir, out) = (work(), work());
+        std::fs::create_dir_all(&dir).unwrap();
+        let wav = dir.join("part-0.wav");
+        std::fs::write(&wav, write_wav(&tone(24000, 0.05, 0.3))).unwrap();
+        SystemPlayer {
+            dump: Some(out.clone()),
+        }
+        .play(&wav, &AtomicBool::new(false))
+        .unwrap();
+        let saved: Vec<_> = std::fs::read_dir(&out)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert_eq!(saved.len(), 1);
+        assert!(read_wav(&std::fs::read(saved[0].path()).unwrap()).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn nothing_to_say_says_nothing() {
+        let (synth, player, dir) = (
+            Arc::new(FakeSynth {
+                made: Mutex::new(vec![]),
+                fail_on: None,
+            }),
+            FakePlayer {
+                played: Mutex::new(vec![]),
+                stop_after: None,
+            },
+            work(),
+        );
+        assert_eq!(
+            speak(
+                "```\ncode\n```",
+                synth.clone(),
+                &player,
+                &dir,
+                Arc::new(AtomicBool::new(false))
+            )
+            .unwrap()
+            .sentences,
+            1
+        );
+        assert_eq!(
+            speak("  ", synth, &player, &dir, Arc::new(AtomicBool::new(false))).unwrap(),
+            Spoken {
+                sentences: 0,
+                stopped: false
+            }
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

@@ -12,6 +12,11 @@ export HOME="$W/home" XDG_STATE_HOME="" XDG_CONFIG_HOME="" USER="${USER:-tester}
 
 cat >"$S/friday-ctl" <<EOF
 #!/bin/bash
+if [[ "\$1" == say ]]; then
+  if [[ "\$2" == "-" ]]; then text=\$(cat); else text="\${*:2}"; fi
+  printf 'friday-ctl-say %s\n' "\$text" >> "$LOG"
+  exit 0
+fi
 if [[ "\$1" == cancel ]]; then
   echo "friday-ctl-cancel" >> "$LOG"
   [[ -n "\$HAVE_GOAL" ]] && { echo '{"accepted":true}'; exit 0; }
@@ -570,6 +575,28 @@ printf '#!/bin/bash\necho "quickshell $*" >>"%s"\n' "$LOG" >"$TOUR/bin/quickshel
 contains "with FRIDAY Shell, the welcome starts its tour" "$(cat "$LOG")" "ipc call tour begin"
 if grep -q "^notify " "$LOG"; then fail "the tour welcome also notified"; else pass "the tour replaces the welcome notification"; fi
 
+echo "spoken answers (friday voice speak)"
+VD="$HOME/.local/share/friday/voice"; SPK="$HOME/.config/friday/speak"
+contains "speak status: not installed" "$(bash "$F" voice speak status)" "voice speak setup"
+if bash "$F" voice speak on >/dev/null 2>&1; then fail "spoken answers turned on without a voice"; else pass "no spoken answers without a voice"; fi
+mkdir -p "$VD/bin" "$VD/model"; printf '#!/bin/sh\n' >"$VD/bin/sherpa-onnx-offline-tts"; chmod +x "$VD/bin/sherpa-onnx-offline-tts"
+echo '{"kind":"supertonic","speaker":0}' >"$VD/settings.json"
+contains "installed but off by default" "$(bash "$F" voice speak status)" "installed, off"
+: >"$LOG"; bash "$F" ask "what is rust" >/dev/null 2>&1; sleep 0.4
+if grep -q "friday-ctl-say" "$LOG"; then fail "an answer was spoken while spoken answers are off"; else pass "answers stay silent while it is off"; fi
+bash "$F" voice speak on >/dev/null
+contains "on" "$(bash "$F" voice speak status)" "Spoken answers: on"
+: >"$LOG"; bash "$F" ask "what is rust" >/dev/null 2>&1; sleep 0.6
+contains "an answer is spoken when it is on" "$(cat "$LOG")" "friday-ctl-say"
+bash "$F" voice speak voice 4 >/dev/null
+contains "the chosen voice is kept" "$(cat "$VD/settings.json")" '"speaker": 4'
+if bash "$F" voice speak voice loud >/dev/null 2>&1; then fail "a voice that isn't a number was accepted"; else pass "a voice must be a number"; fi
+: >"$LOG"; bash "$F" say "hello there"
+contains "friday say speaks through friday-ctl" "$(cat "$LOG")" "friday-ctl-say hello there"
+: >"$LOG"; bash "$F" voice speak setup kitten >/dev/null
+contains "setup installs the chosen voice through friday-ctl" "$(cat "$LOG")" "friday-ctl-say --setup kitten"
+bash "$F" voice speak off >/dev/null
+if [[ -e "$SPK" ]]; then fail "off left the switch on"; else pass "off removes the switch"; fi
 : >"$LOG"; PATH="$TOUR/bin:$PATH" FRIDAY_SHELL_DIR="$TOUR/shell" bash "$F" tour
 contains "friday tour starts the tour again, even after the first login" "$(cat "$LOG")" "ipc call tour begin"
 # A shell that is slow to start: the tour keeps asking, then starts; it is not given up on or doubled with a notification.

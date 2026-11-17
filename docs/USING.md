@@ -79,6 +79,23 @@ first and shows the button's name. Passwords are never read or typed into. What
 it reads inside an app goes to the AI model answering you; in private mode that
 model is on your computer.
 
+## Spoken answers (FRIDAY OS)
+
+FRIDAY can read its answers out loud in a small voice that is made on your computer: nothing is sent
+anywhere to speak, and it needs no GPU.
+
+```
+friday voice speak setup     download the voice once (about 100 MB, checked against a pinned checksum)
+friday voice speak on        read every answer aloud (off: friday voice speak off)
+friday voice speak voice 3   try another voice (0-9)
+friday say "Hello"           say something now;  friday say --stop  stops it
+```
+
+It speaks a sentence at a time, so you hear the start while the rest is still being made, and skips code
+blocks. A new answer replaces the one being read. The default voice is Supertonic 2 (weights under the
+[OpenRAIL-M licence](https://huggingface.co/Supertone/supertonic-2)); `friday voice speak setup kitten` installs
+the smaller Kitten TTS nano (Apache-2.0) instead.
+
 ## Other ways to ask
 
 ```

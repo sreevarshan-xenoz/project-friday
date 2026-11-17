@@ -21,6 +21,7 @@ pub mod probe;
 pub mod protocol;
 pub mod session;
 pub mod shell_state;
+pub mod speech;
 pub mod standing;
 pub mod system_tool;
 pub mod transport;

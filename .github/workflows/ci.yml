@@ -205,6 +205,23 @@ jobs:
           Write-Host "unknown app -> $r (exit $LASTEXITCODE)"
           # The last command failed on purpose; don't let it fail the step.
           exit 0
+      - name: FRIDAY's voice (pinned downloads; speaks into a folder, the runner has no speakers)
+        run: |
+          $ctl = "$env:LOCALAPPDATA\Programs\FRIDAY\friday-ctl.exe"
+          & $ctl say --setup kitten
+          if ($LASTEXITCODE -ne 0) { throw "friday-ctl say --setup exited $LASTEXITCODE" }
+          $dump = "$env:RUNNER_TEMP\say-dump"
+          $env:FRIDAY_SAY_DUMP = $dump
+          & $ctl say "Hello from FRIDAY. This is a test of the voice. Nothing is played."
+          if ($LASTEXITCODE -ne 0) { throw "friday-ctl say exited $LASTEXITCODE" }
+          $wavs = @(Get-ChildItem $dump -Filter *.wav)
+          if ($wavs.Count -lt 3) { throw "expected 3 spoken sentences, got $($wavs.Count)" }
+          foreach ($w in $wavs) {
+            $head = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($w.FullName)[0..3])
+            if ($head -ne 'RIFF' -or $w.Length -lt 20000) { throw "$($w.Name) is not audio ($($w.Length) bytes)" }
+          }
+          Write-Host "the voice spoke $($wavs.Count) sentences ($(($wavs | Measure-Object Length -Sum).Sum) bytes of audio)"
+          exit 0
       - name: Smoke test (tray --smoke)
         run: |
           $p = Start-Process "$env:LOCALAPPDATA\Programs\FRIDAY\friday-tray.exe" -ArgumentList '--smoke' -Wait -PassThru

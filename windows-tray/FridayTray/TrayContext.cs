@@ -221,7 +221,7 @@ internal sealed class TrayContext : ApplicationContext
         var answer = NewAnswerForm(AskKind.Plain, question, "");
         answer.CanAskAnother = false;
         answer.FollowUp += () => _ = FollowUpAsync(outcome.Answer);
-        answer.ShowOutcome(outcome);
+        ShowAnswer(answer, outcome);
         answer.Activate();
     }
 
@@ -302,7 +302,7 @@ internal sealed class TrayContext : ApplicationContext
                     options with { Thorough = true, Avoid = Asking.AvoidFor(outcome.ServedBy) }));
             answer.FollowUp += () => _ = FollowUpAsync(outcome.Answer);
         }
-        answer.ShowOutcome(outcome);
+        ShowAnswer(answer, outcome);
         answer.Activate();
     }
 
@@ -351,9 +351,20 @@ internal sealed class TrayContext : ApplicationContext
         }
     }
 
+    /// <summary>Shows the answer, and reads a good one aloud when spoken answers are on.</summary>
+    private void ShowAnswer(AnswerForm form, AskOutcome outcome)
+    {
+        form.ShowOutcome(outcome);
+        if (outcome.Ok && outcome.Confirmation is null && !string.IsNullOrWhiteSpace(outcome.Answer)
+            && Speaking.Enabled(_install.Paths))
+            Ctl.Say(_install, outcome.Answer);
+    }
+
     private AnswerForm NewAnswerForm(AskKind kind, string question, string waiting)
     {
         var form = new AnswerForm(question, waiting);
+        // Closing the card (or asking again) ends the reading.
+        form.FormClosed += (_, _) => { if (Speaking.Enabled(_install.Paths)) Ctl.StopSaying(_install); };
         form.CanAskAnother = kind != AskKind.Screen;
         form.AskAgain += () => _ = AskAsync(kind);
         form.StartFriday += RestartChildren;

@@ -14,6 +14,12 @@
 //!                                            far: {"partial": ...} lines;
 //!                                            also for context screen)
 //!   friday-ctl system-info
+//!   friday-ctl say "text"              (speak it with FRIDAY's voice on this
+//!                                      computer; "-" reads the text from stdin;
+//!                                      a new say replaces the one speaking)
+//!   friday-ctl say --stop              (stop speaking)
+//!   friday-ctl say --setup [kitten]    (download and install the voice, checked
+//!                                      against pinned checksums)
 //!   friday-ctl cancel                  (cancel the goal in flight)
 //!   friday-ctl context screen          (interactive consent)
 //!   friday-ctl context screen --yes    (consent already collected by the shell panel)
@@ -75,9 +81,52 @@ fn confirm_context_consent() -> bool {
     answer.trim().eq_ignore_ascii_case("y")
 }
 
+/// `friday-ctl say`: no daemon needed, the voice runs here.
+fn say(args: &[String]) -> std::process::ExitCode {
+    if let Some(at) = args.iter().position(|a| a == "--setup") {
+        let name = args.get(at + 1).map(String::as_str).unwrap_or("supertonic");
+        let Some(kind) = friday_mobile::speech::kind_from_name(name) else {
+            eprintln!("friday-ctl: unknown voice \"{name}\" (supertonic or kitten)");
+            return std::process::ExitCode::from(2);
+        };
+        println!("Downloading FRIDAY's voice (about 100 MB, once)...");
+        return match friday_mobile::speech::setup(&friday_mobile::speech::voice_dir(), kind) {
+            Ok(()) => {
+                println!("Voice installed.");
+                std::process::ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("friday-ctl: {e}");
+                std::process::ExitCode::from(1)
+            }
+        };
+    }
+    if args.iter().any(|a| a == "--stop") {
+        friday_mobile::speech::stop_running();
+        return std::process::ExitCode::SUCCESS;
+    }
+    let text = if args == ["-"] {
+        let mut t = String::new();
+        let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut t);
+        t
+    } else {
+        args.join(" ")
+    };
+    match friday_mobile::speech::say(&text) {
+        Ok(_) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("friday-ctl: {e}");
+            std::process::ExitCode::from(1)
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     let raw: Vec<String> = std::env::args().skip(1).collect();
+    if raw.first().map(String::as_str) == Some("say") {
+        return say(&raw[1..]);
+    }
 
     // Resolve the daemon address + token, in precedence order: explicit CLI
     // flags, then env overrides, then the file-backed state.

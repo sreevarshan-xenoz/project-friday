@@ -51,6 +51,9 @@ Autonomous Agent & Cognitive Loop:
                                    Local model only; nothing leaves the machine
   friday face [status|setup|remove] Face unlock for the lock screen (Gaze)
   friday voice [status|setup|remove] Hold Super+Y and speak (speech to text on this computer)
+  friday voice speak [setup|on|off|voice N|status]
+                                   FRIDAY answers out loud, in a voice made on this computer
+  friday say "text"                Say something now (friday say --stop to stop)
   friday tour                      Take the first-login tour again
   friday screen-text [status|on|off]
                                    Ask about the screen with the window's text, not a screenshot
@@ -1059,6 +1062,41 @@ friday_voice() {
   esac
 }
 
+# FRIDAY's voice out: a small voice made on this computer (the sherpa-onnx
+# engine, run on the CPU), nothing sent anywhere. The downloads are pinned by
+# checksum (the hashes GitHub publishes for these release files).
+friday_speak_dir() { echo "${FRIDAY_VOICE_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/friday/voice}"; }
+friday_speak_flag() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/speak"; }
+friday_speak_ready() { [ -x "$(friday_speak_dir)/bin/sherpa-onnx-offline-tts" ] && [ -d "$(friday_speak_dir)/model" ]; }
+
+friday_voice_speak() {
+  local dir flag; dir=$(friday_speak_dir); flag=$(friday_speak_flag)
+  case "${1:-status}" in
+    status)
+      if friday_speak_ready; then
+        if [ -e "$flag" ]; then echo "Spoken answers: on (turn off: friday voice speak off)"
+        else echo "Spoken answers: installed, off (turn on: friday voice speak on)"; fi
+      else echo "Spoken answers: not installed (friday voice speak setup)"; fi
+      ;;
+    setup)
+      friday-ctl say --setup "${2:-supertonic}" || return 1
+      echo "Turn it on: friday voice speak on   (try it: friday say \"Hello, I'm FRIDAY.\")"
+      ;;
+    on)
+      friday_speak_ready || { echo "friday: the voice isn't installed yet (friday voice speak setup)" >&2; return 1; }
+      mkdir -p "$(dirname "$flag")" && : >"$flag"; echo "FRIDAY will read its answers out loud. Stop it any time with friday say --stop."
+      ;;
+    off) rm -f "$flag"; echo "FRIDAY answers in text only." ;;
+    voice)
+      friday_speak_ready || { echo "friday: the voice isn't installed yet (friday voice speak setup)" >&2; return 1; }
+      [[ "${2:-}" =~ ^[0-9]+$ ]] || { echo "Usage: friday voice speak voice <number>   (try a few: friday say \"Hello\")" >&2; return 1; }
+      jq --argjson n "$2" '.speaker = $n' "$dir/settings.json" >"$dir/settings.json.tmp" && mv "$dir/settings.json.tmp" "$dir/settings.json"
+      echo "Voice $2."
+      ;;
+    *) echo "Usage: friday voice speak [setup|on|off|voice N|status]" >&2; return 1 ;;
+  esac
+}
+
 friday_hold() {
   local d="${XDG_RUNTIME_DIR:-/tmp}/friday-hold-$(id -u)"
   mkdir -p "$d" && chmod 700 "$d"
@@ -1762,6 +1800,13 @@ case "${1:-}" in
       # never splits it (FRIDAY Shell's answer history reads these).
       { printf '<!-- friday answer -->\n'; cat "$answer_file"; printf '\n---\n\n'; } >>"$state_dir/answers.md"
 
+      # Spoken answers (friday voice speak on): the answer is read aloud while
+      # the card shows it; a new answer, or friday say --stop, ends it.
+      if $ans_ok && [ -e "$(friday_speak_flag)" ] && friday_speak_ready; then
+        ( printf '%s' "$answer" | friday-ctl say - ) </dev/null >/dev/null 2>&1 &
+        disown 2>/dev/null || true
+      fi
+
       preview="$answer"
       [ "${#preview}" -le 220 ] || preview="${preview:0:217}…"
       [ -z "$meta" ] || preview="$preview\n$meta"
@@ -1946,7 +1991,11 @@ case "${1:-}" in
     ;;
   voice)
     shift
-    friday_voice "$@"
+    if [ "${1:-}" = speak ]; then shift; friday_voice_speak "$@"; else friday_voice "$@"; fi
+    ;;
+  say)
+    shift
+    exec friday-ctl say "$@"
     ;;
   hold)
     shift
