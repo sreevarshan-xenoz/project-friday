@@ -122,7 +122,9 @@ feat() { # feat <dir> VAR=value...  → runs friday_write_features with those ch
 }
 FD="$WORK/features"; rm -rf "$FD"
 feat "$FD/default"
-if [[ -z "$(ls -A "$FD/default")" ]]; then pass "default features write nothing"; else fail "default features wrote: $(ls "$FD/default")"; fi
+if [[ "$(ls -A "$FD/default")" == "no-phone-offer" ]]; then pass "default features write only the no-phone-offer flag"; else fail "default features wrote: $(ls "$FD/default")"; fi
+feat "$FD/phone" FEAT_PHONE=true
+if [[ ! -e "$FD/phone/no-phone-offer" ]]; then pass "choosing phone pairing leaves the flag off"; else fail "phone pairing chosen but flagged off"; fi
 feat "$FD/off" FEAT_DESKTOP=false FEAT_TASKS=false FEAT_APPNAME=false FEAT_SCREENTEXT=true
 contains "desktop control off is written"   "$(cat "$FD/off/friday.env")" "FRIDAY_DESKTOP=0"
 contains "scheduled tasks off is written"   "$(cat "$FD/off/friday.env")" "FRIDAY_STANDING_TASKS=0"

@@ -1165,7 +1165,7 @@ friday_welcome() {
   local free=true
   grep -qE '^([A-Z_]+_API_KEY|FRIDAY_AGENT_CLIS)=.+' "$env_file" 2>/dev/null && free=false
   local phone=false
-  command -v pocketdesk >/dev/null 2>&1 && phone=true
+  command -v pocketdesk >/dev/null 2>&1 && [ ! -e "${XDG_CONFIG_HOME:-$HOME/.config}/friday/no-phone-offer" ] && phone=true
   # FRIDAY Shell walks through the keys (press each one); the notification
   # below is for desktops without it. The shell can take a while to come up
   # (slow disks, software rendering), so keep asking until it answers, and only
