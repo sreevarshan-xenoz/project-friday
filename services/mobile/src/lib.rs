@@ -24,6 +24,7 @@ pub mod shell_state;
 pub mod speech;
 pub mod standing;
 pub mod system_tool;
+pub mod tinyvoca;
 pub mod transport;
 pub mod upgrade;
 pub mod voice;

@@ -36,6 +36,8 @@ tracing = { workspace = true }
 sysinfo = { workspace = true }
 reqwest = { workspace = true }
 url = { workspace = true }
+fancy-regex = "0.14"
+unicode-normalization = "0.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = { version = "5", default-features = false, features = ["tokio"] }

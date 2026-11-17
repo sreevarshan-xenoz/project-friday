@@ -1,0 +1,7 @@
+The text tables in this folder and the Rust code in ../ are a port of dizione
+(https://github.com/n4ze3m/dizione, Apache-2.0, see LICENSE-dizione), the
+phonemizer of tiny-voca (https://github.com/n4ze3m/tiny-voca, Apache-2.0).
+The pronunciation data it reads at run time (lexicon, alignment table,
+homograph weights, unknown-word model) is downloaded from the tiny-voca model
+repository and is derived from CMUdict and the Wikipedia Homograph Data (see
+their license files there).
