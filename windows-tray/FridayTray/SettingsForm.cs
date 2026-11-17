@@ -240,10 +240,10 @@ internal sealed class SettingsForm : Form
         if (!Speaking.Installed(paths))
         {
             yield return Note("FRIDAY can read its answers out loud in a voice that is made on this PC: nothing is sent anywhere to speak. " +
-                "It downloads once (about 150 MB, checked against a fixed checksum) and runs on the CPU. The voice (Bella, and seven more to choose from) is natural and expressive; it takes a few seconds before the first words and about 1 GB of memory while it speaks.");
+                "It downloads once (about 50 MB, checked against a fixed checksum) and runs on the CPU. The voice (tiny voca, female or male) is clear and natural, and starts speaking at once.");
             yield return Download("Download FRIDAY's voice", primary: true, setup: ["say", "--setup"]);
-            yield return Note("Short on disk or memory? The small voice (tiny voca) is about 50 MB, starts at once and sounds clear, a little less expressive.");
-            yield return Download("Download the small voice", primary: false, setup: ["say", "--setup", "tinyvoca"]);
+            yield return Note("Prefer a more expressive voice? Kokoro (Bella, and seven more to choose from) is about 150 MB, takes a few seconds before the first words and about 1 GB of memory while it speaks.");
+            yield return Download("Download the Kokoro voice", primary: false, setup: ["say", "--setup", "kokoro"]);
             yield break;
         }
         yield return Switch(

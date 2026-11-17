@@ -84,10 +84,10 @@ fn confirm_context_consent() -> bool {
 /// `friday-ctl say`: no daemon needed, the voice runs here.
 fn say(args: &[String]) -> std::process::ExitCode {
     if let Some(at) = args.iter().position(|a| a == "--setup") {
-        let name = args.get(at + 1).map(String::as_str).unwrap_or("kokoro");
+        let name = args.get(at + 1).map(String::as_str).unwrap_or("tinyvoca");
         let Some(kind) = friday_mobile::speech::kind_from_name(name) else {
             eprintln!(
-                "friday-ctl: unknown voice \"{name}\" (kokoro, tinyvoca, supertonic or kitten)"
+                "friday-ctl: unknown voice \"{name}\" (tinyvoca, kokoro, supertonic or kitten)"
             );
             return std::process::ExitCode::from(2);
         };
