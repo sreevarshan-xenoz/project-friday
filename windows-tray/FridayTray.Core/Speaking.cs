@@ -35,6 +35,13 @@ public static class Speaking
         }
     }
 
+    /// <summary>The names in `friday-ctl say --voices` output ("0 Bella", one per line), in order.</summary>
+    public static IReadOnlyList<string> ParseVoices(string output) =>
+        output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(l => l.IndexOf(' ') is var at and > 0 && int.TryParse(l[..at], out _) ? l[(at + 1)..].Trim() : "")
+            .Where(n => n.Length > 0)
+            .ToList();
+
     /// <summary>The chosen voice, 0 to <see cref="Voices"/> - 1 (0 when none was chosen).</summary>
     public static int Speaker(Paths p)
     {

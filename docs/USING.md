@@ -89,9 +89,9 @@ FRIDAY can read its answers out loud in a small voice that is made on your compu
 anywhere to speak, and it needs no GPU.
 
 ```
-friday voice speak setup     download the voice once (about 100 MB, checked against a pinned checksum)
+friday voice speak setup     download the voice once (about 150 MB, checked against a pinned checksum)
 friday voice speak on        read every answer aloud (off: friday voice speak off)
-friday voice speak voice 3   try another voice (0-9)
+friday voice speak voices    the installed voice's names (Bella, Heart, ...); pick one: friday voice speak voice 1
 friday say "Hello"           say something now;  friday say --stop  stops it
 ```
 
@@ -99,9 +99,13 @@ The installer can talk you through the install too: after the network check it a
 voice into memory for that session only; nothing is kept on the new system.
 
 It speaks a sentence at a time, so you hear the start while the rest is still being made, and skips code
-blocks. A new answer replaces the one being read. The default voice is Supertonic 2 (weights under the
-[OpenRAIL-M licence](https://huggingface.co/Supertone/supertonic-2)); `friday voice speak setup kitten` installs
-the smaller Kitten TTS nano (Apache-2.0) instead.
+blocks. A new answer replaces the one being read. The default is **Kokoro** (Apache-2.0), with Bella as the
+default voice and seven more to choose from (Heart, Nicole, Sarah, Sky, Nova, Emma, Isabella). It is the most
+natural and expressive of the voices that run on a laptop, and also the heaviest: it makes speech at about real
+time on a typical CPU, so FRIDAY works on three sentences at once (about 1 GB of memory while it speaks, and a few
+seconds before the first words). For something lighter and faster, `friday voice speak setup kitten` installs
+Kitten TTS nano (Apache-2.0) and `friday voice speak setup supertonic` installs Supertonic 2 (weights under the
+[OpenRAIL-M licence](https://huggingface.co/Supertone/supertonic-2)).
 
 ## How is my computer doing?
 

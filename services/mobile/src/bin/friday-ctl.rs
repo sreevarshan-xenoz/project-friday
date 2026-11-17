@@ -84,12 +84,12 @@ fn confirm_context_consent() -> bool {
 /// `friday-ctl say`: no daemon needed, the voice runs here.
 fn say(args: &[String]) -> std::process::ExitCode {
     if let Some(at) = args.iter().position(|a| a == "--setup") {
-        let name = args.get(at + 1).map(String::as_str).unwrap_or("supertonic");
+        let name = args.get(at + 1).map(String::as_str).unwrap_or("kokoro");
         let Some(kind) = friday_mobile::speech::kind_from_name(name) else {
-            eprintln!("friday-ctl: unknown voice \"{name}\" (supertonic or kitten)");
+            eprintln!("friday-ctl: unknown voice \"{name}\" (kokoro, supertonic or kitten)");
             return std::process::ExitCode::from(2);
         };
-        println!("Downloading FRIDAY's voice (about 100 MB, once)...");
+        println!("Downloading FRIDAY's voice (about 150 MB, once)...");
         return match friday_mobile::speech::setup(&friday_mobile::speech::voice_dir(), kind) {
             Ok(()) => {
                 println!("Voice installed.");
@@ -100,6 +100,20 @@ fn say(args: &[String]) -> std::process::ExitCode {
                 std::process::ExitCode::from(1)
             }
         };
+    }
+    // The installed voice's names, one per line as "<number> <name>" (the number is what `voice N` takes).
+    if args.iter().any(|a| a == "--voices") {
+        let Some(voice) = friday_mobile::speech::detect(&friday_mobile::speech::voice_dir()) else {
+            eprintln!("friday-ctl: FRIDAY's voice isn't installed");
+            return std::process::ExitCode::from(1);
+        };
+        for (i, name) in friday_mobile::speech::voice_names(voice.kind)
+            .iter()
+            .enumerate()
+        {
+            println!("{i} {name}");
+        }
+        return std::process::ExitCode::SUCCESS;
     }
     if args.iter().any(|a| a == "--stop") {
         friday_mobile::speech::stop_running();

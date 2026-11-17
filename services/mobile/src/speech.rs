@@ -13,19 +13,47 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::Value;
 
 /// Which model the engine is running. Supertonic is recognised by its files;
-/// Kitten is named in `settings.json`.
+/// Kitten and Kokoro are named in `settings.json`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Supertonic,
     Kitten,
+    Kokoro,
+}
+
+/// Kokoro's English female voices as (name, speaker id in the model). The
+/// person's `speaker` setting is the position in this list, so 0 (the default)
+/// is Bella.
+pub const KOKORO_VOICES: [(&str, u32); 8] = [
+    ("Bella", 2),
+    ("Heart", 3),
+    ("Nicole", 6),
+    ("Sarah", 9),
+    ("Sky", 10),
+    ("Nova", 7),
+    ("Emma", 21),
+    ("Isabella", 22),
+];
+
+/// The names of the voices `kind` offers, in the order the `speaker` setting counts them.
+pub fn voice_names(kind: Kind) -> Vec<String> {
+    match kind {
+        Kind::Kokoro => KOKORO_VOICES.iter().map(|(n, _)| (*n).into()).collect(),
+        Kind::Kitten => [
+            "Bella", "Jasper", "Luna", "Bruno", "Rosie", "Hugo", "Kiki", "Leo",
+        ]
+        .map(String::from)
+        .into(),
+        Kind::Supertonic => (1..=10).map(|n| format!("Voice {n}")).collect(),
+    }
 }
 
 impl Kind {
@@ -33,6 +61,7 @@ impl Kind {
         match s.trim().to_ascii_lowercase().as_str() {
             "supertonic" => Some(Kind::Supertonic),
             "kitten" => Some(Kind::Kitten),
+            "kokoro" => Some(Kind::Kokoro),
             _ => None,
         }
     }
@@ -123,9 +152,14 @@ pub fn detect(dir: &Path) -> Option<Voice> {
 /// The engine's command line for one piece of text.
 pub fn engine_args(v: &Voice, text: &str, out: &Path) -> Vec<String> {
     let m = |f: &str| v.model.join(f).to_string_lossy().into_owned();
+    // Kokoro's speaker setting is a position in its list of voices.
+    let sid = match v.kind {
+        Kind::Kokoro => KOKORO_VOICES[(v.speaker as usize).min(KOKORO_VOICES.len() - 1)].1,
+        _ => v.speaker,
+    };
     let mut a = vec![
         format!("--num-threads={}", v.threads),
-        format!("--sid={}", v.speaker),
+        format!("--sid={sid}"),
         format!("--output-filename={}", out.display()),
     ];
     match v.kind {
@@ -153,6 +187,15 @@ pub fn engine_args(v: &Voice, text: &str, out: &Path) -> Vec<String> {
             format!("--kitten-tokens={}", m("tokens.txt")),
             format!("--kitten-data-dir={}", m("espeak-ng-data")),
             format!("--kitten-length-scale={}", 1.0 / v.speed),
+        ]),
+        Kind::Kokoro => a.extend([
+            format!("--kokoro-model={}", m("model.int8.onnx")),
+            format!("--kokoro-voices={}", m("voices.bin")),
+            format!("--kokoro-tokens={}", m("tokens.txt")),
+            format!("--kokoro-data-dir={}", m("espeak-ng-data")),
+            // English only: the Chinese lexicon and dictionary are not loaded.
+            format!("--kokoro-lexicon={}", m("lexicon-us-en.txt")),
+            format!("--kokoro-length-scale={}", 1.0 / v.speed),
         ]),
     }
     a.push(text.to_string());
@@ -426,6 +469,11 @@ pub fn normalize(p: &mut Pcm, target_rms: f32, peak_limit: f32) {
 /// Makes the audio for one sentence (the engine, in production).
 pub trait Synth: Send + Sync {
     fn synth(&self, text: &str) -> Result<Pcm, String>;
+    /// How many sentences may be made at the same time (a slow voice makes
+    /// several at once to keep ahead of the speech).
+    fn workers(&self) -> usize {
+        1
+    }
 }
 
 /// Plays one prepared WAV file; `cancel` stops it early.
@@ -440,9 +488,10 @@ pub struct Spoken {
     pub stopped: bool,
 }
 
-/// Speaks `text` sentence by sentence: the next sentence is made while the
-/// current one plays, so speech starts after one sentence's work, not the whole
-/// answer's. Stops at once when `cancel` is set.
+/// Speaks `text` sentence by sentence: the next sentences are made while the
+/// current one plays (as many at once as the voice's `workers`), so speech starts
+/// after one sentence's work, not the whole answer's, and is played in order.
+/// Stops at once when `cancel` is set.
 pub fn speak(
     text: &str,
     synth: Arc<dyn Synth>,
@@ -458,16 +507,35 @@ pub fn speak(
         });
     }
     std::fs::create_dir_all(work_dir).map_err(|e| e.to_string())?;
-    // One sentence ahead of the one playing.
-    let (tx, rx) = mpsc::sync_channel::<Result<PathBuf, String>>(1);
-    let producer = {
-        let (cancel, dir) = (cancel.clone(), work_dir.to_path_buf());
-        std::thread::spawn(move || {
-            for (i, part) in parts.iter().enumerate() {
+    let n = parts.len();
+    let workers = synth.workers().max(1);
+    // One channel per sentence, so a sentence made early still waits its turn.
+    type Made = Result<PathBuf, String>;
+    let (senders, receivers): (Vec<_>, Vec<_>) = (0..n).map(|_| mpsc::channel::<Made>()).unzip();
+    let senders: Arc<Vec<Mutex<mpsc::Sender<Made>>>> =
+        Arc::new(senders.into_iter().map(Mutex::new).collect());
+    let parts = Arc::new(parts);
+    let next = Arc::new(AtomicUsize::new(0));
+    // The sentence being played: no worker starts one more than `workers` ahead of it.
+    let playing = Arc::new(AtomicUsize::new(0));
+    let handles: Vec<_> = (0..workers)
+        .map(|_| {
+            let (synth, parts, senders) = (synth.clone(), parts.clone(), senders.clone());
+            let (next, playing, cancel) = (next.clone(), playing.clone(), cancel.clone());
+            let dir = work_dir.to_path_buf();
+            std::thread::spawn(move || loop {
+                let i = next.fetch_add(1, Ordering::SeqCst);
+                if i >= parts.len() {
+                    break;
+                }
+                while i > playing.load(Ordering::SeqCst) + workers && !cancel.load(Ordering::SeqCst)
+                {
+                    std::thread::sleep(Duration::from_millis(30));
+                }
                 if cancel.load(Ordering::SeqCst) {
                     break;
                 }
-                let made = synth.synth(part).map(|mut pcm| {
+                let made = synth.synth(&parts[i]).map(|mut pcm| {
                     normalize(&mut pcm, 0.10, 0.89);
                     pcm
                 });
@@ -477,14 +545,23 @@ pub fn speak(
                     Ok(path)
                 });
                 let failed = item.is_err();
-                if tx.send(item).is_err() || failed {
+                let _ = senders[i].lock().map(|tx| tx.send(item));
+                if failed {
                     break;
                 }
-            }
+            })
         })
-    };
+        .collect();
     let (mut spoken, mut error) = (0, None);
-    for item in rx {
+    'sentences: for (i, rx) in receivers.into_iter().enumerate() {
+        let item = loop {
+            match rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(item) => break item,
+                Err(mpsc::RecvTimeoutError::Timeout) if !cancel.load(Ordering::SeqCst) => {}
+                Err(_) => break 'sentences,
+            }
+        };
+        playing.store(i, Ordering::SeqCst);
         match item {
             Ok(path) => {
                 if !cancel.load(Ordering::SeqCst) {
@@ -502,8 +579,14 @@ pub fn speak(
                 cancel.store(true, Ordering::SeqCst);
             }
         }
+        if cancel.load(Ordering::SeqCst) {
+            break;
+        }
     }
-    let _ = producer.join();
+    // Anything still being made is not wanted any more: cancel is set on every early exit.
+    for h in handles {
+        let _ = h.join();
+    }
     match error {
         Some(e) if spoken == 0 => Err(e),
         _ => Ok(Spoken {
@@ -522,6 +605,15 @@ pub struct EngineSynth {
 }
 
 impl Synth for EngineSynth {
+    /// Kokoro is slower than real time on a laptop CPU: three sentences at once.
+    fn workers(&self) -> usize {
+        if self.voice.kind == Kind::Kokoro {
+            3
+        } else {
+            1
+        }
+    }
+
     fn synth(&self, text: &str) -> Result<Pcm, String> {
         let out = self.work_dir.join(format!(
             "engine-{}-{}.wav",
@@ -734,6 +826,11 @@ fn model_pin(kind: Kind) -> (&'static str, &'static str, &'static str) {
             "kitten-nano-en-v0_8-int8.tar.bz2",
             "6fa5be852612ce761094ba74ee6123b4fc4acfefa79bf64dc63acae4a83af2fd",
         ),
+        Kind::Kokoro => (
+            "tts-models",
+            "kokoro-int8-multi-lang-v1_0.tar.bz2",
+            "72c347230107ef8a31098ec4d468a605244beef5f1ed00db97efa13518800653",
+        ),
     }
 }
 
@@ -835,10 +932,10 @@ pub fn setup(dir: &Path, kind: Kind) -> Result<(), String> {
         if !new.join("bin").join(engine_name()).is_file() {
             return Err("the engine download held no speech program".into());
         }
-        let kind_name = if kind == Kind::Kitten {
-            "kitten"
-        } else {
-            "supertonic"
+        let kind_name = match kind {
+            Kind::Kitten => "kitten",
+            Kind::Kokoro => "kokoro",
+            Kind::Supertonic => "supertonic",
         };
         std::fs::write(
             new.join("settings.json"),
@@ -1002,6 +1099,45 @@ mod tests {
     }
 
     #[test]
+    fn kokoro_defaults_to_bella_and_takes_its_voices_by_position() {
+        let bella = engine_args(&voice(Kind::Kokoro), "hi", Path::new("/o.wav"));
+        // voice() has speaker 3: position 3 is Sarah, speaker id 9.
+        assert!(bella.contains(&"--sid=9".to_string()), "{bella:?}");
+        let mut v = voice(Kind::Kokoro);
+        v.speaker = 0;
+        let a = engine_args(&v, "hi", Path::new("/o.wav"));
+        assert!(
+            a.contains(&"--sid=2".to_string()),
+            "position 0 is Bella: {a:?}"
+        );
+        v.speaker = 63;
+        let last = engine_args(&v, "hi", Path::new("/o.wav"));
+        assert!(
+            last.contains(&"--sid=22".to_string()),
+            "past the end is the last voice: {last:?}"
+        );
+        let model = Path::new("/m").join("model.int8.onnx");
+        assert!(a.contains(&format!("--kokoro-model={}", model.display())));
+        assert!(a
+            .iter()
+            .any(|x| x.starts_with("--kokoro-lexicon=") && !x.contains("zh")));
+        assert!(
+            a.contains(&"--kokoro-length-scale=0.8".to_string()),
+            "{a:?}"
+        );
+        assert_eq!(a.last().unwrap(), "hi");
+    }
+
+    #[test]
+    fn every_kind_names_its_voices() {
+        assert_eq!(voice_names(Kind::Kokoro)[0], "Bella");
+        assert_eq!(voice_names(Kind::Kokoro).len(), KOKORO_VOICES.len());
+        assert_eq!(voice_names(Kind::Kitten).len(), 8);
+        assert_eq!(voice_names(Kind::Supertonic).len(), 10);
+        assert_eq!(kind_from_name("Kokoro"), Some(Kind::Kokoro));
+    }
+
+    #[test]
     fn each_model_gets_its_own_flags_and_the_text_comes_last() {
         let s = engine_args(&voice(Kind::Supertonic), "hello there", Path::new("/o.wav"));
         assert!(s.contains(&"--sid=3".to_string()) && s.contains(&"--speed=1.25".to_string()));
@@ -1071,6 +1207,62 @@ mod tests {
             Ok(())
         }
     }
+    /// Earlier sentences take longer than later ones, three at a time.
+    struct SlowFirstSynth;
+    impl Synth for SlowFirstSynth {
+        fn workers(&self) -> usize {
+            3
+        }
+        fn synth(&self, text: &str) -> Result<Pcm, String> {
+            let n: u64 = text
+                .split_whitespace()
+                .next()
+                .and_then(|w| w.trim_end_matches('.').parse().ok())
+                .unwrap_or(0);
+            std::thread::sleep(Duration::from_millis(60 * (6 - n.min(5))));
+            Ok(tone(24000, 0.05, 0.3))
+        }
+    }
+
+    #[test]
+    fn sentences_made_at_the_same_time_still_play_in_order() {
+        let (dir, player) = (
+            work(),
+            FakePlayer {
+                played: Mutex::new(vec![]),
+                stop_after: None,
+            },
+        );
+        let started = std::time::Instant::now();
+        let spoken = speak(
+            "1 First. 2 Second. 3 Third. 4 Fourth. 5 Fifth.",
+            Arc::new(SlowFirstSynth),
+            &player,
+            &dir,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+        assert_eq!(spoken.sentences, 5);
+        let order = player.played.lock().unwrap().clone();
+        assert_eq!(
+            order,
+            [
+                "part-0.wav",
+                "part-1.wav",
+                "part-2.wav",
+                "part-3.wav",
+                "part-4.wav"
+            ]
+        );
+        // One by one the five would take 60 * (5+4+3+2+1) = 900 ms.
+        assert!(
+            started.elapsed() < Duration::from_millis(800),
+            "{:?}",
+            started.elapsed()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn work() -> PathBuf {
         std::env::temp_dir().join(format!(
             "friday-speak-test-{}-{}",

@@ -10,7 +10,7 @@ ColumnLayout {
 
   Label {
     Layout.fillWidth: true
-    text: "FRIDAY can read its answers out loud, in a voice made on this computer. Nothing is sent anywhere to speak. It downloads once (about 100 MB) and needs no graphics card."
+    text: "FRIDAY can read its answers out loud, in a voice made on this computer. Nothing is sent anywhere to speak. It downloads once (about 150 MB) and needs no graphics card."
     wrapMode: Text.Wrap
     elide: Text.ElideNone
     color: Theme.subtext
@@ -29,7 +29,7 @@ ColumnLayout {
   Cmd {
     id: setup
     args: ["voice", "speak", "setup"]
-    onFinished: speak.refresh()
+    onFinished: { speak.refresh(); voices.run(); }
   }
   Flow {
     Layout.fillWidth: true
@@ -44,16 +44,29 @@ ColumnLayout {
   }
   Output { text: setup.output }
 
-  Label { text: "Voice"; font.weight: Font.DemiBold }
+  // The installed voice's names, as `friday voice speak voices` prints them ("0 Bella").
+  property var names: []
+  Cmd {
+    id: voices
+    args: ["voice", "speak", "voices"]
+    onFinished: output => page.names = output.split("\n")
+      .map(l => l.trim().match(/^(\d+) (.+)$/)).filter(m => m !== null).map(m => ({ n: Number(m[1]), name: m[2] }))
+  }
+  Component.onCompleted: voices.run()
+
+  Label { visible: page.names.length > 0; text: "Voice"; font.weight: Font.DemiBold }
   Flow {
     Layout.fillWidth: true
     spacing: 6
     Repeater {
-      model: 10
+      model: page.names
       Chip {
-        required property int index
-        text: String(index + 1)
-        onClicked: Quickshell.execDetached(["friday", "voice", "speak", "voice", String(index)])
+        required property var modelData
+        text: modelData.name
+        onClicked: {
+          Quickshell.execDetached(["friday", "voice", "speak", "voice", String(modelData.n)]);
+          Quickshell.execDetached(["friday", "say", "Hi, I'm FRIDAY. This is how I sound."]);
+        }
       }
     }
   }
