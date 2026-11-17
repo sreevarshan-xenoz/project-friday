@@ -151,6 +151,14 @@ speak; [[ ! -e "$SV/said" ]] && pass "no voice requested: nothing is spoken" || 
 : >"$SV/voice/on"; speak; grep -qx "say hello" "$SV/said" 2>/dev/null && pass "voice on: the line goes to friday-ctl say" || fail "voice on but nothing was said"
 rm -rf "$SV"
 
+echo "no Omarchy name where a person reads it"
+ISO_DIR="$ROOT/../.."
+if grep -qi omarchy "$ISO_DIR/efiboot/loader/entries/01-archiso-linux.conf" "$ISO_DIR/airootfs/etc/motd" \
+  || grep -i 'menuentry' "$ISO_DIR/grub/grub.cfg" | grep -qi omarchy \
+  || grep -i 'phase_msg\|^title' "$ROOT/installer" | grep -qi omarchy; then
+  fail "the boot menu, login text or installer step names still say Omarchy"
+else pass "boot menu, login text and installer steps do not say Omarchy"; fi
+
 echo "boot splash"
 [[ -s "$ROOT/../usr/share/friday-installer/plymouth-logo.png" ]] && pass "FRIDAY's splash logo ships in the ISO" || fail "plymouth-logo.png is missing"
 grep -q 'friday-installer/plymouth-logo.png /mnt/usr/share/plymouth/themes/omarchy/logo.png' "$ROOT/installer" && pass "the installer puts it into the installed splash theme" || fail "the installer does not use the splash logo"

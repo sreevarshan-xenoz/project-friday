@@ -209,7 +209,7 @@ live_status_stop
 
 genfstab -U /mnt >> /mnt/etc/fstab
 
-phase_msg 4 "Installing FRIDAY and the Omarchy desktop layer"
+phase_msg 4 "Installing FRIDAY and the desktop"
 # FRIDAY itself is the friday-git package the ISO was built with (daemon,
 # CLI, user service); pacman owns its files, so `pacman -Syu` and a later
 # package upgrade work on the installed system.
@@ -538,7 +538,7 @@ case "$SDDM_THEME" in
     SDDM_THEME_ID="silent"
     sed -i 's|^ConfigFile=.*|ConfigFile=configs/nord.conf|' /mnt/usr/share/sddm/themes/silent/metadata.desktop 2>/dev/null || true
     ;;
-  *"Omarchy"*)
+  *"Classic SDDM"*)
     SDDM_THEME_ID="omarchy"
     ;;
   *)
@@ -613,7 +613,7 @@ else
   ROOT_OPTIONS="root=PARTUUID=$ROOT_PARTUUID"
 fi
 cat << EOF_ENTRY > /mnt/boot/loader/entries/arch.conf
-title   FRIDAY OS (Omarchy Substrate)
+title   FRIDAY OS
 linux   /vmlinuz-linux
 initrd  /initramfs-linux.img
 options $ROOT_OPTIONS rw console=ttyS0,115200 console=tty1
