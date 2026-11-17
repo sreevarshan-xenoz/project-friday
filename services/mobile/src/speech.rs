@@ -587,6 +587,10 @@ pub fn speak(
     for h in handles {
         let _ = h.join();
     }
+    // Sentences made but never played (a stop, a failure) leave their files behind.
+    for i in 0..n {
+        let _ = std::fs::remove_file(work_dir.join(format!("part-{i}.wav")));
+    }
     match error {
         Some(e) if spoken == 0 => Err(e),
         _ => Ok(Spoken {
@@ -1260,6 +1264,29 @@ mod tests {
             "{:?}",
             started.elapsed()
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stopping_while_several_are_made_at_once_leaves_no_files() {
+        let (player, dir) = (
+            FakePlayer {
+                played: Mutex::new(vec![]),
+                stop_after: Some(1),
+            },
+            work(),
+        );
+        let r = speak(
+            "1 First. 2 Second. 3 Third. 4 Fourth. 5 Fifth.",
+            Arc::new(SlowFirstSynth),
+            &player,
+            &dir,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+        assert!(r.stopped);
+        assert_eq!(r.sentences, 1);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
