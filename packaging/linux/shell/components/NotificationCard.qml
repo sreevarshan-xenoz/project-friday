@@ -63,7 +63,10 @@ Rectangle {
       }
       Label {
         Layout.fillWidth: true
-        text: root.notification ? (root.notification.appName || "Notification") : ""
+        // Omarchy's own notices ("omarchy-action") are FRIDAY OS's to the person.
+        text: !root.notification ? ""
+          : /^omarchy/i.test(root.notification.appName || "") ? "FRIDAY OS"
+          : (root.notification.appName || "Notification")
         font.pixelSize: Theme.fontS
         font.weight: Font.DemiBold
         color: root.fromFriday ? Theme.accent : Theme.subtext

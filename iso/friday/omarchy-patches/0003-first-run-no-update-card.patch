@@ -1,0 +1,13 @@
+diff --git a/install/user/first-run/wifi.sh b/install/user/first-run/wifi.sh
+--- a/install/user/first-run/wifi.sh
++++ b/install/user/first-run/wifi.sh
+@@ -23,7 +23,8 @@
+     nm-online -q -t 3600 || return
+   fi
+ 
+-  notify_update
++  # The install has just pulled the latest packages, so an "Update System" card
++  # now would only compete with FRIDAY's tour.
+ }
+ 
+ # Detached, so a slow or absent connection never holds up the rest of first run.
