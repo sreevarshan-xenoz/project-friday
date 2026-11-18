@@ -131,7 +131,8 @@ public static class AgentClis
         AgentCli cli,
         string? binaryPath = null,
         string prompt = DefaultCheckPrompt,
-        TimeSpan? timeout = null)
+        TimeSpan? timeout = null,
+        CancellationToken cancel = default)
     {
         binaryPath ??= FindCli(cli);
         if (binaryPath == null)
@@ -193,7 +194,8 @@ public static class AgentClis
             catch { }
 
             var effectiveTimeout = timeout ?? TimeSpan.FromSeconds(120);
-            using var cts = new CancellationTokenSource(effectiveTimeout);
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+            cts.CancelAfter(effectiveTimeout);
 
             var readStdout = process.StandardOutput.ReadToEndAsync();
             var readStderr = process.StandardError.ReadToEndAsync();
