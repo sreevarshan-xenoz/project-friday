@@ -807,11 +807,57 @@ pub fn stop_running() -> bool {
         .status()
         .is_ok_and(|s| s.success());
     #[cfg(not(windows))]
-    let ok = Command::new("kill")
-        .args(["-TERM", &pid.to_string()])
-        .status()
-        .is_ok_and(|s| s.success());
+    let ok = {
+        let alive = || {
+            Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        };
+        // A pid file left by a speaker that died: the number may belong to anything now.
+        if !alive() || !is_friday_process(pid) {
+            return false;
+        }
+        // The speaker sees its pid file go and stops itself, the player with it; killing
+        // it outright would leave the sentence being played running.
+        let mut ended = false;
+        for _ in 0..25 {
+            std::thread::sleep(Duration::from_millis(40));
+            if !alive() {
+                ended = true;
+                break;
+            }
+        }
+        ended
+            || Command::new("kill")
+                .args(["-TERM", &pid.to_string()])
+                .status()
+                .is_ok_and(|s| s.success())
+    };
     ok
+}
+
+/// Whether `pid` is one of FRIDAY's own programs (where that can be told).
+#[cfg(not(windows))]
+fn is_friday_process(pid: u32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/comm")).map_or(true, |c| c.starts_with("friday"))
+}
+
+/// Stops the speech when this process's pid file is taken away or rewritten: that is how
+/// `stop_running` and a newer `say` ask for it. Ends once `done` is set.
+fn watch_pid_file(path: PathBuf, cancel: Arc<AtomicBool>, done: Arc<AtomicBool>) {
+    let me = std::process::id().to_string();
+    std::thread::spawn(move || {
+        while !done.load(Ordering::SeqCst) {
+            if !std::fs::read_to_string(&path).is_ok_and(|t| t.trim() == me) {
+                cancel.store(true, Ordering::SeqCst);
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(40));
+        }
+    });
 }
 
 /// Speaks `text` with the installed voice. Replaces whatever is being said.
@@ -829,14 +875,17 @@ pub fn say(text: &str) -> Result<Spoken, String> {
     };
     stop_running();
     std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
+    let cancel = Arc::new(AtomicBool::new(false));
+    let done = Arc::new(AtomicBool::new(false));
     if let Ok(mut f) = std::fs::File::create(pid_file()) {
         let _ = write!(f, "{}", std::process::id());
+        watch_pid_file(pid_file(), cancel.clone(), done.clone());
     }
-    let cancel = Arc::new(AtomicBool::new(false));
     let player = SystemPlayer {
         dump: std::env::var_os("FRIDAY_SAY_DUMP").map(PathBuf::from),
     };
     let result = speak(text, synth, &player, &work, cancel);
+    done.store(true, Ordering::SeqCst);
     let _ = std::fs::remove_dir_all(&work);
     if std::fs::read_to_string(pid_file())
         .ok()
@@ -1100,6 +1149,42 @@ pub fn kind_from_name(name: &str) -> Option<Kind> {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[test]
+    fn the_speaker_stops_when_its_pid_file_is_taken_or_rewritten() {
+        let dir = std::env::temp_dir().join(format!("friday-pid-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("friday-say.pid");
+        let wait_for = |flag: &AtomicBool| {
+            for _ in 0..100 {
+                if flag.load(Ordering::SeqCst) {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            false
+        };
+
+        // Rewritten by a newer speaker: stop.
+        std::fs::write(&path, std::process::id().to_string()).unwrap();
+        let (cancel, done) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+        watch_pid_file(path.clone(), cancel.clone(), done.clone());
+        std::thread::sleep(Duration::from_millis(150));
+        assert!(!cancel.load(Ordering::SeqCst), "still its own file");
+        std::fs::write(&path, "1").unwrap();
+        assert!(wait_for(&cancel));
+
+        // Taken away by `stop_running`: stop.
+        std::fs::write(&path, std::process::id().to_string()).unwrap();
+        let (cancel, done2) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+        watch_pid_file(path.clone(), cancel.clone(), done2.clone());
+        std::fs::remove_file(&path).unwrap();
+        assert!(wait_for(&cancel));
+
+        done.store(true, Ordering::SeqCst);
+        done2.store(true, Ordering::SeqCst);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn tone(rate: u32, secs: f32, amp: f32) -> Pcm {
         let n = (rate as f32 * secs) as usize;
