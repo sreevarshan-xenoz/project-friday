@@ -16,6 +16,9 @@ pub fn init() {
                     .unwrap_or_else(|_| "info".into()),
             )
             .with_target(true)
+            // Colour only on a terminal: the tray and systemd write this to log
+            // files, where escape codes make it unreadable.
+            .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stdout()))
             .try_init();
     });
 }
