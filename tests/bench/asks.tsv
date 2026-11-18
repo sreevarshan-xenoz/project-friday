@@ -1,0 +1,16 @@
+# question<TAB>an extended regex a correct answer matches (case-insensitive)
+What does the Rust compiler error E0308 mean?	mismatch|type
+How do I list the files in a folder, including hidden ones, on Linux?	ls -[a-z]*a
+What is 15% of 240?	\b36\b
+Convert 100 degrees Fahrenheit to Celsius.	37\.[0-9]|37\b|38\b
+Translate "Where is the train station?" into Spanish.	estaci[oó]n
+How do I undo my last git commit but keep the changes?	reset.*(--soft|HEAD~1|HEAD\^)
+Summarise in one sentence: The meeting moved from Tuesday to Thursday because the projector broke, and lunch will still be provided.	thursday
+What does the HTTP status code 404 mean?	not found
+How do I find which process is using port 8080 on Linux?	ss |lsof|fuser|netstat
+Write a Python one-liner that reverses a string s.	\[::-1\]
+What is the capital of Australia?	canberra
+How do I make a file executable on Linux?	chmod
+Explain what a symbolic link is, briefly.	link|pointer|refer
+How many minutes are in 3.5 hours?	\b210\b
+What does "sudo" stand for or do?	superuser|root|another user|privilege
