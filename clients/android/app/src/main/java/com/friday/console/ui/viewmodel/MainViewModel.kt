@@ -109,10 +109,11 @@ class MainViewModel(
         viewModelScope.launch { repo.saveServerUrl(url) }
     }
 
-    fun pair() {
+    /** [code] is what the user typed from the PC's screen. */
+    fun pair(code: String) {
         val c = _challenge.value ?: return
-        val signature = signPairing(c.challenge, c.code)
-        socket?.send(ClientMessage.AuthResponse(code = c.code, signature = signature))
+        val typed = code.trim()
+        socket?.send(ClientMessage.AuthResponse(code = typed, signature = signPairing(c.challenge, typed)))
     }
 
     fun sendGoal(goal: String) {
@@ -188,7 +189,7 @@ class MainViewModel(
                 if (hadToken) markAuthenticated() else updatePcPill(ConnectionStatus.Authenticating)
             }
             is ServerMessage.AuthChallenge -> {
-                _challenge.value = PairingChallenge(code = msg.pairing_code, challenge = msg.challenge)
+                _challenge.value = PairingChallenge(challenge = msg.challenge)
             }
             is ServerMessage.AuthComplete -> {
                 viewModelScope.launch { repo.saveToken(msg.token) }

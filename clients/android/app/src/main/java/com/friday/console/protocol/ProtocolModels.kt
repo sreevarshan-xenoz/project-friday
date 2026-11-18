@@ -83,7 +83,6 @@ sealed interface ServerMessage {
     @Serializable
     @SerialName("auth_challenge")
     data class AuthChallenge(
-        val pairing_code: String,
         val challenge: String,
     ) : ServerMessage
 

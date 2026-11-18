@@ -32,9 +32,9 @@ notifications/  M6.2.6 notification actions → protocol commands
 ## Wire protocol (must match `services/mobile`)
 | Frame | Direction | Notes |
 |-------|-----------|-------|
-| `welcome` | S→P | `requires_auth` — server then drives pairing |
-| `auth_challenge` | S→P | `pairing_code` + `challenge` (delivered over the secure WS) |
-| `auth_response` | P→S | `code` + `signature = sha256(challenge \|\| code)` |
+| `welcome` | S→P | `requires_auth` — an unpaired phone then says `hello` |
+| `auth_challenge` | S→P | `challenge` only. The pairing code is shown on the PC, never sent; the user types it on the phone |
+| `auth_response` | P→S | `code` (typed) + `signature = sha256(challenge \|\| code)` |
 | `auth_complete` | S→P | `token` — persisted in DataStore |
 | `event` | S→P | `topic` + `payload`; bridge tags `_kind` / `_source` |
 | `telemetry` | S→P | real host CPU/RAM/Disk (`SystemProbe`) |
@@ -45,9 +45,9 @@ Tag style is `serde(tag="type", rename_all="snake_case")`, so the Kotlin sealed
 interfaces use `@JsonClassDiscriminator("type")` + `@SerialName("snake_case")`.
 
 ## Server-side changes made alongside this client
-- `transport.rs`: the server now **sends** `auth_challenge` to an unauthenticated
-  `Hello` (previously the challenge was only generated out-of-band, so a real
-  client could not complete pairing).
+- `transport.rs`: the server sends `auth_challenge` (a per-connection challenge, no
+  code) to an unauthenticated `Hello`. The pairing code is shown on the PC.
+  The link is not encrypted yet: pair on a network you trust, not shared Wi-Fi.
 - `bridge.rs`: forwarded events now carry `_kind` and `_source` so a thin client
   can derive task status (`task.started` vs `task.completed`) without internals.
 - `protocol.rs`: the handshake now carries `protocol: "1.0"` (`PROTOCOL_VERSION`)

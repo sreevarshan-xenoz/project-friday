@@ -56,8 +56,7 @@ data class CommandFeedback(
     val latencyMs: Long = 0,
 )
 
-/** A live pairing challenge surfaced from the server. */
+/** A live pairing challenge from the server. The pairing code is not in it: the user reads it off the PC and types it. */
 data class PairingChallenge(
-    val code: String,
     val challenge: String,
 )

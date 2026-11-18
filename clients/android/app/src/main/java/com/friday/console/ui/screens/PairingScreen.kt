@@ -1,10 +1,12 @@
 package com.friday.console.ui.screens
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.friday.console.network.ConnectionStatus
 import com.friday.console.ui.viewmodel.MainViewModel
@@ -16,6 +18,7 @@ fun PairingScreen(vm: MainViewModel) {
     val serverUrl by vm.serverUrl.collectAsState()
     val feedback by vm.feedback.collectAsState()
     var urlInput by remember { mutableStateOf(serverUrl) }
+    var codeInput by remember { mutableStateOf("") }
 
     Column(
         Modifier.fillMaxSize().padding(24.dp),
@@ -41,14 +44,20 @@ fun PairingScreen(vm: MainViewModel) {
 
         when {
             challenge != null -> {
-                Text("Pairing code", style = MaterialTheme.typography.labelMedium)
-                Text(
-                    challenge!!.code,
-                    style = MaterialTheme.typography.headlineLarge,
-                    color = MaterialTheme.colorScheme.primary,
+                OutlinedTextField(
+                    value = codeInput,
+                    onValueChange = { codeInput = it.filter(Char::isDigit).take(8) },
+                    label = { Text("Pairing code shown on your PC") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(12.dp))
-                Button(onClick = { vm.pair() }, Modifier.fillMaxWidth()) { Text("Pair") }
+                Button(
+                    onClick = { vm.pair(codeInput) },
+                    enabled = codeInput.length == 8,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Pair") }
             }
             status is ConnectionStatus.Connecting -> Text("Connecting…")
             status is ConnectionStatus.Authenticating -> Text("Authenticating…")
