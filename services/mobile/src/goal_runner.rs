@@ -733,6 +733,16 @@ fn filename_token(instruction: &str) -> Option<String> {
     None
 }
 
+/// A word of the instruction that is a file in `cwd` without an extension, like
+/// `Dockerfile` in "read the Dockerfile".
+fn bare_file_token(instruction: &str, cwd: &str) -> Option<String> {
+    instruction
+        .split_whitespace()
+        .map(|tok| tok.trim_matches(|c: char| c.is_ascii_punctuation()))
+        .find(|t| !t.is_empty() && std::path::Path::new(cwd).join(t).is_file())
+        .map(String::from)
+}
+
 /// Resolve the path a read goal names: the file as given relative to the
 /// working directory, else the first filesystem.search hit by name, else an
 /// honest error instead of reading a directory.
@@ -741,7 +751,8 @@ async fn read_path_from_instruction(
     instruction: &str,
     cwd: &str,
 ) -> Result<String, String> {
-    let Some(name) = filename_token(instruction) else {
+    let Some(name) = filename_token(instruction).or_else(|| bare_file_token(instruction, cwd))
+    else {
         return Ok(cwd.to_string());
     };
     // Try the name as given relative to the working dir ("read src/main.rs"),
@@ -3739,6 +3750,20 @@ mod tests {
         );
         assert!(payload.get("evidence_verified").is_some());
         assert!(payload["channels"].is_array());
+    }
+
+    #[test]
+    fn a_file_without_an_extension_is_found_by_its_name() {
+        let dir = std::env::temp_dir().join(format!("friday-bare-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Dockerfile"), "FROM scratch").unwrap();
+        let cwd = dir.to_str().unwrap();
+        assert_eq!(
+            bare_file_token("Read the Dockerfile.", cwd),
+            Some("Dockerfile".to_string())
+        );
+        assert_eq!(bare_file_token("list the files here", cwd), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
