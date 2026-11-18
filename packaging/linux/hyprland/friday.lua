@@ -4,6 +4,9 @@
 -- Tap Super+Y to type a question; hold it and speak (friday voice setup).
 hl.bind("SUPER + Y", hl.dsp.exec_cmd("friday hold start"), { description = "FRIDAY: Ask" })
 hl.bind("SUPER + Y", hl.dsp.exec_cmd("friday hold end"), { description = "FRIDAY: Ask (let go)", release = true })
+-- Voice typing: hold Super+Shift+Y and speak; the words are typed where you are (nothing is asked).
+hl.bind("SUPER + SHIFT + Y", hl.dsp.exec_cmd("friday hold start --type"), { description = "FRIDAY: Voice typing" })
+hl.bind("SUPER + SHIFT + Y", hl.dsp.exec_cmd("friday hold end --type"), { description = "FRIDAY: Voice typing (let go)", release = true })
 hl.bind("SUPER + ALT + Y", hl.dsp.exec_cmd("friday ask --selection"), { description = "FRIDAY: Ask about selected text" })
 hl.bind("SUPER + CTRL + Y", hl.dsp.exec_cmd("friday ask --screen"), { description = "FRIDAY: Ask about the screen" })
 -- The kill key: stops whatever FRIDAY is doing on your desktop, at once.
