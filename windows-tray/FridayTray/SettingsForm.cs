@@ -302,6 +302,11 @@ internal sealed class SettingsForm : Form
             "FRIDAY only does this when you ask; closing a window always asks first and shows the exact action. Off: FRIDAY answers questions but does not act.",
             AppSettings.DesktopControlOn(EnvFile.Load(_install.Paths.EnvFile)),
             on => ChangeEnv(env => AppSettings.WithDesktopControl(env, on)));
+        // What FRIDAY did lately, so a window that moved or a program that opened has an explanation.
+        var done = ActionLog.ReadNewestFirst(_install.Paths.ActionsFile, 8);
+        yield return Pair("What FRIDAY did", done.Count == 0 ? "Nothing yet" : "");
+        foreach (var a in done)
+            yield return Pair(EgressLog.FormatLocalTime(a.Ts), ActionLog.Describe(a));
     }
 
     private IEnumerable<Control> Shortcuts()
