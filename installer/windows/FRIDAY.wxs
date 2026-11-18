@@ -42,6 +42,11 @@
     <MajorUpgrade AllowSameVersionUpgrades="yes"
                   DowngradeErrorMessage="A newer version of FRIDAY is already installed." />
     <MediaTemplate EmbedCab="yes" />
+    <!-- Replace every file on upgrade, whatever its version: 0.4.5 and older
+         stamped the .NET files 1.0.0.0, so Windows Installer kept those as
+         "newer", then removed them with the old product, leaving no
+         FridayTray.Core.dll. The install folder is FRIDAY's alone. -->
+    <Property Id="REINSTALLMODE" Value="amus" />
 
     <Property Id="ARPCOMMENTS" Value="Press a key, ask about what's on screen or selected, get an answer." />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/sreevarshan-xenoz/project-friday" />
