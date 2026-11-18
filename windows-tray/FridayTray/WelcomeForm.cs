@@ -18,7 +18,7 @@ internal sealed class WelcomeForm : Form
         BackColor = Theme.Bg;
         ForeColor = Theme.Text;
         Font = Theme.Body;
-        ClientSize = new Size(500, 420);
+        ClientSize = new Size(500, 470);
         Padding = new Padding(22);
 
         var layout = new FlowLayoutPanel
@@ -37,6 +37,8 @@ internal sealed class WelcomeForm : Form
         layout.Controls.Add(KeyRow(Key(AskKind.Selection, "tray menu"), "ask about the text you selected"));
         layout.Controls.Add(KeyRow(Key(AskKind.Screen, "tray menu"), "ask about your screen (a screenshot goes to your AI provider, this once)"));
 
+        // Windows 11 hides new tray icons behind the ^ arrow; say where FRIDAY lives.
+        layout.Controls.Add(Paragraph("I live in the tray by the clock (behind the ^ arrow until you drag me out). Click the icon to ask, right-click for everything else.", Theme.Subtext, 14, 0));
         layout.Controls.Add(Paragraph("Until you add your own key, I use free models. They may keep what you send them, so for anything private choose your own provider.", Theme.Subtext, 14, 0));
 
         var buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, BackColor = Theme.Bg, Margin = new Padding(0, 16, 0, 0) };
