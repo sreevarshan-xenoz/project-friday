@@ -174,6 +174,10 @@ jobs:
           $path = (Get-ItemProperty 'HKCU:\Environment').Path
           if ($path -notlike "*Programs\FRIDAY*") { throw "install folder is not on the user PATH (got '$path')" }
           if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\FRIDAY.lnk")) { throw "no Start menu shortcut" }
+          # Settings shows the tray's own version: it must be this release's, not the project default.
+          $crate = (Select-String -Path services\mobile\Cargo.toml -Pattern '^version\s*=\s*"([0-9]+\.[0-9]+)\.' | Select-Object -First 1).Matches[0].Groups[1].Value
+          $trayVersion = (Get-Item "$dir\friday-tray.exe").VersionInfo.FileVersion
+          if ($trayVersion -notlike "$crate.*") { throw "friday-tray.exe says version $trayVersion, not $crate.x" }
           # The options that are off unless asked for.
           if (Test-Path "$env:USERPROFILE\Desktop\FRIDAY.lnk") { throw "a default install made a desktop shortcut" }
           if (Test-Path 'HKCU:\Software\FRIDAY\Options') { throw "a default install turned on screen text" }
