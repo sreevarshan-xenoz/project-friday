@@ -457,6 +457,18 @@ contains "tasks off writes FRIDAY_STANDING_TASKS=0" "$(cat "$HOME/.config/friday
 bash "$F" tasks on >/dev/null
 contains "tasks on is saved" "$(bash "$F" tasks status)" "Standing tasks: on"
 
+echo "keys update (FRIDAY OS homes made before a key was added)"
+mkdir -p "$HOME/.config/hypr"
+grep -v -- '--type' "$REPO_ROOT/iso/friday/airootfs/etc/skel/.config/hypr/bindings.lua" >"$HOME/.config/hypr/bindings.lua"
+cp "$HOME/.config/hypr/bindings.lua" "$W/old-keys.lua"
+contains "doctor-style check finds the missing voice typing key" "$(grep -c -- '--type' "$HOME/.config/hypr/bindings.lua" || true)" "0"
+contains "keys update adds voice typing" "$(bash "$F" keys update)" "Added voice typing"
+[[ "$(diff "$W/old-keys.lua" "$HOME/.config/hypr/bindings.lua" | grep -c '^>')" == 2 && "$(diff "$W/old-keys.lua" "$HOME/.config/hypr/bindings.lua" | grep -c '^<')" == 0 ]] \
+  && pass "keys update only adds the two voice typing lines" || fail "keys update changed more than it should"
+contains "keys update a second time changes nothing" "$(bash "$F" keys update)" "up to date"
+rm -rf "$HOME/.config/hypr"
+contains "keys update without a FRIDAY OS key file does nothing" "$(bash "$F" keys update)" "nothing to update"
+
 echo "phone"
 # `friday phone`, without Pocketdesk installed.
 if ! command -v pocketdesk >/dev/null 2>&1; then

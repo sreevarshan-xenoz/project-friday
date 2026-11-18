@@ -37,6 +37,7 @@ Autonomous Agent & Cognitive Loop:
   friday tasks [pause|resume|delete <id>|status|on|off]
                                    Standing tasks ("every morning ..."): list, pause, delete, turn all off
   friday desktop [status|on|off]   Let FRIDAY control your windows, apps, volume and music
+  friday keys update               Add FRIDAY keys from a newer version to your key file (FRIDAY OS)
   friday status | system-info      Inspect daemon state, memory, and telemetry
   friday context screen [--yes]    Share screen context with assistant
   friday daemon <status|restart|logs> Control friday-linux-daemon service
@@ -347,6 +348,12 @@ friday_doctor() {
   else ok "inside-app control: FRIDAY's own reader (agent-desktop is not installed)"; fi
   if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then ok "inside a Hyprland session"
   else warn "not inside a Hyprland session" "desktop checks below may not apply over SSH/TTY"; fi
+  # FRIDAY OS copies its key file into a new home once; keys added later
+  # (voice typing) don't reach a home made before them.
+  local keys="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/bindings.lua"
+  if grep -qs '"friday hold start"' "$keys" && ! grep -qs 'friday hold start --type' "$keys"; then
+    warn "the voice typing key (Super+Shift+Y) isn't in your key file" "friday keys update"
+  fi
   # The Quickshell bar is FRIDAY OS's desktop; a standalone install (the
   # `friday` package on any Wayland desktop) only needs the prompt and
   # notification tools.
@@ -695,6 +702,37 @@ FRIDAY_FREE_NOTICE="Free models (OpenCode Zen, Kilo) may keep what you send them
 # exposes enough text (its accessibility tree) is asked about as that text
 # instead: up to 12,000 characters, which can include text scrolled out of
 # view, and it can go to any provider you use, not only ones that see images.
+# FRIDAY OS's key file is copied into a new home once, so keys added by a
+# later update don't reach older homes. `friday keys update` adds the missing
+# FRIDAY keys right after Super+Y and changes nothing else.
+friday_keys() {
+  local keys="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/bindings.lua"
+  case "${1:-update}" in
+    update)
+      if ! grep -qs '"friday hold start"' "$keys"; then
+        echo "No FRIDAY OS key file here ($keys); nothing to update."
+        return 0
+      fi
+      if grep -qs 'friday hold start --type' "$keys"; then
+        echo "Your keys are up to date."
+        return 0
+      fi
+      local tmp="$keys.tmp.$$"
+      awk '{ print }
+        /"friday hold end", \{ release = true \}\)/ && !done {
+          print "o.bind(\"SUPER + SHIFT + Y\", \"FRIDAY: Voice typing\", \"friday hold start --type\")"
+          print "o.bind(\"SUPER + SHIFT + Y\", \"FRIDAY: Voice typing (let go)\", \"friday hold end --type\", { release = true })"
+          done = 1
+        }' "$keys" >"$tmp" && mv -f "$tmp" "$keys" || { rm -f "$tmp"; echo "friday: couldn't update $keys" >&2; return 1; }
+      if grep -qs 'friday hold start --type' "$keys"; then
+        echo "Added voice typing: hold Super+Shift+Y, speak, let go (friday voice setup first)."
+      else
+        echo "friday: couldn't find Super+Y in $keys to add voice typing after it" >&2; return 1
+      fi ;;
+    *) echo "Usage: friday keys update" >&2; return 1 ;;
+  esac
+}
+
 # A switch that is on unless FRIDAY_<NAME>=0 is in friday.env. The daemon reads
 # it when it starts, so changing it restarts the daemon.
 # usage: friday_switch <VAR> <label> <command> <what on means> <what off means> [status|on|off]
@@ -2134,6 +2172,10 @@ case "${1:-}" in
   desktop)
     shift
     friday_desktop "$@"
+    ;;
+  keys)
+    shift
+    friday_keys "$@"
     ;;
   app-context)
     shift
