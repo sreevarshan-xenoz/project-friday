@@ -571,9 +571,13 @@ async fn send_command(
         method: method.to_string(),
         params,
     };
-    let _ = ws
+    if let Err(e) = ws
         .send(Message::Text(serde_json::to_string(&client_msg).unwrap()))
-        .await;
+        .await
+    {
+        eprintln!("couldn't send the command to the daemon: {e}");
+        return std::process::ExitCode::FAILURE;
+    }
 
     // Loop until we see our CommandResult (skipping welcome/events).
     let deadline = tokio::time::Instant::now() + wait;
@@ -588,7 +592,12 @@ async fn send_command(
                 eprintln!("ws error: {e}");
                 return std::process::ExitCode::FAILURE;
             }
-            _ => continue,
+            Ok(None) => {
+                eprintln!("the daemon closed the connection before it answered (is it restarting?)");
+                return std::process::ExitCode::FAILURE;
+            }
+            // Nothing for a while: keep waiting until the deadline.
+            Err(_) => continue,
         };
         if let Message::Text(t) = msg {
             let decoded = decode_server(&t);
@@ -620,6 +629,23 @@ async fn send_command(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// A daemon that hangs up without answering fails the command at once: it used to
+    /// spin until the deadline and then say it had timed out.
+    #[tokio::test]
+    async fn a_daemon_that_hangs_up_fails_the_command_at_once() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        tokio::spawn(async move {
+            let (sock, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(sock).await.unwrap();
+            let _ = ws.close(None).await;
+        });
+        let started = std::time::Instant::now();
+        let code = send_command(&addr, "x", json!({}), Duration::from_secs(60), false).await;
+        assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
+        assert_eq!(format!("{code:?}"), format!("{:?}", std::process::ExitCode::FAILURE));
+    }
 
     fn state(goal: &str, active: bool, completed_ms: Option<u64>) -> serde_json::Value {
         json!({ "last_goal": {
