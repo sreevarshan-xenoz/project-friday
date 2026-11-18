@@ -25,6 +25,10 @@ You can also just say it in the question: "what is on my screen" or "what am I l
 Hold Super+Y instead of tapping it to talk (`friday voice setup` first). The
 speech is turned into text on your computer; only the text is sent. On niri, which can't see a key being released, press Mod+Y once to speak and again to ask.
 
+**Voice typing:** hold Super+Shift+Y (Mod+Shift+Y on niri: press once to speak, again to type), speak, and let go:
+the words are typed into the field you were in, and nothing is asked or sent. It uses the same voice setup
+(`friday voice setup`) and needs `wtype`.
+
 With a selection, the box offers quick actions (Summarize, Explain, Translate,
 Fix the grammar) and your own prompts, one per line in
 `~/.config/friday/prompts` (on Windows `%APPDATA%\friday\prompts`). Shift+Enter sends what you typed instead (on Windows, type your own and press Enter).

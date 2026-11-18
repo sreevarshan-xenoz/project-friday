@@ -9,6 +9,8 @@ require("default.hypr.bindings.media")
 -- Tap Super+Y to type a question; hold it and speak (friday voice setup).
 o.bind("SUPER + Y", "FRIDAY: Ask", "friday hold start")
 o.bind("SUPER + Y", "FRIDAY: Ask (let go)", "friday hold end", { release = true })
+o.bind("SUPER + SHIFT + Y", "FRIDAY: Voice typing", "friday hold start --type")
+o.bind("SUPER + SHIFT + Y", "FRIDAY: Voice typing (let go)", "friday hold end --type", { release = true })
 o.bind("SUPER + ALT + Y", "FRIDAY: Ask about selected text", "friday ask --selection")
 o.bind("SUPER + CTRL + Y", "FRIDAY: Ask about the screen", "friday ask --screen")
 o.bind("SUPER + CTRL + Escape", "FRIDAY: Stop what it is doing", "friday cancel")

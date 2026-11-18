@@ -393,6 +393,17 @@ contains "hold: the spoken words are asked" "$(cat "$LOG")" "what time is it in 
 if pgrep -f "$S/pw-record" >/dev/null; then fail "the recorder kept running after the release"; else pass "the recorder stops on release"; fi
 : >"$LOG"; bash "$F" hold start; sleep 0.9; WHISPER_SILENT=1 bash "$F" hold end; sleep 0.3
 contains "hold with no words: says so" "$(cat "$LOG")" "I didn't catch that"
+# (The tap just above is followed at once by more key presses: its half-second timer must not start a recording for them.)
+# Voice typing (hold Super+Shift+Y): the same recording, but the words are typed where you are, not asked.
+printf '#!/bin/bash\necho "wtype $*" >>"%s"\n' "$LOG" >"$S/wtype"; chmod +x "$S/wtype"
+: >"$LOG"; bash "$F" hold start --type; sleep 0.9; bash "$F" hold end --type; sleep 0.5
+contains "voice typing: the spoken words are typed" "$(cat "$LOG")" "wtype -- what time is it in Tokyo"
+if grep -q "friday-ctl" "$LOG"; then fail "voice typing sent the words to the AI"; else pass "voice typing asks nothing"; fi
+: >"$LOG"; bash "$F" hold start --type; sleep 0.9; WHISPER_SILENT=1 bash "$F" hold end --type; sleep 0.3
+contains "voice typing with no words: says so" "$(cat "$LOG")" "Super+Shift+Y"
+if grep -q "wtype" "$LOG"; then fail "voice typing typed when nothing was said"; else pass "voice typing types nothing when nothing was said"; fi
+: >"$LOG"; bash "$F" hold start --type; bash "$F" hold end --type; sleep 0.3
+if grep -qE "pw-record|wtype|friday-ctl" "$LOG"; then fail "a quick tap on the voice typing key did something"; else pass "a quick tap on the voice typing key does nothing"; fi
 if grep -q "friday-ctl" "$LOG"; then fail "an empty recording was asked"; else pass "an empty recording asks nothing"; fi
 # niri has no release bind: one press listens, the next one asks.
 : >"$LOG"; bash "$F" hold toggle; sleep 0.5

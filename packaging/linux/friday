@@ -54,6 +54,7 @@ Autonomous Agent & Cognitive Loop:
   friday voice speak [setup [tinyvoca|kokoro|kitten|supertonic]|on|off|voices|voice N|status]
                                    FRIDAY answers out loud, in a voice made on this computer
   friday say "text"                Say something now (friday say --stop to stop)
+  friday hold start|end --type     Voice typing: Super+Shift+Y, hold and speak, the words are typed where you are
   friday app                       Open FRIDAY Settings (a window for all of this, no terminal)
   friday tour                      Take the first-login tour again
   friday screen-text [status|on|off]
@@ -1109,18 +1110,25 @@ friday_hold() {
   case "${1:-}" in
     start)
       rm -f "$d/rec.pid" "$d/recording" "$d/rec.wav"
-      : >"$d/pressed"
-      friday_voice_ready || return 0
+      # Each press has its own token, so the timer of an earlier tap can't
+      # start a recording for a later press that recreated the marker.
+      local token="$$-$RANDOM-$RANDOM"
+      printf '%s' "$token" >"$d/pressed"
+      if ! friday_voice_ready; then
+        [ "${2:-}" = "--type" ] && notify-send -a FRIDAY "FRIDAY" "Voice typing needs voice first: friday voice setup" 2>/dev/null
+        return 0
+      fi
       # Held past the delay: record until the release (or 30 s at most).
       # SIGTERM stops the recorder: background jobs here start with SIGINT ignored.
+      local mode="${2:-}"
       (
         sleep "${FRIDAY_HOLD_DELAY:-0.4}"
-        [ -e "$d/pressed" ] || exit 0
+        [ "$(cat "$d/pressed" 2>/dev/null)" = "$token" ] || exit 0
         : >"$d/recording"
-        pill listening || true
+        if [ "$mode" = "--type" ]; then pill dictating || true; else pill listening || true; fi
         timeout 30 pw-record --rate 16000 --channels 1 --format s16 "$d/rec.wav" &
         echo $! >"$d/rec.pid"
-        [ -e "$d/pressed" ] || kill -TERM $! 2>/dev/null
+        [ "$(cat "$d/pressed" 2>/dev/null)" = "$token" ] || kill -TERM $! 2>/dev/null
         wait
       ) </dev/null >/dev/null 2>&1 &
       disown 2>/dev/null || true
@@ -1138,25 +1146,42 @@ friday_hold() {
         rm -f "$d/rec.wav"
         if [ -z "${text//[[:space:]]/}" ]; then
           pill dismiss || true
-          notify-send -a FRIDAY "FRIDAY" "I didn't catch that. Hold Super+Y and speak, or tap it to type." 2>/dev/null || true
+          if [ "${2:-}" = "--type" ]; then
+            notify-send -a FRIDAY "FRIDAY" "I didn't catch that. Hold Super+Shift+Y and speak." 2>/dev/null || true
+          else
+            notify-send -a FRIDAY "FRIDAY" "I didn't catch that. Hold Super+Y and speak, or tap it to type." 2>/dev/null || true
+          fi
           return 0
+        fi
+        if [ "${2:-}" = "--type" ]; then
+          # Voice typing: the words go into the field you were in, not to the AI.
+          pill dismiss || true
+          if command -v wtype >/dev/null 2>&1; then
+            sleep 0.2
+            exec wtype -- "$text"
+          fi
+          notify-send -a FRIDAY "FRIDAY" "Voice typing needs wtype (sudo pacman -S wtype)." 2>/dev/null || true
+          return 1
         fi
         exec bash "$0" ask "$text"
       fi
+      [ "${2:-}" = "--type" ] && return 0
       exec bash "$0" ask
       ;;
     toggle)
       # For desktops whose binds can't see a key release (niri): press to
       # start listening, press again to ask. Without voice it is a plain ask.
       if [ -e "$d/recording" ]; then
-        friday_hold end
+        friday_hold end "${2:-}"
       elif friday_voice_ready; then
-        FRIDAY_HOLD_DELAY=0 friday_hold start
+        FRIDAY_HOLD_DELAY=0 friday_hold start "${2:-}"
+      elif [ "${2:-}" = "--type" ]; then
+        notify-send -a FRIDAY "FRIDAY" "Voice typing needs voice first: friday voice setup" 2>/dev/null || true
       else
         exec bash "$0" ask
       fi
       ;;
-    *) echo "Usage: friday hold start|end|toggle (start and end are Super+Y's press and release; toggle is for desktops without release binds)" >&2; return 1 ;;
+    *) echo "Usage: friday hold start|end|toggle [--type] (start and end are Super+Y's press and release, with --type Super+Shift+Y's: the words are typed where you are instead of asked; toggle is for desktops without release binds)" >&2; return 1 ;;
   esac
 }
 
