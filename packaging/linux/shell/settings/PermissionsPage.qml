@@ -47,8 +47,36 @@ ColumnLayout {
   Flow {
     Layout.fillWidth: true
     spacing: 8
-    Chip { primary: true; text: phoneOn.running ? "Starting…" : "Pair a phone"; onClicked: phoneOn.run() }
+    Chip { primary: true; text: phoneOn.running ? "Starting…" : "Pair a phone"; onClicked: page.confirmingPhone = true }
     Chip { text: phoneOff.running ? "Stopping…" : "Turn the phone off"; onClicked: phoneOff.run() }
+  }
+  // The same words `friday phone on` shows before it asks.
+  property bool confirmingPhone: false
+  Rectangle {
+    visible: page.confirmingPhone
+    Layout.fillWidth: true
+    implicitHeight: phoneAsk.implicitHeight + 24
+    radius: Theme.radiusS
+    color: Theme.surface
+    border.width: 1
+    border.color: Theme.warn
+    ColumnLayout {
+      id: phoneAsk
+      anchors.fill: parent
+      anchors.margins: 12
+      spacing: 10
+      Label {
+        Layout.fillWidth: true
+        text: "Pocketdesk lets your phone see and control this computer, and answer FRIDAY's questions. Turning it on starts its server in your session (it starts at every sign-in until you turn it off here). Only phones you pair with a PIN shown here can connect."
+        wrapMode: Text.Wrap
+        elide: Text.ElideNone
+      }
+      Row {
+        spacing: 8
+        Chip { primary: true; text: "Turn it on"; onClicked: { page.confirmingPhone = false; phoneOn.run(); } }
+        Chip { text: "Cancel"; onClicked: page.confirmingPhone = false }
+      }
+    }
   }
   Output { text: phoneOn.output !== "" ? phoneOn.output : phoneOff.output }
 

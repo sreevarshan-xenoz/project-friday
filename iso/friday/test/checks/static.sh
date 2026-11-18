@@ -18,6 +18,12 @@ for need in '"voice", "speak"' '"say"' '"screen-text"' '"app-context"' '"sent"' 
             '"desktop", "status"' '"tasks", "status"' '"phone", "status"' '"face", "status"' '"helper", "status"' '"doctor"' '"report"' '"daemon", "restart"' 'friday connect' 'friday private'; do
   if grep -qF -- "$need" <<<"$SETTINGS_QML"; then pass "Settings uses $need"; else fail "no FRIDAY Settings page uses $need"; fi
 done
+# Pairing a phone starts a server that lets it control this computer: the page
+# runs `phone on --yes` only from its confirmation card, after showing what it allows.
+PERM="$REPO_ROOT/packaging/linux/shell/settings/PermissionsPage.qml"
+if [[ "$(grep -c 'phoneOn.run()' "$PERM")" == 1 ]] && grep 'phoneOn.run()' "$PERM" | grep -q 'confirmingPhone = false'; then
+  pass "Settings runs 'phone on' only from its confirmation card"
+else fail "Settings may run 'phone on' without the confirmation card"; fi
 for page in Home AI Voice Permissions Privacy Health; do
   [[ -f "$REPO_ROOT/packaging/linux/shell/settings/${page}Page.qml" ]] && pass "page file $page" || fail "missing ${page}Page.qml"
 done
