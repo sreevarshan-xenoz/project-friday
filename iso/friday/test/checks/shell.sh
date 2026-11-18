@@ -114,7 +114,9 @@ timeout 10 qs -p "$FS" ipc call settings open AI >/dev/null 2>&1 || true
 sleep 1; grim "$W/friday-settings-ai.png" 2>/dev/null || true
 timeout 10 qs -p "$FS" ipc call settings open Privacy >/dev/null 2>&1 || true
 sleep 1; grim "$W/friday-settings-privacy.png" 2>/dev/null || true
-for p in Home AI Privacy Health; do
+timeout 10 qs -p "$FS" ipc call settings open Permissions >/dev/null 2>&1 || true
+sleep 2; grim "$W/friday-settings-permissions.png" 2>/dev/null || true
+for p in Home AI Permissions Privacy Health; do
   timeout 10 qs -p "$FS" ipc call settings open "$p" >/dev/null 2>&1 || true
   sleep 0.5
   [[ "$(timeout 10 qs -p "$FS" ipc call settings page 2>/dev/null)" == "$p" ]] || fail "FRIDAY Settings page $p did not open"
