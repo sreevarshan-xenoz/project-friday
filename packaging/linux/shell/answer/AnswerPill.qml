@@ -70,6 +70,8 @@ PanelWindow {
     border.width: 1
     border.color: Answer.ok ? Theme.outline : Theme.error
     clip: true
+    focus: true
+    Keys.onEscapePressed: Answer.dismiss()
     opacity: Answer.visible ? 1 : Math.min(1, height / 40)
     property bool followUpOpen: false
 
@@ -178,7 +180,7 @@ PanelWindow {
         visible: win.answering
         spacing: 8
 
-        Chip { visible: Answer.ok; icon: Icons.copy; text: "Copy"; onClicked: Answer.copy() }
+        Chip { visible: Answer.body !== ""; icon: Icons.copy; text: "Copy"; onClicked: Answer.copy() }
         Chip { visible: Answer.ok; icon: Icons.selection; text: "Type it"; onClicked: Answer.typeIt() }
         Chip {
           visible: Answer.ok
