@@ -30,6 +30,22 @@ pub mod upgrade;
 pub mod voice;
 pub mod web_search;
 
+/// The next message from a broadcast receiver, or `None` once it is closed. A receiver
+/// that fell behind skips what it missed and carries on: `while let Ok(..) = rx.recv()`
+/// would end the loop (and with it the goal runner) the first time the bus overflowed.
+pub async fn next_event<T: Clone>(rx: &mut tokio::sync::broadcast::Receiver<T>) -> Option<T> {
+    use tokio::sync::broadcast::error::RecvError;
+    loop {
+        match rx.recv().await {
+            Ok(v) => return Some(v),
+            Err(RecvError::Lagged(skipped)) => {
+                tracing::warn!(skipped, "fell behind the event bus; skipping ahead")
+            }
+            Err(RecvError::Closed) => return None,
+        }
+    }
+}
+
 pub use auth::{sign_pairing, AuthError, AuthRegistry, PairingChallenge};
 pub use bridge::{translate, BusBridge};
 pub use commands::{method, CommandGateway};
@@ -43,3 +59,21 @@ pub use session::{MobileSession, PhoneCapabilities, SessionRegistry};
 pub use transport::{Command, WsServer};
 pub use upgrade::{is_executable_replaced, is_self_replaced, ExeSnapshot};
 pub use voice::{VoiceConfig, VoiceIntake};
+
+#[cfg(test)]
+mod tests {
+    use super::next_event;
+
+    #[tokio::test]
+    async fn a_receiver_that_fell_behind_skips_ahead_and_keeps_going() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel(2);
+        for n in 0..5 {
+            tx.send(n).unwrap();
+        }
+        // Three were lost; the two newest are still there.
+        assert_eq!(next_event(&mut rx).await, Some(3));
+        assert_eq!(next_event(&mut rx).await, Some(4));
+        drop(tx);
+        assert_eq!(next_event(&mut rx).await, None);
+    }
+}

@@ -62,7 +62,7 @@ impl BusBridge {
         tokio::spawn(async move {
             let mut rx = self.bus.subscribe();
             tracing::info!("mobile bus-bridge subscribed");
-            while let Ok(ev) = rx.recv().await {
+            while let Some(ev) = crate::next_event(&mut rx).await {
                 let msg = translate(&ev);
                 // `broadcast::send` errors when zero clients are connected — a
                 // normal state between connections, NOT a bridge failure. The

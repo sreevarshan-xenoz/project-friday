@@ -1576,7 +1576,7 @@ impl GoalRunner {
         // no-op (no fabricated state transition).
         tokio::spawn(async move {
             tracing::info!("goal runner control subscriber active");
-            while let Ok(ev) = control_rx.recv().await {
+            while let Some(ev) = crate::next_event(&mut control_rx).await {
                 match ev.kind.as_str() {
                     "task.cancel" => {
                         let task_id = ev
@@ -1655,7 +1655,7 @@ impl GoalRunner {
 
         tokio::spawn(async move {
             tracing::info!("goal runner subscribed to plan.goal");
-            while let Ok(ev) = rx.recv().await {
+            while let Some(ev) = crate::next_event(&mut rx).await {
                 if ev.kind != "plan.goal" {
                     continue;
                 }
