@@ -12,6 +12,9 @@ Singleton {
   property string device: ""
   property int max: 0
   property int raw: 0
+  // False until the first reading, which is the starting level, not a change
+  // (raw can't stand in for this: a screen turned all the way down reads 0).
+  property bool known: false
   readonly property bool ready: device !== "" && max > 0
   readonly property real value: ready ? raw / max : 0
 
@@ -37,11 +40,17 @@ Singleton {
     path: root.device ? "/sys/class/backlight/" + root.device + "/brightness" : ""
     printErrors: false
     onLoaded: {
-      const v = Number(text().trim());
-      if (!isNaN(v) && v !== root.raw) {
-        const first = root.raw === 0;
+      const t = text().trim();
+      const v = Number(t);
+      // An empty read is not "0" (Number("") is 0): wait for a real reading.
+      if (t === "" || isNaN(v))
+        return;
+      if (!root.known) {
+        root.known = true;
         root.raw = v;
-        if (!first && !root.setting)
+      } else if (v !== root.raw) {
+        root.raw = v;
+        if (!root.setting)
           root.changedExternally();
       }
     }
