@@ -293,7 +293,7 @@ step_features() {
   local picks
   picks=$(printf '%s\n' "$a" "$b" "$c" "$d" "$e" \
     | gum choose --no-limit --cursor="$FRIDAY_CURSOR" --height=7 \
-        --selected="$a,$b,$c") || return 0
+        --selected="$a,$b,$c,$e") || return 0
   FEAT_DESKTOP=false FEAT_TASKS=false FEAT_APPNAME=false FEAT_SCREENTEXT=false FEAT_PHONE=false
   [[ $picks == *"$a"* ]] && FEAT_DESKTOP=true
   [[ $picks == *"$b"* ]] && FEAT_TASKS=true
