@@ -58,7 +58,8 @@ Singleton {
     onTriggered: {
       if (root.state !== "working" || Friday.working)
         return;
-      root.show(!Friday.lastFailed, Friday.lastGoal || root.goal, Friday.lastDetail || root.body, "");
+      const ok = !Friday.lastFailed;
+      root.show(ok, Friday.lastGoal || root.goal, Friday.lastDetail || root.body || (ok ? "Done." : "That didn't finish."), "");
     }
   }
 
