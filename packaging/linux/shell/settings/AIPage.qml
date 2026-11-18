@@ -72,7 +72,11 @@ ColumnLayout {
 
   Cmd {
     id: save
-    onFinished: { key.text = ""; page.confirmingFree = false; }
+    onFinished: output => {
+      // Only a saved key is cleared: after a failure it stays, to be fixed and sent again.
+      if (/^(Saved|Using OpenCode)/m.test(output)) key.text = "";
+      page.confirmingFree = false;
+    }
   }
   // Saving a key adds it: the keys already saved stay, and FRIDAY can fall back
   // to them. Going back to the free models removes them, so it asks first.
