@@ -64,6 +64,16 @@ foreach ($project in @("$repo\windows-tray\FridayTray\FridayTray.csproj", "$repo
 }
 Copy-Item "$repo\LICENSE-MIT", "$repo\LICENSE-APACHE" $stage
 
+# The Visual C++ runtime that the Rust programs (the daemon, friday-ctl and
+# agent-desktop) load. A clean Windows doesn't have it (CI runners do), and
+# without it they never start: the tray runs but every question fails. It goes
+# beside them, app-local, as the Visual Studio redistributable terms allow.
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+$crt = & $vswhere -latest -products * -find 'VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT' | Select-Object -Last 1
+if (-not $crt) { throw "no Visual C++ redistributable found (install the Visual Studio Build Tools)" }
+foreach ($dll in 'vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll') { Copy-Item "$crt\$dll" $stage }
+Write-Host "Visual C++ runtime from $crt"
+
 # agent-desktop (Apache-2.0), the pinned Windows release: it reads what an app
 # shows through UI Automation. The version and checksums are the Arch package's
 # pins (packaging\arch\PKGBUILD), so one place moves them; a download that
