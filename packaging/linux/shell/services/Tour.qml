@@ -61,11 +61,12 @@ Singleton {
   function back() { if (root.step > 0) root.step--; }
   function finish() { root.active = false; }
 
-  // A step that waits moves on once FRIDAY has answered.
+  // A step that waits moves on once FRIDAY has answered; a failed answer stays,
+  // so the first question that went wrong isn't skipped past.
   Connections {
     target: Answer
     function onStateChanged() {
-      if (root.active && root.current.waits && Answer.state === "answer")
+      if (root.active && root.current.waits && Answer.state === "answer" && Answer.ok)
         root.next();
     }
   }

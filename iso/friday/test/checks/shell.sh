@@ -131,6 +131,11 @@ timeout 10 qs -p "$FS" ipc call answer present true "q" "a" "" "" "" >/dev/null 
 sleep 0.5
 [[ "$(timeout 10 qs -p "$FS" ipc call tour step 2>/dev/null)" == 1 ]] && pass "tour moves on when FRIDAY answers" || fail "tour did not move on after an answer"
 timeout 10 qs -p "$FS" ipc call answer dismiss >/dev/null 2>&1 || true
+# A failed answer doesn't count: the step stays, so the first question that went wrong isn't skipped past.
+timeout 10 qs -p "$FS" ipc call answer present false "q" "it failed" "" "" "" >/dev/null 2>&1 || true
+sleep 0.5
+[[ "$(timeout 10 qs -p "$FS" ipc call tour step 2>/dev/null)" == 1 ]] && pass "tour stays on a step when the answer failed" || fail "tour moved on after a failed answer"
+timeout 10 qs -p "$FS" ipc call answer dismiss >/dev/null 2>&1 || true
 timeout 10 qs -p "$FS" ipc call tour finish >/dev/null 2>&1 || true
 [[ "$(timeout 10 qs -p "$FS" ipc call tour step 2>/dev/null)" == -1 ]] && pass "tour can be skipped" || fail "tour did not finish"
 # With Pocketdesk installed the tour has a last step about the phone.
