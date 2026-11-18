@@ -27,7 +27,7 @@ speech is turned into text on your computer; only the text is sent. On niri, whi
 
 **Voice typing:** hold Super+Shift+Y (Mod+Shift+Y on niri: press once to speak, again to type), speak, and let go:
 the words are typed into the field you were in, and nothing is asked or sent. It uses the same voice setup
-(`friday voice setup`) and needs `wtype`.
+(`friday voice setup`) and needs `wtype`. On a FRIDAY OS install made before this key existed, run `friday keys update` once to add it (`friday doctor` says so).
 
 With a selection, the box offers quick actions (Summarize, Explain, Translate,
 Fix the grammar) and your own prompts, one per line in
