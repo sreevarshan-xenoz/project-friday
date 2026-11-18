@@ -1850,7 +1850,15 @@ impl GoalRunner {
             && !report.recoverable
         {
             if let Some(answerer) = &self.answerer {
-                match compose_answer(
+                // A cancel that lands while the model is writing stops the wait: the goal
+                // ends as cancelled, not as completed with an answer nobody wanted.
+                let abort = self.abort.clone();
+                let cancelled = async move {
+                    while !abort.load(std::sync::atomic::Ordering::SeqCst) {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                };
+                let composing = compose_answer(
                     answerer.as_ref(),
                     &composed,
                     &report,
@@ -1858,10 +1866,14 @@ impl GoalRunner {
                     &id,
                     web_response.as_ref(),
                     &opts,
-                )
-                .await
-                {
-                    Ok(mut answer) => {
+                );
+                let composed_answer = tokio::select! {
+                    r = composing => Some(r),
+                    _ = cancelled => None,
+                };
+                match composed_answer {
+                    None => report.cancelled = true,
+                    Some(Ok(mut answer)) => {
                         if web {
                             if web_search_failed {
                                 answer.text = format!("{web_note}\n\n{}", answer.text.trim());
@@ -1873,7 +1885,7 @@ impl GoalRunner {
                         report.result = Some(answer);
                         answered_by_model = true;
                     }
-                    Err(e) if !stands_without_the_model(report.result.as_ref()) => {
+                    Some(Err(e)) if !stands_without_the_model(report.result.as_ref()) => {
                         if let (true, false, Some(resp)) = (web, web_search_failed, &web_response) {
                             let mut text = format!("Web search results ({}):\n", resp.backend);
                             for (i, s) in resp.results.iter().enumerate() {
@@ -1890,7 +1902,7 @@ impl GoalRunner {
                             answer_failure = Some(crate::failures::plain_model_error(&e));
                         }
                     }
-                    Err(_) => {}
+                    Some(Err(_)) => {}
                 }
             } else if web {
                 if web_search_failed {
@@ -2816,6 +2828,61 @@ mod tests {
             "{}",
             prompts[0]
         );
+    }
+
+    /// A model that takes its time, so a cancel can land while it writes.
+    struct SlowAnswerer;
+
+    #[async_trait]
+    impl LlmStrategyClient for SlowAnswerer {
+        async fn complete(&self, _prompt: &str) -> Result<String, String> {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            Ok("too late".to_string())
+        }
+    }
+
+    /// A `task.cancel` that arrives while the model is answering ends the goal as
+    /// `goal.cancelled`, quickly, and never as `goal.completed`.
+    #[tokio::test]
+    async fn task_cancel_while_the_model_answers_cancels_the_goal() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let runner = GoalRunner::new(bus.clone()).with_answerer(Arc::new(SlowAnswerer));
+        runner.start();
+        bus.publish(Event::new(
+            "plan.goal",
+            "mobile",
+            json!({ "goal": "What does the Rust error E0308 mean?" }),
+        ))
+        .await
+        .expect("publish");
+
+        let mut cancel_sent = false;
+        let started = std::time::Instant::now();
+        loop {
+            let ev = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+                .await
+                .expect("a terminal event before the model would have answered")
+                .expect("bus alive");
+            match ev.kind.as_str() {
+                "goal.started" => {
+                    let id = ev.payload["id"].as_str().expect("goal id").to_string();
+                    // The plan runs in a moment; the model is then the slow part.
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    bus.publish(Event::new("task.cancel", "mobile", json!({ "task_id": id })))
+                        .await
+                        .expect("publish");
+                    cancel_sent = true;
+                }
+                "goal.cancelled" => break,
+                "goal.completed" | "goal.failed" => {
+                    panic!("a cancelled goal must not end as {}", ev.kind)
+                }
+                _ => {}
+            }
+        }
+        assert!(cancel_sent);
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
     }
 
     #[tokio::test]
