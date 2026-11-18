@@ -160,6 +160,13 @@ window's text instead of a screenshot. Everything is on except the last, and eac
 can be changed later (`FRIDAY_DESKTOP=0`, `FRIDAY_STANDING_TASKS=0`,
 `friday app-context off`, `friday screen-text on` or the Windows tray menu).
 
+## The launcher
+
+Click the grid in the bar. Type to find an app, one of FRIDAY's quick commands
+(mute, do not disturb, timer, battery, Wi-Fi and Bluetooth, settings, the tour) or a file
+by name (needs `fd`; files are looked up on this computer). Arrows move, Enter opens.
+The last row, "Ask FRIDAY", is the only one that asks the AI: typing alone sends nothing.
+
 ## The desktop
 
 FRIDAY OS has its own keymap (Super+K lists it), Super+L locks (with face unlock

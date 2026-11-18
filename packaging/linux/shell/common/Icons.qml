@@ -55,4 +55,5 @@ Singleton {
   readonly property string calendar: "\u{f0e17}"
   readonly property string terminal: "\u{f018d}"
   readonly property string app: "\u{f08c6}"
+  readonly property string file: "\u{f0214}"
 }
