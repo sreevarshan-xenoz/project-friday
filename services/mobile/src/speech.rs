@@ -1167,7 +1167,10 @@ mod tests {
 
         // Rewritten by a newer speaker: stop.
         std::fs::write(&path, std::process::id().to_string()).unwrap();
-        let (cancel, done) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+        let (cancel, done) = (
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        );
         watch_pid_file(path.clone(), cancel.clone(), done.clone());
         std::thread::sleep(Duration::from_millis(150));
         assert!(!cancel.load(Ordering::SeqCst), "still its own file");
@@ -1176,7 +1179,10 @@ mod tests {
 
         // Taken away by `stop_running`: stop.
         std::fs::write(&path, std::process::id().to_string()).unwrap();
-        let (cancel, done2) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+        let (cancel, done2) = (
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        );
         watch_pid_file(path.clone(), cancel.clone(), done2.clone());
         std::fs::remove_file(&path).unwrap();
         assert!(wait_for(&cancel));

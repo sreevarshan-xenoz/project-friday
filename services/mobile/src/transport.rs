@@ -610,7 +610,9 @@ mod tests {
             let _ = server.run_on(listener).await;
         });
 
-        let (mut client, _resp) = tokio_tungstenite::connect_async(url.as_str()).await.unwrap();
+        let (mut client, _resp) = tokio_tungstenite::connect_async(url.as_str())
+            .await
+            .unwrap();
         let _welcome = recv_server_msg(&mut client).await;
         assert_eq!(sessions.count(), 1);
 

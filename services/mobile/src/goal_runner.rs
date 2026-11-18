@@ -2887,9 +2887,13 @@ mod tests {
                     let id = ev.payload["id"].as_str().expect("goal id").to_string();
                     // The plan runs in a moment; the model is then the slow part.
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    bus.publish(Event::new("task.cancel", "mobile", json!({ "task_id": id })))
-                        .await
-                        .expect("publish");
+                    bus.publish(Event::new(
+                        "task.cancel",
+                        "mobile",
+                        json!({ "task_id": id }),
+                    ))
+                    .await
+                    .expect("publish");
                     cancel_sent = true;
                 }
                 "goal.cancelled" => break,

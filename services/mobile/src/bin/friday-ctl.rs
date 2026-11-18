@@ -593,7 +593,9 @@ async fn send_command(
                 return std::process::ExitCode::FAILURE;
             }
             Ok(None) => {
-                eprintln!("the daemon closed the connection before it answered (is it restarting?)");
+                eprintln!(
+                    "the daemon closed the connection before it answered (is it restarting?)"
+                );
                 return std::process::ExitCode::FAILURE;
             }
             // Nothing for a while: keep waiting until the deadline.
@@ -643,8 +645,15 @@ mod tests {
         });
         let started = std::time::Instant::now();
         let code = send_command(&addr, "x", json!({}), Duration::from_secs(60), false).await;
-        assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
-        assert_eq!(format!("{code:?}"), format!("{:?}", std::process::ExitCode::FAILURE));
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+        assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", std::process::ExitCode::FAILURE)
+        );
     }
 
     fn state(goal: &str, active: bool, completed_ms: Option<u64>) -> serde_json::Value {

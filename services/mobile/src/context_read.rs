@@ -1497,7 +1497,10 @@ mod tests {
             method: crate::commands::method::CONTEXT_READ.into(),
             params: serde_json::json!({ "consent": true, "region": { "x": 0, "y": 0, "w": 0, "h": 0 } }),
         };
-        assert!(manager.try_start(&cmd, tx, state, state_path).await.is_err());
+        assert!(manager
+            .try_start(&cmd, tx, state, state_path)
+            .await
+            .is_err());
         assert!(!reader.is_consented());
     }
 
