@@ -1157,6 +1157,28 @@ pub struct CandidateFailure {
     pub error: String,
 }
 
+/// What to tell the person when every candidate failed: each one's own reason
+/// (provider/model: error), not only the last, so "which one is broken and why"
+/// is visible. Long errors are cut and a long list is capped.
+fn describe_failures(failures: &[(String, String, String)]) -> String {
+    if failures.is_empty() {
+        return "none could be tried".to_string();
+    }
+    const SHOWN: usize = 4;
+    let mut parts: Vec<String> = failures
+        .iter()
+        .take(SHOWN)
+        .map(|(provider, model, error)| {
+            let error: String = error.chars().take(100).collect();
+            format!("{provider}/{model}: {error}")
+        })
+        .collect();
+    if failures.len() > SHOWN {
+        parts.push(format!("and {} more", failures.len() - SHOWN));
+    }
+    parts.join("; ")
+}
+
 /// **FROZEN contract v1.** IMMUTABLE audit record of one routed completion.
 ///
 /// Recorded once when routing finishes, then **never edited** — the same rule
@@ -3629,7 +3651,6 @@ impl InferenceFabric {
                 .map(|(m, p)| (p.name().to_string(), m.id.clone())),
         );
 
-        let mut last_error = String::new();
         let mut attempts = 0;
         let start = Instant::now();
 
@@ -3791,13 +3812,22 @@ impl InferenceFabric {
                         model: model.id.clone(),
                         error: sanitize_candidate_error(&err),
                     });
-                    last_error = sanitize_candidate_error(&err);
                 }
             }
         }
 
         let latency_ms = start.elapsed().as_millis() as u64;
-        let final_err = format!("All candidates failed. Last error: {}", last_error);
+        let final_err = format!(
+            "All candidates failed ({} tried). {}",
+            decision.failures.len(),
+            describe_failures(
+                &decision
+                    .failures
+                    .iter()
+                    .map(|f| (f.provider.clone(), f.model.clone(), f.error.clone()))
+                    .collect::<Vec<_>>()
+            )
+        );
         // Leave the immutable audit trail with every failure so the run is
         // debuggable — nothing served, but the why is fully recorded.
         decision.served = None;
@@ -3838,7 +3868,7 @@ impl InferenceFabric {
         }
 
         let mut attempts = 0;
-        let mut last_err = String::new();
+        let mut failures: Vec<(String, String, String)> = Vec::new();
 
         for (model, provider) in &candidates {
             attempts += 1;
@@ -3922,12 +3952,16 @@ impl InferenceFabric {
                 }
                 Ok(Err(e)) => {
                     self.log_egress_attempt(provider.name(), &model.id, prompt, is_local, "error");
-                    last_err = e;
+                    failures.push((
+                        provider.name().to_string(),
+                        model.id.clone(),
+                        sanitize_candidate_error(&e),
+                    ));
                     tracing::warn!(
                         "[Inference Request {}] Provider {} failed: {}",
                         request_id,
                         provider.name(),
-                        last_err
+                        e
                     );
                     {
                         let mut guard = self.health_scores.lock().unwrap();
@@ -3944,7 +3978,12 @@ impl InferenceFabric {
                 }
                 Err(_) => {
                     self.log_egress_attempt(provider.name(), &model.id, prompt, is_local, "error");
-                    last_err = format!("Provider {} timed out", provider.name());
+                    let last_err = format!("Provider {} timed out", provider.name());
+                    failures.push((
+                        provider.name().to_string(),
+                        model.id.clone(),
+                        "timed out".to_string(),
+                    ));
                     tracing::warn!("[Inference Request {}] {}", request_id, last_err);
                     {
                         let mut guard = self.health_scores.lock().unwrap();
@@ -3963,9 +4002,9 @@ impl InferenceFabric {
         }
 
         let final_err = format!(
-            "All {} providers failed. Last error: {}",
+            "All {} providers failed. {}",
             candidates.len(),
-            last_err
+            describe_failures(&failures)
         );
         tracing::error!("[Inference Request {}] {}", request_id, final_err);
 
@@ -7349,5 +7388,68 @@ mod v2_tests {
             .complete_tier("gemini", CapabilityTier::VisionFree, "look at this", false)
             .await;
         assert_eq!(res.unwrap(), "local vision reply");
+    }
+    struct RefusingProvider {
+        name: &'static str,
+        reason: &'static str,
+    }
+
+    #[async_trait]
+    impl Provider for RefusingProvider {
+        fn name(&self) -> &str {
+            self.name
+        }
+        async fn complete(&self, _m: &str, _p: &str, _j: bool) -> Result<String, String> {
+            Err(self.reason.to_string())
+        }
+        async fn check_health(&self) -> bool {
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn when_every_candidate_fails_each_reason_is_reported() {
+        let mut fabric = InferenceFabric::new();
+        fabric.default_mode = RoutingMode::Free;
+        fabric.register_provider(Box::new(RefusingProvider {
+            name: "openrouter",
+            reason: "429 daily limit reached",
+        }));
+        fabric.register_provider(Box::new(RefusingProvider {
+            name: "opengateway",
+            reason: "401 key rejected",
+        }));
+        let model = |id: &str, provider: &str, latency_ms: u64| ModelInfo {
+            id: id.to_string(),
+            family: id.to_string(),
+            provider: provider.to_string(),
+            latency_ms,
+            reliability: 1.0,
+            capabilities: vec![],
+            max_context: 4096,
+            tier: None,
+        };
+        fabric.register_model(model("vend/alpha:free", "openrouter", 5));
+        fabric.register_model(model("vend/beta:free", "opengateway", 10));
+
+        let err = fabric.complete("hi").await.expect_err("both refuse");
+        // Not just the last one: the person can see which provider is broken and why.
+        assert!(err.contains("429 daily limit reached"), "{err}");
+        assert!(err.contains("401 key rejected"), "{err}");
+        assert!(err.contains("2 tried"), "{err}");
+    }
+
+    #[test]
+    fn the_failure_list_is_cut_and_capped() {
+        let one = |n: usize| ("p".to_string(), format!("m{n}"), "x".repeat(300));
+        let text = describe_failures(&(0..6).map(one).collect::<Vec<_>>());
+        assert!(text.contains("and 2 more"), "{text}");
+        assert!(text.matches("p/m").count() == 4, "{text}");
+        assert!(
+            text.len() < 700,
+            "long errors are cut: {} bytes",
+            text.len()
+        );
+        assert_eq!(describe_failures(&[]), "none could be tried");
     }
 }
