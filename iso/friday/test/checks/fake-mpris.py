@@ -59,15 +59,6 @@ class Player(dbus.service.Object):
         self.PropertiesChanged(PLAYER, {"PlaybackStatus": self.status}, [])
 
 
-class Root(dbus.service.Object):
-    def __init__(self, bus):
-        super().__init__(bus, "/org/mpris/MediaPlayer2")
-
-    @dbus.service.method(PROPS, in_signature="ss", out_signature="v")
-    def Get(self, iface, name):
-        return {"Identity": "Check Player", "CanQuit": False, "CanRaise": False, "HasTrackList": False}.get(name, "")
-
-
 bus = dbus.SessionBus()
 name = dbus.service.BusName("org.mpris.MediaPlayer2.checkplayer", bus)
 player = Player(bus, sys.argv[1] if len(sys.argv) > 1 else "Playing")
