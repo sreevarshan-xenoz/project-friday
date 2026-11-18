@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-palette="ember">
+<html lang="en" data-palette="ember" class="no-js">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -96,6 +96,44 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .sim { display:block; text-align:right; padding:10px 16px 0; font-size:.72rem; color:var(--faint); }
 
+
+  /* aurora behind the hero */
+  .aurora { position:absolute; inset:0 0 auto 0; height:900px; overflow:hidden; z-index:-1; pointer-events:none; -webkit-mask-image:linear-gradient(#000 55%, transparent); mask-image:linear-gradient(#000 55%, transparent); }
+  .aurora i { position:absolute; border-radius:50%; filter:blur(90px); opacity:.45; animation: drift 18s ease-in-out infinite alternate; }
+  .aurora i:nth-child(1) { width:620px; height:620px; background:var(--accent); left:55%; top:-180px; }
+  .aurora i:nth-child(2) { width:520px; height:520px; background:var(--signal); left:-6%; top:120px; animation-duration:24s; opacity:.32; }
+  .aurora i:nth-child(3) { width:380px; height:380px; background:var(--accent); left:30%; top:380px; animation-duration:30s; opacity:.2; }
+  @keyframes drift { to { transform: translate(60px, 40px) scale(1.12); } }
+
+  .hero { text-align:center; padding: 56px 0 8px; display:block; }
+  .hero .lead, .hero .alpha { margin-left:auto; margin-right:auto; }
+  .hero .cta { justify-content:center; }
+  .pillnote { display:inline-flex; align-items:center; gap:8px; padding:6px 14px; border-radius:999px; border:1px solid var(--outline); background:color-mix(in srgb, var(--surface) 80%, transparent); color:var(--subtext); font-size:.85rem; margin-bottom:22px; }
+  .pillnote b { color:var(--accent); font-weight:600; }
+  h1 { font-size: clamp(2.4rem, 6.4vw, 4.4rem); text-wrap: balance; }
+
+  .monitor { margin:52px auto 0; max-width:1020px; perspective:1400px; }
+  .monitor .frame { border-radius:18px; padding:10px; background:linear-gradient(160deg, var(--overlay), var(--surface)); border:1px solid var(--outline);
+    box-shadow: 0 40px 120px -30px color-mix(in srgb, var(--accent) 55%, transparent), 0 20px 50px rgba(0,0,0,.35);
+    transform: rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg)); transition: transform .15s ease-out, box-shadow .4s; }
+  .monitor img { display:block; width:100%; height:auto; border-radius:10px; background:var(--bg); }
+  .monitor .cap { color:var(--faint); font-size:.82rem; margin-top:14px; }
+
+  .stats { display:grid; grid-template-columns:repeat(4, 1fr); gap:14px; margin-top:56px; }
+  @media (max-width: 700px) { .stats { grid-template-columns:repeat(2, 1fr); } }
+  .stat { padding:20px 12px; text-align:center; border-radius:18px; background:var(--surface); border:1px solid var(--outline); }
+  .stat b { display:block; font-size:2rem; line-height:1.1; color:var(--accent); letter-spacing:-.02em; }
+  .stat span { color:var(--subtext); font-size:.88rem; }
+
+  .gallery { display:grid; grid-template-columns: 1fr 1fr; gap:28px; align-items:center; }
+  @media (max-width: 800px) { .gallery { grid-template-columns: 1fr; } }
+  .gallery img { width:100%; height:auto; display:block; border-radius:18px; border:1px solid var(--outline); box-shadow:0 30px 70px -30px color-mix(in srgb, var(--accent) 50%, transparent); }
+  .gallery ul { margin:14px 0 0; padding-left:1.1em; color:var(--subtext); } .gallery li { margin-bottom:6px; }
+
+  .reveal { opacity:0; transform: translateY(22px); transition: opacity .7s ease, transform .7s ease; }
+  .reveal.in { opacity:1; transform:none; }
+  .no-js .reveal, .reduced .reveal { opacity:1; transform:none; transition:none; }
+
   /* sections */
   section { padding: 72px 0 0; }
   .eyebrow { color:var(--accent); font:600 .8rem ui-monospace, Menlo, Consolas, monospace; letter-spacing:.14em; text-transform:uppercase; margin:0 0 10px; }
@@ -170,17 +208,32 @@
   </nav>
 
   <header class="hero" id="top">
-    <div>
-      <h1>Press a key.<br><em>Ask what you're looking at.</em></h1>
-      <p class="lead">FRIDAY is a desktop assistant for Linux and Windows. Select some text or point at your screen, press a key, and get an answer in a small card, without opening a browser or switching windows.</p>
-      <div class="cta">
-        <a class="btn primary" id="dl" href="https://github.com/sreevarshan-xenoz/project-friday/releases/latest">Download</a>
-        <a class="btn" href="https://github.com/sreevarshan-xenoz/project-friday/blob/dev/docs/USING.md">How to use it</a>
-        <span class="ver" id="ver"></span>
-      </div>
-      <p class="alpha">Alpha. It runs and is tested in virtual machines and in CI; it hasn't had a pass on real hardware yet, so expect rough edges.</p>
+    <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+    <span class="pillnote"><b>New</b> spoken answers, phone pairing and a first-login tour</span>
+    <h1>Press a key.<br><em>Ask what you're looking at.</em></h1>
+    <p class="lead">FRIDAY is a desktop assistant for Linux and Windows. Select some text or point at your screen, press a key, and get an answer in a small card, without opening a browser or switching windows.</p>
+    <div class="cta">
+      <a class="btn primary" id="dl" href="https://github.com/sreevarshan-xenoz/project-friday/releases/latest">Download</a>
+      <a class="btn" href="https://github.com/sreevarshan-xenoz/project-friday/blob/dev/docs/USING.md">How to use it</a>
+      <span class="ver" id="ver"></span>
     </div>
+    <figure class="monitor" style="margin-bottom:0">
+      <div class="frame" id="frame"><picture><source id="hero-m" media="(max-width: 700px)" srcset="img/answer-ember-m.webp"><img id="hero-shot" src="img/answer-ember.webp" width="1600" height="400" alt="FRIDAY Shell on a desktop: the answer card under the bar, with a short answer about what is using the disk and the buttons Copy, Type it, Follow up, Full answer, Ask again and Try another model."></picture></div>
+      <figcaption class="cap">A real screenshot of FRIDAY Shell on FRIDAY OS. Try the colour swatches at the top.</figcaption>
+    </figure>
+    <div class="stats">
+      <div class="stat reveal"><b>3</b><span>keys to remember</span></div>
+      <div class="stat reveal"><b>0</b><span>accounts needed to start</span></div>
+      <div class="stat reveal"><b>50 MB</b><span>voice, made on your computer</span></div>
+      <div class="stat reveal"><b>2</b><span>systems: Linux and Windows</span></div>
+    </div>
+    <p class="alpha">Alpha. It runs and is tested in virtual machines and in CI; it hasn't had a pass on real hardware yet, so expect rough edges.</p>
+  </header>
 
+  <section id="try" class="reveal">
+    <p class="eyebrow">Try it</p>
+    <h2>Three keys. Tap one.</h2>
+    <p class="sub">A simulation of what each key does. The answers are made up for the demo.</p>
     <div class="stage" aria-label="A simulation of FRIDAY's answer card">
       <div class="bar"><span class="dot on"></span><span class="dot"></span><span class="dot"></span><span>FRIDAY</span><span class="clock mono">tap a key below</span></div>
       <div class="keys" role="tablist" aria-label="The three keys">
@@ -199,25 +252,25 @@
       </div>
       <span class="sim">simulation; Windows uses Win instead of Super</span>
     </div>
-  </header>
+  </section>
 
-  <section id="features">
+  <section id="features" class="reveal">
     <p class="eyebrow">What it does</p>
     <h2>Small card, real work.</h2>
     <p class="sub">Answers stream in under the bar. From there you can copy, type into the window you were in, follow up, or ask a different model. The rest of FRIDAY stays out of the way until you ask.</p>
     <div class="bento">
-      <div class="tile t4"><span class="ic">🗣️</span><h3>Answers out loud, made on your computer</h3><p>A small CPU voice (tiny voca, about 50 MB) runs inside FRIDAY and starts speaking at once. No GPU, and nothing is sent anywhere to speak. Kokoro is there when you want something more expressive. On Linux, hold <kbd>Super+Y</kbd> to talk instead of type.</p>
+      <div class="tile reveal t4"><span class="ic">🗣️</span><h3>Answers out loud, made on your computer</h3><p>A small CPU voice (tiny voca, about 50 MB) runs inside FRIDAY and starts speaking at once. No GPU, and nothing is sent anywhere to speak. Kokoro is there when you want something more expressive. On Linux, hold <kbd>Super+Y</kbd> to talk instead of type.</p>
         <div class="wave" aria-hidden="true"><i style="animation-delay:-.1s"></i><i style="animation-delay:-.5s"></i><i style="animation-delay:-.3s"></i><i style="animation-delay:-.8s"></i><i style="animation-delay:-.2s"></i><i style="animation-delay:-.6s"></i><i style="animation-delay:-.4s"></i><i style="animation-delay:-.9s"></i><i style="animation-delay:-.15s"></i><i style="animation-delay:-.7s"></i><i style="animation-delay:-.35s"></i><i style="animation-delay:-.55s"></i><i style="animation-delay:-.05s"></i><i style="animation-delay:-.65s"></i><i style="animation-delay:-.25s"></i><i style="animation-delay:-.85s"></i></div></div>
-      <div class="tile t2"><span class="ic">⚡</span><h3>Quick things stay home</h3><p>Volume, timers, battery and do not disturb are handled on your computer. The card says "nothing was sent".</p></div>
-      <div class="tile t2"><span class="ic">🪟</span><h3>Run your desktop</h3><p>"Put Firefox on workspace 2." "Pause the music." It does it, one step at a time, and asks before closing anything.</p></div>
-      <div class="tile t2"><span class="ic">🩺</span><h3>How is my computer doing?</h3><p>A read-only look at services, errors, disk, memory and battery, in plain words, with the one safest fix.</p></div>
-      <div class="tile t2"><span class="ic">⏰</span><h3>Do it again for me</h3><p>"Every weekday at 9, summarize my notes." Listed, pausable and deletable, and held to the same rules as your own asks.</p></div>
-      <div class="tile t3"><span class="ic">📱</span><h3>Your phone, if you want it</h3><p>FRIDAY OS offers Pocketdesk at first login: your phone becomes a screen, keyboard and remote for the computer, and can answer FRIDAY's "are you sure?" questions. It stays off until you turn it on.</p></div>
-      <div class="tile t3"><span class="ic">🔎</span><h3>Sources when you ask</h3><p>Web search with links, only when you say "search" or "look up". Never in private mode.</p></div>
+      <div class="tile reveal t2"><span class="ic">⚡</span><h3>Quick things stay home</h3><p>Volume, timers, battery and do not disturb are handled on your computer. The card says "nothing was sent".</p></div>
+      <div class="tile reveal t2"><span class="ic">🪟</span><h3>Run your desktop</h3><p>"Put Firefox on workspace 2." "Pause the music." It does it, one step at a time, and asks before closing anything.</p></div>
+      <div class="tile reveal t2"><span class="ic">🩺</span><h3>How is my computer doing?</h3><p>A read-only look at services, errors, disk, memory and battery, in plain words, with the one safest fix.</p></div>
+      <div class="tile reveal t2"><span class="ic">⏰</span><h3>Do it again for me</h3><p>"Every weekday at 9, summarize my notes." Listed, pausable and deletable, and held to the same rules as your own asks.</p></div>
+      <div class="tile reveal t3"><span class="ic">📱</span><h3>Your phone, if you want it</h3><p>FRIDAY OS offers Pocketdesk at first login: your phone becomes a screen, keyboard and remote for the computer, and can answer FRIDAY's "are you sure?" questions. It stays off until you turn it on.</p></div>
+      <div class="tile reveal t3"><span class="ic">🔎</span><h3>Sources when you ask</h3><p>Web search with links, only when you say "search" or "look up". Never in private mode.</p></div>
     </div>
   </section>
 
-  <section id="privacy">
+  <section id="privacy" class="reveal">
     <p class="eyebrow">What it sends, and when</p>
     <h2>It tells you what left your computer.</h2>
     <div class="privacy">
@@ -240,18 +293,19 @@
     </div>
   </section>
 
-  <section id="real">
-    <p class="eyebrow">The real thing</p>
-    <div class="real">
+  <section id="drawer" class="reveal">
+    <p class="eyebrow">The drawer</p>
+    <div class="gallery">
       <div>
-        <h2>That card, for real.</h2>
-        <p class="sub">A screenshot of FRIDAY Shell's answer card on FRIDAY OS. It comes in four colour themes (the switcher at the top of this page uses them) and a few bar styles, and follows your desktop theme if you use one.</p>
+        <h2>Always one click away.</h2>
+        <p class="sub" style="margin-bottom:0">Click the orb in the bar and the FRIDAY drawer opens: ask, start a selection or screen question, look back through past answers, check on FRIDAY. FRIDAY Shell ships four colour themes and three bar styles, and follows your desktop theme if you use one.</p>
+        <ul><li>Past answers, searchable</li><li>Your standing tasks, with pause and delete</li><li>Health check and settings, for people who don't use a terminal</li></ul>
       </div>
-      <img src="pill.png" alt="FRIDAY's answer card: a question about disk usage, a short answer, and the buttons Copy, Type it, Follow up, Full answer and Ask again.">
+      <img id="drawer-shot" src="img/drawer-ember.webp" width="700" height="420" loading="lazy" alt="The FRIDAY drawer under the bar: a box to ask FRIDAY, Selection and Screen buttons, and the last answer.">
     </div>
   </section>
 
-  <section id="install">
+  <section id="install" class="reveal">
     <p class="eyebrow">Install</p>
     <h2>Three ways in.</h2>
     <div class="tabs" role="tablist" aria-label="Pick your system">
@@ -295,6 +349,7 @@ systemctl --user enable --now friday-linux-daemon</pre><button class="copy" data
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var all = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
   var store = function (k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) {} };
+  document.documentElement.classList.remove("no-js");
   var reduced = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   /* theme: the shell's four palettes; remembered, else follows the system */
@@ -303,6 +358,9 @@ systemctl --user enable --now friday-linux-daemon</pre><button class="copy" data
   function setPalette(p) {
     document.documentElement.setAttribute("data-palette", p);
     all("button", sw).forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.p === p)); });
+    var hs = $("#hero-shot"), ds = $("#drawer-shot");
+    if (hs) { hs.src = "img/answer-" + p + ".webp"; $("#hero-m").srcset = "img/answer-" + p + "-m.webp"; }
+    if (ds) ds.src = "img/drawer-" + p + ".webp";
     store("palette", p);
   }
   palettes.forEach(function (p) {
@@ -315,6 +373,22 @@ systemctl --user enable --now friday-linux-daemon</pre><button class="copy" data
   var saved = store("palette");
   setPalette(saved && palettes.some(function (p) { return p[0] === saved; }) ? saved
     : (window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches ? "dawn" : "ember"));
+
+  /* reveal on scroll, and a slight tilt on the screenshot */
+  if (reduced || !("IntersectionObserver" in window)) document.documentElement.classList.add("reduced");
+  else {
+    var io = new IntersectionObserver(function (es) { es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } }); }, { threshold: 0.12 });
+    all(".reveal").forEach(function (n) { io.observe(n); });
+    var fr = $("#frame");
+    if (fr && matchMedia("(hover: hover)").matches) {
+      fr.parentNode.addEventListener("pointermove", function (e) {
+        var r = fr.getBoundingClientRect();
+        fr.style.setProperty("--ry", ((e.clientX - r.left) / r.width - .5) * 5 + "deg");
+        fr.style.setProperty("--rx", (.5 - (e.clientY - r.top) / r.height) * 4 + "deg");
+      });
+      fr.parentNode.addEventListener("pointerleave", function () { fr.style.setProperty("--rx", "0deg"); fr.style.setProperty("--ry", "0deg"); });
+    }
+  }
 
   /* the demo */
   var scenes = [
