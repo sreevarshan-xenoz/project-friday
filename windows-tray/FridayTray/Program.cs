@@ -63,6 +63,9 @@ internal static class Program
         {
             if (!File.Exists(exe)) { Say($"missing {exe}"); return 1; }
         }
+        // A state.json left by an earlier daemon says "ready" with that daemon's
+        // token: waiting on it would pass before this daemon is up.
+        File.Delete(install.Paths.StateFile);
         using var daemon = new Supervised("friday-daemon", install.Daemon, install.ChildEnvironment, install.Paths.LogDir);
         using var host = new Supervised("friday-windows-host", install.Host, install.ChildEnvironment, install.Paths.LogDir);
         host.Start();

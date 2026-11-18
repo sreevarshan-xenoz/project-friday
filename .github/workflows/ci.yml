@@ -341,6 +341,7 @@ jobs:
             if (-not (Test-Path "$dir\$rel")) { throw "the upgrade left out $rel" }
           }
           $p = Start-Process "$dir\friday-tray.exe" -ArgumentList '--smoke' -Wait -PassThru
+          Get-Content "$env:LOCALAPPDATA\friday\logs\smoke.log" -ErrorAction SilentlyContinue
           if ($p.ExitCode -ne 0) { throw "friday-tray --smoke failed after the upgrade ($($p.ExitCode))" }
           $p = Start-Process msiexec -ArgumentList '/x', '${{ steps.build.outputs.msi }}', '/qn' -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "msiexec /x exited with $($p.ExitCode)" }
