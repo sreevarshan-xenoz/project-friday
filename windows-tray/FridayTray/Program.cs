@@ -7,6 +7,9 @@ using FridayTray.Core;
 ///   --apply-elevated on|off <DOMAIN\user>
 ///                   (run through one UAC prompt) create or remove the
 ///                   scheduled task that starts FRIDAY as administrator
+///   --screenshots <folder>
+///                   open each window with sample content, save a picture of
+///                   it in the folder, exit (CI looks at the Windows side this way)
 ///   --smoke         headless check for CI and installers: start the daemon and
 ///                   host, wait until state.json reports "running" and
 ///                   friday-ctl reaches the daemon, stop them, exit 0 (or 1);
@@ -20,6 +23,9 @@ internal static class Program
     private static int Main(string[] args)
     {
         var install = new Install(Paths.ForCurrentUser());
+        var shots = Array.IndexOf(args, "--screenshots");
+        if (shots >= 0 && args.Length > shots + 1)
+            return Screenshots.Run(install, args[shots + 1]);
         if (args.Contains("--smoke"))
             return Smoke(install).GetAwaiter().GetResult();
         // The elevated half of "Start with administrator rights": run with the
