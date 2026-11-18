@@ -633,7 +633,7 @@ impl Synth for EngineSynth {
         let mut cmd = Command::new(&self.voice.engine);
         cmd.args(engine_args(&self.voice, text, &out))
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
         if let Some(lib) = self
             .voice
             .engine
@@ -646,15 +646,32 @@ impl Synth for EngineSynth {
                 cmd.env("LD_LIBRARY_PATH", &lib);
             }
         }
-        let status = cmd
-            .status()
+        let done = cmd
+            .output()
             .map_err(|e| format!("couldn't run the voice engine: {e}"))?;
         let bytes = std::fs::read(&out).map_err(|_| "the voice engine made no audio".to_string());
         let _ = std::fs::remove_file(&out);
-        if !status.success() {
-            return Err("the voice engine failed".into());
+        if !done.status.success() {
+            return Err(engine_failure(&done.stderr));
         }
         read_wav(&bytes?)
+    }
+}
+
+/// What to tell the person when the engine exits with an error: its own last
+/// line (a missing model file, a bad library) and how to reinstall the voice.
+fn engine_failure(stderr: &[u8]) -> String {
+    let last = String::from_utf8_lossy(stderr)
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(|l| l.chars().take(200).collect::<String>());
+    match last {
+        Some(l) => {
+            format!("the voice engine failed: {l} (reinstall the voice: friday voice speak setup)")
+        }
+        None => "the voice engine failed (reinstall the voice: friday voice speak setup)".into(),
     }
 }
 
@@ -1072,6 +1089,49 @@ fn copy_files(from: &Path, to: &Path, keep: impl Fn(&str) -> bool) -> Result<(),
     Ok(())
 }
 
+/// The folders of an installed voice that a new install replaces.
+const VOICE_PARTS: [&str; 3] = ["bin", "lib", "model"];
+
+/// Moves each of `parts` from `new` into `dir`, keeping what was there until
+/// every one is in place. If any step fails, what was placed is removed and
+/// the old parts are put back, so a failed reinstall never costs the working
+/// voice.
+fn swap_in(new: &Path, dir: &Path, parts: &[&str]) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let aside = |p: &str| dir.join(format!(".old-{}", p.replace('/', "-")));
+    for p in parts {
+        let _ = std::fs::remove_dir_all(aside(p));
+    }
+    let mut moved: Vec<&str> = Vec::new();
+    let mut placed: Vec<&str> = Vec::new();
+    let result = (|| -> Result<(), String> {
+        for p in parts {
+            if dir.join(p).exists() {
+                std::fs::rename(dir.join(p), aside(p)).map_err(|e| e.to_string())?;
+                moved.push(p);
+            }
+            if new.join(p).exists() {
+                std::fs::rename(new.join(p), dir.join(p)).map_err(|e| e.to_string())?;
+                placed.push(p);
+            }
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        for p in &placed {
+            let _ = std::fs::remove_dir_all(dir.join(p));
+        }
+        for p in &moved {
+            let _ = std::fs::rename(aside(p), dir.join(p));
+        }
+    } else {
+        for p in parts {
+            let _ = std::fs::remove_dir_all(aside(p));
+        }
+    }
+    result
+}
+
 /// Installs the voice into `dir`: the pinned engine and the chosen model, then
 /// `settings.json`. Anything already there is replaced; a failure leaves the old
 /// voice as it was.
@@ -1120,13 +1180,7 @@ pub fn setup(dir: &Path, kind: Kind) -> Result<(), String> {
             format!("{{\"kind\": \"{kind_name}\", \"speaker\": 0}}\n"),
         )
         .map_err(|e| e.to_string())?;
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        for part in ["bin", "lib", "model"] {
-            let _ = std::fs::remove_dir_all(dir.join(part));
-            if new.join(part).exists() {
-                std::fs::rename(new.join(part), dir.join(part)).map_err(|e| e.to_string())?;
-            }
-        }
+        swap_in(&new, dir, &VOICE_PARTS)?;
         std::fs::copy(new.join("settings.json"), dir.join("settings.json"))
             .map_err(|e| e.to_string())?;
         #[cfg(unix)]
@@ -1727,6 +1781,79 @@ mod tests {
                 stopped: false
             }
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn a_failed_reinstall_leaves_the_old_voice_working() {
+        let root = std::env::temp_dir().join(format!("friday-swap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (new, dir) = (root.join("new"), root.join("voice"));
+        let put = |d: &Path, name: &str, text: &str| {
+            std::fs::create_dir_all(d.join(name)).unwrap();
+            std::fs::write(d.join(name).join("f"), text).unwrap();
+        };
+        put(&dir, "bin", "old");
+        put(&dir, "model", "old");
+        // The new voice has a bin, and a part whose place in `dir` doesn't exist,
+        // so its move fails after bin was already swapped in.
+        put(&new, "bin", "new");
+        std::fs::create_dir_all(new.join("nested/part")).unwrap();
+        let err = swap_in(&new, &dir, &["bin", "nested/part", "model"]);
+        assert!(err.is_err(), "the move into a missing folder should fail");
+        let read = |p: &str| std::fs::read_to_string(dir.join(p).join("f")).unwrap();
+        assert_eq!(read("bin"), "old", "the old engine must be back");
+        assert_eq!(read("model"), "old", "the old model must be untouched");
+        assert!(!dir.join(".old-bin").exists(), "nothing is left aside");
+
+        // And a good install replaces everything and leaves nothing aside.
+        let (new2, dir2) = (root.join("new2"), root.join("voice2"));
+        put(&dir2, "bin", "old");
+        put(&new2, "bin", "new");
+        put(&new2, "model", "new");
+        swap_in(&new2, &dir2, &VOICE_PARTS).unwrap();
+        assert_eq!(std::fs::read_to_string(dir2.join("bin/f")).unwrap(), "new");
+        assert_eq!(
+            std::fs::read_to_string(dir2.join("model/f")).unwrap(),
+            "new"
+        );
+        assert!(!dir2.join(".old-bin").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_engine_failure_message_carries_its_own_last_line() {
+        let msg = engine_failure(b"loading model\nError: model.onnx: no such file\n\n");
+        assert!(msg.contains("model.onnx: no such file"), "{msg}");
+        assert!(msg.contains("friday voice speak setup"), "{msg}");
+        assert!(engine_failure(b"").contains("the voice engine failed"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failing_engine_says_why() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("friday-engine-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        let engine = dir.join("bin").join("fake-engine");
+        std::fs::write(
+            &engine,
+            "#!/bin/sh\necho 'cannot open model.onnx' >&2\nexit 3\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&engine, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let synth = EngineSynth {
+            voice: Voice {
+                engine,
+                model: dir.join("model"),
+                kind: Kind::Kitten,
+                speaker: 0,
+                speed: 1.0,
+                threads: 1,
+            },
+            work_dir: dir.clone(),
+        };
+        let err = synth.synth("hello").expect_err("the engine fails");
+        assert!(err.contains("cannot open model.onnx"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
