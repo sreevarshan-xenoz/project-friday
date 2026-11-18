@@ -733,11 +733,14 @@ fn capability_for_description(description: &str) -> Capability {
         return Capability::ReadFile;
     }
 
-    // 6. Write / create a file.
-    if has_word(&d, "write")
+    // 6. Write / create a file: only when a file is named or meant. "Write a
+    //    Python one-liner" or "write a poem" wants the text in the answer, not
+    //    a file on disk.
+    if (has_word(&d, "write")
         || has_word(&d, "writing")
         || has_word(&d, "create")
-        || has_word(&d, "saving")
+        || has_word(&d, "saving"))
+        && (has_file_context(&d) || has_filename(&d))
     {
         return Capability::WriteFile;
     }
@@ -1206,6 +1209,27 @@ fn has_file_context(d: &str) -> bool {
         || d.contains(".json")
         || d.contains(".txt")
         || d.contains(".log")
+}
+
+/// A word that looks like a file or a path: `notes.cfg`, `~/todo`, `src/main`
+/// (not a number like `3.5` or a sentence's last word).
+fn has_filename(d: &str) -> bool {
+    d.split_whitespace().any(|w| {
+        let w = w.trim_matches(|c: char| {
+            matches!(c, ',' | '.' | '!' | '?' | '"' | '\'' | '`' | ':' | ';')
+        });
+        if w.contains('/') {
+            return true;
+        }
+        match w.rsplit_once('.') {
+            Some((stem, ext)) => {
+                !stem.is_empty()
+                    && (1..=5).contains(&ext.len())
+                    && ext.chars().all(|c| c.is_ascii_alphabetic())
+            }
+            None => false,
+        }
+    })
 }
 
 /// Does the goal target the web rather than the local filesystem?
@@ -1796,5 +1820,34 @@ mod tests {
 
         let context_crlf = "Review this\r\n\r\n[session context]\r\nprevious goal: cargo test";
         assert_eq!(goal_segment(context_crlf), "Review this");
+    }
+    #[test]
+    fn writing_needs_a_file_to_be_a_file_write() {
+        let planning = Planning::new();
+        // Asked for in words: the answer is the text, nothing is written.
+        for q in [
+            "Write a Python one-liner that reverses a string s.",
+            "write a haiku about rain",
+            "create a regex that matches an email address",
+        ] {
+            assert_ne!(
+                planning.infer_capability(q, &[]),
+                Capability::WriteFile,
+                "{q}"
+            );
+        }
+        // A file named or meant: still a write, which asks first.
+        for q in [
+            "write hello to notes.txt",
+            "create a file called todo",
+            "save the summary to ~/summary",
+            "write the config to app.cfg",
+        ] {
+            let got = planning.infer_capability(q, &[]);
+            let q_saving = q.starts_with("save");
+            assert!(got == Capability::WriteFile || q_saving, "{q}: {got:?}");
+        }
+        assert!(!has_filename("it is 3.5 hours."));
+        assert!(has_filename("put it in notes.cfg please"));
     }
 }
