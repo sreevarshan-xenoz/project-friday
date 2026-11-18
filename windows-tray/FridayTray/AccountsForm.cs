@@ -21,6 +21,7 @@ internal sealed class AccountsForm : Form
 
     public AccountsForm(string envPath, Action? restartDaemon = null)
     {
+        Theme.DarkTitleBar(this);
         _envPath = envPath;
         _restartDaemon = restartDaemon;
 

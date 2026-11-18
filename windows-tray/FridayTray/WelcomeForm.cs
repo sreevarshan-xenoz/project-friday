@@ -10,6 +10,7 @@ internal sealed class WelcomeForm : Form
 {
     public WelcomeForm(IReadOnlyDictionary<AskKind, string> keys, Action chooseProvider, Action openSettings, Action tryIt)
     {
+        Theme.DarkTitleBar(this);
         Text = "Welcome to FRIDAY";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = MinimizeBox = false;
@@ -45,12 +46,10 @@ internal sealed class WelcomeForm : Form
         settings.Click += (_, _) => openSettings();
         var tryNow = Theme.Button("Try it now", primary: true);
         tryNow.Click += (_, _) => { Close(); tryIt(); };
-        buttons.Controls.AddRange(new Control[] { provider, settings, tryNow });
-        layout.Controls.Add(buttons);
-
         var done = Theme.Button("Done");
         done.Click += (_, _) => Close();
-        layout.Controls.Add(done);
+        buttons.Controls.AddRange(new Control[] { provider, settings, tryNow, done });
+        layout.Controls.Add(buttons);
         AcceptButton = tryNow;
         CancelButton = done;
         Controls.Add(layout);

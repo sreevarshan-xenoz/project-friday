@@ -19,6 +19,7 @@ internal sealed class ProviderForm : Form
 
     public ProviderForm(string envPath, Action? restartDaemon = null)
     {
+        Theme.DarkTitleBar(this);
         _envPath = envPath;
         _restartDaemon = restartDaemon;
         Text = "FRIDAY · AI provider";

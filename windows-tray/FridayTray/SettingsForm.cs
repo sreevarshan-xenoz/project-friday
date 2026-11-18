@@ -33,6 +33,7 @@ internal sealed class SettingsForm : Form
 
     public SettingsForm(Install install, SettingsActions actions, string? section = null)
     {
+        Theme.DarkTitleBar(this);
         _install = install;
         _do = actions;
         Text = "FRIDAY · Settings";
@@ -52,6 +53,7 @@ internal sealed class SettingsForm : Form
             var b = new Button
             {
                 Text = name,
+                UseMnemonic = false, // "Health & updates", not "Health _updates"
                 Width = 168,
                 Height = 36,
                 TextAlign = ContentAlignment.MiddleLeft,
@@ -88,7 +90,7 @@ internal sealed class SettingsForm : Form
         _page.SuspendLayout();
         _page.Controls.Clear();
         var column = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, BackColor = Theme.Bg };
-        column.Controls.Add(new Label { Text = name, Font = new Font("Segoe UI Semibold", 15f), ForeColor = Theme.Text, AutoSize = true, Margin = new Padding(0, 0, 0, 14) });
+        column.Controls.Add(new Label { Text = name, UseMnemonic = false, Font = new Font("Segoe UI Semibold", 15f), ForeColor = Theme.Text, AutoSize = true, Margin = new Padding(0, 0, 0, 14) });
         foreach (var c in name switch
         {
             "Home" => Home(),

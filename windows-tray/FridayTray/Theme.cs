@@ -27,6 +27,17 @@ internal static class Theme
     public static readonly Font Input = new("Segoe UI", 13f);
     public static readonly Font Monospace = new(FontFamily.GenericMonospace, 10f);
 
+    [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+
+    /// <summary>A dark title bar to match the dark window (Windows 10 2004 and
+    /// later; older ones keep their light bar).</summary>
+    public static void DarkTitleBar(Form form) => form.HandleCreated += (_, _) =>
+    {
+        var on = 1;
+        _ = DwmSetWindowAttribute(form.Handle, 20, ref on, sizeof(int)); // DWMWA_USE_IMMERSIVE_DARK_MODE
+    };
+
     /// <summary>The orb: a ring with a core. Ready = ember core, working = ember
     /// core with a signal arc, stopped = amber core, offline = an empty ring.</summary>
     public static Icon Orb(string mode, int size = 32)
