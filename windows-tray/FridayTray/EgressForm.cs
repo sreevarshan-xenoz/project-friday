@@ -10,6 +10,7 @@ internal sealed class EgressForm : Form
 {
     public EgressForm(Paths paths)
     {
+        Theme.DarkTitleBar(this);
         Text = "FRIDAY · What left this PC";
         FormBorderStyle = FormBorderStyle.Sizable;
         StartPosition = FormStartPosition.CenterScreen;

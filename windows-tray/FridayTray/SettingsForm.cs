@@ -33,6 +33,7 @@ internal sealed class SettingsForm : Form
 
     public SettingsForm(Install install, SettingsActions actions, string? section = null)
     {
+        Theme.DarkTitleBar(this);
         _install = install;
         _do = actions;
         Text = "FRIDAY · Settings";
@@ -52,6 +53,7 @@ internal sealed class SettingsForm : Form
             var b = new Button
             {
                 Text = name,
+                UseMnemonic = false, // "Health & updates", not "Health _updates"
                 Width = 168,
                 Height = 36,
                 TextAlign = ContentAlignment.MiddleLeft,

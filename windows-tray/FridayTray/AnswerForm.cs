@@ -23,7 +23,7 @@ internal sealed class AnswerForm : Form
 
     private readonly string _question;
     private readonly Label _title;
-    private readonly TextBox _body;
+    private readonly RichTextBox _body;
     private readonly Label _footer;
     private readonly FlowLayoutPanel _buttons;
     private Color _border = Theme.Outline;
@@ -50,12 +50,13 @@ internal sealed class AnswerForm : Form
             ForeColor = Theme.Accent,
             AutoEllipsis = true,
         };
-        _body = new TextBox
+        _body = new RichTextBox
         {
             Text = waiting,
-            Multiline = true,
             ReadOnly = true,
-            ScrollBars = ScrollBars.Vertical,
+            // Shown only when the answer is longer than the window.
+            ScrollBars = RichTextBoxScrollBars.Vertical,
+            DetectUrls = false,
             BorderStyle = BorderStyle.None,
             BackColor = Theme.Bg,
             ForeColor = Theme.Subtext,
@@ -174,7 +175,12 @@ internal sealed class AnswerForm : Form
         _title.Text = (outcome.Ok ? "●  " : "✕  ") + _question;
         _title.ForeColor = outcome.Ok ? Theme.Accent : Theme.Error;
         _body.ForeColor = Theme.Text;
-        _body.Text = Lines(outcome.Answer);
+        // A finished answer reads formatted (bold, lists, code); a failure stays plain.
+        if (outcome.Ok)
+            _body.Rtf = MarkdownRtf.Convert(outcome.Answer, Theme.Body.FontFamily.Name, Theme.Body.SizeInPoints,
+                (Theme.Text.R, Theme.Text.G, Theme.Text.B), (Theme.Signal.R, Theme.Signal.G, Theme.Signal.B));
+        else
+            _body.Text = Lines(outcome.Answer);
         _body.SelectionStart = 0;
         _body.ScrollToCaret();
         _border = outcome.Ok ? Theme.Outline : Theme.Error;
