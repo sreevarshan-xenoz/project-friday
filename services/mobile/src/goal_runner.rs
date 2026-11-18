@@ -3297,7 +3297,7 @@ mod tests {
         let key = "sk-ant-api03-FAKEFAKEFAKEFAKEFAKEFAKE";
         let report = ExecutiveReport {
             result: Some(
-                GoalResult::from_tool_result(&ToolResult::success(&format!("TOKEN=\"{key}\"")))
+                GoalResult::from_tool_result(&ToolResult::success(format!("TOKEN=\"{key}\"")))
                     .with_tool("filesystem"),
             ),
             ..Default::default()
