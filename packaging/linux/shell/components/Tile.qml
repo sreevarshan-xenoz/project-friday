@@ -16,8 +16,13 @@ Rectangle {
   implicitHeight: 56
   radius: Theme.radiusS + 4
   color: on ? Theme.alpha(Theme.accent, 0.16) : (mouse.containsMouse ? Theme.overlay : Theme.raised)
-  border.width: 1
-  border.color: on ? Theme.alpha(Theme.accent, 0.55) : "transparent"
+  border.width: activeFocus ? 2 : 1
+  border.color: activeFocus ? Theme.text : on ? Theme.alpha(Theme.accent, 0.55) : "transparent"
+  activeFocusOnTab: true
+  Keys.onReturnPressed: root.clicked()
+  Keys.onEnterPressed: root.clicked()
+  Keys.onSpacePressed: root.clicked()
+  Keys.onMenuPressed: root.secondaryClicked()
   Behavior on color { ColorAnimation { duration: Theme.fast } }
 
   RowLayout {

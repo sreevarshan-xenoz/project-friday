@@ -17,6 +17,12 @@ Rectangle {
   color: primary ? (mouse.containsMouse ? Qt.lighter(Theme.accent, 1.08) : Theme.accent)
     : (mouse.containsMouse ? Theme.overlay : Theme.raised)
   Behavior on color { ColorAnimation { duration: Theme.fast } }
+  border.width: activeFocus ? 2 : 0
+  border.color: Theme.text
+  activeFocusOnTab: true
+  Keys.onReturnPressed: root.clicked()
+  Keys.onEnterPressed: root.clicked()
+  Keys.onSpacePressed: root.clicked()
 
   RowLayout {
     id: row

@@ -42,6 +42,12 @@ FloatingWindow {
             implicitHeight: 36
             radius: Theme.radiusS
             color: Settings.page === modelData ? Theme.raised : (hover.containsMouse ? Theme.overlay : "transparent")
+            border.width: activeFocus ? 2 : 0
+            border.color: Theme.accent
+            activeFocusOnTab: true
+            Keys.onReturnPressed: Settings.page = modelData
+            Keys.onEnterPressed: Settings.page = modelData
+            Keys.onSpacePressed: Settings.page = modelData
             Label {
               anchors.verticalCenter: parent.verticalCenter
               anchors.left: parent.left
