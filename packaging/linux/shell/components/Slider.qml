@@ -13,12 +13,17 @@ Item {
 
   implicitHeight: 40
   implicitWidth: 240
+  activeFocusOnTab: true
+  Keys.onLeftPressed: root.moved(Math.max(0, root.value - 0.05))
+  Keys.onRightPressed: root.moved(Math.min(1, root.value + 0.05))
 
   Rectangle {
     id: track
     anchors.fill: parent
     radius: height / 2
     color: Theme.raised
+    border.width: root.activeFocus ? 2 : 0
+    border.color: Theme.text
     clip: true
 
     Rectangle {

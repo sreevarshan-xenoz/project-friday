@@ -119,6 +119,15 @@ for p in Home AI Privacy Health; do
   sleep 0.5
   [[ "$(timeout 10 qs -p "$FS" ipc call settings page 2>/dev/null)" == "$p" ]] || fail "FRIDAY Settings page $p did not open"
 done
+# The pages can be switched from the keyboard: Tab to the second entry, Enter.
+if need wtype; then
+  timeout 10 qs -p "$FS" ipc call settings open Home >/dev/null 2>&1 || true
+  sleep 1
+  wtype -s 400 -k Tab -s 400 -k Tab -s 400 -k Return 2>/dev/null || true
+  sleep 0.7
+  [[ "$(timeout 10 qs -p "$FS" ipc call settings page 2>/dev/null)" == AI ]] \
+    && pass "FRIDAY Settings pages switch from the keyboard (Tab, Enter)" || fail "FRIDAY Settings ignored Tab and Enter"
+else skip "keyboard use of FRIDAY Settings (needs wtype)"; fi
 if grep -q "settings/.*File not found" "$W/friday.log"; then fail "a FRIDAY Settings page file is missing: $(grep -h 'settings/.*File not found' "$W/friday.log" | head -1)"
 else pass "every FRIDAY Settings page file loads"; fi
 timeout 10 qs -p "$FS" ipc call settings close >/dev/null 2>&1 || true

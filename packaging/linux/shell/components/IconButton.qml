@@ -15,10 +15,16 @@ Item {
 
   implicitWidth: size
   implicitHeight: size
+  activeFocusOnTab: true
+  Keys.onReturnPressed: root.clicked()
+  Keys.onEnterPressed: root.clicked()
+  Keys.onSpacePressed: root.clicked()
 
   Rectangle {
     anchors.fill: parent
     radius: height / 2
+    border.width: root.activeFocus ? 2 : 0
+    border.color: Theme.text
     color: root.active ? root.tint
       : mouse.containsMouse ? Theme.overlay : "transparent"
     Behavior on color { ColorAnimation { duration: Theme.fast } }

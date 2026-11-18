@@ -21,6 +21,10 @@ ColumnLayout {
   Layout.fillWidth: true
 
   function refresh() { status.run(); }
+  function flip() {
+    change.args = root.checked ? root.offArgs : root.onArgs;
+    change.run();
+  }
   Component.onCompleted: refresh()
 
   Cmd {
@@ -42,6 +46,12 @@ ColumnLayout {
       implicitHeight: 22
       radius: 11
       color: root.checked ? Theme.accent : Theme.overlay
+      border.width: activeFocus ? 2 : 0
+      border.color: Theme.text
+      activeFocusOnTab: true
+      Keys.onReturnPressed: root.flip()
+      Keys.onEnterPressed: root.flip()
+      Keys.onSpacePressed: root.flip()
       Behavior on color { ColorAnimation { duration: Theme.fast } }
       Rectangle {
         width: 16
@@ -55,10 +65,7 @@ ColumnLayout {
       MouseArea {
         anchors.fill: parent
         cursorShape: Qt.PointingHandCursor
-        onClicked: {
-          change.args = root.checked ? root.offArgs : root.onArgs;
-          change.run();
-        }
+        onClicked: root.flip()
       }
     }
     Label {
