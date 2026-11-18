@@ -49,7 +49,8 @@ internal sealed class EgressForm : Form
         {
             var emptyLabel = new Label
             {
-                Text = "Nothing has been sent yet.",
+                // The heading already says nothing was sent; say what will show here.
+                Text = "Each question FRIDAY sends to an AI provider will be listed here: which one, what kind (text or a screenshot), how much, and how many secrets were masked first.",
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleCenter,
                 ForeColor = Theme.Subtext,

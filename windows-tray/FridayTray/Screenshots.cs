@@ -26,7 +26,7 @@ internal static class Screenshots
             Save(new SettingsForm(install, nothing, section), folder, "settings-" + section.Replace(" & ", "-").Replace(' ', '-').ToLowerInvariant());
         Save(new WelcomeForm(keys, () => { }, () => { }, () => { }), folder, "welcome");
         Save(new AskForm(AskKind.Plain, null, ["what's using my disk?"]), folder, "ask");
-        Save(new AskForm(AskKind.Selection, "error[E0308]: mismatched types", []), folder, "ask-selection");
+        Save(new AskForm(AskKind.Selection, "error[E0308]: mismatched types", QuickActions.All(install.Paths.PromptsFile)), folder, "ask-selection");
         Save(new AnswerForm("What is using my disk?", new AskOutcome(true,
             "Your disk is mostly **photos** (41 GB) and the package cache (12 GB).\n\n- Pictures: 41 GB\n- Downloads: 12 GB\n\nEmpty the Downloads folder to free the most space.",
             null, false)), folder, "answer");
