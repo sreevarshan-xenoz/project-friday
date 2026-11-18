@@ -566,7 +566,12 @@ pub fn parse_wikipedia_results(json_str: &str, limit: usize) -> Result<Vec<Searc
             .trim();
         if !title.is_empty() {
             let clean_title = strip_html_tags_and_entities(title);
-            let wiki_slug = clean_title.replace(' ', "_");
+            // `?` and `#` would end the path; `%` would start an escape.
+            let wiki_slug = clean_title
+                .replace(' ', "_")
+                .replace('%', "%25")
+                .replace('?', "%3F")
+                .replace('#', "%23");
             let url = format!("https://en.wikipedia.org/wiki/{wiki_slug}");
             let snippet = strip_html_tags_and_entities(raw_snippet);
             hits.push(SearchResult {
@@ -1013,6 +1018,27 @@ mod tests {
         );
         assert_eq!(results[1].title, "Rust on GitHub");
         assert_eq!(results[1].url, "https://github.com/rust-lang/rust");
+    }
+
+    #[test]
+    fn wikipedia_titles_with_a_question_mark_or_hash_make_working_links() {
+        let json = r#"{"query":{"search":[
+            {"title":"Who's That Girl?","snippet":"a film"},
+            {"title":"C#","snippet":"a language"},
+            {"title":"AC/DC","snippet":"a band"}]}}"#;
+        let urls: Vec<String> = parse_wikipedia_results(json, 5)
+            .expect("parse")
+            .into_iter()
+            .map(|r| r.url)
+            .collect();
+        assert_eq!(
+            urls,
+            [
+                "https://en.wikipedia.org/wiki/Who's_That_Girl%3F",
+                "https://en.wikipedia.org/wiki/C%23",
+                "https://en.wikipedia.org/wiki/AC/DC",
+            ]
+        );
     }
 
     #[test]

@@ -79,7 +79,7 @@ PanelWindow {
     Timer {
       id: quiet
       interval: Answer.ok ? 60000 : 90000
-      running: win.answering && !hover.hovered && !followUp.activeFocus
+      running: win.answering && !hover.hovered && !followUp.activeFocus && followUp.text === ""
       onTriggered: Answer.dismiss()
     }
     Connections {

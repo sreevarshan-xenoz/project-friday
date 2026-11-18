@@ -137,6 +137,19 @@ impl WsServer {
 
 type WsStream = WebSocketStream<TcpStream>;
 
+/// Takes the connection's session out of the registry however the connection ends: a
+/// dropped network or a client that just exits ends it with an error, not a close frame.
+struct SessionGuard {
+    sessions: Arc<SessionRegistry>,
+    id: String,
+}
+
+impl Drop for SessionGuard {
+    fn drop(&mut self) {
+        self.sessions.remove(&self.id);
+    }
+}
+
 async fn handle_conn(
     sock: TcpStream,
     auth: Arc<AuthRegistry>,
@@ -148,6 +161,10 @@ async fn handle_conn(
     let mut ws: WsStream = tokio_tungstenite::accept_async(sock).await?;
     let session_id = Uuid::new_v4().to_string();
     sessions.insert(crate::session::MobileSession::new(session_id.clone()));
+    let _registered = SessionGuard {
+        sessions: sessions.clone(),
+        id: session_id.clone(),
+    };
 
     send(
         &mut ws,
@@ -581,6 +598,33 @@ mod tests {
             .is_err();
         assert!(timed_out, "unauthenticated command must not be delivered");
         client.close(None).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_client_that_vanishes_without_a_close_frame_leaves_no_session() {
+        let server = WsServer::new("127.0.0.1:0".parse().unwrap()).with_require_auth(false);
+        let sessions = server.sessions();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let _ = server.run_on(listener).await;
+        });
+
+        let (mut client, _resp) = tokio_tungstenite::connect_async(url.as_str())
+            .await
+            .unwrap();
+        let _welcome = recv_server_msg(&mut client).await;
+        assert_eq!(sessions.count(), 1);
+
+        // No close handshake: the socket is just dropped.
+        drop(client);
+        for _ in 0..50 {
+            if sessions.count() == 0 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("the session of a dropped connection stayed registered");
     }
 
     #[tokio::test]

@@ -407,7 +407,7 @@ async fn main() {
     let state_cancel_lock = state.clone();
     let state_cancel_path = state_path.clone();
     tokio::spawn(async move {
-        while let Ok(ev) = cancel_bus.recv().await {
+        while let Some(ev) = friday_mobile::next_event(&mut cancel_bus).await {
             if ev.kind == "task.cancel" {
                 let task_id = ev
                     .payload

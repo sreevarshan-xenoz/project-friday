@@ -1965,9 +1965,12 @@ case "${1:-}" in
     exec friday-ctl goal "$@"
     ;;
   cancel)
-    if friday-ctl cancel >/dev/null 2>&1; then
+    if out=$(friday-ctl cancel 2>&1); then
       echo "Cancelled the current goal."
       notify-send -a FRIDAY "FRIDAY" "Cancelled the current goal." 2>/dev/null || true
+    elif [[ "$out" == *"cannot reach daemon"* ]]; then
+      echo "friday: FRIDAY isn't running, so there is nothing to cancel. Start it with: friday daemon restart" >&2
+      exit 1
     else
       echo "Nothing to cancel: no goal is running." >&2
       exit 1

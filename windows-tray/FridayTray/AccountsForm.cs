@@ -213,10 +213,14 @@ internal sealed class AccountsForm : Form
 
         _checkCts?.Dispose();
         _checkCts = new CancellationTokenSource();
+        var cancel = _checkCts.Token;
 
         try
         {
-            var answered = await AgentClis.RunCheckAsync(cli, binary, timeout: TimeSpan.FromSeconds(120));
+            var answered = await AgentClis.RunCheckAsync(cli, binary, timeout: TimeSpan.FromSeconds(120), cancel: cancel);
+            // The dialog was closed while the check ran: nothing to show, nothing to restart.
+            if (cancel.IsCancellationRequested || IsDisposed)
+                return;
             if (!answered)
             {
                 try
@@ -251,8 +255,11 @@ internal sealed class AccountsForm : Form
         }
         finally
         {
-            _connectBtn.Enabled = true;
-            UpdateSelectionState();
+            if (!IsDisposed)
+            {
+                _connectBtn.Enabled = true;
+                UpdateSelectionState();
+            }
         }
     }
 

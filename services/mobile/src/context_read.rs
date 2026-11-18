@@ -507,15 +507,6 @@ where
             });
         }
 
-        let want_consent = cmd
-            .params
-            .get("consent")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if want_consent {
-            self.reader.consent();
-        }
-
         let question = cmd
             .params
             .get("question")
@@ -534,6 +525,15 @@ where
                 }
             },
         };
+        // Consent is given last: a request refused above must not leave it switched on.
+        let want_consent = cmd
+            .params
+            .get("consent")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if want_consent {
+            self.reader.consent();
+        }
         let cmd_id = cmd.id.clone();
         let cmd_method = cmd.method.clone();
 
@@ -1480,6 +1480,28 @@ mod tests {
         // Consent was revoked
         assert!(!reader.is_consented());
         let _ = std::fs::remove_file(&state_path);
+    }
+
+    #[tokio::test]
+    async fn a_refused_screen_ask_does_not_leave_consent_on() {
+        let (seam, _started, _release) = BlockingSeam::new();
+        let reader = Arc::new(ScreenReader::new(fake_collector(), seam, "fabric"));
+        let manager = ScreenAskManager::new(reader.clone());
+        let (tx, _rx) = tokio::sync::broadcast::channel(32);
+        let state_path = std::env::temp_dir().join(format!("state-{}.json", uuid::Uuid::new_v4()));
+        let state = Arc::new(tokio::sync::Mutex::new(ShellState::starting("tok".into())));
+
+        let cmd = Command {
+            session_id: "s1".into(),
+            id: "bad-region".into(),
+            method: crate::commands::method::CONTEXT_READ.into(),
+            params: serde_json::json!({ "consent": true, "region": { "x": 0, "y": 0, "w": 0, "h": 0 } }),
+        };
+        assert!(manager
+            .try_start(&cmd, tx, state, state_path)
+            .await
+            .is_err());
+        assert!(!reader.is_consented());
     }
 
     #[tokio::test]

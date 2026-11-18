@@ -733,6 +733,16 @@ fn filename_token(instruction: &str) -> Option<String> {
     None
 }
 
+/// A word of the instruction that is a file in `cwd` without an extension, like
+/// `Dockerfile` in "read the Dockerfile".
+fn bare_file_token(instruction: &str, cwd: &str) -> Option<String> {
+    instruction
+        .split_whitespace()
+        .map(|tok| tok.trim_matches(|c: char| c.is_ascii_punctuation()))
+        .find(|t| !t.is_empty() && std::path::Path::new(cwd).join(t).is_file())
+        .map(String::from)
+}
+
 /// Resolve the path a read goal names: the file as given relative to the
 /// working directory, else the first filesystem.search hit by name, else an
 /// honest error instead of reading a directory.
@@ -741,7 +751,8 @@ async fn read_path_from_instruction(
     instruction: &str,
     cwd: &str,
 ) -> Result<String, String> {
-    let Some(name) = filename_token(instruction) else {
+    let Some(name) = filename_token(instruction).or_else(|| bare_file_token(instruction, cwd))
+    else {
         return Ok(cwd.to_string());
     };
     // Try the name as given relative to the working dir ("read src/main.rs"),
@@ -1576,7 +1587,7 @@ impl GoalRunner {
         // no-op (no fabricated state transition).
         tokio::spawn(async move {
             tracing::info!("goal runner control subscriber active");
-            while let Ok(ev) = control_rx.recv().await {
+            while let Some(ev) = crate::next_event(&mut control_rx).await {
                 match ev.kind.as_str() {
                     "task.cancel" => {
                         let task_id = ev
@@ -1655,7 +1666,7 @@ impl GoalRunner {
 
         tokio::spawn(async move {
             tracing::info!("goal runner subscribed to plan.goal");
-            while let Ok(ev) = rx.recv().await {
+            while let Some(ev) = crate::next_event(&mut rx).await {
                 if ev.kind != "plan.goal" {
                     continue;
                 }
@@ -1850,7 +1861,15 @@ impl GoalRunner {
             && !report.recoverable
         {
             if let Some(answerer) = &self.answerer {
-                match compose_answer(
+                // A cancel that lands while the model is writing stops the wait: the goal
+                // ends as cancelled, not as completed with an answer nobody wanted.
+                let abort = self.abort.clone();
+                let cancelled = async move {
+                    while !abort.load(std::sync::atomic::Ordering::SeqCst) {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                };
+                let composing = compose_answer(
                     answerer.as_ref(),
                     &composed,
                     &report,
@@ -1858,10 +1877,14 @@ impl GoalRunner {
                     &id,
                     web_response.as_ref(),
                     &opts,
-                )
-                .await
-                {
-                    Ok(mut answer) => {
+                );
+                let composed_answer = tokio::select! {
+                    r = composing => Some(r),
+                    _ = cancelled => None,
+                };
+                match composed_answer {
+                    None => report.cancelled = true,
+                    Some(Ok(mut answer)) => {
                         if web {
                             if web_search_failed {
                                 answer.text = format!("{web_note}\n\n{}", answer.text.trim());
@@ -1873,7 +1896,7 @@ impl GoalRunner {
                         report.result = Some(answer);
                         answered_by_model = true;
                     }
-                    Err(e) if !stands_without_the_model(report.result.as_ref()) => {
+                    Some(Err(e)) if !stands_without_the_model(report.result.as_ref()) => {
                         if let (true, false, Some(resp)) = (web, web_search_failed, &web_response) {
                             let mut text = format!("Web search results ({}):\n", resp.backend);
                             for (i, s) in resp.results.iter().enumerate() {
@@ -1890,7 +1913,7 @@ impl GoalRunner {
                             answer_failure = Some(crate::failures::plain_model_error(&e));
                         }
                     }
-                    Err(_) => {}
+                    Some(Err(_)) => {}
                 }
             } else if web {
                 if web_search_failed {
@@ -2216,7 +2239,11 @@ fn answer_prompt(
             let label = if r.success { "output" } else { "error" };
             p.push_str(&format!(
                 "\nWhat FRIDAY did ({tool}, {label}):\n{}\n",
-                truncate(&r.text, ANSWER_SOURCE_CHARS)
+                // Masked before it is cut, so a key can't be left half showing.
+                truncate(
+                    &friday_goal_execution::mask_secrets(&r.text).0,
+                    ANSWER_SOURCE_CHARS
+                )
             ));
         }
     }
@@ -2233,7 +2260,10 @@ fn answer_prompt(
         if !block.is_empty() {
             p.push_str(&format!(
                 "\nEvidence:\n{}",
-                truncate(&block, ANSWER_SOURCE_CHARS)
+                truncate(
+                    &friday_goal_execution::mask_secrets(&block).0,
+                    ANSWER_SOURCE_CHARS
+                )
             ));
         }
     }
@@ -2818,6 +2848,65 @@ mod tests {
         );
     }
 
+    /// A model that takes its time, so a cancel can land while it writes.
+    struct SlowAnswerer;
+
+    #[async_trait]
+    impl LlmStrategyClient for SlowAnswerer {
+        async fn complete(&self, _prompt: &str) -> Result<String, String> {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            Ok("too late".to_string())
+        }
+    }
+
+    /// A `task.cancel` that arrives while the model is answering ends the goal as
+    /// `goal.cancelled`, quickly, and never as `goal.completed`.
+    #[tokio::test]
+    async fn task_cancel_while_the_model_answers_cancels_the_goal() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let runner = GoalRunner::new(bus.clone()).with_answerer(Arc::new(SlowAnswerer));
+        runner.start();
+        bus.publish(Event::new(
+            "plan.goal",
+            "mobile",
+            json!({ "goal": "What does the Rust error E0308 mean?" }),
+        ))
+        .await
+        .expect("publish");
+
+        let mut cancel_sent = false;
+        let started = std::time::Instant::now();
+        loop {
+            let ev = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+                .await
+                .expect("a terminal event before the model would have answered")
+                .expect("bus alive");
+            match ev.kind.as_str() {
+                "goal.started" => {
+                    let id = ev.payload["id"].as_str().expect("goal id").to_string();
+                    // The plan runs in a moment; the model is then the slow part.
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    bus.publish(Event::new(
+                        "task.cancel",
+                        "mobile",
+                        json!({ "task_id": id }),
+                    ))
+                    .await
+                    .expect("publish");
+                    cancel_sent = true;
+                }
+                "goal.cancelled" => break,
+                "goal.completed" | "goal.failed" => {
+                    panic!("a cancelled goal must not end as {}", ev.kind)
+                }
+                _ => {}
+            }
+        }
+        assert!(cancel_sent);
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    }
+
     #[tokio::test]
     async fn goal_containing_secret_never_reaches_answerer_unmasked() {
         let answerer = Arc::new(ScriptedAnswerer {
@@ -3200,6 +3289,22 @@ mod tests {
         let failed = GoalResult::from_tool_result(&ToolResult::error("no tool for capability"));
         assert!(!stands_without_the_model(Some(&failed)));
         assert!(!stands_without_the_model(None));
+    }
+
+    /// A key a tool printed (a file read, a command's output) never goes to the model.
+    #[test]
+    fn answer_prompt_masks_secrets_in_tool_output() {
+        let key = "sk-ant-api03-FAKEFAKEFAKEFAKEFAKEFAKE";
+        let report = ExecutiveReport {
+            result: Some(
+                GoalResult::from_tool_result(&ToolResult::success(format!("TOKEN=\"{key}\"")))
+                    .with_tool("filesystem"),
+            ),
+            ..Default::default()
+        };
+        let p = answer_prompt("what is in this file", &report, None);
+        assert!(!p.contains(key), "{p}");
+        assert!(p.contains("[secret masked]"), "{p}");
     }
 
     /// The prompt carries the request, what the tool produced, and evidence.
@@ -3649,6 +3754,20 @@ mod tests {
         );
         assert!(payload.get("evidence_verified").is_some());
         assert!(payload["channels"].is_array());
+    }
+
+    #[test]
+    fn a_file_without_an_extension_is_found_by_its_name() {
+        let dir = std::env::temp_dir().join(format!("friday-bare-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Dockerfile"), "FROM scratch").unwrap();
+        let cwd = dir.to_str().unwrap();
+        assert_eq!(
+            bare_file_token("Read the Dockerfile.", cwd),
+            Some("Dockerfile".to_string())
+        );
+        assert_eq!(bare_file_token("list the files here", cwd), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

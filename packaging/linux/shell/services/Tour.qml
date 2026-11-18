@@ -33,7 +33,7 @@ Singleton {
       waits: true },
     { title: "Let me talk",
       keys: "",
-      body: "I can read my answers out loud, in a voice made on this computer (about 100 MB, nothing is sent anywhere). Skip this if you prefer quiet.",
+      body: "I can read my answers out loud, in a voice made on this computer (about 50 MB, nothing is sent anywhere). Skip this if you prefer quiet.",
       action: { label: "Give me a voice", command: "friday voice speak setup; friday voice speak on" },
       waits: false },
     { title: "The rest of your desktop",
