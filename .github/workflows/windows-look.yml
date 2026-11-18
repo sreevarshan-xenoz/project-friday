@@ -1,0 +1,33 @@
+name: Windows look
+
+# Pictures of every FRIDAY window on a real Windows desktop (friday-tray.exe
+# --screenshots), to see the Windows side without a Windows machine. Runs on
+# changes to the tray and by hand; the pictures are the run's artifact.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['windows-tray/**', '.github/workflows/windows-look.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  screenshots:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build the tray
+        run: dotnet build windows-tray/FridayTray/FridayTray.csproj -c Release -o out
+      - name: Take the pictures
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath out\friday-tray.exe -ArgumentList '--screenshots', "$PWD\shots" -PassThru -Wait
+          Get-ChildItem shots | Format-Table Name, Length
+          if (-not (Get-ChildItem shots -Filter *.png)) { throw "no pictures were saved (exit $($p.ExitCode))" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-look
+          path: shots
