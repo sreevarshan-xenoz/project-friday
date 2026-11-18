@@ -321,6 +321,16 @@ contains "timer: set" "$(cat "$state/last-answer.md")" "Timer set for 1 minute."
 : >"$LOG"; bash "$F" ask "what is the volume of a sphere"; sleep 0.3
 contains "a real question about volume still goes to the model" "$(cat "$LOG")" "friday-ctl"
 
+# The launcher's quick commands (shell/services/Commands.qml) promise "nothing sent":
+# each phrase it hands to `friday ask` must be one the CLI answers itself. (dnd and
+# wifi settings need the running shell, so the shell check covers those.)
+while IFS= read -r phrase; do
+  : >"$LOG"; bash "$F" ask "$phrase" >/dev/null 2>&1; sleep 0.3
+  if grep -q "friday-ctl" "$LOG"; then fail "launcher command '$phrase' goes to the AI, not handled locally"
+  else pass "launcher command '$phrase' is handled locally"; fi
+done < <(grep -o 'run: \["friday", "ask", "[^"]*"\]' "$REPO_ROOT/packaging/linux/shell/services/Commands.qml" \
+         | sed 's/.*"ask", "\([^"]*\)".*/\1/' | grep -viE '^(dnd|wifi|how )')
+
 echo "confirm"
 : >"$LOG"; bash "$F" ask "gated action"; sleep 0.4
 contains "confirms before running action" "$(cat "$LOG")" "run=Run"

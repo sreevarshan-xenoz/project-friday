@@ -1,13 +1,16 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell
+import Quickshell.Io
 import Quickshell.Widgets
 import qs.common
 import qs.components
 import qs.services
 
-// Find an app and start it, or hand the words to FRIDAY. Type to filter,
-// arrows to move, Enter to launch. The last row is always "Ask FRIDAY".
+// Find an app, one of FRIDAY's quick commands or a file, or hand the words to
+// FRIDAY. Type to filter, arrows to move, Enter to launch. The last row is
+// always "Ask FRIDAY". Typing here sends nothing: file names are looked up on
+// this computer (with fd, when it is installed), and only the last row asks.
 FocusScope {
   id: root
 
@@ -19,11 +22,16 @@ FocusScope {
   property int selected: 0
   readonly property string query: input.text.trim().toLowerCase()
 
+  // Rows are plain objects: { kind: "app" | "cmd" | "file", name, sub, ... }.
+  function appRow(e) {
+    return { kind: "app", name: e.name, sub: e.genericName || e.comment || "", icon: e.icon, id: e.id, entry: e };
+  }
+
   readonly property var results: {
     const q = query;
     const apps = DesktopEntries.applications.values.filter(e => !e.noDisplay);
     if (q === "")
-      return apps.slice().sort((a, b) => a.name.localeCompare(b.name)).slice(0, 7);
+      return apps.slice().sort((a, b) => a.name.localeCompare(b.name)).slice(0, 7).map(appRow);
     const scored = [];
     for (const e of apps) {
       const name = (e.name || "").toLowerCase();
@@ -37,14 +45,54 @@ FocusScope {
         scored.push({ e, s });
     }
     scored.sort((a, b) => b.s - a.s || a.e.name.localeCompare(b.e.name));
-    return scored.slice(0, 7).map(x => x.e);
+    const rows = scored.slice(0, 5).map(x => appRow(x.e));
+    for (const c of Commands.match(q).slice(0, 3))
+      rows.push({ kind: "cmd", name: c.name, sub: c.hint, run: c.run });
+    for (const f of fileHits)
+      rows.push({ kind: "file", name: f.name, sub: f.dir, path: f.path });
+    return rows;
+  }
+
+  // Files whose names contain the query, newest lookup only.
+  property var fileHits: []
+  property string fileQuery: ""
+  readonly property string home: Quickshell.env("HOME") || ""
+
+  Timer {
+    id: debounce
+    interval: 250
+    onTriggered: {
+      if (finder.running) finder.running = false;
+      root.fileQuery = root.query;
+      finder.command = ["fd", "--max-results", "4", "--type", "f", "--ignore-case", "--fixed-strings", "--", root.fileQuery, root.home];
+      finder.running = true;
+    }
+  }
+  Process {
+    id: finder
+    stdout: StdioCollector {
+      onStreamFinished: {
+        if (root.fileQuery !== root.query) return;
+        root.fileHits = text.split("\n").filter(p => p !== "").map(p => {
+          const cut = p.lastIndexOf("/");
+          return { path: p, name: p.slice(cut + 1), dir: p.slice(0, cut).replace(root.home, "~") };
+        });
+      }
+    }
   }
   readonly property int count: results.length + (query !== "" ? 1 : 0)
-  onQueryChanged: selected = 0
+  onQueryChanged: {
+    selected = 0;
+    fileHits = [];
+    if (query.length >= 3) debounce.restart(); else debounce.stop();
+  }
 
   function activate(i) {
     if (i < results.length) {
-      results[i].execute();
+      const r = results[i];
+      if (r.kind === "app") r.entry.execute();
+      else if (r.kind === "cmd") Quickshell.execDetached(r.run);
+      else Quickshell.execDetached(["xdg-open", r.path]);
     } else if (query !== "") {
       Friday.ask(input.text.trim());
     }
@@ -87,7 +135,7 @@ FocusScope {
           Label {
             anchors.verticalCenter: parent.verticalCenter
             visible: input.text === ""
-            text: "Search apps, or ask FRIDAY"
+            text: "Search apps and files, or ask FRIDAY"
             color: Theme.faint
             font.pixelSize: Theme.fontM + 1
           }
@@ -124,8 +172,9 @@ FocusScope {
           Item {
             implicitWidth: 26
             implicitHeight: 26
-            readonly property bool isFriday: row.modelData.id === "friday" || row.modelData.name === "FRIDAY"
-            readonly property string iconSource: AppIcons.source(row.modelData.icon)
+            readonly property bool isApp: row.modelData.kind === "app"
+            readonly property bool isFriday: row.modelData.kind === "cmd" || row.modelData.id === "friday" || row.modelData.name === "FRIDAY"
+            readonly property string iconSource: isApp ? AppIcons.source(row.modelData.icon) : ""
             Orb { anchors.centerIn: parent; size: 22; visible: parent.isFriday }
             IconImage {
               anchors.fill: parent
@@ -136,7 +185,7 @@ FocusScope {
             Glyph {
               anchors.centerIn: parent
               visible: !parent.isFriday && parent.iconSource === ""
-              text: Icons.app
+              text: parent.isApp ? Icons.app : Icons.file
               size: 22
               color: Theme.subtext
             }
@@ -148,7 +197,7 @@ FocusScope {
             Label {
               Layout.fillWidth: true
               visible: text !== ""
-              text: row.modelData.genericName || row.modelData.comment || ""
+              text: row.modelData.sub
               font.pixelSize: Theme.fontS
               color: Theme.subtext
             }
@@ -199,7 +248,7 @@ FocusScope {
 
     Label {
       visible: root.query !== "" && root.results.length === 0
-      text: "No apps match."
+      text: "Nothing matches."
       color: Theme.faint
       font.pixelSize: Theme.fontS + 1
     }

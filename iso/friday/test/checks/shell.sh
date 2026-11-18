@@ -189,6 +189,13 @@ sleep 1
 [[ "$(timeout 10 qs -p "$FS" ipc call tasks count 2>/dev/null)" == 0 ]] \
   && pass "an unreadable standing.json lists nothing" || fail "an unreadable standing.json broke the list"
 rm -f "$XDG_STATE_HOME/friday/standing.json"
+# The launcher's quick commands: found by what a person types, nothing for a stray letter.
+[[ "$(timeout 10 qs -p "$FS" ipc call commands match mut 2>/dev/null)" == "Mute|Unmute" ]] \
+  && pass "launcher finds Mute and Unmute for 'mut'" || fail "launcher commands for 'mut': $(timeout 10 qs -p "$FS" ipc call commands match mut 2>/dev/null)"
+[[ "$(timeout 10 qs -p "$FS" ipc call commands match dnd 2>/dev/null)" == "Do not disturb: on|Do not disturb: off" ]] \
+  && pass "launcher finds do not disturb by 'dnd'" || fail "launcher commands for 'dnd' wrong"
+[[ -z "$(timeout 10 qs -p "$FS" ipc call commands match a 2>/dev/null)" && -z "$(timeout 10 qs -p "$FS" ipc call commands match zzzzq 2>/dev/null)" ]] \
+  && pass "launcher lists no command for one letter or nonsense" || fail "launcher listed commands for one letter or nonsense"
 # What FRIDAY did on the desktop, as the daemon logs it (actions.jsonl), shown in the drawer.
 printf '%s\n' \
   '{"ts":"2026-11-18T10:00:00Z","verb":"focus_window","params":{"target":"firefox"},"risk":"reversible","ok":true,"goal":"x"}' \
