@@ -2228,7 +2228,11 @@ fn answer_prompt(
             let label = if r.success { "output" } else { "error" };
             p.push_str(&format!(
                 "\nWhat FRIDAY did ({tool}, {label}):\n{}\n",
-                truncate(&r.text, ANSWER_SOURCE_CHARS)
+                // Masked before it is cut, so a key can't be left half showing.
+                truncate(
+                    &friday_goal_execution::mask_secrets(&r.text).0,
+                    ANSWER_SOURCE_CHARS
+                )
             ));
         }
     }
@@ -2245,7 +2249,10 @@ fn answer_prompt(
         if !block.is_empty() {
             p.push_str(&format!(
                 "\nEvidence:\n{}",
-                truncate(&block, ANSWER_SOURCE_CHARS)
+                truncate(
+                    &friday_goal_execution::mask_secrets(&block).0,
+                    ANSWER_SOURCE_CHARS
+                )
             ));
         }
     }
@@ -3267,6 +3274,22 @@ mod tests {
         let failed = GoalResult::from_tool_result(&ToolResult::error("no tool for capability"));
         assert!(!stands_without_the_model(Some(&failed)));
         assert!(!stands_without_the_model(None));
+    }
+
+    /// A key a tool printed (a file read, a command's output) never goes to the model.
+    #[test]
+    fn answer_prompt_masks_secrets_in_tool_output() {
+        let key = "sk-ant-api03-FAKEFAKEFAKEFAKEFAKEFAKE";
+        let report = ExecutiveReport {
+            result: Some(
+                GoalResult::from_tool_result(&ToolResult::success(&format!("TOKEN=\"{key}\"")))
+                    .with_tool("filesystem"),
+            ),
+            ..Default::default()
+        };
+        let p = answer_prompt("what is in this file", &report, None);
+        assert!(!p.contains(key), "{p}");
+        assert!(p.contains("[secret masked]"), "{p}");
     }
 
     /// The prompt carries the request, what the tool produced, and evidence.
