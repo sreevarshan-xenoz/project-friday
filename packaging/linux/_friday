@@ -26,7 +26,8 @@ _friday() {
     'app-context:Whether selected-text questions name the app they came from'
     'forget:Show what FRIDAY keeps, or wipe it'
     'actions:Show what FRIDAY did on your desktop'
-    'tasks:Standing tasks (every morning ...): list, pause, delete'
+    'tasks:Standing tasks (every morning ...): list, pause, delete, turn off'
+    'desktop:Let FRIDAY control your windows, apps, volume and music'
     'context:Share screen context with the assistant'
     'daemon:Control the friday-linux-daemon service'
     'create-skill:Create a new skill template'
@@ -58,7 +59,8 @@ _friday() {
     screen-text) _values 'action' status on off ;;
     forget)   _values 'what' answers sent memory actions all ;;
     actions)  _arguments '1:count:' ;;
-    tasks)    _values 'action' list --json pause resume delete ;;
+    tasks)    _values 'action' list --json pause resume delete status on off ;;
+    desktop)  _values 'action' status on off ;;
     connect|disconnect) _values 'account' claude codex agy cline ;;
     private)  _values 'action' status on off ;;
     app-context) _values 'action' status on off ;;

@@ -263,6 +263,51 @@ FocusScope {
       }
     }
 
+    // What FRIDAY did on the desktop lately, so a window that moved or an app
+    // that opened has an explanation. Only shown when there is something.
+    ColumnLayout {
+      Layout.fillWidth: true
+      visible: Actions.entries.length > 0
+      spacing: 4
+
+      Label {
+        text: "What FRIDAY did"
+        color: Theme.subtext
+        font.pixelSize: Theme.fontS
+      }
+      Repeater {
+        model: Actions.entries.slice(0, 4)
+        RowLayout {
+          required property var modelData
+          Layout.fillWidth: true
+          spacing: 8
+          Rectangle {
+            implicitWidth: 8
+            implicitHeight: 8
+            radius: 4
+            color: modelData.ok ? Theme.ok : Theme.error
+          }
+          Label {
+            Layout.fillWidth: true
+            text: modelData.text + (modelData.ok ? "" : " (didn't work)")
+            elide: Text.ElideRight
+            color: modelData.ok ? Theme.text : Theme.error
+            font.pixelSize: Theme.fontS + 1
+          }
+          Label {
+            text: modelData.when
+            color: Theme.faint
+            font.pixelSize: Theme.fontS
+          }
+        }
+      }
+      Label {
+        text: "All of it: friday actions"
+        color: Theme.faint
+        font.pixelSize: Theme.fontS
+      }
+    }
+
     // One-press questions about what's in front of you.
     RowLayout {
       Layout.fillWidth: true

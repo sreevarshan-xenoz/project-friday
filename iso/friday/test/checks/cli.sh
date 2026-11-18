@@ -429,6 +429,23 @@ bash "$F" screen-text off >/dev/null
 contains "screen-text off is saved" "$(bash "$F" screen-text status)" "Screen text: off"
 [[ "$(grep -c '^FRIDAY_SCREEN_TEXT=' "$HOME/.config/friday/friday.env" 2>/dev/null || true)" == 0 ]] && pass "screen-text off leaves no setting" || fail "FRIDAY_SCREEN_TEXT left in friday.env"
 
+echo "desktop control and standing tasks switches"
+contains "desktop control is on by default" "$(bash "$F" desktop status)" "Desktop control: on"
+bash "$F" desktop off >/dev/null
+contains "desktop off is saved" "$(bash "$F" desktop status)" "Desktop control: off"
+contains "desktop off writes FRIDAY_DESKTOP=0" "$(cat "$HOME/.config/friday/friday.env")" "FRIDAY_DESKTOP=0"
+[[ "$(stat -c %a "$HOME/.config/friday/friday.env")" == 600 ]] && pass "desktop switch keeps the env file private" || fail "friday.env is not 0600"
+bash "$F" desktop on >/dev/null
+contains "desktop on is saved" "$(bash "$F" desktop status)" "Desktop control: on"
+[[ "$(grep -c '^FRIDAY_DESKTOP=' "$HOME/.config/friday/friday.env" 2>/dev/null || true)" == 0 ]] && pass "desktop on leaves no setting" || fail "FRIDAY_DESKTOP left in friday.env"
+expect "desktop rejects an unknown action" bash -c "! bash '$F' desktop bogus 2>/dev/null"
+contains "standing tasks are on by default" "$(bash "$F" tasks status)" "Standing tasks: on"
+bash "$F" tasks off >/dev/null
+contains "tasks off is saved" "$(bash "$F" tasks status)" "Standing tasks: off"
+contains "tasks off writes FRIDAY_STANDING_TASKS=0" "$(cat "$HOME/.config/friday/friday.env")" "FRIDAY_STANDING_TASKS=0"
+bash "$F" tasks on >/dev/null
+contains "tasks on is saved" "$(bash "$F" tasks status)" "Standing tasks: on"
+
 echo "phone"
 # `friday phone`, without Pocketdesk installed.
 if ! command -v pocketdesk >/dev/null 2>&1; then

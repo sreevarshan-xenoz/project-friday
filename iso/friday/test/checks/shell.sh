@@ -114,7 +114,9 @@ timeout 10 qs -p "$FS" ipc call settings open AI >/dev/null 2>&1 || true
 sleep 1; grim "$W/friday-settings-ai.png" 2>/dev/null || true
 timeout 10 qs -p "$FS" ipc call settings open Privacy >/dev/null 2>&1 || true
 sleep 1; grim "$W/friday-settings-privacy.png" 2>/dev/null || true
-for p in Home AI Privacy Health; do
+timeout 10 qs -p "$FS" ipc call settings open Permissions >/dev/null 2>&1 || true
+sleep 2; grim "$W/friday-settings-permissions.png" 2>/dev/null || true
+for p in Home AI Permissions Privacy Health; do
   timeout 10 qs -p "$FS" ipc call settings open "$p" >/dev/null 2>&1 || true
   sleep 0.5
   [[ "$(timeout 10 qs -p "$FS" ipc call settings page 2>/dev/null)" == "$p" ]] || fail "FRIDAY Settings page $p did not open"
@@ -191,6 +193,20 @@ rm -f "$XDG_STATE_HOME/friday/standing.json"
   && pass "launcher finds do not disturb by 'dnd'" || fail "launcher commands for 'dnd' wrong"
 [[ -z "$(timeout 10 qs -p "$FS" ipc call commands match a 2>/dev/null)" && -z "$(timeout 10 qs -p "$FS" ipc call commands match zzzzq 2>/dev/null)" ]] \
   && pass "launcher lists no command for one letter or nonsense" || fail "launcher listed commands for one letter or nonsense"
+# What FRIDAY did on the desktop, as the daemon logs it (actions.jsonl), shown in the drawer.
+printf '%s\n' \
+  '{"ts":"2026-11-18T10:00:00Z","verb":"focus_window","params":{"target":"firefox"},"risk":"reversible","ok":true,"goal":"x"}' \
+  '{"ts":"2026-11-18T10:01:00Z","verb":"close_window","params":{"target":"gedit"},"risk":"destructive","ok":false,"goal":"(confirmed)"}' \
+  '{"ts":"2026-11-18T10:02:0' >"$XDG_STATE_HOME/friday/actions.jsonl"
+sleep 1
+[[ "$(timeout 10 qs -p "$FS" ipc call actions count 2>/dev/null)" == 2 ]] \
+  && pass "the action log is read (a torn last line is skipped)" || fail "action log count wrong: $(timeout 10 qs -p "$FS" ipc call actions count 2>/dev/null)"
+[[ "$(timeout 10 qs -p "$FS" ipc call actions first 2>/dev/null)" == "close window · gedit | failed" ]] \
+  && pass "the newest action shows what it did and that it failed" || fail "action text wrong: $(timeout 10 qs -p "$FS" ipc call actions first 2>/dev/null)"
+rm -f "$XDG_STATE_HOME/friday/actions.jsonl"
+sleep 1
+[[ "$(timeout 10 qs -p "$FS" ipc call actions count 2>/dev/null)" == 0 ]] \
+  && pass "no action log lists nothing" || fail "a missing action log still listed actions"
 # Every style with a palette, switched live through shell.json as the Look
 # picker does: the bar, the FRIDAY drawer and the control drawer each time.
 mkdir -p "$HOME/.config/friday"

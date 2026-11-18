@@ -34,8 +34,9 @@ Autonomous Agent & Cognitive Loop:
   friday sent [N]                  Show what left this machine for AI providers (egress log)
   friday goal "<objective>"        Dispatch an autonomous goal to FRIDAY agent
   friday cancel                    Cancel the goal FRIDAY is working on
-  friday tasks [pause|resume|delete <id>]
-                                   Standing tasks ("every morning ..."): list, pause, delete
+  friday tasks [pause|resume|delete <id>|status|on|off]
+                                   Standing tasks ("every morning ..."): list, pause, delete, turn all off
+  friday desktop [status|on|off]   Let FRIDAY control your windows, apps, volume and music
   friday status | system-info      Inspect daemon state, memory, and telemetry
   friday context screen [--yes]    Share screen context with assistant
   friday daemon <status|restart|logs> Control friday-linux-daemon service
@@ -693,6 +694,42 @@ FRIDAY_FREE_NOTICE="Free models (OpenCode Zen, Kilo) may keep what you send them
 # exposes enough text (its accessibility tree) is asked about as that text
 # instead: up to 12,000 characters, which can include text scrolled out of
 # view, and it can go to any provider you use, not only ones that see images.
+# A switch that is on unless FRIDAY_<NAME>=0 is in friday.env. The daemon reads
+# it when it starts, so changing it restarts the daemon.
+# usage: friday_switch <VAR> <label> <command> <what on means> <what off means> [status|on|off]
+friday_switch() {
+  local var="$1" label="$2" cmd="$3" on_text="$4" off_text="$5" action="${6:-status}"
+  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" want
+  case "$action" in
+    status)
+      if grep -qE "^$var=0\$" "$env_file" 2>/dev/null; then
+        echo "$label: off ($off_text). Turn on: friday $cmd on"
+      else
+        echo "$label: on ($on_text). Turn off: friday $cmd off"
+      fi
+      return 0 ;;
+    on) want="" ;;
+    off) want=0 ;;
+    *) echo "Usage: friday $cmd [status|on|off]" >&2; return 1 ;;
+  esac
+  mkdir -p "$(dirname "$env_file")"
+  (
+    umask 077
+    { grep -vE "^$var=" "$env_file" 2>/dev/null || true
+      [ -z "$want" ] || echo "$var=0"; } >"$env_file.tmp"
+    chmod 0600 "$env_file.tmp"
+    mv -f "$env_file.tmp" "$env_file"
+  )
+  systemctl --user restart friday-linux-daemon 2>/dev/null || true
+  [ -n "$want" ] && echo "$label: off" || echo "$label: on"
+}
+
+friday_desktop() {
+  friday_switch FRIDAY_DESKTOP "Desktop control" desktop \
+    "FRIDAY can focus, move and launch windows, change volume and music, and press buttons in apps; closing or deleting asks first" \
+    "FRIDAY only answers questions" "$@"
+}
+
 friday_screen_text() {
   local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" want
   case "${1:-status}" in
@@ -1360,6 +1397,10 @@ friday_tasks() {
         | sed 's/[[:space:]]*$//' \
         || { echo "FRIDAY couldn't read $f" >&2; return 1; }
       ;;
+    status|on|off)
+      friday_switch FRIDAY_STANDING_TASKS "Standing tasks" tasks \
+        "FRIDAY can run what you ask to repeat, each with the usual rules" \
+        "nothing repeats and no new ones can be made" "$cmd" ;;
     pause|resume|delete)
       [[ "$id" =~ ^t[0-9]+$ ]] || { echo "usage: friday tasks $cmd <id>   (ids are in: friday tasks)" >&2; return 2; }
       [ -s "$f" ] && jq -e --arg id "$id" '.tasks | any(.id == $id)' "$f" >/dev/null 2>&1 \
@@ -1376,7 +1417,7 @@ friday_tasks() {
       echo "Standing task $id: $cmd done."
       ;;
     *)
-      echo "usage: friday tasks [list|--json|pause <id>|resume <id>|delete <id>]" >&2
+      echo "usage: friday tasks [list|--json|pause <id>|resume <id>|delete <id>|status|on|off]" >&2
       return 2
       ;;
   esac
@@ -2064,6 +2105,10 @@ case "${1:-}" in
   tasks)
     shift
     friday_tasks "$@"
+    ;;
+  desktop)
+    shift
+    friday_desktop "$@"
     ;;
   app-context)
     shift

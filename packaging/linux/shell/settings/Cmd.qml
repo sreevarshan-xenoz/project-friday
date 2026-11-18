@@ -5,6 +5,9 @@ import Quickshell.Io
 Item {
   id: root
 
+  // Not drawn, and not a layout item: a page's spacing would otherwise add a gap for each command.
+  visible: false
+
   property var args: []
   property string output: ""
   readonly property bool running: proc.running
