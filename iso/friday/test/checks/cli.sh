@@ -463,7 +463,7 @@ grep -v -- '--type' "$REPO_ROOT/iso/friday/airootfs/etc/skel/.config/hypr/bindin
 cp "$HOME/.config/hypr/bindings.lua" "$W/old-keys.lua"
 contains "doctor-style check finds the missing voice typing key" "$(grep -c -- '--type' "$HOME/.config/hypr/bindings.lua" || true)" "0"
 contains "keys update adds voice typing" "$(bash "$F" keys update)" "Added voice typing"
-[[ "$(diff "$W/old-keys.lua" "$HOME/.config/hypr/bindings.lua" | grep -c '^>')" == 2 && "$(diff "$W/old-keys.lua" "$HOME/.config/hypr/bindings.lua" | grep -c '^<')" == 0 ]] \
+[[ "$(grep -c -- '--type' "$HOME/.config/hypr/bindings.lua")" == 2 && "$(grep -v -- '--type' "$HOME/.config/hypr/bindings.lua")" == "$(cat "$W/old-keys.lua")" ]] \
   && pass "keys update only adds the two voice typing lines" || fail "keys update changed more than it should"
 contains "keys update a second time changes nothing" "$(bash "$F" keys update)" "up to date"
 rm -rf "$HOME/.config/hypr"
