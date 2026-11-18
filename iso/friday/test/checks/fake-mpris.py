@@ -3,6 +3,7 @@
 
 Usage: fake-mpris.py <Playing|Paused>   (runs until killed; send SIGUSR1 to
 flip between playing and paused). Needs dbus-python and PyGObject."""
+
 import signal
 import sys
 
@@ -24,14 +25,23 @@ class Player(dbus.service.Object):
     def props(self):
         return {
             "PlaybackStatus": self.status,
-            "Metadata": dbus.Dictionary({
-                "xesam:title": "Check Song",
-                "xesam:artist": dbus.Array(["Check Artist"], signature="s"),
-                "mpris:trackid": dbus.ObjectPath("/check/track/1"),
-            }, signature="sv"),
-            "CanPlay": True, "CanPause": True, "CanControl": True,
-            "CanGoNext": False, "CanGoPrevious": False, "CanSeek": False,
-            "Position": dbus.Int64(0), "Rate": 1.0, "Volume": 1.0,
+            "Metadata": dbus.Dictionary(
+                {
+                    "xesam:title": "Check Song",
+                    "xesam:artist": dbus.Array(["Check Artist"], signature="s"),
+                    "mpris:trackid": dbus.ObjectPath("/check/track/1"),
+                },
+                signature="sv",
+            ),
+            "CanPlay": True,
+            "CanPause": True,
+            "CanControl": True,
+            "CanGoNext": False,
+            "CanGoPrevious": False,
+            "CanSeek": False,
+            "Position": dbus.Int64(0),
+            "Rate": 1.0,
+            "Volume": 1.0,
         }
 
     @dbus.service.method(PROPS, in_signature="ss", out_signature="v")
