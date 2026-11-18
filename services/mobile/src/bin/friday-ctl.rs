@@ -254,8 +254,13 @@ async fn main() -> std::process::ExitCode {
         match read_token(&state_path) {
             Some(t) => t,
             None => {
+                let hint = if cfg!(windows) {
+                    "start FRIDAY from the Start menu"
+                } else {
+                    "try: friday doctor"
+                };
                 eprintln!(
-                    "no token found; daemon not running at {} (is friday-linux-daemon up?)",
+                    "no token found; FRIDAY isn't running (no {}): {hint}",
                     state_path.display()
                 );
                 return std::process::ExitCode::FAILURE;
