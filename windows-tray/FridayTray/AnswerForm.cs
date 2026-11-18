@@ -38,7 +38,8 @@ internal sealed class AnswerForm : Form
         ShowInTaskbar = false;
         TopMost = true;
         BackColor = Theme.Bg;
-        Size = new Size(460, 320);
+        // Wide enough for an answer's five buttons on one row (at 460 Copy wrapped alone).
+        Size = new Size(540, 320);
         Padding = new Padding(16, 12, 16, 12);
 
         _title = new Label
