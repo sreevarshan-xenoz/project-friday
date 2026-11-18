@@ -59,7 +59,8 @@ Copy-Item "$repo\target\release\friday-ctl.exe" "$stage\friday-ctl.exe"
 
 foreach ($project in @("$repo\windows-tray\FridayTray\FridayTray.csproj", "$repo\windows-host\windows-host.csproj")) {
     Run dotnet @('publish', $project, '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true',
-        '-p:PublishSingleFile=false', '-o', $stage)
+        # The MSI's version, so Settings' "This version" matches what was installed (it said 0.1.0).
+        '-p:PublishSingleFile=false', "-p:Version=$version", '-o', $stage)
 }
 Copy-Item "$repo\LICENSE-MIT", "$repo\LICENSE-APACHE" $stage
 
