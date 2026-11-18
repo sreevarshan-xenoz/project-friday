@@ -3837,12 +3837,26 @@ impl InferenceFabric {
             return Err(err_msg);
         }
 
-        let deadline = std::time::Duration::from_millis(3000);
         let mut attempts = 0;
         let mut last_err = String::new();
 
         for (model, provider) in &candidates {
             attempts += 1;
+            // The same egress gate as every other dispatch: a secret never goes to a
+            // provider the policy doesn't allow. A block is not a provider failure.
+            let prompt = &match self.egress_process(provider.name(), prompt) {
+                Ok(prompt) => prompt,
+                Err(e) => {
+                    tracing::warn!("[Inference Request {}] {}", request_id, e);
+                    return Err(e);
+                }
+            };
+            // The configured deadline (screen asks get theirs), 3 s only when none is set.
+            let deadline = at_least(
+                self.timeout_for_prompt(prompt),
+                provider.min_request_timeout(),
+            )
+            .unwrap_or(std::time::Duration::from_millis(3000));
             tracing::info!(
                 "[Inference Request {}] Attempting {}/{}: provider={}, model={}",
                 request_id,
@@ -6486,6 +6500,78 @@ mod v2_tests {
         async fn check_health(&self) -> bool {
             true
         }
+    }
+
+    /// A provider that takes its time, so a deadline can be told from a hang.
+    struct SlowProvider {
+        delay: std::time::Duration,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Provider for SlowProvider {
+        fn name(&self) -> &str {
+            "groq"
+        }
+
+        async fn complete(&self, _m: &str, _p: &str, _j: bool) -> Result<String, String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(self.delay).await;
+            Ok("ok".to_string())
+        }
+
+        async fn check_health(&self) -> bool {
+            true
+        }
+    }
+
+    fn fabric_with_one_model(provider: Box<dyn Provider>) -> InferenceFabric {
+        let mut fabric = InferenceFabric::new();
+        let name = provider.name().to_string();
+        fabric.register_provider(provider);
+        fabric.register_model(ModelInfo {
+            id: format!("{name}/auto"),
+            family: name.clone(),
+            provider: name,
+            latency_ms: 1,
+            reliability: 1.0,
+            capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
+            max_context: 1024,
+            tier: Some(CapabilityTier::Auto),
+        });
+        fabric
+    }
+
+    #[tokio::test]
+    async fn the_usage_path_honours_the_configured_deadline() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut fabric = fabric_with_one_model(Box::new(SlowProvider {
+            delay: std::time::Duration::from_millis(3300),
+            calls: Arc::clone(&calls),
+        }));
+        fabric.request_timeout = Some(std::time::Duration::from_secs(10));
+        // A hard-coded 3 s used to cut this one off.
+        let answered = fabric.complete_with_usage("hello").await;
+        assert_eq!(answered.expect("answered in time").content, "ok");
+    }
+
+    #[tokio::test]
+    async fn the_usage_path_goes_through_the_egress_gate() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let gate_fabric = fabric_with_egress(None); // default policy = Block
+        let mut fabric =
+            fabric_with_one_model(Box::new(CountingProvider::new("groq", Arc::clone(&calls))));
+        fabric.egress = gate_fabric.egress.clone();
+        let err = fabric
+            .complete_with_usage("please use sk-token-abcdef here")
+            .await
+            .unwrap_err();
+        assert!(err.contains("egress policy blocked"), "{err}");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "the payload never left for the provider"
+        );
     }
 
     // ── Egress policy (#12): the outbound seam shared by every dispatch ──
