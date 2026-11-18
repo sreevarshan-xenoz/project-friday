@@ -11,14 +11,14 @@ says what it does in a line underneath.
 | Home | status, ask, "how is my computer doing?", tour or welcome | `ask`, `tour` | Home |
 | AI | choose the AI and key (adds to saved keys), free models only (asks first), connect an account, private mode | `setup-ai`, `connect`, `private` | AI |
 | Voice | read answers aloud, download the voice, hear it, stop, pick a voice | `voice speak`, `say` | Voice |
+| Permissions | control windows and apps, run things on a schedule, pair a phone, see face unlock and the system helper | `desktop`, `tasks`, `phone`, `face`, `helper` | Desktop control |
 | Privacy | name the app, read a window's text, what left this computer, forget my data | `app-context`, `screen-text`, `sent`, `forget` | Privacy |
 | Health | health look, check FRIDAY, restart, save a report | `ask`, `doctor`, `daemon restart`, `report` | Health & updates |
-| Desktop control | let FRIDAY control windows and apps | (Windows only for now) | Desktop control |
 | Shortcuts | the keys and what they do | (shown on Home) | Shortcuts |
 
-Not in an app yet (still terminal-only): phone pairing (`phone`), face unlock (`face`),
-scheduled tasks (`tasks`), shell look (`shell style|palette`, in the control drawer),
-voice typing (`voice`). Add each to a page, then to the list in
+Shown but changed in a terminal (they need a password or the camera): face unlock
+(`face setup`) and the system helper (`helper enable`). Not in an app yet: the
+shell look (`shell style|palette`, in the control drawer), voice typing (`voice`). Add each to a page, then to the list in
 `iso/friday/test/checks/static.sh` ("FRIDAY Settings covers the commands").
 
 Rules for a page: a switch reads its state from the command's own `status` (never a

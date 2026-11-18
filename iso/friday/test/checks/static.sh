@@ -15,10 +15,10 @@ else skip "zsh completion syntax (no zsh)"; fi
 echo "FRIDAY Settings covers the commands (docs/SETTINGS-PAGES.md)"
 SETTINGS_QML=$(cat "$REPO_ROOT"/packaging/linux/shell/settings/*.qml)
 for need in '"voice", "speak"' '"say"' '"screen-text"' '"app-context"' '"sent"' '"forget"' '"setup-ai"' \
-            '"doctor"' '"report"' '"daemon", "restart"' 'friday connect' 'friday private'; do
+            '"desktop", "status"' '"tasks", "status"' '"phone", "status"' '"face", "status"' '"helper", "status"' '"doctor"' '"report"' '"daemon", "restart"' 'friday connect' 'friday private'; do
   if grep -qF -- "$need" <<<"$SETTINGS_QML"; then pass "Settings uses $need"; else fail "no FRIDAY Settings page uses $need"; fi
 done
-for page in Home AI Voice Privacy Health; do
+for page in Home AI Voice Permissions Privacy Health; do
   [[ -f "$REPO_ROOT/packaging/linux/shell/settings/${page}Page.qml" ]] && pass "page file $page" || fail "missing ${page}Page.qml"
 done
 grep -qF -- "Health & updates" "$REPO_ROOT/windows-tray/FridayTray/SettingsForm.cs" && pass "Windows has the Health & updates page" || fail "Windows lacks the Health & updates page"

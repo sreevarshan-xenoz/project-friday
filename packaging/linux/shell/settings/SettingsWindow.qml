@@ -18,7 +18,7 @@ FloatingWindow {
   minimumSize: Qt.size(640, 420)
   color: Theme.bg
 
-  readonly property var pages: ["Home", "AI", "Voice", "Privacy", "Health"]
+  readonly property var pages: ["Home", "AI", "Voice", "Permissions", "Privacy", "Health"]
 
   RowLayout {
     anchors.fill: parent
