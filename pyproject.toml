@@ -18,7 +18,8 @@ ignore = ["B008"]
 python_version = "3.12"
 strict = true
 ignore_missing_imports = true
-exclude = ["^iso/friday/airootfs/usr/share/", "^target/"]
+# fake-mpris.py is a test stand-in built on dbus-python, which has no type information.
+exclude = ["^iso/friday/airootfs/usr/share/", "^target/", "^iso/friday/test/checks/fake-mpris\\.py$"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

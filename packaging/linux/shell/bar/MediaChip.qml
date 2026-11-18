@@ -1,17 +1,16 @@
 import QtQuick
 import QtQuick.Layouts
-import Quickshell.Services.Mpris
 import qs.common
 import qs.components
+import qs.services
 
-// What is playing, if anything. Click to pause or resume.
+// What is playing, or paused with a track loaded, if anything. Click to pause
+// or resume: a paused one stays (dimmed) so it can be resumed from the bar.
 Item {
   id: root
 
-  readonly property var player: {
-    const all = Mpris.players.values;
-    return all.find(p => p.isPlaying) || null;
-  }
+  readonly property var player: Media.player
+  readonly property bool playing: Media.playing
 
   visible: player !== null
   implicitWidth: row.implicitWidth
@@ -22,15 +21,15 @@ Item {
     anchors.verticalCenter: parent.verticalCenter
     spacing: 6
     Glyph {
-      text: Icons.pause
+      text: root.playing ? Icons.pause : Icons.play
       size: 14
-      color: Theme.signal
+      color: root.playing ? Theme.signal : Theme.faint
     }
     Label {
       Layout.maximumWidth: 220
       text: root.player ? [root.player.trackTitle, root.player.trackArtist].filter(s => s).join(" · ") : ""
       font.pixelSize: Theme.fontS + 1
-      color: Theme.subtext
+      color: root.playing ? Theme.subtext : Theme.faint
     }
   }
 

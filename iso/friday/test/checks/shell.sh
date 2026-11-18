@@ -210,6 +210,20 @@ rm -f "$XDG_STATE_HOME/friday/actions.jsonl"
 sleep 1
 [[ "$(timeout 10 qs -p "$FS" ipc call actions count 2>/dev/null)" == 0 ]] \
   && pass "no action log lists nothing" || fail "a missing action log still listed actions"
+# The bar's media chip keeps a paused player so it can be resumed (a stand-in
+# MPRIS player on the session bus; needs the check to run under dbus-run-session).
+if [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] && python3 -c 'import dbus, gi' 2>/dev/null; then
+  python3 "$(dirname "$0")/fake-mpris.py" Paused & MPRIS=$!
+  sleep 2
+  [[ "$(timeout 10 qs -p "$FS" ipc call media state 2>/dev/null)" == paused ]] \
+    && pass "the media chip keeps a paused player" || fail "a paused player vanished from the media chip: $(timeout 10 qs -p "$FS" ipc call media state 2>/dev/null)"
+  kill -USR1 "$MPRIS"; sleep 1
+  [[ "$(timeout 10 qs -p "$FS" ipc call media state 2>/dev/null)" == playing ]] \
+    && pass "the media chip shows a playing player" || fail "the media chip missed playback resuming"
+  kill "$MPRIS" 2>/dev/null; wait "$MPRIS" 2>/dev/null; sleep 1.5
+  [[ "$(timeout 10 qs -p "$FS" ipc call media state 2>/dev/null)" == none ]] \
+    && pass "the media chip goes away with the player" || fail "the media chip stayed after the player quit"
+else skip "media chip (needs dbus-python, PyGObject and dbus-run-session)"; fi
 # Every style with a palette, switched live through shell.json as the Look
 # picker does: the bar, the FRIDAY drawer and the control drawer each time.
 mkdir -p "$HOME/.config/friday"
