@@ -331,6 +331,11 @@ internal sealed class TrayContext : ApplicationContext
             Action<string>? onConfirm = null;
             onConfirm = action =>
             {
+                if (_asking)
+                {
+                    Notify("FRIDAY", "Still answering. Press Run again in a moment.", ToolTipIcon.Info);
+                    return;
+                }
                 answer.ConfirmRun -= onConfirm;
                 _ = ExecuteConfirmedAsync(kind, question, context, request, action, answer, options);
             };
@@ -476,10 +481,17 @@ internal sealed class TrayContext : ApplicationContext
         Notify("FRIDAY", failed.Count == 0 ? "Deleted." : "Couldn't delete: " + string.Join(", ", failed), failed.Count == 0 ? ToolTipIcon.Info : ToolTipIcon.Warning);
     }
 
+    private EgressForm? _egress;
+
     private void ShowEgress()
     {
-        var form = new EgressForm(_install.Paths);
-        form.Show();
+        if (_egress is { IsDisposed: false })
+        {
+            _egress.Activate();
+            return;
+        }
+        _egress = new EgressForm(_install.Paths);
+        _egress.Show();
     }
 
     private void ToggleAppContext()
