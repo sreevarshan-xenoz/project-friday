@@ -77,8 +77,13 @@ Singleton {
 
   function dismiss() { root.state = "idle"; }
 
-  // Super+Y held with voice on: shown until the words are asked.
-  function listening() {
+  // What the pill says to do when the key is let go.
+  property string listenHint: "let go of Super+Y to ask"
+
+  // Super+Y held with voice on: shown until the words are asked. Super+Shift+Y
+  // (voice typing): shown until the words are typed.
+  function listening(typing) {
+    root.listenHint = typing === true ? "let go of Super+Shift+Y to type" : "let go of Super+Y to ask";
     settle.stop();
     root.ok = true;
     root.goal = "";
@@ -124,7 +129,8 @@ Singleton {
     target: "answer"
     function present(ok: bool, goal: string, body: string, meta: string, mode: string, served: string): void { root.show(ok, goal, body, meta, mode, served); }
     function dismiss(): void { root.dismiss(); }
-    function listening(): void { root.listening(); }
+    function listening(): void { root.listening(false); }
+    function dictating(): void { root.listening(true); }
     function state(): string { return root.state; }
   }
 }

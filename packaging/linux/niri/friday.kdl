@@ -8,6 +8,7 @@ binds {
     // niri's binds see only the press: with voice on (friday voice setup), press
     // once to speak and again to ask; without it this is a plain ask.
     Mod+Y hotkey-overlay-title="FRIDAY: Ask" { spawn "friday" "hold" "toggle"; }
+    Mod+Shift+Y hotkey-overlay-title="FRIDAY: Voice typing" { spawn "friday" "hold" "toggle" "--type"; }
     Mod+Alt+Y hotkey-overlay-title="FRIDAY: Ask about selected text" { spawn "friday" "ask" "--selection"; }
     Mod+Ctrl+Y hotkey-overlay-title="FRIDAY: Ask about the screen" { spawn "friday" "ask" "--screen"; }
     Mod+Ctrl+Escape hotkey-overlay-title="FRIDAY: Stop what it is doing" { spawn "friday" "cancel"; }
