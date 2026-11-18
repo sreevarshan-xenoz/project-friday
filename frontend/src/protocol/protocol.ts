@@ -46,7 +46,7 @@ export interface TelemetrySample {
 
 export type ServerMessage =
   | { type: 'welcome'; session_id: string; requires_auth: boolean; protocol: string }
-  | { type: 'auth_challenge'; pairing_code: string; challenge: string }
+  | { type: 'auth_challenge'; challenge: string }
   | { type: 'auth_complete'; token: string }
   | { type: 'event'; topic: string; payload: unknown }
   | { type: 'health'; snapshot: SystemHealth }

@@ -49,20 +49,28 @@ core event bus for the dashboard.
 - **REST** only for: login, config download, asset downloads.
 - JSON wire protocol (`protocol.rs`), tagged `type` for routing.
 
-## Authentication (Alpha = QR Pair)
+## Authentication (Alpha = pairing code)
 
 ```
-QR Pair  →  Exchange Keys  →  Save Token  →  Reconnect
+Code on the PC  →  Type it on the phone  →  Save Token  →  Reconnect
 ```
 
-1. PC shows a short `pairing_code` (the QR encodes it).
-2. Phone sends `AuthResponse { code, signature }` where
-   `signature = sha256(challenge + code)` from the server-issued challenge.
-3. Server validates, issues a `token` (uuid), phone persists it.
-4. Reconnect sends `Hello { token }`; server validates and skips pairing.
+1. The PC shows a short `pairing_code` (8 digits, valid 2 minutes). It is shown
+   on the PC only: the server never sends it to a phone.
+2. An unpaired phone sends `Hello`; the server answers `AuthChallenge { challenge }`,
+   a fresh random challenge for that connection.
+3. The user types the code on the phone, which sends `AuthResponse { code, signature }`
+   where `signature = sha256(challenge + code)`.
+4. Server validates, issues a `token` (uuid), phone persists it.
+5. Reconnect sends `Hello { token }`; server validates and skips pairing.
 
-> Alpha note: this proves the phone *saw* the QR; it is not strong mutual auth.
-> A real key exchange (Ed25519) is a follow-up, not Alpha.
+Five wrong answers discard every pending code and block new ones for five
+minutes, so the short code can't be guessed online.
+
+> Alpha note: the link is a plain WebSocket, not encrypted, and the phone sends
+> the code across it. Someone who can watch the network (shared Wi-Fi) can read
+> the code while you pair. Pair at home or on a network you trust until the link
+> is encrypted (a TLS or key-exchange follow-up, not Alpha).
 
 ## M6 roadmap
 

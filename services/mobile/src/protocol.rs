@@ -45,7 +45,8 @@ pub enum ClientMessage {
         /// incompatible clients instead of guessing.
         protocol: String,
     },
-    /// Response to an [`ServerMessage::AuthChallenge`]; proves the QR was seen.
+    /// Response to an [`ServerMessage::AuthChallenge`]: the code the user typed
+    /// (shown on the PC, never sent by the server) and `signature` over the challenge.
     AuthResponse { code: String, signature: String },
     /// A command for FRIDAY (run task, approve, open terminal, ...).
     Command {
@@ -72,11 +73,9 @@ pub enum ServerMessage {
         /// Mobile Protocol version the server speaks, e.g. `"1.0"`.
         protocol: String,
     },
-    /// Issued when a pairing is initiated on the PC; the QR encodes `pairing_code`.
-    AuthChallenge {
-        pairing_code: String,
-        challenge: String,
-    },
+    /// Answer to an unpaired `Hello`: a fresh challenge to sign with the pairing
+    /// code shown on the PC. The code itself is never sent to the phone.
+    AuthChallenge { challenge: String },
     /// Pairing succeeded; the phone persists `token` for future reconnects.
     AuthComplete { token: String },
     /// An outbound event (notification, task update, log line, ...).

@@ -46,7 +46,7 @@ pub async fn next_event<T: Clone>(rx: &mut tokio::sync::broadcast::Receiver<T>) 
     }
 }
 
-pub use auth::{sign_pairing, AuthError, AuthRegistry, PairingChallenge};
+pub use auth::{sign_pairing, AuthError, AuthRegistry};
 pub use bridge::{translate, BusBridge};
 pub use commands::{method, CommandGateway};
 pub use error::MobileError;

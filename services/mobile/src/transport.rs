@@ -78,7 +78,7 @@ impl WsServer {
     }
 
     /// Begin a QR pairing on the PC; returns the challenge to render as a QR.
-    pub fn begin_pairing(&self) -> crate::auth::PairingChallenge {
+    pub fn begin_pairing(&self) -> String {
         self.auth.begin_pairing()
     }
 
@@ -185,6 +185,7 @@ async fn handle_conn(
         sessions.update(&session_id, |s| s.authenticated = true);
     }
     let mut topics: HashSet<String> = HashSet::new();
+    let mut conn_challenge: Option<String> = None;
 
     // --- handshake phase: read until authenticated ---
     while !authed {
@@ -215,22 +216,36 @@ async fn handle_conn(
                             .await?;
                         }
                     } else {
-                        // Unpaired device: issue a challenge over the secure channel
-                        // (the PC may also render `pairing_code` as a QR for the human
-                        // to confirm). The phone signs challenge||code and returns it.
-                        let challenge = auth.begin_pairing();
+                        // Unpaired device: the pairing code goes to the PC's screen,
+                        // never down this socket. The phone gets only a challenge,
+                        // signs it with the code its user types, and answers.
+                        if let Some(code) = auth.ensure_pairing() {
+                            tracing::warn!("a phone is waiting to pair: enter code {code} on it (valid 2 minutes)");
+                        }
+                        let challenge = auth.new_challenge();
                         send(
                             &mut ws,
                             ServerMessage::AuthChallenge {
-                                pairing_code: challenge.pairing_code,
-                                challenge: challenge.challenge,
+                                challenge: challenge.clone(),
                             },
                         )
                         .await?;
+                        conn_challenge = Some(challenge);
                     }
                 }
                 Ok(ClientMessage::AuthResponse { code, signature }) => {
-                    match auth.complete_pairing(&code, &signature) {
+                    let Some(challenge) = conn_challenge.as_deref() else {
+                        send(
+                            &mut ws,
+                            ServerMessage::Error {
+                                code: "bad_request".into(),
+                                message: "say hello before answering".into(),
+                            },
+                        )
+                        .await?;
+                        continue;
+                    };
+                    match auth.complete_pairing(&code, challenge, &signature) {
                         Ok(token) => {
                             authed = true;
                             sessions.update(&session_id, |s| s.authenticated = true);
@@ -421,8 +436,8 @@ fn record_device(
 mod tests {
     use super::*;
     use crate::auth::sign_pairing;
-    use crate::protocol::{ClientMessage, ServerMessage};
-    use futures::{Stream, StreamExt};
+    use crate::protocol::{ClientInfo, ClientMessage, ServerMessage};
+    use futures::{SinkExt, Stream, StreamExt};
     use std::net::SocketAddr;
     use tokio_tungstenite::tungstenite::Message;
 
@@ -441,14 +456,81 @@ mod tests {
         }
     }
 
+    type Client = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>;
+
+    async fn send_client(ws: &mut Client, msg: &ClientMessage) {
+        ws.send(Message::Text(serde_json::to_string(msg).unwrap()))
+            .await
+            .unwrap();
+    }
+
+    /// An unpaired phone: Hello, read the challenge frame (raw text, to see
+    /// everything on the wire), answer it with the code the user typed.
+    async fn pair_with(ws: &mut Client, code: &str) -> (String, ServerMessage) {
+        let hello = ClientMessage::Hello {
+            client: ClientInfo {
+                device: "test".into(),
+                model: "test".into(),
+                app_version: "0".into(),
+            },
+            token: None,
+            protocol: protocol::PROTOCOL_VERSION.to_string(),
+        };
+        send_client(ws, &hello).await;
+        let raw = loop {
+            if let Some(Ok(Message::Text(t))) = ws.next().await {
+                break t;
+            }
+        };
+        let ServerMessage::AuthChallenge { challenge } = protocol::decode_server(&raw).unwrap()
+        else {
+            panic!("expected a challenge, got {raw}");
+        };
+        let answer = ClientMessage::AuthResponse {
+            code: code.into(),
+            signature: sign_pairing(&challenge, code),
+        };
+        send_client(ws, &answer).await;
+        (raw, recv_server_msg(ws).await)
+    }
+
+    #[tokio::test]
+    async fn the_pairing_code_never_goes_down_the_socket() {
+        let server = WsServer::new("127.0.0.1:0".parse().unwrap());
+        let code = server.begin_pairing();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let _ = server.run_on(listener).await;
+        });
+
+        let (mut phone, _) = tokio_tungstenite::connect_async(url.as_str())
+            .await
+            .unwrap();
+        let _welcome = recv_server_msg(&mut phone).await;
+        // Someone who never saw the PC's screen can't pair, however often they say hello.
+        let (raw, reply) = pair_with(&mut phone, "00000000").await;
+        assert!(
+            !raw.contains(&code),
+            "the challenge frame leaked the code: {raw}"
+        );
+        assert!(!raw.contains("pairing_code"), "{raw}");
+        assert!(matches!(reply, ServerMessage::Error { .. }), "{reply:?}");
+        // The user who read it off the PC can.
+        let (_, reply) = pair_with(&mut phone, &code).await;
+        assert!(
+            matches!(reply, ServerMessage::AuthComplete { .. }),
+            "{reply:?}"
+        );
+    }
+
     #[tokio::test]
     async fn full_handshake_command_and_broadcast() {
         let addr: SocketAddr = "127.0.0.1:18128".parse().unwrap();
         let server = WsServer::new(addr);
         let mut cmd_rx = server.subscribe_commands();
         let outbound = server.broadcast_tx();
-        let pairing = server.begin_pairing();
-        let sig = sign_pairing(&pairing.challenge, &pairing.pairing_code);
+        let code = server.begin_pairing();
 
         tokio::spawn(async move {
             server.run().await.unwrap();
@@ -465,16 +547,8 @@ mod tests {
             _ => panic!("expected welcome"),
         }
 
-        // 2. Auth response -> AuthComplete with token
-        let auth_resp = ClientMessage::AuthResponse {
-            code: pairing.pairing_code,
-            signature: sig,
-        };
-        client
-            .send(Message::Text(serde_json::to_string(&auth_resp).unwrap()))
-            .await
-            .unwrap();
-        let ac = recv_server_msg(&mut client).await;
+        // 2. Hello, challenge, typed code -> AuthComplete with token
+        let (_, ac) = pair_with(&mut client, &code).await;
         let _token = match ac {
             ServerMessage::AuthComplete { token } => token,
             _ => panic!("expected auth complete, got {ac:?}"),
@@ -698,7 +772,7 @@ mod tests {
         let outbound = server.broadcast_tx();
         let sessions = server.sessions();
         let mut ingress = server.subscribe_commands();
-        let pairing = server.begin_pairing();
+        let code = server.begin_pairing();
 
         // Bus bridge subscribes (never polls) and forwards to phones.
         BusBridge::new(bus.clone(), outbound.clone()).start();
@@ -724,19 +798,8 @@ mod tests {
         let (mut client, _resp) = tokio_tungstenite::connect_async(url).await.unwrap();
         let _welcome = recv_server_msg(&mut client).await;
 
-        // Pair (QR flow) -> authenticated.
-        let sig = sign_pairing(&pairing.challenge, &pairing.pairing_code);
-        client
-            .send(Message::Text(
-                serde_json::to_string(&ClientMessage::AuthResponse {
-                    code: pairing.pairing_code,
-                    signature: sig,
-                })
-                .unwrap(),
-            ))
-            .await
-            .unwrap();
-        let _auth_complete = recv_server_msg(&mut client).await;
+        // Pair with the code shown on the PC -> authenticated.
+        let (_, _auth_complete) = pair_with(&mut client, &code).await;
 
         // Publish a REAL host telemetry sample onto the bus (sysinfo).
         let sample = SystemProbe::sample();

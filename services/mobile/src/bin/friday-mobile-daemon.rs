@@ -65,6 +65,11 @@ async fn main() {
 
     let server = WsServer::new(addr).with_require_auth(require_auth);
     tracing::info!("mobile daemon auth required: {require_auth}");
+    if require_auth {
+        // The code is shown here, on the PC, and never sent to a phone.
+        let code = server.begin_pairing();
+        tracing::warn!("pairing code: {code} (valid 2 minutes; type it on the phone)");
+    }
     let outbound: broadcast::Sender<_> = server.broadcast_tx();
     let sessions = server.sessions();
     let mut ingress = server.subscribe_commands();
