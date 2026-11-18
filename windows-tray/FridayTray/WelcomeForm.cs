@@ -33,8 +33,8 @@ internal sealed class WelcomeForm : Form
 
         string Key(AskKind k, string fallback) => keys.TryGetValue(k, out var l) ? l : fallback;
         layout.Controls.Add(KeyRow(Key(AskKind.Plain, "tray icon"), "ask anything"));
-        layout.Controls.Add(KeyRow(Key(AskKind.Selection, "(taken)"), "ask about the text you selected"));
-        layout.Controls.Add(KeyRow(Key(AskKind.Screen, "(taken)"), "ask about your screen (a screenshot goes to your AI provider, this once)"));
+        layout.Controls.Add(KeyRow(Key(AskKind.Selection, "tray menu"), "ask about the text you selected"));
+        layout.Controls.Add(KeyRow(Key(AskKind.Screen, "tray menu"), "ask about your screen (a screenshot goes to your AI provider, this once)"));
 
         layout.Controls.Add(Paragraph("Until you add your own key, I use free models. They may keep what you send them, so for anything private choose your own provider.", Theme.Subtext, 14, 0));
 
