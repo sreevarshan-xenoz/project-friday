@@ -65,9 +65,33 @@ mod pipe {
     #[async_trait]
     impl IpcTransport for NamedPipeTransport {
         async fn call(&self, frame: BridgeFrame) -> Result<BridgeFrame, String> {
-            let mut client = ClientOptions::new()
-                .open(&self.path)
-                .map_err(|e| format!("host_unavailable: {e}"))?;
+            // The host serves one client at a time and opens its pipe again
+            // after each request: "busy" (another request is running, maybe an
+            // app launching) and "not there" (that moment between requests)
+            // are worth a short wait. A host that isn't running stays "not
+            // there", so that wait is short.
+            const ERROR_FILE_NOT_FOUND: i32 = 2;
+            const ERROR_PIPE_BUSY: i32 = 231;
+            let start = std::time::Instant::now();
+            let mut client = loop {
+                match ClientOptions::new().open(&self.path) {
+                    Ok(c) => break c,
+                    Err(e) => {
+                        let waited = start.elapsed();
+                        let retry = match e.raw_os_error() {
+                            Some(ERROR_PIPE_BUSY) => waited < std::time::Duration::from_secs(10),
+                            Some(ERROR_FILE_NOT_FOUND) => {
+                                waited < std::time::Duration::from_secs(2)
+                            }
+                            _ => false,
+                        };
+                        if !retry {
+                            return Err(format!("host_unavailable: {e}"));
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    }
+                }
+            };
             let bytes = serde_json::to_vec(&frame).map_err(|e| e.to_string())?;
             let len = (bytes.len() as u32).to_le_bytes();
             client.write_all(&len).await.map_err(|e| e.to_string())?;
