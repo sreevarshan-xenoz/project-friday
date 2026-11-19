@@ -1105,7 +1105,7 @@ mod tests {
             agent_out,
             agent_in,
             vec![
-                permission(100, "execute", "cargo test"),
+                permission(100, "execute", "git status"),
                 permission(101, "execute", "git push"),
             ],
             "All done.",

@@ -175,7 +175,7 @@ mod tests {
             json!({"type": "permission.asked", "location": {"directory": site},
                 "data": {"id": "per_1", "sessionID": "ses_1", "action": action, "resources": [resource]}})
         };
-        let reply = handle(&event("shell", "cargo test"), &logs).unwrap();
+        let reply = handle(&event("shell", "git status"), &logs).unwrap();
         assert_eq!((reply.0.as_str(), reply.1.as_str()), ("ses_1", "per_1"));
         assert!(handle(&event("shell", "rm -rf build"), &logs).is_none());
         assert!(handle(&event("edit", "package.json"), &logs).is_none());

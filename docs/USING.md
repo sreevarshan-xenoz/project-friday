@@ -200,10 +200,11 @@ FRIDAY can hand work to a coding agent and follow it for you. Ask with the agent
 While the agent works, FRIDAY answers its approvals for you, by fixed rules rather than by an AI's judgement. Text the agent reads (a README, a web page) can't talk FRIDAY into anything. FRIDAY approves:
 
 - reading and searching inside the folder, except files that look like secrets;
-- editing files inside the folder, except `.git`, files that look like secrets (`.env`, keys, certificates) and files that decide what a build or test runs (`package.json`, `Makefile`, `build.rs`, `Cargo.toml`, `.cargo/`, `conftest.py`, `pyproject.toml`, CI workflows, git hooks);
-- builds, tests and read-only commands, such as `cargo test`, `npm test`, `git status` and `ls`.
+- editing files inside the folder, except `.git`, files that look like secrets (`.env`, keys, certificates), files that decide what a build or test runs (`package.json`, `Makefile`, `build.rs`, `Cargo.toml`, `.cargo/`, `conftest.py`, `pyproject.toml`, CI workflows, git hooks) and files git ignores (`node_modules`, `target`);
+- read-only commands, such as `git status`, `git diff` and `ls`;
+- builds and tests, such as `cargo test` and `npm test`, while git shows no uncommitted change in the folder.
 
-A build or test still runs the project's own code, including code the agent just wrote: that is what a coding agent does. Changing what those commands run (the files above) always comes to you first.
+A build or test runs the project's own code, so once the folder has changes nobody has committed (the agent's edits, or yours), each build or test comes to you first: a tricked agent could otherwise write harmful code into a test and run it. A folder that isn't a git repository always asks.
 
 Anything else waits for you with a notification: deleting or moving files, `git commit` or `git push`, installing packages, fetching from the web, anything outside the folder (links that point out of it included), and any command it doesn't recognise. Answer with `friday agents allow <id>` or `friday agents deny <id>`. A step nobody answers in 30 minutes is refused. FRIDAY only ever allows a step once; it never tells an agent to "always allow". When the agent asks a question your request already answers, FRIDAY answers it, up to three times a run. Any other question comes to you as a notification; answer with `friday agents reply <id> "your answer"`, and the agent carries on.
 
