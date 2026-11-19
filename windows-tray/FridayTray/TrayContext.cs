@@ -1,5 +1,6 @@
 using Microsoft.Win32;
 using FridayTray.Core;
+using FridayTray.Fluent;
 
 namespace FridayTray;
 
@@ -262,14 +263,14 @@ internal sealed class TrayContext : ApplicationContext
         }
         var outcome = new AskOutcome(!text.StartsWith("Couldn't"), text, null, false);
         _log.Save(question, null, outcome, DateTime.Now);
-        var answer = NewAnswerForm(AskKind.Plain, question, "");
+        var answer = NewAnswerWindow(AskKind.Plain, question, "");
         answer.CanAskAnother = false;
         answer.FollowUp += () => _ = FollowUpAsync(outcome.Answer);
         ShowAnswer(answer, outcome);
         answer.Activate();
     }
 
-    private async Task RunRequestAsync(AskKind kind, string question, string? context, string request, string? confirm, AnswerForm? answer, AskOptions options)
+    private async Task RunRequestAsync(AskKind kind, string question, string? context, string request, string? confirm, AnswerWindow? answer, AskOptions options)
     {
         // The answer window opens now and fills in while the answer
         // streams (state.json's current.partial). Not for a screen ask:
@@ -283,15 +284,15 @@ internal sealed class TrayContext : ApplicationContext
         }
         else
         {
-            if (answer is null || answer.IsDisposed)
-                answer = NewAnswerForm(kind, question, "Thinking…");
+            if (answer is null || answer.IsClosed)
+                answer = NewAnswerWindow(kind, question, "Thinking…");
             else
                 answer.ShowWaiting("Thinking…");
 
             poll.Tick += (_, _) =>
             {
                 var partial = ReadPartial(request);
-                if (partial != null && partial != shown && !answer.IsDisposed)
+                if (partial != null && partial != shown && !answer.IsClosed)
                 {
                     answer.ShowPartial(partial);
                     shown = partial;
@@ -308,8 +309,8 @@ internal sealed class TrayContext : ApplicationContext
                 return;
             ui.Post(_ =>
             {
-                if (answer is null || answer.IsDisposed)
-                    answer = NewAnswerForm(kind, question, "");
+                if (answer is null || answer.IsClosed)
+                    answer = NewAnswerWindow(kind, question, "");
                 answer.ShowPartial(partial);
             }, null);
         };
@@ -323,8 +324,8 @@ internal sealed class TrayContext : ApplicationContext
         _log.Save(question, context, outcome, DateTime.Now);
 
         // A screen ask, or closed while it was on its way: show it now.
-        if (answer is null || answer.IsDisposed)
-            answer = NewAnswerForm(kind, question, "");
+        if (answer is null || answer.IsClosed)
+            answer = NewAnswerWindow(kind, question, "");
 
         if (outcome.Confirmation is { } nextConf)
         {
@@ -385,7 +386,7 @@ internal sealed class TrayContext : ApplicationContext
             confirm: null, answer: null, new AskOptions());
     });
 
-    private async Task ExecuteConfirmedAsync(AskKind kind, string question, string? context, string request, string confirmAction, AnswerForm answer, AskOptions options)
+    private async Task ExecuteConfirmedAsync(AskKind kind, string question, string? context, string request, string confirmAction, AnswerWindow answer, AskOptions options)
     {
         if (_asking)
             return;
@@ -401,7 +402,7 @@ internal sealed class TrayContext : ApplicationContext
     }
 
     /// <summary>Shows the answer, and reads a good one aloud when spoken answers are on.</summary>
-    private void ShowAnswer(AnswerForm form, AskOutcome outcome)
+    private void ShowAnswer(AnswerWindow form, AskOutcome outcome)
     {
         form.ShowOutcome(outcome);
         if (outcome.Ok && outcome.Confirmation is null && !string.IsNullOrWhiteSpace(outcome.Answer)
@@ -409,15 +410,15 @@ internal sealed class TrayContext : ApplicationContext
             Ctl.Say(_install, outcome.Answer);
     }
 
-    private AnswerForm NewAnswerForm(AskKind kind, string question, string waiting)
+    private AnswerWindow NewAnswerWindow(AskKind kind, string question, string waiting)
     {
-        var form = new AnswerForm(question, waiting);
+        var form = new AnswerWindow(question, waiting);
         // Closing the card (or asking again) ends the reading.
-        form.FormClosed += (_, _) => { if (Speaking.Enabled(_install.Paths)) Ctl.StopSaying(_install); };
+        form.Closed += (_, _) => { if (Speaking.Enabled(_install.Paths)) Ctl.StopSaying(_install); };
         form.CanAskAnother = kind != AskKind.Screen;
         form.AskAgain += () => _ = AskAsync(kind);
         form.StartFriday += RestartChildren;
-        form.Show();
+        FluentApp.Show(form);
         form.Activate();
         return form;
     }

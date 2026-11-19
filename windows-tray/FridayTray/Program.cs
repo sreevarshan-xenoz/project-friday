@@ -43,6 +43,7 @@ internal static class Program
             return 0;
         }
         ApplicationConfiguration.Initialize();
+        FridayTray.Fluent.FluentApp.Init();
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         Application.Run(new TrayContext(install));
         return 0;
