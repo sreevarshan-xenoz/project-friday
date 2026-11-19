@@ -1,0 +1,611 @@
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
+using FridayTray.Core;
+using Wpf.Ui.Controls;
+using Brush = System.Windows.Media.Brush;
+using Button = System.Windows.Controls.Button;
+using Color = System.Windows.Media.Color;
+using ComboBox = System.Windows.Controls.ComboBox;
+using HorizontalAlignment = System.Windows.HorizontalAlignment;
+using Brushes = System.Windows.Media.Brushes;
+using FontFamily = System.Windows.Media.FontFamily;
+using MessageBox = System.Windows.MessageBox;
+using MessageBoxButton = System.Windows.MessageBoxButton;
+using MessageBoxResult = System.Windows.MessageBoxResult;
+using Orientation = System.Windows.Controls.Orientation;
+using TextBlock = System.Windows.Controls.TextBlock;
+using VerticalAlignment = System.Windows.VerticalAlignment;
+
+namespace FridayTray.Fluent;
+
+/// <summary>What the Settings window asks the tray to do (it owns the daemon and the other windows).</summary>
+internal sealed record SettingsActions(
+    Action RestartDaemon,
+    Action ChooseProvider,
+    Action ConnectAccounts,
+    Action ShowEgress,
+    Action ForgetSavedData,
+    Action OpenLogs,
+    Action OpenDataFolder,
+    Action RestartIntoAdministrator,
+    Action<string> AskText,
+    Action ShowWelcome,
+    IReadOnlyDictionary<AskKind, string> Hotkeys);
+
+/// <summary>
+/// FRIDAY's settings: sections on the left, cards on the right. A switch takes
+/// effect as soon as it is flipped (friday.env is rewritten and the daemon
+/// restarted when that is what it changes); nothing here is a second copy of a
+/// setting, so the tray menu and friday.env always agree with it.
+/// </summary>
+internal sealed partial class SettingsWindow : FluentWindow
+{
+    private static readonly (string Name, SymbolRegular Icon)[] Sections =
+    [
+        ("Home", SymbolRegular.Home24),
+        ("General", SymbolRegular.Settings24),
+        ("Privacy", SymbolRegular.ShieldLock24),
+        ("AI", SymbolRegular.BrainCircuit24),
+        ("Voice", SymbolRegular.Speaker224),
+        ("Desktop control", SymbolRegular.Cursor24),
+        ("Tasks", SymbolRegular.CalendarClock24),
+        ("Shortcuts", SymbolRegular.Keyboard24),
+        ("Health & updates", SymbolRegular.HeartPulse24),
+        ("About", SymbolRegular.Info24),
+    ];
+
+    private readonly Install _install;
+    private readonly SettingsActions _do;
+    private readonly Dictionary<string, Button> _nav = new();
+    private string _current = "";
+
+    /// <summary>Closed; the tray makes a new one when asked again.</summary>
+    public bool IsClosed { get; private set; }
+
+    public SettingsWindow(Install install, SettingsActions actions, string? section = null)
+    {
+        InitializeComponent();
+        _install = install;
+        _do = actions;
+        foreach (var (name, icon) in Sections)
+        {
+            var b = NavButton(name, icon);
+            _nav[name] = b;
+            Nav.Children.Add(b);
+        }
+        Closed += (_, _) => IsClosed = true;
+        // Every card as wide as the page, up to a comfortable reading width.
+        Scroll.SizeChanged += (_, _) => Page.Width = Math.Max(300, Math.Min(760, Scroll.ActualWidth - 72));
+        Loaded += (_, _) =>
+        {
+            Show(section is not null && _nav.ContainsKey(section) ? section : "Home", animate: false);
+            _nav[_current].Focus(); // the keyboard starts in the sidebar (arrows move, Enter opens)
+        };
+    }
+
+    /// <summary>Opens <paramref name="name"/>: the marker glides to it and its cards rise in.</summary>
+    public void Show(string name, bool animate = true)
+    {
+        var index = Array.FindIndex(Sections, s => s.Name == name);
+        if (index < 0)
+            return;
+        var y = index * 38.0;
+        if (animate)
+            MarkerMove.BeginAnimation(TranslateTransform.YProperty,
+                new DoubleAnimation(y, TimeSpan.FromMilliseconds(460)) { EasingFunction = new Spring { Damping = 0.7 } });
+        else
+        {
+            MarkerMove.BeginAnimation(TranslateTransform.YProperty, null);
+            MarkerMove.Y = y;
+        }
+        foreach (var (n, b) in _nav)
+            b.Foreground = Resource(n == name ? "Text" : "Subtext");
+
+        var same = name == _current;
+        _current = name;
+        Page.Children.Clear();
+        var title = new TextBlock
+        {
+            Text = name,
+            FontFamily = (FontFamily)FindResource("DisplayFont"),
+            FontSize = 26,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Resource("Text"),
+            Margin = new Thickness(0, 0, 0, 18),
+        };
+        Page.Children.Add(title);
+        foreach (var e in Group(name switch
+        {
+            "Home" => Home(),
+            "General" => General(),
+            "Privacy" => Privacy(),
+            "AI" => Ai(),
+            "Voice" => Voice(),
+            "Desktop control" => Desktop(),
+            "Tasks" => Tasks(),
+            "Shortcuts" => Shortcuts(),
+            "Health & updates" => HealthAndUpdates(),
+            _ => About(),
+        }))
+            Page.Children.Add(e);
+        if (!same)
+        {
+            Scroll.ScrollToTop();
+            for (var i = 0; i < Page.Children.Count; i++)
+                Motion.RiseIn(Page.Children[i], dy: 12, delayMs: Math.Min(i, 8) * 30, ms: 460);
+        }
+    }
+
+    // ---- pages ----
+
+    private IEnumerable<UIElement> Home()
+    {
+        var env = EnvFile.Load(_install.Paths.EnvFile);
+        yield return Pair("FRIDAY", DaemonState.Read(_install.Paths.StateFile).Detail);
+        yield return Pair("AI", AppSettings.UsingFreeModels(env)
+            ? "Free models (they may keep what you send)"
+            : "Your own account or key");
+        yield return Pair("Voice", !Speaking.Installed(_install.Paths) ? "Not set up"
+            : Speaking.Enabled(_install.Paths) ? "On" : "Off");
+        yield return Note("Press " + (_do.Hotkeys.TryGetValue(AskKind.Plain, out var k) ? k : "the tray icon") + " any time to ask FRIDAY anything.");
+        yield return Row(Pill("Ask FRIDAY something", SymbolRegular.Sparkle24, primary: true), () => _do.AskText(""));
+        yield return Row(Pill("How is my computer doing?", SymbolRegular.HeartPulse24), () => _do.AskText("How is my computer doing?"));
+        yield return Row(Pill("Show the welcome again", SymbolRegular.HandWave24), _do.ShowWelcome);
+    }
+
+    private IEnumerable<UIElement> HealthAndUpdates()
+    {
+        yield return Pair("This version", Version());
+        yield return Note("FRIDAY doesn't update itself. To get the newest version, download it and run it over this one; your settings and data are kept.");
+        yield return Row(Pill("Open the download page", SymbolRegular.ArrowDownload24, primary: true),
+            () => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                "https://github.com/sreevarshan-xenoz/project-friday/releases/latest") { UseShellExecute = true }));
+        yield return Row(Pill("Check my computer's health", SymbolRegular.HeartPulse24), () => _do.AskText("How is my computer doing?"));
+        yield return Row(Pill("Restart FRIDAY", SymbolRegular.ArrowSync24), () => { _do.RestartDaemon(); Said("FRIDAY restarted."); });
+        yield return Note("Something wrong? Save a short report to your desktop to send to whoever is helping. It has versions and which switches are on; no questions, answers, logs or keys.");
+        yield return Row(Pill("Save a support report", SymbolRegular.DocumentSave24), SaveReport);
+    }
+
+    private void SaveReport()
+    {
+        var env = EnvFile.Load(_install.Paths.EnvFile);
+        var voice = !Speaking.Installed(_install.Paths) ? "not set up" : Speaking.Enabled(_install.Paths) ? "on" : "off";
+        var text = SupportReport.Build(Version(), Environment.OSVersion.VersionString,
+            DaemonState.Read(_install.Paths.StateFile).Detail, AppSettings.UsingFreeModels(env),
+            AppSettings.DesktopControlOn(env), AppSettings.ScreenTextOn(env), voice);
+        var file = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "FRIDAY support report.txt");
+        try
+        {
+            File.WriteAllText(file, text);
+            Said("Saved to your desktop: FRIDAY support report.txt");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(this, "Couldn't save the report: " + e.Message, "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private IEnumerable<UIElement> General()
+    {
+        var admin = Elevation.Enabled();
+        yield return Switch(
+            "Start FRIDAY when I sign in",
+            admin
+                ? "Administrator start-up (below) is on, so Windows starts FRIDAY at sign-in through its task scheduler."
+                : "FRIDAY waits in the tray so Win+Y works right away.",
+            _install.StartsAtLogin || admin,
+            on => _install.StartsAtLogin = on,
+            enabled: !admin);
+        yield return Switch(
+            "Start with administrator rights",
+            "Lets FRIDAY control apps that run as administrator (an app like that ignores keys and clicks from a normal program). " +
+            "Everything FRIDAY does then runs with those rights, so only turn it on if you need it. " +
+            "Windows asks for permission once, now; after that FRIDAY starts at every sign-in without asking. " +
+            (Elevation.IsElevated() ? "FRIDAY is running as administrator now." : "Takes effect the next time FRIDAY starts."),
+            admin,
+            SetAdministrator);
+        yield return Row(Pill("Restart FRIDAY", SymbolRegular.ArrowSync24), () => { _do.RestartDaemon(); Said("FRIDAY restarted."); });
+        yield return Row(Pill("Open logs", SymbolRegular.DocumentBulletList24), _do.OpenLogs);
+    }
+
+    private IEnumerable<UIElement> Privacy()
+    {
+        yield return Switch(
+            "Name the app when asking about a selection",
+            "A question about selected text says which app (and window title) it came from, so answers fit. Off: only the text is sent.",
+            SourceApp.Enabled(_install.Paths),
+            on => SourceApp.SetEnabled(_install.Paths, on));
+        yield return Switch(
+            "Read a window's text for screen questions",
+            "When you ask about your screen, FRIDAY may send the window's text instead of a screenshot, if the app offers enough of it. " +
+            "That text can include words you can't see and goes to the AI provider you use. Password fields are skipped; key-like secrets are masked. Off by default.",
+            AppSettings.ScreenTextOn(EnvFile.Load(_install.Paths.EnvFile)),
+            on =>
+            {
+                if (on && MessageBox.Show(this,
+                        "FRIDAY would send a window's text (it can include words that are not on screen) to your AI provider instead of a screenshot.\n\nTurn it on?",
+                        "Read a window's text", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
+                {
+                    Show("Privacy");
+                    return;
+                }
+                ChangeEnv(env => AppSettings.WithScreenText(env, on));
+            });
+        yield return Row(Pill("What left this PC…", SymbolRegular.ArrowUpload24), _do.ShowEgress);
+        yield return Row(Pill("Forget saved data…", SymbolRegular.Delete24), _do.ForgetSavedData);
+    }
+
+    private IEnumerable<UIElement> Ai()
+    {
+        yield return Note("FRIDAY thinks with a language model. Free models work with no account; for anything private use your own key or account. Your key is stored only on this PC, in your profile.");
+        yield return Row(Pill("Choose a provider and key…", SymbolRegular.Key24, primary: true), _do.ChooseProvider);
+        yield return Row(Pill("Connect an account…", SymbolRegular.PersonAccounts24), _do.ConnectAccounts);
+    }
+
+    private Button Download(string text, bool primary, string[] setup)
+    {
+        var button = Pill(text, SymbolRegular.ArrowDownload24, primary);
+        button.Click += async (_, _) =>
+        {
+            button.IsEnabled = false;
+            Said("Downloading the voice…");
+            var (ok, output) = await Ctl.RunAsync(_install, setup, TimeSpan.FromMinutes(15));
+            if (ok)
+                Show("Voice");
+            else
+            {
+                button.IsEnabled = true;
+                MessageBox.Show(this, "The voice wasn't installed:\n\n" + output.Trim(), "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        };
+        return button;
+    }
+
+    private IEnumerable<UIElement> Voice()
+    {
+        var paths = _install.Paths;
+        if (!Speaking.Installed(paths))
+        {
+            yield return Note("FRIDAY can read its answers out loud in a voice that is made on this PC: nothing is sent anywhere to speak. " +
+                "It downloads once (about 50 MB, checked against a fixed checksum) and runs on the CPU. The voice (tiny voca, female or male) is clear and natural, and starts speaking at once.");
+            yield return Download("Download FRIDAY's voice", primary: true, setup: ["say", "--setup"]);
+            yield return Note("Prefer a more expressive voice? Kokoro (Bella, and seven more to choose from) is about 150 MB, takes a few seconds before the first words and about 1 GB of memory while it speaks.");
+            yield return Download("Download the Kokoro voice", primary: false, setup: ["say", "--setup", "kokoro"]);
+            yield break;
+        }
+        yield return Switch(
+            "Read answers out loud",
+            "FRIDAY reads each answer as it appears, a sentence at a time. Closing the answer stops it. Code is skipped.",
+            Speaking.Enabled(paths),
+            on => Speaking.SetEnabled(paths, on));
+        var picker = new ComboBox { Width = 240, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 12) };
+        AutomationProperties.SetName(picker, "Voice");
+        for (var i = 0; i < Speaking.Voices; i++)
+            picker.Items.Add($"Voice {i + 1}");
+        picker.SelectedIndex = Speaking.Speaker(paths);
+        var loading = false;
+        picker.SelectionChanged += (_, _) =>
+        {
+            if (loading || picker.SelectedIndex < 0)
+                return;
+            Speaking.SetSpeaker(paths, picker.SelectedIndex);
+            Ctl.Say(_install, "Hi, I'm FRIDAY. This is how I sound.");
+        };
+        // The installed voice's own names (Bella, Heart, ...) replace "Voice 1, 2, ...".
+        _ = Task.Run(async () =>
+        {
+            var (ok, output) = await Ctl.RunAsync(_install, ["say", "--voices"], TimeSpan.FromSeconds(15));
+            var names = ok ? Speaking.ParseVoices(output) : [];
+            if (names.Count == 0)
+                return;
+            await picker.Dispatcher.InvokeAsync(() =>
+            {
+                loading = true;
+                var keep = Math.Min(Speaking.Speaker(paths), names.Count - 1);
+                picker.Items.Clear();
+                foreach (var n in names)
+                    picker.Items.Add(n);
+                picker.SelectedIndex = keep;
+                loading = false;
+            });
+        });
+        yield return Caption("Voice");
+        yield return picker;
+        yield return Row(Pill("Hear it", SymbolRegular.Play24), () => Ctl.Say(_install, "Hi, I'm FRIDAY. This is how I sound."));
+        yield return Row(Pill("Stop", SymbolRegular.Stop24), () => Ctl.StopSaying(_install));
+    }
+
+    private IEnumerable<UIElement> Desktop()
+    {
+        yield return Switch(
+            "Let FRIDAY control my desktop when I ask",
+            "Say \"focus Notepad\", \"open Brave\", \"set the volume to 30\", \"pause the music\", \"switch to desktop 2\". " +
+            "FRIDAY only does this when you ask; closing a window always asks first and shows the exact action. Off: FRIDAY answers questions but does not act.",
+            AppSettings.DesktopControlOn(EnvFile.Load(_install.Paths.EnvFile)),
+            on => ChangeEnv(env => AppSettings.WithDesktopControl(env, on)));
+        // What FRIDAY did lately, so a window that moved or a program that opened has an explanation.
+        var done = ActionLog.ReadNewestFirst(_install.Paths.ActionsFile, 8);
+        yield return Caption("What FRIDAY did");
+        if (done.Count == 0)
+            yield return Pair("Lately", "Nothing yet");
+        foreach (var a in done)
+            yield return Pair(EgressLog.FormatLocalTime(a.Ts), ActionLog.Describe(a));
+    }
+
+    private IEnumerable<UIElement> Tasks()
+    {
+        yield return Note("Things FRIDAY does again and again. Make one by asking, like \"every morning at 8 tell me the weather\" " +
+            "or \"when the battery is under 20% tell me\". Each one runs like your own ask: the answer opens, and anything risky still asks first. " +
+            "They run while FRIDAY is running.");
+        var path = _install.Paths.StandingFile;
+        var tasks = StandingTasks.Load(path);
+        if (tasks.Count == 0)
+            yield return Pair("Standing tasks", "None yet");
+        foreach (var t in tasks)
+        {
+            var pause = Pill(t.Paused ? "Resume" : "Pause", t.Paused ? SymbolRegular.Play24 : SymbolRegular.Pause24);
+            pause.Click += (_, _) =>
+            {
+                StandingTasks.SetPaused(path, t.Id, !t.Paused);
+                Show("Tasks");
+                Said(t.Paused ? "Resumed." : "Paused: it won't run until you resume it.");
+            };
+            var delete = Pill("Delete", SymbolRegular.Delete24);
+            delete.Click += (_, _) =>
+            {
+                StandingTasks.Delete(path, t.Id);
+                Show("Tasks");
+                Said("Deleted.");
+            };
+            yield return Card(t.Goal, t.When + (t.Paused ? " · paused" : ""), t.Paused, pause, delete);
+        }
+    }
+
+    private IEnumerable<UIElement> Shortcuts()
+    {
+        yield return Note("The keys FRIDAY answers to. If another program already owns a key, FRIDAY picks the next free one and shows it here.");
+        foreach (var (kind, label) in new[]
+        {
+            (AskKind.Plain, "Ask FRIDAY"),
+            (AskKind.Selection, "Ask about the selected text"),
+            (AskKind.Screen, "Ask about the screen"),
+        })
+            yield return Pair(label, _do.Hotkeys.TryGetValue(kind, out var key) ? key : "not available (taken by another program)");
+        yield return Note("Changing the keys is not available yet.");
+    }
+
+    private IEnumerable<UIElement> About()
+    {
+        yield return Pair("FRIDAY", Version());
+        yield return Pair("Installed in", _install.Dir.TrimEnd('\\'));
+        yield return Pair("Your data", _install.Paths.EnvFile.Replace("\\friday.env", ""));
+        yield return Row(Pill("Open the data folder", SymbolRegular.FolderOpen24), _do.OpenDataFolder);
+    }
+
+    // ---- building blocks ----
+
+    private static string Version()
+    {
+        var v = typeof(SettingsWindow).Assembly.GetName().Version;
+        return $"{v?.Major}.{v?.Minor}.{v?.Build}";
+    }
+
+    private Brush Resource(string key) => (Brush)FindResource(key);
+
+    private Button NavButton(string name, SymbolRegular icon)
+    {
+        var content = new StackPanel { Orientation = Orientation.Horizontal };
+        content.Children.Add(new SymbolIcon { Symbol = icon, FontSize = 16, Margin = new Thickness(0, 0, 12, 0), VerticalAlignment = VerticalAlignment.Center });
+        content.Children.Add(new TextBlock { Text = name, FontSize = 13.5, VerticalAlignment = VerticalAlignment.Center });
+        var b = new Button
+        {
+            Content = content,
+            Height = 36,
+            Margin = new Thickness(0, 0, 0, 2),
+            Padding = new Thickness(14, 0, 10, 0),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Foreground = Resource("Subtext"),
+            Cursor = System.Windows.Input.Cursors.Hand,
+            Style = (Style)FindResource("NavItem"),
+        };
+        AutomationProperties.SetName(b, name);
+        b.Click += (_, _) => Show(name);
+        return b;
+    }
+
+    private Button Pill(string text, SymbolRegular icon, bool primary = false)
+    {
+        var content = new StackPanel { Orientation = Orientation.Horizontal };
+        content.Children.Add(new SymbolIcon { Symbol = icon, FontSize = 14, Margin = new Thickness(0, 0, 7, 0), VerticalAlignment = VerticalAlignment.Center });
+        content.Children.Add(new TextBlock { Text = text, VerticalAlignment = VerticalAlignment.Center });
+        var b = new Button { Content = content, Style = (Style)FindResource(primary ? "PrimaryPill" : "Pill") };
+        AutomationProperties.SetName(b, text);
+        return b;
+    }
+
+    /// <summary>A setting: what it is and what it does, and its switch.</summary>
+    private UIElement Switch(string title, string detail, bool on, Action<bool> set, bool enabled = true)
+    {
+        var toggle = new ToggleSwitch { IsChecked = on, IsEnabled = enabled, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(16, 0, 0, 0) };
+        AutomationProperties.SetName(toggle, title);
+        toggle.Checked += (_, _) => set(true);
+        toggle.Unchecked += (_, _) => set(false);
+        var text = new StackPanel();
+        text.Children.Add(new TextBlock { Text = title, FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = Resource(enabled ? "Text" : "Subtext"), TextWrapping = TextWrapping.Wrap });
+        text.Children.Add(new TextBlock { Text = detail, FontSize = 12.5, LineHeight = 18, Foreground = Resource("Subtext"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) });
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition());
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(toggle, 1);
+        grid.Children.Add(text);
+        grid.Children.Add(toggle);
+        return Surface(grid);
+    }
+
+    /// <summary>A card with a title, a line under it, and buttons on the right.</summary>
+    private UIElement Card(string title, string detail, bool dim, params Button[] buttons)
+    {
+        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        text.Children.Add(new TextBlock { Text = title, FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = Resource(dim ? "Subtext" : "Text"), TextWrapping = TextWrapping.Wrap });
+        text.Children.Add(new TextBlock { Text = detail, FontSize = 12.5, Foreground = Resource("Subtext"), Margin = new Thickness(0, 3, 0, 0) });
+        var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        foreach (var b in buttons)
+            row.Children.Add(b);
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition());
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(row, 1);
+        grid.Children.Add(text);
+        grid.Children.Add(row);
+        return Surface(grid);
+    }
+
+    private Border Surface(UIElement child) => new()
+    {
+        Background = Resource("Well"),
+        BorderBrush = Resource("Hairline"),
+        BorderThickness = new Thickness(1),
+        CornerRadius = new CornerRadius(10),
+        Padding = new Thickness(16, 13, 16, 13),
+        Margin = new Thickness(0, 0, 0, 10),
+        Child = child,
+    };
+
+    private UIElement Note(string text) => new TextBlock
+    {
+        Text = text,
+        FontSize = 12.5,
+        LineHeight = 18,
+        Foreground = Resource("Subtext"),
+        TextWrapping = TextWrapping.Wrap,
+        Margin = new Thickness(2, 4, 0, 14),
+    };
+
+    private UIElement Caption(string text) => new TextBlock
+    {
+        Text = text.ToUpperInvariant(),
+        FontSize = 11,
+        FontWeight = FontWeights.SemiBold,
+        Foreground = Resource("Faint"),
+        Margin = new Thickness(2, 10, 0, 8),
+    };
+
+    private static Button Row(Button button, Action click)
+    {
+        button.Click += (_, _) => click();
+        return button;
+    }
+
+    /// <summary>A label and its value; neighbouring pairs share one card, divided by hairlines.</summary>
+    private UIElement Pair(string name, string value)
+    {
+        var grid = new Grid { Tag = PairTag, Margin = new Thickness(0, 9, 0, 9) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(210) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition());
+        var v = new TextBlock { Text = value, Foreground = Resource("Text"), FontSize = 13, TextWrapping = TextWrapping.Wrap };
+        Grid.SetColumn(v, 1);
+        grid.Children.Add(new TextBlock { Text = name, Foreground = Resource("Subtext"), FontSize = 13, TextTrimming = TextTrimming.CharacterEllipsis });
+        grid.Children.Add(v);
+        return grid;
+    }
+
+    private static readonly object PairTag = new();
+
+    /// <summary>Neighbouring pairs into one card; neighbouring buttons into one row.</summary>
+    private IEnumerable<UIElement> Group(IEnumerable<UIElement> items)
+    {
+        StackPanel? pairs = null;
+        WrapPanel? buttons = null;
+        foreach (var e in items)
+        {
+            if (e is Grid { Tag: var tag } && ReferenceEquals(tag, PairTag))
+            {
+                buttons = null;
+                if (pairs is null)
+                {
+                    pairs = new StackPanel();
+                    var card = Surface(pairs);
+                    card.Padding = new Thickness(16, 4, 16, 4);
+                    yield return card;
+                }
+                else
+                    pairs.Children.Add(new Border { Height = 1, Background = Resource("Hairline"), Opacity = 0.6 });
+                pairs.Children.Add(e);
+                continue;
+            }
+            pairs = null;
+            if (e is Button b)
+            {
+                if (buttons is null)
+                {
+                    buttons = new WrapPanel { Margin = new Thickness(-6, 0, 0, 6) };
+                    yield return buttons;
+                }
+                b.Margin = new Thickness(6, 0, 0, 8); // room between wrapped rows
+                buttons.Children.Add(b);
+                continue;
+            }
+            buttons = null;
+            yield return e;
+        }
+    }
+
+    /// <summary>"Saved. FRIDAY restarted.": a toast that rises in, waits, and fades.</summary>
+    private void Said(string text)
+    {
+        ToastText.Text = text;
+        var move = new TranslateTransform(0, 10);
+        Toast.RenderTransform = move;
+        move.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(420)) { EasingFunction = new Spring { Damping = 0.7 } });
+        var fade = new DoubleAnimationUsingKeyFrames();
+        fade.KeyFrames.Add(new EasingDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(200))));
+        fade.KeyFrames.Add(new LinearDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(2600))));
+        fade.KeyFrames.Add(new EasingDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(3000))));
+        Toast.BeginAnimation(OpacityProperty, fade);
+    }
+
+    /// <summary>Rewrites friday.env with <paramref name="change"/> and restarts the daemon so it takes effect.</summary>
+    private void ChangeEnv(Func<string, string> change)
+    {
+        var path = _install.Paths.EnvFile;
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var tmp = path + ".tmp";
+        File.WriteAllText(tmp, change(File.Exists(path) ? File.ReadAllText(path) : ""));
+        File.Move(tmp, path, overwrite: true);
+        _do.RestartDaemon();
+        Said("Saved. FRIDAY restarted.");
+    }
+
+    private void SetAdministrator(bool on)
+    {
+        if (on && MessageBox.Show(this,
+                "FRIDAY will start with administrator rights at every sign-in, so it can control apps that run as administrator.\n\n" +
+                "Everything FRIDAY does will then run with administrator rights. FRIDAY acts on what an AI model decides, so a misread request, " +
+                "or text on your screen that tricks it, would act with those rights too. Closing a window and anything that deletes or sends still asks you first.\n\n" +
+                "Only turn this on if you need to control administrator apps. Windows will ask for permission once now; you can turn it off here any time.\n\nContinue?",
+                "Start with administrator rights", MessageBoxButton.OKCancel, MessageBoxImage.Information) != MessageBoxResult.OK)
+        {
+            Show("General");
+            return;
+        }
+        if (!Elevation.Apply(_install, on))
+        {
+            MessageBox.Show(this, "Windows didn't allow the change (the prompt was declined, or this account can't approve it). Nothing was changed.",
+                "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Warning);
+            Show("General");
+            return;
+        }
+        // The task now starts FRIDAY at sign-in (or the Run entry does again).
+        _install.StartsAtLogin = !on;
+        Show("General");
+        if (MessageBox.Show(this, on ? "FRIDAY will start as administrator from now on. Restart it now?" : "FRIDAY will start normally from now on. Restart it now?",
+                "FRIDAY", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+            _do.RestartIntoAdministrator();
+    }
+}

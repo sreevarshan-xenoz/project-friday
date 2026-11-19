@@ -1,0 +1,59 @@
+<ui:FluentWindow x:Class="FridayTray.Fluent.SettingsWindow" x:ClassModifier="internal"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 Title="FRIDAY · Settings"
+                 Width="920" Height="640" MinWidth="760" MinHeight="520"
+                 WindowStartupLocation="CenterScreen"
+                 ExtendsContentIntoTitleBar="True"
+                 WindowBackdropType="Mica"
+                 WindowCornerPreference="Round">
+  <Grid>
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="228" />
+      <ColumnDefinition Width="*" />
+    </Grid.ColumnDefinitions>
+
+    <!-- Sidebar: a darker pane of glass; the marker glides to the page you pick. -->
+    <Border Grid.Column="0" Background="#B80C0E12" BorderBrush="{StaticResource Hairline}" BorderThickness="0,0,1,0">
+      <Grid Margin="12,48,12,16">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <StackPanel Orientation="Horizontal" Margin="10,0,0,22">
+          <Grid Width="18" Height="18" VerticalAlignment="Center">
+            <Ellipse Fill="{StaticResource Ember}" Opacity="0.22" />
+            <Ellipse Width="9" Height="9" Fill="{StaticResource EmberFill}" />
+          </Grid>
+          <TextBlock Text="FRIDAY" Margin="10,0,0,0" FontFamily="{StaticResource DisplayFont}" FontSize="16" FontWeight="SemiBold"
+                     Foreground="{StaticResource Text}" VerticalAlignment="Center" />
+        </StackPanel>
+        <Grid Grid.Row="1">
+          <Border x:Name="Marker" Height="36" VerticalAlignment="Top" CornerRadius="8" Background="#1FFF8F4C">
+            <Border.RenderTransform><TranslateTransform x:Name="MarkerMove" /></Border.RenderTransform>
+            <Border Width="3" Height="16" HorizontalAlignment="Left" Margin="0,0,0,0" CornerRadius="1.5" Background="{StaticResource Ember}" />
+          </Border>
+          <StackPanel x:Name="Nav" KeyboardNavigation.DirectionalNavigation="Cycle" />
+        </Grid>
+      </Grid>
+    </Border>
+
+    <!-- The page: a title and its cards, cross-fading as you switch. -->
+    <ScrollViewer x:Name="Scroll" Grid.Column="1" VerticalScrollBarVisibility="Auto" Focusable="False">
+      <StackPanel x:Name="Page" Margin="36,48,36,32" HorizontalAlignment="Left" />
+    </ScrollViewer>
+
+    <!-- What just happened ("Saved. FRIDAY restarted."): a toast that rises and fades. -->
+    <Border x:Name="Toast" Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,22"
+            CornerRadius="10" Padding="14,8" Background="#F2202329" BorderBrush="{StaticResource Hairline}" BorderThickness="1"
+            Opacity="0" IsHitTestVisible="False">
+      <StackPanel Orientation="Horizontal">
+        <ui:SymbolIcon Symbol="CheckmarkCircle24" FontSize="15" Foreground="{StaticResource Signal}" Margin="0,0,8,0" VerticalAlignment="Center" />
+        <TextBlock x:Name="ToastText" FontSize="13" Foreground="{StaticResource Text}" VerticalAlignment="Center" />
+      </StackPanel>
+    </Border>
+
+    <ui:TitleBar Grid.ColumnSpan="2" Title="" ShowHelp="False" ShowMaximize="True" />
+  </Grid>
+</ui:FluentWindow>
