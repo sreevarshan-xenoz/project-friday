@@ -191,6 +191,8 @@ Ask for something to happen again and again: `friday ask "every morning at 8 tel
 
 The FRIDAY drawer lists them (up to four) with pause/resume and delete buttons. `friday tasks` lists them all; `friday tasks pause t1`, `resume t1` and `delete t1` change one. A morning task missed while the computer was off still runs if it's less than six hours late. Up to 20 tasks, at least 5 minutes apart. `FRIDAY_STANDING_TASKS=0` turns them off.
 
+On Windows, ask the same way with Win+Y. When a task is due, its answer opens like any other answer, while FRIDAY is running. Settings → Tasks lists them with Pause/Resume and Delete.
+
 ## Your phone (Pocketdesk)
 
 The installer offers pairing at first login unless you untick it (the "What may FRIDAY do?" step). FRIDAY OS installs Pocketdesk, which shows this computer on your Android phone and lets the phone act as its screen, keyboard and remote. It stays off until you turn it on: `friday phone on` asks first, starts it in your session and prints a PIN to enter in the Pocketdesk app on the phone; `friday phone off` stops it and `friday phone status` says where it stands.

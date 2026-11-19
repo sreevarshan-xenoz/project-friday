@@ -299,12 +299,18 @@ async fn main() {
         "[context.read] Screen reader armed (collector=Real, provider={context_label}); no ambient capture"
     );
 
-    // Standing tasks: run what is due ("every morning ...") through
-    // `friday ask`, as the person's own ask would run.
+    // Standing tasks: run what is due ("every morning ...") as the person's
+    // own ask would run: `friday ask` on Linux, the tray on Windows.
     if friday_mobile::standing::enabled() {
+        #[cfg(windows)]
+        let runner = Arc::new(friday_mobile::standing::TrayQueue(
+            friday_mobile::standing::tray_queue_path(),
+        ));
+        #[cfg(not(windows))]
+        let runner = Arc::new(friday_mobile::standing::FridayAsk);
         tokio::spawn(friday_mobile::standing::run_loop(
             friday_mobile::standing::store_path(),
-            Arc::new(friday_mobile::standing::FridayAsk),
+            runner,
         ));
     }
 

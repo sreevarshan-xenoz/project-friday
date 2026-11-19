@@ -26,7 +26,7 @@ internal static class Screenshots
         var nothing = new SettingsActions(() => { }, () => { }, () => { }, () => { }, () => { }, () => { },
             () => { }, () => { }, _ => { }, () => { }, keys);
 
-        foreach (var section in new[] { "Home", "General", "Privacy", "AI", "Voice", "Desktop control", "Shortcuts", "Health & updates", "About" })
+        foreach (var section in new[] { "Home", "General", "Privacy", "AI", "Voice", "Desktop control", "Tasks", "Shortcuts", "Health & updates", "About" })
             Save(new SettingsForm(install, nothing, section), folder, "settings-" + section.Replace(" & ", "-").Replace(' ', '-').ToLowerInvariant());
         Save(new WelcomeForm(keys, () => { }, () => { }, () => { }), folder, "welcome");
         Save(new AskForm(AskKind.Plain, null, ["what's using my disk?"]), folder, "ask");
