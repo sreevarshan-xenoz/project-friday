@@ -33,6 +33,11 @@ if friday_look_file then
 end
 require("hypr.autostart")
 
+-- Qt apps join the accessibility bus only when asked; FRIDAY reads and
+-- operates apps through it (GTK, Firefox and Electron are on it already, and
+-- chromium-flags.conf asks Chromium).
+hl.env("QT_ACCESSIBILITY", "1")
+
 -- Toggle config flags dynamically.
 require("default.hypr.toggles")
 
