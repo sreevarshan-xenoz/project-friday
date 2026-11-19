@@ -152,7 +152,9 @@ fn real_place(path: &Path) -> Option<PathBuf> {
 }
 
 fn outside<'a>(paths: &'a [String], folder: &Path) -> Option<&'a str> {
-    let real_folder = std::fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
+    // Resolved the same way as the paths, so both carry the same prefix
+    // (Windows adds `\\?\` to a resolved path).
+    let real_folder = real_place(folder).unwrap_or_else(|| folder.to_path_buf());
     paths
         .iter()
         .find(|p| {
