@@ -8,6 +8,8 @@
 //! All intelligence stays on the Windows PC.
 
 pub mod agent_desktop;
+pub mod agent_policy;
+pub mod agent_runs;
 pub mod auth;
 pub mod bridge;
 pub mod commands;
