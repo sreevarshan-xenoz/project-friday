@@ -51,6 +51,7 @@ internal sealed partial class SettingsWindow : FluentWindow
         ("AI", SymbolRegular.BrainCircuit24),
         ("Voice", SymbolRegular.Speaker224),
         ("Desktop control", SymbolRegular.Cursor24),
+        ("Agents", SymbolRegular.Bot24),
         ("Tasks", SymbolRegular.CalendarClock24),
         ("Shortcuts", SymbolRegular.Keyboard24),
         ("Health & updates", SymbolRegular.HeartPulse24),
@@ -125,6 +126,7 @@ internal sealed partial class SettingsWindow : FluentWindow
             "AI" => Ai(),
             "Voice" => Voice(),
             "Desktop control" => Desktop(),
+            "Agents" => Agents(),
             "Tasks" => Tasks(),
             "Shortcuts" => Shortcuts(),
             "Health & updates" => HealthAndUpdates(),
@@ -333,6 +335,111 @@ internal sealed partial class SettingsWindow : FluentWindow
             yield return Pair("Lately", "Nothing yet");
         foreach (var a in done)
             yield return Pair(EgressLog.FormatLocalTime(a.Ts), ActionLog.Describe(a));
+    }
+
+    private IEnumerable<UIElement> Agents()
+    {
+        var env = EnvFile.Load(_install.Paths.EnvFile);
+        yield return Switch(
+            "Let FRIDAY run coding agents",
+            "Run coding agents (such as opencode, agy, or Claude Code) to carry out tasks. Routine steps are approved automatically; risky steps wait for you.",
+            AppSettings.AgentsOn(env),
+            on => ChangeEnv(e => AppSettings.WithAgents(e, on)));
+
+        yield return AgentHooksSwitch();
+
+        var approved = AgentRuns.HooksApprovedSince(_install.Paths.AgentsDir, DateTimeOffset.UtcNow.AddDays(-1).ToUnixTimeSeconds());
+        var steps = approved == 1 ? "1 routine step" : $"{approved} routine steps";
+        yield return Note($"FRIDAY approved {steps} in your own sessions in the last day.");
+
+        var runs = AgentRuns.Load(_install.Paths.AgentsDir);
+        var recent = runs.Take(10).ToList();
+        yield return Caption("Recent runs");
+        if (recent.Count == 0)
+            yield return Pair("Recent runs", "None yet");
+        foreach (var r in recent)
+        {
+            var status = r.Status == "waiting_for_you" ? "waiting for you" : r.Status;
+            var title = $"{r.Agent} · {r.Folder} · {status}";
+            var detail = r.Status == "waiting_for_you" && r.Pending is not null
+                ? $"{r.Pending.Step} ({r.Pending.Why})"
+                : (r.Request ?? "");
+            yield return Card(title, detail, r.Status is "done" or "failed");
+        }
+    }
+
+    private bool _updatingHooks;
+
+    private UIElement AgentHooksSwitch()
+    {
+        const string title = "Answer routine approvals in my Claude Code sessions";
+        const string detail = "FRIDAY answers routine permissions in Claude Code sessions you run in your terminal; risky actions still wait for you.";
+        var toggle = new ToggleSwitch
+        {
+            IsEnabled = false,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(16, 0, 0, 0),
+        };
+        AutomationProperties.SetName(toggle, title);
+
+        toggle.Checked += (_, _) =>
+        {
+            if (_updatingHooks) return;
+            SetAgentHooks(toggle, true);
+        };
+        toggle.Unchecked += (_, _) =>
+        {
+            if (_updatingHooks) return;
+            SetAgentHooks(toggle, false);
+        };
+
+        _ = Task.Run(async () =>
+        {
+            var (ok, output) = await Ctl.RunAsync(_install, ["agent-hooks", "status"], TimeSpan.FromSeconds(5));
+            var isOn = ok && output.Contains("FRIDAY answers routine approvals");
+            await Dispatcher.InvokeAsync(() =>
+            {
+                _updatingHooks = true;
+                toggle.IsChecked = isOn;
+                _updatingHooks = false;
+                toggle.IsEnabled = true;
+            });
+        });
+
+        var text = new StackPanel();
+        text.Children.Add(new TextBlock { Text = title, FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = Resource("Text"), TextWrapping = TextWrapping.Wrap });
+        text.Children.Add(new TextBlock { Text = detail, FontSize = 12.5, LineHeight = 18, Foreground = Resource("Subtext"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) });
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition());
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(toggle, 1);
+        grid.Children.Add(text);
+        grid.Children.Add(toggle);
+        return Surface(grid);
+    }
+
+    private void SetAgentHooks(ToggleSwitch toggle, bool on)
+    {
+        toggle.IsEnabled = false;
+        _ = Task.Run(async () =>
+        {
+            var (ok, output) = await Ctl.RunAsync(_install, ["agent-hooks", on ? "on" : "off"], TimeSpan.FromSeconds(5));
+            await Dispatcher.InvokeAsync(() =>
+            {
+                toggle.IsEnabled = true;
+                if (ok)
+                {
+                    Said(on ? "Claude Code approvals turned on." : "Claude Code approvals turned off.");
+                }
+                else
+                {
+                    _updatingHooks = true;
+                    toggle.IsChecked = !on;
+                    _updatingHooks = false;
+                    MessageBox.Show(this, "Couldn't update Claude Code hook:\n\n" + output.Trim(), "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+            });
+        });
     }
 
     private IEnumerable<UIElement> Tasks()

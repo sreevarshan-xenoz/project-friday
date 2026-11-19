@@ -58,7 +58,7 @@ internal sealed class TrayContext : ApplicationContext
         }) { IsBackground = true, Name = "FRIDAY open-window listener" }.Start();
         _icon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) _ = AskAsync(AskKind.Plain); };
         UpdateStatus();
-        _poll.Tick += (_, _) => { UpdateStatus(); _ = RunDueTasksAsync(); };
+        _poll.Tick += (_, _) => { UpdateStatus(); _ = RunDueTasksAsync(); CheckAgentRuns(); };
         _poll.Start();
 
         _host.Start();
@@ -221,6 +221,88 @@ internal sealed class TrayContext : ApplicationContext
     }
 
     private bool _runningDue;
+    private readonly HashSet<string> _knownFinishedRunIds = new(StringComparer.Ordinal);
+    /// <summary>The step each waiting run last showed, so a new one opens a new window.</summary>
+    private readonly Dictionary<string, string> _shownStep = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, AgentPromptWindow> _waitingWindows = new(StringComparer.Ordinal);
+    private bool _agentsInitialized;
+
+    /// <summary>
+    /// Checks for agent runs waiting for person approval or questions, and
+    /// notifies when an agent run finishes.
+    /// </summary>
+    private void CheckAgentRuns()
+    {
+        var agentsDir = _install.Paths.AgentsDir;
+        var runs = AgentRuns.Load(agentsDir);
+        if (!_agentsInitialized)
+        {
+            // Runs that ended before the tray started aren't announced again.
+            foreach (var run in runs.Where(r => r.IsFinished))
+                _knownFinishedRunIds.Add(run.Id);
+            _agentsInitialized = true;
+        }
+
+        foreach (var run in runs)
+        {
+            if (run.IsWaiting)
+            {
+                // A second step can follow the first between two polls, so
+                // what counts is the step, not just "waiting".
+                var step = (run.Pending?.Step ?? "") + "\n" + (run.Pending?.Why ?? "");
+                if (!_shownStep.TryGetValue(run.Id, out var shown) || shown != step)
+                {
+                    _shownStep[run.Id] = step;
+                    if (_waitingWindows.Remove(run.Id, out var old) && !old.IsClosed)
+                        old.Close();
+                    OpenWaitingWindow(agentsDir, run);
+                }
+            }
+            else
+            {
+                if (_waitingWindows.TryGetValue(run.Id, out var openWin))
+                {
+                    if (!openWin.IsClosed)
+                        openWin.Close();
+                    _waitingWindows.Remove(run.Id);
+                }
+            }
+
+            if (run.Status is "done" or "failed")
+            {
+                if (_knownFinishedRunIds.Add(run.Id))
+                {
+                    var folderName = "";
+                    if (!string.IsNullOrEmpty(run.Folder))
+                    {
+                        folderName = Path.GetFileName(run.Folder.TrimEnd('\\', '/'));
+                        if (string.IsNullOrEmpty(folderName))
+                            folderName = run.Folder;
+                    }
+                    var firstLine = "";
+                    if (!string.IsNullOrEmpty(run.Summary))
+                        firstLine = run.Summary.Split('\n', 2)[0].TrimEnd('\r');
+                    var text = string.IsNullOrWhiteSpace(firstLine) ? "Done." : firstLine;
+                    var ended = run.Status == "failed" ? "stopped" : "finished";
+                    Notify($"{run.Agent} {ended} in {folderName}", text,
+                        run.Status == "failed" ? ToolTipIcon.Warning : ToolTipIcon.Info);
+                }
+            }
+        }
+    }
+
+    private void OpenWaitingWindow(string agentsDir, AgentRun run)
+    {
+        if (_waitingWindows.TryGetValue(run.Id, out var existing) && !existing.IsClosed)
+        {
+            existing.Activate();
+            return;
+        }
+        var win = new AgentPromptWindow(agentsDir, run);
+        win.Closed += (_, _) => _waitingWindows.Remove(run.Id);
+        _waitingWindows[run.Id] = win;
+        FluentApp.Show(win);
+    }
 
     /// <summary>Asks a ready-made question (from a button) and shows the answer like any other.</summary>
     private async Task AskTextAsync(string question)

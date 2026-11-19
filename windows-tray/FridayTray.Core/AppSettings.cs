@@ -11,10 +11,15 @@ public static class AppSettings
 {
     public const string DesktopControl = "FRIDAY_DESKTOP";
     public const string ScreenText = "FRIDAY_SCREEN_TEXT";
+    public const string Agents = "FRIDAY_AGENTS";
 
     /// <summary>On unless explicitly "0" (the daemon's rule for settings that default on).</summary>
     public static bool DesktopControlOn(IReadOnlyDictionary<string, string> env) =>
         !env.TryGetValue(DesktopControl, out var v) || v != "0";
+
+    /// <summary>On unless explicitly "0" (the daemon's rule for settings that default on).</summary>
+    public static bool AgentsOn(IReadOnlyDictionary<string, string> env) =>
+        !env.TryGetValue(Agents, out var v) || v != "0";
 
     /// <summary>Off unless "1" or "true" (the daemon's rule for settings that default off).</summary>
     public static bool ScreenTextOn(IReadOnlyDictionary<string, string> env) =>
@@ -27,6 +32,9 @@ public static class AppSettings
 
     public static string WithDesktopControl(string existing, bool on) =>
         EnvFile.WithSetting(existing, DesktopControl, on ? null : "0");
+
+    public static string WithAgents(string existing, bool on) =>
+        EnvFile.WithSetting(existing, Agents, on ? null : "0");
 
     public static string WithScreenText(string existing, bool on) =>
         EnvFile.WithSetting(existing, ScreenText, on ? "1" : null);

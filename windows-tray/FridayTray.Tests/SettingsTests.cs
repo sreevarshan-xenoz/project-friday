@@ -12,6 +12,7 @@ public class SettingsTests
     {
         var empty = Env("");
         Assert.True(AppSettings.DesktopControlOn(empty));
+        Assert.True(AppSettings.AgentsOn(empty));
         Assert.False(AppSettings.ScreenTextOn(empty));
     }
 
@@ -21,6 +22,14 @@ public class SettingsTests
         Assert.False(AppSettings.DesktopControlOn(Env("FRIDAY_DESKTOP=0")));
         Assert.True(AppSettings.DesktopControlOn(Env("FRIDAY_DESKTOP=1")));
         Assert.True(AppSettings.DesktopControlOn(Env("FRIDAY_DESKTOP=off")));
+    }
+
+    [Fact]
+    public void Agents_is_off_only_for_zero()
+    {
+        Assert.False(AppSettings.AgentsOn(Env("FRIDAY_AGENTS=0")));
+        Assert.True(AppSettings.AgentsOn(Env("FRIDAY_AGENTS=1")));
+        Assert.True(AppSettings.AgentsOn(Env("FRIDAY_AGENTS=off")));
     }
 
     [Fact]
@@ -42,6 +51,9 @@ public class SettingsTests
         var on = AppSettings.WithScreenText(key, true);
         Assert.Contains("FRIDAY_SCREEN_TEXT=1", on);
         Assert.Equal(key, AppSettings.WithScreenText(on, false));
+        var agentsOff = AppSettings.WithAgents(key, false);
+        Assert.Equal("OPENAI_API_KEY=sk-test\nFRIDAY_AGENTS=0\n", agentsOff);
+        Assert.Equal(key, AppSettings.WithAgents(agentsOff, true));
     }
 
     [Fact]
