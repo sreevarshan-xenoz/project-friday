@@ -226,7 +226,8 @@ pub trait UiBackend: Send + Sync {
     /// Perform the default action on a node.
     async fn perform_default_action(&self, node_id: &str) -> Result<bool, String>;
 
-    /// Set text on an editable node.
+    /// Type text into an editable node, the way a person typing would: at
+    /// its caret, keeping what is already there.
     async fn set_text(&self, node_id: &str, text: &str) -> Result<bool, String>;
 
     /// Read text of a node.
@@ -484,10 +485,44 @@ impl UiBackend for AtspiBackend {
                 .await
                 .map_err(|e| format!("cannot create editable text proxy: {e}"))?;
 
-        editable_proxy
-            .set_text_contents(text)
+        // At the caret, or at the end when the app doesn't say where it is:
+        // what is already there stays.
+        let text_proxy = atspi::proxy::text::TextProxy::builder(conn.connection())
+            .destination(bus_name)
+            .map_err(|e| format!("invalid destination: {e}"))?
+            .path(object_path)
+            .map_err(|e| format!("invalid path: {e}"))?
+            .cache_properties(zbus::proxy::CacheProperties::No)
+            .build()
             .await
-            .map_err(|e| format!("set_text failed: {e}"))
+            .ok();
+        let mut existing = None;
+        let mut at = None;
+        if let Some(tp) = &text_proxy {
+            let count = tp.character_count().await.ok();
+            existing = count;
+            at = match tp.caret_offset().await {
+                Ok(c) if c >= 0 && count.is_none_or(|n| c <= n) => Some(c),
+                _ => count,
+            };
+        }
+        // The length is in bytes (ATK's, and GTK's, convention).
+        let inserted = editable_proxy
+            .insert_text(at.unwrap_or(0), text, text.len() as i32)
+            .await
+            .unwrap_or(false);
+        if inserted {
+            return Ok(true);
+        }
+        // Some toolkits take no insertion; an empty field can still be filled
+        // whole, and a field with text in it is never replaced.
+        if existing.unwrap_or(0) == 0 {
+            return editable_proxy
+                .set_text_contents(text)
+                .await
+                .map_err(|e| format!("set_text failed: {e}"));
+        }
+        Err("that field takes no typed text from here, and it already has text FRIDAY won't replace".to_string())
     }
 
     async fn read_text(&self, node_id: &str) -> Result<String, String> {
