@@ -21,6 +21,8 @@
 //!   friday-ctl say --setup [kitten]    (download and install the voice, checked
 //!                                      against pinned checksums)
 //!   friday-ctl cancel                  (cancel the goal in flight)
+//!   friday-ctl agent-hook claude       (Claude Code's PermissionRequest hook)
+//!   friday-ctl agent-hooks on|off|status (FRIDAY's hook in Claude Code's settings)
 //!   friday-ctl context screen          (interactive consent)
 //!   friday-ctl context screen --yes    (consent already collected by the shell panel)
 //!   friday-ctl context screen --yes --ask "what does this error mean?"
@@ -147,6 +149,12 @@ async fn main() -> std::process::ExitCode {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     if raw.first().map(String::as_str) == Some("say") {
         return say(&raw[1..]);
+    }
+    if raw.first().map(String::as_str) == Some("agent-hook") {
+        return agent_hook(&raw[1..]);
+    }
+    if raw.first().map(String::as_str) == Some("agent-hooks") {
+        return agent_hooks(&raw[1..]);
     }
 
     // Resolve the daemon address + token, in precedence order: explicit CLI
@@ -389,6 +397,68 @@ async fn wait_for_goal(
     }
     eprintln!("timed out after {limit}s waiting for the goal to finish");
     std::process::ExitCode::FAILURE
+}
+
+/// `friday-ctl agent-hook claude`: Claude Code's PermissionRequest hook.
+/// Reads the request on stdin; prints FRIDAY's approval, or nothing to leave
+/// the prompt to the person. Never fails the hook: any problem means "ask".
+fn agent_hook(args: &[String]) -> std::process::ExitCode {
+    use std::io::Read;
+    if args.first().map(String::as_str) != Some("claude") {
+        eprintln!("usage: friday-ctl agent-hook claude   (Claude Code runs this; it reads stdin)");
+        return std::process::ExitCode::from(2u8);
+    }
+    let mut input = String::new();
+    if std::io::stdin().read_to_string(&mut input).is_err()
+        || !friday_mobile::agent_hooks::enabled()
+    {
+        return std::process::ExitCode::SUCCESS;
+    }
+    let Ok(request) = serde_json::from_str::<serde_json::Value>(&input) else {
+        return std::process::ExitCode::SUCCESS;
+    };
+    if let Some(answer) = friday_mobile::agent_hooks::claude_permission(
+        &request,
+        &friday_mobile::agent_runs::runs_dir(),
+    ) {
+        println!("{answer}");
+    }
+    std::process::ExitCode::SUCCESS
+}
+
+/// `friday-ctl agent-hooks on|off|status`: FRIDAY's hook in Claude Code's settings.
+fn agent_hooks(args: &[String]) -> std::process::ExitCode {
+    use friday_mobile::agent_hooks::{
+        claude_settings, install_claude, installed_claude, uninstall_claude,
+    };
+    let Some(settings) = claude_settings() else {
+        eprintln!("no home folder");
+        return std::process::ExitCode::FAILURE;
+    };
+    let result = match args.first().map(String::as_str).unwrap_or("status") {
+        "status" => {
+            if installed_claude(&settings) {
+                println!("Claude Code: FRIDAY answers routine approvals in your own sessions; risky ones stay with you. Turn off: friday agents hooks off");
+            } else {
+                println!("Claude Code: FRIDAY isn't answering approvals in your own sessions. Turn on: friday agents hooks on");
+            }
+            Ok(())
+        }
+        "on" => std::env::current_exe()
+            .map_err(|e| e.to_string())
+            .and_then(|ctl| install_claude(&settings, &ctl))
+            .map(|_| println!("Claude Code: FRIDAY now answers routine approvals in your own sessions (new sessions pick it up).")),
+        "off" => uninstall_claude(&settings)
+            .map(|_| println!("Claude Code: FRIDAY no longer answers approvals in your sessions.")),
+        _ => Err("usage: friday-ctl agent-hooks on|off|status".into()),
+    };
+    match result {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::ExitCode::FAILURE
+        }
+    }
 }
 
 /// The state document's `last_goal` when it is `goal`, finished, and
