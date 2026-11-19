@@ -917,9 +917,16 @@ struct RefFacts {
 }
 
 impl AgentDesktopUi {
-    /// Sets an empty field's value to `text`; a field that already has text is
-    /// left alone (setting it would replace what is there) and `refused` says why.
-    async fn fill_if_empty(&self, target_ref: &str, text: &str, refused: String) -> ActionResult {
+    /// Sets an empty field's value to `text`. Setting a field that already has
+    /// text would replace it: on Windows the text is inserted at the app's
+    /// caret instead, and elsewhere the field is left alone and `refused` says why.
+    async fn fill_if_empty(
+        &self,
+        app: &str,
+        target_ref: &str,
+        text: &str,
+        refused: String,
+    ) -> ActionResult {
         let get = vec![
             "get".to_string(),
             target_ref.to_string(),
@@ -931,9 +938,30 @@ impl AgentDesktopUi {
             Err(_) => return ActionResult::error(refused),
         };
         if !current.trim().is_empty() {
-            return ActionResult::error(format!(
-                "{refused}. That field already has text, and FRIDAY won't replace it"
-            ));
+            #[cfg(windows)]
+            {
+                let (app, owned) = (app.to_string(), text.to_string());
+                return match tokio::task::spawn_blocking(move || {
+                    crate::win_insert::insert_text(&app, &owned)
+                })
+                .await
+                {
+                    Ok(Ok(())) => ActionResult::success(json!({
+                        "typed": text.chars().count(),
+                        "ref": target_ref,
+                        "via": "insert",
+                    })),
+                    Ok(Err(err)) => ActionResult::error(format!("{refused}. {err}")),
+                    Err(err) => ActionResult::error(err.to_string()),
+                };
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = app;
+                return ActionResult::error(format!(
+                    "{refused}. That field already has text, and FRIDAY won't replace it"
+                ));
+            }
         }
         let set = vec![
             "set-value".to_string(),
@@ -1305,7 +1333,7 @@ impl UiControl for AgentDesktopUi {
                     // one can still be filled by setting its value: nothing is
                     // replaced, and no focus or keys are involved.
                     Err(err) if err.contains("semantic action is unavailable") => {
-                        self.fill_if_empty(&target_ref, text, err).await
+                        self.fill_if_empty(app, &target_ref, text, err).await
                     }
                     Err(err) => ActionResult::error(err),
                 }
