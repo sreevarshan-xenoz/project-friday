@@ -186,6 +186,7 @@ pub fn validate_command(args: &[String]) -> Result<(), String> {
         "get",
         "click",
         "type",
+        "set-value",
     ];
 
     let subcmd = args[0].as_str();
@@ -915,6 +916,41 @@ struct RefFacts {
     states: Vec<String>,
 }
 
+impl AgentDesktopUi {
+    /// Sets an empty field's value to `text`; a field that already has text is
+    /// left alone (setting it would replace what is there) and `refused` says why.
+    async fn fill_if_empty(&self, target_ref: &str, text: &str, refused: String) -> ActionResult {
+        let get = vec![
+            "get".to_string(),
+            target_ref.to_string(),
+            "--property".to_string(),
+            "value".to_string(),
+        ];
+        let current = match self.run_cli_envelope(&get, None).await {
+            Ok(env) => env["data"]["value"].as_str().unwrap_or("").to_string(),
+            Err(_) => return ActionResult::error(refused),
+        };
+        if !current.trim().is_empty() {
+            return ActionResult::error(format!(
+                "{refused}. That field already has text, and FRIDAY won't replace it"
+            ));
+        }
+        let set = vec![
+            "set-value".to_string(),
+            target_ref.to_string(),
+            "--stdin".to_string(),
+        ];
+        match self.run_cli_envelope(&set, Some(text)).await {
+            Ok(_) => ActionResult::success(json!({
+                "typed": text.chars().count(),
+                "ref": target_ref,
+                "via": "set-value",
+            })),
+            Err(err) => ActionResult::error(err),
+        }
+    }
+}
+
 #[async_trait]
 impl UiControl for AgentDesktopUi {
     async fn run(&self, verb: &str, params: Value) -> ActionResult {
@@ -1263,6 +1299,14 @@ impl UiControl for AgentDesktopUi {
                         "typed": text.chars().count(),
                         "ref": target_ref,
                     })),
+                    // Some editors take no inserted text through accessibility
+                    // (the Windows 11 Notepad editor is one) and only physical
+                    // keys would reach them, which FRIDAY never sends. An empty
+                    // one can still be filled by setting its value: nothing is
+                    // replaced, and no focus or keys are involved.
+                    Err(err) if err.contains("semantic action is unavailable") => {
+                        self.fill_if_empty(&target_ref, text, err).await
+                    }
                     Err(err) => ActionResult::error(err),
                 }
             }
@@ -2503,5 +2547,67 @@ mod tests {
             text.is_some(),
             "no usable text (a thin tree, or no such app)"
         );
+    }
+
+    /// An editor that takes no inserted text (the Windows 11 Notepad one) is
+    /// filled through its value when empty, and left alone when it has text.
+    #[tokio::test]
+    async fn type_text_fills_an_empty_editor_but_never_replaces_text() {
+        let refused = json!({
+            "ok": false,
+            "command": "type",
+            "error": { "code": "POLICY_DENIED", "message": "Target is not actionable: supported_action (semantic action is unavailable and focus fallback is denied)" }
+        });
+        let value = |v: &str| json!({ "ok": true, "command": "get", "data": { "property": "value", "value": v } });
+        let set_ok = json!({ "ok": true, "command": "set-value", "data": {} });
+        let find = json!({
+            "ok": true,
+            "command": "find",
+            "data": { "matches": [
+                { "interactive": true, "name": "Text Editor", "ref_id": "@s1:e1", "role": "textfield", "states": ["editable"] }
+            ] }
+        });
+
+        // Empty: set-value, with the text on stdin and never in argv.
+        let stub = StubSpawn::new();
+        stub.push_response("find", Ok(find.to_string()));
+        stub.push_response("type", Ok(refused.to_string()));
+        stub.push_response("get", Ok(value("").to_string()));
+        stub.push_response("set-value", Ok(set_ok.to_string()));
+        let ui = AgentDesktopUi::new(stub.clone());
+        let res = ui
+            .run(
+                "type_text",
+                json!({ "app": "notepad", "name": "Text Editor", "text": "hello from FRIDAY" }),
+            )
+            .await;
+        assert!(res.success, "{:?}", res.error);
+        assert_eq!(res.output["via"], "set-value");
+        let calls = stub.calls();
+        let set = calls
+            .iter()
+            .find(|c| c.0.first().map(String::as_str) == Some("set-value"))
+            .expect("set-value was called");
+        assert_eq!(set.0, ["set-value", "@s1:e1", "--stdin"]);
+        assert_eq!(set.1.as_deref(), Some("hello from FRIDAY"));
+
+        // Has text: refused, and nothing is set.
+        let stub = StubSpawn::new();
+        stub.push_response("find", Ok(find.to_string()));
+        stub.push_response("type", Ok(refused.to_string()));
+        stub.push_response("get", Ok(value("my notes").to_string()));
+        let ui = AgentDesktopUi::new(stub.clone());
+        let res = ui
+            .run(
+                "type_text",
+                json!({ "app": "notepad", "name": "Text Editor", "text": "hello" }),
+            )
+            .await;
+        assert!(!res.success);
+        assert!(res.error.unwrap().contains("won't replace it"));
+        assert!(!stub
+            .calls()
+            .iter()
+            .any(|c| c.0.first().map(String::as_str) == Some("set-value")));
     }
 }
