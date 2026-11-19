@@ -59,13 +59,13 @@ PanelWindow {
     id: pill
     anchors.fill: parent
     radius: height / 2
-    color: Theme.bg
+    color: Theme.glass
     border.width: 1
-    border.color: Theme.outline
+    border.color: Theme.glassEdge
     opacity: osd.shown ? 1 : 0
     scale: osd.shown ? 1 : 0.92
     Behavior on opacity { NumberAnimation { duration: Theme.fast } }
-    Behavior on scale { NumberAnimation { duration: Theme.medium; easing.type: Theme.easing } }
+    Behavior on scale { NumberAnimation { duration: Theme.medium; easing.type: osd.shown ? Theme.spring : Theme.easing } }
 
     RowLayout {
       anchors.fill: parent

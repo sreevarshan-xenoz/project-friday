@@ -15,7 +15,7 @@ import qs.common
 Shape {
   id: root
 
-  property color color: Theme.bg
+  property color color: Theme.glass
   property real fillet: Theme.fillet
   property real radius: Theme.radius
 

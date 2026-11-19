@@ -149,7 +149,7 @@ FocusScope {
       visible: root.player !== null
       implicitHeight: 64
       radius: Theme.radiusS + 4
-      color: Theme.surface
+      color: Theme.glassWell
 
       RowLayout {
         anchors.fill: parent

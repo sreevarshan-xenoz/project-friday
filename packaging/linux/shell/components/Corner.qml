@@ -8,7 +8,7 @@ Shape {
   id: root
 
   property bool leftSide: true
-  property color color: Theme.bg
+  property color color: Theme.glass
   property real size: Theme.fillet
 
   width: size

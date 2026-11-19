@@ -96,7 +96,8 @@ HELP_EOF
 # (with a notification) rather than spin. $1 = shell dir, $2 = pid file.
 # The windows' side of FRIDAY Shell's look: gaps, corner radius and borders
 # for shell.json's style, border colours from its palette (none for
-# "classic": the desktop theme sets them), for both compositors:
+# "classic": the desktop theme sets them), and on Hyprland the blur behind
+# the shell's frosted surfaces, for both compositors:
 #   ~/.config/friday/hypr-look.lua  FRIDAY OS's hyprland.lua loads it after
 #     hypr/looknfeel.lua; elsewhere add to yours:
 #       local f = os.getenv("HOME") .. "/.config/friday/hypr-look.lua"
@@ -139,8 +140,11 @@ shell_window_look() {
     echo "  },"
     echo "  decoration = {"
     echo "    rounding = $r,"
+    echo "    blur = { enabled = true, size = 10, passes = 3, vibrancy = 0.2, noise = 0.02 },"
     echo "  },"
     echo "})"
+    echo "-- Frosted glass behind FRIDAY Shell's surfaces (see-through pixels stay clear)."
+    echo "hl.layer_rule({ match = { namespace = \"^friday-\" }, blur = true, ignore_alpha = 0.2 })"
   } >"${conf%/*}/hypr-look.lua.tmp" && mv -f "${conf%/*}/hypr-look.lua.tmp" "${conf%/*}/hypr-look.lua"
   {
     echo "// FRIDAY Shell's look for windows (style: $style, palette: $palette)."
