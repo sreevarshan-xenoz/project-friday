@@ -144,7 +144,7 @@ shell_window_look() {
     echo "  },"
     echo "})"
     echo "-- Frosted glass behind FRIDAY Shell's surfaces (see-through pixels stay clear)."
-    echo "hl.layer_rule({ match = { namespace = \"^friday-\" }, blur = true, ignore_alpha = 0.2 })"
+    echo "hl.layer_rule({ match = { namespace = \"^friday-.*$\" }, blur = true, ignore_alpha = 0.2 })"
   } >"${conf%/*}/hypr-look.lua.tmp" && mv -f "${conf%/*}/hypr-look.lua.tmp" "${conf%/*}/hypr-look.lua"
   {
     echo "// FRIDAY Shell's look for windows (style: $style, palette: $palette)."
