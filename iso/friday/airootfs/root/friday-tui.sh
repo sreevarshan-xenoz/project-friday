@@ -247,17 +247,18 @@ friday_write_features() {
 
 # --- validators (pure; unit-testable) -------------------------------------
 
-# RFC 1123 label, lowercase.
 # The disk the live system booted from (/dev/sdX), or nothing: the parent of
-# the partition mounted at bootmnt, resolved through any /dev/disk/by-* link.
+# the partition mounted at bootmnt (or that device itself, for a CD), resolved
+# through any /dev/disk/by-* link.
 friday_live_disk() {
   local src dev
   src=$(findmnt -n -o SOURCE /run/archiso/bootmnt 2>/dev/null) && [[ -n "$src" ]] || return 0
   src=$(readlink -f "$src")
   dev=$(lsblk -n -d -o PKNAME "$src" 2>/dev/null | head -n1)
-  echo "${dev:+/dev/$dev}${dev:-$src}"
+  if [[ -n "$dev" ]]; then echo "/dev/$dev"; else echo "$src"; fi
 }
 
+# RFC 1123 label, lowercase.
 friday_valid_hostname() { [[ "$1" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; }
 
 # useradd-safe login name, not a system account.

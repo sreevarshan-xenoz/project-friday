@@ -175,6 +175,21 @@ if grep -q '^echo "root:\$PASSWORD" | arch-chroot /mnt chpasswd' "$ROOT/installe
 else pass "root doesn't get the person's password"; fi
 
 echo "disk safety: the installer refuses before erasing anything"
+# The live disk: the USB stick's whole disk, not its partition (nor the two
+# names run together), and the device itself for a CD.
+live_disk() { # live_disk <findmnt source> <lsblk parent>
+  local B="$WORK/live-disk-stub"; mkdir -p "$B"
+  printf '#!/bin/bash\necho %s\n' "$1" >"$B/findmnt"
+  printf '#!/bin/bash\necho %s\n' "$2" >"$B/lsblk"
+  chmod +x "$B/findmnt" "$B/lsblk"
+  PATH="$B:$PATH" bash -c 'source "$1" >/dev/null 2>&1; friday_live_disk' _ "$ROOT/friday-tui.sh"
+}
+[[ "$(live_disk /dev/sdb1 sdb)" == /dev/sdb ]] && pass "booted from a USB stick: its disk is /dev/sdb" \
+  || fail "live disk for /dev/sdb1 is '$(live_disk /dev/sdb1 sdb)', not /dev/sdb"
+[[ "$(live_disk /dev/nvme1n1p1 nvme1n1)" == /dev/nvme1n1 ]] && pass "an NVMe stick: /dev/nvme1n1" \
+  || fail "live disk for /dev/nvme1n1p1 is '$(live_disk /dev/nvme1n1p1 nvme1n1)'"
+[[ "$(live_disk /dev/sr0 "")" == /dev/sr0 ]] && pass "booted from a CD: /dev/sr0" \
+  || fail "live disk for a CD is '$(live_disk /dev/sr0 "")'"
 if need gum; then
   F="$WORK/installer-not-a-disk"; : >"$F"
   refused() { # refused <expected words> <env...>: the installer stops, says why and erases nothing
