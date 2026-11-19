@@ -299,6 +299,20 @@ async fn main() {
         "[context.read] Screen reader armed (collector=Real, provider={context_label}); no ambient capture"
     );
 
+    // FRIDAY answers routine Claude Code approvals in the person's own
+    // sessions: on by default, added once; `friday agents hooks off` stands.
+    if let Ok(exe) = std::env::current_exe() {
+        let ctl = exe.with_file_name(if cfg!(windows) {
+            "friday-ctl.exe"
+        } else {
+            "friday-ctl"
+        });
+        let state_dir = friday_mobile::agent_runs::runs_dir();
+        if let Some(dir) = state_dir.parent() {
+            friday_mobile::agent_hooks::install_once(dir, &ctl);
+        }
+    }
+
     // Standing tasks: run what is due ("every morning ...") as the person's
     // own ask would run: `friday ask` on Linux, the tray on Windows.
     if friday_mobile::standing::enabled() {

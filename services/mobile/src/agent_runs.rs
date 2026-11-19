@@ -917,6 +917,11 @@ impl friday_goal_execution::Tool for AgentsTool {
                 if !folder.is_dir() {
                     return ToolResult::error(format!("there's no folder {}", folder.display()));
                 }
+                if crate::agent_hooks::too_broad(&folder) {
+                    return ToolResult::error(
+                        "name a project folder, not your home folder or the top of the disk",
+                    );
+                }
                 let task = choice["task"].as_str().unwrap_or("").trim().to_string();
                 if task.is_empty() {
                     return ToolResult::error("couldn't tell what the agent should do");

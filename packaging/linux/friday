@@ -36,7 +36,7 @@ Autonomous Agent & Cognitive Loop:
   friday cancel                    Cancel the goal FRIDAY is working on
   friday tasks [pause|resume|delete <id>|status|on|off]
                                    Standing tasks ("every morning ..."): list, pause, delete, turn all off
-  friday agents [show|allow|deny|reply <id>|status|on|off]
+  friday agents [show|allow|deny|reply <id>|hooks [on|off]|status|on|off]
                                    Coding agents FRIDAY runs for you (opencode, agy, Claude Code): follow, answer, turn off
   friday desktop [status|on|off]   Let FRIDAY control your windows, apps, volume and music
   friday keys update               Add FRIDAY keys from a newer version to your key file (FRIDAY OS)
@@ -1517,6 +1517,13 @@ friday_agents() {
           (if .status == "waiting_for_you" then "WAITING FOR YOU: " + .pending.step + " (" + .pending.why + ")"
            else .status end)] | join("  ")' "$f" 2>/dev/null
       done
+      if [ -s "$d/hooks.jsonl" ]; then
+        local today approved
+        today=$(date -u +%s); today=$((today - 86400))
+        approved=$(jq -s --argjson t "$today" '[.[] | select(.ts >= $t and .decision == "approved")] | length' "$d/hooks.jsonl" 2>/dev/null || echo 0)
+        echo
+        echo "In your own Claude Code sessions, FRIDAY approved $approved routine step(s) in the last day."
+      fi
       if grep -ls '"waiting_for_you"' $runs >/dev/null 2>&1; then
         echo
         echo "Answer a step with: friday agents allow <id>   or   friday agents deny <id>"
@@ -1550,6 +1557,10 @@ friday_agents() {
       printf '%s' "$cmd" >"$d/$id.answer"
       echo "Told run $id: $cmd."
       ;;
+    hooks)
+      # Your own Claude Code sessions: FRIDAY approves the routine steps there too.
+      friday-ctl agent-hooks "${id:-status}"
+      ;;
     reply)
       local text="${*:3}"
       [[ "$id" =~ ^r[0-9a-f]+$ ]] && [ -f "$d/$id.json" ] && [ -n "$text" ] \
@@ -1564,7 +1575,7 @@ friday_agents() {
         "FRIDAY can run opencode, agy or Claude Code for you and answer their routine approvals; risky steps wait for you" \
         "FRIDAY won't start coding agents" "$cmd" ;;
     *)
-      echo "usage: friday agents [list|show <id>|allow <id>|deny <id>|reply <id> \"text\"|status|on|off]" >&2
+      echo "usage: friday agents [list|show <id>|allow <id>|deny <id>|reply <id> \"text\"|hooks [on|off]|status|on|off]" >&2
       return 2
       ;;
   esac
