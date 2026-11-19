@@ -132,16 +132,8 @@ step_network() {
 
 step_disk() {
   screen 2
-  local boot_dev="" name type size model fstypes
-  # The disk the live system booted from: the parent of the partition mounted
-  # at bootmnt, resolved through any /dev/disk/by-* link.
-  local boot_src
-  if boot_src=$(findmnt -n -o SOURCE /run/archiso/bootmnt 2>/dev/null) && [[ -n "$boot_src" ]]; then
-    boot_src=$(readlink -f "$boot_src")
-    boot_dev=$(lsblk -n -d -o PKNAME "$boot_src" 2>/dev/null | head -n1)
-    boot_dev=${boot_dev:+/dev/$boot_dev}
-    [[ -n "$boot_dev" ]] || boot_dev="$boot_src"
-  fi
+  local boot_dev name type size model fstypes
+  boot_dev=$(friday_live_disk)
   local labels=()
   while read -r name type size model; do
     [[ "$type" == "disk" && ! "$name" =~ ^(fd|loop|ram|sr|zram) ]] || continue
@@ -426,6 +418,8 @@ friday_say "Thanks, $USERNAME. I'll take it from here."
 sleep 1
 FRIDAY_HOSTNAME="$HOSTNAME"
 export TARGET_DISK KEYBOARD HOSTNAME FRIDAY_HOSTNAME USERNAME PASSWORD TIMEZONE THEME SHELL_STYLE SESSION SDDM_THEME FRIDAY_AI_PROVIDER FRIDAY_AI_KEY AUTOLOGIN ENCRYPT FEAT_DESKTOP FEAT_TASKS FEAT_APPNAME FEAT_SCREENTEXT FEAT_PHONE
+# The person confirmed erasing this disk on the review screen.
+export ERASE_DISK="$TARGET_DISK"
 export FRIDAY_INTERACTIVE=1
 /root/installer || leave_menu "Something went wrong during the install. The full log is in /tmp/friday-installer.log."
 leave_menu ""

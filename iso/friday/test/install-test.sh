@@ -101,7 +101,7 @@ wait_ssh root 300
 log "live system is up; installing"
 # Through env: the live shell is zsh, where USERNAME (and HOSTNAME in bash) are
 # special parameters that a plain prefix assignment doesn't pass on.
-if ! vm root "env TERM=xterm TARGET_DISK=/dev/vda FRIDAY_HOSTNAME=friday USERNAME=friday PASSWORD=$PASS_WORD \
+if ! vm root "env TERM=xterm TARGET_DISK=/dev/vda ERASE_DISK=/dev/vda FRIDAY_HOSTNAME=friday USERNAME=friday PASSWORD=$PASS_WORD \
       AUTOLOGIN=true ENCRYPT=false FRIDAY_DEBUG_ACCESS=true AUTO_REBOOT=false FRIDAY_FAST=1 \
       timeout 3000 /root/installer" >"$OUT/installer.log" 2>&1; then
   log "the installer failed; last lines:"; tail -n 30 "$OUT/installer.log" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g'
