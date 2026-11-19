@@ -18,6 +18,7 @@ pub mod commands;
 pub mod context_read;
 pub mod desktop_tool;
 pub mod desktop_windows;
+pub mod diagnose;
 pub mod error;
 pub mod failures;
 pub mod goal_runner;
