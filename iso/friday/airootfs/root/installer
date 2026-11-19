@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FRIDAY OS Automated Core Assembler (M7 Identity Baseline + Dots-Hyprland Theming)
+# FRIDAY OS installer: takes the configurator's choices and builds the system.
 set -euo pipefail
 
 OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
@@ -220,7 +220,7 @@ pacstrap_with_retry /mnt base linux linux-firmware sudo zsh hyprland sddm uwsm q
   kirigami kdialog syntax-highlighting chromium libnotify niri xwayland-satellite \
   udiskie inotify-tools xdg-terminal-exec nautilus hyprpicker power-profiles-daemon \
   bluez bluez-utils sof-firmware alsa-utils noto-fonts-emoji wireless-regdb less \
-  btop xdg-user-dirs
+  btop xdg-user-dirs plymouth
 live_status_stop
 
 genfstab -U /mnt >> /mnt/etc/fstab
@@ -621,11 +621,14 @@ default arch.conf
 timeout 2
 EOF_LOADER
 
+# FRIDAY's boot splash, which also draws the disk-password prompt: plymouth
+# right after systemd/udev in the initramfs, and `quiet splash` below.
+sed -i -E '/^HOOKS=\(/ { /\bplymouth\b/! s/\b(systemd|udev)\b/\1 plymouth/ }' /mnt/etc/mkinitcpio.conf
+grep -qE '^HOOKS=\(.*\bplymouth\b' /mnt/etc/mkinitcpio.conf || echo "No plymouth hook: boot shows text." >&2
 if [[ "$ENCRYPT" == "true" ]]; then
   LUKS_UUID=$(cryptsetup luksUUID "$ROOT_PART")
   [[ -n "$LUKS_UUID" ]] || { echo "Could not read the LUKS UUID of $ROOT_PART." >&2; false; }
   ROOT_OPTIONS=$(friday_add_crypt_hook /mnt/etc/mkinitcpio.conf "$LUKS_UUID" cryptroot)
-  arch-chroot /mnt mkinitcpio -P
 else
   ROOT_PARTUUID=$(blkid -s PARTUUID -o value "$ROOT_PART")
   if [[ -z "$ROOT_PARTUUID" ]]; then
@@ -634,11 +637,16 @@ else
   fi
   ROOT_OPTIONS="root=PARTUUID=$ROOT_PARTUUID"
 fi
+arch-chroot /mnt mkinitcpio -P
+# The serial console is for the VM debug install only; elsewhere it would
+# only slow the boot.
+SERIAL=""
+[[ "$FRIDAY_DEBUG_ACCESS" == "true" ]] && SERIAL="console=ttyS0,115200 "
 cat << EOF_ENTRY > /mnt/boot/loader/entries/arch.conf
 title   FRIDAY OS
 linux   /vmlinuz-linux
 initrd  /initramfs-linux.img
-options $ROOT_OPTIONS rw console=ttyS0,115200 console=tty1
+options $ROOT_OPTIONS rw quiet splash ${SERIAL}console=tty1
 EOF_ENTRY
 
 chmod +x /root/configurator /root/installer

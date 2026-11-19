@@ -13,7 +13,7 @@ export PATH
 
 show_help() {
   cat << 'HELP_EOF'
-FRIDAY OS Command Center (M7 Cognitive Edition)
+FRIDAY: your desktop assistant
 
 Usage:
   friday <command> [args...]
