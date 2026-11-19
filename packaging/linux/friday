@@ -346,19 +346,14 @@ friday_doctor() {
   if [[ "$ad_ver" =~ ^1\.([3-9]|[1-9][0-9])\. ]]; then ok "inside-app control: agent-desktop $ad_ver"
   elif [ -n "$ad_ver" ]; then warn "inside-app control: agent-desktop $ad_ver is not a version FRIDAY accepts (1.3 up to 2.0)" "FRIDAY's own reader is used instead"
   else ok "inside-app control: FRIDAY's own reader (agent-desktop is not installed)"; fi
-  # Qt and Chromium apps stay off the accessibility bus unless asked, and then
+  # Qt 6 and Chromium apps stay off the accessibility bus unless asked, and then
   # FRIDAY can't read or operate them (GTK, Firefox and Electron need nothing).
   if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}${NIRI_SOCKET:-}" ]; then
-    if [ "${QT_ACCESSIBILITY:-}" = 1 ]; then ok "Qt apps are visible to FRIDAY"
-    else warn "Qt apps are hidden from FRIDAY" "add hl.env(\"QT_ACCESSIBILITY\", \"1\") to hyprland.lua (FRIDAY OS has it), then sign in again"; fi
+    if [ "${QT_LINUX_ACCESSIBILITY_ALWAYS_ON:-}" = 1 ]; then ok "Qt apps are visible to FRIDAY"
+    else warn "Qt apps are hidden from FRIDAY" "add hl.env(\"QT_LINUX_ACCESSIBILITY_ALWAYS_ON\", \"1\") to hyprland.lua (FRIDAY OS has it), then sign in again"; fi
+    if [ "${ACCESSIBILITY_ENABLED:-}" = 1 ]; then ok "Chromium browsers are visible to FRIDAY"
+    else warn "Chromium browsers are hidden from FRIDAY" "add hl.env(\"ACCESSIBILITY_ENABLED\", \"1\") to hyprland.lua (FRIDAY OS has it), then sign in again"; fi
   fi
-  local browser flags
-  for browser in chromium brave google-chrome; do
-    command -v "$browser" >/dev/null 2>&1 || command -v "$browser-stable" >/dev/null 2>&1 || continue
-    flags="${XDG_CONFIG_HOME:-$HOME/.config}/${browser/google-chrome/chrome}-flags.conf"
-    if grep -qs -- '--force-renderer-accessibility' "$flags"; then ok "$browser pages are visible to FRIDAY"
-    else warn "$browser pages are hidden from FRIDAY" "echo --force-renderer-accessibility >> $flags, then restart $browser"; fi
-  done
   if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then ok "inside a Hyprland session"
   else warn "not inside a Hyprland session" "desktop checks below may not apply over SSH/TTY"; fi
   # FRIDAY OS copies its key file into a new home once; keys added later
