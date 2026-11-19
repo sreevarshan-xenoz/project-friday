@@ -40,10 +40,43 @@ pub fn claude_settings() -> Option<PathBuf> {
 pub fn too_broad(folder: &Path) -> bool {
     let normal = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     let folder = normal(folder);
-    if home().is_some_and(|h| normal(&h) == folder) {
+    let home = home().map(|h| normal(&h));
+    if home.as_ref().is_some_and(|h| *h == folder) || folder.components().count() < 3 {
         return true;
     }
-    folder.components().count() < 3
+    // A hidden folder in the home folder (~/.ssh, ~/.config) holds settings
+    // and keys, not a project.
+    if let Some(inside) = home.as_ref().and_then(|h| folder.strip_prefix(h).ok()) {
+        if inside
+            .components()
+            .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
+        {
+            return true;
+        }
+    }
+    // The system's own folders.
+    let text = folder.to_string_lossy().to_lowercase().replace('\\', "/");
+    let text = text.trim_start_matches("//?/");
+    [
+        "/etc",
+        "/usr",
+        "/var",
+        "/boot",
+        "/root",
+        "/opt",
+        "/srv/www",
+        "/sys",
+        "/proc",
+        "/dev",
+        "/run",
+        "c:/windows",
+        "c:/program files",
+        "c:/programdata",
+        "c:/users",
+    ]
+    .iter()
+    .any(|sys| text == *sys || text.starts_with(&format!("{sys}/")))
+        && !home.as_ref().is_some_and(|h| folder.starts_with(h))
 }
 
 /// FRIDAY's answer to a Claude Code `PermissionRequest` hook: the JSON to
@@ -182,11 +215,20 @@ pub fn uninstall_claude(settings: &Path) -> Result<bool, String> {
     else {
         return Ok(false);
     };
-    let before = list.len();
-    list.retain(|e| !is_ours(e));
-    if list.len() == before {
+    // Only FRIDAY's own hook goes: an entry that also holds someone else's
+    // keeps theirs.
+    let mut changed = false;
+    for entry in list.iter_mut() {
+        if let Some(hooks) = entry["hooks"].as_array_mut() {
+            let before = hooks.len();
+            hooks.retain(|h| !h["command"].as_str().is_some_and(|c| c.contains(MARK)));
+            changed |= hooks.len() != before;
+        }
+    }
+    if !changed {
         return Ok(false);
     }
+    list.retain(|e| e["hooks"].as_array().is_none_or(|h| !h.is_empty()));
     if list.is_empty() {
         doc["hooks"]
             .as_object_mut()
@@ -342,6 +384,32 @@ mod tests {
     fn broad_folders_are_never_a_project() {
         assert!(too_broad(Path::new("/")));
         assert!(too_broad(Path::new("/home")));
+        assert!(too_broad(Path::new("/etc/nginx")));
+        assert!(too_broad(Path::new("/usr/local/bin")));
         assert!(!too_broad(Path::new("/srv/code/site")));
+        let home = home().unwrap();
+        assert!(too_broad(&home.join(".ssh")));
+        assert!(too_broad(&home.join(".config").join("app")));
+        assert!(!too_broad(&home.join("code").join("site")));
+    }
+
+    #[test]
+    fn uninstall_keeps_a_hook_that_shares_friday_s_entry() {
+        let d = temp("shared");
+        let settings = d.0.join("settings.json");
+        std::fs::write(
+            &settings,
+            json!({"hooks": {"PermissionRequest": [{"matcher": "*", "hooks": [
+                {"type": "command", "command": "\"/usr/bin/friday-ctl\" agent-hook claude"},
+                {"type": "command", "command": "their-audit-hook"}]}]}})
+            .to_string(),
+        )
+        .unwrap();
+        assert!(uninstall_claude(&settings).unwrap());
+        let doc: Value = serde_json::from_slice(&std::fs::read(&settings).unwrap()).unwrap();
+        assert_eq!(
+            doc["hooks"]["PermissionRequest"][0]["hooks"],
+            json!([{"type": "command", "command": "their-audit-hook"}])
+        );
     }
 }
