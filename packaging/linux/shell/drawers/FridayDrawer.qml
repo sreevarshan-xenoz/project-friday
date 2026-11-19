@@ -102,7 +102,7 @@ FocusScope {
       Layout.fillWidth: true
       implicitHeight: 48
       radius: height / 2
-      color: Theme.surface
+      color: Theme.glassWell
       border.width: 1
       border.color: input.activeFocus ? Theme.alpha(Theme.accent, 0.6) : Theme.outline
 
@@ -218,7 +218,7 @@ FocusScope {
           Layout.fillWidth: true
           implicitHeight: 48
           radius: Theme.radiusS
-          color: Theme.surface
+          color: Theme.glassWell
           opacity: modelData.paused ? 0.6 : 1
 
           RowLayout {
@@ -325,7 +325,7 @@ FocusScope {
       visible: Friday.lastGoal !== "" || Friday.lastDetail !== ""
       implicitHeight: last.implicitHeight + 28
       radius: Theme.radiusS + 4
-      color: Theme.surface
+      color: Theme.glassWell
 
       ColumnLayout {
         id: last

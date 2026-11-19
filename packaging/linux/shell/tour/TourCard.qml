@@ -31,7 +31,7 @@ PanelWindow {
     width: parent.width
     implicitHeight: content.implicitHeight + 2 * Theme.pad
     radius: Theme.radius
-    color: Theme.bg
+    color: Theme.glass
     border.width: 1
     border.color: Theme.alpha(Theme.accent, 0.5)
 

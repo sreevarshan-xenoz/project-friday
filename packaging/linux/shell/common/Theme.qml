@@ -137,6 +137,14 @@ Singleton {
 
   function alpha(col, a) { return Qt.rgba(col.r, col.g, col.b, a); }
 
+  // Frosted glass: the bar, drawers, answer card, notifications and OSD let
+  // the desktop show through, blurred where the compositor can (Hyprland:
+  // the layer rules in hypr-look.lua). Opaque enough to read without blur.
+  readonly property bool light: bg.hslLightness > 0.5
+  readonly property color glass: alpha(bg, light ? 0.8 : 0.72)
+  readonly property color glassWell: alpha(text, light ? 0.07 : 0.06)
+  readonly property color glassEdge: alpha(text, light ? 0.16 : 0.11)
+
   // Type: Noto Sans for words, JetBrains Mono for numbers and glyphs.
   readonly property string sans: "Noto Sans"
   readonly property string mono: "JetBrainsMono Nerd Font Propo"
@@ -168,6 +176,8 @@ Singleton {
   readonly property int medium: 260
   readonly property int slow: 420
   readonly property int easing: Easing.OutCubic
+  // Things that appear spring in: past their mark a little, then settle.
+  readonly property int spring: Easing.OutBack
 
   // Omarchy's colors.toml: flat `key = "value"` lines.
   FileView {

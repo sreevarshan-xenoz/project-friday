@@ -23,7 +23,15 @@ PanelWindow {
   onCurrentChanged: if (current !== "") shown = current
 
   property real reveal: current !== "" ? 1 : 0
-  Behavior on reveal { NumberAnimation { duration: Theme.medium; easing.type: Theme.easing } }
+  // Opens with a little spring, closes on the plain curve (a spring there
+  // would dip below zero).
+  Behavior on reveal {
+    NumberAnimation {
+      duration: host.current !== "" ? Theme.slow : Theme.medium
+      easing.type: host.current !== "" ? Theme.spring : Theme.easing
+      easing.overshoot: 1.1
+    }
+  }
 
   readonly property var specs: ({
     friday: { align: "center", source: "FridayDrawer.qml", dim: false },
@@ -84,9 +92,9 @@ PanelWindow {
       anchors.fill: parent
       visible: Theme.floating
       radius: Math.min(Theme.radius, height / 2)
-      color: Theme.bg
+      color: Theme.glass
       border.width: 1
-      border.color: Theme.outline
+      border.color: Theme.glassEdge
     }
 
     Item {

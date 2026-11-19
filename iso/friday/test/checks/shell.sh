@@ -228,8 +228,10 @@ else skip "media chip (needs dbus-python, PyGObject and dbus-run-session)"; fi
 # picker does: the bar, the FRIDAY drawer and the control drawer each time.
 mkdir -p "$HOME/.config/friday"
 # The bar must really show the look: enough of the palette's background in
-# the half of the screen the style puts the bar in (png_colour.py).
-declare -A look_bg=([ember]=0d0f13 [frost]=0e141b [moss]=0f120e [dawn]=f7f3ee)
+# the half of the screen the style puts the bar in (png_colour.py). The bar
+# is frosted glass (Theme.glass: the background at 72%, 80% for the light
+# dawn) over the headless output's black, with no blur here.
+declare -A look_bg=([ember]=090b0e [frost]=0a0e13 [moss]=0b0d0a [dawn]=c6c3be)
 for look in island:frost dock:moss ember:dawn island:dawn dock:ember; do
   style=${look%%:*} palette=${look##*:}
   printf '{ "style": "%s", "palette": "%s" }\n' "$style" "$palette" >"$HOME/.config/friday/shell.json"

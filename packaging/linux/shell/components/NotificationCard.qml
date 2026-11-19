@@ -25,9 +25,9 @@ Rectangle {
 
   implicitHeight: body.implicitHeight + 24
   radius: 14
-  color: compact ? Theme.surface : Theme.bg
+  color: compact ? Theme.glassWell : Theme.glass
   border.width: compact ? 0 : 1
-  border.color: fromFriday ? Theme.alpha(Theme.accent, 0.45) : Theme.outline
+  border.color: fromFriday ? Theme.alpha(Theme.accent, 0.45) : Theme.glassEdge
 
   Rectangle {
     anchors { left: parent.left; top: parent.top; bottom: parent.bottom; margins: 10 }

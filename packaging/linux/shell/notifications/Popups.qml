@@ -62,12 +62,14 @@ PanelWindow {
         }
 
         opacity: 0
+        scale: 0.96
         transform: Translate { id: shift; x: 40 }
         Component.onCompleted: enter.start()
         ParallelAnimation {
           id: enter
           NumberAnimation { target: card; property: "opacity"; to: 1; duration: Theme.medium; easing.type: Theme.easing }
-          NumberAnimation { target: shift; property: "x"; to: 0; duration: Theme.medium; easing.type: Theme.easing }
+          NumberAnimation { target: shift; property: "x"; to: 0; duration: Theme.slow; easing.type: Theme.spring; easing.overshoot: 1.3 }
+          NumberAnimation { target: card; property: "scale"; to: 1; duration: Theme.slow; easing.type: Theme.spring }
         }
       }
     }

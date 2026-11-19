@@ -48,9 +48,9 @@ PanelWindow {
     }
     height: Theme.barHeight
     radius: Theme.floating ? height / 2 : 0
-    color: bar.island ? "transparent" : Theme.bg
+    color: bar.island ? "transparent" : Theme.glass
     border.width: Theme.style === "dock" ? 1 : 0
-    border.color: Theme.outline
+    border.color: Theme.glassEdge
   }
   Corner { visible: !Theme.floating; leftSide: true; anchors.top: strip.bottom; anchors.left: parent.left }
   Corner { visible: !Theme.floating; leftSide: false; anchors.top: strip.bottom; anchors.right: parent.right }
@@ -64,9 +64,9 @@ PanelWindow {
     width: group.width + 20
     height: strip.height
     radius: height / 2
-    color: Theme.bg
+    color: Theme.glass
     border.width: 1
-    border.color: Theme.outline
+    border.color: Theme.glassEdge
   }
   Pill { id: leftPill; group: leftGroup }
   Pill { id: centrePill; group: centre }

@@ -108,7 +108,7 @@ FocusScope {
       Layout.fillWidth: true
       implicitHeight: 44
       radius: height / 2
-      color: Theme.surface
+      color: Theme.glassWell
       border.width: 1
       border.color: Theme.alpha(Theme.accent, 0.5)
 
