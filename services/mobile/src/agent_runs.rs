@@ -30,9 +30,9 @@ const MODEL_TIMEOUT: Duration = Duration::from_secs(45);
 /// How long a step waits for the person before it is rejected.
 const PERSON_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// How often FRIDAY may answer the agent's questions in one run.
-const MAX_REPLIES: usize = 3;
+pub(crate) const MAX_REPLIES: usize = 3;
 /// How long an agent may go silent before the run is stopped.
-const IDLE_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+pub(crate) const IDLE_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 
 /// The agent's output, one line at a time, read in the background so it
 /// never blocks on a full pipe while a step waits for the person.
@@ -72,6 +72,7 @@ pub fn enabled() -> bool {
 pub enum Agent {
     Opencode,
     Agy,
+    Claude,
 }
 
 impl Agent {
@@ -79,6 +80,7 @@ impl Agent {
         match name.trim().to_lowercase().as_str() {
             "opencode" | "open code" => Some(Agent::Opencode),
             "agy" | "antigravity" => Some(Agent::Agy),
+            "claude" | "claude code" | "claude-code" => Some(Agent::Claude),
             _ => None,
         }
     }
@@ -87,6 +89,7 @@ impl Agent {
         match self {
             Agent::Opencode => "opencode",
             Agent::Agy => "agy",
+            Agent::Claude => "claude",
         }
     }
 
@@ -327,22 +330,23 @@ pub struct Outcome {
     pub failed: bool,
 }
 
-/// Drives one ACP agent through a run over `stdin`/`stdout`.
-pub struct AcpRun<'a, W> {
-    rec: &'a mut Recorder,
+/// Drives one agent through a run over its `stdin`/`stdout`: ACP here, and
+/// Claude Code's own protocol in [`crate::agent_claude`].
+pub struct Driver<'a, W> {
+    pub(crate) rec: &'a mut Recorder,
     stdin: W,
     model: Option<Arc<dyn LlmStrategyClient>>,
     next_id: u64,
     /// The agent's words in the current turn.
-    said: String,
+    pub(crate) said: String,
     /// Each step's description, by its id (updates often leave it out).
-    steps: std::collections::HashMap<String, String>,
+    pub(crate) steps: std::collections::HashMap<String, String>,
     /// The last step refused, which usually ends the agent's turn.
-    refused: Option<String>,
-    poll: Duration,
+    pub(crate) refused: Option<String>,
+    pub(crate) poll: Duration,
 }
 
-impl<'a, W: AsyncWrite + Unpin> AcpRun<'a, W> {
+impl<'a, W: AsyncWrite + Unpin> Driver<'a, W> {
     pub fn new(rec: &'a mut Recorder, stdin: W, model: Option<Arc<dyn LlmStrategyClient>>) -> Self {
         Self {
             rec,
@@ -356,7 +360,7 @@ impl<'a, W: AsyncWrite + Unpin> AcpRun<'a, W> {
         }
     }
 
-    async fn send(&mut self, msg: Value) -> Result<(), String> {
+    pub(crate) async fn send(&mut self, msg: Value) -> Result<(), String> {
         let mut line = msg.to_string();
         line.push('\n');
         self.stdin
@@ -450,38 +454,43 @@ impl<'a, W: AsyncWrite + Unpin> AcpRun<'a, W> {
             one_time(&options, "allow_once"),
             one_time(&options, "reject_once"),
         );
-        let selected = |id: Option<String>| match id {
+        let allowed = self
+            .decide_step(&describe(call), &step_from_acp(call), allow.is_some())
+            .await;
+        match if allowed { allow } else { reject } {
             Some(id) => json!({"outcome": {"outcome": "selected", "optionId": id}}),
             None => json!({"outcome": {"outcome": "cancelled"}}),
-        };
-        let what = describe(call);
-        let decision = agent_policy::decide(&step_from_acp(call), &self.rec.run.folder);
-        let why = match decision {
-            Decision::Allow if allow.is_some() => {
+        }
+    }
+
+    /// Decides one step: by the rules, else by the person. `can_allow` is
+    /// false when the agent offers no way to allow it just this once.
+    /// Records who decided.
+    pub(crate) async fn decide_step(&mut self, what: &str, step: &Step, can_allow: bool) -> bool {
+        let why = match agent_policy::decide(step, &self.rec.run.folder) {
+            Decision::Allow if can_allow => {
                 self.rec.run.approved_by_friday += 1;
                 self.rec
                     .log(json!({"event": "approved", "by": "friday", "step": what}));
                 let _ = self.rec.save();
-                return selected(allow);
+                return true;
             }
             Decision::Allow => "it offers no one-time approval".to_string(),
             Decision::Ask(why) => why,
         };
-        let allowed = self.ask_person(&what, &why).await;
-        if allowed && allow.is_some() {
+        let allowed = self.ask_person(what, &why).await && can_allow;
+        if allowed {
             self.rec.run.approved_by_you += 1;
             self.rec
                 .log(json!({"event": "approved", "by": "you", "step": what}));
-            let _ = self.rec.save();
-            selected(allow)
         } else {
             self.rec.run.rejected += 1;
-            self.refused = Some(what.clone());
+            self.refused = Some(what.to_string());
             self.rec
                 .log(json!({"event": "rejected", "step": what, "why": why}));
-            let _ = self.rec.save();
-            selected(reject)
         }
+        let _ = self.rec.save();
+        allowed
     }
 
     /// Pauses the run until the person answers, or rejects after a while.
@@ -522,7 +531,7 @@ impl<'a, W: AsyncWrite + Unpin> AcpRun<'a, W> {
     }
 
     /// Passes the agent's question to the person and waits for their reply.
-    async fn ask_person_question(&mut self, question: &str) -> Option<String> {
+    pub(crate) async fn ask_person_question(&mut self, question: &str) -> Option<String> {
         let id = self.rec.run.id.clone();
         let short: String = question.chars().take(300).collect();
         self.rec.run.status = Status::WaitingForYou;
@@ -549,7 +558,7 @@ impl<'a, W: AsyncWrite + Unpin> AcpRun<'a, W> {
 
     /// FRIDAY's answer to the agent's question, or `None` when it is the
     /// person's to answer.
-    async fn reply_to(&self, question: &str) -> Option<String> {
+    pub(crate) async fn reply_to(&self, question: &str) -> Option<String> {
         let model = self.model.as_ref()?;
         let prompt = format!(
             "{REPLY_GUIDE}\n\nThe person's request:\n{}\n\nThe agent's message:\n{}\n\nYour reply:",
@@ -664,11 +673,15 @@ pub async fn run_agent(
         .ok_or_else(|| format!("{} isn't installed", run.agent.name()))?;
     let mut rec = Recorder::new(&dir, run).map_err(|e| e.to_string())?;
     let mut command = tokio::process::Command::new(program);
-    command.arg("acp");
     match rec.run.agent {
+        // Claude Code's own protocol, its permission prompts handed to FRIDAY.
+        Agent::Claude => {
+            command.args(crate::agent_claude::ARGS);
+        }
         // Every edit and command asks, so FRIDAY's rules decide each one,
         // whatever the person's own opencode settings allow.
         Agent::Opencode => {
+            command.arg("acp");
             command.env(
                 "OPENCODE_CONFIG_CONTENT",
                 r#"{"permission":{"edit":"ask","bash":"ask","external_directory":"ask"}}"#,
@@ -678,7 +691,7 @@ pub async fn run_agent(
         // sign-in is shared), set to ask before every step.
         Agent::Agy => {
             agy_settings().map_err(|e| format!("couldn't set up agy for FRIDAY: {e}"))?;
-            command.args(["--cli_dir_name", "friday"]);
+            command.args(["acp", "--cli_dir_name", "friday"]);
         }
     }
     let mut child = command
@@ -692,7 +705,12 @@ pub async fn run_agent(
     let stdin = child.stdin.take().ok_or("no stdin")?;
     let stdout = child.stdout.take().ok_or("no stdout")?;
     let mut lines = read_lines(stdout);
-    let outcome = AcpRun::new(&mut rec, stdin, model).drive(&mut lines).await;
+    let mut driver = Driver::new(&mut rec, stdin, model);
+    let outcome = if driver.rec.run.agent == Agent::Claude {
+        driver.drive_claude(&mut lines).await
+    } else {
+        driver.drive(&mut lines).await
+    };
     let _ = child.kill().await;
     finish(&mut rec, outcome);
     Ok(())
@@ -814,8 +832,8 @@ fn expand(folder: &str) -> PathBuf {
     }
 }
 
-const GUIDE: &str = r#"FRIDAY can run a coding agent for the person: opencode or agy (Antigravity). Turn the person's request into JSON only, one of:
-  {"op": "run", "agent": "opencode" | "agy", "folder": "<folder named in the request, or empty>", "task": "<the task for the agent>"}
+const GUIDE: &str = r#"FRIDAY can run a coding agent for the person: opencode, agy (Antigravity) or Claude Code. Turn the person's request into JSON only, one of:
+  {"op": "run", "agent": "opencode" | "agy" | "claude", "folder": "<folder named in the request, or empty>", "task": "<the task for the agent>"}
   {"op": "status"}     the person asks how their agent runs are going
   {"op": "none", "say": "<one short sentence>"}   not a request to run an agent
 Write "task" as a clear brief for a capable coding agent: what to do, what done looks like, and to report briefly what it changed at the end. Keep every requirement the person gave; add nothing they didn't ask for. If no agent is named, use "opencode"."#;
@@ -845,7 +863,7 @@ impl friday_goal_execution::Tool for AgentsTool {
     }
 
     fn description(&self) -> &str {
-        "Runs a coding agent (opencode, agy) on a task in a folder, answers its routine approvals, and reports (agents.run)"
+        "Runs a coding agent (opencode, agy, Claude Code) on a task in a folder, answers its routine approvals, and reports (agents.run)"
     }
 
     fn capabilities(&self) -> Vec<friday_goal_execution::Capability> {
@@ -878,7 +896,7 @@ impl friday_goal_execution::Tool for AgentsTool {
             Some("run") => {
                 let Some(agent) = Agent::from_name(choice["agent"].as_str().unwrap_or("opencode"))
                 else {
-                    return ToolResult::error("FRIDAY can run opencode or agy");
+                    return ToolResult::error("FRIDAY can run opencode, agy or Claude Code");
                 };
                 if agent.program().is_none() {
                     return ToolResult::error(format!("{} isn't installed", agent.name()));
@@ -1104,7 +1122,7 @@ mod tests {
             panic!("the push never waited for the person");
         });
         let mut lines = read_lines(friday_in);
-        let mut acp = AcpRun::new(&mut rec, friday_out, None);
+        let mut acp = Driver::new(&mut rec, friday_out, None);
         acp.poll = Duration::from_millis(10);
         let outcome = acp.drive(&mut lines).await.unwrap();
         person.await.unwrap();
@@ -1136,7 +1154,7 @@ mod tests {
             "What should the project be called?",
         ));
         let mut lines = read_lines(friday_in);
-        let outcome = AcpRun::new(&mut rec, friday_out, Some(Arc::new(Model("Call it Site."))))
+        let outcome = Driver::new(&mut rec, friday_out, Some(Arc::new(Model("Call it Site."))))
             .drive(&mut lines)
             .await
             .unwrap();
@@ -1177,7 +1195,7 @@ mod tests {
             panic!("the question never waited for the person");
         });
         let mut lines = read_lines(friday_in);
-        let mut acp = AcpRun::new(&mut rec, friday_out, Some(Arc::new(Model("ASK_PERSON"))));
+        let mut acp = Driver::new(&mut rec, friday_out, Some(Arc::new(Model("ASK_PERSON"))));
         acp.poll = Duration::from_millis(10);
         let outcome = acp.drive(&mut lines).await.unwrap();
         person.await.unwrap();
@@ -1230,7 +1248,10 @@ mod tests {
             assert!(missing.error.unwrap().contains("no folder"));
         }
         let unknown = ask_tool(r#"{"op": "run", "agent": "vim", "task": "x"}"#, dir.path()).await;
-        assert!(unknown.error.unwrap().contains("opencode or agy"));
+        assert!(unknown
+            .error
+            .unwrap()
+            .contains("opencode, agy or Claude Code"));
     }
 
     #[test]

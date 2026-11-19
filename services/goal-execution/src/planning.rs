@@ -834,7 +834,11 @@ fn is_agents_intent(d: &str) -> bool {
     let named = words
         .iter()
         .any(|w| ["opencode", "agy", "antigravity"].contains(w))
-        || words.windows(2).any(|w| w == ["open", "code"]);
+        || words.windows(2).any(|w| w == ["open", "code"])
+        // "claude" alone is often the model FRIDAY answers with; only Claude
+        // Code, or Claude given a folder, is an agent run.
+        || words.windows(2).any(|w| w == ["claude", "code"])
+        || (words.contains(&"claude") && (d.contains("~/") || d.contains(" /")));
     if !named {
         return false;
     }
@@ -1805,6 +1809,8 @@ mod tests {
             "use antigravity to write tests for ~/code/app",
             "in opencode, refactor the parser in ~/code/x",
             "how are my agent runs going",
+            "have claude code add tests to ~/code/app",
+            "ask claude to fix the build in ~/code/app",
         ] {
             assert_eq!(capability_for_description(g), runs, "{g}");
         }
@@ -1812,6 +1818,8 @@ mod tests {
             "what is opencode",
             "is agy any good",
             "why does the agency close early",
+            "have a strategy meeting with the stagy team",
+            "use claude to explain this error",
         ] {
             assert_ne!(capability_for_description(g), runs, "{g}");
         }

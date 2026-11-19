@@ -7,6 +7,7 @@
 //! are translated into real bus events (never free text, never internal knowledge).
 //! All intelligence stays on the Windows PC.
 
+pub mod agent_claude;
 pub mod agent_desktop;
 pub mod agent_policy;
 pub mod agent_runs;
