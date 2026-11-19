@@ -48,7 +48,8 @@ phase_msg() {
   {
     friday_header "INSTALLING"
     friday_rail "$1" "${INSTALL_STEPS[@]}"
-    friday_note "  $USERNAME@$HOSTNAME  ·  $TARGET_DISK  ·  elapsed $(elapsed)"
+    # The time runs on the live line below, not frozen here.
+    friday_note "  $USERNAME@$HOSTNAME  ·  $TARGET_DISK"
     echo
     gum style --margin "0 0 0 $FRIDAY_INDENT" --foreground "$FRIDAY_SUCCESS" --bold "Step $1 of 6 · $2"
     echo
@@ -119,7 +120,7 @@ fi
 
 # Nothing is erased unless the target is a whole disk, named twice, and not
 # the USB stick this live system runs from.
-refuse() { { friday_err "$1 Nothing was erased."; } >&3 2>&1; exit 1; }
+refuse() { echo "$1 Nothing was erased."; { friday_err "$1 Nothing was erased."; } >&3 2>&1; exit 1; }
 [[ -n "$TARGET_DISK" ]] || refuse "No disk was chosen (TARGET_DISK)."
 [[ "$ERASE_DISK" == "$TARGET_DISK" ]] || refuse "Erasing $TARGET_DISK wasn't confirmed (ERASE_DISK must name it too)."
 [[ -b "$TARGET_DISK" && "$(lsblk -n -d -o TYPE "$TARGET_DISK" 2>/dev/null)" == disk ]] \

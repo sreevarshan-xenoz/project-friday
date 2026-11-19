@@ -40,6 +40,7 @@ STEPS = [
     (2, "secret1" + ENTER),
     (3, ENTER),  # autologin? default No
     (3, ENTER),  # encrypt the disk? default Yes
+    (3, "n"),  # FRIDAY's look? choose my own
     (3, ENTER),  # desktop colours: FRIDAY Shell (default)
     (2, DOWN),
     (1, ENTER),  # window manager: niri
@@ -121,6 +122,7 @@ checks = {
 env = env_lines[-1] if env_lines else ""
 for key, want in [
     ("disk", "/dev/vda"),
+    ("erase", "/dev/vda"),
     ("host", "mybox"),
     ("user", "alice"),
     ("pw", "secret1"),

@@ -15,7 +15,8 @@ STEPS=(NETWORK DISK REGION IDENTITY SECURITY LOOK FEATURES AI REVIEW)
 
 # Defaults (also what an unattended run would use).
 TARGET_DISK="" TARGET_LABEL=""
-HOSTNAME="friday" USERNAME="friday" PASSWORD=""
+# Empty until named, so typing replaces the placeholder (empty input means "friday").
+HOSTNAME="" USERNAME="" PASSWORD=""
 KEYBOARD="us" TIMEZONE="UTC"
 THEME="FRIDAY Shell (Ember, made for FRIDAY)"
 SHELL_STYLE="Ember (bar flush with the top edge)"
@@ -214,11 +215,14 @@ step_region() {
   friday_head "Region"
   local v
   friday_note "  Type to search, e.g. 'kolkata', 'berlin', 'new_york'."
-  v=$(friday_timezones | gum filter --height=10 --placeholder="Timezone (current: $TIMEZONE)") || true
+  # The current choice comes first, so Enter without typing keeps it.
+  v=$({ echo "$TIMEZONE"; friday_timezones | grep -vxF -- "$TIMEZONE"; } \
+    | gum filter --height=10 --placeholder="Timezone (current: $TIMEZONE)") || true
   if friday_valid_timezone "${v:-}"; then TIMEZONE="$v"; fi
   friday_ok "Timezone: $TIMEZONE"
   friday_note "  Keyboard layout, e.g. 'us', 'uk', 'de', 'fr'."
-  v=$(friday_keymaps | gum filter --height=10 --placeholder="Keyboard (current: $KEYBOARD)") || true
+  v=$({ echo "$KEYBOARD"; friday_keymaps | grep -vxF -- "$KEYBOARD"; } \
+    | gum filter --height=10 --placeholder="Keyboard (current: $KEYBOARD)") || true
   if friday_valid_keymap "${v:-}"; then KEYBOARD="$v"; fi
   # Type the passwords that follow with this layout: the disk-unlock prompt
   # and the login use it, so a password typed with another one wouldn't match.
@@ -230,6 +234,15 @@ step_look() {
   screen 6
   friday_head "Desktop"
   local v
+  # Most people keep FRIDAY's look; four questions only for those who don't.
+  # From the review screen ("Change desktop") it goes straight to them.
+  if [[ "${1:-}" != choose ]]; then
+    friday_note "  FRIDAY's look: the Ember shell on Hyprland, with FRIDAY's login screen. Change any of it later in the controls drawer (Look)."
+    if gum confirm --affirmative="Keep FRIDAY's look" --negative="Choose my own" "Use FRIDAY's look?"; then
+      friday_ok "FRIDAY's look"
+      return 0
+    fi
+  fi
   friday_note "  Colours. Change them any time in the controls drawer (Look) or with friday shell palette."
   v=$(gum choose --cursor="$FRIDAY_CURSOR" --height=10 --selected="$THEME" \
     "FRIDAY Shell (Ember, made for FRIDAY)" \
@@ -316,7 +329,8 @@ step_ai() {
   friday_note "  Prefer your own provider? Pick it and paste its key. Change it later with: friday setup-ai"
   friday_note "  Use Claude Code, Codex, Antigravity or Cline? Connect it after you log in (it signs in"
   friday_note "  in a browser): FRIDAY offers it when you first log in, or run: friday connect"
-  friday_note "  Free models may keep what you send them, screenshots included; use your own key or account for private work."
+  friday_note "  Free models may keep what you send them, screenshots included;"
+  friday_note "  use your own key or account for private work."
   echo
   local choice key
   choice=$(gum choose --cursor="$FRIDAY_CURSOR" --height=8 \
@@ -392,7 +406,7 @@ review() {
           friday_note "  The keyboard changed, so type your password again with it."
           step_security
         fi ;;
-      "Change desktop") step_look ;;
+      "Change desktop") step_look choose ;;
       "Change what FRIDAY may do") step_features ;;
       "Change AI") step_ai ;;
       *) leave_menu "Nothing was written to disk." ;;
@@ -421,5 +435,6 @@ export TARGET_DISK KEYBOARD HOSTNAME FRIDAY_HOSTNAME USERNAME PASSWORD TIMEZONE 
 # The person confirmed erasing this disk on the review screen.
 export ERASE_DISK="$TARGET_DISK"
 export FRIDAY_INTERACTIVE=1
-/root/installer || leave_menu "Something went wrong during the install. The full log is in /tmp/friday-installer.log."
+# On failure the setup screen replaces the installer's, so carry its last line over.
+/root/installer || leave_menu "The install stopped: $(tail -n 1 /tmp/friday-installer.log 2>/dev/null) The full log is in /tmp/friday-installer.log."
 leave_menu ""
