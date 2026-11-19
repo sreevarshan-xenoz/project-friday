@@ -44,6 +44,7 @@ internal static class Screenshots
         SaveWpf(streaming, folder, "answer-streaming");
         SaveWpf(new AnswerWindow("Close the Downloads window", new AskOutcome(true,
             "close_window: File Explorer · Downloads", null, false, Confirmation: new NeedsConfirmation("desktop", "close_window"))), folder, "answer-confirm");
+        SaveMenu(folder, "tray-menu");
         Save(new EgressForm(install.Paths), folder, "what-left-this-pc");
         Save(new ProviderForm(install.Paths.EnvFile), folder, "ai-provider");
         return 0;
@@ -79,6 +80,47 @@ internal static class Screenshots
     }
 
     private static bool _firstWpf = true;
+
+    /// <summary>The tray menu, opened at a fixed spot with sample entries (nothing runs).</summary>
+    private static void SaveMenu(string folder, string name)
+    {
+        void Nothing() { }
+        var menu = TrayMenu.Open(
+        [
+            new("Ask FRIDAY", Wpf.Ui.Controls.SymbolRegular.Sparkle24, Nothing, "Win+Y", Bold: true),
+            new("Ask about selection", Wpf.Ui.Controls.SymbolRegular.TextQuote24, Nothing, "Win+Alt+Y"),
+            new("Ask about the screen", Wpf.Ui.Controls.SymbolRegular.Desktop24, Nothing, "Win+Ctrl+Y"),
+            null,
+            new("Last answer", Wpf.Ui.Controls.SymbolRegular.ChatBubblesQuestion24, Nothing),
+            new("Name the app when asking about a selection", Wpf.Ui.Controls.SymbolRegular.AppGeneric24, Nothing, Checked: true),
+            null,
+            new("Settings…", Wpf.Ui.Controls.SymbolRegular.Settings24, Nothing),
+            new("Quit FRIDAY", Wpf.Ui.Controls.SymbolRegular.Dismiss24, Nothing),
+        ], new System.Windows.Point(200, 150));
+        try
+        {
+            Pump(1200);
+            var toDevice = System.Windows.PresentationSource.FromVisual(menu)?.CompositionTarget?.TransformToDevice
+                ?? System.Windows.Media.Matrix.Identity;
+            var at = menu.PointToScreen(new System.Windows.Point(0, 0));
+            var b = new Rectangle((int)at.X - 16, (int)at.Y - 16,
+                (int)Math.Round(menu.ActualWidth * toDevice.M11) + 32, (int)Math.Round(menu.ActualHeight * toDevice.M22) + 32);
+            using var bmp = new Bitmap(b.Width, b.Height);
+            using (var g = Graphics.FromImage(bmp))
+                g.CopyFromScreen(b.Location, Point.Empty, b.Size);
+            bmp.Save(Path.Combine(folder, name + ".png"), ImageFormat.Png);
+            Console.WriteLine($"[screenshots] {name}.png {b.Width}x{b.Height}");
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine($"[screenshots] {name} failed: {e.Message}");
+        }
+        finally
+        {
+            menu.IsOpen = false;
+            Pump(200);
+        }
+    }
 
     /// <summary>A WPF window: shown where it places itself, captured once its entrance has settled.</summary>
     private static void SaveWpf(System.Windows.Window window, string folder, string name)
