@@ -29,6 +29,7 @@ pub mod transport;
 pub mod upgrade;
 pub mod voice;
 pub mod web_search;
+pub mod win_insert;
 
 /// The next message from a broadcast receiver, or `None` once it is closed. A receiver
 /// that fell behind skips what it missed and carries on: `while let Ok(..) = rx.recv()`
