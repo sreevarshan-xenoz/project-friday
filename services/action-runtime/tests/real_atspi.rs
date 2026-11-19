@@ -2,7 +2,8 @@
 //! default; run it on a session made for testing, such as the FRIDAY OS test
 //! VM, with the accessibility status on (`busctl --user set-property
 //! org.a11y.Bus /org/a11y/bus org.a11y.Status IsEnabled b true`), one Nautilus
-//! window and one pavucontrol window open:
+//! window and one pavucontrol window open (and, for the typing test, a Qt
+//! `kdialog --inputbox Name kept` started with QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1):
 //!
 //! ```text
 //! FRIDAY_TEST_REAL_ATSPI=1 cargo test -p friday-actions --test real_atspi -- --ignored
@@ -112,5 +113,34 @@ mod live {
                 "{tab} wasn't selected: {states:?}"
             );
         }
+    }
+
+    /// Qt 6 (kdialog, started with QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 as
+    /// `kdialog --inputbox Name kept`): typed text goes in at the caret, and
+    /// the text already in the field stays.
+    #[tokio::test]
+    #[ignore = "types into a live Qt app over the accessibility bus"]
+    async fn type_into_a_qt_field_and_keep_its_text() {
+        if !enabled() {
+            return;
+        }
+        let a = UiAdapter::new();
+        let found = ui(
+            &a,
+            "find",
+            json!({"app": "kdialog", "name": "", "role": "text"}),
+        )
+        .await;
+        let path = found[0]["path"].as_str().expect("a text field").to_string();
+        ui(
+            &a,
+            "type_text",
+            json!({"app": "kdialog", "path": path, "text": " plus"}),
+        )
+        .await;
+        let after = ui(&a, "read", json!({"app": "kdialog", "path": path}))
+            .await
+            .to_string();
+        assert!(after.contains("kept") && after.contains(" plus"), "{after}");
     }
 }
