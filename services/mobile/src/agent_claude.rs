@@ -374,7 +374,7 @@ mod tests {
             claude_out,
             claude_in,
             vec![
-                can_use("q1", "Bash", json!({"command": "cargo test"})),
+                can_use("q1", "Bash", json!({"command": "git status"})),
                 can_use(
                     "q2",
                     "Write",
@@ -411,7 +411,7 @@ mod tests {
         let response = |i: usize| seen[i]["response"]["response"].clone();
         assert_eq!(seen[2]["response"]["request_id"], "q1");
         assert_eq!(response(2)["behavior"], "allow");
-        assert_eq!(response(2)["updatedInput"]["command"], "cargo test");
+        assert_eq!(response(2)["updatedInput"]["command"], "git status");
         assert_eq!(response(3)["behavior"], "allow");
         assert_eq!(response(4)["behavior"], "deny");
         assert_eq!(response(5)["behavior"], "allow");

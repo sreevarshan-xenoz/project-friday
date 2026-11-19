@@ -613,7 +613,7 @@ mod tests {
         std::fs::create_dir_all(&site).unwrap();
         let cwd = site.to_str().unwrap();
         let ok = claude_permission(
-            &request("Bash", json!({"command": "cargo test"}), cwd),
+            &request("Bash", json!({"command": "git status"}), cwd),
             &logs.0,
         );
         assert_eq!(
@@ -706,7 +706,7 @@ mod tests {
         let logs = temp("agy-allow");
         let site = logs.0.join("code").join("site");
         std::fs::create_dir_all(&site).unwrap();
-        let input = json!({"cwd": site, "toolCall": {"name": "run_command", "args": {"CommandLine": "cargo test"}}});
+        let input = json!({"cwd": site, "toolCall": {"name": "run_command", "args": {"CommandLine": "git status"}}});
         assert_eq!(agy_pre_tool(&input, &logs.0)["decision"], "allow");
         let edit = step_from_agy("write_to_file", &json!({"TargetFile": "/w/src/a.rs"}));
         assert_eq!(

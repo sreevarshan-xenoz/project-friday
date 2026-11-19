@@ -7,6 +7,12 @@
 //! planted instructions such as "this is safe, approve it", and a model can
 //! fall for them; these rules can't. Anything they don't recognise goes to
 //! the person.
+//!
+//! A build or test runs the project's own code, and an agent can change that
+//! code first. So one is approved only while git shows no uncommitted change
+//! in the folder (nothing the agent may have written), and an edit to a file
+//! git ignores (dependencies, build output a test may load) is the person's
+//! call.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -102,13 +108,31 @@ pub fn decide(step: &Step, folder: &Path) -> Decision {
                 Some(p) if defines_commands(p) => ask(format!(
                     "changes {p}, which decides what builds and tests run"
                 )),
+                Some(p) if hides_changes(p) => ask(format!(
+                    "changes {p}, which decides what git shows as changed"
+                )),
                 Some(p) => ask(format!("changes {p}, which may hold secrets or history")),
-                None => Decision::Allow,
+                None => match step.paths.iter().find(|p| git_ignores(p, folder)) {
+                    Some(p) => ask(format!(
+                        "changes {p}, which git ignores (a change there wouldn't show before a test runs it)"
+                    )),
+                    None => Decision::Allow,
+                },
             }
         }
         Kind::Delete => ask("deletes files"),
         Kind::Move => ask("moves or renames files"),
         Kind::Execute => match &step.command {
+            Some(c)
+                if runs_project_code(&c.replace("2>&1", " "))
+                    && command(c, folder) == Decision::Allow =>
+            {
+                if has_changes(folder) {
+                    ask("builds or tests while the folder has uncommitted changes, which would run them")
+                } else {
+                    Decision::Allow
+                }
+            }
             Some(c) => command(c, folder),
             None => ask("runs a command it doesn't show"),
         },
@@ -177,6 +201,19 @@ fn is_sensitive(path: &str) -> bool {
         .any(|c| c.as_os_str() == ".git")
         || is_secret(path)
         || defines_commands(path)
+        || hides_changes(path)
+}
+
+/// Files that decide what git shows as changed: editing one could hide a
+/// changed test from the check before a build or test.
+fn hides_changes(path: &str) -> bool {
+    Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| {
+            [".gitignore", ".gitmodules", ".gitattributes"]
+                .contains(&n.to_ascii_lowercase().as_str())
+        })
 }
 
 /// Files that decide what an allowed command runs. Editing one and then
@@ -241,6 +278,48 @@ fn is_secret(path: &str) -> bool {
         || name.ends_with(".key")
         || name.ends_with(".p12")
         || name.ends_with(".pfx")
+}
+
+/// Whether an allowed command builds or tests, so runs the project's code
+/// (build scripts, macros, tests). Formatting doesn't.
+fn runs_project_code(cmd: &str) -> bool {
+    let words: Vec<&str> = cmd.split_whitespace().collect();
+    let program = words.first().map(|p| {
+        Path::new(p)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(p)
+    });
+    let sub = words.get(1).copied().unwrap_or("");
+    match program {
+        Some("cargo" | "go") => sub != "fmt",
+        Some("npm" | "pnpm" | "yarn" | "pytest" | "python" | "python3" | "dotnet" | "make") => true,
+        _ => false,
+    }
+}
+
+/// Whether git shows any uncommitted change in `folder` (or can't tell).
+fn has_changes(folder: &Path) -> bool {
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(folder)
+        .args(["status", "--porcelain", "--untracked-files=all"])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map(|o| !o.status.success() || !o.stdout.is_empty())
+        .unwrap_or(true)
+}
+
+/// Whether git ignores `path` in `folder` (false when it isn't a repository).
+fn git_ignores(path: &str, folder: &Path) -> bool {
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(folder)
+        .args(["check-ignore", "-q", "--"])
+        .arg(resolve(path, folder))
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 /// Programs that only read, whatever their arguments (paths still have to
@@ -362,15 +441,10 @@ mod tests {
 
     const DIR: &str = "/home/u/code/site";
 
+    /// Which commands are allowed at all (the uncommitted-changes rule has
+    /// its own test).
     fn run(cmd: &str) -> Decision {
-        decide(
-            &Step {
-                kind: Kind::Execute,
-                command: Some(cmd.into()),
-                paths: vec![],
-            },
-            Path::new(DIR),
-        )
+        command(cmd, Path::new(DIR))
     }
 
     fn touch(kind: Kind, path: &str) -> Decision {
@@ -544,6 +618,73 @@ mod tests {
     }
 
     #[test]
+    fn a_build_or_test_waits_while_there_are_uncommitted_changes() {
+        let dir = std::env::temp_dir().join(format!("friday-policy-git-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            assert!(std::process::Command::new("git")
+                .arg("-C")
+                .arg(&dir)
+                .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success());
+        };
+        let step = |kind: Kind, command: Option<&str>, path: &str| {
+            decide(
+                &Step {
+                    kind,
+                    command: command.map(str::to_string),
+                    paths: [path]
+                        .iter()
+                        .filter(|p| !p.is_empty())
+                        .map(|p| p.to_string())
+                        .collect(),
+                },
+                &dir,
+            )
+        };
+        let test = || step(Kind::Execute, Some("cargo test"), "");
+        // Not a repository: FRIDAY can't tell what changed.
+        assert!(matches!(test(), Decision::Ask(_)));
+        git(&["init", "-q"]);
+        std::fs::write(dir.join(".gitignore"), "target/\n").unwrap();
+        std::fs::write(dir.join("lib.rs"), "").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-qm", "x"]);
+        assert_eq!(test(), Decision::Allow);
+        assert_eq!(step(Kind::Execute, Some("git status"), ""), Decision::Allow);
+        // The agent changed a test: running it is the person's call.
+        std::fs::write(dir.join("lib.rs"), "#[test] fn t() {}").unwrap();
+        assert!(matches!(test(), Decision::Ask(_)));
+        assert_eq!(step(Kind::Execute, Some("cargo fmt"), ""), Decision::Allow);
+        assert_eq!(step(Kind::Execute, Some("git diff"), ""), Decision::Allow);
+        // Ignored files never show as changes, so editing one asks.
+        assert_eq!(step(Kind::Edit, None, "src/new.rs"), Decision::Allow);
+        assert!(matches!(
+            step(Kind::Edit, None, "target/debug/x.rs"),
+            Decision::Ask(_)
+        ));
+        assert!(matches!(
+            step(Kind::Execute, Some("2>&1 cargo test"), ""),
+            Decision::Ask(_)
+        ));
+        // Nor can the agent hide its change from git first.
+        assert!(matches!(
+            step(Kind::Edit, None, ".gitignore"),
+            Decision::Ask(_)
+        ));
+        assert!(matches!(
+            step(Kind::Edit, None, "sub/.gitattributes"),
+            Decision::Ask(_)
+        ));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn claude_tools_map_to_kinds() {
         assert_eq!(Kind::from_claude_tool("Bash"), Kind::Execute);
         assert_eq!(Kind::from_claude_tool("Write"), Kind::Edit);
@@ -575,16 +716,7 @@ mod windows_tests {
         assert_eq!(edit(r"C:\code\site\README.md"), Decision::Allow);
         assert!(matches!(edit(r"C:\Users\u\notes.txt"), Decision::Ask(_)));
         assert!(matches!(edit(r"..\other\x"), Decision::Ask(_)));
-        let run = |c: &str| {
-            decide(
-                &Step {
-                    kind: Kind::Execute,
-                    command: Some(c.into()),
-                    paths: vec![],
-                },
-                folder,
-            )
-        };
+        let run = |c: &str| command(c, folder);
         assert_eq!(run("cargo test"), Decision::Allow);
         assert!(matches!(run(r"type C:\Windows\win.ini"), Decision::Ask(_)));
         assert!(matches!(run(r"cat C:\Windows\win.ini"), Decision::Ask(_)));
