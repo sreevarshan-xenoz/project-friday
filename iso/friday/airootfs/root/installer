@@ -122,10 +122,14 @@ fi
 # the USB stick this live system runs from.
 refuse() { echo "$1 Nothing was erased."; { friday_err "$1 Nothing was erased."; } >&3 2>&1; exit 1; }
 [[ -n "$TARGET_DISK" ]] || refuse "No disk was chosen (TARGET_DISK)."
+# A /dev/disk/by-id link becomes the device it names (/dev/sda), whose
+# partitions the steps below name by appending 1 and 2 (or p1, p2).
+TARGET_DISK=$(readlink -f -- "$TARGET_DISK" || echo "$TARGET_DISK")
+ERASE_DISK=$(readlink -f -- "$ERASE_DISK" || true)
 [[ "$ERASE_DISK" == "$TARGET_DISK" ]] || refuse "Erasing $TARGET_DISK wasn't confirmed (ERASE_DISK must name it too)."
 [[ -b "$TARGET_DISK" && "$(lsblk -n -d -o TYPE "$TARGET_DISK" 2>/dev/null)" == disk ]] \
   || refuse "$TARGET_DISK isn't a whole disk."
-[[ "$(readlink -f "$TARGET_DISK")" != "$(friday_live_disk)" ]] \
+[[ "$TARGET_DISK" != "$(friday_live_disk)" ]] \
   || refuse "$TARGET_DISK is the USB stick FRIDAY OS is running from."
 [[ -n "$PASSWORD" ]] || refuse "No password was set (PASSWORD)."
 echo "Target: $TARGET_DISK, $(lsblk -n -d -o SIZE,MODEL "$TARGET_DISK" 2>/dev/null | xargs)"
