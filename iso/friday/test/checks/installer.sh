@@ -169,6 +169,26 @@ if [[ "$guarded" == guarded ]]; then pass "SDDM autologin is only written when A
 else fail "installer writes SDDM autologin unconditionally"; fi
 expect "ESP mounted root-only (fmask/dmask 0077)" grep -q 'mount -o fmask=0077,dmask=0077 "$BOOT_PART" /mnt/boot' "$ROOT/installer"
 expect "AUTOLOGIN defaults to false" grep -q 'AUTOLOGIN="${AUTOLOGIN:-false}"' "$ROOT/installer"
+expect "root is locked unless it's the VM debug install" grep -q 'arch-chroot /mnt passwd -l root' "$ROOT/installer"
+if grep -q '^echo "root:\$PASSWORD" | arch-chroot /mnt chpasswd' "$ROOT/installer"; then
+  fail "root gets the person's password unconditionally"
+else pass "root doesn't get the person's password"; fi
+
+echo "disk safety: the installer refuses before erasing anything"
+if need gum; then
+  F="$WORK/installer-not-a-disk"; : >"$F"
+  refused() { # refused <expected words> <env...>: the installer stops, says why and erases nothing
+    local want=$1 out; shift
+    out=$(env -i PATH="$PATH" HOME="$HOME" TERM=dumb FRIDAY_FAST=1 FRIDAY_ASSUME_UEFI=1 PASSWORD=x "$@" \
+      bash "$ROOT/installer" 2>&1 </dev/null) && return 1
+    grep -q "Nothing was erased" <<<"$out" && grep -q "$want" <<<"$out"
+  }
+  refused "No disk was chosen" && pass "no TARGET_DISK: refused" || fail "the installer runs with no TARGET_DISK"
+  refused "wasn't confirmed" TARGET_DISK="$F" && pass "TARGET_DISK without ERASE_DISK: refused" \
+    || fail "the installer erases a disk nobody confirmed"
+  refused "isn't a whole disk" TARGET_DISK="$F" ERASE_DISK="$F" && pass "a target that isn't a whole disk: refused" \
+    || fail "the installer accepts a target that isn't a whole disk"
+fi
 
 echo "configurator flow (pty)"
 if need gum python3; then
@@ -183,7 +203,7 @@ EOF
   printf '#!/bin/bash\nexit 0\n' >"$W/stub/curl"   # pretend we're online
   cat >"$W/stub/installer" <<'EOF'
 #!/bin/bash
-echo "INSTALLER-ENV disk=$TARGET_DISK host=$FRIDAY_HOSTNAME user=$USERNAME pw=$PASSWORD tz=$TIMEZONE kb=$KEYBOARD ai=[$FRIDAY_AI_PROVIDER] autologin=$AUTOLOGIN encrypt=$ENCRYPT interactive=$FRIDAY_INTERACTIVE session=$SESSION style=$SHELL_STYLE desktop=$FEAT_DESKTOP tasks=$FEAT_TASKS appname=$FEAT_APPNAME screentext=$FEAT_SCREENTEXT"
+echo "INSTALLER-ENV disk=$TARGET_DISK erase=$ERASE_DISK host=$FRIDAY_HOSTNAME user=$USERNAME pw=$PASSWORD tz=$TIMEZONE kb=$KEYBOARD ai=[$FRIDAY_AI_PROVIDER] autologin=$AUTOLOGIN encrypt=$ENCRYPT interactive=$FRIDAY_INTERACTIVE session=$SESSION style=$SHELL_STYLE desktop=$FEAT_DESKTOP tasks=$FEAT_TASKS appname=$FEAT_APPNAME screentext=$FEAT_SCREENTEXT"
 EOF
   chmod +x "$W"/stub/* "$W/configurator"
   if python3 "$CHECKS/installer_flow.py" "$W/configurator" "$W/stub"; then :; else FAILS=$((FAILS + 1)); fi

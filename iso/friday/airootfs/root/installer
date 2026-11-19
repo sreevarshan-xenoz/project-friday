@@ -5,13 +5,16 @@ set -euo pipefail
 OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
 export PATH="$OMARCHY_PATH/bin:$PATH"
 
-# Configuration parameters with resilient defaults
-TARGET_DISK="${TARGET_DISK:-/dev/sda}"
+# Configuration. The disk and password have no defaults: the configurator
+# (or an unattended run) must name them, and ERASE_DISK must repeat the disk
+# as the go-ahead to erase it.
+TARGET_DISK="${TARGET_DISK:-}"
+ERASE_DISK="${ERASE_DISK:-}"
 KEYBOARD="${KEYBOARD:-us}"
 # Not $HOSTNAME: bash sets that to the live system's name ("archiso").
 HOSTNAME="${FRIDAY_HOSTNAME:-friday}"
 USERNAME="${USERNAME:-friday}"
-PASSWORD="${PASSWORD:-friday}"
+PASSWORD="${PASSWORD:-}"
 TIMEZONE="${TIMEZONE:-UTC}"
 THEME="${THEME:-FRIDAY Shell (Ember, made for FRIDAY)}"
 SHELL_STYLE="${SHELL_STYLE:-Ember (bar flush with the top edge)}"
@@ -45,7 +48,8 @@ phase_msg() {
   {
     friday_header "INSTALLING"
     friday_rail "$1" "${INSTALL_STEPS[@]}"
-    friday_note "  $USERNAME@$HOSTNAME  ·  $TARGET_DISK  ·  elapsed $(elapsed)"
+    # The time runs on the live line below, not frozen here.
+    friday_note "  $USERNAME@$HOSTNAME  ·  $TARGET_DISK"
     echo
     gum style --margin "0 0 0 $FRIDAY_INDENT" --foreground "$FRIDAY_SUCCESS" --bold "Step $1 of 6 · $2"
     echo
@@ -113,6 +117,18 @@ if [[ ! -d /sys/firmware/efi && -z "${FRIDAY_ASSUME_UEFI:-}" ]]; then
   { friday_err "This computer started in legacy BIOS mode; FRIDAY OS needs UEFI. Nothing was erased."; } >&3 2>&1
   exit 1
 fi
+
+# Nothing is erased unless the target is a whole disk, named twice, and not
+# the USB stick this live system runs from.
+refuse() { echo "$1 Nothing was erased."; { friday_err "$1 Nothing was erased."; } >&3 2>&1; exit 1; }
+[[ -n "$TARGET_DISK" ]] || refuse "No disk was chosen (TARGET_DISK)."
+[[ "$ERASE_DISK" == "$TARGET_DISK" ]] || refuse "Erasing $TARGET_DISK wasn't confirmed (ERASE_DISK must name it too)."
+[[ -b "$TARGET_DISK" && "$(lsblk -n -d -o TYPE "$TARGET_DISK" 2>/dev/null)" == disk ]] \
+  || refuse "$TARGET_DISK isn't a whole disk."
+[[ "$(readlink -f "$TARGET_DISK")" != "$(friday_live_disk)" ]] \
+  || refuse "$TARGET_DISK is the USB stick FRIDAY OS is running from."
+[[ -n "$PASSWORD" ]] || refuse "No password was set (PASSWORD)."
+echo "Target: $TARGET_DISK, $(lsblk -n -d -o SIZE,MODEL "$TARGET_DISK" 2>/dev/null | xargs)"
 
 phase_msg 1 "Preparing $TARGET_DISK"
 if mountpoint -q /mnt; then fuser -km /mnt 2>/dev/null || true; fi
@@ -356,7 +372,13 @@ else
   USER_HOME="/root"
 fi
 echo "$USERNAME:$PASSWORD" | arch-chroot /mnt chpasswd
-echo "root:$PASSWORD" | arch-chroot /mnt chpasswd
+# Root stays locked: the person administers with sudo (wheel). Only the VM
+# debug access below gets a root password, for SSH into a test install.
+if [ "$FRIDAY_DEBUG_ACCESS" = "true" ] || [ "$USERNAME" = "root" ]; then
+  echo "root:$PASSWORD" | arch-chroot /mnt chpasswd
+else
+  arch-chroot /mnt passwd -l root
+fi
 mkdir -p /mnt/etc/sudoers.d
 echo "%wheel ALL=(ALL:ALL) ALL" > /mnt/etc/sudoers.d/wheel
 chmod 440 /mnt/etc/sudoers.d/wheel
@@ -633,7 +655,9 @@ gum style --foreground "$FRIDAY_SUCCESS" --border "$FRIDAY_BORDER_STYLE" --borde
   "in $(elapsed)." \
   "" \
   "Sign in as $USERNAME on $HOSTNAME." \
-  "Press Super+Y any time to ask me something."
+  "Press Super+Y any time to ask me something." \
+  "" \
+  "Remove the USB stick before you restart."
 echo
 friday_say "All done, $USERNAME. Remove the USB stick and I'll see you on the other side."
 echo
