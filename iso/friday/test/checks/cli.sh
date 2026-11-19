@@ -225,6 +225,8 @@ contains "agents show reports who approved what" "$(bash "$F" agents show r1a2b3
 bash "$F" agents deny r1a2b3 >/dev/null
 [[ "$(cat "$FD/agents/r1a2b3.answer")" == deny ]] && pass "agents deny answers the run" || fail "agents deny didn't write the answer"
 bash "$F" agents allow 'x; rm' >/dev/null 2>&1 && fail "agents allow accepted a bad id" || pass "agents allow refuses a bad id"
+bash "$F" agents reply r1a2b3 use the MIT license >/dev/null
+[[ "$(cat "$FD/agents/r1a2b3.answer")" == "reply:use the MIT license" ]] && pass "agents reply passes the answer on" || fail "agents reply didn't write the answer"
 rm -rf "$FD/agents"
 if bash "$F" actions oops >/dev/null 2>&1; then fail "actions took a non-number"; else pass "actions refuses a non-number"; fi
 contains "forget actions reports counts" "$(bash "$F" forget actions --yes)" "Deleted 2 entries from the log of desktop actions"

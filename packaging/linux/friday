@@ -36,7 +36,7 @@ Autonomous Agent & Cognitive Loop:
   friday cancel                    Cancel the goal FRIDAY is working on
   friday tasks [pause|resume|delete <id>|status|on|off]
                                    Standing tasks ("every morning ..."): list, pause, delete, turn all off
-  friday agents [show <id>|allow <id>|deny <id>|status|on|off]
+  friday agents [show|allow|deny|reply <id>|status|on|off]
                                    Coding agents FRIDAY runs for you (opencode, agy): follow, answer, turn off
   friday desktop [status|on|off]   Let FRIDAY control your windows, apps, volume and music
   friday keys update               Add FRIDAY keys from a newer version to your key file (FRIDAY OS)
@@ -1519,7 +1519,8 @@ friday_agents() {
       done
       if grep -ls '"waiting_for_you"' $runs >/dev/null 2>&1; then
         echo
-        echo "Answer with: friday agents allow <id>   or   friday agents deny <id>"
+        echo "Answer a step with: friday agents allow <id>   or   friday agents deny <id>"
+        echo "Answer a question with: friday agents reply <id> \"your answer\""
       fi
       ;;
     show)
@@ -1535,7 +1536,7 @@ friday_agents() {
         jq -r 'if .event == "approved" then "  approved by \(.by): \(.step)"
           elif .event == "rejected" then "  rejected: \(.step) (\(.why // ""))"
           elif .event == "asked_you" then "  asked you: \(.step)"
-          elif .event == "answered" then "  FRIDAY answered the agent: \(.text)"
+          elif .event == "answered" then "  \(if .by == "you" then "You" else "FRIDAY" end) answered the agent: \(.text)"
           elif .event == "step_done" then "  done: \(.step)"
           elif .event == "step_failed" then "  failed: \(.step)"
           else empty end' "$d/$id.jsonl" 2>/dev/null | tail -n 40
@@ -1549,12 +1550,21 @@ friday_agents() {
       printf '%s' "$cmd" >"$d/$id.answer"
       echo "Told run $id: $cmd."
       ;;
+    reply)
+      local text="${*:3}"
+      [[ "$id" =~ ^r[0-9a-f]+$ ]] && [ -f "$d/$id.json" ] && [ -n "$text" ] \
+        || { echo "usage: friday agents reply <id> \"your answer\"   (ids are in: friday agents)" >&2; return 2; }
+      jq -e '.status == "waiting_for_you"' "$d/$id.json" >/dev/null 2>&1 \
+        || { echo "Run $id isn't waiting for you." >&2; return 1; }
+      printf 'reply:%s' "$text" >"$d/$id.answer"
+      echo "Told run $id."
+      ;;
     status|on|off)
       friday_switch FRIDAY_AGENTS "Coding agents" agents \
         "FRIDAY can run opencode or agy for you and answer their routine approvals; risky steps wait for you" \
         "FRIDAY won't start coding agents" "$cmd" ;;
     *)
-      echo "usage: friday agents [list|show <id>|allow <id>|deny <id>|status|on|off]" >&2
+      echo "usage: friday agents [list|show <id>|allow <id>|deny <id>|reply <id> \"text\"|status|on|off]" >&2
       return 2
       ;;
   esac

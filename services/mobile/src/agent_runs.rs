@@ -31,6 +31,34 @@ const MODEL_TIMEOUT: Duration = Duration::from_secs(45);
 const PERSON_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// How often FRIDAY may answer the agent's questions in one run.
 const MAX_REPLIES: usize = 3;
+/// How long an agent may go silent before the run is stopped.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+
+/// The agent's output, one line at a time, read in the background so it
+/// never blocks on a full pipe while a step waits for the person.
+pub type Lines = tokio::sync::mpsc::UnboundedReceiver<String>;
+
+/// Starts reading `out` line by line into a [`Lines`].
+pub fn read_lines<R: tokio::io::AsyncRead + Send + Unpin + 'static>(out: R) -> Lines {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(out).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    rx
+}
+
+/// The person's answer to a step or question that waits for them.
+#[derive(Debug, PartialEq, Eq)]
+enum Answer {
+    Allow,
+    Deny,
+    Reply(String),
+}
 
 /// Whether FRIDAY may run agents: on unless the person turned it off
 /// (`FRIDAY_AGENTS=0`).
@@ -169,32 +197,39 @@ impl Recorder {
         }
     }
 
-    /// The person's answer to the waiting step, if they gave one.
-    fn take_answer(&self) -> Option<bool> {
+    /// The person's answer to what waits for them, if they gave one.
+    fn take_answer(&self) -> Option<Answer> {
         let path = self.file("answer");
         let answer = std::fs::read_to_string(&path).ok()?;
         let _ = std::fs::remove_file(path);
         match answer.trim() {
-            "allow" => Some(true),
-            "deny" => Some(false),
-            _ => None,
+            "allow" => Some(Answer::Allow),
+            "deny" => Some(Answer::Deny),
+            other => other
+                .strip_prefix("reply:")
+                .map(|t| Answer::Reply(t.trim().chars().take(4000).collect())),
         }
     }
 }
 
 /// Writes the person's answer to a waiting step (`friday agents allow <id>`).
 pub fn answer(dir: &Path, id: &str, allow: bool) -> Result<(), String> {
+    write_answer(dir, id, if allow { "allow" } else { "deny" })
+}
+
+/// Writes the person's reply to the agent's question (`friday agents reply <id> "…"`).
+pub fn reply(dir: &Path, id: &str, text: &str) -> Result<(), String> {
+    write_answer(dir, id, &format!("reply:{text}"))
+}
+
+fn write_answer(dir: &Path, id: &str, answer: &str) -> Result<(), String> {
     if !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err("that isn't a run id".into());
     }
     if !dir.join(format!("{id}.json")).is_file() {
         return Err(format!("no run {id}"));
     }
-    std::fs::write(
-        dir.join(format!("{id}.answer")),
-        if allow { "allow" } else { "deny" },
-    )
-    .map_err(|e| e.to_string())
+    std::fs::write(dir.join(format!("{id}.answer")), answer).map_err(|e| e.to_string())
 }
 
 /// Tells the person something about a run, best effort.
@@ -255,6 +290,20 @@ pub fn step_from_acp(tool_call: &Value) -> Step {
         command,
         paths,
     }
+}
+
+/// The id of the option of `kind` that holds for this step only. Never one
+/// that lasts beyond it, whatever its kind says.
+fn one_time(options: &[Value], kind: &str) -> Option<String> {
+    options
+        .iter()
+        .filter(|o| {
+            let words = format!("{} {}", o["optionId"], o["name"]).to_lowercase();
+            !words.contains("always")
+        })
+        .find(|o| o["kind"] == kind)
+        .and_then(|o| o["optionId"].as_str())
+        .map(str::to_string)
 }
 
 /// A short line for a step: its title, else its command.
@@ -326,16 +375,11 @@ impl<'a, W: AsyncWrite + Unpin> AcpRun<'a, W> {
     }
 
     /// Reads until the reply to `id`, handling what the agent sends meanwhile.
-    async fn wait<R: tokio::io::AsyncBufRead + Unpin>(
-        &mut self,
-        lines: &mut tokio::io::Lines<R>,
-        id: u64,
-    ) -> Result<Value, String> {
+    async fn wait(&mut self, lines: &mut Lines, id: u64) -> Result<Value, String> {
         loop {
-            let line = lines
-                .next_line()
+            let line = tokio::time::timeout(IDLE_TIMEOUT, lines.recv())
                 .await
-                .map_err(|e| e.to_string())?
+                .map_err(|_| "the agent went quiet for 20 minutes".to_string())?
                 .ok_or("the agent quit")?;
             let Ok(msg) = serde_json::from_str::<Value>(&line) else {
                 continue;
@@ -354,7 +398,7 @@ impl<'a, W: AsyncWrite + Unpin> AcpRun<'a, W> {
                         .await?;
                 }
                 Some(_) => {}
-                None if msg["id"].as_u64() == Some(id) => {
+                None if msg["id"] == json!(id) => {
                     if let Some(err) = msg.get("error") {
                         return Err(err["message"]
                             .as_str()
@@ -402,14 +446,10 @@ impl<'a, W: AsyncWrite + Unpin> AcpRun<'a, W> {
     async fn permission(&mut self, params: &Value) -> Value {
         let call = &params["toolCall"];
         let options = params["options"].as_array().cloned().unwrap_or_default();
-        let pick = |kind: &str| {
-            options
-                .iter()
-                .find(|o| o["kind"] == kind)
-                .and_then(|o| o["optionId"].as_str())
-                .map(str::to_string)
-        };
-        let (allow, reject) = (pick("allow_once"), pick("reject_once"));
+        let (allow, reject) = (
+            one_time(&options, "allow_once"),
+            one_time(&options, "reject_once"),
+        );
         let selected = |id: Option<String>| match id {
             Some(id) => json!({"outcome": {"outcome": "selected", "optionId": id}}),
             None => json!({"outcome": {"outcome": "cancelled"}}),
@@ -459,14 +499,19 @@ impl<'a, W: AsyncWrite + Unpin> AcpRun<'a, W> {
             &format!("{} wants your OK", self.rec.run.agent.name()),
             &format!("It {why}:\n{what}\nfriday agents allow {id}  ·  friday agents deny {id}"),
         );
+        matches!(self.wait_for_person(what).await, Some(Answer::Allow))
+    }
+
+    /// Waits for the person's answer, up to [`PERSON_TIMEOUT`].
+    async fn wait_for_person(&mut self, what: &str) -> Option<Answer> {
         let start = tokio::time::Instant::now();
         let answer = loop {
             if let Some(a) = self.rec.take_answer() {
-                break a;
+                break Some(a);
             }
             if start.elapsed() >= PERSON_TIMEOUT {
                 self.rec.log(json!({"event": "no_answer", "step": what}));
-                break false;
+                break None;
             }
             tokio::time::sleep(self.poll).await;
         };
@@ -474,6 +519,32 @@ impl<'a, W: AsyncWrite + Unpin> AcpRun<'a, W> {
         self.rec.run.pending = None;
         let _ = self.rec.save();
         answer
+    }
+
+    /// Passes the agent's question to the person and waits for their reply.
+    async fn ask_person_question(&mut self, question: &str) -> Option<String> {
+        let id = self.rec.run.id.clone();
+        let short: String = question.chars().take(300).collect();
+        self.rec.run.status = Status::WaitingForYou;
+        self.rec.run.pending = Some(Pending {
+            step: short.clone(),
+            why: "has a question for you".into(),
+        });
+        let _ = self.rec.save();
+        self.rec
+            .log(json!({"event": "asked_you", "step": short, "why": "a question"}));
+        notify(
+            &format!("{} has a question for you", self.rec.run.agent.name()),
+            &format!("{short}\nfriday agents reply {id} \"your answer\""),
+        );
+        match self.wait_for_person(&short).await {
+            Some(Answer::Reply(text)) if !text.is_empty() => {
+                self.rec
+                    .log(json!({"event": "answered", "by": "you", "text": text}));
+                Some(text)
+            }
+            _ => None,
+        }
     }
 
     /// FRIDAY's answer to the agent's question, or `None` when it is the
@@ -495,10 +566,7 @@ impl<'a, W: AsyncWrite + Unpin> AcpRun<'a, W> {
     }
 
     /// The whole run: start a session, give the task, follow it to the end.
-    pub async fn drive<R: tokio::io::AsyncBufRead + Unpin>(
-        &mut self,
-        lines: &mut tokio::io::Lines<R>,
-    ) -> Result<Outcome, String> {
+    pub async fn drive(&mut self, lines: &mut Lines) -> Result<Outcome, String> {
         let init = self
             .request(
                 "initialize",
@@ -550,7 +618,7 @@ impl<'a, W: AsyncWrite + Unpin> AcpRun<'a, W> {
                     failed: reason != "max_tokens" && reason != "max_turn_requests",
                 });
             }
-            if !said.trim_end().ends_with('?') || replies >= MAX_REPLIES {
+            if !said.trim_end().ends_with('?') {
                 let summary = match self.refused.take() {
                     Some(step) if said.is_empty() => {
                         format!("Stopped: it wasn't allowed to run {step}")
@@ -562,23 +630,23 @@ impl<'a, W: AsyncWrite + Unpin> AcpRun<'a, W> {
                     failed: false,
                 });
             }
-            match self.reply_to(&said).await {
-                Some(r) => {
-                    replies += 1;
-                    self.rec
-                        .log(json!({"event": "answered", "by": "friday", "text": r}));
-                    text = r;
-                }
-                None => {
-                    notify(
-                        &format!("{} has a question for you", self.rec.run.agent.name()),
-                        &said.chars().take(300).collect::<String>(),
-                    );
-                    return Ok(Outcome {
-                        summary: said,
-                        failed: false,
-                    });
-                }
+            let by_friday = if replies < MAX_REPLIES {
+                self.reply_to(&said).await
+            } else {
+                None
+            };
+            if let Some(r) = by_friday {
+                replies += 1;
+                self.rec
+                    .log(json!({"event": "answered", "by": "friday", "text": r}));
+                text = r;
+            } else if let Some(r) = self.ask_person_question(&said).await {
+                text = r;
+            } else {
+                return Ok(Outcome {
+                    summary: said,
+                    failed: false,
+                });
             }
         }
     }
@@ -623,7 +691,7 @@ pub async fn run_agent(
         .map_err(|e| format!("couldn't start {}: {e}", rec.run.agent.name()))?;
     let stdin = child.stdin.take().ok_or("no stdin")?;
     let stdout = child.stdout.take().ok_or("no stdout")?;
-    let mut lines = BufReader::new(stdout).lines();
+    let mut lines = read_lines(stdout);
     let outcome = AcpRun::new(&mut rec, stdin, model).drive(&mut lines).await;
     let _ = child.kill().await;
     finish(&mut rec, outcome);
@@ -1035,7 +1103,7 @@ mod tests {
             }
             panic!("the push never waited for the person");
         });
-        let mut lines = BufReader::new(friday_in).lines();
+        let mut lines = read_lines(friday_in);
         let mut acp = AcpRun::new(&mut rec, friday_out, None);
         acp.poll = Duration::from_millis(10);
         let outcome = acp.drive(&mut lines).await.unwrap();
@@ -1067,7 +1135,7 @@ mod tests {
             vec![],
             "What should the project be called?",
         ));
-        let mut lines = BufReader::new(friday_in).lines();
+        let mut lines = read_lines(friday_in);
         let outcome = AcpRun::new(&mut rec, friday_out, Some(Arc::new(Model("Call it Site."))))
             .drive(&mut lines)
             .await
@@ -1078,7 +1146,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_question_only_the_person_can_answer_ends_the_run_with_it() {
+    async fn a_question_only_the_person_can_answer_waits_for_their_reply() {
         let dir = TempDir(
             std::env::temp_dir().join(format!("friday-agents-person-{}", std::process::id())),
         );
@@ -1092,15 +1160,42 @@ mod tests {
             vec![],
             "Which license do you want?",
         ));
-        let mut lines = BufReader::new(friday_in).lines();
-        let outcome = AcpRun::new(&mut rec, friday_out, Some(Arc::new(Model("ASK_PERSON"))))
-            .drive(&mut lines)
-            .await
-            .unwrap();
-        drop(lines);
+        // The person replies once the question waits for them.
+        let watch = dir.path().to_path_buf();
+        let person = tokio::spawn(async move {
+            for _ in 0..200 {
+                let run: Run =
+                    serde_json::from_slice(&std::fs::read(watch.join("rtest1.json")).unwrap())
+                        .unwrap();
+                if run.status == Status::WaitingForYou {
+                    assert_eq!(run.pending.unwrap().step, "Which license do you want?");
+                    reply(&watch, "rtest1", "MIT").unwrap();
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            panic!("the question never waited for the person");
+        });
+        let mut lines = read_lines(friday_in);
+        let mut acp = AcpRun::new(&mut rec, friday_out, Some(Arc::new(Model("ASK_PERSON"))));
+        acp.poll = Duration::from_millis(10);
+        let outcome = acp.drive(&mut lines).await.unwrap();
+        person.await.unwrap();
         let answers = agent.await.unwrap();
-        assert_eq!(answers.len(), 1);
-        assert_eq!(outcome.summary, "Which license do you want?");
+        assert_eq!(answers[1]["prompt"], "MIT");
+        assert_eq!(outcome.summary, "Done.");
+    }
+
+    #[test]
+    fn friday_never_picks_an_option_that_lasts() {
+        let options = |v: Value| v.as_array().unwrap().clone();
+        let honest = options(json!([
+            {"optionId": "once", "kind": "allow_once", "name": "Allow once"},
+            {"optionId": "always", "kind": "allow_always", "name": "Always allow"}]));
+        assert_eq!(one_time(&honest, "allow_once").as_deref(), Some("once"));
+        let mislabelled = options(json!([
+            {"optionId": "always", "kind": "allow_once", "name": "Always allow"}]));
+        assert_eq!(one_time(&mislabelled, "allow_once"), None);
     }
 
     async fn ask_tool(reply: &'static str, dir: &Path) -> friday_goal_execution::ToolResult {
