@@ -207,6 +207,8 @@ Anything else waits for you with a notification: deleting or moving files, `git 
 
 FRIDAY does the same in Claude Code sessions you start yourself. Before Claude Code shows you a permission prompt, it asks FRIDAY, which approves the step if the same rules allow it, with the session's folder as the project. Anything else shows up in your terminal as usual, and FRIDAY sends a notification so you know it's waiting. Sessions in your home folder, or near the top of the disk, get nothing approved. FRIDAY adds this to your Claude Code settings (`~/.claude/settings.json`) the first time it runs, and leaves the rest of the file as it was. `friday agents hooks off` takes it out again and `friday agents hooks on` puts it back. It never sees sessions that don't ask for permission (bypass mode).
 
+On Windows, a step or question that waits for you opens a small FRIDAY window with Allow and Deny (or a box for your reply), and a finished run shows a notification from the tray. Settings → Agents lists recent runs and has the switches for agent runs and for approvals in your own Claude Code sessions.
+
 `friday agents` lists the runs and `friday agents show <id>` reports one: what you asked, what the agent said, and every step approved by FRIDAY, approved by you, or refused. `friday agents off` stops FRIDAY from starting agents (`FRIDAY_AGENTS=0`).
 
 ## Your phone (Pocketdesk)
