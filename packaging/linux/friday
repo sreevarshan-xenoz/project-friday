@@ -36,6 +36,8 @@ Autonomous Agent & Cognitive Loop:
   friday cancel                    Cancel the goal FRIDAY is working on
   friday tasks [pause|resume|delete <id>|status|on|off]
                                    Standing tasks ("every morning ..."): list, pause, delete, turn all off
+  friday agents [show <id>|allow <id>|deny <id>|status|on|off]
+                                   Coding agents FRIDAY runs for you (opencode, agy): follow, answer, turn off
   friday desktop [status|on|off]   Let FRIDAY control your windows, apps, volume and music
   friday keys update               Add FRIDAY keys from a newer version to your key file (FRIDAY OS)
   friday status | system-info      Inspect daemon state, memory, and telemetry
@@ -1494,6 +1496,70 @@ friday_tasks() {
   esac
 }
 
+# Coding agents FRIDAY runs for you (opencode, agy): what each run did, and
+# your answer to a step that waits for you. Started by asking ("have opencode
+# add a README to ~/code/site").
+friday_agents() {
+  local d="${XDG_STATE_HOME:-$HOME/.local/state}/friday/agents"
+  local cmd="${1:-list}" id="${2:-}"
+  case "$cmd" in
+    list)
+      local runs
+      runs=$(ls -t "$d"/r*.json 2>/dev/null | head -n 10 || true)
+      if [ -z "$runs" ]; then
+        echo "No agent runs yet."
+        echo "Try: friday ask \"have opencode add a README to ~/code/site\""
+        return 0
+      fi
+      local f
+      for f in $runs; do
+        jq -r '[.id, .agent, .folder,
+          (if .status == "waiting_for_you" then "WAITING FOR YOU: " + .pending.step + " (" + .pending.why + ")"
+           else .status end)] | join("  ")' "$f" 2>/dev/null
+      done
+      if grep -ls '"waiting_for_you"' $runs >/dev/null 2>&1; then
+        echo
+        echo "Answer with: friday agents allow <id>   or   friday agents deny <id>"
+      fi
+      ;;
+    show)
+      [[ "$id" =~ ^r[0-9a-f]+$ ]] && [ -f "$d/$id.json" ] \
+        || { echo "usage: friday agents show <id>   (ids are in: friday agents)" >&2; return 2; }
+      jq -r '"\(.agent) in \(.folder): \(.status)",
+        "You asked: \(.request)",
+        "FRIDAY approved \(.approved_by_friday) step(s), you approved \(.approved_by_you), \(.rejected) rejected.",
+        "", (.summary // "")' "$d/$id.json"
+      if [ -s "$d/$id.jsonl" ]; then
+        echo
+        echo "What happened:"
+        jq -r 'if .event == "approved" then "  approved by \(.by): \(.step)"
+          elif .event == "rejected" then "  rejected: \(.step) (\(.why // ""))"
+          elif .event == "asked_you" then "  asked you: \(.step)"
+          elif .event == "answered" then "  FRIDAY answered the agent: \(.text)"
+          elif .event == "step_done" then "  done: \(.step)"
+          elif .event == "step_failed" then "  failed: \(.step)"
+          else empty end' "$d/$id.jsonl" 2>/dev/null | tail -n 40
+      fi
+      ;;
+    allow|deny)
+      [[ "$id" =~ ^r[0-9a-f]+$ ]] && [ -f "$d/$id.json" ] \
+        || { echo "usage: friday agents $cmd <id>   (ids are in: friday agents)" >&2; return 2; }
+      jq -e '.status == "waiting_for_you"' "$d/$id.json" >/dev/null 2>&1 \
+        || { echo "Run $id isn't waiting for you." >&2; return 1; }
+      printf '%s' "$cmd" >"$d/$id.answer"
+      echo "Told run $id: $cmd."
+      ;;
+    status|on|off)
+      friday_switch FRIDAY_AGENTS "Coding agents" agents \
+        "FRIDAY can run opencode or agy for you and answer their routine approvals; risky steps wait for you" \
+        "FRIDAY won't start coding agents" "$cmd" ;;
+    *)
+      echo "usage: friday agents [list|show <id>|allow <id>|deny <id>|status|on|off]" >&2
+      return 2
+      ;;
+  esac
+}
+
 friday_sent() {
   local n="${1:-20}"
   local state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
@@ -2176,6 +2242,10 @@ case "${1:-}" in
   tasks)
     shift
     friday_tasks "$@"
+    ;;
+  agents)
+    shift
+    friday_agents "$@"
     ;;
   desktop)
     shift

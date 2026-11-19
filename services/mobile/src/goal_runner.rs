@@ -1406,6 +1406,18 @@ impl GoalRunner {
 
         // Standing tasks ("every morning ..."): made from an ask, run by the
         // daemon's scheduler through `friday ask`.
+        // Coding agents (opencode, agy) run on the person's request; on unless
+        // they turned it off (`FRIDAY_AGENTS=0`).
+        let has_agents = match &fabric {
+            Some(f) if crate::agent_runs::enabled() => {
+                executive.register_tool(Box::new(crate::agent_runs::AgentsTool::new(
+                    f.clone() as Arc<dyn LlmStrategyClient>,
+                    crate::agent_runs::runs_dir(),
+                )));
+                true
+            }
+            _ => false,
+        };
         let has_standing = match &fabric {
             Some(f) if crate::standing::enabled() => {
                 executive.register_tool(Box::new(crate::standing::StandingTool::new(
@@ -1456,6 +1468,10 @@ impl GoalRunner {
         if has_system {
             world_state =
                 world_state.with_tool(Capability::Custom(crate::system_tool::CAPABILITY.into()));
+        }
+        if has_agents {
+            world_state =
+                world_state.with_tool(Capability::Custom(crate::agent_runs::CAPABILITY.into()));
         }
         if has_standing {
             world_state =

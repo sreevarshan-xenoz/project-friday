@@ -212,6 +212,20 @@ bash "$F" tasks delete t9 >/dev/null 2>&1 && fail "tasks delete of a missing id 
 bash "$F" tasks delete 'x; rm' >/dev/null 2>&1 && fail "tasks delete accepted a bad id" || pass "tasks delete refuses a bad id"
 [[ "$(stat -c %a "$FD/standing.json")" == 600 ]] && pass "tasks keeps the file private" || fail "standing.json is not 0600"
 rm -f "$FD/standing.json"
+
+# `friday agents`: coding-agent runs, listed, shown and answered without the daemon.
+contains "agents with none says how to start one" "$(bash "$F" agents)" "have opencode add a README"
+mkdir -p "$FD/agents"
+printf '%s\n' '{"id":"r1a2b3","agent":"opencode","folder":"/w/site","request":"add a README","task":"Add a README.","status":"waiting_for_you","started":1,"pending":{"step":"git push","why":"runs `git push`"},"summary":"","approved_by_friday":2,"approved_by_you":0,"rejected":0}' >"$FD/agents/r1a2b3.json"
+printf '%s\n' '{"event":"approved","by":"friday","step":"cargo test","ts":1}' >"$FD/agents/r1a2b3.jsonl"
+al=$(bash "$F" agents)
+contains "agents lists a waiting run" "$al" "r1a2b3  opencode  /w/site  WAITING FOR YOU: git push"
+contains "agents says how to answer" "$al" "friday agents allow <id>"
+contains "agents show reports who approved what" "$(bash "$F" agents show r1a2b3)" "approved by friday: cargo test"
+bash "$F" agents deny r1a2b3 >/dev/null
+[[ "$(cat "$FD/agents/r1a2b3.answer")" == deny ]] && pass "agents deny answers the run" || fail "agents deny didn't write the answer"
+bash "$F" agents allow 'x; rm' >/dev/null 2>&1 && fail "agents allow accepted a bad id" || pass "agents allow refuses a bad id"
+rm -rf "$FD/agents"
 if bash "$F" actions oops >/dev/null 2>&1; then fail "actions took a non-number"; else pass "actions refuses a non-number"; fi
 contains "forget actions reports counts" "$(bash "$F" forget actions --yes)" "Deleted 2 entries from the log of desktop actions"
 [[ ! -e "$FD/actions.jsonl" ]] && pass "forget actions deletes the log" || fail "forget actions left the log"
