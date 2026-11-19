@@ -1522,7 +1522,7 @@ friday_agents() {
         today=$(date -u +%s); today=$((today - 86400))
         approved=$(jq -s --argjson t "$today" '[.[] | select(.ts >= $t and .decision == "approved")] | length' "$d/hooks.jsonl" 2>/dev/null || echo 0)
         echo
-        echo "In your own Claude Code sessions, FRIDAY approved $approved routine step(s) in the last day."
+        echo "In your own agent sessions, FRIDAY approved $approved routine step(s) in the last day."
       fi
       if grep -ls '"waiting_for_you"' $runs >/dev/null 2>&1; then
         echo

@@ -21,8 +21,8 @@
 //!   friday-ctl say --setup [kitten]    (download and install the voice, checked
 //!                                      against pinned checksums)
 //!   friday-ctl cancel                  (cancel the goal in flight)
-//!   friday-ctl agent-hook claude       (Claude Code's PermissionRequest hook)
-//!   friday-ctl agent-hooks on|off|status (FRIDAY's hook in Claude Code's settings)
+//!   friday-ctl agent-hook claude|agy   (Claude Code's / agy's permission hook)
+//!   friday-ctl agent-hooks on|off|status (FRIDAY in your own agent sessions)
 //!   friday-ctl context screen          (interactive consent)
 //!   friday-ctl context screen --yes    (consent already collected by the shell panel)
 //!   friday-ctl context screen --yes --ask "what does this error mean?"
@@ -404,52 +404,75 @@ async fn wait_for_goal(
 /// the prompt to the person. Never fails the hook: any problem means "ask".
 fn agent_hook(args: &[String]) -> std::process::ExitCode {
     use std::io::Read;
-    if args.first().map(String::as_str) != Some("claude") {
-        eprintln!("usage: friday-ctl agent-hook claude   (Claude Code runs this; it reads stdin)");
+    let agent = args.first().map(String::as_str).unwrap_or("");
+    if agent != "claude" && agent != "agy" {
+        eprintln!(
+            "usage: friday-ctl agent-hook claude|agy   (the agent runs this; it reads stdin)"
+        );
         return std::process::ExitCode::from(2u8);
     }
     let mut input = String::new();
-    if std::io::stdin().read_to_string(&mut input).is_err()
-        || !friday_mobile::agent_hooks::enabled()
-    {
-        return std::process::ExitCode::SUCCESS;
-    }
-    let Ok(request) = serde_json::from_str::<serde_json::Value>(&input) else {
-        return std::process::ExitCode::SUCCESS;
-    };
-    if let Some(answer) = friday_mobile::agent_hooks::claude_permission(
-        &request,
-        &friday_mobile::agent_runs::runs_dir(),
-    ) {
-        println!("{answer}");
+    let off = std::io::stdin().read_to_string(&mut input).is_err()
+        || !friday_mobile::agent_hooks::enabled();
+    let request = serde_json::from_str::<serde_json::Value>(&input).ok();
+    let log_dir = friday_mobile::agent_runs::runs_dir();
+    match (agent, request) {
+        ("claude", Some(r)) if !off => {
+            if let Some(answer) = friday_mobile::agent_hooks::claude_permission(&r, &log_dir) {
+                println!("{answer}");
+            }
+        }
+        ("agy", Some(r)) if !off => {
+            println!("{}", friday_mobile::agent_hooks::agy_pre_tool(&r, &log_dir));
+        }
+        // agy wants an answer every time: when FRIDAY can't decide, agy asks
+        // the person as it would without FRIDAY.
+        ("agy", _) => println!("{}", serde_json::json!({"decision": "ask"})),
+        _ => {}
     }
     std::process::ExitCode::SUCCESS
 }
 
-/// `friday-ctl agent-hooks on|off|status`: FRIDAY's hook in Claude Code's settings.
+/// `friday-ctl agent-hooks on|off|status`: FRIDAY in the person's own agent
+/// sessions: its hooks in Claude Code's and agy's settings, and the opencode
+/// watcher's switch.
 fn agent_hooks(args: &[String]) -> std::process::ExitCode {
-    use friday_mobile::agent_hooks::{
-        claude_settings, install_claude, installed_claude, uninstall_claude,
-    };
-    let Some(settings) = claude_settings() else {
+    use friday_mobile::agent_hooks::*;
+    let (Some(claude), Some(agy)) = (claude_settings(), agy_hooks()) else {
         eprintln!("no home folder");
         return std::process::ExitCode::FAILURE;
     };
-    let result = match args.first().map(String::as_str).unwrap_or("status") {
+    let off_marker = sessions_off_marker();
+    let result: Result<(), String> = match args.first().map(String::as_str).unwrap_or("status") {
         "status" => {
-            if installed_claude(&settings) {
-                println!("Claude Code: FRIDAY answers routine approvals in your own sessions; risky ones stay with you. Turn off: friday agents hooks off");
-            } else {
-                println!("Claude Code: FRIDAY isn't answering approvals in your own sessions. Turn on: friday agents hooks on");
-            }
+            let line = |name: &str, on: bool| {
+                if on {
+                    println!("{name}: FRIDAY answers routine approvals in your own sessions; risky ones stay with you.");
+                } else {
+                    println!("{name}: FRIDAY isn't answering approvals in your own sessions.");
+                }
+            };
+            line("Claude Code", installed_claude(&claude));
+            line("agy", installed_agy(&agy));
+            line("opencode", !off_marker.exists());
+            println!("Turn all on or off: friday agents hooks on|off");
             Ok(())
         }
-        "on" => std::env::current_exe()
-            .map_err(|e| e.to_string())
-            .and_then(|ctl| install_claude(&settings, &ctl))
-            .map(|_| println!("Claude Code: FRIDAY now answers routine approvals in your own sessions (new sessions pick it up).")),
-        "off" => uninstall_claude(&settings)
-            .map(|_| println!("Claude Code: FRIDAY no longer answers approvals in your sessions.")),
+        "on" => std::env::current_exe().map_err(|e| e.to_string()).and_then(|ctl| {
+            install_claude(&claude, &ctl)?;
+            install_agy(&agy, &ctl)?;
+            let _ = std::fs::remove_file(&off_marker);
+            println!("FRIDAY now answers routine approvals in your own Claude Code, agy and opencode sessions (new sessions pick it up).");
+            Ok(())
+        }),
+        "off" => uninstall_claude(&claude).and_then(|_| uninstall_agy(&agy)).and_then(|_| {
+            if let Some(dir) = off_marker.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            std::fs::write(&off_marker, "").map_err(|e| e.to_string())?;
+            println!("FRIDAY no longer answers approvals in your own agent sessions.");
+            Ok(())
+        }),
         _ => Err("usage: friday-ctl agent-hooks on|off|status".into()),
     };
     match result {

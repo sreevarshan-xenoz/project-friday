@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-use crate::agent_policy::{self, Decision};
+use crate::agent_policy::{self, Decision, Kind};
 
 /// What marks FRIDAY's own hook entry, so it can be found and removed.
 const MARK: &str = "agent-hook claude";
@@ -79,50 +79,190 @@ pub fn too_broad(folder: &Path) -> bool {
         && !home.as_ref().is_some_and(|h| folder.starts_with(h))
 }
 
-/// FRIDAY's answer to a Claude Code `PermissionRequest` hook: the JSON to
-/// print to approve, or `None` to leave the prompt to the person.
-pub fn claude_permission(input: &Value, log_dir: &Path) -> Option<Value> {
-    let tool = input["tool_name"].as_str().unwrap_or("");
-    let tool_input = &input["tool_input"];
-    let folder = PathBuf::from(input["cwd"].as_str().unwrap_or(""));
-    let step = crate::agent_claude::step_from_claude(tool, tool_input);
+/// Decides a step in a session the person started, logs it, and tells the
+/// person when it is left to them. `label` names the agent for them.
+pub fn decide_session_step(
+    label: &str,
+    step: &agent_policy::Step,
+    folder: &Path,
+    question: bool,
+    log_dir: &Path,
+) -> Decision {
     let what: String = step
         .command
         .clone()
         .or_else(|| step.paths.first().cloned())
-        .unwrap_or_else(|| tool.to_string())
+        .unwrap_or_else(|| "a step".into())
         .chars()
         .take(200)
         .collect();
-    let decision = if folder.as_os_str().is_empty() || too_broad(&folder) {
+    let decision = if folder.as_os_str().is_empty() || too_broad(folder) {
         Decision::Ask("the session isn't in a project folder".into())
-    } else if tool == "AskUserQuestion" || tool == "ExitPlanMode" {
+    } else if question {
         Decision::Ask("it's a question for you".into())
     } else {
-        agent_policy::decide(&step, &folder)
+        agent_policy::decide(step, folder)
     };
     log(
         log_dir,
-        json!({"agent": "claude", "folder": folder, "step": what,
+        json!({"agent": label, "folder": folder, "step": what,
             "decision": match &decision { Decision::Allow => "approved", Decision::Ask(_) => "left to you" },
             "why": match &decision { Decision::Allow => "", Decision::Ask(w) => w.as_str() }}),
     );
-    match decision {
+    if let Decision::Ask(why) = &decision {
+        notify(
+            &format!("{label} is waiting for you"),
+            &format!(
+                "It {why}:\n{what}\nin {}",
+                folder
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("its terminal")
+            ),
+        );
+    }
+    decision
+}
+
+/// FRIDAY's answer to a Claude Code `PermissionRequest` hook: the JSON to
+/// print to approve, or `None` to leave the prompt to the person.
+pub fn claude_permission(input: &Value, log_dir: &Path) -> Option<Value> {
+    let tool = input["tool_name"].as_str().unwrap_or("");
+    let folder = PathBuf::from(input["cwd"].as_str().unwrap_or(""));
+    let step = crate::agent_claude::step_from_claude(tool, &input["tool_input"]);
+    let question = tool == "AskUserQuestion" || tool == "ExitPlanMode";
+    match decide_session_step("Claude Code", &step, &folder, question, log_dir) {
         Decision::Allow => Some(json!({"hookSpecificOutput": {
             "hookEventName": "PermissionRequest",
             "decision": {"behavior": "allow"}}})),
+        Decision::Ask(_) => None,
+    }
+}
+
+/// agy's tools FRIDAY knows, and what kind of step each is. Its hook only
+/// fires for these, so agy's own housekeeping tools never wait on FRIDAY.
+const AGY_TOOLS: [(&str, Kind); 13] = [
+    ("run_command", Kind::Execute),
+    ("view_file", Kind::Read),
+    ("view_file_outline", Kind::Read),
+    ("view_code_item", Kind::Read),
+    ("list_dir", Kind::Read),
+    ("grep_search", Kind::Search),
+    ("find_by_name", Kind::Search),
+    ("codebase_search", Kind::Search),
+    ("write_to_file", Kind::Edit),
+    ("replace_file_content", Kind::Edit),
+    ("multi_replace_file_content", Kind::Edit),
+    ("read_url_content", Kind::Fetch),
+    ("search_web", Kind::Fetch),
+];
+
+/// The step an agy `PreToolUse` hook asks about.
+pub fn step_from_agy(tool: &str, args: &Value) -> agent_policy::Step {
+    let kind = AGY_TOOLS
+        .iter()
+        .find(|(name, _)| *name == tool)
+        .map_or(Kind::Other, |(_, k)| *k);
+    let paths = [
+        "TargetFile",
+        "AbsolutePath",
+        "Path",
+        "DirectoryPath",
+        "SearchPath",
+        "SearchDirectory",
+        "File",
+    ]
+    .iter()
+    .filter_map(|k| args[*k].as_str().map(str::to_string))
+    .collect();
+    agent_policy::Step {
+        kind,
+        command: args["CommandLine"].as_str().map(str::to_string),
+        paths,
+    }
+}
+
+/// Whether the agy that runs this hook is unattended: print mode (`agy -p`)
+/// or FRIDAY's own run (`agy acp`). Nobody waits at a prompt there, and
+/// FRIDAY's runs answer each step over ACP already. Linux reads the parent
+/// processes; elsewhere every session counts as attended.
+pub fn agy_unattended() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let mut pid = std::process::id();
+        for _ in 0..6 {
+            let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+                return false;
+            };
+            // The parent pid is the second field after the ")" that closes the name.
+            let Some(ppid) = stat
+                .rsplit_once(')')
+                .and_then(|(_, rest)| rest.split_whitespace().nth(1))
+                .and_then(|p| p.parse::<u32>().ok())
+            else {
+                return false;
+            };
+            if ppid <= 1 {
+                return false;
+            }
+            pid = ppid;
+            let cmdline = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+            let args: Vec<String> = cmdline
+                .split(|b| *b == 0)
+                .map(|a| String::from_utf8_lossy(a).into_owned())
+                .collect();
+            let is_agy = args
+                .first()
+                .is_some_and(|a| Path::new(a).file_name().is_some_and(|n| n == "agy"));
+            if is_agy {
+                return args.iter().skip(1).any(|a| {
+                    ["-p", "--print", "--prompt", "acp"].contains(&a.as_str())
+                        || a.starts_with("--print=")
+                        || a.starts_with("--prompt=")
+                });
+            }
+        }
+        false
+    }
+    #[cfg(not(target_os = "linux"))]
+    false
+}
+
+/// FRIDAY's answer to an agy `PreToolUse` hook: allow it, or hold a risky
+/// step for the person.
+pub fn agy_pre_tool(input: &Value, log_dir: &Path) -> Value {
+    if agy_unattended() {
+        // agy decides as it would without FRIDAY.
+        return json!({"decision": "ask"});
+    }
+    let call = &input["toolCall"];
+    let tool = call["name"].as_str().unwrap_or("");
+    let folder = PathBuf::from(input["cwd"].as_str().unwrap_or(""));
+    let step = step_from_agy(tool, &call["args"]);
+    match decide_session_step("agy", &step, &folder, false, log_dir) {
+        Decision::Allow => json!({"decision": "allow"}),
+        // agy goes ahead on "ask" when the person lets it run on its own
+        // (auto, always-proceed), so FRIDAY holds the step and asks itself.
         Decision::Ask(why) => {
-            notify(
-                "Claude Code is waiting for you",
-                &format!(
-                    "It {why}:\n{what}\nin {}",
-                    folder
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("its terminal")
-                ),
-            );
-            None
+            let what = step
+                .command
+                .clone()
+                .or_else(|| step.paths.first().cloned())
+                .unwrap_or_else(|| tool.to_string());
+            if wait_for_person(
+                crate::agent_runs::Agent::Agy,
+                &folder,
+                &what,
+                &why,
+                log_dir,
+                PERSON_WAIT,
+            ) {
+                json!({"decision": "allow"})
+            } else {
+                json!({"decision": "deny", "reason": format!(
+                    "The person didn't approve this step (it {why}). Don't retry it; tell them what you wanted to do and why."
+                )})
+            }
         }
     }
 }
@@ -270,20 +410,155 @@ pub fn install_once(state_dir: &Path, ctl: &Path) {
     if !enabled() || marker.exists() || !ctl.is_file() {
         return;
     }
-    let Some(settings) = claude_settings() else {
-        return;
-    };
-    // Only for people who use Claude Code.
-    if !settings.parent().is_some_and(Path::is_dir) {
-        return;
-    }
-    match install_claude(&settings, ctl) {
-        Ok(_) => {
-            let _ = std::fs::write(&marker, "");
-            tracing::info!("agent hooks: FRIDAY answers routine Claude Code approvals (friday agents hooks off to stop)");
+    // Only for agents the person has: their settings folder exists.
+    if let Some(settings) = claude_settings().filter(|s| s.parent().is_some_and(Path::is_dir)) {
+        match install_claude(&settings, ctl) {
+            Ok(_) => tracing::info!("agent hooks: FRIDAY answers routine Claude Code approvals (friday agents hooks off to stop)"),
+            Err(e) => tracing::warn!("agent hooks: couldn't add FRIDAY's Claude Code hook: {e}"),
         }
-        Err(e) => tracing::warn!("agent hooks: couldn't add FRIDAY's Claude Code hook: {e}"),
     }
+    if let Some(hooks) =
+        agy_hooks().filter(|h| h.parent().and_then(Path::parent).is_some_and(Path::is_dir))
+    {
+        match install_agy(&hooks, ctl) {
+            Ok(_) => tracing::info!("agent hooks: FRIDAY answers routine agy approvals (friday agents hooks off to stop)"),
+            Err(e) => tracing::warn!("agent hooks: couldn't add FRIDAY's agy hook: {e}"),
+        }
+    }
+    let _ = std::fs::write(&marker, "");
+}
+
+/// agy's shared hooks file (the CLI and the app both read it).
+pub fn agy_hooks() -> Option<PathBuf> {
+    Some(home()?.join(".gemini").join("config").join("hooks.json"))
+}
+
+/// FRIDAY's named entry in agy's hooks file.
+const AGY_NAME: &str = "friday";
+
+fn read_object(path: &Path) -> Result<Value, String> {
+    match std::fs::read(path) {
+        Ok(b) => {
+            let doc: Value = serde_json::from_slice(&b).map_err(|e| {
+                format!(
+                    "{} isn't valid JSON, so FRIDAY left it alone: {e}",
+                    path.display()
+                )
+            })?;
+            if doc.is_object() {
+                Ok(doc)
+            } else {
+                Err(format!("{} isn't a JSON object", path.display()))
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(json!({})),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Adds FRIDAY's `PreToolUse` hook to agy's hooks file under its own name,
+/// for the tools FRIDAY knows. Returns whether anything changed.
+pub fn install_agy(hooks: &Path, ctl: &Path) -> Result<bool, String> {
+    let mut doc = read_object(hooks)?;
+    if doc.get(AGY_NAME).is_some() {
+        return Ok(false);
+    }
+    let tools: Vec<&str> = AGY_TOOLS.iter().map(|(name, _)| *name).collect();
+    doc[AGY_NAME] = json!({"PreToolUse": [{
+        "matcher": format!("^({})$", tools.join("|")),
+        "hooks": [{"type": "command", "command": format!("\"{}\" agent-hook agy", ctl.display()),
+            // A risky step waits up to PERSON_WAIT for the person.
+            "timeout": PERSON_WAIT.as_secs() + 30}]}]});
+    write(hooks, &doc)?;
+    Ok(true)
+}
+
+/// Removes FRIDAY's entry from agy's hooks file, and nothing else.
+pub fn uninstall_agy(hooks: &Path) -> Result<bool, String> {
+    if !hooks.is_file() {
+        return Ok(false);
+    }
+    let mut doc = read_object(hooks)?;
+    if doc.as_object_mut().unwrap().remove(AGY_NAME).is_none() {
+        return Ok(false);
+    }
+    write(hooks, &doc)?;
+    Ok(true)
+}
+
+/// Whether FRIDAY's entry is in agy's hooks file.
+pub fn installed_agy(hooks: &Path) -> bool {
+    read_object(hooks).is_ok_and(|d| d.get(AGY_NAME).is_some())
+}
+
+/// How long a step in the person's own session waits for their answer.
+pub const PERSON_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Holds a step from the person's own session until they answer it, the
+/// same way a step of FRIDAY's own run waits: it shows in `friday agents`
+/// (and on Windows as the tray's prompt) until `friday agents allow|deny`.
+/// No answer in time means no.
+pub fn wait_for_person(
+    agent: crate::agent_runs::Agent,
+    folder: &Path,
+    what: &str,
+    why: &str,
+    dir: &Path,
+    limit: std::time::Duration,
+) -> bool {
+    use crate::agent_runs::{Answer, Pending, Recorder, Run, Status};
+    let run = Run {
+        id: format!("r{}", &uuid::Uuid::new_v4().simple().to_string()[..6]),
+        agent,
+        folder: folder.to_path_buf(),
+        request: "a step in your own session".into(),
+        task: String::new(),
+        status: Status::WaitingForYou,
+        started: chrono::Utc::now().timestamp(),
+        ended: None,
+        pending: Some(Pending {
+            step: what.chars().take(200).collect(),
+            why: why.to_string(),
+        }),
+        summary: String::new(),
+        approved_by_friday: 0,
+        approved_by_you: 0,
+        rejected: 0,
+    };
+    let Ok(rec) = Recorder::new(dir, run) else {
+        return false;
+    };
+    let id = rec.run.id.clone();
+    notify(
+        &format!("{} wants your OK", agent.name()),
+        &format!("It {why}:\n{what}\nfriday agents allow {id}  ·  friday agents deny {id}"),
+    );
+    let start = std::time::Instant::now();
+    let allowed = loop {
+        match rec.take_answer() {
+            Some(Answer::Allow) => break true,
+            Some(_) => break false,
+            None if start.elapsed() >= limit => break false,
+            None => std::thread::sleep(std::time::Duration::from_millis(500)),
+        }
+    };
+    log(
+        dir,
+        json!({"agent": agent.name(), "folder": folder, "step": what,
+            "decision": if allowed { "approved by you" } else { "refused" }}),
+    );
+    // The step is settled; only the log keeps it.
+    for ext in ["json", "jsonl", "answer"] {
+        let _ = std::fs::remove_file(dir.join(format!("{id}.{ext}")));
+    }
+    allowed
+}
+
+/// The file whose presence means the person turned FRIDAY off in their own
+/// sessions; the opencode watcher checks it (Claude Code and agy lose their
+/// hooks instead).
+pub fn sessions_off_marker() -> PathBuf {
+    crate::agent_runs::runs_dir().join("sessions-off")
 }
 
 #[cfg(all(test, unix))]
@@ -378,6 +653,83 @@ mod tests {
         assert!(install_claude(&fresh, Path::new("/usr/bin/friday-ctl")).unwrap());
         assert!(uninstall_claude(&fresh).unwrap());
         assert_eq!(std::fs::read_to_string(&fresh).unwrap().trim(), "{}");
+    }
+
+    #[test]
+    fn agy_hook_installs_under_its_own_name_and_leaves_the_rest() {
+        let d = temp("agy");
+        let hooks = d.0.join("config").join("hooks.json");
+        std::fs::create_dir_all(hooks.parent().unwrap()).unwrap();
+        let theirs =
+            json!({"lint": {"PostToolUse": [{"matcher": "*", "hooks": [{"command": "lint.sh"}]}]}});
+        std::fs::write(&hooks, theirs.to_string()).unwrap();
+        let ctl = Path::new("/usr/bin/friday-ctl");
+        assert!(install_agy(&hooks, ctl).unwrap());
+        assert!(!install_agy(&hooks, ctl).unwrap());
+        assert!(installed_agy(&hooks));
+        let doc: Value = serde_json::from_slice(&std::fs::read(&hooks).unwrap()).unwrap();
+        let entry = &doc["friday"]["PreToolUse"][0];
+        assert!(entry["matcher"].as_str().unwrap().contains("run_command"));
+        assert_eq!(
+            entry["hooks"][0]["command"],
+            "\"/usr/bin/friday-ctl\" agent-hook agy"
+        );
+        assert!(uninstall_agy(&hooks).unwrap());
+        let doc: Value = serde_json::from_slice(&std::fs::read(&hooks).unwrap()).unwrap();
+        assert_eq!(doc, theirs);
+    }
+
+    #[test]
+    fn agy_steps_the_rules_allow_are_allowed() {
+        let logs = temp("agy-allow");
+        let site = logs.0.join("code").join("site");
+        std::fs::create_dir_all(&site).unwrap();
+        let input = json!({"cwd": site, "toolCall": {"name": "run_command", "args": {"CommandLine": "cargo test"}}});
+        assert_eq!(agy_pre_tool(&input, &logs.0)["decision"], "allow");
+        let edit = step_from_agy("write_to_file", &json!({"TargetFile": "/w/src/a.rs"}));
+        assert_eq!(
+            (edit.kind, edit.paths),
+            (Kind::Edit, vec!["/w/src/a.rs".to_string()])
+        );
+        assert_eq!(step_from_agy("task_boundary", &json!({})).kind, Kind::Other);
+    }
+
+    #[test]
+    fn a_held_step_answers_with_the_persons_choice() {
+        let d = temp("hold");
+        let dir = d.0.clone();
+        let answerer = std::thread::spawn(move || {
+            for _ in 0..200 {
+                let waiting = std::fs::read_dir(&dir).ok().and_then(|mut e| {
+                    e.find_map(|f| {
+                        let p = f.ok()?.path();
+                        (p.extension()? == "json")
+                            .then(|| p.file_stem().unwrap().to_string_lossy().to_string())
+                    })
+                });
+                if let Some(id) = waiting {
+                    crate::agent_runs::answer(&dir, &id, true).unwrap();
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        });
+        let allowed = wait_for_person(
+            crate::agent_runs::Agent::Agy,
+            Path::new("/w/site"),
+            "rm x",
+            "runs `rm x`",
+            &d.0,
+            std::time::Duration::from_secs(10),
+        );
+        answerer.join().unwrap();
+        assert!(allowed);
+        // Settled steps leave only the log.
+        assert!(std::fs::read_dir(&d.0).unwrap().all(|f| f
+            .unwrap()
+            .path()
+            .extension()
+            .is_some_and(|x| x == "jsonl")));
     }
 
     #[test]

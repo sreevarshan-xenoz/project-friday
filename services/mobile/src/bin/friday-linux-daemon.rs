@@ -313,6 +313,14 @@ async fn main() {
         }
     }
 
+    // opencode sessions the person started: FRIDAY follows opencode's
+    // service and answers the routine permissions it announces.
+    if friday_mobile::agent_hooks::enabled() {
+        tokio::spawn(friday_mobile::agent_opencode::watch(
+            friday_mobile::agent_runs::runs_dir(),
+        ));
+    }
+
     // Standing tasks: run what is due ("every morning ...") as the person's
     // own ask would run: `friday ask` on Linux, the tray on Windows.
     if friday_mobile::standing::enabled() {
