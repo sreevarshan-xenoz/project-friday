@@ -41,6 +41,13 @@ prefer-no-csd
 screenshot-path "~/Pictures/Screenshots/Screenshot %Y-%m-%d %H-%M-%S.png"
 hotkey-overlay { skip-at-startup; }
 
+// Qt 6 and Chromium apps join the accessibility bus only when asked; FRIDAY
+// reads and operates apps through it.
+environment {
+    QT_LINUX_ACCESSIBILITY_ALWAYS_ON "1"
+    ACCESSIBILITY_ENABLED "1"
+}
+
 spawn-at-startup "/usr/lib/polkit-kde-authentication-agent-1"
 // The wallpaper: the current Omarchy theme's background (Omarchy's own shell
 // draws it on Hyprland, and isn't started here).

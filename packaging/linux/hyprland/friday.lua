@@ -11,3 +11,7 @@ hl.bind("SUPER + ALT + Y", hl.dsp.exec_cmd("friday ask --selection"), { descript
 hl.bind("SUPER + CTRL + Y", hl.dsp.exec_cmd("friday ask --screen"), { description = "FRIDAY: Ask about the screen" })
 -- The kill key: stops whatever FRIDAY is doing on your desktop, at once.
 hl.bind("SUPER + CTRL + Escape", hl.dsp.exec_cmd("friday cancel"), { description = "FRIDAY: Stop what it is doing" })
+-- Qt 6 and Chromium apps join the accessibility bus only when asked; without
+-- it FRIDAY can't read or operate them (`friday doctor` checks).
+hl.env("QT_LINUX_ACCESSIBILITY_ALWAYS_ON", "1")
+hl.env("ACCESSIBILITY_ENABLED", "1")

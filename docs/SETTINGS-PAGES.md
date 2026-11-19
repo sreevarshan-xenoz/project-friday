@@ -2,7 +2,7 @@
 
 One list for both apps, so a person who never opens a terminal can do everything
 the `friday` commands do. The Linux window lives in `packaging/linux/shell/settings/`
-(`friday app`); the Windows window is `windows-tray/FridayTray/SettingsForm.cs`
+(`friday app`); the Windows window is `windows-tray/FridayTray/Fluent/SettingsWindow.xaml.cs`
 (Start menu, or the tray menu's Settings). Labels are plain words; each setting
 says what it does in a line underneath. On Linux everything also works from the
 keyboard: Tab moves between controls (a ring shows where you are), Enter or
