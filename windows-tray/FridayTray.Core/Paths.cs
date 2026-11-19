@@ -29,6 +29,8 @@ public sealed class Paths
     public string ActionsFile => Path.Combine(StateDir, "actions.jsonl");
     public string StandingFile => Path.Combine(StateDir, "standing.json");
     public string StandingDueFile => Path.Combine(StateDir, "standing-due.jsonl");
+    public string AgentsDir => Path.Combine(StateDir, "agents");
+    public string HooksFile => Path.Combine(AgentsDir, "hooks.jsonl");
     public string EnvFile => Path.Combine(ConfigDir, "friday.env");
     public string NoAppContextFile => Path.Combine(ConfigDir, "no-app-context");
     public string PromptsFile => Path.Combine(ConfigDir, "prompts");

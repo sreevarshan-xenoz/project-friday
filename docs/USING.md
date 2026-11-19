@@ -155,7 +155,7 @@ Web search happens only when you ask for it, and never in private mode.
 On Windows, **Settings…** in the tray menu opens a normal window for all of this: start at
 sign-in, starting with administrator rights (so FRIDAY can control apps that run as
 administrator; Windows asks once), naming the app, reading a window's text, the AI provider
-and accounts, desktop control, and the keys FRIDAY answers to.
+and accounts, desktop control, coding agents, and the keys FRIDAY answers to.
 
 Setup asks what FRIDAY may do (FRIDAY OS: the "What may FRIDAY do?" step; Windows:
 the installer's Customize page and the tray menu): control windows, apps, volume
