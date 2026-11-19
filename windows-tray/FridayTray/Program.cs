@@ -38,6 +38,9 @@ internal static class Program
         if (!first)
         {
             // FRIDAY is already running: ask it to open its window (the Start menu entry).
+            // This copy was just started by the person, so it may bring a window
+            // forward; let the running one do that, or its window opens behind.
+            FridayTray.Native.AllowSetForegroundWindow(FridayTray.Native.ASFW_ANY);
             try { System.Threading.EventWaitHandle.OpenExisting(OpenEventName).Set(); }
             catch (Exception e) when (e is System.Threading.WaitHandleCannotBeOpenedException or UnauthorizedAccessException) { }
             return 0;

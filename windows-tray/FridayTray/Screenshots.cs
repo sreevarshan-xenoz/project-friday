@@ -27,7 +27,7 @@ internal static class Screenshots
             () => { }, () => { }, _ => { }, () => { }, keys);
 
         foreach (var section in new[] { "Home", "General", "Privacy", "AI", "Voice", "Desktop control", "Tasks", "Shortcuts", "Health & updates", "About" })
-            Save(new SettingsForm(install, nothing, section), folder, "settings-" + section.Replace(" & ", "-").Replace(' ', '-').ToLowerInvariant());
+            SaveWpf(new SettingsWindow(install, nothing, section), folder, "settings-" + section.Replace(" & ", "-").Replace(' ', '-').ToLowerInvariant());
         SaveWpf(new WelcomeWindow(keys, () => { }, () => { }, () => { }), folder, "welcome");
         SaveWpf(new AskWindow(AskKind.Plain, null, ["what's using my disk?"]), folder, "ask");
         SaveWpf(new AskWindow(AskKind.Selection, "error[E0308]: mismatched types", QuickActions.All(install.Paths.PromptsFile)), folder, "ask-selection");

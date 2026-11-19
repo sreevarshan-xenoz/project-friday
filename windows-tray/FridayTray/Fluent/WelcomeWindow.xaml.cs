@@ -22,7 +22,7 @@ namespace FridayTray.Fluent;
 /// worth making now (which AI, and whether to look at Settings). Everything
 /// else stays off.
 /// </summary>
-public partial class WelcomeWindow : FluentWindow
+public partial class WelcomeWindow : Window
 {
     /// <summary>Closed; the tray makes a new one when asked again.</summary>
     public bool IsClosed { get; private set; }
@@ -51,11 +51,14 @@ public partial class WelcomeWindow : FluentWindow
         CloseButton.Click += (_, _) => Close();
         Closed += (_, _) => IsClosed = true;
         Loaded += (_, _) => Enter();
+        // No title bar: the card itself moves the window.
+        Card.MouseLeftButtonDown += (_, e) => { if (e.ButtonState == System.Windows.Input.MouseButtonState.Pressed) DragMove(); };
     }
 
-    /// <summary>The orb springs up and starts to glow; then the words, then each key, rise in.</summary>
+    /// <summary>The card rises in; the orb springs up and starts to glow; then the words, then each key.</summary>
     private void Enter()
     {
+        Motion.RiseIn(Frame, dy: 14, ms: 620, fromScale: 0.96);
         var pop = new DoubleAnimation(0.6, 1, TimeSpan.FromMilliseconds(900)) { EasingFunction = new Spring { Damping = 0.42, Frequency = 1.4 } };
         OrbScale.BeginAnimation(ScaleTransform.ScaleXProperty, pop);
         OrbScale.BeginAnimation(ScaleTransform.ScaleYProperty, pop);

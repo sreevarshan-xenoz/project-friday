@@ -602,16 +602,18 @@ internal sealed class TrayContext : ApplicationContext
         _install.StartsAtLogin = !_install.StartsAtLogin;
     }
 
-    private SettingsForm? _settings;
+    private SettingsWindow? _settings;
 
     private void OpenSettings(string? section = null)
     {
-        if (_settings is { IsDisposed: false })
+        if (_settings is { IsClosed: false })
         {
+            if (section is not null)
+                _settings.Show(section);
             _settings.Activate();
             return;
         }
-        _settings = new SettingsForm(_install, new SettingsActions(
+        _settings = new SettingsWindow(_install, new SettingsActions(
             RestartDaemon: () => _daemon.Restart(),
             ChooseProvider: ChooseProvider,
             ConnectAccounts: () =>
@@ -627,7 +629,7 @@ internal sealed class TrayContext : ApplicationContext
             AskText: text => _ = string.IsNullOrWhiteSpace(text) ? AskAsync(AskKind.Plain) : AskTextAsync(text),
             ShowWelcome: ShowWelcome,
             Hotkeys: _hotkeys.Labels), section);
-        _settings.Show();
+        FluentApp.Show(_settings);
     }
 
     /// <summary>Starts FRIDAY again the way it will start at sign-in (through its task when administrator start-up is on) and quits this one.</summary>

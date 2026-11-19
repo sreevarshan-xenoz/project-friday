@@ -1,17 +1,21 @@
-<ui:FluentWindow x:Class="FridayTray.Fluent.AnswerWindow"
+<Window x:Class="FridayTray.Fluent.AnswerWindow"
                  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
                  Title="FRIDAY"
-                 Width="540" MinWidth="0" MinHeight="0"
+                 Width="588" MinWidth="0" MinHeight="0"
+                 WindowStyle="None" AllowsTransparency="True" Background="Transparent"
                  ResizeMode="NoResize" ShowInTaskbar="False" Topmost="True"
                  WindowStartupLocation="Manual"
-                 ExtendsContentIntoTitleBar="True"
-                 WindowBackdropType="Acrylic"
-                 WindowCornerPreference="Round">
-  <Border x:Name="Card" Background="{StaticResource Glass}" BorderBrush="{StaticResource Hairline}" BorderThickness="1" CornerRadius="8">
+>
+  <Grid x:Name="Frame" Margin="24">
+    <!-- The shadow is its own layer, so the card's text stays crisp. -->
+    <Border CornerRadius="14" Background="#FF0D0F13" IsHitTestVisible="False">
+      <Border.Effect><DropShadowEffect BlurRadius="34" ShadowDepth="10" Direction="270" Opacity="0.5" Color="Black" /></Border.Effect>
+    </Border>
+  <Border x:Name="Card" Background="{StaticResource Glass}" BorderBrush="{StaticResource Hairline}" BorderThickness="1" CornerRadius="14">
     <Grid>
-    <Border x:Name="Wash" Background="{StaticResource EmberWash}" CornerRadius="8" IsHitTestVisible="False" />
+    <Border x:Name="Wash" Background="{StaticResource EmberWash}" CornerRadius="14" IsHitTestVisible="False" />
     <Grid x:Name="Body" Margin="18,14,12,14" VerticalAlignment="Top">
       <Grid.RowDefinitions>
         <RowDefinition Height="Auto" />
@@ -63,4 +67,5 @@
     </Grid>
     </Grid>
   </Border>
-</ui:FluentWindow>
+  </Grid>
+</Window>
