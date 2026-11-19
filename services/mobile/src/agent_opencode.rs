@@ -94,11 +94,13 @@ pub async fn follow(base: &str, password: &str, log_dir: &Path) -> Result<(), St
         return Err(format!("opencode's service said {}", response.status()));
     }
     let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
+    // Bytes until a whole line is in: a character can be split across chunks.
+    let mut buffer: Vec<u8> = Vec::new();
     while let Some(chunk) = stream.next().await {
-        buffer.push_str(&String::from_utf8_lossy(&chunk.map_err(|e| e.to_string())?));
-        while let Some(end) = buffer.find('\n') {
-            let line: String = buffer.drain(..=end).collect();
+        buffer.extend_from_slice(&chunk.map_err(|e| e.to_string())?);
+        while let Some(end) = buffer.iter().position(|b| *b == b'\n') {
+            let bytes: Vec<u8> = buffer.drain(..=end).collect();
+            let line = String::from_utf8_lossy(&bytes);
             let Some(data) = line.trim().strip_prefix("data:") else {
                 continue;
             };

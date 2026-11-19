@@ -96,8 +96,18 @@ pub fn decide_session_step(
         .chars()
         .take(200)
         .collect();
+    // A search with no path searches the session's folder; a read or edit
+    // must say which file.
+    let names_nothing = step.paths.is_empty()
+        && matches!(
+            step.kind,
+            agent_policy::Kind::Read | agent_policy::Kind::Edit
+        );
     let decision = if folder.as_os_str().is_empty() || too_broad(folder) {
         Decision::Ask("the session isn't in a project folder".into())
+    } else if names_nothing {
+        // A read or edit whose file FRIDAY can't see can't be checked.
+        Decision::Ask("doesn't say which file it touches".into())
     } else if question {
         Decision::Ask("it's a question for you".into())
     } else {
@@ -215,17 +225,25 @@ pub fn agy_unattended() -> bool {
                 .first()
                 .is_some_and(|a| Path::new(a).file_name().is_some_and(|n| n == "agy"));
             if is_agy {
-                return args.iter().skip(1).any(|a| {
-                    ["-p", "--print", "--prompt", "acp"].contains(&a.as_str())
-                        || a.starts_with("--print=")
-                        || a.starts_with("--prompt=")
-                });
+                return agy_args_unattended(&args);
             }
         }
         false
     }
     #[cfg(not(target_os = "linux"))]
     false
+}
+
+/// Whether agy's command line runs it unattended: the `acp` subcommand, or a
+/// print flag. Only agy's own subcommand and flags count, never words of the
+/// person's prompt.
+pub fn agy_args_unattended(args: &[String]) -> bool {
+    args.get(1).is_some_and(|a| a == "acp")
+        || args.iter().skip(1).any(|a| {
+            ["-p", "--print", "--prompt"].contains(&a.as_str())
+                || a.starts_with("--print=")
+                || a.starts_with("--prompt=")
+        })
 }
 
 /// FRIDAY's answer to an agy `PreToolUse` hook: allow it, or hold a risky
@@ -393,6 +411,10 @@ pub fn installed_claude(settings: &Path) -> bool {
 }
 
 fn write(path: &Path, doc: &Value) -> Result<(), String> {
+    // A settings file that is a link (a dotfiles manager's) is written
+    // through, not replaced.
+    let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let path = real.as_path();
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
@@ -730,6 +752,35 @@ mod tests {
             .path()
             .extension()
             .is_some_and(|x| x == "jsonl")));
+    }
+
+    #[test]
+    fn only_agy_s_own_flags_make_it_unattended() {
+        let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(agy_args_unattended(&args(&["agy", "-p", "fix it"])));
+        assert!(agy_args_unattended(&args(&[
+            "agy",
+            "acp",
+            "--cli_dir_name",
+            "friday"
+        ])));
+        assert!(!agy_args_unattended(&args(&["agy", "explain acp"])));
+        assert!(!agy_args_unattended(&args(&[
+            "agy", "-i", "explain", "acp"
+        ])));
+        assert!(!agy_args_unattended(&args(&["agy"])));
+    }
+
+    #[test]
+    fn a_read_or_edit_that_names_no_file_asks() {
+        let logs = temp("nofile");
+        let site = logs.0.join("code").join("site");
+        std::fs::create_dir_all(&site).unwrap();
+        let read = step_from_agy("view_file", &json!({"path": "/etc/shadow"}));
+        assert!(matches!(
+            decide_session_step("agy", &read, &site, false, &logs.0),
+            Decision::Ask(_)
+        ));
     }
 
     #[test]
