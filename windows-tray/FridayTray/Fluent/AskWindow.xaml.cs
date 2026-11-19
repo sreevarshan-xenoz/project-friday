@@ -30,6 +30,7 @@ public partial class AskWindow : FluentWindow
     private int _index = -1;
     private bool _wasActive;
     private bool _done;
+    private bool _modal;
 
     public string Question => Input.Text.Trim();
 
@@ -63,6 +64,7 @@ public partial class AskWindow : FluentWindow
         Input.TextChanged += (_, _) => OnTyped();
         PreviewKeyDown += OnKey;
         Activated += (_, _) => _wasActive = true;
+        Closing += (_, _) => _done = true; // closing deactivates it too
         // Clicking away closes it, but only once it has had focus: Windows may
         // refuse a background app the foreground, and an ask box that vanishes
         // the moment it opens would be worse than one that stays.
@@ -123,12 +125,22 @@ public partial class AskWindow : FluentWindow
             Tint(_rows[r], r == i ? Chosen : Clear);
     }
 
+    /// <summary>Shows it as the dialog the tray waits on (true: ask <see cref="Question"/>).</summary>
+    public new bool? ShowDialog()
+    {
+        _modal = true;
+        return base.ShowDialog();
+    }
+
     private void Finish(bool ok)
     {
         if (_done)
             return;
         _done = true;
-        DialogResult = ok;
+        if (_modal)
+            DialogResult = ok;
+        else
+            Close(); // shown on its own (the screenshots)
     }
 
     // ---- look ----

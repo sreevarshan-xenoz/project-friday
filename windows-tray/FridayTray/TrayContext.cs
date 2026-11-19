@@ -119,19 +119,19 @@ internal sealed class TrayContext : ApplicationContext
             Notify("FRIDAY is running", $"Press {_hotkeys.Labels[AskKind.Plain]} to ask anything.", ToolTipIcon.Info);
     }
 
-    private WelcomeForm? _welcome;
+    private WelcomeWindow? _welcome;
 
     private void ShowWelcome()
     {
-        if (_welcome is { IsDisposed: false })
+        if (_welcome is { IsClosed: false })
         {
             _welcome.Activate();
             return;
         }
         Welcome.MarkShown(_install.Paths);
-        _welcome = new WelcomeForm(_hotkeys.Labels, ChooseProvider, () => OpenSettings(), () => _ = AskAsync(AskKind.Plain));
-        _welcome.FormClosed += (_, _) => _welcome = null;
-        _welcome.Show();
+        _welcome = new WelcomeWindow(_hotkeys.Labels, ChooseProvider, () => OpenSettings(), () => _ = AskAsync(AskKind.Plain));
+        _welcome.Closed += (_, _) => _welcome = null;
+        FluentApp.Show(_welcome);
     }
 
     private async Task AskAsync(AskKind kind, bool pickArea = false)
