@@ -195,7 +195,7 @@ On Windows, ask the same way with Win+Y. When a task is due, its answer opens li
 
 ## Coding agents
 
-FRIDAY can hand work to a coding agent and follow it for you. Ask with the agent's name and a folder, for example `friday ask "have opencode add a README to ~/code/site"` or `"ask agy to fix the failing tests in ~/code/app"`. FRIDAY writes the task for the agent, starts it in that folder, and returns straight away; you get a notification when it's done. Without a folder, it uses the last one that agent worked in. It works with opencode and agy (Antigravity), whichever is installed and signed in.
+FRIDAY can hand work to a coding agent and follow it for you. Ask with the agent's name and a folder, for example `friday ask "have opencode add a README to ~/code/site"` or `"ask agy to fix the failing tests in ~/code/app"`. FRIDAY writes the task for the agent, starts it in that folder, and returns straight away; you get a notification when it's done. Without a folder, it uses the last one that agent worked in. It works with opencode, agy (Antigravity) and Claude Code, whichever is installed and signed in; for Claude Code say "Claude Code", or name a folder ("ask claude to fix the build in ~/code/app"), since "claude" alone may just mean the model. A Claude Code run counts against your Claude plan, and permissions you've already allowed in your own Claude Code settings still apply without asking FRIDAY.
 
 While the agent works, FRIDAY answers its approvals for you, by fixed rules rather than by an AI's judgement. Text the agent reads (a README, a web page) can't talk FRIDAY into anything. FRIDAY approves:
 
