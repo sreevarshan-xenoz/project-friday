@@ -27,7 +27,7 @@ else fail "Settings may run 'phone on' without the confirmation card"; fi
 for page in Home AI Voice Permissions Privacy Health; do
   [[ -f "$REPO_ROOT/packaging/linux/shell/settings/${page}Page.qml" ]] && pass "page file $page" || fail "missing ${page}Page.qml"
 done
-grep -qF -- "Health & updates" "$REPO_ROOT/windows-tray/FridayTray/SettingsForm.cs" && pass "Windows has the Health & updates page" || fail "Windows lacks the Health & updates page"
+grep -qF -- "Health & updates" "$REPO_ROOT/windows-tray/FridayTray/Fluent/SettingsWindow.xaml.cs" && pass "Windows has the Health & updates page" || fail "Windows lacks the Health & updates page"
 
 echo "Hyprland Lua configs parse"
 LUAC=$(command -v luac5.4 || command -v luac || true)
