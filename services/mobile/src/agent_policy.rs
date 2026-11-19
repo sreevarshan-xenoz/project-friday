@@ -118,6 +118,7 @@ pub fn decide(step: &Step, folder: &Path) -> Decision {
 
 /// A path as it would resolve from `folder`, without touching the disk.
 fn resolve(path: &str, folder: &Path) -> PathBuf {
+    let path = path.strip_prefix("file://").unwrap_or(path);
     let p = Path::new(path);
     let joined = if path.starts_with('~') {
         return PathBuf::from("/~home");
@@ -481,6 +482,7 @@ mod tests {
         assert!(allowed(touch(Kind::Edit, "tests/test_app.py")));
         assert!(!allowed(touch(Kind::Read, "/etc/passwd")));
         assert!(!allowed(touch(Kind::Read, ".env")));
+        assert!(!allowed(touch(Kind::Read, "file:///etc/shadow")));
         assert!(!allowed(touch(Kind::Fetch, "https://example.com")));
         assert!(!allowed(touch(Kind::Other, "x")));
     }

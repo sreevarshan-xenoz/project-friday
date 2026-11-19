@@ -10,6 +10,7 @@
 pub mod agent_claude;
 pub mod agent_desktop;
 pub mod agent_hooks;
+pub mod agent_opencode;
 pub mod agent_policy;
 pub mod agent_runs;
 pub mod auth;

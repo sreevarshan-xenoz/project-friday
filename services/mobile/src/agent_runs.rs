@@ -54,7 +54,7 @@ pub fn read_lines<R: tokio::io::AsyncRead + Send + Unpin + 'static>(out: R) -> L
 
 /// The person's answer to a step or question that waits for them.
 #[derive(Debug, PartialEq, Eq)]
-enum Answer {
+pub(crate) enum Answer {
     Allow,
     Deny,
     Reply(String),
@@ -201,7 +201,7 @@ impl Recorder {
     }
 
     /// The person's answer to what waits for them, if they gave one.
-    fn take_answer(&self) -> Option<Answer> {
+    pub(crate) fn take_answer(&self) -> Option<Answer> {
         let path = self.file("answer");
         let answer = std::fs::read_to_string(&path).ok()?;
         let _ = std::fs::remove_file(path);

@@ -372,8 +372,8 @@ internal sealed partial class SettingsWindow : FluentWindow
 
     private UIElement AgentHooksSwitch()
     {
-        const string title = "Answer routine approvals in my Claude Code sessions";
-        const string detail = "FRIDAY answers routine permissions in Claude Code sessions you run in your terminal; risky actions still wait for you.";
+        const string title = "Answer routine approvals in my own agent sessions";
+        const string detail = "FRIDAY answers routine permissions in the Claude Code, agy and opencode sessions you start yourself; risky actions still wait for you.";
         var toggle = new ToggleSwitch
         {
             IsEnabled = false,
@@ -429,14 +429,14 @@ internal sealed partial class SettingsWindow : FluentWindow
                 toggle.IsEnabled = true;
                 if (ok)
                 {
-                    Said(on ? "Claude Code approvals turned on." : "Claude Code approvals turned off.");
+                    Said(on ? "Approvals in your own agent sessions turned on." : "Approvals in your own agent sessions turned off.");
                 }
                 else
                 {
                     _updatingHooks = true;
                     toggle.IsChecked = !on;
                     _updatingHooks = false;
-                    MessageBox.Show(this, "Couldn't update Claude Code hook:\n\n" + output.Trim(), "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    MessageBox.Show(this, "Couldn't update FRIDAY's agent hooks:\n\n" + output.Trim(), "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Warning);
                 }
             });
         });
