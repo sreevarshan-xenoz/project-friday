@@ -466,8 +466,8 @@ internal sealed class TrayContext : ApplicationContext
 
     private void ChooseProvider()
     {
-        using var form = new ProviderForm(_install.Paths.EnvFile, () => _daemon.Restart());
-        if (form.ShowDialog() == DialogResult.OK)
+        var form = new ProviderWindow(_install.Paths.EnvFile, () => _daemon.Restart());
+        if (form.ShowDialog() == true)
         {
             _daemon.Restart();
             Notify("FRIDAY", "Saved. FRIDAY restarted with the new provider.", ToolTipIcon.Info);
@@ -494,17 +494,17 @@ internal sealed class TrayContext : ApplicationContext
         Notify("FRIDAY", failed.Count == 0 ? "Deleted." : "Couldn't delete: " + string.Join(", ", failed), failed.Count == 0 ? ToolTipIcon.Info : ToolTipIcon.Warning);
     }
 
-    private EgressForm? _egress;
+    private EgressWindow? _egress;
 
     private void ShowEgress()
     {
-        if (_egress is { IsDisposed: false })
+        if (_egress is { IsClosed: false })
         {
             _egress.Activate();
             return;
         }
-        _egress = new EgressForm(_install.Paths);
-        _egress.Show();
+        _egress = new EgressWindow(_install.Paths);
+        FluentApp.Show(_egress);
     }
 
     private void ToggleAppContext()
@@ -618,8 +618,7 @@ internal sealed class TrayContext : ApplicationContext
             ChooseProvider: ChooseProvider,
             ConnectAccounts: () =>
             {
-                using var dlg = new AccountsForm(_install.Paths.EnvFile, () => _daemon.Restart());
-                dlg.ShowDialog();
+                new AccountsWindow(_install.Paths.EnvFile, () => _daemon.Restart()).ShowDialog();
             },
             ShowEgress: ShowEgress,
             ForgetSavedData: ForgetSavedData,

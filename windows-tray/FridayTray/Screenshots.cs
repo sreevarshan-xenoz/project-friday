@@ -45,8 +45,9 @@ internal static class Screenshots
         SaveWpf(new AnswerWindow("Close the Downloads window", new AskOutcome(true,
             "close_window: File Explorer · Downloads", null, false, Confirmation: new NeedsConfirmation("desktop", "close_window"))), folder, "answer-confirm");
         SaveMenu(folder, "tray-menu");
-        Save(new EgressForm(install.Paths), folder, "what-left-this-pc");
-        Save(new ProviderForm(install.Paths.EnvFile), folder, "ai-provider");
+        SaveWpf(new EgressWindow(install.Paths), folder, "what-left-this-pc");
+        SaveWpf(new ProviderWindow(install.Paths.EnvFile), folder, "ai-provider");
+        SaveWpf(new AccountsWindow(install.Paths.EnvFile), folder, "accounts");
         return 0;
     }
 
