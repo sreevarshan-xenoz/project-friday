@@ -25,6 +25,9 @@ internal sealed class AgentPromptWindow : CardWindow
     public AgentPromptWindow(string agentsDir, AgentRun run)
         : base("FRIDAY · " + run.Agent, run.IsQuestion ? "Agent question" : "Agent approval", 480)
     {
+        // The agent is waiting on this: keep it above other windows, like
+        // the answer card, since the tray can't take focus by itself.
+        Topmost = true;
         var details = new StackPanel();
         var header = new TextBlock
         {
