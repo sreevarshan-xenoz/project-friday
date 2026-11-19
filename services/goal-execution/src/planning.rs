@@ -683,6 +683,13 @@ impl Planning {
 fn capability_for_description(description: &str) -> Capability {
     let d = goal_segment(description).to_lowercase();
 
+    // 0. Coding agents: "have opencode add a README to ~/code/site", "ask
+    //    agy to fix the tests", "how are my agent runs going". Before the
+    //    shell, since "run opencode on …" is a request for an agent run.
+    if is_agents_intent(&d) {
+        return Capability::Custom("agents.run".into());
+    }
+
     // 1. Shell — only an explicit request to run something: "run …" /
     //    "execute …", or a goal that is itself a command line ("cargo test",
     //    "git status"). A question that merely mentions a tool ("why does my
@@ -813,6 +820,40 @@ fn capability_for_description(description: &str) -> Capability {
 /// A request for something to happen on a schedule or a battery level, or to
 /// see the ones already set. "every morning at 8 tell me the weather", "when
 /// my battery drops below 20% tell me". Not a question about schedules.
+/// A request to run a coding agent, or about the agent runs. Naming an agent
+/// isn't enough ("what is opencode?"): it has to be given work, or the runs
+/// asked about.
+fn is_agents_intent(d: &str) -> bool {
+    if ["agent run", "agent task", "coding agent"]
+        .iter()
+        .any(|t| d.contains(t))
+    {
+        return true;
+    }
+    let words: Vec<&str> = d.split(|c: char| !c.is_alphanumeric()).collect();
+    let named = words
+        .iter()
+        .any(|w| ["opencode", "agy", "antigravity"].contains(w))
+        || words.windows(2).any(|w| w == ["open", "code"]);
+    if !named {
+        return false;
+    }
+    let first = d.split_whitespace().next().unwrap_or("");
+    if [
+        "what", "why", "who", "which", "where", "is", "are", "does", "do", "can", "should",
+    ]
+    .contains(&first)
+    {
+        return false;
+    }
+    [
+        "have ", "ask ", "tell ", "get ", "let ", "use ", "run ", "start ", "with ", "in ",
+        "using ",
+    ]
+    .iter()
+    .any(|w| d.contains(w))
+}
+
 fn is_standing_intent(d: &str) -> bool {
     let d = [
         "please ",
@@ -1752,6 +1793,28 @@ mod tests {
             planning.infer_capability(composed, &[]),
             Capability::ExecuteCommand
         );
+    }
+
+    #[test]
+    fn agent_requests_route_to_agent_runs() {
+        let runs = Capability::Custom("agents.run".into());
+        for g in [
+            "have opencode add a README to ~/code/site",
+            "ask agy to fix the failing tests in ~/code/app",
+            "run opencode on ~/code/site and add dark mode",
+            "use antigravity to write tests for ~/code/app",
+            "in opencode, refactor the parser in ~/code/x",
+            "how are my agent runs going",
+        ] {
+            assert_eq!(capability_for_description(g), runs, "{g}");
+        }
+        for g in [
+            "what is opencode",
+            "is agy any good",
+            "why does the agency close early",
+        ] {
+            assert_ne!(capability_for_description(g), runs, "{g}");
+        }
     }
 
     #[test]

@@ -193,6 +193,20 @@ The FRIDAY drawer lists them (up to four) with pause/resume and delete buttons. 
 
 On Windows, ask the same way with Win+Y. When a task is due, its answer opens like any other answer, while FRIDAY is running. Settings → Tasks lists them with Pause/Resume and Delete.
 
+## Coding agents
+
+FRIDAY can hand work to a coding agent and follow it for you. Ask with the agent's name and a folder, for example `friday ask "have opencode add a README to ~/code/site"` or `"ask agy to fix the failing tests in ~/code/app"`. FRIDAY writes the task for the agent, starts it in that folder, and returns straight away; you get a notification when it's done. Without a folder, it uses the last one that agent worked in. It works with opencode and agy (Antigravity), whichever is installed and signed in.
+
+While the agent works, FRIDAY answers its approvals for you, by fixed rules rather than by an AI's judgement. Text the agent reads (a README, a web page) can't talk FRIDAY into anything. FRIDAY approves:
+
+- reading and searching inside the folder, except files that look like secrets;
+- editing files inside the folder, except `.git` and files that look like secrets (`.env`, keys, certificates);
+- builds, tests and read-only commands, such as `cargo test`, `npm test`, `git status` and `ls`.
+
+Anything else waits for you with a notification: deleting or moving files, `git commit` or `git push`, installing packages, fetching from the web, anything outside the folder (links that point out of it included), and any command it doesn't recognise. Answer with `friday agents allow <id>` or `friday agents deny <id>`. A step nobody answers in 30 minutes is refused. FRIDAY only ever allows a step once; it never tells an agent to "always allow". When the agent asks a question your request already answers, FRIDAY answers it, up to three times a run. Any other question comes to you as a notification; answer with `friday agents reply <id> "your answer"`, and the agent carries on.
+
+`friday agents` lists the runs and `friday agents show <id>` reports one: what you asked, what the agent said, and every step approved by FRIDAY, approved by you, or refused. `friday agents off` stops FRIDAY from starting agents (`FRIDAY_AGENTS=0`).
+
 ## Your phone (Pocketdesk)
 
 The installer offers pairing at first login unless you untick it (the "What may FRIDAY do?" step). FRIDAY OS installs Pocketdesk, which shows this computer on your Android phone and lets the phone act as its screen, keyboard and remote. It stays off until you turn it on: `friday phone on` asks first, starts it in your session and prints a PIN to enter in the Pocketdesk app on the phone; `friday phone off` stops it and `friday phone status` says where it stands.
