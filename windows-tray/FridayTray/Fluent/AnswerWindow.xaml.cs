@@ -31,7 +31,7 @@ namespace FridayTray.Fluent;
 /// outcome (<see cref="ShowOutcome"/>): an answer, a step that needs the
 /// person's OK, or a failure (with Start FRIDAY when FRIDAY isn't running).
 /// </summary>
-public partial class AnswerWindow : FluentWindow
+public partial class AnswerWindow : Window
 {
     public event Action? AskAgain;
     public event Action? TryAnother;
@@ -62,7 +62,7 @@ public partial class AnswerWindow : FluentWindow
         {
             Fit(animate: false);
             Place();
-            Motion.RiseIn(Body, dy: 16, ms: 560, fromScale: 0.985);
+            Motion.RiseIn(Frame, dy: 16, ms: 560, fromScale: 0.97);
         };
         ShowWaiting(waiting);
     }
@@ -280,7 +280,7 @@ public partial class AnswerWindow : FluentWindow
         if (_closing || IsClosed)
             return;
         _closing = true;
-        Motion.SinkOut(Body, Close);
+        Motion.SinkOut(Frame, Close);
     }
 
     private void OnKey(object sender, KeyEventArgs e)
@@ -298,8 +298,10 @@ public partial class AnswerWindow : FluentWindow
     /// </summary>
     private void Fit(bool animate)
     {
-        Body.Measure(new System.Windows.Size(Width - 2, double.PositiveInfinity));
-        var want = Math.Min(Math.Ceiling(Body.DesiredSize.Height) + 2, SystemParameters.WorkArea.Height - 48);
+        // The frame's margin is room for the shadow around the card.
+        var room = Frame.Margin.Left + Frame.Margin.Right;
+        Body.Measure(new System.Windows.Size(Width - room - 2, double.PositiveInfinity));
+        var want = Math.Min(Math.Ceiling(Body.DesiredSize.Height) + 2 + room, SystemParameters.WorkArea.Height - 24);
         if (Math.Abs(want - ActualHeight) < 1 && IsLoaded)
             return;
         if (!animate || !IsLoaded)
@@ -348,9 +350,10 @@ public partial class AnswerWindow : FluentWindow
     /// <summary>Above the tray, in the corner of the work area, growing upward as the answer grows.</summary>
     private void Place()
     {
+        // The card sits 16 from the corner; the shadow's margin may hang past it.
         var area = SystemParameters.WorkArea;
-        Left = area.Right - ActualWidth - 16;
-        Top = area.Bottom - ActualHeight - 16;
+        Left = area.Right - ActualWidth + Frame.Margin.Right - 16;
+        Top = area.Bottom - ActualHeight + Frame.Margin.Bottom - 16;
     }
 
     // ---- building blocks ----

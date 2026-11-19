@@ -19,7 +19,7 @@ namespace FridayTray.Fluent;
 /// a selection the quick actions are listed under the field (click one, or
 /// walk them with Up/Down; what you type instead is sent as typed).
 /// </summary>
-public partial class AskWindow : FluentWindow
+public partial class AskWindow : Window
 {
     private static readonly Color Clear = Color.FromArgb(0, 255, 255, 255);
     private static readonly Color Hover = Color.FromArgb(0x14, 255, 255, 255);
@@ -76,7 +76,7 @@ public partial class AskWindow : FluentWindow
         Loaded += (_, _) =>
         {
             Place();
-            Motion.RiseIn(Body, dy: -10, ms: 480, fromScale: 0.985);
+            Motion.RiseIn(Frame, dy: -10, ms: 480, fromScale: 0.97);
             for (var i = 0; i < _rows.Count; i++)
                 Motion.RiseIn(_rows[i], dy: 6, delayMs: 60 + Math.Min(i, 8) * 28, ms: 380);
             Breathe();
