@@ -2619,7 +2619,8 @@ mod tests {
         assert_eq!(set.0, ["set-value", "@s1:e1", "--stdin"]);
         assert_eq!(set.1.as_deref(), Some("hello from FRIDAY"));
 
-        // Has text: refused, and nothing is set.
+        // Has text: nothing is set. Elsewhere it is refused; on Windows the
+        // text goes in at the app's caret instead, and no notepad is open here.
         let stub = StubSpawn::new();
         stub.push_response("find", Ok(find.to_string()));
         stub.push_response("type", Ok(refused.to_string()));
@@ -2632,7 +2633,12 @@ mod tests {
             )
             .await;
         assert!(!res.success);
-        assert!(res.error.unwrap().contains("won't replace it"));
+        let err = res.error.unwrap();
+        if cfg!(windows) {
+            assert!(err.contains("no open window of notepad"), "{err}");
+        } else {
+            assert!(err.contains("won't replace it"), "{err}");
+        }
         assert!(!stub
             .calls()
             .iter()
