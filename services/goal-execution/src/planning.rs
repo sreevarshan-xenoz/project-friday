@@ -690,6 +690,13 @@ fn capability_for_description(description: &str) -> Capability {
         return Capability::Custom("agents.run".into());
     }
 
+    // 0b. Troubleshooting: "my wifi keeps dropping", "troubleshoot my
+    //     sound", "why is my disk full". FRIDAY looks with read-only
+    //     commands before it answers.
+    if is_diagnose_intent(&d) {
+        return Capability::Custom("system.diagnose".into());
+    }
+
     // 1. Shell — only an explicit request to run something: "run …" /
     //    "execute …", or a goal that is itself a command line ("cargo test",
     //    "git status"). A question that merely mentions a tool ("why does my
@@ -856,6 +863,62 @@ fn is_agents_intent(d: &str) -> bool {
     ]
     .iter()
     .any(|w| d.contains(w))
+}
+
+/// A problem with this computer the person wants looked into.
+fn is_diagnose_intent(d: &str) -> bool {
+    if ["troubleshoot", "diagnose"]
+        .iter()
+        .any(|w| d.starts_with(w))
+    {
+        return true;
+    }
+    const PARTS: [&str; 22] = [
+        "wifi",
+        "wi-fi",
+        "internet",
+        "network",
+        "ethernet",
+        "dns",
+        "sound",
+        "audio",
+        "speaker",
+        "microphone",
+        "mic",
+        "bluetooth",
+        "disk",
+        "storage",
+        "battery",
+        "printer",
+        "monitor",
+        "display",
+        "usb",
+        "webcam",
+        "camera",
+        "computer",
+    ];
+    const TROUBLE: [&str; 15] = [
+        " full",
+        "not working",
+        "isn't working",
+        "stopped working",
+        "doesn't work",
+        "won't connect",
+        "can't connect",
+        "keeps dropping",
+        "keeps disconnecting",
+        "is slow",
+        "so slow",
+        "is full",
+        "not detected",
+        "no sound",
+        "draining",
+    ];
+    let words: Vec<&str> = d
+        .split(|c: char| !c.is_alphanumeric() && c != '-')
+        .collect();
+    let mine = d.contains("my ") || d.contains("this computer") || d.contains("this laptop");
+    mine && PARTS.iter().any(|p| words.contains(p)) && TROUBLE.iter().any(|t| d.contains(t))
 }
 
 fn is_standing_intent(d: &str) -> bool {
@@ -1822,6 +1885,29 @@ mod tests {
             "use claude to explain this error",
         ] {
             assert_ne!(capability_for_description(g), runs, "{g}");
+        }
+    }
+
+    #[test]
+    fn computer_problems_route_to_troubleshooting() {
+        let diag = Capability::Custom("system.diagnose".into());
+        for g in [
+            "my wifi keeps dropping",
+            "troubleshoot my sound",
+            "diagnose why bluetooth won't pair",
+            "why is my disk full",
+            "my internet is so slow today",
+            "the microphone on my laptop is not working",
+        ] {
+            assert_eq!(capability_for_description(g), diag, "{g}");
+        }
+        for g in [
+            "what is wifi 7",
+            "my favourite song is not working out for me",
+            "is the internet slow in general",
+            "explain how dns works",
+        ] {
+            assert_ne!(capability_for_description(g), diag, "{g}");
         }
     }
 

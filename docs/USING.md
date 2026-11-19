@@ -209,6 +209,12 @@ FRIDAY does the same in Claude Code sessions you start yourself. Before Claude C
 
 `friday agents` lists the runs and `friday agents show <id>` reports one: what you asked, what the agent said, and every step approved by FRIDAY, approved by you, or refused. `friday agents off` stops FRIDAY from starting agents (`FRIDAY_AGENTS=0`).
 
+## Troubleshooting
+
+Tell FRIDAY what's wrong, for example `friday ask "my wifi keeps dropping"`, `"why is my disk full"` or `"troubleshoot my sound"`. FRIDAY looks before it answers: it runs diagnostic commands that only read, such as `nmcli device status`, `journalctl -b -p err`, `df -h` and `wpctl status` (on Windows: `ipconfig`, `Get-NetAdapter`, `Test-NetConnection`). It reads what they print and answers with what it found, in up to four rounds.
+
+A fixed list decides which commands may run, not the AI. Each command may only take the options on its list, so ones that print secrets (saved Wi-Fi passwords, a process's environment) or read a file they're given are refused too. Nothing that changes your system runs here: no restarts, no installs, no `sudo`, no reading your files or keys. When the fix needs such a command, FRIDAY tells you what it is so you can run it yourself, or say `friday ask "run <command>"`, which asks you first. Command output has secrets masked before it goes to your AI provider. `FRIDAY_DIAGNOSE=0` turns troubleshooting off.
+
 ## Your phone (Pocketdesk)
 
 The installer offers pairing at first login unless you untick it (the "What may FRIDAY do?" step). FRIDAY OS installs Pocketdesk, which shows this computer on your Android phone and lets the phone act as its screen, keyboard and remote. It stays off until you turn it on: `friday phone on` asks first, starts it in your session and prints a PIN to enter in the Pocketdesk app on the phone; `friday phone off` stops it and `friday phone status` says where it stands.

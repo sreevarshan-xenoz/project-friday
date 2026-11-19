@@ -1418,6 +1418,16 @@ impl GoalRunner {
             }
             _ => false,
         };
+        // Troubleshooting: read-only diagnostic commands, then an answer.
+        let has_diagnose = match &fabric {
+            Some(f) if crate::diagnose::enabled() => {
+                executive.register_tool(Box::new(crate::diagnose::DiagnoseTool::new(
+                    f.clone() as Arc<dyn LlmStrategyClient>
+                )));
+                true
+            }
+            _ => false,
+        };
         let has_standing = match &fabric {
             Some(f) if crate::standing::enabled() => {
                 executive.register_tool(Box::new(crate::standing::StandingTool::new(
@@ -1472,6 +1482,10 @@ impl GoalRunner {
         if has_agents {
             world_state =
                 world_state.with_tool(Capability::Custom(crate::agent_runs::CAPABILITY.into()));
+        }
+        if has_diagnose {
+            world_state =
+                world_state.with_tool(Capability::Custom(crate::diagnose::CAPABILITY.into()));
         }
         if has_standing {
             world_state =
