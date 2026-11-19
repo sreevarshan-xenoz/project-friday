@@ -2310,6 +2310,9 @@ case "${1:-}" in
     case "${1:-start}" in
       start)
         if [ -n "$supervisor" ]; then echo "FRIDAY Shell is already running (pid $supervisor)"; exit 0; fi
+        # A window look written before the frosted glass has no blur rule.
+        look="${XDG_CONFIG_HOME:-$HOME/.config}/friday/hypr-look.lua"
+        if [ -f "$look" ] && ! grep -q layer_rule "$look"; then shell_window_look; fi
         shell_supervise "$dir" "$pidfile" ;;
       restart)
         if [ -n "$supervisor" ]; then
