@@ -861,7 +861,13 @@ mod tests {
         )
         .await;
         assert!(made.success, "{:?}", made.error);
-        assert!(made.output.contains("every day at 08:00") && made.output.contains("friday tasks"));
+        // Where to manage them: the CLI on Linux, Settings on Windows.
+        let manage = if cfg!(windows) {
+            "Settings"
+        } else {
+            "friday tasks"
+        };
+        assert!(made.output.contains("every day at 08:00") && made.output.contains(manage));
         let store = Store::load(&path);
         assert_eq!(store.tasks.len(), 1);
         assert_eq!(store.tasks[0].goal, "tell me the weather");
