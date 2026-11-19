@@ -199,11 +199,11 @@ FRIDAY can hand work to a coding agent and follow it for you. Ask with the agent
 
 While the agent works, FRIDAY answers its approvals for you, by fixed rules rather than by an AI's judgement. Text the agent reads (a README, a web page) can't talk FRIDAY into anything. FRIDAY approves:
 
-- reading and searching inside the folder;
+- reading and searching inside the folder, except files that look like secrets;
 - editing files inside the folder, except `.git` and files that look like secrets (`.env`, keys, certificates);
 - builds, tests and read-only commands, such as `cargo test`, `npm test`, `git status` and `ls`.
 
-Anything else waits for you with a notification: deleting or moving files, `git commit` or `git push`, installing packages, anything outside the folder, and any command it doesn't recognise. Answer with `friday agents allow <id>` or `friday agents deny <id>`. A step nobody answers in 30 minutes is refused. FRIDAY only ever allows a step once; it never tells an agent to "always allow". When the agent asks a question your request already answers, FRIDAY answers it, up to three times a run. Any other question comes to you.
+Anything else waits for you with a notification: deleting or moving files, `git commit` or `git push`, installing packages, fetching from the web, anything outside the folder (links that point out of it included), and any command it doesn't recognise. Answer with `friday agents allow <id>` or `friday agents deny <id>`. A step nobody answers in 30 minutes is refused. FRIDAY only ever allows a step once; it never tells an agent to "always allow". When the agent asks a question your request already answers, FRIDAY answers it, up to three times a run. Any other question comes to you.
 
 `friday agents` lists the runs and `friday agents show <id>` reports one: what you asked, what the agent said, and every step approved by FRIDAY, approved by you, or refused. `friday agents off` stops FRIDAY from starting agents (`FRIDAY_AGENTS=0`).
 

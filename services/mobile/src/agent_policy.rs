@@ -78,11 +78,19 @@ fn ask(why: impl Into<String>) -> Decision {
 /// Decides one step of a run in `folder`.
 pub fn decide(step: &Step, folder: &Path) -> Decision {
     match step.kind {
-        Kind::Think | Kind::Fetch => Decision::Allow,
-        Kind::Read | Kind::Search => match outside(&step.paths, folder) {
-            Some(p) => ask(format!("reads {p}, outside the project folder")),
-            None => Decision::Allow,
-        },
+        Kind::Think => Decision::Allow,
+        // A fetch can carry what the agent read (a key in the URL) out to
+        // anyone, so it is the person's call.
+        Kind::Fetch => ask("fetches from the web"),
+        Kind::Read | Kind::Search => {
+            if let Some(p) = outside(&step.paths, folder) {
+                return ask(format!("reads {p}, outside the project folder"));
+            }
+            match step.paths.iter().find(|p| is_secret(p)) {
+                Some(p) => ask(format!("reads {p}, which may hold secrets")),
+                None => Decision::Allow,
+            }
+        }
         Kind::Edit => {
             if step.paths.is_empty() {
                 return ask("edits a file it doesn't name");
@@ -129,19 +137,43 @@ fn resolve(path: &str, folder: &Path) -> PathBuf {
 }
 
 /// The first path that lands outside `folder`.
+/// A link inside the folder can point out of it, so where a path (or the
+/// nearest part of it that exists) really is counts too.
+fn real_place(path: &Path) -> Option<PathBuf> {
+    let mut probe = path.to_path_buf();
+    let mut rest = Vec::new();
+    loop {
+        if let Ok(real) = std::fs::canonicalize(&probe) {
+            return Some(rest.iter().rev().fold(real, |acc, part| acc.join(part)));
+        }
+        rest.push(probe.file_name()?.to_os_string());
+        probe = probe.parent()?.to_path_buf();
+    }
+}
+
 fn outside<'a>(paths: &'a [String], folder: &Path) -> Option<&'a str> {
+    let real_folder = std::fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
     paths
         .iter()
-        .find(|p| !resolve(p, folder).starts_with(folder))
+        .find(|p| {
+            let lexical = resolve(p, folder);
+            !lexical.starts_with(folder)
+                || real_place(&lexical).is_some_and(|r| !r.starts_with(&real_folder))
+        })
         .map(String::as_str)
 }
 
 /// Files whose change is the person's call: git history and secrets.
 fn is_sensitive(path: &str) -> bool {
+    Path::new(path)
+        .components()
+        .any(|c| c.as_os_str() == ".git")
+        || is_secret(path)
+}
+
+/// Files that look like they hold keys or passwords.
+fn is_secret(path: &str) -> bool {
     let p = Path::new(path);
-    if p.components().any(|c| c.as_os_str() == ".git") {
-        return true;
-    }
     let name = p
         .file_name()
         .and_then(|n| n.to_str())
@@ -180,7 +212,7 @@ fn command(cmd: &str, folder: &Path) -> Decision {
     if cmd.is_empty() {
         return ask("runs an empty command");
     }
-    if let Some(c) = [";", "&", "|", "`", "$(", ">", "<", "\n"]
+    if let Some(c) = [";", "&", "|", "`", "$", ">", "<", "\n", "\\"]
         .iter()
         .find(|c| cmd.contains(**c))
     {
@@ -195,26 +227,43 @@ fn command(cmd: &str, folder: &Path) -> Decision {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or(program);
+    // Every argument that could be a path, quotes stripped and `--opt=value`
+    // split, is checked against the folder; plain words resolve inside it.
     let paths: Vec<String> = args
         .iter()
-        .filter(|a| !a.starts_with('-'))
-        .filter(|a| {
-            a.starts_with('/') || a.starts_with('~') || a.contains("..") || a.contains(":\\")
+        .map(|a| a.trim_matches(|c| c == '"' || c == '\''))
+        .map(|a| match a.split_once('=') {
+            Some((flag, value)) if flag.starts_with('-') => value,
+            _ => a,
         })
-        .map(|a| a.to_string())
+        .filter(|a| !a.starts_with('-') && !a.is_empty())
+        .map(|a| a.trim_matches(|c| c == '"' || c == '\'').to_string())
         .collect();
     if let Some(p) = outside(&paths, folder) {
         return ask(format!("runs a command on {p}, outside the project folder"));
     }
+    if let Some(p) = paths.iter().find(|p| is_secret(p)) {
+        return ask(format!("runs a command on {p}, which may hold secrets"));
+    }
+    // Options that run another program or write a file.
+    let writes_or_runs = |flags: &[&str]| {
+        args.iter().any(|a| {
+            flags
+                .iter()
+                .any(|f| *a == *f || a.starts_with(&format!("{f}=")))
+        })
+    };
     let sub = args.first().copied().unwrap_or("");
     let ok = match program {
+        "rg" => !writes_or_runs(&["--pre", "--pre-glob"]),
+        "tree" => !writes_or_runs(&["-o"]),
         p if READ_ONLY.contains(&p) => true,
         "find" => !args.iter().any(|a| {
-            ["-delete", "-exec", "-execdir", "-ok", "-okdir"].contains(a)
+            ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fls"].contains(a)
                 || a.starts_with("-fprint")
         }),
         "git" => {
-            [
+            ([
                 "status",
                 "diff",
                 "log",
@@ -224,7 +273,8 @@ fn command(cmd: &str, folder: &Path) -> Decision {
                 "blame",
             ]
             .contains(&sub)
-                || (sub == "branch" && args.len() == 1)
+                || (sub == "branch" && args.len() == 1))
+                && !writes_or_runs(&["--output", "--ext-diff", "--textconv", "-o"])
         }
         "cargo" => ["build", "check", "test", "fmt", "clippy"].contains(&sub),
         "npm" | "pnpm" | "yarn" => {
@@ -333,6 +383,20 @@ mod tests {
             "npm run deploy",
             "make install",
             "bash script.sh",
+            "cat \"/etc/passwd\"",
+            "cat '/etc/passwd'",
+            "grep --file=/etc/passwd x",
+            "rg --pre=sh x",
+            "rg --pre sh x",
+            "tree -o out.txt",
+            "find . -fls out",
+            "git diff --output=/tmp/x",
+            "git log --ext-diff",
+            "git -C /other status",
+            "cat $HOME/.ssh/id_rsa",
+            "cat .env",
+            "grep -r KEY .env.local",
+            "ls \\..\\x",
         ] {
             assert!(!allowed(run(c)), "{c}");
         }
@@ -345,6 +409,8 @@ mod tests {
         assert!(!allowed(touch(Kind::Edit, ".git/config")));
         assert!(!allowed(touch(Kind::Edit, "certs/server.pem")));
         assert!(!allowed(touch(Kind::Read, "/etc/passwd")));
+        assert!(!allowed(touch(Kind::Read, ".env")));
+        assert!(!allowed(touch(Kind::Fetch, "https://example.com")));
         assert!(!allowed(touch(Kind::Other, "x")));
     }
 
@@ -363,6 +429,36 @@ mod tests {
             paths: vec![],
         };
         assert!(!allowed(decide(&exec, folder)));
+    }
+
+    #[test]
+    fn a_link_out_of_the_folder_is_outside() {
+        let base = std::env::temp_dir().join(format!("friday-policy-link-{}", std::process::id()));
+        let (folder, away) = (base.join("site"), base.join("away"));
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::create_dir_all(&away).unwrap();
+        std::os::unix::fs::symlink(&away, folder.join("escape")).unwrap();
+        let edit = |p: &str| {
+            decide(
+                &Step {
+                    kind: Kind::Edit,
+                    command: None,
+                    paths: vec![p.into()],
+                },
+                &folder,
+            )
+        };
+        assert!(!allowed(edit("escape/x.txt")));
+        assert!(allowed(edit("src/new.rs")));
+        assert!(!allowed(decide(
+            &Step {
+                kind: Kind::Execute,
+                command: Some("cat escape/x".into()),
+                paths: vec![],
+            },
+            &folder
+        )));
+        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]

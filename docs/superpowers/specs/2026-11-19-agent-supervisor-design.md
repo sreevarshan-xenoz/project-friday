@@ -41,16 +41,16 @@ Second, when the person asks for help troubleshooting, FRIDAY runs diagnostic co
 The input is the agent, the step's kind (read, search, edit, delete, move, execute, fetch, think, other), the command when there is one, its paths, and the run's folder. The output is Allow or Ask(reason).
 
 FRIDAY allows:
-- read, search and think, anywhere in the run's folder;
+- read, search and think, anywhere in the run's folder (secret-looking files excepted);
 - edits to files inside the folder, except `.git/` and secret-looking files (`.env*`, `*.pem`, `*.key`, `id_*`, `credentials*`, `secrets*`);
-- commands whose program and subcommand are on a read-only or build/test list, with no `;`, `&&`, `|`, backticks, `$(`, redirects outside the folder, `sudo`, or `rm`. The list: `ls cat head tail wc grep rg find` (no `-delete` or `-exec`), `git status/diff/log/show/branch`, `cargo build/check/test/fmt/clippy`, `npm|pnpm|yarn test/run lint/run build`, `pytest`, `python -m pytest`, `go build/test/vet`, `dotnet build/test`, `make test/build`, `echo pwd which`;
-- fetch (reading a web page).
+- commands whose program and subcommand are on a read-only or build/test list, with no `;`, `&`, `|`, backticks, `$`, redirects or backslashes, and no argument (quoted, or after `--opt=`) that leads outside the folder or names a secret-looking file. Options that write files or run programs (`rg --pre`, `git --output`, `tree -o`, `find -fls`) are refused. The list: `ls cat head tail wc grep rg find` (no `-delete` or `-exec`), `git status/diff/log/show/branch`, `cargo build/check/test/fmt/clippy`, `npm|pnpm|yarn test/run lint/run build`, `pytest`, `python -m pytest`, `go build/test/vet`, `dotnet build/test`, `make test/build`, `echo pwd which`;
+- Paths are checked both as written and as they really resolve, so a link inside the folder that points out of it counts as outside.
 
 Everything else goes to the person:
 - delete and move;
 - git commit, push, reset, checkout and rebase;
 - package installs;
-- network uploads;
+- fetching from the web (a fetch can carry what the agent read out in its URL);
 - anything outside the folder;
 - secrets;
 - unknown kinds and unknown programs.
