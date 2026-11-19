@@ -102,7 +102,7 @@ internal sealed class TrayContext : ApplicationContext
         }) { IsBackground = true, Name = "FRIDAY open-window listener" }.Start();
         _icon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) _ = AskAsync(AskKind.Plain); };
         UpdateStatus();
-        _poll.Tick += (_, _) => UpdateStatus();
+        _poll.Tick += (_, _) => { UpdateStatus(); _ = RunDueTasksAsync(); };
         _poll.Start();
 
         _host.Start();
@@ -206,6 +206,38 @@ internal sealed class TrayContext : ApplicationContext
             _asking = false;
         }
     }
+
+    /// <summary>
+    /// Asks what the daemon queued from a standing task, one goal at a time,
+    /// the way the person's own ask runs (so it gets the same answer window,
+    /// questions before anything risky, history and egress log). Waits while
+    /// another ask is on screen.
+    /// </summary>
+    private async Task RunDueTasksAsync()
+    {
+        if (_asking || _runningDue)
+            return;
+        _runningDue = true;
+        try
+        {
+            foreach (var goal in StandingTasks.TakeDue(_install.Paths.StandingDueFile))
+            {
+                while (_asking)
+                    await Task.Delay(1000);
+                await AskTextAsync(goal);
+            }
+        }
+        catch (IOException e)
+        {
+            Notify("FRIDAY", "Couldn't run a standing task: " + e.Message, ToolTipIcon.Warning);
+        }
+        finally
+        {
+            _runningDue = false;
+        }
+    }
+
+    private bool _runningDue;
 
     /// <summary>Asks a ready-made question (from a button) and shows the answer like any other.</summary>
     private async Task AskTextAsync(string question)

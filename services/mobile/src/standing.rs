@@ -9,6 +9,10 @@
 //! step still stops and asks; nobody has said yes to it in advance.
 //!
 //! `friday tasks` lists, pauses, resumes and deletes by editing the same file.
+//!
+//! On Windows there is no `friday` CLI: the tray is what asks, so a due goal
+//! goes into `standing-due.jsonl` and the tray runs it as an ask of its own
+//! (its Tasks page edits `standing.json`).
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -173,7 +177,7 @@ impl Store {
         trigger.valid()?;
         if self.tasks.len() >= MAX_TASKS {
             return Err(format!(
-                "there are already {MAX_TASKS} standing tasks; delete one first (friday tasks)"
+                "there are already {MAX_TASKS} standing tasks; delete one first"
             ));
         }
         let id = (1..)
@@ -270,8 +274,28 @@ pub fn tick(
     run
 }
 
+/// The battery as Windows reports it; `None` on a machine without one.
+#[cfg(windows)]
+pub fn read_battery() -> Option<Battery> {
+    use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+    // SAFETY: GetSystemPowerStatus only fills the struct it is given.
+    let mut s: SYSTEM_POWER_STATUS = unsafe { std::mem::zeroed() };
+    if unsafe { GetSystemPowerStatus(&mut s) } == 0 {
+        return None;
+    }
+    // 128: no battery; 255: unknown.
+    if s.BatteryFlag & 128 != 0 || s.BatteryFlag == 255 || s.BatteryLifePercent > 100 {
+        return None;
+    }
+    Some(Battery {
+        percent: s.BatteryLifePercent,
+        charging: s.ACLineStatus == 1,
+    })
+}
+
 /// The battery from `/sys/class/power_supply` (the first one that reports a
 /// capacity); `None` on a machine without one.
+#[cfg(not(windows))]
 pub fn read_battery() -> Option<Battery> {
     let dir = std::fs::read_dir("/sys/class/power_supply").ok()?;
     for entry in dir.flatten() {
@@ -324,6 +348,31 @@ impl Runner for FridayAsk {
     }
 }
 
+/// Where the daemon leaves due goals for the tray to ask (Windows).
+pub fn tray_queue_path() -> PathBuf {
+    store_path().with_file_name("standing-due.jsonl")
+}
+
+/// Hands the goal to the tray, one JSON line per due goal; the tray asks it
+/// the way the person's own ask runs, and removes the line.
+pub struct TrayQueue(pub PathBuf);
+
+#[async_trait]
+impl Runner for TrayQueue {
+    async fn run(&self, goal: &str) {
+        use std::io::Write;
+        let line = serde_json::json!({ "goal": goal, "ts": chrono::Utc::now().timestamp() });
+        let wrote = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.0)
+            .and_then(|mut f| writeln!(f, "{line}"));
+        if let Err(e) = wrote {
+            tracing::warn!("[standing] couldn't queue for the tray: {e}");
+        }
+    }
+}
+
 /// Checks the file every [`TICK`] and runs what is due, one task at a time.
 /// The file is read each time, so `friday tasks` changes apply at once.
 pub async fn run_loop(path: PathBuf, runner: std::sync::Arc<dyn Runner>) {
@@ -370,10 +419,10 @@ pub async fn run_loop(path: PathBuf, runner: std::sync::Arc<dyn Runner>) {
 pub const CAPABILITY: &str = "standing.tasks";
 
 /// Whether this machine can run standing tasks: Linux with the `friday` CLI
-/// (which runs them), and the owner hasn't turned them off
-/// (`FRIDAY_STANDING_TASKS=0`).
+/// or Windows with the tray (which run them), and the owner hasn't turned
+/// them off (`FRIDAY_STANDING_TASKS=0`).
 pub fn enabled() -> bool {
-    cfg!(target_os = "linux")
+    (cfg!(target_os = "linux") || cfg!(windows))
         && std::env::var("FRIDAY_STANDING_TASKS")
             .map(|v| v != "0")
             .unwrap_or(true)
@@ -494,8 +543,13 @@ impl friday_goal_execution::Tool for StandingTool {
                 if let Err(e) = store.save(&self.path) {
                     return ToolResult::error(format!("couldn't save the task: {e}"));
                 }
+                let manage = if cfg!(windows) {
+                    "in FRIDAY's Settings, under Tasks"
+                } else {
+                    "with: friday tasks"
+                };
                 ToolResult::success(format!(
-                    "Done. Standing task {made}\nSee, pause or delete your tasks with: friday tasks"
+                    "Done. Standing task {made}\nSee, pause or delete your tasks {manage}"
                 ))
             }
             _ => {
@@ -642,6 +696,29 @@ mod tests {
             charging: false,
         });
         assert!(tick(&mut store, now, ts(now), high).is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_tray_queue_gets_one_line_per_due_goal() {
+        let dir =
+            std::env::temp_dir().join(format!("friday-standing-queue-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let q = TrayQueue(dir.join("standing-due.jsonl"));
+        let _ = std::fs::remove_file(&q.0);
+        q.run("tell me the weather").await;
+        q.run("check my mail").await;
+        let text = std::fs::read_to_string(&q.0).unwrap();
+        let goals: Vec<String> = text
+            .lines()
+            .map(|l| {
+                serde_json::from_str::<serde_json::Value>(l).unwrap()["goal"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(goals, ["tell me the weather", "check my mail"]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

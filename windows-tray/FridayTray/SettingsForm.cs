@@ -48,7 +48,7 @@ internal sealed class SettingsForm : Form
         var side = new Panel { Dock = DockStyle.Left, Width = 190, BackColor = Theme.Surface, Padding = new Padding(10, 18, 10, 10) };
         var brand = new Label { Text = "FRIDAY", Font = Theme.Title, ForeColor = Theme.Accent, Dock = DockStyle.Top, Height = 34 };
         var items = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, BackColor = Theme.Surface };
-        foreach (var name in new[] { "Home", "General", "Privacy", "AI", "Voice", "Desktop control", "Shortcuts", "Health & updates", "About" })
+        foreach (var name in new[] { "Home", "General", "Privacy", "AI", "Voice", "Desktop control", "Tasks", "Shortcuts", "Health & updates", "About" })
         {
             var b = new Button
             {
@@ -99,6 +99,7 @@ internal sealed class SettingsForm : Form
             "AI" => Ai(),
             "Voice" => Voice(),
             "Desktop control" => Desktop(),
+            "Tasks" => Tasks(),
             "Shortcuts" => Shortcuts(),
             "Health & updates" => HealthAndUpdates(),
             _ => About(),
@@ -309,6 +310,47 @@ internal sealed class SettingsForm : Form
         yield return Pair("What FRIDAY did", done.Count == 0 ? "Nothing yet" : "");
         foreach (var a in done)
             yield return Pair(EgressLog.FormatLocalTime(a.Ts), ActionLog.Describe(a));
+    }
+
+    private IEnumerable<Control> Tasks()
+    {
+        yield return Note("Things FRIDAY does again and again. Make one by asking, like \"every morning at 8 tell me the weather\" " +
+            "or \"when the battery is under 20% tell me\". Each one runs like your own ask: the answer opens, and anything risky still asks first. " +
+            "They run while FRIDAY is running.");
+        var path = _install.Paths.StandingFile;
+        var tasks = StandingTasks.Load(path);
+        if (tasks.Count == 0)
+            yield return Pair("Standing tasks", "None yet");
+        foreach (var t in tasks)
+        {
+            var row = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, BackColor = Theme.Bg, Margin = new Padding(0, 0, 0, 8) };
+            row.Controls.Add(new Label
+            {
+                Text = $"{t.When} · {t.Goal}" + (t.Paused ? " (paused)" : ""),
+                UseMnemonic = false,
+                AutoSize = true,
+                MaximumSize = new Size(300, 0),
+                ForeColor = t.Paused ? Theme.Subtext : Theme.Text,
+                Margin = new Padding(0, 6, 10, 0),
+            });
+            var pause = Theme.Button(t.Paused ? "Resume" : "Pause");
+            pause.Click += (_, _) =>
+            {
+                StandingTasks.SetPaused(path, t.Id, !t.Paused);
+                Show("Tasks");
+                Said(t.Paused ? "Resumed." : "Paused: it won't run until you resume it.");
+            };
+            var delete = Theme.Button("Delete");
+            delete.Click += (_, _) =>
+            {
+                StandingTasks.Delete(path, t.Id);
+                Show("Tasks");
+                Said("Deleted.");
+            };
+            row.Controls.Add(pause);
+            row.Controls.Add(delete);
+            yield return row;
+        }
     }
 
     private IEnumerable<Control> Shortcuts()
