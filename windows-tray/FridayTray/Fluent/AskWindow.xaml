@@ -1,0 +1,56 @@
+<ui:FluentWindow x:Class="FridayTray.Fluent.AskWindow"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 Title="Ask FRIDAY"
+                 Width="680" MinWidth="0" MinHeight="0" SizeToContent="Height"
+                 ResizeMode="NoResize" ShowInTaskbar="False" Topmost="True"
+                 WindowStartupLocation="Manual"
+                 ExtendsContentIntoTitleBar="True"
+                 WindowBackdropType="Acrylic"
+                 WindowCornerPreference="Round">
+  <Border Background="{StaticResource Glass}" BorderBrush="{StaticResource Hairline}" BorderThickness="1" CornerRadius="8">
+    <Grid>
+      <Border Background="{StaticResource EmberWash}" CornerRadius="8" IsHitTestVisible="False" />
+      <StackPanel x:Name="Body" Margin="20,16,18,14">
+
+        <!-- The field: the orb, the question, and Enter. -->
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <Grid Width="16" Height="16" VerticalAlignment="Center">
+            <Ellipse x:Name="Halo" Fill="{StaticResource Ember}" Opacity="0.22" RenderTransformOrigin="0.5,0.5">
+              <Ellipse.RenderTransform><ScaleTransform x:Name="HaloScale" ScaleX="1.2" ScaleY="1.2" /></Ellipse.RenderTransform>
+            </Ellipse>
+            <Ellipse Width="9" Height="9" Fill="{StaticResource EmberFill}" />
+          </Grid>
+          <Grid Grid.Column="1" Margin="14,0,10,0">
+            <TextBlock x:Name="Placeholder" Text="Ask FRIDAY anything…" FontFamily="{StaticResource DisplayFont}" FontSize="20"
+                       Foreground="{StaticResource Faint}" VerticalAlignment="Center" IsHitTestVisible="False" Margin="2,0,0,0" />
+            <TextBox x:Name="Input" Style="{StaticResource BareInput}" FontSize="20" VerticalAlignment="Center"
+                     AutomationProperties.Name="Ask FRIDAY" />
+          </Grid>
+          <Border x:Name="EnterKey" Grid.Column="2" Style="{StaticResource Chip}" VerticalAlignment="Center" Opacity="0">
+            <TextBlock Text="↵" FontSize="13" Foreground="{StaticResource Subtext}" />
+          </Border>
+        </Grid>
+
+        <!-- What goes with it (a selection, the screen). -->
+        <Border x:Name="Context" Style="{StaticResource Chip}" HorizontalAlignment="Left" Margin="30,12,0,0" Visibility="Collapsed">
+          <StackPanel Orientation="Horizontal">
+            <ui:SymbolIcon x:Name="ContextIcon" Symbol="TextQuote24" FontSize="13" Margin="0,0,6,0" VerticalAlignment="Center" />
+            <TextBlock x:Name="ContextText" FontSize="12" MaxWidth="560" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+          </StackPanel>
+        </Border>
+
+        <!-- Quick actions for a selection: a soft highlight follows the keys. -->
+        <ItemsControl x:Name="Quick" Margin="22,10,0,0" Visibility="Collapsed" Focusable="False" />
+
+        <TextBlock x:Name="Keys" Margin="30,12,0,0" Style="{StaticResource Caption}" />
+      </StackPanel>
+    </Grid>
+  </Border>
+</ui:FluentWindow>

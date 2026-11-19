@@ -214,6 +214,34 @@
     </Setter>
   </Style>
 
+  <!-- A text field with nothing around it: the glass is the field. -->
+  <Style x:Key="BareInput" TargetType="TextBox">
+    <Setter Property="FontFamily" Value="{StaticResource DisplayFont}" />
+    <Setter Property="Foreground" Value="{StaticResource Text}" />
+    <Setter Property="CaretBrush" Value="{StaticResource Ember}" />
+    <Setter Property="SelectionBrush" Value="{StaticResource Ember}" />
+    <Setter Property="SelectionOpacity" Value="0.35" />
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="TextBox">
+          <ScrollViewer x:Name="PART_ContentHost" Focusable="False" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden" />
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- A small rounded tag: what goes with the question. -->
+  <Style x:Key="Chip" TargetType="Border">
+    <Setter Property="CornerRadius" Value="6" />
+    <Setter Property="Padding" Value="8,3" />
+    <Setter Property="Background" Value="{StaticResource Well}" />
+    <Setter Property="BorderBrush" Value="{StaticResource Hairline}" />
+    <Setter Property="BorderThickness" Value="1" />
+  </Style>
+
   <!-- A round icon button (close): invisible until hovered. -->
   <Style x:Key="IconButton" TargetType="Button">
     <Setter Property="Width" Value="26" />

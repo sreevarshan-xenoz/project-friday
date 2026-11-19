@@ -1,6 +1,7 @@
 using Microsoft.Win32;
 using FridayTray.Core;
 using FridayTray.Fluent;
+using SymbolRegular = Wpf.Ui.Controls.SymbolRegular;
 
 namespace FridayTray;
 
@@ -17,9 +18,6 @@ internal sealed class TrayContext : ApplicationContext
     private readonly Supervised _daemon;
     private readonly Supervised _host;
     private readonly System.Windows.Forms.Timer _poll = new() { Interval = 2000 };
-    private readonly ToolStripMenuItem _startAtLogin;
-    private readonly ToolStripMenuItem _appContext;
-    private readonly ToolStripMenuItem _screenText;
     private string _mode = "";
     private bool _asking;
 
@@ -48,51 +46,8 @@ internal sealed class TrayContext : ApplicationContext
 
         _hotkeys.Pressed += kind => _ = AskAsync(kind);
         _hotkeys.RegisterAll();
-        // The hotkey is drawn right-aligned by the menu (a tab in the text would
-        // not be expanded and ran into the name).
-        ToolStripMenuItem Ask(string text, AskKind kind, bool pickArea = false) =>
-            new(text, null, (_, _) => _ = AskAsync(kind, pickArea))
-            {
-                ShortcutKeyDisplayString = !pickArea && _hotkeys.Labels.TryGetValue(kind, out var l) ? l : null,
-            };
-
-        _startAtLogin = new ToolStripMenuItem("Start at login", null, (_, _) => ToggleStartAtLogin()) { Checked = install.StartsAtLogin };
-        var menu = new ContextMenuStrip();
-        var askItem = Ask("Ask FRIDAY", AskKind.Plain);
-        askItem.Font = new Font(menu.Font, FontStyle.Bold);
-        menu.Items.Add(askItem);
-        menu.Items.Add(Ask("Ask about selection", AskKind.Selection));
-        menu.Items.Add(Ask("Ask about the screen", AskKind.Screen));
-        menu.Items.Add(Ask("Ask about an area…", AskKind.Screen, pickArea: true));
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Last answer", null, (_, _) => Open(install.Paths.LastAnswerFile));
-        menu.Items.Add("All answers", null, (_, _) => Open(install.Paths.AnswersFile));
-        menu.Items.Add("What left this PC…", null, (_, _) => ShowEgress());
-        menu.Items.Add("Forget saved data…", null, (_, _) => ForgetSavedData());
-        _appContext = new ToolStripMenuItem("Name the app when asking about a selection", null, (_, _) => ToggleAppContext())
-            { Checked = SourceApp.Enabled(install.Paths) };
-        menu.Items.Add(_appContext);
-        _screenText = new ToolStripMenuItem("Read a window's text for screen asks", null, (_, _) => ToggleScreenText())
-            { Checked = ScreenTextOn() };
-        menu.Items.Add(_screenText);
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Welcome…", null, (_, _) => ShowWelcome());
-        menu.Items.Add("Settings…", null, (_, _) => OpenSettings());
-        menu.Items.Add("AI provider…", null, (_, _) => ChooseProvider());
-        menu.Items.Add(_startAtLogin);
-        menu.Items.Add("Restart FRIDAY", null, (_, _) => RestartChildren());
-        menu.Items.Add("Open logs", null, (_, _) => Open(install.Paths.LogDir));
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Quit FRIDAY", null, (_, _) => ExitThread());
-
-        // The Settings window can change these; show what is true when the menu opens.
-        menu.Opening += (_, _) =>
-        {
-            _appContext.Checked = SourceApp.Enabled(install.Paths);
-            _screenText.Checked = ScreenTextOn();
-            _startAtLogin.Checked = install.StartsAtLogin;
-        };
-        _icon = new NotifyIcon { ContextMenuStrip = menu, Visible = true, Text = "FRIDAY" };
+        _icon = new NotifyIcon { Visible = true, Text = "FRIDAY" };
+        _icon.MouseUp += (_, e) => { if (e.Button == MouseButtons.Right) ShowMenu(); };
         // Opening FRIDAY again (the Start menu entry) opens its window instead of doing nothing.
         var openWindow = new System.Threading.EventWaitHandle(false, System.Threading.EventResetMode.AutoReset, Program.OpenEventName);
         var uiContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
@@ -119,19 +74,49 @@ internal sealed class TrayContext : ApplicationContext
             Notify("FRIDAY is running", $"Press {_hotkeys.Labels[AskKind.Plain]} to ask anything.", ToolTipIcon.Info);
     }
 
-    private WelcomeForm? _welcome;
+    /// <summary>The tray menu, built as it opens so every check mark says what is true now.</summary>
+    private void ShowMenu()
+    {
+        string? Key(AskKind kind) => _hotkeys.Labels.TryGetValue(kind, out var l) ? l : null;
+        var paths = _install.Paths;
+        TrayMenu.Open(
+        [
+            new("Ask FRIDAY", SymbolRegular.Sparkle24, () => _ = AskAsync(AskKind.Plain), Key(AskKind.Plain), Bold: true),
+            new("Ask about selection", SymbolRegular.TextQuote24, () => _ = AskAsync(AskKind.Selection), Key(AskKind.Selection)),
+            new("Ask about the screen", SymbolRegular.Desktop24, () => _ = AskAsync(AskKind.Screen), Key(AskKind.Screen)),
+            new("Ask about an area…", SymbolRegular.Crop24, () => _ = AskAsync(AskKind.Screen, pickArea: true)),
+            null,
+            new("Last answer", SymbolRegular.ChatBubblesQuestion24, () => Open(paths.LastAnswerFile)),
+            new("All answers", SymbolRegular.History24, () => Open(paths.AnswersFile)),
+            new("What left this PC…", SymbolRegular.ArrowUpload24, ShowEgress),
+            new("Forget saved data…", SymbolRegular.Delete24, ForgetSavedData),
+            new("Name the app when asking about a selection", SymbolRegular.AppGeneric24, ToggleAppContext, Checked: SourceApp.Enabled(paths)),
+            new("Read a window's text for screen asks", SymbolRegular.DocumentText24, ToggleScreenText, Checked: ScreenTextOn()),
+            null,
+            new("Welcome…", SymbolRegular.HandWave24, ShowWelcome),
+            new("Settings…", SymbolRegular.Settings24, () => OpenSettings()),
+            new("AI provider…", SymbolRegular.BrainCircuit24, ChooseProvider),
+            new("Start at login", SymbolRegular.Power24, ToggleStartAtLogin, Checked: _install.StartsAtLogin),
+            new("Restart FRIDAY", SymbolRegular.ArrowSync24, RestartChildren),
+            new("Open logs", SymbolRegular.DocumentBulletList24, () => Open(paths.LogDir)),
+            null,
+            new("Quit FRIDAY", SymbolRegular.Dismiss24, ExitThread),
+        ]);
+    }
+
+    private WelcomeWindow? _welcome;
 
     private void ShowWelcome()
     {
-        if (_welcome is { IsDisposed: false })
+        if (_welcome is { IsClosed: false })
         {
             _welcome.Activate();
             return;
         }
         Welcome.MarkShown(_install.Paths);
-        _welcome = new WelcomeForm(_hotkeys.Labels, ChooseProvider, () => OpenSettings(), () => _ = AskAsync(AskKind.Plain));
-        _welcome.FormClosed += (_, _) => _welcome = null;
-        _welcome.Show();
+        _welcome = new WelcomeWindow(_hotkeys.Labels, ChooseProvider, () => OpenSettings(), () => _ = AskAsync(AskKind.Plain));
+        _welcome.Closed += (_, _) => _welcome = null;
+        FluentApp.Show(_welcome);
     }
 
     private async Task AskAsync(AskKind kind, bool pickArea = false)
@@ -170,18 +155,15 @@ internal sealed class TrayContext : ApplicationContext
                     appLine = SourceApp.Line(Native.ProcessNameOf(targetWindow), Native.GetWindowTitle(targetWindow));
             }
 
-            string question;
-            using (var form = new AskForm(kind, preview, kind switch
+            var form = new AskWindow(kind, preview, kind switch
             {
                 AskKind.Plain => _log.History(),
                 AskKind.Selection => QuickActions.All(_install.Paths.PromptsFile),
                 _ => [],
-            }))
-            {
-                if (form.ShowDialog() != DialogResult.OK)
-                    return;
-                question = form.Question;
-            }
+            });
+            if (form.ShowDialog() != true)
+                return;
+            var question = form.Question;
             _log.Remember(question);
 
             // The battery, a timer, a settings page: answered here, nothing sent.
@@ -407,12 +389,10 @@ internal sealed class TrayContext : ApplicationContext
     {
         string question;
         var preview = previousAnswer.ReplaceLineEndings(" ");
-        using (var form = new AskForm(AskKind.Plain, "Follow up on: " + (preview.Length > 50 ? preview[..50] : preview), []))
-        {
-            if (form.ShowDialog() != DialogResult.OK)
-                return;
-            question = form.Question;
-        }
+        var form = new AskWindow(AskKind.Plain, "Follow up on: " + (preview.Length > 50 ? preview[..50] : preview), []);
+        if (form.ShowDialog() != true)
+            return;
+        question = form.Question;
         _log.Remember(question);
         await RunRequestAsync(AskKind.Plain, question, null, Asking.BuildFollowUp(question, previousAnswer),
             confirm: null, answer: null, new AskOptions());
@@ -530,7 +510,6 @@ internal sealed class TrayContext : ApplicationContext
     private void ToggleAppContext()
     {
         SourceApp.SetEnabled(_install.Paths, !SourceApp.Enabled(_install.Paths));
-        _appContext.Checked = SourceApp.Enabled(_install.Paths);
     }
 
     private bool ScreenTextOn() =>
@@ -549,12 +528,10 @@ internal sealed class TrayContext : ApplicationContext
                 "Turn it on?",
                 "Read a window's text", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
         {
-            _screenText.Checked = false;
             return;
         }
         WriteScreenText(turnOn);
         _daemon.Restart();
-        _screenText.Checked = turnOn;
         Notify("FRIDAY", turnOn ? "Screen asks may now send a window's text." : "Screen asks send one screenshot again.", ToolTipIcon.Info);
     }
 
@@ -623,7 +600,6 @@ internal sealed class TrayContext : ApplicationContext
     private void ToggleStartAtLogin()
     {
         _install.StartsAtLogin = !_install.StartsAtLogin;
-        _startAtLogin.Checked = _install.StartsAtLogin;
     }
 
     private SettingsForm? _settings;
