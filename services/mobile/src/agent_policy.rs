@@ -108,6 +108,9 @@ pub fn decide(step: &Step, folder: &Path) -> Decision {
                 Some(p) if defines_commands(p) => ask(format!(
                     "changes {p}, which decides what builds and tests run"
                 )),
+                Some(p) if hides_changes(p) => ask(format!(
+                    "changes {p}, which decides what git shows as changed"
+                )),
                 Some(p) => ask(format!("changes {p}, which may hold secrets or history")),
                 None => match step.paths.iter().find(|p| git_ignores(p, folder)) {
                     Some(p) => ask(format!(
@@ -120,7 +123,10 @@ pub fn decide(step: &Step, folder: &Path) -> Decision {
         Kind::Delete => ask("deletes files"),
         Kind::Move => ask("moves or renames files"),
         Kind::Execute => match &step.command {
-            Some(c) if runs_project_code(c) && command(c, folder) == Decision::Allow => {
+            Some(c)
+                if runs_project_code(&c.replace("2>&1", " "))
+                    && command(c, folder) == Decision::Allow =>
+            {
                 if has_changes(folder) {
                     ask("builds or tests while the folder has uncommitted changes, which would run them")
                 } else {
@@ -195,6 +201,19 @@ fn is_sensitive(path: &str) -> bool {
         .any(|c| c.as_os_str() == ".git")
         || is_secret(path)
         || defines_commands(path)
+        || hides_changes(path)
+}
+
+/// Files that decide what git shows as changed: editing one could hide a
+/// changed test from the check before a build or test.
+fn hides_changes(path: &str) -> bool {
+    Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| {
+            [".gitignore", ".gitmodules", ".gitattributes"]
+                .contains(&n.to_ascii_lowercase().as_str())
+        })
 }
 
 /// Files that decide what an allowed command runs. Editing one and then
@@ -647,6 +666,19 @@ mod tests {
         assert_eq!(step(Kind::Edit, None, "src/new.rs"), Decision::Allow);
         assert!(matches!(
             step(Kind::Edit, None, "target/debug/x.rs"),
+            Decision::Ask(_)
+        ));
+        assert!(matches!(
+            step(Kind::Execute, Some("2>&1 cargo test"), ""),
+            Decision::Ask(_)
+        ));
+        // Nor can the agent hide its change from git first.
+        assert!(matches!(
+            step(Kind::Edit, None, ".gitignore"),
+            Decision::Ask(_)
+        ));
+        assert!(matches!(
+            step(Kind::Edit, None, "sub/.gitattributes"),
             Decision::Ask(_)
         ));
         let _ = std::fs::remove_dir_all(dir);

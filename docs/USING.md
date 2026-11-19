@@ -200,7 +200,7 @@ FRIDAY can hand work to a coding agent and follow it for you. Ask with the agent
 While the agent works, FRIDAY answers its approvals for you, by fixed rules rather than by an AI's judgement. Text the agent reads (a README, a web page) can't talk FRIDAY into anything. FRIDAY approves:
 
 - reading and searching inside the folder, except files that look like secrets;
-- editing files inside the folder, except `.git`, files that look like secrets (`.env`, keys, certificates), files that decide what a build or test runs (`package.json`, `Makefile`, `build.rs`, `Cargo.toml`, `.cargo/`, `conftest.py`, `pyproject.toml`, CI workflows, git hooks) and files git ignores (`node_modules`, `target`);
+- editing files inside the folder, except `.git`, files that look like secrets (`.env`, keys, certificates), files that decide what a build or test runs (`package.json`, `Makefile`, `build.rs`, `Cargo.toml`, `.cargo/`, `conftest.py`, `pyproject.toml`, CI workflows, git hooks), files git ignores (`node_modules`, `target`) and `.gitignore`, `.gitattributes` or `.gitmodules`, which decide what git shows as changed;
 - read-only commands, such as `git status`, `git diff` and `ls`;
 - builds and tests, such as `cargo test` and `npm test`, while git shows no uncommitted change in the folder.
 
