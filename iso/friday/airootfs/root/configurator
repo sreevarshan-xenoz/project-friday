@@ -237,7 +237,8 @@ step_look() {
   # Most people keep FRIDAY's look; four questions only for those who don't.
   # From the review screen ("Change desktop") it goes straight to them.
   if [[ "${1:-}" != choose ]]; then
-    friday_note "  FRIDAY's look: the Ember shell on Hyprland, with FRIDAY's login screen. Change any of it later in the controls drawer (Look)."
+    friday_note "  FRIDAY's look: the Ember shell on Hyprland, with FRIDAY's login screen."
+    friday_note "  Change any of it later in the controls drawer (Look)."
     if gum confirm --affirmative="Keep FRIDAY's look" --negative="Choose my own" "Use FRIDAY's look?"; then
       friday_ok "FRIDAY's look"
       return 0

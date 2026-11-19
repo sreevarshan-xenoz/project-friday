@@ -134,6 +134,10 @@ check() { # check <description> <remote command>: pass when the command exits 0
 
 echo "installed system"
 check "computer is named friday" '[ "$(cat /etc/hostname)" = friday ]'
+# Boot shows FRIDAY's splash (and its disk-password prompt), not systemd's text.
+if out=$(vm root 'grep -q " quiet splash " /boot/loader/entries/arch.conf && lsinitcpio /boot/initramfs-linux.img | grep -q "themes/omarchy/logo.png"' 2>&1); then
+  echo "  ok   boot shows FRIDAY's splash (plymouth and its theme in the initramfs)"
+else echo "  FAIL boot shows no splash: $out"; FAILS=$((FAILS + 1)); fi
 check "Hyprland session is running" 'hyprctl version >/dev/null'
 check "Hyprland reports no deprecated options" 'out=$(hyprctl deprecated-config); echo "$out"; echo "$out" | grep -qi "all good"'
 check "Hyprland reports no config errors" 'out=$(hyprctl configerrors); echo "$out"; [ -z "$(echo "$out" | tr -d "[:space:]")" ]'
