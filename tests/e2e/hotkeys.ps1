@@ -52,27 +52,21 @@ public static class Keys {
         return found.ToArray();
     }
     public static void Close(IntPtr h) { PostMessage(h, 0x0010, IntPtr.Zero, IntPtr.Zero); }
-    [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, EnumProc f, IntPtr l);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, StringBuilder l);
-    [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
-    // The text of a window's first edit control (WM_GETTEXT works across
-    // processes; GetWindowText doesn't for another process's controls).
-    public static string EditText(IntPtr top) {
-        string found = null;
-        EnumChildWindows(top, (h, l) => {
-            var c = new StringBuilder(256); GetClassName(h, c, 256);
-            if (!c.ToString().ToUpperInvariant().Contains("EDIT")) return true;
-            int len = (int)SendMessage(h, 0x000E, IntPtr.Zero, IntPtr.Zero);
-            var sb = new StringBuilder(len + 1);
-            SendMessage(h, 0x000D, (IntPtr)(len + 1), sb);
-            found = sb.ToString();
-            return false;
-        }, IntPtr.Zero);
-        return found ?? "";
-    }
 }
 '@
+
+# The answer window is WPF: its answer text is read through UI Automation
+# (the text elements it marks "Answer"), not from a Win32 edit control.
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+function AnswerText([IntPtr]$h) {
+    try {
+        $id = New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'Answer')
+        $els = [System.Windows.Automation.AutomationElement]::FromHandle($h).FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants, $id)
+        (@($els) | ForEach-Object { $_.Current.Name }) -join "`n"
+    } catch { "" }
+}
 
 $VK = @{ WIN = 0x5B; CTRL = 0x11; ALT = 0x12; SHIFT = 0x10; Y = 0x59; S = 0x53; A = 0x41 }
 $script:fails = 0
@@ -135,7 +129,7 @@ try {
         $end = (Get-Date).AddSeconds(150)
         while ((Get-Date) -lt $end) {
             foreach ($h in [Keys]::Find("FRIDAY")) {
-                $t = [Keys]::EditText($h).Trim()
+                $t = (AnswerText $h).Trim()
                 if ($t -and ($seen.Count -eq 0 -or $seen[$seen.Count - 1] -ne $t)) { $seen.Add($t) }
             }
             if ((Test-Path "$state\answers.md") -and ((Get-Content "$state\answers.md" -Raw) -match [regex]::Escape("# $question"))) {
@@ -156,7 +150,7 @@ try {
             # partial texts, each the start of the final answer.
             Start-Sleep -Milliseconds 500
             $final = ""
-            foreach ($h in [Keys]::Find("FRIDAY")) { $final = [Keys]::EditText($h).Trim() }
+            foreach ($h in [Keys]::Find("FRIDAY")) { $final = (AnswerText $h).Trim() }
             $partials = @($seen | Where-Object { $_ -like 'FAKE-MODEL-ANSWER*' -and $_ -ne $final })
             $growing = $partials.Count -ge 2 -and -not ($partials | Where-Object { -not $final.StartsWith($_) })
             if ($growing) { Pass "${label}: the answer window filled in ($($partials.Count) steps) before the end" }

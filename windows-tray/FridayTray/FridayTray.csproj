@@ -7,6 +7,9 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
+    <!-- The windows are WPF (smooth animation, Fluent look via WPF-UI); the tray
+         icon, hotkeys and the message loop stay WinForms. -->
+    <UseWPF>true</UseWPF>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -20,6 +23,16 @@
     <Product>FRIDAY</Product>
     <Company>Project FRIDAY</Company>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WPF-UI" Version="4.0.3" />
+    <!-- UseWPF drops System.IO from the implicit usings (Shapes.Path); nothing here uses Shapes. -->
+    <Using Include="System.IO" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- WPF-UI is MIT: its notice ships beside the app. -->
+    <None Include="$(NuGetPackageRoot)wpf-ui/4.0.3/LICENSE.md" Link="wpf-ui-LICENSE.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="$(NuGetPackageRoot)wpf-ui/4.0.3/ThirdPartyNotices.txt" Link="wpf-ui-ThirdPartyNotices.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../FridayTray.Core/FridayTray.Core.csproj" />
   </ItemGroup>

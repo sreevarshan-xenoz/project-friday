@@ -1,0 +1,256 @@
+<!--
+  FRIDAY's look on Windows: "Ember on Ink" (the FRIDAY Shell palette) on frosted
+  glass. Every window takes its colours, type and buttons from here, so they
+  read as one app: a dark tinted glass surface over the desktop, hairline
+  edges, ember for the one thing to do next, and motion that settles like a
+  spring rather than snapping.
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:f="clr-namespace:FridayTray.Fluent">
+
+  <!-- Palette -->
+  <Color x:Key="InkColor">#FF0D0F13</Color>
+  <Color x:Key="GlassColor">#D8121419</Color>
+  <Color x:Key="TextColor">#FFF2EEE8</Color>
+  <Color x:Key="SubtextColor">#FFA8A39B</Color>
+  <Color x:Key="FaintColor">#FF77726B</Color>
+  <Color x:Key="EmberColor">#FFFF8F4C</Color>
+  <Color x:Key="EmberHiColor">#FFFFB07A</Color>
+  <Color x:Key="SignalColor">#FF5FD3BC</Color>
+  <Color x:Key="WarnColor">#FFF5C451</Color>
+  <Color x:Key="ErrorColor">#FFFF5D6C</Color>
+
+  <!-- Tinted glass: a touch lighter at the top, so the surface has depth even
+       where Windows shows no blur (no GPU, transparency off, Windows 10). -->
+  <LinearGradientBrush x:Key="Glass" StartPoint="0,0" EndPoint="0,1">
+    <GradientStop Color="#E61C1F26" Offset="0" />
+    <GradientStop Color="{StaticResource GlassColor}" Offset="0.55" />
+  </LinearGradientBrush>
+  <!-- A faint warmth in the corner the orb sits in. -->
+  <RadialGradientBrush x:Key="EmberWash" Center="0.04,0.02" GradientOrigin="0.04,0.02" RadiusX="0.55" RadiusY="0.9">
+    <GradientStop Color="#1FFF8F4C" Offset="0" />
+    <GradientStop Color="#00FF8F4C" Offset="1" />
+  </RadialGradientBrush>
+  <SolidColorBrush x:Key="Text" Color="{StaticResource TextColor}" />
+  <SolidColorBrush x:Key="Subtext" Color="{StaticResource SubtextColor}" />
+  <SolidColorBrush x:Key="Faint" Color="{StaticResource FaintColor}" />
+  <SolidColorBrush x:Key="Ember" Color="{StaticResource EmberColor}" />
+  <SolidColorBrush x:Key="Signal" Color="{StaticResource SignalColor}" />
+  <SolidColorBrush x:Key="Warn" Color="{StaticResource WarnColor}" />
+  <SolidColorBrush x:Key="Error" Color="{StaticResource ErrorColor}" />
+  <!-- The edge light catches: brighter at the top, like glass under a lamp. -->
+  <LinearGradientBrush x:Key="Hairline" StartPoint="0,0" EndPoint="0,1">
+    <GradientStop Color="#2EFFFFFF" Offset="0" />
+    <GradientStop Color="#0FFFFFFF" Offset="1" />
+  </LinearGradientBrush>
+  <SolidColorBrush x:Key="Well" Color="#0DFFFFFF" />
+  <SolidColorBrush x:Key="CodeWell" Color="#40000000" />
+  <LinearGradientBrush x:Key="EmberFill" StartPoint="0,0" EndPoint="0,1">
+    <GradientStop Color="{StaticResource EmberHiColor}" Offset="0" />
+    <GradientStop Color="{StaticResource EmberColor}" Offset="1" />
+  </LinearGradientBrush>
+
+  <!-- Type: Segoe UI Variable on Windows 11, Segoe UI before it. -->
+  <FontFamily x:Key="UiFont">Segoe UI Variable Text, Segoe UI</FontFamily>
+  <FontFamily x:Key="DisplayFont">Segoe UI Variable Display, Segoe UI</FontFamily>
+  <FontFamily x:Key="MonoFont">Cascadia Mono, Consolas</FontFamily>
+
+  <Style x:Key="Body" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="LineHeight" Value="21" />
+    <Setter Property="Foreground" Value="{StaticResource Text}" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+  <Style x:Key="Caption" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+    <Setter Property="FontSize" Value="11.5" />
+    <Setter Property="Foreground" Value="{StaticResource Faint}" />
+  </Style>
+
+  <!-- A pill button: a soft well that brightens on hover and presses in. -->
+  <Style x:Key="Pill" TargetType="Button">
+    <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+    <Setter Property="FontSize" Value="12.5" />
+    <Setter Property="Foreground" Value="{StaticResource Text}" />
+    <Setter Property="Padding" Value="13,6" />
+    <Setter Property="Margin" Value="6,0,0,0" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+    <Setter Property="RenderTransformOrigin" Value="0.5,0.5" />
+    <Setter Property="RenderTransform">
+      <Setter.Value>
+        <ScaleTransform />
+      </Setter.Value>
+    </Setter>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Grid>
+            <Border x:Name="Fill" CornerRadius="8" BorderThickness="1" BorderBrush="{StaticResource Hairline}">
+              <Border.Background>
+                <SolidColorBrush x:Name="FillBrush" Color="#14FFFFFF" />
+              </Border.Background>
+            </Border>
+            <Border x:Name="Focus" CornerRadius="9" Margin="-3" BorderThickness="2" BorderBrush="{StaticResource Ember}" Opacity="0" />
+            <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Trigger.EnterActions>
+                <BeginStoryboard>
+                  <Storyboard>
+                    <ColorAnimation Storyboard.TargetName="FillBrush" Storyboard.TargetProperty="Color" To="#26FFFFFF" Duration="0:0:0.14" />
+                  </Storyboard>
+                </BeginStoryboard>
+              </Trigger.EnterActions>
+              <Trigger.ExitActions>
+                <BeginStoryboard>
+                  <Storyboard>
+                    <ColorAnimation Storyboard.TargetName="FillBrush" Storyboard.TargetProperty="Color" To="#14FFFFFF" Duration="0:0:0.22" />
+                  </Storyboard>
+                </BeginStoryboard>
+              </Trigger.ExitActions>
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+              <Trigger.EnterActions>
+                <BeginStoryboard>
+                  <Storyboard>
+                    <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="0.95" Duration="0:0:0.08" />
+                    <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="0.95" Duration="0:0:0.08" />
+                  </Storyboard>
+                </BeginStoryboard>
+              </Trigger.EnterActions>
+              <Trigger.ExitActions>
+                <BeginStoryboard>
+                  <Storyboard>
+                    <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1" Duration="0:0:0.45">
+                      <DoubleAnimation.EasingFunction><f:Spring Damping="0.45" /></DoubleAnimation.EasingFunction>
+                    </DoubleAnimation>
+                    <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1" Duration="0:0:0.45">
+                      <DoubleAnimation.EasingFunction><f:Spring Damping="0.45" /></DoubleAnimation.EasingFunction>
+                    </DoubleAnimation>
+                  </Storyboard>
+                </BeginStoryboard>
+              </Trigger.ExitActions>
+            </Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+              <Setter TargetName="Focus" Property="Opacity" Value="0.8" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Opacity" Value="0.45" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- The one thing to do next: ember, with a soft glow that warms on hover. -->
+  <Style x:Key="PrimaryPill" TargetType="Button" BasedOn="{StaticResource Pill}">
+    <Setter Property="Foreground" Value="#FF1D0F05" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Grid>
+            <Border x:Name="Fill" CornerRadius="8" Background="{StaticResource EmberFill}">
+              <Border.Effect>
+                <DropShadowEffect x:Name="Glow" Color="{StaticResource EmberColor}" BlurRadius="10" ShadowDepth="0" Opacity="0.28" />
+              </Border.Effect>
+            </Border>
+            <Border CornerRadius="8" BorderThickness="1" BorderBrush="#40FFFFFF" />
+            <Border x:Name="Focus" CornerRadius="9" Margin="-3" BorderThickness="2" BorderBrush="{StaticResource Text}" Opacity="0" />
+            <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Trigger.EnterActions>
+                <BeginStoryboard>
+                  <Storyboard>
+                    <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity" To="0.6" Duration="0:0:0.18" />
+                    <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="BlurRadius" To="18" Duration="0:0:0.18" />
+                  </Storyboard>
+                </BeginStoryboard>
+              </Trigger.EnterActions>
+              <Trigger.ExitActions>
+                <BeginStoryboard>
+                  <Storyboard>
+                    <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity" To="0.28" Duration="0:0:0.3" />
+                    <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="BlurRadius" To="10" Duration="0:0:0.3" />
+                  </Storyboard>
+                </BeginStoryboard>
+              </Trigger.ExitActions>
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+              <Trigger.EnterActions>
+                <BeginStoryboard>
+                  <Storyboard>
+                    <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="0.95" Duration="0:0:0.08" />
+                    <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="0.95" Duration="0:0:0.08" />
+                  </Storyboard>
+                </BeginStoryboard>
+              </Trigger.EnterActions>
+              <Trigger.ExitActions>
+                <BeginStoryboard>
+                  <Storyboard>
+                    <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1" Duration="0:0:0.45">
+                      <DoubleAnimation.EasingFunction><f:Spring Damping="0.45" /></DoubleAnimation.EasingFunction>
+                    </DoubleAnimation>
+                    <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1" Duration="0:0:0.45">
+                      <DoubleAnimation.EasingFunction><f:Spring Damping="0.45" /></DoubleAnimation.EasingFunction>
+                    </DoubleAnimation>
+                  </Storyboard>
+                </BeginStoryboard>
+              </Trigger.ExitActions>
+            </Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+              <Setter TargetName="Focus" Property="Opacity" Value="0.7" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- A round icon button (close): invisible until hovered. -->
+  <Style x:Key="IconButton" TargetType="Button">
+    <Setter Property="Width" Value="26" />
+    <Setter Property="Height" Value="26" />
+    <Setter Property="Foreground" Value="{StaticResource Subtext}" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border x:Name="Fill" CornerRadius="13">
+            <Border.Background>
+              <SolidColorBrush x:Name="FillBrush" Color="#00FFFFFF" />
+            </Border.Background>
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter Property="Foreground" Value="{StaticResource Text}" />
+              <Trigger.EnterActions>
+                <BeginStoryboard>
+                  <Storyboard>
+                    <ColorAnimation Storyboard.TargetName="FillBrush" Storyboard.TargetProperty="Color" To="#22FFFFFF" Duration="0:0:0.12" />
+                  </Storyboard>
+                </BeginStoryboard>
+              </Trigger.EnterActions>
+              <Trigger.ExitActions>
+                <BeginStoryboard>
+                  <Storyboard>
+                    <ColorAnimation Storyboard.TargetName="FillBrush" Storyboard.TargetProperty="Color" To="#00FFFFFF" Duration="0:0:0.2" />
+                  </Storyboard>
+                </BeginStoryboard>
+              </Trigger.ExitActions>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+</ResourceDictionary>
