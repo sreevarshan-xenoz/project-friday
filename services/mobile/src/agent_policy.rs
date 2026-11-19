@@ -99,6 +99,9 @@ pub fn decide(step: &Step, folder: &Path) -> Decision {
                 return ask(format!("changes {p}, outside the project folder"));
             }
             match step.paths.iter().find(|p| is_sensitive(p)) {
+                Some(p) if defines_commands(p) => ask(format!(
+                    "changes {p}, which decides what builds and tests run"
+                )),
                 Some(p) => ask(format!("changes {p}, which may hold secrets or history")),
                 None => Decision::Allow,
             }
@@ -165,12 +168,60 @@ fn outside<'a>(paths: &'a [String], folder: &Path) -> Option<&'a str> {
         .map(String::as_str)
 }
 
-/// Files whose change is the person's call: git history and secrets.
+/// Files whose change is the person's call: git history, secrets, and the
+/// files that say what a build or test command runs.
 fn is_sensitive(path: &str) -> bool {
     Path::new(path)
         .components()
         .any(|c| c.as_os_str() == ".git")
         || is_secret(path)
+        || defines_commands(path)
+}
+
+/// Files that decide what an allowed command runs. Editing one and then
+/// running `npm test` or `make` would run anything, so the edit asks first.
+fn defines_commands(path: &str) -> bool {
+    let p = Path::new(path);
+    let name = p
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let in_dir = |dir: &str| p.components().any(|c| c.as_os_str() == dir);
+    [
+        "package.json",
+        "makefile",
+        "gnumakefile",
+        "build.rs",
+        "cargo.toml",
+        "pyproject.toml",
+        "setup.py",
+        "setup.cfg",
+        "conftest.py",
+        "tox.ini",
+        "pytest.ini",
+        "noxfile.py",
+        "justfile",
+        ".npmrc",
+        ".yarnrc",
+        ".yarnrc.yml",
+        "go.mod",
+        "build.gradle",
+        "build.gradle.kts",
+        "pom.xml",
+        "directory.build.props",
+        "directory.build.targets",
+        "global.json",
+        ".envrc",
+    ]
+    .contains(&name.as_str())
+        || name.ends_with(".mk")
+        || name.ends_with(".csproj")
+        || name.ends_with(".sln")
+        || in_dir(".cargo")
+        || in_dir(".github")
+        || in_dir(".husky")
+        || in_dir(".githooks")
 }
 
 /// Files that look like they hold keys or passwords.
@@ -410,6 +461,24 @@ mod tests {
         assert!(!allowed(touch(Kind::Edit, "config/.env.local")));
         assert!(!allowed(touch(Kind::Edit, ".git/config")));
         assert!(!allowed(touch(Kind::Edit, "certs/server.pem")));
+        // Files that say what an allowed build or test runs.
+        for f in [
+            "package.json",
+            "Makefile",
+            "build.rs",
+            "crates/x/build.rs",
+            "Cargo.toml",
+            ".cargo/config.toml",
+            "tests/conftest.py",
+            "pyproject.toml",
+            ".github/workflows/ci.yml",
+            "rules.mk",
+            "app/App.csproj",
+        ] {
+            assert!(!allowed(touch(Kind::Edit, f)), "{f}");
+        }
+        assert!(allowed(touch(Kind::Edit, "src/lib.rs")));
+        assert!(allowed(touch(Kind::Edit, "tests/test_app.py")));
         assert!(!allowed(touch(Kind::Read, "/etc/passwd")));
         assert!(!allowed(touch(Kind::Read, ".env")));
         assert!(!allowed(touch(Kind::Fetch, "https://example.com")));
