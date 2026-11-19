@@ -170,18 +170,15 @@ internal sealed class TrayContext : ApplicationContext
                     appLine = SourceApp.Line(Native.ProcessNameOf(targetWindow), Native.GetWindowTitle(targetWindow));
             }
 
-            string question;
-            using (var form = new AskForm(kind, preview, kind switch
+            var form = new AskWindow(kind, preview, kind switch
             {
                 AskKind.Plain => _log.History(),
                 AskKind.Selection => QuickActions.All(_install.Paths.PromptsFile),
                 _ => [],
-            }))
-            {
-                if (form.ShowDialog() != DialogResult.OK)
-                    return;
-                question = form.Question;
-            }
+            });
+            if (form.ShowDialog() != true)
+                return;
+            var question = form.Question;
             _log.Remember(question);
 
             // The battery, a timer, a settings page: answered here, nothing sent.
@@ -407,12 +404,10 @@ internal sealed class TrayContext : ApplicationContext
     {
         string question;
         var preview = previousAnswer.ReplaceLineEndings(" ");
-        using (var form = new AskForm(AskKind.Plain, "Follow up on: " + (preview.Length > 50 ? preview[..50] : preview), []))
-        {
-            if (form.ShowDialog() != DialogResult.OK)
-                return;
-            question = form.Question;
-        }
+        var form = new AskWindow(AskKind.Plain, "Follow up on: " + (preview.Length > 50 ? preview[..50] : preview), []);
+        if (form.ShowDialog() != true)
+            return;
+        question = form.Question;
         _log.Remember(question);
         await RunRequestAsync(AskKind.Plain, question, null, Asking.BuildFollowUp(question, previousAnswer),
             confirm: null, answer: null, new AskOptions());
