@@ -1117,6 +1117,8 @@ pub struct GoalRunner {
     sessions: Mutex<HashMap<String, SessionContext>>,
     /// Where conversations are saved between daemon runs (`None`: memory only).
     conversations: Option<std::path::PathBuf>,
+    /// Where lessons from failed goals are kept (`None`: not learned).
+    lessons: Option<std::path::PathBuf>,
     /// The durable memory journal this runner writes through (shared with the
     /// Executive's `EpisodeStore` and the recall tool — one store, one
     /// journal). `None` = memory stays in-memory only (heuristic test runners
@@ -1217,6 +1219,13 @@ impl GoalRunner {
     pub fn with_conversations(mut self, path: std::path::PathBuf) -> Self {
         *self.sessions.lock().unwrap() = load_conversations(&path);
         self.conversations = Some(path);
+        self
+    }
+
+    /// Keep lessons from failed goals in `path` and bring them back for
+    /// similar asks.
+    pub fn with_lessons(mut self, path: std::path::PathBuf) -> Self {
+        self.lessons = Some(path);
         self
     }
 
@@ -1568,6 +1577,7 @@ impl GoalRunner {
             fabric,
             sessions: Mutex::new(HashMap::new()),
             conversations: None,
+            lessons: None,
             journal,
             abort,
             pause,
@@ -1882,7 +1892,15 @@ impl GoalRunner {
                     .cloned()
                     .collect(),
             };
-            hits.iter().map(format_recalled_memory).collect()
+            let mut lines: Vec<String> = hits.iter().map(format_recalled_memory).collect();
+            if let Some(path) = &self.lessons {
+                lines.extend(crate::lessons::recall(
+                    path,
+                    chrono::Utc::now().timestamp(),
+                    &goal,
+                ));
+            }
+            lines
         };
         let composed = compose_goal_with_context(&goal, &prior, &recalled);
         let goal_start = std::time::Instant::now();
@@ -2053,6 +2071,28 @@ impl GoalRunner {
             }
         }
         evict_lru(&self.sessions, MAX_SESSIONS);
+        // A failed goal is a lesson for the next similar ask; a success
+        // closes one. Errors from the provider or web search aren't about
+        // the goal. Private mode leaves nothing on disk.
+        if let (Some(path), false, false, false, None, Some(r)) = (
+            &self.lessons,
+            self.private_mode,
+            report.cancelled,
+            report.paused,
+            &pending_confirmation,
+            &report.result,
+        ) {
+            if r.tool.as_deref() != Some("web_search") {
+                let (text, _) = friday_goal_execution::mask_secrets(&r.text);
+                let _ = crate::lessons::learn(
+                    path,
+                    chrono::Utc::now().timestamp(),
+                    &goal,
+                    r.success,
+                    &text,
+                );
+            }
+        }
         // Private mode leaves nothing on disk.
         if let (Some(path), false) = (&self.conversations, self.private_mode) {
             save_conversations(path, &self.sessions.lock().unwrap());
@@ -2915,6 +2955,71 @@ mod tests {
             }
         }
         panic!("no terminal event");
+    }
+
+    /// A hermetic runner with lessons in `path` answers one goal; returns
+    /// what the model was asked.
+    async fn ask_with_lessons(path: &std::path::Path, goal: &str, private: bool) -> String {
+        let answerer = Arc::new(ScriptedAnswerer {
+            reply: Ok("E0308 means mismatched types.".to_string()),
+            prompts: Mutex::new(Vec::new()),
+        });
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        GoalRunner::new(bus.clone())
+            .with_answerer(answerer.clone())
+            .with_lessons(path.to_path_buf())
+            .with_private_mode(private)
+            .start();
+        drive_goal(&bus, &mut rx, json!({ "goal": goal })).await;
+        let prompt = answerer.prompts.lock().unwrap().join("\n");
+        prompt
+    }
+
+    /// A failure kept earlier comes back in the prompt for a similar ask, and
+    /// the answer that follows is kept as what worked; private mode changes
+    /// nothing on disk.
+    #[tokio::test]
+    async fn a_similar_ask_gets_the_lesson_and_the_answer_closes_it() {
+        let path = std::env::temp_dir()
+            .join(format!("friday-mobile-lessons-{}", uuid::Uuid::new_v4()))
+            .join("lessons.jsonl");
+        let now = chrono::Utc::now().timestamp();
+        crate::lessons::learn(
+            &path,
+            now,
+            "What does the Rust error E0308 mean in closures?",
+            false,
+            "the explanation was cut off",
+        )
+        .unwrap();
+        let goal = "What does the Rust error E0308 mean?";
+
+        let private = ask_with_lessons(&path, goal, true).await;
+        assert!(private.contains("the explanation was cut off"), "{private}");
+        assert!(
+            !std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("what worked"),
+            "private mode learns nothing"
+        );
+        assert!(!std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("mismatched"));
+
+        let prompt = ask_with_lessons(&path, goal, false).await;
+        assert!(
+            prompt.contains("lesson: an earlier ask") && prompt.contains("cut off"),
+            "{prompt}"
+        );
+        let kept = std::fs::read_to_string(&path).unwrap();
+        assert!(kept.contains("E0308 means mismatched types."), "{kept}");
+
+        let later = ask_with_lessons(&path, goal, false).await;
+        assert!(
+            later.contains("what worked afterwards: E0308 means mismatched types."),
+            "{later}"
+        );
     }
 
     /// The answer step: a question gets the model's reply as its result, and
