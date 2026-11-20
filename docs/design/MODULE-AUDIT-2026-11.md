@@ -80,6 +80,13 @@ Not checked: whether stored `reflection` strings feed a later prompt through
 `MemoryJournal` recall (grep found no reader outside tests); whether
 `autonomy.rs` is called from anything outside tests.
 
+Follow-up: the memory gate rejects failed runs (`Unreliable`), so FRIDAY
+kept nothing about failures, and `reflection`'s sentences only restated the
+goal. `lessons.rs` in the daemon now keeps a failed goal's cause and what
+worked afterwards (`lessons.jsonl`), and a similar ask gets them in its
+`[memory]` block. It doesn't use `reflection` or `knowledge`; whether those
+two go is still open.
+
 ## Rules for what comes next
 
 - Nothing gets wired in to raise a count. A candidate goes in when a person

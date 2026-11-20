@@ -23,6 +23,7 @@ pub mod diagnose;
 pub mod error;
 pub mod failures;
 pub mod goal_runner;
+pub mod lessons;
 pub mod listen;
 pub mod local_ai;
 pub mod local_docs;

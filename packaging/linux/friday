@@ -1890,7 +1890,7 @@ friday_forget() {
     if systemctl --user is-active --quiet friday-linux-daemon 2>/dev/null; then
       was_up=true; systemctl --user stop friday-linux-daemon 2>/dev/null || true
     fi
-    rm -f "$mem_dir/episodes.jsonl" "$state_dir/conversations.json" "$state_dir/conversation"
+    rm -f "$mem_dir/episodes.jsonl" "$state_dir/conversations.json" "$state_dir/conversation" "$state_dir/lessons.jsonl"
     if $was_up; then systemctl --user start friday-linux-daemon 2>/dev/null || true; fi
     echo "Deleted ${n_mem:-0} remembered things."
   fi

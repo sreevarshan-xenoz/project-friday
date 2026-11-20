@@ -340,6 +340,7 @@ async fn main() {
     // real Executive with real evidence adapters.
     let goal_runner = GoalRunner::with_fabric_and_memory(bus.clone(), fabric, journal, voice)
         .with_conversations(state_path.with_file_name("conversations.json"))
+        .with_lessons(state_path.with_file_name("lessons.jsonl"))
         .start();
     let screen_ask = friday_mobile::context_read::ScreenAskManager::new(screen_reader.clone());
 
