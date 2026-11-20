@@ -46,6 +46,11 @@ if [[ "\$*" == *"should they click first"* ]]; then
   printf 'friday-ctl-pick %s\n' "\$*" >> "$LOG"
   echo '{"accepted":true}'; printf '{\n "outcome": "completed",\n "result": "Appearance"\n}\n'; exit 0
 fi
+if [[ "\$1" == routine ]]; then
+  printf 'friday-ctl-routine %s\n' "\$*" >> "$LOG"
+  echo "stub routine output"
+  exit 0
+fi
 if [[ "\$1" == cancel ]]; then
   echo "friday-ctl-cancel" >> "$LOG"
   [[ -n "\$HAVE_GOAL" ]] && { echo '{"accepted":true}'; exit 0; }
@@ -591,6 +596,24 @@ printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s %q\nexit 0\n'
 : >"$LOG"; SHOW_REPLY='{"found":false,"app":"KeePassXC","controls":["Entry 1"]}' bash "$F" ask "where is my bank entry"; sleep 0.3
 if grep -q "friday-ctl-pick" "$LOG"; then fail "sent a private window's controls to the model"; else pass "a private window's controls stay here"; fi
 unset FRIDAY_SHELL_DIR; rm -f "$S/hyprctl" "$S/quickshell"
+
+echo "routines"
+: >"$LOG"; bash "$F" routine save "morning setup" >/dev/null
+contains "friday routine save goes to friday-ctl" "$(cat "$LOG")" "friday-ctl-routine routine save morning setup"
+: >"$LOG"; bash "$F" ask "run morning setup"; sleep 0.3
+if grep -q "friday-ctl-routine" "$LOG"; then fail "ran a routine that doesn't exist"; else pass "\"run <name>\" with no such routine: an ordinary question"; fi
+mkdir -p "$HOME/.local/share/friday/routines"; echo '{}' >"$HOME/.local/share/friday/routines/morning-setup.json"
+: >"$LOG"; bash "$F" ask "Run Morning Setup"; sleep 0.3
+contains "\"run <name>\" runs the saved routine" "$(cat "$LOG")" "friday-ctl-routine routine run morning setup"
+if grep -q "^friday-ctl '" "$LOG"; then fail "running a routine asked the AI"; else pass "running a routine asks no AI"; fi
+: >"$LOG"; bash "$F" routine bogus >/dev/null 2>&1 && fail "accepted an unknown routine command" || pass "unknown routine command is refused"
+echo '{}' >"$HOME/.local/share/friday/routines/my-setup.json"
+: >"$LOG"; bash "$F" ask "run my setup"; sleep 0.3
+contains "a routine named \"my setup\" is found with its \"my\"" "$(cat "$LOG")" "friday-ctl-routine routine run my setup"
+echo '{}' >"$HOME/.local/share/friday/routines/work.json"
+: >"$LOG"; bash "$F" ask "run my work"; sleep 0.3
+contains "\"run my work\" means the routine \"work\"" "$(cat "$LOG")" "friday-ctl-routine routine run work"
+rm -rf "$HOME/.local/share/friday/routines"
 
 echo "local commands (no AI)"
 printf '#!/bin/sh\necho "wpctl $*" >>"%s"\n[ "$1" = get-volume ] && echo "Volume: 0.55${MUTED:+ [MUTED]}"\nexit 0\n' "$LOG" >"$S/wpctl"; chmod +x "$S/wpctl"
