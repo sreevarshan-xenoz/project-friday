@@ -164,7 +164,7 @@ fn program(arg0: &str) -> &str {
 }
 
 /// A terminal's shell, its folder, and an editor running in it.
-fn terminal_work(proc_root: &Path, pid: i64) -> (Option<String>, Vec<String>) {
+pub fn terminal_work(proc_root: &Path, pid: i64) -> (Option<String>, Vec<String>) {
     let Some(shell) = children(proc_root, pid).into_iter().next() else {
         return (cwd(proc_root, pid), Vec::new());
     };
@@ -180,7 +180,7 @@ fn terminal_work(proc_root: &Path, pid: i64) -> (Option<String>, Vec<String>) {
 }
 
 /// The top of the git repository holding `folder`, if any.
-fn git_top(folder: &str) -> Option<String> {
+pub fn git_top(folder: &str) -> Option<String> {
     let mut p = Path::new(folder);
     loop {
         if p.join(".git").exists() {
