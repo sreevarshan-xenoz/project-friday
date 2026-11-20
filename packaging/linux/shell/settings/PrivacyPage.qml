@@ -20,7 +20,8 @@ ColumnLayout {
     title: "Read a window's text for screen questions"
     detail: "FRIDAY may send a window's text instead of a screenshot when you ask about your screen. The text can include words you can't see. Password fields are skipped. Off by default."
     statusArgs: ["screen-text", "status"]
-    onArgs: ["screen-text", "on"]
+    // The detail above is the disclosure the CLI would otherwise ask about.
+    onArgs: ["screen-text", "on", "--yes"]
     offArgs: ["screen-text", "off"]
     onText: "Screen text: on"
   }
