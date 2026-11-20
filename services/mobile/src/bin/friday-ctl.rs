@@ -570,6 +570,13 @@ fn workspace(args: &[String]) -> std::process::ExitCode {
                 ExitCode::FAILURE
             }
         },
+        (Some("project"), _) => {
+            // The project of the window in front (`friday ask` tags its answers).
+            if let Some(p) = project_in_front() {
+                println!("{p}");
+            }
+            ExitCode::SUCCESS
+        }
         (Some("list") | None, _) => {
             let all = ws::list(&dir);
             if all.is_empty() {

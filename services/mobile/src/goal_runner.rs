@@ -1951,7 +1951,7 @@ impl GoalRunner {
             };
             let mut lines: Vec<String> = hits.iter().map(format_recalled_memory).collect();
             if let Some(dir) = &self.timeline {
-                let entries = crate::timeline::collect(dir);
+                let entries = crate::timeline::for_project(crate::timeline::collect(dir), &goal);
                 if let Some((from, to)) =
                     crate::timeline::wants(&goal, &entries, chrono::Local::now())
                 {
