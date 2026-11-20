@@ -13,6 +13,7 @@ public static partial class Providers
         new("gemini", "Google Gemini (vision, free tier)", "GEMINI_API_KEY", true, false),
         new("groq", "Groq (fast, vision)", "GROQ_API_KEY", true, false),
         new("nvidia-nim", "NVIDIA NIM (vision)", "NVIDIA_NIM_API_KEY", true, false),
+        new("runcrate", "Runcrate (six free models weekly, GitHub sign-in)", "RUNCRATE_API_KEY", true, false),
         new("openrouter", "OpenRouter (many models, no screen context)", "OPENROUTER_API_KEY", false, false),
         new("cerebras", "Cerebras (fast, no screen context)", "CEREBRAS_API_KEY", false, false),
     ];
