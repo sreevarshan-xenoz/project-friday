@@ -33,6 +33,8 @@ public static class SavedData
         {
             p.AnswersFile, p.LastAnswerFile, p.HistoryFile, p.EgressFile,
             Path.Combine(p.MemoryDir, "episodes.jsonl"),
+            // The current conversation (friday-ctl and the daemon keep it).
+            Path.Combine(p.StateDir, "conversations.json"), Path.Combine(p.StateDir, "conversation"),
         })
         {
             try

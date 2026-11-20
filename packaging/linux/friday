@@ -27,6 +27,8 @@ Autonomous Agent & Cognitive Loop:
   friday ask --region              Drag out an area of the screen and ask about it
   friday ask --follow-up           Ask a follow-up about the last answer
   friday ask --web ["<objective>"] Ask with web search results and cited sources
+  friday ask --new ["<objective>"] Start a new conversation (asks within 15 minutes of
+                                   each other otherwise share one)
   friday answers                   Show past answers (last one: friday answers --last)
   friday app-context [on|off]      Whether a question about selected text names the app it came from
   friday forget [what]             Show what FRIDAY keeps on this computer, or wipe it
@@ -1394,7 +1396,8 @@ friday_forget() {
     echo "FRIDAY keeps this on your computer:"
     echo "  answers  ${n_answers:-0} saved answers, ${n_asks:-0} remembered questions   ($state_dir)"
     echo "  sent     ${n_sent:-0} entries in the log of what was sent to AI providers"
-    echo "  memory   ${n_mem:-0} things FRIDAY remembered between questions   ($mem_dir)"
+    echo "  memory   ${n_mem:-0} things FRIDAY remembered between questions   ($mem_dir),"
+    echo "           and the current conversation's last few turns"
     echo "  actions  ${n_actions:-0} things FRIDAY did on your desktop (friday actions)"
     echo "Wipe some:  friday forget answers|sent|memory|actions|all   (add --yes to skip the question)"
     return 0
@@ -1423,7 +1426,7 @@ friday_forget() {
     if systemctl --user is-active --quiet friday-linux-daemon 2>/dev/null; then
       was_up=true; systemctl --user stop friday-linux-daemon 2>/dev/null || true
     fi
-    rm -f "$mem_dir/episodes.jsonl"
+    rm -f "$mem_dir/episodes.jsonl" "$state_dir/conversations.json" "$state_dir/conversation"
     if $was_up; then systemctl --user start friday-linux-daemon 2>/dev/null || true; fi
     echo "Deleted ${n_mem:-0} remembered things."
   fi
@@ -1806,6 +1809,8 @@ case "${1:-}" in
     #   friday ask --follow-up [text]   ask about the last answer (the answer pill's
     #                                   Follow up)
     #   friday ask --web [text]         ask with web search results and cited sources
+    #   friday ask --new [text]         start a new conversation (asks within 15
+    #                                   minutes of each other share one: friday-ctl)
     #   friday ask --another provider/model [text]
     #                                   ask again, answered with more care by a
     #                                   different model (the answer pill's
@@ -1813,7 +1818,7 @@ case "${1:-}" in
     # With FRIDAY Shell running, the answer opens in its answer pill (which also
     # streams it); otherwise it arrives as a notification.
     shift
-    use_selection=false use_screen=false use_region=false use_followup=false use_web=false another="" details="" daemon_down=false
+    use_selection=false use_screen=false use_region=false use_followup=false use_web=false use_new=false another="" details="" daemon_down=false
     ask_args=()
     while [ $# -gt 0 ]; do
       case "${1:-}" in
@@ -1822,6 +1827,7 @@ case "${1:-}" in
         --region|-r) use_screen=true; use_region=true; ask_args+=(--region); shift ;;
         --follow-up|-f) use_followup=true; ask_args+=(--follow-up); shift ;;
         --web) use_web=true; ask_args+=(--web); shift ;;
+        --new|-n) use_new=true; shift ;;
         --another) another="${2:-}"; shift; [ $# -eq 0 ] || shift ;;
         *) break ;;
       esac
@@ -2132,6 +2138,7 @@ case "${1:-}" in
       [[ "$nid" =~ ^[0-9]+$ ]] || nid=""
       ctl_args=(goal --wait)
       $use_web && ctl_args+=(--web)
+      $use_new && ctl_args+=(--new-conversation)
       [ -z "$another" ] || ctl_args+=(--thorough --avoid "$another")
       ctl_args+=("$request")
       stream_ctl friday-ctl "${ctl_args[@]}"

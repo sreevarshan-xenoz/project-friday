@@ -42,6 +42,12 @@ the pill shows ribbons of light that flow like a voice (slow while listening, qu
 - **Follow up** asks about that answer; **Ask again** repeats the question the
   same way; **Try another model** asks a different model to answer with more care.
 - **Full answer** opens it in a terminal. Esc or a quiet minute puts it away.
+
+Questions asked within 15 minutes of each other are one conversation: FRIDAY
+sees your last few questions and its answers, so "and the second one?" works,
+even after FRIDAY restarts. After 15 quiet minutes the next question starts a
+new one; `friday ask --new` starts one at once. `friday forget memory` wipes
+the conversation along with what FRIDAY remembers.
 - Past answers are searchable in the FRIDAY drawer.
 
 ## Without a model

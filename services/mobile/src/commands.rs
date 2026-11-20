@@ -64,7 +64,18 @@ impl CommandGateway {
                 // The GoalRunner subscribes to `plan.goal` and runs the goal.
                 // The session id rides along so the runner keeps this
                 // conversation continuous (per-session context, S1).
-                let mut payload = json!({ "goal": goal, "session_id": cmd.session_id });
+                // A client that keeps one conversation across asks (friday-ctl
+                // does) names it; otherwise each connection is its own.
+                let session = cmd
+                    .params
+                    .get("conversation")
+                    .and_then(|v| v.as_str())
+                    .filter(|c| {
+                        (1..=64).contains(&c.len())
+                            && c.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+                    })
+                    .unwrap_or(&cmd.session_id);
+                let mut payload = json!({ "goal": goal, "session_id": session });
                 if let Some(c) = confirm {
                     payload["confirm"] = json!(c);
                 }
