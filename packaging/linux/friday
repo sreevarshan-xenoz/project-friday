@@ -512,7 +512,7 @@ friday_setup_ai() {
     command -v gum >/dev/null || { echo "usage: echo KEY | friday setup-ai <opencode|gemini|groq|nvidia-nim|openrouter|cerebras|runcrate|axforge>" >&2; return 1; }
     echo "FRIDAY thinks with a cloud language model. Pick a provider:"
     choice=$(gum choose --cursor="❯ " \
-      "Free models: OpenCode Zen, then Kilo (no key, no sign-in)" \
+      "Free models: OpenCode Zen, then Kilo or OVHcloud (no key, no sign-in)" \
       "Connect an account you already have (Claude Code, Codex, Antigravity, Cline)" \
       "Google Gemini (vision, free tier)" "Groq (fast, vision)" "NVIDIA NIM (vision)" \
       "Runcrate (six free models weekly, sign in with GitHub)" \
@@ -722,7 +722,7 @@ friday_disconnect() {
 }
 
 # Free models keep what they're sent, more often than not.
-FRIDAY_FREE_NOTICE="Free models (OpenCode Zen, Kilo) may keep what you send them, including screenshots and selected text, and may use it for training. For anything private, use your own key (friday setup-ai) or account (friday connect)."
+FRIDAY_FREE_NOTICE="Free models (OpenCode Zen, Kilo, OVHcloud) may keep what you send them, including screenshots and selected text, and may use it for training. For anything private, use your own key (friday setup-ai) or account (friday connect)."
 
 # Screen asks send one screenshot by default. With this on, a window whose app
 # exposes enough text (its accessibility tree) is asked about as that text
@@ -1313,7 +1313,7 @@ friday_welcome() {
   fi
   : >"$stamp"
   local body="Press Super+Y to ask me anything, Super+Alt+Y about selected text, Super+Ctrl+Y about your screen."
-  $free && body="$body I'm on free models (OpenCode Zen, then Kilo), which may keep what you send. Connect your own account or key for private work."
+  $free && body="$body I'm on free models (OpenCode Zen, then Kilo or OVHcloud), which may keep what you send. Connect your own account or key for private work."
   local phone_action=()
   $phone && phone_action=(-A phone="Pair your phone")
   action=$(notify-send -a FRIDAY -t 20000 -A keys="Show shortcuts" -A connect="Connect an account" -A setup="Choose AI provider" "${phone_action[@]}" \
@@ -1331,6 +1331,7 @@ friday_sent_map_provider() {
   case "$1" in
     opencode|opencode-zen) echo "OpenCode Zen" ;;
     kilo) echo "Kilo" ;;
+    ovh) echo "OVHcloud" ;;
     claude-code) echo "Claude Code" ;;
     codex) echo "Codex" ;;
     antigravity) echo "Antigravity" ;;
@@ -2063,6 +2064,7 @@ case "${1:-}" in
           case "$served_p" in
             opencode-zen) p_name="OpenCode Zen" ;;
             kilo) p_name="Kilo" ;;
+            ovh) p_name="OVHcloud" ;;
             claude-code) p_name="Claude Code" ;;
             codex) p_name="Codex" ;;
             antigravity) p_name="Antigravity" ;;

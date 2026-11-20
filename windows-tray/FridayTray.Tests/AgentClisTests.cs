@@ -232,6 +232,6 @@ public class AgentClisTests
     {
         var first = Providers.All[0];
         Assert.Equal("opencode", first.Id);
-        Assert.Equal("Free models: OpenCode Zen, then Kilo (no key, no sign-in)", first.Name);
+        Assert.Equal("Free models: OpenCode Zen, then Kilo or OVHcloud (no key, no sign-in)", first.Name);
     }
 }
