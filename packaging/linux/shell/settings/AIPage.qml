@@ -11,7 +11,7 @@ ColumnLayout {
   // [label, provider id]
   readonly property var providers: [
     ["Free models", "opencode"], ["Google Gemini", "gemini"], ["Groq", "groq"],
-    ["NVIDIA NIM", "nvidia-nim"], ["Runcrate", "runcrate"], ["OpenRouter", "openrouter"], ["Cerebras", "cerebras"]
+    ["NVIDIA NIM", "nvidia-nim"], ["Runcrate", "runcrate"], ["AxForge", "axforge"], ["OpenRouter", "openrouter"], ["Cerebras", "cerebras"]
   ]
   property string provider: "opencode"
   readonly property bool free: provider === "opencode"

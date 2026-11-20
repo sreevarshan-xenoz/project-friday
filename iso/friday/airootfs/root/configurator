@@ -333,12 +333,13 @@ step_ai() {
   friday_note "  use your own key or account for private work."
   echo
   local choice key
-  choice=$(gum choose --cursor="$FRIDAY_CURSOR" --height=8 \
+  choice=$(gum choose --cursor="$FRIDAY_CURSOR" --height=9 \
     "OpenCode Zen (free, no key needed)" \
     "Google Gemini (vision, free tier)" \
     "Groq (fast, vision)" \
     "NVIDIA NIM (vision)" \
     "Runcrate (six free models weekly, GitHub sign-in)" \
+    "AxForge (3M free tokens a month, keeps nothing)" \
     "OpenRouter (many models, no screen context)" \
     "Cerebras (fast, no screen context)") || choice="OpenCode Zen"
   FRIDAY_AI_PROVIDER=""
@@ -348,6 +349,7 @@ step_ai() {
     "Groq"*)          FRIDAY_AI_PROVIDER="groq" ;;
     "NVIDIA NIM"*)    FRIDAY_AI_PROVIDER="nvidia-nim" ;;
     "Runcrate"*)      FRIDAY_AI_PROVIDER="runcrate" ;;
+    "AxForge"*)       FRIDAY_AI_PROVIDER="axforge" ;;
     "OpenRouter"*)    FRIDAY_AI_PROVIDER="openrouter" ;;
     "Cerebras"*)      FRIDAY_AI_PROVIDER="cerebras" ;;
   esac

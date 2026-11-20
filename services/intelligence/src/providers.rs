@@ -20,7 +20,7 @@ use crate::secrets::SecretsVault;
 /// [`crate::secrets::SecretsVault::seed_from_env`] to register production
 /// keys into the vault (so the egress gate can scan for them and nothing
 /// auto-prints them). Mirrors the provider-qual environment matrix.
-pub const PROVIDER_ENV_VARS: [(&str, &str); 14] = [
+pub const PROVIDER_ENV_VARS: [(&str, &str); 15] = [
     ("OMNIROUTE_API_KEY", "omniroute"),
     ("OPENROUTER_API_KEY", "openrouter"),
     ("GROQ_API_KEY", "groq"),
@@ -35,6 +35,7 @@ pub const PROVIDER_ENV_VARS: [(&str, &str); 14] = [
     ("SILICONFLOW_API_KEY", "siliconflow"),
     ("ZHIPU_API_KEY", "zhipu"),
     ("RUNCRATE_API_KEY", "runcrate"),
+    ("AXFORGE_API_KEY", "axforge"),
 ];
 
 /// Pluggable interface for calling large language models.
@@ -2547,6 +2548,41 @@ impl InferenceFabric {
             }
         }
 
+        // AxForge: 3M free tokens every 30 days, no card; EU-hosted, keeps
+        // nothing after the response and doesn't train on it.
+        if let Ok(key) = std::env::var("AXFORGE_API_KEY") {
+            fabric.register_provider(Box::new(OpenAiProvider {
+                name: "axforge".to_string(),
+                base_url: "https://api.axforge.ai/v1".to_string(),
+                api_key: key,
+            }));
+            if !registry_loaded {
+                for (id, latency_ms) in [("glm-5.3-flash", 950), ("qwen3.8-27b", 1300)] {
+                    fabric.register_model(ModelInfo {
+                        id: id.to_string(),
+                        family: id.to_string(),
+                        provider: "axforge".to_string(),
+                        latency_ms,
+                        reliability: 1.0,
+                        capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
+                        max_context: 262_144,
+                        tier: None,
+                    });
+                }
+                // Free vision: Qwen3.8 Flash Next reads images.
+                fabric.register_model(ModelInfo {
+                    id: "qwen3.8-flash-next".to_string(),
+                    family: "qwen3.8-flash-next".to_string(),
+                    provider: "axforge".to_string(),
+                    latency_ms: 1100,
+                    reliability: 1.0,
+                    capabilities: vec![ModelCapability::Json, ModelCapability::Vision],
+                    max_context: 262_144,
+                    tier: Some(CapabilityTier::VisionFree),
+                });
+            }
+        }
+
         // Local Ollama (always probed, so not a choice the user made)
         fabric.automatic.insert("ollama".to_string());
         fabric.register_provider(Box::new(OpenAiProvider {
@@ -2852,6 +2888,7 @@ fn is_free_provider(name: &str) -> bool {
             | "kilo"
             | "nvidia-nim"
             | "runcrate"
+            | "axforge"
     )
 }
 
@@ -4358,6 +4395,22 @@ mod tests {
         assert_eq!(
             classify_failure_reason("402 {\"error\":{\"code\":\"free_allowance_used\"}}"),
             "rate_limit"
+        );
+    }
+
+    #[test]
+    fn an_axforge_key_adds_its_free_models_and_vision() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard("AXFORGE_API_KEY");
+        std::env::set_var("AXFORGE_API_KEY", "axf_example");
+        let fabric = InferenceFabric::default_from_env();
+        assert!(fabric.providers.contains_key("axforge"));
+        assert!(is_free_provider("axforge"));
+        assert_eq!(
+            fabric
+                .resolve_tier("axforge", CapabilityTier::VisionFree)
+                .map(|m| m.id.as_str()),
+            Some("qwen3.8-flash-next")
         );
     }
 
