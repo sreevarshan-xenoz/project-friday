@@ -48,7 +48,7 @@ Autonomous Agent & Cognitive Loop:
   friday doctor                    Check daemon, AI provider and desktop health
   friday report [file]             Write a redacted bug report to read and share
   friday setup-ai [--keep-others|--only] [provider]
-                                   Set or change the AI provider key
+                                   Set or change the AI provider key (local: a model on this computer)
   friday connect [--prefer] [claude|codex|agy|cline]
                                    Use an AI account you already have (signs in);
                                    a fallback after the free models unless --prefer
@@ -511,12 +511,14 @@ friday_setup_ai() {
     esac
   done
   local provider="${1:-}"
+  if [ "$provider" = local ]; then shift; friday_setup_local "$@"; return; fi
   if [ -z "$provider" ]; then
-    command -v gum >/dev/null || { echo "usage: echo KEY | friday setup-ai <opencode|gemini|groq|nvidia-nim|openrouter|cerebras|runcrate|axforge>" >&2; return 1; }
+    command -v gum >/dev/null || { echo "usage: echo KEY | friday setup-ai <opencode|gemini|groq|nvidia-nim|openrouter|cerebras|runcrate|axforge|local>" >&2; return 1; }
     echo "FRIDAY thinks with a cloud language model. Pick a provider:"
     choice=$(gum choose --cursor="❯ " \
       "Free models: OpenCode Zen, then Kilo or OVHcloud (no key, no sign-in)" \
       "Connect an account you already have (Claude Code, Codex, Antigravity, Cline)" \
+      "Local AI (on this computer: private, works offline)" \
       "Google Gemini (vision, free tier)" "Groq (fast, vision)" "NVIDIA NIM (vision)" \
       "Runcrate (six free models weekly, sign in with GitHub)" \
       "AxForge (3M free tokens a month, keeps nothing)" \
@@ -524,6 +526,7 @@ friday_setup_ai() {
     case "$choice" in
       "Free models"*) provider=opencode; echo; echo "Note: $FRIDAY_FREE_NOTICE"; echo ;;
       "Connect an account"*) friday_connect; return ;;
+      "Local AI"*) friday_setup_local; return ;;
       "Google Gemini"*) provider=gemini ;; "Groq"*) provider=groq ;; "NVIDIA NIM"*) provider=nvidia-nim ;;
       "OpenRouter"*) provider=openrouter ;; "Cerebras"*) provider=cerebras ;; "Runcrate"*) provider=runcrate ;; "AxForge"*) provider=axforge ;;
     esac
@@ -1992,6 +1995,72 @@ friday_local_ai_summary() {
   fi
 }
 
+# friday local-ai packages <engine>: the Arch packages it needs on this GPU.
+# With no GPU driver both engines fall back to the CPU.
+friday_local_ai_packages() {
+  local gpu
+  gpu=$(friday_local_ai_detect | sed -n 's/^gpu=//p')
+  case "$1:$gpu" in
+    ollama:nvidia)   echo ollama-cuda ;;
+    ollama:none)     echo ollama ;;
+    ollama:*)        echo ollama-vulkan ;;
+    llamacpp:amd)    echo vulkan-icd-loader vulkan-radeon ;;
+    llamacpp:intel)  echo vulkan-icd-loader vulkan-intel ;;
+    llamacpp:nvidia) echo vulkan-icd-loader ;;
+    llamacpp:none)   ;;
+    *) echo "usage: friday local-ai packages <ollama|llamacpp>" >&2; return 2 ;;
+  esac
+}
+
+# `friday setup-ai local [--engine E] [--preset ID]`: the installer's local AI
+# steps, after install. Asks with gum when a choice isn't given.
+friday_setup_local() {
+  local engine="" preset=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --engine) engine="$2"; shift 2 ;;
+      --preset) preset="$2"; shift 2 ;;
+      *) echo "usage: friday setup-ai local [--engine ollama|llamacpp] [--preset light|balanced|most|gpu]" >&2; return 2 ;;
+    esac
+  done
+  echo "Local AI answers first and keeps your questions on this computer. It's slower than cloud."
+  echo "This computer: $(friday_local_ai_summary | head -n1)"
+  friday_local_ai_summary | tail -n +2
+  if [ -z "$engine" ]; then
+    command -v gum >/dev/null || { echo "choose an engine: --engine ollama|llamacpp" >&2; return 2; }
+    case "$(gum choose --cursor="❯ " "Ollama (simplest; from the Arch repos)" "llama.cpp (lighter; llama.cpp's official build)")" in
+      llama.cpp*) engine=llamacpp ;; Ollama*) engine=ollama ;; *) return 1 ;;
+    esac
+  fi
+  local presets id label budget model dl vision fast available note
+  local -a options=() rows=()
+  presets=$(friday_local_ai_presets)
+  while IFS='|' read -r id label budget model dl vision fast available note; do
+    [ -n "$id" ] || continue
+    if [ -z "$model" ] || [ "$available" != 1 ]; then echo "  ${label%% (*}: $note"; continue; fi
+    options+=("$id: $label: $model, $(friday_gb "$dl") download, $note")
+    rows+=("$id|$budget")
+  done <<<"$presets"
+  [ ${#options[@]} -gt 0 ] || { echo "This computer can't run a local model well; FRIDAY keeps using cloud providers." >&2; return 1; }
+  if [ -z "$preset" ]; then
+    command -v gum >/dev/null || { printf '  %s\n' "${options[@]}"; echo "choose one: --preset <id>" >&2; return 2; }
+    preset=$(printf '%s\n' "${options[@]}" | gum choose --cursor="❯ " --height=8) || return 1
+    preset="${preset%%:*}"
+  fi
+  budget=$(printf '%s\n' "${rows[@]}" | awk -F'|' -v id="$preset" '$1 == id { print $2 }')
+  [ -n "$budget" ] || { echo "no such preset here: $preset (friday local-ai presets)" >&2; return 2; }
+  local pkgs missing=false
+  pkgs=$(friday_local_ai_packages "$engine")
+  if [ "$engine" = ollama ] && ! command -v ollama >/dev/null 2>&1; then missing=true; fi
+  if [ -n "$pkgs" ] && { $missing || [ "$engine" = llamacpp ]; }; then
+    # shellcheck disable=SC2086 # one package name per word
+    sudo pacman -S --needed --noconfirm $pkgs || return 1
+  fi
+  if [ "$engine" = ollama ]; then sudo systemctl enable --now ollama || return 1; fi
+  friday_local_conf_set state pending
+  friday_local_ai_install --engine "$engine" --budget "$budget"
+}
+
 friday_local_ai() {
   local sub="${1:-presets}"
   case "$sub" in
@@ -2001,7 +2070,8 @@ friday_local_ai() {
     install) shift; friday_local_ai_install "$@" ;;
     status) friday_local_ai_status ;;
     off) friday_local_ai_off ;;
-    *) echo "usage: friday local-ai [detect|presets|summary|install|status|off]" >&2; return 2 ;;
+    packages) friday_local_ai_packages "${2:-}" ;;
+    *) echo "usage: friday local-ai [detect|presets|summary|install|status|off|packages]" >&2; return 2 ;;
   esac
 }
 

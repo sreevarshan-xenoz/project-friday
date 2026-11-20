@@ -23,7 +23,7 @@ SHELL_STYLE="Ember (bar flush with the top edge)"
 SESSION="Hyprland (tiling, the FRIDAY OS default)"
 SDDM_THEME="SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)"
 FRIDAY_AI_PROVIDERS="" FRIDAY_AI_KEYS=""
-FRIDAY_LOCAL_ENGINE="" FRIDAY_LOCAL_BUDGET_MB="" FRIDAY_LOCAL_MODEL="" FRIDAY_LOCAL_GPU="" FRIDAY_LOCAL_LABEL=""
+FRIDAY_LOCAL_ENGINE="" FRIDAY_LOCAL_BUDGET_MB="" FRIDAY_LOCAL_MODEL="" FRIDAY_LOCAL_LABEL=""
 AUTOLOGIN="false"
 ENCRYPT="true"
 FRIDAY_AI_LABEL="OpenCode Zen free models (no key)"
@@ -346,7 +346,7 @@ step_ai() {
     "Local AI (on this computer: private, works offline)") || choices=""
   [[ -n "$choices" ]] || choices="OpenCode Zen (free, no key needed)"
   FRIDAY_AI_PROVIDERS="" FRIDAY_AI_KEYS=""
-  FRIDAY_LOCAL_ENGINE="" FRIDAY_LOCAL_BUDGET_MB="" FRIDAY_LOCAL_MODEL="" FRIDAY_LOCAL_GPU=""
+  FRIDAY_LOCAL_ENGINE="" FRIDAY_LOCAL_BUDGET_MB="" FRIDAY_LOCAL_MODEL=""
   local -a labels=()
   # fd 3: gum input reads the keyboard on stdin.
   while IFS= read -r -u 3 choice; do
@@ -432,7 +432,6 @@ step_local_ai() {
     [[ "${options[$i]}" == "$pick" ]] || continue
     IFS='|' read -r _ FRIDAY_LOCAL_BUDGET_MB FRIDAY_LOCAL_MODEL vision <<<"${ids[$i]}"
     FRIDAY_LOCAL_ENGINE="$eng"
-    FRIDAY_LOCAL_GPU=$(friday local-ai detect 2>/dev/null | sed -n 's/^gpu=//p')
     local sees="text only"; (( vision )) && sees="sees screenshots"
     FRIDAY_LOCAL_LABEL="Local: $FRIDAY_LOCAL_MODEL on ${engine%% (*} ($sees)"
     friday_ok "$FRIDAY_LOCAL_LABEL; it downloads after your first login"
@@ -496,7 +495,7 @@ friday_banner
 friday_say "Thanks, $USERNAME. I'll take it from here."
 sleep 1
 FRIDAY_HOSTNAME="$HOSTNAME"
-export TARGET_DISK KEYBOARD HOSTNAME FRIDAY_HOSTNAME USERNAME PASSWORD TIMEZONE THEME SHELL_STYLE SESSION SDDM_THEME FRIDAY_AI_PROVIDERS FRIDAY_AI_KEYS FRIDAY_LOCAL_ENGINE FRIDAY_LOCAL_BUDGET_MB FRIDAY_LOCAL_MODEL FRIDAY_LOCAL_GPU AUTOLOGIN ENCRYPT FEAT_DESKTOP FEAT_TASKS FEAT_APPNAME FEAT_SCREENTEXT FEAT_PHONE
+export TARGET_DISK KEYBOARD HOSTNAME FRIDAY_HOSTNAME USERNAME PASSWORD TIMEZONE THEME SHELL_STYLE SESSION SDDM_THEME FRIDAY_AI_PROVIDERS FRIDAY_AI_KEYS FRIDAY_LOCAL_ENGINE FRIDAY_LOCAL_BUDGET_MB FRIDAY_LOCAL_MODEL AUTOLOGIN ENCRYPT FEAT_DESKTOP FEAT_TASKS FEAT_APPNAME FEAT_SCREENTEXT FEAT_PHONE
 # The person confirmed erasing this disk on the review screen.
 export ERASE_DISK="$TARGET_DISK"
 export FRIDAY_INTERACTIVE=1

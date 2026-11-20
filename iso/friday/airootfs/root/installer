@@ -37,7 +37,6 @@ fi
 FRIDAY_LOCAL_ENGINE="${FRIDAY_LOCAL_ENGINE:-}"
 FRIDAY_LOCAL_BUDGET_MB="${FRIDAY_LOCAL_BUDGET_MB:-}"
 FRIDAY_LOCAL_MODEL="${FRIDAY_LOCAL_MODEL:-}"
-FRIDAY_LOCAL_GPU="${FRIDAY_LOCAL_GPU:-none}"
 # Root SSH + serial autologin on the installed system, for VM debugging only.
 # Opt in with FRIDAY_DEBUG_ACCESS=true or `friday.debug` on the live kernel cmdline.
 FRIDAY_DEBUG_ACCESS="${FRIDAY_DEBUG_ACCESS:-false}"
@@ -248,17 +247,12 @@ POCKETDESK_PKG=$(find /opt/friday/repo -maxdepth 1 -name 'pocketdesk-*.pkg.tar.z
 [[ -n "$POCKETDESK_PKG" ]] || { echo "the Pocketdesk package is missing from /opt/friday/repo" >&2; exit 1; }
 pacstrap_with_retry -U /mnt "$FRIDAY_PKG" "$POCKETDESK_PKG"
 # Local AI: the engine's packages now (first login has no root); the model
-# downloads at first login (friday-local-ai.service). With no GPU driver both
-# engines fall back to the CPU.
+# downloads at first login (friday-local-ai.service). friday-git is on the
+# live ISO, and it sees the same GPU.
 local_pkgs=()
-case "$FRIDAY_LOCAL_ENGINE:$FRIDAY_LOCAL_GPU" in
-  ollama:nvidia)   local_pkgs=(ollama-cuda) ;;
-  ollama:none)     local_pkgs=(ollama) ;;
-  ollama:*)        local_pkgs=(ollama-vulkan) ;;
-  llamacpp:amd)    local_pkgs=(vulkan-icd-loader vulkan-radeon) ;;
-  llamacpp:intel)  local_pkgs=(vulkan-icd-loader vulkan-intel) ;;
-  llamacpp:nvidia) local_pkgs=(vulkan-icd-loader) ;;
-esac
+if [[ "$FRIDAY_LOCAL_ENGINE" == ollama || "$FRIDAY_LOCAL_ENGINE" == llamacpp ]]; then
+  read -r -a local_pkgs <<<"$(friday local-ai packages "$FRIDAY_LOCAL_ENGINE")"
+fi
 if (( ${#local_pkgs[@]} )); then pacstrap_with_retry /mnt "${local_pkgs[@]}"; fi
 if [[ "$FRIDAY_LOCAL_ENGINE" == ollama ]]; then arch-chroot /mnt systemctl enable ollama 2>/dev/null || true; fi
 # Updates: each FRIDAY release publishes friday-git to this pacman repo, so

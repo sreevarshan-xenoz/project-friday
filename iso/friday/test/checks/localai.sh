@@ -130,4 +130,23 @@ printf 'engine=ollama\nbudget_mb=1000\nstate=pending\n' >"$CONF"
 FRIDAY_HW_ROOT="$hw" bash "$F" local-ai install --first-login >/dev/null 2>&1
 contains "too little memory: failed, in words" "$(cat "$CONF")" "too little memory"
 
+echo "packages per GPU"
+[[ "$(FRIDAY_HW_ROOT="$hw_nv" bash "$F" local-ai packages ollama)" == ollama-cuda ]] && pass "NVIDIA: ollama-cuda" || fail "NVIDIA Ollama package"
+[[ "$(FRIDAY_HW_ROOT="$hw" bash "$F" local-ai packages ollama)" == ollama-vulkan ]] && pass "AMD: ollama-vulkan" || fail "AMD Ollama package"
+[[ "$(FRIDAY_HW_ROOT="$hw_none" bash "$F" local-ai packages ollama)" == ollama ]] && pass "no GPU: ollama" || fail "CPU Ollama package"
+[[ "$(FRIDAY_HW_ROOT="$hw" bash "$F" local-ai packages llamacpp)" == "vulkan-icd-loader vulkan-radeon" ]] && pass "llama.cpp on AMD: Vulkan" || fail "llama.cpp AMD packages"
+[[ -z "$(FRIDAY_HW_ROOT="$hw_none" bash "$F" local-ai packages llamacpp)" ]] && pass "llama.cpp with no GPU: nothing extra" || fail "llama.cpp CPU packages"
+
+echo "setup-ai local"
+printf '#!/bin/sh\necho "sudo $*" >>"%s"\n' "$LOG" >"$S/sudo"; chmod +x "$S/sudo"
+rm -f "$CONF"; : >"$LOG"
+if FRIDAY_HW_ROOT="$hw" bash "$F" setup-ai local --engine ollama --preset balanced >"$W/out" 2>&1; then pass "setup-ai local with flags succeeds"
+else fail "setup-ai local failed: $(tail -3 "$W/out")"; fi
+contains "describes the computer" "$(cat "$W/out")" "This computer: 16 GB memory, AMD GPU 8 GB"
+contains "Balanced on 16 GB pulls gemma3:4b" "$(cat "$LOG")" "ollama pull gemma3:4b"
+contains "Ollama already installed: no pacman" "$(grep -c pacman "$LOG" || true)" "0"
+contains "starts Ollama's service" "$(cat "$LOG")" "sudo systemctl enable --now ollama"
+contains "the choice is saved" "$(cat "$CONF")" "budget_mb=8192"
+refuse "an unknown preset is refused" env FRIDAY_HW_ROOT="$hw_nv" bash "$F" setup-ai local --engine ollama --preset gpu
+
 finish
