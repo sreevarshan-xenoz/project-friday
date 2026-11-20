@@ -27,6 +27,8 @@ Autonomous Agent & Cognitive Loop:
   friday ask --region              Drag out an area of the screen and ask about it
   friday ask --follow-up           Ask a follow-up about the last answer
   friday ask --web ["<objective>"] Ask with web search results and cited sources
+  friday paste-as                  Paste the clipboard transformed: bullets, JSON, shorter,
+                                   translated… (Super+Alt+V)
   friday ask --new ["<objective>"] Start a new conversation (asks within 15 minutes of
                                    each other otherwise share one)
   friday answers                   Show past answers (last one: friday answers --last)
@@ -751,22 +753,21 @@ friday_keys() {
         echo "No FRIDAY OS key file here ($keys); nothing to update."
         return 0
       fi
-      if grep -qs 'friday hold start --type' "$keys"; then
-        echo "Your keys are up to date."
-        return 0
-      fi
-      local tmp="$keys.tmp.$$"
-      awk '{ print }
-        /"friday hold end", \{ release = true \}\)/ && !done {
-          print "o.bind(\"SUPER + SHIFT + Y\", \"FRIDAY: Voice typing\", \"friday hold start --type\")"
-          print "o.bind(\"SUPER + SHIFT + Y\", \"FRIDAY: Voice typing (let go)\", \"friday hold end --type\", { release = true })"
-          done = 1
-        }' "$keys" >"$tmp" && mv -f "$tmp" "$keys" || { rm -f "$tmp"; echo "friday: couldn't update $keys" >&2; return 1; }
-      if grep -qs 'friday hold start --type' "$keys"; then
-        echo "Added voice typing: hold Super+Shift+Y, speak, let go (friday voice setup first)."
-      else
-        echo "friday: couldn't find Super+Y in $keys to add voice typing after it" >&2; return 1
-      fi ;;
+      # Each key a newer FRIDAY added: the line goes after an existing one.
+      # marker|after (a line in the file)|the new line(s)|what it says
+      local entry marker after lines said tmp added=false
+      while IFS='|' read -r marker after lines said; do
+        grep -qsF -- "$marker" "$keys" && continue
+        tmp="$keys.tmp.$$"
+        awk -v after="$after" -v lines="$lines" '{ print } index($0, after) && !done { n = split(lines, l, "\\\\n"); for (i = 1; i <= n; i++) print l[i]; done = 1 }' \
+          "$keys" >"$tmp" && mv -f "$tmp" "$keys" || { rm -f "$tmp"; echo "friday: couldn't update $keys" >&2; return 1; }
+        if grep -qsF -- "$marker" "$keys"; then echo "$said"; added=true
+        else echo "friday: couldn't find where to add it in $keys" >&2; return 1; fi
+      done <<'KEYS'
+friday hold start --type|"friday hold end", { release = true })|o.bind("SUPER + SHIFT + Y", "FRIDAY: Voice typing", "friday hold start --type")\no.bind("SUPER + SHIFT + Y", "FRIDAY: Voice typing (let go)", "friday hold end --type", { release = true })|Added voice typing: hold Super+Shift+Y, speak, let go (friday voice setup first).
+friday paste-as|"friday ask --selection")|o.bind("SUPER + ALT + V", "FRIDAY: Paste as…", "friday paste-as")|Added Paste as: copy text, press Super+Alt+V, pick how to paste it.
+KEYS
+      $added || echo "Your keys are up to date." ;;
     *) echo "Usage: friday keys update" >&2; return 1 ;;
   esac
 }
@@ -1390,13 +1391,14 @@ friday_rewrite_clean() {
   printf '%s' "$t"
 }
 
-# friday_replace_selection <text> <window address>: put the rewrite where the
-# selection was. Pastes (Ctrl+V, sent by Hyprland as Omarchy's universal paste
-# does) only into the same window, still focused, and never into a terminal
-# (its selection isn't editable); otherwise the text is left on the clipboard.
-# The clipboard is put back afterwards when it held text.
+# friday_replace_selection <text> <window address> [terminals]: put the
+# rewrite where the selection was. Pastes (Ctrl+V, sent by Hyprland as
+# Omarchy's universal paste does) only into the same window, still focused;
+# into a terminal only with "terminals" (Shift+Insert there; a terminal's
+# selection isn't editable, but its prompt is). Otherwise the text is left on
+# the clipboard. The clipboard is put back afterwards when it held text.
 friday_replace_selection() {
-  local text="$1" addr="$2" win now terminal=false old="" had_text=false
+  local text="$1" addr="$2" win now terminal=false old="" had_text=false mods=CTRL key=V
   win=$(timeout 2 hyprctl activewindow -j 2>/dev/null || true)
   now=$(jq -r '.address // empty' <<<"$win" 2>/dev/null || true)
   jq -e '(.tags // []) | any(sub("\\*$"; "") == "terminal")' <<<"$win" >/dev/null 2>&1 && terminal=true
@@ -1404,16 +1406,54 @@ friday_replace_selection() {
     old=$(timeout 2 wl-paste --no-newline 2>/dev/null || true); had_text=true
   fi
   printf '%s' "$text" | wl-copy
+  if $terminal && [ "${3:-}" = terminals ]; then terminal=false mods=SHIFT key=Insert; fi
   if [ -n "$addr" ] && [ "$now" = "$addr" ] && ! $terminal; then
     sleep 0.15
-    timeout 2 hyprctl dispatch 'hl.dsp.send_key_state({ mods = "CTRL", key = "V", state = "down" })' >/dev/null 2>&1 || true
+    timeout 2 hyprctl dispatch "hl.dsp.send_key_state({ mods = \"$mods\", key = \"$key\", state = \"down\" })" >/dev/null 2>&1 || true
     sleep 0.05
-    timeout 2 hyprctl dispatch 'hl.dsp.send_key_state({ mods = "CTRL", key = "V", state = "up" })' >/dev/null 2>&1 || true
+    timeout 2 hyprctl dispatch "hl.dsp.send_key_state({ mods = \"$mods\", key = \"$key\", state = \"up\" })" >/dev/null 2>&1 || true
     # The app reads the clipboard after the paste; put yours back a moment later.
     if $had_text; then ( sleep 1; printf '%s' "$old" | wl-copy ) >/dev/null 2>&1 & fi
     return 0
   fi
   notify-send -a FRIDAY -- "FRIDAY" "The rewrite is on your clipboard: paste it with Ctrl+V." 2>/dev/null || true
+}
+
+# `friday paste-as` (Super+Alt+V): the clipboard's text, transformed, pasted
+# where you are. The clipboard itself keeps the original.
+friday_paste_as() {
+  local clip win addr pick how request out summary text
+  clip=$(timeout 2 wl-paste --no-newline 2>/dev/null || true)
+  if [ -z "${clip//[[:space:]]/}" ]; then
+    notify-send -a FRIDAY -- "FRIDAY" "Copy some text first, then press Super+Alt+V." 2>/dev/null || true
+    return 0
+  fi
+  # Never send something shaped like a password or token (as ask --selection).
+  if [[ "$clip" =~ ^[^[:space:]]{12,}$ && "$clip" =~ [A-Za-z] && "$clip" =~ [0-9] ]]; then
+    notify-send -a FRIDAY -- "FRIDAY" "The clipboard looks like a password or token, so I won't send it." 2>/dev/null || true
+    return 0
+  fi
+  clip="${clip:0:4000}"
+  addr=$(timeout 2 hyprctl activewindow -j 2>/dev/null | jq -r '.address // empty' 2>/dev/null || true)
+  pick=$(printf '%s\n' "As a bullet list" "As JSON" "As a Markdown table" "Cleaned up (spacing, line breaks, typos)" \
+      "Shorter" "More formal" "Translated to English" \
+    | fuzzel --dmenu --prompt="Paste › " --width=60 --lines=7 \
+      --placeholder="\"$(tr '\n\t' '  ' <<<"$clip" | cut -c1-40)…\" · pick or type how") || return 0
+  [ -n "${pick// /}" ] || return 0
+  how="$pick"
+  case "$pick" in
+    "As JSON") how="as JSON (only the JSON)" ;;
+    "Cleaned up"*) how="cleaned up: fix spacing, line breaks and typos, change nothing else" ;;
+  esac
+  request=$(printf 'Rewrite the text below %s. Keep its language unless told to translate. Reply with only the result: no quotes, no notes, no introduction.\n"""\n%s\n"""' "$how" "$clip")
+  out=$(friday-ctl goal --wait "$request" 2>&1) || true
+  summary=$(jq -s 'map(select(type == "object" and .outcome? != null)) | last // {}' <<<"$out" 2>/dev/null || echo '{}')
+  text=$(friday_rewrite_clean "$(jq -r 'select(.outcome == "completed") | .result // empty' <<<"$summary" 2>/dev/null || true)")
+  if [ -z "${text//[[:space:]]/}" ]; then
+    notify-send -a FRIDAY -u critical -- "FRIDAY" "Couldn't paste that: $(jq -r '.error // "no answer"' <<<"$summary" 2>/dev/null | cut -c1-160)" 2>/dev/null || true
+    return 1
+  fi
+  friday_replace_selection "$text" "$addr" terminals
 }
 
 # The app and window title the selected text came from, as one line for the
@@ -2771,6 +2811,9 @@ case "${1:-}" in
   local-ai)
     shift
     friday_local_ai "$@"
+    ;;
+  paste-as)
+    friday_paste_as
     ;;
   tour)
     FRIDAY_WELCOME_DELAY=0 friday_welcome --force
