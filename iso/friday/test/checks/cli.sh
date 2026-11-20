@@ -167,6 +167,21 @@ bash "$F" app-context on >/dev/null
 contains "app-context status says on" "$(bash "$F" app-context status)" "On"
 rm -f "$S/hyprctl"
 
+echo "suggestions for the app you're in"
+printf '#!/bin/bash\necho "hyprctl $*" >> %q\n[[ "$*" == "activewindow -j" ]] && printf %%s "$HYPR_WIN"\nexit 0\n' "$LOG" >"$S/hyprctl"; chmod +x "$S/hyprctl"
+printf '#!/bin/bash\ncat >%q\necho "$PICK"\n' "$W/menu.txt" >"$S/fuzzel"
+: >"$LOG"; HYPR_WIN='{"class":"firefox"}' PICK="Summarize this page" bash "$F" ask; sleep 0.3
+contains "a browser offers to summarize the page" "$(head -n1 "$W/menu.txt")" "Summarize this page"
+contains "picking it asks about the screen" "$(cat "$LOG")" "friday-ctl-context"
+contains "with that question" "$(cat "$LOG")" "Summarize this page"
+: >"$LOG"; HYPR_WIN='{"class":"code"}' PRIMARY="fn main() { let x: i32 = \"a\"; }" PICK="Explain the selected code" bash "$F" ask; sleep 0.3
+contains "an editor with a selection offers to explain the code" "$(cat "$W/menu.txt")" "Explain the selected code"
+contains "picking it sends the selection" "$(cat "$LOG")" "let x: i32"
+: >"$LOG"; HYPR_WIN='{"class":"org.gnome.Calculator"}' PICK="what is rust" bash "$F" ask; sleep 0.3
+if grep -qE "Summarize|Explain the selected" "$W/menu.txt"; then fail "suggested something for an app with nothing to offer"; else pass "an app with no page and no selection: no suggestions"; fi
+printf '#!/bin/bash\necho "fuzzel $*" >> %q\necho "$PICK"\n' "$LOG" >"$S/fuzzel"; chmod +x "$S/fuzzel"
+rm -f "$S/hyprctl"
+
 echo "explain the last error (kitty)"
 # A focused kitty window (pid 4242) whose last command failed; kitty's own
 # remote control answers ls and get-text (stubbed), on its real socket path.
