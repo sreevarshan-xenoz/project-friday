@@ -10,6 +10,7 @@ _friday() {
     'answers:Show past answers'
     'sent:Show what left this machine for AI providers'
     'show:Ring a control in the window in front'
+    'recall:Keep window text for 3 hours to ask what was that (status|on|off)'
     'undo:Put back the last thing FRIDAY changed'
     'watch:Say when an area of the screen changes (region|stop)'
     'status:Inspect daemon state and telemetry'

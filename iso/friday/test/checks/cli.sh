@@ -21,6 +21,11 @@ if [[ "\$1" == watch ]]; then
   printf 'friday-ctl-watch %s\n' "\$*" >> "$LOG"
   exit 0
 fi
+if [[ "\$1" == recall ]]; then
+  printf 'friday-ctl-recall %s\n' "\$*" >> "$LOG"
+  [ -n "\$RECALL_REPLY" ] && printf '%s\n' "\$RECALL_REPLY"
+  exit 0
+fi
 if [[ "\$1" == docs ]]; then
   printf 'friday-ctl-docs %s\n' "\$*" >> "$LOG"
   [ -n "\$DOCS_REPLY" ] && printf '%s\n' "\$DOCS_REPLY"
@@ -531,6 +536,31 @@ contains "summary includes masked secrets count" "$out" "5 secrets masked"
 out1=$(bash "$F" sent 1 2>&1 || true)
 contains "limit N prints last entry" "$out1" "Kilo"
 if grep -q "1,240 chars" <<<"$out1"; then fail "sent 1 printed older entries"; else pass "sent 1 limits table to last entry"; fi
+
+echo "recall (what was that?)"
+: >"$LOG"; out=$(bash "$F" recall on </dev/null)
+contains "recall on asks first; no answer changes nothing" "$out" "Nothing changed."
+if grep -q "enable --now friday-recall" "$LOG"; then fail "recall turned on without a yes"; else pass "no yes: recall stays off"; fi
+contains "and it says where the text goes" "$out" "they go to your cloud provider"
+: >"$LOG"; bash "$F" recall on --yes >/dev/null
+contains "recall on --yes starts the service" "$(cat "$LOG")" "systemctl --user enable --now friday-recall.service"
+rf="$HOME/.local/state/friday/recall.jsonl"; mkdir -p "$(dirname "$rf")"; echo '{"ts":1}' >"$rf"
+: >"$LOG"; RECALL_REPLY=$'[kitty — zsh (5 min ago)]\nerror[E0425]: cannot find value cfg' bash "$F" ask "what was that error I saw?"; sleep 0.3
+contains "what was that: the kept text is searched" "$(cat "$LOG")" "friday-ctl-recall recall search what was that error I saw?"
+contains "and goes with the question (no local model: to the provider)" "$(cat "$LOG")" "text that was on my screen"
+: >"$LOG"; RECALL_REPLY="[x]" bash "$F" ask "what is rust"; sleep 0.3
+if grep -q "friday-ctl-recall" "$LOG"; then fail "an ordinary question searched recall"; else pass "an ordinary question doesn't search recall"; fi
+# With a local model, it answers instead.
+envf="$HOME/.config/friday/friday.env"; mkdir -p "$(dirname "$envf")"; cp "$envf" "$W/env.saved2" 2>/dev/null || : >"$W/env.saved2"
+printf 'LLAMACPP_ENABLED=1\nLLAMACPP_BASE_URL=http://127.0.0.1:8080/v1\n' >"$envf"; cp "$S/curl" "$W/curl.saved2"
+printf '#!/bin/bash\necho "curl $*" >>%q\necho "{\\"choices\\":[{\\"message\\":{\\"content\\":\\"It was E0425 in kitty.\\"}}]}"\n' "$LOG" >"$S/curl"
+: >"$LOG"; RECALL_REPLY="[kitty]"$'\n'"error E0425" bash "$F" ask "what was that error?"; sleep 0.3
+contains "a local model answers recalled text" "$(cat "$LOG")" "It was E0425 in kitty."
+if grep -q "^friday-ctl '" "$LOG"; then fail "recalled text went to the daemon despite a local model"; else pass "recalled text stays local when it can"; fi
+cp "$W/env.saved2" "$envf"; mv "$W/curl.saved2" "$S/curl"
+: >"$LOG"; bash "$F" recall off >/dev/null
+contains "recall off stops the service" "$(cat "$LOG")" "systemctl --user disable --now friday-recall.service"
+[ -e "$rf" ] && fail "recall off left the kept text" || pass "recall off forgets the kept text"
 
 echo "documentation on this computer"
 : >"$LOG"; DOCS_REPLY=$'[Arch wiki: Pacman]\nTo upgrade the system, run pacman -Syu.' bash "$F" ask "how do I upgrade with pacman"; sleep 0.3
