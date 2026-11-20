@@ -14,6 +14,7 @@ public static partial class Providers
         new("groq", "Groq (fast, vision)", "GROQ_API_KEY", true, false),
         new("nvidia-nim", "NVIDIA NIM (vision)", "NVIDIA_NIM_API_KEY", true, false),
         new("runcrate", "Runcrate (six free models weekly, GitHub sign-in)", "RUNCRATE_API_KEY", true, false),
+        new("axforge", "AxForge (3M free tokens a month, keeps nothing)", "AXFORGE_API_KEY", true, false),
         new("openrouter", "OpenRouter (many models, no screen context)", "OPENROUTER_API_KEY", false, false),
         new("cerebras", "Cerebras (fast, no screen context)", "CEREBRAS_API_KEY", false, false),
     ];

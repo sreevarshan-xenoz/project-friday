@@ -123,7 +123,7 @@ flowchart TD
   A["an ask"] --> L{"local model running?"}
   L -->|yes| LM["llama.cpp / Ollama"]
   L -->|no, or it fails| K{"your own API key?<br/>friday setup-ai"}
-  K -->|yes| KP["Gemini, Groq, NVIDIA NIM, Runcrate,<br/>OpenRouter, Cerebras, OpenCode"]
+  K -->|yes| KP["Gemini, Groq, NVIDIA NIM, Runcrate,<br/>AxForge, OpenRouter, Cerebras, OpenCode"]
   K -->|no, or it fails| Z["OpenCode Zen free models"]
   Z -->|busy or unreachable| KI["Kilo free gateway<br/>(named free models only)"]
   KI -->|busy or unreachable| C{"an account connected?<br/>friday connect"}

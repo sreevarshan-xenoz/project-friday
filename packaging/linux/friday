@@ -309,6 +309,7 @@ friday_doctor() {
     CEREBRAS_API_KEY)   api_host=api.cerebras.ai ;;
     NVIDIA_NIM_API_KEY) api_host=integrate.api.nvidia.com ;;
     RUNCRATE_API_KEY)   api_host=api.runcrate.ai ;;
+    AXFORGE_API_KEY)    api_host=api.axforge.ai ;;
     *)                  api_host=opencode.ai ;;
   esac
   if curl -sS -o /dev/null --max-time 6 "https://$api_host/" 2>/dev/null; then
@@ -508,19 +509,20 @@ friday_setup_ai() {
   done
   local provider="${1:-}"
   if [ -z "$provider" ]; then
-    command -v gum >/dev/null || { echo "usage: echo KEY | friday setup-ai <opencode|gemini|groq|nvidia-nim|openrouter|cerebras|runcrate>" >&2; return 1; }
+    command -v gum >/dev/null || { echo "usage: echo KEY | friday setup-ai <opencode|gemini|groq|nvidia-nim|openrouter|cerebras|runcrate|axforge>" >&2; return 1; }
     echo "FRIDAY thinks with a cloud language model. Pick a provider:"
     choice=$(gum choose --cursor="❯ " \
       "Free models: OpenCode Zen, then Kilo (no key, no sign-in)" \
       "Connect an account you already have (Claude Code, Codex, Antigravity, Cline)" \
       "Google Gemini (vision, free tier)" "Groq (fast, vision)" "NVIDIA NIM (vision)" \
       "Runcrate (six free models weekly, sign in with GitHub)" \
+      "AxForge (3M free tokens a month, keeps nothing)" \
       "OpenRouter (many models, no screen context)" "Cerebras (fast, no screen context)") || return 1
     case "$choice" in
       "Free models"*) provider=opencode; echo; echo "Note: $FRIDAY_FREE_NOTICE"; echo ;;
       "Connect an account"*) friday_connect; return ;;
       "Google Gemini"*) provider=gemini ;; "Groq"*) provider=groq ;; "NVIDIA NIM"*) provider=nvidia-nim ;;
-      "OpenRouter"*) provider=openrouter ;; "Cerebras"*) provider=cerebras ;; "Runcrate"*) provider=runcrate ;;
+      "OpenRouter"*) provider=openrouter ;; "Cerebras"*) provider=cerebras ;; "Runcrate"*) provider=runcrate ;; "AxForge"*) provider=axforge ;;
     esac
   fi
   case "$provider" in
@@ -533,7 +535,10 @@ friday_setup_ai() {
     runcrate)   var=RUNCRATE_API_KEY;   vision=true
                 echo "Runcrate: sign in with GitHub at https://www.runcrate.ai (account 30+ days old), then copy a key"
                 echo "from the dashboard's API keys page. Six models are free each week (resets Mondays)." ;;
-    *) echo "unknown provider '$provider' (opencode, gemini, groq, nvidia-nim, openrouter, cerebras, runcrate)" >&2; return 1 ;;
+    axforge)    var=AXFORGE_API_KEY;    vision=true
+                echo "AxForge: create an account and a key at https://console.axforge.ai/keys (no card)."
+                echo "3M tokens are free every 30 days; it keeps nothing after answering." ;;
+    *) echo "unknown provider '$provider' (opencode, gemini, groq, nvidia-nim, openrouter, cerebras, runcrate, axforge)" >&2; return 1 ;;
   esac
   if [ -t 0 ]; then
     local hint="paste your key"
