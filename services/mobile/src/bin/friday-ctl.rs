@@ -177,6 +177,7 @@ async fn main() -> std::process::ExitCode {
     // Optional goal fields: `--web`, `--thorough`, `--avoid <provider>/<model>`.
     let mut ask_opts = serde_json::Map::new();
     let mut question: Option<String> = None;
+    let mut new_conversation = false;
 
     // Scan ALL tokens for flags (`--addr`/`--token`/`--wait` may appear before
     // or after the subcommand) so they never leak into the goal text. The first
@@ -214,6 +215,9 @@ async fn main() -> std::process::ExitCode {
         } else if w == "--thorough" {
             ask_opts.insert("thorough".into(), serde_json::json!(true));
             i += 1;
+        } else if w == "--new-conversation" {
+            new_conversation = true;
+            i += 1;
         } else if w == "--avoid" && i + 1 < raw.len() {
             // `provider/model`; the model id may itself hold a `/`.
             if let Some((provider, model)) = raw[i + 1].split_once('/') {
@@ -230,11 +234,21 @@ async fn main() -> std::process::ExitCode {
     }
 
     let Some(sub) = positional.first() else {
-        eprintln!("usage: friday-ctl <goal|cancel|system-info|context screen> [goal text] [--web] [--thorough [--avoid <provider>/<model>]] [--addr <host:port>] [--token <tok>]");
+        eprintln!("usage: friday-ctl <goal|cancel|system-info|context screen> [goal text] [--web] [--thorough [--avoid <provider>/<model>]] [--new-conversation] [--addr <host:port>] [--token <tok>]");
         return std::process::ExitCode::FAILURE;
     };
     let sub = sub.clone();
     let goal_words = positional.into_iter().skip(1).collect::<Vec<_>>();
+    if sub == "goal" {
+        ask_opts.insert(
+            "conversation".into(),
+            serde_json::json!(conversation_id(
+                &state_path.with_file_name("conversation"),
+                new_conversation,
+                now_ms()
+            )),
+        );
+    }
 
     if sub == "context" {
         // R5-2-5-3: consent + disclosure come first, before any daemon or
@@ -530,6 +544,25 @@ fn read_listen(path: &std::path::Path) -> Option<String> {
     (!st.listen.is_empty()).then_some(st.listen)
 }
 
+/// How long a conversation stays open between asks.
+const CONVERSATION_IDLE_MS: u64 = 15 * 60 * 1000;
+
+/// The conversation this ask belongs to: the one in `path` ("<id> <last ask
+/// ms>") while it was used in the last 15 minutes, else a new one (always a
+/// new one with `--new-conversation`). Shared by every client that asks
+/// through friday-ctl: the CLI, FRIDAY Shell and the Windows tray.
+fn conversation_id(path: &std::path::Path, fresh: bool, now: u64) -> String {
+    let kept = std::fs::read_to_string(path).ok().and_then(|text| {
+        let (id, at) = text.trim().split_once(' ')?;
+        let at: u64 = at.parse().ok()?;
+        (!fresh && now.saturating_sub(at) < CONVERSATION_IDLE_MS && !id.is_empty())
+            .then(|| id.to_string())
+    });
+    let id = kept.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let _ = std::fs::write(path, format!("{id} {now}"));
+    id
+}
+
 fn read_token(path: &std::path::Path) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
     let st: ShellState = serde_json::from_str(&text).ok()?;
@@ -727,6 +760,28 @@ async fn send_command(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn asks_share_a_conversation_until_it_goes_quiet() {
+        let path = std::env::temp_dir().join(format!("friday-ctl-conv-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let first = conversation_id(&path, false, 1_000);
+        assert_eq!(
+            conversation_id(&path, false, 60_000),
+            first,
+            "a minute later: same one"
+        );
+        let later = 60_000 + CONVERSATION_IDLE_MS + 1;
+        let quiet = conversation_id(&path, false, later);
+        assert_ne!(quiet, first, "after 15 quiet minutes: a new one");
+        assert_ne!(
+            conversation_id(&path, true, later + 1),
+            quiet,
+            "--new-conversation"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
     use super::*;
     use serde_json::json;
 

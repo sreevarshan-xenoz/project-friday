@@ -338,8 +338,9 @@ async fn main() {
 
     // The assistant loop. Consumes `plan.goal` and runs each goal through the
     // real Executive with real evidence adapters.
-    let goal_runner =
-        GoalRunner::with_fabric_and_memory(bus.clone(), fabric, journal, voice).start();
+    let goal_runner = GoalRunner::with_fabric_and_memory(bus.clone(), fabric, journal, voice)
+        .with_conversations(state_path.with_file_name("conversations.json"))
+        .start();
     let screen_ask = friday_mobile::context_read::ScreenAskManager::new(screen_reader.clone());
 
     // Watch for package upgrades: if the binary on disk was replaced (e.g. pacman -Syu)

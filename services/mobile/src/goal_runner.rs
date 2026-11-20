@@ -912,6 +912,8 @@ const DEFAULT_SESSION_ID: &str = "default";
 /// Hard cap on tracked sessions. Least-recently-used entries are evicted so a
 /// flood of short-lived sessions cannot grow the map unboundedly.
 const MAX_SESSIONS: usize = 32;
+/// How many earlier turns of a conversation ride along with a new ask.
+const MAX_TURNS: usize = 4;
 
 /// Per-context character cap (applied to prior goal/result text) so a
 /// long-running session never balloons the composed goal handed to the
@@ -922,27 +924,74 @@ const MAX_CONTEXT_CHARS: usize = 400;
 /// and the recall tool returns — bounded so memory never floods a turn.
 const MEMORY_RECALL_LIMIT: usize = 3;
 
-/// One session's conversational state — held in memory only (S1; persistence
-/// is the separate memory-write slice). `last_goal` / `last_result` describe
-/// the just-finished turn and are composed into the *next* goal the Executive
-/// sees, so the planner and its investigation are grounded in the prior turn
-/// instead of starting from an empty conversation.
-#[derive(Debug, Clone)]
+/// One conversation's state. Its last few turns are composed into the *next*
+/// goal the Executive sees, so a follow-up ("and the second one?") is
+/// grounded in what came before. The daemon saves it between runs
+/// ([`GoalRunner::with_conversations`]).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct SessionContext {
     turn: u64,
-    last_goal: String,
-    last_result: String,
+    /// The last [`MAX_TURNS`] turns, oldest first. Older ones drop off; what
+    /// matters from them lives on in memory recall.
+    #[serde(default)]
+    history: Vec<Turn>,
     last_seen_ms: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct Turn {
+    goal: String,
+    result: String,
 }
 
 impl SessionContext {
     fn new() -> Self {
         Self {
             turn: 0,
-            last_goal: String::new(),
-            last_result: String::new(),
+            history: Vec::new(),
             last_seen_ms: now_ms(),
         }
+    }
+
+    fn record(&mut self, goal: &str, result: String) {
+        self.history.push(Turn {
+            goal: truncate(goal, MAX_CONTEXT_CHARS),
+            result,
+        });
+        if self.history.len() > MAX_TURNS {
+            self.history.remove(0);
+        }
+        self.last_seen_ms = now_ms();
+    }
+}
+
+/// Conversations saved to disk so a daemon restart picks them up: the
+/// session map as JSON, owner-only. Entries idle longer than a day are
+/// dropped on load.
+fn load_conversations(path: &std::path::Path) -> HashMap<String, SessionContext> {
+    let mut map: HashMap<String, SessionContext> = std::fs::read(path)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default();
+    let day_ago = now_ms().saturating_sub(24 * 60 * 60 * 1000);
+    map.retain(|_, c| c.last_seen_ms >= day_ago);
+    map
+}
+
+fn save_conversations(path: &std::path::Path, sessions: &HashMap<String, SessionContext>) {
+    let Ok(body) = serde_json::to_vec(sessions) else {
+        return;
+    };
+    let tmp = path.with_extension("tmp");
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+    let written = opts
+        .open(&tmp)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, &body));
+    if written.is_ok() {
+        let _ = std::fs::rename(&tmp, path);
     }
 }
 
@@ -968,13 +1017,15 @@ fn now_ms() -> u64 {
 fn compose_goal_with_context(goal: &str, prior: &SessionContext, recalled: &[String]) -> String {
     let mut out = String::with_capacity(goal.len() + 640);
     out.push_str(goal);
-    if prior.turn > 0 {
-        out.push_str("\n\n[session context]\n");
-        out.push_str("previous goal: ");
-        out.push_str(&truncate(&prior.last_goal, MAX_CONTEXT_CHARS));
-        if !prior.last_result.is_empty() {
-            out.push_str("\nprevious result: ");
-            out.push_str(&truncate(&prior.last_result, MAX_CONTEXT_CHARS));
+    if !prior.history.is_empty() {
+        out.push_str("\n\n[session context]");
+        for t in &prior.history {
+            out.push_str("\nprevious goal: ");
+            out.push_str(&truncate(&t.goal, MAX_CONTEXT_CHARS));
+            if !t.result.is_empty() {
+                out.push_str("\nprevious result: ");
+                out.push_str(&truncate(&t.result, MAX_CONTEXT_CHARS));
+            }
         }
     }
     if !recalled.is_empty() {
@@ -1064,6 +1115,8 @@ pub struct GoalRunner {
     /// [`MAX_SESSIONS`] with LRU eviction. Locked only in short critical
     /// sections — never held across an await.
     sessions: Mutex<HashMap<String, SessionContext>>,
+    /// Where conversations are saved between daemon runs (`None`: memory only).
+    conversations: Option<std::path::PathBuf>,
     /// The durable memory journal this runner writes through (shared with the
     /// Executive's `EpisodeStore` and the recall tool — one store, one
     /// journal). `None` = memory stays in-memory only (heuristic test runners
@@ -1159,6 +1212,14 @@ impl GoalRunner {
     }
 
     /// Override the web searcher (e.g. for hermetic testing).
+    /// Save conversations to `path` and pick up the ones saved there, so a
+    /// conversation carries on across a daemon restart.
+    pub fn with_conversations(mut self, path: std::path::PathBuf) -> Self {
+        *self.sessions.lock().unwrap() = load_conversations(&path);
+        self.conversations = Some(path);
+        self
+    }
+
     pub fn with_private_mode(mut self, enabled: bool) -> Self {
         self.private_mode = enabled;
         self
@@ -1506,6 +1567,7 @@ impl GoalRunner {
             answerer: fabric.clone().map(|f| f as Arc<dyn LlmStrategyClient>),
             fabric,
             sessions: Mutex::new(HashMap::new()),
+            conversations: None,
             journal,
             abort,
             pause,
@@ -1974,8 +2036,7 @@ impl GoalRunner {
         {
             let mut sessions = self.sessions.lock().unwrap();
             if let Some(ctx) = sessions.get_mut(&session_id) {
-                ctx.last_goal = goal.clone();
-                ctx.last_result = if report.cancelled {
+                let result = if report.cancelled {
                     "cancelled by human".to_string()
                 } else if report.paused {
                     "paused by human".to_string()
@@ -1988,10 +2049,14 @@ impl GoalRunner {
                         .map(|r| truncate(&r.text, MAX_CONTEXT_CHARS))
                         .unwrap_or_default()
                 };
-                ctx.last_seen_ms = now_ms();
+                ctx.record(&goal, result);
             }
         }
         evict_lru(&self.sessions, MAX_SESSIONS);
+        // Private mode leaves nothing on disk.
+        if let (Some(path), false) = (&self.conversations, self.private_mode) {
+            save_conversations(path, &self.sessions.lock().unwrap());
+        }
 
         if report.cancelled {
             // The human stopped this goal: publish the terminal `goal.cancelled`
@@ -4277,8 +4342,10 @@ mod tests {
 
         let mut prior = SessionContext::new();
         prior.turn = 1;
-        prior.last_goal = "List the files in this project".into();
-        prior.last_result = "src/main.rs, src/lib.rs".into();
+        prior.record(
+            "List the files in this project",
+            "src/main.rs, src/lib.rs".into(),
+        );
         let composed = compose_goal_with_context("Show me the second file", &prior, &[]);
         assert!(composed.starts_with("Show me the second file"));
         assert!(composed.contains("[session context]"));
@@ -4293,15 +4360,47 @@ mod tests {
         assert!(composed.contains("goal: My main project is FRIDAY"));
 
         let mut big = SessionContext::new();
-        big.turn = 1;
-        big.last_goal = "g".repeat(MAX_CONTEXT_CHARS * 2);
-        big.last_result = "r".repeat(MAX_CONTEXT_CHARS * 2);
+        for _ in 0..(MAX_TURNS + 3) {
+            big.record(
+                &"g".repeat(MAX_CONTEXT_CHARS * 2),
+                "r".repeat(MAX_CONTEXT_CHARS * 2),
+            );
+        }
+        assert_eq!(big.history.len(), MAX_TURNS, "older turns drop off");
         let composed = compose_goal_with_context("next", &big, &[]);
         assert!(
-            composed.len() < MAX_CONTEXT_CHARS * 3,
+            composed.len() < MAX_TURNS * MAX_CONTEXT_CHARS * 3,
             "composed context stays bounded: {}",
             composed.len()
         );
+    }
+
+    /// A conversation outlives the daemon: saved after a turn, loaded by the
+    /// next run, and a stale one is dropped.
+    #[test]
+    fn conversations_survive_a_restart() {
+        let path = std::env::temp_dir().join(format!("friday-conv-{}.json", std::process::id()));
+        let mut map = HashMap::new();
+        let mut live = SessionContext::new();
+        live.record("Remember the code word is heron", "Noted: heron.".into());
+        map.insert("conv-a".to_string(), live);
+        let mut stale = SessionContext::new();
+        stale.last_seen_ms = 0;
+        map.insert("conv-old".to_string(), stale);
+        save_conversations(&path, &map);
+        let loaded = load_conversations(&path);
+        assert_eq!(
+            loaded["conv-a"].history[0].goal,
+            "Remember the code word is heron"
+        );
+        assert!(!loaded.contains_key("conv-old"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        let _ = std::fs::remove_file(path);
     }
 
     /// The per-session map stays bounded: LRU eviction drops the oldest

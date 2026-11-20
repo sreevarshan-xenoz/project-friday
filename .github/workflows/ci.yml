@@ -63,6 +63,7 @@ jobs:
         run: |
           cargo build -p friday-mobile --bin friday-linux-daemon --bin friday-ctl
           bash tests/e2e/ask.sh
+          bash tests/e2e/conversation.sh
       - name: End-to-end hotkeys (shipped keymaps, each key's command to its answer)
         run: |
           sudo apt-get install -y lua5.4
@@ -289,7 +290,9 @@ jobs:
           Write-Host "list-apps ok=$($apps.ok), $(@($apps.data.apps).Count) app(s)"
       - name: End-to-end ask on the installed binaries (fake model, no network)
         shell: bash
-        run: bash tests/e2e/ask.sh "$LOCALAPPDATA/Programs/FRIDAY"
+        run: |
+          bash tests/e2e/ask.sh "$LOCALAPPDATA/Programs/FRIDAY"
+          bash tests/e2e/conversation.sh "$LOCALAPPDATA/Programs/FRIDAY"
       - name: End-to-end desktop control (the real daemon and Windows host; fake model lists the windows)
         shell: bash
         run: bash tests/e2e/desktop.sh "$LOCALAPPDATA/Programs/FRIDAY"
