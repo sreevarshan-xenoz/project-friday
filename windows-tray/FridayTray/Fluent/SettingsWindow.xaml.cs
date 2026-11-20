@@ -49,6 +49,7 @@ internal sealed partial class SettingsWindow : FluentWindow
         ("General", SymbolRegular.Settings24),
         ("Privacy", SymbolRegular.ShieldLock24),
         ("AI", SymbolRegular.BrainCircuit24),
+        ("Local AI", SymbolRegular.HardDrive24),
         ("Voice", SymbolRegular.Speaker224),
         ("Desktop control", SymbolRegular.Cursor24),
         ("Agents", SymbolRegular.Bot24),
@@ -124,6 +125,7 @@ internal sealed partial class SettingsWindow : FluentWindow
             "General" => General(),
             "Privacy" => Privacy(),
             "AI" => Ai(),
+            "Local AI" => LocalAiSection(),
             "Voice" => Voice(),
             "Desktop control" => Desktop(),
             "Agents" => Agents(),
@@ -245,6 +247,222 @@ internal sealed partial class SettingsWindow : FluentWindow
         yield return Note("FRIDAY thinks with a language model. Free models work with no account; for anything private use your own key or account. Your key is stored only on this PC, in your profile.");
         yield return Row(Pill("Choose a provider and key…", SymbolRegular.Key24, primary: true), _do.ChooseProvider);
         yield return Row(Pill("Connect an account…", SymbolRegular.PersonAccounts24), _do.ConnectAccounts);
+    }
+
+    private IEnumerable<UIElement> LocalAiSection()
+    {
+        yield return Note("Local AI runs on this computer: it works offline, but it uses your computer's memory and processor. Sized to what your machine can handle.");
+        yield return BuildLocalAiCard();
+    }
+
+    private UIElement BuildLocalAiCard()
+    {
+        var env = EnvFile.Load(_install.Paths.EnvFile);
+        var (isOn, currentModel) = LocalAi.GetCurrentState(env);
+
+        LocalAiInfo? recommendedInfo = null;
+
+        var machineVal = new TextBlock
+        {
+            Text = "Detecting...",
+            FontSize = 13,
+            Foreground = Resource("Text"),
+            TextWrapping = TextWrapping.Wrap,
+        };
+        var modelVal = new TextBlock
+        {
+            Text = "Checking presets...",
+            FontSize = 13,
+            Foreground = Resource("Text"),
+            TextWrapping = TextWrapping.Wrap,
+        };
+        var stateVal = new TextBlock
+        {
+            Text = isOn ? $"on: {currentModel}" : "not set up",
+            FontSize = 13,
+            Foreground = Resource("Text"),
+            TextWrapping = TextWrapping.Wrap,
+        };
+        var progressText = new TextBlock
+        {
+            FontSize = 12.5,
+            LineHeight = 18,
+            Foreground = Resource("Subtext"),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 8, 0, 0),
+            Visibility = Visibility.Collapsed,
+        };
+        var errorText = new TextBlock
+        {
+            FontSize = 12.5,
+            LineHeight = 18,
+            Foreground = Resource("Ember"),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 8, 0, 0),
+            Visibility = Visibility.Collapsed,
+        };
+
+        var setupBtn = Pill("Set up local AI", SymbolRegular.ArrowDownload24, primary: true);
+        var turnOffBtn = Pill("Turn off", SymbolRegular.Power24);
+        turnOffBtn.Visibility = isOn ? Visibility.Visible : Visibility.Collapsed;
+        turnOffBtn.Margin = new Thickness(10, 0, 0, 0);
+
+        turnOffBtn.Click += (_, _) =>
+        {
+            errorText.Visibility = Visibility.Collapsed;
+            progressText.Visibility = Visibility.Collapsed;
+            ChangeEnv(LocalAi.TurnOffLocalAi);
+            stateVal.Text = "not set up";
+            turnOffBtn.Visibility = Visibility.Collapsed;
+        };
+
+        setupBtn.Click += async (_, _) =>
+        {
+            if (recommendedInfo == null || string.IsNullOrEmpty(recommendedInfo.RecommendedModel))
+            {
+                errorText.Text = recommendedInfo?.Note ?? "No recommended local model fits this computer.";
+                errorText.Visibility = Visibility.Visible;
+                return;
+            }
+
+            var model = recommendedInfo.RecommendedModel;
+            var vision = recommendedInfo.Vision;
+
+            setupBtn.IsEnabled = false;
+            turnOffBtn.IsEnabled = false;
+            errorText.Visibility = Visibility.Collapsed;
+            progressText.Text = "Starting local AI setup...";
+            progressText.Visibility = Visibility.Visible;
+
+            var (success, errorMsg) = await Task.Run<(bool Success, string? Error)>(async () =>
+            {
+                try
+                {
+                    if (!ProcessRunner.IsOllamaInstalled(out var ollamaExe))
+                    {
+                        await Dispatcher.InvokeAsync(() => progressText.Text = "Installing Ollama (via winget)...");
+                        var (wingetOk, _) = await ProcessRunner.RunAsync("winget",
+                            ["install", "--id", "Ollama.Ollama", "-e", "--accept-source-agreements", "--accept-package-agreements"],
+                            TimeSpan.FromMinutes(10),
+                            line => Dispatcher.InvokeAsync(() => progressText.Text = line));
+                        if (!wingetOk)
+                            return (false, "Could not install Ollama with winget.");
+
+                        if (!ProcessRunner.IsOllamaInstalled(out ollamaExe))
+                            ollamaExe = "ollama";
+                    }
+
+                    await Dispatcher.InvokeAsync(() => progressText.Text = "Starting Ollama...");
+                    if (!await ProcessRunner.EnsureOllamaRunningAsync(ollamaExe))
+                        return (false, "Ollama is installed but didn't start. Open Ollama once from the Start menu, then try again.");
+
+                    await Dispatcher.InvokeAsync(() => progressText.Text = $"Downloading {model}...");
+                    var (pullOk, _) = await ProcessRunner.RunAsync(ollamaExe,
+                        ["pull", model],
+                        TimeSpan.FromMinutes(30),
+                        line => Dispatcher.InvokeAsync(() => progressText.Text = line));
+                    if (!pullOk)
+                        return (false, $"Could not download {model} with Ollama.");
+
+                    await Dispatcher.InvokeAsync(() => progressText.Text = "Configuring model priority...");
+                    var (ctlOk, ctlOut) = await Ctl.RunAsync(_install, ["local-ai", "local-first", model, "auto"], TimeSpan.FromSeconds(15));
+                    var localFirst = ctlOk && ctlOut.Trim() == "1";
+
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        ChangeEnv(e => LocalAi.WithLocalAi(e, model, vision, localFirst));
+                    });
+
+                    return (true, null);
+                }
+                catch (Exception ex)
+                {
+                    return (false, "Local AI setup failed: " + ex.Message);
+                }
+            });
+
+            setupBtn.IsEnabled = true;
+            turnOffBtn.IsEnabled = true;
+
+            if (success)
+            {
+                progressText.Visibility = Visibility.Collapsed;
+                errorText.Visibility = Visibility.Collapsed;
+                stateVal.Text = $"on: {model}";
+                turnOffBtn.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                progressText.Visibility = Visibility.Collapsed;
+                errorText.Text = errorMsg ?? "Local AI setup failed.";
+                errorText.Visibility = Visibility.Visible;
+            }
+        };
+
+        var stack = new StackPanel();
+        stack.Children.Add(PairRow("This computer", machineVal));
+        stack.Children.Add(new Border { Height = 1, Background = Resource("Hairline"), Opacity = 0.6 });
+        stack.Children.Add(PairRow("Recommended model", modelVal));
+        stack.Children.Add(new Border { Height = 1, Background = Resource("Hairline"), Opacity = 0.6 });
+        stack.Children.Add(PairRow("Current state", stateVal));
+        stack.Children.Add(progressText);
+        stack.Children.Add(errorText);
+
+        var btnPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 14, 0, 4) };
+        btnPanel.Children.Add(setupBtn);
+        btnPanel.Children.Add(turnOffBtn);
+        stack.Children.Add(btnPanel);
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var (detectOk, detectOut) = await Ctl.RunAsync(_install, ["local-ai", "detect"], TimeSpan.FromSeconds(10));
+                var (presetsOk, presetsOut) = await Ctl.RunAsync(_install, ["local-ai", "presets", "--json"], TimeSpan.FromSeconds(10));
+                if (detectOk && presetsOk)
+                {
+                    var info = LocalAi.Parse(detectOut, presetsOut);
+                    recommendedInfo = info;
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        machineVal.Text = info.MachineSummary;
+                        if (!string.IsNullOrEmpty(info.RecommendedModel))
+                            modelVal.Text = $"{info.RecommendedModel} ({info.VisionSummary})";
+                        else
+                            modelVal.Text = info.Note ?? "No local model fits this PC.";
+                    });
+                }
+                else
+                {
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        machineVal.Text = "Could not detect machine hardware.";
+                        modelVal.Text = "Could not load presets.";
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    errorText.Text = "Could not inspect hardware: " + ex.Message;
+                    errorText.Visibility = Visibility.Visible;
+                });
+            }
+        });
+
+        return Surface(stack);
+    }
+
+    private Grid PairRow(string name, TextBlock valueBlock)
+    {
+        var grid = new Grid { Tag = PairTag, Margin = new Thickness(0, 9, 0, 9) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(210) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition());
+        Grid.SetColumn(valueBlock, 1);
+        grid.Children.Add(new TextBlock { Text = name, Foreground = Resource("Subtext"), FontSize = 13, TextTrimming = TextTrimming.CharacterEllipsis });
+        grid.Children.Add(valueBlock);
+        return grid;
     }
 
     private Button Download(string text, bool primary, string[] setup)
