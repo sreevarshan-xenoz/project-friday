@@ -42,6 +42,34 @@ release page). `friday doctor` first on Linux; it should be all green.
       nosuch.service"), then ask it again: the second answer mentions the
       earlier failure. `friday forget memory` removes `lessons.jsonl`.
 
+## vNext N1: your work, remembered (new tonight)
+
+- [ ] **Workspaces**: open a terminal in a git repo with `nvim` (or `hx`) on
+      a file, a browser on another workspace, one floating window. Super+Y
+      "save this as my friday workspace". Close everything. Super+Y "restore
+      my friday workspace": the windows come back on their workspaces, the
+      terminal in the repo with the editor on the file, the floating one in
+      its place; the answer lists what came back and what didn't. Run it
+      again: "already in place", no duplicates.
+- [ ] **Continue building**: after a reboot, Super+Y "Friday, let's continue
+      building FRIDAY": the workspace comes back, and the answer says where
+      you stopped (from your earlier asks and actions) and your open
+      thoughts. Time it (the goal is under five seconds to the windows).
+- [ ] **Timeline**: `friday-ctl timeline yesterday` lists what you asked and
+      did; Super+Y "what did I do yesterday?" answers from it.
+- [ ] **Thoughts**: in a terminal in the repo, Super+Y "keep this idea:
+      workspaces should remember tab groups"; "we decided to ship workspaces
+      first"; "open question: sync threads between computers?". Then
+      `friday-ctl thought list friday` shows all three under the project,
+      with your capitals, and "what was I thinking about FRIDAY?" quotes them
+      with dates.
+- [ ] **Autosave** (opt-in): `friday workspace autosave on`; after ten
+      minutes `friday workspace list` shows "last session"; "restore my last
+      session" brings it back. `friday workspace autosave off`.
+- [ ] **Windows local AI**: tray Settings → Local AI shows the GPU, VRAM and
+      RAM and a recommended model; "Set up local AI" installs Ollama (winget),
+      downloads it with progress, and Win+Y then answers with it on.
+
 ## Owed from items 1-14 (real session only)
 
 - [ ] kitty: run a failing command, Super+Y: it offers to explain the error.
