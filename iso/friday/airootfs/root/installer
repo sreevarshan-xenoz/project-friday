@@ -224,7 +224,7 @@ fi
 live_status_start
 pacstrap_with_retry /mnt base linux linux-firmware sudo zsh hyprland sddm uwsm quickshell waybar \
   xdg-desktop-portal-hyprland grim slurp wl-clipboard pipewire pipewire-alsa pipewire-pulse wireplumber \
-  foot alacritty ttf-jetbrains-mono-nerd noto-fonts networkmanager rsync gum openssh \
+  kitty foot alacritty ttf-jetbrains-mono-nerd noto-fonts networkmanager rsync gum openssh \
   jq socat fzf bc wtype fastfetch starship playerctl brightnessctl pavucontrol polkit-kde-agent \
   matugen hypridle hyprlock fuzzel cliphist imagemagick libqalculate hyprsunset hyprpaper swaybg \
   qt6-5compat qt6-imageformats qt6-multimedia qt6-multimedia-ffmpeg qt6-virtualkeyboard qt6-quicktimeline qt6-svg qt6-wayland \
