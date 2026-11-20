@@ -33,6 +33,14 @@ ColumnLayout {
     offArgs: ["recall", "off"]
     onText: "Recall: on"
   }
+  Toggle {
+    title: "Listen for \"hey Friday\""
+    detail: "Listens to your microphone all the time, on this computer only, and turns speech into text with the local voice model. Nothing is recorded or sent unless a piece begins with \"hey Friday\"; then only what you say next is asked. A microphone mark shows in the bar while it listens. Needs voice set up (friday voice setup). Off by default."
+    statusArgs: ["wake", "status"]
+    onArgs: ["wake", "on", "--yes"]
+    offArgs: ["wake", "off"]
+    onText: "Wake word: on"
+  }
 
   Cmd { id: sent; args: ["sent", "20"] }
   Cmd { id: forget; onFinished: confirming = "" }
