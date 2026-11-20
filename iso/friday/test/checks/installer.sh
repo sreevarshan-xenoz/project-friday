@@ -218,11 +218,37 @@ EOF
   printf '#!/bin/bash\nexit 0\n' >"$W/stub/curl"   # pretend we're online
   cat >"$W/stub/installer" <<'EOF'
 #!/bin/bash
-echo "INSTALLER-ENV disk=$TARGET_DISK erase=$ERASE_DISK host=$FRIDAY_HOSTNAME user=$USERNAME pw=$PASSWORD tz=$TIMEZONE kb=$KEYBOARD ai=[$FRIDAY_AI_PROVIDER] autologin=$AUTOLOGIN encrypt=$ENCRYPT interactive=$FRIDAY_INTERACTIVE session=$SESSION style=$SHELL_STYLE desktop=$FEAT_DESKTOP tasks=$FEAT_TASKS appname=$FEAT_APPNAME screentext=$FEAT_SCREENTEXT"
+echo "INSTALLER-ENV disk=$TARGET_DISK erase=$ERASE_DISK host=$FRIDAY_HOSTNAME user=$USERNAME pw=$PASSWORD tz=$TIMEZONE kb=$KEYBOARD ai=[$FRIDAY_AI_PROVIDERS] keys=[$(cut -d= -f1 <<<"$FRIDAY_AI_KEYS" | xargs)] local=[$FRIDAY_LOCAL_ENGINE:$FRIDAY_LOCAL_MODEL:$FRIDAY_LOCAL_BUDGET_MB] autologin=$AUTOLOGIN encrypt=$ENCRYPT interactive=$FRIDAY_INTERACTIVE session=$SESSION style=$SHELL_STYLE desktop=$FEAT_DESKTOP tasks=$FEAT_TASKS appname=$FEAT_APPNAME screentext=$FEAT_SCREENTEXT"
 EOF
+  # friday-git is on the live ISO: the real CLI, on a fake 16 GB machine with no GPU.
+  mkdir -p "$W/hw/proc"
+  printf 'MemTotal:       16777216 kB\n' >"$W/hw/proc/meminfo"
+  printf 'processor\t: 0\nflags\t\t: avx2\n' >"$W/hw/proc/cpuinfo"
+  printf '#!/bin/bash\nFRIDAY_HW_ROOT=%q exec bash %q "$@"\n' "$W/hw" "$REPO_ROOT/packaging/linux/friday" >"$W/stub/friday"
   chmod +x "$W"/stub/* "$W/configurator"
   if python3 "$CHECKS/installer_flow.py" "$W/configurator" "$W/stub"; then :; else FAILS=$((FAILS + 1)); fi
+  echo "configurator flow: several providers and local AI (pty)"
+  if python3 "$CHECKS/installer_flow.py" "$W/configurator" "$W/stub" multi; then :; else FAILS=$((FAILS + 1)); fi
 else skip "configurator flow (needs gum + python3)"; fi
+
+echo "installer: AI keys and local AI"
+W="$WORK/ai-section"; rm -rf "$W"; mkdir -p "$W/mnt/home/alice"
+{
+  echo 'set -euo pipefail; USER_HOME=/home/alice'
+  echo "FRIDAY_AI_KEYS=\$'gemini=gem-key-123456\\ngroq=groq-key-123456\\n'"
+  echo 'FRIDAY_LOCAL_ENGINE=ollama FRIDAY_LOCAL_BUDGET_MB=8192 FRIDAY_LOCAL_MODEL=gemma3:4b'
+  awk '/^# FRIDAY AI provider credentials, loaded by/,/downloaded after the first login/' "$ROOT/installer"
+  echo fi
+} | sed "s#/mnt#$W/mnt#g" >"$W/section.sh"
+out=$(bash "$W/section.sh" 2>&1)
+envf="$W/mnt/home/alice/.config/friday/friday.env"
+contains "both keys saved" "$(cat "$envf" 2>/dev/null)" $'GEMINI_API_KEY=gem-key-123456\nGROQ_API_KEY=groq-key-123456'
+contains "screen context goes to the first vision provider" "$(cat "$envf" 2>/dev/null)" "FRIDAY_CONTEXT_PROVIDER=gemini"
+[[ "$(stat -c %a "$envf" 2>/dev/null)" == 600 ]] && pass "friday.env is 0600" || fail "friday.env mode $(stat -c %a "$envf" 2>/dev/null)"
+[[ "$out" != *key-123456* ]] && pass "keys never reach the log" || fail "a key was printed"
+contains "local AI choice saved, pending" "$(cat "$W/mnt/home/alice/.config/friday/local-ai.conf" 2>/dev/null)" $'engine=ollama\nbudget_mb=8192\nmodel=gemma3:4b\nstate=pending'
+[[ -L "$W/mnt/home/alice/.config/systemd/user/default.target.wants/friday-local-ai.service" ]] \
+  && pass "the first-login download is enabled for the user" || fail "friday-local-ai.service not enabled"
 
 echo "installer progress and failure screens"
 if need gum python3; then

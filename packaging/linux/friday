@@ -48,13 +48,16 @@ Autonomous Agent & Cognitive Loop:
   friday doctor                    Check daemon, AI provider and desktop health
   friday report [file]             Write a redacted bug report to read and share
   friday setup-ai [--keep-others|--only] [provider]
-                                   Set or change the AI provider key
+                                   Set or change the AI provider key (local: a model on this computer)
   friday connect [--prefer] [claude|codex|agy|cline]
                                    Use an AI account you already have (signs in);
                                    a fallback after the free models unless --prefer
   friday disconnect <name>         Stop using a connected account
   friday private [status|on [model]|off]
                                    Local model only; nothing leaves the machine
+  friday local-ai [summary|presets|install|status|off]
+                                   A model on this computer, sized to it; answers first,
+                                   cloud covers what it can't (friday setup-ai local)
   friday face [status|setup|remove] Face unlock for the lock screen (Gaze)
   friday voice [status|setup|remove] Hold Super+Y and speak (speech to text on this computer)
   friday voice speak [setup [tinyvoca|kokoro|kitten|supertonic]|on|off|voices|voice N|status]
@@ -508,12 +511,14 @@ friday_setup_ai() {
     esac
   done
   local provider="${1:-}"
+  if [ "$provider" = local ]; then shift; friday_setup_local "$@"; return; fi
   if [ -z "$provider" ]; then
-    command -v gum >/dev/null || { echo "usage: echo KEY | friday setup-ai <opencode|gemini|groq|nvidia-nim|openrouter|cerebras|runcrate|axforge>" >&2; return 1; }
+    command -v gum >/dev/null || { echo "usage: echo KEY | friday setup-ai <opencode|gemini|groq|nvidia-nim|openrouter|cerebras|runcrate|axforge|local>" >&2; return 1; }
     echo "FRIDAY thinks with a cloud language model. Pick a provider:"
     choice=$(gum choose --cursor="❯ " \
       "Free models: OpenCode Zen, then Kilo or OVHcloud (no key, no sign-in)" \
       "Connect an account you already have (Claude Code, Codex, Antigravity, Cline)" \
+      "Local AI (on this computer: private, works offline)" \
       "Google Gemini (vision, free tier)" "Groq (fast, vision)" "NVIDIA NIM (vision)" \
       "Runcrate (six free models weekly, sign in with GitHub)" \
       "AxForge (3M free tokens a month, keeps nothing)" \
@@ -521,6 +526,7 @@ friday_setup_ai() {
     case "$choice" in
       "Free models"*) provider=opencode; echo; echo "Note: $FRIDAY_FREE_NOTICE"; echo ;;
       "Connect an account"*) friday_connect; return ;;
+      "Local AI"*) friday_setup_local; return ;;
       "Google Gemini"*) provider=gemini ;; "Groq"*) provider=groq ;; "NVIDIA NIM"*) provider=nvidia-nim ;;
       "OpenRouter"*) provider=openrouter ;; "Cerebras"*) provider=cerebras ;; "Runcrate"*) provider=runcrate ;; "AxForge"*) provider=axforge ;;
     esac
@@ -1691,6 +1697,395 @@ friday_sent() {
   fi
 }
 
+# `friday local-ai`: a model on this computer, sized to it.
+#   detect   what the machine has (RAM, GPU, video memory, AVX2, free disk)
+#   presets  how much local AI may use, and the model each budget gets
+# Tests point FRIDAY_HW_ROOT at a fake /proc and /sys, and set
+# FRIDAY_DISK_FREE_MB.
+
+# The ladder: id|memory it needs (MB)|largest download, Ollama or GGUF (MB)|sees screenshots
+FRIDAY_LOCAL_MODELS="qwen3:1.7b|2048|1834|0
+qwen3:4b|3584|2497|0
+gemma3:4b|4608|3350|1
+gemma3:12b|9216|8164|1
+gemma3:27b|19456|17413|1"
+
+friday_local_ai_detect() {
+  local root="${FRIDAY_HW_ROOT:-}" ram_mb=0 gpu=none discrete=no vram=unknown threads=0 avx2=no disk
+  ram_mb=$(awk '/^MemTotal:/ {print int($2 / 1024)}' "$root/proc/meminfo" 2>/dev/null)
+  threads=$(grep -c '^processor' "$root/proc/cpuinfo" 2>/dev/null || true)
+  grep -qw avx2 "$root/proc/cpuinfo" 2>/dev/null && avx2=yes
+  # The strongest GPU: NVIDIA, then AMD with its own memory, then integrated.
+  local dev vendor mem
+  # PCI display devices (class 0x03xx), so a GPU with no driver loaded counts.
+  for dev in "$root"/sys/bus/pci/devices/*; do
+    [[ -r "$dev/class" && $(<"$dev/class") == 0x03* ]] || continue
+    vendor=$(<"$dev/vendor")
+    case "$vendor" in
+      0x10de)
+        gpu=nvidia discrete=yes vram=unknown
+        if command -v nvidia-smi >/dev/null 2>&1; then
+          mem=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -n1 | tr -dc 0-9 || true)
+          [[ -n "$mem" ]] && vram=$mem
+        fi
+        break ;;
+      0x1002)
+        mem=$(( $(cat "$dev/mem_info_vram_total" 2>/dev/null || echo 0) / 1048576 ))
+        if (( mem >= 2048 )); then gpu=amd discrete=yes vram=$mem
+        elif [[ $gpu == none ]]; then gpu=amd; fi ;;
+      0x8086) [[ $gpu == none ]] && gpu=intel ;;
+    esac
+  done
+  if [[ -n "${FRIDAY_DISK_FREE_MB:-}" ]]; then disk=$FRIDAY_DISK_FREE_MB
+  else
+    local where="${FRIDAY_DISK_PATH:-$HOME}"
+    while [[ ! -d "$where" ]]; do where=$(dirname "$where"); done
+    disk=$(df -Pm "$where" 2>/dev/null | awk 'NR == 2 {print $4}')
+  fi
+  echo "ram_mb=${ram_mb:-0}"
+  echo "gpu=$gpu"
+  echo "gpu_discrete=$discrete"
+  echo "vram_mb=$vram"
+  echo "cpu_threads=${threads:-0}"
+  echo "avx2=$avx2"
+  echo "disk_free_mb=${disk:-0}"
+}
+
+# friday_local_ai_model <budget_mb>: the largest ladder model that fits.
+friday_local_ai_model() {
+  local id need _ best=""
+  while IFS='|' read -r id need _ _; do
+    (( $1 >= need )) && best=$id
+  done <<<"$FRIDAY_LOCAL_MODELS"
+  echo "$best"
+}
+
+# friday_local_ai_info <id>: "need_mb download_mb vision"
+friday_local_ai_info() {
+  awk -F'|' -v id="$1" '$1 == id { print $2, $3, $4 }' <<<"$FRIDAY_LOCAL_MODELS"
+}
+
+friday_gb() { awk -v m="$1" 'BEGIN { g = m / 1024; if (g == int(g)) printf "%d GB", g; else printf "%.1f GB", g }'; }
+
+# One line per preset: id|label|budget_mb|model|download_mb|vision|fast|available|note
+friday_local_ai_presets() {
+  local hw ram_mb discrete vram disk
+  hw=$(friday_local_ai_detect)
+  ram_mb=$(sed -n 's/^ram_mb=//p' <<<"$hw")
+  discrete=$(sed -n 's/^gpu_discrete=//p' <<<"$hw"); vram=$(sed -n 's/^vram_mb=//p' <<<"$hw")
+  disk=$(sed -n 's/^disk_free_mb=//p' <<<"$hw")
+  local -a ids=() labels=() budgets=() fast=()
+  if [[ $discrete == yes && $vram != unknown ]] && (( vram > 512 )); then
+    ids+=(gpu); budgets+=($((vram - 512))); fast+=(1)
+    labels+=("GPU (up to $(friday_gb $((vram - 512))) of video memory)")
+  fi
+  local pct name i
+  for name in light:25:Light balanced:50:Balanced most:75:Most; do
+    IFS=: read -r i pct label <<<"$name"
+    ids+=("$i"); budgets+=($((ram_mb * pct / 100))); fast+=(0)
+    labels+=("$label (up to $(friday_gb $((ram_mb * pct / 100))) of memory)")
+  done
+  local model need dl vision available note
+  for i in "${!ids[@]}"; do
+    model=$(friday_local_ai_model "${budgets[$i]}")
+    if [[ -z "$model" ]]; then
+      echo "${ids[$i]}|${labels[$i]}|${budgets[$i]}||0|0|${fast[$i]}|0|too little memory for local AI; use a cloud provider"
+      continue
+    fi
+    read -r need dl vision <<<"$(friday_local_ai_info "$model")"
+    available=1
+    if (( vision )); then note="sees screenshots"; else note="text only: can't see screenshots"; fi
+    note="needs about $(friday_gb "$need") while answering, $note"
+    if (( dl + 1024 > ${disk:-0} )); then
+      available=0 note="needs $(friday_gb $((dl + 1024))) of disk, $(friday_gb "${disk:-0}") free"
+    fi
+    echo "${ids[$i]}|${labels[$i]}|${budgets[$i]}|$model|$dl|$vision|${fast[$i]}|$available|$note"
+  done
+}
+
+# Fixed paths under $HOME: the user units (friday-local-ai, friday-llama) use %h.
+FRIDAY_LOCAL_CONF="$HOME/.config/friday/local-ai.conf"
+FRIDAY_LLAMA_DIR="$HOME/.local/share/friday/llama.cpp"
+FRIDAY_LLAMA_BUILD=b12556
+# llama.cpp's own release builds: cpu|vulkan → SHA-256.
+FRIDAY_LLAMA_SHA="cpu|1a573b6089d29c9048eefe8497dd40cac4115400f223d33f2a71e506bf6d5b18
+vulkan|75ea69b93eea3abfb9539cc0bb21701cfa1f7f791e6fc30b290eab4d5dbcee4f"
+# GGUF for each ladder model: id|repo|revision|file|sha256|mmproj sha256 (vision only).
+FRIDAY_LOCAL_GGUF="qwen3:1.7b|Qwen/Qwen3-1.7B-GGUF|90862c4b9d2787eaed51d12237eafdfe7c5f6077|Qwen3-1.7B-Q8_0.gguf|061b54daade076b5d3362dac252678d17da8c68f07560be70818cace6590cb1a|
+qwen3:4b|Qwen/Qwen3-4B-GGUF|bc640142c66e1fdd12af0bd68f40445458f3869b|Qwen3-4B-Q4_K_M.gguf|7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5|
+gemma3:4b|ggml-org/gemma-3-4b-it-GGUF|d0976223747697cb51e056d85c532013931fe52e|gemma-3-4b-it-Q4_K_M.gguf|882e8d2db44dc554fb0ea5077cb7e4bc49e7342a1f0da57901c0802ea21a0863|8c0fb064b019a6972856aaae2c7e4792858af3ca4561be2dbf649123ba6c40cb
+gemma3:12b|ggml-org/gemma-3-12b-it-GGUF|ec0cbabd8dbff316f659876a50202295c3c4a314|gemma-3-12b-it-Q4_K_M.gguf|7bb69bff3f48a7b642355d64a90e481182a7794707b3133890646b1efa778ff5|30c02d056410848227001830866e0a269fcc28aaf8ca971bded494003de9f5a5
+gemma3:27b|ggml-org/gemma-3-27b-it-GGUF|f94c25afed0072339c5fa3b705a7b4222afe5f62|gemma-3-27b-it-Q4_K_M.gguf|edc9aff4d811a285b9157618130b08688b0768d94ee5355b02dc0cb713012e15|54cb61c842fe49ac3c89bc1a614a2778163eb49f3dec2b90ff688b4c0392cb48"
+
+friday_local_conf_get() { { sed -n "s/^$1=//p" "$FRIDAY_LOCAL_CONF" 2>/dev/null || true; } | tail -n1; }
+friday_local_conf_set() { # friday_local_conf_set key value...
+  mkdir -p "$(dirname "$FRIDAY_LOCAL_CONF")"
+  local tmp="$FRIDAY_LOCAL_CONF.tmp"
+  { grep -v "^$1=" "$FRIDAY_LOCAL_CONF" 2>/dev/null || true; echo "$1=${*:2}"; } >"$tmp"
+  mv "$tmp" "$FRIDAY_LOCAL_CONF"
+}
+
+# friday_fetch <url> <sha256> <dest>: download, check, then move into place.
+friday_fetch() {
+  local part="$3.part"
+  mkdir -p "$(dirname "$3")"
+  curl -fL --retry 3 -o "$part" "$1" || { rm -f "$part"; echo "download failed: $1"; return 1; }
+  if ! echo "$2  $part" | sha256sum -c --status 2>/dev/null; then
+    rm -f "$part"; echo "checksum mismatch for $(basename "$3")"; return 1
+  fi
+  mv "$part" "$3"
+}
+
+# friday_wait_http <url> <seconds>
+friday_wait_http() {
+  local i=0
+  while (( i < $2 )); do
+    curl -s -f -o /dev/null "$1" 2>/dev/null && return 0
+    sleep 1; i=$((i + 1))
+  done
+  return 1
+}
+
+friday_local_failed() {
+  friday_local_conf_set state failed
+  friday_local_conf_set reason "$1"
+  echo "Local AI setup failed: $1" >&2
+  notify-send -a FRIDAY -u normal "Local AI setup failed" "$1. Cloud answers meanwhile; try again: friday local-ai install" 2>/dev/null || true
+}
+
+# The model on Ollama: the package is already installed (the installer or
+# friday setup-ai local), its service listens on 11434.
+friday_local_install_ollama() {
+  command -v ollama >/dev/null 2>&1 || { echo "Ollama isn't installed (friday setup-ai local installs it)"; return 1; }
+  friday_wait_http "http://127.0.0.1:11434/" 60 || { echo "Ollama isn't running (sudo systemctl enable --now ollama)"; return 1; }
+  ollama pull "$1" >&2 || { echo "ollama pull $1 failed"; return 1; }
+  LOCAL_BASE_URL="http://127.0.0.1:11434/v1"
+}
+
+# The model on llama.cpp's release build, served by friday-llama.service.
+friday_local_install_llamacpp() {
+  local model="$1" gpu="$2" kind=cpu asset sha row repo rev file fsha msha args
+  [[ $gpu != none ]] && kind=vulkan
+  asset="llama-$FRIDAY_LLAMA_BUILD-bin-ubuntu-$([[ $kind == vulkan ]] && echo vulkan-)x64.tar.gz"
+  sha=$(awk -F'|' -v k="$kind" '$1 == k { print $2 }' <<<"$FRIDAY_LLAMA_SHA")
+  row=$(awk -F'|' -v id="$model" '$1 == id' <<<"$FRIDAY_LOCAL_GGUF")
+  IFS='|' read -r _ repo rev file fsha msha <<<"$row"
+  [[ -n "$file" ]] || { echo "no llama.cpp download for $model"; return 1; }
+  local dl="$FRIDAY_LLAMA_DIR/downloads"
+  friday_fetch "https://github.com/ggml-org/llama.cpp/releases/download/$FRIDAY_LLAMA_BUILD/$asset" "$sha" "$dl/$asset" || return 1
+  tar -xzf "$dl/$asset" -C "$FRIDAY_LLAMA_DIR" --strip-components=1 || { echo "could not unpack $asset"; return 1; }
+  rm -f "$dl/$asset"
+  local hf="https://huggingface.co/$repo/resolve/$rev"
+  friday_fetch "$hf/$file" "$fsha" "$FRIDAY_LLAMA_DIR/models/$file" || return 1
+  # No thinking out loud: on a CPU it costs hundreds of tokens per answer.
+  # Asleep after 5 idle minutes (the model leaves memory, as Ollama's does);
+  # the next question wakes it in about a second.
+  args="-m $FRIDAY_LLAMA_DIR/models/$file -c 8192 --reasoning off --sleep-idle-seconds 300"
+  if [[ -n "$msha" ]]; then
+    friday_fetch "$hf/mmproj-model-f16.gguf" "$msha" "$FRIDAY_LLAMA_DIR/models/${file%.gguf}-mmproj.gguf" || return 1
+    args="$args --mmproj $FRIDAY_LLAMA_DIR/models/${file%.gguf}-mmproj.gguf"
+  fi
+  [[ $kind == vulkan ]] && args="$args --n-gpu-layers 99"
+  (umask 077; echo "LLAMA_ARGS=$args" >"$(dirname "$FRIDAY_LOCAL_CONF")/llama.env")
+  systemctl --user daemon-reload 2>/dev/null || true
+  systemctl --user enable --now friday-llama.service >/dev/null 2>&1 || { echo "could not start friday-llama.service"; return 1; }
+  if ! friday_wait_http "http://127.0.0.1:8080/health" 180; then
+    systemctl --user disable --now friday-llama.service >/dev/null 2>&1 || true
+    echo "the llama.cpp server didn't start (journalctl --user -u friday-llama)"; return 1
+  fi
+  LOCAL_BASE_URL="http://127.0.0.1:8080/v1"
+}
+
+# friday local-ai install [--engine ollama|llamacpp] [--budget MB] [--first-login]
+friday_local_ai_install() {
+  local engine budget first=false
+  engine=$(friday_local_conf_get engine); budget=$(friday_local_conf_get budget_mb)
+  while (( $# )); do
+    case "$1" in
+      --engine) engine="$2"; shift ;;
+      --budget) budget="$2"; shift ;;
+      --first-login) first=true ;;
+      *) echo "usage: friday local-ai install [--engine ollama|llamacpp] [--budget MB]" >&2; return 2 ;;
+    esac
+    shift
+  done
+  if $first; then
+    # Anything but ready: a reboot mid-download leaves "installing".
+    [[ "$(friday_local_conf_get state)" != ready ]] || return 0
+    # A user unit can't wait for network-online.target, so wait here (2 min).
+    local i=0
+    until curl -s -o /dev/null --max-time 5 https://github.com 2>/dev/null || (( ++i >= 24 )); do sleep 5; done
+  fi
+  [[ $engine == ollama || $engine == llamacpp ]] || { echo "choose an engine: --engine ollama|llamacpp" >&2; return 2; }
+  [[ $budget =~ ^[0-9]+$ ]] || { echo "choose a budget: --budget MB (friday local-ai presets)" >&2; return 2; }
+  friday_local_conf_set engine "$engine"
+  friday_local_conf_set budget_mb "$budget"
+  local model need dl vision gpu
+  model=$(friday_local_ai_model "$budget")
+  [[ -n "$model" ]] || { friday_local_failed "too little memory for local AI ($(friday_gb "$budget"))"; return 1; }
+  read -r need dl vision <<<"$(friday_local_ai_info "$model")"
+  gpu=$(friday_local_ai_detect | sed -n 's/^gpu=//p')
+  friday_local_conf_set model "$model"
+  friday_local_conf_set state installing
+  friday_local_conf_set reason ""
+  echo "Setting up $model on $engine ($(friday_gb "$dl") download)..."
+  # The engine step prints only its failure reason on stdout (progress goes
+  # to stderr) and sets LOCAL_BASE_URL, so it runs here, not in $( ).
+  local LOCAL_BASE_URL="" errf
+  errf=$(mktemp)
+  if ! "friday_local_install_$engine" "$model" "$gpu" >"$errf"; then
+    friday_local_failed "$(tail -n1 "$errf" || true)"; rm -f "$errf"; return 1
+  fi
+  rm -f "$errf"
+  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
+  (
+    umask 077
+    { grep -vE '^(LLAMACPP_ENABLED|LLAMACPP_BASE_URL|LLAMACPP_MODEL|LLAMACPP_VISION)=' "$env_file" 2>/dev/null || true
+      echo "LLAMACPP_ENABLED=1"
+      echo "LLAMACPP_BASE_URL=$LOCAL_BASE_URL"
+      echo "LLAMACPP_MODEL=$model"
+      echo "LLAMACPP_VISION=$vision"
+    } >"$env_file.tmp"
+    mv "$env_file.tmp" "$env_file"
+  )
+  friday_local_conf_set state ready
+  systemctl --user restart friday-linux-daemon 2>/dev/null || true
+  local sees="text only: screenshots go to your cloud provider"
+  (( vision )) && sees="sees screenshots"
+  notify-send -a FRIDAY "Local AI is on" "$model on this computer ($sees)" 2>/dev/null || true
+  echo "Local AI is on: $model ($sees)."
+}
+
+friday_local_ai_status() {
+  if [[ ! -f "$FRIDAY_LOCAL_CONF" ]]; then echo "Local AI: not set up (friday setup-ai local)"; return 0; fi
+  local state model engine reason
+  state=$(friday_local_conf_get state); model=$(friday_local_conf_get model)
+  engine=$(friday_local_conf_get engine); reason=$(friday_local_conf_get reason)
+  case "$state" in
+    ready) echo "Local AI: on, ${model:-?} on $engine" ;;
+    installing) echo "Local AI: downloading ${model:-the model} for $engine" ;;
+    pending) echo "Local AI: waits for the next login to download (or run: friday local-ai install)" ;;
+    failed) echo "Local AI: setup failed: $reason (try again: friday local-ai install)" ;;
+    *) echo "Local AI: ${state:-unknown}" ;;
+  esac
+}
+
+# Back to cloud only: the local model stays on disk.
+friday_local_ai_off() {
+  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
+  if [[ -f "$env_file" ]]; then
+    (umask 077; grep -vE '^(LLAMACPP_ENABLED|LLAMACPP_BASE_URL|LLAMACPP_MODEL|LLAMACPP_VISION)=' "$env_file" >"$env_file.tmp" || true; mv "$env_file.tmp" "$env_file")
+  fi
+  systemctl --user disable --now friday-llama.service >/dev/null 2>&1 || true
+  rm -f "$FRIDAY_LOCAL_CONF"
+  systemctl --user restart friday-linux-daemon 2>/dev/null || true
+  echo "Local AI is off. The model stays on disk (ollama rm, or $FRIDAY_LLAMA_DIR, to free the space)."
+}
+
+# The machine in one line, then a line per caveat.
+friday_local_ai_summary() {
+  local hw ram_mb gpu vram threads avx2 line
+  hw=$(friday_local_ai_detect)
+  ram_mb=$(sed -n 's/^ram_mb=//p' <<<"$hw"); gpu=$(sed -n 's/^gpu=//p' <<<"$hw")
+  vram=$(sed -n 's/^vram_mb=//p' <<<"$hw"); threads=$(sed -n 's/^cpu_threads=//p' <<<"$hw")
+  avx2=$(sed -n 's/^avx2=//p' <<<"$hw")
+  line="$(friday_gb "$ram_mb") memory"
+  case "$gpu" in
+    nvidia) line="$line, NVIDIA GPU" ;;
+    amd) line="$line, AMD GPU" ;;
+    intel) line="$line, Intel graphics" ;;
+  esac
+  [[ $vram != unknown && $gpu != intel ]] && line="$line $(friday_gb "$vram")"
+  echo "$line, $threads threads"
+  if [[ $gpu == nvidia && $vram == unknown ]]; then
+    echo "Its video memory can be read once the NVIDIA driver is installed; then friday setup-ai local offers a GPU preset."
+  fi
+  if [[ $gpu == none && $avx2 == no ]]; then
+    echo "This computer is old for local AI: answers will be very slow."
+  fi
+}
+
+# friday local-ai packages <engine>: the Arch packages it needs on this GPU.
+# With no GPU driver both engines fall back to the CPU.
+friday_local_ai_packages() {
+  local gpu
+  gpu=$(friday_local_ai_detect | sed -n 's/^gpu=//p')
+  case "$1:$gpu" in
+    ollama:nvidia)   echo ollama-cuda ;;
+    ollama:none)     echo ollama ;;
+    ollama:*)        echo ollama-vulkan ;;
+    llamacpp:amd)    echo vulkan-icd-loader vulkan-radeon ;;
+    llamacpp:intel)  echo vulkan-icd-loader vulkan-intel ;;
+    llamacpp:nvidia) echo vulkan-icd-loader ;;
+    llamacpp:none)   ;;
+    *) echo "usage: friday local-ai packages <ollama|llamacpp>" >&2; return 2 ;;
+  esac
+}
+
+# `friday setup-ai local [--engine E] [--preset ID]`: the installer's local AI
+# steps, after install. Asks with gum when a choice isn't given.
+friday_setup_local() {
+  local engine="" preset=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --engine) engine="$2"; shift 2 ;;
+      --preset) preset="$2"; shift 2 ;;
+      *) echo "usage: friday setup-ai local [--engine ollama|llamacpp] [--preset light|balanced|most|gpu]" >&2; return 2 ;;
+    esac
+  done
+  echo "Local AI answers first and keeps your questions on this computer. It's slower than cloud."
+  echo "This computer: $(friday_local_ai_summary | head -n1)"
+  friday_local_ai_summary | tail -n +2
+  if [ -z "$engine" ]; then
+    command -v gum >/dev/null || { echo "choose an engine: --engine ollama|llamacpp" >&2; return 2; }
+    case "$(gum choose --cursor="❯ " "Ollama (simplest; from the Arch repos)" "llama.cpp (lighter; llama.cpp's official build)")" in
+      llama.cpp*) engine=llamacpp ;; Ollama*) engine=ollama ;; *) return 1 ;;
+    esac
+  fi
+  local presets id label budget model dl vision fast available note
+  local -a options=() rows=()
+  presets=$(friday_local_ai_presets)
+  while IFS='|' read -r id label budget model dl vision fast available note; do
+    [ -n "$id" ] || continue
+    if [ -z "$model" ] || [ "$available" != 1 ]; then echo "  ${label%% (*}: $note"; continue; fi
+    options+=("$id: $label: $model, $(friday_gb "$dl") download, $note")
+    rows+=("$id|$budget")
+  done <<<"$presets"
+  [ ${#options[@]} -gt 0 ] || { echo "This computer can't run a local model well; FRIDAY keeps using cloud providers." >&2; return 1; }
+  echo "The amount picks the model. It's in memory only while FRIDAY answers, and freed after 5 idle minutes."
+  if [ -z "$preset" ]; then
+    command -v gum >/dev/null || { printf '  %s\n' "${options[@]}"; echo "choose one: --preset <id>" >&2; return 2; }
+    preset=$(printf '%s\n' "${options[@]}" | gum choose --cursor="❯ " --height=8) || return 1
+    preset="${preset%%:*}"
+  fi
+  budget=$(printf '%s\n' "${rows[@]}" | awk -F'|' -v id="$preset" '$1 == id { print $2 }')
+  [ -n "$budget" ] || { echo "no such preset here: $preset (friday local-ai presets)" >&2; return 2; }
+  local pkgs missing=false
+  pkgs=$(friday_local_ai_packages "$engine")
+  if [ "$engine" = ollama ] && ! command -v ollama >/dev/null 2>&1; then missing=true; fi
+  if [ -n "$pkgs" ] && { $missing || [ "$engine" = llamacpp ]; }; then
+    # shellcheck disable=SC2086 # one package name per word
+    sudo pacman -S --needed --noconfirm $pkgs || return 1
+  fi
+  if [ "$engine" = ollama ]; then sudo systemctl enable --now ollama || return 1; fi
+  friday_local_conf_set state pending
+  friday_local_ai_install --engine "$engine" --budget "$budget"
+}
+
+friday_local_ai() {
+  local sub="${1:-presets}"
+  case "$sub" in
+    detect) friday_local_ai_detect ;;
+    presets) friday_local_ai_presets ;;
+    summary) friday_local_ai_summary ;;
+    install) shift; friday_local_ai_install "$@" ;;
+    status) friday_local_ai_status ;;
+    off) friday_local_ai_off ;;
+    packages) friday_local_ai_packages "${2:-}" ;;
+    *) echo "usage: friday local-ai [detect|presets|summary|install|status|off|packages]" >&2; return 2 ;;
+  esac
+}
+
 friday_private() {
   local sub="${1:-status}"
   case "$sub" in
@@ -1700,19 +2095,17 @@ friday_private() {
       local vision=1
       echo "Answers stay on this computer — nothing leaves this machine."
       echo "Slower than cloud models and uses your computer's CPU or GPU."
-      echo "Needs ~3–5 GB of disk space for the local model."
+      echo "Downloads a model sized to this computer's memory (see: friday local-ai presets)."
       if [ -z "$model" ]; then
-        local total_kb=0
-        if [ -r /proc/meminfo ]; then
-          total_kb=$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+        # The Balanced preset: half the memory (friday local-ai presets).
+        local ram_mb
+        ram_mb=$(friday_local_ai_detect | sed -n 's/^ram_mb=//p')
+        model=$(friday_local_ai_model $((ram_mb / 2)))
+        if [ -z "$model" ]; then
+          echo "This computer has too little memory for a local model ($(friday_gb "$ram_mb"))." >&2
+          return 1
         fi
-        if [ "$total_kb" -gt 0 ] && [ "$total_kb" -lt 8000000 ]; then
-          model="qwen3:1.7b"
-          vision=0
-        else
-          model="gemma3:4b"
-          vision=1
-        fi
+        vision=$(friday_local_ai_info "$model" | awk '{print $3}')
       else
         case "$model" in
           *gemma3*|*vision*|*llava*|*minicpm*|*moondream*) vision=1 ;;
@@ -2017,6 +2410,12 @@ case "${1:-}" in
             daemon_down=true ;;
           *"timed out after"*)
             answer="This is taking longer than expected. FRIDAY may still be working on it: check the bar icon, or run friday answers --last later." ;;
+          *"Couldn't reach your AI provider"*)
+            case "$(friday_local_conf_get state)" in
+              pending|installing)
+                answer="Local AI is still downloading, and no cloud provider answered. Ask again once it's on (friday local-ai status)." ;;
+              *) details="" ;;
+            esac ;;
           *) details="" ;;
         esac
         title="FRIDAY ✗ $goal"
@@ -2220,6 +2619,10 @@ case "${1:-}" in
   private)
     shift
     friday_private "$@"
+    ;;
+  local-ai)
+    shift
+    friday_local_ai "$@"
     ;;
   tour)
     FRIDAY_WELCOME_DELAY=0 friday_welcome --force

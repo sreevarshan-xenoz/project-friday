@@ -13,7 +13,7 @@
 #   bash iso/friday/test/run-checks.sh static cli # only some groups
 #   SKIP_PACKAGES=1 ...                           # no repo lookups (offline)
 #
-# Groups: static packages installer cli shell
+# Groups: static packages installer cli localai shell
 set -uo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,7 +23,7 @@ export AIROOTFS="$PROFILE_DIR/airootfs"
 export WORK="${CHECK_WORK:-$(mktemp -d /tmp/friday-checks.XXXXXX)}"
 
 groups=("$@")
-(( ${#groups[@]} )) || groups=(static packages installer cli shell)
+(( ${#groups[@]} )) || groups=(static packages installer cli localai shell)
 
 failed=()
 for g in "${groups[@]}"; do

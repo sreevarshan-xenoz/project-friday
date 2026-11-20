@@ -279,6 +279,10 @@ contains "timeout: explains it may still be running" "$(cat "$state/last-answer.
 contains "model server down: says so plainly" "$(cat "$state/last-answer.md")" "Couldn't reach your AI provider"
 if grep -q "start=Start FRIDAY" "$LOG"; then fail "a model server refusing was taken for FRIDAY being down"
 else pass "a model server refusing is not FRIDAY being down"; fi
+mkdir -p "$HOME/.config/friday"; printf 'engine=ollama\nstate=installing\n' >"$HOME/.config/friday/local-ai.conf"
+bash "$F" ask "model refused test"; sleep 0.3
+contains "local AI still downloading: says so" "$(cat "$state/last-answer.md")" "Local AI is still downloading"
+rm -f "$HOME/.config/friday/local-ai.conf"
 bash "$F" ask "this will fail"; sleep 0.3
 contains "failure is critical with the error" "$(cat "$LOG")" "-u critical"
 contains "failure shows the reason" "$(cat "$LOG")" "network unreachable"
@@ -581,10 +585,13 @@ mkdir -p "$(dirname "$envf")"
 printf 'FRIDAY_LOG=debug\nOTHER_VAR=keepme\n' >"$envf"
 chmod 600 "$envf"
 
-out=$(bash "$F" private on 2>&1)
+# A fake 16 GB machine: the Balanced preset (8 GB) gets gemma3:4b.
+hw16="$W/hw16"; mkdir -p "$hw16/proc"
+printf 'MemTotal:       16777216 kB\n' >"$hw16/proc/meminfo"
+out=$(FRIDAY_HW_ROOT="$hw16" bash "$F" private on 2>&1)
 contains "explains answers stay on computer" "$out" "Answers stay on this computer"
 contains "explains slower than cloud" "$out" "Slower than cloud models"
-contains "explains disk space needed" "$out" "Needs ~3–5 GB of disk space"
+contains "explains the model is sized to the computer" "$out" "sized to this computer"
 contains "says private mode is on" "$out" "Private mode is on: gemma3:4b on this computer."
 contains "pacman installed ollama" "$(cat "$LOG")" "pacman -S --needed --noconfirm ollama"
 contains "ollama service enabled" "$(cat "$LOG")" "systemctl enable --now ollama"

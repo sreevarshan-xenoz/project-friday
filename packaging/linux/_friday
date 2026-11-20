@@ -16,6 +16,7 @@ _friday() {
     'connect:Use an AI account you already have'
     'disconnect:Stop using a connected account'
     'private:Private mode with a local model only'
+    'local-ai:A local model sized to this computer'
     'face:Face unlock for the lock screen'
     'voice:Hold Super+Y and speak'
     'screen-text:Ask about the screen with the window text, not a screenshot'
@@ -66,11 +67,12 @@ _friday() {
     keys)     _values 'action' update ;;
     connect|disconnect) _values 'account' claude codex agy cline ;;
     private)  _values 'action' status on off ;;
+    local-ai) _values 'action' summary presets install status off ;;
     app-context) _values 'action' status on off ;;
     face)     _values 'action' status setup remove ;;
     voice)    _values 'action' status setup remove ;;
     helper)   _values 'action' status enable disable ;;
-    setup-ai) _arguments '--keep-others[keep the other providers'"'"' keys]' '--only[use only this provider'"'"'s key]' '1:provider:(opencode gemini groq nvidia-nim openrouter cerebras runcrate axforge)' ;;
+    setup-ai) _arguments '--keep-others[keep the other providers'"'"' keys]' '--only[use only this provider'"'"'s key]' '1:provider:(opencode gemini groq nvidia-nim openrouter cerebras runcrate axforge local)' ;;
     welcome)  _arguments '--force[show it even if already shown]' ;;
     daemon)   _values 'action' status start stop restart logs ;;
     shell)    _values 'action' start restart stop close ipc friday control calendar launcher session ;;
