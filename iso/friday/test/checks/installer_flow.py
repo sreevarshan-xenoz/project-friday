@@ -6,7 +6,10 @@ password must re-prompt (not exit), timezone/keymap search must pick real
 values, the review screen must allow editing, and the final spec must reach
 the installer. Disks, the installer and network are stubbed.
 
-usage: installer_flow.py <configurator> <stub_dir>
+usage: installer_flow.py <configurator> <stub_dir> [multi]
+
+multi: pick Gemini, Groq (no key) and local AI (Ollama, Light) instead of
+the default free models.
 """
 
 import fcntl
@@ -20,6 +23,7 @@ import termios
 import time
 
 configurator, stub_dir = sys.argv[1], sys.argv[2]
+MULTI = sys.argv[3:] == ["multi"]
 UP, DOWN, ENTER, CTRL_U = "\x1b[A", "\x1b[B", "\r", "\x15"
 
 # (seconds to wait for the screen, keys to send)
@@ -51,8 +55,23 @@ STEPS = [
     (1, DOWN * 3),
     (1, "x"),  # window text on
     (1, ENTER),
-    (6, ENTER),  # AI: OpenCode Zen (first, default)
-    (3, ENTER),  # no key: free models
+    *(
+        [
+            (6, DOWN + "x"),  # AI: Gemini
+            (1, DOWN + "x"),  # Groq
+            (1, DOWN * 6 + "x"),  # Local AI (last)
+            (1, ENTER),
+            (3, "gem-key-123456" + ENTER),  # Gemini key
+            (3, ENTER),  # Groq: no key, skipped
+            (5, ENTER),  # engine: Ollama
+            (4, ENTER),  # preset: Light (first; no GPU)
+        ]
+        if MULTI
+        else [
+            (6, ENTER),  # AI: OpenCode Zen (first, default)
+            (3, ENTER),  # no key: free models
+        ]
+    ),
     (4, DOWN * 2),
     (1, ENTER),  # review: Change names
     (3, ENTER),
@@ -113,14 +132,32 @@ checks = {
     "encryption defaults to on": "Disk will be encrypted (LUKS2)" in text,
     "review shows encryption": "(encrypted)" in text,
     "review lists what FRIDAY may do": "Allowed" in text and "window text" in text,
-    "AI defaults to OpenCode Zen free models": "OpenCode Zen free models (no key)" in text,
     "installer received the spec": bool(env_lines),
     "keyboard is chosen before the password": 0
     <= text.find("Keyboard: uk")
     < text.find("Choose a password"),
 }
+if MULTI:
+    checks.update(
+        {
+            "a provider with no key is skipped, in words": "skipped Groq" in text,
+            "the machine is described": "This computer: 16 GB memory" in text,
+            "the preset says text only": "qwen3:4b" in text and "text only" in text,
+            "review lists every choice": "Gemini (key ••••3456)" in text
+            and "Local: qwen3:4b on Ollama (text only)" in text,
+        }
+    )
+else:
+    checks["AI defaults to OpenCode Zen free models"] = (
+        "OpenCode Zen free models (no key)" in text
+    )
 env = env_lines[-1] if env_lines else ""
-for key, want in [
+ai_spec = (
+    [("ai", "[gemini]"), ("keys", "[gemini]"), ("local", "[ollama:qwen3:4b:4096]")]
+    if MULTI
+    else [("ai", "[]"), ("keys", "[]"), ("local", "[::]")]
+)
+for key, want in ai_spec + [
     ("disk", "/dev/vda"),
     ("erase", "/dev/vda"),
     ("host", "mybox"),
@@ -128,7 +165,6 @@ for key, want in [
     ("pw", "secret1"),
     ("tz", "Asia/Kolkata"),
     ("kb", "uk"),
-    ("ai", "[]"),
     ("autologin", "false"),
     ("encrypt", "true"),
     ("interactive", "1"),

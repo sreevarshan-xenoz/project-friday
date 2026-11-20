@@ -22,7 +22,8 @@ THEME="FRIDAY Shell (Ember, made for FRIDAY)"
 SHELL_STYLE="Ember (bar flush with the top edge)"
 SESSION="Hyprland (tiling, the FRIDAY OS default)"
 SDDM_THEME="SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)"
-FRIDAY_AI_PROVIDER="" FRIDAY_AI_KEY=""
+FRIDAY_AI_PROVIDERS="" FRIDAY_AI_KEYS=""
+FRIDAY_LOCAL_ENGINE="" FRIDAY_LOCAL_BUDGET_MB="" FRIDAY_LOCAL_MODEL="" FRIDAY_LOCAL_GPU="" FRIDAY_LOCAL_LABEL=""
 AUTOLOGIN="false"
 ENCRYPT="true"
 FRIDAY_AI_LABEL="OpenCode Zen free models (no key)"
@@ -325,15 +326,15 @@ friday_features_label() {
 step_ai() {
   screen 8
   friday_head "Give FRIDAY a brain"
-  friday_say "I think with a cloud language model. OpenCode Zen's free models work with no account."
-  friday_note "  Prefer your own provider? Pick it and paste its key. Change it later with: friday setup-ai"
+  friday_say "I think with language models. Pick one or more: cloud providers, a model on this computer, or both."
+  friday_note "  Tab or x picks, Enter goes on. OpenCode Zen's free models need no account and back up the rest."
   friday_note "  Use Claude Code, Codex, Antigravity or Cline? Connect it after you log in (it signs in"
   friday_note "  in a browser): FRIDAY offers it when you first log in, or run: friday connect"
   friday_note "  Free models may keep what you send them, screenshots included;"
-  friday_note "  use your own key or account for private work."
+  friday_note "  use your own key, account or local AI for private work."
   echo
-  local choice key
-  choice=$(gum choose --cursor="$FRIDAY_CURSOR" --height=9 \
+  local choices choice id name key want_local=false
+  choices=$(gum choose --no-limit --cursor="$FRIDAY_CURSOR" --height=10 \
     "OpenCode Zen (free, no key needed)" \
     "Google Gemini (vision, free tier)" \
     "Groq (fast, vision)" \
@@ -341,40 +342,100 @@ step_ai() {
     "Runcrate (six free models weekly, GitHub sign-in)" \
     "AxForge (3M free tokens a month, keeps nothing)" \
     "OpenRouter (many models, no screen context)" \
-    "Cerebras (fast, no screen context)") || choice="OpenCode Zen"
-  FRIDAY_AI_PROVIDER=""
-  case "$choice" in
-    "OpenCode Zen"*)  FRIDAY_AI_PROVIDER="opencode" ;;
-    "Google Gemini"*) FRIDAY_AI_PROVIDER="gemini" ;;
-    "Groq"*)          FRIDAY_AI_PROVIDER="groq" ;;
-    "NVIDIA NIM"*)    FRIDAY_AI_PROVIDER="nvidia-nim" ;;
-    "Runcrate"*)      FRIDAY_AI_PROVIDER="runcrate" ;;
-    "AxForge"*)       FRIDAY_AI_PROVIDER="axforge" ;;
-    "OpenRouter"*)    FRIDAY_AI_PROVIDER="openrouter" ;;
-    "Cerebras"*)      FRIDAY_AI_PROVIDER="cerebras" ;;
-  esac
-  FRIDAY_AI_KEY=""
-  FRIDAY_AI_LABEL="OpenCode Zen free models (no key)"
-  local optional=false placeholder="paste it here (empty: use OpenCode Zen's free models)"
-  if [[ "$FRIDAY_AI_PROVIDER" == opencode ]]; then
-    optional=true placeholder="optional: OpenCode key for paid models (Enter to skip)"
+    "Cerebras (fast, no screen context)" \
+    "Local AI (on this computer: private, works offline)") || choices=""
+  [[ -n "$choices" ]] || choices="OpenCode Zen (free, no key needed)"
+  FRIDAY_AI_PROVIDERS="" FRIDAY_AI_KEYS=""
+  FRIDAY_LOCAL_ENGINE="" FRIDAY_LOCAL_BUDGET_MB="" FRIDAY_LOCAL_MODEL="" FRIDAY_LOCAL_GPU=""
+  local -a labels=()
+  # fd 3: gum input reads the keyboard on stdin.
+  while IFS= read -r -u 3 choice; do
+    case "$choice" in
+      "OpenCode Zen"*)  id=opencode ;;
+      "Google Gemini"*) id=gemini ;;
+      "Groq"*)          id=groq ;;
+      "NVIDIA NIM"*)    id=nvidia-nim ;;
+      "Runcrate"*)      id=runcrate ;;
+      "AxForge"*)       id=axforge ;;
+      "OpenRouter"*)    id=openrouter ;;
+      "Cerebras"*)      id=cerebras ;;
+      "Local AI"*)      want_local=true; continue ;;
+      *) continue ;;
+    esac
+    name="${choice%% (*}"
+    local placeholder="paste it here (Enter to skip $name)"
+    [[ $id == opencode ]] && placeholder="optional: OpenCode key for paid models (Enter to skip)"
+    while true; do
+      key=$(gum input --password --prompt="$name key › " --placeholder="$placeholder") || key=""
+      if [[ -z "$key" ]]; then
+        [[ $id == opencode ]] || friday_note "  No key: skipped $name."
+        break
+      fi
+      if friday_valid_api_key "$key"; then
+        FRIDAY_AI_PROVIDERS="${FRIDAY_AI_PROVIDERS:+$FRIDAY_AI_PROVIDERS }$id"
+        FRIDAY_AI_KEYS+="$id=$key"$'\n'
+        labels+=("$name (key ••••${key: -4})")
+        break
+      fi
+      friday_err "That doesn't look like an API key (too short, or has spaces/symbols). Try again."
+    done
+  done 3<<<"$choices"
+  $want_local && step_local_ai
+  [[ -n "$FRIDAY_LOCAL_MODEL" ]] && labels+=("$FRIDAY_LOCAL_LABEL")
+  (( ${#labels[@]} )) || labels=("OpenCode Zen free models (no key)")
+  FRIDAY_AI_LABEL="${labels[0]}"
+  local l
+  for l in "${labels[@]:1}"; do FRIDAY_AI_LABEL+=", $l"; done
+  friday_ok "$FRIDAY_AI_LABEL"
+}
+
+# Local AI: the engine, then how much of this computer it may use. The
+# numbers come from `friday local-ai` (friday-git is on the live ISO).
+step_local_ai() {
+  local summary presets size_mb line
+  if ! summary=$(friday local-ai summary 2>/dev/null); then
+    friday_err "Couldn't check this computer for local AI; set it up after you log in: friday setup-ai local"
+    return 0
   fi
-  while true; do
-    key=$(gum input --password --prompt="API key › " --placeholder="$placeholder") || key=""
-    if [[ -z "$key" ]]; then
-      # No key: OpenCode Zen's free models (the daemon's default).
-      $optional || friday_note "  No key: using OpenCode Zen's free models instead."
-      FRIDAY_AI_PROVIDER=""
-      friday_ok "$FRIDAY_AI_LABEL"
-      return 0
+  echo
+  friday_say "Local AI answers first and keeps your questions on this computer. It's slower than cloud."
+  friday_note "  This computer: $(head -n1 <<<"$summary")"
+  while IFS= read -r line; do friday_note "  $line"; done < <(tail -n +2 <<<"$summary")
+  local engine eng
+  engine=$(gum choose --cursor="$FRIDAY_CURSOR" \
+    "Ollama (simplest; installed from the Arch repos)" \
+    "llama.cpp (lighter; llama.cpp's official build)") || engine="Ollama"
+  case "$engine" in llama.cpp*) eng=llamacpp ;; *) eng=ollama ;; esac
+  # Free space: the target disk less ~20 GB for the system.
+  size_mb=$(lsblk -b -d -n -o SIZE "$TARGET_DISK" 2>/dev/null | head -n1 | xargs)
+  if [[ "$size_mb" =~ ^[0-9]+$ ]]; then size_mb=$(( size_mb / 1048576 - 20480 )); else size_mb=1000000; fi
+  presets=$(FRIDAY_DISK_FREE_MB="$size_mb" friday local-ai presets 2>/dev/null) || presets=""
+  local -a options=() ids=()
+  local id label budget model dl vision fast available note speed
+  while IFS='|' read -r id label budget model dl vision fast available note; do
+    [[ -n "$id" ]] || continue
+    if [[ -z "$model" || $available != 1 ]]; then
+      friday_note "  ${label%% (*}: $note"
+      continue
     fi
-    if friday_valid_api_key "$key"; then
-      FRIDAY_AI_KEY="$key"
-      FRIDAY_AI_LABEL="${choice%% (*} (key ••••${key: -4})"
-      friday_ok "$FRIDAY_AI_LABEL"
-      return 0
-    fi
-    friday_err "That doesn't look like an API key (too short, or has spaces/symbols). Try again."
+    speed="slower (CPU)"; (( fast )) && speed="fast (GPU)"
+    options+=("$label: $model, $(awk -v m="$dl" 'BEGIN { printf "%.1f GB", m / 1024 }') download, $note, $speed")
+    ids+=("$id|$budget|$model|$vision")
+  done <<<"$presets"
+  if (( ${#options[@]} == 0 )); then
+    friday_err "This computer can't run a local model well, so FRIDAY uses cloud providers only."
+    return 0
+  fi
+  local pick i
+  pick=$(printf '%s\n' "${options[@]}" "No local AI after all" | gum choose --cursor="$FRIDAY_CURSOR" --height=8) || pick=""
+  for i in "${!options[@]}"; do
+    [[ "${options[$i]}" == "$pick" ]] || continue
+    IFS='|' read -r _ FRIDAY_LOCAL_BUDGET_MB FRIDAY_LOCAL_MODEL vision <<<"${ids[$i]}"
+    FRIDAY_LOCAL_ENGINE="$eng"
+    FRIDAY_LOCAL_GPU=$(friday local-ai detect 2>/dev/null | sed -n 's/^gpu=//p')
+    local sees="text only"; (( vision )) && sees="sees screenshots"
+    FRIDAY_LOCAL_LABEL="Local: $FRIDAY_LOCAL_MODEL on ${engine%% (*} ($sees)"
+    friday_ok "$FRIDAY_LOCAL_LABEL; it downloads after your first login"
   done
 }
 
@@ -435,7 +496,7 @@ friday_banner
 friday_say "Thanks, $USERNAME. I'll take it from here."
 sleep 1
 FRIDAY_HOSTNAME="$HOSTNAME"
-export TARGET_DISK KEYBOARD HOSTNAME FRIDAY_HOSTNAME USERNAME PASSWORD TIMEZONE THEME SHELL_STYLE SESSION SDDM_THEME FRIDAY_AI_PROVIDER FRIDAY_AI_KEY AUTOLOGIN ENCRYPT FEAT_DESKTOP FEAT_TASKS FEAT_APPNAME FEAT_SCREENTEXT FEAT_PHONE
+export TARGET_DISK KEYBOARD HOSTNAME FRIDAY_HOSTNAME USERNAME PASSWORD TIMEZONE THEME SHELL_STYLE SESSION SDDM_THEME FRIDAY_AI_PROVIDERS FRIDAY_AI_KEYS FRIDAY_LOCAL_ENGINE FRIDAY_LOCAL_BUDGET_MB FRIDAY_LOCAL_MODEL FRIDAY_LOCAL_GPU AUTOLOGIN ENCRYPT FEAT_DESKTOP FEAT_TASKS FEAT_APPNAME FEAT_SCREENTEXT FEAT_PHONE
 # The person confirmed erasing this disk on the review screen.
 export ERASE_DISK="$TARGET_DISK"
 export FRIDAY_INTERACTIVE=1

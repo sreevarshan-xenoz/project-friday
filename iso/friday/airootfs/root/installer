@@ -27,8 +27,17 @@ AUTOLOGIN="${AUTOLOGIN:-false}"
 # LUKS2 full-disk encryption of the root partition, unlocked with PASSWORD
 # at boot. The configurator asks (default yes); unattended runs opt in.
 ENCRYPT="${ENCRYPT:-false}"
-FRIDAY_AI_PROVIDER="${FRIDAY_AI_PROVIDER:-}"
-FRIDAY_AI_KEY="${FRIDAY_AI_KEY:-}"
+# AI providers: "id=key" lines (the configurator; never logged). An
+# unattended run may pass one as FRIDAY_AI_PROVIDER + FRIDAY_AI_KEY.
+FRIDAY_AI_KEYS="${FRIDAY_AI_KEYS:-}"
+if [[ -n "${FRIDAY_AI_PROVIDER:-}" && -n "${FRIDAY_AI_KEY:-}" ]]; then
+  FRIDAY_AI_KEYS+="$FRIDAY_AI_PROVIDER=$FRIDAY_AI_KEY"$'\n'
+fi
+# Local AI: ollama|llamacpp, its memory budget and model (friday local-ai presets).
+FRIDAY_LOCAL_ENGINE="${FRIDAY_LOCAL_ENGINE:-}"
+FRIDAY_LOCAL_BUDGET_MB="${FRIDAY_LOCAL_BUDGET_MB:-}"
+FRIDAY_LOCAL_MODEL="${FRIDAY_LOCAL_MODEL:-}"
+FRIDAY_LOCAL_GPU="${FRIDAY_LOCAL_GPU:-none}"
 # Root SSH + serial autologin on the installed system, for VM debugging only.
 # Opt in with FRIDAY_DEBUG_ACCESS=true or `friday.debug` on the live kernel cmdline.
 FRIDAY_DEBUG_ACCESS="${FRIDAY_DEBUG_ACCESS:-false}"
@@ -238,6 +247,20 @@ FRIDAY_PKG=$(find /opt/friday/repo -maxdepth 1 -name 'friday-git-*.pkg.tar.zst' 
 POCKETDESK_PKG=$(find /opt/friday/repo -maxdepth 1 -name 'pocketdesk-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1)
 [[ -n "$POCKETDESK_PKG" ]] || { echo "the Pocketdesk package is missing from /opt/friday/repo" >&2; exit 1; }
 pacstrap_with_retry -U /mnt "$FRIDAY_PKG" "$POCKETDESK_PKG"
+# Local AI: the engine's packages now (first login has no root); the model
+# downloads at first login (friday-local-ai.service). With no GPU driver both
+# engines fall back to the CPU.
+local_pkgs=()
+case "$FRIDAY_LOCAL_ENGINE:$FRIDAY_LOCAL_GPU" in
+  ollama:nvidia)   local_pkgs=(ollama-cuda) ;;
+  ollama:none)     local_pkgs=(ollama) ;;
+  ollama:*)        local_pkgs=(ollama-vulkan) ;;
+  llamacpp:amd)    local_pkgs=(vulkan-icd-loader vulkan-radeon) ;;
+  llamacpp:intel)  local_pkgs=(vulkan-icd-loader vulkan-intel) ;;
+  llamacpp:nvidia) local_pkgs=(vulkan-icd-loader) ;;
+esac
+if (( ${#local_pkgs[@]} )); then pacstrap_with_retry /mnt "${local_pkgs[@]}"; fi
+if [[ "$FRIDAY_LOCAL_ENGINE" == ollama ]]; then arch-chroot /mnt systemctl enable ollama 2>/dev/null || true; fi
 # Updates: each FRIDAY release publishes friday-git to this pacman repo, so
 # pacman -Syu keeps FRIDAY current. Packages and the database are signed with
 # FRIDAY's release key (shipped in friday-git); pacman trusts that one key and
@@ -511,33 +534,51 @@ else
 fi
 
 # FRIDAY AI provider credentials, loaded by friday-linux-daemon.service via
-# EnvironmentFile. Owner-only (0600); the key is never echoed so it stays out of $LOG_FILE.
-AI_KEY_VAR=""
-AI_VISION=false
-case "$FRIDAY_AI_PROVIDER" in
-  opencode)   AI_KEY_VAR="OPENCODE_API_KEY";   AI_VISION=true ;;
-  gemini)     AI_KEY_VAR="GEMINI_API_KEY";     AI_VISION=true ;;
-  groq)       AI_KEY_VAR="GROQ_API_KEY";       AI_VISION=true ;;
-  nvidia-nim) AI_KEY_VAR="NVIDIA_NIM_API_KEY"; AI_VISION=true ;;
-  runcrate)   AI_KEY_VAR="RUNCRATE_API_KEY";   AI_VISION=true ;;
-  axforge)    AI_KEY_VAR="AXFORGE_API_KEY";    AI_VISION=true ;;
-  openrouter) AI_KEY_VAR="OPENROUTER_API_KEY" ;;
-  cerebras)   AI_KEY_VAR="CEREBRAS_API_KEY" ;;
-esac
-if [[ -n "$AI_KEY_VAR" && -n "$FRIDAY_AI_KEY" ]]; then
+# EnvironmentFile. Owner-only (0600); keys are never echoed so they stay out of $LOG_FILE.
+ai_lines=() ai_names=() ai_context=""
+while IFS='=' read -r ai_id ai_key; do
+  [[ -n "$ai_id" && -n "$ai_key" ]] || continue
+  ai_var="" ai_vision=false
+  case "$ai_id" in
+    opencode)   ai_var="OPENCODE_API_KEY";   ai_vision=true ;;
+    gemini)     ai_var="GEMINI_API_KEY";     ai_vision=true ;;
+    groq)       ai_var="GROQ_API_KEY";       ai_vision=true ;;
+    nvidia-nim) ai_var="NVIDIA_NIM_API_KEY"; ai_vision=true ;;
+    runcrate)   ai_var="RUNCRATE_API_KEY";   ai_vision=true ;;
+    axforge)    ai_var="AXFORGE_API_KEY";    ai_vision=true ;;
+    openrouter) ai_var="OPENROUTER_API_KEY" ;;
+    cerebras)   ai_var="CEREBRAS_API_KEY" ;;
+    *) continue ;;
+  esac
+  ai_lines+=("$ai_var=$ai_key")
+  ai_names+=("$ai_id")
+  # Screen-context reads go to the first provider with a vision model.
+  if $ai_vision && [[ -z "$ai_context" ]]; then ai_context="$ai_id"; fi
+done <<<"$FRIDAY_AI_KEYS"
+if (( ${#ai_lines[@]} )); then
   (
     umask 077
     mkdir -p "/mnt$USER_HOME/.config/friday"
     {
       echo "# FRIDAY AI provider credentials (written by the installer)."
-      printf '%s=%s\n' "$AI_KEY_VAR" "$FRIDAY_AI_KEY"
-      # Screen-context reads need a provider with a vision model.
-      if $AI_VISION; then echo "FRIDAY_CONTEXT_PROVIDER=$FRIDAY_AI_PROVIDER"; fi
+      printf '%s\n' "${ai_lines[@]}"
+      if [[ -n "$ai_context" ]]; then echo "FRIDAY_CONTEXT_PROVIDER=$ai_context"; fi
     } > "/mnt$USER_HOME/.config/friday/friday.env"
   )
-  echo "FRIDAY AI provider configured: $FRIDAY_AI_PROVIDER"
+  echo "FRIDAY AI providers configured: ${ai_names[*]}"
 else
   echo "No AI key: FRIDAY uses OpenCode Zen's free models (change with: friday setup-ai)."
+fi
+# Local AI: what was picked, for `friday local-ai install` at first login.
+if [[ "$FRIDAY_LOCAL_ENGINE" == ollama || "$FRIDAY_LOCAL_ENGINE" == llamacpp ]] \
+    && [[ "$FRIDAY_LOCAL_BUDGET_MB" =~ ^[0-9]+$ ]]; then
+  mkdir -p "/mnt$USER_HOME/.config/friday" "/mnt$USER_HOME/.config/systemd/user/default.target.wants"
+  printf 'engine=%s\nbudget_mb=%s\nmodel=%s\nstate=pending\n' \
+    "$FRIDAY_LOCAL_ENGINE" "$FRIDAY_LOCAL_BUDGET_MB" "$FRIDAY_LOCAL_MODEL" \
+    > "/mnt$USER_HOME/.config/friday/local-ai.conf"
+  ln -sf /usr/lib/systemd/user/friday-local-ai.service \
+    "/mnt$USER_HOME/.config/systemd/user/default.target.wants/friday-local-ai.service"
+  echo "Local AI: $FRIDAY_LOCAL_MODEL on $FRIDAY_LOCAL_ENGINE, downloaded after the first login."
 fi
 
 if [ "$USERNAME" != "root" ]; then
