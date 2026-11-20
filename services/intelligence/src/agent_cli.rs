@@ -364,14 +364,27 @@ mod tests {
     }
 
     #[cfg(unix)]
+    /// A script at a fresh path. A separate `sh` writes it: had this process
+    /// held it open for writing, a child forked meanwhile by another test
+    /// thread could inherit that handle and running it would fail with "Text
+    /// file busy" (ETXTBSY).
     fn shim(name: &str, body: &str) -> String {
-        use std::os::unix::fs::PermissionsExt;
         let dir =
             std::env::temp_dir().join(format!("friday-agent-shim-{}-{name}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(name);
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let ok = std::process::Command::new("sh")
+            .args([
+                "-c",
+                "printf '%s\\n' \"$1\" >\"$2\" && chmod 755 \"$2\"",
+                "sh",
+            ])
+            .arg(format!("#!/bin/sh\n{body}"))
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "couldn't write {}", path.display());
         path.display().to_string()
     }
 
