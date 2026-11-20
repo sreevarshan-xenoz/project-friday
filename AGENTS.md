@@ -55,6 +55,10 @@ Top to bottom; don't start a later phase while an earlier one has known failures
 - **Upstreams are pinned:** Omarchy at the commit in `fetch-omarchy.sh`; bump
   a pin on purpose, in its own commit. A fix the pin needs before then is a
   patch in `iso/friday/omarchy-patches/` (applied on top, in order).
+- **A subsystem earns its place:** a new crate or module needs one clear job,
+  a call from the running daemon or a host, behaviour a person would notice,
+  tests that prove it, and a reason it belongs in FRIDAY rather than an
+  external service. Interesting isn't a reason (`docs/design/MODULE-AUDIT-2026-11.md`).
 - **No build output in git:** ISOs, `target/`, `bin/`, `obj/`, packages, MSIs,
   `airootfs/opt/friday/repo/`.
 
