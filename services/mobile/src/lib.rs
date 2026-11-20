@@ -27,6 +27,7 @@ pub mod lessons;
 pub mod listen;
 pub mod local_ai;
 pub mod local_docs;
+pub mod page_read;
 pub mod probe;
 pub mod protocol;
 pub mod provider_status;

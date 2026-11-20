@@ -411,13 +411,41 @@ impl Tool for WindowsOpenTool {
     }
 }
 
-/// Real browser tool for the `web.open` capability (S4). The planner classifies
-/// "open example.com" as `web.open`; this tool bridges the capability to the
-/// BrowserAdapter (CDP-backed Chrome). Only the safe `web.open` verb is
-/// advertised — the adapter's high-risk `web.evaluate` stays unadvertised
-/// (denied by default).
+/// The `web.open` capability: "open example.com" opens the page in the
+/// person's own default browser, where they can see it and are signed in.
+/// FRIDAY's own headless browser is for reading pages (`page_read`), never
+/// for showing them.
+type Opener = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
+
 struct BrowserCapabilityTool {
-    adapter: BrowserAdapter,
+    open: Opener,
+}
+
+impl Default for BrowserCapabilityTool {
+    fn default() -> Self {
+        Self {
+            open: Arc::new(open_in_default_browser),
+        }
+    }
+}
+
+/// Hands a web address to the desktop's default browser.
+fn open_in_default_browser(url: &str) -> Result<(), String> {
+    #[cfg(windows)]
+    let mut cmd = std::process::Command::new("explorer.exe");
+    #[cfg(not(windows))]
+    let mut cmd = std::process::Command::new("xdg-open");
+    let mut child = cmd
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("couldn't start the browser: {e}"))?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }
 
 #[async_trait]
@@ -427,7 +455,7 @@ impl Tool for BrowserCapabilityTool {
     }
 
     fn description(&self) -> &str {
-        "Opens URLs in a browser (web.open capability)"
+        "Opens URLs in the default browser (web.open capability)"
     }
 
     fn capabilities(&self) -> Vec<Capability> {
@@ -440,20 +468,12 @@ impl Tool for BrowserCapabilityTool {
                 "no URL found in the goal — say which address to open (e.g. \"open example.com\")",
             );
         };
-        let res = self
-            .adapter
-            .execute(ActionRequest::new("web", "open", json!({ "url": url })))
-            .await;
-        ToolResult {
-            success: res.success,
-            output: serde_json::to_string_pretty(&res.output).unwrap_or_default(),
-            error: res.error,
-            duration_ms: res
-                .metadata
-                .get("latency_ms")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0),
-            metadata: json!(res.metadata),
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            return ToolResult::error("only web addresses (http, https) are opened");
+        }
+        match (self.open)(&url) {
+            Ok(()) => ToolResult::success(format!("Opened {url} in your browser.")),
+            Err(e) => ToolResult::error(e),
         }
     }
 }
@@ -695,6 +715,24 @@ fn open_failure(app: &str, error: &str) -> String {
 /// The URL a `web.open` goal names: a scheme, a `www.` host, or a bare domain
 /// with a known suffix (→ https://). Anything else returns `None` so the tool
 /// can fail honestly instead of guessing.
+/// "open/launch/browse/navigate/go to <address>": the person wants to see
+/// the page (the browser tool), not have FRIDAY read it.
+fn opens_a_page(goal: &str) -> bool {
+    let g = friday_goal_execution::planning::goal_segment(goal)
+        .trim()
+        .to_lowercase();
+    [
+        "open ",
+        "launch ",
+        "browse ",
+        "navigate ",
+        "go to ",
+        "show me ",
+    ]
+    .iter()
+    .any(|v| g.starts_with(v))
+}
+
 fn url_from_instruction(instruction: &str) -> Option<String> {
     let tlds = [
         "com", "org", "net", "io", "dev", "co", "ai", "me", "app", "to", "gov", "edu", "xyz",
@@ -1138,6 +1176,8 @@ pub struct GoalRunner {
     confirmation_gate: Arc<Mutex<ConfirmationGate>>,
     /// Pluggable web search provider for goals requesting web search.
     web_searcher: Arc<dyn WebSearcher>,
+    /// Reads a page an ask names (FRIDAY's browser, or a plain download).
+    page_reader: Arc<dyn crate::page_read::PageReader>,
     /// Private mode (FRIDAY_PRIVATE): nothing leaves the machine, so a web
     /// search is never made.
     private_mode: bool,
@@ -1231,6 +1271,12 @@ impl GoalRunner {
 
     pub fn with_private_mode(mut self, enabled: bool) -> Self {
         self.private_mode = enabled;
+        self
+    }
+
+    /// Override the page reader (tests).
+    pub fn with_page_reader(mut self, reader: Arc<dyn crate::page_read::PageReader>) -> Self {
+        self.page_reader = reader;
         self
     }
 
@@ -1450,8 +1496,8 @@ impl GoalRunner {
                 }));
             }
         }
-        if let Some(adapter) = browser {
-            executive.register_tool(Box::new(BrowserCapabilityTool { adapter }));
+        if browser.is_some() {
+            executive.register_tool(Box::new(BrowserCapabilityTool::default()));
         }
 
         // FRIDAY OS: system packages through the root helper. Registered
@@ -1584,6 +1630,7 @@ impl GoalRunner {
             in_flight: Arc::new(Mutex::new(None)),
             confirmation_gate,
             web_searcher: Arc::new(ChainedWebSearcher::default_chain()),
+            page_reader: Arc::new(crate::page_read::DefaultPageReader::default()),
             private_mode: std::env::var("FRIDAY_PRIVATE")
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                 .unwrap_or(false),
@@ -1944,7 +1991,7 @@ impl GoalRunner {
         } else {
             "Web search failed, so this is from the model alone."
         };
-        let (web_response, web_search_failed) = if web_blocked {
+        let (mut web_response, web_search_failed) = if web_blocked {
             (None, true)
         } else if web {
             let search_query = friday_goal_execution::planning::goal_segment(&goal);
@@ -1956,6 +2003,44 @@ impl GoalRunner {
         } else {
             (None, false)
         };
+
+        // A question that names a page ("summarize https://…"): the page is
+        // read and becomes the answer's source. "open <url>" opens it in
+        // the person's browser instead (the browser tool). Private mode
+        // reads nothing.
+        let mut page_note: Option<String> = None;
+        let page_url = (!web && !opens_a_page(&goal))
+            .then(|| url_from_instruction(friday_goal_execution::planning::goal_segment(&goal)))
+            .flatten();
+        if let Some(url) = page_url {
+            if self.private_mode {
+                page_note = Some(format!(
+                    "Private mode is on, so FRIDAY didn't read {url}; this is from the local model alone."
+                ));
+            } else {
+                match self.page_reader.read(&url).await {
+                    Ok(page) => {
+                        web_response = Some(SearchResponse {
+                            backend: "the page".to_string(),
+                            results: vec![crate::web_search::SearchResult {
+                                title: if page.title.is_empty() {
+                                    page.url.clone()
+                                } else {
+                                    page.title
+                                },
+                                url: page.url,
+                                snippet: page.text,
+                            }],
+                        })
+                    }
+                    Err(e) => {
+                        page_note = Some(format!(
+                            "FRIDAY couldn't read {url} ({e}), so this is from the model alone."
+                        ))
+                    }
+                }
+            }
+        }
 
         // The answer step: the cycle ran a tool and gathered evidence; the
         // model now writes the reply from them. Only for a goal that ran to
@@ -1995,6 +2080,12 @@ impl GoalRunner {
                 match composed_answer {
                     None => report.cancelled = true,
                     Some(Ok(mut answer)) => {
+                        if let Some(note) = &page_note {
+                            answer.text = format!("{note}\n\n{}", answer.text.trim());
+                        } else if let (false, Some(resp)) = (web, &web_response) {
+                            answer.text =
+                                append_sources(&answer.text, &resp.backend, &resp.results);
+                        }
                         if web {
                             if web_search_failed {
                                 answer.text = format!("{web_note}\n\n{}", answer.text.trim());
@@ -5573,32 +5664,138 @@ mod tests {
         );
     }
 
-    /// S4: the browser tool advertises ONLY the safe `web.open` verb (the
-    /// adapter's high-risk `web.evaluate` stays off the surface) and refuses an
-    /// instruction with no URL instead of guessing or launching Chrome.
+    /// The browser tool advertises only `web.open`, refuses an instruction
+    /// with no web address, and hands an address to the default browser.
     #[tokio::test]
-    async fn browser_tool_advertises_safe_surface_and_needs_a_url() {
+    async fn browser_tool_opens_the_page_in_the_default_browser() {
+        let opened: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+        let seen = opened.clone();
         let tool = BrowserCapabilityTool {
-            adapter: BrowserAdapter::new(),
+            open: Arc::new(move |url: &str| {
+                seen.lock().unwrap().push(url.to_string());
+                Ok(())
+            }),
         };
         assert_eq!(
             tool.capabilities(),
-            vec![Capability::Custom("web.open".into())],
-            "only the safe web.open verb may be advertised"
+            vec![Capability::Custom("web.open".into())]
+        );
+        let ctx = ExecutionContext::for_goal("goal-1");
+        let cap = Capability::Custom("web.open".into());
+        let res = tool
+            .execute(
+                &Action::single("open the browser", cap.clone(), "goal-1"),
+                &ctx,
+            )
+            .await;
+        assert!(!res.success && res.error.clone().unwrap_or_default().contains("no URL"));
+        let res = tool
+            .execute(
+                &Action::single("open file:///etc/passwd", cap.clone(), "goal-1"),
+                &ctx,
+            )
+            .await;
+        assert!(!res.success, "{res:?}");
+        let res = tool
+            .execute(&Action::single("open example.com", cap, "goal-1"), &ctx)
+            .await;
+        assert!(res.success, "{res:?}");
+        assert_eq!(res.output, "Opened https://example.com in your browser.");
+        assert_eq!(
+            *opened.lock().unwrap(),
+            vec!["https://example.com".to_string()]
+        );
+    }
+
+    struct FakePageReader {
+        result: Result<crate::page_read::Page, String>,
+        reads: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl crate::page_read::PageReader for FakePageReader {
+        async fn read(&self, url: &str) -> Result<crate::page_read::Page, String> {
+            self.reads.lock().unwrap().push(url.to_string());
+            self.result.clone()
+        }
+    }
+
+    async fn ask_about_a_page(
+        goal: &str,
+        reader: Arc<FakePageReader>,
+        private: bool,
+    ) -> (serde_json::Value, String) {
+        let answerer = Arc::new(ScriptedAnswerer {
+            reply: Ok("It costs 10 € a month [1].".to_string()),
+            prompts: Mutex::new(Vec::new()),
+        });
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        GoalRunner::new(bus.clone())
+            .with_answerer(answerer.clone())
+            .with_page_reader(reader)
+            .with_private_mode(private)
+            .start();
+        let (_, done) = drive_goal(&bus, &mut rx, json!({ "goal": goal })).await;
+        let prompt = answerer.prompts.lock().unwrap().join("\n");
+        (done, prompt)
+    }
+
+    /// A question naming a page: the page is read and its text is the
+    /// answer's source, cited; private mode reads nothing; a failed read
+    /// says so; "open <url>" isn't a read.
+    #[tokio::test]
+    async fn a_question_about_a_page_reads_it() {
+        let page = crate::page_read::Page {
+            url: "https://example.com/pricing".into(),
+            title: "Pricing".into(),
+            text: "Pro plan: 10 € a month.".into(),
+        };
+        let reader = Arc::new(FakePageReader {
+            result: Ok(page),
+            reads: Default::default(),
+        });
+        let goal = "how much is the pro plan on https://example.com/pricing";
+        let (done, prompt) = ask_about_a_page(goal, reader.clone(), false).await;
+        assert_eq!(
+            *reader.reads.lock().unwrap(),
+            vec!["https://example.com/pricing"]
+        );
+        assert!(prompt.contains("Pro plan: 10 € a month."), "{prompt}");
+        let text = done["result"]["text"].as_str().unwrap_or_default();
+        assert!(
+            text.contains("https://example.com/pricing"),
+            "the answer cites the page: {text}"
         );
 
-        let action = Action::single(
-            "open the browser",
-            Capability::Custom("web.open".into()),
-            "goal-1",
-        );
-        let res = tool
-            .execute(&action, &ExecutionContext::for_goal("goal-1"))
-            .await;
-        assert!(!res.success, "must refuse, not launch a browser: {res:?}");
+        let private = Arc::new(FakePageReader {
+            result: Err("unused".into()),
+            reads: Default::default(),
+        });
+        let (done, _) = ask_about_a_page(goal, private.clone(), true).await;
+        assert!(private.reads.lock().unwrap().is_empty());
+        let text = done["result"]["text"].as_str().unwrap_or_default();
+        assert!(text.contains("Private mode is on"), "{text}");
+
+        let broken = Arc::new(FakePageReader {
+            result: Err("the site answered 404".into()),
+            reads: Default::default(),
+        });
+        let (done, _) = ask_about_a_page(goal, broken, false).await;
+        let text = done["result"]["text"].as_str().unwrap_or_default();
         assert!(
-            res.error.clone().unwrap_or_default().contains("no URL"),
-            "refusal must name the missing URL: {res:?}"
+            text.contains("couldn't read https://example.com/pricing") && text.contains("404"),
+            "{text}"
+        );
+
+        let opener = Arc::new(FakePageReader {
+            result: Err("unused".into()),
+            reads: Default::default(),
+        });
+        ask_about_a_page("open example.com", opener.clone(), false).await;
+        assert!(
+            opener.reads.lock().unwrap().is_empty(),
+            "opening a page isn't reading it"
         );
     }
 
