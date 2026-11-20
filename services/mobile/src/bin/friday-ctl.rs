@@ -293,6 +293,102 @@ fn docs(args: &[String]) -> std::process::ExitCode {
     std::process::ExitCode::SUCCESS
 }
 
+/// `friday-ctl show [--exact <name>] <what>`: where that control is in the
+/// focused window, as JSON for `friday show`: `{"found": true, "name", "x",
+/// "y", "width", "height"}` in screen pixels, or `{"found": false, "app",
+/// "controls": [names]}` for the model to pick from, or `{"found": false,
+/// "error"}`.
+#[cfg(target_os = "linux")]
+async fn show(args: &[String]) -> std::process::ExitCode {
+    use friday_actions::{ActionAdapter, ActionRequest, UiAdapter};
+    use friday_mobile::show_me::{self, Control};
+    let say = |v: serde_json::Value| {
+        println!("{v}");
+        std::process::ExitCode::SUCCESS
+    };
+    let (exact, words) = match args {
+        [flag, name, rest @ ..] if flag == "--exact" => (Some(name.as_str()), rest),
+        _ => (None, args),
+    };
+    let question = words.join(" ");
+    let win: serde_json::Value = std::process::Command::new("hyprctl")
+        .args(["activewindow", "-j"])
+        .output()
+        .ok()
+        .and_then(|o| serde_json::from_slice(&o.stdout).ok())
+        .unwrap_or_default();
+    let (Some(pid), Some(wx), Some(wy)) = (
+        win["pid"].as_u64(),
+        win["at"][0].as_i64(),
+        win["at"][1].as_i64(),
+    ) else {
+        return say(
+            serde_json::json!({ "found": false, "error": "no window has focus (Hyprland)" }),
+        );
+    };
+    let ui = UiAdapter::new();
+    // One process can register more than one app (a Qt app loading a GTK
+    // theme plugin does): the first of them with controls to show.
+    let mut found_app = None;
+    let mut controls: Vec<Control> = Vec::new();
+    for app in ui.apps_for_pid(pid as u32).await {
+        let listed = ui
+            .execute(ActionRequest::new(
+                "ui",
+                "controls",
+                serde_json::json!({ "app": app.id }),
+            ))
+            .await;
+        controls = serde_json::from_value(listed.output).unwrap_or_default();
+        if !controls.is_empty() {
+            found_app = Some(app);
+            break;
+        }
+    }
+    let Some(app) = found_app else {
+        return say(serde_json::json!({
+            "found": false,
+            "error": format!("FRIDAY can't see inside {}", win["class"].as_str().unwrap_or("this app")),
+        }));
+    };
+    let found = match exact {
+        Some(name) => show_me::named(name, &controls),
+        None => show_me::pick(&question, &controls),
+    };
+    let Some(control) = found else {
+        let names = show_me::names_for_model(&controls);
+        return say(serde_json::json!({ "found": false, "app": app.name, "controls": names }));
+    };
+    let at = ui
+        .execute(ActionRequest::new(
+            "ui",
+            "locate",
+            serde_json::json!({ "app": app.id, "path": control.path }),
+        ))
+        .await;
+    if !at.success {
+        return say(serde_json::json!({ "found": false, "error": at.error }));
+    }
+    let o = &at.output;
+    say(serde_json::json!({
+        "found": true,
+        "name": control.name,
+        "x": wx + o["x"].as_i64().unwrap_or(0),
+        "y": wy + o["y"].as_i64().unwrap_or(0),
+        "width": o["width"],
+        "height": o["height"],
+    }))
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn show(_args: &[String]) -> std::process::ExitCode {
+    println!(
+        "{}",
+        serde_json::json!({ "found": false, "error": "not on this system yet" })
+    );
+    std::process::ExitCode::SUCCESS
+}
+
 fn say(args: &[String]) -> std::process::ExitCode {
     if let Some(at) = args.iter().position(|a| a == "--setup") {
         let name = args.get(at + 1).map(String::as_str).unwrap_or("tinyvoca");
@@ -364,6 +460,9 @@ async fn main() -> std::process::ExitCode {
     }
     if raw.first().map(String::as_str) == Some("docs") {
         return docs(&raw[1..]);
+    }
+    if raw.first().map(String::as_str) == Some("show") {
+        return show(&raw[1..]).await;
     }
     if raw.first().map(String::as_str) == Some("agent-hook") {
         return agent_hook(&raw[1..]);
