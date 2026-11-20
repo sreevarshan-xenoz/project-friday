@@ -19,6 +19,7 @@ Singleton {
     { name: "Do not disturb: off", hint: "Show notifications again", words: "dnd notifications", run: ["friday", "ask", "dnd off"] },
     { name: "Battery", hint: "How much is left", words: "power charge", run: ["friday", "ask", "battery"] },
     { name: "Timer: 5 minutes", hint: "A notification when it's up", words: "alarm countdown", run: ["friday", "ask", "timer 5 min"] },
+    { name: "Watch an area", hint: "Told when it changes, or stops changing", words: "watch screen progress download notify", run: ["friday", "watch", "region"] },
     { name: "Wi-Fi and Bluetooth", hint: "Open the controls", words: "wifi network internet bluetooth sound", run: ["friday", "ask", "wifi settings"] },
     { name: "FRIDAY Settings", hint: "AI, voice, permissions, privacy", words: "preferences options configure", run: ["friday", "app"] },
     { name: "How is my computer doing?", hint: "A read-only health look", words: "health slow disk memory", run: ["friday", "ask", "How is my computer doing?"] },
