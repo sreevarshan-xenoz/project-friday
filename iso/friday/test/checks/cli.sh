@@ -238,8 +238,8 @@ contains "and is pasted over the selection (Ctrl+V down)" "$(cat "$LOG")" 'send_
 contains "and up again" "$(cat "$LOG")" 'state = "up"'
 if grep -q "Rewrite: fix grammar" "$HOME/.local/state/friday/ask-history" 2>/dev/null; then fail "a rewrite went into ask history"; else pass "a rewrite stays out of ask history"; fi
 # The person moved to another window while the model answered: no paste.
-# (Looks 1 and 2 are taken with the selection; the 3rd is when the answer is back.)
-: >"$LOG"; rm -f "$W/looks"; MOVE_AFTER=3 PRIMARY="teh quick fox" PICK="Rewrite: fix grammar and spelling" bash "$F" ask --selection; sleep 0.5
+# (Looks 1-3 are taken with the selection and the private check; the 4th is when the answer is back.)
+: >"$LOG"; rm -f "$W/looks"; MOVE_AFTER=4 PRIMARY="teh quick fox" PICK="Rewrite: fix grammar and spelling" bash "$F" ask --selection; sleep 0.5
 if grep -q "send_key_state" "$LOG"; then fail "pasted into a window the person moved to"; else pass "another window by then: no paste"; fi
 contains "it says the rewrite is on the clipboard" "$(cat "$LOG")" "on your clipboard"
 rm -f "$W/looks"
@@ -265,6 +265,52 @@ if grep -q "^friday-ctl" "$LOG"; then fail "paste-as sent a password-shaped clip
 : >"$LOG"; CLIP="" PICK="Shorter" bash "$F" paste-as; sleep 0.3
 contains "an empty clipboard says what to do" "$(cat "$LOG")" "Copy some text first"
 rm -f "$S/hyprctl"
+
+echo "private windows"
+# The focused window is $HYPR_WIN; curl answers as the local model ($LOCAL_REPLY).
+printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s "$HYPR_WIN"\nexit 0\n' >"$S/hyprctl"
+cp "$S/curl" "$W/curl.saved"
+cat >"$S/curl" <<STUB
+#!/bin/bash
+echo "curl \$*" >>"$LOG"
+[ -n "\${LOCAL_REPLY:-}" ] && jq -nc --arg r "\$LOCAL_REPLY" '{choices: [{message: {content: \$r}}]}'
+exit 0
+STUB
+chmod +x "$S/hyprctl" "$S/curl"
+envf="$HOME/.config/friday/friday.env"; mkdir -p "$HOME/.config/friday"; cp "$envf" "$W/env.saved" 2>/dev/null || : >"$W/env.saved"
+export HYPR_WIN='{"class":"org.keepassxc.KeePassXC","title":"Passwords.kdbx"}'
+: >"$LOG"; : >"$envf"; PRIMARY="hunter2 secret note" PICK="explain" bash "$F" ask --selection; sleep 0.3
+if grep -q "^friday-ctl" "$LOG"; then fail "a password manager's text went to the daemon"; else pass "a password manager's text never reaches the daemon"; fi
+contains "no local model: it says why and how" "$(cat "$LOG")" "friday setup-ai local"
+printf 'LLAMACPP_ENABLED=1\nLLAMACPP_BASE_URL=http://127.0.0.1:8080/v1\nLLAMACPP_MODEL=qwen3:4b\n' >"$envf"
+: >"$LOG"; LOCAL_REPLY="It is a note." PRIMARY="hunter2 secret note" PICK="explain" bash "$F" ask --selection; sleep 0.3
+contains "with a local model it asks it directly" "$(cat "$LOG")" "http://127.0.0.1:8080/v1/chat/completions"
+contains "and shows its answer" "$(cat "$LOG")" "It is a note."
+if grep -q "^friday-ctl" "$LOG"; then fail "the private ask went through the daemon"; else pass "the private ask skips the daemon"; fi
+# A local model that isn't on this computer doesn't count.
+printf 'LLAMACPP_ENABLED=1\nLLAMACPP_BASE_URL=http://192.0.2.7:8080/v1\n' >"$envf"
+: >"$LOG"; LOCAL_REPLY="x" PRIMARY="hunter2" PICK="explain" bash "$F" ask --selection; sleep 0.3
+if grep -q "192.0.2.7" "$LOG"; then fail "sent private text to another machine"; else pass "a model on another machine isn't local"; fi
+printf 'LLAMACPP_ENABLED=1\nLLAMACPP_BASE_URL=http://127.0.0.1:8080/v1\n' >"$envf"
+: >"$LOG"; bash "$F" ask --screen "what is this"; sleep 0.3
+if grep -q "context screen" "$LOG"; then fail "took a screenshot of a private window"; else pass "no screenshot of a private window"; fi
+contains "and says so" "$(cat "$LOG")" "no screenshot of it leaves"
+export HYPR_WIN='{"class":"firefox","title":"Bank statement — Mozilla Firefox Private Browsing"}'
+: >"$LOG"; LOCAL_REPLY="ok" PRIMARY="balance 12" PICK="explain" bash "$F" ask --selection; sleep 0.3
+contains "private browsing counts" "$(cat "$LOG")" "127.0.0.1:8080"
+# Your own list adds windows; "!word" drops a built-in one.
+export HYPR_WIN='{"class":"org.gnome.TextEditor","title":"diary.txt"}'
+printf 'Diary\n!bank\n' >"$HOME/.config/friday/private-windows"
+: >"$LOG"; LOCAL_REPLY="ok" PRIMARY="dear diary" PICK="explain" bash "$F" ask --selection; sleep 0.3
+contains "your own list counts" "$(cat "$LOG")" "127.0.0.1:8080"
+export HYPR_WIN='{"class":"firefox","title":"My bank"}'
+: >"$LOG"; PRIMARY="rates" PICK="explain" bash "$F" ask --selection; sleep 0.3
+contains "a dropped built-in goes to the daemon as usual" "$(cat "$LOG")" "friday-ctl"
+export HYPR_WIN='{"class":"firefox","title":"Rust docs"}'
+: >"$LOG"; PRIMARY="fn main" PICK="explain" bash "$F" ask --selection; sleep 0.3
+if grep -q "127.0.0.1:8080" "$LOG"; then fail "an ordinary window was treated as private"; else pass "an ordinary window asks as usual"; fi
+unset HYPR_WIN
+rm -f "$HOME/.config/friday/private-windows" "$S/hyprctl"; cp "$W/env.saved" "$envf"; mv "$W/curl.saved" "$S/curl"
 # `friday forget` shows counts, asks before deleting, and wipes only what was named.
 FD="$HOME/.local/state/friday"; mkdir -p "$FD/memory"
 printf '<!-- friday answer -->\n# q1\n\nA\n\n---\n\n<!-- friday answer -->\n# q2\n\nB\n\n---\n\n' >"$FD/answers.md"

@@ -179,6 +179,8 @@ Signing in to Claude Code, Codex, Antigravity or Cline needs a browser and your 
 
 In kitty (FRIDAY OS's terminal), `Super+Y` right after a command failed offers "Explain the error from: …" first: FRIDAY reads the command, its exit code and its output from kitty (its shell integration and remote control) and sends them only when you pick it. Hyprland only, for now.
 
+**Private windows.** Text from a password manager, a private or incognito browser window, or a bank or payment site goes only to the local model, asked directly (never through the daemon, so nothing can fall back to the cloud); with no local model set up, FRIDAY says so and sends nothing. Screen asks there are refused. Add your own apps or window titles, one per line, to `~/.config/friday/private-windows` (`!bank` drops a built-in one). Hyprland only, for now.
+
 With highlighted text, `Super+Alt+Y` also offers "Rewrite: fix grammar / shorter / more formal / friendlier / translate to English": the answer replaces the selection (pasted into the same window if it still has focus, never into a terminal; otherwise it's left on the clipboard), and your clipboard is put back. Hyprland only, for now.
 
 `Super+Alt+V` (`friday paste-as`) pastes the clipboard transformed: as a bullet list, as JSON, as a Markdown table, cleaned up, shorter, more formal or translated (or type how). It pastes into the window you're in (Shift+Insert in a terminal); the clipboard keeps the original. FRIDAY OS homes from before get the key with `friday keys update`.
