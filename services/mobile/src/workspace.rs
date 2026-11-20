@@ -68,9 +68,29 @@ pub trait Hypr {
 
 pub struct SystemHypr;
 
+/// `hyprctl`, pointed at the newest Hyprland instance when the environment
+/// doesn't name one (a systemd timer starts without it).
+fn hyprctl() -> std::process::Command {
+    let mut cmd = std::process::Command::new("hyprctl");
+    if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_none() {
+        let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
+        let newest = runtime
+            .and_then(|r| std::fs::read_dir(r.join("hypr")).ok())
+            .and_then(|d| {
+                d.flatten()
+                    .filter(|e| e.path().is_dir())
+                    .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())
+            });
+        if let Some(e) = newest {
+            cmd.env("HYPRLAND_INSTANCE_SIGNATURE", e.file_name());
+        }
+    }
+    cmd
+}
+
 impl Hypr for SystemHypr {
     fn clients(&self) -> Result<String, String> {
-        let out = std::process::Command::new("hyprctl")
+        let out = hyprctl()
             .args(["-j", "clients"])
             .output()
             .map_err(|e| format!("hyprctl: {e}"))?;
@@ -81,7 +101,7 @@ impl Hypr for SystemHypr {
     }
 
     fn eval(&self, lua: &str) -> Result<(), String> {
-        let out = std::process::Command::new("hyprctl")
+        let out = hyprctl()
             .args(["eval", lua])
             .output()
             .map_err(|e| format!("hyprctl: {e}"))?;

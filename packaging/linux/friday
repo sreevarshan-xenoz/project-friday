@@ -1273,7 +1273,17 @@ friday_workspace() {
   command -v friday-ctl >/dev/null 2>&1 || { echo "friday: friday-ctl is not installed" >&2; return 1; }
   case "${1:-list}" in
     save|restore|rm|list) friday-ctl workspace "$@" ;;
-    *) echo "Usage: friday workspace save <name> | restore <name> | list | rm <name>" >&2; return 1 ;;
+    autosave)
+      case "${2:-status}" in
+        on) systemctl --user enable --now friday-session-save.timer >/dev/null 2>&1 \
+              || { echo "Couldn't start the session timer (systemctl --user enable --now friday-session-save.timer)." >&2; return 1; }
+            echo "Autosave: on. Every ten minutes your open windows are saved as \"last session\" (on this computer only). Bring them back: friday workspace restore last session" ;;
+        off) systemctl --user disable --now friday-session-save.timer >/dev/null 2>&1 || true
+             echo "Autosave: off. The last saved session stays until you remove it: friday workspace rm last session" ;;
+        status) if systemctl --user is-active --quiet friday-session-save.timer 2>/dev/null; then echo "Autosave: on"; else echo "Autosave: off (turn on: friday workspace autosave on)"; fi ;;
+        *) echo "Usage: friday workspace autosave [on|off|status]" >&2; return 1 ;;
+      esac ;;
+    *) echo "Usage: friday workspace save <name> | restore <name> | list | rm <name> | autosave [on|off]" >&2; return 1 ;;
   esac
 }
 
@@ -1437,6 +1447,8 @@ friday_local_command() {
   elif [[ "$q" =~ ^save\ (this|these\ windows|my\ windows|the\ windows)\ as\ (my\ |the\ )?([a-z0-9_\ -]{1,40})$ ]] \
       || [[ "$q" =~ ^save\ (this|my|the)\ workspace\ as\ (my\ |the\ )?([a-z0-9_\ -]{1,40})$ ]]; then
     friday_workspace save "${BASH_REMATCH[-1]% workspace}" 2>&1 || true
+  elif [[ "$q" =~ ^(restore|bring\ back|reopen)\ (my\ |the\ )?last\ session$ ]]; then
+    friday_workspace restore last session 2>&1 || true
   elif [[ "$q" =~ ^(restore|open|bring\ back)\ (my\ |the\ )?([a-z0-9_\ -]{1,40})\ workspace$ ]] \
       && friday-ctl workspace list 2>/dev/null | grep -qi .; then
     friday_workspace restore "${BASH_REMATCH[3]}" 2>&1 || true

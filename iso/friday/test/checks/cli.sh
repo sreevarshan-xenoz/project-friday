@@ -647,6 +647,11 @@ if grep -q "workspace restore" "$LOG"; then fail "restored with no workspace sav
 : >"$LOG"; WS_SAVED=1 bash "$F" ask "restore my friday workspace"; sleep 0.3
 contains "\"restore my X workspace\" restores it" "$(cat "$LOG")" "friday-ctl-workspace workspace restore friday"
 : >"$LOG"; bash "$F" workspace bogus >/dev/null 2>&1 && fail "accepted an unknown workspace command" || pass "unknown workspace command is refused"
+: >"$LOG"; bash "$F" ask "restore my last session"; sleep 0.3
+contains "\"restore my last session\" restores it" "$(cat "$LOG")" "friday-ctl-workspace workspace restore last session"
+contains "autosave off says how to turn it on" "$(STUB_INACTIVE=1 bash "$F" workspace autosave status)" "friday workspace autosave on"
+: >"$LOG"; bash "$F" workspace autosave on >/dev/null
+contains "autosave on starts the session timer" "$(cat "$LOG")" "systemctl --user enable --now friday-session-save.timer"
 : >"$LOG"; WS_SAVED=1 bash "$F" ask "Friday, let's continue building FRIDAY"; sleep 0.3
 contains "\"continue building X\" restores X's workspace" "$(cat "$LOG")" "friday-ctl-workspace workspace restore friday"
 contains "and asks with what came back" "$(cat "$LOG")" "started foot in friday"
