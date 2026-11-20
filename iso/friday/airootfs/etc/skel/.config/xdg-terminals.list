@@ -1,0 +1,6 @@
+# Terminal preference for xdg-terminal-exec (Super+Return and every app that
+# opens a terminal). kitty first: FRIDAY can read its last command, exit code
+# and output, so Super+Y offers to explain a failed command. foot is the
+# fallback and opens FRIDAY's small windows.
+kitty.desktop
+foot.desktop
