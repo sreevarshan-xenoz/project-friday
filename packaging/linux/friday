@@ -1777,13 +1777,13 @@ friday_local_ai_presets() {
   local -a ids=() labels=() budgets=() fast=()
   if [[ $discrete == yes && $vram != unknown ]] && (( vram > 512 )); then
     ids+=(gpu); budgets+=($((vram - 512))); fast+=(1)
-    labels+=("GPU ($(friday_gb $((vram - 512))) of video memory)")
+    labels+=("GPU (up to $(friday_gb $((vram - 512))) of video memory)")
   fi
   local pct name i
   for name in light:25:Light balanced:50:Balanced most:75:Most; do
     IFS=: read -r i pct label <<<"$name"
     ids+=("$i"); budgets+=($((ram_mb * pct / 100))); fast+=(0)
-    labels+=("$label ($(friday_gb $((ram_mb * pct / 100))) of memory)")
+    labels+=("$label (up to $(friday_gb $((ram_mb * pct / 100))) of memory)")
   done
   local model need dl vision available note
   for i in "${!ids[@]}"; do
@@ -1795,6 +1795,7 @@ friday_local_ai_presets() {
     read -r need dl vision <<<"$(friday_local_ai_info "$model")"
     available=1
     if (( vision )); then note="sees screenshots"; else note="text only: can't see screenshots"; fi
+    note="needs about $(friday_gb "$need") while answering, $note"
     if (( dl + 1024 > ${disk:-0} )); then
       available=0 note="needs $(friday_gb $((dl + 1024))) of disk, $(friday_gb "${disk:-0}") free"
     fi
@@ -1877,7 +1878,9 @@ friday_local_install_llamacpp() {
   local hf="https://huggingface.co/$repo/resolve/$rev"
   friday_fetch "$hf/$file" "$fsha" "$FRIDAY_LLAMA_DIR/models/$file" || return 1
   # No thinking out loud: on a CPU it costs hundreds of tokens per answer.
-  args="-m $FRIDAY_LLAMA_DIR/models/$file -c 8192 --reasoning off"
+  # Asleep after 5 idle minutes (the model leaves memory, as Ollama's does);
+  # the next question wakes it in about a second.
+  args="-m $FRIDAY_LLAMA_DIR/models/$file -c 8192 --reasoning off --sleep-idle-seconds 300"
   if [[ -n "$msha" ]]; then
     friday_fetch "$hf/mmproj-model-f16.gguf" "$msha" "$FRIDAY_LLAMA_DIR/models/${file%.gguf}-mmproj.gguf" || return 1
     args="$args --mmproj $FRIDAY_LLAMA_DIR/models/${file%.gguf}-mmproj.gguf"
@@ -2049,6 +2052,7 @@ friday_setup_local() {
     rows+=("$id|$budget")
   done <<<"$presets"
   [ ${#options[@]} -gt 0 ] || { echo "This computer can't run a local model well; FRIDAY keeps using cloud providers." >&2; return 1; }
+  echo "The amount picks the model. It's in memory only while FRIDAY answers, and freed after 5 idle minutes."
   if [ -z "$preset" ]; then
     command -v gum >/dev/null || { printf '  %s\n' "${options[@]}"; echo "choose one: --preset <id>" >&2; return 2; }
     preset=$(printf '%s\n' "${options[@]}" | gum choose --cursor="❯ " --height=8) || return 1

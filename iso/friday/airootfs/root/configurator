@@ -422,6 +422,7 @@ step_local_ai() {
     options+=("$label: $model, $(awk -v m="$dl" 'BEGIN { printf "%.1f GB", m / 1024 }') download, $note, $speed")
     ids+=("$id|$budget|$model|$vision")
   done <<<"$presets"
+  friday_note "  The amount picks the model. It's in memory only while FRIDAY answers, and freed after 5 idle minutes."
   if (( ${#options[@]} == 0 )); then
     friday_err "This computer can't run a local model well, so FRIDAY uses cloud providers only."
     return 0
