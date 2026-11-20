@@ -7,6 +7,9 @@
 //! stdin closed, so the tool can only reply — never read or change files.
 //! These providers are text-only: a screenshot never goes to a CLI.
 //!
+//! OpenCode's CLI is the exception: no sign-in, it reaches Zen's free
+//! models, and the fabric adds it whenever `opencode` is installed.
+//!
 //! Opt-in only: `FRIDAY_AGENT_CLIS=claude,cline` (written by `friday
 //! connect`) lists the connected ones; one whose binary isn't on `PATH` is
 //! skipped.
@@ -48,6 +51,9 @@ pub enum AgentCli {
     Codex,
     Antigravity,
     Cline,
+    /// OpenCode's own CLI on its free Zen model: not an account (no sign-in),
+    /// so it isn't in `ALL`; the fabric adds it when `opencode` is installed.
+    OpenCode,
 }
 
 impl AgentCli {
@@ -65,6 +71,7 @@ impl AgentCli {
             AgentCli::Codex => "codex",
             AgentCli::Antigravity => "agy",
             AgentCli::Cline => "cline",
+            AgentCli::OpenCode => "opencode",
         }
     }
 
@@ -79,6 +86,7 @@ impl AgentCli {
             AgentCli::Codex => "codex",
             AgentCli::Antigravity => "antigravity",
             AgentCli::Cline => "cline",
+            AgentCli::OpenCode => "opencode-cli",
         }
     }
 
@@ -101,10 +109,44 @@ impl AgentCli {
             ],
             AgentCli::Antigravity => vec!["-p", &p, "--mode", "plan", "--effort", "low"],
             AgentCli::Cline => vec!["-p", "--auto-approve", "false", &p],
+            // The plan agent, which doesn't edit files; it runs in an empty directory.
+            // A private server (not the person's background service) so the
+            // locked-down config in `env` applies; kept out of their sessions.
+            AgentCli::OpenCode => vec![
+                "run",
+                "--standalone",
+                "--archived",
+                "--agent",
+                "plan",
+                "-m",
+                OPENCODE_CLI_MODEL,
+                &p,
+            ],
         };
         v.into_iter().map(String::from).collect()
     }
+
+    /// Environment for one run. OpenCode gets an empty config home (none of
+    /// the person's plugins or MCP servers) and every tool denied.
+    pub fn env(self, config_home: &Path) -> Vec<(&'static str, String)> {
+        match self {
+            AgentCli::OpenCode => vec![
+                ("XDG_CONFIG_HOME", config_home.display().to_string()),
+                ("OPENCODE_DISABLE_PROJECT_CONFIG", "1".into()),
+                ("OPENCODE_DISABLE_CLAUDE_CODE", "1".into()),
+                ("OPENCODE_DISABLE_AUTOUPDATE", "1".into()),
+                (
+                    "OPENCODE_CONFIG_CONTENT",
+                    r#"{"permission":{"*":"deny"}}"#.into(),
+                ),
+            ],
+            _ => Vec::new(),
+        }
+    }
 }
+
+/// The free Zen model the OpenCode CLI answers with.
+pub const OPENCODE_CLI_MODEL: &str = "opencode/big-pickle";
 
 /// The connected tools listed in `FRIDAY_AGENT_CLIS` (comma-separated ids),
 /// in order, without duplicates, keeping only those `installed` says exist.
@@ -172,8 +214,10 @@ impl AgentCliProvider {
             RUN.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", self.cli.provider_name()))?;
+        let config_home = dir.with_extension("config");
         let out = tokio::process::Command::new(&self.binary)
             .args(self.cli.args(prompt))
+            .envs(self.cli.env(&config_home))
             .current_dir(&dir)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
@@ -182,6 +226,7 @@ impl AgentCliProvider {
             .output()
             .await;
         let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&config_home);
         let name = self.cli.provider_name();
         let out = out.map_err(|e| format!("{name} isn't available: {e}"))?;
         let answer = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -272,6 +317,26 @@ mod tests {
             AgentCli::Cline.args("q"),
             ["-p", "--auto-approve", "false", "q"]
         );
+        assert_eq!(
+            AgentCli::OpenCode.args("q"),
+            [
+                "run",
+                "--standalone",
+                "--archived",
+                "--agent",
+                "plan",
+                "-m",
+                "opencode/big-pickle",
+                "q"
+            ]
+        );
+        let env = AgentCli::OpenCode.env(Path::new("/x"));
+        assert!(env.contains(&("XDG_CONFIG_HOME", "/x".into())));
+        assert!(env
+            .iter()
+            .any(|(k, v)| *k == "OPENCODE_CONFIG_CONTENT" && v.contains("deny")));
+        assert!(AgentCli::Claude.env(Path::new("/x")).is_empty());
+        assert_eq!(AgentCli::from_id("opencode"), None, "not an account");
         assert_eq!(
             AgentCli::Codex.args("q"),
             [

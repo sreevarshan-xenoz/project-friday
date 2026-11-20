@@ -43,6 +43,7 @@ optdepends=(
   'networkmanager: network status in FRIDAY Shell'
   'pocketdesk: pair a phone (friday phone) and answer FRIDAY from it'
   'fd: file search in the FRIDAY Shell launcher'
+  'opencode: more free answers when Zen refuses other apps (same free quota)'
 )
 provides=("$_name")
 conflicts=("$_name")

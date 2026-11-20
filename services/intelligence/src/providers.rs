@@ -2346,6 +2346,32 @@ impl InferenceFabric {
             }
         }
 
+        // OpenCode's own CLI, when installed: Zen keeps its free models for
+        // its own client and refuses other apps' keyless calls
+        // (FreeUsageLimitError), so this reaches them through `opencode run`.
+        // After the Zen API, before Kilo. FRIDAY_OPENCODE_CLI=off turns it off.
+        if !std::env::var("FRIDAY_OPENCODE_CLI")
+            .map(|v| v.trim().eq_ignore_ascii_case("off"))
+            .unwrap_or(false)
+            && crate::agent_cli::on_path("opencode")
+        {
+            let cli = crate::agent_cli::AgentCli::OpenCode;
+            fabric.automatic.insert(cli.provider_name().to_string());
+            fabric.register_provider(Box::new(crate::agent_cli::AgentCliProvider::new(cli)));
+            if !registry_loaded {
+                fabric.register_model(ModelInfo {
+                    id: "big-pickle".to_string(),
+                    family: "opencode-cli".to_string(),
+                    provider: cli.provider_name().to_string(),
+                    latency_ms: 3_200,
+                    reliability: 1.0,
+                    capabilities: vec![],
+                    max_context: 100_000,
+                    tier: None,
+                });
+            }
+        }
+
         // OVHcloud AI Endpoints — the last keyless fallback, after Zen and
         // Kilo: no account at all, EU-hosted, 2 requests a minute per model
         // per IP (so two text models). FRIDAY_OVH=off turns it off.
@@ -2905,6 +2931,7 @@ fn is_free_provider(name: &str) -> bool {
             | "zhipu"
             | "groq"
             | "opencode"
+            | "opencode-cli"
             | "kilo"
             | "nvidia-nim"
             | "runcrate"
@@ -4491,6 +4518,61 @@ mod tests {
         assert!(!InferenceFabric::default_from_env()
             .providers
             .contains_key("ovh"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_opencode_cli_comes_after_the_zen_api_and_before_kilo_when_installed() {
+        use std::os::unix::fs::PermissionsExt;
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _off = EnvVarGuard("FRIDAY_OPENCODE_CLI");
+        let _kilo = EnvVarGuard("FRIDAY_KILO");
+        let _kilo_key = EnvVarGuard("KILO_API_KEY");
+        let _zen_key = EnvVarGuard("OPENCODE_API_KEY");
+        for v in [
+            "FRIDAY_OPENCODE_CLI",
+            "FRIDAY_KILO",
+            "KILO_API_KEY",
+            "OPENCODE_API_KEY",
+        ] {
+            std::env::remove_var(v);
+        }
+        let dir = std::env::temp_dir().join(format!("friday-opencode-bin-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join("opencode");
+        std::fs::write(&bin, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        struct RestorePath(std::ffi::OsString);
+        impl Drop for RestorePath {
+            fn drop(&mut self) {
+                std::env::set_var("PATH", &self.0);
+            }
+        }
+        let _path = RestorePath(std::env::var_os("PATH").unwrap_or_default());
+        std::env::set_var("PATH", &dir);
+
+        let fabric = InferenceFabric::default_from_env();
+        assert!(fabric.providers.contains_key("opencode-cli"));
+        assert!(fabric.automatic.contains("opencode-cli"));
+        assert!(is_free_provider("opencode-cli"));
+        let cands = fabric.select_for(&RequestRequirements::default());
+        let pos = |p: &str| cands.iter().position(|(m, _)| m.provider == p);
+        assert!(pos("opencode").unwrap() < pos("opencode-cli").unwrap());
+        assert!(pos("opencode-cli").unwrap() < pos("kilo").unwrap());
+
+        std::env::set_var("FRIDAY_OPENCODE_CLI", "off");
+        assert!(!InferenceFabric::default_from_env()
+            .providers
+            .contains_key("opencode-cli"));
+        std::env::remove_var("FRIDAY_OPENCODE_CLI");
+        std::env::set_var("PATH", std::env::temp_dir().join("friday-no-such-dir"));
+        assert!(
+            !InferenceFabric::default_from_env()
+                .providers
+                .contains_key("opencode-cli"),
+            "not installed, not added"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
