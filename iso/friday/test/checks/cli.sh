@@ -165,6 +165,41 @@ contains "app-context status says off" "$(bash "$F" app-context status)" "Off"
 bash "$F" app-context on >/dev/null
 contains "app-context status says on" "$(bash "$F" app-context status)" "On"
 rm -f "$S/hyprctl"
+
+echo "explain the last error (kitty)"
+# A focused kitty window (pid 4242) whose last command failed; kitty's own
+# remote control answers ls and get-text (stubbed), on its real socket path.
+RUN="$W/run"; mkdir -p "$RUN"
+python3 -c 'import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$RUN/omarchy-kitty-4242"
+printf '#!/bin/bash\necho "hyprctl $*" >> %q\n[[ "$*" == "activewindow -j" ]] && printf %%s "$HYPR_WIN"\nexit 0\n' "$LOG" >"$S/hyprctl"
+cat >"$S/kitten" <<STUB
+#!/bin/bash
+echo "kitten \$*" >>"$LOG"
+case "\$*" in
+  *" ls"*) printf '%s' "\$KITTY_LS" ;;
+  *get-text*) printf 'npm ERR! Missing script: "build"\nnpm ERR! A complete log of this run can be found in /tmp/x.log\n' ;;
+esac
+STUB
+chmod +x "$S/hyprctl" "$S/kitten"
+kls() { printf '[{"is_focused":true,"tabs":[{"is_focused":true,"windows":[{"id":7,"is_focused":true,"at_prompt":true,"cwd":"/home/me/app","last_reported_cmdline":"npm run build","last_cmd_exit_status":%s}]}]}]' "$1"; }
+export HYPR_WIN='{"class":"kitty","pid":4242,"title":"zsh"}'
+: >"$LOG"; KITTY_LS=$(kls 1) XDG_RUNTIME_DIR="$RUN" PICK="Explain the error from: npm run build (exit 1)" bash "$F" ask; sleep 0.3
+contains "Super+Y in kitty offers to explain the failed command" "$(cat "$LOG")" "fuzzel"
+contains "it reads the output from kitty" "$(cat "$LOG")" "get-text --match id:7 --extent last_cmd_output"
+contains "the model gets the command" "$(cat "$LOG")" "npm run build"
+contains "and its output" "$(cat "$LOG")" 'Missing script'
+contains "and asks how to fix it" "$(cat "$LOG")" "Explain why this command failed"
+if grep -q "Explain why this command failed" "$HOME/.local/state/friday/ask-history" 2>/dev/null; then fail "an explained error went into ask history"
+else pass "an explained error stays out of ask history"; fi
+: >"$LOG"; KITTY_LS=$(kls 0) XDG_RUNTIME_DIR="$RUN" PICK="what is rust" bash "$F" ask; sleep 0.3
+if grep -q "get-text" "$LOG"; then fail "read output after a command that worked"; else pass "nothing to explain after a command that worked"; fi
+: >"$LOG"; KITTY_LS=$(kls 130) XDG_RUNTIME_DIR="$RUN" PICK="what is rust" bash "$F" ask; sleep 0.3
+if grep -q "get-text" "$LOG"; then fail "offered to explain a Ctrl+C"; else pass "a Ctrl+C (exit 130) isn't an error"; fi
+export HYPR_WIN='{"class":"firefox","pid":4242,"title":"x"}'
+: >"$LOG"; KITTY_LS=$(kls 1) XDG_RUNTIME_DIR="$RUN" PICK="what is rust" bash "$F" ask; sleep 0.3
+if grep -q "^kitten" "$LOG"; then fail "asked kitty while another app had focus"; else pass "only a focused kitty window is asked"; fi
+unset HYPR_WIN
+rm -f "$S/hyprctl" "$S/kitten"
 # `friday forget` shows counts, asks before deleting, and wipes only what was named.
 FD="$HOME/.local/state/friday"; mkdir -p "$FD/memory"
 printf '<!-- friday answer -->\n# q1\n\nA\n\n---\n\n<!-- friday answer -->\n# q2\n\nB\n\n---\n\n' >"$FD/answers.md"

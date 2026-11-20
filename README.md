@@ -174,6 +174,8 @@ Signing in to Claude Code, Codex, Antigravity or Cline needs a browser and your 
 | Ask about the screen | `Super+Ctrl+Y` (`friday ask --screen`) | `Win+Ctrl+Y` (`Ctrl+Alt+Shift+S`) |
 | Ask about an area you drag out | `friday ask --region` | tray menu, "Ask about an area…" |
 
+In kitty (FRIDAY OS's terminal), `Super+Y` right after a command failed offers "Explain the error from: …" first: FRIDAY reads the command, its exit code and its output from kitty (its shell integration and remote control) and sends them only when you pick it. Hyprland only, for now.
+
 The bindings ship in `packaging/linux/hyprland/friday.lua` and `packaging/linux/niri/friday.kdl`; on Windows the tray registers them, retrying the Win+ key briefly before falling back.
 
 ## Installation
