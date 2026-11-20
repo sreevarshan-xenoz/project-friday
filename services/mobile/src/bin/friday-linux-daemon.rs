@@ -22,7 +22,7 @@
 //! SIGTERM shutdown, and systemd readiness.
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -341,6 +341,12 @@ async fn main() {
     let goal_runner = GoalRunner::with_fabric_and_memory(bus.clone(), fabric, journal, voice)
         .with_conversations(state_path.with_file_name("conversations.json"))
         .with_lessons(state_path.with_file_name("lessons.jsonl"))
+        .with_timeline(
+            state_path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_default(),
+        )
         .start();
     let screen_ask = friday_mobile::context_read::ScreenAskManager::new(screen_reader.clone());
 

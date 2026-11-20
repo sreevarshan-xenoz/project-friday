@@ -10,7 +10,6 @@ description = "FRIDAY Goal Execution — Goal → Action → Outcome → Reflect
 
 [dependencies]
 friday-actions = { path = "../action-runtime" }
-friday-agent-runtime = { path = "../agent-runtime" }
 friday-capabilities = { path = "../capabilities" }
 friday-cognitive = { path = "../cognitive" }
 friday-investigation = { path = "../investigation" }

@@ -27,6 +27,7 @@ pub mod lessons;
 pub mod listen;
 pub mod local_ai;
 pub mod local_docs;
+pub mod page_read;
 pub mod probe;
 pub mod protocol;
 pub mod provider_status;
@@ -38,6 +39,7 @@ pub mod show_me;
 pub mod speech;
 pub mod standing;
 pub mod system_tool;
+pub mod timeline;
 pub mod tinyvoca;
 pub mod transport;
 pub mod upgrade;
@@ -45,6 +47,7 @@ pub mod voice;
 pub mod watch;
 pub mod web_search;
 pub mod win_insert;
+pub mod workspace;
 
 /// The next message from a broadcast receiver, or `None` once it is closed. A receiver
 /// that fell behind skips what it missed and carries on: `while let Ok(..) = rx.recv()`

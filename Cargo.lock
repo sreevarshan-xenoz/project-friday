@@ -1344,7 +1344,6 @@ dependencies = [
  "async-trait",
  "chrono",
  "friday-actions",
- "friday-agent-runtime",
  "friday-capabilities",
  "friday-cognitive",
  "friday-investigation",

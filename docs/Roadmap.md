@@ -317,7 +317,7 @@ Produces an `AgentContext` handed to the Intelligence Layer. Full spec:
 🚧 M5.5 Evaluation & Benchmarking Framework
 🚧 M5.6 Knowledge Graph
 🚧 M5.7 Reasoning Session
-⏳ M6  Browser Runtime           (now trivial: just declares capabilities)
+⏳ M6  Browser Runtime           (adapter + page reading done; browser tasks: vnext.md N3)
 ⏳ M7  Desktop World Model (Vision)
 ⏳ M8  Voice
 ⏳ M9  Learning

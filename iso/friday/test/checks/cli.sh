@@ -51,6 +51,11 @@ if [[ "\$1" == routine ]]; then
   echo "stub routine output"
   exit 0
 fi
+if [[ "\$1" == workspace ]]; then
+  printf 'friday-ctl-workspace %s\n' "\$*" >> "$LOG"
+  [[ "\$2" == list ]] && [ -n "\${WS_SAVED:-}" ] && echo "friday  3 window(s)  saved 2026-11-21 09:00"
+  exit 0
+fi
 if [[ "\$1" == listen ]]; then
   printf 'friday-ctl-listen %s\n' "\$*" >> "$LOG"
   echo "/notes/2026-11-20-0905.txt"
@@ -348,6 +353,7 @@ printf 'LLAMACPP_ENABLED=1\nLLAMACPP_BASE_URL=http://127.0.0.1:8080/v1\nLLAMACPP
 : >"$LOG"; LOCAL_REPLY="It is a note." PRIMARY="hunter2 secret note" PICK="explain" bash "$F" ask --selection; sleep 0.3
 contains "with a local model it asks it directly" "$(cat "$LOG")" "http://127.0.0.1:8080/v1/chat/completions"
 contains "and shows its answer" "$(cat "$LOG")" "It is a note."
+contains "the saved answer is marked as kept here (the timeline skips it)" "$(cat "$HOME/.local/state/friday/last-answer.md" 2>/dev/null)" "_On this computer · nothing was sent_"
 if grep -q "^friday-ctl" "$LOG"; then fail "the private ask went through the daemon"; else pass "the private ask skips the daemon"; fi
 # A local model that isn't on this computer doesn't count.
 printf 'LLAMACPP_ENABLED=1\nLLAMACPP_BASE_URL=http://192.0.2.7:8080/v1\n' >"$envf"
@@ -620,6 +626,18 @@ echo '{}' >"$HOME/.local/share/friday/routines/work.json"
 : >"$LOG"; bash "$F" ask "run my work"; sleep 0.3
 contains "\"run my work\" means the routine \"work\"" "$(cat "$LOG")" "friday-ctl-routine routine run work"
 rm -rf "$HOME/.local/share/friday/routines"
+
+echo "workspaces"
+: >"$LOG"; bash "$F" workspace save friday >/dev/null
+contains "friday workspace save goes to friday-ctl" "$(cat "$LOG")" "friday-ctl-workspace workspace save friday"
+: >"$LOG"; bash "$F" ask "save this as my friday workspace"; sleep 0.3
+contains "\"save this as my X workspace\" saves X" "$(cat "$LOG")" "friday-ctl-workspace workspace save friday"
+if grep -q "^friday-ctl '" "$LOG"; then fail "saving a workspace asked the AI"; else pass "saving a workspace asks no AI"; fi
+: >"$LOG"; bash "$F" ask "restore my friday workspace"; sleep 0.3
+if grep -q "workspace restore" "$LOG"; then fail "restored with no workspace saved"; else pass "restore with none saved: an ordinary question"; fi
+: >"$LOG"; WS_SAVED=1 bash "$F" ask "restore my friday workspace"; sleep 0.3
+contains "\"restore my X workspace\" restores it" "$(cat "$LOG")" "friday-ctl-workspace workspace restore friday"
+: >"$LOG"; bash "$F" workspace bogus >/dev/null 2>&1 && fail "accepted an unknown workspace command" || pass "unknown workspace command is refused"
 
 echo "local commands (no AI)"
 printf '#!/bin/sh\necho "wpctl $*" >>"%s"\n[ "$1" = get-volume ] && echo "Volume: 0.55${MUTED:+ [MUTED]}"\nexit 0\n' "$LOG" >"$S/wpctl"; chmod +x "$S/wpctl"
