@@ -15,29 +15,29 @@ crates live here.
 | `friday-capabilities` | `capabilities/` | Capability registry, ranking, health, graph, service orchestrator, cost estimator | ✅ |
 | `friday-context` | `context/` | Context Builder — assembles `AgentContext` (skill-aware) for the intelligence layer | ✅ |
 | `friday-skills` | `skills/` | **Skill Engine (M5)** — `SkillLoader` / `SkillRegistry` / `SkillContext`; manifests are pure data; health, approvals, explainable ranking | ✅ |
-| `friday-persona` | `persona/` | **Persona Engine** — one identity, blended personas, PAD mood from OCC appraisals, cooldowns, deterministic `render_instruction` | ✅ Built (not yet wired into the runtime) |
 | `friday-investigation` | `investigation/` | **Investigation Engine** — strategy layer between goal and plan; heuristic + LLM strategies, evidence requirements, `InvestigationGraph` | ✅ |
 | `friday-agent-runtime` | `agent-runtime/` | **Agent Runtime** — sub-agent orchestrator: spawner, lifecycle, mailbox, contexts, budgets, result merge, fan-out decomposition | ✅ |
 | `friday-goal-execution` | `goal-execution/` | **Executive** — the cognitive cycle (Observe→Attend→Investigate→Plan→Simulate→Execute→Verify→…); evidence lifecycle (`Prepared→Observed→Verified`), workflow trait + checkpoint/resume, memory admission controller, cognitive trace | ✅ |
 | `friday-knowledge` | `knowledge/` | **Knowledge Graph + World Model** — entities, relationships, state; world model wiring for planning | ✅ |
-| `friday-project-cognition` | `project-cognition/` | **Persistent project cognition** — long-term goal memory, milestone tracking, decision journal | ✅ |
 | `friday-simulation` | `simulation/` | Plan simulation / dry-run / validation / optimization / approval | ✅ |
 | `friday-intelligence` | `intelligence/` | **Inference Fabric** — provider registry (llama.cpp, Ollama, OmniRoute, Gemini, OpenGateway, …), capability-based routing, qualification profiles, health telemetry, request timeouts, prompt compiler, response interpreter | ✅ |
 | `friday-recovery` | `recovery/` | Recovery graph, failure taxonomy, confidence model | ✅ (shadow mode in runtime) |
 | `friday-benchmark` | `benchmark/` | Resilience dashboard, MTBF / first-pass / recovery metrics | ✅ |
-| `friday-experience` | `experience/` | Experience engine (procedural memory: recorder, miner, reflection, suggestion, replay) | ✅ |
-| `friday-plugin-runtime` | `plugin-runtime/` | Plugin runtime contract, telemetry envelopes, correlation ids | ✅ |
 | `friday-sensors` | `sensors/` | Sensor surface for the cognitive OS | 🟡 Early |
 | `friday-cognitive` | `cognitive/` | Cognitive Runtime scaffold (`specs/cognitive-runtime.md`) | 🟡 Early |
 | `friday-reflection` | `reflection/` | Reflection types (`specs/reflection-engine.md`) | 🟡 Early |
 | `friday-evaluation` | `evaluation/` | Mission scorecard / evaluation framework | 🟡 Early |
-| `friday-engines-perception` | `engines/perception/` | Perception engine | 🟡 Early |
 | `friday-engines-memory` | `engines/memory/` | Memory engine | 🟡 Early |
 | `friday-mobile` | `mobile/` | Mobile protocol daemon (WebSocket, `:18432`) for phones + web portal; QR-pairing auth (env-disablable for local dev) | ✅ Live |
-| `friday-bridge` | `bridge/` | **ReadModelBridge** — frozen read models over WebSocket (`:18433`) for the engineering console | ✅ |
 | `provider-qual` | `provider-qual/` | LLM/provider qualification harness + **chaos laboratory** (18 scenarios: provider failures + health corruption) | ✅ |
 | `windows-qual` | `windows-qual/` | Windows action qualification harness | ✅ |
 | `friday-skill-forge` | `skill-forge/` | **Skill Forge (M7)** — `create-skill` / `validate` / `publish` CLI for third-party skills | ✅ |
+
+Archived on 2026-11-20 (never linked into the daemon; see
+`docs/design/MODULE-AUDIT-2026-11.md`): autonomy, engines/perception, persona,
+project-cognition, observability, experience, lesson-store, plugin-runtime and
+bridge (with `protocol-tests/`). Restore one with
+`git checkout dc501bd -- services/<crate>` and add it back to the workspace.
 
 ## Adapters (under `action-runtime`)
 
@@ -64,7 +64,6 @@ Windows automation is **not** an adapter in this folder alone: Rust client is
   `specs/simulation.md`, `specs/context.md`, `specs/intelligence.md`,
   `specs/recovery.md`, `specs/benchmark.md`, `specs/skill-engine.md`,
   `specs/investigation-engine.md`, `specs/agent-runtime.md`,
-  `specs/persona-engine.md`, `specs/project-cognition.md`,
   `specs/friday-2-0-synthesis.md`
 - Design notes: `docs/CapabilityIntelligence.md`, `docs/Execution.md`,
   `docs/WindowsBridge.md`

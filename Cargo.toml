@@ -6,7 +6,6 @@ members = [
     "services/action-runtime",
     "services/capabilities",
     "services/cognitive",
-    "services/engines/perception",
     "services/engines/memory",
     "services/evaluation",
     "services/simulation",
@@ -14,7 +13,6 @@ members = [
     "services/recovery",
     "services/context",
     "services/skills",
-    "services/persona",
     "services/investigation",
     "services/agent-runtime",
     "services/skill-forge",
@@ -25,7 +23,7 @@ members = [
     "plugins/windows",
     "services/windows-qual",
     "mcp"
-, "services/sensors", "services/knowledge", "services/reflection",    "services/goal-execution", "services/plugin-runtime", "services/experience", "services/project-cognition",     "services/bridge", "services/observability", "services/autonomy", "services/lesson-store", "services/context-collector", "services/os-helper"]
+, "services/sensors", "services/knowledge", "services/reflection",    "services/goal-execution",     "services/context-collector", "services/os-helper"]
 
 [workspace.package]
 edition = "2021"

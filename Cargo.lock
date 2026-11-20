@@ -305,19 +305,8 @@ version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fb6fa015ebe961e9908ca4c1854e7dc7aabd4417da77b6a0466e4dfb4c8f6f69"
 dependencies = [
- "async-stream-impl 0.1.1",
+ "async-stream-impl",
  "futures-core-preview",
-]
-
-[[package]]
-name = "async-stream"
-version = "0.3.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b5a71a6f37880a80d1d7f19efd781e4b5de42c88f0722cc13bcb6cc2cfe8476"
-dependencies = [
- "async-stream-impl 0.3.6",
- "futures-core",
- "pin-project-lite",
 ]
 
 [[package]]
@@ -329,17 +318,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
-]
-
-[[package]]
-name = "async-stream-impl"
-version = "0.3.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7c24de15d275a1ecfd47a380fb4d5ec9bfe0933f309ed5e705b775596a3574d"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.118",
 ]
 
 [[package]]
@@ -445,53 +423,6 @@ name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
-
-[[package]]
-name = "axum"
-version = "0.7.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edca88bc138befd0323b20752846e6587272d3b03b0343c8ea28a6f819e6e71f"
-dependencies = [
- "async-trait",
- "axum-core",
- "bytes",
- "futures-util",
- "http 1.4.2",
- "http-body 1.1.0",
- "http-body-util",
- "itoa",
- "matchit",
- "memchr",
- "mime",
- "percent-encoding",
- "pin-project-lite",
- "rustversion",
- "serde",
- "sync_wrapper 1.0.2",
- "tower 0.5.3",
- "tower-layer",
- "tower-service",
-]
-
-[[package]]
-name = "axum-core"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09f2bd6146b97ae3359fa0cc6d6b376d9539582c7b4220f041a33ec24c226199"
-dependencies = [
- "async-trait",
- "bytes",
- "futures-util",
- "http 1.4.2",
- "http-body 1.1.0",
- "http-body-util",
- "mime",
- "pin-project-lite",
- "rustversion",
- "sync_wrapper 1.0.2",
- "tower-layer",
- "tower-service",
-]
 
 [[package]]
 name = "base64"
@@ -1281,28 +1212,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "friday-autonomy"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "friday-actions",
- "friday-agent-runtime",
- "friday-capabilities",
- "friday-cognitive",
- "friday-core",
- "friday-goal-execution",
- "friday-lesson-store",
- "friday-observability",
- "friday-planner",
- "friday-skills",
- "serde",
- "serde_json",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "friday-benchmark"
 version = "0.1.0"
 dependencies = [
@@ -1318,28 +1227,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "uuid",
-]
-
-[[package]]
-name = "friday-bridge"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "friday-actions",
- "friday-agent-runtime",
- "friday-cognitive",
- "friday-experience",
- "friday-goal-execution",
- "friday-investigation",
- "friday-plugin-runtime",
- "futures",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tokio-tungstenite",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1451,15 +1338,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "friday-experience"
-version = "0.1.0"
-dependencies = [
- "friday-plugin-runtime",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "friday-goal-execution"
 version = "0.1.0"
 dependencies = [
@@ -1488,7 +1366,7 @@ dependencies = [
 name = "friday-intelligence"
 version = "0.1.0"
 dependencies = [
- "async-stream 0.1.2",
+ "async-stream",
  "async-trait",
  "chrono",
  "friday-capabilities",
@@ -1528,17 +1406,6 @@ dependencies = [
  "thiserror 1.0.69",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "friday-lesson-store"
-version = "0.1.0"
-dependencies = [
- "friday-capabilities",
- "redb",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -1615,20 +1482,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "friday-observability"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "friday-core",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "friday-os-helper"
 version = "0.1.0"
 dependencies = [
@@ -1640,28 +1493,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "zbus",
-]
-
-[[package]]
-name = "friday-perception"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "friday-cognitive",
- "friday-sensors",
- "rand 0.8.7",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "friday-persona"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -1686,24 +1517,6 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "friday-plugin-runtime"
-version = "0.1.0"
-dependencies = [
- "serde",
- "tracing",
-]
-
-[[package]]
-name = "friday-project-cognition"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "tracing",
 ]
 
 [[package]]
@@ -1971,12 +1784,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "glob"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
-
-[[package]]
 name = "gloo-timers"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2000,37 +1807,12 @@ dependencies = [
  "futures-sink",
  "futures-util",
  "http 0.2.12",
- "indexmap 2.14.0",
+ "indexmap",
  "slab",
  "tokio",
  "tokio-util",
  "tracing",
 ]
-
-[[package]]
-name = "h2"
-version = "0.4.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f877e75f39e9827ec50a572dd592684ac28c029578726c85f1b2aa6ab807449"
-dependencies = [
- "atomic-waker",
- "bytes",
- "fnv",
- "futures-core",
- "futures-sink",
- "http 1.4.2",
- "indexmap 2.14.0",
- "slab",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
-name = "hashbrown"
-version = "0.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
 
 [[package]]
 name = "hashbrown"
@@ -2160,7 +1942,7 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "futures-util",
- "h2 0.3.27",
+ "h2",
  "http 0.2.12",
  "http-body 0.4.6",
  "httparse",
@@ -2184,29 +1966,14 @@ dependencies = [
  "bytes",
  "futures-channel",
  "futures-core",
- "h2 0.4.17",
  "http 1.4.2",
  "http-body 1.1.0",
  "httparse",
- "httpdate",
  "itoa",
  "pin-project-lite",
  "smallvec",
  "tokio",
  "want",
-]
-
-[[package]]
-name = "hyper-timeout"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b90d566bffbce6a75bd8b09a05aa8c2cb1fabb6cb348f8840c9e4c90a0d83b0"
-dependencies = [
- "hyper 1.11.0",
- "hyper-util",
- "pin-project-lite",
- "tokio",
- "tower-service",
 ]
 
 [[package]]
@@ -2393,22 +2160,12 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "1.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd070e393353796e801d209ad339e89596eb4c8d430d18ede6a1cced8fafbd99"
-dependencies = [
- "autocfg",
- "hashbrown 0.12.3",
-]
-
-[[package]]
-name = "indexmap"
 version = "2.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9"
 dependencies = [
  "equivalent",
- "hashbrown 0.17.1",
+ "hashbrown",
 ]
 
 [[package]]
@@ -2441,15 +2198,6 @@ name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
-
-[[package]]
-name = "itertools"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
-dependencies = [
- "either",
-]
 
 [[package]]
 name = "itoa"
@@ -2618,7 +2366,7 @@ dependencies = [
  "encoding_rs",
  "flate2",
  "getrandom 0.4.3",
- "indexmap 2.14.0",
+ "indexmap",
  "itoa",
  "jiff",
  "log",
@@ -2652,12 +2400,6 @@ checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
 dependencies = [
  "regex-automata",
 ]
-
-[[package]]
-name = "matchit"
-version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e7465ac9959cc2b1404e8e2367b43684a6d13790fe23056cc8c6c5a6b7bcb94"
 
 [[package]]
 name = "matrixmultiply"
@@ -2869,72 +2611,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "opentelemetry"
-version = "0.27.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab70038c28ed37b97d8ed414b6429d343a8bbf44c9f79ec854f3a643029ba6d7"
-dependencies = [
- "futures-core",
- "futures-sink",
- "js-sys",
- "pin-project-lite",
- "thiserror 1.0.69",
- "tracing",
-]
-
-[[package]]
-name = "opentelemetry-otlp"
-version = "0.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91cf61a1868dacc576bf2b2a1c3e9ab150af7272909e80085c3173384fe11f76"
-dependencies = [
- "async-trait",
- "futures-core",
- "http 1.4.2",
- "opentelemetry",
- "opentelemetry-proto",
- "opentelemetry_sdk",
- "prost",
- "thiserror 1.0.69",
- "tokio",
- "tonic",
-]
-
-[[package]]
-name = "opentelemetry-proto"
-version = "0.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6e05acbfada5ec79023c85368af14abd0b307c015e9064d249b2a950ef459a6"
-dependencies = [
- "opentelemetry",
- "opentelemetry_sdk",
- "prost",
- "tonic",
-]
-
-[[package]]
-name = "opentelemetry_sdk"
-version = "0.27.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "231e9d6ceef9b0b2546ddf52335785ce41252bc7474ee8ba05bfad277be13ab8"
-dependencies = [
- "async-std",
- "async-trait",
- "futures-channel",
- "futures-executor",
- "futures-util",
- "glob",
- "opentelemetry",
- "percent-encoding",
- "rand 0.8.7",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tokio-stream",
- "tracing",
-]
-
-[[package]]
 name = "ordered-stream"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3025,26 +2701,6 @@ name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
-
-[[package]]
-name = "pin-project"
-version = "1.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2466b2336ed02bcdca6b294417127b90ec92038d1d5c4fbeac971a922e0e0924"
-dependencies = [
- "pin-project-internal",
-]
-
-[[package]]
-name = "pin-project-internal"
-version = "1.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c96395f0a926bc13b1c17622aaddda1ecb55d49c8f1bf9777e4d877800a43f8b"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.118",
-]
 
 [[package]]
 name = "pin-project-lite"
@@ -3150,29 +2806,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "prost"
-version = "0.13.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2796faa41db3ec313a31f7624d9286acf277b52de526150b7e69f3debf891ee5"
-dependencies = [
- "bytes",
- "prost-derive",
-]
-
-[[package]]
-name = "prost-derive"
-version = "0.13.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
-dependencies = [
- "anyhow",
- "itertools",
- "proc-macro2",
- "quote",
- "syn 2.0.118",
 ]
 
 [[package]]
@@ -3337,7 +2970,7 @@ dependencies = [
  "encoding_rs",
  "futures-core",
  "futures-util",
- "h2 0.3.27",
+ "h2",
  "http 0.2.12",
  "http-body 0.4.6",
  "hyper 0.14.32",
@@ -3391,7 +3024,7 @@ dependencies = [
  "serde_urlencoded",
  "sync_wrapper 1.0.2",
  "tokio",
- "tower 0.5.3",
+ "tower",
  "tower-http",
  "tower-service",
  "url",
@@ -3933,17 +3566,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-stream"
-version = "0.1.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3d06f0b082ba57c26b79407372e57cf2a1e28124f78e9479fe80322cf53420b"
-dependencies = [
- "futures-core",
- "pin-project-lite",
- "tokio",
-]
-
-[[package]]
 name = "tokio-tungstenite"
 version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3983,7 +3605,7 @@ version = "0.25.19+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd43688c4858d7264ae1cf9a9f874a67c3feb74a883b1cd7bebd6a4ea8307218"
 dependencies = [
- "indexmap 2.14.0",
+ "indexmap",
  "toml_datetime",
  "toml_parser",
  "winnow",
@@ -3996,56 +3618,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c"
 dependencies = [
  "winnow",
-]
-
-[[package]]
-name = "tonic"
-version = "0.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "877c5b330756d856ffcc4553ab34a5684481ade925ecc54bcd1bf02b1d0d4d52"
-dependencies = [
- "async-stream 0.3.6",
- "async-trait",
- "axum",
- "base64 0.22.1",
- "bytes",
- "h2 0.4.17",
- "http 1.4.2",
- "http-body 1.1.0",
- "http-body-util",
- "hyper 1.11.0",
- "hyper-timeout",
- "hyper-util",
- "percent-encoding",
- "pin-project",
- "prost",
- "socket2 0.5.10",
- "tokio",
- "tokio-stream",
- "tower 0.4.13",
- "tower-layer",
- "tower-service",
- "tracing",
-]
-
-[[package]]
-name = "tower"
-version = "0.4.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8fa9be0de6cf49e536ce1851f987bd21a43b771b09473c3549a6c853db37c1c"
-dependencies = [
- "futures-core",
- "futures-util",
- "indexmap 1.9.3",
- "pin-project",
- "pin-project-lite",
- "rand 0.8.7",
- "slab",
- "tokio",
- "tokio-util",
- "tower-layer",
- "tower-service",
- "tracing",
 ]
 
 [[package]]
@@ -4075,7 +3647,7 @@ dependencies = [
  "http 1.4.2",
  "http-body 1.1.0",
  "pin-project-lite",
- "tower 0.5.3",
+ "tower",
  "tower-layer",
  "tower-service",
  "url",
@@ -5050,7 +4622,7 @@ dependencies = [
  "flate2",
  "getrandom 0.4.3",
  "hmac",
- "indexmap 2.14.0",
+ "indexmap",
  "lzma-rust2",
  "memchr",
  "pbkdf2",

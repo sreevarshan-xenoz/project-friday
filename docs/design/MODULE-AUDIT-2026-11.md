@@ -40,6 +40,22 @@ Since #222 the last four turns of the conversation ride along with each ask.
 | knowledge | 989 | Workflow patterns and a triple graph | Candidate, same rule as above |
 | agent-runtime | 3,768 | Sub-agent runtime; FRIDAY's agent runs are `agent_runs.rs` | Keep only what action-runtime needs |
 
+## Done (2026-11-20)
+
+Why they were unused: they were built in July and August 2026 as research
+prototypes (the R2 qualification campaign, milestones M4.7, 7A, 8B). When the
+plan turned to "first hour works", the daemon grew its own smaller versions
+(standing tasks, `MemoryJournal`, the fabric's failover) and these were never
+wired in.
+
+Archived (removed from the workspace): autonomy, engines/perception, persona,
+project-cognition, observability, experience, lesson-store, plugin-runtime and
+bridge, with `protocol-tests/` (bridge's fixtures). Restore any with
+`git checkout dc501bd -- services/<crate>`.
+
+Kept: skill-forge (ships in friday-git as `friday create-skill|validate|publish`),
+recovery and simulation (used by the benchmark and e2e crates).
+
 ## Rules for what comes next
 
 - Nothing gets wired in to raise a count. A candidate goes in when a person
