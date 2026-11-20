@@ -17,6 +17,10 @@ if [[ "\$1" == say ]]; then
   printf 'friday-ctl-say %s\n' "\$text" >> "$LOG"
   exit 0
 fi
+if [[ "\$1" == watch ]]; then
+  printf 'friday-ctl-watch %s\n' "\$*" >> "$LOG"
+  exit 0
+fi
 if [[ "\$1" == cancel ]]; then
   echo "friday-ctl-cancel" >> "$LOG"
   [[ -n "\$HAVE_GOAL" ]] && { echo '{"accepted":true}'; exit 0; }
@@ -211,6 +215,12 @@ else pass "an explained error stays out of ask history"; fi
 if grep -q "get-text" "$LOG"; then fail "read output after a command that worked"; else pass "nothing to explain after a command that worked"; fi
 : >"$LOG"; KITTY_LS=$(kls 130) XDG_RUNTIME_DIR="$RUN" PICK="what is rust" bash "$F" ask; sleep 0.3
 if grep -q "get-text" "$LOG"; then fail "offered to explain a Ctrl+C"; else pass "a Ctrl+C (exit 130) isn't an error"; fi
+# A command still running there can be watched instead.
+: >"$LOG"; KITTY_LS='[{"is_focused":true,"tabs":[{"is_focused":true,"windows":[{"id":7,"is_focused":true,"at_prompt":false,"last_reported_cmdline":"make build","last_cmd_exit_status":0}]}]}]' \
+  XDG_RUNTIME_DIR="$RUN" PICK="Tell me when this finishes: make build" bash "$F" ask; sleep 0.5
+contains "a running command can be watched" "$(cat "$LOG")" "friday-ctl-watch watch kitty $RUN/omarchy-kitty-4242 7 make build"
+contains "and it says so" "$(cat "$LOG")" "I'll tell you when make build finishes"
+if grep -q "^friday-ctl '" "$LOG"; then fail "watching a command asked the AI"; else pass "watching a command asks no AI"; fi
 export HYPR_WIN='{"class":"firefox","pid":4242,"title":"x"}'
 : >"$LOG"; KITTY_LS=$(kls 1) XDG_RUNTIME_DIR="$RUN" PICK="what is rust" bash "$F" ask; sleep 0.3
 if grep -q "^kitten" "$LOG"; then fail "asked kitty while another app had focus"; else pass "only a focused kitty window is asked"; fi
@@ -422,6 +432,17 @@ if grep -q "context screen" "$LOG"; then fail "a how-to about the screen capture
 : >"$LOG"; rm -f "$W/again_done"
 ACTION_AGAIN=1 PICK="screen follow-up" bash "$F" ask --screen; sleep 0.5
 contains "Ask again: screen preserves --screen kind" "$(cat "$LOG")" "friday-ctl-context context screen --yes --ask screen follow-up"
+echo "watch an area"
+printf '#!/bin/sh\nexit 0\n' >"$S/grim"; chmod +x "$S/grim"
+printf '#!/bin/sh\n[ -n "$SLURP_CANCEL" ] && exit 1\necho "10,20 300x200"\n' >"$S/slurp"; chmod +x "$S/slurp"
+: >"$LOG"; bash "$F" watch; sleep 0.5
+contains "friday watch: the dragged area is watched" "$(cat "$LOG")" "friday-ctl-watch watch region 10,20 300x200"
+contains "and it says how to stop" "$(cat "$LOG")" "friday watch stop"
+: >"$LOG"; SLURP_CANCEL=1 bash "$F" watch region; sleep 0.3
+if grep -q "friday-ctl-watch" "$LOG"; then fail "watched after Esc"; else pass "Esc while dragging watches nothing"; fi
+: >"$LOG"; bash "$F" watch stop
+contains "friday watch stop stops it" "$(cat "$LOG")" "friday-ctl-watch watch stop"
+rm -f "$S/grim"
 echo "region ask"
 printf '#!/bin/sh\n[ -n "$SLURP_CANCEL" ] && exit 1\necho "10,20 300x200"\n' >"$S/slurp"; chmod +x "$S/slurp"
 : >"$LOG"; PICK="what is this chart" bash "$F" ask --region; sleep 0.3

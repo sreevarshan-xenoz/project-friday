@@ -181,6 +181,8 @@ In kitty (FRIDAY OS's terminal), `Super+Y` right after a command failed offers "
 
 **Private windows.** Text from a password manager, a private or incognito browser window, or a bank or payment site goes only to the local model, asked directly (never through the daemon, so nothing can fall back to the cloud); with no local model set up, FRIDAY says so and sends nothing. Screen asks there are refused. Add your own apps or window titles, one per line, to `~/.config/friday/private-windows` (`!bank` drops a built-in one). Hyprland only, for now.
 
+**Watch this.** In kitty, while a command runs, Super+Y offers "Tell me when this finishes": you get a notification with its exit status when it's done. `friday watch` (or "Watch an area" in the launcher) lets you drag an area of the screen. If it's still, FRIDAY tells you when it changes; if it's busy, like a progress bar, when it stops changing. It's compared on this computer every 2 seconds, nothing is sent, and it stops after 2 hours or with `friday watch stop`.
+
 With highlighted text, `Super+Alt+Y` also offers "Rewrite: fix grammar / shorter / more formal / friendlier / translate to English": the answer replaces the selection (pasted into the same window if it still has focus, never into a terminal; otherwise it's left on the clipboard), and your clipboard is put back. Hyprland only, for now.
 
 `Super+Alt+V` (`friday paste-as`) pastes the clipboard transformed: as a bullet list, as JSON, as a Markdown table, cleaned up, shorter, more formal or translated (or type how). It pastes into the window you're in (Shift+Insert in a terminal); the clipboard keeps the original. FRIDAY OS homes from before get the key with `friday keys update`.

@@ -31,6 +31,8 @@ Autonomous Agent & Cognitive Loop:
                                    translated… (Super+Alt+V)
   friday undo                      Put back the last thing FRIDAY changed (volume, mute,
                                    Do not disturb, a rewrite or paste); "undo" in the ask box too
+  friday watch [region|stop]       Drag an area; FRIDAY says when it changes (or stops
+                                   changing). A kitty command: "Tell me when this finishes"
   friday ask --new ["<objective>"] Start a new conversation (asks within 15 minutes of
                                    each other otherwise share one)
   friday answers                   Show past answers (last one: friday answers --last)
@@ -1445,7 +1447,8 @@ friday_sent_format_num() {
 # command, its exit code and its output itself (shell integration and remote
 # control, both on in FRIDAY OS's kitty.conf). Prints
 # "<exit>\t<command>\t<folder>\t<socket>\t<window id>", or nothing.
-friday_last_error() {
+# The remote-control socket of the focused kitty window, or nothing.
+friday_kitty_sock() {
   command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 && command -v kitten >/dev/null 2>&1 || return 0
   local win pid sock
   win=$(timeout 2 hyprctl activewindow -j 2>/dev/null) || return 0
@@ -1454,7 +1457,23 @@ friday_last_error() {
   for sock in "${XDG_RUNTIME_DIR:-/tmp}/omarchy-kitty-$pid" "${XDG_RUNTIME_DIR:-/tmp}/kitty-$pid"; do
     [ -S "$sock" ] && break
   done
-  [ -n "$pid" ] && [ -S "$sock" ] || return 0
+  [ -n "$pid" ] && [ -S "$sock" ] && printf '%s' "$sock"
+  return 0
+}
+
+# The command running now in the focused kitty window: "command\tsocket\tid".
+friday_kitty_running() {
+  local sock; sock=$(friday_kitty_sock)
+  [ -n "$sock" ] || return 0
+  timeout 3 kitten @ --to "unix:$sock" ls 2>/dev/null | jq -r --arg s "$sock" '
+    [.[] | select(.is_focused) | .tabs[] | select(.is_focused) | .windows[] | select(.is_focused)][0]
+    | select(. != null and (.at_prompt | not) and (.last_reported_cmdline // "") != "")
+    | [(.last_reported_cmdline | gsub("[\t\n]"; " ")), $s, .id] | @tsv' 2>/dev/null || true
+}
+
+friday_last_error() {
+  local sock; sock=$(friday_kitty_sock)
+  [ -n "$sock" ] || return 0
   timeout 3 kitten @ --to "unix:$sock" ls 2>/dev/null | jq -r --arg s "$sock" '
     [.[] | select(.is_focused) | .tabs[] | select(.is_focused) | .windows[] | select(.is_focused)][0]
     | select(. != null and .at_prompt and .last_cmd_exit_status != 0 and .last_cmd_exit_status != 130
@@ -2657,8 +2676,9 @@ case "${1:-}" in
           sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "${XDG_CONFIG_HOME:-$HOME/.config}/friday/prompts" 2>/dev/null || true
         } | fuzzel --dmenu --prompt="FRIDAY › " --width=70 --lines=8 \
           --placeholder="$source_label: \"$preview…\" · pick or type (Shift+Enter sends it)") || exit 0
-      elif last_error=$(friday_last_error) && suggestions=$(friday_app_suggestions) \
-          && { [ -s "$history_file" ] || [ -n "$last_error$suggestions" ]; }; then
+      elif last_error=$(friday_last_error) && running=$(friday_kitty_running) \
+          && suggestions=$(friday_app_suggestions) \
+          && { [ -s "$history_file" ] || [ -n "$last_error$running$suggestions" ]; }; then
         # Recent asks, newest first. Enter re-runs the highlighted one;
         # Shift+Enter sends exactly what was typed (fuzzel execute-input).
         # A kitty window whose last command failed offers to explain it first.
@@ -2667,8 +2687,15 @@ case "${1:-}" in
           IFS=$'\t' read -r le_exit le_cmd le_cwd le_sock le_id <<<"$last_error"
           explain="Explain the error from: $(cut -c1-60 <<<"$le_cmd") (exit $le_exit)"
         fi
+        # One still running can be watched instead (friday-ctl watch kitty).
+        tell_me=""
+        if [ -n "$running" ]; then
+          IFS=$'\t' read -r run_cmd run_sock run_id <<<"$running"
+          tell_me="Tell me when this finishes: $(cut -c1-60 <<<"$run_cmd")"
+        fi
         # Then what fits the app you're in (friday_app_suggestions).
-        goal=$({ [ -z "$explain" ] || printf '%s\n' "$explain"; [ -z "$suggestions" ] || cut -f1 <<<"$suggestions"
+        goal=$({ [ -z "$explain" ] || printf '%s\n' "$explain"; [ -z "$tell_me" ] || printf '%s\n' "$tell_me"
+          [ -z "$suggestions" ] || cut -f1 <<<"$suggestions"
           cat "$history_file" 2>/dev/null || true; } \
           | fuzzel --dmenu --prompt="FRIDAY › " --width=60 --minimal-lines --lines=8 \
           --placeholder="Ask anything · Shift+Enter sends your text as typed") || exit 0
@@ -2677,6 +2704,11 @@ case "${1:-}" in
           if [ -n "$picked" ]; then
             FRIDAY_SUGGESTED=1 exec bash "$0" ask "$(cut -f1 <<<"$picked")" "$(cut -f2- <<<"$picked")"
           fi
+        fi
+        if [ -n "$tell_me" ] && [ "$goal" = "$tell_me" ]; then
+          setsid friday-ctl watch kitty "$run_sock" "$run_id" "$run_cmd" </dev/null >/dev/null 2>&1 &
+          notify-send -a FRIDAY -- "FRIDAY" "I'll tell you when $(cut -c1-60 <<<"$run_cmd") finishes." 2>/dev/null || true
+          exit 0
         fi
         if [ -n "$explain" ] && [ "$goal" = "$explain" ]; then
           # Its output, from kitty (the last 150 lines).
@@ -3039,6 +3071,20 @@ case "${1:-}" in
     ;;
   paste-as)
     friday_paste_as
+    ;;
+  watch)
+    # friday watch region (drag an area) | stop. The command in a kitty
+    # window is watched from the Super+Y menu.
+    case "${2:-region}" in
+      stop) exec friday-ctl watch stop ;;
+      region)
+        command -v slurp >/dev/null 2>&1 && command -v grim >/dev/null 2>&1 \
+          || { echo "friday watch needs slurp and grim" >&2; exit 1; }
+        geom=$(slurp 2>/dev/null) || exit 0
+        setsid friday-ctl watch region "$geom" </dev/null >/dev/null 2>&1 &
+        notify-send -a FRIDAY -- "FRIDAY" "Watching that area. I'll tell you when it changes, or when it stops changing if it's busy now. Stop with: friday watch stop" 2>/dev/null || true ;;
+      *) echo "Usage: friday watch [region|stop]" >&2; exit 2 ;;
+    esac
     ;;
   providers)
     exec friday-ctl providers
