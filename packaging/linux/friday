@@ -58,7 +58,7 @@ Autonomous Agent & Cognitive Loop:
   friday disconnect <name>         Stop using a connected account
   friday private [status|on [model]|off]
                                    Local model only; nothing leaves the machine
-  friday local-ai [summary|presets|install|status|order|off]
+  friday local-ai [summary|presets|install|status|order|bench|off]
                                    A model on this computer, sized to it; answers first,
                                    cloud covers what it can't (friday setup-ai local)
   friday face [status|setup|remove] Face unlock for the lock screen (Gaze)
@@ -1895,12 +1895,31 @@ friday_local_ai_info() {
 # model answers first. Auto: above 4B it answers about as well as the free
 # cloud models, so it goes first; at 4B and below cloud goes first while
 # there's internet, and the local model backs it up.
+# A measured speed ([3], tokens a second; `friday local-ai bench`) can only
+# hold a big model back: under FRIDAY_LOCAL_MIN_TPS (8) it backs up cloud
+# too, since every answer would drag.
 friday_local_ai_local_first() {
   case "$2" in
     local) echo 1 ;;
     cloud) echo 0 ;;
-    *) local size="${1##*:}"; awk -v s="${size%b}" 'BEGIN { print (s + 0 > 4) ? 1 : 0 }' ;;
+    *) local size="${1##*:}"
+       awk -v s="${size%b}" -v tps="${3:-}" -v min=8 'BEGIN { print (s + 0 > 4 && (tps == "" || tps + 0 >= min)) ? 1 : 0 }' ;;
   esac
+}
+
+# friday_local_ai_bench <base url> <model>: tokens a second, or nothing. One
+# warm-up answer (loads the model), then one timed short answer.
+friday_local_ai_bench() {
+  local url="$1/chat/completions" body t0 t1 tokens
+  body=$(jq -nc --arg m "$2" '{model: $m, messages: [{role: "user", content: "Say hi."}], max_tokens: 1}')
+  timeout 300 curl -s -o /dev/null -H 'Content-Type: application/json' -d "$body" "$url" 2>/dev/null || return 0
+  body=$(jq -nc --arg m "$2" '{model: $m, messages: [{role: "user", content: "Count from one to forty in words, separated by commas."}], max_tokens: 64}')
+  t0=$(date +%s%N)
+  tokens=$(timeout 300 curl -s -H 'Content-Type: application/json' -d "$body" "$url" 2>/dev/null \
+    | jq -r '.usage.completion_tokens // empty' 2>/dev/null || true)
+  t1=$(date +%s%N)
+  [[ "$tokens" =~ ^[0-9]+$ ]] && (( tokens > 0 && t1 > t0 )) || return 0
+  echo $(( tokens * 1000000000 / (t1 - t0) ))
 }
 
 # friday_env_set <KEY> <value>: replace one line in friday.env (0600).
@@ -2084,8 +2103,11 @@ friday_local_ai_install() {
     friday_local_failed "$(tail -n1 "$errf" || true)"; rm -f "$errf"; return 1
   fi
   rm -f "$errf"
+  # How fast it answers here: Auto keeps a slow big model behind cloud.
+  echo "Timing $model on this computer..."
+  friday_local_conf_set speed_tps "$(friday_local_ai_bench "$LOCAL_BASE_URL" "$model")"
   local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" local_first
-  local_first=$(friday_local_ai_local_first "$model" "$(friday_local_conf_get order)")
+  local_first=$(friday_local_ai_local_first "$model" "$(friday_local_conf_get order)" "$(friday_local_conf_get speed_tps)")
   (
     umask 077
     { grep -vE '^(LLAMACPP_ENABLED|LLAMACPP_BASE_URL|LLAMACPP_MODEL|LLAMACPP_VISION|FRIDAY_LOCAL_FIRST)=' "$env_file" 2>/dev/null || true
@@ -2130,14 +2152,32 @@ friday_local_ai_order() {
     case "$want" in auto|local|cloud) ;; *) echo "usage: friday local-ai order [auto|local|cloud]" >&2; return 2 ;; esac
     friday_local_conf_set order "$want"
     if [ "$(friday_local_conf_get state)" = ready ]; then
-      friday_env_set FRIDAY_LOCAL_FIRST "$(friday_local_ai_local_first "$model" "$want")"
+      friday_env_set FRIDAY_LOCAL_FIRST "$(friday_local_ai_local_first "$model" "$want" "$(friday_local_conf_get speed_tps)")"
       systemctl --user restart friday-linux-daemon 2>/dev/null || true
     fi
   fi
   order=$(friday_local_conf_get order); order="${order:-auto}"
-  first=$(friday_local_ai_local_first "$model" "$order")
+  local tps; tps=$(friday_local_conf_get speed_tps)
+  first=$(friday_local_ai_local_first "$model" "$order" "$tps")
   if [ "$first" = 1 ]; then echo "Order: $order: ${model:-the local model} answers first; cloud covers what it can't."
   else echo "Order: $order: cloud answers first while online; ${model:-the local model} takes over when it can't."; fi
+  [ -z "$tps" ] || echo "Speed: about $tps tokens a second here (friday local-ai bench measures again)."
+}
+
+# friday local-ai bench: time the local model again (after a driver or
+# hardware change) and let Auto use the new speed.
+friday_local_ai_bench_cmd() {
+  [ "$(friday_local_conf_get state)" = ready ] || { echo "Local AI isn't on yet (friday local-ai status)" >&2; return 1; }
+  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" url model tps
+  url=$(sed -n 's/^LLAMACPP_BASE_URL=//p' "$env_file" 2>/dev/null | tail -n1)
+  model=$(friday_local_conf_get model)
+  echo "Timing $model..."
+  tps=$(friday_local_ai_bench "$url" "$model")
+  [ -n "$tps" ] || { echo "It didn't answer; is it running? (friday local-ai status)" >&2; return 1; }
+  friday_local_conf_set speed_tps "$tps"
+  friday_env_set FRIDAY_LOCAL_FIRST "$(friday_local_ai_local_first "$model" "$(friday_local_conf_get order)" "$tps")"
+  systemctl --user restart friday-linux-daemon 2>/dev/null || true
+  friday_local_ai_order
 }
 
 # Back to cloud only: the local model stays on disk.
@@ -2255,7 +2295,8 @@ friday_local_ai() {
     off) friday_local_ai_off ;;
     packages) friday_local_ai_packages "${2:-}" ;;
     order) friday_local_ai_order "${2:-}" ;;
-    *) echo "usage: friday local-ai [detect|presets|summary|install|status|order|off|packages]" >&2; return 2 ;;
+    bench) friday_local_ai_bench_cmd ;;
+    *) echo "usage: friday local-ai [detect|presets|summary|install|status|order|bench|off|packages]" >&2; return 2 ;;
   esac
 }
 

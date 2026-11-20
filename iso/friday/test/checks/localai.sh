@@ -89,8 +89,11 @@ done
 cat >"$S/curl" <<STUB
 #!/bin/bash
 echo "curl \$*" >>"$LOG"
+all="\$*"
 out=""; while (( \$# )); do [[ \$1 == -o ]] && { out=\$2; shift; }; shift; done
-[[ -n "\$out" ]] && echo "not the model" >"\$out"
+[[ -n "\$out" ]] && { [[ \$out == /dev/null ]] || echo "not the model" >"\$out"; }
+# The timed answer of the benchmark: 64 tokens.
+[[ \$all == *chat/completions* && -z "\$out" ]] && echo '{"usage":{"completion_tokens":64}}'
 exit 0
 STUB
 chmod +x "$S"/*
@@ -129,6 +132,25 @@ refuse "an unknown order is refused" bash "$F" local-ai order sometimes
 p=$(presets "$hw")
 contains "presets: gemma3:12b answers first" "$(field "$p" most 9)" "answers first"
 contains "presets: a 4B model backs up cloud" "$(field "$p" gpu 9)" "backs up cloud"
+
+echo "speed (Auto)"
+: >"$LOG"
+printf 'engine=ollama\nbudget_mb=10240\nstate=pending\n' >"$CONF"
+FRIDAY_HW_ROOT="$hw" bash "$F" local-ai install --first-login >"$W/out" 2>&1
+contains "install times the model" "$(cat "$LOG")" "chat/completions"
+tps=$(sed -n 's/^speed_tps=//p' "$CONF")
+[[ "$tps" =~ ^[0-9]+$ ]] && (( tps > 0 )) && pass "and saves its speed ($tps tokens a second)" || fail "no speed saved: '$tps'"
+contains "a fast 12B model answers first" "$(cat "$ENV")" "FRIDAY_LOCAL_FIRST=1"
+contains "status shows the speed" "$(bash "$F" local-ai status)" "tokens a second"
+sed -i 's/^speed_tps=.*/speed_tps=4/' "$CONF"
+bash "$F" local-ai order auto >/dev/null
+contains "a slow 12B model (4 tokens a second) backs up cloud" "$(cat "$ENV")" "FRIDAY_LOCAL_FIRST=0"
+bash "$F" local-ai order local >/dev/null
+contains "Local first still wins over speed" "$(cat "$ENV")" "FRIDAY_LOCAL_FIRST=1"
+bash "$F" local-ai order auto >/dev/null
+: >"$LOG"
+contains "bench measures again" "$(bash "$F" local-ai bench)" "Speed: about"
+contains "and the fast speed puts it first again" "$(cat "$ENV")" "FRIDAY_LOCAL_FIRST=1"
 
 : >"$LOG"; cp "$ENV" "$W/env.before"
 printf 'engine=llamacpp\nbudget_mb=3000\nstate=pending\n' >"$CONF"
