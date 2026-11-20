@@ -126,11 +126,18 @@ try {
         [System.Windows.Forms.SendKeys]::SendWait($question + "{ENTER}")
         # Watch the answer window's text while waiting for the saved answer.
         $seen = [System.Collections.Generic.List[string]]::new()
+        # How the reading went, for a failure: UI Automation can be slow on a
+        # new window, so one read may outlast the whole stream.
+        $reads = 0; $slowest = 0; $firstText = $null; $sent = Get-Date
         $answered = $false
         $end = (Get-Date).AddSeconds(150)
         while ((Get-Date) -lt $end) {
             foreach ($h in [Keys]::Find("FRIDAY")) {
+                $t0 = Get-Date
                 $t = (AnswerText $h).Trim()
+                $ms = [int]((Get-Date) - $t0).TotalMilliseconds
+                $reads++; if ($ms -gt $slowest) { $slowest = $ms }
+                if ($t -and -not $firstText) { $firstText = [int]((Get-Date) - $sent).TotalMilliseconds }
                 if ($t -and ($seen.Count -eq 0 -or $seen[$seen.Count - 1] -ne $t)) { $seen.Add($t) }
             }
             if ((Test-Path "$state\answers.md") -and ((Get-Content "$state\answers.md" -Raw) -match [regex]::Escape("# $question"))) {
@@ -157,6 +164,7 @@ try {
             if ($growing) { Pass "${label}: the answer window filled in ($($partials.Count) steps) before the end" }
             else {
                 Fail "${label}: the answer window did not fill in as the answer streamed (seen below)"
+                Write-Host "       ($reads reads of the window, slowest ${slowest} ms; first text ${firstText} ms after sending)"
                 $seen | ForEach-Object { Write-Host "       | $_" }
             }
         }
