@@ -7,7 +7,7 @@ public class AgentClisTests
     [Fact]
     public void All_clis_have_expected_identifiers_labels_hints_and_logins()
     {
-        Assert.Equal(4, AgentClis.All.Count);
+        Assert.Equal(5, AgentClis.All.Count);
 
         var claude = AgentClis.Find("claude");
         Assert.NotNull(claude);
@@ -54,6 +54,9 @@ public class AgentClisTests
 
         var cline = AgentClis.Find("cline")!;
         Assert.Equal(["-p", "--auto-approve", "false", q], cline.CheckArgs(q));
+
+        var hermes = AgentClis.Find("hermes")!;
+        Assert.Equal(["--ignore-rules", "-z", q, "-t", "context_engine"], hermes.CheckArgs(q));
     }
 
     [Fact]

@@ -548,6 +548,13 @@ if [[ -f /usr/lib/friday/friday-os-helper ]]; then
 fi
 
 echo "connect an account"
+# Hermes, with no friday.env yet (no key saved): asked with no tools, then saved.
+printf '#!/bin/bash\necho "hermes $*" >>"%s"; echo ready\n' "$LOG" >"$S/hermes"; chmod +x "$S/hermes"
+mv "$envf" "$envf.saved" 2>/dev/null || true; : >"$LOG"
+expect "connect hermes with no friday.env yet" bash "$F" connect hermes
+contains "hermes is asked one-shot with a toolset of no tools" "$(cat "$LOG")" "hermes --ignore-rules -z Reply with the single word: ready -t context_engine"
+contains "hermes is saved" "$(cat "$envf" 2>/dev/null)" "FRIDAY_AGENT_CLIS=hermes"
+rm -f "$envf"; mv "$envf.saved" "$envf" 2>/dev/null || true
 # A stub Claude Code: answers only once signed in (its login makes the mark).
 cat >"$S/claude" <<EOF
 #!/bin/bash

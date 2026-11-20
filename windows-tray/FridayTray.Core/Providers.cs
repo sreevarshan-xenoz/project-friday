@@ -34,6 +34,7 @@ public static partial class Providers
         "codex" => "Codex",
         "antigravity" => "Antigravity",
         "cline" => "Cline",
+        "hermes" => "Hermes Agent",
         _ => providerId,
     };
 
