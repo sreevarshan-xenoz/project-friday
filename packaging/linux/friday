@@ -38,6 +38,9 @@ Autonomous Agent & Cognitive Loop:
                                    only, so you can ask "what was that…" (off forgets it)
   friday routine save|run|list|rm  Save what FRIDAY just did on your desktop, then do it again
                                    by name ("run <name>" in the ask box works too)
+  friday workspace save|restore|list|rm  Keep your windows and the work in them (terminal
+                                   folders, editor files, the project); put them back
+                                   ("save this as my X workspace" in the ask box too)
   friday undo                      Put back the last thing FRIDAY changed (volume, mute,
                                    Do not disturb, a rewrite or paste); "undo" in the ask box too
   friday watch [region|stop]       Drag an area; FRIDAY says when it changes (or stops
@@ -1263,6 +1266,17 @@ friday_routine() {
   esac
 }
 
+# `friday workspace save|restore|list|rm <name>`: keep the windows and the
+# work in them (terminal folders, the editor and its files, the project), and
+# put them back (friday-ctl workspace; Hyprland).
+friday_workspace() {
+  command -v friday-ctl >/dev/null 2>&1 || { echo "friday: friday-ctl is not installed" >&2; return 1; }
+  case "${1:-list}" in
+    save|restore|rm|list) friday-ctl workspace "$@" ;;
+    *) echo "Usage: friday workspace save <name> | restore <name> | list | rm <name>" >&2; return 1 ;;
+  esac
+}
+
 # The saved routine a typed name means, as the person spelled it: "my setup"
 # is a routine called "my setup", or one called "setup". Fails when none.
 friday_routine_find() {
@@ -1392,6 +1406,12 @@ friday_local_command() {
     echo "Opened the controls (Wi-Fi, Bluetooth, sound)."
   elif [[ "$q" =~ ^(run|do|start)\ ([a-z0-9_\ -]{1,40})$ ]] && rname=$(friday_routine_find "${BASH_REMATCH[2]}"); then
     friday_routine run "$rname" 2>&1 || true
+  elif [[ "$q" =~ ^save\ (this|these\ windows|my\ windows|the\ windows)\ as\ (my\ |the\ )?([a-z0-9_\ -]{1,40})$ ]] \
+      || [[ "$q" =~ ^save\ (this|my|the)\ workspace\ as\ (my\ |the\ )?([a-z0-9_\ -]{1,40})$ ]]; then
+    friday_workspace save "${BASH_REMATCH[-1]% workspace}" 2>&1 || true
+  elif [[ "$q" =~ ^(restore|open|bring\ back)\ (my\ |the\ )?([a-z0-9_\ -]{1,40})\ workspace$ ]] \
+      && friday-ctl workspace list 2>/dev/null | grep -qi .; then
+    friday_workspace restore "${BASH_REMATCH[3]}" 2>&1 || true
   elif [[ "$q" =~ ^undo(\ that|\ it)?$ ]]; then
     friday_undo || true
   else
@@ -3279,6 +3299,10 @@ case "${1:-}" in
   routine)
     shift
     friday_routine "$@"
+    ;;
+  workspace)
+    shift
+    friday_workspace "$@"
     ;;
   captions)
     shift

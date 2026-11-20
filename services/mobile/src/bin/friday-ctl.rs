@@ -502,6 +502,94 @@ fn local_ai(args: &[String]) -> std::process::ExitCode {
 /// `friday-ctl docs "<question>"`: excerpts from the documentation on this
 /// computer (nothing when nothing fits). `--prepare` unpacks the Arch wiki
 /// for searching; a search starts that in the background when it's due.
+/// `friday-ctl workspace save <name> | restore <name> | list | rm <name>`:
+/// keep the windows and the work in them, and put them back
+/// (`friday_mobile::workspace`).
+fn workspace(args: &[String]) -> std::process::ExitCode {
+    use friday_mobile::workspace as ws;
+    use std::process::ExitCode;
+    let dir = ws::dir();
+    let name = args.get(1..).unwrap_or_default().join(" ");
+    let proc_root = std::path::Path::new("/proc");
+    let now = chrono::Utc::now().timestamp();
+    match (args.first().map(String::as_str), name.is_empty()) {
+        (Some("save"), false) => match ws::capture(&ws::SystemHypr, proc_root, &name, now)
+            .and_then(|s| ws::save(&dir, &s).map(|_| s).map_err(|e| e.to_string()))
+        {
+            Ok(s) => {
+                println!(
+                    "Saved workspace \"{}\": {} window(s){}. Bring it back: friday workspace restore {}",
+                    s.name,
+                    s.windows.len(),
+                    s.project.map(|p| format!(", project {p}")).unwrap_or_default(),
+                    ws::key(&s.name)
+                );
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("Couldn't save the workspace: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        (Some("restore"), false) => {
+            let Some(saved) = ws::find(&dir, &name) else {
+                eprintln!("No saved workspace called \"{name}\" (friday workspace list).");
+                return ExitCode::FAILURE;
+            };
+            match ws::restore(&ws::SystemHypr, proc_root, &saved) {
+                Ok(report) => {
+                    println!("{}", report.text(&saved));
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("Couldn't restore the workspace: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        (Some("rm"), false) => match ws::find(&dir, &name) {
+            Some(s)
+                if std::fs::remove_file(dir.join(format!("{}.json", ws::key(&s.name)))).is_ok() =>
+            {
+                println!("Removed workspace \"{}\".", s.name);
+                ExitCode::SUCCESS
+            }
+            _ => {
+                eprintln!("No saved workspace called \"{name}\".");
+                ExitCode::FAILURE
+            }
+        },
+        (Some("list") | None, _) => {
+            let all = ws::list(&dir);
+            if all.is_empty() {
+                println!("No saved workspaces. Save the windows you have open: friday workspace save <name>");
+            }
+            for s in all {
+                let when = chrono::DateTime::from_timestamp(s.saved, 0)
+                    .map(|t| {
+                        t.with_timezone(&chrono::Local)
+                            .format("%Y-%m-%d %H:%M")
+                            .to_string()
+                    })
+                    .unwrap_or_default();
+                println!(
+                    "{}  {} window(s)  saved {when}{}",
+                    s.name,
+                    s.windows.len(),
+                    s.project.map(|p| format!("  {p}")).unwrap_or_default()
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        _ => {
+            eprintln!(
+                "usage: friday-ctl workspace save <name> | restore <name> | list | rm <name>"
+            );
+            ExitCode::from(2)
+        }
+    }
+}
+
 fn docs(args: &[String]) -> std::process::ExitCode {
     use friday_mobile::local_docs;
     let s = local_docs::Sources::system();
@@ -761,6 +849,9 @@ async fn main() -> std::process::ExitCode {
     }
     if raw.first().map(String::as_str) == Some("docs") {
         return docs(&raw[1..]);
+    }
+    if raw.first().map(String::as_str) == Some("workspace") {
+        return workspace(&raw[1..]);
     }
     if raw.first().map(String::as_str) == Some("show") {
         return show(&raw[1..]).await;
