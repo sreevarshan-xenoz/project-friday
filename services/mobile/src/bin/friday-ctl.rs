@@ -288,6 +288,156 @@ async fn recall(args: &[String]) -> std::process::ExitCode {
     }
 }
 
+/// `friday-ctl routine save|run|list|rm [<name>]` (see
+/// `friday_mobile::routine`).
+async fn routine(args: &[String]) -> std::process::ExitCode {
+    use friday_mobile::routine::{self as r, Routine, Step};
+    use std::process::ExitCode;
+    let dir = r::dir();
+    let name = args[1.min(args.len())..].join(" ");
+    let named = |what: &str| -> Result<(), ExitCode> {
+        if r::valid_name(&name) {
+            return Ok(());
+        }
+        eprintln!(
+            "friday-ctl: {what} needs a name made of letters, digits, spaces, - or _ (up to 40)"
+        );
+        Err(ExitCode::from(2))
+    };
+    match args.first().map(String::as_str) {
+        Some("list") => {
+            for x in r::list(&dir) {
+                println!("{}\t{} steps\t{}", x.name, x.steps.len(), x.goal);
+            }
+            ExitCode::SUCCESS
+        }
+        Some("rm") => {
+            if let Err(c) = named("rm") {
+                return c;
+            }
+            if r::remove(&dir, &name) {
+                println!("Removed the routine \"{name}\".");
+                ExitCode::SUCCESS
+            } else {
+                eprintln!("There's no routine called \"{name}\".");
+                ExitCode::FAILURE
+            }
+        }
+        Some("save") => {
+            if let Err(c) = named("save") {
+                return c;
+            }
+            let log = friday_mobile::desktop_tool::audit_dir()
+                .and_then(|d| std::fs::read_to_string(d.join("actions.jsonl")).ok())
+                .unwrap_or_default();
+            let Some(rec) = r::last_task(&log) else {
+                eprintln!("FRIDAY hasn't done anything on your desktop to save yet. Ask it to (for example \"put Firefox on workspace 2\"), then save it.");
+                return ExitCode::FAILURE;
+            };
+            let routine = Routine {
+                name: name.trim().to_string(),
+                goal: rec.goal,
+                steps: rec.steps,
+            };
+            if let Err(e) = r::save(&dir, &routine) {
+                eprintln!("friday-ctl: couldn't save it: {e}");
+                return ExitCode::FAILURE;
+            }
+            println!(
+                "Saved \"{}\": {} steps, from \"{}\".",
+                routine.name,
+                routine.steps.len(),
+                routine.goal
+            );
+            if rec.left_out > 0 {
+                println!(
+                    "{} step(s) were left out (they needed your confirmation, or typed text, which isn't saved); do those yourself.",
+                    rec.left_out
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        Some("run") => {
+            if let Err(c) = named("run") {
+                return c;
+            }
+            let Some(routine) = r::load(&dir, &name) else {
+                eprintln!("There's no routine called \"{name}\".");
+                return ExitCode::FAILURE;
+            };
+            struct Live {
+                desktop: friday_actions::DesktopAdapter,
+                #[cfg(target_os = "linux")]
+                ui: friday_actions::UiAdapter,
+            }
+            #[async_trait::async_trait]
+            impl r::Runner for Live {
+                async fn run(&mut self, step: &Step) -> Result<(), String> {
+                    use friday_actions::{ActionAdapter, ActionRequest};
+                    let res = match step.verb.strip_prefix("ui_") {
+                        #[cfg(target_os = "linux")]
+                        Some(v) => {
+                            // A click is found again by the label it had.
+                            let mut p = step.params.clone();
+                            if v == "click" {
+                                p = serde_json::json!({
+                                    "app": step.params["app"],
+                                    "name": step.params["label"],
+                                });
+                            }
+                            self.ui.execute(ActionRequest::new("ui", v, p)).await
+                        }
+                        #[cfg(not(target_os = "linux"))]
+                        Some(_) => friday_actions::ActionResult::error("not on this system yet"),
+                        None => {
+                            self.desktop
+                                .execute(ActionRequest::new(
+                                    "desktop",
+                                    &step.verb,
+                                    step.params.clone(),
+                                ))
+                                .await
+                        }
+                    };
+                    if res.success {
+                        Ok(())
+                    } else {
+                        Err(res.error.unwrap_or_else(|| "failed".into()))
+                    }
+                }
+            }
+            // Destructive verbs ask each time: refuse them here too, in case
+            // a file was edited by hand.
+            if let Some(bad) = routine.steps.iter().find(|s| {
+                friday_actions::desktop_risk_of(&s.verb)
+                    == Some(friday_actions::DesktopRisk::Destructive)
+            }) {
+                eprintln!("The routine \"{}\" has a step ({}) that needs your confirmation each time, so it isn't run.", routine.name, bad.verb);
+                return ExitCode::FAILURE;
+            }
+            let mut live = Live {
+                desktop: friday_actions::DesktopAdapter::new(),
+                #[cfg(target_os = "linux")]
+                ui: friday_actions::UiAdapter::new(),
+            };
+            match r::replay(&routine, &mut live).await {
+                Ok(n) => {
+                    println!("Ran \"{}\": {n} steps.", routine.name);
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("\"{}\" {e}", routine.name);
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        _ => {
+            eprintln!("usage: friday-ctl routine save|run|rm <name> | list");
+            ExitCode::from(2)
+        }
+    }
+}
+
 /// `friday-ctl docs "<question>"`: excerpts from the documentation on this
 /// computer (nothing when nothing fits). `--prepare` unpacks the Arch wiki
 /// for searching; a search starts that in the background when it's due.
@@ -529,6 +679,9 @@ async fn main() -> std::process::ExitCode {
     }
     if raw.first().map(String::as_str) == Some("recall") {
         return recall(&raw[1..]).await;
+    }
+    if raw.first().map(String::as_str) == Some("routine") {
+        return routine(&raw[1..]).await;
     }
     if raw.first().map(String::as_str) == Some("docs") {
         return docs(&raw[1..]);
