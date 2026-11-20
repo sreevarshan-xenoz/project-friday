@@ -35,6 +35,7 @@ pub mod tinyvoca;
 pub mod transport;
 pub mod upgrade;
 pub mod voice;
+pub mod watch;
 pub mod web_search;
 pub mod win_insert;
 

@@ -84,6 +84,141 @@ fn confirm_context_consent() -> bool {
 }
 
 /// `friday-ctl say`: no daemon needed, the voice runs here.
+/// `friday-ctl watch kitty <socket> <id> <command> | region <geometry> | stop`
+/// (see `friday_mobile::watch`). Runs until it has something to say, is
+/// replaced or stopped, or two hours pass.
+fn watch(args: &[String]) -> std::process::ExitCode {
+    use friday_mobile::watch::{self as w, Kitty, Region, RegionEvent};
+    use std::process::{Command, ExitCode, Stdio};
+    let pidfile = std::path::PathBuf::from(
+        std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into()),
+    )
+    .join("friday-watch.pid");
+    // The watch running now, if any (the pid file names a live process).
+    let running = std::fs::read_to_string(&pidfile)
+        .ok()
+        .and_then(|p| p.trim().parse::<u32>().ok())
+        // A pid can be reused after a reboot or a crash: only a process run
+        // as `friday-ctl watch …` counts.
+        .filter(|pid| {
+            std::fs::read(format!("/proc/{pid}/cmdline")).is_ok_and(|c| {
+                let mut argv = c.split(|b| *b == 0);
+                let exe = argv.next().unwrap_or_default();
+                exe.rsplit(|b| *b == b'/').next() == Some(b"friday-ctl".as_slice())
+                    && argv.next() == Some(b"watch".as_slice())
+            })
+        });
+    let stop_running = || {
+        if let Some(pid) = running {
+            let _ = Command::new("kill").arg(pid.to_string()).status();
+        }
+        let _ = std::fs::remove_file(&pidfile);
+    };
+    let notify = |title: &str, body: &str| {
+        let _ = Command::new("notify-send")
+            .args(["-a", "FRIDAY", "--", title, body])
+            .stderr(Stdio::null())
+            .status();
+    };
+    let usage = || {
+        eprintln!("usage: friday-ctl watch kitty <socket> <window id> <command> | region <X,Y WxH> | stop");
+        ExitCode::from(2)
+    };
+    match args.first().map(String::as_str) {
+        Some("stop") => {
+            println!(
+                "{}",
+                if running.is_some() {
+                    "Stopped watching."
+                } else {
+                    "Nothing is being watched."
+                }
+            );
+            stop_running();
+            return ExitCode::SUCCESS;
+        }
+        Some("kitty") if args.len() >= 4 && args[2].parse::<u64>().is_ok() => {}
+        Some("region") if args.len() == 2 && w::valid_geometry(&args[1]) => {}
+        _ => return usage(),
+    }
+    stop_running();
+    let _ = std::fs::write(&pidfile, std::process::id().to_string());
+    let deadline = std::time::Instant::now() + Duration::from_secs(w::MAX_SECS);
+    let mut region = Region::default();
+    let me = std::process::id().to_string();
+    let mut blind = 0;
+    while std::time::Instant::now() < deadline {
+        // Replaced by a newer watch (or stopped): this one ends quietly.
+        if std::fs::read_to_string(&pidfile).ok().as_deref() != Some(me.as_str()) {
+            return ExitCode::SUCCESS;
+        }
+        if args[0] == "kitty" {
+            let ls = Command::new("timeout")
+                .args([
+                    "5",
+                    "kitten",
+                    "@",
+                    "--to",
+                    &format!("unix:{}", args[1]),
+                    "ls",
+                ])
+                .stderr(Stdio::null())
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                .unwrap_or_default();
+            match w::kitty_state(&ls, args[2].parse().unwrap_or(0)) {
+                Kitty::Running => {}
+                Kitty::Finished(status) => {
+                    let (title, body) = w::finished_message(&args[3..].join(" "), status);
+                    notify(&title, &body);
+                    break;
+                }
+                Kitty::Gone => {
+                    notify("FRIDAY", "The window you asked me to watch was closed.");
+                    break;
+                }
+            }
+        } else if let Some(frame) = Command::new("timeout")
+            .args(["5", "grim", "-g", &args[1], "-t", "ppm", "-"])
+            .stderr(Stdio::null())
+            .output()
+            .ok()
+            .map(|o| o.stdout)
+            .filter(|f| w::parse_ppm(f).is_some())
+        {
+            blind = 0;
+            match region.look(frame) {
+                Some(RegionEvent::Changed) => {
+                    notify("FRIDAY", "The area you're watching changed.");
+                    break;
+                }
+                Some(RegionEvent::Stopped) => {
+                    notify("FRIDAY", "The area you're watching has stopped changing.");
+                    break;
+                }
+                None => {}
+            }
+        } else if args[0] == "region" {
+            // No picture (the screen is locked, or grim failed): a minute of
+            // that and the watch ends, saying why.
+            blind += 1;
+            if blind >= 30 {
+                notify(
+                    "FRIDAY",
+                    "I can't see that area any more, so I stopped watching it.",
+                );
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_secs(w::EVERY_SECS));
+    }
+    // Only our own pid file: a newer watch may have replaced it.
+    if std::fs::read_to_string(&pidfile).ok().as_deref() == Some(me.as_str()) {
+        let _ = std::fs::remove_file(&pidfile);
+    }
+    ExitCode::SUCCESS
+}
+
 fn say(args: &[String]) -> std::process::ExitCode {
     if let Some(at) = args.iter().position(|a| a == "--setup") {
         let name = args.get(at + 1).map(String::as_str).unwrap_or("tinyvoca");
@@ -149,6 +284,9 @@ async fn main() -> std::process::ExitCode {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     if raw.first().map(String::as_str) == Some("say") {
         return say(&raw[1..]);
+    }
+    if raw.first().map(String::as_str) == Some("watch") {
+        return watch(&raw[1..]);
     }
     if raw.first().map(String::as_str) == Some("agent-hook") {
         return agent_hook(&raw[1..]);
