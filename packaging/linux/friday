@@ -1691,6 +1691,144 @@ friday_sent() {
   fi
 }
 
+# `friday local-ai`: a model on this computer, sized to it.
+#   detect   what the machine has (RAM, GPU, video memory, AVX2, free disk)
+#   presets  how much local AI may use, and the model each budget gets
+# Tests point FRIDAY_HW_ROOT at a fake /proc and /sys, and set
+# FRIDAY_DISK_FREE_MB.
+
+# The ladder: id|memory it needs (MB)|largest download, Ollama or GGUF (MB)|sees screenshots
+FRIDAY_LOCAL_MODELS="qwen3:1.7b|2048|1834|0
+qwen3:4b|3584|2497|0
+gemma3:4b|4608|3350|1
+gemma3:12b|9216|8164|1
+gemma3:27b|19456|17413|1"
+
+friday_local_ai_detect() {
+  local root="${FRIDAY_HW_ROOT:-}" ram_mb=0 gpu=none discrete=no vram=unknown threads=0 avx2=no disk
+  ram_mb=$(awk '/^MemTotal:/ {print int($2 / 1024)}' "$root/proc/meminfo" 2>/dev/null)
+  threads=$(grep -c '^processor' "$root/proc/cpuinfo" 2>/dev/null || true)
+  grep -qw avx2 "$root/proc/cpuinfo" 2>/dev/null && avx2=yes
+  # The strongest GPU: NVIDIA, then AMD with its own memory, then integrated.
+  local dev vendor mem
+  # PCI display devices (class 0x03xx), so a GPU with no driver loaded counts.
+  for dev in "$root"/sys/bus/pci/devices/*; do
+    [[ -r "$dev/class" && $(<"$dev/class") == 0x03* ]] || continue
+    vendor=$(<"$dev/vendor")
+    case "$vendor" in
+      0x10de)
+        gpu=nvidia discrete=yes vram=unknown
+        if command -v nvidia-smi >/dev/null 2>&1; then
+          mem=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -n1 | tr -dc 0-9 || true)
+          [[ -n "$mem" ]] && vram=$mem
+        fi
+        break ;;
+      0x1002)
+        mem=$(( $(cat "$dev/mem_info_vram_total" 2>/dev/null || echo 0) / 1048576 ))
+        if (( mem >= 2048 )); then gpu=amd discrete=yes vram=$mem
+        elif [[ $gpu == none ]]; then gpu=amd; fi ;;
+      0x8086) [[ $gpu == none ]] && gpu=intel ;;
+    esac
+  done
+  if [[ -n "${FRIDAY_DISK_FREE_MB:-}" ]]; then disk=$FRIDAY_DISK_FREE_MB
+  else
+    local where="${FRIDAY_DISK_PATH:-$HOME}"
+    while [[ ! -d "$where" ]]; do where=$(dirname "$where"); done
+    disk=$(df -Pm "$where" 2>/dev/null | awk 'NR == 2 {print $4}')
+  fi
+  echo "ram_mb=${ram_mb:-0}"
+  echo "gpu=$gpu"
+  echo "gpu_discrete=$discrete"
+  echo "vram_mb=$vram"
+  echo "cpu_threads=${threads:-0}"
+  echo "avx2=$avx2"
+  echo "disk_free_mb=${disk:-0}"
+}
+
+# friday_local_ai_model <budget_mb>: the largest ladder model that fits.
+friday_local_ai_model() {
+  local id need _ best=""
+  while IFS='|' read -r id need _ _; do
+    (( $1 >= need )) && best=$id
+  done <<<"$FRIDAY_LOCAL_MODELS"
+  echo "$best"
+}
+
+# friday_local_ai_info <id>: "need_mb download_mb vision"
+friday_local_ai_info() {
+  awk -F'|' -v id="$1" '$1 == id { print $2, $3, $4 }' <<<"$FRIDAY_LOCAL_MODELS"
+}
+
+friday_gb() { awk -v m="$1" 'BEGIN { g = m / 1024; if (g == int(g)) printf "%d GB", g; else printf "%.1f GB", g }'; }
+
+# One line per preset: id|label|budget_mb|model|download_mb|vision|fast|available|note
+friday_local_ai_presets() {
+  local hw ram_mb discrete vram disk
+  hw=$(friday_local_ai_detect)
+  ram_mb=$(sed -n 's/^ram_mb=//p' <<<"$hw")
+  discrete=$(sed -n 's/^gpu_discrete=//p' <<<"$hw"); vram=$(sed -n 's/^vram_mb=//p' <<<"$hw")
+  disk=$(sed -n 's/^disk_free_mb=//p' <<<"$hw")
+  local -a ids=() labels=() budgets=() fast=()
+  if [[ $discrete == yes && $vram != unknown ]] && (( vram > 512 )); then
+    ids+=(gpu); budgets+=($((vram - 512))); fast+=(1)
+    labels+=("GPU ($(friday_gb $((vram - 512))) of video memory)")
+  fi
+  local pct name i
+  for name in light:25:Light balanced:50:Balanced most:75:Most; do
+    IFS=: read -r i pct label <<<"$name"
+    ids+=("$i"); budgets+=($((ram_mb * pct / 100))); fast+=(0)
+    labels+=("$label ($(friday_gb $((ram_mb * pct / 100))) of memory)")
+  done
+  local model need dl vision available note
+  for i in "${!ids[@]}"; do
+    model=$(friday_local_ai_model "${budgets[$i]}")
+    if [[ -z "$model" ]]; then
+      echo "${ids[$i]}|${labels[$i]}|${budgets[$i]}||0|0|${fast[$i]}|0|too little memory for local AI; use a cloud provider"
+      continue
+    fi
+    read -r need dl vision <<<"$(friday_local_ai_info "$model")"
+    available=1
+    if (( vision )); then note="sees screenshots"; else note="text only: can't see screenshots"; fi
+    if (( dl + 1024 > ${disk:-0} )); then
+      available=0 note="needs $(friday_gb $((dl + 1024))) of disk, $(friday_gb "${disk:-0}") free"
+    fi
+    echo "${ids[$i]}|${labels[$i]}|${budgets[$i]}|$model|$dl|$vision|${fast[$i]}|$available|$note"
+  done
+}
+
+# The machine in one line, then a line per caveat.
+friday_local_ai_summary() {
+  local hw ram_mb gpu vram threads avx2 line
+  hw=$(friday_local_ai_detect)
+  ram_mb=$(sed -n 's/^ram_mb=//p' <<<"$hw"); gpu=$(sed -n 's/^gpu=//p' <<<"$hw")
+  vram=$(sed -n 's/^vram_mb=//p' <<<"$hw"); threads=$(sed -n 's/^cpu_threads=//p' <<<"$hw")
+  avx2=$(sed -n 's/^avx2=//p' <<<"$hw")
+  line="$(friday_gb "$ram_mb") memory"
+  case "$gpu" in
+    nvidia) line="$line, NVIDIA GPU" ;;
+    amd) line="$line, AMD GPU" ;;
+    intel) line="$line, Intel graphics" ;;
+  esac
+  [[ $vram != unknown && $gpu != intel ]] && line="$line $(friday_gb "$vram")"
+  echo "$line, $threads threads"
+  if [[ $gpu == nvidia && $vram == unknown ]]; then
+    echo "Its video memory can be read once the NVIDIA driver is installed; then friday setup-ai local offers a GPU preset."
+  fi
+  if [[ $gpu == none && $avx2 == no ]]; then
+    echo "This computer is old for local AI: answers will be very slow."
+  fi
+}
+
+friday_local_ai() {
+  local sub="${1:-presets}"
+  case "$sub" in
+    detect) friday_local_ai_detect ;;
+    presets) friday_local_ai_presets ;;
+    summary) friday_local_ai_summary ;;
+    *) echo "usage: friday local-ai [detect|presets|summary]" >&2; return 2 ;;
+  esac
+}
+
 friday_private() {
   local sub="${1:-status}"
   case "$sub" in
@@ -2220,6 +2358,10 @@ case "${1:-}" in
   private)
     shift
     friday_private "$@"
+    ;;
+  local-ai)
+    shift
+    friday_local_ai "$@"
     ;;
   tour)
     FRIDAY_WELCOME_DELAY=0 friday_welcome --force
