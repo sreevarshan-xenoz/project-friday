@@ -338,6 +338,7 @@ step_ai() {
     "Google Gemini (vision, free tier)" \
     "Groq (fast, vision)" \
     "NVIDIA NIM (vision)" \
+    "Runcrate (six free models weekly, GitHub sign-in)" \
     "OpenRouter (many models, no screen context)" \
     "Cerebras (fast, no screen context)") || choice="OpenCode Zen"
   FRIDAY_AI_PROVIDER=""
@@ -346,6 +347,7 @@ step_ai() {
     "Google Gemini"*) FRIDAY_AI_PROVIDER="gemini" ;;
     "Groq"*)          FRIDAY_AI_PROVIDER="groq" ;;
     "NVIDIA NIM"*)    FRIDAY_AI_PROVIDER="nvidia-nim" ;;
+    "Runcrate"*)      FRIDAY_AI_PROVIDER="runcrate" ;;
     "OpenRouter"*)    FRIDAY_AI_PROVIDER="openrouter" ;;
     "Cerebras"*)      FRIDAY_AI_PROVIDER="cerebras" ;;
   esac

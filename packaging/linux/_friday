@@ -69,7 +69,7 @@ _friday() {
     face)     _values 'action' status setup remove ;;
     voice)    _values 'action' status setup remove ;;
     helper)   _values 'action' status enable disable ;;
-    setup-ai) _arguments '--keep-others[keep the other providers'"'"' keys]' '--only[use only this provider'"'"'s key]' '1:provider:(opencode gemini groq nvidia-nim openrouter cerebras)' ;;
+    setup-ai) _arguments '--keep-others[keep the other providers'"'"' keys]' '--only[use only this provider'"'"'s key]' '1:provider:(opencode gemini groq nvidia-nim openrouter cerebras runcrate)' ;;
     welcome)  _arguments '--force[show it even if already shown]' ;;
     daemon)   _values 'action' status start stop restart logs ;;
     shell)    _values 'action' start restart stop close ipc friday control calendar launcher session ;;

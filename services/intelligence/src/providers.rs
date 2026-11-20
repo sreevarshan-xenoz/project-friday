@@ -20,7 +20,7 @@ use crate::secrets::SecretsVault;
 /// [`crate::secrets::SecretsVault::seed_from_env`] to register production
 /// keys into the vault (so the egress gate can scan for them and nothing
 /// auto-prints them). Mirrors the provider-qual environment matrix.
-pub const PROVIDER_ENV_VARS: [(&str, &str); 13] = [
+pub const PROVIDER_ENV_VARS: [(&str, &str); 14] = [
     ("OMNIROUTE_API_KEY", "omniroute"),
     ("OPENROUTER_API_KEY", "openrouter"),
     ("GROQ_API_KEY", "groq"),
@@ -34,6 +34,7 @@ pub const PROVIDER_ENV_VARS: [(&str, &str); 13] = [
     ("GITHUB_TOKEN", "github-models"),
     ("SILICONFLOW_API_KEY", "siliconflow"),
     ("ZHIPU_API_KEY", "zhipu"),
+    ("RUNCRATE_API_KEY", "runcrate"),
 ];
 
 /// Pluggable interface for calling large language models.
@@ -2494,6 +2495,58 @@ impl InferenceFabric {
             }
         }
 
+        // Runcrate: six free models with a weekly token allowance (resets
+        // Mondays) for a GitHub-signed-in account; keys look like rc_live_….
+        // When the week's allowance is spent it answers `free_allowance_used`
+        // and the fabric moves on to the next provider.
+        if let Ok(key) = std::env::var("RUNCRATE_API_KEY") {
+            fabric.register_provider(Box::new(OpenAiProvider {
+                name: "runcrate".to_string(),
+                base_url: "https://api.runcrate.ai/v1".to_string(),
+                api_key: key,
+            }));
+            if !registry_loaded {
+                for (id, family, latency_ms) in [
+                    ("zai-org/GLM-5.3-Flash", "glm-5.3-flash", 900),
+                    (
+                        "deepseek-ai/DeepSeek-V4.1-Flash",
+                        "deepseek-v4.1-flash",
+                        1200,
+                    ),
+                    ("zai-org/GLM-5.3", "glm-5.3", 2500),
+                    ("openai/gpt-oss-120b", "gpt-oss-120b", 1500),
+                    ("Qwen/Qwen3.8-Flash", "qwen3.8-flash", 1000),
+                ] {
+                    fabric.register_model(ModelInfo {
+                        id: id.to_string(),
+                        family: family.to_string(),
+                        provider: "runcrate".to_string(),
+                        latency_ms,
+                        reliability: 1.0,
+                        capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
+                        max_context: if family == "gpt-oss-120b" {
+                            131_072
+                        } else {
+                            1_000_000
+                        },
+                        tier: None,
+                    });
+                }
+                // Free vision: DeepSeek V4.1 Flash takes images (its /models
+                // entry lists image input).
+                fabric.register_model(ModelInfo {
+                    id: "deepseek-ai/DeepSeek-V4.1-Flash".to_string(),
+                    family: "deepseek-v4.1-flash".to_string(),
+                    provider: "runcrate".to_string(),
+                    latency_ms: 1500,
+                    reliability: 1.0,
+                    capabilities: vec![ModelCapability::Json, ModelCapability::Vision],
+                    max_context: 1_000_000,
+                    tier: Some(CapabilityTier::VisionFree),
+                });
+            }
+        }
+
         // Local Ollama (always probed, so not a choice the user made)
         fabric.automatic.insert("ollama".to_string());
         fabric.register_provider(Box::new(OpenAiProvider {
@@ -2798,6 +2851,7 @@ fn is_free_provider(name: &str) -> bool {
             | "opencode"
             | "kilo"
             | "nvidia-nim"
+            | "runcrate"
     )
 }
 
@@ -3404,7 +3458,11 @@ pub fn classify_failure_reason(err: &str) -> &'static str {
     let lower = err.to_lowercase();
     if lower.contains("timed out") || lower.contains("timeout") {
         "timeout"
-    } else if lower.contains("429") || lower.contains("rate limit") || lower.contains("quota") {
+    } else if lower.contains("429")
+        || lower.contains("rate limit")
+        || lower.contains("quota")
+        || lower.contains("free_allowance_used")
+    {
         "rate_limit"
     } else if lower.contains("401")
         || lower.contains("403")
@@ -4277,6 +4335,29 @@ mod tests {
         assert!(
             !fabric.automatic.contains("kilo"),
             "kilo not in automatic set when disabled"
+        );
+    }
+
+    #[test]
+    fn a_runcrate_key_adds_its_free_models_ahead_of_the_keyless_ones() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard("RUNCRATE_API_KEY");
+        std::env::set_var("RUNCRATE_API_KEY", "rc_live_example");
+
+        let fabric = InferenceFabric::default_from_env();
+        assert!(fabric.providers.contains_key("runcrate"));
+        assert!(is_free_provider("runcrate"));
+        let vision = fabric
+            .resolve_tier("runcrate", CapabilityTier::VisionFree)
+            .expect("a free vision model");
+        assert_eq!(vision.id, "deepseek-ai/DeepSeek-V4.1-Flash");
+        let cands = fabric.select_for(&RequestRequirements::default());
+        let pos = |p: &str| cands.iter().position(|(m, _)| m.provider == p);
+        assert!(pos("runcrate").unwrap() < pos("opencode").unwrap());
+        // A spent weekly allowance fails over like any rate limit.
+        assert_eq!(
+            classify_failure_reason("402 {\"error\":{\"code\":\"free_allowance_used\"}}"),
+            "rate_limit"
         );
     }
 
