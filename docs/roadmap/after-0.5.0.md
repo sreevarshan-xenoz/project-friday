@@ -73,14 +73,19 @@ notes below).
 - **11 Show me** works with GTK and Qt apps. Chromium shows only its window
   frame on the accessibility bus here, so web pages fall back to a worded answer.
 
+## Checked live (FRIDAY OS test VM, Hyprland 0.57)
+
+- The key sends behind Rewrite in place, Paste as and Undo: `send_key_state`
+  Ctrl+V replaced the selected text in a Qt text field with the clipboard, and
+  Ctrl+Z put the original back (screenshots checked, 2026-11-20). The full
+  Super+Alt+Y flow around them (menu, model answer) was not run in the VM.
+
 ## Owed live checks
 
 Everything above passed its unit and CLI checks and a run in the FRIDAY OS test
 VM where noted in its PR. These still need a real session (the VM pass, then the
 real-hardware pass in item 18):
 
-- Keys sent through Hyprland (`send_key_state`): Ctrl+V for Rewrite in place and
-  Paste as, Ctrl+Z for Undo.
 - kitty on a real session: Explain the last error and "Tell me when this finishes".
 - The `friday-recall` and `friday-wake` user services under systemd, and the bar
   marks they show.
