@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 namespace FridayTray.Core;
 
 /// <summary>
-/// An AI account tool FRIDAY can answer through (Claude Code, Codex, Antigravity, Cline)
+/// An AI account tool FRIDAY can answer through (Claude Code, Codex, Antigravity, Cline, Hermes)
 /// using that tool's own CLI and sign-in.
 /// </summary>
 public sealed record AgentCli(
@@ -53,6 +53,14 @@ public static class AgentClis
             "Cline installs as an npm .cmd shim, which FRIDAY can't use on Windows yet (it works on Linux)",
             "cline auth",
             ["-p", "--auto-approve", "false", "<q>"]),
+
+        // One-shot mode approves tools by itself: context_engine is a toolset with none.
+        new("hermes",
+            "Hermes Agent (its own provider, or Nous Portal's free tier)",
+            "hermes",
+            "irm https://hermes-agent.nousresearch.com/install.ps1 | iex",
+            "hermes setup",
+            ["--ignore-rules", "-z", "<q>", "-t", "context_engine"]),
     ];
 
     public static AgentCli? Find(string id) =>

@@ -65,7 +65,7 @@ _friday() {
     tasks)    _values 'action' list --json pause resume delete status on off ;;
     desktop)  _values 'action' status on off ;;
     keys)     _values 'action' update ;;
-    connect|disconnect) _values 'account' claude codex agy cline ;;
+    connect|disconnect) _values 'account' claude codex agy cline hermes ;;
     private)  _values 'action' status on off ;;
     local-ai) _values 'action' summary presets install status off ;;
     app-context) _values 'action' status on off ;;

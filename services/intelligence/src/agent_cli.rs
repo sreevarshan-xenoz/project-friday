@@ -1,5 +1,6 @@
 //! Answering with an AI account the person already has: Claude Code, Codex,
-//! Antigravity (`agy`) or Cline, through that tool's own CLI and sign-in.
+//! Antigravity (`agy`), Cline or Hermes Agent, through that tool's own CLI and
+//! sign-in.
 //!
 //! FRIDAY holds no credential: the CLI owns its login (`friday connect`
 //! runs it in the desktop session, since signing in needs a browser). Each
@@ -51,17 +52,21 @@ pub enum AgentCli {
     Codex,
     Antigravity,
     Cline,
+    /// Hermes Agent (Nous Research): whatever provider its own setup chose,
+    /// Nous Portal's free tier included.
+    Hermes,
     /// OpenCode's own CLI on its free Zen model: not an account (no sign-in),
     /// so it isn't in `ALL`; the fabric adds it when `opencode` is installed.
     OpenCode,
 }
 
 impl AgentCli {
-    pub const ALL: [AgentCli; 4] = [
+    pub const ALL: [AgentCli; 5] = [
         AgentCli::Claude,
         AgentCli::Codex,
         AgentCli::Antigravity,
         AgentCli::Cline,
+        AgentCli::Hermes,
     ];
 
     /// The id `friday connect` and `FRIDAY_AGENT_CLIS` use.
@@ -71,6 +76,7 @@ impl AgentCli {
             AgentCli::Codex => "codex",
             AgentCli::Antigravity => "agy",
             AgentCli::Cline => "cline",
+            AgentCli::Hermes => "hermes",
             AgentCli::OpenCode => "opencode",
         }
     }
@@ -86,6 +92,7 @@ impl AgentCli {
             AgentCli::Codex => "codex",
             AgentCli::Antigravity => "antigravity",
             AgentCli::Cline => "cline",
+            AgentCli::Hermes => "hermes",
             AgentCli::OpenCode => "opencode-cli",
         }
     }
@@ -109,6 +116,9 @@ impl AgentCli {
             ],
             AgentCli::Antigravity => vec!["-p", &p, "--mode", "plan", "--effort", "low"],
             AgentCli::Cline => vec!["-p", "--auto-approve", "false", &p],
+            // One-shot mode approves every tool call by itself, so it gets
+            // `context_engine`, a toolset with no tools; no AGENTS.md or memory.
+            AgentCli::Hermes => vec!["--ignore-rules", "-z", &p, "-t", "context_engine"],
             // The plan agent, which doesn't edit files; it runs in an empty directory.
             // A private server (not the person's background service) so the
             // locked-down config in `env` applies; kept out of their sessions.
@@ -316,6 +326,10 @@ mod tests {
         assert_eq!(
             AgentCli::Cline.args("q"),
             ["-p", "--auto-approve", "false", "q"]
+        );
+        assert_eq!(
+            AgentCli::Hermes.args("q"),
+            ["--ignore-rules", "-z", "q", "-t", "context_engine"]
         );
         assert_eq!(
             AgentCli::OpenCode.args("q"),
