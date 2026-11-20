@@ -1277,6 +1277,27 @@ friday_workspace() {
   esac
 }
 
+# friday_continue_restore <goal>: "continue building FRIDAY", "let's keep
+# working on the site", "prepare my world for rust": restores the saved
+# workspace that name means and prints what it did. Fails (prints nothing)
+# when the goal isn't one of these or no workspace fits.
+friday_continue_restore() {
+  local g="${1,,}" name re1 re2
+  g="${g%%[.!?]}"
+  re1="^(friday,? )?(let'?s )?(continue|resume|keep|get back to) (building |working on |with |on )?(the |my )?(.{1,40})$"
+  re2="^(friday,? )?prepare my (world|workspace|desk|setup) for (the |my )?(.{1,40})$"
+  if [[ "$g" =~ $re1 ]]; then
+    name="${BASH_REMATCH[6]}"
+  elif [[ "$g" =~ $re2 ]]; then
+    name="${BASH_REMATCH[4]}"
+  else
+    return 1
+  fi
+  [[ "$name" =~ ^(where|from|it|that|this)( |$) ]] && return 1
+  command -v friday-ctl >/dev/null 2>&1 || return 1
+  timeout 10 friday-ctl workspace restore "$name" 2>/dev/null
+}
+
 # The saved routine a typed name means, as the person spelled it: "my setup"
 # is a routine called "my setup", or one called "setup". Fails when none.
 friday_routine_find() {
@@ -2982,6 +3003,10 @@ case "${1:-}" in
       # "What was that …?" with recall on: what was on screen earlier.
       request=$(printf '%s\n\nThis is text that was on my screen in the last few hours, kept on this computer. Answer from it and say which window it was in:\n"""\n%s\n"""' "$goal" "$recalled")
       from_recall=true
+    elif ! $use_screen && [ -z "$local_answer" ] && ws_report=$(friday_continue_restore "$goal"); then
+      # "Continue building FRIDAY": its workspace is put back first; the
+      # daemon adds where you stopped (the timeline).
+      request=$(printf '%s\n\nFRIDAY just put the windows of this project back:\n"""\n%s\n"""' "$goal" "$ws_report")
     elif ! $use_screen && [ -z "$local_answer" ]; then
       # A typed question: documentation on this computer that fits it well
       # (Arch wiki, tldr, man pages; friday-ctl docs prints nothing otherwise).
