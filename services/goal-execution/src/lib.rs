@@ -84,8 +84,6 @@
 
 pub mod mask;
 pub use mask::*;
-pub mod autonomy;
-pub use autonomy::*;
 pub mod confidence;
 pub use confidence::*;
 pub mod goal;
