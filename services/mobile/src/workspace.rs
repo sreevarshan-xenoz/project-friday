@@ -15,13 +15,14 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// Terminals FRIDAY reopens in a folder, and the flag each takes for it.
-const TERMINALS: &[(&str, &str)] = &[
-    ("kitty", "--directory"),
-    ("foot", "--working-directory"),
-    ("alacritty", "--working-directory"),
-    ("com.mitchellh.ghostty", "--working-directory"),
-    ("org.wezfurlong.wezterm", "start --cwd"),
+/// Terminals FRIDAY reopens in a folder: window class, program, and the
+/// flag it takes for the folder.
+const TERMINALS: &[(&str, &str, &str)] = &[
+    ("kitty", "kitty", "--directory"),
+    ("foot", "foot", "--working-directory"),
+    ("alacritty", "alacritty", "--working-directory"),
+    ("com.mitchellh.ghostty", "ghostty", "--working-directory"),
+    ("org.wezfurlong.wezterm", "wezterm", "start --cwd"),
 ];
 /// Editors run inside a terminal that are reopened with their files.
 const EDITORS: &[&str] = &["nvim", "vim", "vi", "hx", "helix", "nano", "micro", "emacs"];
@@ -46,6 +47,9 @@ pub struct Window {
     /// The editor running in a terminal, with its arguments.
     #[serde(default)]
     pub run: Vec<String>,
+    /// Hyprland's address for it, while it is open (not saved).
+    #[serde(skip)]
+    pub address: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -221,6 +225,12 @@ fn kept(class: &str, workspace: &str) -> bool {
 
 /// The windows open now, as a workspace called `name`.
 pub fn capture(hypr: &dyn Hypr, proc_root: &Path, name: &str, now: i64) -> Result<Saved, String> {
+    if key(name).is_empty() {
+        return Err(format!(
+            "\"{}\" isn't a name FRIDAY can keep: use a word or two, like \"site\"",
+            name.trim()
+        ));
+    }
     let clients: Vec<serde_json::Value> =
         serde_json::from_str(&hypr.clients()?).map_err(|e| format!("hyprctl clients: {e}"))?;
     let mut windows = Vec::new();
@@ -241,7 +251,9 @@ pub fn capture(hypr: &dyn Hypr, proc_root: &Path, name: &str, now: i64) -> Resul
                 c[k][1].as_i64().unwrap_or(0) as i32,
             ]
         };
-        let terminal = TERMINALS.iter().any(|(t, _)| class.eq_ignore_ascii_case(t));
+        let terminal = TERMINALS
+            .iter()
+            .any(|(t, _, _)| class.eq_ignore_ascii_case(t));
         let (cwd, run) = if terminal && pid > 0 {
             terminal_work(proc_root, pid)
         } else {
@@ -261,6 +273,7 @@ pub fn capture(hypr: &dyn Hypr, proc_root: &Path, name: &str, now: i64) -> Resul
             },
             cwd,
             run,
+            address: c["address"].as_str().map(String::from),
         });
     }
     if windows.is_empty() {
@@ -364,17 +377,19 @@ fn lua_string(s: &str) -> String {
 
 /// How to start a saved window again; `None` when FRIDAY can't tell.
 fn launch_line(w: &Window) -> Option<String> {
-    let flag = TERMINALS
+    let terminal = TERMINALS
         .iter()
-        .find(|(t, _)| w.class.eq_ignore_ascii_case(t))
-        .map(|(_, f)| *f);
-    match (flag, &w.cwd) {
-        (Some(flag), Some(dir)) => {
+        .find(|(t, _, _)| w.class.eq_ignore_ascii_case(t));
+    match (terminal, &w.cwd) {
+        (Some((_, program_name, flag)), Some(dir)) => {
+            // The terminal's own program as started (it may live elsewhere
+            // than PATH), unless something else started it (`sh -c kitty`).
             let term = w
                 .command
                 .first()
+                .filter(|c| program(c) == *program_name)
                 .cloned()
-                .unwrap_or_else(|| w.class.clone());
+                .unwrap_or_else(|| program_name.to_string());
             let mut line = format!(
                 "{} {flag} {}",
                 shell_line(&[term]),
@@ -446,19 +461,10 @@ fn label(w: &Window) -> String {
 /// Puts a saved workspace back: open windows go to their workspace, missing
 /// ones are started there.
 pub fn restore(hypr: &dyn Hypr, proc_root: &Path, saved: &Saved) -> Result<Report, String> {
-    let now = capture(hypr, proc_root, "now", 0)
-        .map(|s| s.windows)
-        .unwrap_or_default();
-    let clients: Vec<serde_json::Value> =
-        serde_json::from_str(&hypr.clients()?).unwrap_or_default();
-    let address_of = |w: &Window| {
-        clients
-            .iter()
-            .find(|c| {
-                c["class"].as_str() == Some(w.class.as_str())
-                    && c["title"].as_str() == Some(w.title.as_str())
-            })
-            .and_then(|c| c["address"].as_str().map(String::from))
+    let now = match capture(hypr, proc_root, "now", 0) {
+        Ok(s) => s.windows,
+        Err(e) if e.contains("no windows") => Vec::new(),
+        Err(e) => return Err(e),
     };
     let mut used = vec![false; now.len()];
     let mut report = Report::default();
@@ -473,7 +479,7 @@ pub fn restore(hypr: &dyn Hypr, proc_root: &Path, saved: &Saved) -> Result<Repor
                 report.already.push(label(w));
                 continue;
             }
-            let Some(address) = address_of(&now[i]) else {
+            let Some(address) = now[i].address.clone() else {
                 report.already.push(label(w));
                 continue;
             };
@@ -681,6 +687,108 @@ mod tests {
     }
 
     #[test]
+    fn two_alike_windows_each_go_to_their_own_workspace() {
+        let repo = tmp();
+        let proc_root = tmp();
+        for (pid, dir) in [(400, "site"), (402, "docs")] {
+            for (p, ppid, cmd, cwd) in [
+                (pid, 1, "kitty".to_string(), "/".to_string()),
+                (
+                    pid + 1,
+                    pid,
+                    "-zsh".to_string(),
+                    repo.join(dir).to_string_lossy().into_owned(),
+                ),
+            ] {
+                let d = proc_root.join(p.to_string());
+                std::fs::create_dir_all(&d).unwrap();
+                std::fs::create_dir_all(&cwd).unwrap();
+                std::fs::write(d.join("cmdline"), format!("{cmd}\0")).unwrap();
+                std::fs::write(d.join("stat"), format!("{p} (x) S {ppid} 0")).unwrap();
+                std::os::unix::fs::symlink(&cwd, d.join("cwd")).unwrap();
+            }
+        }
+        let win = |addr: &str, pid: i64, ws: &str| {
+            format!(
+                r#"{{"address":"{addr}","class":"kitty","title":"zsh","workspace":{{"id":{ws},"name":"{ws}"}},"pid":{pid}}}"#
+            )
+        };
+        let saved_clients = format!("[{},{}]", win("0x1", 400, "2"), win("0x2", 402, "3"));
+        let saved = capture(
+            &FakeHypr {
+                clients: saved_clients,
+                calls: Mutex::default(),
+            },
+            &proc_root,
+            "two",
+            1,
+        )
+        .unwrap();
+        // Both now sit on workspace 9, listed in the other order.
+        let now = format!("[{},{}]", win("0x2", 402, "9"), win("0x1", 400, "9"));
+        let hypr = FakeHypr {
+            clients: now,
+            calls: Mutex::default(),
+        };
+        restore(&hypr, &proc_root, &saved).unwrap();
+        let calls = hypr.calls.lock().unwrap().clone();
+        assert_eq!(
+            calls,
+            vec![
+                r#"hl.dsp.window.move({ workspace = "2", follow = false, window = "address:0x1" })"#,
+                r#"hl.dsp.window.move({ workspace = "3", follow = false, window = "address:0x2" })"#,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_terminal_started_by_something_else_reopens_as_itself() {
+        let w = Window {
+            class: "Alacritty".into(),
+            title: "t".into(),
+            workspace: "1".into(),
+            floating: false,
+            at: [0, 0],
+            size: [0, 0],
+            command: vec!["sh".into(), "-c".into(), "alacritty".into()],
+            cwd: Some("/w".into()),
+            run: vec![],
+            address: None,
+        };
+        assert_eq!(launch_line(&w).unwrap(), "alacritty --working-directory /w");
+        let unread = Window {
+            command: vec![],
+            ..w.clone()
+        };
+        assert_eq!(
+            launch_line(&unread).unwrap(),
+            "alacritty --working-directory /w"
+        );
+        let own = Window {
+            command: vec!["/opt/alacritty/bin/alacritty".into()],
+            ..w
+        };
+        assert_eq!(
+            launch_line(&own).unwrap(),
+            "/opt/alacritty/bin/alacritty --working-directory /w"
+        );
+    }
+
+    #[test]
+    fn a_name_with_no_words_is_refused() {
+        let hypr = FakeHypr {
+            clients: clients(),
+            calls: Mutex::default(),
+        };
+        for name in ["workspace", "my workspace", "!!"] {
+            assert!(
+                capture(&hypr, Path::new("/nonexistent"), name, 1).is_err(),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
     fn odd_names_and_arguments_stay_quoted() {
         assert_eq!(key("My Rust Learning workspace"), "rust-learning");
         let w = Window {
@@ -696,6 +804,7 @@ mod tests {
             ],
             cwd: None,
             run: vec![],
+            address: None,
         };
         let line = launch_line(&w).unwrap();
         assert_eq!(line, r#"gnome-text-editor 'my "notes"; rm -rf ~.txt'"#);
