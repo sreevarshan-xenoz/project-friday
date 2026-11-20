@@ -51,6 +51,12 @@ release page). `friday doctor` first on Linux; it should be all green.
       terminal in the repo with the editor on the file, the floating one in
       its place; the answer lists what came back and what didn't. Run it
       again: "already in place", no duplicates.
+- [ ] **Browser tabs**: with Chromium on a workspace and a few tabs open,
+      save a workspace, close Chromium, restore: it comes back on its
+      workspace with the same tabs, none twice.
+- [ ] **Project facts**: in a git repo with an uncommitted change, Super+Y
+      "what's left on <project>": the answer names the branch, the
+      uncommitted file and your last commit (from git, not guessed).
 - [ ] **Continue building**: after a reboot, Super+Y "Friday, let's continue
       building FRIDAY": the workspace comes back, and the answer says where
       you stopped (from your earlier asks and actions) and your open
