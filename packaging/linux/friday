@@ -352,6 +352,15 @@ friday_doctor() {
   ok "search backends: $b_str"
 
   echo
+  echo "Offline docs"
+  local tldr_pages="${TEALDEER_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/tealdeer}"
+  if [ -f /usr/share/doc/arch-wiki/text/arch-wiki.txt.gz ]; then ok "Arch wiki (arch-wiki-lite)"
+  else warn "no offline Arch wiki" "sudo pacman -S arch-wiki-lite"; fi
+  if [ -d "$tldr_pages/tldr-pages/pages.en" ] || [ -d "$tldr_pages/tldr-pages/pages" ] || [ -d "$tldr_pages/tldr-master/pages" ]; then ok "tldr pages"
+  elif command -v tldr >/dev/null 2>&1; then warn "tldr pages not fetched yet" "tldr --update (once, while online)"
+  else warn "no tldr pages" "sudo pacman -S tealdeer, then tldr --update"; fi
+
+  echo
   echo "Desktop"
   # What reads and presses things inside apps: agent-desktop when a 1.x copy is
   # installed (the package's, or FRIDAY_AGENT_DESKTOP), else FRIDAY's own reader.
@@ -2774,6 +2783,11 @@ case "${1:-}" in
     elif [ -n "$context" ]; then
       request=$(printf '%s\n\nUse this text as context:\n"""\n%s\n"""' "$goal" "$context")
       [ -z "${app_context:-}" ] || request="$request"$'\n'"$app_context"
+    elif ! $use_screen && [ -z "$local_answer" ]; then
+      # A typed question: documentation on this computer that fits it well
+      # (Arch wiki, tldr, man pages; friday-ctl docs prints nothing otherwise).
+      docs=$(timeout 2 friday-ctl docs -- "$goal" 2>/dev/null || true)
+      [ -z "$docs" ] || request=$(printf '%s\n\nThese excerpts from documentation on this computer may help. Use them only if they fit, and name the one you use (for example "Arch wiki: Pacman"):\n"""\n%s\n"""' "$goal" "$docs")
     fi
 
     ok=true

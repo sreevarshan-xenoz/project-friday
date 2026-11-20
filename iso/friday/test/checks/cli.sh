@@ -21,6 +21,11 @@ if [[ "\$1" == watch ]]; then
   printf 'friday-ctl-watch %s\n' "\$*" >> "$LOG"
   exit 0
 fi
+if [[ "\$1" == docs ]]; then
+  printf 'friday-ctl-docs %s\n' "\$*" >> "$LOG"
+  [ -n "\$DOCS_REPLY" ] && printf '%s\n' "\$DOCS_REPLY"
+  exit 0
+fi
 if [[ "\$1" == cancel ]]; then
   echo "friday-ctl-cancel" >> "$LOG"
   [[ -n "\$HAVE_GOAL" ]] && { echo '{"accepted":true}'; exit 0; }
@@ -511,6 +516,16 @@ contains "summary includes masked secrets count" "$out" "5 secrets masked"
 out1=$(bash "$F" sent 1 2>&1 || true)
 contains "limit N prints last entry" "$out1" "Kilo"
 if grep -q "1,240 chars" <<<"$out1"; then fail "sent 1 printed older entries"; else pass "sent 1 limits table to last entry"; fi
+
+echo "documentation on this computer"
+: >"$LOG"; DOCS_REPLY=$'[Arch wiki: Pacman]\nTo upgrade the system, run pacman -Syu.' bash "$F" ask "how do I upgrade with pacman"; sleep 0.3
+contains "a typed question looks in the local docs" "$(cat "$LOG")" "friday-ctl-docs docs -- how do I upgrade with pacman"
+contains "what fits goes to the model, named" "$(cat "$LOG")" "Arch wiki: Pacman"
+contains "with how to use it" "$(cat "$LOG")" "name the one you use"
+: >"$LOG"; bash "$F" ask "write a haiku"; sleep 0.3
+if grep -q "These excerpts" "$LOG"; then fail "added docs when none fit"; else pass "nothing fits: the question goes as it is"; fi
+: >"$LOG"; DOCS_REPLY="[x]" PRIMARY="some text" PICK="explain" bash "$F" ask --selection; sleep 0.3
+if grep -q "friday-ctl-docs" "$LOG"; then fail "looked in the docs for a selection"; else pass "a selection isn't looked up in the docs"; fi
 
 echo "local commands (no AI)"
 printf '#!/bin/sh\necho "wpctl $*" >>"%s"\n[ "$1" = get-volume ] && echo "Volume: 0.55${MUTED:+ [MUTED]}"\nexit 0\n' "$LOG" >"$S/wpctl"; chmod +x "$S/wpctl"
