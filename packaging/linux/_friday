@@ -17,6 +17,7 @@ _friday() {
     'disconnect:Stop using a connected account'
     'private:Private mode with a local model only'
     'local-ai:A local model sized to this computer'
+    'providers:How each AI provider is doing'
     'face:Face unlock for the lock screen'
     'voice:Hold Super+Y and speak'
     'screen-text:Ask about the screen with the window text, not a screenshot'

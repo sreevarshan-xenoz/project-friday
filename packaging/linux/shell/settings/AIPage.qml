@@ -29,6 +29,13 @@ ColumnLayout {
     color: Theme.subtext
   }
 
+  // How each provider is doing right now (friday providers): a slow or
+  // missing answer usually means a free limit was hit.
+  Label { text: "Right now"; font.weight: Font.DemiBold }
+  Cmd { id: providers; args: ["providers"] }
+  Output { text: providers.output }
+  Chip { text: providers.running ? "Checking…" : "Check again"; onClicked: providers.run() }
+
   Label { text: "Choose the AI"; font.weight: Font.DemiBold }
   Flow {
     Layout.fillWidth: true
@@ -136,7 +143,7 @@ ColumnLayout {
   // below cloud first while online (friday local-ai order).
   Label { text: "Local AI"; font.weight: Font.DemiBold; Layout.topMargin: 8 }
   Cmd { id: localAi; args: ["local-ai", "status"] }
-  Component.onCompleted: localAi.run()
+  Component.onCompleted: { localAi.run(); providers.run(); }
   Flow {
     Layout.fillWidth: true
     spacing: 8

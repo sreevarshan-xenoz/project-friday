@@ -36,6 +36,7 @@ Autonomous Agent & Cognitive Loop:
   friday forget [what]             Show what FRIDAY keeps on this computer, or wipe it
   friday actions [N]               Show what FRIDAY did on your desktop (windows, apps, media)
   friday sent [N]                  Show what left this machine for AI providers (egress log)
+  friday providers                 How each AI provider is doing (limit hit, OK…) and who answered last
   friday goal "<objective>"        Dispatch an autonomous goal to FRIDAY agent
   friday cancel                    Cancel the goal FRIDAY is working on
   friday tasks [pause|resume|delete <id>|status|on|off]
@@ -2847,6 +2848,9 @@ case "${1:-}" in
     ;;
   paste-as)
     friday_paste_as
+    ;;
+  providers)
+    exec friday-ctl providers
     ;;
   tour)
     FRIDAY_WELCOME_DELAY=0 friday_welcome --force

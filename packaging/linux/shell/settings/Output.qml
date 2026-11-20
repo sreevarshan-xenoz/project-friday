@@ -10,7 +10,8 @@ Rectangle {
   property string text: ""
 
   Layout.fillWidth: true
-  Layout.preferredHeight: 190
+  // As tall as the text, up to 190 px; longer output scrolls.
+  Layout.preferredHeight: Math.min(190, body.implicitHeight + 20)
   radius: Theme.radiusS
   color: Theme.surface
   visible: root.text !== ""

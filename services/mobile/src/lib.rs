@@ -25,6 +25,7 @@ pub mod failures;
 pub mod goal_runner;
 pub mod probe;
 pub mod protocol;
+pub mod provider_status;
 pub mod session;
 pub mod shell_state;
 pub mod speech;

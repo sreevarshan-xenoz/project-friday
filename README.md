@@ -244,6 +244,7 @@ pacman refuses any package or database that key didn't sign. On Windows, install
 | `friday connect [--prefer] [claude\|codex\|agy\|cline\|hermes]` / `friday disconnect <name>` | Use an account you already have (a fallback unless `--prefer`) |
 | `friday private [status\|on [model]\|off]` | Local model only; nothing leaves the machine |
 | `friday local-ai [summary\|presets\|install\|status\|off]` / `friday setup-ai local` | A model on this computer, sized to it |
+| `friday providers` | How each AI provider is doing right now (OK, limit hit, key refused…) and who answered last; also in FRIDAY Settings → AI |
 | `friday answers [--last]` | Past answers (kept private, in `~/.local/state/friday`) |
 | `friday sent [N]` | What left this machine for AI providers (egress log) |
 | `friday shell style\|palette` | FRIDAY Shell's look, matched on Hyprland or niri |
