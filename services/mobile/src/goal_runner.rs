@@ -1965,6 +1965,32 @@ impl GoalRunner {
                     }
                 }
             }
+            if let Some(dir) = &self.timeline {
+                let g = goal.to_lowercase();
+                let about_thoughts = [
+                    "what was i thinking",
+                    "my ideas",
+                    "open questions",
+                    "what did we decide",
+                    "what did i decide",
+                    "decisions about",
+                ]
+                .iter()
+                .any(|p| g.contains(p));
+                let entries = crate::timeline::collect(dir);
+                let about_past =
+                    crate::timeline::wants(&goal, &entries, chrono::Local::now()).is_some();
+                if about_thoughts || about_past {
+                    let text = crate::thoughts::render(&crate::thoughts::recent(dir, &goal, 15));
+                    if !text.is_empty() {
+                        let (text, _) = friday_goal_execution::mask_secrets(&text);
+                        lines.push(format!(
+                            "thoughts the person kept (never edited; quote them with their dates, \
+                             and say which are still open):\n{text}"
+                        ));
+                    }
+                }
+            }
             if let Some(path) = &self.lessons {
                 lines.extend(crate::lessons::recall(
                     path,
@@ -3123,12 +3149,27 @@ mod tests {
                 prompt
             }
         };
+        crate::thoughts::add(
+            &dir,
+            &crate::thoughts::Thought {
+                ts: chrono::Utc::now().timestamp(),
+                project: Some("/home/me/code/site".into()),
+                kind: "question".into(),
+                text: "should the images move to a CDN?".into(),
+            },
+        )
+        .unwrap();
         let prompt = ask("continue where we stopped").await;
         assert!(
             prompt.contains("timeline (what happened on this computer"),
             "{prompt}"
         );
         assert!(prompt.contains("why does the site build fail"), "{prompt}");
+        assert!(
+            prompt.contains("thoughts the person kept")
+                && prompt.contains("question [site]: should the images move to a CDN?"),
+            "{prompt}"
+        );
         let other = ask("What does the Rust error E0308 mean?").await;
         assert!(!other.contains("timeline ("), "{other}");
     }

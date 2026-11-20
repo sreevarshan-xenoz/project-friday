@@ -51,6 +51,11 @@ if [[ "\$1" == routine ]]; then
   echo "stub routine output"
   exit 0
 fi
+if [[ "\$1" == thought ]]; then
+  printf 'friday-ctl-thought %s\n' "\$*" >> "$LOG"
+  echo "Kept that \$3."
+  exit 0
+fi
 if [[ "\$1" == workspace ]]; then
   printf 'friday-ctl-workspace %s\n' "\$*" >> "$LOG"
   [[ "\$2" == list ]] && [ -n "\${WS_SAVED:-}" ] && echo "friday  3 window(s)  saved 2026-11-21 09:00"
@@ -649,6 +654,15 @@ contains "and asks with what came back" "$(cat "$LOG")" "started foot in friday"
 contains "with no such workspace it is an ordinary question" "$(cat "$LOG")" "continue\\ building\\ the\\ site"
 : >"$LOG"; WS_SAVED=1 bash "$F" ask "continue where we stopped"; sleep 0.3
 if grep -q "workspace restore" "$LOG"; then fail "\"continue where we stopped\" restored a workspace called \"where\""; else pass "\"continue where we stopped\" restores nothing by name"; fi
+
+echo "thoughts"
+: >"$LOG"; bash "$F" ask "Keep this idea: Memory as an INDEX, not a store."; sleep 0.3
+contains "\"keep this idea\" keeps it, as typed" "$(cat "$LOG")" "friday-ctl-thought thought add idea Memory as an INDEX, not a store"
+if grep -q "^friday-ctl '" "$LOG"; then fail "keeping an idea asked the AI"; else pass "keeping an idea asks no AI"; fi
+: >"$LOG"; bash "$F" ask "we decided to compute the index from the logs"; sleep 0.3
+contains "\"we decided …\" keeps a decision" "$(cat "$LOG")" "friday-ctl-thought thought add decision compute the index from the logs"
+: >"$LOG"; bash "$F" ask "open question: should threads sync between computers?"; sleep 0.3
+contains "\"open question: …\" keeps a question" "$(cat "$LOG")" "friday-ctl-thought thought add question should threads sync between computers"
 
 echo "local commands (no AI)"
 printf '#!/bin/sh\necho "wpctl $*" >>"%s"\n[ "$1" = get-volume ] && echo "Volume: 0.55${MUTED:+ [MUTED]}"\nexit 0\n' "$LOG" >"$S/wpctl"; chmod +x "$S/wpctl"

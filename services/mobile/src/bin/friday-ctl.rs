@@ -615,6 +615,75 @@ fn timeline(args: &[String]) -> std::process::ExitCode {
     std::process::ExitCode::SUCCESS
 }
 
+/// `friday-ctl thought add [idea|decision|question] <text> | list [words]`:
+/// keep a thought under the project in front (the terminal's git repo), and
+/// read a thread back (`friday_mobile::thoughts`).
+fn thought(args: &[String]) -> std::process::ExitCode {
+    use friday_mobile::thoughts::{self as th, Thought};
+    use std::process::ExitCode;
+    let state = friday_intelligence::default_state_dir();
+    match args.first().map(String::as_str) {
+        Some("add") => {
+            let (kind, words) = match args.get(1).map(String::as_str) {
+                Some(k) if th::KINDS.contains(&k) => (k, &args[2..]),
+                _ => ("idea", &args[1..]),
+            };
+            let text = words.join(" ");
+            if text.trim().is_empty() {
+                eprintln!("usage: friday-ctl thought add [idea|decision|question] <text>");
+                return ExitCode::from(2);
+            }
+            let project = project_in_front();
+            let t = Thought {
+                ts: chrono::Utc::now().timestamp(),
+                project: project.clone(),
+                kind: kind.to_string(),
+                text,
+            };
+            match th::add(&state, &t) {
+                Ok(()) => {
+                    match project {
+                        Some(p) => println!("Kept that {kind} under {}.", th::project_name(&p)),
+                        None => println!("Kept that {kind}."),
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("Couldn't keep it: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Some("list") | None => {
+            let goal = args.get(1..).unwrap_or_default().join(" ");
+            let text = th::render(&th::recent(&state, &goal, 50));
+            if text.is_empty() {
+                println!("No thoughts kept yet. Say \"keep this idea: …\" in the ask box.");
+            }
+            print!("{text}");
+            ExitCode::SUCCESS
+        }
+        _ => {
+            eprintln!(
+                "usage: friday-ctl thought add [idea|decision|question] <text> | list [project]"
+            );
+            ExitCode::from(2)
+        }
+    }
+}
+
+/// The project folder of the window in front: a terminal's git repository.
+fn project_in_front() -> Option<String> {
+    let out = std::process::Command::new("hyprctl")
+        .args(["-j", "activewindow"])
+        .output()
+        .ok()?;
+    let w: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    let pid = w["pid"].as_i64()?;
+    let (dir, _) = friday_mobile::workspace::terminal_work(std::path::Path::new("/proc"), pid);
+    friday_mobile::workspace::git_top(&dir?)
+}
+
 fn docs(args: &[String]) -> std::process::ExitCode {
     use friday_mobile::local_docs;
     let s = local_docs::Sources::system();
@@ -877,6 +946,9 @@ async fn main() -> std::process::ExitCode {
     }
     if raw.first().map(String::as_str) == Some("workspace") {
         return workspace(&raw[1..]);
+    }
+    if raw.first().map(String::as_str) == Some("thought") {
+        return thought(&raw[1..]);
     }
     if raw.first().map(String::as_str) == Some("timeline") {
         return timeline(&raw[1..]);

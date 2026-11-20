@@ -1298,6 +1298,13 @@ friday_continue_restore() {
   timeout 10 friday-ctl workspace restore "$name" 2>/dev/null
 }
 
+# friday_as_typed <typed> <lowercased> <matched tail>: the tail of what the
+# person typed, with their capitals (the matcher sees the lowercased form).
+friday_as_typed() {
+  local typed="${1#"${1%%[![:space:]]*}"}"
+  printf '%s' "${typed:$(( ${#2} - ${#3} )):${#3}}"
+}
+
 # The saved routine a typed name means, as the person spelled it: "my setup"
 # is a routine called "my setup", or one called "setup". Fails when none.
 friday_routine_find() {
@@ -1433,6 +1440,12 @@ friday_local_command() {
   elif [[ "$q" =~ ^(restore|open|bring\ back)\ (my\ |the\ )?([a-z0-9_\ -]{1,40})\ workspace$ ]] \
       && friday-ctl workspace list 2>/dev/null | grep -qi .; then
     friday_workspace restore "${BASH_REMATCH[3]}" 2>&1 || true
+  elif [[ "$q" =~ ^(keep|note|remember|save)\ (this|the|an?)\ (idea|thought)(:|,|\ -)?\ (.+)$ ]]; then
+    friday-ctl thought add idea "$(friday_as_typed "$1" "$q" "${BASH_REMATCH[5]}")" 2>&1 || true
+  elif [[ "$q" =~ ^(we|i)\ decided\ (to\ |that\ )?(.+)$ ]] || [[ "$q" =~ ^(decision)(:)\ ()(.+)$ ]]; then
+    friday-ctl thought add decision "$(friday_as_typed "$1" "$q" "${BASH_REMATCH[-1]}")" 2>&1 || true
+  elif [[ "$q" =~ ^(open\ question|question\ for\ later)(:|,)?\ (.+)$ ]]; then
+    friday-ctl thought add question "$(friday_as_typed "$1" "$q" "${BASH_REMATCH[3]}")" 2>&1 || true
   elif [[ "$q" =~ ^undo(\ that|\ it)?$ ]]; then
     friday_undo || true
   else
@@ -1931,7 +1944,7 @@ friday_forget() {
     if systemctl --user is-active --quiet friday-linux-daemon 2>/dev/null; then
       was_up=true; systemctl --user stop friday-linux-daemon 2>/dev/null || true
     fi
-    rm -f "$mem_dir/episodes.jsonl" "$state_dir/conversations.json" "$state_dir/conversation" "$state_dir/lessons.jsonl"
+    rm -f "$mem_dir/episodes.jsonl" "$state_dir/conversations.json" "$state_dir/conversation" "$state_dir/lessons.jsonl" "$state_dir/thoughts.jsonl"
     if $was_up; then systemctl --user start friday-linux-daemon 2>/dev/null || true; fi
     echo "Deleted ${n_mem:-0} remembered things."
   fi
