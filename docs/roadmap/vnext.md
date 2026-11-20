@@ -1,19 +1,33 @@
-# FRIDAY vNext: continuity
+# FRIDAY vNext: your work, remembered
 
-Direction agreed with the owner on 2026-11-21, after v0.6.0. This is the
-plan for AGENTS.md phases 3 to 5. It doesn't replace their rules: a
-subsystem still earns its place, and each change is verified and says what
-wasn't.
+Direction agreed with the owner on 2026-11-21, after v0.6.0, and settled
+with a second review the same day. This is the plan for AGENTS.md phases
+3 to 5. It doesn't replace their rules: a subsystem still earns its place,
+and each change is verified and says what wasn't.
+
+**The promise:** FRIDAY remembers your work and restores your context.
+Your intentions don't disappear between sessions, your thinking doesn't
+disappear between conversations, and your working environment doesn't
+reset when your goals change. (Internal north star: a "personal reality
+engine": computing around what you're trying to make, not around apps.)
+
+**The test that decides N1:** shut everything down; tomorrow say "Friday,
+let's continue building FRIDAY". Within five seconds FRIDAY knows which
+project you mean, restores as much of your working environment as it can
+(and says what it couldn't), shows where you stopped, and brings back the
+unfinished thoughts that belong to it.
 
 ## The idea in one paragraph
 
 Chatbots answer questions; agents complete tasks. FRIDAY should know what
-you are working on, across apps and days, and move it forward when you ask,
-with as few instructions as possible. It stays model-independent (identity,
-memory, goals and permissions live in FRIDAY, models are replaceable),
-local-first (cloud when useful, never required), and quiet: it acts on
-events, not in an endless model loop, and it never watches the camera,
-microphone or screen unless you turned that on.
+you are working on, across apps and days, and help when invited: it
+preserves context and stays out of the way otherwise. It is not a
+life-management supervisor: it never tells you you're behind or questions
+your priorities. It stays model-independent (identity, memory, goals and
+permissions live in FRIDAY, models are replaceable), local-first (cloud
+when useful, never required), and quiet: it acts on events, not in an
+endless model loop, and it never watches the camera, microphone or screen
+unless you turned that on.
 
 ## What already exists, and what's missing
 
@@ -47,6 +61,22 @@ work is joining them, not adding frameworks.
 - One agent with the right context and checks beats twenty without.
 - Every feature ships with a working implementation, a test that proves
   it, and a demonstration a person can repeat.
+- Every factual answer about your work traces to a file, a log line or a
+  recorded event. No progress invented by a model.
+- No new architectural expansion until the flagship (N1) works end to end.
+
+## The shared foundation: a project context index
+
+Workspaces, thought threads and project answers must not each remember a
+slightly different version of reality. Underneath them is one **project
+context index**: computed from the files FRIDAY already writes (answers,
+actions, agent runs, lessons, the timeline, workspaces, threads), never a
+second store that can drift from them. Entities: project, workspace,
+session, thought, decision, task, file, event. Links: belongs to, created
+during, derived from, depends on, resumes, contradicts (only with the
+evidence shown). A project is a folder (a git repo, the terminal's
+directory, the editor's file), named by it. The timeline (`timeline.rs`)
+is its first slice.
 
 ## Milestones, in build order
 
@@ -54,85 +84,89 @@ Each has an exit test; the acceptance suite at the end collects them.
 
 ### N0 · Stable base (now)
 
-Merge the open work (#257 to #260), the owner's real-hardware pass, and the
-Windows local-AI page. Exit: a green `dev`, the hardware checklist done.
+Merge the open work, the owner's real-hardware pass, the Windows local-AI
+page. Exit: a green `dev`, the hardware checklist done.
 
-### N1 · Context: "continue where we stopped"
+### N1 · Context: workspaces, session resurrection, thought threads
 
-- A **timeline**: one read-only view over conversations, answers, actions,
-  agent runs, lessons and (if on) screen recall, grouped by day and by
-  project. A project is a folder FRIDAY sees you working in (the terminal's
-  directory, the editor's file, a git repo), named by its folder.
-- **Asks that use it**: "what was I doing yesterday", "continue where we
-  stopped", "what's left on <project>": the timeline for that project goes
-  to the model with the question, and the answer ends with a next step to
-  confirm.
-- Exit test (*resume*): after a restart, "continue where we stopped" names
-  the last project, what was done and what failed, from real logs.
+- **Workspaces with session resurrection.** `friday workspace save
+  <name>` keeps the arrangement *and* the work: windows and their
+  workspaces and positions, terminals in their project folders, browser
+  tabs, editor projects and open files where the editor tells, notes, and
+  the project's unfinished items. `restore` brings it back and reports what
+  it restored and what it couldn't (a tab gone, an app that doesn't expose
+  its state). A session is saved on its own when you log out.
+- **Thought threads.** "Keep this idea" files the thought under its
+  project with why it came up, then later decisions, evidence and open
+  questions join the same thread, versioned, so you can see how the idea
+  changed. FRIDAY never rewrites a thought, and only points out a conflict
+  with the two entries side by side.
+- **"Continue building X" / "prepare my world for X"**: the index finds the
+  project, restores its workspace, and the answer shows where you stopped
+  (timeline, #262) and the open threads.
+- Exit test (*resume*): the N1 test above, scripted in the VM: save,
+  reboot, ask, and count what came back.
 
-### N2 · Control centre (before more autonomy)
+### N2 · Continuity: project understanding
 
-- One **Activity** page (FRIDAY Shell, tray on Windows): what is running,
-  why, which tools it used, what it read and sent (egress), what's waiting
-  for approval, what can be undone; cancel and undo from there.
-- **Permission levels** per kind of action, from the risk levels the action
-  runtime already has: Observe, Suggest, Prepare, Execute, Autonomous
-  (bounded tasks only, e.g. standing tasks). Defaults stay where they are
-  today; the page shows and changes them.
-- Exit test (*governance*): every action of a goal shows up there with its
-  level, and a refused or cancelled one leaves nothing behind.
+- "What's left on FRIDAY", "what did we decide about memory", "why did we
+  drop X": answered from the index with each fact's source (file, log line,
+  thread entry). Decisions and how they evolved, unfinished work,
+  related files.
+- Exit test (*context*): a seeded project's questions are answered with
+  correct, cited sources, and "I don't know" where the logs don't say.
 
-### N3 · Computer runtime
+### N3 · Environment: modes and attention
 
-- Pages: open in your browser and read for an ask (#260, done).
-- **Browser tasks**: "find the cheapest flight on …", "fill this form from
-  my notes": FRIDAY's browser in a visible window, steps planned by the
-  model one at a time over the adapter's verbs (open, extract, click, type,
-  submit), nothing submitted without a yes, a step limit, the person's
-  logins never used unless they connect a profile.
-- **Verify**: each step checks its effect (the page changed, the field
-  holds the text), and a failure becomes a lesson.
-- Exit test (*recovery*): a scripted form task completes in CI against a
-  local site, and a broken step stops with a reason instead of guessing.
+- Modes (creation, learning, focus, system care) are saved workspaces plus
+  an attention policy: focus holds notifications for later, a full-screen
+  app or a meeting means wait. One policy decides for every event: notify
+  now, add to the morning brief, or drop.
+- Exit test (*attention*): a day of recorded events yields a short brief
+  and only the notifications the policy allows.
 
-### N4 · Proactive, with an attention policy
+### N4 · Sovereignty
 
-- One policy decides for every event (a build failed, a long command
-  finished, a deadline in a note, an unfinished task from yesterday):
-  notify now, add to the morning brief, or drop. Do-not-disturb, full-screen
-  apps and meetings mean wait.
-- A **morning brief** built from the timeline and standing tasks.
-- Exit test (*attention*): a day of recorded events produces a short brief
-  and at most the notifications the policy allows.
+- A page that shows what FRIDAY believes about you and your projects, where
+  each belief came from, and lets you correct or delete it; `friday export`
+  writes everything (threads, workspaces, preferences, history) as plain
+  files you can take to a new computer, where `friday import` rebuilds your
+  environment.
+- Exit test (*model independence*, *portability*): switching provider keeps
+  memory, context and permissions; an export imported on a fresh install
+  restores the workspaces and threads.
 
-### N5 · Multimodal
+### After the flagship works
 
-- Images and files as input to an ask; region ask; screen text and a
-  screenshot together in one context.
-- Exit test: "what's wrong in this screenshot" with a dropped file answers
-  from it, locally when a vision model is installed.
+In this order, each with its own exit test:
 
-### N6 · Adaptive
-
-- Lessons and routines turn repeated work into proposals ("you do this
-  every Monday: make it a routine?"), tested before they are kept and
-  easy to undo. Skill manifests (`services/skills`, skill-forge) and MCP
-  (`mcp/`) carry new abilities in.
-- Exit test (*learning*): a task that failed twice the same way succeeds
-  the third time because of a kept lesson, shown in the answer.
+- **Control centre**: one Activity page for what's running, what it read and
+  sent, approvals, cancel and undo; permission levels (observe, suggest,
+  prepare, execute, autonomous for bounded tasks) per kind of action.
+- **Computer runtime**: browser tasks in a visible window over the adapter's
+  verbs, nothing submitted without a yes, each step verified (pages: open in
+  your browser and read for an ask are done, #260).
+- **Multimodal**: images and files as input; region ask with screen text.
+- **Adaptive**: repeated work offered as a routine; lessons that change the
+  next attempt.
+- **Future branches** ("what if I spend two weeks on voice"): only once
+  months of reliable history exist, and then showing assumptions, never
+  predictions dressed up as simulation.
 
 ## Acceptance suite (the qualification for vNext)
 
 | Test | Passes when |
 |---|---|
-| Resume | After a restart, FRIDAY recovers the last project's state from real logs |
-| Context | It links a conversation, the files and the failed command of one project |
+| Resume | "Let's continue building FRIDAY" after a reboot: project found, workspace restored (with a report of what wasn't), where you stopped, open threads; under five seconds |
+| Context | Project questions answered with cited sources, "I don't know" where the logs are silent |
+| Thought | A kept idea and a later decision show up in one thread, in order, unedited |
 | Governance | Every action is visible with its level; cancel and undo work |
 | Recovery | A broken browser step stops with a reason; a retried task resumes |
 | Attention | A day of events yields a brief and few, allowed notifications |
 | Privacy | Private mode and private windows send nothing (egress log stays empty) |
 | Learning | A kept lesson changes the next attempt, visibly |
 | Model independence | Switching provider keeps memory, context and permissions |
+| Portability | An export imported on a fresh install restores workspaces and threads |
 
 ## Not now
 
