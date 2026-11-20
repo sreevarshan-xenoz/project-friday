@@ -1451,6 +1451,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "fancy-regex",
+ "flate2",
  "friday-actions",
  "friday-capabilities",
  "friday-cognitive",
