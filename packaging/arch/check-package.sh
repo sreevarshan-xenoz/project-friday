@@ -61,7 +61,8 @@ systemd-analyze verify --user /usr/lib/systemd/user/friday-{linux-daemon,local-a
   && ok "user service verifies" || echo "  - systemd-analyze verify unavailable here (no user manager)"
 
 echo "daemon"
-tmp=$(mktemp -d); trap 'kill "$dpid" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+# The daemon writes its state as it stops: wait for it before removing that.
+tmp=$(mktemp -d); trap 'kill "$dpid" 2>/dev/null && wait "$dpid" 2>/dev/null; rm -rf "$tmp"' EXIT
 export XDG_STATE_HOME="$tmp/state" HOME="$tmp" FRIDAY_LISTEN=127.0.0.1:0
 friday-linux-daemon >"$tmp/daemon.log" 2>&1 & dpid=$!
 state="$XDG_STATE_HOME/friday/state.json"
