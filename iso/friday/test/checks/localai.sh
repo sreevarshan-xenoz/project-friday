@@ -106,6 +106,7 @@ contains "keeps the other keys" "$envf" "GEMINI_API_KEY=k"
 contains "points FRIDAY at Ollama" "$envf" "LLAMACPP_BASE_URL=http://127.0.0.1:11434/v1"
 contains "names the model" "$envf" "LLAMACPP_MODEL=gemma3:4b"
 contains "it sees screenshots" "$envf" "LLAMACPP_VISION=1"
+contains "a 4B model backs up cloud (auto)" "$envf" "FRIDAY_LOCAL_FIRST=0"
 [[ $(grep -c '^LLAMACPP_MODEL=' "$ENV") == 1 ]] && pass "replaces the old model line" || fail "two LLAMACPP_MODEL lines"
 [[ "$(stat -c %a "$ENV")" == 600 ]] && pass "friday.env stays private (0600)" || fail "friday.env is $(stat -c %a "$ENV")"
 contains "state is ready" "$(cat "$CONF")" "state=ready"
@@ -115,6 +116,19 @@ contains "says local AI is on, and that it sees screenshots" "$(cat "$LOG")" "se
 FRIDAY_HW_ROOT="$hw" bash "$F" local-ai install --first-login >/dev/null 2>&1
 [[ ! -s "$LOG" ]] && pass "first login with the model ready does nothing" || fail "first login re-ran: $(head -2 "$LOG")"
 contains "status names the model" "$(bash "$F" local-ai status)" "gemma3:4b"
+contains "status says cloud answers first" "$(bash "$F" local-ai status)" "cloud answers first while online"
+: >"$LOG"
+contains "order local: the local model answers first" "$(bash "$F" local-ai order local)" "gemma3:4b answers first"
+contains "and it's written for the daemon" "$(cat "$ENV")" "FRIDAY_LOCAL_FIRST=1"
+[[ $(grep -c '^FRIDAY_LOCAL_FIRST=' "$ENV") == 1 ]] && pass "one FRIDAY_LOCAL_FIRST line" || fail "duplicate FRIDAY_LOCAL_FIRST lines"
+contains "and the daemon restarts" "$(cat "$LOG")" "systemctl --user restart friday-linux-daemon"
+bash "$F" local-ai order cloud >/dev/null
+contains "order cloud" "$(cat "$ENV")" "FRIDAY_LOCAL_FIRST=0"
+bash "$F" local-ai order auto >/dev/null
+refuse "an unknown order is refused" bash "$F" local-ai order sometimes
+p=$(presets "$hw")
+contains "presets: gemma3:12b answers first" "$(field "$p" most 9)" "answers first"
+contains "presets: a 4B model backs up cloud" "$(field "$p" gpu 9)" "backs up cloud"
 
 : >"$LOG"; cp "$ENV" "$W/env.before"
 printf 'engine=llamacpp\nbudget_mb=3000\nstate=pending\n' >"$CONF"

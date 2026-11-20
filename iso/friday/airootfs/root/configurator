@@ -398,7 +398,7 @@ step_local_ai() {
     return 0
   fi
   echo
-  friday_say "Local AI answers first and keeps your questions on this computer. It's slower than cloud."
+  friday_say "Local AI runs on this computer: it works offline, but it's slower than cloud."
   friday_note "  This computer: $(head -n1 <<<"$summary")"
   while IFS= read -r line; do friday_note "  $line"; done < <(tail -n +2 <<<"$summary")
   local engine eng
@@ -423,6 +423,8 @@ step_local_ai() {
     ids+=("$id|$budget|$model|$vision")
   done <<<"$presets"
   friday_note "  The amount picks the model. It's in memory only while FRIDAY answers, and freed after 5 idle minutes."
+  friday_note "  Models above 4B answer first. Smaller ones back up cloud, so your questions go to a cloud model first."
+  friday_note "  To keep everything on this computer, choose Local first in FRIDAY Settings later (or: friday private on)."
   if (( ${#options[@]} == 0 )); then
     friday_err "This computer can't run a local model well, so FRIDAY uses cloud providers only."
     return 0
@@ -434,7 +436,8 @@ step_local_ai() {
     IFS='|' read -r _ FRIDAY_LOCAL_BUDGET_MB FRIDAY_LOCAL_MODEL vision <<<"${ids[$i]}"
     FRIDAY_LOCAL_ENGINE="$eng"
     local sees="text only"; (( vision )) && sees="sees screenshots"
-    FRIDAY_LOCAL_LABEL="Local: $FRIDAY_LOCAL_MODEL on ${engine%% (*} ($sees)"
+    local when="backs up cloud"; [[ $pick == *", answers first,"* ]] && when="answers first"
+    FRIDAY_LOCAL_LABEL="Local: $FRIDAY_LOCAL_MODEL on ${engine%% (*} ($sees, $when)"
     friday_ok "$FRIDAY_LOCAL_LABEL; it downloads after your first login"
   done
 }
