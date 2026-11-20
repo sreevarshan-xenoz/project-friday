@@ -438,6 +438,67 @@ async fn routine(args: &[String]) -> std::process::ExitCode {
     }
 }
 
+/// `friday-ctl local-ai detect | presets [--json] | model <budget_mb> |
+/// local-first <model> <auto|local|cloud> [tokens/s]` (see
+/// `friday_mobile::local_ai`): the same lines as the bash `friday local-ai`.
+fn local_ai(args: &[String]) -> std::process::ExitCode {
+    use friday_mobile::local_ai as l;
+    match args.first().map(String::as_str) {
+        Some("detect") => print!("{}", l::detect().lines()),
+        Some("presets") => {
+            let rows = l::presets(&l::detect());
+            if args.iter().any(|a| a == "--json") {
+                let json: Vec<serde_json::Value> = rows
+                    .iter()
+                    .map(|p| {
+                        serde_json::json!({
+                            "id": p.id, "label": p.label, "budget_mb": p.budget_mb,
+                            "model": p.model, "download_mb": p.download_mb,
+                            "vision": p.vision, "fast": p.fast,
+                            "available": p.available, "note": p.note,
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::Value::Array(json));
+            } else {
+                for p in rows {
+                    println!("{}", p.line());
+                }
+            }
+        }
+        Some("model") => {
+            let Some(mb) = args.get(1).and_then(|v| v.parse().ok()) else {
+                eprintln!("usage: friday-ctl local-ai model <budget_mb>");
+                return std::process::ExitCode::from(2);
+            };
+            println!("{}", l::model_for_budget(mb).map_or("", |m| m.id));
+        }
+        Some("local-first") => {
+            let (Some(model), Some(order)) = (args.get(1), args.get(2)) else {
+                eprintln!(
+                    "usage: friday-ctl local-ai local-first <model> <auto|local|cloud> [tokens/s]"
+                );
+                return std::process::ExitCode::from(2);
+            };
+            // Like the bash script: no speed means unmeasured, one that isn't
+            // a number counts as 0.
+            let tps = args
+                .get(3)
+                .filter(|v| !v.is_empty())
+                .map(|v| v.parse().unwrap_or(0.0));
+            println!(
+                "{}",
+                l::local_first(model, l::Order::parse(order), tps) as u8
+            );
+        }
+        _ => {
+            eprintln!("usage: friday-ctl local-ai detect | presets [--json] | model <mb> | local-first <model> <order> [tps]");
+            return std::process::ExitCode::from(2);
+        }
+    }
+    std::process::ExitCode::SUCCESS
+}
+
 /// `friday-ctl docs "<question>"`: excerpts from the documentation on this
 /// computer (nothing when nothing fits). `--prepare` unpacks the Arch wiki
 /// for searching; a search starts that in the background when it's due.
@@ -694,6 +755,9 @@ async fn main() -> std::process::ExitCode {
                 std::process::ExitCode::from(2)
             }
         };
+    }
+    if raw.first().map(String::as_str) == Some("local-ai") {
+        return local_ai(&raw[1..]);
     }
     if raw.first().map(String::as_str) == Some("docs") {
         return docs(&raw[1..]);
