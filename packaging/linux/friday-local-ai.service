@@ -4,8 +4,6 @@ Description=FRIDAY: set up local AI (downloads the model chosen at install)
 # nothing once the model is ready.
 ConditionPathExists=%h/.config/friday/local-ai.conf
 ConditionUser=!@system
-Wants=network-online.target
-After=network-online.target
 
 [Service]
 # exec, not oneshot: a download of several GB must not hold up the session.

@@ -1802,8 +1802,9 @@ friday_local_ai_presets() {
   done
 }
 
-FRIDAY_LOCAL_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/friday/local-ai.conf"
-FRIDAY_LLAMA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/friday/llama.cpp"
+# Fixed paths under $HOME: the user units (friday-local-ai, friday-llama) use %h.
+FRIDAY_LOCAL_CONF="$HOME/.config/friday/local-ai.conf"
+FRIDAY_LLAMA_DIR="$HOME/.local/share/friday/llama.cpp"
 FRIDAY_LLAMA_BUILD=b12556
 # llama.cpp's own release builds: cpu|vulkan → SHA-256.
 FRIDAY_LLAMA_SHA="cpu|1a573b6089d29c9048eefe8497dd40cac4115400f223d33f2a71e506bf6d5b18
@@ -1815,7 +1816,7 @@ gemma3:4b|ggml-org/gemma-3-4b-it-GGUF|d0976223747697cb51e056d85c532013931fe52e|g
 gemma3:12b|ggml-org/gemma-3-12b-it-GGUF|ec0cbabd8dbff316f659876a50202295c3c4a314|gemma-3-12b-it-Q4_K_M.gguf|7bb69bff3f48a7b642355d64a90e481182a7794707b3133890646b1efa778ff5|30c02d056410848227001830866e0a269fcc28aaf8ca971bded494003de9f5a5
 gemma3:27b|ggml-org/gemma-3-27b-it-GGUF|f94c25afed0072339c5fa3b705a7b4222afe5f62|gemma-3-27b-it-Q4_K_M.gguf|edc9aff4d811a285b9157618130b08688b0768d94ee5355b02dc0cb713012e15|54cb61c842fe49ac3c89bc1a614a2778163eb49f3dec2b90ff688b4c0392cb48"
 
-friday_local_conf_get() { sed -n "s/^$1=//p" "$FRIDAY_LOCAL_CONF" 2>/dev/null | tail -n1; }
+friday_local_conf_get() { { sed -n "s/^$1=//p" "$FRIDAY_LOCAL_CONF" 2>/dev/null || true; } | tail -n1; }
 friday_local_conf_set() { # friday_local_conf_set key value...
   mkdir -p "$(dirname "$FRIDAY_LOCAL_CONF")"
   local tmp="$FRIDAY_LOCAL_CONF.tmp"
@@ -1849,7 +1850,6 @@ friday_local_failed() {
   friday_local_conf_set reason "$1"
   echo "Local AI setup failed: $1" >&2
   notify-send -a FRIDAY -u normal "Local AI setup failed" "$1. Cloud answers meanwhile; try again: friday local-ai install" 2>/dev/null || true
-  return 1
 }
 
 # The model on Ollama: the package is already installed (the installer or
@@ -1886,7 +1886,10 @@ friday_local_install_llamacpp() {
   (umask 077; echo "LLAMA_ARGS=$args" >"$(dirname "$FRIDAY_LOCAL_CONF")/llama.env")
   systemctl --user daemon-reload 2>/dev/null || true
   systemctl --user enable --now friday-llama.service >/dev/null 2>&1 || { echo "could not start friday-llama.service"; return 1; }
-  friday_wait_http "http://127.0.0.1:8080/health" 180 || { echo "the llama.cpp server didn't start (journalctl --user -u friday-llama)"; return 1; }
+  if ! friday_wait_http "http://127.0.0.1:8080/health" 180; then
+    systemctl --user disable --now friday-llama.service >/dev/null 2>&1 || true
+    echo "the llama.cpp server didn't start (journalctl --user -u friday-llama)"; return 1
+  fi
   LOCAL_BASE_URL="http://127.0.0.1:8080/v1"
 }
 
@@ -1904,7 +1907,11 @@ friday_local_ai_install() {
     shift
   done
   if $first; then
-    case "$(friday_local_conf_get state)" in pending|failed) ;; *) return 0 ;; esac
+    # Anything but ready: a reboot mid-download leaves "installing".
+    [[ "$(friday_local_conf_get state)" != ready ]] || return 0
+    # A user unit can't wait for network-online.target, so wait here (2 min).
+    local i=0
+    until curl -s -o /dev/null --max-time 5 https://github.com 2>/dev/null || (( ++i >= 24 )); do sleep 5; done
   fi
   [[ $engine == ollama || $engine == llamacpp ]] || { echo "choose an engine: --engine ollama|llamacpp" >&2; return 2; }
   [[ $budget =~ ^[0-9]+$ ]] || { echo "choose a budget: --budget MB (friday local-ai presets)" >&2; return 2; }

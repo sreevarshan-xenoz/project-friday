@@ -126,6 +126,14 @@ cmp -s "$ENV" "$W/env.before" && pass "friday.env is untouched" || fail "friday.
 contains "the failure is a notification" "$(cat "$LOG")" "notify-send"
 contains "llama.cpp: the GPU build for a machine with a GPU" "$(cat "$LOG")" "ubuntu-vulkan-x64"
 
+: >"$LOG"
+printf 'engine=ollama\nbudget_mb=6144\nstate=installing\n' >"$CONF"
+FRIDAY_HW_ROOT="$hw" bash "$F" local-ai install --first-login >/dev/null 2>&1
+contains "a download a reboot cut short resumes at the next login" "$(cat "$LOG")" "ollama pull gemma3:4b"
+rm -f "$CONF"; : >"$LOG"
+if FRIDAY_HW_ROOT="$hw" bash "$F" local-ai install --engine ollama --budget 4096 >"$W/out" 2>&1; then pass "install with no settings file yet works"
+else fail "install with no settings file failed: $(tail -2 "$W/out")"; fi
+
 printf 'engine=ollama\nbudget_mb=1000\nstate=pending\n' >"$CONF"
 FRIDAY_HW_ROOT="$hw" bash "$F" local-ai install --first-login >/dev/null 2>&1
 contains "too little memory: failed, in words" "$(cat "$CONF")" "too little memory"
