@@ -87,6 +87,11 @@ worked afterwards (`lessons.jsonl`), and a similar ask gets them in its
 `[memory]` block. It doesn't use `reflection` or `knowledge`; whether those
 two go is still open.
 
+Removed from goal-execution: `autonomy.rs` (1,815 lines; nothing outside its
+own tests called it), and with it goal-execution's dependency on
+agent-runtime. The crate stays for action-runtime's `SecurityScope` and
+`SkillAgentDriver`.
+
 ## Rules for what comes next
 
 - Nothing gets wired in to raise a count. A candidate goes in when a person
