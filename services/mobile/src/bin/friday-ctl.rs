@@ -156,6 +156,18 @@ async fn main() -> std::process::ExitCode {
     if raw.first().map(String::as_str) == Some("agent-hooks") {
         return agent_hooks(&raw[1..]);
     }
+    // How each AI provider is doing, from the files next to state.json.
+    if raw.first().map(String::as_str) == Some("providers") {
+        let state_path = std::env::var("FRIDAY_STATE_FILE")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| ShellState::default_path());
+        let dir = state_path.parent().unwrap_or(std::path::Path::new("."));
+        print!(
+            "{}",
+            friday_mobile::provider_status::report(dir, chrono::Utc::now())
+        );
+        return std::process::ExitCode::SUCCESS;
+    }
 
     // Resolve the daemon address + token, in precedence order: explicit CLI
     // flags, then env overrides, then the file-backed state.
