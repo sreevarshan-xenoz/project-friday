@@ -219,6 +219,75 @@ fn watch(args: &[String]) -> std::process::ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `friday-ctl recall watch | search <question>` (see `friday_mobile::recall`).
+async fn recall(args: &[String]) -> std::process::ExitCode {
+    use friday_mobile::context_read::ScreenText;
+    use friday_mobile::recall::{self, Seen};
+    let path = recall::file();
+    let now = || chrono::Utc::now().timestamp();
+    match args.first().map(String::as_str) {
+        Some("search") => {
+            let found = recall::search(&path, now(), &args[1..].join(" "));
+            print!("{}", friday_mobile::local_docs::render(&found));
+            std::process::ExitCode::SUCCESS
+        }
+        Some("watch") => {
+            let Some(reader) = friday_mobile::agent_desktop::detect().await else {
+                eprintln!("friday-ctl: recall needs agent-desktop to read windows");
+                return std::process::ExitCode::FAILURE;
+            };
+            let own = std::env::var_os("XDG_CONFIG_HOME")
+                .map(std::path::PathBuf::from)
+                .or_else(|| {
+                    std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
+                })
+                .unwrap_or_default()
+                .join("friday/private-windows");
+            loop {
+                let win: serde_json::Value = std::process::Command::new("hyprctl")
+                    .args(["activewindow", "-j"])
+                    .output()
+                    .ok()
+                    .and_then(|o| serde_json::from_slice(&o.stdout).ok())
+                    .unwrap_or_default();
+                let app = win["class"].as_str().unwrap_or_default();
+                let title = win["title"].as_str().unwrap_or_default();
+                let own_list = std::fs::read_to_string(&own).unwrap_or_default();
+                // The reader takes the whole app, every window of it: one
+                // private window (a private Firefox one) keeps it all out.
+                let clients: serde_json::Value = std::process::Command::new("hyprctl")
+                    .args(["clients", "-j"])
+                    .output()
+                    .ok()
+                    .and_then(|o| serde_json::from_slice(&o.stdout).ok())
+                    .unwrap_or_default();
+                let any_private = clients.as_array().into_iter().flatten().any(|c| {
+                    c["class"].as_str() == Some(app)
+                        && recall::private(app, c["title"].as_str().unwrap_or_default(), &own_list)
+                });
+                if !app.is_empty() && !any_private && !recall::private(app, title, &own_list) {
+                    if let Some(text) = reader.window_text(app).await {
+                        let _ = recall::add(
+                            &path,
+                            Seen {
+                                ts: now(),
+                                app: app.to_string(),
+                                title: title.to_string(),
+                                text,
+                            },
+                        );
+                    }
+                }
+                tokio::time::sleep(Duration::from_secs(recall::EVERY_SECS)).await;
+            }
+        }
+        _ => {
+            eprintln!("usage: friday-ctl recall watch | search <question>");
+            std::process::ExitCode::from(2)
+        }
+    }
+}
+
 /// `friday-ctl docs "<question>"`: excerpts from the documentation on this
 /// computer (nothing when nothing fits). `--prepare` unpacks the Arch wiki
 /// for searching; a search starts that in the background when it's due.
@@ -457,6 +526,9 @@ async fn main() -> std::process::ExitCode {
     }
     if raw.first().map(String::as_str) == Some("watch") {
         return watch(&raw[1..]);
+    }
+    if raw.first().map(String::as_str) == Some("recall") {
+        return recall(&raw[1..]).await;
     }
     if raw.first().map(String::as_str) == Some("docs") {
         return docs(&raw[1..]);

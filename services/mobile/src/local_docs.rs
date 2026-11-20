@@ -15,7 +15,7 @@ use std::process::Command;
 
 const WIKI_DIR: &str = "/usr/share/doc/arch-wiki/text";
 /// Marks an article's first line in the cache: `\x01Title`.
-const TITLE_MARK: char = '\u{1}';
+pub const TITLE_MARK: char = '\u{1}';
 const PASSAGE_LINES: usize = 14;
 const PASSAGE_CHARS: usize = 1500;
 const PAGE_CHARS: usize = 1200;
@@ -204,10 +204,11 @@ fn count(hay: &str, term: &str) -> usize {
     }
 }
 
-/// The best wiki articles for the question (one, or two when the second
-/// scores close) and their best passages, where the match is strong: the
-/// passage holds most of the question's words.
-fn wiki(question: &str, cache_text: &str) -> Vec<Excerpt> {
+/// The best articles in `cache_text` (articles start with a `TITLE_MARK`
+/// line) for the question: one, or two when the second scores close, each
+/// with its best passage, where the match is strong (the passage holds most
+/// of the question's words). The source is the article's title.
+pub fn passages(question: &str, cache_text: &str) -> Vec<Excerpt> {
     let terms = terms(question);
     let arts = articles(cache_text);
     if terms.is_empty() || arts.is_empty() {
@@ -296,7 +297,7 @@ fn passage(art: &Article, terms: &[String], idf: &[f64]) -> Option<Excerpt> {
         PASSAGE_CHARS,
     );
     Some(Excerpt {
-        source: format!("Arch wiki: {}", art.title),
+        source: art.title.to_string(),
         text,
     })
 }
@@ -374,7 +375,15 @@ pub fn find(question: &str, s: &Sources) -> Vec<Excerpt> {
         }
     }
     if let Ok(text) = std::fs::read_to_string(&s.cache) {
-        out.extend(wiki(question, &text).into_iter().take(3 - out.len()));
+        out.extend(
+            passages(question, &text)
+                .into_iter()
+                .take(3 - out.len())
+                .map(|e| Excerpt {
+                    source: format!("Arch wiki: {}", e.source),
+                    text: e.text,
+                }),
+        );
     }
     out
 }
