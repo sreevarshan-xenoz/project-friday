@@ -27,19 +27,27 @@ Rectangle {
   color: mouse.containsMouse ? Theme.raised : Theme.surface
   Behavior on color { ColorAnimation { duration: Theme.fast } }
 
-  // Whether recall is keeping window text (its user service is running).
+  // Whether recall is keeping window text, or the wake word is listening
+  // (their user services are running).
   property bool recalling: false
+  property bool listening: false
   Process {
     id: recallCheck
     command: ["systemctl", "--user", "is-active", "--quiet", "friday-recall.service"]
     onExited: code => root.recalling = code === 0
+  }
+  // The microphone is in use: the wake word, or captions of the microphone.
+  Process {
+    id: wakeCheck
+    command: ["sh", "-c", "systemctl --user is-active --quiet friday-wake.service || pgrep -f '[f]riday-ctl listen captions --mic' >/dev/null"]
+    onExited: code => root.listening = code === 0
   }
   Timer {
     interval: 10000
     running: true
     repeat: true
     triggeredOnStart: true
-    onTriggered: recallCheck.running = true
+    onTriggered: { recallCheck.running = true; wakeCheck.running = true; }
   }
 
   RowLayout {
@@ -47,6 +55,12 @@ Rectangle {
     anchors.centerIn: parent
     spacing: 10
 
+    Glyph {
+      visible: root.listening
+      text: Icons.mic
+      size: 15
+      color: Theme.warn
+    }
     Glyph {
       visible: root.recalling
       text: Icons.history

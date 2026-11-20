@@ -1,0 +1,14 @@
+[Unit]
+Description=FRIDAY: listen for "hey Friday" on the microphone (friday wake)
+# Off unless the person turns it on (friday wake on enables it).
+ConditionUser=!@system
+After=pipewire.service friday-linux-daemon.service
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/friday-ctl listen wake
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

@@ -9,6 +9,8 @@ _friday() {
     'cancel:Cancel the goal FRIDAY is working on'
     'answers:Show past answers'
     'sent:Show what left this machine for AI providers'
+    'captions:Live captions of what you hear (on|off|toggle|status)'
+    'wake:Say "hey Friday" to ask, hands free (status|on|off)'
     'show:Ring a control in the window in front'
     'recall:Keep window text for 3 hours to ask what was that (status|on|off)'
     'routine:Save what FRIDAY just did on the desktop and run it by name'

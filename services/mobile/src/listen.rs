@@ -1,0 +1,519 @@
+//! Listening on this computer: live captions for any audio, and an opt-in
+//! "hey Friday" wake word. Audio comes from PipeWire (`pw-record`), is cut
+//! into spoken pieces by loudness, and each piece is turned into text by
+//! whisper.cpp (the same model as `friday voice`). Audio is never stored or
+//! sent anywhere; only the text of a piece leaves this module, and wake-word
+//! listening hands on nothing unless a piece starts with "hey Friday".
+
+use std::path::Path;
+
+/// Samples per second.
+pub const RATE: usize = 16_000;
+/// One frame is 100 ms.
+pub const FRAME: usize = RATE / 10;
+
+/// Cuts a stream of 100 ms frames into spoken pieces: a piece starts when a
+/// frame is clearly louder than the room, keeps a little before it, and ends
+/// after a pause or at its maximum length.
+pub struct Segmenter {
+    floor: f64,
+    pre: std::collections::VecDeque<Vec<i16>>,
+    piece: Vec<i16>,
+    quiet: usize,
+    speaking: bool,
+    /// Frames of lead-in kept before the piece began.
+    lead: usize,
+    /// Frames heard while learning the room's noise level.
+    heard: usize,
+    /// The last piece was cut at its maximum length: what follows continues it.
+    cut: bool,
+    hang: usize,
+    max_frames: usize,
+}
+
+const PRE_ROLL: usize = 3;
+const CALIBRATE: usize = 10;
+const MIN_LOUD: f64 = 250.0;
+/// A piece shorter than this many frames is noise (a click, a cough).
+const MIN_FRAMES: usize = 4;
+
+pub fn rms(frame: &[i16]) -> f64 {
+    if frame.is_empty() {
+        return 0.0;
+    }
+    (frame.iter().map(|&s| (s as f64) * (s as f64)).sum::<f64>() / frame.len() as f64).sqrt()
+}
+
+impl Segmenter {
+    /// `hang`: quiet frames that end a piece; `max_frames`: its longest.
+    pub fn new(hang: usize, max_frames: usize) -> Self {
+        Segmenter {
+            floor: 100.0,
+            pre: Default::default(),
+            piece: Vec::new(),
+            quiet: 0,
+            speaking: false,
+            lead: 0,
+            heard: 0,
+            cut: false,
+            hang,
+            max_frames,
+        }
+    }
+
+    /// A segmenter that already knows this room (no calibration second).
+    pub fn continuing(&self, hang: usize, max_frames: usize) -> Self {
+        Segmenter {
+            heard: CALIBRATE,
+            floor: self.floor,
+            ..Segmenter::new(hang, max_frames)
+        }
+    }
+
+    /// Feeds one frame; returns a finished piece when one ends.
+    pub fn feed(&mut self, frame: &[i16]) -> Option<Vec<i16>> {
+        let level = rms(frame);
+        // The first second only teaches the room's level, whatever it is.
+        if self.heard < CALIBRATE {
+            self.floor = (self.floor * self.heard as f64 + level) / (self.heard + 1) as f64;
+            self.heard += 1;
+            return None;
+        }
+        let loud = level > (self.floor * 3.0).max(MIN_LOUD);
+        if !self.speaking {
+            if !loud {
+                // The room's own noise level, slowly followed.
+                self.floor = 0.95 * self.floor + 0.05 * level;
+                self.pre.push_back(frame.to_vec());
+                if self.pre.len() > PRE_ROLL {
+                    self.pre.pop_front();
+                }
+                return None;
+            }
+            self.speaking = true;
+            self.quiet = 0;
+            self.lead = self.pre.len();
+            self.piece = self.pre.drain(..).flatten().collect();
+        }
+        self.piece.extend_from_slice(frame);
+        self.quiet = if loud { 0 } else { self.quiet + 1 };
+        let frames = self.piece.len() / FRAME;
+        if self.quiet >= self.hang || frames >= self.max_frames {
+            self.speaking = false;
+            let piece = std::mem::take(&mut self.piece);
+            let speech_frames = frames.saturating_sub(self.quiet + self.lead);
+            // The end of a long piece, after a cut, may be short.
+            let long_enough = speech_frames >= MIN_FRAMES || self.cut;
+            self.cut = self.quiet < self.hang && frames >= self.max_frames;
+            return long_enough.then_some(piece);
+        }
+        None
+    }
+}
+
+/// 16-bit mono WAV bytes for whisper.
+pub fn wav_bytes(samples: &[i16]) -> Vec<u8> {
+    let data = (samples.len() * 2) as u32;
+    let mut out = Vec::with_capacity(44 + samples.len() * 2);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    out.extend_from_slice(&1u16.to_le_bytes()); // mono
+    out.extend_from_slice(&(RATE as u32).to_le_bytes());
+    out.extend_from_slice(&((RATE * 2) as u32).to_le_bytes());
+    out.extend_from_slice(&2u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&data.to_le_bytes());
+    for s in samples {
+        out.extend_from_slice(&s.to_le_bytes());
+    }
+    out
+}
+
+/// Whisper's text without its bracketed markers ("[BLANK_AUDIO]", "(music)")
+/// and extra spaces.
+pub fn clean_text(raw: &str) -> String {
+    let mut out = String::new();
+    let mut depth = 0;
+    for c in raw.chars() {
+        match c {
+            '[' | '(' => depth += 1,
+            ']' | ')' if depth > 0 => depth -= 1,
+            _ if depth > 0 => {}
+            '\n' | '\t' => out.push(' '),
+            c => out.push(c),
+        }
+    }
+    let text = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    // On faint noise whisper makes up a lone "you".
+    if text.eq_ignore_ascii_case("you") || text.eq_ignore_ascii_case("you.") {
+        return String::new();
+    }
+    text
+}
+
+/// Whether the text starts with "hey Friday" (or "ok / okay / hi Friday"),
+/// and what follows it. "Friday" alone isn't enough: it is a day of the week.
+pub fn wake_phrase(text: &str) -> Option<String> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let bare = |w: &str| {
+        w.trim_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase()
+    };
+    if words.len() < 2 || !matches!(bare(words[0]).as_str(), "hey" | "ok" | "okay" | "hi") {
+        return None;
+    }
+    (bare(words[1]) == "friday").then(|| {
+        words[2..]
+            .join(" ")
+            .trim_start_matches(|c: char| !c.is_alphanumeric())
+            .to_string()
+    })
+}
+
+/// Runs whisper.cpp on a piece and returns its cleaned text.
+pub fn transcribe(whisper: &Path, model: &Path, samples: &[i16]) -> Option<String> {
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let file = dir.join(format!("friday-listen-{}.wav", std::process::id()));
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+    std::io::Write::write_all(&mut opts.open(&file).ok()?, &wav_bytes(samples)).ok()?;
+    let out = std::process::Command::new("timeout")
+        .arg("60")
+        .arg(whisper)
+        .arg("-m")
+        .arg(model)
+        .arg("-f")
+        .arg(&file)
+        .args(["-nt", "-np"])
+        .stderr(std::process::Stdio::null())
+        .output();
+    let _ = std::fs::remove_file(&file);
+    let text = clean_text(&String::from_utf8_lossy(&out.ok()?.stdout));
+    (!text.is_empty()).then_some(text)
+}
+
+/// whisper.cpp and the model `friday voice setup` installs, if both are there.
+pub fn find_whisper() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let path = std::env::var_os("PATH")?;
+    let bin = std::env::split_paths(&path)
+        .flat_map(|d| [d.join("whisper-cli"), d.join("whisper-cpp")])
+        .find(|p| p.is_file())?;
+    let model = std::env::var_os("XDG_DATA_HOME")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))
+        })?
+        .join("friday/whisper/ggml-base.en.bin");
+    model.is_file().then_some((bin, model))
+}
+
+/// Frames of 100 ms from PipeWire: what is heard (`sink`: the sound the
+/// computer plays) or the microphone. Ends when the recorder does.
+fn frames(sink: bool) -> std::io::Result<impl Iterator<Item = Vec<i16>>> {
+    use std::io::Read;
+    let mut cmd = std::process::Command::new("pw-record");
+    cmd.args([
+        "--raw",
+        "--rate",
+        "16000",
+        "--channels",
+        "1",
+        "--format",
+        "s16",
+    ]);
+    if sink {
+        cmd.args(["-P", "stream.capture.sink=true"]);
+    }
+    let mut child = cmd
+        .arg("-")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    let mut out = child.stdout.take().ok_or(std::io::ErrorKind::BrokenPipe)?;
+    Ok(std::iter::from_fn(move || {
+        let mut buf = vec![0u8; FRAME * 2];
+        if out.read_exact(&mut buf).is_err() {
+            let _ = child.kill();
+            return None;
+        }
+        Some(
+            buf.chunks_exact(2)
+                .map(|b| i16::from_le_bytes([b[0], b[1]]))
+                .collect(),
+        )
+    }))
+}
+
+fn friday(args: &[&str]) {
+    let _ = std::process::Command::new("friday")
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+/// Live captions: every spoken piece of what the computer plays (or, with
+/// `mic`, the microphone) is shown on screen and kept in a notes file.
+/// Runs until stopped.
+pub fn run_captions(mic: bool) -> u8 {
+    use std::io::Write;
+    let Some((whisper, model)) = find_whisper() else {
+        eprintln!("friday-ctl: captions need voice first: friday voice setup");
+        return 1;
+    };
+    let Ok(frames) = frames(!mic) else {
+        eprintln!("friday-ctl: couldn't start pw-record");
+        return 1;
+    };
+    let notes = notes_file(chrono::Local::now());
+    if let Some(dir) = notes.parent() {
+        let _ = std::fs::create_dir_all(dir);
+        // What was said can be private: only you can open the notes.
+        #[cfg(unix)]
+        let _ = std::fs::set_permissions(dir, std::os::unix::fs::PermissionsExt::from_mode(0o700));
+    }
+    println!("{}", notes.display());
+    let mut seg = Segmenter::new(6, 80);
+    let mut last = String::new();
+    let mut shown: Vec<String> = Vec::new();
+    for frame in frames {
+        let Some(piece) = seg.feed(&frame) else {
+            continue;
+        };
+        let Some(text) = transcribe(&whisper, &model, &piece) else {
+            continue;
+        };
+        if text == last {
+            continue;
+        }
+        last = text.clone();
+        let mut opts = std::fs::OpenOptions::new();
+        opts.create(true).append(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+        if let Ok(mut f) = opts.open(&notes) {
+            let _ = writeln!(f, "{} {text}", chrono::Local::now().format("%H:%M:%S"));
+        }
+        shown.push(text);
+        if shown.len() > 2 {
+            shown.remove(0);
+        }
+        friday(&["shell", "ipc", "captions", "put", &shown.join("\n")]);
+    }
+    0
+}
+
+/// The wake word: listens to the microphone for a piece that starts with
+/// "hey Friday", then asks what follows it (or, when nothing does, listens
+/// for the question). Nothing is kept or sent until then.
+pub fn run_wake() -> u8 {
+    let Some((whisper, model)) = find_whisper() else {
+        eprintln!("friday-ctl: the wake word needs voice first: friday voice setup");
+        return 1;
+    };
+    let Ok(mut frames) = frames(false) else {
+        eprintln!("friday-ctl: couldn't start pw-record");
+        return 1;
+    };
+    let mut seg = Segmenter::new(8, 50);
+    let mut quiet_until = std::time::Instant::now();
+    while let Some(frame) = frames.next() {
+        let Some(piece) = seg.feed(&frame) else {
+            continue;
+        };
+        if std::time::Instant::now() < quiet_until {
+            continue;
+        }
+        let Some(rest) = transcribe(&whisper, &model, &piece).and_then(|t| wake_phrase(&t)) else {
+            continue;
+        };
+        let mut question = rest;
+        if question.trim().is_empty() {
+            let _ = std::process::Command::new("notify-send")
+                .args(["-a", "FRIDAY", "-t", "4000", "--", "FRIDAY", "Listening…"])
+                .stderr(std::process::Stdio::null())
+                .status();
+            // The question: the next piece, if it starts within 8 seconds.
+            let mut ask = seg.continuing(12, 150);
+            let mut waited = 0;
+            question = String::new();
+            for f in frames.by_ref() {
+                waited += 1;
+                if let Some(p) = ask.feed(&f) {
+                    question = transcribe(&whisper, &model, &p).unwrap_or_default();
+                    break;
+                }
+                if waited > 80 + 150 {
+                    break;
+                }
+            }
+        }
+        if !question.trim().is_empty() {
+            // On its own thread: the answer streams for a while, and the
+            // microphone's pipe mustn't back up meanwhile.
+            std::thread::spawn(move || friday(&["ask", &question]));
+        }
+        quiet_until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        seg = Segmenter::new(8, 50);
+    }
+    0
+}
+
+/// Where captions' notes are kept: `captions/<date>-<time>.txt` under
+/// FRIDAY's data directory.
+pub fn notes_file(now: chrono::DateTime<chrono::Local>) -> std::path::PathBuf {
+    std::env::var_os("XDG_DATA_HOME")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))
+        })
+        .unwrap_or_else(|| "/tmp".into())
+        .join("friday/captions")
+        .join(format!("{}.txt", now.format("%Y-%m-%d-%H%M")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tone(level: i16) -> Vec<i16> {
+        (0..FRAME)
+            .map(|i| if i % 2 == 0 { level } else { -level })
+            .collect()
+    }
+
+    #[test]
+    fn a_spoken_piece_is_cut_out_with_a_little_before_it() {
+        let mut s = Segmenter::new(5, 50);
+        let mut got = Vec::new();
+        // A second of calibration, then the room.
+        for _ in 0..14 {
+            assert!(s.feed(&tone(20)).is_none());
+        }
+        for _ in 0..8 {
+            assert!(s.feed(&tone(4000)).is_none());
+        }
+        for _ in 0..5 {
+            got.extend(s.feed(&tone(20)));
+        }
+        assert_eq!(got.len(), 1);
+        // 3 frames before, 8 spoken, 5 of pause.
+        assert_eq!(got[0].len() / FRAME, 16);
+    }
+
+    #[test]
+    fn a_click_is_not_a_piece_and_a_long_one_is_cut() {
+        let mut s = Segmenter::new(3, 10);
+        for _ in 0..12 {
+            s.feed(&tone(20));
+        }
+        s.feed(&tone(5000));
+        let click = (0..3).filter_map(|_| s.feed(&tone(20))).count();
+        assert_eq!(click, 0);
+        let mut pieces = 0;
+        for _ in 0..25 {
+            pieces += s.feed(&tone(5000)).is_some() as usize;
+        }
+        assert!(pieces >= 2, "{pieces}");
+    }
+
+    #[test]
+    fn a_continuing_segmenter_hears_at_once_and_a_cut_tail_may_be_short() {
+        let mut first = Segmenter::new(3, 10);
+        for _ in 0..14 {
+            first.feed(&tone(20));
+        }
+        // No second of calibration: speech right away is heard.
+        let mut next = first.continuing(3, 10);
+        let mut pieces = 0;
+        for _ in 0..6 {
+            pieces += next.feed(&tone(4000)).is_some() as usize;
+        }
+        for _ in 0..4 {
+            pieces += next.feed(&tone(20)).is_some() as usize;
+        }
+        assert_eq!(pieces, 1);
+        // A long piece is cut at 10 frames; two more spoken frames after the
+        // cut still make a piece.
+        let mut long = first.continuing(3, 10);
+        let mut got = 0;
+        for _ in 0..10 {
+            got += long.feed(&tone(4000)).is_some() as usize;
+        }
+        for _ in 0..2 {
+            got += long.feed(&tone(4000)).is_some() as usize;
+        }
+        for _ in 0..3 {
+            got += long.feed(&tone(20)).is_some() as usize;
+        }
+        assert_eq!(got, 2);
+    }
+
+    #[test]
+    fn a_noisy_room_raises_the_bar() {
+        let mut s = Segmenter::new(3, 50);
+        for _ in 0..40 {
+            assert!(s.feed(&tone(600)).is_none());
+        }
+        // The same level is the room, not speech.
+        assert!(s.feed(&tone(700)).is_none() && !s.speaking);
+    }
+
+    #[test]
+    fn the_wav_has_a_proper_header() {
+        let w = wav_bytes(&[1, -1, 2]);
+        assert_eq!(&w[..4], b"RIFF");
+        assert_eq!(&w[8..16], b"WAVEfmt ");
+        assert_eq!(
+            u32::from_le_bytes(w[24..28].try_into().unwrap()),
+            RATE as u32
+        );
+        assert_eq!(u32::from_le_bytes(w[40..44].try_into().unwrap()), 6);
+        assert_eq!(w.len(), 50);
+    }
+
+    #[test]
+    fn whispers_markers_are_dropped() {
+        assert_eq!(clean_text(" [BLANK_AUDIO]\n"), "");
+        assert_eq!(
+            clean_text("Hello (music) there\n  friend [x] "),
+            "Hello there friend"
+        );
+        assert_eq!(clean_text(" you\n"), "");
+        assert_eq!(clean_text("Thank you"), "Thank you");
+    }
+
+    #[test]
+    fn only_hey_friday_wakes_it() {
+        assert_eq!(
+            wake_phrase("Hey Friday, what time is it?").as_deref(),
+            Some("what time is it?")
+        );
+        assert_eq!(wake_phrase("okay friday").as_deref(), Some(""));
+        assert_eq!(
+            wake_phrase("Hey, Friday! open the settings").as_deref(),
+            Some("open the settings")
+        );
+        assert_eq!(wake_phrase("see you on Friday"), None);
+        assert_eq!(wake_phrase("Friday is the day"), None);
+        assert_eq!(wake_phrase("hey there friday"), None);
+        assert_eq!(wake_phrase(""), None);
+    }
+
+    #[test]
+    fn notes_are_named_by_time() {
+        let t = chrono::TimeZone::with_ymd_and_hms(&chrono::Local, 2026, 11, 20, 9, 5, 0).unwrap();
+        assert!(notes_file(t).ends_with("friday/captions/2026-11-20-0905.txt"));
+    }
+}

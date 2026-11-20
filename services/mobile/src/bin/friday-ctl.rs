@@ -683,6 +683,18 @@ async fn main() -> std::process::ExitCode {
     if raw.first().map(String::as_str) == Some("routine") {
         return routine(&raw[1..]).await;
     }
+    if raw.first().map(String::as_str) == Some("listen") {
+        return match raw.get(1).map(String::as_str) {
+            Some("captions") => std::process::ExitCode::from(friday_mobile::listen::run_captions(
+                raw.iter().any(|a| a == "--mic"),
+            )),
+            Some("wake") => std::process::ExitCode::from(friday_mobile::listen::run_wake()),
+            _ => {
+                eprintln!("usage: friday-ctl listen captions [--mic] | wake");
+                std::process::ExitCode::from(2)
+            }
+        };
+    }
     if raw.first().map(String::as_str) == Some("docs") {
         return docs(&raw[1..]);
     }
