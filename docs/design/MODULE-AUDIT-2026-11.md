@@ -80,6 +80,11 @@ Not checked: whether stored `reflection` strings feed a later prompt through
 `MemoryJournal` recall (grep found no reader outside tests); whether
 `autonomy.rs` is called from anything outside tests.
 
+Removed from goal-execution: `autonomy.rs` (1,815 lines; nothing outside its
+own tests called it), and with it goal-execution's dependency on
+agent-runtime. The crate stays for action-runtime's `SecurityScope` and
+`SkillAgentDriver`.
+
 ## Rules for what comes next
 
 - Nothing gets wired in to raise a count. A candidate goes in when a person
