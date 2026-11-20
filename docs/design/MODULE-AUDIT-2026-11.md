@@ -56,6 +56,30 @@ bridge, with `protocol-tests/` (bridge's fixtures). Restore any with
 Kept: skill-forge (ships in friday-git as `friday create-skill|validate|publish`),
 recovery and simulation (used by the benchmark and e2e crates).
 
+## The five "linked but barely used" crates, after v0.6.0 (2026-11-20)
+
+Checked with `grep` over the workspace and `cargo tree -p friday-mobile`; the
+call sites below were read, but no ask was run to watch them.
+
+| Crate | Reached from the daemon how | Does a person notice? | Verdict |
+|---|---|---|---|
+| cognitive | `Topic` and `WorkspaceEvent` in `voice.rs`, `goal_runner.rs` and goal-execution's `execution.rs` | Types only; the heartbeat loop isn't run | Keep the types. Dropping the loop is a separate, safe cut. |
+| engines/memory (`friday-memory`) | One call site: `Episode::from_event` in goal-execution's `create_episodes` | No; the daemon's memory is `MemoryJournal` | Fold `Episode` into goal-execution, then drop the crate |
+| reflection | goal-execution `reflect()` runs after every executed action | No: the strongest insight is stored as the episode's `reflection` string, and only tests read it back (`goal_runner.rs` tests) | Candidate to fold or remove together with knowledge |
+| knowledge | `KnowledgeEngine::analyze` feeds `reflect()`; `KnowledgeGraph` in `world.rs`, `planning.rs` | Only through reflection (above) | As reflection |
+| agent-runtime | `SecurityScope` is used by action-runtime's request, egress, kernel and browser code; `AgentDriver`/`AgentDirector` only by goal-execution's `autonomy.rs` and tests | `SecurityScope` yes (egress rules); the driver no | Keep `SecurityScope`; the driver side is the part to cut if `autonomy.rs` goes |
+
+None of these is dead: goal-execution links all five, so archiving one means
+editing goal-execution first. The order that removes the most with the least
+risk: (1) `autonomy.rs` in goal-execution (the only user of the agent driver),
+(2) reflection + knowledge together with their `reflect()` call, (3) fold
+`Episode` and drop `engines/memory`. Each needs the goal-execution and
+goal_runner tests re-run, and each is the owner's call.
+
+Not checked: whether stored `reflection` strings feed a later prompt through
+`MemoryJournal` recall (grep found no reader outside tests); whether
+`autonomy.rs` is called from anything outside tests.
+
 ## Rules for what comes next
 
 - Nothing gets wired in to raise a count. A candidate goes in when a person
