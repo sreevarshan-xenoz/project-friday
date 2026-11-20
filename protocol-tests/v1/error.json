@@ -1,1 +1,0 @@
-{"kind":"error","sequence":5,"timestamp":1700000000000,"source":"mock","protocol":1,"bridge":"friday-bridge-demo","message":"capability `teleport` is not advertised by this bridge","code":"unsupported_capability","severity":"warning","recoverable":true,"recommended_action":"drop the unsupported capability from hello_response and retry"}
