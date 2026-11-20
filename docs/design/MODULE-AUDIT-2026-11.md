@@ -80,6 +80,12 @@ Not checked: whether stored `reflection` strings feed a later prompt through
 `MemoryJournal` recall (grep found no reader outside tests); whether
 `autonomy.rs` is called from anything outside tests.
 
+Follow-up: the memory gate rejects failed runs (`Unreliable`), so FRIDAY
+kept nothing about failures, and `reflection`'s sentences only restated the
+goal. `lessons.rs` in the daemon now keeps a failed goal's cause and what
+worked afterwards (`lessons.jsonl`), and a similar ask gets them in its
+`[memory]` block. It doesn't use `reflection` or `knowledge`; whether those
+two go is still open.
 Decision (2026-11-21): keep `reflection`, `knowledge`, `engines/memory` and
 `cognitive`. The first pass above said nothing read their output; looking
 again, `knowledge` is part of goal-execution's planning: `PlanningContext`
@@ -90,6 +96,7 @@ Taking them out means redesigning planning and the world model in the path
 every ask takes, for no change a person would see. What was missing was
 learning from failures, and `lessons.rs` does that. Revisit if one of them
 starts costing something (build time, a bug it causes).
+||||||| d48393b1
 
 ## Rules for what comes next
 

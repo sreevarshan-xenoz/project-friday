@@ -377,7 +377,7 @@ rm -f "$HOME/.config/friday/private-windows" "$S/hyprctl"; cp "$W/env.saved" "$e
 FD="$HOME/.local/state/friday"; mkdir -p "$FD/memory"
 printf '<!-- friday answer -->\n# q1\n\nA\n\n---\n\n<!-- friday answer -->\n# q2\n\nB\n\n---\n\n' >"$FD/answers.md"
 printf 'q2\nq1\n' >"$FD/ask-history"; printf '{"a":1}\n{"a":2}\n{"a":3}\n' >"$FD/egress.jsonl"
-printf '{"e":1}\n' >"$FD/memory/episodes.jsonl"
+printf '{"e":1}\n' >"$FD/memory/episodes.jsonl"; printf '{"ts":1}\n' >"$FD/lessons.jsonl"
 printf '%s\n' '{"ts":"2026-11-15T08:12:03.123+00:00","verb":"move_window","params":{"target":"firefox","workspace":"2"},"risk":"reversible","ok":true,"goal":"put firefox on workspace 2"}' \
   '{"ts":"2026-11-15T08:12:04+00:00","verb":"close_window","params":{"target":"gimp"},"risk":"destructive","ok":false,"goal":"close gimp"}' >"$FD/actions.jsonl"
 out=$(bash "$F" forget </dev/null)
@@ -391,7 +391,7 @@ contains "forget answers reports counts" "$(bash "$F" forget answers --yes)" "De
 [[ ! -e "$FD/answers.md" && ! -e "$FD/ask-history" ]] && pass "forget answers deletes them" || fail "forget answers left files"
 [[ -f "$FD/egress.jsonl" && -f "$FD/memory/episodes.jsonl" ]] && pass "and only them" || fail "forget answers deleted more than asked"
 bash "$F" forget all --yes >/dev/null
-[[ ! -e "$FD/egress.jsonl" && ! -e "$FD/memory/episodes.jsonl" ]] && pass "forget all deletes the rest" || fail "forget all left files"
+[[ ! -e "$FD/egress.jsonl" && ! -e "$FD/memory/episodes.jsonl" && ! -e "$FD/lessons.jsonl" ]] && pass "forget all deletes the rest, lessons too" || fail "forget all left files"
 if bash "$F" forget nonsense >/dev/null 2>&1; then fail "forget took an unknown thing"; else pass "forget refuses an unknown thing"; fi
 
 # `friday actions`: what FRIDAY did on the desktop, readable, newest last.
