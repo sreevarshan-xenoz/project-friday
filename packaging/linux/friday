@@ -661,7 +661,8 @@ friday_agent_clis_write() { # <comma list>: rewrite FRIDAY_AGENT_CLIS in friday.
 
 friday_agent_clis_current() {
   local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
-  sed -n 's/^FRIDAY_AGENT_CLIS=//p' "$env_file" 2>/dev/null | tail -n1
+  # No friday.env yet (no key saved) is not an error under pipefail.
+  { sed -n 's/^FRIDAY_AGENT_CLIS=//p' "$env_file" 2>/dev/null || true; } | tail -n1
 }
 
 friday_connect() {
