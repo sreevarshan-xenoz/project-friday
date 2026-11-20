@@ -1480,6 +1480,51 @@ friday_app_suggestions() {
   esac
 }
 
+# Windows whose text never goes to a cloud model: matched (case doesn't
+# matter) against the focused window's app and title. Add your own, one per
+# line, in ~/.config/friday/private-windows; "!bank" there drops a default.
+FRIDAY_PRIVATE_WINDOWS="keepassxc
+bitwarden
+1password
+enpass
+proton pass
+org.gnome.world.secrets
+seahorse
+private browsing
+incognito
+inprivate
+bank
+paypal"
+
+# friday_private_window: what made the focused window private, or nothing.
+friday_private_window() {
+  command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 0
+  local win hay pat own="${XDG_CONFIG_HOME:-$HOME/.config}/friday/private-windows" drop
+  win=$(timeout 2 hyprctl activewindow -j 2>/dev/null) || return 0
+  hay=$(jq -r '"\(.class // "") \(.title // "")"' <<<"$win" 2>/dev/null | tr '[:upper:]' '[:lower:]') || return 0
+  drop=$(sed -n 's/^[[:space:]]*!//p' "$own" 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
+  while IFS= read -r pat; do
+    pat=$(tr '[:upper:]' '[:lower:]' <<<"$pat" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    [[ -n "$pat" && "$pat" != \#* && "$pat" != !* ]] || continue
+    grep -qxF -- "$pat" <<<"$drop" && continue
+    if [[ "$hay" == *"$pat"* ]]; then printf '%s' "$pat"; return 0; fi
+  done < <(printf '%s\n' "$FRIDAY_PRIVATE_WINDOWS"; cat "$own" 2>/dev/null || true)
+}
+
+# friday_ask_local <prompt>: the local model's answer, asked directly on this
+# computer (not through the daemon, so nothing can fall back to the cloud).
+# Fails when no local model is set up.
+friday_ask_local() {
+  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" base model body
+  grep -qx 'LLAMACPP_ENABLED=1' "$env_file" 2>/dev/null || return 2
+  base=$(sed -n 's/^LLAMACPP_BASE_URL=//p' "$env_file" | tail -n1)
+  model=$(sed -n 's/^LLAMACPP_MODEL=//p' "$env_file" | tail -n1)
+  [[ "$base" == http://127.0.0.1:* || "$base" == http://localhost:* ]] || return 2
+  body=$(jq -nc --arg m "$model" --arg p "$1" '{model: $m, messages: [{role: "user", content: $p}]}')
+  timeout 180 curl -s -H 'Content-Type: application/json' -d "$body" "$base/chat/completions" 2>/dev/null \
+    | jq -er '.choices[0].message.content | select(. != null and . != "")' 2>/dev/null
+}
+
 # The app and window title the selected text came from, as one line for the
 # model ("" when off, or when Hyprland can't say). Called before the ask box
 # opens, while that window still has focus. `friday app-context off` stops it.
@@ -2452,6 +2497,9 @@ case "${1:-}" in
       esac
     done
     goal="$*"
+    # The window you're asking about (its selection or its screen): private?
+    private_win=""
+    if $use_selection || $use_screen; then private_win=$(friday_private_window); fi
     state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
     history_file="$state_dir/ask-history"
     notify() { notify-send -a FRIDAY -- "$@" 2>/dev/null || true; }
@@ -2786,6 +2834,25 @@ case "${1:-}" in
 
     if [ -n "$local_answer" ]; then
       show_answer true "$(jq -n --arg r "$local_answer" '{result: $r, local: true}')" ""
+      exit 0
+    fi
+
+    # A private window: its text goes only to the local model, asked here
+    # directly; a screenshot of it never leaves.
+    if [ -n "$private_win" ]; then
+      if $use_screen; then
+        notify-send -a FRIDAY -- "FRIDAY" "This window looks private (\"$private_win\"), so no screenshot of it leaves this computer. Select the text instead to ask the local model about it." 2>/dev/null || true
+        exit 0
+      fi
+      if ! reply=$(friday_ask_local "$request"); then
+        notify-send -a FRIDAY -- "FRIDAY" "This window looks private (\"$private_win\"), so I won't send its text to a cloud model. Set up local AI to ask about it here: friday setup-ai local" 2>/dev/null || true
+        exit 0
+      fi
+      if [ -n "${rewrite:-}" ]; then
+        friday_replace_selection "$(friday_rewrite_clean "$reply")" "${sel_window:-}"
+        exit 0
+      fi
+      show_answer true "$(jq -n --arg r "$reply" '{result: $r, local: true}')" ""
       exit 0
     fi
 
