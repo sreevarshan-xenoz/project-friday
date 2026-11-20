@@ -40,6 +40,10 @@ Top to bottom; don't start a later phase while an earlier one has known failures
 5. **Deeper integration** through the interfaces above, each behind consent.
 6. **Only then** `docs/roadmap/ecosystem-backlog.md`.
 
+Phases 3 to 5 follow `docs/roadmap/vnext.md` (continuity: context,
+control centre, computer runtime, attention policy, multimodal, adaptive),
+each milestone with its exit test.
+
 ## Rules
 
 - **Verify before saying done** (commands below), and say what wasn't verified.
