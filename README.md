@@ -249,6 +249,7 @@ pacman refuses any package or database that key didn't sign. On Windows, install
 | `friday providers` | How each AI provider is doing right now (OK, limit hit, key refused…) and who answered last; also in FRIDAY Settings → AI |
 | `friday answers [--last]` | Past answers (kept private, in `~/.local/state/friday`) |
 | `friday sent [N]` | What left this machine for AI providers (egress log) |
+| `friday undo` | Put back the last thing FRIDAY changed: volume, mute, Do not disturb, a rewrite or paste (Ctrl+Z in that window). "undo" in the ask box does the same |
 | `friday shell style\|palette` | FRIDAY Shell's look, matched on Hyprland or niri |
 | `friday doctor` | Why isn't FRIDAY working? |
 | `friday report` | A redacted bug report to read, then share |

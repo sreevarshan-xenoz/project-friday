@@ -29,6 +29,8 @@ Autonomous Agent & Cognitive Loop:
   friday ask --web ["<objective>"] Ask with web search results and cited sources
   friday paste-as                  Paste the clipboard transformed: bullets, JSON, shorter,
                                    translated… (Super+Alt+V)
+  friday undo                      Put back the last thing FRIDAY changed (volume, mute,
+                                   Do not disturb, a rewrite or paste); "undo" in the ask box too
   friday ask --new ["<objective>"] Start a new conversation (asks within 15 minutes of
                                    each other otherwise share one)
   friday answers                   Show past answers (last one: friday answers --last)
@@ -1107,23 +1109,98 @@ friday_helper() {
   esac
 }
 
+# Undo: what FRIDAY changed, newest last, one JSON line each (the last 20),
+# with what puts it back: {ts, said, kind, args}. Kinds:
+#   sound <volume 0..1.5> <muted 0|1>   dnd <true|false>
+#   text <window address> <original text>  (a paste: Ctrl+Z in that window)
+friday_undo_file() { echo "${XDG_STATE_HOME:-$HOME/.local/state}/friday/undo.jsonl"; }
+
+# friday_undo_add <what was done> <kind> <args...>
+friday_undo_add() {
+  local f said="$1" kind="$2"; shift 2
+  f=$(friday_undo_file)
+  mkdir -p "$(dirname "$f")" && chmod 700 "$(dirname "$f")"
+  (umask 077
+   { tail -n 19 "$f" 2>/dev/null || true
+     jq -nc --arg ts "$(date -Is)" --arg said "$said" --arg kind "$kind" \
+       '{ts: $ts, said: $said, kind: $kind, args: $ARGS.positional}' --args "$@"
+   } >"$f.tmp" && mv -f "$f.tmp" "$f") || true
+}
+
+# The sound's volume (0..1.5) and mute (0|1), as an undo entry's args.
+friday_sound_now() {
+  local v
+  v=$(timeout 2 wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null) || return 1
+  [[ "$v" =~ Volume:\ ([0-9.]+) ]] || return 1
+  printf '%s %s' "${BASH_REMATCH[1]}" "$([[ "$v" == *MUTED* ]] && echo 1 || echo 0)"
+}
+
+# `friday undo`: put back the last thing FRIDAY changed, and say what.
+friday_undo() {
+  local f last kind said a0 a1 pct win
+  f=$(friday_undo_file)
+  last=$(tail -n 1 "$f" 2>/dev/null || true)
+  if [ -z "$last" ]; then echo "Nothing to undo."; return 0; fi
+  kind=$(jq -r '.kind' <<<"$last") said=$(jq -r '.said' <<<"$last")
+  a0=$(jq -r '.args[0] // ""' <<<"$last") a1=$(jq -r '.args[1] // ""' <<<"$last")
+  # Taken off first: an undo that fails isn't tried again by the next one.
+  (umask 077; head -n -1 "$f" >"$f.tmp" && mv -f "$f.tmp" "$f") || true
+  case "$kind" in
+    sound)
+      wpctl set-volume @DEFAULT_AUDIO_SINK@ "$a0" 2>/dev/null || { echo "Couldn't change the sound back."; return 1; }
+      wpctl set-mute @DEFAULT_AUDIO_SINK@ "$a1" 2>/dev/null || true
+      pct=$(awk -v v="$a0" 'BEGIN { printf "%d", v * 100 + 0.5 }')
+      echo "Undid $said: volume back to $pct%$([ "$a1" = 1 ] && echo ", muted")." ;;
+    dnd)
+      bash "$0" shell ipc notifications setDnd "$a0" >/dev/null 2>&1 || { echo "Couldn't change Do not disturb back."; return 1; }
+      echo "Undid $said: Do not disturb is $([ "$a0" = true ] && echo on || echo off) again." ;;
+    text)
+      win=$(timeout 2 hyprctl activewindow -j 2>/dev/null || true)
+      # Never Ctrl+Z in a terminal: it would stop the running program.
+      if [ -n "$a0" ] && [ "$(jq -r '.address // empty' <<<"$win" 2>/dev/null || true)" = "$a0" ] \
+        && ! jq -e '(.tags // []) | any(sub("\\*$"; "") == "terminal")' <<<"$win" >/dev/null 2>&1; then
+        timeout 2 hyprctl dispatch 'hl.dsp.send_key_state({ mods = "CTRL", key = "Z", state = "down" })' >/dev/null 2>&1 || true
+        sleep 0.05
+        timeout 2 hyprctl dispatch 'hl.dsp.send_key_state({ mods = "CTRL", key = "Z", state = "up" })' >/dev/null 2>&1 || true
+        echo "Undid $said (Ctrl+Z in that window)."
+      elif [ -n "$a1" ]; then
+        printf '%s' "$a1" | wl-copy 2>/dev/null || true
+        echo "That window isn't in front any more: go back to it and press Ctrl+Z. The original text is also on your clipboard."
+      else
+        echo "That window isn't in front any more: go back to it and press Ctrl+Z."
+      fi ;;
+    *) echo "Can't undo that."; return 1 ;;
+  esac
+}
+
 # Requests this computer handles itself, with no AI and nothing sent: prints
 # what it did and succeeds, or fails so the question goes to the model.
-#   volume 40 | mute | unmute | dnd on|off | battery | timer 5 min | wifi settings
+#   volume 40 | mute | unmute | dnd on|off | battery | timer 5 min | wifi settings | undo
 friday_local_command() {
-  local q n unit secs label
+  local q n unit secs label before
   q=$(tr '[:upper:]' '[:lower:]' <<<"$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]?.!]*$//')
   if [[ "$q" =~ ^(set\ )?(the\ )?volume\ (to\ )?([0-9]{1,3})\ ?%?$ ]]; then
     n=${BASH_REMATCH[4]}; (( n > 150 )) && n=150
+    before=$(friday_sound_now) || before=""
     wpctl set-volume @DEFAULT_AUDIO_SINK@ "$n%" 2>/dev/null || return 1
+    # shellcheck disable=SC2086 # two words: volume and mute
+    [ -z "$before" ] || friday_undo_add "the volume change" sound $before
     echo "Volume set to $n%."
   elif [[ "$q" =~ ^(mute|unmute)(\ (the\ )?(sound|audio|volume))?$ ]]; then
     local on=1; [ "${BASH_REMATCH[1]}" = unmute ] && on=0
+    before=$(friday_sound_now) || before=""
     wpctl set-mute @DEFAULT_AUDIO_SINK@ "$on" 2>/dev/null || return 1
+    # shellcheck disable=SC2086
+    [ -z "$before" ] || friday_undo_add "the $([ "$on" = 1 ] && echo mute || echo unmute)" sound $before
     [ "$on" = 1 ] && echo "Sound muted." || echo "Sound unmuted."
   elif [[ "$q" =~ ^(turn\ )?(dnd|do\ not\ disturb)\ (on|off)$ ]]; then
     local want=true; [ "${BASH_REMATCH[3]}" = off ] && want=false
+    before=$(bash "$0" shell ipc notifications isDnd 2>/dev/null) || before=""
     bash "$0" shell ipc notifications setDnd "$want" >/dev/null 2>&1 || return 1
+    # Only a state the shell reported can be put back.
+    if [[ "$before" == true || "$before" == false ]]; then
+      friday_undo_add "Do not disturb $([ "$want" = true ] && echo on || echo off)" dnd "$before"
+    fi
     $want && echo "Do not disturb is on." || echo "Do not disturb is off."
   elif [[ "$q" =~ ^(battery|battery\ (level|status)|how\ much\ battery(\ is\ left|\ do\ i\ have)?)$ ]]; then
     local b; b=$(ls -d /sys/class/power_supply/BAT* 2>/dev/null | head -n 1)
@@ -1139,6 +1216,8 @@ friday_local_command() {
   elif [[ "$q" =~ ^(open\ )?(the\ )?(wi-?fi|network|bluetooth)\ (settings|controls)$ ]]; then
     bash "$0" shell ipc shell open control >/dev/null 2>&1 || return 1
     echo "Opened the controls (Wi-Fi, Bluetooth, sound)."
+  elif [[ "$q" =~ ^undo(\ that|\ it)?$ ]]; then
+    friday_undo || true
   else
     return 1
   fi
@@ -1398,6 +1477,8 @@ friday_rewrite_clean() {
 # into a terminal only with "terminals" (Shift+Insert there; a terminal's
 # selection isn't editable, but its prompt is). Otherwise the text is left on
 # the clipboard. The clipboard is put back afterwards when it held text.
+# [undo label] [original text]: a paste with Ctrl+V can be undone with
+# `friday undo` (as "<label>").
 friday_replace_selection() {
   local text="$1" addr="$2" win now terminal=false old="" had_text=false mods=CTRL key=V
   win=$(timeout 2 hyprctl activewindow -j 2>/dev/null || true)
@@ -1415,6 +1496,8 @@ friday_replace_selection() {
     timeout 2 hyprctl dispatch "hl.dsp.send_key_state({ mods = \"$mods\", key = \"$key\", state = \"up\" })" >/dev/null 2>&1 || true
     # The app reads the clipboard after the paste; put yours back a moment later.
     if $had_text; then ( sleep 1; printf '%s' "$old" | wl-copy ) >/dev/null 2>&1 & fi
+    # Ctrl+Z undoes a Ctrl+V; in a terminal it would stop the running program.
+    if [ "$mods" = CTRL ] && [ -n "${4:-}" ]; then friday_undo_add "$4" text "$addr" "${5:-}"; fi
     return 0
   fi
   notify-send -a FRIDAY -- "FRIDAY" "The rewrite is on your clipboard: paste it with Ctrl+V." 2>/dev/null || true
@@ -1454,7 +1537,7 @@ friday_paste_as() {
     notify-send -a FRIDAY -u critical -- "FRIDAY" "Couldn't paste that: $(jq -r '.error // "no answer"' <<<"$summary" 2>/dev/null | cut -c1-160)" 2>/dev/null || true
     return 1
   fi
-  friday_replace_selection "$text" "$addr" terminals
+  friday_replace_selection "$text" "$addr" terminals "the paste"
 }
 
 # Suggestions for the focused app, shown first in the Super+Y ask box:
@@ -2849,7 +2932,7 @@ case "${1:-}" in
         exit 0
       fi
       if [ -n "${rewrite:-}" ]; then
-        friday_replace_selection "$(friday_rewrite_clean "$reply")" "${sel_window:-}"
+        friday_replace_selection "$(friday_rewrite_clean "$reply")" "${sel_window:-}" "" "the rewrite" "$context"
         exit 0
       fi
       show_answer true "$(jq -n --arg r "$reply" '{result: $r, local: true}')" ""
@@ -2882,7 +2965,7 @@ case "${1:-}" in
       rewritten=$(friday_rewrite_clean "$(jq -r '.result // empty' <<<"$summary" 2>/dev/null || true)")
       if [ -n "${rewritten//[[:space:]]/}" ]; then
         [ -z "$nid" ] || notify-send -a FRIDAY -r "$nid" -t 1500 -- "FRIDAY" "Rewritten: $rewrite" 2>/dev/null || true
-        friday_replace_selection "$rewritten" "${sel_window:-}"
+        friday_replace_selection "$rewritten" "${sel_window:-}" "" "the rewrite" "$context"
         exit 0
       fi
     fi
@@ -2959,6 +3042,9 @@ case "${1:-}" in
     ;;
   providers)
     exec friday-ctl providers
+    ;;
+  undo)
+    friday_undo
     ;;
   tour)
     FRIDAY_WELCOME_DELAY=0 friday_welcome --force

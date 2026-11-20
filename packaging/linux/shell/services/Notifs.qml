@@ -12,7 +12,7 @@ import Quickshell.Services.Notifications
 // `popups` is what is on screen now; `list` is the history kept until
 // dismissed. Do-not-disturb holds back popups except critical ones.
 //
-// IPC target `notifications`: dismissOne, dismissAll, invokeLast, toggleDnd, setDnd <true|false>.
+// IPC target `notifications`: dismissOne, dismissAll, invokeLast, toggleDnd, setDnd <true|false>, isDnd.
 Singleton {
   id: root
 
@@ -53,6 +53,7 @@ Singleton {
     }
     function toggleDnd(): void { root.dnd = !root.dnd; }
     function setDnd(on: bool): void { root.dnd = on; }
+    function isDnd(): string { return root.dnd ? "true" : "false"; }
   }
 
   NotificationServer {
