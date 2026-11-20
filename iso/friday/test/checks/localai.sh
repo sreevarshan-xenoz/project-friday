@@ -122,7 +122,7 @@ if FRIDAY_HW_ROOT="$hw" bash "$F" local-ai install --first-login >"$W/out" 2>&1;
 else pass "llama.cpp: a download that fails its checksum fails the install"; fi
 contains "state is failed" "$(cat "$CONF")" "state=failed"
 contains "the reason names the checksum" "$(cat "$CONF")" "checksum"
-cmp -s "$ENV" "$W/env.before" && pass "friday.env is untouched" || fail "friday.env changed after a failed install"
+[[ "$(cat "$ENV")" == "$(cat "$W/env.before")" ]] && pass "friday.env is untouched" || fail "friday.env changed after a failed install"
 contains "the failure is a notification" "$(cat "$LOG")" "notify-send"
 contains "llama.cpp: the GPU build for a machine with a GPU" "$(cat "$LOG")" "ubuntu-vulkan-x64"
 

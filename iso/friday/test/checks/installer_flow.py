@@ -148,9 +148,7 @@ if MULTI:
         }
     )
 else:
-    checks["AI defaults to OpenCode Zen free models"] = (
-        "OpenCode Zen free models (no key)" in text
-    )
+    checks["AI defaults to OpenCode Zen free models"] = "OpenCode Zen free models (no key)" in text
 env = env_lines[-1] if env_lines else ""
 ai_spec = (
     [("ai", "[gemini]"), ("keys", "[gemini]"), ("local", "[ollama:qwen3:4b:4096]")]
