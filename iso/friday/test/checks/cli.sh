@@ -54,6 +54,10 @@ fi
 if [[ "\$1" == workspace ]]; then
   printf 'friday-ctl-workspace %s\n' "\$*" >> "$LOG"
   [[ "\$2" == list ]] && [ -n "\${WS_SAVED:-}" ] && echo "friday  3 window(s)  saved 2026-11-21 09:00"
+  if [[ "\$2" == restore ]]; then
+    [ -n "\${WS_SAVED:-}" ] || exit 1
+    echo 'Workspace "friday": started foot in friday (nvim).'
+  fi
   exit 0
 fi
 if [[ "\$1" == listen ]]; then
@@ -638,6 +642,13 @@ if grep -q "workspace restore" "$LOG"; then fail "restored with no workspace sav
 : >"$LOG"; WS_SAVED=1 bash "$F" ask "restore my friday workspace"; sleep 0.3
 contains "\"restore my X workspace\" restores it" "$(cat "$LOG")" "friday-ctl-workspace workspace restore friday"
 : >"$LOG"; bash "$F" workspace bogus >/dev/null 2>&1 && fail "accepted an unknown workspace command" || pass "unknown workspace command is refused"
+: >"$LOG"; WS_SAVED=1 bash "$F" ask "Friday, let's continue building FRIDAY"; sleep 0.3
+contains "\"continue building X\" restores X's workspace" "$(cat "$LOG")" "friday-ctl-workspace workspace restore friday"
+contains "and asks with what came back" "$(cat "$LOG")" "started foot in friday"
+: >"$LOG"; bash "$F" ask "continue building the site"; sleep 0.3
+contains "with no such workspace it is an ordinary question" "$(cat "$LOG")" "continue\\ building\\ the\\ site"
+: >"$LOG"; WS_SAVED=1 bash "$F" ask "continue where we stopped"; sleep 0.3
+if grep -q "workspace restore" "$LOG"; then fail "\"continue where we stopped\" restored a workspace called \"where\""; else pass "\"continue where we stopped\" restores nothing by name"; fi
 
 echo "local commands (no AI)"
 printf '#!/bin/sh\necho "wpctl $*" >>"%s"\n[ "$1" = get-volume ] && echo "Volume: 0.55${MUTED:+ [MUTED]}"\nexit 0\n' "$LOG" >"$S/wpctl"; chmod +x "$S/wpctl"
