@@ -56,6 +56,12 @@ if [[ "\$1" == thought ]]; then
   echo "Kept that \$3."
   exit 0
 fi
+if [[ "\$1" == workspace && "\$2" == project ]]; then
+  # A local lookup (the project in front), not a question for the daemon.
+  printf 'ctl-project\n' >> "$LOG"
+  [ -n "\${WS_PROJECT:-}" ] && echo "\$WS_PROJECT"
+  exit 0
+fi
 if [[ "\$1" == workspace ]]; then
   printf 'friday-ctl-workspace %s\n' "\$*" >> "$LOG"
   [[ "\$2" == list ]] && [ -n "\${WS_SAVED:-}" ] && echo "friday  3 window(s)  saved 2026-11-21 09:00"
@@ -659,6 +665,12 @@ contains "and asks with what came back" "$(cat "$LOG")" "started foot in friday"
 contains "with no such workspace it is an ordinary question" "$(cat "$LOG")" "continue\\ building\\ the\\ site"
 : >"$LOG"; WS_SAVED=1 bash "$F" ask "continue where we stopped"; sleep 0.3
 if grep -q "workspace restore" "$LOG"; then fail "\"continue where we stopped\" restored a workspace called \"where\""; else pass "\"continue where we stopped\" restores nothing by name"; fi
+
+echo "answers know their project"
+: >"$LOG"; WS_PROJECT=/home/me/code/project-friday bash "$F" ask "why does the build fail"; sleep 0.3
+contains "the saved answer names the project in front" "$(cat "$HOME/.local/state/friday/last-answer.md")" "_project: /home/me/code/project-friday_"
+: >"$LOG"; bash "$F" ask "what is the capital of peru"; sleep 0.3
+if grep -q "_project:" "$HOME/.local/state/friday/last-answer.md"; then fail "an answer with no project in front named one"; else pass "no project in front: none named"; fi
 
 echo "thoughts"
 : >"$LOG"; bash "$F" ask "Keep this idea: Memory as an INDEX, not a store."; sleep 0.3

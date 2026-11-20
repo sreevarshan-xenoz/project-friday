@@ -57,8 +57,18 @@ fn answers(text: &str) -> Vec<Entry> {
         else {
             continue;
         };
+        let mut project = None;
         let answer = lines
-            .find(|l| !l.starts_with('>') && *l != "---" && !l.starts_with('<'))
+            .find(|l| {
+                if let Some(p) = l
+                    .strip_prefix("_project: ")
+                    .and_then(|p| p.strip_suffix('_'))
+                {
+                    project = Some(crate::thoughts::project_name(p).to_string());
+                    return false;
+                }
+                !l.starts_with('>') && *l != "---" && !l.starts_with('<')
+            })
             .unwrap_or_default();
         let failed = goal.starts_with("FRIDAY ✗");
         out.push(Entry {
@@ -73,7 +83,7 @@ fn answers(text: &str) -> Vec<Entry> {
                     format!(" → {answer}")
                 }
             )),
-            project: None,
+            project,
         });
     }
     out
@@ -154,6 +164,25 @@ pub fn collect(state_dir: &Path) -> Vec<Entry> {
     }
     all.sort_by_key(|e| e.ts);
     all
+}
+
+/// The entries of the project an ask names ("continue building FRIDAY"
+/// keeps FRIDAY's), or all of them when it names none.
+pub fn for_project(entries: Vec<Entry>, goal: &str) -> Vec<Entry> {
+    let named: Vec<Entry> = entries
+        .iter()
+        .filter(|e| {
+            e.project
+                .as_deref()
+                .is_some_and(|p| crate::thoughts::named(goal, p))
+        })
+        .cloned()
+        .collect();
+    if named.is_empty() {
+        entries
+    } else {
+        named
+    }
 }
 
 /// Which days an ask is about, or `None` when it isn't about the past.
@@ -290,6 +319,27 @@ mod tests {
             !text.contains("bank"),
             "a local answer never goes in: {text}"
         );
+    }
+
+    #[test]
+    fn an_ask_naming_a_project_keeps_its_history() {
+        let d = dir();
+        std::fs::write(
+            d.join("answers.md"),
+            "<!-- friday answer -->\n# fix the build\n\n_2026-11-20 10:05_\n\n_project: /home/me/code/project-friday_\n\nAdded the missing cfg.\n\n---\n\n\
+             <!-- friday answer -->\n# what's for dinner\n\n_2026-11-20 19:00_\n\nPasta.\n\n---\n\n",
+        )
+        .unwrap();
+        let all = collect(&d);
+        assert_eq!(all[0].project.as_deref(), Some("project-friday"));
+        assert!(
+            all[0].text.ends_with("→ Added the missing cfg."),
+            "{:?}",
+            all[0]
+        );
+        let friday = for_project(all.clone(), "let's continue building FRIDAY");
+        assert_eq!(friday.len(), 1);
+        assert_eq!(for_project(all, "where was I").len(), 2);
     }
 
     #[test]

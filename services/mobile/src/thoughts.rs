@@ -60,7 +60,7 @@ pub fn project_name(project: &str) -> &str {
 
 /// Whether `goal` names this project: its folder name, or a distinctive
 /// word of it ("FRIDAY" names "project-friday"; "the" or "app" never count).
-fn named(goal: &str, project: &str) -> bool {
+pub fn named(goal: &str, project: &str) -> bool {
     use friday_goal_execution::significant_tokens;
     let words = significant_tokens(goal);
     let name = project_name(project).to_lowercase();

@@ -2842,6 +2842,9 @@ case "${1:-}" in
     # The window you're asking about (its selection or its screen): private?
     private_win=""
     if $use_selection || $use_screen; then private_win=$(friday_private_window); fi
+    # The project in front (a terminal's git repo), kept with the answer so
+    # "continue building X" finds X's history.
+    ask_project=$(timeout 2 friday-ctl workspace project 2>/dev/null || true)
     state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
     history_file="$state_dir/ask-history"
     notify() { notify-send -a FRIDAY -- "$@" 2>/dev/null || true; }
@@ -3108,6 +3111,7 @@ case "${1:-}" in
         printf '# %s\n\n_%s_\n\n' "$goal" "$(date '+%Y-%m-%d %H:%M')"
         # Kept on this computer: the timeline never sends these to a cloud model.
         ! $local_only || printf '_On this computer · nothing was sent_\n\n'
+        [ -z "${ask_project:-}" ] || printf '_project: %s_\n\n' "$ask_project"
         [ -n "$context" ] && printf '> %s\n\n' "$(head -c 300 <<<"$context" | tr '\n' ' ')"
         printf '%s\n' "$answer"
         [ -z "${details:-}" ] || printf '\n<details>\n\n```\n%s\n```\n' "$details"
