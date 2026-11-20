@@ -1,0 +1,14 @@
+[Unit]
+Description=FRIDAY: keep the text of the windows you look at for three hours (friday recall)
+# Off unless the person turns it on (friday recall on enables it).
+ConditionUser=!@system
+After=friday-linux-daemon.service
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/friday-ctl recall watch
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

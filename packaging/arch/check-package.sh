@@ -13,6 +13,7 @@ files=$(bsdtar -tf "$pkg")
 for f in usr/bin/friday usr/bin/friday-linux-daemon usr/bin/friday-ctl \
   usr/lib/friday/friday-skill-forge usr/lib/systemd/user/friday-linux-daemon.service \
   usr/lib/systemd/user/friday-local-ai.service usr/lib/systemd/user/friday-llama.service \
+  usr/lib/systemd/user/friday-recall.service \
   usr/share/zsh/site-functions/_friday usr/share/applications/friday.desktop \
   usr/share/applications/friday-settings.desktop usr/share/friday/shell/settings/SettingsWindow.qml \
   usr/share/friday/hyprland/friday.lua usr/share/friday/niri/friday.kdl \
@@ -57,7 +58,7 @@ grep -q '"ok":true' <<<"$ad" && grep -qE '"version":"1\.([3-9]|[1-9][0-9])\.' <<
   || bad "agent-desktop did not start, or is a version FRIDAY does not accept"
 command -v desktop-file-validate >/dev/null \
   && { desktop-file-validate /usr/share/applications/friday.desktop /usr/share/applications/friday-settings.desktop && ok "launcher entries are valid" || bad "launcher entry invalid"; }
-systemd-analyze verify --user /usr/lib/systemd/user/friday-{linux-daemon,local-ai}.service 2>/dev/null \
+systemd-analyze verify --user /usr/lib/systemd/user/friday-{linux-daemon,local-ai,recall}.service 2>/dev/null \
   && ok "user service verifies" || echo "  - systemd-analyze verify unavailable here (no user manager)"
 
 echo "daemon"

@@ -25,6 +25,14 @@ ColumnLayout {
     offArgs: ["screen-text", "off"]
     onText: "Screen text: on"
   }
+  Toggle {
+    title: "Remember what was on screen (\"what was that…?\")"
+    detail: "Keeps the text of the window in front every 30 seconds, on this computer only, for 3 hours. No screenshots; never password fields or private windows (a Chromium incognito window can't be told apart: don't use recall with one open). When you ask \"what was that…\", the matching passages go to your local model, or to your cloud provider if you have none. Turning it off forgets it all."
+    statusArgs: ["recall", "status"]
+    onArgs: ["recall", "on", "--yes"]
+    offArgs: ["recall", "off"]
+    onText: "Recall: on"
+  }
 
   Cmd { id: sent; args: ["sent", "20"] }
   Cmd { id: forget; onFinished: confirming = "" }

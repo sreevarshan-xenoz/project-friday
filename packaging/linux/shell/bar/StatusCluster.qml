@@ -1,13 +1,15 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell.Bluetooth
+import Quickshell.Io
 import Quickshell.Services.UPower
 import qs.common
 import qs.components
 import qs.services
 
-// Network, Bluetooth, sound and battery in one pill. Click opens the
-// control drawer; scroll changes the volume.
+// Network, Bluetooth, sound and battery in one pill (and a mark while
+// recall keeps window text, `friday recall`). Click opens the control
+// drawer; scroll changes the volume.
 Rectangle {
   id: root
 
@@ -25,10 +27,32 @@ Rectangle {
   color: mouse.containsMouse ? Theme.raised : Theme.surface
   Behavior on color { ColorAnimation { duration: Theme.fast } }
 
+  // Whether recall is keeping window text (its user service is running).
+  property bool recalling: false
+  Process {
+    id: recallCheck
+    command: ["systemctl", "--user", "is-active", "--quiet", "friday-recall.service"]
+    onExited: code => root.recalling = code === 0
+  }
+  Timer {
+    interval: 10000
+    running: true
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: recallCheck.running = true
+  }
+
   RowLayout {
     id: row
     anchors.centerIn: parent
     spacing: 10
+
+    Glyph {
+      visible: root.recalling
+      text: Icons.history
+      size: 15
+      color: Theme.accent
+    }
 
     Glyph {
       visible: Notifs.dnd
