@@ -67,7 +67,7 @@ _friday() {
     keys)     _values 'action' update ;;
     connect|disconnect) _values 'account' claude codex agy cline hermes ;;
     private)  _values 'action' status on off ;;
-    local-ai) _values 'action' summary presets install status off ;;
+    local-ai) _values 'action' summary presets install status order off ;;
     app-context) _values 'action' status on off ;;
     face)     _values 'action' status setup remove ;;
     voice)    _values 'action' status setup remove ;;

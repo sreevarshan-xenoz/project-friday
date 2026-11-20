@@ -2671,13 +2671,20 @@ impl InferenceFabric {
                     api_key: "unused".to_string(),
                 }));
                 if !registry_loaded {
-                    fabric.register_model(llamacpp_model(
+                    let mut m = llamacpp_model(
                         std::env::var("LLAMACPP_MODEL")
                             .unwrap_or_else(|_| "gemma4:e4b".to_string()),
                         std::env::var("LLAMACPP_VISION")
                             .map(|v| v == "true" || v == "1")
                             .unwrap_or(false),
-                    ));
+                    );
+                    // FRIDAY_LOCAL_FIRST=0 (`friday local-ai order`, auto for a
+                    // small model): your keys and the free cloud models first,
+                    // the local model when they fail (offline, limits).
+                    if std::env::var("FRIDAY_LOCAL_FIRST").is_ok_and(|v| v.trim() == "0") {
+                        m.latency_ms = LOCAL_AS_FALLBACK_LATENCY_MS;
+                    }
+                    fabric.register_model(m);
                 }
                 tracing::info!("Registered llama.cpp provider (OpenAI-compatible local backend).");
             }
@@ -2978,6 +2985,11 @@ pub fn opencode_static_models() -> Vec<ModelInfo> {
 /// The llama.cpp model entry. `vision` is set when llama-server was started
 /// with a multimodal projector (`--mmproj`) and the user says so
 /// (LLAMACPP_VISION=1): screen asks can then stay on this machine.
+/// The local model's rank when it backs up cloud: after a user's keys (800 ms),
+/// Zen (3000), the OpenCode CLI (3200) and Kilo (3500); before OVHcloud and
+/// connected accounts (4000).
+pub const LOCAL_AS_FALLBACK_LATENCY_MS: u64 = 3_900;
+
 pub fn llamacpp_model(id: String, vision: bool) -> ModelInfo {
     let mut capabilities = vec![
         ModelCapability::Json,
@@ -5566,6 +5578,53 @@ mod tests {
         let providers: Vec<&str> = picks.iter().map(|(m, _)| m.provider.as_str()).collect();
         assert_eq!(providers[0], "llamacpp", "{providers:?}");
         assert!(providers.contains(&"groq") && providers.contains(&"opencode"));
+    }
+
+    #[test]
+    fn local_first_off_puts_the_local_model_after_cloud_and_before_ovh() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let vars = [
+            "LLAMACPP_ENABLED",
+            "LLAMACPP_MODEL",
+            "FRIDAY_LOCAL_FIRST",
+            "FRIDAY_KILO",
+            "FRIDAY_OVH",
+            "KILO_API_KEY",
+            "OPENCODE_API_KEY",
+        ];
+        let _guards: Vec<EnvVarGuard> = vars.iter().map(|v| EnvVarGuard(v)).collect();
+        for v in vars {
+            std::env::remove_var(v);
+        }
+        std::env::set_var("LLAMACPP_ENABLED", "1");
+        std::env::set_var("LLAMACPP_MODEL", "qwen3:1.7b");
+        let order = || {
+            let fabric = InferenceFabric::default_from_env();
+            let cands = fabric.select_for(&RequestRequirements::default());
+            cands
+                .iter()
+                .map(|(m, _)| m.provider.clone())
+                .collect::<Vec<_>>()
+        };
+        let pos = |o: &Vec<String>, p: &str| o.iter().position(|x| x == p).unwrap();
+
+        let first = order();
+        assert_eq!(first[0], "llamacpp", "local first by default: {first:?}");
+
+        std::env::set_var("FRIDAY_LOCAL_FIRST", "0");
+        let fallback = order();
+        assert!(
+            pos(&fallback, "opencode") < pos(&fallback, "llamacpp"),
+            "{fallback:?}"
+        );
+        assert!(
+            pos(&fallback, "kilo") < pos(&fallback, "llamacpp"),
+            "{fallback:?}"
+        );
+        assert!(
+            pos(&fallback, "llamacpp") < pos(&fallback, "ovh"),
+            "{fallback:?}"
+        );
     }
 
     /// A screen ask routes with `vision: Required`: a vision model the user

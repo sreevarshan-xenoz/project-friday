@@ -132,6 +132,35 @@ ColumnLayout {
     font.pixelSize: Theme.fontS + 1
   }
 
+  // Local AI: who answers first. Auto: above 4B the local model, at 4B and
+  // below cloud first while online (friday local-ai order).
+  Label { text: "Local AI"; font.weight: Font.DemiBold; Layout.topMargin: 8 }
+  Cmd { id: localAi; args: ["local-ai", "status"] }
+  Component.onCompleted: localAi.run()
+  Flow {
+    Layout.fillWidth: true
+    spacing: 8
+    Repeater {
+      model: [["Auto", "auto"], ["Local first", "local"], ["Cloud first", "cloud"]]
+      Chip {
+        required property var modelData
+        text: modelData[0]
+        primary: localAi.output.indexOf("Order: " + modelData[1] + ":") >= 0
+        onClicked: { localAi.args = ["local-ai", "order", modelData[1]]; localAi.run(); }
+      }
+    }
+    Chip { text: "Set up local AI"; onClicked: page.inTerminal("local AI", "friday setup-ai local") }
+  }
+  Output { text: localAi.output }
+  Label {
+    Layout.fillWidth: true
+    text: "Auto: a model above 4B answers first; a smaller one backs up cloud, so questions go to a cloud model first while you're online. Local first keeps them on this computer whenever the local model can answer."
+    wrapMode: Text.Wrap
+    elide: Text.ElideNone
+    color: Theme.faint
+    font.pixelSize: Theme.fontS + 1
+  }
+
   Label { text: "More ways"; font.weight: Font.DemiBold; Layout.topMargin: 8 }
   Flow {
     Layout.fillWidth: true

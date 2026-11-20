@@ -144,7 +144,7 @@ if MULTI:
             "the machine is described": "This computer: 16 GB memory" in text,
             "the preset says text only": "qwen3:4b" in text and "text only" in text,
             "review lists every choice": "Gemini (key ••••3456)" in text
-            and "Local: qwen3:4b on Ollama (text only)" in text,
+            and "Local: qwen3:4b on Ollama (text only, backs up cloud)" in text,
         }
     )
 else:

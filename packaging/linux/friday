@@ -55,7 +55,7 @@ Autonomous Agent & Cognitive Loop:
   friday disconnect <name>         Stop using a connected account
   friday private [status|on [model]|off]
                                    Local model only; nothing leaves the machine
-  friday local-ai [summary|presets|install|status|off]
+  friday local-ai [summary|presets|install|status|order|off]
                                    A model on this computer, sized to it; answers first,
                                    cloud covers what it can't (friday setup-ai local)
   friday face [status|setup|remove] Face unlock for the lock screen (Gaze)
@@ -1771,6 +1771,25 @@ friday_local_ai_info() {
   awk -F'|' -v id="$1" '$1 == id { print $2, $3, $4 }' <<<"$FRIDAY_LOCAL_MODELS"
 }
 
+# friday_local_ai_local_first <model> <auto|local|cloud>: 1 when the local
+# model answers first. Auto: above 4B it answers about as well as the free
+# cloud models, so it goes first; at 4B and below cloud goes first while
+# there's internet, and the local model backs it up.
+friday_local_ai_local_first() {
+  case "$2" in
+    local) echo 1 ;;
+    cloud) echo 0 ;;
+    *) local size="${1##*:}"; awk -v s="${size%b}" 'BEGIN { print (s + 0 > 4) ? 1 : 0 }' ;;
+  esac
+}
+
+# friday_env_set <KEY> <value>: replace one line in friday.env (0600).
+friday_env_set() {
+  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
+  mkdir -p "$(dirname "$env_file")"
+  ( umask 077; { grep -v "^$1=" "$env_file" 2>/dev/null || true; echo "$1=$2"; } >"$env_file.tmp" && mv "$env_file.tmp" "$env_file" )
+}
+
 friday_gb() { awk -v m="$1" 'BEGIN { g = m / 1024; if (g == int(g)) printf "%d GB", g; else printf "%.1f GB", g }'; }
 
 # One line per preset: id|label|budget_mb|model|download_mb|vision|fast|available|note
@@ -1802,6 +1821,8 @@ friday_local_ai_presets() {
     available=1
     if (( vision )); then note="sees screenshots"; else note="text only: can't see screenshots"; fi
     note="needs about $(friday_gb "$need") while answering, $note"
+    if [ "$(friday_local_ai_local_first "$model" auto)" = 1 ]; then note="$note, answers first"
+    else note="$note, backs up cloud (cloud answers first while online)"; fi
     if (( dl + 1024 > ${disk:-0} )); then
       available=0 note="needs $(friday_gb $((dl + 1024))) of disk, $(friday_gb "${disk:-0}") free"
     fi
@@ -1943,23 +1964,26 @@ friday_local_ai_install() {
     friday_local_failed "$(tail -n1 "$errf" || true)"; rm -f "$errf"; return 1
   fi
   rm -f "$errf"
-  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
+  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" local_first
+  local_first=$(friday_local_ai_local_first "$model" "$(friday_local_conf_get order)")
   (
     umask 077
-    { grep -vE '^(LLAMACPP_ENABLED|LLAMACPP_BASE_URL|LLAMACPP_MODEL|LLAMACPP_VISION)=' "$env_file" 2>/dev/null || true
+    { grep -vE '^(LLAMACPP_ENABLED|LLAMACPP_BASE_URL|LLAMACPP_MODEL|LLAMACPP_VISION|FRIDAY_LOCAL_FIRST)=' "$env_file" 2>/dev/null || true
       echo "LLAMACPP_ENABLED=1"
       echo "LLAMACPP_BASE_URL=$LOCAL_BASE_URL"
       echo "LLAMACPP_MODEL=$model"
       echo "LLAMACPP_VISION=$vision"
+      echo "FRIDAY_LOCAL_FIRST=$local_first"
     } >"$env_file.tmp"
     mv "$env_file.tmp" "$env_file"
   )
   friday_local_conf_set state ready
   systemctl --user restart friday-linux-daemon 2>/dev/null || true
-  local sees="text only: screenshots go to your cloud provider"
+  local sees="text only: screenshots go to your cloud provider" when="answers first"
   (( vision )) && sees="sees screenshots"
-  notify-send -a FRIDAY "Local AI is on" "$model on this computer ($sees)" 2>/dev/null || true
-  echo "Local AI is on: $model ($sees)."
+  (( local_first )) || when="backs up cloud"
+  notify-send -a FRIDAY "Local AI is on" "$model on this computer ($sees, $when)" 2>/dev/null || true
+  echo "Local AI is on: $model ($sees, $when). Change the order: friday local-ai order local|cloud|auto"
 }
 
 friday_local_ai_status() {
@@ -1968,7 +1992,7 @@ friday_local_ai_status() {
   state=$(friday_local_conf_get state); model=$(friday_local_conf_get model)
   engine=$(friday_local_conf_get engine); reason=$(friday_local_conf_get reason)
   case "$state" in
-    ready) echo "Local AI: on, ${model:-?} on $engine" ;;
+    ready) echo "Local AI: on, ${model:-?} on $engine"; friday_local_ai_order ;;
     installing) echo "Local AI: downloading ${model:-the model} for $engine" ;;
     pending) echo "Local AI: waits for the next login to download (or run: friday local-ai install)" ;;
     failed) echo "Local AI: setup failed: $reason (try again: friday local-ai install)" ;;
@@ -1976,11 +2000,31 @@ friday_local_ai_status() {
   esac
 }
 
+# friday local-ai order [auto|local|cloud]: who answers first. Auto decides
+# by the model's size (friday_local_ai_local_first).
+friday_local_ai_order() {
+  local want="${1:-}" order model first
+  if [ ! -f "$FRIDAY_LOCAL_CONF" ]; then echo "Local AI isn't set up (friday setup-ai local)" >&2; return 1; fi
+  model=$(friday_local_conf_get model)
+  if [ -n "$want" ]; then
+    case "$want" in auto|local|cloud) ;; *) echo "usage: friday local-ai order [auto|local|cloud]" >&2; return 2 ;; esac
+    friday_local_conf_set order "$want"
+    if [ "$(friday_local_conf_get state)" = ready ]; then
+      friday_env_set FRIDAY_LOCAL_FIRST "$(friday_local_ai_local_first "$model" "$want")"
+      systemctl --user restart friday-linux-daemon 2>/dev/null || true
+    fi
+  fi
+  order=$(friday_local_conf_get order); order="${order:-auto}"
+  first=$(friday_local_ai_local_first "$model" "$order")
+  if [ "$first" = 1 ]; then echo "Order: $order: ${model:-the local model} answers first; cloud covers what it can't."
+  else echo "Order: $order: cloud answers first while online; ${model:-the local model} takes over when it can't."; fi
+}
+
 # Back to cloud only: the local model stays on disk.
 friday_local_ai_off() {
   local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
   if [[ -f "$env_file" ]]; then
-    (umask 077; grep -vE '^(LLAMACPP_ENABLED|LLAMACPP_BASE_URL|LLAMACPP_MODEL|LLAMACPP_VISION)=' "$env_file" >"$env_file.tmp" || true; mv "$env_file.tmp" "$env_file")
+    (umask 077; grep -vE '^(LLAMACPP_ENABLED|LLAMACPP_BASE_URL|LLAMACPP_MODEL|LLAMACPP_VISION|FRIDAY_LOCAL_FIRST)=' "$env_file" >"$env_file.tmp" || true; mv "$env_file.tmp" "$env_file")
   fi
   systemctl --user disable --now friday-llama.service >/dev/null 2>&1 || true
   rm -f "$FRIDAY_LOCAL_CONF"
@@ -2039,7 +2083,7 @@ friday_setup_local() {
       *) echo "usage: friday setup-ai local [--engine ollama|llamacpp] [--preset light|balanced|most|gpu]" >&2; return 2 ;;
     esac
   done
-  echo "Local AI answers first and keeps your questions on this computer. It's slower than cloud."
+  echo "Local AI runs on this computer: it works offline, but it's slower than cloud."
   echo "This computer: $(friday_local_ai_summary | head -n1)"
   friday_local_ai_summary | tail -n +2
   if [ -z "$engine" ]; then
@@ -2059,6 +2103,8 @@ friday_setup_local() {
   done <<<"$presets"
   [ ${#options[@]} -gt 0 ] || { echo "This computer can't run a local model well; FRIDAY keeps using cloud providers." >&2; return 1; }
   echo "The amount picks the model. It's in memory only while FRIDAY answers, and freed after 5 idle minutes."
+  echo "Models above 4B answer first. Smaller ones back up cloud, so your questions go to a cloud model first;"
+  echo "to keep everything on this computer: friday local-ai order local (or friday private on)."
   if [ -z "$preset" ]; then
     command -v gum >/dev/null || { printf '  %s\n' "${options[@]}"; echo "choose one: --preset <id>" >&2; return 2; }
     preset=$(printf '%s\n' "${options[@]}" | gum choose --cursor="❯ " --height=8) || return 1
@@ -2088,7 +2134,8 @@ friday_local_ai() {
     status) friday_local_ai_status ;;
     off) friday_local_ai_off ;;
     packages) friday_local_ai_packages "${2:-}" ;;
-    *) echo "usage: friday local-ai [detect|presets|summary|install|status|off|packages]" >&2; return 2 ;;
+    order) friday_local_ai_order "${2:-}" ;;
+    *) echo "usage: friday local-ai [detect|presets|summary|install|status|order|off|packages]" >&2; return 2 ;;
   esac
 }
 
