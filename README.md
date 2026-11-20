@@ -48,7 +48,7 @@ flowchart LR
   D --> FAB["Inference fabric"]
   FAB --> P1["local model<br/>(llama.cpp, Ollama)"]
   FAB --> P2["your API key"]
-  FAB --> P4["free: OpenCode Zen, then Kilo"]
+  FAB --> P4["free: OpenCode Zen, then Kilo, then OVHcloud"]
   FAB --> P3["your connected account (optional)<br/>Claude Code, Codex, Antigravity, Cline"]
 ```
 
@@ -130,7 +130,7 @@ flowchart TD
   C -->|yes| CP["Claude Code, Codex,<br/>Antigravity, Cline (text only)"]
 ```
 
-- **Out of the box:** no key, no sign-in. OpenCode Zen's free models, then Kilo's free gateway as the fallback; never Kilo's unnamed "stealth" models or its auto-router.
+- **Out of the box:** no key, no sign-in. OpenCode Zen's free models, then Kilo's free gateway, then OVHcloud's AI Endpoints (EU, no account) as fallbacks; never Kilo's unnamed "stealth" models or its auto-router.
 - **Your own key** (`friday setup-ai`, or the tray's AI provider window) comes first. `--keep-others` keeps your other keys as fallbacks; `--only` keeps just the new one.
 - **Your own account** (`friday connect claude|codex|agy|cline` on Linux, **Connect an account** in the tray on Windows) is optional, and by default only a fallback when the free models can't answer: it starts the tool's app for each answer (seconds slower) and counts against your plan. `friday connect --prefer <name>` (or `FRIDAY_PREFER_ACCOUNTS=1`) uses it before the free models instead, still after your own key. It answers through that tool's own app and sign-in. FRIDAY never sees the credentials, and runs the tool with no tools of its own, in an empty folder. These are text only: a screenshot never goes to them. On Windows only a native `.exe` can be used (Claude Code, Antigravity, Codex's native build); Cline is Linux-only for now.
 - **Screen asks** go only to models that can see images: your vision provider, or the free ones.

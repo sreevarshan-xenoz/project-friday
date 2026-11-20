@@ -104,7 +104,7 @@ PanelWindow {
       Label {
         Layout.fillWidth: true
         visible: Tour.last && Tour.freeModels
-        text: "You're on free models (OpenCode Zen, then Kilo), which may keep what you send. For private work, connect your own account or key."
+        text: "You're on free models (OpenCode Zen, then Kilo or OVHcloud), which may keep what you send. For private work, connect your own account or key."
         wrapMode: Text.Wrap
         elide: Text.ElideNone
         color: Theme.warn

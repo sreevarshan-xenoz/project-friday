@@ -632,7 +632,7 @@ contains "status reports off" "$out_status_off" "Private mode: off"
 echo "welcome"
 : >"$LOG"; rm -f "$envf"
 bash "$F" welcome
-contains "no key: still greets, mentions free models" "$(cat "$LOG")" "free models (OpenCode Zen, then Kilo)"
+contains "no key: still greets, mentions free models" "$(cat "$LOG")" "free models (OpenCode Zen, then Kilo or OVHcloud)"
 contains "the welcome says free models may keep what's sent" "$(cat "$LOG")" "may keep what you send"
 contains "offers connecting an account" "$(cat "$LOG")" "connect=Connect an account"
 contains "offers choosing a provider" "$(cat "$LOG")" "setup=Choose AI provider"

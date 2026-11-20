@@ -2346,6 +2346,26 @@ impl InferenceFabric {
             }
         }
 
+        // OVHcloud AI Endpoints — the last keyless fallback, after Zen and
+        // Kilo: no account at all, EU-hosted, 2 requests a minute per model
+        // per IP (so two text models). FRIDAY_OVH=off turns it off.
+        if !std::env::var("FRIDAY_OVH")
+            .map(|v| v.trim().eq_ignore_ascii_case("off"))
+            .unwrap_or(false)
+        {
+            fabric.automatic.insert("ovh".to_string());
+            fabric.register_provider(Box::new(OpenAiProvider {
+                name: "ovh".to_string(),
+                base_url: OVH_AI_ENDPOINTS_BASE_URL.to_string(),
+                api_key: String::new(),
+            }));
+            if !registry_loaded {
+                for m in ovh_static_models() {
+                    fabric.register_model(m);
+                }
+            }
+        }
+
         // GitHub Copilot account-auth provider — the subscription seam. Opt-in
         // ONLY (`COPILOT_CLI_ENABLED=true|1`): `copilot`/`gh` are commonly on CI
         // and dev boxes, so a bare detection must never silently add a cloud
@@ -2889,6 +2909,7 @@ fn is_free_provider(name: &str) -> bool {
             | "nvidia-nim"
             | "runcrate"
             | "axforge"
+            | "ovh"
     )
 }
 
@@ -3032,6 +3053,38 @@ pub const KILO_GATEWAY_BASE_URL: &str = "https://ai-gateway.kilo.ai/api/v1";
 
 /// Boot-time fallback for Kilo's free models. The live catalog replaces these
 /// at warm-up because Kilo rotates free models.
+/// OVHcloud AI Endpoints' OpenAI-compatible base (anonymous use allowed).
+pub const OVH_AI_ENDPOINTS_BASE_URL: &str = "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1";
+
+/// OVHcloud's keyless models: two text models (each has its own 2 RPM) and a
+/// vision one. Slower than Kilo's keyless latency, so it's tried last.
+pub fn ovh_static_models() -> Vec<ModelInfo> {
+    let text = |id: &str, family: &str| ModelInfo {
+        id: id.to_string(),
+        family: family.to_string(),
+        provider: "ovh".to_string(),
+        latency_ms: 4_000,
+        reliability: 0.8,
+        capabilities: vec![ModelCapability::Json, ModelCapability::Tools],
+        max_context: 131_072,
+        tier: None,
+    };
+    vec![
+        text("Qwen3.8-27B", "qwen3.8-27b"),
+        text("gpt-oss-120b", "gpt-oss-120b"),
+        ModelInfo {
+            id: "Qwen2.5-VL-72B-Instruct".to_string(),
+            family: "qwen2.5-vl-72b".to_string(),
+            provider: "ovh".to_string(),
+            latency_ms: 4_500,
+            reliability: 0.8,
+            capabilities: vec![ModelCapability::Json, ModelCapability::Vision],
+            max_context: 32_768,
+            tier: Some(CapabilityTier::VisionFree),
+        },
+    ]
+}
+
 pub fn kilo_static_models() -> Vec<ModelInfo> {
     vec![
         ModelInfo {
@@ -4412,6 +4465,32 @@ mod tests {
                 .map(|m| m.id.as_str()),
             Some("qwen3.8-flash-next")
         );
+    }
+
+    #[test]
+    fn ovhcloud_is_the_last_keyless_fallback_and_can_be_turned_off() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _ovh = EnvVarGuard("FRIDAY_OVH");
+        let _kilo = EnvVarGuard("FRIDAY_KILO");
+        std::env::remove_var("FRIDAY_OVH");
+        std::env::remove_var("FRIDAY_KILO");
+        let fabric = InferenceFabric::default_from_env();
+        assert!(fabric.providers.contains_key("ovh"));
+        assert!(
+            fabric.automatic.contains("ovh"),
+            "not a choice the person made"
+        );
+        assert!(is_free_provider("ovh"));
+        assert!(fabric
+            .resolve_tier("ovh", CapabilityTier::VisionFree)
+            .is_some());
+        let cands = fabric.select_for(&RequestRequirements::default());
+        let pos = |p: &str| cands.iter().position(|(m, _)| m.provider == p);
+        assert!(pos("kilo").unwrap() < pos("ovh").unwrap(), "after Kilo");
+        std::env::set_var("FRIDAY_OVH", "off");
+        assert!(!InferenceFabric::default_from_env()
+            .providers
+            .contains_key("ovh"));
     }
 
     #[test]
