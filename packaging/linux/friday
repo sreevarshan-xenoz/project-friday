@@ -2999,7 +2999,8 @@ case "${1:-}" in
     show_answer() {
       local ans_ok="$1" summary_json="$2" raw_out="$3"
       local answer title details preview urgency actions meta=""
-      [ "$(jq -r '.local // false' <<<"$summary_json" 2>/dev/null)" = true ] && meta="On this computer · nothing was sent"
+      local local_only=false
+      [ "$(jq -r '.local // false' <<<"$summary_json" 2>/dev/null)" = true ] && meta="On this computer · nothing was sent" && local_only=true
       if $ans_ok; then
         answer=$(jq -r '.result // empty' <<<"$summary_json")
         [ -n "$answer" ] || answer="Done: $goal"
@@ -3035,6 +3036,8 @@ case "${1:-}" in
       answer_file="$state_dir/last-answer.md"
       {
         printf '# %s\n\n_%s_\n\n' "$goal" "$(date '+%Y-%m-%d %H:%M')"
+        # Kept on this computer: the timeline never sends these to a cloud model.
+        ! $local_only || printf '_On this computer · nothing was sent_\n\n'
         [ -n "$context" ] && printf '> %s\n\n' "$(head -c 300 <<<"$context" | tr '\n' ' ')"
         printf '%s\n' "$answer"
         [ -z "${details:-}" ] || printf '\n<details>\n\n```\n%s\n```\n' "$details"

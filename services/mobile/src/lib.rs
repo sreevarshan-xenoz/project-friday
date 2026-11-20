@@ -38,6 +38,7 @@ pub mod show_me;
 pub mod speech;
 pub mod standing;
 pub mod system_tool;
+pub mod timeline;
 pub mod tinyvoca;
 pub mod transport;
 pub mod upgrade;
