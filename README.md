@@ -175,6 +175,8 @@ Signing in to Claude Code, Codex, Antigravity or Cline needs a browser and your 
 | Ask about the screen | `Super+Ctrl+Y` (`friday ask --screen`) | `Win+Ctrl+Y` (`Ctrl+Alt+Shift+S`) |
 | Ask about an area you drag out | `friday ask --region` | tray menu, "Ask about an area…" |
 
+`Super+Y` suggests what fits the app you're in, first in the ask box: "Summarize this page" in a browser or document viewer (it asks about the screen, so screen text or a screenshot is used only when you pick it), "Summarize this email" in a mail app, and "Explain the selected code" (or text) when something is highlighted.
+
 In kitty (FRIDAY OS's terminal), `Super+Y` right after a command failed offers "Explain the error from: …" first: FRIDAY reads the command, its exit code and its output from kitty (its shell integration and remote control) and sends them only when you pick it. Hyprland only, for now.
 
 With highlighted text, `Super+Alt+Y` also offers "Rewrite: fix grammar / shorter / more formal / friendlier / translate to English": the answer replaces the selection (pasted into the same window if it still has focus, never into a terminal; otherwise it's left on the clipboard), and your clipboard is put back. Hyprland only, for now.
