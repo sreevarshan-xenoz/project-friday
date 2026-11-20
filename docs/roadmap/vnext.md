@@ -107,6 +107,18 @@ page. Exit: a green `dev`, the hardware checklist done.
 - Exit test (*resume*): the N1 test above, scripted in the VM: save,
   reboot, ask, and count what came back.
 
+**Status (2026-11-21):** built and merged: workspaces with session
+resurrection (#264; restore by window address, terminals as themselves,
+#265), "continue building X" (#265), thought threads (#268), opt-in
+session autosave (#269), answers that keep their project (#270), on the
+timeline (#262). Checked live in the FRIDAY OS VM: save and restore
+(windows back on their workspaces, the floating one in place, the editor on
+its file, 0.08 s, no duplicates), and the autosave save from systemd without
+Hyprland's environment. Owed on real hardware: the whole N1 test after a
+reboot, and the project in front (the VM gives no window focus). Not yet:
+browser tabs (the browser's own session restore for now), GUI editors' open
+files, niri.
+
 ### N2 · Continuity: project understanding
 
 - "What's left on FRIDAY", "what did we decide about memory", "why did we
