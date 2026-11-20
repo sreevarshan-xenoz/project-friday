@@ -24,6 +24,7 @@ pub mod error;
 pub mod failures;
 pub mod goal_runner;
 pub mod listen;
+pub mod local_ai;
 pub mod local_docs;
 pub mod probe;
 pub mod protocol;
