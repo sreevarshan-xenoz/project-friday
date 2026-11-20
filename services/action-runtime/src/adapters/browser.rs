@@ -268,6 +268,12 @@ impl BrowserAdapter {
         self
     }
 
+    /// Use this Chrome or Chromium binary instead of looking for one.
+    pub fn with_chrome_executable(mut self, path: impl Into<PathBuf>) -> Self {
+        self.chrome_path = Some(path.into());
+        self
+    }
+
     /// Persist cookies/localStorage in `dir` so sessions survive restarts.
     pub fn with_user_data_dir(mut self, dir: PathBuf) -> Self {
         self.user_data_dir = Some(dir);
