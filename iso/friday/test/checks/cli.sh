@@ -243,6 +243,22 @@ if grep -q "Rewrite: fix grammar" "$HOME/.local/state/friday/ask-history" 2>/dev
 if grep -q "send_key_state" "$LOG"; then fail "pasted into a window the person moved to"; else pass "another window by then: no paste"; fi
 contains "it says the rewrite is on the clipboard" "$(cat "$LOG")" "on your clipboard"
 rm -f "$W/looks"
+# Undo after a rewrite: Ctrl+Z in that window; another window in front: the
+# original goes on the clipboard.
+: >"$LOG"; PRIMARY="teh quick fox" PICK="Rewrite: fix grammar and spelling" bash "$F" ask --selection; sleep 0.5
+rm -f "$W/looks"; : >"$LOG"; out=$(bash "$F" undo)
+contains "undo after a rewrite: Ctrl+Z in that window" "$(cat "$LOG")" 'send_key_state({ mods = "CTRL", key = "Z", state = "down" })'
+contains "and says what it undid" "$out" "Undid the rewrite"
+: >"$LOG"; PRIMARY="teh quick fox" PICK="Rewrite: fix grammar and spelling" bash "$F" ask --selection; sleep 0.5
+rm -f "$W/looks"; : >"$LOG"; out=$(MOVE_AFTER=1 bash "$F" undo)
+if grep -q 'key = "Z"' "$LOG"; then fail "sent Ctrl+Z to another window"; else pass "another window in front: no Ctrl+Z"; fi
+contains "the original text goes on the clipboard" "$(cat "$LOG")" "wl-copy: teh quick fox"
+contains "and it says how to undo" "$out" "press Ctrl+Z"
+# The same window, but a terminal now has it (an address reused): no Ctrl+Z.
+: >"$LOG"; PRIMARY="teh quick fox" PICK="Rewrite: fix grammar and spelling" bash "$F" ask --selection; sleep 0.5
+rm -f "$W/looks"; : >"$LOG"; WIN_TAGS='"terminal*"' bash "$F" undo >/dev/null
+if grep -q 'key = "Z"' "$LOG"; then fail "sent Ctrl+Z to a terminal"; else pass "a terminal in front: no Ctrl+Z"; fi
+rm -f "$W/looks"
 : >"$LOG"; WIN_TAGS='"terminal*"' PRIMARY="teh quick fox" PICK="Rewrite: fix grammar and spelling" bash "$F" ask --selection; sleep 0.5
 if grep -q "send_key_state" "$LOG"; then fail "pasted into a terminal"; else pass "a terminal gets the rewrite on the clipboard, not pasted"; fi
 # Text that only came from the clipboard can't be replaced: no rewrite entries.
@@ -476,7 +492,8 @@ contains "limit N prints last entry" "$out1" "Kilo"
 if grep -q "1,240 chars" <<<"$out1"; then fail "sent 1 printed older entries"; else pass "sent 1 limits table to last entry"; fi
 
 echo "local commands (no AI)"
-printf '#!/bin/sh\necho "wpctl $*" >>"%s"\n' "$LOG" >"$S/wpctl"; chmod +x "$S/wpctl"
+printf '#!/bin/sh\necho "wpctl $*" >>"%s"\n[ "$1" = get-volume ] && echo "Volume: 0.55${MUTED:+ [MUTED]}"\nexit 0\n' "$LOG" >"$S/wpctl"; chmod +x "$S/wpctl"
+rm -f "$state/undo.jsonl"
 : >"$LOG"; bash "$F" ask "Volume 40"; sleep 0.3
 contains "volume: set on this computer" "$(cat "$LOG")" "wpctl set-volume @DEFAULT_AUDIO_SINK@ 40%"
 contains "volume: says what it did" "$(cat "$state/last-answer.md")" "Volume set to 40%."
@@ -484,6 +501,16 @@ contains "local command says nothing was sent" "$(cat "$LOG")" "nothing was sent
 if grep -q "friday-ctl" "$LOG"; then fail "a local command went to the daemon"; else pass "a local command never reaches the daemon"; fi
 : >"$LOG"; bash "$F" ask "timer 1 min"; sleep 0.3
 contains "timer: set" "$(cat "$state/last-answer.md")" "Timer set for 1 minute."
+# Undo puts back what the volume was before (0.55 from get-volume).
+: >"$LOG"; out=$(bash "$F" undo)
+contains "undo: the volume goes back" "$(cat "$LOG")" "wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.55"
+contains "undo: and its mute" "$(cat "$LOG")" "wpctl set-mute @DEFAULT_AUDIO_SINK@ 0"
+contains "undo: says what it undid" "$out" "Undid the volume change: volume back to 55%."
+contains "undo: then there's nothing left" "$(bash "$F" undo)" "Nothing to undo."
+: >"$LOG"; MUTED=1 bash "$F" ask "unmute"; sleep 0.3; : >"$LOG"; bash "$F" ask "undo"; sleep 0.3
+contains "\"undo\" in the ask box undoes too" "$(cat "$LOG")" "wpctl set-mute @DEFAULT_AUDIO_SINK@ 1"
+contains "and says so" "$(cat "$state/last-answer.md")" "Undid the unmute: volume back to 55%, muted."
+if grep -q "friday-ctl" "$LOG"; then fail "\"undo\" went to the daemon"; else pass "\"undo\" never reaches the daemon"; fi
 : >"$LOG"; bash "$F" ask "what is the volume of a sphere"; sleep 0.3
 contains "a real question about volume still goes to the model" "$(cat "$LOG")" "friday-ctl"
 
