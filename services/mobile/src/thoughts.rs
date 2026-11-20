@@ -58,24 +58,24 @@ pub fn project_name(project: &str) -> &str {
         .unwrap_or(project)
 }
 
-/// Whether `goal` names this project: its folder name, or a word of it
-/// ("FRIDAY" names "project-friday").
+/// Whether `goal` names this project: its folder name, or a distinctive
+/// word of it ("FRIDAY" names "project-friday"; "the" or "app" never count).
 fn named(goal: &str, project: &str) -> bool {
-    let g = goal.to_lowercase();
-    let words: Vec<&str> = g
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| w.len() >= 3)
-        .collect();
+    use friday_goal_execution::significant_tokens;
+    let words = significant_tokens(goal);
     let name = project_name(project).to_lowercase();
-    words.contains(&name.as_str())
-        || name
-            .split(|c: char| !c.is_alphanumeric())
-            .filter(|w| w.len() >= 3 && *w != "project")
-            .any(|w| words.contains(&w))
+    words.contains(&name)
+        || significant_tokens(&name)
+            .iter()
+            .filter(|w| *w != "project" && *w != "code")
+            .any(|w| words.contains(w))
 }
 
-/// The thoughts an ask should see, oldest first, at most `limit`: those of
-/// the project it names, or, when it names none, the most recent ones.
+/// How many thoughts an ask that names no known project sees.
+const UNNAMED: usize = 5;
+
+/// The thoughts an ask should see, oldest first: those of the project it
+/// names (at most `limit`), or, when it names none, only the last few.
 pub fn recent(state_dir: &Path, goal: &str, limit: usize) -> Vec<Thought> {
     let all = load(state_dir);
     let of_project: Vec<Thought> = all
@@ -83,12 +83,12 @@ pub fn recent(state_dir: &Path, goal: &str, limit: usize) -> Vec<Thought> {
         .filter(|t| t.project.as_deref().is_some_and(|p| named(goal, p)))
         .cloned()
         .collect();
-    let chosen = if of_project.is_empty() {
-        all
+    let (chosen, keep) = if of_project.is_empty() {
+        (all, UNNAMED.min(limit))
     } else {
-        of_project
+        (of_project, limit)
     };
-    let skip = chosen.len().saturating_sub(limit);
+    let skip = chosen.len().saturating_sub(keep);
     chosen.into_iter().skip(skip).collect()
 }
 
@@ -181,6 +181,17 @@ mod tests {
         assert_eq!(
             any.iter().map(|t| t.text.as_str()).collect::<Vec<_>>(),
             ["B", "C"]
+        );
+        // Common words in a folder name don't make a question about it.
+        assert!(!named("what's the weather in the app store", "/c/the-app"));
+        assert!(named("continue building the garden", "/c/garden"));
+        // An unknown project gets only the last few, not every thought.
+        for i in 0..10 {
+            add(&d, &t(10 + i, Some("/c/garden"), "idea", "g")).unwrap();
+        }
+        assert_eq!(
+            recent(&d, "what did we decide about Atlas", 15).len(),
+            UNNAMED
         );
         let text = render(&mine);
         assert!(text.contains(" idea [project-friday]: A\n"), "{text}");
