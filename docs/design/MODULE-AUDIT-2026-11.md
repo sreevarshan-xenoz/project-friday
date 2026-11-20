@@ -80,6 +80,17 @@ Not checked: whether stored `reflection` strings feed a later prompt through
 `MemoryJournal` recall (grep found no reader outside tests); whether
 `autonomy.rs` is called from anything outside tests.
 
+Decision (2026-11-21): keep `reflection`, `knowledge`, `engines/memory` and
+`cognitive`. The first pass above said nothing read their output; looking
+again, `knowledge` is part of goal-execution's planning: `PlanningContext`
+carries `KnowledgeRecord`s, a `KnowledgeBased` plan source and the world
+model's `KnowledgeGraph` are built on it. `reflection`'s `Outcome` and
+`Insight` types run through execution, the learning engine and about 30 tests.
+Taking them out means redesigning planning and the world model in the path
+every ask takes, for no change a person would see. What was missing was
+learning from failures, and `lessons.rs` does that. Revisit if one of them
+starts costing something (build time, a bug it causes).
+
 ## Rules for what comes next
 
 - Nothing gets wired in to raise a count. A candidate goes in when a person
