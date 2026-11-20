@@ -24,6 +24,20 @@ const TERMINALS: &[(&str, &str, &str)] = &[
     ("com.mitchellh.ghostty", "ghostty", "--working-directory"),
     ("org.wezfurlong.wezterm", "wezterm", "start --cwd"),
 ];
+/// Chromium-based browsers (by program name): restarted with their last
+/// session, so the tabs come back too.
+const CHROMIUMS: &[&str] = &[
+    "chromium",
+    "chrome",
+    "google-chrome",
+    "google-chrome-stable",
+    "brave",
+    "brave-browser",
+    "vivaldi",
+    "vivaldi-stable",
+    "microsoft-edge",
+    "microsoft-edge-stable",
+];
 /// Editors run inside a terminal that are reopened with their files.
 const EDITORS: &[&str] = &["nvim", "vim", "vi", "hx", "helix", "nano", "micro", "emacs"];
 
@@ -141,14 +155,22 @@ fn read_proc(proc_root: &Path, pid: i64, what: &str) -> Option<String> {
 }
 
 fn cmdline(proc_root: &Path, pid: i64) -> Vec<String> {
-    read_proc(proc_root, pid, "cmdline")
+    let args: Vec<String> = read_proc(proc_root, pid, "cmdline")
         .map(|s| {
             s.split('\0')
                 .filter(|a| !a.is_empty())
                 .map(String::from)
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // Chromium and Electron apps rewrite their process title: the whole
+    // command line comes back as one string joined by spaces.
+    match args.as_slice() {
+        [one] if one.contains(' ') && !Path::new(one).exists() => {
+            one.split_whitespace().map(String::from).collect()
+        }
+        _ => args,
+    }
 }
 
 fn cwd(proc_root: &Path, pid: i64) -> Option<String> {
@@ -407,7 +429,18 @@ fn launch_line(w: &Window) -> Option<String> {
             }
             Some(line)
         }
-        _ if !w.command.is_empty() => Some(shell_line(&w.command)),
+        _ if !w.command.is_empty() => {
+            let mut command = w.command.clone();
+            if CHROMIUMS.contains(&program(&command[0])) {
+                // Its last session brings the tabs back; the pages it was
+                // started with would open a second time.
+                let program = command.remove(0);
+                command.retain(|a| a.starts_with('-') && a != "--restore-last-session");
+                command.insert(0, program);
+                command.push("--restore-last-session".into());
+            }
+            Some(shell_line(&command))
+        }
         _ => None,
     }
 }
@@ -771,6 +804,66 @@ mod tests {
         assert_eq!(
             launch_line(&own).unwrap(),
             "/opt/alacritty/bin/alacritty --working-directory /w"
+        );
+    }
+
+    #[test]
+    fn a_chromium_comes_back_with_its_tabs() {
+        let w = Window {
+            class: "chromium".into(),
+            title: "t".into(),
+            workspace: "3".into(),
+            floating: false,
+            at: [0, 0],
+            size: [0, 0],
+            command: vec![
+                "/usr/lib/chromium/chromium".into(),
+                "--ozone-platform=wayland".into(),
+            ],
+            cwd: None,
+            run: vec![],
+            address: None,
+        };
+        assert_eq!(
+            launch_line(&w).unwrap(),
+            "/usr/lib/chromium/chromium --ozone-platform=wayland --restore-last-session"
+        );
+        let with_pages = Window {
+            command: vec![
+                "chromium".into(),
+                "--incognito".into(),
+                "file:///tmp/a.html".into(),
+            ],
+            ..w.clone()
+        };
+        assert_eq!(
+            launch_line(&with_pages).unwrap(),
+            "chromium --incognito --restore-last-session"
+        );
+        let firefox = Window {
+            command: vec!["firefox".into()],
+            ..w
+        };
+        assert_eq!(launch_line(&firefox).unwrap(), "firefox");
+    }
+
+    #[test]
+    fn a_rewritten_process_title_is_split_back_into_arguments() {
+        let p = tmp();
+        let d = p.join("500");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(
+            d.join("cmdline"),
+            "/usr/lib/chromium/chromium --ozone-platform=wayland --user-data-dir=/tmp/x\0",
+        )
+        .unwrap();
+        assert_eq!(
+            cmdline(&p, 500),
+            vec![
+                "/usr/lib/chromium/chromium",
+                "--ozone-platform=wayland",
+                "--user-data-dir=/tmp/x"
+            ]
         );
     }
 
