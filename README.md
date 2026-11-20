@@ -130,7 +130,8 @@ flowchart TD
   C -->|yes| CP["Claude Code, Codex,<br/>Antigravity, Cline (text only)"]
 ```
 
-- **Out of the box:** no key, no sign-in. OpenCode Zen's free models, then Kilo's free gateway, then OVHcloud's AI Endpoints (EU, no account) as fallbacks; never Kilo's unnamed "stealth" models or its auto-router.
+- **Out of the box:** no key, no sign-in. OpenCode Zen's free models (also through OpenCode's own CLI when it's installed), then Kilo's free gateway, then OVHcloud's AI Endpoints (EU, no account) as fallbacks; never Kilo's unnamed "stealth" models or its auto-router.
+- **A model on your computer** (the FRIDAY OS installer, or `friday setup-ai local`): FRIDAY checks the memory, GPU and disk, offers Light / Balanced / Most presets (and a GPU one with a discrete card), and says what each gets: no local AI under 2 GB, text only up to qwen3:4b, screenshots from gemma3:4b up. Ollama (Arch package) or llama.cpp (its official build, pinned and checksummed). It answers first; cloud covers screenshots on a text-only model and anything it can't answer.
 - **Your own key** (`friday setup-ai`, or the tray's AI provider window) comes first. `--keep-others` keeps your other keys as fallbacks; `--only` keeps just the new one.
 - **Your own account** (`friday connect claude|codex|agy|cline` on Linux, **Connect an account** in the tray on Windows) is optional, and by default only a fallback when the free models can't answer: it starts the tool's app for each answer (seconds slower) and counts against your plan. `friday connect --prefer <name>` (or `FRIDAY_PREFER_ACCOUNTS=1`) uses it before the free models instead, still after your own key. It answers through that tool's own app and sign-in. FRIDAY never sees the credentials, and runs the tool with no tools of its own, in an empty folder. These are text only: a screenshot never goes to them. On Windows only a native `.exe` can be used (Claude Code, Antigravity, Codex's native build); Cline is Linux-only for now.
 - **Screen asks** go only to models that can see images: your vision provider, or the free ones.
@@ -233,6 +234,7 @@ pacman refuses any package or database that key didn't sign. On Windows, install
 | `friday setup-ai [--keep-others\|--only] [provider]` | Use your own API key |
 | `friday connect [--prefer] [claude\|codex\|agy\|cline]` / `friday disconnect <name>` | Use an account you already have (a fallback unless `--prefer`) |
 | `friday private [status\|on [model]\|off]` | Local model only; nothing leaves the machine |
+| `friday local-ai [summary\|presets\|install\|status\|off]` / `friday setup-ai local` | A model on this computer, sized to it |
 | `friday answers [--last]` | Past answers (kept private, in `~/.local/state/friday`) |
 | `friday sent [N]` | What left this machine for AI providers (egress log) |
 | `friday shell style\|palette` | FRIDAY Shell's look, matched on Hyprland or niri |
