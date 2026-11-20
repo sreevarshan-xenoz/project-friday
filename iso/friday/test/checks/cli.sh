@@ -55,6 +55,7 @@ if [[ "\$target_arg" == *nodaemon* ]]; then echo "no token found; daemon not run
 if [[ "\$target_arg" == *slowgoal* ]]; then echo '{"accepted":true}'; echo "timed out after 180s waiting for the goal to finish" >&2; exit 1; fi
 if [[ "\$target_arg" == *refused* ]]; then printf '{\n "outcome": "failed",\n "error": "Couldn'"'"'t reach your AI provider. Check your internet connection (or that your local model server is running)."\n}\n'; echo "llamacpp: tcp connect error: Connection refused" >&2; exit 1; fi
 if [[ "\$target_arg" == *limit* ]]; then printf '{\n "outcome": "failed",\n "error": "provider opencode: 429 FreeUsageLimitError"\n}\n'; exit 1; fi
+if [[ "\$target_arg" == *"rewritten text"* && "\$target_arg" == *teh* ]]; then printf '{\n "outcome": "completed",\n "result": "\\\\"The quick fox.\\\\""\n}\n'; exit 0; fi
 if [[ "\$target_arg" == *bullets* ]]; then printf '{\n "outcome": "completed",\n "result": "- first point\\\\n- second point"\n}\n'; exit 0; fi
 if [[ "\$target_arg" == *fail* ]]; then printf '{\n "outcome": "failed",\n "error": "network unreachable"\n}\n'; exit 1; fi
 printf '{\n "outcome": "completed",\n "result": "Line one.\\\\nLine two.\\\\nLast line."\n}\n'
@@ -200,6 +201,43 @@ export HYPR_WIN='{"class":"firefox","pid":4242,"title":"x"}'
 if grep -q "^kitten" "$LOG"; then fail "asked kitty while another app had focus"; else pass "only a focused kitty window is asked"; fi
 unset HYPR_WIN
 rm -f "$S/hyprctl" "$S/kitten"
+
+echo "rewrite in place"
+# hyprctl: the focused window (tags from $WIN_TAGS). With $MOVE_AFTER=N, the
+# Nth look and later see another window (the person switched windows).
+cat >"$S/hyprctl" <<STUB
+#!/bin/bash
+echo "hyprctl \$*" >>"$LOG"
+if [[ "\$*" == "activewindow -j" ]]; then
+  n=\$(( \$(cat "$W/looks" 2>/dev/null || echo 0) + 1 )); echo \$n >"$W/looks"
+  addr=0xaaa; [ -n "\${MOVE_AFTER:-}" ] && (( n >= MOVE_AFTER )) && addr=0xbbb
+  printf '{"class":"org.gnome.TextEditor","address":"%s","tags":[%s]}' "\$addr" "\${WIN_TAGS:-}"
+fi
+exit 0
+STUB
+chmod +x "$S/hyprctl"; rm -f "$W/looks"
+: >"$LOG"; PRIMARY="teh quick fox" PICK="Rewrite: fix grammar and spelling" bash "$F" ask --selection; sleep 0.5
+contains "asks for only the rewritten text" "$(cat "$LOG")" "Reply with only the rewritten text"
+contains "the rewrite goes on the clipboard, quotes stripped" "$(cat "$LOG")" "wl-copy: The quick fox."
+contains "and is pasted over the selection (Ctrl+V down)" "$(cat "$LOG")" 'send_key_state({ mods = "CTRL", key = "V", state = "down" })'
+contains "and up again" "$(cat "$LOG")" 'state = "up"'
+if grep -q "Rewrite: fix grammar" "$HOME/.local/state/friday/ask-history" 2>/dev/null; then fail "a rewrite went into ask history"; else pass "a rewrite stays out of ask history"; fi
+# The person moved to another window while the model answered: no paste.
+# (Looks 1 and 2 are taken with the selection; the 3rd is when the answer is back.)
+: >"$LOG"; rm -f "$W/looks"; MOVE_AFTER=3 PRIMARY="teh quick fox" PICK="Rewrite: fix grammar and spelling" bash "$F" ask --selection; sleep 0.5
+if grep -q "send_key_state" "$LOG"; then fail "pasted into a window the person moved to"; else pass "another window by then: no paste"; fi
+contains "it says the rewrite is on the clipboard" "$(cat "$LOG")" "on your clipboard"
+rm -f "$W/looks"
+: >"$LOG"; WIN_TAGS='"terminal*"' PRIMARY="teh quick fox" PICK="Rewrite: fix grammar and spelling" bash "$F" ask --selection; sleep 0.5
+if grep -q "send_key_state" "$LOG"; then fail "pasted into a terminal"; else pass "a terminal gets the rewrite on the clipboard, not pasted"; fi
+# Text that only came from the clipboard can't be replaced: no rewrite entries.
+printf '#!/bin/bash\ncat >>%q\necho "$PICK"\n' "$W/menu.txt" >"$S/fuzzel"; : >"$W/menu.txt"
+CLIP="copied words here" PICK="Summarize this" bash "$F" ask --selection; sleep 0.3
+if grep -q "^Rewrite:" "$W/menu.txt"; then fail "offered to rewrite text that wasn't selected"; else pass "clipboard text: no rewrite entries"; fi
+: >"$W/menu.txt"; PRIMARY="teh quick fox" PICK="Summarize this" bash "$F" ask --selection; sleep 0.3
+contains "highlighted text: rewrite entries first" "$(head -n1 "$W/menu.txt")" "Rewrite: fix grammar and spelling"
+printf '#!/bin/bash\necho "fuzzel $*" >> %q\necho "$PICK"\n' "$LOG" >"$S/fuzzel"; chmod +x "$S/fuzzel"
+rm -f "$S/hyprctl"
 # `friday forget` shows counts, asks before deleting, and wipes only what was named.
 FD="$HOME/.local/state/friday"; mkdir -p "$FD/memory"
 printf '<!-- friday answer -->\n# q1\n\nA\n\n---\n\n<!-- friday answer -->\n# q2\n\nB\n\n---\n\n' >"$FD/answers.md"
