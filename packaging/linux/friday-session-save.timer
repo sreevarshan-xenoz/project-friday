@@ -1,0 +1,10 @@
+[Unit]
+Description=FRIDAY: save your open windows every ten minutes (off unless friday workspace autosave on)
+ConditionUser=!@system
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+
+[Install]
+WantedBy=timers.target

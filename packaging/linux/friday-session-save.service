@@ -1,0 +1,7 @@
+[Unit]
+Description=FRIDAY: save the windows you have open as "last session" (friday workspace autosave)
+ConditionUser=!@system
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/friday-ctl workspace save --quiet last session

@@ -15,6 +15,8 @@ for f in usr/bin/friday usr/bin/friday-linux-daemon usr/bin/friday-ctl \
   usr/lib/systemd/user/friday-local-ai.service usr/lib/systemd/user/friday-llama.service \
   usr/lib/systemd/user/friday-recall.service \
   usr/lib/systemd/user/friday-wake.service \
+  usr/lib/systemd/user/friday-session-save.service \
+  usr/lib/systemd/user/friday-session-save.timer \
   usr/share/zsh/site-functions/_friday usr/share/applications/friday.desktop \
   usr/share/applications/friday-settings.desktop usr/share/friday/shell/settings/SettingsWindow.qml \
   usr/share/friday/hyprland/friday.lua usr/share/friday/niri/friday.kdl \

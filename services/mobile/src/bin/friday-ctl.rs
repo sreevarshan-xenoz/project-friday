@@ -509,13 +509,24 @@ fn workspace(args: &[String]) -> std::process::ExitCode {
     use friday_mobile::workspace as ws;
     use std::process::ExitCode;
     let dir = ws::dir();
-    let name = args.get(1..).unwrap_or_default().join(" ");
+    // --quiet (the session timer): no windows open is not an error, and
+    // nothing is saved over the last session then.
+    let quiet = args.iter().any(|a| a == "--quiet");
+    let name = args
+        .get(1..)
+        .unwrap_or_default()
+        .iter()
+        .filter(|a| *a != "--quiet")
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ");
     let proc_root = std::path::Path::new("/proc");
     let now = chrono::Utc::now().timestamp();
     match (args.first().map(String::as_str), name.is_empty()) {
         (Some("save"), false) => match ws::capture(&ws::SystemHypr, proc_root, &name, now)
             .and_then(|s| ws::save(&dir, &s).map(|_| s).map_err(|e| e.to_string()))
         {
+            Ok(_) | Err(_) if quiet => ExitCode::SUCCESS,
             Ok(s) => {
                 println!(
                     "Saved workspace \"{}\": {} window(s){}. Bring it back: friday workspace restore {}",
