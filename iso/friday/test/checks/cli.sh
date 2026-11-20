@@ -348,6 +348,7 @@ printf 'LLAMACPP_ENABLED=1\nLLAMACPP_BASE_URL=http://127.0.0.1:8080/v1\nLLAMACPP
 : >"$LOG"; LOCAL_REPLY="It is a note." PRIMARY="hunter2 secret note" PICK="explain" bash "$F" ask --selection; sleep 0.3
 contains "with a local model it asks it directly" "$(cat "$LOG")" "http://127.0.0.1:8080/v1/chat/completions"
 contains "and shows its answer" "$(cat "$LOG")" "It is a note."
+contains "the saved answer is marked as kept here (the timeline skips it)" "$(cat "$HOME/.local/state/friday/last-answer.md" 2>/dev/null)" "_On this computer · nothing was sent_"
 if grep -q "^friday-ctl" "$LOG"; then fail "the private ask went through the daemon"; else pass "the private ask skips the daemon"; fi
 # A local model that isn't on this computer doesn't count.
 printf 'LLAMACPP_ENABLED=1\nLLAMACPP_BASE_URL=http://192.0.2.7:8080/v1\n' >"$envf"

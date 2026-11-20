@@ -1157,6 +1157,8 @@ pub struct GoalRunner {
     conversations: Option<std::path::PathBuf>,
     /// Where lessons from failed goals are kept (`None`: not learned).
     lessons: Option<std::path::PathBuf>,
+    /// FRIDAY's state directory, read for asks about the past (`timeline`).
+    timeline: Option<std::path::PathBuf>,
     /// The durable memory journal this runner writes through (shared with the
     /// Executive's `EpisodeStore` and the recall tool — one store, one
     /// journal). `None` = memory stays in-memory only (heuristic test runners
@@ -1266,6 +1268,13 @@ impl GoalRunner {
     /// similar asks.
     pub fn with_lessons(mut self, path: std::path::PathBuf) -> Self {
         self.lessons = Some(path);
+        self
+    }
+
+    /// Answer asks about the past ("continue where we stopped") from the
+    /// logs in `state_dir`.
+    pub fn with_timeline(mut self, state_dir: std::path::PathBuf) -> Self {
+        self.timeline = Some(state_dir);
         self
     }
 
@@ -1624,6 +1633,7 @@ impl GoalRunner {
             sessions: Mutex::new(HashMap::new()),
             conversations: None,
             lessons: None,
+            timeline: None,
             journal,
             abort,
             pause,
@@ -1940,6 +1950,21 @@ impl GoalRunner {
                     .collect(),
             };
             let mut lines: Vec<String> = hits.iter().map(format_recalled_memory).collect();
+            if let Some(dir) = &self.timeline {
+                let entries = crate::timeline::collect(dir);
+                if let Some((from, to)) =
+                    crate::timeline::wants(&goal, &entries, chrono::Local::now())
+                {
+                    let text = crate::timeline::render(&entries, from, to);
+                    if !text.is_empty() {
+                        let (text, _) = friday_goal_execution::mask_secrets(&text);
+                        lines.push(format!(
+                            "timeline (what happened on this computer, from FRIDAY's logs; \
+                             say what was done and what is unfinished, then offer the next step):\n{text}"
+                        ));
+                    }
+                }
+            }
             if let Some(path) = &self.lessons {
                 lines.extend(crate::lessons::recall(
                     path,
@@ -3065,6 +3090,47 @@ mod tests {
         drive_goal(&bus, &mut rx, json!({ "goal": goal })).await;
         let prompt = answerer.prompts.lock().unwrap().join("\n");
         prompt
+    }
+
+    /// "Continue where we stopped" gets the timeline from the state
+    /// directory in its prompt; another ask doesn't.
+    #[tokio::test]
+    async fn an_ask_about_the_past_gets_the_timeline() {
+        let dir =
+            std::env::temp_dir().join(format!("friday-mobile-timeline-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let yesterday = (chrono::Local::now() - chrono::Duration::days(1)).format("%Y-%m-%d 17:40");
+        std::fs::write(
+            dir.join("answers.md"),
+            format!("<!-- friday answer -->\n# why does the site build fail\n\n_{yesterday}_\n\nThe image path is wrong.\n\n---\n\n"),
+        )
+        .unwrap();
+        let ask = |goal: &'static str| {
+            let dir = dir.clone();
+            async move {
+                let answerer = Arc::new(ScriptedAnswerer {
+                    reply: Ok("You were fixing the site build.".to_string()),
+                    prompts: Mutex::new(Vec::new()),
+                });
+                let bus = EventBus::new();
+                let mut rx = bus.subscribe();
+                GoalRunner::new(bus.clone())
+                    .with_answerer(answerer.clone())
+                    .with_timeline(dir)
+                    .start();
+                drive_goal(&bus, &mut rx, json!({ "goal": goal })).await;
+                let prompt = answerer.prompts.lock().unwrap().join("\n");
+                prompt
+            }
+        };
+        let prompt = ask("continue where we stopped").await;
+        assert!(
+            prompt.contains("timeline (what happened on this computer"),
+            "{prompt}"
+        );
+        assert!(prompt.contains("why does the site build fail"), "{prompt}");
+        let other = ask("What does the Rust error E0308 mean?").await;
+        assert!(!other.contains("timeline ("), "{other}");
     }
 
     /// A failure kept earlier comes back in the prompt for a similar ask, and

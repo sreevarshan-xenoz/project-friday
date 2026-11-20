@@ -502,6 +502,31 @@ fn local_ai(args: &[String]) -> std::process::ExitCode {
 /// `friday-ctl docs "<question>"`: excerpts from the documentation on this
 /// computer (nothing when nothing fits). `--prepare` unpacks the Arch wiki
 /// for searching; a search starts that in the background when it's due.
+/// `friday-ctl timeline [today|yesterday|week]`: what FRIDAY's logs say
+/// happened (the same text an ask about the past gets). Default: the last
+/// day with anything on it.
+fn timeline(args: &[String]) -> std::process::ExitCode {
+    use friday_mobile::timeline;
+    let entries = timeline::collect(&friday_intelligence::default_state_dir());
+    let ask = match args.first().map(String::as_str) {
+        None => "where was I".to_string(),
+        Some("today") => "what did I do today".to_string(),
+        Some("yesterday") => "what did I do yesterday".to_string(),
+        Some("week") => "what did I do this week".to_string(),
+        Some(_) => {
+            eprintln!("usage: friday-ctl timeline [today|yesterday|week]");
+            return std::process::ExitCode::from(2);
+        }
+    };
+    match timeline::wants(&ask, &entries, chrono::Local::now()) {
+        Some((from, to)) if !timeline::render(&entries, from, to).is_empty() => {
+            print!("{}", timeline::render(&entries, from, to));
+        }
+        _ => println!("Nothing in FRIDAY's logs for that yet."),
+    }
+    std::process::ExitCode::SUCCESS
+}
+
 fn docs(args: &[String]) -> std::process::ExitCode {
     use friday_mobile::local_docs;
     let s = local_docs::Sources::system();
@@ -761,6 +786,9 @@ async fn main() -> std::process::ExitCode {
     }
     if raw.first().map(String::as_str) == Some("docs") {
         return docs(&raw[1..]);
+    }
+    if raw.first().map(String::as_str) == Some("timeline") {
+        return timeline(&raw[1..]);
     }
     if raw.first().map(String::as_str) == Some("show") {
         return show(&raw[1..]).await;
