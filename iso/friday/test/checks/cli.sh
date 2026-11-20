@@ -237,6 +237,18 @@ if grep -q "^Rewrite:" "$W/menu.txt"; then fail "offered to rewrite text that wa
 : >"$W/menu.txt"; PRIMARY="teh quick fox" PICK="Summarize this" bash "$F" ask --selection; sleep 0.3
 contains "highlighted text: rewrite entries first" "$(head -n1 "$W/menu.txt")" "Rewrite: fix grammar and spelling"
 printf '#!/bin/bash\necho "fuzzel $*" >> %q\necho "$PICK"\n' "$LOG" >"$S/fuzzel"; chmod +x "$S/fuzzel"
+
+echo "paste as"
+rm -f "$W/looks"
+: >"$LOG"; CLIP="teh notes" PICK="As a bullet list" bash "$F" paste-as; sleep 0.3
+contains "paste-as transforms the clipboard" "$(cat "$LOG")" "Rewrite the text below As a bullet list"
+contains "and pastes the result" "$(cat "$LOG")" 'send_key_state({ mods = "CTRL", key = "V", state = "down" })'
+: >"$LOG"; WIN_TAGS='"terminal*"' CLIP="teh notes" PICK="Shorter" bash "$F" paste-as; sleep 0.3
+contains "in a terminal it pastes with Shift+Insert" "$(cat "$LOG")" 'mods = "SHIFT", key = "Insert"'
+: >"$LOG"; CLIP="hunter2Secret99xyz" PICK="Shorter" bash "$F" paste-as; sleep 0.3
+if grep -q "^friday-ctl" "$LOG"; then fail "paste-as sent a password-shaped clipboard"; else pass "paste-as never sends a password-shaped clipboard"; fi
+: >"$LOG"; CLIP="" PICK="Shorter" bash "$F" paste-as; sleep 0.3
+contains "an empty clipboard says what to do" "$(cat "$LOG")" "Copy some text first"
 rm -f "$S/hyprctl"
 # `friday forget` shows counts, asks before deleting, and wipes only what was named.
 FD="$HOME/.local/state/friday"; mkdir -p "$FD/memory"
@@ -559,6 +571,9 @@ contains "keys update adds voice typing" "$(bash "$F" keys update)" "Added voice
 [[ "$(grep -c -- '--type' "$HOME/.config/hypr/bindings.lua")" == 2 && "$(grep -v -- '--type' "$HOME/.config/hypr/bindings.lua")" == "$(cat "$W/old-keys.lua")" ]] \
   && pass "keys update only adds the two voice typing lines" || fail "keys update changed more than it should"
 contains "keys update a second time changes nothing" "$(bash "$F" keys update)" "up to date"
+grep -v -- 'paste-as' "$REPO_ROOT/iso/friday/airootfs/etc/skel/.config/hypr/bindings.lua" >"$HOME/.config/hypr/bindings.lua"
+contains "keys update adds Paste as" "$(bash "$F" keys update)" "Added Paste as"
+contains "right after the selection key" "$(grep -A1 'friday ask --selection' "$HOME/.config/hypr/bindings.lua")" '"SUPER + ALT + V", "FRIDAY: Paste as…", "friday paste-as"'
 rm -rf "$HOME/.config/hypr"
 contains "keys update without a FRIDAY OS key file does nothing" "$(bash "$F" keys update)" "nothing to update"
 
