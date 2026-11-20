@@ -1381,6 +1381,41 @@ friday_last_error() {
     | [.last_cmd_exit_status, (.last_reported_cmdline | gsub("[\t\n]"; " ")), .cwd, $s, .id] | @tsv' 2>/dev/null || true
 }
 
+# A rewrite's text as the model may wrap it: drop a code fence or quotes
+# around the whole answer.
+friday_rewrite_clean() {
+  local t="$1"
+  if [[ "$t" == '```'* && "$t" == *'```' ]]; then t=$(sed '1d;$d' <<<"$t"); fi
+  if [[ ${#t} -ge 2 && "$t" == '"'*'"' && "${t:1:${#t}-2}" != *'"'* ]]; then t="${t:1:${#t}-2}"; fi
+  printf '%s' "$t"
+}
+
+# friday_replace_selection <text> <window address>: put the rewrite where the
+# selection was. Pastes (Ctrl+V, sent by Hyprland as Omarchy's universal paste
+# does) only into the same window, still focused, and never into a terminal
+# (its selection isn't editable); otherwise the text is left on the clipboard.
+# The clipboard is put back afterwards when it held text.
+friday_replace_selection() {
+  local text="$1" addr="$2" win now terminal=false old="" had_text=false
+  win=$(timeout 2 hyprctl activewindow -j 2>/dev/null || true)
+  now=$(jq -r '.address // empty' <<<"$win" 2>/dev/null || true)
+  jq -e '(.tags // []) | any(sub("\\*$"; "") == "terminal")' <<<"$win" >/dev/null 2>&1 && terminal=true
+  if timeout 2 wl-paste --list-types 2>/dev/null | grep -q '^text/plain'; then
+    old=$(timeout 2 wl-paste --no-newline 2>/dev/null || true); had_text=true
+  fi
+  printf '%s' "$text" | wl-copy
+  if [ -n "$addr" ] && [ "$now" = "$addr" ] && ! $terminal; then
+    sleep 0.15
+    timeout 2 hyprctl dispatch 'hl.dsp.send_key_state({ mods = "CTRL", key = "V", state = "down" })' >/dev/null 2>&1 || true
+    sleep 0.05
+    timeout 2 hyprctl dispatch 'hl.dsp.send_key_state({ mods = "CTRL", key = "V", state = "up" })' >/dev/null 2>&1 || true
+    # The app reads the clipboard after the paste; put yours back a moment later.
+    if $had_text; then ( sleep 1; printf '%s' "$old" | wl-copy ) >/dev/null 2>&1 & fi
+    return 0
+  fi
+  notify-send -a FRIDAY -- "FRIDAY" "The rewrite is on your clipboard: paste it with Ctrl+V." 2>/dev/null || true
+}
+
 # The app and window title the selected text came from, as one line for the
 # model ("" when off, or when Hyprland can't say). Called before the ask box
 # opens, while that window still has focus. `friday app-context off` stops it.
@@ -2297,6 +2332,7 @@ case "${1:-}" in
     # streams it); otherwise it arrives as a notification.
     shift
     use_selection=false use_screen=false use_region=false use_followup=false use_web=false use_new=false another="" details="" daemon_down=false
+    rewrite="" sel_window="" source_label=""
     ask_args=()
     while [ $# -gt 0 ]; do
       case "${1:-}" in
@@ -2350,6 +2386,7 @@ case "${1:-}" in
       fi
       context="${context:0:4000}"
       app_context=$(friday_app_context)
+      sel_window=$(timeout 2 hyprctl activewindow -j 2>/dev/null | jq -r '.address // empty' 2>/dev/null || true)
     fi
 
     region=""
@@ -2374,6 +2411,11 @@ case "${1:-}" in
         # ~/.config/friday/prompts); Shift+Enter sends what you typed instead.
         preview=$(tr '\n\t' '  ' <<<"$context" | cut -c1-40)
         goal=$({
+          # Highlighted text can be rewritten in place (the selection is replaced).
+          if [ "$source_label" = Selected ]; then
+            printf '%s\n' "Rewrite: fix grammar and spelling" "Rewrite: make it shorter" \
+              "Rewrite: make it more formal" "Rewrite: make it friendlier" "Rewrite: translate to English"
+          fi
           printf '%s\n' "Summarize this" "Explain this simply" "Translate this to English" \
             "Fix the grammar and spelling; reply with only the corrected text"
           sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "${XDG_CONFIG_HOME:-$HOME/.config}/friday/prompts" 2>/dev/null || true
@@ -2438,8 +2480,9 @@ case "${1:-}" in
     # this directory (also fixes one made world-readable by an older version).
     mkdir -p "$state_dir" && chmod 700 "$state_dir"
     # Remember the question (not the pasted context): newest first, no dups, last 50.
-    # (Not an explained error: it means nothing without that error.)
-    if ! ${explaining_error:-false}; then
+    # (Not an explained error or a rewrite: they mean nothing without the
+    # error or the selection.)
+    if ! ${explaining_error:-false} && [[ "$goal" != "Rewrite: "* ]]; then
       { printf '%s\n' "$goal"; grep -vxF -- "$goal" "$history_file" 2>/dev/null || true; } \
         | head -n 50 >"$history_file.tmp" && mv -f "$history_file.tmp" "$history_file"
     fi
@@ -2447,6 +2490,9 @@ case "${1:-}" in
     request="$goal"
     if $use_followup; then
       request=$(printf '%s\n\nThis follows up on my previous question and your answer:\n"""\n%s\n"""' "$goal" "$context")
+    elif [[ "$goal" == "Rewrite: "* ]] && $use_selection && [ "$source_label" = Selected ]; then
+      rewrite="${goal#Rewrite: }"
+      request=$(printf 'Rewrite the text below: %s. Keep its language unless told to translate. Reply with only the rewritten text: no quotes, no notes, no introduction.\n"""\n%s\n"""' "$rewrite" "$context")
     elif [ -n "$context" ]; then
       request=$(printf '%s\n\nUse this text as context:\n"""\n%s\n"""' "$goal" "$context")
       [ -z "${app_context:-}" ] || request="$request"$'\n'"$app_context"
@@ -2648,6 +2694,15 @@ case "${1:-}" in
       stream_ctl friday-ctl "${ctl_args[@]}"
       # The final {outcome,result,error} object; keep every line of the answer.
       summary=$(jq -s 'map(select(type == "object" and .outcome? != null)) | last // {}' <<<"$out" 2>/dev/null || echo '{}')
+    fi
+
+    if [ -n "${rewrite:-}" ] && $ok; then
+      rewritten=$(friday_rewrite_clean "$(jq -r '.result // empty' <<<"$summary" 2>/dev/null || true)")
+      if [ -n "${rewritten//[[:space:]]/}" ]; then
+        [ -z "$nid" ] || notify-send -a FRIDAY -r "$nid" -t 1500 -- "FRIDAY" "Rewritten: $rewrite" 2>/dev/null || true
+        friday_replace_selection "$rewritten" "${sel_window:-}"
+        exit 0
+      fi
     fi
 
     action_to_confirm=$(jq -r '.needs_confirmation.action // empty' <<<"$summary" 2>/dev/null || true)

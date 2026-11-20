@@ -176,6 +176,8 @@ Signing in to Claude Code, Codex, Antigravity or Cline needs a browser and your 
 
 In kitty (FRIDAY OS's terminal), `Super+Y` right after a command failed offers "Explain the error from: …" first: FRIDAY reads the command, its exit code and its output from kitty (its shell integration and remote control) and sends them only when you pick it. Hyprland only, for now.
 
+With highlighted text, `Super+Alt+Y` also offers "Rewrite: fix grammar / shorter / more formal / friendlier / translate to English": the answer replaces the selection (pasted into the same window if it still has focus, never into a terminal; otherwise it's left on the clipboard), and your clipboard is put back. Hyprland only, for now.
+
 The bindings ship in `packaging/linux/hyprland/friday.lua` and `packaging/linux/niri/friday.kdl`; on Windows the tray registers them, retrying the Win+ key briefly before falling back.
 
 ## Installation
