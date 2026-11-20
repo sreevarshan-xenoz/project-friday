@@ -80,4 +80,54 @@ hw_old=$(machine old8 8 no)
 contains "no AVX2 and no GPU: very slow" "$(FRIDAY_HW_ROOT="$hw_old" bash "$F" local-ai summary)" "very slow"
 contains "summary: memory, GPU and its memory, threads" "$(FRIDAY_HW_ROOT="$hw" bash "$F" local-ai summary)" "16 GB memory, AMD GPU 8 GB, 8 threads"
 
+echo "install"
+LOG="$W/calls.log"; : >"$LOG"
+for c in ollama systemctl notify-send; do
+  printf '#!/bin/sh\necho "%s $*" >>"%s"\n' "$c" "$LOG" >"$S/$c"
+done
+# curl: health checks succeed; a download writes a file that isn't the real one.
+cat >"$S/curl" <<STUB
+#!/bin/bash
+echo "curl \$*" >>"$LOG"
+out=""; while (( \$# )); do [[ \$1 == -o ]] && { out=\$2; shift; }; shift; done
+[[ -n "\$out" ]] && echo "not the model" >"\$out"
+exit 0
+STUB
+chmod +x "$S"/*
+CONF="$HOME/.config/friday/local-ai.conf" ENV="$HOME/.config/friday/friday.env"
+mkdir -p "$HOME/.config/friday"
+printf 'engine=ollama\nbudget_mb=6144\nstate=pending\n' >"$CONF"
+(umask 077; printf 'GEMINI_API_KEY=k\nLLAMACPP_MODEL=old\n' >"$ENV")
+if FRIDAY_HW_ROOT="$hw" bash "$F" local-ai install --first-login >"$W/out" 2>&1; then pass "Ollama install succeeds"
+else fail "Ollama install failed: $(tail -3 "$W/out")"; fi
+contains "pulls the model the budget fits (6 GB: gemma3:4b)" "$(cat "$LOG")" "ollama pull gemma3:4b"
+envf=$(cat "$ENV")
+contains "keeps the other keys" "$envf" "GEMINI_API_KEY=k"
+contains "points FRIDAY at Ollama" "$envf" "LLAMACPP_BASE_URL=http://127.0.0.1:11434/v1"
+contains "names the model" "$envf" "LLAMACPP_MODEL=gemma3:4b"
+contains "it sees screenshots" "$envf" "LLAMACPP_VISION=1"
+[[ $(grep -c '^LLAMACPP_MODEL=' "$ENV") == 1 ]] && pass "replaces the old model line" || fail "two LLAMACPP_MODEL lines"
+[[ "$(stat -c %a "$ENV")" == 600 ]] && pass "friday.env stays private (0600)" || fail "friday.env is $(stat -c %a "$ENV")"
+contains "state is ready" "$(cat "$CONF")" "state=ready"
+contains "restarts the daemon" "$(cat "$LOG")" "systemctl --user restart friday-linux-daemon"
+contains "says local AI is on, and that it sees screenshots" "$(cat "$LOG")" "sees screenshots"
+: >"$LOG"
+FRIDAY_HW_ROOT="$hw" bash "$F" local-ai install --first-login >/dev/null 2>&1
+[[ ! -s "$LOG" ]] && pass "first login with the model ready does nothing" || fail "first login re-ran: $(head -2 "$LOG")"
+contains "status names the model" "$(bash "$F" local-ai status)" "gemma3:4b"
+
+: >"$LOG"; cp "$ENV" "$W/env.before"
+printf 'engine=llamacpp\nbudget_mb=3000\nstate=pending\n' >"$CONF"
+if FRIDAY_HW_ROOT="$hw" bash "$F" local-ai install --first-login >"$W/out" 2>&1; then fail "a bad download counted as installed"
+else pass "llama.cpp: a download that fails its checksum fails the install"; fi
+contains "state is failed" "$(cat "$CONF")" "state=failed"
+contains "the reason names the checksum" "$(cat "$CONF")" "checksum"
+cmp -s "$ENV" "$W/env.before" && pass "friday.env is untouched" || fail "friday.env changed after a failed install"
+contains "the failure is a notification" "$(cat "$LOG")" "notify-send"
+contains "llama.cpp: the GPU build for a machine with a GPU" "$(cat "$LOG")" "ubuntu-vulkan-x64"
+
+printf 'engine=ollama\nbudget_mb=1000\nstate=pending\n' >"$CONF"
+FRIDAY_HW_ROOT="$hw" bash "$F" local-ai install --first-login >/dev/null 2>&1
+contains "too little memory: failed, in words" "$(cat "$CONF")" "too little memory"
+
 finish

@@ -1,0 +1,13 @@
+[Unit]
+Description=FRIDAY: local model server (llama.cpp)
+ConditionPathExists=%h/.local/share/friday/llama.cpp/llama-server
+
+[Service]
+# LLAMA_ARGS: the model, its vision projector and GPU layers (friday local-ai install).
+EnvironmentFile=%h/.config/friday/llama.env
+ExecStart=%h/.local/share/friday/llama.cpp/llama-server $LLAMA_ARGS --host 127.0.0.1 --port 8080
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

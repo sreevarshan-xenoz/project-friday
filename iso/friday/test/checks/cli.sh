@@ -581,10 +581,13 @@ mkdir -p "$(dirname "$envf")"
 printf 'FRIDAY_LOG=debug\nOTHER_VAR=keepme\n' >"$envf"
 chmod 600 "$envf"
 
-out=$(bash "$F" private on 2>&1)
+# A fake 16 GB machine: the Balanced preset (8 GB) gets gemma3:4b.
+hw16="$W/hw16"; mkdir -p "$hw16/proc"
+printf 'MemTotal:       16777216 kB\n' >"$hw16/proc/meminfo"
+out=$(FRIDAY_HW_ROOT="$hw16" bash "$F" private on 2>&1)
 contains "explains answers stay on computer" "$out" "Answers stay on this computer"
 contains "explains slower than cloud" "$out" "Slower than cloud models"
-contains "explains disk space needed" "$out" "Needs ~3–5 GB of disk space"
+contains "explains the model is sized to the computer" "$out" "sized to this computer"
 contains "says private mode is on" "$out" "Private mode is on: gemma3:4b on this computer."
 contains "pacman installed ollama" "$(cat "$LOG")" "pacman -S --needed --noconfirm ollama"
 contains "ollama service enabled" "$(cat "$LOG")" "systemctl enable --now ollama"

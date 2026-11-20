@@ -1,0 +1,17 @@
+[Unit]
+Description=FRIDAY: set up local AI (downloads the model chosen at install)
+# Written by the installer when local AI was picked; the command itself does
+# nothing once the model is ready.
+ConditionPathExists=%h/.config/friday/local-ai.conf
+ConditionUser=!@system
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+# exec, not oneshot: a download of several GB must not hold up the session.
+Type=exec
+ExecStart=/usr/bin/friday local-ai install --first-login
+TimeoutStartSec=0
+
+[Install]
+WantedBy=default.target
