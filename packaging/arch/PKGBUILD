@@ -98,7 +98,7 @@ package() {
   install -Dm755 "$lin/friday" -t "$pkgdir/usr/bin"
 
   install -Dm644 "$lin/friday-linux-daemon.service" "$lin/friday-local-ai.service" \
-    "$lin/friday-llama.service" "$lin/friday-recall.service" -t "$pkgdir/usr/lib/systemd/user"
+    "$lin/friday-llama.service" "$lin/friday-recall.service" "$lin/friday-wake.service" -t "$pkgdir/usr/lib/systemd/user"
   install -Dm644 "$lin/_friday" -t "$pkgdir/usr/share/zsh/site-functions"
 
   install -Dm644 "$lin/friday.desktop" -t "$pkgdir/usr/share/applications"

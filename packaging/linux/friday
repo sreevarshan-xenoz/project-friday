@@ -29,6 +29,9 @@ Autonomous Agent & Cognitive Loop:
   friday ask --web ["<objective>"] Ask with web search results and cited sources
   friday paste-as                  Paste the clipboard transformed: bullets, JSON, shorter,
                                    translated… (Super+Alt+V)
+  friday captions [on|off|toggle]  Live captions of what you hear (--mic: the microphone), with
+                                   notes saved; local, a few seconds behind
+  friday wake [status|on|off]      Say "hey Friday" and your question, hands free (opt-in)
   friday show <what>               Ring that control in the window in front ("where's …"
                                    and "show me …" in the ask box do the same)
   friday recall [status|on|off]    Keep the text of windows you look at for 3 hours, here
@@ -1269,6 +1272,79 @@ friday_routine_find() {
     if [ -n "$k" ] && [ -f "$dir/$k.json" ]; then printf '%s' "$n"; return 0; fi
   done
   return 1
+}
+
+# `friday captions [on [--mic]|off|toggle|status]`: live captions of what the
+# computer plays (or, with --mic, the microphone), on screen and in a notes
+# file. whisper.cpp on this computer; nothing is sent (friday-ctl listen).
+friday_captions() {
+  local run="${XDG_RUNTIME_DIR:-/tmp}" pidfile out pid=""
+  pidfile="$run/friday-captions-$(id -u).pid" out="$run/friday-captions-$(id -u).out"
+  if [ -f "$pidfile" ]; then
+    pid=$(cat "$pidfile")
+    # Only a running friday-ctl listen counts (a pid can be reused).
+    [[ "$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)" == *"friday-ctl listen captions"* ]] || pid=""
+  fi
+  case "${1:-status}" in
+    toggle) if [ -n "$pid" ]; then friday_captions off; else friday_captions on "${@:2}"; fi ;;
+    status)
+      if [ -n "$pid" ]; then echo "Captions: on (notes: $(head -n1 "$out" 2>/dev/null)). Turn off: friday captions off"
+      else echo "Captions: off. Turn on: friday captions on"; fi ;;
+    on)
+      [ -z "$pid" ] || { echo "Captions are already on."; return 0; }
+      friday_voice_ready || { echo "Captions need voice first: friday voice setup" >&2; return 1; }
+      command -v friday-ctl >/dev/null 2>&1 || { echo "friday: friday-ctl is not installed" >&2; return 1; }
+      local what="what you hear"
+      [ "${2:-}" != --mic ] || what="the microphone"
+      ( umask 077; setsid friday-ctl listen captions "${@:2}" </dev/null >"$out" 2>&1 & echo $! >"$pidfile" )
+      echo "Captions: on, for $what. A few seconds behind. Turn off: friday captions off" ;;
+    off)
+      if [ -n "$pid" ]; then
+        # Its whole group (it ran under setsid), so a transcription in
+        # progress stops too.
+        kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+        echo "Captions: off. Notes: $(head -n1 "$out" 2>/dev/null)"
+      else echo "Captions are off."; fi
+      rm -f "$pidfile" ;;
+    *) echo "Usage: friday captions [on [--mic]|off|toggle|status]" >&2; return 1 ;;
+  esac
+}
+
+# `friday wake [status|on|off]`: say "hey Friday" to ask, hands free. The
+# microphone is listened to on this computer (whisper.cpp), nothing is kept
+# or sent until the phrase is heard (friday-ctl listen wake, run by the
+# friday-wake user service).
+friday_wake() {
+  case "${1:-status}" in
+    status)
+      if systemctl --user is-enabled --quiet friday-wake.service 2>/dev/null; then
+        echo "Wake word: on (say \"hey Friday\" and your question). Turn off: friday wake off"
+      else
+        echo "Wake word: off. Turn on: friday wake on"
+      fi ;;
+    on)
+      friday_voice_ready || { echo "The wake word needs voice first: friday voice setup" >&2; return 1; }
+      if [ "${2:-}" != "--yes" ]; then
+        cat <<'EOF2'
+With the wake word on, FRIDAY listens to your microphone all the time, on this
+computer only. Sound is cut into spoken pieces and turned into text by the
+same local model as voice; nothing is recorded or sent anywhere unless a piece
+begins with "hey Friday" (or "ok Friday"). Then only what you say next is asked,
+like a typed question. A microphone mark shows in the bar while it listens.
+It uses some processor time whenever someone speaks near the microphone.
+EOF2
+        local a
+        read -r -p "Turn it on? [y/N] " a || a=n
+        [[ "$a" =~ ^[Yy] ]] || { echo "Nothing changed."; return 0; }
+      fi
+      systemctl --user enable --now friday-wake.service >/dev/null 2>&1 \
+        || { echo "Couldn't start it (systemctl --user enable --now friday-wake.service)." >&2; return 1; }
+      echo "Wake word: on" ;;
+    off)
+      systemctl --user disable --now friday-wake.service >/dev/null 2>&1 || true
+      echo "Wake word: off" ;;
+    *) echo "Usage: friday wake [status|on|off]" >&2; return 1 ;;
+  esac
 }
 
 # Requests this computer handles itself, with no AI and nothing sent: prints
@@ -3203,6 +3279,14 @@ case "${1:-}" in
   routine)
     shift
     friday_routine "$@"
+    ;;
+  captions)
+    shift
+    friday_captions "$@"
+    ;;
+  wake)
+    shift
+    friday_wake "$@"
     ;;
   watch)
     # friday watch region (drag an area) | stop. The command in a kitty

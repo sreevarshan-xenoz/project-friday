@@ -51,6 +51,12 @@ if [[ "\$1" == routine ]]; then
   echo "stub routine output"
   exit 0
 fi
+if [[ "\$1" == listen ]]; then
+  printf 'friday-ctl-listen %s\n' "\$*" >> "$LOG"
+  echo "/notes/2026-11-20-0905.txt"
+  sleep 30
+  exit 0
+fi
 if [[ "\$1" == cancel ]]; then
   echo "friday-ctl-cancel" >> "$LOG"
   [[ -n "\$HAVE_GOAL" ]] && { echo '{"accepted":true}'; exit 0; }
@@ -739,7 +745,32 @@ if grep -q "friday-ctl" "$LOG"; then fail "the first toggle press asked"; else p
 bash "$F" hold toggle; sleep 0.3
 contains "toggle: the second press asks the spoken words" "$(cat "$LOG")" "what time is it in Tokyo"
 if pgrep -f "$S/pw-record" >/dev/null; then fail "the recorder kept running after the second press"; else pass "the recorder stops on the second press"; fi
+# Live captions and the wake word need that same voice setup.
+RUNQ="$W/runq"; mkdir -p "$RUNQ"; chmod 700 "$RUNQ"
+contains "captions start off" "$(XDG_RUNTIME_DIR="$RUNQ" bash "$F" captions status)" "Captions: off"
+: >"$LOG"; out=$(XDG_RUNTIME_DIR="$RUNQ" bash "$F" captions on); sleep 0.5
+contains "captions on starts the listener" "$(cat "$LOG")" "friday-ctl-listen listen captions"
+contains "and says what it listens to" "$out" "what you hear"
+contains "status shows the notes file" "$(XDG_RUNTIME_DIR="$RUNQ" bash "$F" captions status)" "/notes/2026-11-20-0905.txt"
+out=$(XDG_RUNTIME_DIR="$RUNQ" bash "$F" captions off)
+contains "captions off says where the notes are" "$out" "Notes: /notes/2026-11-20-0905.txt"
+contains "and it is off" "$(XDG_RUNTIME_DIR="$RUNQ" bash "$F" captions status)" "Captions: off"
+: >"$LOG"; out=$(XDG_RUNTIME_DIR="$RUNQ" bash "$F" captions toggle --mic); sleep 0.5
+contains "toggle turns it on (microphone: --mic goes through)" "$(cat "$LOG")" "listen captions --mic"
+contains "and names the microphone" "$out" "the microphone"
+XDG_RUNTIME_DIR="$RUNQ" bash "$F" captions toggle >/dev/null
+contains "toggle again turns it off" "$(XDG_RUNTIME_DIR="$RUNQ" bash "$F" captions status)" "Captions: off"
+: >"$LOG"; out=$(bash "$F" wake on </dev/null)
+contains "the wake word asks first and says what it hears" "$out" "listens to your microphone all the time"
+contains "and no answer changes nothing" "$out" "Nothing changed."
+if grep -q "enable --now friday-wake" "$LOG"; then fail "the wake word turned on without a yes"; else pass "no yes: the wake word stays off"; fi
+: >"$LOG"; bash "$F" wake on --yes >/dev/null
+contains "wake on --yes starts the service" "$(cat "$LOG")" "systemctl --user enable --now friday-wake.service"
+: >"$LOG"; bash "$F" wake off >/dev/null
+contains "wake off stops the service" "$(cat "$LOG")" "systemctl --user disable --now friday-wake.service"
 rm -f "$HOME/.local/share/friday/whisper/ggml-base.en.bin"
+contains "without voice, captions say so" "$(XDG_RUNTIME_DIR="$RUNQ" bash "$F" captions on 2>&1)" "friday voice setup"
+contains "without voice, the wake word says so" "$(bash "$F" wake on --yes 2>&1)" "friday voice setup"
 
 echo "face unlock"
 contains "face status says it's off and how to turn it on" "$(bash "$F" face status 2>&1)" "friday face setup"
