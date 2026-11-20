@@ -179,6 +179,8 @@ Signing in to Claude Code, Codex, Antigravity or Cline needs a browser and your 
 
 In kitty (FRIDAY OS's terminal), `Super+Y` right after a command failed offers "Explain the error from: …" first: FRIDAY reads the command, its exit code and its output from kitty (its shell integration and remote control) and sends them only when you pick it. Hyprland only, for now.
 
+**Answers from the docs on your computer.** A typed question that matches the Arch wiki (`arch-wiki-lite`), a tldr page (`tealdeer`) or a man page you named as `code` gets a short excerpt sent along, and the answer names it ("Arch wiki: Pacman"). With a local model this works offline. Nothing is looked up for selections or screenshots. FRIDAY OS installs both; elsewhere `sudo pacman -S arch-wiki-lite tealdeer` (`friday doctor` says what's missing).
+
 **Private windows.** Text from a password manager, a private or incognito browser window, or a bank or payment site goes only to the local model, asked directly (never through the daemon, so nothing can fall back to the cloud); with no local model set up, FRIDAY says so and sends nothing. Screen asks there are refused. Add your own apps or window titles, one per line, to `~/.config/friday/private-windows` (`!bank` drops a built-in one). Hyprland only, for now.
 
 **Watch this.** In kitty, while a command runs, Super+Y offers "Tell me when this finishes": you get a notification with its exit status when it's done. `friday watch` (or "Watch an area" in the launcher) lets you drag an area of the screen. If it's still, FRIDAY tells you when it changes; if it's busy, like a progress bar, when it stops changing. It's compared on this computer every 2 seconds, nothing is sent, and it stops after 2 hours or with `friday watch stop`.

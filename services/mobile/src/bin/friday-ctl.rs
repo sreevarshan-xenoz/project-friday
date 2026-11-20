@@ -219,6 +219,80 @@ fn watch(args: &[String]) -> std::process::ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `friday-ctl docs "<question>"`: excerpts from the documentation on this
+/// computer (nothing when nothing fits). `--prepare` unpacks the Arch wiki
+/// for searching; a search starts that in the background when it's due.
+fn docs(args: &[String]) -> std::process::ExitCode {
+    use friday_mobile::local_docs;
+    let s = local_docs::Sources::system();
+    if args.first().map(String::as_str) == Some("--prepare") {
+        let mut code = std::process::ExitCode::SUCCESS;
+        if s.wiki_gz.exists() {
+            match local_docs::prepare(&s) {
+                Ok(()) => println!("The Arch wiki is ready to search."),
+                Err(e) => {
+                    eprintln!("friday-ctl: couldn't unpack the Arch wiki: {e}");
+                    code = std::process::ExitCode::FAILURE;
+                }
+            }
+        }
+        // tealdeer keeps its pages in a cache it fetches once (given two
+        // minutes, so a network that never answers can't hold this forever).
+        let tealdeer = std::process::Command::new("tldr")
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("tealdeer"));
+        if s.tldr.is_none() && tealdeer {
+            let fetched = std::process::Command::new("timeout")
+                .args(["120", "tldr", "--update"])
+                .stdout(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|st| st.success());
+            if fetched {
+                println!("tldr pages fetched.");
+            } else {
+                eprintln!("friday-ctl: couldn't fetch tldr pages (tldr --update)");
+            }
+        }
+        return code;
+    }
+    if s.needs_prepare() {
+        // One try an hour: a marker younger than that means one is running,
+        // or failed recently.
+        let marker = s.cache.with_extension("preparing");
+        let busy = std::fs::metadata(&marker)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age < Duration::from_secs(3600));
+        if !busy {
+            if let Some(dir) = marker.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = std::fs::write(&marker, "");
+            if let Ok(exe) = std::env::current_exe() {
+                let mut cmd = std::process::Command::new(exe);
+                cmd.args(["docs", "--prepare"])
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
+                // Its own process group: `timeout` around this search kills
+                // its whole group when time runs out.
+                #[cfg(unix)]
+                std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+                let _ = cmd.spawn();
+            }
+        }
+    }
+    // The question follows `--`, so one that reads "--prepare" is a question.
+    let question = args.strip_prefix(&["--".to_string()]).unwrap_or(args);
+    print!(
+        "{}",
+        local_docs::render(&local_docs::find(&question.join(" "), &s))
+    );
+    std::process::ExitCode::SUCCESS
+}
+
 fn say(args: &[String]) -> std::process::ExitCode {
     if let Some(at) = args.iter().position(|a| a == "--setup") {
         let name = args.get(at + 1).map(String::as_str).unwrap_or("tinyvoca");
@@ -287,6 +361,9 @@ async fn main() -> std::process::ExitCode {
     }
     if raw.first().map(String::as_str) == Some("watch") {
         return watch(&raw[1..]);
+    }
+    if raw.first().map(String::as_str) == Some("docs") {
+        return docs(&raw[1..]);
     }
     if raw.first().map(String::as_str) == Some("agent-hook") {
         return agent_hook(&raw[1..]);
