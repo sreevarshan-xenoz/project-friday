@@ -496,7 +496,8 @@ pub fn restore(hypr: &dyn Hypr, proc_root: &Path, saved: &Saved) -> Result<Repor
     Ok(report)
 }
 
-#[cfg(test)]
+// Workspaces are Hyprland-only, and the tests build a fake /proc.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::sync::Mutex;
@@ -530,7 +531,6 @@ mod tests {
             std::fs::create_dir_all(&d).unwrap();
             std::fs::write(d.join("cmdline"), cmd.join("\0") + "\0").unwrap();
             std::fs::write(d.join("stat"), format!("{pid} (x y) S {ppid} 0 0")).unwrap();
-            #[cfg(unix)]
             std::os::unix::fs::symlink(cwd, d.join("cwd")).unwrap();
         };
         proc_entry(100, 1, &["kitty"], Path::new("/"));
@@ -549,7 +549,6 @@ mod tests {
         .to_string()
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_workspace_keeps_the_work_not_just_the_windows() {
         let repo = tmp().join("project-friday");
@@ -582,7 +581,6 @@ mod tests {
         assert!(find(&dir, "garden").is_none());
     }
 
-    #[cfg(unix)]
     #[test]
     fn restore_starts_what_is_missing_where_it_was_and_moves_the_rest() {
         let repo = tmp().join("site");
@@ -646,7 +644,6 @@ mod tests {
         assert_eq!(report.already.len(), 1);
     }
 
-    #[cfg(unix)]
     #[test]
     fn an_editor_the_terminal_runs_itself_is_kept() {
         let p = tmp();
