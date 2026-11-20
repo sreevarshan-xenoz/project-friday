@@ -169,7 +169,8 @@ fn terminal_work(proc_root: &Path, pid: i64) -> (Option<String>, Vec<String>) {
         return (cwd(proc_root, pid), Vec::new());
     };
     let folder = cwd(proc_root, shell);
-    for child in children(proc_root, shell) {
+    // The terminal may run the editor itself, or a shell that runs it.
+    for child in std::iter::once(shell).chain(children(proc_root, shell)) {
         let cmd = cmdline(proc_root, child);
         if cmd.first().is_some_and(|c| EDITORS.contains(&program(c))) {
             return (cwd(proc_root, child).or(folder), cmd);
@@ -643,6 +644,23 @@ mod tests {
             ]
         );
         assert_eq!(report.already.len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_editor_the_terminal_runs_itself_is_kept() {
+        let p = tmp();
+        let repo = tmp();
+        for (pid, ppid, cmd) in [(300, 1, "foot"), (301, 300, "hx\0notes.md")] {
+            let d = p.join(pid.to_string());
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("cmdline"), format!("{cmd}\0")).unwrap();
+            std::fs::write(d.join("stat"), format!("{pid} (x) S {ppid} 0")).unwrap();
+            std::os::unix::fs::symlink(&repo, d.join("cwd")).unwrap();
+        }
+        let (dir, run) = terminal_work(&p, 300);
+        assert_eq!(dir.as_deref(), Some(repo.to_str().unwrap()));
+        assert_eq!(run, vec!["hx", "notes.md"]);
     }
 
     #[test]
