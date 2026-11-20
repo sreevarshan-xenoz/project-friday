@@ -9,6 +9,7 @@ _friday() {
     'cancel:Cancel the goal FRIDAY is working on'
     'answers:Show past answers'
     'sent:Show what left this machine for AI providers'
+    'show:Ring a control in the window in front'
     'undo:Put back the last thing FRIDAY changed'
     'watch:Say when an area of the screen changes (region|stop)'
     'status:Inspect daemon state and telemetry'

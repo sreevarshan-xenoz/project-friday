@@ -29,6 +29,8 @@ Autonomous Agent & Cognitive Loop:
   friday ask --web ["<objective>"] Ask with web search results and cited sources
   friday paste-as                  Paste the clipboard transformed: bullets, JSON, shorter,
                                    translated… (Super+Alt+V)
+  friday show <what>               Ring that control in the window in front ("where's …"
+                                   and "show me …" in the ask box do the same)
   friday undo                      Put back the last thing FRIDAY changed (volume, mute,
                                    Do not disturb, a rewrite or paste); "undo" in the ask box too
   friday watch [region|stop]       Drag an area; FRIDAY says when it changes (or stops
@@ -1182,6 +1184,29 @@ friday_undo() {
       fi ;;
     *) echo "Can't undo that."; return 1 ;;
   esac
+}
+
+# friday_show <question>: ring the control it names in the focused window
+# (friday-ctl show, FRIDAY Shell's ring). When no name fits, the model picks
+# from the names of the window's controls (not in a private window). Fails
+# when FRIDAY can't see inside that app, or nothing fits.
+friday_show() {
+  command -v friday-ctl >/dev/null 2>&1 && command -v hyprctl >/dev/null 2>&1 || return 1
+  local out names app request reply pick
+  out=$(timeout 20 friday-ctl show "$1" 2>/dev/null) || return 1
+  if [ "$(jq -r '.found' <<<"$out" 2>/dev/null)" != true ]; then
+    names=$(jq -r '(.controls // []) | join("\n")' <<<"$out" 2>/dev/null || true)
+    app=$(jq -r '.app // "this app"' <<<"$out" 2>/dev/null || echo "this app")
+    [ -n "$names" ] && [ -z "$(friday_private_window)" ] || return 1
+    request=$(printf 'Someone using %s asked: "%s"\nThese are the controls they can see now, one per line:\n%s\nIf the question is about something in this app, which one should they click first to get there? Reply with only its name exactly as written. If the question is not about this app (a place, a fact, anything else), or none fits, reply NONE.' "$app" "$1" "$names")
+    reply=$(friday-ctl goal --wait "$request" 2>/dev/null) || true
+    pick=$(jq -rs 'map(select(type == "object" and .outcome? == "completed")) | last | .result // empty' <<<"$reply" 2>/dev/null | head -n1 || true)
+    [ -n "$pick" ] && [ "$pick" != NONE ] || return 1
+    out=$(timeout 20 friday-ctl show --exact "$pick" "$1" 2>/dev/null) || return 1
+    [ "$(jq -r '.found' <<<"$out" 2>/dev/null)" = true ] || return 1
+  fi
+  bash "$0" shell ipc ring point "$(jq -r .x <<<"$out")" "$(jq -r .y <<<"$out")" \
+    "$(jq -r .width <<<"$out")" "$(jq -r .height <<<"$out")" "Here: $(jq -r .name <<<"$out")" >/dev/null 2>&1
 }
 
 # Requests this computer handles itself, with no AI and nothing sent: prints
@@ -2762,6 +2787,13 @@ case "${1:-}" in
     if ! $use_selection && ! $use_screen && ! $use_followup && ! ${explaining_error:-false}; then
       local_answer=$(friday_local_command "$goal") || local_answer=""
     fi
+    # "Where's …" / "show me …": a ring around it in the window you're in;
+    # when FRIDAY can't see inside that app, the question is answered in words.
+    if [ -z "$local_answer" ] && ! $use_selection && ! $use_screen && ! $use_followup \
+        && [[ "${goal,,}" =~ ^(where(\'s|\ is|\ are|\ do\ i\ find|\ can\ i\ find)|show\ me)\ .+ ]] \
+        && friday_show "$goal"; then
+      exit 0
+    fi
     # Questions, selected text and answers are private: only you can open
     # this directory (also fixes one made world-readable by an older version).
     mkdir -p "$state_dir" && chmod 700 "$state_dir"
@@ -3099,6 +3131,11 @@ case "${1:-}" in
         notify-send -a FRIDAY -- "FRIDAY" "Watching that area. I'll tell you when it changes, or when it stops changing if it's busy now. Stop with: friday watch stop" 2>/dev/null || true ;;
       *) echo "Usage: friday watch [region|stop]" >&2; exit 2 ;;
     esac
+    ;;
+  show)
+    shift
+    [ -n "$*" ] || { echo "Usage: friday show <what>   (for example: friday show output devices)" >&2; exit 2; }
+    friday_show "$*" || { echo "Couldn't find \"$*\" in the window in front." >&2; exit 1; }
     ;;
   providers)
     exec friday-ctl providers

@@ -25,6 +25,21 @@ if [[ "\$1" == docs ]]; then
   printf 'friday-ctl-docs %s\n' "\$*" >> "$LOG"
   [ -n "\$DOCS_REPLY" ] && printf '%s\n' "\$DOCS_REPLY"
   exit 0
+  exit 0
+fi
+if [[ "\$1" == show ]]; then
+  printf 'friday-ctl-show %s\n' "\$*" >> "$LOG"
+  if [[ "\$2" == --exact ]]; then
+    [[ "\$3" == Appearance ]] && { echo '{"found":true,"name":"Appearance","x":30,"y":200,"width":180,"height":40}'; exit 0; }
+    echo '{"found":false,"app":"Settings","controls":[]}'; exit 0
+  fi
+  none='{"found":false,"error":"not on the bus"}'
+  printf '%s\n' "\${SHOW_REPLY:-\$none}"
+  exit 0
+fi
+if [[ "\$*" == *"should they click first"* ]]; then
+  printf 'friday-ctl-pick %s\n' "\$*" >> "$LOG"
+  echo '{"accepted":true}'; printf '{\n "outcome": "completed",\n "result": "Appearance"\n}\n'; exit 0
 fi
 if [[ "\$1" == cancel ]]; then
   echo "friday-ctl-cancel" >> "$LOG"
@@ -526,6 +541,26 @@ contains "with how to use it" "$(cat "$LOG")" "name the one you use"
 if grep -q "These excerpts" "$LOG"; then fail "added docs when none fit"; else pass "nothing fits: the question goes as it is"; fi
 : >"$LOG"; DOCS_REPLY="[x]" PRIMARY="some text" PICK="explain" bash "$F" ask --selection; sleep 0.3
 if grep -q "friday-ctl-docs" "$LOG"; then fail "looked in the docs for a selection"; else pass "a selection isn't looked up in the docs"; fi
+echo "show me"
+# A fake FRIDAY Shell: quickshell records the ring it's asked to draw.
+mkdir -p "$W/fakeshell"; : >"$W/fakeshell/shell.qml"
+printf '#!/bin/bash\necho "quickshell $*" >>"%s"\n' "$LOG" >"$S/quickshell"; chmod +x "$S/quickshell"
+printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s %q\nexit 0\n' '{"class":"org.gnome.Settings","pid":77,"title":"Settings","at":[0,0]}' >"$S/hyprctl"; chmod +x "$S/hyprctl"
+export FRIDAY_SHELL_DIR="$W/fakeshell"
+: >"$LOG"; SHOW_REPLY='{"found":true,"name":"Output Devices","x":213,"y":46,"width":131,"height":37}' bash "$F" ask "where's output devices"; sleep 0.3
+contains "where's …: FRIDAY looks in the window in front" "$(cat "$LOG")" "friday-ctl-show show where's output devices"
+contains "and rings what it found" "$(cat "$LOG")" "ipc call ring point 213 46 131 37 Here: Output Devices"
+if grep -q "^friday-ctl '" "$LOG"; then fail "a found control still asked the AI"; else pass "a found control asks no AI"; fi
+: >"$LOG"; SHOW_REPLY='{"found":false,"app":"Settings","controls":["Wi-Fi","Appearance","Sound"]}' bash "$F" ask "where is dark mode"; sleep 0.3
+contains "no name fits: the model picks from the control names" "$(cat "$LOG")" "friday-ctl-pick"
+contains "and its pick is ringed" "$(cat "$LOG")" "ipc call ring point 30 200 180 40 Here: Appearance"
+: >"$LOG"; bash "$F" ask "where is the eiffel tower"; sleep 0.3
+if grep -q "ring show" "$LOG"; then fail "drew a ring for a question about the world"; else pass "an app FRIDAY can't see: no ring"; fi
+contains "and the question is answered in words" "$(cat "$LOG")" "friday-ctl where\\ is\\ the\\ eiffel\\ tower"
+printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s %q\nexit 0\n' '{"class":"org.keepassxc.KeePassXC","pid":78,"title":"Passwords","at":[0,0]}' >"$S/hyprctl"
+: >"$LOG"; SHOW_REPLY='{"found":false,"app":"KeePassXC","controls":["Entry 1"]}' bash "$F" ask "where is my bank entry"; sleep 0.3
+if grep -q "friday-ctl-pick" "$LOG"; then fail "sent a private window's controls to the model"; else pass "a private window's controls stay here"; fi
+unset FRIDAY_SHELL_DIR; rm -f "$S/hyprctl" "$S/quickshell"
 
 echo "local commands (no AI)"
 printf '#!/bin/sh\necho "wpctl $*" >>"%s"\n[ "$1" = get-volume ] && echo "Volume: 0.55${MUTED:+ [MUTED]}"\nexit 0\n' "$LOG" >"$S/wpctl"; chmod +x "$S/wpctl"

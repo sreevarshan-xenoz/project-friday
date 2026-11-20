@@ -29,6 +29,7 @@ pub mod protocol;
 pub mod provider_status;
 pub mod session;
 pub mod shell_state;
+pub mod show_me;
 pub mod speech;
 pub mod standing;
 pub mod system_tool;

@@ -42,7 +42,7 @@ pub enum UiRisk {
 /// The static risk class of a UI verb; `None` for unknown verbs.
 pub fn ui_risk_of(action: &str) -> Option<UiRisk> {
     Some(match action {
-        "apps" | "tree" | "find" | "read" => UiRisk::Read,
+        "apps" | "tree" | "find" | "read" | "controls" | "locate" => UiRisk::Read,
         "type_text" | "click" => UiRisk::Reversible,
         _ => return None,
     })
@@ -232,6 +232,17 @@ pub trait UiBackend: Send + Sync {
 
     /// Read text of a node.
     async fn read_text(&self, node_id: &str) -> Result<String, String>;
+
+    /// A node's rectangle (x, y, width, height) in the toolkit's window
+    /// coordinates; `None` when it has none.
+    async fn window_extents(&self, _node_id: &str) -> Result<Option<(i32, i32, i32, i32)>, String> {
+        Ok(None)
+    }
+
+    /// An application's process id and toolkit ("GTK 4.18.2"), when known.
+    async fn app_process(&self, _app_id: &str) -> (Option<u32>, String) {
+        (None, String::new())
+    }
 }
 
 /// Real AT-SPI backend connected over the session accessibility bus.
@@ -573,6 +584,57 @@ impl UiBackend for AtspiBackend {
             .await
             .map_err(|e| format!("read text failed: {e}"))
     }
+
+    async fn window_extents(&self, node_id: &str) -> Result<Option<(i32, i32, i32, i32)>, String> {
+        let conn = self.connection().await?;
+        let (bus_name, object_path) = parse_atspi_id(node_id)?;
+        let Ok(proxy) = atspi::proxy::component::ComponentProxy::builder(conn.connection())
+            .destination(bus_name)
+            .and_then(|b| b.path(object_path))
+        else {
+            return Ok(None);
+        };
+        let Ok(proxy) = proxy
+            .cache_properties(zbus::proxy::CacheProperties::No)
+            .build()
+            .await
+        else {
+            return Ok(None);
+        };
+        Ok(proxy.get_extents(atspi::CoordType::Window).await.ok())
+    }
+
+    async fn app_process(&self, app_id: &str) -> (Option<u32>, String) {
+        let Ok(conn) = self.connection().await else {
+            return (None, String::new());
+        };
+        let Ok((bus_name, object_path)) = parse_atspi_id(app_id) else {
+            return (None, String::new());
+        };
+        let mut pid = None;
+        if let (Ok(dbus), Ok(name)) = (
+            zbus::fdo::DBusProxy::new(conn.connection()).await,
+            zbus::names::BusName::try_from(bus_name),
+        ) {
+            pid = dbus.get_connection_unix_process_id(name).await.ok();
+        }
+        let mut toolkit = String::new();
+        if let Ok(b) = atspi::proxy::application::ApplicationProxy::builder(conn.connection())
+            .destination(bus_name)
+            .and_then(|b| b.path(object_path))
+        {
+            if let Ok(app) = b
+                .cache_properties(zbus::proxy::CacheProperties::No)
+                .build()
+                .await
+            {
+                let name = app.toolkit_name().await.unwrap_or_default();
+                let version = app.version().await.unwrap_or_default();
+                toolkit = format!("{name} {version}").trim().to_string();
+            }
+        }
+        (pid, toolkit)
+    }
 }
 
 /// How deep a walk goes. GTK4 and libadwaita nest many unnamed wrapper panels,
@@ -580,6 +642,24 @@ impl UiBackend for AtspiBackend {
 const MAX_DEPTH: usize = 40;
 /// Most nodes one verb will look at, so a huge or runaway tree stays quick.
 const VISIT_BUDGET: usize = 2500;
+
+/// Roles `controls` lists: what a person clicks to get somewhere.
+const CONTROL_ROLES: &[&str] = &[
+    "Button",
+    "PushButtonMenu",
+    "ToggleButton",
+    "PageTab",
+    "MenuItem",
+    "CheckMenuItem",
+    "RadioMenuItem",
+    "Menu",
+    "CheckBox",
+    "RadioButton",
+    "ComboBox",
+    "ListItem",
+    "SpinButton",
+    "Slider",
+];
 
 /// UI Adapter implementing the `ActionAdapter` trait for AT-SPI control.
 pub struct UiAdapter {
@@ -619,6 +699,18 @@ impl UiAdapter {
     /// List all accessible applications currently on the bus.
     pub async fn list_apps(&self) -> Result<Vec<AppInfo>, String> {
         self.backend.list_applications().await
+    }
+
+    /// The accessible applications this process runs (one process can
+    /// register more than one: a Qt app loading a GTK theme plugin does).
+    pub async fn apps_for_pid(&self, pid: u32) -> Vec<AppInfo> {
+        let mut out = Vec::new();
+        for app in self.backend.list_applications().await.unwrap_or_default() {
+            if self.backend.app_process(&app.id).await.0 == Some(pid) {
+                out.push(app);
+            }
+        }
+        out
     }
 
     /// Resolve an application query string to a unique `AppInfo`.
@@ -682,6 +774,74 @@ impl UiAdapter {
             current_id = children[idx].id.clone();
         }
         self.backend.get_node(&current_id).await
+    }
+
+    /// Showing, named controls (see `CONTROL_ROLES`), at most 150.
+    async fn collect_controls(
+        &self,
+        node_id: &str,
+        current_path: &str,
+        depth: usize,
+        out: &mut Vec<Value>,
+    ) -> Result<(), String> {
+        if out.len() >= 150 || depth > MAX_DEPTH {
+            return Ok(());
+        }
+        let children = self.backend.get_children(node_id).await?;
+        if self.spend(children.len()) {
+            return Ok(());
+        }
+        for (i, child) in children.iter().enumerate() {
+            if out.len() >= 150 {
+                break;
+            }
+            if child.is_password || is_password_role(&child.role) || !child.is_showing {
+                continue;
+            }
+            let child_path = if current_path.is_empty() {
+                format!("{i}")
+            } else {
+                format!("{current_path}/{i}")
+            };
+            if !child.name.trim().is_empty() && CONTROL_ROLES.contains(&child.role.as_str()) {
+                out.push(json!({ "path": child_path, "role": child.role, "name": child.name }));
+            }
+            Box::pin(self.collect_controls(&child.id, &child_path, depth + 1, out)).await?;
+        }
+        Ok(())
+    }
+
+    /// An element's rectangle in its window. GTK 4 reports each element
+    /// relative to its parent, so its rectangles are added up along the path
+    /// (checked on FRIDAY OS); other toolkits report window coordinates.
+    async fn locate(&self, app_root_id: &str, path: &str) -> Result<Value, String> {
+        let indexes = validate_path(path)?;
+        let (_, toolkit) = self.backend.app_process(app_root_id).await;
+        let nested = toolkit.starts_with("GTK 4") || toolkit.starts_with("gtk 4");
+        let mut current = app_root_id.to_string();
+        let (mut x, mut y, mut rect) = (0, 0, None);
+        for (depth, &idx) in indexes.iter().enumerate() {
+            let children = self.backend.get_children(&current).await?;
+            let child = children.get(idx).ok_or_else(|| {
+                format!("path \"{path}\" invalid at segment {depth}: no child {idx}")
+            })?;
+            current = child.id.clone();
+            rect = self.backend.window_extents(&current).await?;
+            if nested {
+                if let Some((ex, ey, _, _)) = rect {
+                    x += ex;
+                    y += ey;
+                }
+            }
+        }
+        let (ex, ey, w, h) = rect.ok_or("that element has no position")?;
+        if !nested {
+            (x, y) = (ex, ey);
+        }
+        if w <= 0 || h <= 0 {
+            return Err("that element isn't on screen".to_string());
+        }
+        Ok(json!({ "x": x, "y": y, "width": w, "height": h, "toolkit": toolkit }))
     }
 
     /// Collect showing elements up to `max_depth` (max 4), capped at 120 nodes.
@@ -1083,6 +1243,37 @@ impl UiAdapter {
                 }
                 (Ok(json!(nodes)), base_risk)
             }
+            // The named controls a person could be pointed at (no text
+            // fields, labels or links: their names can be content).
+            "controls" => {
+                let app = match p("app") {
+                    Some(a) => a,
+                    None => return (Err("name the app".to_string()), base_risk),
+                };
+                let app_info = match self.resolve_app(app).await {
+                    Ok(info) => info,
+                    Err(e) => return (Err(e), base_risk),
+                };
+                let mut out = Vec::new();
+                if let Err(e) = self.collect_controls(&app_info.id, "", 1, &mut out).await {
+                    return (Err(e), base_risk);
+                }
+                (Ok(json!(out)), base_risk)
+            }
+            // Where an element is in its window: {x, y, width, height}.
+            "locate" => {
+                let (Some(app), Some(path)) = (p("app"), p("path")) else {
+                    return (
+                        Err("name the app and the element's path".to_string()),
+                        base_risk,
+                    );
+                };
+                let app_info = match self.resolve_app(app).await {
+                    Ok(info) => info,
+                    Err(e) => return (Err(e), base_risk),
+                };
+                (self.locate(&app_info.id, path).await, base_risk)
+            }
             "find" => {
                 let app = match p("app") {
                     Some(a) => a,
@@ -1411,6 +1602,8 @@ mod tests {
     struct FakeUiBackend {
         apps: Vec<AppInfo>,
         nodes: Mutex<HashMap<String, FakeNode>>,
+        extents: HashMap<String, (i32, i32, i32, i32)>,
+        toolkit: String,
     }
 
     impl FakeUiBackend {
@@ -1418,6 +1611,8 @@ mod tests {
             Self {
                 apps: Vec::new(),
                 nodes: Mutex::new(HashMap::new()),
+                extents: HashMap::new(),
+                toolkit: String::new(),
             }
         }
 
@@ -1437,6 +1632,17 @@ mod tests {
     impl UiBackend for FakeUiBackend {
         async fn list_applications(&self) -> Result<Vec<AppInfo>, String> {
             Ok(self.apps.clone())
+        }
+
+        async fn window_extents(
+            &self,
+            node_id: &str,
+        ) -> Result<Option<(i32, i32, i32, i32)>, String> {
+            Ok(self.extents.get(node_id).copied())
+        }
+
+        async fn app_process(&self, _app_id: &str) -> (Option<u32>, String) {
+            (Some(42), self.toolkit.clone())
         }
 
         async fn get_node(&self, node_id: &str) -> Result<NodeDetails, String> {
@@ -2342,5 +2548,106 @@ mod tests {
             .error
             .unwrap()
             .contains("the ui adapter has no \"explode\""));
+    }
+
+    /// A small window: a tab list holding two tabs, a password field, a
+    /// label and a hidden button (the shape of pavucontrol under GTK 4).
+    fn settings_like(toolkit: &str, nested: bool) -> FakeUiBackend {
+        let mut b = FakeUiBackend::new();
+        b.add_app("Volume Control", "root");
+        b.toolkit = toolkit.to_string();
+        let node = |id, name, role, showing, children| {
+            make_test_node(id, name, role, showing, true, false, false, children)
+        };
+        b.add_node(node(
+            "root",
+            "Volume Control",
+            "Application",
+            true,
+            vec!["frame"],
+        ));
+        b.add_node(node(
+            "frame",
+            "Volume Control",
+            "Frame",
+            true,
+            vec!["tabs", "pw", "label", "hidden", "ok"],
+        ));
+        b.add_node(node("tabs", "", "PageTabList", true, vec!["t0", "t1"]));
+        b.add_node(node("t0", "Playback", "PageTab", true, vec![]));
+        b.add_node(node("t1", "Output Devices", "PageTab", true, vec![]));
+        b.add_node(make_test_node(
+            "pw",
+            "Password",
+            "PasswordText",
+            true,
+            false,
+            true,
+            true,
+            vec![],
+        ));
+        b.add_node(node(
+            "label",
+            "Your bank balance is 12",
+            "Label",
+            true,
+            vec![],
+        ));
+        b.add_node(node("hidden", "Advanced", "Button", false, vec![]));
+        b.add_node(node("ok", "Apply", "Button", true, vec![]));
+        b.extents.insert("frame".into(), (0, 0, 1256, 740));
+        if nested {
+            // Each relative to its parent.
+            b.extents.insert("tabs".into(), (-1, -1, 700, 37));
+            b.extents.insert("t1".into(), (202, -1, 131, 37));
+        } else {
+            b.extents.insert("tabs".into(), (-1, -1, 700, 37));
+            b.extents.insert("t1".into(), (201, -2, 131, 37));
+        }
+        b
+    }
+
+    #[tokio::test]
+    async fn controls_lists_only_showing_named_controls() {
+        let adapter = UiAdapter::with_backend(Arc::new(settings_like("GTK 4.18.2", true)));
+        let res = adapter
+            .execute(ActionRequest::new(
+                "ui",
+                "controls",
+                json!({ "app": "Volume Control" }),
+            ))
+            .await;
+        assert!(res.success, "{:?}", res.error);
+        let names: Vec<&str> = res
+            .output
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["Playback", "Output Devices", "Apply"]);
+        assert_eq!(res.output[1]["path"], "0/0/1");
+    }
+
+    #[tokio::test]
+    async fn locate_adds_up_gtk4_rectangles_and_trusts_others() {
+        for (toolkit, nested) in [("GTK 4.18.2", true), ("Qt 6.10.0", false)] {
+            let adapter = UiAdapter::with_backend(Arc::new(settings_like(toolkit, nested)));
+            let res = adapter
+                .execute(ActionRequest::new(
+                    "ui",
+                    "locate",
+                    json!({ "app": "Volume Control", "path": "0/0/1" }),
+                ))
+                .await;
+            assert!(res.success, "{toolkit}: {:?}", res.error);
+            assert_eq!(
+                (res.output["x"].as_i64(), res.output["y"].as_i64()),
+                (Some(201), Some(-2)),
+                "{toolkit}"
+            );
+            assert_eq!(res.output["width"], 131);
+            assert_eq!(ui_risk_of("locate"), Some(UiRisk::Read));
+        }
     }
 }
