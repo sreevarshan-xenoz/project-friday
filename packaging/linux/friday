@@ -2399,6 +2399,12 @@ case "${1:-}" in
             daemon_down=true ;;
           *"timed out after"*)
             answer="This is taking longer than expected. FRIDAY may still be working on it: check the bar icon, or run friday answers --last later." ;;
+          *"Couldn't reach your AI provider"*)
+            case "$(friday_local_conf_get state)" in
+              pending|installing)
+                answer="Local AI is still downloading, and no cloud provider answered. Ask again once it's on (friday local-ai status)." ;;
+              *) details="" ;;
+            esac ;;
           *) details="" ;;
         esac
         title="FRIDAY ✗ $goal"

@@ -5539,6 +5539,35 @@ mod tests {
         );
     }
 
+    /// Local AI picked at install with a cloud key: the local model answers
+    /// text first; the keyed and keyless cloud models follow as fallbacks.
+    #[test]
+    fn a_local_model_answers_text_before_cloud_even_a_keyed_one() {
+        let mut fabric = InferenceFabric::new();
+        for name in ["opencode", "groq", "llamacpp"] {
+            fabric.register_provider(Box::new(ScriptedProvider { name, fail: false }));
+        }
+        for mut m in opencode_static_models() {
+            m.latency_ms = 3_000;
+            fabric.register_model(m);
+        }
+        fabric.register_model(ModelInfo {
+            id: "groq-model".to_string(),
+            family: "groq".to_string(),
+            provider: "groq".to_string(),
+            latency_ms: 800, // a user key
+            reliability: 1.0,
+            capabilities: vec![ModelCapability::Vision],
+            max_context: 100_000,
+            tier: None,
+        });
+        fabric.register_model(llamacpp_model("qwen3:1.7b".to_string(), false));
+        let picks = fabric.select_for(&RequestRequirements::default());
+        let providers: Vec<&str> = picks.iter().map(|(m, _)| m.provider.as_str()).collect();
+        assert_eq!(providers[0], "llamacpp", "{providers:?}");
+        assert!(providers.contains(&"groq") && providers.contains(&"opencode"));
+    }
+
     /// A screen ask routes with `vision: Required`: a vision model the user
     /// configured (here llama.cpp with LLAMACPP_VISION) must win over keyless
     /// OpenCode Zen, and models that can't see images are never picked.

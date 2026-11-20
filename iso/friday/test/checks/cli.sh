@@ -279,6 +279,10 @@ contains "timeout: explains it may still be running" "$(cat "$state/last-answer.
 contains "model server down: says so plainly" "$(cat "$state/last-answer.md")" "Couldn't reach your AI provider"
 if grep -q "start=Start FRIDAY" "$LOG"; then fail "a model server refusing was taken for FRIDAY being down"
 else pass "a model server refusing is not FRIDAY being down"; fi
+mkdir -p "$HOME/.config/friday"; printf 'engine=ollama\nstate=installing\n' >"$HOME/.config/friday/local-ai.conf"
+bash "$F" ask "model refused test"; sleep 0.3
+contains "local AI still downloading: says so" "$(cat "$state/last-answer.md")" "Local AI is still downloading"
+rm -f "$HOME/.config/friday/local-ai.conf"
 bash "$F" ask "this will fail"; sleep 0.3
 contains "failure is critical with the error" "$(cat "$LOG")" "-u critical"
 contains "failure shows the reason" "$(cat "$LOG")" "network unreachable"
