@@ -33,6 +33,8 @@ Autonomous Agent & Cognitive Loop:
                                    and "show me …" in the ask box do the same)
   friday recall [status|on|off]    Keep the text of windows you look at for 3 hours, here
                                    only, so you can ask "what was that…" (off forgets it)
+  friday routine save|run|list|rm  Save what FRIDAY just did on your desktop, then do it again
+                                   by name ("run <name>" in the ask box works too)
   friday undo                      Put back the last thing FRIDAY changed (volume, mute,
                                    Do not disturb, a rewrite or paste); "undo" in the ask box too
   friday watch [region|stop]       Drag an area; FRIDAY says when it changes (or stops
@@ -1248,6 +1250,27 @@ EOF2
   esac
 }
 
+# `friday routine save|run|list|rm <name>`: save what FRIDAY just did on the
+# desktop, and do it again by name (friday-ctl routine).
+friday_routine() {
+  command -v friday-ctl >/dev/null 2>&1 || { echo "friday: friday-ctl is not installed" >&2; return 1; }
+  case "${1:-list}" in
+    save|run|rm|list) friday-ctl routine "$@" ;;
+    *) echo "Usage: friday routine save <name> | run <name> | list | rm <name>" >&2; return 1 ;;
+  esac
+}
+
+# The saved routine a typed name means, as the person spelled it: "my setup"
+# is a routine called "my setup", or one called "setup". Fails when none.
+friday_routine_find() {
+  local n k dir="${XDG_DATA_HOME:-$HOME/.local/share}/friday/routines"
+  for n in "$1" "${1#my }"; do
+    k=$(tr -s ' ' '\n' <<<"$n" | grep . | paste -sd- - || true)
+    if [ -n "$k" ] && [ -f "$dir/$k.json" ]; then printf '%s' "$n"; return 0; fi
+  done
+  return 1
+}
+
 # Requests this computer handles itself, with no AI and nothing sent: prints
 # what it did and succeeds, or fails so the question goes to the model.
 #   volume 40 | mute | unmute | dnd on|off | battery | timer 5 min | wifi settings | undo
@@ -1291,6 +1314,8 @@ friday_local_command() {
   elif [[ "$q" =~ ^(open\ )?(the\ )?(wi-?fi|network|bluetooth)\ (settings|controls)$ ]]; then
     bash "$0" shell ipc shell open control >/dev/null 2>&1 || return 1
     echo "Opened the controls (Wi-Fi, Bluetooth, sound)."
+  elif [[ "$q" =~ ^(run|do|start)\ ([a-z0-9_\ -]{1,40})$ ]] && rname=$(friday_routine_find "${BASH_REMATCH[2]}"); then
+    friday_routine run "$rname" 2>&1 || true
   elif [[ "$q" =~ ^undo(\ that|\ it)?$ ]]; then
     friday_undo || true
   else
@@ -3174,6 +3199,10 @@ case "${1:-}" in
   recall)
     shift
     friday_recall "$@"
+    ;;
+  routine)
+    shift
+    friday_routine "$@"
     ;;
   watch)
     # friday watch region (drag an area) | stop. The command in a kitty

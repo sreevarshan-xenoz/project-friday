@@ -28,6 +28,7 @@ pub mod probe;
 pub mod protocol;
 pub mod provider_status;
 pub mod recall;
+pub mod routine;
 pub mod session;
 pub mod shell_state;
 pub mod show_me;
