@@ -1974,6 +1974,11 @@ impl GoalRunner {
                     "what did we decide",
                     "what did i decide",
                     "decisions about",
+                    "what's left",
+                    "what is left",
+                    "where are we on",
+                    "what's next on",
+                    "what should i do next",
                 ]
                 .iter()
                 .any(|p| g.contains(p));
