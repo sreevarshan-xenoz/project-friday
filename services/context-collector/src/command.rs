@@ -317,8 +317,10 @@ fn first_wayland_display(dir: &Path) -> Option<String> {
 pub struct FakeCommandRunner {
     scripted: HashMap<(String, Vec<String>), CommandOutput>,
     /// Outputs given one per call, the last one repeating.
-    sequences: HashMap<(String, Vec<String>), std::sync::Arc<std::sync::Mutex<Vec<CommandOutput>>>>,
+    sequences: HashMap<(String, Vec<String>), Queue>,
 }
+
+type Queue = std::sync::Arc<std::sync::Mutex<Vec<CommandOutput>>>;
 
 impl FakeCommandRunner {
     pub fn new() -> Self {
