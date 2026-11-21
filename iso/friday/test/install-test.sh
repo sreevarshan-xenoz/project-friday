@@ -136,7 +136,7 @@ if [[ -n "$ALONGSIDE" ]]; then
   echo "alongside: the other system is as it was"
   vm root 'while read -r l; do sfdisk -d /dev/vda | grep -qxF -- "$l" || { echo "changed: $l"; exit 1; }; done </root/parts-before.txt' \
     && echo "  ok   its four partitions are unchanged" || { echo "  FAIL a partition changed"; exit 1; }
-  vm root 'm=$(mktemp -d); mount -o ro /dev/vda1 $m; cd $m; sha256sum -c --quiet /root/esp-before.txt; r=$?; cd /; umount $m; exit $r' \
+  vm root 'cd /mnt/efi && sha256sum -c --quiet /root/esp-before.txt && ls EFI/systemd/systemd-bootx64.efi' \
     && echo "  ok   the files on its EFI partition are unchanged" || { echo "  FAIL a file on the EFI partition changed"; exit 1; }
   vm root 'm=$(mktemp -d); mount -o ro /dev/vda3 $m; grep -q "my files" $m/keep.txt; r=$?; umount $m; exit $r' \
     && echo "  ok   its data is still there" || { echo "  FAIL its data is gone"; exit 1; }
