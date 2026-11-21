@@ -18,12 +18,12 @@ pub struct Thought {
     pub ts: i64,
     /// The project folder it belongs to; `None` when none was in front.
     pub project: Option<String>,
-    /// idea, decision or question.
+    /// idea, decision, question or action (from a meeting).
     pub kind: String,
     pub text: String,
 }
 
-pub const KINDS: &[&str] = &["idea", "decision", "question"];
+pub const KINDS: &[&str] = &["idea", "decision", "question", "action"];
 
 pub fn file(state_dir: &Path) -> std::path::PathBuf {
     state_dir.join("thoughts.jsonl")
