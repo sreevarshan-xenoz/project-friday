@@ -25,6 +25,8 @@ public class UpdatesTests
     {
         Assert.Null(Updates.Parse("""{"tag_name": "v0.7.4", "assets": [{"name": "FRIDAY-0.7.4-x64.msi", "browser_download_url": "u"}]}"""));
         Assert.Null(Updates.Parse("""{"tag_name": "v0.7.4", "assets": [{"name": "SHA256SUMS", "browser_download_url": "u"}]}"""));
+        // An older MSI under a newer tag isn't an update (a downgrade).
+        Assert.Null(Updates.Parse("""{"tag_name": "v99.0.0", "assets": [{"name": "SHA256SUMS", "browser_download_url": "s"}, {"name": "FRIDAY-0.7.4-x64.msi", "browser_download_url": "m"}]}"""));
         Assert.Null(Updates.Parse("""{"message": "API rate limit exceeded"}"""));
         Assert.Null(Updates.Parse("not json"));
     }

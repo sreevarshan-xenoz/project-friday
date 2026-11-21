@@ -660,11 +660,25 @@ mod tests {
         fn run(&self, program: &str, args: &[String]) -> Result<String, String> {
             let line = format!("{program} {}", args.join(" "));
             self.0.lock().unwrap().push(line.clone());
-            Ok(if line == "hyprctl -j clients" {
-                CLIENTS.into()
-            } else {
-                String::new()
-            })
+            if line != "hyprctl -j clients" {
+                return Ok(String::new());
+            }
+            // The windows as the moves so far left them (the adapter checks).
+            let mut list: Vec<Value> = serde_json::from_str(CLIENTS).unwrap();
+            for c in self.calls() {
+                let (Some(ws), Some(addr)) = (
+                    c.split("workspace = \"")
+                        .nth(1)
+                        .and_then(|r| r.split('"').next()),
+                    c.split("address:").nth(1).and_then(|r| r.split('"').next()),
+                ) else {
+                    continue;
+                };
+                for w in list.iter_mut().filter(|w| w["address"] == addr) {
+                    w["workspace"] = json!({ "name": ws });
+                }
+            }
+            Ok(Value::Array(list).to_string())
         }
     }
 

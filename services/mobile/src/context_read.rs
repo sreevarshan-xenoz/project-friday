@@ -500,6 +500,9 @@ where
 {
     reader: Arc<ScreenReader<C, P>>,
     active: Arc<tokio::sync::Mutex<Option<ActiveScreenAsk>>>,
+    /// Where an answered screen ask is noted for its conversation
+    /// (`conversation.turn`), so the next ask can follow on from it.
+    bus: Option<friday_core::event::EventBus>,
 }
 
 struct ActiveScreenAsk {
@@ -580,7 +583,15 @@ where
         Self {
             reader,
             active: Arc::new(tokio::sync::Mutex::new(None)),
+            bus: None,
         }
+    }
+
+    /// Screen asks join the conversation they name (`conversation` in the
+    /// request): the question and the answer, never the window's text.
+    pub fn with_bus(mut self, bus: friday_core::event::EventBus) -> Self {
+        self.bus = Some(bus);
+        self
     }
 
     pub fn reader(&self) -> &Arc<ScreenReader<C, P>> {
@@ -615,6 +626,16 @@ where
             .get("question")
             .and_then(|v| v.as_str())
             .map(str::to_string);
+        let conversation = cmd
+            .params
+            .get("conversation")
+            .and_then(|v| v.as_str())
+            .filter(|c| {
+                (1..=64).contains(&c.len())
+                    && c.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+            })
+            .map(str::to_string);
+        let bus = self.bus.clone();
         let region = match cmd.params.get("region") {
             None | Some(serde_json::Value::Null) => None,
             Some(v) => match region_param(v) {
@@ -676,6 +697,22 @@ where
             let (ok, result) = match asked {
                 Ok((response, route)) => {
                     tracing::info!("[context.read] screen delivered to provider");
+                    if let (Some(bus), Some(session)) = (&bus, &conversation) {
+                        let _ = bus
+                            .publish(friday_core::event::Event::new(
+                                "conversation.turn",
+                                "context",
+                                serde_json::json!({
+                                    "session_id": session,
+                                    "goal": format!(
+                                        "(about the window on screen) {}",
+                                        question.as_deref().unwrap_or("what is this?")
+                                    ),
+                                    "result": response,
+                                }),
+                            ))
+                            .await;
+                    }
                     (
                         true,
                         serde_json::json!({ "response": response, "used": [route.used()] }),

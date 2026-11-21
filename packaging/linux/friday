@@ -120,6 +120,7 @@ Desktop & System Substrate:
   friday theme [list|set <name>]   Switch desktop visual theme (22 available)
   friday bar [toggle|reload]       Configure Quickshell bar and widgets
   friday update                    Update system and OS components
+  friday upgrade [status|now|auto on|off]  Upgrade safely: settings saved, reverted if FRIDAY breaks
   friday wifi [scan|connect]        Manage network connections
   friday audio [mute|vol-up]        Audio volume and device control
   friday menu                      Launch system control menu
@@ -386,6 +387,13 @@ friday_doctor() {
   if [ -d "$tldr_pages/tldr-pages/pages.en" ] || [ -d "$tldr_pages/tldr-pages/pages" ] || [ -d "$tldr_pages/tldr-master/pages" ]; then ok "tldr pages"
   elif command -v tldr >/dev/null 2>&1; then warn "tldr pages not fetched yet" "tldr --update (once, while online)"
   else warn "no tldr pages" "sudo pacman -S tealdeer, then tldr --update"; fi
+  # The last safe upgrade (friday upgrade), when it didn't go cleanly.
+  local up_last="${FRIDAY_UPGRADE_STATE:-/var/lib/friday/upgrade}/last.json" up_out
+  up_out=$(jq -r '.outcome // empty' "$up_last" 2>/dev/null || true)
+  case "$up_out" in
+    broken) bad "the last upgrade broke something and going back didn't fix it" "friday upgrade status; sudo less /var/lib/friday/upgrade/upgrade.log" ;;
+    reverted) warn "the last upgrade was undone (something didn't start)" "friday upgrade status" ;;
+  esac
 
   echo
   echo "Desktop"
@@ -1386,6 +1394,34 @@ friday_meeting() {
     echo "$kind at ${at// /}: ${text# }"
   done <<<"$reply"
   if [ "$kept" -eq 0 ]; then echo "Nothing to keep from that meeting."; else echo "Kept $kept under the project in front (friday-ctl thought list)."; fi
+}
+
+# `friday upgrade [status|now|auto on|off]`: the system upgraded safely,
+# FRIDAY included (friday-upgrade, as root): only on mains power and online,
+# the package list and your FRIDAY settings saved first, nothing running
+# restarted, and the previous versions put back if FRIDAY or the desktop
+# doesn't start afterwards. Off until `friday upgrade auto on` (daily).
+friday_upgrade() {
+  local last="${FRIDAY_UPGRADE_STATE:-/var/lib/friday/upgrade}/last.json"
+  case "${1:-status}" in
+    status)
+      if systemctl is-enabled --quiet friday-upgrade.timer 2>/dev/null; then echo "Automatic upgrades: on (daily)"
+      else echo "Automatic upgrades: off (friday upgrade auto on)"; fi
+      if [ -s "$last" ]; then
+        jq -r '"Last run \(.at): \(.outcome), \(.message)" + (if .restart_for_kernel then " · restart to use the new kernel" else "" end)' "$last" 2>/dev/null
+      else echo "No upgrade has run yet."; fi ;;
+    now)
+      echo "Upgrading (FRIDAY saves the package list and your settings first, and goes back if something breaks)..."
+      sudo systemctl start friday-upgrade.service || true
+      friday_upgrade status ;;
+    auto)
+      case "${2:-}" in
+        on) sudo systemctl enable --now friday-upgrade.timer && echo "FRIDAY will upgrade the system once a day, on mains power." ;;
+        off) sudo systemctl disable --now friday-upgrade.timer && echo "Automatic upgrades are off." ;;
+        *) echo "Usage: friday upgrade auto on|off" >&2; return 1 ;;
+      esac ;;
+    *) echo "Usage: friday upgrade [status|now|auto on|off]" >&2; return 1 ;;
+  esac
 }
 
 # `friday wrong [reason]` ("That was wrong" on an answer): keep a repro of
@@ -4202,6 +4238,10 @@ case "${1:-}" in
   meeting)
     shift
     friday_meeting "$@"
+    ;;
+  upgrade)
+    shift
+    friday_upgrade "$@"
     ;;
   wrong)
     shift

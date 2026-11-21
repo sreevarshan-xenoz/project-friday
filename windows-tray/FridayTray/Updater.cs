@@ -44,10 +44,17 @@ internal static class Updater
         try
         {
             using var http = Http(TimeSpan.FromMinutes(10));
-            var expected = Updates.ExpectedSha(await http.GetStringAsync(r.SumsUrl), r.MsiName);
+            var sums = await http.GetByteArrayAsync(r.SumsUrl);
+            byte[] sig;
+            try { sig = await http.GetByteArrayAsync(r.SigUrl); }
+            catch (HttpRequestException) { sig = []; }
+            if (!Updates.Signed(sums, sig))
+                return "This release isn't signed with FRIDAY's update key, so it wasn't downloaded.";
+            var expected = Updates.ExpectedSha(System.Text.Encoding.UTF8.GetString(sums), r.MsiName);
             if (expected is null)
                 return $"The release's checksum file doesn't list {r.MsiName}.";
-            var dir = Path.Combine(Path.GetTempPath(), "friday-update");
+            // A folder of its own each time: nothing else can have put a file there.
+            var dir = Path.Combine(Path.GetTempPath(), "friday-update-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
             var path = Path.Combine(dir, r.MsiName);
             await using (var body = await http.GetStreamAsync(r.MsiUrl))
