@@ -203,22 +203,32 @@ fn resumed(goal: &str) -> Option<String> {
         .iter()
         .find_map(|p| g.strip_prefix(p))
         .unwrap_or(g);
-    if let Some(rest) = g.strip_prefix("get back to ") {
-        return name_in(rest);
-    }
     if let Some(rest) = g.strip_prefix("prepare my ") {
         return ["world for ", "workspace for ", "desk for ", "setup for "]
             .iter()
             .find_map(|p| rest.strip_prefix(p))
             .and_then(name_in);
     }
-    let rest = ["continue ", "resume ", "keep "]
-        .iter()
-        .find_map(|v| g.strip_prefix(v))?;
-    ["building ", "working on ", "with ", "on "]
+    // "continue", "resume" and "get back to" may name the project straight
+    // away; "keep" needs "building"/"working on"/… ("keep calm" isn't one).
+    let (rest, needs_connector) = if let Some(r) = g.strip_prefix("keep ") {
+        (r, true)
+    } else {
+        (
+            ["continue ", "resume ", "get back to "]
+                .iter()
+                .find_map(|v| g.strip_prefix(v))?,
+            false,
+        )
+    };
+    match ["building ", "working on ", "with ", "on "]
         .iter()
         .find_map(|c| rest.strip_prefix(c))
-        .and_then(name_in)
+    {
+        Some(after) => name_in(after),
+        None if !needs_connector => name_in(rest),
+        None => None,
+    }
 }
 
 /// The project an ask names: a resume ("continue building X") or the end

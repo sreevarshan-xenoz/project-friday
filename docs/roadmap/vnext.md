@@ -122,21 +122,16 @@ files, niri.
 Two outside audits of v0.7.1 (2026-11-21) led to #277 and its follow-up:
 resume asks get the timeline and thoughts, a named project never gets
 another project's history, home paths stay out of prompts, and page reads
-refuse local-network redirects. Still open from them:
-- **One project identity.** Projects are matched by a distinctive word of
-  the folder name, so `project-friday` and `friday-mobile` both match
-  "FRIDAY". Once an ask resolves a project, carry its folder through the
-  timeline, thoughts and git facts instead of matching each again.
+refuse local-network redirects. Since then (after-0.7.3 #2) one project
+identity is carried through the timeline, thoughts, lessons and git facts,
+`friday ask` and the daemon share one resume grammar
+(`tests/fixtures/resume-phrases.tsv`), and lessons keep their project.
+Still open from them:
 - **Browser page reads are checked after the load.** The download path
   refuses a redirect to the local network before following it; headless
   Chrome is checked only on where it ended up, so a local service may still
   get the request (its text never reaches the model). Closing it needs
   request interception in the browser adapter.
-- **One resume grammar.** The shell (`friday_continue_restore`) also
-  accepts "continue FRIDAY" with no "building"/"working on"; the daemon
-  doesn't, to keep "keep calm" out. Test both against one table of phrases.
-- **Lessons are global.** A lesson is recalled for a similar ask in any
-  project; project-specific ones should carry their project.
 
 ### N2 · Continuity: project understanding
 
