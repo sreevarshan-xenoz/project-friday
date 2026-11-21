@@ -40,6 +40,8 @@ Autonomous Agent & Cognitive Loop:
                                    command, or says when one finishes, in any terminal
   friday sync [init|trust|folder|project|now]  Share chosen projects' thoughts and
                                    workspaces between your machines, end-to-end encrypted
+  friday meeting [notes] [--yes]   A meeting's captions become decisions, actions and open
+                                   questions, kept with the project
   friday recall [status|on|off|keep 3h|24h|7d]  Keep the text of windows you look at, here
                                    only, so you can ask "what was that…" (off forgets it)
   friday clips [status|on|off|pick] Keep the last 200 texts you copy; Super+Ctrl+V pastes one
@@ -1315,6 +1317,38 @@ EOF2
       echo "Recall keeps what it saw for ${2/h/ hours}." | sed 's/7d/7 days/' ;;
     *) echo "Usage: friday recall [status|on|off|keep 3h|24h|7d]" >&2; return 1 ;;
   esac
+}
+
+# `friday meeting [notes file] [--yes]`: a meeting's captions (friday captions
+# notes; the newest by default) become decisions, actions and open questions,
+# each with the time it was said, kept as thoughts under the project in front.
+# The local model reads the transcript when there is one; otherwise it goes to
+# your AI provider, after you say yes.
+friday_meeting() {
+  local notes="" yes=false arg dir request out reply line kind at text kept=0
+  for arg in "$@"; do
+    case "$arg" in --yes) yes=true ;; *) notes="$arg" ;; esac
+  done
+  dir="${XDG_DATA_HOME:-$HOME/.local/share}/friday/captions"
+  [ -n "$notes" ] || notes=$(ls -t "$dir"/*.txt 2>/dev/null | head -n1 || true)
+  [ -s "$notes" ] || { echo "No meeting notes yet: friday captions on keeps them (in $dir)." >&2; return 1; }
+  request=$(printf 'Below is a meeting transcript; each line starts with the time it was said. List only what was actually said, one per line, exactly in this form:\ndecision|HH:MM:SS|what was decided\naction|HH:MM:SS|who does what (when said)\nquestion|HH:MM:SS|a question left open\nNo other lines. If there are none, reply NONE.\n"""\n%s\n"""' "$(tail -c 12000 "$notes")")
+  if ! reply=$(friday_ask_local "$request" 2>/dev/null); then
+    if ! $yes; then
+      echo "There's no local model, so the transcript ($(wc -l <"$notes") lines) would go to your AI provider."
+      local a; read -r -p "Send it? [y/N] " a || a=n
+      [[ "$a" =~ ^[Yy] ]] || { echo "Nothing sent."; return 0; }
+    fi
+    out=$(friday-ctl goal --wait "$request" 2>&1) || true
+    reply=$(jq -rs 'map(select(type == "object" and .outcome? == "completed")) | last | .result // empty' <<<"$out" 2>/dev/null || true)
+  fi
+  while IFS='|' read -r kind at text; do
+    kind=$(tr -d '[:space:]' <<<"$kind" | tr '[:upper:]' '[:lower:]')
+    [[ "$kind" =~ ^(decision|action|question)$ && "$at" =~ ^[[:space:]]*[0-9]{1,2}:[0-9]{2}(:[0-9]{2})?[[:space:]]*$ && -n "${text// /}" ]] || continue
+    friday-ctl thought add "$kind" "(meeting $(basename "$notes" .txt), ${at// /}) ${text# }" >/dev/null 2>&1 && kept=$((kept + 1))
+    echo "$kind at ${at// /}: ${text# }"
+  done <<<"$reply"
+  if [ "$kept" -eq 0 ]; then echo "Nothing to keep from that meeting."; else echo "Kept $kept under the project in front (friday-ctl thought list)."; fi
 }
 
 # `friday wrong [reason]` ("That was wrong" on an answer): keep a repro of
@@ -3881,6 +3915,10 @@ case "${1:-}" in
   sync)
     shift
     friday_sync "$@"
+    ;;
+  meeting)
+    shift
+    friday_meeting "$@"
     ;;
   wrong)
     shift
