@@ -3,6 +3,11 @@
 #
 #   bash iso/friday/test/install-test.sh <friday-os.iso> [out-dir]
 #
+# INSTALL_TEST_ALONGSIDE=1 installs next to a stand-in Windows instead (an
+# EFI partition with Windows Boot Manager, MSR, a data partition, recovery,
+# free space) and checks that none of it changed and both systems are in
+# the start menu.
+#
 # Boots the ISO (UEFI, KVM when available), runs the installer unattended
 # over SSH, boots the installed disk with autologin, then checks what a person
 # would hit first: the hostname, the FRIDAY daemon, Hyprland's config
@@ -41,7 +46,8 @@ for d in /usr/share/edk2/x64 /usr/share/OVMF /usr/share/edk2-ovmf/x64; do
 done
 [[ -n "${OVMF_CODE:-}" && -f "${OVMF_VARS_SRC:-}" ]] || { echo "OVMF (edk2) not found" >&2; exit 2; }
 cp "$OVMF_VARS_SRC" "$WORK/vars.fd"
-qemu-img create -q -f qcow2 "$WORK/disk.qcow2" 25G
+ALONGSIDE="${INSTALL_TEST_ALONGSIDE:-}"
+qemu-img create -q -f qcow2 "$WORK/disk.qcow2" "$([[ -n "$ALONGSIDE" ]] && echo 80G || echo 25G)"
 ACCEL=(-accel "tcg,thread=multi" -cpu max)
 [[ -w /dev/kvm ]] && ACCEL=(-enable-kvm -cpu host)
 
@@ -99,13 +105,41 @@ log "booting the ISO"
 boot cdrom
 wait_ssh root 300
 log "live system is up; installing"
+DISK_MODE="ERASE_DISK=/dev/vda"
+if [[ -n "$ALONGSIDE" ]]; then
+  # A stand-in Windows: what an OEM laptop's disk looks like, with 30 GB of
+  # it left free. Its partitions and EFI files are recorded to compare after.
+  vm root 'set -e
+    sgdisk -n 1:0:+100M -t 1:ef00 -c 1:"EFI system partition" -n 2:0:+16M -t 2:0c01 -c 2:"Microsoft reserved partition" \
+      -n 3:0:+30G -t 3:0700 -c 3:"Basic data partition" -n 4:0:+700M -t 4:2700 -c 4:"Recovery" /dev/vda >/dev/null
+    partprobe /dev/vda; udevadm settle
+    mkfs.vfat -F32 /dev/vda1 >/dev/null; mkfs.ext4 -q -L WINDOWS /dev/vda3
+    m=$(mktemp -d); mount /dev/vda1 $m
+    mkdir -p $m/EFI/Microsoft/Boot $m/EFI/Boot; echo bootmgr >$m/EFI/Microsoft/Boot/bootmgfw.efi; echo fallback >$m/EFI/Boot/bootx64.efi
+    (cd $m && find . -type f | sort | xargs sha256sum) >/root/esp-before.txt; umount $m
+    mount /dev/vda3 $m; echo "my files" >$m/keep.txt; umount $m
+    sfdisk -d /dev/vda | grep "^/dev/" >/root/parts-before.txt
+    efibootmgr | sed -n "s/^BootOrder: //p" >/root/order-before.txt'
+  DISK_MODE="INSTALL_MODE=alongside ALONGSIDE_DISK=/dev/vda FRIDAY_SIZE_MB=40960 BOOT_DEFAULT=other"
+fi
 # Through env: the live shell is zsh, where USERNAME (and HOSTNAME in bash) are
 # special parameters that a plain prefix assignment doesn't pass on.
-if ! vm root "env TERM=xterm TARGET_DISK=/dev/vda ERASE_DISK=/dev/vda FRIDAY_HOSTNAME=friday USERNAME=friday PASSWORD=$PASS_WORD \
+if ! vm root "env TERM=xterm TARGET_DISK=/dev/vda $DISK_MODE FRIDAY_HOSTNAME=friday USERNAME=friday PASSWORD=$PASS_WORD \
       AUTOLOGIN=true ENCRYPT=false FRIDAY_DEBUG_ACCESS=true AUTO_REBOOT=false FRIDAY_FAST=1 \
       timeout 3000 /root/installer" >"$OUT/installer.log" 2>&1; then
   log "the installer failed; last lines:"; tail -n 30 "$OUT/installer.log" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g'
   exit 1
+fi
+if [[ -n "$ALONGSIDE" ]]; then
+  echo "alongside: the other system is as it was"
+  vm root 'while read -r l; do sfdisk -d /dev/vda | grep -qxF -- "$l" || { echo "changed: $l"; exit 1; }; done </root/parts-before.txt' \
+    && echo "  ok   its four partitions are unchanged" || { echo "  FAIL a partition changed"; exit 1; }
+  vm root 'm=$(mktemp -d); mount -o ro /dev/vda1 $m; cd $m; sha256sum -c --quiet /root/esp-before.txt; r=$?; cd /; umount $m; exit $r' \
+    && echo "  ok   the files on its EFI partition are unchanged" || { echo "  FAIL a file on the EFI partition changed"; exit 1; }
+  vm root 'm=$(mktemp -d); mount -o ro /dev/vda3 $m; grep -q "my files" $m/keep.txt; r=$?; umount $m; exit $r' \
+    && echo "  ok   its data is still there" || { echo "  FAIL its data is gone"; exit 1; }
+  vm root 'o=$(efibootmgr | sed -n "s/^BootOrder: //p"); f=$(efibootmgr | awk "/FRIDAY OS/ {print substr(\$1,5,4)}"); echo "$o / next $(efibootmgr | sed -n "s/^BootNext: //p") / friday $f"; [ -n "$f" ] && [ "$o" = "$(cat /root/order-before.txt),$f" ] && efibootmgr | grep -q "^BootNext: $f"' \
+    && echo "  ok   FRIDAY is last in the boot order, and next once" || { echo "  FAIL boot order"; exit 1; }
 fi
 log "installed; booting the disk"
 vm root 'sync' || true
@@ -146,6 +180,10 @@ check "commands the desktop runs are installed" 'm=""; for c in xdg-terminal-exe
 check "omarchy-* commands are on a login shell's PATH" 'bash -lc "command -v omarchy-launch-terminal omarchy-version-channel" >/dev/null'
 check "friday in zsh is the FRIDAY CLI, not an alias" 'w=$(zsh -c "source ~/.zshrc >/dev/null 2>&1; whence -w friday"); echo "$w"; [ "$w" = "friday: command" ]'
 check "friday doctor finds no problems" 'friday doctor'
+if [[ -n "$ALONGSIDE" ]]; then
+  if vm root 'bootctl list --no-pager | grep -qi "windows boot manager"'; then echo "  ok   the start menu lists Windows too"
+  else echo "  FAIL the start menu doesn't list Windows"; FAILS=$((FAILS + 1)); fi
+fi
 
 # The lock screen locks, takes the password typed on the VM's keyboard, and
 # locks again after that (a stale lock state once made the second lock a no-op).
