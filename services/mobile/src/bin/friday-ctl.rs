@@ -236,13 +236,6 @@ async fn recall(args: &[String]) -> std::process::ExitCode {
                 eprintln!("friday-ctl: recall needs agent-desktop to read windows");
                 return std::process::ExitCode::FAILURE;
             };
-            let own = std::env::var_os("XDG_CONFIG_HOME")
-                .map(std::path::PathBuf::from)
-                .or_else(|| {
-                    std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
-                })
-                .unwrap_or_default()
-                .join("friday/private-windows");
             loop {
                 let win: serde_json::Value = std::process::Command::new("hyprctl")
                     .args(["activewindow", "-j"])
@@ -252,7 +245,7 @@ async fn recall(args: &[String]) -> std::process::ExitCode {
                     .unwrap_or_default();
                 let app = win["class"].as_str().unwrap_or_default();
                 let title = win["title"].as_str().unwrap_or_default();
-                let own_list = std::fs::read_to_string(&own).unwrap_or_default();
+                let own_list = recall::own_list();
                 // The reader takes only the window in front, so another
                 // window of the app (a private one) is never read.
                 if !app.is_empty() && !recall::private(app, title, &own_list) {

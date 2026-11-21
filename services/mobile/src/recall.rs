@@ -161,6 +161,21 @@ pub const PRIVATE: &[&str] = &[
     "paypal",
 ];
 
+/// The person's own list of private windows (`private-windows` in FRIDAY's
+/// config folder; `%APPDATA%\\friday` on Windows), or nothing.
+pub fn own_list() -> String {
+    #[cfg(windows)]
+    let base = std::env::var_os("APPDATA").map(std::path::PathBuf::from);
+    #[cfg(not(windows))]
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")));
+    base.map(|b| b.join("friday").join("private-windows"))
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_default()
+}
+
 /// Whether this window is private, given the person's own list.
 pub fn private(app: &str, title: &str, own: &str) -> bool {
     let hay = format!("{app} {title}").to_lowercase();
