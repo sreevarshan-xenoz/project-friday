@@ -49,14 +49,17 @@ public static partial class Providers
     /// <summary>Format the masked secrets notification line.</summary>
     public static string FormatMasked(int count) => $"{count} secret(s) masked before sending";
 
-    /// <summary>Format footer line with attribution and masked secrets if any.</summary>
-    public static string FormatFooter(ServedByInfo? servedBy, int masked)
+    /// <summary>Format footer line with attribution, masked secrets and what the
+    /// answer used, if any ("Used: your selection, your timeline").</summary>
+    public static string FormatFooter(ServedByInfo? servedBy, int masked, IReadOnlyList<string>? used = null)
     {
         var parts = new List<string>();
         if (servedBy is { } sb)
             parts.Add(FormatServedBy(sb.Provider, sb.Ms));
         if (masked > 0)
             parts.Add(FormatMasked(masked));
+        if (used is { Count: > 0 })
+            parts.Add("Used: " + string.Join(", ", used));
         return string.Join(" · ", parts);
     }
 

@@ -27,7 +27,8 @@ public sealed record AskOutcome(
     bool DaemonDown,
     NeedsConfirmation? Confirmation = null,
     ServedByInfo? ServedBy = null,
-    int Masked = 0)
+    int Masked = 0,
+    IReadOnlyList<string>? Used = null)
 {
     public NeedsConfirmation? NeedsConfirmation => Confirmation;
 }
@@ -278,6 +279,11 @@ public static partial class Asking
         string? result, error;
         ServedByInfo? servedBy = null;
         int masked = 0;
+        // What went into the answer besides the question: what the tray sent,
+        // then what the daemon added (its "used" list).
+        var used = new List<string>();
+        if (kind == AskKind.Selection) used.Add("your selection");
+        if (kind == AskKind.Screen) used.Add("the window in front");
         if (kind == AskKind.Screen)
         {
             // The result, not one of the {"partial": ...} lines before it.
@@ -294,6 +300,10 @@ public static partial class Asking
             {
                 if (last.TryGetProperty("masked", out var mk) && mk.TryGetInt32(out var mc))
                     masked = mc;
+                if (last.TryGetProperty("used", out var us) && us.ValueKind == JsonValueKind.Array)
+                    used.AddRange(us.EnumerateArray()
+                        .Where(u => u.ValueKind == JsonValueKind.String)
+                        .Select(u => u.GetString()!));
                 var sb = last.TryGetProperty("served_by", out var s) ? s : default;
                 if (sb.ValueKind == JsonValueKind.Object)
                 {
@@ -307,7 +317,7 @@ public static partial class Asking
         }
 
         if (exitOk)
-            return new AskOutcome(true, string.IsNullOrEmpty(result) ? $"Done: {question}" : result, null, false, Confirmation: null, ServedBy: servedBy, Masked: masked);
+            return new AskOutcome(true, string.IsNullOrEmpty(result) ? $"Done: {question}" : result, null, false, Confirmation: null, ServedBy: servedBy, Masked: masked, Used: used);
 
         var raw = string.IsNullOrEmpty(error) ? output.Trim() : error;
         var all = raw + output;

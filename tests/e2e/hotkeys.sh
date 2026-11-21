@@ -179,7 +179,7 @@ press ALT+SUPER+Y "explain this" "FAKE-MODEL-ANSWER: explain this*" \
   PRIMARY="error[E0308]: mismatched types: expected u32, found String"
 if grep -q "mismatched types" "$W/model.log"; then pass "ALT+SUPER+Y: the selection reached the model"
 else fail "ALT+SUPER+Y: the selected text never reached the model"; fi
-press CTRL+SUPER+Y "what is on my screen?" "FAKE-MODEL-ANSWER: what is on my screen? \[saw a [1-9]*-byte 1x1 image/png\]"
+press CTRL+SUPER+Y "what is on my screen?" "FAKE-MODEL-ANSWER: what is on my screen? \[saw a [1-9]*-byte 1x1 image/png\]*"
 if grep -qx 'grim -g 100,50 800x600 -' "$W/grim.log"; then pass "CTRL+SUPER+Y: captured just the focused window (grim -g 100,50 800x600)"
 else fail "CTRL+SUPER+Y: expected grim to capture the focused window, ran:"; sed 's/^/       /' "$W/grim.log"; fi
 
@@ -191,7 +191,7 @@ else fail "Mod+Alt+Y: the selected text never reached the model"; fi
 : >"$W/grim.log"
 # The window crop isn't checked here: the stubbed hyprctl answers on niri too,
 # and real niri has no hyprctl, so the crop needs its own niri test.
-press Mod+Ctrl+Y "what is on my screen?" "FAKE-MODEL-ANSWER: what is on my screen? \[saw a [1-9]*-byte 1x1 image/png\]"
+press Mod+Ctrl+Y "what is on my screen?" "FAKE-MODEL-ANSWER: what is on my screen? \[saw a [1-9]*-byte 1x1 image/png\]*"
 
 if grep -q "panicked" "$W/daemon.log"; then fail "daemon panicked:"; grep -A1 panicked "$W/daemon.log" | head -4
 else pass "no panics"; fi

@@ -10,6 +10,7 @@ hl.bind("SUPER + SHIFT + Y", hl.dsp.exec_cmd("friday hold end --type"), { descri
 hl.bind("SUPER + ALT + Y", hl.dsp.exec_cmd("friday ask --selection"), { description = "FRIDAY: Ask about selected text" })
 -- Paste the clipboard transformed (bullets, JSON, shorter, translated…).
 hl.bind("SUPER + ALT + V", hl.dsp.exec_cmd("friday paste-as"), { description = "FRIDAY: Paste as…" })
+hl.bind("SUPER + CTRL + V", hl.dsp.exec_cmd("friday clips pick"), { description = "FRIDAY: Clips and snippets" })
 hl.bind("SUPER + CTRL + Y", hl.dsp.exec_cmd("friday ask --screen"), { description = "FRIDAY: Ask about the screen" })
 -- The kill key: stops whatever FRIDAY is doing on your desktop, at once.
 hl.bind("SUPER + CTRL + Escape", hl.dsp.exec_cmd("friday cancel"), { description = "FRIDAY: Stop what it is doing" })

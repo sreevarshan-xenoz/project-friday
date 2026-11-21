@@ -116,6 +116,7 @@ if [[ "\$target_arg" == *slowgoal* ]]; then echo '{"accepted":true}'; echo "time
 if [[ "\$target_arg" == *refused* ]]; then printf '{\n "outcome": "failed",\n "error": "Couldn'"'"'t reach your AI provider. Check your internet connection (or that your local model server is running)."\n}\n'; echo "llamacpp: tcp connect error: Connection refused" >&2; exit 1; fi
 if [[ "\$target_arg" == *limit* ]]; then printf '{\n "outcome": "failed",\n "error": "provider opencode: 429 FreeUsageLimitError"\n}\n'; exit 1; fi
 if [[ "\$target_arg" == *"rewritten text"* && "\$target_arg" == *teh* ]]; then printf '{\n "outcome": "completed",\n "result": "\\\\"The quick fox.\\\\""\n}\n'; exit 0; fi
+if [[ "\$target_arg" == *useditems* ]]; then printf '{\n "outcome": "completed",\n "result": "Done.",\n "used": ["your timeline", "a lesson from a failure"]\n}\n'; exit 0; fi
 if [[ "\$target_arg" == *"word: ready"* && -n "\${READY_FAILS:-}" ]]; then printf '{\n "outcome": "failed",\n "error": "All candidates failed (2 tried). opencode: 429"\n}\n'; exit 1; fi
 if [[ "\$target_arg" == *"word: ready"* && -n "\${READY_TIMES_OUT:-}" ]]; then printf '{"accepted":true}\n'; echo "timed out after 60s waiting for the goal to finish" >&2; exit 1; fi
 if [[ "\$target_arg" == *"word: ready"* ]]; then printf '{\n "outcome": "completed",\n "result": "ready",\n "served_by": {"provider": "kilo", "model": "m", "ms": 940}\n}\n'; exit 0; fi
@@ -396,6 +397,52 @@ contains "in a terminal it pastes with Shift+Insert" "$(cat "$LOG")" 'mods = "SH
 if grep -q "^friday-ctl" "$LOG"; then fail "paste-as sent a password-shaped clipboard"; else pass "paste-as never sends a password-shaped clipboard"; fi
 : >"$LOG"; CLIP="" PICK="Shorter" bash "$F" paste-as; sleep 0.3
 contains "an empty clipboard says what to do" "$(cat "$LOG")" "Copy some text first"
+
+echo "clips and snippets"
+CLIPS="$state/clips.jsonl"
+rm -f "$CLIPS" "$W/looks"
+printf 'first note' | bash "$F" clips add
+printf 'second note\nwith two lines' | bash "$F" clips add
+printf 'first note' | bash "$F" clips add
+expect "a copied text is kept" test "$(wc -l <"$CLIPS")" -eq 2
+contains "copying it again moves it to the top" "$(tail -n1 "$CLIPS")" '"text":"first note"'
+contains "clips are owner-only" "$(stat -c %a "$CLIPS")" "600"
+printf 'hunter2Secret99xyz' | bash "$F" clips add
+if grep -q hunter2 "$CLIPS"; then fail "kept a password-shaped clip"; else pass "a password-shaped clip isn't kept"; fi
+printf 'vault words' | CLIPBOARD_STATE=sensitive bash "$F" clips add
+if grep -q "vault words" "$CLIPS"; then fail "kept a clip marked sensitive"; else pass "a clip marked sensitive isn't kept"; fi
+printf '   ' | bash "$F" clips add
+expect "blank text isn't kept" test "$(wc -l <"$CLIPS")" -eq 2
+for i in $(seq 1 205); do printf '{"ts":1,"text":"old %s"}\n' "$i"; done >"$CLIPS"
+printf 'newest' | bash "$F" clips add
+expect "only the last 200 are kept" test "$(wc -l <"$CLIPS")" -eq 200
+printf '{"ts":1,"text":"first note"}\n{"ts":2,"text":"second note\\nwith two lines"}\n' >"$CLIPS"
+bash "$F" snippet add sig "Best, Sam" >/dev/null
+contains "snippets are listed by name" "$(bash "$F" snippet list)" ";sig  Best, Sam"
+printf '#!/bin/bash\ncat >%q\necho "$PICK"\n' "$W/menu.txt" >"$S/fuzzel"
+: >"$LOG"; PICK=";sig  Best, Sam" bash "$F" clips pick; sleep 0.3
+contains "the picker lists snippets" "$(cat "$W/menu.txt")" ";sig  Best, Sam"
+contains "and clips newest first, on one line" "$(sed -n 2p "$W/menu.txt")" "1  second note with two lines"
+contains "a picked snippet is pasted as it is" "$(cat "$LOG")" "wl-copy: Best, Sam"
+: >"$LOG"; PICK="2  first note" bash "$F" clips pick; sleep 0.3
+contains "a picked clip offers As it is first" "$(head -n1 "$W/menu.txt")" "As it is"
+printf '#!/bin/bash\necho "fuzzel $*" >> %q\nif [[ "$*" == *Clips* ]]; then echo "2  first note"; else echo "Shorter"; fi\n' "$LOG" >"$S/fuzzel"
+: >"$LOG"; bash "$F" clips pick; sleep 0.3
+contains "a clip can be rewritten (paste as)" "$(cat "$LOG")" "Rewrite the text below Shorter"
+contains "the clip goes to the model, not the clipboard" "$(grep -A2 'Rewrite the text below' "$LOG")" "first note"
+printf '#!/bin/bash\necho "fuzzel $*" >> %q\necho "$PICK"\n' "$LOG" >"$S/fuzzel"; chmod +x "$S/fuzzel"
+bash "$F" snippet rm sig >/dev/null
+contains "the snippet file stays owner-only" "$(stat -c %a "$HOME/.config/friday/snippets.jsonl")" "600"
+if bash "$F" snippet list | grep -q ";sig"; then fail "snippet rm left it"; else pass "snippet rm removes it"; fi
+refuse "a snippet name with spaces is refused" bash "$F" snippet add "two words" x
+: >"$LOG"; bash "$F" clips off >/dev/null
+expect "clips off forgets them all" test ! -e "$CLIPS"
+contains "and stops the service" "$(cat "$LOG")" "systemctl --user disable --now friday-clips.service"
+rm -f "$S/hyprctl"
+# A private window in front: nothing is kept.
+printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s %q\nexit 0\n' '{"class":"org.keepassxc.KeePassXC","title":"vault"}' >"$S/hyprctl"; chmod +x "$S/hyprctl"
+printf 'copied in the vault' | bash "$F" clips add
+expect "nothing is kept from a private window" test ! -s "$CLIPS"
 rm -f "$S/hyprctl"
 
 echo "private windows"
@@ -716,6 +763,12 @@ contains "with no such workspace it is an ordinary question" "$(cat "$LOG")" "co
 : >"$LOG"; WS_SAVED=1 bash "$F" ask "continue where we stopped"; sleep 0.3
 if grep -q "workspace restore" "$LOG"; then fail "\"continue where we stopped\" restored a workspace called \"where\""; else pass "\"continue where we stopped\" restores nothing by name"; fi
 
+echo "what FRIDAY used"
+: >"$LOG"; bash "$F" ask "useditems please"; sleep 0.3
+contains "the answer says what the daemon added" "$(cat "$LOG")" "Used: your timeline, a lesson from a failure"
+: >"$LOG"; bash "$F" ask "what is the capital of peru"; sleep 0.3
+if grep -q "Used:" "$LOG"; then fail "an answer with nothing extra said it used something"; else pass "nothing extra: no used line"; fi
+
 echo "one resume grammar: friday ask and the daemon read the same table"
 # timeline.rs checks the daemon against tests/fixtures/resume-phrases.tsv;
 # this checks friday_continue_restore against it.
@@ -763,6 +816,30 @@ contains "undo: the volume goes back" "$(cat "$LOG")" "wpctl set-volume @DEFAULT
 contains "undo: and its mute" "$(cat "$LOG")" "wpctl set-mute @DEFAULT_AUDIO_SINK@ 0"
 contains "undo: says what it undid" "$out" "Undid the volume change: volume back to 55%."
 contains "undo: then there's nothing left" "$(bash "$F" undo)" "Nothing to undo."
+# A window the daemon moved (desktop_tool writes this entry): undo moves it back.
+cat >"$S/hyprctl" <<STUB
+#!/bin/bash
+echo "hyprctl \$*" >>"$LOG"
+c=\${CLIENTS:-}; [ -n "\$c" ] || c='[{"address":"0xabc1"}]'
+[[ "\$*" == "clients -j" ]] && printf %s "\$c"
+[[ -n "\${OLD_HYPR:-}" && "\$*" == "dispatch hl.dsp"* ]] && echo "Invalid dispatcher"
+exit 0
+STUB
+chmod +x "$S/hyprctl"
+printf '{"ts":"t","said":"moving kitty to workspace 2","kind":"window","args":["0xabc1","1"]}\n' >"$state/undo.jsonl"
+: >"$LOG"; out=$(bash "$F" undo)
+contains "undo: a moved window goes back" "$(cat "$LOG")" 'hl.dsp.window.move({ workspace = "1", follow = false, window = "address:0xabc1" })'
+contains "undo: and says where" "$out" "Undid moving kitty to workspace 2: it's back on workspace 1."
+printf '{"ts":"t","said":"moving kitty to workspace 2","kind":"window","args":["0xabc1","1"]}\n' >"$state/undo.jsonl"
+: >"$LOG"; out=$(OLD_HYPR=1 bash "$F" undo)
+contains "undo: an older Hyprland gets the classic dispatch" "$(cat "$LOG")" "hyprctl dispatch movetoworkspacesilent 1,address:0xabc1"
+printf '{"ts":"t","said":"moving kitty to workspace 2","kind":"window","args":["0xabc1","1"]}\n' >"$state/undo.jsonl"
+: >"$LOG"; out=$(CLIENTS='[]' bash "$F" undo || true)
+contains "undo: a closed window is said so" "$out" "That window is closed"
+printf '{"ts":"t","said":"x","kind":"window","args":["0xabc1","1\\" })"]}\n' >"$state/undo.jsonl"
+: >"$LOG"; out=$(bash "$F" undo || true)
+if grep -q "dispatch" "$LOG"; then fail "undo dispatched an odd workspace"; else pass "undo: an odd entry is refused"; fi
+rm -f "$S/hyprctl" "$state/undo.jsonl"
 : >"$LOG"; MUTED=1 bash "$F" ask "unmute"; sleep 0.3; : >"$LOG"; bash "$F" ask "undo"; sleep 0.3
 contains "\"undo\" in the ask box undoes too" "$(cat "$LOG")" "wpctl set-mute @DEFAULT_AUDIO_SINK@ 1"
 contains "and says so" "$(cat "$state/last-answer.md")" "Undid the unmute: volume back to 55%, muted."
