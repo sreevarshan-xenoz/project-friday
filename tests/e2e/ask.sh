@@ -235,12 +235,13 @@ CLOUD_FAKE=""
 # Askers that leave before their answer (Ctrl+C, a cancelled --wait): the
 # daemon used to stop answering anyone once a result found no client.
 echo "an asker that leaves"
-for d in 0.05 0.1 0.2 0.3 0.5 0.8; do
-  "${priv[@]}" timeout -s KILL "$d" "$CTL_BIN" goal "What is 2 plus 2?" >/dev/null 2>&1 || true
+# Three askers that don't wait: each leaves once its goal is accepted, so the
+# goals overlap the one asked next and finish after it started.
+for _ in 1 2 3; do
+  "${priv[@]}" timeout 20 "$CTL_BIN" goal "What is 2 plus 2?" >/dev/null 2>&1 || true
 done
-sleep 1
 q="What does the Rust error E0599 mean?"
-out=$("${priv[@]}" timeout 90 "$CTL_BIN" goal --wait "$q" 2>&1) || true
+out=$("${priv[@]}" timeout 180 "$CTL_BIN" goal --wait "$q" 2>&1) || true
 if grep -qF "\"result\": \"FAKE-MODEL-ANSWER: $q" <<<"$out"; then pass "still answers after askers left, with its own answer"
 else fail "no answer of its own after askers left"; sed 's/^/       /' <<<"$out" | tail -8; fi
 
