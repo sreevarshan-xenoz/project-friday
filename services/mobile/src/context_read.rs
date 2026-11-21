@@ -84,7 +84,9 @@ pub trait ProviderSeam: Send + Sync {
 /// screenshot).
 #[async_trait]
 pub trait ScreenText: Send + Sync {
-    async fn window_text(&self, class: &str) -> Option<String>;
+    /// The words of `class`'s window titled `title` (the one in front), never
+    /// of its other windows.
+    async fn window_text(&self, class: &str, title: &str) -> Option<String>;
 }
 
 /// The line a [`ScreenText`] ends the words with when the window had more
@@ -135,6 +137,9 @@ pub enum ContextReadError {
     EgressBlocked { reason: String },
     /// The provider seam refused or errored after receiving an allowed payload.
     Provider(String),
+    /// The window in front is private (a password manager, a private browser
+    /// window, a bank, the person's own list): nothing is read or sent.
+    PrivateWindow,
 }
 
 impl std::fmt::Display for ContextReadError {
@@ -145,6 +150,7 @@ impl std::fmt::Display for ContextReadError {
             ContextReadError::NotAuthorized { reason, .. } => write!(f, "not authorized: {reason}"),
             ContextReadError::EgressBlocked { reason } => write!(f, "egress blocked: {reason}"),
             ContextReadError::Provider(m) => write!(f, "provider error: {m}"),
+            ContextReadError::PrivateWindow => write!(f, "the window in front is private"),
         }
     }
 }
@@ -302,6 +308,17 @@ where
 
         let mut text_failed = false;
         if region.is_none() {
+            // Every host and client gets this, not only FRIDAY's own CLI: a
+            // private window is neither read nor captured.
+            if let Ok(CapturedContext::AppInfo { class, title, .. }) = self
+                .collector
+                .capture(ContextChannel::App, &CaptureOptions::default())
+            {
+                if crate::recall::private(&class, &title, &crate::recall::own_list()) {
+                    self.revoke();
+                    return Err(ContextReadError::PrivateWindow);
+                }
+            }
             let front = self.window_in_front();
             match self.ask_from_text(question, progress).await {
                 Some(Ok((answer, cut))) => return Ok((answer, ScreenSent::Text { cut })),
@@ -417,7 +434,7 @@ where
         else {
             return None;
         };
-        let words = source.window_text(&class).await?;
+        let words = source.window_text(&class, &title).await?;
         let cut = words.ends_with(SCREEN_TEXT_CUT);
         let (words, masked_words) = friday_goal_execution::mask_secrets(&words);
         let question = question.map(str::trim).filter(|q| !q.is_empty());
@@ -428,6 +445,8 @@ where
             }
             None => ("Describe what the person is looking at.".to_string(), 0),
         };
+        // A title can carry a token too (a URL with a key in it, a terminal).
+        let (title, masked_title) = friday_goal_execution::mask_secrets(&title);
         let title = title.replace(['\n', '\r'], " ");
         let payload = format!(
             "The person asked about the window they are looking at ({class}: {title}). \
@@ -442,7 +461,7 @@ where
         let ctx = if current.masked.is_none() {
             friday_intelligence::EgressContext {
                 goal_id: current.goal_id,
-                masked: Some(masked_words + masked_q),
+                masked: Some(masked_words + masked_q + masked_title),
             }
         } else {
             current
@@ -1735,8 +1754,8 @@ mod tests {
 
     #[async_trait]
     impl ScreenText for FakeText {
-        async fn window_text(&self, class: &str) -> Option<String> {
-            assert_eq!(class, "nautilus");
+        async fn window_text(&self, class: &str, title: &str) -> Option<String> {
+            assert_eq!((class, title), ("nautilus", "Home"));
             self.0.clone()
         }
     }
@@ -1805,6 +1824,9 @@ mod tests {
                 &win.0,
                 &strs(&win.1),
                 &[
+                    // The private check, the window before, the text's own look.
+                    br#"{"class":"nautilus","title":"Home","at":[0,0],"size":[800,600]}"#
+                        .as_slice(),
                     br#"{"class":"nautilus","title":"Home","at":[0,0],"size":[800,600]}"#
                         .as_slice(),
                     br#"{"class":"nautilus","title":"Home","at":[0,0],"size":[800,600]}"#
@@ -1836,6 +1858,44 @@ mod tests {
         reader.consent();
         let (_, sent) = reader.ask_routed(None, None, &|_| {}).await.unwrap();
         assert_eq!(sent, ScreenSent::Screenshot { text_failed: false });
+    }
+
+    #[tokio::test]
+    async fn a_private_window_is_neither_read_nor_captured() {
+        struct NeverRead;
+        #[async_trait]
+        impl ScreenText for NeverRead {
+            async fn window_text(&self, _: &str, _: &str) -> Option<String> {
+                panic!("a private window's text was read")
+            }
+        }
+        let win = friday_context_collector::window_command();
+        let full = friday_context_collector::screen_command(None);
+        let runner = FakeCommandRunner::new()
+            .script_stdout(&full.0, &strs(&full.1), PNG)
+            .script_stdout(
+                &win.0,
+                &strs(&win.1),
+                br#"{"class":"firefox","title":"Private Browsing - Mozilla Firefox","at":[0,0],"size":[800,600]}"#,
+            );
+        let reader = ScreenReader::new(
+            ContextCollector::new(runner),
+            RecordingSeam::default(),
+            "fabric",
+        )
+        .with_text(Arc::new(NeverRead));
+        reader.consent();
+        let got = reader.ask(Some("what is this?")).await;
+        assert_eq!(got, Err(ContextReadError::PrivateWindow));
+        assert!(
+            reader.provider.last().is_none(),
+            "nothing reaches the model"
+        );
+        // The consent is used up: the next ask needs a new one.
+        assert!(matches!(
+            reader.ask(None).await,
+            Err(ContextReadError::NotAuthorized { .. })
+        ));
     }
 
     #[tokio::test]

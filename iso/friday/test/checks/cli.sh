@@ -232,6 +232,14 @@ bash "$F" app-context on >/dev/null
 contains "app-context status says on" "$(bash "$F" app-context status)" "On"
 rm -f "$S/hyprctl"
 
+echo "password-shaped text"
+shaped=$(bash -c 'source <(sed -n "/^friday_secret_shaped() {/,/^}/p" "$1"); shift; for t in "$@"; do friday_secret_shaped "$t" && printf "S" || printf "."; done' _ "$F" \
+  "https://github.com/x/y/issues/1234" "/home/me/notes/file2.txt" 'C:\Users\me\file2.txt' "report2026.pdf" "hello world 123" \
+  "tok_abc123def456ghi789jkl012" "abcdefghij1234567890.klmnopqrst0987654321.uvwxyzABC123def456" \
+  "https://api.x.com/v1?key=zz_abcd1234efgh5678ijkl" "hunter2hunter2" \
+  "https://x.com/cb?id=ab12ab12ab12ab12" "Zq8rTk2LmN0p/Wx4Yb7Vc1Ds/Ee9Ff3Gh5Jk6" "hunter2hunter2." "pass/12345678abc")
+[[ "$shaped" == ".....SSSSSSSS" ]] && pass "URLs, paths and file names go; tokens, JWTs, keys in URLs and base64 don't" || fail "password-shaped rule: got $shaped, wanted .....SSSSSSSS"
+
 echo "suggestions for the app you're in"
 printf '#!/bin/bash\necho "hyprctl $*" >> %q\n[[ "$*" == "activewindow -j" ]] && printf %%s "$HYPR_WIN"\nexit 0\n' "$LOG" >"$S/hyprctl"; chmod +x "$S/hyprctl"
 printf '#!/bin/bash\ncat >%q\necho "$PICK"\n' "$W/menu.txt" >"$S/fuzzel"
@@ -468,6 +476,11 @@ contains "with a local model it asks it directly" "$(cat "$LOG")" "http://127.0.
 contains "and shows its answer" "$(cat "$LOG")" "It is a note."
 contains "the saved answer is marked as kept here (the timeline skips it)" "$(cat "$HOME/.local/state/friday/last-answer.md" 2>/dev/null)" "_On this computer · nothing was sent_"
 if grep -q "^friday-ctl" "$LOG"; then fail "the private ask went through the daemon"; else pass "the private ask skips the daemon"; fi
+if grep -q "hunter2" "$HOME/.local/state/friday/last-answer.md"; then fail "the saved answer kept the selected text"
+else pass "the saved answer says there was text, not what it was"; fi
+: >"$LOG"; LOCAL_REPLY="An example." HYPR_WIN='{"class":"kitty","title":"zsh"}' bash "$F" ask --follow-up "give an example"; sleep 0.3
+contains "a follow-up to a local answer stays local" "$(cat "$LOG")" "http://127.0.0.1:8080/v1/chat/completions"
+if grep -q "^friday-ctl" "$LOG"; then fail "a local answer's follow-up went to the daemon"; else pass "a local answer's follow-up skips the daemon"; fi
 # A local model that isn't on this computer doesn't count.
 printf 'LLAMACPP_ENABLED=1\nLLAMACPP_BASE_URL=http://192.0.2.7:8080/v1\n' >"$envf"
 : >"$LOG"; LOCAL_REPLY="x" PRIMARY="hunter2" PICK="explain" bash "$F" ask --selection; sleep 0.3
@@ -860,6 +873,7 @@ printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s %q\nexit 0\n'
 if grep -q "context screen" "$LOG"; then fail "took a screenshot though the extension had the page"; else pass "a browser with the extension sends the page's text, no screenshot"; fi
 contains "with its address" "$(cat "$LOG")" "Address: https://example.com/book"
 contains "and its text" "$(cat "$LOG")" "Ownership rules"
+contains "the page is marked as quoted material (it can't pick the tool)" "$(cat "$LOG")" "[page]"
 : >"$LOG"; bash "$F" ask --screen "summarize this page"; sleep 0.3
 contains "without the extension it's a screenshot as before" "$(cat "$LOG")" "context screen"
 # A private window the extension can't see: its tab answer is another window's.

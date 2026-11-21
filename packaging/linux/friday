@@ -2274,6 +2274,23 @@ friday_replace_selection() {
 # where you are. The clipboard itself keeps the original.
 # With a text argument (a clip from friday clips), that text instead, and
 # "As it is" first.
+# Whether text is shaped like a password or token: one long run with no
+# spaces, mixing letters and digits. A URL (…://…), a path (/…, ~/…, ./…,
+# C:\…) or a dotted file name isn't, unless one of its parts is such a run
+# of 16 or more (a key in a URL, a JWT). Anything else with a slash (base64,
+# an AWS secret) still is. Same rule as the Windows tray (Asking.LooksLikeSecret).
+friday_secret_shaped() {
+  local t="${1:-}" part
+  [[ "$t" =~ ^[^[:space:]]{12,}$ && "$t" =~ [A-Za-z] && "$t" =~ [0-9] ]] || return 1
+  [[ "$t" == *://* || "$t" =~ ^(/|~/|\./|\.\./|[A-Za-z]:[\\/]) || "$t" =~ ^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+$ ]] || return 0
+  local -a parts
+  IFS=$'/\\.:?=&#' read -ra parts <<<"$t"
+  for part in "${parts[@]}"; do
+    [[ ${#part} -ge 16 && "$part" =~ [A-Za-z] && "$part" =~ [0-9] ]] && return 0
+  done
+  return 1
+}
+
 friday_paste_as() {
   local clip win addr pick how request out summary text first=""
   if [ $# -gt 0 ]; then clip="$1" first="As it is"
@@ -2283,7 +2300,7 @@ friday_paste_as() {
     return 0
   fi
   # Never send something shaped like a password or token (as ask --selection).
-  if [[ "$clip" =~ ^[^[:space:]]{12,}$ && "$clip" =~ [A-Za-z] && "$clip" =~ [0-9] ]]; then
+  if friday_secret_shaped "$clip"; then
     notify-send -a FRIDAY -- "FRIDAY" "The clipboard looks like a password or token, so I won't send it." 2>/dev/null || true
     return 0
   fi
@@ -2300,7 +2317,7 @@ friday_paste_as() {
     "As JSON") how="as JSON (only the JSON)" ;;
     "Cleaned up"*) how="cleaned up: fix spacing, line breaks and typos, change nothing else" ;;
   esac
-  request=$(printf 'Rewrite the text below %s. Keep its language unless told to translate. Reply with only the result: no quotes, no notes, no introduction.\n"""\n%s\n"""' "$how" "$clip")
+  request=$(printf 'Rewrite the text below %s. Keep its language unless told to translate. Reply with only the result: no quotes, no notes, no introduction.\n\n[text to rewrite]\n"""\n%s\n"""' "$how" "$clip")
   out=$(friday-ctl goal --wait "$request" 2>&1) || true
   summary=$(jq -s 'map(select(type == "object" and .outcome? != null)) | last // {}' <<<"$out" 2>/dev/null || echo '{}')
   text=$(friday_rewrite_clean "$(jq -r 'select(.outcome == "completed") | .result // empty' <<<"$summary" 2>/dev/null || true)")
@@ -2352,7 +2369,7 @@ EOF2
       # wl-paste --watch marks what a password manager copied as sensitive.
       [ "${CLIPBOARD_STATE:-}" = sensitive ] && return 0
       timeout 2 wl-paste --list-types 2>/dev/null | grep -qi 'passwordmanagerhint' && return 0
-      [[ "$text" =~ ^[^[:space:]]{12,}$ && "$text" =~ [A-Za-z] && "$text" =~ [0-9] ]] && return 0
+      friday_secret_shaped "$text" && return 0
       # A window that can't be read might be a private one: keep nothing.
       if command -v hyprctl >/dev/null 2>&1; then timeout 2 hyprctl activewindow -j >/dev/null 2>&1 || return 0; fi
       [ -z "$(friday_private_window)" ] || return 0
@@ -3503,6 +3520,9 @@ case "${1:-}" in
         exit 0
       fi
       context="${context:0:6000}"
+      # An answer made on this computer keeps its follow-up here too.
+      # (In the header lines, not anywhere in the answer's own text.)
+      head -n 8 "$state_dir/last-answer.md" 2>/dev/null | grep -qx '_On this computer · nothing was sent_' && followup_local=true
     fi
 
     if $use_selection; then
@@ -3515,7 +3535,7 @@ case "${1:-}" in
         # The clipboard often holds a just-copied password or token. Never
         # send something shaped like one (a single long token mixing letters
         # and digits) to a cloud model by accident.
-        if [[ "$context" =~ ^[^[:space:]]{12,}$ && "$context" =~ [A-Za-z] && "$context" =~ [0-9] ]]; then
+        if friday_secret_shaped "$context"; then
           notify "FRIDAY" "The clipboard looks like a password or token, so I won't send it. Highlight the text you mean instead."
           exit 0
         fi
@@ -3699,10 +3719,10 @@ case "${1:-}" in
 
     request="$goal"
     if $use_followup; then
-      request=$(printf '%s\n\nThis follows up on my previous question and your answer:\n"""\n%s\n"""' "$goal" "$context")
+      request=$(printf '%s\n\n[follow-up]\nThis follows up on my previous question and your answer:\n"""\n%s\n"""' "$goal" "$context")
     elif [[ "$goal" == "Rewrite: "* ]] && $use_selection && [ "$source_label" = Selected ]; then
       rewrite="${goal#Rewrite: }"
-      request=$(printf 'Rewrite the text below: %s. Keep its language unless told to translate. Reply with only the rewritten text: no quotes, no notes, no introduction.\n"""\n%s\n"""' "$rewrite" "$context")
+      request=$(printf 'Rewrite the text below: %s. Keep its language unless told to translate. Reply with only the rewritten text: no quotes, no notes, no introduction.\n\n[text to rewrite]\n"""\n%s\n"""' "$rewrite" "$context")
     elif [ -n "$context" ]; then
       request=$(printf '%s\n\nUse this text as context:\n"""\n%s\n"""' "$goal" "$context")
       [ -z "${app_context:-}" ] || request="$request"$'\n'"$app_context"
@@ -3711,17 +3731,17 @@ case "${1:-}" in
         && [[ "${goal,,}" =~ ^(what\ was\ (that|the|it)|what\ did\ i\ (just\ )?(see|read)|where\ did\ i\ (see|read)|earlier|i\ (just\ )?saw)[[:space:][:punct:]] ]] \
         && recalled=$(timeout 3 friday-ctl recall search "$goal" 2>/dev/null) && [ -n "$recalled" ]; then
       # "What was that …?" with recall on: what was on screen earlier.
-      request=$(printf '%s\n\nThis is text that was on my screen in the last few hours, kept on this computer. Answer from it and say which window it was in:\n"""\n%s\n"""' "$goal" "$recalled")
+      request=$(printf '%s\n\n[recall]\nThis is text that was on my screen in the last few hours, kept on this computer. Answer from it and say which window it was in:\n"""\n%s\n"""' "$goal" "$recalled")
       from_recall=true
     elif ! $use_screen && [ -z "$local_answer" ] && ws_report=$(friday_continue_restore "$goal"); then
       # "Continue building FRIDAY": its workspace is put back first; the
       # daemon adds where you stopped (the timeline).
-      request=$(printf '%s\n\nFRIDAY just put the windows of this project back:\n"""\n%s\n"""' "$goal" "$ws_report")
+      request=$(printf '%s\n\n[workspace]\nFRIDAY just put the windows of this project back:\n"""\n%s\n"""' "$goal" "$ws_report")
     elif ! $use_screen && [ -z "$local_answer" ]; then
       # A typed question: documentation on this computer that fits it well
       # (Arch wiki, tldr, man pages; friday-ctl docs prints nothing otherwise).
       docs=$(timeout 2 friday-ctl docs -- "$goal" 2>/dev/null || true)
-      [ -z "$docs" ] || request=$(printf '%s\n\nThese excerpts from documentation on this computer may help. Use them only if they fit, and name the one you use (for example "Arch wiki: Pacman"):\n"""\n%s\n"""' "$goal" "$docs")
+      [ -z "$docs" ] || request=$(printf '%s\n\n[docs]\nThese excerpts from documentation on this computer may help. Use them only if they fit, and name the one you use (for example "Arch wiki: Pacman"):\n"""\n%s\n"""' "$goal" "$docs")
     fi
 
     ok=true
@@ -3796,7 +3816,9 @@ case "${1:-}" in
         [ -z "${ask_project:-}" ] || printf '_project: %s_\n\n' "$ask_project"
         # The timeline shows a failed ask as failed.
         case "$title" in "FRIDAY ✗"*) printf '_failed_\n\n' ;; esac
-        [ -n "$context" ] && printf '> %s\n\n' "$(head -c 300 <<<"$context" | tr '\n' ' ')"
+        # That there was text, never the text itself.
+        if $use_followup; then printf '> (a follow-up)\n\n'
+        elif [ -n "$context" ]; then printf '> (with the text you asked about; not kept)\n\n'; fi
         printf '%s\n' "$answer"
         [ -z "${details:-}" ] || printf '\n<details>\n\n```\n%s\n```\n' "$details"
       } >"$answer_file"
@@ -3975,6 +3997,15 @@ case "${1:-}" in
       exit 0
     fi
 
+    if ${followup_local:-false}; then
+      if ! reply=$(friday_ask_local "$request"); then
+        notify-send -a FRIDAY -- "FRIDAY" "That answer was made on this computer, so its follow-up stays here too, and the local model isn't answering. Start it with: friday private on" 2>/dev/null || true
+        exit 0
+      fi
+      show_answer true "$(jq -n --arg r "$reply" '{result: $r, local: true}')" ""
+      exit 0
+    fi
+
     # Recalled text goes to the local model first (with none set up, to the
     # cloud provider, as friday recall on said).
     if ${from_recall:-false} && reply=$(friday_ask_local "$request"); then
@@ -3987,7 +4018,7 @@ case "${1:-}" in
     if $use_screen && [ -z "${region:-}" ] && [[ "$(friday_app_class)" =~ firefox|chromium|chrome|brave|librewolf|zen|vivaldi|edge ]] \
         && tab=$(timeout 8 friday-ctl browser tab 2>/dev/null) && [ -n "$(jq -r '.text // empty' <<<"$tab" 2>/dev/null)" ] \
         && friday_tab_in_front "$tab"; then
-      request=$(jq -r --arg q "$goal" '"\($q)\n\nThe page in front (read from the browser when asked):\nTitle: \(.title)\nAddress: \(.url)\n" + (if (.selection // "") != "" then "Selected: \(.selection)\n" else "" end) + "Text:\n\"\"\"\n\(.text)\n\"\"\""' <<<"$tab")
+      request=$(jq -r --arg q "$goal" '"\($q)\n\n[page]\nThe page in front (read from the browser when asked):\nTitle: \(.title)\nAddress: \(.url)\n" + (if (.selection // "") != "" then "Selected: \(.selection)\n" else "" end) + "Text:\n\"\"\"\n\(.text)\n\"\"\""' <<<"$tab")
       use_screen=false
     fi
     if $use_screen; then

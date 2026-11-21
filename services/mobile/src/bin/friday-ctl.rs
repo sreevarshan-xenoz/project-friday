@@ -236,13 +236,6 @@ async fn recall(args: &[String]) -> std::process::ExitCode {
                 eprintln!("friday-ctl: recall needs agent-desktop to read windows");
                 return std::process::ExitCode::FAILURE;
             };
-            let own = std::env::var_os("XDG_CONFIG_HOME")
-                .map(std::path::PathBuf::from)
-                .or_else(|| {
-                    std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
-                })
-                .unwrap_or_default()
-                .join("friday/private-windows");
             loop {
                 let win: serde_json::Value = std::process::Command::new("hyprctl")
                     .args(["activewindow", "-j"])
@@ -252,9 +245,9 @@ async fn recall(args: &[String]) -> std::process::ExitCode {
                     .unwrap_or_default();
                 let app = win["class"].as_str().unwrap_or_default();
                 let title = win["title"].as_str().unwrap_or_default();
-                let own_list = std::fs::read_to_string(&own).unwrap_or_default();
-                // The reader takes the whole app, every window of it: one
-                // private window (a private Firefox one) keeps it all out.
+                let own_list = recall::own_list();
+                // The reader takes only the window in front; still, while
+                // any window of the app is private, none of it is kept.
                 let clients: serde_json::Value = std::process::Command::new("hyprctl")
                     .args(["clients", "-j"])
                     .output()
@@ -266,7 +259,7 @@ async fn recall(args: &[String]) -> std::process::ExitCode {
                         && recall::private(app, c["title"].as_str().unwrap_or_default(), &own_list)
                 });
                 if !app.is_empty() && !any_private && !recall::private(app, title, &own_list) {
-                    if let Some(text) = reader.window_text(app).await {
+                    if let Some(text) = reader.window_text(app, title).await {
                         let _ = recall::add(
                             &path,
                             Seen {
@@ -1200,12 +1193,17 @@ async fn main() -> std::process::ExitCode {
     if raw.first().map(String::as_str) == Some("workspace") {
         return workspace(&raw[1..]);
     }
-    // The browser starts the host with the extension's origin as its argument.
-    #[cfg(unix)]
-    if raw.first().map(String::as_str) == Some("browser-host") {
+    // The browser starts the host: through the Linux wrapper as
+    // `browser-host`, or (Windows) directly, with the extension's origin
+    // (Chromium) or the manifest's path (Firefox) as the first argument.
+    let started_by_browser = raw.first().is_some_and(|a| {
+        a == "browser-host"
+            || a.starts_with("chrome-extension://")
+            || (a.contains("org.friday.browser") && a.ends_with(".json"))
+    });
+    if started_by_browser {
         return std::process::ExitCode::from(friday_mobile::browser_host::run_host());
     }
-    #[cfg(unix)]
     if raw.first().map(String::as_str) == Some("browser")
         && raw.get(1).map(String::as_str) == Some("tab")
     {

@@ -261,7 +261,7 @@ EOF
   printf '#!/bin/bash\nexit 0\n' >"$W/stub/curl"   # pretend we're online
   cat >"$W/stub/installer" <<'EOF'
 #!/bin/bash
-echo "INSTALLER-ENV disk=$TARGET_DISK erase=$ERASE_DISK mode=$INSTALL_MODE alongside=$ALONGSIDE_DISK size=$FRIDAY_SIZE_MB bootdefault=$BOOT_DEFAULT bitlocker_ack=$BITLOCKER_ACK host=$FRIDAY_HOSTNAME user=$USERNAME pw=$PASSWORD tz=$TIMEZONE kb=$KEYBOARD ai=[$FRIDAY_AI_PROVIDERS] keys=[$(cut -d= -f1 <<<"$FRIDAY_AI_KEYS" | xargs)] local=[$FRIDAY_LOCAL_ENGINE:$FRIDAY_LOCAL_MODEL:$FRIDAY_LOCAL_BUDGET_MB] autologin=$AUTOLOGIN encrypt=$ENCRYPT interactive=$FRIDAY_INTERACTIVE session=$SESSION style=$SHELL_STYLE desktop=$FEAT_DESKTOP tasks=$FEAT_TASKS appname=$FEAT_APPNAME screentext=$FEAT_SCREENTEXT"
+echo "INSTALLER-ENV disk=$TARGET_DISK erase=$ERASE_DISK mode=$INSTALL_MODE alongside=$ALONGSIDE_DISK size=$FRIDAY_SIZE_MB bootdefault=$BOOT_DEFAULT bitlocker_ack=$BITLOCKER_ACK host=$FRIDAY_HOSTNAME user=$USERNAME pw=$PASSWORD tz=$TIMEZONE kb=$KEYBOARD ai=[$FRIDAY_AI_PROVIDERS] keys=[$(cut -d= -f1 <<<"$FRIDAY_AI_KEYS" | xargs)] local=[$FRIDAY_LOCAL_ENGINE:$FRIDAY_LOCAL_MODEL:$FRIDAY_LOCAL_BUDGET_MB] autologin=$AUTOLOGIN encrypt=$ENCRYPT interactive=$FRIDAY_INTERACTIVE session=$SESSION style=$SHELL_STYLE desktop=$FEAT_DESKTOP tasks=$FEAT_TASKS appname=$FEAT_APPNAME screentext=$FEAT_SCREENTEXT browsers=[$BROWSERS] default_browser=$DEFAULT_BROWSER"
 EOF
   # friday-git is on the live ISO: the real CLI, on a fake 16 GB machine with no GPU.
   mkdir -p "$W/hw/proc"
@@ -294,6 +294,68 @@ contains "screen context goes to the first vision provider" "$(cat "$envf" 2>/de
 contains "local AI choice saved, pending" "$(cat "$W/mnt/home/alice/.config/friday/local-ai.conf" 2>/dev/null)" $'engine=ollama\nbudget_mb=8192\nmodel=gemma3:4b\nstate=pending'
 [[ -L "$W/mnt/home/alice/.config/systemd/user/default.target.wants/friday-local-ai.service" ]] \
   && pass "the first-login download is enabled for the user" || fail "friday-local-ai.service not enabled"
+
+echo "installer: browser extension flags"
+contains "chromium loads the extension" "$(cat "$ROOT/../etc/skel/.config/chromium-flags.conf")" "/usr/share/friday/browser-extension"
+contains "brave loads the extension" "$(cat "$ROOT/../etc/skel/.config/brave-flags.conf")" "--load-extension=/usr/share/friday/browser-extension"
+contains "brave ozone hint auto" "$(cat "$ROOT/../etc/skel/.config/brave-flags.conf")" "--ozone-platform-hint=auto"
+contains "vivaldi loads the extension" "$(cat "$ROOT/../etc/skel/.config/vivaldi-stable.conf")" "--load-extension=/usr/share/friday/browser-extension"
+contains "vivaldi ozone hint auto" "$(cat "$ROOT/../etc/skel/.config/vivaldi-stable.conf")" "--ozone-platform-hint=auto"
+
+echo "installer: browser packages and default browser"
+W="$WORK/browser-section"; rm -rf "$W"; mkdir -p "$W/mnt/home/alice"
+cat >"$W/test-browser.sh" <<'EOF'
+set -euo pipefail
+USER_HOME=/home/alice
+USERNAME=alice
+LOG="$WORK/browser-section/pacstrap.log"
+pacstrap_with_retry() { shift; echo "pacstrap: $*" >> "$LOG"; }
+# arch-chroot: log what runs as whom; "mktemp" gives a folder; a build of
+# a package named in FAIL_AUR fails.
+arch-chroot() {
+  shift
+  case "$*" in
+    *mktemp*) mkdir -p "$WORK/browser-section/mnt/tmp/b"; echo /tmp/b ;;
+    *makepkg*) echo "build: $*" >> "$LOG"; [[ -z "${FAIL_AUR:-}" || "$*" != *"$FAIL_AUR"* ]] ;;
+    *) echo "chroot: $*" >> "$LOG" ;;
+  esac
+}
+EOF
+browsers() {
+  {
+    cat "$W/test-browser.sh"
+    echo "BROWSERS=\"$1\" DEFAULT_BROWSER=$2"
+    awk '/^# Web browsers chosen in addition to Chromium/,/pacstrap_with_retry \/mnt "\$\{browser_pkgs\[@\]\}"/' "$ROOT/installer"
+    sed -n '/^friday_aur_install() {/,/^if (( \${#aur_pkgs/p' "$ROOT/installer"
+    sed -n '/^# Default web browser/,/^friday_default_browser "/p' "$ROOT/installer"
+  } | sed "s#/mnt#$W/mnt#g" >"$W/run.sh"
+  WORK="$WORK" bash "$W/run.sh"
+}
+
+# Chosen browsers: repo ones pacstrapped, AUR ones built as the user and
+# installed by pacman; the default is set
+browsers "brave firefox zen" zen 2>"$W/err"
+log=$(cat "$W/pacstrap.log" 2>/dev/null)
+contains "repo browsers pacstrapped" "$log" "pacstrap: firefox"
+contains "the AUR build tools come first" "$log" "pacstrap: base-devel git"
+contains "brave-bin is built as the user from the AUR" "$log" "build: runuser -u alice -- bash -c"
+contains "zen-browser-bin too" "$log" "/tmp/b zen-browser-bin"
+contains "pacman installs what was built" "$log" "chroot: bash -c pacman -U --noconfirm --needed"
+contains "default browser set in mimeapps.list" "$(cat "$W/mnt/home/alice/.config/mimeapps.list" 2>/dev/null)" "x-scheme-handler/https=zen.desktop"
+
+# None chosen: nothing installed, Chromium opens links
+rm -f "$W/pacstrap.log" "$W/mnt/home/alice/.config/mimeapps.list"
+browsers "" chromium
+[[ ! -f "$W/pacstrap.log" ]] && pass "nothing is installed when no browsers are chosen" || fail "something was installed when none chosen"
+contains "default browser is chromium when none chosen" "$(cat "$W/mnt/home/alice/.config/mimeapps.list" 2>/dev/null)" "x-scheme-handler/https=chromium.desktop"
+
+# A failed AUR build is skipped with a way out, and the install goes on
+rm -f "$W/pacstrap.log"
+printf 'x=1' >"$W/mnt/home/alice/.config/mimeapps.list"
+out=$(FAIL_AUR=zen-browser-bin browsers "brave zen" brave 2>&1) && pass "a failed AUR build doesn't stop the install" || fail "a failed AUR build stopped the install"
+contains "it says how to get it later" "$out" "yay -S zen-browser-bin"
+contains "the other one is still installed" "$out" "Installed brave-bin from the AUR."
+contains "mimeapps.list without a final newline still gets the header" "$(cat "$W/mnt/home/alice/.config/mimeapps.list")" $'x=1\n[Default Applications]'
 
 echo "installer progress and failure screens"
 if need gum python3; then

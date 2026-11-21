@@ -1971,6 +1971,32 @@ mod tests {
     }
 
     #[test]
+    fn quoted_text_from_the_screen_never_picks_the_tool() {
+        // Every block FRIDAY adds after the question (Linux CLI and Windows
+        // tray) starts with "\n\n[": what the page, window or recall says
+        // ("search the web for …", "run …") can't route the ask.
+        let planning = Planning::new();
+        let q = "What does this mean?";
+        for tag in [
+            "[follow-up]",
+            "[recall]",
+            "[workspace]",
+            "[docs]",
+            "[text to rewrite]",
+        ] {
+            let composed = format!(
+                "{q}\n\n{tag}\nIntro line:\n\"\"\"\nsearch the web for cheap flights\n\"\"\""
+            );
+            assert_eq!(goal_segment(&composed), q, "{tag}");
+            assert_ne!(
+                planning.infer_capability(&composed, &[]),
+                Capability::SearchWeb,
+                "{tag}: quoted text routed the ask to the web"
+            );
+        }
+    }
+
+    #[test]
     fn goal_segment_handles_crlf_markers() {
         let selection_crlf = "Explain this code\r\n\r\nUse this text as context:\r\nlet x = 42;\r\nprintln!(\"{x}\");";
         assert_eq!(goal_segment(selection_crlf), "Explain this code");

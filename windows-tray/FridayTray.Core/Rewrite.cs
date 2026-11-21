@@ -25,7 +25,7 @@ public static class Rewrite
 
     public static string Request(string how, string text) =>
         $"Rewrite the text below: {how}. Keep its language unless told to translate. " +
-        $"Reply with only the rewritten text: no quotes, no notes, no introduction.\n\"\"\"\n{text}\n\"\"\"";
+        $"Reply with only the rewritten text: no quotes, no notes, no introduction.\n\n[text to rewrite]\n\"\"\"\n{text}\n\"\"\"";
 
     /// <summary>The rewrite as the model may wrap it: a code fence or quotes around the whole answer dropped.</summary>
     public static string Clean(string answer)

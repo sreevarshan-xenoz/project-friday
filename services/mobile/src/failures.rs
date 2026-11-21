@@ -111,6 +111,11 @@ pub fn plain_screen_error(e: &ContextReadError) -> String {
         }
         ContextReadError::InvalidPayload(_) => "Couldn't read the screenshot.".to_string(),
         ContextReadError::Provider(raw) => plain_model_error(raw),
+        ContextReadError::PrivateWindow => {
+            "That's a private window, so FRIDAY doesn't read it or take a screenshot. \
+             Nothing was sent."
+                .to_string()
+        }
     }
 }
 

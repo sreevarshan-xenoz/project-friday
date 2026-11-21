@@ -55,7 +55,7 @@ public class AskingTests
     public void A_follow_up_carries_the_answer_it_follows_capped()
     {
         var r = Asking.BuildFollowUp("give an example", "A monad wraps a value.");
-        Assert.Equal("give an example\n\nThis follows up on my previous question and your answer:\n\"\"\"\nA monad wraps a value.\n\"\"\"", r);
+        Assert.Equal("give an example\n\n[follow-up]\nThis follows up on my previous question and your answer:\n\"\"\"\nA monad wraps a value.\n\"\"\"", r);
         Assert.DoesNotContain(new string('x', Asking.MaxFollowUpContextChars + 1), Asking.BuildFollowUp("q", new string('x', 9000)));
     }
 
@@ -113,11 +113,22 @@ public class AskingTests
     }
 
     [Theory]
-    [InlineData("ghp_A1b2C3d4E5f6G7h8", true)]
+    [InlineData("tok_A1b2C3d4E5f6G7h8", true)]
     [InlineData("hunter2hunter2hunter2", true)]
     [InlineData("hello world this is text", false)]
     [InlineData("onlyletterslongword", false)]
     [InlineData("short1", false)]
+    [InlineData("https://github.com/x/y/issues/1234", false)]
+    [InlineData(@"C:\Users\me\file2.txt", false)]
+    [InlineData("/home/me/notes/file2.txt", false)]
+    [InlineData("report2026.pdf", false)]
+    [InlineData("abcdefghij1234567890.klmnopqrst0987654321.uvwxyzABC123def456", true)]
+    [InlineData("https://api.x.com/v1?key=zz_abcd1234efgh5678ijkl", true)]
+    [InlineData("https://x.com/cb?id=ab12ab12ab12ab12", true)]
+    [InlineData("Zq8rTk2LmN0p/Wx4Yb7Vc1Ds/Ee9Ff3Gh5Jk6", true)]
+    [InlineData("hunter2hunter2.", true)]
+    [InlineData("pass/12345678abc", true)]
+    [InlineData("com.example.app2.v3", false)]
     public void Clipboard_secrets_are_recognised(string text, bool secret) =>
         Assert.Equal(secret, Asking.LooksLikeSecret(text));
 

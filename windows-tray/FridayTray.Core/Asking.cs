@@ -109,7 +109,7 @@ public static partial class Asking
     public static string BuildFollowUp(string question, string previousAnswer)
     {
         var prev = previousAnswer.Length > MaxFollowUpContextChars ? previousAnswer[..MaxFollowUpContextChars] : previousAnswer;
-        return $"{question}\n\nThis follows up on my previous question and your answer:\n\"\"\"\n{prev}\n\"\"\"";
+        return $"{question}\n\n[follow-up]\nThis follows up on my previous question and your answer:\n\"\"\"\n{prev}\n\"\"\"";
     }
 
     /// <summary>The "provider/model" to avoid when asking again, from who answered.</summary>
@@ -166,13 +166,30 @@ public static partial class Asking
     /// <summary>
     /// Clipboard text that looks like a password or token (one long run of
     /// non-space characters mixing letters and digits) must not be sent to a
-    /// cloud model by accident.
+    /// cloud model by accident. A URL (…://…), a path (/…, ~/…, ./…, C:\…)
+    /// or a dotted file name isn't one, unless one of its parts is such a run
+    /// of 16 or more (a key in a URL, a JWT). Anything else with a slash
+    /// (base64, an AWS secret) still is. Same rule as `friday_secret_shaped`
+    /// on Linux (ASCII letters and digits, as there).
     /// </summary>
-    public static bool LooksLikeSecret(string text) =>
-        TokenRun().IsMatch(text) && text.Any(char.IsLetter) && text.Any(char.IsDigit);
+    public static bool LooksLikeSecret(string text)
+    {
+        static bool Mixed(string t) => t.Any(char.IsAsciiLetter) && t.Any(char.IsAsciiDigit);
+        if (!TokenRun().IsMatch(text) || !Mixed(text))
+            return false;
+        if (!text.Contains("://") && !PathStart().IsMatch(text) && !DottedName().IsMatch(text))
+            return true;
+        return text.Split(['/', '\\', '.', ':', '?', '=', '&', '#']).Any(p => p.Length >= 16 && Mixed(p));
+    }
 
     [GeneratedRegex(@"^\S{12,}$")]
     private static partial Regex TokenRun();
+
+    [GeneratedRegex(@"^(/|~/|\./|\.\./|[A-Za-z]:[\\/])")]
+    private static partial Regex PathStart();
+
+    [GeneratedRegex(@"^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+$")]
+    private static partial Regex DottedName();
 
     /// <summary>
     /// Every top-level JSON object in friday-ctl's output, which mixes
