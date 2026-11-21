@@ -1502,24 +1502,22 @@ pub async fn detect() -> Option<AgentDesktopUi> {
 }
 
 /// The id of `app`'s window that is in front: the one with the focused
-/// window's title, else the one the desktop says is focused, else its only
-/// window. None when that can't be told apart.
+/// window's exact title, else the app's only window. Anything less certain
+/// (no title match, two with that title) is None, so a window the person
+/// isn't looking at, a private one, is never read in its place.
 fn front_window(windows: &[Value], app: &str, title: &str) -> Option<String> {
-    fn only<'a>(mut found: impl Iterator<Item = &'a Value>) -> Option<&'a Value> {
-        let first = found.next()?;
-        found.next().is_none().then_some(first)
-    }
-    let own = || {
-        windows
-            .iter()
-            .filter(move |w| w.get("app_name").and_then(Value::as_str) == Some(app))
-    };
-    let titled = || own().filter(|w| w.get("title").and_then(Value::as_str) == Some(title));
-    let w = if !title.is_empty() && titled().next().is_some() {
-        only(titled())?
-    } else {
-        only(own().filter(|w| w.get("is_focused") == Some(&Value::Bool(true))))
-            .or_else(|| only(own()))?
+    let own: Vec<&Value> = windows
+        .iter()
+        .filter(|w| w.get("app_name").and_then(Value::as_str) == Some(app))
+        .collect();
+    let titled: Vec<&&Value> = own
+        .iter()
+        .filter(|w| w.get("title").and_then(Value::as_str) == Some(title))
+        .collect();
+    let w = match (titled.as_slice(), own.as_slice()) {
+        ([w], _) => **w,
+        ([], [w]) => *w,
+        _ => return None,
     };
     w.get("id").and_then(Value::as_str).map(str::to_string)
 }
@@ -2615,11 +2613,9 @@ mod tests {
             front_window(&two, "firefox", "Notes - Firefox").as_deref(),
             Some("w-1")
         );
-        // No title match: the one the desktop says is focused.
-        assert_eq!(
-            front_window(&two, "firefox", "Other").as_deref(),
-            Some("w-2")
-        );
+        // No title match is no window, never the "focused" (private) one.
+        assert_eq!(front_window(&two, "firefox", "Other"), None);
+        assert_eq!(front_window(&two, "firefox", ""), None);
         // Two windows, neither focused nor matching: none (a screenshot instead).
         let unsure = [
             w("w-1", "A", "firefox", false),
@@ -2634,6 +2630,7 @@ mod tests {
         assert_eq!(front_window(&same, "firefox", "A"), None);
         // An app's only window is that window.
         assert_eq!(front_window(&two, "foot", "").as_deref(), Some("w-3"));
+        assert_eq!(front_window(&two, "foot", "Notes ").as_deref(), Some("w-3"));
         assert_eq!(front_window(&two, "kitty", ""), None);
     }
 
