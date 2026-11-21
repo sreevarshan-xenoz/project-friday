@@ -120,6 +120,7 @@ if [[ "\$target_arg" == *useditems* ]]; then printf '{\n "outcome": "completed",
 if [[ "\$target_arg" == *"word: ready"* && -n "\${READY_FAILS:-}" ]]; then printf '{\n "outcome": "failed",\n "error": "All candidates failed (2 tried). opencode: 429"\n}\n'; exit 1; fi
 if [[ "\$target_arg" == *"word: ready"* && -n "\${READY_TIMES_OUT:-}" ]]; then printf '{"accepted":true}\n'; echo "timed out after 60s waiting for the goal to finish" >&2; exit 1; fi
 if [[ "\$target_arg" == *"word: ready"* ]]; then printf '{\n "outcome": "completed",\n "result": "ready",\n "served_by": {"provider": "kilo", "model": "m", "ms": 940}\n}\n'; exit 0; fi
+if [[ "\$target_arg" == *"meeting transcript"* ]]; then printf '{\n "outcome": "completed",\n "result": "decision|10:02:15|Ship v0.8 on Friday\\\\naction|10:04:01|Sam writes the release notes\\\\nquestion|10:05:30|Do we need a beta?\\\\nsome chatter"\n}\n'; exit 0; fi
 if [[ "\$target_arg" == *bullets* ]]; then printf '{\n "outcome": "completed",\n "result": "- first point\\\\n- second point"\n}\n'; exit 0; fi
 if [[ "\$target_arg" == *fail* ]]; then printf '{\n "outcome": "failed",\n "error": "network unreachable"\n}\n'; exit 1; fi
 printf '{\n "outcome": "completed",\n "result": "Line one.\\\\nLine two.\\\\nLast line."\n}\n'
@@ -847,6 +848,18 @@ if grep -q "_failed_" <(bash "$F" ask "what is the capital of peru" >/dev/null 2
 echo "thoughts"
 : >"$LOG"; bash "$F" ask "Keep this idea: Memory as an INDEX, not a store."; sleep 0.3
 contains "\"keep this idea\" keeps it, as typed" "$(cat "$LOG")" "friday-ctl-thought thought add idea Memory as an INDEX, not a store"
+mkdir -p "$HOME/.local/share/friday/captions"
+printf '10:02:15 lets ship v0.8 on friday\n10:04:01 sam can you write the release notes\n' >"$HOME/.local/share/friday/captions/2026-11-21-1000.txt"
+: >"$LOG"; out=$(bash "$F" meeting --yes)
+contains "a meeting becomes decisions" "$(cat "$LOG")" "friday-ctl-thought thought add decision (meeting 2026-11-21-1000, 10:02:15) Ship v0.8 on Friday"
+contains "actions" "$(cat "$LOG")" "thought add action (meeting 2026-11-21-1000, 10:04:01) Sam writes the release notes"
+contains "and open questions" "$(cat "$LOG")" "thought add question (meeting 2026-11-21-1000, 10:05:30) Do we need a beta?"
+if grep -q "chatter" "$LOG"; then fail "kept a line that wasn't a decision, action or question"; else pass "anything else in the reply is dropped"; fi
+contains "it says what it kept" "$out" "Kept 3 under the project in front"
+: >"$LOG"; out=$(bash "$F" meeting </dev/null)
+contains "without --yes and no local model it asks first" "$out" "Nothing sent."
+if grep -q "meeting transcript" "$LOG"; then fail "sent a transcript without a yes"; else pass "no transcript sent without a yes"; fi
+rm -rf "$HOME/.local/share/friday/captions"
 if grep -q "^friday-ctl '" "$LOG"; then fail "keeping an idea asked the AI"; else pass "keeping an idea asks no AI"; fi
 : >"$LOG"; bash "$F" ask "we decided to compute the index from the logs"; sleep 0.3
 contains "\"we decided …\" keeps a decision" "$(cat "$LOG")" "friday-ctl-thought thought add decision compute the index from the logs"
