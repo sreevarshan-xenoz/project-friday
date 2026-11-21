@@ -42,7 +42,9 @@ Top to bottom; don't start a later phase while an earlier one has known failures
 
 Phases 3 to 5 follow `docs/roadmap/vnext.md` ("your work, remembered":
 workspaces with session resurrection, thought threads, project
-understanding, modes, sovereignty), each milestone with its exit test.
+understanding, modes, sovereignty), each milestone with its exit test. The
+owner-approved queue of twenty improvements from the v0.7.3 brainstorm is
+`docs/roadmap/after-0.7.3.md`, worked top to bottom.
 
 ## Rules
 
