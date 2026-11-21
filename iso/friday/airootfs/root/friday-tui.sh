@@ -354,7 +354,8 @@ friday_part_dev() { if [[ "$1" =~ [0-9]$ ]]; then echo "${1}p$2"; else echo "${1
 friday_disk_scan() {
   local disk="$1" ss first last esp mnt d others=""
   echo "table=$(lsblk -n -d -o PTTYPE "$disk" 2>/dev/null | xargs)"
-  echo "parts=$(lsblk -l -n -o TYPE "$disk" 2>/dev/null | grep -c '^part$')"
+  # (|| true: grep -c fails on no match, which the installer's ERR trap catches.)
+  echo "parts=$(lsblk -l -n -o TYPE "$disk" 2>/dev/null | grep -c '^part$' || true)"
   ss=$(blockdev --getss "$disk" 2>/dev/null || echo 512)
   first=$(sgdisk -F "$disk" 2>/dev/null | tail -n1)
   last=$(sgdisk -E "$disk" 2>/dev/null | tail -n1)
@@ -363,26 +364,40 @@ friday_disk_scan() {
   else
     echo "free_mb=0"
   fi
-  esp=$(lsblk -l -n -p -o NAME,PARTTYPE "$disk" 2>/dev/null \
-    | awk -v t="$FRIDAY_ESP_TYPE" 'tolower($2) == t { print $1; exit }')
-  echo "esp=$esp"
+  # Every EFI partition on the disk: the one with Windows Boot Manager if
+  # there is one (OEM tools or an older Linux may have their own), else the first.
+  local all e win=0 found_win="" esp1="" esp1_others="" esp1_free=0 o free
+  all=$(lsblk -l -n -p -o NAME,PARTTYPE "$disk" 2>/dev/null \
+    | awk -v t="$FRIDAY_ESP_TYPE" 'tolower($2) == t { print $1 }')
   if lsblk -l -n -o FSTYPE "$disk" 2>/dev/null | grep -qx BitLocker; then echo bitlocker=1; else echo bitlocker=0; fi
-  [[ -n "$esp" ]] || return 0
+  echo "esps=$(grep -c . <<<"$all" || true)"
   mnt=$(mktemp -d /tmp/friday-esp.XXXXXX)
-  if mount -o ro "$esp" "$mnt" 2>/dev/null; then
-    [[ -e "$mnt/EFI/Microsoft/Boot/bootmgfw.efi" ]] && echo windows=1 || echo windows=0
+  for e in $all; do
+    mount -o ro "$e" "$mnt" 2>/dev/null || continue
+    o=""
     for d in "$mnt"/EFI/*/; do
+      [[ -d "$d" ]] || continue
       d=$(basename "$d")
-      [[ "${d,,}" =~ ^(microsoft|boot|systemd|linux)$ ]] || others+="${others:+, }$d"
+      [[ "${d,,}" =~ ^(microsoft|boot|systemd|linux)$ ]] || o+="${o:+, }$d"
     done
-    echo "others=$others"
-    echo "esp_free_mb=$(df -m --output=avail "$mnt" | tail -n1 | xargs)"
+    free=$(df -m --output=avail "$mnt" | tail -n1 | xargs)
+    if [[ -z "$found_win" && -e "$mnt/EFI/Microsoft/Boot/bootmgfw.efi" ]]; then
+      found_win="$e|$o|$free"
+    fi
+    [[ -n "$esp1" ]] || { esp1="$e"; esp1_others="$o"; esp1_free="$free"; }
     umount "$mnt" || true
-  else
-    echo windows=0
-    echo esp_free_mb=0
-  fi
+  done
   rmdir "$mnt" 2>/dev/null || true
+  if [[ -n "$found_win" ]]; then
+    IFS='|' read -r esp others free <<<"$found_win"
+    win=1
+  else
+    esp="$esp1" others="$esp1_others" free="$esp1_free"
+  fi
+  echo "esp=$esp"
+  echo "windows=$win"
+  echo "others=$others"
+  echo "esp_free_mb=${free:-0}"
 }
 
 # The size FRIDAY suggests, in MB: 80 GB, or 60 GB plus room for the

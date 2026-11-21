@@ -15,7 +15,7 @@ STEPS=(NETWORK DISK REGION IDENTITY SECURITY LOOK FEATURES AI REVIEW)
 
 # Defaults (also what an unattended run would use).
 TARGET_DISK="" TARGET_LABEL=""
-INSTALL_MODE="erase" FRIDAY_SIZE_MB="" BOOT_DEFAULT="friday" ALONGSIDE_OS=""
+INSTALL_MODE="erase" FRIDAY_SIZE_MB="" BOOT_DEFAULT="friday" ALONGSIDE_OS="" BITLOCKER_ACK=""
 # Empty until named, so typing replaces the placeholder (empty input means "friday").
 HOSTNAME="" USERNAME="" PASSWORD=""
 KEYBOARD="us" TIMEZONE="UTC"
@@ -158,7 +158,7 @@ step_disk() {
 # Erase the disk, or (when it already holds a system and has free space)
 # install alongside it. Sets INSTALL_MODE, FRIDAY_SIZE_MB, BOOT_DEFAULT.
 step_disk_mode() {
-  INSTALL_MODE=erase FRIDAY_SIZE_MB="" BOOT_DEFAULT=friday
+  INSTALL_MODE=erase FRIDAY_SIZE_MB="" BOOT_DEFAULT=friday BITLOCKER_ACK=""
   local scan table parts free esp esp_free windows others bitlocker os
   scan=$(friday_disk_scan "$TARGET_DISK")
   get() { sed -n "s/^$1=//p" <<<"$scan"; }
@@ -211,6 +211,7 @@ step_disk_mode() {
     friday_note "  Get the key first (aka.ms/myrecoverykey), or turn BitLocker off in Windows and come back."
     gum confirm --default=false --affirmative="I have the key (or BitLocker is off)" --negative="Stop, I'll get it" \
       "Carry on?" || leave_menu "Nothing was written. Get the BitLocker recovery key (or turn BitLocker off), then start setup again."
+    BITLOCKER_ACK=1
   fi
   [[ "$windows" == 1 ]] && friday_note "  Shut Windows down fully before installing (turn off Fast Startup), or its drive stays locked."
   step_disk_size "$free"
@@ -616,7 +617,7 @@ friday_banner
 friday_say "Thanks, $USERNAME. I'll take it from here."
 sleep 1
 FRIDAY_HOSTNAME="$HOSTNAME"
-export INSTALL_MODE FRIDAY_SIZE_MB BOOT_DEFAULT TARGET_DISK KEYBOARD HOSTNAME FRIDAY_HOSTNAME USERNAME PASSWORD TIMEZONE THEME SHELL_STYLE SESSION SDDM_THEME FRIDAY_AI_PROVIDERS FRIDAY_AI_KEYS FRIDAY_LOCAL_ENGINE FRIDAY_LOCAL_BUDGET_MB FRIDAY_LOCAL_MODEL AUTOLOGIN ENCRYPT FEAT_DESKTOP FEAT_TASKS FEAT_APPNAME FEAT_SCREENTEXT FEAT_PHONE
+export INSTALL_MODE FRIDAY_SIZE_MB BOOT_DEFAULT BITLOCKER_ACK TARGET_DISK KEYBOARD HOSTNAME FRIDAY_HOSTNAME USERNAME PASSWORD TIMEZONE THEME SHELL_STYLE SESSION SDDM_THEME FRIDAY_AI_PROVIDERS FRIDAY_AI_KEYS FRIDAY_LOCAL_ENGINE FRIDAY_LOCAL_BUDGET_MB FRIDAY_LOCAL_MODEL AUTOLOGIN ENCRYPT FEAT_DESKTOP FEAT_TASKS FEAT_APPNAME FEAT_SCREENTEXT FEAT_PHONE
 # The person confirmed erasing this disk (or adding FRIDAY next to what's on
 # it) on the review screen.
 if [[ "$INSTALL_MODE" == alongside ]]; then
