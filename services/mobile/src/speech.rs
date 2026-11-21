@@ -803,6 +803,25 @@ pub fn pid_file() -> PathBuf {
     base.join("friday-say.pid")
 }
 
+/// Whether an answer is being spoken now: a `say` recorded its pid and is alive.
+pub fn speaking() -> bool {
+    let Some(pid) = std::fs::read_to_string(pid_file())
+        .ok()
+        .and_then(|t| t.trim().parse::<u32>().ok())
+    else {
+        return false;
+    };
+    #[cfg(not(windows))]
+    {
+        std::path::Path::new(&format!("/proc/{pid}")).exists() && is_friday_process(pid)
+    }
+    #[cfg(windows)]
+    {
+        let _ = pid;
+        true
+    }
+}
+
 /// Ends a running `say` (a new answer replaces the old one; Stop and a key press end it).
 pub fn stop_running() -> bool {
     let path = pid_file();
