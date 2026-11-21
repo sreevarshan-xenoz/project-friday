@@ -419,6 +419,8 @@ pub fn prepare_folders(
     private: &[PathBuf],
     cache: &Path,
 ) -> std::io::Result<usize> {
+    // Symlinks are never followed: they could lead into a private or hidden
+    // place, or round in a loop.
     fn walk(dir: &Path, depth: usize, private: &[PathBuf], files: &mut Vec<PathBuf>) {
         if depth > 8 || private.iter().any(|p| dir.starts_with(p)) {
             return;
@@ -426,16 +428,23 @@ pub fn prepare_folders(
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
         };
-        let mut entries: Vec<_> = entries.flatten().map(|e| e.path()).collect();
-        entries.sort();
-        for path in entries {
+        let mut entries: Vec<_> = entries
+            .flatten()
+            .filter_map(|e| Some((e.path(), e.file_type().ok()?)))
+            .collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        for (path, kind) in entries {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if name.starts_with('.') || name == "node_modules" || name == "target" {
+            if name.starts_with('.')
+                || name == "node_modules"
+                || name == "target"
+                || kind.is_symlink()
+            {
                 continue;
             }
-            if path.is_dir() {
+            if kind.is_dir() {
                 walk(&path, depth + 1, private, files);
-            } else {
+            } else if kind.is_file() && !private.iter().any(|p| path.starts_with(p)) {
                 files.push(path);
             }
         }
@@ -448,8 +457,10 @@ pub fn prepare_folders(
         std::fs::create_dir_all(dir)?;
     }
     let tmp = cache.with_extension("tmp");
+    // A new file every time, so it is created owner-only.
+    let _ = std::fs::remove_file(&tmp);
     let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
+    opts.write(true).create_new(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
     let mut out = std::io::BufWriter::new(opts.open(&tmp)?);
@@ -461,9 +472,17 @@ pub fn prepare_folders(
             .map(str::to_lowercase)
             .unwrap_or_default();
         let text = if FOLDER_TEXT.contains(&ext.as_str()) {
-            std::fs::read(&path)
+            // Only the first megabyte is read: a huge file can't fill memory.
+            let mut buf = Vec::new();
+            std::fs::File::open(&path)
+                .and_then(|f| {
+                    std::io::Read::read_to_end(
+                        &mut std::io::Read::take(f, FILE_BYTES as u64),
+                        &mut buf,
+                    )
+                })
                 .ok()
-                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .map(|_| String::from_utf8_lossy(&buf).into_owned())
         } else if ext == "pdf" {
             Command::new("pdftotext")
                 .arg(&path)
@@ -525,6 +544,11 @@ mod tests {
         .unwrap();
         std::fs::write(notes.join(".git/config"), "router rotation quarter").unwrap();
         std::fs::write(notes.join("photo.jpg"), [0xff, 0xd8, 0xff]).unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(notes.join("private"), notes.join("linked")).unwrap();
+            std::os::unix::fs::symlink(&notes, notes.join("loop")).unwrap();
+        }
         let n = prepare_folders(
             std::slice::from_ref(&notes),
             &[notes.join("private")],
