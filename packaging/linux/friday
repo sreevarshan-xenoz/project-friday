@@ -3885,8 +3885,11 @@ case "${1:-}" in
         if $use_selection && [ -n "${context:-}" ]; then
           if [ "$source_label" = Clipboard ]; then used_parts+=("your clipboard"); else used_parts+=("your selection"); fi
         fi
-        if ${use_region:-false}; then used_parts+=("the area you picked")
-        elif $use_screen && [ -z "$(jq -r '.used[0]? // empty' <<<"$summary_json" 2>/dev/null)" ]; then used_parts+=("the window in front")
+        # A screen ask's own "used" (the window's text or a screenshot) comes
+        # from the daemon; this is only for an older one that doesn't say.
+        if $use_screen && [ -n "$(jq -r '.used[0]? // empty' <<<"$summary_json" 2>/dev/null)" ]; then :
+        elif ${use_region:-false}; then used_parts+=("the area you picked")
+        elif $use_screen; then used_parts+=("the window in front")
         elif [ -n "${tab:-}" ]; then used_parts+=("the page's text (browser extension)"); fi
         [ -z "${docs:-}" ] || used_parts+=("docs on this computer")
         [ -z "${ws_report:-}" ] || used_parts+=("the windows FRIDAY put back")

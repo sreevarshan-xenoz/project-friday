@@ -302,12 +302,19 @@ where
 
         let mut text_failed = false;
         if region.is_none() {
+            let front = self.window_in_front();
             match self.ask_from_text(question, progress).await {
                 Some(Ok((answer, cut))) => return Ok((answer, ScreenSent::Text { cut })),
                 // A busy or refusing provider on the text route: the
                 // screenshot (consent was given for this ask) rather than no
                 // answer. Every other refusal stands.
+                // Only of the same window: one the person switched to while
+                // the text was out (perhaps a private one) is never captured.
                 Some(Err(ContextReadError::Provider(e))) => {
+                    if front.is_none() || self.window_in_front() != front {
+                        self.revoke();
+                        return Err(ContextReadError::Provider(e));
+                    }
                     tracing::warn!(
                         "[context.read] the text route failed ({e}); trying a screenshot"
                     );
@@ -380,6 +387,17 @@ where
             (answer, route)
         })
         .map_err(ContextReadError::Provider)
+    }
+
+    /// The window in front (its app and title), if the desktop says.
+    fn window_in_front(&self) -> Option<(String, String)> {
+        match self
+            .collector
+            .capture(ContextChannel::App, &CaptureOptions::default())
+        {
+            Ok(CapturedContext::AppInfo { class, title, .. }) => Some((class, title)),
+            _ => None,
+        }
     }
 
     /// The focused window's words, when its app has an accessibility tree
@@ -1774,6 +1792,34 @@ mod tests {
             "the screenshot went instead"
         );
         assert!(sent.used().contains("the text went first"));
+    }
+
+    #[tokio::test]
+    async fn no_fallback_screenshot_of_a_window_switched_to_meanwhile() {
+        // The window in front changes between the text and the fallback.
+        let win = friday_context_collector::window_command();
+        let full = friday_context_collector::screen_command(None);
+        let runner = FakeCommandRunner::new()
+            .script_stdout(&full.0, &strs(&full.1), PNG)
+            .script_stdout_seq(
+                &win.0,
+                &strs(&win.1),
+                &[
+                    br#"{"class":"nautilus","title":"Home","at":[0,0],"size":[800,600]}"#
+                        .as_slice(),
+                    br#"{"class":"nautilus","title":"Home","at":[0,0],"size":[800,600]}"#
+                        .as_slice(),
+                    br#"{"class":"keepassxc","title":"Passwords","at":[0,0],"size":[800,600]}"#
+                        .as_slice(),
+                ],
+            );
+        let seam = TextRefused::default();
+        let reader = ScreenReader::new(ContextCollector::new(runner), seam.clone(), "fabric")
+            .with_text(Arc::new(FakeText(Some("Report.pdf".into()))));
+        reader.consent();
+        let got = reader.ask_routed(None, None, &|_| {}).await;
+        assert!(matches!(got, Err(ContextReadError::Provider(_))), "{got:?}");
+        assert_eq!(seam.0.sent(), 0, "no screenshot of the other window");
     }
 
     #[tokio::test]

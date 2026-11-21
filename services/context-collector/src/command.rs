@@ -316,6 +316,8 @@ fn first_wayland_display(dir: &Path) -> Option<String> {
 #[derive(Debug, Clone, Default)]
 pub struct FakeCommandRunner {
     scripted: HashMap<(String, Vec<String>), CommandOutput>,
+    /// Outputs given one per call, the last one repeating.
+    sequences: HashMap<(String, Vec<String>), std::sync::Arc<std::sync::Mutex<Vec<CommandOutput>>>>,
 }
 
 impl FakeCommandRunner {
@@ -334,6 +336,21 @@ impl FakeCommandRunner {
         self
     }
 
+    /// Like [`FakeCommandRunner::script_stdout`], with a different output on
+    /// each call (the last one repeating): a window that changes, say.
+    pub fn script_stdout_seq(mut self, program: &str, args: &[&str], outputs: &[&[u8]]) -> Self {
+        let outs = outputs
+            .iter()
+            .rev()
+            .map(|o| CommandOutput::ok_binary(o.to_vec()))
+            .collect();
+        self.sequences.insert(
+            key(program, args),
+            std::sync::Arc::new(std::sync::Mutex::new(outs)),
+        );
+        self
+    }
+
     pub fn script_error(mut self, program: &str, args: &[&str], stderr: &str, code: i32) -> Self {
         self.scripted
             .insert(key(program, args), CommandOutput::failed(stderr, code));
@@ -349,6 +366,17 @@ impl FakeCommandRunner {
 impl CommandRunner for FakeCommandRunner {
     fn run(&self, program: &str, args: &[String]) -> Result<CommandOutput, RunnerError> {
         let arg_slice: Vec<&str> = args.iter().map(String::as_str).collect();
+        if let Some(seq) = self.sequences.get(&key(program, &arg_slice)) {
+            let mut outs = seq.lock().unwrap();
+            let out = if outs.len() > 1 {
+                outs.pop()
+            } else {
+                outs.last().cloned()
+            };
+            if let Some(out) = out {
+                return Ok(out);
+            }
+        }
         match self.scripted.get(&key(program, &arg_slice)) {
             Some(out) => Ok(out.clone()),
             None => Err(RunnerError::Io(format!(
