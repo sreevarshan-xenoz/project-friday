@@ -148,6 +148,15 @@ internal sealed class TrayContext : ApplicationContext
                 area = picker.Picked;
             }
             var targetWindow = Native.GetForegroundWindow();
+            // A password manager, a private browser window, a bank: neither a
+            // screenshot of it nor text selected in it is sent anywhere.
+            if (kind is AskKind.Screen or AskKind.Selection
+                && PrivateWindows.Match(_install.Paths, Native.ProcessNameOf(targetWindow), Native.GetWindowTitle(targetWindow)) is { } privateBy)
+            {
+                Notify("FRIDAY", $"This window looks private (\"{privateBy}\"), so nothing from it was sent. " +
+                    $"Your own list: {_install.Paths.PrivateWindowsFile}", ToolTipIcon.Info);
+                return;
+            }
             string? context = null;
             string? preview = null;
             string? appLine = null;
