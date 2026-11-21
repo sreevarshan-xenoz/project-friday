@@ -147,7 +147,7 @@ fn lessons(text: &str) -> Vec<Entry> {
                     .map(|f| format!("; later worked: {f}"))
                     .unwrap_or_default()
             )),
-            project: None,
+            project: l.project.clone(),
         })
         .collect()
 }
@@ -203,22 +203,32 @@ fn resumed(goal: &str) -> Option<String> {
         .iter()
         .find_map(|p| g.strip_prefix(p))
         .unwrap_or(g);
-    if let Some(rest) = g.strip_prefix("get back to ") {
-        return name_in(rest);
-    }
     if let Some(rest) = g.strip_prefix("prepare my ") {
         return ["world for ", "workspace for ", "desk for ", "setup for "]
             .iter()
             .find_map(|p| rest.strip_prefix(p))
             .and_then(name_in);
     }
-    let rest = ["continue ", "resume ", "keep "]
-        .iter()
-        .find_map(|v| g.strip_prefix(v))?;
-    ["building ", "working on ", "with ", "on "]
+    // "continue", "resume" and "get back to" may name the project straight
+    // away; "keep" needs "building"/"working on"/… ("keep calm" isn't one).
+    let (rest, needs_connector) = if let Some(r) = g.strip_prefix("keep ") {
+        (r, true)
+    } else {
+        (
+            ["continue ", "resume ", "get back to "]
+                .iter()
+                .find_map(|v| g.strip_prefix(v))?,
+            false,
+        )
+    };
+    match ["building ", "working on ", "with ", "on "]
         .iter()
         .find_map(|c| rest.strip_prefix(c))
-        .and_then(name_in)
+    {
+        Some(after) => name_in(after),
+        None if !needs_connector => name_in(rest),
+        None => None,
+    }
 }
 
 /// The project an ask names: a resume ("continue building X") or the end
@@ -254,31 +264,28 @@ pub fn project_named(goal: &str) -> Option<String> {
     (!weekdays.contains(&name.as_str())).then_some(name)
 }
 
-/// The entries of the project an ask names ("continue building FRIDAY"
-/// keeps FRIDAY's), or all of them when it names none. Desktop actions and
-/// lessons carry no project: those within half an hour of the project's own
-/// entries stay with it. A named project with no history of its own gets
-/// nothing.
-pub fn for_project(entries: Vec<Entry>, goal: &str) -> Vec<Entry> {
-    let mine = |e: &Entry| {
-        e.project
-            .as_deref()
-            .is_some_and(|p| crate::thoughts::named(goal, p))
-    };
-    let named: Vec<i64> = entries.iter().filter(|e| mine(e)).map(|e| e.ts).collect();
-    if named.is_empty() {
-        // A project with no history of its own gets none: not another
-        // project's, and not the actions of whatever else went on.
+/// The entries of the project an ask names (`project`: its folder's name,
+/// resolved once by [`crate::project::resolve`]), or all of them when it
+/// names none. Desktop actions and lessons carry no project: those within
+/// half an hour of the project's own entries stay with it. A named project
+/// with no history of its own (or one FRIDAY doesn't know) gets nothing.
+pub fn for_project(entries: Vec<Entry>, goal: &str, project: Option<&str>) -> Vec<Entry> {
+    let Some(name) = project else {
         return if project_named(goal).is_some() {
             Vec::new()
         } else {
             entries
         };
-    }
+    };
+    let mine = |e: &Entry| e.project.as_deref() == Some(name);
+    let named: Vec<i64> = entries.iter().filter(|e| mine(e)).map(|e| e.ts).collect();
     entries
         .into_iter()
         .filter(|e| {
-            mine(e) || (e.project.is_none() && named.iter().any(|t| e.ts.abs_diff(*t) <= 30 * 60))
+            mine(e)
+                || (!named.is_empty()
+                    && e.project.is_none()
+                    && named.iter().any(|t| e.ts.abs_diff(*t) <= 30 * 60))
         })
         .collect()
 }
@@ -438,9 +445,13 @@ mod tests {
             "{:?}",
             all[0]
         );
-        let friday = for_project(all.clone(), "let's continue building FRIDAY");
+        let friday = for_project(
+            all.clone(),
+            "let's continue building FRIDAY",
+            Some("project-friday"),
+        );
         assert_eq!(friday.len(), 1);
-        assert_eq!(for_project(all, "where was I").len(), 2);
+        assert_eq!(for_project(all, "where was I", None).len(), 2);
     }
 
     #[test]
@@ -460,7 +471,11 @@ mod tests {
         ];
         let texts = |v: Vec<Entry>| v.into_iter().map(|e| e.text).collect::<Vec<_>>();
         assert_eq!(
-            texts(for_project(all.clone(), "continue building FRIDAY")),
+            texts(for_project(
+                all.clone(),
+                "continue building FRIDAY",
+                Some("project-friday")
+            )),
             [
                 "asked about the build",
                 "did move_window",
@@ -468,11 +483,34 @@ mod tests {
             ]
         );
         // Atlas has no history: nothing, not FRIDAY's actions or dinner.
-        assert!(for_project(all.clone(), "let's keep working on Atlas").is_empty());
-        assert!(for_project(all.clone(), "what did I do on Atlas yesterday?").is_empty());
-        assert_eq!(for_project(all.clone(), "where was I").len(), 5);
-        assert_eq!(for_project(all.clone(), "what did I do on monday").len(), 5);
-        assert_eq!(for_project(all, "continue where we stopped").len(), 5);
+        assert!(for_project(all.clone(), "let's keep working on Atlas", None).is_empty());
+        assert!(for_project(all.clone(), "what did I do on Atlas yesterday?", None).is_empty());
+        assert_eq!(for_project(all.clone(), "where was I", None).len(), 5);
+        assert_eq!(
+            for_project(all.clone(), "what did I do on monday", None).len(),
+            5
+        );
+        assert_eq!(
+            for_project(all.clone(), "continue where we stopped", None).len(),
+            5
+        );
+        // A known project with nothing of its own: nothing, not the actions
+        // that happened near another project's entries.
+        assert!(for_project(all, "continue building money", Some("garden")).is_empty());
+    }
+
+    /// The same table `friday ask` is checked against (checks/cli.sh).
+    #[test]
+    fn resume_asks_follow_the_shared_table() {
+        let table = include_str!("../../../tests/fixtures/resume-phrases.tsv");
+        for line in table
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.is_empty())
+        {
+            let (ask, want) = line.split_once('\t').expect("ask<TAB>project");
+            let want = (!want.is_empty()).then(|| want.to_string());
+            assert_eq!(resumed(ask), want, "{ask}");
+        }
     }
 
     #[test]
@@ -524,6 +562,26 @@ mod tests {
             wants("where was I", &[], now),
             None,
             "nothing to go back to"
+        );
+    }
+
+    #[test]
+    fn a_lesson_on_the_timeline_keeps_its_project() {
+        let e =
+            lessons(r#"{"ts":10,"goal":"run the tests","failed":"no script","project":"garden"}"#);
+        assert_eq!(e[0].project.as_deref(), Some("garden"));
+        // So it never rides along with another project's entries.
+        let near = vec![
+            Entry {
+                ts: 0,
+                text: "asked".into(),
+                project: Some("project-friday".into()),
+            },
+            e[0].clone(),
+        ];
+        assert_eq!(
+            for_project(near, "continue building FRIDAY", Some("project-friday")).len(),
+            1
         );
     }
 

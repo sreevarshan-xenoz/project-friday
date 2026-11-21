@@ -673,6 +673,19 @@ contains "the answer says what the daemon added" "$(cat "$LOG")" "Used: your tim
 : >"$LOG"; bash "$F" ask "what is the capital of peru"; sleep 0.3
 if grep -q "Used:" "$LOG"; then fail "an answer with nothing extra said it used something"; else pass "nothing extra: no used line"; fi
 
+echo "one resume grammar: friday ask and the daemon read the same table"
+# timeline.rs checks the daemon against tests/fixtures/resume-phrases.tsv;
+# this checks friday_continue_restore against it.
+RS="$WORK/resume-stub"; mkdir -p "$RS"
+printf '#!/bin/bash\necho "$3"\n' >"$RS/friday-ctl"; chmod +x "$RS/friday-ctl"
+resume_bad=""
+while IFS=$'\t' read -r ask want; do
+  [[ -z "$ask" || "$ask" == \#* ]] && continue
+  got=$(PATH="$RS:$PATH" bash -c 'source <(sed -n "/^friday_continue_restore()/,/^}/p" "$1"); friday_continue_restore "$2"' _ "$F" "$ask")
+  [[ "$got" == "$want" ]] || resume_bad+=" [$ask: got '$got', want '$want']"
+done <"$REPO_ROOT/tests/fixtures/resume-phrases.tsv"
+[[ -z "$resume_bad" ]] && pass "every ask in the table restores the project it names (or none)" || fail "resume grammar:$resume_bad"
+
 echo "answers know their project"
 : >"$LOG"; WS_PROJECT=/home/me/code/project-friday bash "$F" ask "why does the build fail"; sleep 0.3
 contains "the saved answer names the project in front" "$(cat "$HOME/.local/state/friday/last-answer.md")" "_project: /home/me/code/project-friday_"

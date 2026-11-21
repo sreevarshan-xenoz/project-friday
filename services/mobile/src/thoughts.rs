@@ -75,24 +75,22 @@ pub fn named(goal: &str, project: &str) -> bool {
 const UNNAMED: usize = 5;
 
 /// The thoughts an ask should see, oldest first: those of the project it
-/// names (at most `limit`), none for a named project with none kept, or,
-/// when it names none, only the last few.
-pub fn recent(state_dir: &Path, goal: &str, limit: usize) -> Vec<Thought> {
+/// names (`project`: the folder's name from [`crate::project::resolve`]; at
+/// most `limit`), none for a named project with none kept, or, when it
+/// names none, only the last few.
+pub fn recent(state_dir: &Path, goal: &str, limit: usize, project: Option<&str>) -> Vec<Thought> {
     let all = load(state_dir);
-    let of_project: Vec<Thought> = all
-        .iter()
-        .filter(|t| t.project.as_deref().is_some_and(|p| named(goal, p)))
-        .cloned()
-        .collect();
-    let (chosen, keep) = if of_project.is_empty() {
-        // A project the ask names but nothing was kept for gets nothing,
-        // not another project's thoughts.
-        if crate::timeline::project_named(goal).is_some() {
-            return Vec::new();
-        }
-        (all, UNNAMED.min(limit))
-    } else {
-        (of_project, limit)
+    let (chosen, keep) = match project {
+        Some(name) => (
+            all.into_iter()
+                .filter(|t| t.project.as_deref().map(project_name) == Some(name))
+                .collect(),
+            limit,
+        ),
+        // A project the ask names but FRIDAY doesn't know gets nothing, not
+        // another project's thoughts.
+        None if crate::timeline::project_named(goal).is_some() => return Vec::new(),
+        None => (all, UNNAMED.min(limit)),
     };
     let skip = chosen.len().saturating_sub(keep);
     chosen.into_iter().skip(skip).collect()
@@ -178,12 +176,17 @@ mod tests {
         add(&d, &t(1, Some("/c/project-friday"), "idea", "A")).unwrap();
         add(&d, &t(2, Some("/c/garden"), "question", "B")).unwrap();
         add(&d, &t(3, Some("/c/project-friday"), "decision", "C")).unwrap();
-        let mine = recent(&d, "Friday, let's continue building FRIDAY", 10);
+        let mine = recent(
+            &d,
+            "Friday, let's continue building FRIDAY",
+            10,
+            Some("project-friday"),
+        );
         assert_eq!(
             mine.iter().map(|t| t.text.as_str()).collect::<Vec<_>>(),
             ["A", "C"]
         );
-        let any = recent(&d, "where was I", 2);
+        let any = recent(&d, "where was I", 2, None);
         assert_eq!(
             any.iter().map(|t| t.text.as_str()).collect::<Vec<_>>(),
             ["B", "C"]
@@ -196,9 +199,9 @@ mod tests {
         for i in 0..10 {
             add(&d, &t(10 + i, Some("/c/garden"), "idea", "g")).unwrap();
         }
-        assert_eq!(recent(&d, "what did we decide?", 15).len(), UNNAMED);
-        assert!(recent(&d, "what did we decide about Atlas", 15).is_empty());
-        assert!(recent(&d, "let's continue building Atlas", 15).is_empty());
+        assert_eq!(recent(&d, "what did we decide?", 15, None).len(), UNNAMED);
+        assert!(recent(&d, "what did we decide about Atlas", 15, None).is_empty());
+        assert!(recent(&d, "let's continue building Atlas", 15, None).is_empty());
         let text = render(&mine);
         assert!(text.contains(" idea [project-friday]: A\n"), "{text}");
         assert!(text.contains(" decision [project-friday]: C\n"), "{text}");
