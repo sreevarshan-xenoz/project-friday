@@ -838,39 +838,26 @@ friday_screen_text() {
   local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" want
   case "${1:-status}" in
     status)
-      if grep -qE '^FRIDAY_SCREEN_TEXT=(1|true)$' "$env_file" 2>/dev/null; then
-        echo "Screen text: on (Super+Ctrl+Y sends the window's text when the app offers enough, else a screenshot). Turn off: friday screen-text off"
-      else
+      if grep -qE '^FRIDAY_SCREEN_TEXT=(0|false)$' "$env_file" 2>/dev/null; then
         echo "Screen text: off (Super+Ctrl+Y sends one screenshot). Turn on: friday screen-text on"
+      else
+        echo "Screen text: on (Super+Ctrl+Y sends the window's text when the app offers enough, else a screenshot; the text can include parts scrolled out of view). Turn off: friday screen-text off"
       fi
       return 0 ;;
-    on)
-      if [ "${2:-}" != "--yes" ]; then
-        cat <<'EOF2'
-With this on, asking about your screen sends the focused window's text instead
-of a screenshot when the app offers enough of it. That text can include parts
-you can't see (a long page scrolled out of view). It goes to any provider you
-use, including free ones that may keep it. Password fields are left out and
-key-like secrets are masked; ordinary private text is not.
-EOF2
-        local a
-        read -r -p "Turn it on? [y/N] " a || a=n
-        [[ "$a" =~ ^[Yy] ]] || { echo "Nothing changed."; return 0; }
-      fi
-      want=1 ;;
-    off) want="" ;;
+    on) want="" ;;
+    off) want=0 ;;
     *) echo "Usage: friday screen-text [status|on|off]" >&2; return 1 ;;
   esac
   mkdir -p "$(dirname "$env_file")"
   (
     umask 077
     { grep -vE '^FRIDAY_SCREEN_TEXT=' "$env_file" 2>/dev/null || true
-      [ -z "$want" ] || echo "FRIDAY_SCREEN_TEXT=1"; } >"$env_file.tmp"
+      [ -z "$want" ] || echo "FRIDAY_SCREEN_TEXT=0"; } >"$env_file.tmp"
     chmod 0600 "$env_file.tmp"
     mv -f "$env_file.tmp" "$env_file"
   )
   systemctl --user restart friday-linux-daemon 2>/dev/null || true
-  [ -n "$want" ] && echo "Screen text: on" || echo "Screen text: off"
+  [ -z "$want" ] && echo "Screen text: on" || echo "Screen text: off"
 }
 
 # Pocketdesk (the phone as a screen, keyboard and remote): FRIDAY OS installs

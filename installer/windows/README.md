@@ -10,7 +10,7 @@ nothing outside the user's profile.
 | Start menu | `FRIDAY` |
 | `friday-ctl` in terminals (option, on) | the install folder is added to the user `PATH` |
 | Desktop shortcut (option, off) | `FRIDAY` on the desktop |
-| Read a window's text for screen questions (option, off) | the tray turns it on at its first start (`FRIDAY_SCREEN_TEXT=1` in `friday.env`) |
+| Read a window's text for screen questions (option, on) | on by default in the tray too; the tray menu turns it off (`FRIDAY_SCREEN_TEXT=0` in `friday.env`) |
 | State, answers, logs | `%LOCALAPPDATA%\friday` (kept on uninstall) |
 | AI provider key | `%APPDATA%\friday\friday.env` (kept on uninstall) |
 
