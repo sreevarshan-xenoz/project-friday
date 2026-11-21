@@ -315,6 +315,18 @@ impl DesktopAdapter {
                 let w = self.pick(p("target").ok_or("name the window to move")?)?;
                 let ws = workspace_arg(p("workspace").ok_or("name the workspace")?)?;
                 self.move_to_workspace(&w.address, &ws)?;
+                // Done only when it's there: look again (a relative
+                // workspace, +1, can't be checked by name).
+                if !ws.starts_with(['+', '-']) {
+                    if let Some(now) = self.windows()?.iter().find(|x| x.address == w.address) {
+                        if now.workspace != ws {
+                            return Err(format!(
+                                "asked to move {} to workspace {ws}, but it's still on {}",
+                                w.class, now.workspace
+                            ));
+                        }
+                    }
+                }
                 // Where it was, so it can be put back (friday undo).
                 Ok(
                     json!({"moved": w.class, "workspace": ws, "address": w.address, "from": w.workspace}),
@@ -328,6 +340,13 @@ impl DesktopAdapter {
             "close_window" => {
                 let w = self.pick(p("target").ok_or("name the window to close")?)?;
                 self.close(&w.address)?;
+                // An app can ask to save first: say it's still open rather
+                // than "closed".
+                std::thread::sleep(std::time::Duration::from_millis(CLOSE_SETTLE_MS));
+                if self.windows()?.iter().any(|x| x.address == w.address) {
+                    return Ok(json!({"asked_to_close": w.class, "title": w.title,
+                        "still_open": true, "note": "it's still open: it may be asking whether to save"}));
+                }
                 Ok(json!({"closed": w.class, "title": w.title}))
             }
             "launch_app" => {
@@ -464,6 +483,12 @@ impl DesktopAdapter {
     }
 }
 
+/// How long a closed window gets to go before it's looked for again.
+#[cfg(not(test))]
+const CLOSE_SETTLE_MS: u64 = 400;
+#[cfg(test)]
+const CLOSE_SETTLE_MS: u64 = 0;
+
 /// A relative workspace in Lua dispatch is `r+1` / `r-1` (as in our bindings).
 fn lua_workspace(ws: &str) -> String {
     if ws.starts_with('+') || ws.starts_with('-') {
@@ -583,6 +608,10 @@ mod tests {
         no_entry: Vec<&'static str>,
         version: &'static str,
         dispatch_reply: &'static str,
+        /// Moves and closes that took effect (a stuck window is in `stuck`).
+        moved: Mutex<Vec<(String, String)>>,
+        closed: Mutex<Vec<String>>,
+        stuck: Vec<&'static str>,
     }
 
     impl Stub {
@@ -593,6 +622,9 @@ mod tests {
                 no_entry: no_entry.to_vec(),
                 version: "",
                 dispatch_reply: "ok",
+                moved: Mutex::new(Vec::new()),
+                closed: Mutex::new(Vec::new()),
+                stuck: Vec::new(),
             })
         }
         /// An older Hyprland, which takes the classic dispatch syntax.
@@ -602,6 +634,9 @@ mod tests {
                 no_entry: no_entry.to_vec(),
                 version: "Hyprland 0.50.1 built from branch v0.50.1",
                 dispatch_reply: "ok",
+                moved: Mutex::new(Vec::new()),
+                closed: Mutex::new(Vec::new()),
+                stuck: Vec::new(),
             })
         }
         /// A Hyprland that refuses every dispatch.
@@ -611,13 +646,33 @@ mod tests {
                 no_entry: Vec::new(),
                 version: "",
                 dispatch_reply: "error: no such window",
+                moved: Mutex::new(Vec::new()),
+                closed: Mutex::new(Vec::new()),
+                stuck: Vec::new(),
             })
         }
         fn calls(&self) -> Vec<String> {
             self.calls.lock().unwrap().clone()
         }
+        /// The last command that did something (not a `hyprctl -j` look).
         fn last(&self) -> String {
-            self.calls().last().cloned().unwrap_or_default()
+            self.calls()
+                .into_iter()
+                .rev()
+                .find(|c| !c.starts_with("hyprctl -j "))
+                .unwrap_or_default()
+        }
+        /// One whose dispatches Hyprland accepts but that doesn't move or close.
+        fn stuck(stuck: &[&'static str]) -> Arc<Self> {
+            Arc::new(Self {
+                calls: Mutex::new(Vec::new()),
+                no_entry: Vec::new(),
+                version: "",
+                dispatch_reply: "ok",
+                moved: Mutex::new(Vec::new()),
+                closed: Mutex::new(Vec::new()),
+                stuck: stuck.to_vec(),
+            })
         }
     }
 
@@ -629,10 +684,41 @@ mod tests {
                 return Ok(self.version.into());
             }
             if program == "hyprctl" && args[0] == "dispatch" {
+                // What the dispatch did, unless the window is stuck.
+                let addr = line.split("address:").nth(1).map(|a| {
+                    a.chars()
+                        .take_while(|c| c.is_ascii_alphanumeric())
+                        .collect::<String>()
+                });
+                if let (Some(addr), "ok") = (addr, self.dispatch_reply) {
+                    if !self.stuck.contains(&addr.as_str()) {
+                        let ws = line
+                            .split("workspace = \"")
+                            .nth(1)
+                            .map(|r| r.split('"').next().unwrap_or("").to_string())
+                            .or_else(|| {
+                                line.split("movetoworkspacesilent ")
+                                    .nth(1)
+                                    .map(|r| r.split(',').next().unwrap_or("").to_string())
+                            });
+                        if line.contains("close") {
+                            self.closed.lock().unwrap().push(addr);
+                        } else if let Some(ws) = ws {
+                            self.moved.lock().unwrap().push((addr, ws));
+                        }
+                    }
+                }
                 return Ok(self.dispatch_reply.into());
             }
             if line == "hyprctl -j clients" {
-                return Ok(CLIENTS.into());
+                let mut list: Vec<Value> = serde_json::from_str(CLIENTS).unwrap();
+                list.retain(|w| !self.closed.lock().unwrap().contains(&s(w, "address")));
+                for (addr, ws) in self.moved.lock().unwrap().iter() {
+                    for w in list.iter_mut().filter(|w| s(w, "address") == *addr) {
+                        w["workspace"] = json!({"name": ws});
+                    }
+                }
+                return Ok(Value::Array(list).to_string());
             }
             if line == "hyprctl -j activewindow" {
                 return Ok(r#"{"class":"foot","title":"zsh"}"#.into());
@@ -783,6 +869,29 @@ mod tests {
             r#"hyprctl dispatch hl.dsp.window.close({ window = "address:0xccc3" })"#
         );
         assert_eq!(r.metadata["risk"], json!("destructive"));
+    }
+
+    #[tokio::test]
+    async fn a_move_or_close_is_reported_as_it_turned_out() {
+        // Hyprland said ok, but the window didn't move: not "done".
+        let stub = Stub::stuck(&["0xaaa1", "0xccc3"]);
+        let r = run(
+            &stub,
+            "move_window",
+            json!({"target": "firefox", "workspace": "3"}),
+        )
+        .await;
+        assert!(!r.success);
+        assert!(r.error.unwrap().contains("still on 1"));
+        // A window that stays open (asking to save) is said to be open.
+        let r = run(&stub, "close_window", json!({"target": "btop"})).await;
+        assert!(r.success);
+        assert_eq!(r.output["still_open"], json!(true));
+        // One that went is closed.
+        let stub = Stub::new(&[]);
+        let r = run(&stub, "close_window", json!({"target": "btop"})).await;
+        assert_eq!(r.output["closed"], json!("foot"));
+        assert!(r.output.get("still_open").is_none());
     }
 
     #[tokio::test]
