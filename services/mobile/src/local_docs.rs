@@ -561,7 +561,12 @@ mod tests {
             .iter()
             .find(|e| e.source.starts_with("File: "))
             .expect("a file passage");
-        assert!(file.source.ends_with("notes/router.md"), "{}", file.source);
+        assert!(
+            Path::new(file.source.trim_start_matches("File: "))
+                .ends_with(Path::new("notes").join("router.md")),
+            "{}",
+            file.source
+        );
         assert!(file.text.contains("first Monday"), "{}", file.text);
         let all = std::fs::read_to_string(&s.folders).unwrap();
         assert!(!all.contains("salary"), "a private folder was indexed");
