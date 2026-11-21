@@ -174,7 +174,9 @@ if [[ "$INSTALL_MODE" == alongside ]]; then
   (( $(sed -n 's/^free_mb=//p' <<<"$scan") >= FRIDAY_SIZE_MB )) \
     || refuse "$TARGET_DISK has less free space than the $FRIDAY_SIZE_MB MB chosen."
   GPT_BACKUP=/run/friday-gpt-backup.bin
-  if ! why=$(friday_disk_alongside "$TARGET_DISK" "$FRIDAY_SIZE_MB" "$GPT_BACKUP"); then
+  # Not in $( ): it sets FRIDAY_BOOT_PART and FRIDAY_ROOT_PART.
+  if ! friday_disk_alongside "$TARGET_DISK" "$FRIDAY_SIZE_MB" "$GPT_BACKUP" >/run/friday-alongside.txt; then
+    why=$(cat /run/friday-alongside.txt)
     { friday_err "$why"; friday_note "  The partition table from before is saved in $GPT_BACKUP (sgdisk --load-backup)."; } >&3 2>&1
     echo "$why"
     exit 1

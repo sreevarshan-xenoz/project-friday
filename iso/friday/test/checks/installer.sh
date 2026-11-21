@@ -210,6 +210,11 @@ if need gum; then
     && pass "alongside with less than 40 GB: refused" || fail "the installer goes alongside in 1 GB"
 fi
 
+echo "dual boot: the installer keeps what the partition step found"
+# In $( ) its FRIDAY_BOOT_PART/FRIDAY_ROOT_PART were lost (a VM install stopped).
+if grep -qE '\$\(friday_disk_alongside' "$ROOT/installer"; then fail "friday_disk_alongside runs in a subshell"
+else pass "friday_disk_alongside runs in the installer's own shell"; fi
+
 echo "dual boot: how much space FRIDAY suggests and how it judges a size"
 # (friday-tui.sh is sourced above, for the validators)
 [[ $(friday_size_recommend 102400) == 81920 ]] && pass "100 GB free: 80 GB suggested" || fail "100 GB free: $(friday_size_recommend 102400)"

@@ -128,6 +128,8 @@ if ! vm root "env TERM=xterm TARGET_DISK=/dev/vda $DISK_MODE FRIDAY_HOSTNAME=fri
       AUTOLOGIN=true ENCRYPT=false FRIDAY_DEBUG_ACCESS=true AUTO_REBOOT=false FRIDAY_FAST=1 \
       timeout 3000 /root/installer" >"$OUT/installer.log" 2>&1; then
   log "the installer failed; last lines:"; tail -n 30 "$OUT/installer.log" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g'
+  log "its log (/tmp/friday-installer.log):"
+  vm root 'tail -n 40 /tmp/friday-installer.log' 2>&1 | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tee "$OUT/friday-installer.log"
   exit 1
 fi
 if [[ -n "$ALONGSIDE" ]]; then
