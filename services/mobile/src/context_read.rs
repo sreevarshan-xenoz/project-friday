@@ -84,7 +84,9 @@ pub trait ProviderSeam: Send + Sync {
 /// screenshot).
 #[async_trait]
 pub trait ScreenText: Send + Sync {
-    async fn window_text(&self, class: &str) -> Option<String>;
+    /// The words of `class`'s window titled `title` (the one in front), never
+    /// of its other windows.
+    async fn window_text(&self, class: &str, title: &str) -> Option<String>;
 }
 
 /// Why an explicit Screen context read did not produce a provider response.
@@ -335,7 +337,7 @@ where
         else {
             return None;
         };
-        let words = source.window_text(&class).await?;
+        let words = source.window_text(&class, &title).await?;
         let (words, masked_words) = friday_goal_execution::mask_secrets(&words);
         let question = question.map(str::trim).filter(|q| !q.is_empty());
         let (task, masked_q) = match question {
@@ -1648,7 +1650,7 @@ mod tests {
 
     #[async_trait]
     impl ScreenText for FakeText {
-        async fn window_text(&self, class: &str) -> Option<String> {
+        async fn window_text(&self, class: &str, _title: &str) -> Option<String> {
             assert_eq!(class, "nautilus");
             self.0.clone()
         }
