@@ -304,7 +304,108 @@ async fn routine(args: &[String]) -> std::process::ExitCode {
         );
         Err(ExitCode::from(2))
     };
+    // `friday routine record`: Hyprland's events while you work, kept in the
+    // runtime folder until `finish <name>` turns them into a routine.
+    let recording = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("friday-recording.txt");
     match args.first().map(String::as_str) {
+        #[cfg(unix)]
+        Some("record") => {
+            use std::io::{BufRead, Write};
+            let socket = std::env::var_os("XDG_RUNTIME_DIR")
+                .zip(std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE"))
+                .map(|(run, sig)| {
+                    std::path::PathBuf::from(run)
+                        .join("hypr")
+                        .join(sig)
+                        .join(".socket2.sock")
+                });
+            let Some(Ok(stream)) = socket.map(std::os::unix::net::UnixStream::connect) else {
+                eprintln!("friday-ctl: recording a routine needs Hyprland");
+                return ExitCode::FAILURE;
+            };
+            let clients: serde_json::Value = std::process::Command::new("hyprctl")
+                .args(["-j", "clients"])
+                .output()
+                .ok()
+                .and_then(|o| serde_json::from_slice(&o.stdout).ok())
+                .unwrap_or_default();
+            let open: Vec<(String, String)> = clients
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|c| {
+                    (
+                        c["address"].as_str().unwrap_or("").to_string(),
+                        c["class"].as_str().unwrap_or("").to_string(),
+                    )
+                })
+                .collect();
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create(true).truncate(true);
+            std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+            let Ok(mut file) = opts.open(&recording) else {
+                eprintln!("friday-ctl: couldn't write {}", recording.display());
+                return ExitCode::FAILURE;
+            };
+            let _ = writeln!(
+                file,
+                "#open {}",
+                serde_json::to_string(&open).unwrap_or_default()
+            );
+            // Its own pid, for `friday routine stop` (a wrapper's would be wrong).
+            let _ = std::fs::write(
+                recording.with_extension("pid"),
+                std::process::id().to_string(),
+            );
+            for line in std::io::BufReader::new(stream).lines() {
+                let Ok(line) = line else { break };
+                // Only the events a routine can do again; never window titles.
+                if let Some((event, data)) = line.split_once(">>") {
+                    let keep = match event {
+                        "openwindow" => data.splitn(4, ',').take(3).collect::<Vec<_>>().join(","),
+                        "movewindowv2" | "workspacev2" => data.to_string(),
+                        _ => continue,
+                    };
+                    let _ = writeln!(file, "{event}>>{keep}");
+                }
+            }
+            ExitCode::SUCCESS
+        }
+        Some("finish") => {
+            if let Err(c) = named("finish") {
+                return c;
+            }
+            let text = std::fs::read_to_string(&recording).unwrap_or_default();
+            let open: Vec<(String, String)> = text
+                .lines()
+                .next()
+                .and_then(|l| l.strip_prefix("#open "))
+                .and_then(|j| serde_json::from_str(j).ok())
+                .unwrap_or_default();
+            let steps = r::from_events(&text, &open);
+            let _ = std::fs::remove_file(&recording);
+            if steps.is_empty() {
+                eprintln!("Nothing to save: open an app, move a window or switch workspaces while recording.");
+                return ExitCode::FAILURE;
+            }
+            let routine = Routine {
+                name: name.trim().to_string(),
+                goal: "recorded by you".into(),
+                steps,
+            };
+            if let Err(e) = r::save(&dir, &routine) {
+                eprintln!("friday-ctl: couldn't save it: {e}");
+                return ExitCode::FAILURE;
+            }
+            println!("Saved \"{}\": {} steps.", routine.name, routine.steps.len());
+            for s in &routine.steps {
+                println!("  {} {}", s.verb, s.params);
+            }
+            ExitCode::SUCCESS
+        }
         Some("list") => {
             for x in r::list(&dir) {
                 println!("{}\t{} steps\t{}", x.name, x.steps.len(), x.goal);
@@ -791,6 +892,54 @@ fn project_in_front() -> Option<String> {
 fn docs(args: &[String]) -> std::process::ExitCode {
     use friday_mobile::local_docs;
     let s = local_docs::Sources::system();
+    // `friday folders`: the chosen folders (one per line in
+    // ~/.config/friday/search-folders), minus private ones (folder lines in
+    // private-windows), made searchable.
+    if args.first().map(String::as_str) == Some("--prepare-folders") {
+        let config = std::env::var_os("XDG_CONFIG_HOME")
+            .filter(|v| !v.is_empty())
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
+            })
+            .unwrap_or_default()
+            .join("friday");
+        let home = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_default();
+        let paths = |file: &str, folders_only: bool| -> Vec<std::path::PathBuf> {
+            std::fs::read_to_string(config.join(file))
+                .unwrap_or_default()
+                .lines()
+                .map(|l| l.trim())
+                .map(|l| l.strip_prefix("never ").map_or(l, str::trim))
+                .filter(|l| !folders_only || l.starts_with('/') || l.starts_with("~/"))
+                .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                .map(|l| {
+                    l.strip_prefix("~/")
+                        .map_or_else(|| l.into(), |r| home.join(r))
+                })
+                .collect()
+        };
+        let folders = paths("search-folders", false);
+        return match local_docs::prepare_folders(
+            &folders,
+            &paths("private-windows", true),
+            &s.folders,
+        ) {
+            Ok(n) => {
+                println!(
+                    "{n} files from {} folder(s) are ready to search.",
+                    folders.len()
+                );
+                std::process::ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("friday-ctl: couldn't read the folders: {e}");
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
     if args.first().map(String::as_str) == Some("--prepare") {
         let mut code = std::process::ExitCode::SUCCESS;
         if s.wiki_gz.exists() {
