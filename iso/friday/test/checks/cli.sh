@@ -285,7 +285,54 @@ export HYPR_WIN='{"class":"firefox","pid":4242,"title":"x"}'
 : >"$LOG"; KITTY_LS=$(kls 1) XDG_RUNTIME_DIR="$RUN" PICK="what is rust" bash "$F" ask; sleep 0.3
 if grep -q "^kitten" "$LOG"; then fail "asked kitty while another app had focus"; else pass "only a focused kitty window is asked"; fi
 unset HYPR_WIN
-rm -f "$S/hyprctl" "$S/kitten"
+rm -f "$S/kitten"
+
+echo "explain the last error (any terminal, friday shell-hook)"
+contains "the zsh hook records each command" "$(bash "$F" shell-hook zsh)" "add-zsh-hook preexec _friday_preexec"
+contains "the bash hook too" "$(bash "$F" shell-hook bash)" 'PROMPT_COMMAND="_friday_prompt'
+# A foot window (its pid) with a shell under it that left a record.
+# script gives the shell a terminal of its own (WezTerm's pane is found by it).
+script -qc "bash -c 'sleep 30; :'" /dev/null </dev/null >/dev/null 2>&1 & TERM_WIN=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do TERM_SH=$(pgrep -P "$TERM_WIN" | head -n1); [ -n "$TERM_SH" ] && break; sleep 0.1; done
+mkdir -p "$RUN/friday-term"
+printf 'done\t%s\t2\t/home/me/app\tmake test\n' "$(date +%s)" >"$RUN/friday-term/$TERM_SH"
+export HYPR_WIN="{\"class\":\"foot\",\"pid\":$TERM_WIN,\"title\":\"zsh\"}"
+printf '#!/bin/bash\ncat >%q\necho "$PICK"\n' "$W/menu.txt" >"$S/fuzzel"
+: >"$LOG"; XDG_RUNTIME_DIR="$RUN" PICK="what is rust" bash "$F" ask; sleep 0.3
+contains "Super+Y in foot offers to explain the failed command" "$(head -n1 "$W/menu.txt")" "Explain the error from: make test (exit 2)"
+: >"$LOG"; XDG_RUNTIME_DIR="$RUN" PICK="Explain the error from: make test (exit 2)" bash "$F" ask; sleep 0.3
+contains "with no way to read its output, FRIDAY looks at the window" "$(cat "$LOG")" "context screen --yes --ask"
+contains "and the model gets the command and exit code" "$(cat "$LOG")" "Command: make test. Folder: /home/me/app. Exit code: 2."
+# WezTerm can give the pane's text: that goes instead of a screenshot.
+cat >"$S/wezterm" <<'STUB'
+#!/bin/bash
+case "$*" in
+  "cli list --format json") printf '[{"pane_id":2,"tty_name":"/dev/pts/999"},{"pane_id":3,"tty_name":"%s"}]' "$PANE_TTY" ;;
+  "cli get-text --pane-id 3 --start-line -150") printf 'make: *** No rule to make target test.  Stop.\n' ;;
+esac
+STUB
+chmod +x "$S/wezterm"
+export PANE_TTY="/dev/$(ps -o tty= -p "$TERM_SH" | tr -d ' ')"
+export HYPR_WIN="{\"class\":\"org.wezfurlong.wezterm\",\"pid\":$TERM_WIN,\"title\":\"zsh\"}"
+: >"$LOG"; XDG_RUNTIME_DIR="$RUN" PICK="Explain the error from: make test (exit 2)" bash "$F" ask; sleep 0.3
+contains "in WezTerm the model gets the pane's text" "$(cat "$LOG")" "No rule to make target test"
+if grep -q "context screen" "$LOG"; then fail "took a screenshot in WezTerm"; else pass "WezTerm: no screenshot"; fi
+rm -f "$S/wezterm"
+export HYPR_WIN="{\"class\":\"foot\",\"pid\":$TERM_WIN,\"title\":\"zsh\"}"
+printf 'done\t%s\t2\t/home/me/app\tmake test\n' "$(( $(date +%s) - 3600 ))" >"$RUN/friday-term/$TERM_SH"
+: >"$LOG"; XDG_RUNTIME_DIR="$RUN" PICK="what is rust" bash "$F" ask; sleep 0.3
+if grep -q "Explain the error" "$W/menu.txt"; then fail "offered an hour-old failure"; else pass "an old failure isn't offered"; fi
+printf 'running\t%s\t-\t/home/me/app\tcargo build\n' "$(date +%s)" >"$RUN/friday-term/$TERM_SH"
+: >"$LOG"; XDG_RUNTIME_DIR="$RUN" PICK="Tell me when this finishes: cargo build" bash "$F" ask; sleep 0.3
+contains "a running command can be watched" "$(cat "$LOG")" "I'll tell you when cargo build finishes"
+printf '#!/bin/bash\necho "fuzzel $*" >> %q\necho "$PICK"\n' "$LOG" >"$S/fuzzel"; chmod +x "$S/fuzzel"
+: >"$LOG"; XDG_RUNTIME_DIR="$RUN" timeout 10 bash "$F" term-watch "$TERM_SH" & WATCH=$!
+sleep 0.5; printf 'done\t%s\t101\t/home/me/app\tcargo build\n' "$(date +%s)" >"$RUN/friday-term/$TERM_SH"
+wait "$WATCH" 2>/dev/null || true
+contains "and it says how it ended" "$(cat "$LOG")" "Failed (exit 101): cargo build"
+kill "$TERM_WIN" 2>/dev/null || true
+unset HYPR_WIN
+rm -rf "$S/hyprctl" "$RUN/friday-term"
 
 echo "rewrite in place"
 # hyprctl: the focused window (tags from $WIN_TAGS). With $MOVE_AFTER=N, the

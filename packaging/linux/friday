@@ -34,6 +34,8 @@ Autonomous Agent & Cognitive Loop:
   friday wake [status|on|off]      Say "hey Friday" and your question, hands free (opt-in)
   friday show <what>               Ring that control in the window in front ("where's …"
                                    and "show me …" in the ask box do the same)
+  friday shell-hook [zsh|bash]     Lines for your shell's rc file: Super+Y explains a failed
+                                   command, or says when one finishes, in any terminal
   friday recall [status|on|off]    Keep the text of windows you look at for 3 hours, here
                                    only, so you can ask "what was that…" (off forgets it)
   friday clips [status|on|off|pick] Keep the last 200 texts you copy; Super+Ctrl+V pastes one
@@ -1778,6 +1780,115 @@ friday_last_error() {
     | [.last_cmd_exit_status, (.last_reported_cmdline | gsub("[\t\n]"; " ")), .cwd, $s, .id] | @tsv' 2>/dev/null || true
 }
 
+# `friday shell-hook [zsh|bash]`: lines for your shell's rc file, so "Explain
+# the error" and "Tell me when this finishes" work in any terminal (kitty
+# reports this itself). Each shell keeps one line in
+# $XDG_RUNTIME_DIR/friday-term/<its pid>: running|done, when, the exit code,
+# the folder and the command. Never the command's output.
+friday_shell_hook() {
+  case "${1:-zsh}" in
+    zsh) cat <<'EOF'
+zmodload zsh/datetime 2>/dev/null
+typeset -g _friday_tf="${XDG_RUNTIME_DIR:-/tmp}/friday-term/$$" _friday_cmd="" _friday_dir=""
+_friday_term() { mkdir -p -m 700 "${_friday_tf:h}" 2>/dev/null; print -r -- "$1"$'\t'"${EPOCHSECONDS:-0}"$'\t'"$2"$'\t'"$_friday_dir"$'\t'"$_friday_cmd" >| "$_friday_tf" 2>/dev/null; }
+_friday_preexec() { _friday_cmd=${1//[$'\t\n']/ } _friday_dir=$PWD; _friday_term running -; }
+_friday_precmd() { local s=$?; [[ -n $_friday_cmd ]] && _friday_term done $s; _friday_cmd=""; return 0; }
+_friday_zshexit() { rm -f "$_friday_tf"; }
+autoload -Uz add-zsh-hook
+add-zsh-hook preexec _friday_preexec
+add-zsh-hook precmd _friday_precmd
+add-zsh-hook zshexit _friday_zshexit
+# First, so it sees the command's exit status before any other hook runs.
+precmd_functions=(_friday_precmd ${precmd_functions:#_friday_precmd})
+EOF
+      ;;
+    bash) cat <<'EOF'
+# The DEBUG trap records the first command after a prompt that isn't one of
+# PROMPT_COMMAND's own (starship and the like). With bash-preexec, its hooks
+# are used instead.
+_friday_tf="${XDG_RUNTIME_DIR:-/tmp}/friday-term/$$" _friday_cmd="" _friday_dir="" _friday_ready=""
+_friday_term() { mkdir -p -m 700 "${_friday_tf%/*}" 2>/dev/null; printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$(date +%s)" "$2" "$_friday_dir" "$_friday_cmd" >| "$_friday_tf" 2>/dev/null; }
+_friday_start() { local n c; read -r n c <<<"$(HISTTIMEFORMAT= history 1)"; _friday_cmd=${1:-$c}; _friday_cmd=${_friday_cmd//[$'\t\n']/ } _friday_dir=$PWD; _friday_term running -; }
+_friday_debug() { [[ -n $_friday_ready ]] || return 0; local p="${PROMPT_COMMAND[*]}" b="$BASH_COMMAND"; [[ ${p//[[:space:]]/} != *"${b//[[:space:]]/}"* ]] || return 0; _friday_ready=""; _friday_start; }
+_friday_prompt() { local s=$?; [[ -n $_friday_cmd ]] && _friday_term done $s; _friday_cmd="" _friday_ready=1; return $s; }
+if declare -F __bp_install >/dev/null 2>&1 || [[ -n ${bash_preexec_imported:-} ]]; then
+  preexec_functions+=(_friday_start); precmd_functions=(_friday_prompt "${precmd_functions[@]}")
+elif [[ -z $(trap -p DEBUG) ]]; then
+  trap '_friday_debug' DEBUG
+  if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == "declare -a"* ]]; then
+    PROMPT_COMMAND=(_friday_prompt "${PROMPT_COMMAND[@]}")
+  else
+    PROMPT_COMMAND="_friday_prompt${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+  fi
+fi
+EOF
+      ;;
+    *) echo "Usage: friday shell-hook [zsh|bash]  (then: eval \"\$(friday shell-hook zsh)\" in ~/.zshrc)" >&2; return 1 ;;
+  esac
+}
+
+# The shell-hook line of the shell in the focused window (any terminal but
+# kitty): the newest one among the window's processes. Prints
+# "state\twhen\texit\tfolder\tcommand\tshell pid\twindow class", or nothing.
+friday_term_record() {
+  command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 0
+  local dir="${XDG_RUNTIME_DIR:-/tmp}/friday-term" win pid cls pids p f best=""
+  [ -d "$dir" ] || return 0
+  win=$(timeout 2 hyprctl activewindow -j 2>/dev/null) || return 0
+  pid=$(jq -r '.pid // empty' <<<"$win" 2>/dev/null) cls=$(jq -r '.class // empty' <<<"$win" 2>/dev/null)
+  [[ "$pid" =~ ^[0-9]+$ && "$cls" != kitty ]] || return 0
+  # Every process under the window's: its shells are in there.
+  pids=$(ps -eo pid=,ppid= 2>/dev/null | awk -v root="$pid" '{ kids[$2] = kids[$2] " " $1 }
+    END { q = root; while (q != "") { split(q, a, " "); q = ""; for (i in a) { print a[i]; q = q " " kids[a[i]] } } }')
+  for p in $pids; do
+    f="$dir/$p"
+    [ -f "$f" ] || continue
+    if [ -z "$best" ] || [ "$f" -nt "$best" ]; then best="$f"; fi
+  done
+  [ -n "$best" ] && printf '%s\t%s\t%s\n' "$(head -n1 "$best")" "${best##*/}" "$cls"
+  return 0
+}
+
+# friday_term_text <shell pid>: the last lines of that shell's WezTerm pane
+# (found by its terminal), or nothing (other terminals have no way to read them).
+friday_term_text() {
+  command -v wezterm >/dev/null 2>&1 || return 0
+  local tty pane
+  tty=$(ps -o tty= -p "$1" 2>/dev/null | tr -d ' ')
+  [ -n "$tty" ] && [ "$tty" != "?" ] || return 0
+  pane=$(timeout 3 wezterm cli list --format json 2>/dev/null | jq -r --arg t "/dev/$tty" 'map(select(.tty_name == $t)) | .[0].pane_id // empty' 2>/dev/null || true)
+  [[ "$pane" =~ ^[0-9]+$ ]] || return 0
+  timeout 3 wezterm cli get-text --pane-id "$pane" --start-line -150 2>/dev/null | cut -c1-400 || true
+}
+
+# friday term-watch <pid>: wait for that shell's running command to finish
+# (up to a day), then say how it went.
+friday_term_watch() {
+  local f="${XDG_RUNTIME_DIR:-/tmp}/friday-term/$1" line state when code cmd start="" i
+  [[ "$1" =~ ^[0-9]+$ ]] || return 1
+  for ((i = 0; i < 43200; i++)); do
+    # The shell closed (or was killed): nothing more will come.
+    kill -0 "$1" 2>/dev/null || return 0
+    line=$(head -n1 "$f" 2>/dev/null) || return 0
+    IFS=$'\t' read -r state when code _ cmd <<<"$line"
+    [ -n "$start" ] || start="$when"
+    # Another command started while we slept: the watched one is over.
+    if [ "$state" = running ] && [ "$when" != "$start" ]; then
+      notify-send -a FRIDAY -- "FRIDAY" "Finished." 2>/dev/null || true
+      return 0
+    fi
+    if [ "$state" = done ]; then
+      case "$code" in
+        0) notify-send -a FRIDAY -- "FRIDAY" "Finished: ${cmd:0:80}" 2>/dev/null || true ;;
+        130) notify-send -a FRIDAY -- "FRIDAY" "Stopped: ${cmd:0:80}" 2>/dev/null || true ;;
+        *) notify-send -a FRIDAY -u critical -- "FRIDAY" "Failed (exit $code): ${cmd:0:80}. Super+Y explains it." 2>/dev/null || true ;;
+      esac
+      return 0
+    fi
+    sleep 2
+  done
+}
+
 # A rewrite's text as the model may wrap it: drop a code fence or quotes
 # around the whole answer.
 friday_rewrite_clean() {
@@ -3109,7 +3220,8 @@ case "${1:-}" in
           --placeholder="$source_label: \"$preview…\" · pick or type (Shift+Enter sends it)") || exit 0
       elif last_error=$(friday_last_error) && running=$(friday_kitty_running) \
           && suggestions=$(friday_app_suggestions) \
-          && { [ -s "$history_file" ] || [ -n "$last_error$running$suggestions" ]; }; then
+          && term=$([ -n "$last_error$running" ] || friday_term_record) \
+          && { [ -s "$history_file" ] || [ -n "$last_error$running$suggestions$term" ]; }; then
         # Recent asks, newest first. Enter re-runs the highlighted one;
         # Shift+Enter sends exactly what was typed (fuzzel execute-input).
         # A kitty window whose last command failed offers to explain it first.
@@ -3124,6 +3236,21 @@ case "${1:-}" in
           IFS=$'\t' read -r run_cmd run_sock run_id <<<"$running"
           tell_me="Tell me when this finishes: $(cut -c1-60 <<<"$run_cmd")"
         fi
+        # Any other terminal, through friday shell-hook: a failure from the
+        # last ten minutes, or the command running now.
+        term_pid="" term_private=""
+        if [ -n "$term" ]; then
+          # Checked now, while the terminal still has the focus.
+          term_private=$(friday_private_window)
+          IFS=$'\t' read -r t_state t_when t_exit t_cwd t_cmd t_pid t_class <<<"$term"
+          if [ "$t_state" = done ] && [[ "$t_exit" =~ ^[0-9]+$ ]] && [ "$t_exit" != 0 ] && [ "$t_exit" != 130 ] \
+              && (( $(date +%s) - ${t_when:-0} < 600 )); then
+            explain="Explain the error from: $(cut -c1-60 <<<"$t_cmd") (exit $t_exit)"
+          elif [ "$t_state" = running ]; then
+            tell_me="Tell me when this finishes: $(cut -c1-60 <<<"$t_cmd")"
+            term_pid="$t_pid"
+          fi
+        fi
         # Then what fits the app you're in (friday_app_suggestions).
         goal=$({ [ -z "$explain" ] || printf '%s\n' "$explain"; [ -z "$tell_me" ] || printf '%s\n' "$tell_me"
           [ -z "$suggestions" ] || cut -f1 <<<"$suggestions"
@@ -3136,12 +3263,31 @@ case "${1:-}" in
             FRIDAY_SUGGESTED=1 exec bash "$0" ask "$(cut -f1 <<<"$picked")" "$(cut -f2- <<<"$picked")"
           fi
         fi
+        if [ -n "$tell_me" ] && [ "$goal" = "$tell_me" ] && [ -n "$term_pid" ]; then
+          setsid bash "$0" term-watch "$term_pid" </dev/null >/dev/null 2>&1 &
+          notify-send -a FRIDAY -- "FRIDAY" "I'll tell you when $(cut -c1-60 <<<"$t_cmd") finishes." 2>/dev/null || true
+          exit 0
+        fi
         if [ -n "$tell_me" ] && [ "$goal" = "$tell_me" ]; then
           setsid friday-ctl watch kitty "$run_sock" "$run_id" "$run_cmd" </dev/null >/dev/null 2>&1 &
           notify-send -a FRIDAY -- "FRIDAY" "I'll tell you when $(cut -c1-60 <<<"$run_cmd") finishes." 2>/dev/null || true
           exit 0
         fi
-        if [ -n "$explain" ] && [ "$goal" = "$explain" ]; then
+        if [ -n "$explain" ] && [ "$goal" = "$explain" ] && [ -z "$last_error" ]; then
+          # Another terminal: its text from WezTerm, else FRIDAY looks at the
+          # window (picking this is asking it to).
+          out=""; [[ "${t_class,,}" == *wezterm* ]] && out=$(friday_term_text "$t_pid" | tail -n 150)
+          private_win="$term_private"
+          goal="Explain why this command failed and how to fix it"
+          if [ -n "$out" ]; then
+            context=$(printf 'Command: %s\nFolder: %s\nExit code: %s\nOutput:\n%s' "$t_cmd" "$t_cwd" "$t_exit" "$out")
+            [ "${#context}" -le 8000 ] || context="${context: -8000}"
+          else
+            goal=$(printf '%s. Command: %s. Folder: %s. Exit code: %s. Its output is in the terminal window shown.' "$goal" "$t_cmd" "$t_cwd" "$t_exit")
+            use_screen=true; ask_args+=(--screen)
+          fi
+          explaining_error=true
+        elif [ -n "$explain" ] && [ "$goal" = "$explain" ]; then
           # Its output, from kitty (the last 150 lines).
           out=$(timeout 3 kitten @ --to "unix:$le_sock" get-text --match "id:$le_id" --extent last_cmd_output 2>/dev/null \
             | tail -n 150 | cut -c1-400 || true)
@@ -3569,6 +3715,14 @@ case "${1:-}" in
   recall)
     shift
     friday_recall "$@"
+    ;;
+  shell-hook)
+    shift
+    friday_shell_hook "$@"
+    ;;
+  term-watch)
+    shift
+    friday_term_watch "$@"
     ;;
   clips)
     shift
