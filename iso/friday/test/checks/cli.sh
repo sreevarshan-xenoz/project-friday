@@ -865,6 +865,7 @@ printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s %q\nexit 0\n'
 if grep -q "context screen" "$LOG"; then fail "took a screenshot though the extension had the page"; else pass "a browser with the extension sends the page's text, no screenshot"; fi
 contains "with its address" "$(cat "$LOG")" "Address: https://example.com/book"
 contains "and its text" "$(cat "$LOG")" "Ownership rules"
+contains "the page is marked as quoted material (it can't pick the tool)" "$(cat "$LOG")" "[page]"
 : >"$LOG"; bash "$F" ask --screen "summarize this page"; sleep 0.3
 contains "without the extension it's a screenshot as before" "$(cat "$LOG")" "context screen"
 # A private window the extension can't see: its tab answer is another window's.

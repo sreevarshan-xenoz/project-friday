@@ -3504,7 +3504,8 @@ case "${1:-}" in
       fi
       context="${context:0:6000}"
       # An answer made on this computer keeps its follow-up here too.
-      grep -q '^_On this computer · nothing was sent_$' "$state_dir/last-answer.md" 2>/dev/null && followup_local=true
+      # (In the header lines, not anywhere in the answer's own text.)
+      head -n 8 "$state_dir/last-answer.md" 2>/dev/null | grep -qx '_On this computer · nothing was sent_' && followup_local=true
     fi
 
     if $use_selection; then
@@ -3997,7 +3998,7 @@ case "${1:-}" in
     if $use_screen && [ -z "${region:-}" ] && [[ "$(friday_app_class)" =~ firefox|chromium|chrome|brave|librewolf|zen|vivaldi|edge ]] \
         && tab=$(timeout 8 friday-ctl browser tab 2>/dev/null) && [ -n "$(jq -r '.text // empty' <<<"$tab" 2>/dev/null)" ] \
         && friday_tab_in_front "$tab"; then
-      request=$(jq -r --arg q "$goal" '"\($q)\n\nThe page in front (read from the browser when asked):\nTitle: \(.title)\nAddress: \(.url)\n" + (if (.selection // "") != "" then "Selected: \(.selection)\n" else "" end) + "Text:\n\"\"\"\n\(.text)\n\"\"\""' <<<"$tab")
+      request=$(jq -r --arg q "$goal" '"\($q)\n\n[page]\nThe page in front (read from the browser when asked):\nTitle: \(.title)\nAddress: \(.url)\n" + (if (.selection // "") != "" then "Selected: \(.selection)\n" else "" end) + "Text:\n\"\"\"\n\(.text)\n\"\"\""' <<<"$tab")
       use_screen=false
     fi
     if $use_screen; then
