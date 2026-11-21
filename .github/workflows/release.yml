@@ -284,6 +284,12 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: sha256sum * | tee SHA256SUMS
+      # Only the public update key, to check the secret against it.
+      - uses: actions/checkout@v4
+        with:
+          path: src
+          sparse-checkout: installer/windows/friday-update-key.pub
+          sparse-checkout-cone-mode: false
       # The Windows tray installs an update only when FRIDAY's update key
       # signed SHA256SUMS (FRIDAY_UPDATE_KEY, which must match the committed
       # installer/windows/friday-update-key.pub). A dry run signs with a
@@ -295,10 +301,11 @@ jobs:
           PUBLISH: ${{ needs.version.outputs.publish }}
         run: |
           key="$RUNNER_TEMP/update.key"; ( umask 077; : >"$key" )
+          trap 'rm -f "$key"' EXIT
           if [[ "$PUBLISH" == true ]]; then
             [[ -n "$FRIDAY_UPDATE_KEY" ]] || { echo "::error::FRIDAY_UPDATE_KEY is not set"; exit 1; }
             printf '%s\n' "$FRIDAY_UPDATE_KEY" >"$key"
-            cmp -s <(openssl ec -in "$key" -pubout 2>/dev/null) "$GITHUB_WORKSPACE/installer/windows/friday-update-key.pub" \
+            cmp -s <(openssl ec -in "$key" -pubout 2>/dev/null) "$GITHUB_WORKSPACE/src/installer/windows/friday-update-key.pub" \
               || { echo "::error::FRIDAY_UPDATE_KEY is not the key in installer/windows/friday-update-key.pub"; exit 1; }
           else
             openssl ecparam -name prime256v1 -genkey -noout -out "$key"

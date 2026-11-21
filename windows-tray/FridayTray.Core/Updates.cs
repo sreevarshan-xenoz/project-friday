@@ -64,9 +64,12 @@ vSpfZge9Uiz7oJrnZ35a/mstGcgqB1nmEdvVo8VJRrs2sTi9/Kzm559PFA==
                 else if (name.StartsWith("FRIDAY-", StringComparison.Ordinal) && name.EndsWith("-x64.msi", StringComparison.Ordinal))
                     (msiName, msiUrl) = (name, url);
             }
-            if (msiName is null || msiUrl is null || sumsUrl is null)
+            var version = tag.TrimStart('v');
+            // The MSI must be the tag's own: an older signed MSI under a newer
+            // tag would otherwise install as an "update" (a downgrade).
+            if (msiName is null || msiUrl is null || sumsUrl is null || msiName != $"FRIDAY-{version}-x64.msi")
                 return null;
-            return new Release(tag.TrimStart('v'), msiName, msiUrl, sumsUrl);
+            return new Release(version, msiName, msiUrl, sumsUrl);
         }
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
         {
