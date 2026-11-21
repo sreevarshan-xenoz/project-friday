@@ -355,6 +355,11 @@ async fn routine(args: &[String]) -> std::process::ExitCode {
                 "#open {}",
                 serde_json::to_string(&open).unwrap_or_default()
             );
+            // Its own pid, for `friday routine stop` (a wrapper's would be wrong).
+            let _ = std::fs::write(
+                recording.with_extension("pid"),
+                std::process::id().to_string(),
+            );
             for line in std::io::BufReader::new(stream).lines() {
                 let Ok(line) = line else { break };
                 // Only the events a routine can do again; never window titles.

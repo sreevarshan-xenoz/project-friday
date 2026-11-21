@@ -812,17 +812,28 @@ contains "nothing to report before an answer" "$(bash "$F" wrong x 2>&1 || true)
 
 echo "teach a routine by showing it"
 RUNTIME_SAVE="${XDG_RUNTIME_DIR:-}"; export XDG_RUNTIME_DIR="$W/rt"; mkdir -p "$XDG_RUNTIME_DIR"
+# The recorder (friday-ctl routine record) writes its own pid and listens.
+RC="$W/rec-bin"; mkdir -p "$RC"
+cat >"$RC/friday-ctl" <<STUB
+#!/bin/bash
+if [ "\$1 \$2" = "routine record" ]; then echo \$\$ >"\$XDG_RUNTIME_DIR/friday-recording.pid"; exec sleep 30; fi
+exec "$S/friday-ctl" "\$@"
+STUB
+chmod +x "$RC/friday-ctl"; PATH_SAVE="$PATH"; export PATH="$RC:$PATH"
 : >"$LOG"; out=$(bash "$F" routine record)
 contains "recording starts and says how to stop" "$out" "friday routine stop <name>"
 contains "a notification shows it records the whole time" "$(cat "$LOG")" "FRIDAY is recording a routine"
 expect "it keeps the recorder's pid" test -s "$XDG_RUNTIME_DIR/friday-recording.pid"
+REC_PID=$(cat "$XDG_RUNTIME_DIR/friday-recording.pid")
 : >"$LOG"; bash "$F" routine stop morning setup >/dev/null 2>&1 || true
 contains "stop turns the recording into a routine" "$(cat "$LOG")" "routine finish morning setup"
+sleep 0.2; if kill -0 "$REC_PID" 2>/dev/null; then fail "the recorder kept running"; kill "$REC_PID"; else pass "stop ends the recorder itself"; fi
 expect "and forgets the recorder" test ! -e "$XDG_RUNTIME_DIR/friday-recording.pid"
 contains "stop when not recording says so" "$(bash "$F" routine stop x 2>&1 || true)" "Not recording"
 mkdir -p "$HOME/.local/share/friday/routines"; echo '{}' >"$HOME/.local/share/friday/routines/morning-setup.json"
 contains "edit opens the routine's file" "$(EDITOR=echo bash "$F" routine edit Morning Setup)" "friday/routines/morning-setup.json"
-rm -rf "$HOME/.local/share/friday/routines"; export XDG_RUNTIME_DIR="$RUNTIME_SAVE"
+refuse "edit refuses a path" bash "$F" routine edit ../../etc/x
+rm -rf "$HOME/.local/share/friday/routines"; export XDG_RUNTIME_DIR="$RUNTIME_SAVE" PATH="$PATH_SAVE"
 
 echo "answers know their project"
 : >"$LOG"; WS_PROJECT=/home/me/code/project-friday bash "$F" ask "why does the build fail"; sleep 0.3

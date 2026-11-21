@@ -1364,8 +1364,11 @@ friday_routine() {
     record)
       pid=$(cat "$pidf" 2>/dev/null || true)
       if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then echo "Already recording: friday routine stop <name>"; return 0; fi
+      rm -f "$pidf"
       setsid friday-ctl routine record </dev/null >/dev/null 2>&1 &
-      echo $! >"$pidf"
+      # The recorder writes its own pid once it listens.
+      for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$pidf" ] && break; sleep 0.1; done
+      [ -s "$pidf" ] || { echo "Couldn't start recording (it needs Hyprland)." >&2; return 1; }
       nid=$(notify-send -a FRIDAY -u critical -p -- "● FRIDAY is recording a routine" "Open apps, move windows, switch workspaces. Then: friday routine stop <name>" 2>/dev/null || true)
       echo "$nid" >"$nidf"
       echo "Recording. Do the steps, then: friday routine stop <name>" ;;
@@ -1380,6 +1383,7 @@ friday_routine() {
       friday-ctl routine finish "$@" && echo "Change a step: friday routine edit $*" ;;
     edit)
       shift
+      [[ "$*" =~ ^[[:alnum:]\ _-]{1,40}$ ]] || { echo "A routine's name is letters, digits, spaces, - or _." >&2; return 1; }
       local f="${XDG_DATA_HOME:-$HOME/.local/share}/friday/routines/$(tr '[:upper:]' '[:lower:]' <<<"$*" | xargs | tr ' ' '-').json"
       [ -f "$f" ] || { echo "There's no routine called \"$*\"." >&2; return 1; }
       "${EDITOR:-nano}" "$f" ;;

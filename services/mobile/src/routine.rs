@@ -140,6 +140,7 @@ pub fn from_events(events: &str, open: &[(String, String)]) -> Vec<Step> {
     let mut apps: std::collections::HashMap<String, String> =
         open.iter().map(|(a, c)| (bare(a), c.clone())).collect();
     let mut steps: Vec<Step> = Vec::new();
+    let mut launched = std::collections::HashSet::new();
     for line in events.lines() {
         let Some((event, data)) = line.split_once(">>") else {
             continue;
@@ -148,6 +149,11 @@ pub fn from_events(events: &str, open: &[(String, String)]) -> Vec<Step> {
         let step = match (event, f.as_slice()) {
             ("openwindow", [addr, _ws, class, ..]) if !class.is_empty() => {
                 apps.insert(bare(addr), class.to_string());
+                // A second window of an app just opened (a dialog, a splash)
+                // isn't a second launch.
+                if !launched.insert(class.to_lowercase()) {
+                    continue;
+                }
                 Step {
                     verb: "launch_app".into(),
                     params: json!({ "app": class.to_lowercase() }),
@@ -168,14 +174,15 @@ pub fn from_events(events: &str, open: &[(String, String)]) -> Vec<Step> {
             },
             _ => continue,
         };
-        let same = steps.last().is_some_and(|last| {
-            last.verb == step.verb
-                && (step.verb == "switch_workspace"
-                    || (step.verb == "move_window"
-                        && last.params["target"] == step.params["target"]))
-        });
-        if same {
+        // The last of several switches in a row; a window moved again
+        // replaces its earlier move.
+        if step.verb == "switch_workspace" && steps.last().is_some_and(|l| l.verb == step.verb) {
             steps.pop();
+        }
+        if step.verb == "move_window" {
+            steps.retain(|l| {
+                !(l.verb == "move_window" && l.params["target"] == step.params["target"])
+            });
         }
         steps.push(step);
     }
@@ -239,7 +246,7 @@ mod tests {
     fn your_own_steps_become_a_routine() {
         let open = [("0xaaa1".to_string(), "kitty".to_string())];
         let events =
-            "workspacev2>>2,2\nworkspacev2>>3,3\nopenwindow>>bbb2,3,firefox,Mozilla Firefox\n\
+            "workspacev2>>2,2\nworkspacev2>>3,3\nopenwindow>>bbb2,3,firefox,Mozilla Firefox\nopenwindow>>ddd4,3,firefox,Save as\n\
             movewindowv2>>bbb2,1,1\nmovewindowv2>>bbb2,4,4\nmovewindowv2>>aaa1,2,2\n\
             activewindow>>kitty,zsh\nworkspacev2>>-98,special:magic\nmovewindowv2>>ccc3,1,1\n";
         let steps = from_events(events, &open);
