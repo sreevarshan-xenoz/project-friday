@@ -34,10 +34,12 @@ Autonomous Agent & Cognitive Loop:
   friday wake [status|on|off]      Say "hey Friday" and your question, hands free (opt-in)
   friday show <what>               Ring that control in the window in front ("where's …"
                                    and "show me …" in the ask box do the same)
+  friday wrong [reason|--list]     The last answer was wrong: keep a repro (no question or
+                                   answer text) to turn into a test
   friday shell-hook [zsh|bash]     Lines for your shell's rc file: Super+Y explains a failed
                                    command, or says when one finishes, in any terminal
   friday mcp [allow|deny <tool>]   Let other AI apps use FRIDAY (MCP); each tool off until allowed
-  friday recall [status|on|off]    Keep the text of windows you look at for 3 hours, here
+  friday recall [status|on|off|keep 3h|24h|7d]  Keep the text of windows you look at, here
                                    only, so you can ask "what was that…" (off forgets it)
   friday clips [status|on|off|pick] Keep the last 200 texts you copy; Super+Ctrl+V pastes one
   friday snippet add|rm|list       Text you paste often, by name (;name in Super+Ctrl+V)
@@ -557,6 +559,8 @@ friday_report() {
       else
         echo "no state.json"
       fi
+      section "Answers marked wrong (no question or answer text)"
+      cat "${XDG_STATE_HOME:-$HOME/.local/state}/friday/repros/"*.json 2>/dev/null || echo "none"
       section "Daemon log (last 300 lines)"
       journalctl --user -u friday-linux-daemon -n 300 --no-pager -o short-iso 2>/dev/null || echo "journalctl not available"
     } | friday_redact >"$out"
@@ -1267,11 +1271,14 @@ friday_show() {
 # you look at, kept on this computer for three hours (friday-ctl recall, run
 # by the friday-recall user service). Off forgets everything kept.
 friday_recall() {
-  local file="${XDG_STATE_HOME:-$HOME/.local/state}/friday/recall.jsonl"
+  local file="${XDG_STATE_HOME:-$HOME/.local/state}/friday/recall.jsonl" keep hours label
+  keep="$(dirname "$file")/recall-keep"
+  hours=$(cat "$keep" 2>/dev/null || echo 3)
+  case "$hours" in 24) label="24 hours" ;; 168) label="7 days" ;; *) label="3 hours" ;; esac
   case "${1:-status}" in
     status)
       if systemctl --user is-enabled --quiet friday-recall.service 2>/dev/null; then
-        echo "Recall: on (the text of the windows you look at is kept here for 3 hours; ask \"what was that …\"). Turn off: friday recall off"
+        echo "Recall: on (the text of the windows you look at is kept here for $label; ask \"what was that …\"). Turn off: friday recall off · keep longer or shorter: friday recall keep 3h|24h|7d"
       else
         echo "Recall: off. Turn on: friday recall on"
       fi ;;
@@ -1279,7 +1286,8 @@ friday_recall() {
       if [ "${2:-}" != "--yes" ]; then
         cat <<'EOF2'
 With recall on, FRIDAY keeps the text of the window in front every 30 seconds,
-on this computer only, for three hours: no screenshots, never password fields or
+on this computer only, for three hours (friday recall keep 24h or 7d keeps it
+longer): no screenshots, never password fields or
 private windows (password managers, private browsing, banks, and your own list in
 ~/.config/friday/private-windows). When you ask "what was that…",
 the few passages that match go to your local model; with no local model set
@@ -1294,9 +1302,17 @@ EOF2
       echo "Recall: on" ;;
     off)
       systemctl --user disable --now friday-recall.service >/dev/null 2>&1 || true
-      rm -f "$file" "${file%.jsonl}.tmp"
+      rm -f "$file" "${file%.jsonl}.tmp" "$keep"
       echo "Recall: off, and everything it kept is forgotten." ;;
-    *) echo "Usage: friday recall [status|on|off]" >&2; return 1 ;;
+    keep)
+      case "${2:-}" in
+        3h) hours=3 ;; 24h) hours=24 ;; 7d) hours=168 ;;
+        *) echo "Usage: friday recall keep 3h|24h|7d (now: $label)" >&2; return 1 ;;
+      esac
+      mkdir -p "$(dirname "$keep")"
+      if [ "$hours" = 3 ]; then rm -f "$keep"; else (umask 077; echo "$hours" >"$keep"); fi
+      echo "Recall keeps what it saw for ${2/h/ hours}." | sed 's/7d/7 days/' ;;
+    *) echo "Usage: friday recall [status|on|off|keep 3h|24h|7d]" >&2; return 1 ;;
   esac
 }
 
@@ -1331,6 +1347,42 @@ friday_mcp() {
       fi ;;
     *) echo "Usage: friday mcp [allow|deny <tool>]" >&2; return 1 ;;
   esac
+}
+
+# `friday wrong [reason]` ("That was wrong" on an answer): keep a repro of
+# the last answer to turn into a test: how it was asked (selection, screen…),
+# who answered and how fast, what went into it, the reason and FRIDAY's
+# version. Never the question's or the answer's text; an error only as its
+# kind (timeout, rate_limited, …).
+# `friday wrong --list` shows them; friday report includes them.
+friday_wrong() {
+  local state="${XDG_STATE_HOME:-$HOME/.local/state}/friday" dir reason f
+  dir="$state/repros"
+  if [ "${1:-}" = --list ]; then
+    ls "$dir"/*.json >/dev/null 2>&1 || { echo "No repros yet."; return 0; }
+    for f in "$dir"/*.json; do
+      jq -r --arg f "${f##*/}" '"\($f): \(.reason) · \(.mode) · \(.served_by.provider // "none")/\(.served_by.model // "-") · \(if .ok then "answered" else "failed" end)"' "$f" 2>/dev/null || true
+    done
+    return 0
+  fi
+  [ -s "$state/last-ask.json" ] || { echo "No answer to report yet."; return 1; }
+  reason="${*:-}"
+  if [ -z "$reason" ]; then
+    reason=$(printf '%s\n' "Wrong" "Didn't answer what I asked" "Didn't use what I selected or showed" \
+        "Too slow" "Refused or failed for no good reason" "Made something up" \
+      | fuzzel --dmenu --prompt="What was wrong › " --width=50 --lines=6 --placeholder="pick or type") || return 0
+  fi
+  [ -n "${reason// /}" ] || return 0
+  mkdir -p "$dir" && chmod 700 "$dir"
+  f="$dir/$(date +%Y%m%d-%H%M%S).json"
+  (
+    umask 077
+    jq --arg reason "${reason:0:120}" --arg version "$(pacman -Q friday-git 2>/dev/null | cut -d' ' -f2 || true)" --arg ts "$(date -Is)" \
+      '. + {reason: $reason, version: $version, ts: $ts}' \
+      "$state/last-ask.json" | friday_redact >"$f"
+  )
+  echo "Saved a repro of that answer (no question or answer text): $f"
+  notify-send -a FRIDAY -- "FRIDAY" "Thanks: saved what went wrong (no question or answer text). friday wrong --list shows it." 2>/dev/null || true
 }
 
 # `friday routine save|run|list|rm <name>`: save what FRIDAY just did on the
@@ -2157,16 +2209,36 @@ paypal"
 # friday_private_window: what made the focused window private, or nothing.
 friday_private_window() {
   command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 0
-  local win hay pat own="${XDG_CONFIG_HOME:-$HOME/.config}/friday/private-windows" drop
+  local win hay pat own="${XDG_CONFIG_HOME:-$HOME/.config}/friday/private-windows" drop never
   win=$(timeout 2 hyprctl activewindow -j 2>/dev/null) || return 0
   hay=$(jq -r '"\(.class // "") \(.title // "")"' <<<"$win" 2>/dev/null | tr '[:upper:]' '[:lower:]') || return 0
   drop=$(sed -n 's/^[[:space:]]*!//p' "$own" 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
   while IFS= read -r pat; do
     pat=$(tr '[:upper:]' '[:lower:]' <<<"$pat" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     [[ -n "$pat" && "$pat" != \#* && "$pat" != !* ]] || continue
+    never=""
+    if [[ "$pat" == "never "* ]]; then never="never:"; pat="${pat#never }"; pat="${pat#"${pat%%[![:space:]]*}"}"; fi
+    # Folder lines are about commands (friday_private_folder), not windows.
+    [[ -n "$pat" && "$pat" != /* && "$pat" != "~/"* ]] || continue
     grep -qxF -- "$pat" <<<"$drop" && continue
-    if [[ "$hay" == *"$pat"* ]]; then printf '%s' "$pat"; return 0; fi
-  done < <(printf '%s\n' "$FRIDAY_PRIVATE_WINDOWS"; cat "$own" 2>/dev/null || true)
+    if [[ "$hay" == *"$pat"* ]]; then printf '%s%s' "$never" "$pat"; return 0; fi
+  done < <(cat "$own" 2>/dev/null | grep -i '^[[:space:]]*never ' || true; printf '%s\n' "$FRIDAY_PRIVATE_WINDOWS"; cat "$own" 2>/dev/null || true)
+}
+
+# friday_private_folder <folder>: the private-windows line (a folder: /… or
+# ~/…) that folder is in, or nothing. Commands run there are private.
+friday_private_folder() {
+  local dir="${1%/}" own="${XDG_CONFIG_HOME:-$HOME/.config}/friday/private-windows" line path never
+  [ -n "$1" ] || return 0
+  while IFS= read -r line; do
+    line=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<<"$line")
+    never=""
+    if [[ "$line" == "never "* ]]; then never="never:"; line=$(sed 's/^never[[:space:]]*//' <<<"$line"); fi
+    case "$line" in /*|"~/"*) ;; *) continue ;; esac
+    path="${line/#\~/$HOME}"; path="${path%/}"
+    # "/" alone: every folder.
+    if [ -z "$path" ] || [ "$dir" = "$path" ] || [[ "$dir" == "$path"/* ]]; then printf '%s%s' "$never" "$line"; return 0; fi
+  done < <(cat "$own" 2>/dev/null || true)
 }
 
 # friday_ask_local <prompt>: the local model's answer, asked directly on this
@@ -3260,6 +3332,7 @@ case "${1:-}" in
           # Checked now, while the terminal still has the focus.
           term_private=$(friday_private_window)
           IFS=$'\t' read -r t_state t_when t_exit t_cwd t_cmd t_pid t_class <<<"$term"
+          [ -n "$term_private" ] || term_private=$(friday_private_folder "$t_cwd")
           if [ "$t_state" = done ] && [[ "$t_exit" =~ ^[0-9]+$ ]] && [ "$t_exit" != 0 ] && [ "$t_exit" != 130 ] \
               && (( $(date +%s) - ${t_when:-0} < 600 )); then
             explain="Explain the error from: $(cut -c1-60 <<<"$t_cmd") (exit $t_exit)"
@@ -3313,6 +3386,10 @@ case "${1:-}" in
           # The end matters most (the error is usually last).
           [ "${#context}" -le 8000 ] || context="${context: -8000}"
           explaining_error=true
+          # A private terminal window, or a command run in a private folder
+          # (private-windows: /… or ~/…).
+          private_win=$(friday_private_window)
+          [ -n "$private_win" ] || private_win=$(friday_private_folder "$le_cwd")
         fi
       else
         goal=$(fuzzel --dmenu --prompt-only="FRIDAY › " --width=60 \
@@ -3472,6 +3549,26 @@ case "${1:-}" in
       # Each entry opens with a marker line, so a "---" inside an answer
       # never splits it (FRIDAY Shell's answer history reads these).
       { printf '<!-- friday answer -->\n'; cat "$answer_file"; printf '\n---\n\n'; } >>"$state_dir/answers.md"
+      # What friday wrong saves about this answer: how it was asked and
+      # answered, never the question's or the answer's text.
+      # An error is kept as its kind only: its text can echo the answer.
+      local shape
+      shape=$(jq -c 'if type == "object" then . else {} end' <<<"${summary_json:-{\}}" 2>/dev/null || true)
+      [ -n "$shape" ] || shape='{}'
+      jq -n --arg mode "${ask_args[0]:-plain}" --argjson ok "$ans_ok" --argjson local "$local_only" \
+        --argjson q "${#goal}" --argjson a "${#answer}" --argjson s "$shape" \
+        '{mode: ($mode | ltrimstr("--")), ok: $ok, local: $local, served_by: ($s.served_by // null),
+          used: ($s.used // []), masked: ($s.masked // 0),
+          error: ($s.error // null | if . == null then null else (tostring | ascii_downcase |
+            if test("timed out") then "timeout"
+            elif test("429|rate.?limit|usage limit") then "rate_limited"
+            elif test("see images") then "no_vision"
+            elif test("reach|connect|network") then "unreachable"
+            elif test("confirm") then "needs_confirmation"
+            elif test("all candidates failed") then "all_failed"
+            else "other" end) end),
+          question_chars: $q, answer_chars: $a}' >"$state_dir/last-ask.json.tmp" 2>/dev/null \
+        && mv -f "$state_dir/last-ask.json.tmp" "$state_dir/last-ask.json" || rm -f "$state_dir/last-ask.json.tmp"
 
       # Spoken answers (friday voice speak on): the answer is read aloud while
       # the card shows it; a new answer, or friday say --stop, ends it.
@@ -3557,7 +3654,7 @@ case "${1:-}" in
       fi
       urgency=normal; $ans_ok || urgency=critical
       if $ans_ok; then
-        actions=(-A copy="Copy" -A again="Ask again" -A open="Open full answer")
+        actions=(-A copy="Copy" -A again="Ask again" -A open="Open full answer" -A wrong="That was wrong")
       else
         actions=(-A open="Open full answer")
         [ "${daemon_down:-false}" = true ] && actions=(-A start="Start FRIDAY")
@@ -3581,6 +3678,8 @@ case "${1:-}" in
             [ -x "$0" ] && exec "$0" ask "${ask_args[@]}" || exec bash "$0" ask "${ask_args[@]}" ;;
           open)
             open_answer ;;
+          wrong)
+            bash "$0" wrong ;;
           start)
             systemctl --user restart friday-linux-daemon 2>/dev/null \
               && notify-send -a FRIDAY "FRIDAY" "Started. Ask again with Super+Y." 2>/dev/null || true ;;
@@ -3596,6 +3695,11 @@ case "${1:-}" in
 
     # A private window: its text goes only to the local model, asked here
     # directly; a screenshot of it never leaves.
+    # "never <name>" in private-windows: not even the local model reads it.
+    if [[ "$private_win" == never:* ]]; then
+      notify-send -a FRIDAY -- "FRIDAY" "FRIDAY doesn't read this window at all (your rule \"never ${private_win#never:}\" in ~/.config/friday/private-windows)." 2>/dev/null || true
+      exit 0
+    fi
     if [ -n "$private_win" ]; then
       if $use_screen; then
         notify-send -a FRIDAY -- "FRIDAY" "This window looks private (\"$private_win\"), so no screenshot of it leaves this computer. Select the text instead to ask the local model about it." 2>/dev/null || true
@@ -3729,6 +3833,10 @@ case "${1:-}" in
   mcp)
     shift
     friday_mcp "$@"
+    ;;
+  wrong)
+    shift
+    friday_wrong "$@"
     ;;
   shell-hook)
     shift

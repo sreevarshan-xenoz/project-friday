@@ -475,6 +475,21 @@ printf 'LLAMACPP_ENABLED=1\nLLAMACPP_BASE_URL=http://127.0.0.1:8080/v1\n' >"$env
 : >"$LOG"; bash "$F" ask --screen "what is this"; sleep 0.3
 if grep -q "context screen" "$LOG"; then fail "took a screenshot of a private window"; else pass "no screenshot of a private window"; fi
 contains "and says so" "$(cat "$LOG")" "no screenshot of it leaves"
+# "never <name>": not even the local model reads that window.
+cp "$HOME/.config/friday/private-windows" "$W/pw.saved" 2>/dev/null || : >"$W/pw.saved"
+printf 'never thunderbird\n~/work/clients\n' >"$HOME/.config/friday/private-windows"
+export HYPR_WIN='{"class":"thunderbird","title":"Inbox"}'
+: >"$LOG"; LOCAL_REPLY="x" PRIMARY="the contract terms" PICK="explain" bash "$F" ask --selection; sleep 0.3
+if grep -q "chat/completions\|^friday-ctl" "$LOG"; then fail "a never window was read"; else pass "a never window isn't read, not even locally"; fi
+contains "and it says which rule" "$(cat "$LOG")" 'your rule "never thunderbird"'
+contains "a folder line marks folders private" "$(bash -c 'source <(sed -n "/^friday_private_folder()/,/^}/p" "$1"); friday_private_folder "$HOME/work/clients/acme"' _ "$F")" "~/work/clients"
+if [ -n "$(bash -c 'source <(sed -n "/^friday_private_folder()/,/^}/p" "$1"); friday_private_folder "$HOME/work/clientside"' _ "$F")" ]; then fail "a folder rule matched a sibling folder"; else pass "a folder rule matches only inside it"; fi
+printf 'never ~/vault\n' >"$HOME/.config/friday/private-windows"
+contains "a never folder stays never" "$(bash -c 'source <(sed -n "/^friday_private_folder()/,/^}/p" "$1"); friday_private_folder "$HOME/vault/"' _ "$F")" "never:~/vault"
+export HYPR_WIN='{"class":"foot","title":"~/vault notes"}'
+: >"$LOG"; PRIMARY="x" PICK="explain" bash "$F" ask --selection; sleep 0.3
+if grep -q "your rule" "$LOG"; then fail "a folder line was matched against a window title"; else pass "folder lines aren't matched against windows"; fi
+cp "$W/pw.saved" "$HOME/.config/friday/private-windows"
 export HYPR_WIN='{"class":"firefox","title":"Bank statement — Mozilla Firefox Private Browsing"}'
 : >"$LOG"; LOCAL_REPLY="ok" PRIMARY="balance 12" PICK="explain" bash "$F" ask --selection; sleep 0.3
 contains "private browsing counts" "$(cat "$LOG")" "127.0.0.1:8080"
@@ -687,9 +702,17 @@ printf '#!/bin/bash\necho "curl $*" >>%q\necho "{\\"choices\\":[{\\"message\\":{
 contains "a local model answers recalled text" "$(cat "$LOG")" "It was E0425 in kitty."
 if grep -q "^friday-ctl '" "$LOG"; then fail "recalled text went to the daemon despite a local model"; else pass "recalled text stays local when it can"; fi
 cp "$W/env.saved2" "$envf"; mv "$W/curl.saved2" "$S/curl"
+contains "recall keep 24h keeps a day" "$(bash "$F" recall keep 24h)" "Recall keeps what it saw for 24 hours."
+expect "it says so beside the kept text" test "$(cat "$state/recall-keep")" = 24
+contains "7d keeps a week" "$(bash "$F" recall keep 7d)" "for 7 days."
+refuse "other keeps are refused" bash "$F" recall keep 1y
+bash "$F" recall keep 3h >/dev/null
+expect "3h (the default) leaves no file" test ! -e "$state/recall-keep"
+bash "$F" recall keep 24h >/dev/null
 : >"$LOG"; bash "$F" recall off >/dev/null
 contains "recall off stops the service" "$(cat "$LOG")" "systemctl --user disable --now friday-recall.service"
 [ -e "$rf" ] && fail "recall off left the kept text" || pass "recall off forgets the kept text"
+expect "and the keep goes back to 3 hours" test ! -e "$state/recall-keep"
 
 echo "documentation on this computer"
 : >"$LOG"; DOCS_REPLY=$'[Arch wiki: Pacman]\nTo upgrade the system, run pacman -Syu.' bash "$F" ask "how do I upgrade with pacman"; sleep 0.3
@@ -791,6 +814,26 @@ contains "the allow list is owner-only" "$(stat -c %a "$HOME/.config/friday/mcp-
 bash "$F" mcp deny friday_ask >/dev/null
 contains "deny takes it back" "$(bash "$F" mcp)" "friday_ask: not allowed"
 refuse "an unknown tool can't be allowed" bash "$F" mcp allow rm_rf
+
+echo "that was wrong: a repro without the text"
+rm -rf "$state/repros"
+: >"$LOG"; bash "$F" ask "what is the capital of peru"; sleep 0.3
+expect "each answer leaves its shape in last-ask.json" test -s "$state/last-ask.json"
+if grep -q "peru\|Line one" "$state/last-ask.json"; then fail "last-ask.json holds the question or answer"; else pass "last-ask.json holds no question or answer text"; fi
+contains "it says how long the question was" "$(cat "$state/last-ask.json")" '"question_chars": 27'
+out=$(bash "$F" wrong "Made something up")
+contains "friday wrong saves a repro" "$out" "Saved a repro of that answer"
+R=$(ls "$state/repros"/*.json | head -n1)
+contains "with the reason" "$(cat "$R")" '"reason": "Made something up"'
+if grep -q "peru" "$R"; then fail "the repro holds the question"; else pass "the repro holds no question text"; fi
+contains "repros are owner-only" "$(stat -c %a "$state/repros")" "700"
+contains "--list shows them" "$(bash "$F" wrong --list)" "Made something up · plain"
+contains "the report includes them" "$(bash "$F" report "$W/report.txt" >/dev/null 2>&1; cat "$W/report.txt")" '"reason": "Made something up"'
+: >"$LOG"; bash "$F" ask "this will fail"; sleep 0.3
+contains "a failed answer keeps only the error's kind" "$(cat "$state/last-ask.json")" '"error": "unreachable"'
+if grep -q "network unreachable" "$state/last-ask.json"; then fail "last-ask.json holds the error text"; else pass "no error text in last-ask.json"; fi
+rm -f "$state/last-ask.json"
+contains "nothing to report before an answer" "$(bash "$F" wrong x 2>&1 || true)" "No answer to report yet"
 
 echo "answers know their project"
 : >"$LOG"; WS_PROJECT=/home/me/code/project-friday bash "$F" ask "why does the build fail"; sleep 0.3

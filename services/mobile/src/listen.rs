@@ -174,6 +174,73 @@ pub fn wake_phrase(text: &str) -> Option<String> {
     })
 }
 
+/// What a heard piece means for the wake word and a hands-free conversation.
+#[derive(Debug, PartialEq)]
+pub enum Heard {
+    /// "Hey Friday, keep listening": what follows needs no wake word.
+    Start,
+    /// "Stop listening" (or "that's all") during a conversation.
+    Stop,
+    /// A question (empty: the wake word alone, the question comes next).
+    Ask(String),
+    /// The wake word while FRIDAY speaks: stop speaking, then this question.
+    Interrupt(String),
+    Ignore,
+}
+
+/// Decides what `text` means. During a conversation no wake word is needed;
+/// while FRIDAY speaks only the wake word counts (anything else is most
+/// likely its own voice coming back through the microphone).
+pub fn heard(text: &str, conversing: bool, speaking: bool) -> Heard {
+    let plain = |t: &str| {
+        t.to_lowercase()
+            .chars()
+            .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let stop_words = |t: &str| {
+        matches!(
+            t,
+            "stop listening"
+                | "thats all"
+                | "that is all"
+                | "goodbye"
+                | "thank you thats all"
+                | "thanks thats all"
+        )
+    };
+    if let Some(rest) = wake_phrase(text) {
+        if matches!(
+            plain(&rest).as_str(),
+            "keep listening" | "lets talk" | "let us talk" | "stay with me"
+        ) {
+            return Heard::Start;
+        }
+        // "Hey Friday, stop listening": ends the conversation (and the speech).
+        if conversing && stop_words(&plain(&rest)) {
+            return Heard::Stop;
+        }
+        return if speaking {
+            Heard::Interrupt(rest)
+        } else {
+            Heard::Ask(rest)
+        };
+    }
+    if !conversing || speaking {
+        return Heard::Ignore;
+    }
+    let said = plain(text);
+    match said.as_str() {
+        "" => Heard::Ignore,
+        "stop" => Heard::Stop,
+        t if stop_words(t) => Heard::Stop,
+        _ => Heard::Ask(text.trim().to_string()),
+    }
+}
+
 /// Runs whisper.cpp on a piece and returns its cleaned text.
 pub fn transcribe(whisper: &Path, model: &Path, samples: &[i16]) -> Option<String> {
     let dir = std::env::var_os("XDG_RUNTIME_DIR")
@@ -327,16 +394,72 @@ pub fn run_wake() -> u8 {
     };
     let mut seg = Segmenter::new(8, 50);
     let mut quiet_until = std::time::Instant::now();
+    // A hands-free conversation: on since this moment, ends after a minute of quiet.
+    let mut conversing: Option<std::time::Instant> = None;
+    // When an answer was last heard being spoken (its echo is ignored).
+    let mut last_spoke = std::time::Instant::now()
+        .checked_sub(std::time::Duration::from_secs(60))
+        .unwrap_or_else(std::time::Instant::now);
+    let note = |text: &str| {
+        let _ = std::process::Command::new("notify-send")
+            .args(["-a", "FRIDAY", "-t", "4000", "--", "FRIDAY", text])
+            .stderr(std::process::Stdio::null())
+            .status();
+    };
     while let Some(frame) = frames.next() {
+        if conversing.is_some_and(|t| t.elapsed() > std::time::Duration::from_secs(60))
+            && !crate::speech::speaking()
+        {
+            conversing = None;
+            note("Stopped listening.");
+        }
+        if conversing.is_some() && crate::speech::speaking() {
+            last_spoke = std::time::Instant::now();
+        }
         let Some(piece) = seg.feed(&frame) else {
             continue;
         };
         if std::time::Instant::now() < quiet_until {
             continue;
         }
-        let Some(rest) = transcribe(&whisper, &model, &piece).and_then(|t| wake_phrase(&t)) else {
+        let Some(text) = transcribe(&whisper, &model, &piece) else {
             continue;
         };
+        // Its own voice can still be in the piece just after it stopped speaking.
+        let echo = crate::speech::speaking()
+            || last_spoke.elapsed() < std::time::Duration::from_millis(1500);
+        let (rest, follow_up) = match heard(&text, conversing.is_some(), echo) {
+            Heard::Ignore => continue,
+            Heard::Start => {
+                conversing = Some(std::time::Instant::now());
+                note("Listening: just talk. Say \"stop listening\" to end.");
+                seg = Segmenter::new(8, 50);
+                continue;
+            }
+            Heard::Stop => {
+                crate::speech::stop_running();
+                conversing = None;
+                note("Stopped listening.");
+                continue;
+            }
+            Heard::Interrupt(rest) => {
+                crate::speech::stop_running();
+                // "Hey Friday, stop" only stops the speech.
+                if matches!(
+                    rest.trim()
+                        .to_lowercase()
+                        .trim_matches(|c: char| !c.is_alphanumeric()),
+                    "stop" | "quiet" | "be quiet" | "enough"
+                ) {
+                    continue;
+                }
+                (rest, conversing.is_some())
+            }
+            Heard::Ask(rest) => (rest, conversing.is_some()),
+        };
+        if conversing.is_some() {
+            conversing = Some(std::time::Instant::now());
+        }
         let mut question = rest;
         if question.trim().is_empty() {
             let _ = std::process::Command::new("notify-send")
@@ -360,8 +483,15 @@ pub fn run_wake() -> u8 {
         }
         if !question.trim().is_empty() {
             // On its own thread: the answer streams for a while, and the
-            // microphone's pipe mustn't back up meanwhile.
-            std::thread::spawn(move || friday(&["ask", &question]));
+            // microphone's pipe mustn't back up meanwhile. In a conversation
+            // each question follows on from the last answer.
+            std::thread::spawn(move || {
+                if follow_up {
+                    friday(&["ask", "--follow-up", &question]);
+                } else {
+                    friday(&["ask", &question]);
+                }
+            });
         }
         quiet_until = std::time::Instant::now() + std::time::Duration::from_secs(3);
         seg = Segmenter::new(8, 50);
@@ -391,6 +521,51 @@ mod tests {
         (0..FRAME)
             .map(|i| if i % 2 == 0 { level } else { -level })
             .collect()
+    }
+
+    #[test]
+    fn a_conversation_starts_stops_and_needs_no_wake_word_in_between() {
+        assert_eq!(
+            heard("Hey Friday, keep listening.", false, false),
+            Heard::Start
+        );
+        assert_eq!(heard("Okay Friday let's talk", false, false), Heard::Start);
+        assert_eq!(
+            heard("what time is it in Tokyo", false, false),
+            Heard::Ignore
+        );
+        assert_eq!(
+            heard("What time is it in Tokyo?", true, false),
+            Heard::Ask("What time is it in Tokyo?".into())
+        );
+        assert_eq!(heard("Stop listening.", true, false), Heard::Stop);
+        assert_eq!(heard("Thanks, that's all!", true, false), Heard::Stop);
+        assert_eq!(
+            heard("Hey Friday, stop listening", true, false),
+            Heard::Stop
+        );
+        assert_eq!(heard("Hey Friday, stop listening", true, true), Heard::Stop);
+        assert_eq!(
+            heard("hey friday what is rust", false, false),
+            Heard::Ask("what is rust".into())
+        );
+    }
+
+    #[test]
+    fn while_friday_speaks_only_the_wake_word_counts() {
+        // Its own voice through the microphone isn't a question.
+        assert_eq!(
+            heard("The capital of Peru is Lima.", true, true),
+            Heard::Ignore
+        );
+        assert_eq!(
+            heard("Hey Friday, stop", true, true),
+            Heard::Interrupt("stop".into())
+        );
+        assert_eq!(
+            heard("Hey Friday", false, true),
+            Heard::Interrupt(String::new())
+        );
     }
 
     #[test]

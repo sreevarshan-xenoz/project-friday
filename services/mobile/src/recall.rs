@@ -1,5 +1,6 @@
 //! "What was that?": an opt-in memory of the text of the windows you looked
-//! at, kept on this computer for three hours. `friday recall on` starts
+//! at, kept on this computer for three hours (or 24 hours or 7 days, as
+//! `friday recall keep` chose: `recall-keep` beside the file, in hours). `friday recall on` starts
 //! `friday-ctl recall watch` (the `friday-recall` user service); every 30
 //! seconds it keeps the text of the window in front when it changed. Private
 //! windows are never kept, nor are password fields (the reader leaves them
@@ -12,10 +13,25 @@ use serde::{Deserialize, Serialize};
 
 use crate::local_docs::{self, Excerpt, TITLE_MARK};
 
-/// How long text is kept, in seconds.
+/// How long text is kept, in seconds, unless `recall-keep` says otherwise.
 pub const KEEP_SECS: i64 = 3 * 60 * 60;
+/// The longer keeps a person can choose, in hours.
+pub const KEEP_HOURS: [i64; 3] = [3, 24, 7 * 24];
+
+/// How long the looks in `path` are kept: `recall-keep` beside it (3, 24 or
+/// 168 hours), else three hours.
+pub fn keep_secs(path: &Path) -> i64 {
+    std::fs::read_to_string(path.with_file_name("recall-keep"))
+        .ok()
+        .and_then(|t| t.trim().parse::<i64>().ok())
+        .filter(|h| KEEP_HOURS.contains(h))
+        .map_or(KEEP_SECS, |h| h * 60 * 60)
+}
 /// Seconds between looks.
 pub const EVERY_SECS: u64 = 30;
+/// The most text kept, in bytes (a week of looks can add up): the oldest
+/// looks go first.
+pub const MAX_BYTES: usize = 20_000_000;
 
 /// One look at a window.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -43,12 +59,12 @@ pub fn load(path: &Path, now: i64) -> Vec<Seen> {
         .unwrap_or_default()
         .lines()
         .filter_map(|l| serde_json::from_str::<Seen>(l).ok())
-        .filter(|s| (0..=KEEP_SECS).contains(&(now - s.ts)))
+        .filter(|s| (0..=keep_secs(path)).contains(&(now - s.ts)))
         .collect()
 }
 
 /// Keeps a look, unless the same window's newest look had the same text.
-/// Looks older than three hours are dropped from the file either way (it is
+/// Looks older than the keep are dropped from the file either way (it is
 /// rewritten, owner-only).
 pub fn add(path: &Path, seen: Seen) -> std::io::Result<bool> {
     let mut all = load(path, seen.ts);
@@ -67,6 +83,13 @@ pub fn add(path: &Path, seen: Seen) -> std::io::Result<bool> {
         return Ok(false);
     }
     all.push(seen);
+    let mut total: usize = all.iter().map(|s| s.text.len()).sum();
+    let mut drop = 0;
+    while total > MAX_BYTES && drop + 1 < all.len() {
+        total -= all[drop].text.len();
+        drop += 1;
+    }
+    all.drain(..drop);
     write(path, &all)?;
     Ok(true)
 }
@@ -94,7 +117,8 @@ fn ago(secs: i64) -> String {
     match secs {
         ..=89 => "just now".to_string(),
         90..=3599 => format!("{} min ago", ((secs + 30) / 60).min(59)),
-        _ => format!("{} h {} min ago", secs / 3600, (secs % 3600) / 60),
+        3600..=86_399 => format!("{} h {} min ago", secs / 3600, (secs % 3600) / 60),
+        _ => format!("{} days ago", secs / 86_400),
     }
 }
 
@@ -145,11 +169,18 @@ pub fn private(app: &str, title: &str, own: &str) -> bool {
         .filter_map(|l| l.trim().strip_prefix('!'))
         .map(str::to_lowercase)
         .collect();
+    // "never <name>" is private too (and stricter for the CLI); folder
+    // lines (/… or ~/…) are about commands, not windows.
     PRIVATE
         .iter()
         .map(|p| p.to_string())
-        .chain(own.lines().map(|l| l.trim().to_lowercase()))
+        .chain(own.lines().map(|l| {
+            let l = l.trim().to_lowercase();
+            l.strip_prefix("never ")
+                .map_or(l.clone(), |r| r.trim().to_string())
+        }))
         .filter(|p| !p.is_empty() && !p.starts_with('#') && !p.starts_with('!'))
+        .filter(|p| !p.starts_with('/') && !p.starts_with("~/"))
         .filter(|p| !dropped.contains(p))
         .any(|p| hay.contains(&p))
 }
@@ -171,6 +202,34 @@ mod tests {
             title: "t".into(),
             text: text.into(),
         }
+    }
+
+    #[test]
+    fn the_oldest_looks_go_past_the_size_cap() {
+        let p = tmp();
+        let big = "x".repeat(MAX_BYTES / 2 + 1);
+        add(&p, seen(1_000, "a", &big)).unwrap();
+        add(&p, seen(1_001, "b", &big)).unwrap();
+        add(&p, seen(1_002, "c", "small")).unwrap();
+        let kept: Vec<String> = load(&p, 1_003).into_iter().map(|s| s.app).collect();
+        assert_eq!(kept, ["b", "c"]);
+    }
+
+    #[test]
+    fn a_longer_keep_is_read_beside_the_file() {
+        let p = tmp();
+        add(&p, seen(1_000, "firefox", "a page")).unwrap();
+        assert!(load(&p, 1_000 + KEEP_SECS + 1).is_empty());
+        std::fs::write(p.with_file_name("recall-keep"), "24\n").unwrap();
+        assert_eq!(keep_secs(&p), 24 * 3600);
+        assert_eq!(load(&p, 1_000 + KEEP_SECS + 1).len(), 1);
+        assert!(load(&p, 1_000 + 24 * 3600 + 1).is_empty());
+        // Only the offered keeps count: anything else is three hours.
+        std::fs::write(p.with_file_name("recall-keep"), "9999").unwrap();
+        assert_eq!(keep_secs(&p), KEEP_SECS);
+        std::fs::write(p.with_file_name("recall-keep"), "168").unwrap();
+        assert_eq!(keep_secs(&p), 7 * 24 * 3600);
+        assert_eq!(ago(3 * 86_400 + 5), "3 days ago");
     }
 
     #[test]
@@ -235,6 +294,12 @@ mod tests {
     #[test]
     fn private_windows_are_never_kept() {
         assert!(private("org.keepassxc.KeePassXC", "Passwords.kdbx", ""));
+        assert!(private(
+            "thunderbird",
+            "Inbox - work",
+            "never thunderbird\n"
+        ));
+        assert!(!private("code", "notes", "~/work/clients\n/srv/private\n"));
         assert!(private("firefox", "My Bank — Mozilla Firefox", ""));
         assert!(!private("firefox", "My Bank — Mozilla Firefox", "!bank"));
         assert!(private("org.gnome.TextEditor", "diary.txt", "Diary\n"));
