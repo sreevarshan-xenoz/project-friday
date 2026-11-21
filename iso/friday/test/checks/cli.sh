@@ -246,6 +246,14 @@ if [ -s "$W/box-at" ]; then
 else fail "the ask box never opened"; fi
 sleep 2.5  # the slow lookups end before the next checks read the log
 
+echo "password-shaped text"
+shaped=$(bash -c 'source <(sed -n "/^friday_secret_shaped() {/,/^}/p" "$1"); shift; for t in "$@"; do friday_secret_shaped "$t" && printf "S" || printf "."; done' _ "$F" \
+  "https://github.com/x/y/issues/1234" "/home/me/notes/file2.txt" 'C:\Users\me\file2.txt' "report2026.pdf" "hello world 123" \
+  "tok_abc123def456ghi789jkl012" "abcdefghij1234567890.klmnopqrst0987654321.uvwxyzABC123def456" \
+  "https://api.x.com/v1?key=zz_abcd1234efgh5678ijkl" "hunter2hunter2" \
+  "https://x.com/cb?id=ab12ab12ab12ab12" "Zq8rTk2LmN0p/Wx4Yb7Vc1Ds/Ee9Ff3Gh5Jk6" "hunter2hunter2." "pass/12345678abc")
+[[ "$shaped" == ".....SSSSSSSS" ]] && pass "URLs, paths and file names go; tokens, JWTs, keys in URLs and base64 don't" || fail "password-shaped rule: got $shaped, wanted .....SSSSSSSS"
+
 echo "suggestions for the app you're in"
 printf '#!/bin/bash\necho "hyprctl $*" >> %q\n[[ "$*" == "activewindow -j" ]] && printf %%s "$HYPR_WIN"\nexit 0\n' "$LOG" >"$S/hyprctl"; chmod +x "$S/hyprctl"
 printf '#!/bin/bash\ncat >%q\necho "$PICK"\n' "$W/menu.txt" >"$S/fuzzel"
@@ -879,6 +887,7 @@ printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s %q\nexit 0\n'
 if grep -q "context screen" "$LOG"; then fail "took a screenshot though the extension had the page"; else pass "a browser with the extension sends the page's text, no screenshot"; fi
 contains "with its address" "$(cat "$LOG")" "Address: https://example.com/book"
 contains "and its text" "$(cat "$LOG")" "Ownership rules"
+contains "the page is marked as quoted material (it can't pick the tool)" "$(cat "$LOG")" "[page]"
 : >"$LOG"; bash "$F" ask --screen "summarize this page"; sleep 0.3
 contains "without the extension it's a screenshot as before" "$(cat "$LOG")" "context screen"
 # A private window the extension can't see: its tab answer is another window's.

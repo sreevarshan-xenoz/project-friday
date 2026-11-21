@@ -242,12 +242,24 @@ impl<R: CommandRunner> ContextCollector<R> {
     fn capture_app(&self) -> Result<CapturedContext, CaptureError> {
         let channel = ContextChannel::App;
         let (program, args) = window_command();
-        let out =
-            self.run_capture(channel, &program, &args)
-                .map_err(|e| CaptureError::Command {
+        let out = match self.run_capture(channel, &program, &args) {
+            Ok(out) => out,
+            // No hyprctl: niri's focused window, in its own shape (`app_id`).
+            Err(e) if !cfg!(windows) => {
+                let niri = ["msg", "--json", "focused-window"].map(String::from);
+                self.run_capture(channel, "niri", &niri)
+                    .map_err(|_| CaptureError::Command {
+                        channel,
+                        message: e.to_string(),
+                    })?
+            }
+            Err(e) => {
+                return Err(CaptureError::Command {
                     channel,
                     message: e.to_string(),
-                })?;
+                })
+            }
+        };
         parse_activewindow(&out.stdout)
             .map_err(|message| CaptureError::Command { channel, message })
     }
@@ -260,7 +272,7 @@ impl<R: CommandRunner> ContextCollector<R> {
             Ok(CapturedContext::AppInfo {
                 geometry: Some(r), ..
             }) if r.width > 0 && r.height > 0 => Some(r),
-            Err(_) if !cfg!(windows) => self.niri_focused_window(),
+            _ if !cfg!(windows) => self.niri_focused_window(),
             _ => None,
         }
     }
@@ -398,7 +410,9 @@ fn parse_activewindow(stdout: &[u8]) -> Result<CapturedContext, String> {
     let v: serde_json::Value =
         serde_json::from_slice(stdout).map_err(|e| format!("invalid hyprctl JSON: {e}"))?;
 
-    let class = field(&v, "class").or_else(|| field(&v, "initialClass"));
+    let class = field(&v, "class")
+        .or_else(|| field(&v, "initialClass"))
+        .or_else(|| field(&v, "app_id"));
     let title = field(&v, "title").or_else(|| field(&v, "initialTitle"));
     let geometry = rect(&v, "at", "size");
 
@@ -641,6 +655,23 @@ mod tests {
                 assert_eq!(geometry, Some(ScreenRegion::new(2020, 50, 800, 600)))
             }
             other => panic!("expected an image, got {other:?}"),
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn the_app_in_front_on_niri() {
+        match on_niri(br#"{"id":7,"title":"Inbox - Mail","app_id":"thunderbird"}"#)
+            .capture(ContextChannel::App, &CaptureOptions::default())
+            .unwrap()
+        {
+            CapturedContext::AppInfo { class, title, .. } => {
+                assert_eq!(
+                    (class.as_str(), title.as_str()),
+                    ("thunderbird", "Inbox - Mail")
+                )
+            }
+            other => panic!("expected app info, got {other:?}"),
         }
     }
 
