@@ -1,8 +1,9 @@
 //! FRIDAY's browser extension and its native host (`friday-ctl browser-host`,
 //! started by the browser itself through native messaging): the extension
 //! keeps a pipe to the host open, and the host answers FRIDAY's "what tab am
-//! I on" on a socket in the user's runtime folder (`friday-browser.sock`,
-//! owner-only). No port: nothing from the network or a web page can reach
+//! I on" on a socket in the user's runtime folder (`friday/browser.sock`,
+//! owner-only; any program running as the same user could ask too, as it
+//! could read the browser's profile anyway). No port: nothing from the network or a web page can reach
 //! it. `friday-ctl browser tab` asks: the tab's title, address, selection and
 //! text, read only when asked and never from a private window.
 
@@ -12,11 +13,12 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 /// The socket the host listens on.
-pub fn socket() -> PathBuf {
+/// The socket the host listens on: in a folder only this user can enter,
+/// inside the user's runtime folder (never /tmp: no runtime folder, no socket).
+pub fn socket() -> Option<PathBuf> {
     std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("friday-browser.sock")
+        .filter(|v| !v.is_empty())
+        .map(|d| PathBuf::from(d).join("friday").join("browser.sock"))
 }
 
 /// One native-messaging message: a 4-byte length (native byte order) and
@@ -51,12 +53,19 @@ pub fn run_host() -> u8 {
     use std::sync::mpsc;
     use std::sync::{Arc, Mutex};
 
-    let path = socket();
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    let Some(path) = socket() else {
+        return 1;
+    };
+    // The folder is owner-only before the socket exists, so there is no
+    // moment when anyone else could reach it.
+    let dir = path.parent().expect("socket has a folder");
+    let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir);
+    let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
     let _ = std::fs::remove_file(&path);
     let Ok(listener) = UnixListener::bind(&path) else {
         return 1;
     };
-    use std::os::unix::fs::PermissionsExt;
     let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
 
     let waiting: Arc<Mutex<HashMap<u64, mpsc::Sender<Value>>>> = Arc::default();
@@ -81,6 +90,8 @@ pub fn run_host() -> u8 {
     let mut next = 1u64;
     for conn in listener.incoming() {
         let Ok(mut conn) = conn else { continue };
+        // A client that never says anything can't hold the host up.
+        let _ = conn.set_read_timeout(Some(std::time::Duration::from_secs(2)));
         let mut line = String::new();
         if BufReader::new(&conn).read_line(&mut line).is_err() || line.trim() != "tab" {
             continue;
@@ -106,7 +117,7 @@ pub fn run_host() -> u8 {
 /// Asks the host for the tab in front: its answer, or why there is none.
 #[cfg(unix)]
 pub fn tab() -> Result<Value, String> {
-    tab_at(&socket())
+    tab_at(&socket().ok_or("no runtime folder (XDG_RUNTIME_DIR)")?)
 }
 
 #[cfg(unix)]
@@ -171,7 +182,7 @@ mod tests {
             .stderr(std::process::Stdio::null())
             .spawn()
             .unwrap();
-        let sock = dir.join("friday-browser.sock");
+        let sock = dir.join("friday").join("browser.sock");
         for _ in 0..100 {
             if sock.exists() {
                 break;

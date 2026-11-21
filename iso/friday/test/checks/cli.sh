@@ -852,6 +852,10 @@ contains "with its address" "$(cat "$LOG")" "Address: https://example.com/book"
 contains "and its text" "$(cat "$LOG")" "Ownership rules"
 : >"$LOG"; bash "$F" ask --screen "summarize this page"; sleep 0.3
 contains "without the extension it's a screenshot as before" "$(cat "$LOG")" "context screen"
+# A private window the extension can't see: its tab answer is another window's.
+printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s %q\nexit 0\n' '{"class":"firefox","title":"Mozilla Firefox Private Browsing"}' >"$S/hyprctl"
+: >"$LOG"; PATH="$W/bt-bin:$PATH" bash "$F" ask --screen "summarize this page"; sleep 0.3
+if grep -q "Ownership rules" "$LOG"; then fail "sent another window's tab"; else pass "a tab that isn't the one in front isn't sent"; fi
 rm -f "$S/hyprctl"
 H2="$W/bhome"; mkdir -p "$H2"
 HOME="$H2" XDG_CONFIG_HOME="$H2/.config" bash "$F" browser setup >/dev/null

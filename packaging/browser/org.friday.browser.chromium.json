@@ -1,0 +1,7 @@
+{
+  "name": "org.friday.browser",
+  "description": "FRIDAY",
+  "path": "/usr/lib/friday/friday-browser-host",
+  "type": "stdio",
+  "allowed_origins": ["chrome-extension://eiblopljacafgajanhkngbhejpjjmfff/"]
+}
