@@ -715,6 +715,16 @@ contains "recall off stops the service" "$(cat "$LOG")" "systemctl --user disabl
 [ -e "$rf" ] && fail "recall off left the kept text" || pass "recall off forgets the kept text"
 expect "and the keep goes back to 3 hours" test ! -e "$state/recall-keep"
 
+echo "search a folder you pick"
+mkdir -p "$W/notes"
+contains "adding a folder asks first" "$(bash "$F" folders add "$W/notes" </dev/null)" "Nothing changed."
+: >"$LOG"; bash "$F" folders add "$W/notes" --yes >/dev/null
+contains "a folder added is listed" "$(bash "$F" folders list)" "$W/notes"
+contains "and indexed" "$(cat "$LOG")" "docs --prepare-folders"
+contains "the folder list is owner-only" "$(stat -c %a "$HOME/.config/friday/search-folders")" "600"
+bash "$F" folders rm "$W/notes" >/dev/null
+contains "rm takes it off" "$(bash "$F" folders list)" "No folders yet"
+
 echo "documentation on this computer"
 : >"$LOG"; DOCS_REPLY=$'[Arch wiki: Pacman]\nTo upgrade the system, run pacman -Syu.' bash "$F" ask "how do I upgrade with pacman"; sleep 0.3
 contains "a typed question looks in the local docs" "$(cat "$LOG")" "friday-ctl-docs docs -- how do I upgrade with pacman"
@@ -861,6 +871,33 @@ H2="$W/bhome"; mkdir -p "$H2"
 HOME="$H2" XDG_CONFIG_HOME="$H2/.config" bash "$F" browser setup >/dev/null
 contains "setup registers the host with Chromium for FRIDAY's extension only" "$(cat "$H2/.config/chromium/NativeMessagingHosts/org.friday.browser.json")" "chrome-extension://eiblopljacafgajanhkngbhejpjjmfff/"
 contains "and with Firefox" "$(cat "$H2/.mozilla/native-messaging-hosts/org.friday.browser.json")" "browser@friday-os"
+echo "teach a routine by showing it"
+RUNTIME_SAVE="${XDG_RUNTIME_DIR:-}"; export XDG_RUNTIME_DIR="$W/rt"; mkdir -p "$XDG_RUNTIME_DIR"
+# The recorder (friday-ctl routine record) writes its own pid and listens.
+RC="$W/rec-bin"; mkdir -p "$RC"
+cat >"$RC/friday-ctl" <<STUB
+#!/bin/bash
+if [ "\$1 \$2" = "routine record" ]; then echo \$\$ >"\$XDG_RUNTIME_DIR/friday-recording.pid"; exec sleep 30; fi
+exec "$S/friday-ctl" "\$@"
+STUB
+chmod +x "$RC/friday-ctl"; PATH_SAVE="$PATH"; export PATH="$RC:$PATH"
+: >"$LOG"; out=$(bash "$F" routine record)
+contains "recording starts and says how to stop" "$out" "friday routine stop <name>"
+contains "a notification shows it records the whole time" "$(cat "$LOG")" "FRIDAY is recording a routine"
+expect "it keeps the recorder's pid" test -s "$XDG_RUNTIME_DIR/friday-recording.pid"
+REC_PID=$(cat "$XDG_RUNTIME_DIR/friday-recording.pid")
+: >"$LOG"; bash "$F" routine stop morning setup >/dev/null 2>&1 || true
+contains "stop turns the recording into a routine" "$(cat "$LOG")" "routine finish morning setup"
+# Gone, or a zombie nobody reaps (a container without init): either way stopped.
+rec_alive() { local st; st=$(ps -o stat= -p "$REC_PID" 2>/dev/null | cut -c1); [ -n "$st" ] && [ "$st" != Z ]; }
+for _ in 1 2 3 4 5 6 7 8 9 10; do rec_alive || break; sleep 0.2; done
+if rec_alive; then fail "the recorder kept running"; kill "$REC_PID"; else pass "stop ends the recorder itself"; fi
+expect "and forgets the recorder" test ! -e "$XDG_RUNTIME_DIR/friday-recording.pid"
+contains "stop when not recording says so" "$(bash "$F" routine stop x 2>&1 || true)" "Not recording"
+mkdir -p "$HOME/.local/share/friday/routines"; echo '{}' >"$HOME/.local/share/friday/routines/morning-setup.json"
+contains "edit opens the routine's file" "$(EDITOR=echo bash "$F" routine edit Morning Setup)" "friday/routines/morning-setup.json"
+refuse "edit refuses a path" bash "$F" routine edit ../../etc/x
+rm -rf "$HOME/.local/share/friday/routines"; export XDG_RUNTIME_DIR="$RUNTIME_SAVE" PATH="$PATH_SAVE"
 
 echo "answers know their project"
 : >"$LOG"; WS_PROJECT=/home/me/code/project-friday bash "$F" ask "why does the build fail"; sleep 0.3
