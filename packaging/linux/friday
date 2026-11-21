@@ -38,6 +38,8 @@ Autonomous Agent & Cognitive Loop:
                                    answer text) to turn into a test
   friday shell-hook [zsh|bash]     Lines for your shell's rc file: Super+Y explains a failed
                                    command, or says when one finishes, in any terminal
+  friday sync [init|trust|folder|project|now]  Share chosen projects' thoughts and
+                                   workspaces between your machines, end-to-end encrypted
   friday recall [status|on|off|keep 3h|24h|7d]  Keep the text of windows you look at, here
                                    only, so you can ask "what was that…" (off forgets it)
   friday clips [status|on|off|pick] Keep the last 200 texts you copy; Super+Ctrl+V pastes one
@@ -1349,6 +1351,86 @@ friday_wrong() {
   )
   echo "Saved a repro of that answer (no question or answer text): $f"
   notify-send -a FRIDAY -- "FRIDAY" "Thanks: saved what went wrong (no question or answer text). friday wrong --list shows it." 2>/dev/null || true
+}
+
+# `friday sync`: the thoughts and workspaces of the projects you choose,
+# shared between your own machines through a folder you already sync
+# (Syncthing, a USB stick…), end-to-end encrypted with age: each machine has
+# its own key, and a bundle opens only with the keys of the machines you
+# trusted. Off until you set it up; nothing is synced for a project you
+# didn't turn on.
+#   friday sync init | trust <age1…> | folder <dir> | project <name> on|off | now
+friday_sync() {
+  local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/friday/sync" state="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
+  local ws="${XDG_DATA_HOME:-$HOME/.local/share}/friday/workspaces" key id dir f bundle tmp added=0 copied=0 r name
+  key="$cfg/key.txt"
+  command -v age >/dev/null 2>&1 && command -v age-keygen >/dev/null 2>&1 \
+    || { echo "friday sync needs age: sudo pacman -S age" >&2; return 1; }
+  case "${1:-status}" in
+    status)
+      if [ ! -s "$key" ]; then echo "Sync: not set up. Start with: friday sync init"; return 0; fi
+      echo "This machine's key: $(age-keygen -y "$key" 2>/dev/null)"
+      echo "Trusted machines: $(grep -c . "$cfg/recipients" 2>/dev/null || echo 0)"
+      echo "Folder: $(cat "$cfg/folder" 2>/dev/null || echo "none (friday sync folder <dir>)")"
+      echo "Projects: $(paste -sd, "$cfg/projects" 2>/dev/null || echo "none (friday sync project <name> on)")" ;;
+    init)
+      mkdir -p "$cfg" && chmod 700 "$cfg"
+      [ -s "$key" ] || (umask 077; age-keygen -o "$key" >/dev/null 2>&1)
+      [ -s "$cfg/id" ] || (umask 077; od -An -N8 -tx1 /dev/urandom | tr -d ' \n' >"$cfg/id")
+      echo "This machine's key: $(age-keygen -y "$key")"
+      echo "On each of your other machines: friday sync trust <that machine's key>, and trust theirs here." ;;
+    trust)
+      [[ "${2:-}" =~ ^age1[0-9a-z]{50,}$ ]] || { echo "Usage: friday sync trust <age1… key from: friday sync init>" >&2; return 1; }
+      mkdir -p "$cfg"
+      (umask 077; { grep -vxF "$2" "$cfg/recipients" 2>/dev/null || true; echo "$2"; } >"$cfg/recipients.tmp" && mv -f "$cfg/recipients.tmp" "$cfg/recipients")
+      echo "Trusted. Bundles from here can be opened by that machine, and its by this one." ;;
+    folder)
+      [ -n "${2:-}" ] && [ -d "$2" ] || { echo "Usage: friday sync folder <a folder you already sync>" >&2; return 1; }
+      mkdir -p "$cfg"; (cd "$2" && pwd) >"$cfg/folder"
+      echo "Bundles go to $(cat "$cfg/folder")." ;;
+    project)
+      name="${2:-}"
+      [[ -n "$name" && "${3:-}" =~ ^(on|off)$ ]] || { echo "Usage: friday sync project <name> on|off" >&2; return 1; }
+      mkdir -p "$cfg"
+      (umask 077; { grep -vxF "$name" "$cfg/projects" 2>/dev/null || true; [ "$3" = off ] || echo "$name"; } >"$cfg/projects.tmp" && mv -f "$cfg/projects.tmp" "$cfg/projects")
+      echo "Sync for $name: $3." ;;
+    now)
+      [ -s "$key" ] || { echo "Not set up: friday sync init" >&2; return 1; }
+      dir=$(cat "$cfg/folder" 2>/dev/null) && [ -d "$dir" ] || { echo "No folder: friday sync folder <dir>" >&2; return 1; }
+      [ -s "$cfg/projects" ] || { echo "No project is synced: friday sync project <name> on" >&2; return 1; }
+      id=$(cat "$cfg/id")
+      # Out: this machine's thoughts and workspaces for the chosen projects.
+      bundle=$(jq -n --slurpfile th <(jq -c --rawfile p "$cfg/projects" \
+            'select(.project != null and ((.project | split("/") | last) as $n | ($p | split("\n") | index($n))))' \
+            "$state/thoughts.jsonl" 2>/dev/null || true) \
+          --argjson w "$(for f in "$ws"/*.json; do [ -f "$f" ] || continue; name=$(basename "$f" .json)
+              grep -qxF "$name" "$cfg/projects" && jq -c --arg n "$name" '{($n): .}' "$f"; done | jq -s 'add // {}')" \
+          '{thoughts: $th, workspaces: $w}')
+      local args=(-r "$(age-keygen -y "$key")")
+      if [ -f "$cfg/recipients" ]; then
+        while IFS= read -r r; do [ -n "$r" ] && args+=(-r "$r"); done <"$cfg/recipients"
+      fi
+      tmp="$dir/.$id.age.tmp"
+      printf '%s' "$bundle" | age "${args[@]}" -o "$tmp" && mv -f "$tmp" "$dir/$id.age" || { rm -f "$tmp"; echo "Couldn't write the bundle." >&2; return 1; }
+      # In: the other machines' bundles this key can open.
+      mkdir -p "$state" "$ws"
+      for f in "$dir"/*.age; do
+        [ -f "$f" ] && [ "$(basename "$f" .age)" != "$id" ] || continue
+        bundle=$(age -d -i "$key" "$f" 2>/dev/null) || continue
+        while IFS= read -r r; do
+          [ -n "$r" ] || continue
+          grep -qxF -- "$r" "$state/thoughts.jsonl" 2>/dev/null && continue
+          (umask 077; printf '%s\n' "$r" >>"$state/thoughts.jsonl"); added=$((added + 1))
+        done < <(jq -c --rawfile p "$cfg/projects" '.thoughts[]? | select((.project // "" | split("/") | last) as $n | ($p | split("\n") | index($n)))' <<<"$bundle" 2>/dev/null || true)
+        while IFS= read -r name; do
+          [[ "$name" =~ ^[a-z0-9-]+$ ]] && grep -qxF "$name" "$cfg/projects" || continue
+          [ -e "$ws/$name.json" ] && continue
+          jq --arg n "$name" '.workspaces[$n]' <<<"$bundle" >"$ws/$name.json" && copied=$((copied + 1))
+        done < <(jq -r '.workspaces | keys[]?' <<<"$bundle" 2>/dev/null || true)
+      done
+      echo "Synced: wrote this machine's bundle; took $added thought(s) and $copied workspace(s) from your other machines." ;;
+    *) echo "Usage: friday sync [init | trust <key> | folder <dir> | project <name> on|off | now]" >&2; return 1 ;;
+  esac
 }
 
 # `friday routine save|run|list|rm <name>`: save what FRIDAY just did on the
@@ -3795,6 +3877,10 @@ case "${1:-}" in
   recall)
     shift
     friday_recall "$@"
+    ;;
+  sync)
+    shift
+    friday_sync "$@"
     ;;
   wrong)
     shift

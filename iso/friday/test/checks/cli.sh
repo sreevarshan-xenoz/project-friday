@@ -825,6 +825,55 @@ if grep -q "network unreachable" "$state/last-ask.json"; then fail "last-ask.jso
 rm -f "$state/last-ask.json"
 contains "nothing to report before an answer" "$(bash "$F" wrong x 2>&1 || true)" "No answer to report yet"
 
+echo "encrypted sync between your machines"
+# A stand-in for age: "encrypts" by naming the recipients; only a key among
+# them opens it (the flow is tested here, age itself does the cryptography).
+cat >"$S/age-keygen" <<'STUB'
+#!/bin/bash
+if [ "$1" = -o ]; then echo "SECRET-$RANDOM$RANDOM" >"$2"; exit 0; fi
+[ "$1" = -y ] && printf 'age1%s\n' "$(sha256sum "$2" | cut -c1-58)"
+STUB
+cat >"$S/age" <<'STUB'
+#!/bin/bash
+if [ "$1" = -d ]; then
+  me=$(age-keygen -y "$3"); head -n1 "$4" | grep -qw "$me" || { echo "no identity matched" >&2; exit 1; }
+  tail -n +2 "$4"; exit 0
+fi
+rec=""; out=""
+while [ $# -gt 0 ]; do case "$1" in -r) rec="$rec $2"; shift 2 ;; -o) out="$2"; shift 2 ;; *) shift ;; esac; done
+{ echo "AGE:$rec"; cat; } >"$out"
+STUB
+chmod +x "$S/age" "$S/age-keygen"
+SYNC="$W/syncdir"; mkdir -p "$SYNC"
+mA() { XDG_CONFIG_HOME="$W/A/cfg" XDG_STATE_HOME="$W/A/state" XDG_DATA_HOME="$W/A/data" bash "$F" sync "$@"; }
+mB() { XDG_CONFIG_HOME="$W/B/cfg" XDG_STATE_HOME="$W/B/state" XDG_DATA_HOME="$W/B/data" bash "$F" sync "$@"; }
+contains "sync is off until set up" "$(mA)" "not set up"
+KA=$(mA init | sed -n 's/^This machine.s key: //p'); KB=$(mB init | sed -n 's/^This machine.s key: //p')
+contains "the key file is owner-only" "$(stat -c %a "$W/A/cfg/friday/sync/key.txt")" "600"
+mA trust "$KB" >/dev/null; mB trust "$KA" >/dev/null
+mA folder "$SYNC" >/dev/null; mB folder "$SYNC" >/dev/null
+mA project site on >/dev/null; mB project site on >/dev/null
+mkdir -p "$W/A/state/friday" "$W/A/data/friday/workspaces"
+printf '%s\n' '{"ts":1,"project":"/home/me/code/site","kind":"decision","text":"move images to a CDN"}' \
+  '{"ts":2,"project":"/home/me/code/diary","kind":"idea","text":"private diary idea"}' >"$W/A/state/friday/thoughts.jsonl"
+echo '{"windows":[]}' >"$W/A/data/friday/workspaces/site.json"
+mA now >/dev/null
+if grep -q "diary\|CDN" "$SYNC"/*.age; then
+  if grep -q "diary" "$SYNC"/*.age; then fail "a project that isn't synced went into the bundle"; else pass "only synced projects go in the bundle"; fi
+else pass "only synced projects go in the bundle"; fi
+out=$(mB now)
+contains "the other machine takes the thoughts" "$out" "took 1 thought(s) and 1 workspace(s)"
+contains "and keeps them" "$(cat "$W/B/state/friday/thoughts.jsonl")" "move images to a CDN"
+expect "and the workspace" test -s "$W/B/data/friday/workspaces/site.json"
+contains "a second sync adds nothing twice" "$(mB now)" "took 0 thought(s) and 0 workspace(s)"
+# A machine that wasn't trusted can't open the bundle.
+XDG_CONFIG_HOME="$W/C/cfg" bash "$F" sync init >/dev/null
+XDG_CONFIG_HOME="$W/C/cfg" bash "$F" sync folder "$SYNC" >/dev/null
+XDG_CONFIG_HOME="$W/C/cfg" bash "$F" sync project site on >/dev/null
+contains "an untrusted machine gets nothing" "$(XDG_CONFIG_HOME="$W/C/cfg" XDG_STATE_HOME="$W/C/state" XDG_DATA_HOME="$W/C/data" bash "$F" sync now)" "took 0 thought(s)"
+refuse "a key that isn't an age key is refused" mA trust not-a-key
+rm -f "$S/age" "$S/age-keygen"
+
 echo "answers know their project"
 : >"$LOG"; WS_PROJECT=/home/me/code/project-friday bash "$F" ask "why does the build fail"; sleep 0.3
 contains "the saved answer names the project in front" "$(cat "$HOME/.local/state/friday/last-answer.md")" "_project: /home/me/code/project-friday_"
