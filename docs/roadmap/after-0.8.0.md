@@ -6,7 +6,7 @@ the project and once outside it, so it would think differently), Gemini,
 Claude Fable, Sonnet and Haiku, and the five OpenCode free models that
 weren't rate-limited (big-pickle, hy4-flash, iceman, flint-40b,
 nemotron-lightning). Their ideas were merged and the code gaps they named
-checked against `dev`. The owner asked for this list to be worked on
+checked against `dev`; every idea that fits FRIDAY's rules is here, items 24–39 being the ones the first cut had left out. The owner asked for this list to be worked on
 autopilot. Item 11 is the owner's own.
 
 Same rules as before: one item at a time, each with its own branch, tests
@@ -39,14 +39,31 @@ things. "Votes" is how many of the eleven suggested it.
 | 21 | **One project identity everywhere** | 3 | `thoughts::named` still matches any word of a folder's name, so "FRIDAY" matches both `project-friday` and `friday-mobile`; the project picked once for the ask is the only one thoughts and the timeline use. |
 | 22 | **Long use stays fast** | 1 | `answers.md` rotates and the timeline reads its tail; the undo journal gets a lock (the shell and the daemon both rewrite it today). |
 | 23 | **The partial items, finished** | 6 | From `after-0.7.3.md`: undo for launches, file writes and agent runs (and on Windows), Windows Terminal help, the "2:30" strip, local OCR for apps without accessibility text, Windows workspaces/thoughts/timeline. |
+| 24 | **A private window's ask goes to the local model** | 1 | With a local model set up, Super+Ctrl+Y on a private window sends its text to that model only, instead of refusing. |
+| 25 | **Windows shows the ask while it reads** | 1 | Win+Ctrl+Y opens a card that doesn't take focus, with Cancel, as soon as the window is read, instead of a balloon and up to 240 s of nothing. |
+| 26 | **@-mentions in the ask box** | 1 | `@screen`, `@tab`, `@clip`, `@term`, `@file` pick exactly what goes with the question. |
+| 27 | **Quick action chips** | 2 | The ask box offers two or three actions for what's in front (explain this error, summarise this page, reply to this) with no typing. |
+| 28 | **Preview before acting** | 2 | A risky action shows what will change (files, settings, windows) and needs a yes; plain "yes", "ok" and "go ahead" count. |
+| 29 | **How much FRIDAY may do on its own** | 1 | One setting: ask before every action, ask only for risky ones, or act and tell me; shown on every action card. |
+| 30 | **Answers say when they couldn't check** | 1 | An answer with nothing behind it (no file, page, window or log) says so instead of sounding sure. |
+| 31 | **"What changed?"** | 2 | Ask what changed since a time or since the last ask: in a project (git, files), in a window you asked about before, or on the system (packages, settings). |
+| 32 | **Explanations about this machine** | 1 | Answers about errors and settings use the machine's real versions, config and logs (with consent), not generic advice. |
+| 33 | **See and fix what FRIDAY remembers** | 2 | One page to read, correct or delete thoughts, lessons, per-app instructions and recall, with where each came from. |
+| 34 | **An activity page** | 2 | One place for what FRIDAY did today: asks, actions (with undo), agent runs, what left the computer. |
+| 35 | **A scratchpad** | 1 | Pin a clip or an answer to a floating note, and ask about the note later. |
+| 36 | **Window control in plain words** | 2 | "Put the browser left and the terminal right", "all chat apps on workspace 3", through the compositor's own IPC (Hyprland, niri) and Win32. |
+| 37 | **Show me in Chromium** | 1 | "Show me the Save button" points at the element in a Chromium page through the extension, not just the window frame. |
+| 38 | **Phone handoff** | 1 | Send an answer or the current task to the paired phone and pick it up there. |
+| 39 | **Test hygiene** | 1 | The transport tests bind free ports instead of fixed ones (they collide in parallel runs). |
 
 Also: `vnext.md`'s "Still open" list is out of date (lessons are scoped,
 browser redirects are intercepted, the resume grammar is shared); it is
 refreshed in the same PR as this list.
 
-## Ideas kept for later
+## Ideas left out
 
-Task capsules and a workflow compiler (overlap with workspaces, threads and
-teach-a-routine), cross-app handoff, a live "notify me when…" watcher (it
-would be ambient capture), smart form fill, an attention budget for
-notifications, a semantic search across recall, meetings and threads.
+Task capsules and a workflow compiler (they duplicate workspaces, threads and
+teach-a-routine), a live "notify me when…" screen watcher (ambient capture),
+smart form fill and cross-app handoff (no clear job yet), an attention
+budget (that's N3's attention policy), semantic search across recall,
+meetings and threads (after recall item 20).
