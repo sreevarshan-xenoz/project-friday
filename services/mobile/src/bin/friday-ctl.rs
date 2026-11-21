@@ -1206,7 +1206,9 @@ async fn main() -> std::process::ExitCode {
         return std::process::ExitCode::from(friday_mobile::browser_host::run_host());
     }
     #[cfg(unix)]
-    if raw.first().map(String::as_str) == Some("browser") && raw.get(1).map(String::as_str) == Some("tab") {
+    if raw.first().map(String::as_str) == Some("browser")
+        && raw.get(1).map(String::as_str) == Some("tab")
+    {
         return match friday_mobile::browser_host::tab() {
             Ok(v) => {
                 println!("{v}");

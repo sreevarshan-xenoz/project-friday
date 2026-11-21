@@ -60,7 +60,10 @@ pub fn run_host() -> u8 {
     // The folder is owner-only before the socket exists, so there is no
     // moment when anyone else could reach it.
     let dir = path.parent().expect("socket has a folder");
-    let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir);
+    let _ = std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir);
     let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
     let _ = std::fs::remove_file(&path);
     let Ok(listener) = UnixListener::bind(&path) else {
