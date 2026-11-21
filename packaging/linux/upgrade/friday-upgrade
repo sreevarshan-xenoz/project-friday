@@ -118,7 +118,7 @@ revert() {
 }
 # A failed upgrade that changed nothing (a download that didn't finish) has
 # nothing to undo.
-if $failed_upgrade && cmp -s "$before" <(pacman -Q); then
+if $failed_upgrade && [ "$(cat "$before")" = "$(pacman -Q)" ]; then
   result failed "the upgrade didn't go through; nothing was changed (see $LOG)"
   exit 0
 fi
