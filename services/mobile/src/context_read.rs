@@ -89,6 +89,37 @@ pub trait ScreenText: Send + Sync {
     async fn window_text(&self, class: &str, title: &str) -> Option<String>;
 }
 
+/// The line a [`ScreenText`] ends the words with when the window had more
+/// than it sends.
+pub const SCREEN_TEXT_CUT: &str = "[… the rest of the window was cut]";
+
+/// What a screen ask sent to the model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenSent {
+    /// The window's own text; `cut` when only its first part fitted.
+    Text { cut: bool },
+    /// A screenshot of the window; `text_failed` when the text went first
+    /// and the provider didn't answer it.
+    Screenshot { text_failed: bool },
+    /// A screenshot of the area the person picked.
+    Area,
+}
+
+impl ScreenSent {
+    /// The "Used:" entry the answer shows.
+    pub fn used(self) -> &'static str {
+        match self {
+            ScreenSent::Text { cut: false } => "the window's text",
+            ScreenSent::Text { cut: true } => "the window's text (only its first part)",
+            ScreenSent::Screenshot { text_failed: false } => "a screenshot of the window",
+            ScreenSent::Screenshot { text_failed: true } => {
+                "a screenshot of the window (the text went first and got no answer)"
+            }
+            ScreenSent::Area => "a screenshot of the area you picked",
+        }
+    }
+}
+
 /// Why an explicit Screen context read did not produce a provider response.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContextReadError {
@@ -248,6 +279,19 @@ where
         region: Option<ScreenRegion>,
         progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
     ) -> Result<String, ContextReadError> {
+        self.ask_routed(question, region, progress)
+            .await
+            .map(|(answer, _)| answer)
+    }
+
+    /// [`ScreenReader::ask_region_streaming`], also saying what went to the
+    /// model: the window's text or a screenshot.
+    pub async fn ask_routed(
+        &self,
+        question: Option<&str>,
+        region: Option<ScreenRegion>,
+        progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+    ) -> Result<(String, ScreenSent), ContextReadError> {
         // Check authorization BEFORE capturing the screen — with no consent,
         // nothing is captured at all.
         {
@@ -262,6 +306,7 @@ where
             }
         }
 
+        let mut text_failed = false;
         if region.is_none() {
             // Every host and client gets this, not only FRIDAY's own CLI: a
             // private window is neither read nor captured.
@@ -274,8 +319,26 @@ where
                     return Err(ContextReadError::PrivateWindow);
                 }
             }
-            if let Some(answer) = self.ask_from_text(question, progress).await {
-                return answer;
+            let front = self.window_in_front();
+            match self.ask_from_text(question, progress).await {
+                Some(Ok((answer, cut))) => return Ok((answer, ScreenSent::Text { cut })),
+                // A busy or refusing provider on the text route: the
+                // screenshot (consent was given for this ask) rather than no
+                // answer. Every other refusal stands.
+                // Only of the same window: one the person switched to while
+                // the text was out (perhaps a private one) is never captured.
+                Some(Err(ContextReadError::Provider(e))) => {
+                    if front.is_none() || self.window_in_front() != front {
+                        self.revoke();
+                        return Err(ContextReadError::Provider(e));
+                    }
+                    tracing::warn!(
+                        "[context.read] the text route failed ({e}); trying a screenshot"
+                    );
+                    text_failed = true;
+                }
+                Some(Err(e)) => return Err(e),
+                None => {}
             }
         }
 
@@ -332,7 +395,26 @@ where
             self.provider.send_streaming(&composed, progress),
         )
         .await
+        .map(|answer| {
+            let route = if region.is_some() {
+                ScreenSent::Area
+            } else {
+                ScreenSent::Screenshot { text_failed }
+            };
+            (answer, route)
+        })
         .map_err(ContextReadError::Provider)
+    }
+
+    /// The window in front (its app and title), if the desktop says.
+    fn window_in_front(&self) -> Option<(String, String)> {
+        match self
+            .collector
+            .capture(ContextChannel::App, &CaptureOptions::default())
+        {
+            Ok(CapturedContext::AppInfo { class, title, .. }) => Some((class, title)),
+            _ => None,
+        }
     }
 
     /// The focused window's words, when its app has an accessibility tree
@@ -343,7 +425,7 @@ where
         &self,
         question: Option<&str>,
         progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
-    ) -> Option<Result<String, ContextReadError>> {
+    ) -> Option<Result<(String, bool), ContextReadError>> {
         let source = self.text.as_ref()?;
         let CapturedContext::AppInfo { class, title, .. } = self
             .collector
@@ -353,6 +435,7 @@ where
             return None;
         };
         let words = source.window_text(&class, &title).await?;
+        let cut = words.ends_with(SCREEN_TEXT_CUT);
         let (words, masked_words) = friday_goal_execution::mask_secrets(&words);
         let question = question.map(str::trim).filter(|q| !q.is_empty());
         let (task, masked_q) = match question {
@@ -389,6 +472,7 @@ where
                 self.provider.send_text_streaming(&composed, progress),
             )
             .await
+            .map(|answer| (answer, cut))
             .map_err(ContextReadError::Provider),
         )
     }
@@ -585,14 +669,17 @@ where
             };
             let asked = friday_intelligence::with_egress_context(
                 egress_ctx,
-                reader.ask_region_streaming(question.as_deref(), region, &progress),
+                reader.ask_routed(question.as_deref(), region, &progress),
             )
             .await;
 
             let (ok, result) = match asked {
-                Ok(response) => {
+                Ok((response, route)) => {
                     tracing::info!("[context.read] screen delivered to provider");
-                    (true, serde_json::json!({ "response": response }))
+                    (
+                        true,
+                        serde_json::json!({ "response": response, "used": [route.used()] }),
+                    )
                 }
                 Err(e) => {
                     tracing::warn!("[context.read] {e}");
@@ -1687,6 +1774,90 @@ mod tests {
                 br#"{"class":"nautilus","title":"Home","at":[0,0],"size":[800,600]}"#,
             );
         ContextCollector::new(runner)
+    }
+
+    /// A provider that refuses text and answers screenshots.
+    #[derive(Clone, Default)]
+    struct TextRefused(RecordingSeam);
+
+    #[async_trait]
+    impl ProviderSeam for TextRefused {
+        async fn send(&self, payload: &str) -> Result<String, String> {
+            self.0.send(payload).await
+        }
+        async fn send_text_streaming(
+            &self,
+            _: &str,
+            _: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+        ) -> Result<String, String> {
+            Err("rate limited".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_busy_provider_on_the_text_falls_back_to_the_screenshot() {
+        let seam = TextRefused::default();
+        let reader = ScreenReader::new(collector_with_window(), seam.clone(), "fabric")
+            .with_text(Arc::new(FakeText(Some("Report.pdf\nbutton: Open".into()))));
+        reader.consent();
+        let (answer, sent) = reader
+            .ask_routed(Some("what is here?"), None, &|_| {})
+            .await
+            .unwrap();
+        assert!(answer.contains("FRIDAY"));
+        assert_eq!(sent, ScreenSent::Screenshot { text_failed: true });
+        assert!(
+            seam.0.last().unwrap().contains("SCREEN_CAPTURE"),
+            "the screenshot went instead"
+        );
+        assert!(sent.used().contains("the text went first"));
+    }
+
+    #[tokio::test]
+    async fn no_fallback_screenshot_of_a_window_switched_to_meanwhile() {
+        // The window in front changes between the text and the fallback.
+        let win = friday_context_collector::window_command();
+        let full = friday_context_collector::screen_command(None);
+        let runner = FakeCommandRunner::new()
+            .script_stdout(&full.0, &strs(&full.1), PNG)
+            .script_stdout_seq(
+                &win.0,
+                &strs(&win.1),
+                &[
+                    // The private check, the window before, the text's own look.
+                    br#"{"class":"nautilus","title":"Home","at":[0,0],"size":[800,600]}"#
+                        .as_slice(),
+                    br#"{"class":"nautilus","title":"Home","at":[0,0],"size":[800,600]}"#
+                        .as_slice(),
+                    br#"{"class":"nautilus","title":"Home","at":[0,0],"size":[800,600]}"#
+                        .as_slice(),
+                    br#"{"class":"keepassxc","title":"Passwords","at":[0,0],"size":[800,600]}"#
+                        .as_slice(),
+                ],
+            );
+        let seam = TextRefused::default();
+        let reader = ScreenReader::new(ContextCollector::new(runner), seam.clone(), "fabric")
+            .with_text(Arc::new(FakeText(Some("Report.pdf".into()))));
+        reader.consent();
+        let got = reader.ask_routed(None, None, &|_| {}).await;
+        assert!(matches!(got, Err(ContextReadError::Provider(_))), "{got:?}");
+        assert_eq!(seam.0.sent(), 0, "no screenshot of the other window");
+    }
+
+    #[tokio::test]
+    async fn the_answer_says_what_was_sent() {
+        let reader = ScreenReader::new(collector_with_window(), RecordingSeam::default(), "fabric")
+            .with_text(Arc::new(FakeText(Some(format!(
+                "Report.pdf\n{SCREEN_TEXT_CUT}"
+            )))));
+        reader.consent();
+        let (_, sent) = reader.ask_routed(None, None, &|_| {}).await.unwrap();
+        assert_eq!(sent, ScreenSent::Text { cut: true });
+        assert_eq!(sent.used(), "the window's text (only its first part)");
+        let reader = ScreenReader::new(collector_with_window(), RecordingSeam::default(), "fabric");
+        reader.consent();
+        let (_, sent) = reader.ask_routed(None, None, &|_| {}).await.unwrap();
+        assert_eq!(sent, ScreenSent::Screenshot { text_failed: false });
     }
 
     #[tokio::test]

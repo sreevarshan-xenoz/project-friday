@@ -605,7 +605,7 @@ contains "Ask again: selection preserves --selection kind" "$(cat "$LOG")" "sele
 contains "empty selection explains what to do" "$(cat "$LOG")" "Select or copy some text first"
 PICK="what does this error mean" bash "$F" ask --screen; sleep 0.3
 contains "screen: asks the daemon with consent and the question" "$(cat "$LOG")" "friday-ctl-context context screen --yes --ask what does this error mean"
-contains "screen: prompt says a screenshot is shared" "$(cat "$LOG")" "a screenshot goes to your AI provider"
+contains "screen: prompt says what is shared" "$(cat "$LOG")" "its text, or a screenshot if it has too little, goes to your AI provider"
 contains "screen: full answer saved" "$(cat "$state/last-answer.md")" $'The error says E0308.\nFix the type.'
 # Asking about the screen in words looks at it; a how-to about the screen does not.
 : >"$LOG"; bash "$F" ask "what is on my screen right now" >/dev/null 2>&1; sleep 0.4

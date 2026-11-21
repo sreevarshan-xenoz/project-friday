@@ -300,13 +300,17 @@ public static partial class Asking
         // then what the daemon added (its "used" list).
         var used = new List<string>();
         if (kind == AskKind.Selection) used.Add("your selection");
-        if (kind == AskKind.Screen) used.Add("the window in front");
         if (kind == AskKind.Screen)
         {
             // The result, not one of the {"partial": ...} lines before it.
             var last = objects.LastOrDefault(o => !o.TryGetProperty("partial", out _));
             result = last.ValueKind == JsonValueKind.Object ? Str(last, "response") : null;
             error = last.ValueKind == JsonValueKind.Object ? Str(last, "error") : null;
+            // The daemon says what it sent (the window's text or a screenshot).
+            if (last.ValueKind == JsonValueKind.Object && last.TryGetProperty("used", out var su) && su.ValueKind == JsonValueKind.Array)
+                used.AddRange(su.EnumerateArray().Where(u => u.ValueKind == JsonValueKind.String).Select(u => u.GetString()!));
+            else
+                used.Add("the window in front");
         }
         else
         {
