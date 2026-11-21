@@ -102,7 +102,7 @@ pub fn learn(
         let open = all
             .iter_mut()
             .rev()
-            .find(|l| l.fixed.is_none() && alike(goal, &l.goal) && fits(l, project));
+            .find(|l| l.fixed.is_none() && alike(goal, &l.goal) && l.project.as_deref() == project);
         match open {
             Some(l) => l.fixed = Some(text),
             None => return Ok(()),
@@ -110,7 +110,7 @@ pub fn learn(
     } else if let Some(l) = all
         .iter_mut()
         .rev()
-        .find(|l| l.fixed.is_none() && l.goal == goal && fits(l, project))
+        .find(|l| l.fixed.is_none() && l.goal == goal && l.project.as_deref() == project)
     {
         l.ts = now;
         l.failed = text;
@@ -126,8 +126,10 @@ pub fn learn(
     save(path, &all)
 }
 
-/// Whether a lesson belongs with an ask about `project`: one kept for a
-/// project goes only with that project (or an ask naming none).
+/// Whether a lesson comes back for an ask about `project`: one kept for a
+/// project goes only with that project (or an ask naming none). Learning is
+/// stricter: a lesson is refreshed or closed only by an ask about its own
+/// project (or, for one kept without, an ask naming none).
 fn fits(lesson: &Lesson, project: Option<&str>) -> bool {
     match (lesson.project.as_deref(), project) {
         (Some(kept), Some(asked)) => kept == asked,
@@ -206,7 +208,7 @@ mod tests {
             1
         );
         assert!(recall(&p, 2_000, "run the tests for the site", Some("garden")).is_empty());
-        // A success in another project doesn't close it.
+        // A success in another project, or in an ask naming none, doesn't close it.
         learn(
             &p,
             1_500,
@@ -216,6 +218,7 @@ mod tests {
             Some("garden"),
         )
         .unwrap();
+        learn(&p, 1_600, "run the tests for the site", true, "ok", None).unwrap();
         assert!(
             !recall(&p, 2_000, "run the tests for the site", Some("site"))[0]
                 .contains("what worked")

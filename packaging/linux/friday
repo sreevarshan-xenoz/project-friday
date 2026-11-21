@@ -1293,8 +1293,12 @@ friday_workspace() {
 # when the goal isn't one of these or no workspace fits.
 friday_continue_restore() {
   local g="${1,,}" name rest re
-  g="${g%%[.!?]}"
-  g="${g#friday}"; g="${g#,}"; g="${g# }"
+  # Trimmed like the daemon does: spaces round it, every trailing . ! ?,
+  # and any commas and spaces after a leading "friday".
+  g="${g#"${g%%[![:space:]]*}"}"; g="${g%"${g##*[![:space:]]}"}"
+  while [[ "$g" == *[.!?] ]]; do g="${g%?}"; done
+  g="${g#friday}"
+  while [[ "$g" == [,\ ]* ]]; do g="${g:1}"; done
   g="${g#let\'s }"; g="${g#lets }"
   # The grammar the daemon uses too (tests/fixtures/resume-phrases.tsv):
   # "continue", "resume" and "get back to" may name the project straight
@@ -1311,8 +1315,10 @@ friday_continue_restore() {
   else
     return 1
   fi
-  name="${name#the }"; name="${name#my }"
-  (( ${#name} <= 40 )) || return 1
+  name="${name#"${name%%[![:space:]]*}"}"; name="${name%"${name##*[![:space:]]}"}"
+  if [[ "$name" == "the "* ]]; then name="${name#the }"; else name="${name#my }"; fi
+  name="${name#"${name%%[![:space:]]*}"}"
+  [ -n "$name" ] && (( ${#name} <= 40 )) || return 1
   [[ "$name" =~ ^(where|from|it|that|this|me|you|us|him|her|them)( |$) ]] && return 1
   command -v friday-ctl >/dev/null 2>&1 || return 1
   timeout 10 friday-ctl workspace restore "$name" 2>/dev/null

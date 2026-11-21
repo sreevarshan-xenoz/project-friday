@@ -50,36 +50,48 @@ fn known_folders(state_dir: &Path, workspaces: &Path) -> Vec<String> {
 /// below, which may name other folders).
 pub fn resolve(state_dir: &Path, workspaces: &Path, goal: &str) -> Option<PathBuf> {
     use friday_goal_execution::significant_tokens;
-    let goal = goal.lines().next().unwrap_or_default();
-    let words = significant_tokens(goal);
+    let goal = goal.lines().next().unwrap_or_default().to_lowercase();
+    // "on Friday" / "last Friday" is a day, not the FRIDAY project.
+    let mut goal = goal;
+    for when in ["on ", "last ", "this ", "next "] {
+        for day in [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        ] {
+            goal = goal.replace(&format!("{when}{day}"), " ");
+        }
+    }
+    let words = significant_tokens(&goal);
+    // (how well, how many of its words): the whole name, then all its
+    // distinctive words (more of them is more specific), then any.
     let score = |folder: &str| {
         let name = crate::thoughts::project_name(folder).to_lowercase();
         if words.contains(&name) {
-            return 3;
+            return (3, 0);
         }
         let own: Vec<String> = significant_tokens(&name)
             .into_iter()
             .filter(|w| w != "project" && w != "code")
             .collect();
         if !own.is_empty() && own.iter().all(|w| words.contains(w)) {
-            2
+            (2, own.len())
         } else {
-            usize::from(crate::thoughts::named(goal, folder))
+            (usize::from(crate::thoughts::named(&goal, folder)), 0)
         }
     };
-    let mut best: Option<(usize, String)> = None;
+    let mut best: Option<((usize, usize), String)> = None;
     for folder in known_folders(state_dir, workspaces) {
         let s = score(&folder);
-        if s > 0 && best.as_ref().is_none_or(|(b, _)| s >= *b) {
+        if s.0 > 0 && best.as_ref().is_none_or(|(b, _)| s >= *b) {
             best = Some((s, folder));
         }
     }
     best.map(|(_, f)| PathBuf::from(f))
-}
-
-/// The folder of the project an ask names, when it's a git repository.
-pub fn find(state_dir: &Path, workspaces: &Path, goal: &str) -> Option<PathBuf> {
-    resolve(state_dir, workspaces, goal).filter(|p| p.join(".git").exists())
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
@@ -216,9 +228,9 @@ mod tests {
         )
         .unwrap();
         let ws = root.join("workspaces");
-        let found = find(&state, &ws, "let's continue building FRIDAY").unwrap();
+        let found = resolve(&state, &ws, "let's continue building FRIDAY").unwrap();
         assert_eq!(found, repo);
-        assert!(find(&state, &ws, "what's the weather").is_none());
+        assert!(resolve(&state, &ws, "what's the weather").is_none());
 
         let text = facts(&found).unwrap();
         assert!(
@@ -256,6 +268,11 @@ mod tests {
         );
         assert_eq!(r("open friday-mobile").as_deref(), Some("/c/friday-mobile"));
         assert_eq!(r("what's the weather"), None);
+        assert_eq!(
+            r("what did I do on Friday?"),
+            None,
+            "a day, not the project"
+        );
         // Only the first line: what `friday ask` restored below doesn't count.
         assert_eq!(
             r("continue building FRIDAY\n\nFRIDAY just put back: foot in friday-mobile").as_deref(),

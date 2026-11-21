@@ -147,7 +147,7 @@ fn lessons(text: &str) -> Vec<Entry> {
                     .map(|f| format!("; later worked: {f}"))
                     .unwrap_or_default()
             )),
-            project: None,
+            project: l.project.clone(),
         })
         .collect()
 }
@@ -562,6 +562,26 @@ mod tests {
             wants("where was I", &[], now),
             None,
             "nothing to go back to"
+        );
+    }
+
+    #[test]
+    fn a_lesson_on_the_timeline_keeps_its_project() {
+        let e =
+            lessons(r#"{"ts":10,"goal":"run the tests","failed":"no script","project":"garden"}"#);
+        assert_eq!(e[0].project.as_deref(), Some("garden"));
+        // So it never rides along with another project's entries.
+        let near = vec![
+            Entry {
+                ts: 0,
+                text: "asked".into(),
+                project: Some("project-friday".into()),
+            },
+            e[0].clone(),
+        ];
+        assert_eq!(
+            for_project(near, "continue building FRIDAY", Some("project-friday")).len(),
+            1
         );
     }
 
