@@ -28,11 +28,10 @@ public sealed class AnswerLog
     {
         var sb = new System.Text.StringBuilder();
         sb.Append($"# {question}\n\n_{when:yyyy-MM-dd HH:mm}_\n\n");
+        // That there was text, never the text itself (a selection can be
+        // anything: a message, a password manager's page).
         if (!string.IsNullOrWhiteSpace(context))
-        {
-            var preview = context.Length > 300 ? context[..300] : context;
-            sb.Append($"> {preview.Replace('\n', ' ').Replace('\r', ' ')}\n\n");
-        }
+            sb.Append("> (with the text you asked about; not kept)\n\n");
         sb.Append(outcome.Answer).Append('\n');
         if (!string.IsNullOrEmpty(outcome.Details))
             sb.Append($"\n<details>\n\n```\n{outcome.Details}\n```\n");
