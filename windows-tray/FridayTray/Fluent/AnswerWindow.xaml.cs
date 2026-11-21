@@ -38,6 +38,8 @@ public partial class AnswerWindow : Window
     public event Action? FollowUp;
     public event Action? StartFriday;
     public event Action<string>? ConfirmRun;
+    /// <summary>Puts the answer into the window the question was asked from.</summary>
+    public event Action<string>? TypeIt;
 
     /// <summary>Whether "Try another model" applies (a text ask, not a screen one).</summary>
     public bool CanAskAnother { get; set; }
@@ -171,6 +173,13 @@ public partial class AnswerWindow : Window
         }
         else
         {
+            if (outcome.Ok && TypeIt is not null && !string.IsNullOrWhiteSpace(outcome.Answer))
+            {
+                var type = Pill("Type it", SymbolRegular.Keyboard24);
+                type.ToolTip = "Put this answer where you were typing";
+                type.Click += (_, _) => { CloseSoftly(); TypeIt?.Invoke(outcome.Answer); };
+                buttons.Add(type);
+            }
             if (outcome.Ok)
             {
                 var follow = Pill("Follow up", SymbolRegular.Chat24);
