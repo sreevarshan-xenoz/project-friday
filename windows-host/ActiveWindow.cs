@@ -37,6 +37,8 @@ public static class ActiveWindow
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT r, int size);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    private delegate bool EnumProc(IntPtr h, IntPtr param);
+    [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr parent, EnumProc proc, IntPtr param);
 
     public static int Run()
     {
@@ -83,6 +85,28 @@ public static class ActiveWindow
     }
 
     private static string? ProcessName(IntPtr h)
+    {
+        var name = NameOf(h);
+        // A Store app's frame belongs to ApplicationFrameHost; the app is
+        // the process of a child window that isn't the frame's own.
+        if (name == "applicationframehost")
+        {
+            GetWindowThreadProcessId(h, out var frame);
+            string? app = null;
+            EnumChildWindows(h, (child, _) =>
+            {
+                GetWindowThreadProcessId(child, out var pid);
+                if (pid == frame)
+                    return true;
+                app = NameOf(child);
+                return false;
+            }, IntPtr.Zero);
+            name = app ?? name;
+        }
+        return name;
+    }
+
+    private static string? NameOf(IntPtr h)
     {
         try
         {
