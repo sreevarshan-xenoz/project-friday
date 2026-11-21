@@ -126,7 +126,7 @@ internal sealed class TrayContext : ApplicationContext
             return;
         }
         Welcome.MarkShown(_install.Paths);
-        _welcome = new WelcomeWindow(_hotkeys.Labels, ChooseProvider, () => OpenSettings(), () => _ = AskAsync(AskKind.Plain));
+        _welcome = new WelcomeWindow(_hotkeys.Labels, ChooseProvider, () => OpenSettings(), () => _ = AskAsync(AskKind.Plain), () => OpenSettings("Browser"));
         _welcome.Closed += (_, _) => _welcome = null;
         FluentApp.Show(_welcome);
     }
@@ -215,6 +215,19 @@ internal sealed class TrayContext : ApplicationContext
             {
                 Native.RestoreForeground(targetWindow);
                 await FocusWait.WaitForForegroundAsync(targetWindow, Native.GetForegroundWindow);
+            }
+
+            // A browser in front with FRIDAY's extension: the page's text
+            // instead of a screenshot (an area dragged out stays a screenshot).
+            if (kind == AskKind.Screen && area is null && BrowserLink.All.Any(b =>
+                    string.Equals(Path.GetFileNameWithoutExtension(b.Exe), Native.ProcessNameOf(targetWindow), StringComparison.OrdinalIgnoreCase)))
+            {
+                var tab = await Ctl.RunAsync(_install, ["browser", "tab"], TimeSpan.FromSeconds(8));
+                if (tab.Ok && BrowserLink.PageContext(tab.Output, Native.GetWindowTitle(targetWindow) ?? "") is { } page)
+                {
+                    kind = AskKind.Plain;
+                    context = page;
+                }
             }
 
             // "search ..." and "look up ..." ask for a web search, and only they do.

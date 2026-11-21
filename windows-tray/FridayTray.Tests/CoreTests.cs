@@ -101,7 +101,8 @@ public class AnswerLogTests
         var when = new DateTime(2026, 11, 5, 9, 30, 0);
         log.Save("why?", "some\ncontext", new AskOutcome(false, "plain message", "raw error", false), when);
         var text = File.ReadAllText(paths.LastAnswerFile);
-        Assert.StartsWith("# why?\n\n_2026-11-05 09:30_\n\n> some context\n\nplain message\n", text);
+        Assert.StartsWith("# why?\n\n_2026-11-05 09:30_\n\n> (with the text you asked about; not kept)\n\nplain message\n", text);
+        Assert.DoesNotContain("some", text);
         Assert.Contains("```\nraw error\n```", text);
         Assert.Contains("---", File.ReadAllText(paths.AnswersFile));
         Assert.Equal(Path.Combine(dir, "local", "friday", "state.json"), paths.StateFile);

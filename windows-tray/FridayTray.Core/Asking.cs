@@ -109,7 +109,7 @@ public static partial class Asking
     public static string BuildFollowUp(string question, string previousAnswer)
     {
         var prev = previousAnswer.Length > MaxFollowUpContextChars ? previousAnswer[..MaxFollowUpContextChars] : previousAnswer;
-        return $"{question}\n\nThis follows up on my previous question and your answer:\n\"\"\"\n{prev}\n\"\"\"";
+        return $"{question}\n\n[follow-up]\nThis follows up on my previous question and your answer:\n\"\"\"\n{prev}\n\"\"\"";
     }
 
     /// <summary>The "provider/model" to avoid when asking again, from who answered.</summary>

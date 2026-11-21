@@ -55,6 +55,7 @@ internal sealed partial class SettingsWindow : FluentWindow
         ("Agents", SymbolRegular.Bot24),
         ("Tasks", SymbolRegular.CalendarClock24),
         ("Shortcuts", SymbolRegular.Keyboard24),
+        ("Browser", SymbolRegular.Globe24),
         ("Health & updates", SymbolRegular.HeartPulse24),
         ("About", SymbolRegular.Info24),
     ];
@@ -131,6 +132,7 @@ internal sealed partial class SettingsWindow : FluentWindow
             "Agents" => Agents(),
             "Tasks" => Tasks(),
             "Shortcuts" => Shortcuts(),
+            "Browser" => Browser(),
             "Health & updates" => HealthAndUpdates(),
             _ => About(),
         }))
@@ -158,6 +160,27 @@ internal sealed partial class SettingsWindow : FluentWindow
         yield return Row(Pill("Ask FRIDAY something", SymbolRegular.Sparkle24, primary: true), () => _do.AskText(""));
         yield return Row(Pill("How is my computer doing?", SymbolRegular.HeartPulse24), () => _do.AskText("How is my computer doing?"));
         yield return Row(Pill("Show the welcome again", SymbolRegular.HandWave24), _do.ShowWelcome);
+    }
+
+    private IEnumerable<UIElement> Browser()
+    {
+        yield return Note("With FRIDAY's extension in your browser, asking about your screen while a page is in front sends the page's text (title, address, selection) instead of a screenshot. " +
+            "The browser starts FRIDAY itself and talks to it over a private pipe: no port, nothing from the web can reach it. It reads the tab only when you ask, and never in a private window.");
+        var any = false;
+        foreach (var b in BrowserSetup.Installed())
+        {
+            any = true;
+            var browser = b;
+            yield return Pair(b.Name, BrowserSetup.Connected(b) ? "Connected" : "Not connected");
+            yield return Row(Pill($"Connect {b.Name}", SymbolRegular.PlugConnected24, primary: !BrowserSetup.Connected(b)), () =>
+            {
+                var steps = BrowserSetup.Connect(browser, _install);
+                MessageBox.Show(this, steps, "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Information);
+                Show("Browser");
+            });
+        }
+        if (!any)
+            yield return Note("No browser FRIDAY knows was found (Chrome, Edge, Brave, Vivaldi, Firefox).");
     }
 
     private IEnumerable<UIElement> HealthAndUpdates()

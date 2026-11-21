@@ -159,6 +159,8 @@ grep -q "pocketdesk-\*.pkg.tar.zst" "$AIROOTFS/root/installer" \
   && pass "installer installs the pocketdesk package" || fail "installer does not install pocketdesk"
 grep -q "packaging/arch/pocketdesk/PKGBUILD" "$PROFILE_DIR/build-iso.sh" \
   && pass "build-iso.sh builds the pocketdesk package" || fail "build-iso.sh does not build pocketdesk"
+grep -q 'git clone -q "https://aur.archlinux.org/\$2.git"' "$AIROOTFS/root/installer" \
+  && pass "installer builds Brave and Zen from the AUR (never Flathub)" || fail "installer does not build the AUR browsers"
 # The update channel: the installer's [friday] repo must be where release.yml
 # publishes (the rolling "pacman" release).
 if grep -q '^Server = https://github.com/sreevarshan-xenoz/project-friday/releases/download/pacman$' "$AIROOTFS/root/installer" \

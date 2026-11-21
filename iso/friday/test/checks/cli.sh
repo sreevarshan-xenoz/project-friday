@@ -468,6 +468,11 @@ contains "with a local model it asks it directly" "$(cat "$LOG")" "http://127.0.
 contains "and shows its answer" "$(cat "$LOG")" "It is a note."
 contains "the saved answer is marked as kept here (the timeline skips it)" "$(cat "$HOME/.local/state/friday/last-answer.md" 2>/dev/null)" "_On this computer · nothing was sent_"
 if grep -q "^friday-ctl" "$LOG"; then fail "the private ask went through the daemon"; else pass "the private ask skips the daemon"; fi
+if grep -q "hunter2" "$HOME/.local/state/friday/last-answer.md"; then fail "the saved answer kept the selected text"
+else pass "the saved answer says there was text, not what it was"; fi
+: >"$LOG"; LOCAL_REPLY="An example." HYPR_WIN='{"class":"kitty","title":"zsh"}' bash "$F" ask --follow-up "give an example"; sleep 0.3
+contains "a follow-up to a local answer stays local" "$(cat "$LOG")" "http://127.0.0.1:8080/v1/chat/completions"
+if grep -q "^friday-ctl" "$LOG"; then fail "a local answer's follow-up went to the daemon"; else pass "a local answer's follow-up skips the daemon"; fi
 # A local model that isn't on this computer doesn't count.
 printf 'LLAMACPP_ENABLED=1\nLLAMACPP_BASE_URL=http://192.0.2.7:8080/v1\n' >"$envf"
 : >"$LOG"; LOCAL_REPLY="x" PRIMARY="hunter2" PICK="explain" bash "$F" ask --selection; sleep 0.3

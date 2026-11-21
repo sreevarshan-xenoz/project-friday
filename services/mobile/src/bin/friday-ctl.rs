@@ -1193,12 +1193,17 @@ async fn main() -> std::process::ExitCode {
     if raw.first().map(String::as_str) == Some("workspace") {
         return workspace(&raw[1..]);
     }
-    // The browser starts the host with the extension's origin as its argument.
-    #[cfg(unix)]
-    if raw.first().map(String::as_str) == Some("browser-host") {
+    // The browser starts the host: through the Linux wrapper as
+    // `browser-host`, or (Windows) directly, with the extension's origin
+    // (Chromium) or the manifest's path (Firefox) as the first argument.
+    let started_by_browser = raw.first().is_some_and(|a| {
+        a == "browser-host"
+            || a.starts_with("chrome-extension://")
+            || (a.contains("org.friday.browser") && a.ends_with(".json"))
+    });
+    if started_by_browser {
         return std::process::ExitCode::from(friday_mobile::browser_host::run_host());
     }
-    #[cfg(unix)]
     if raw.first().map(String::as_str) == Some("browser")
         && raw.get(1).map(String::as_str) == Some("tab")
     {
