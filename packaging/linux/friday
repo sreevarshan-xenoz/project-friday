@@ -2012,16 +2012,33 @@ paypal"
 # friday_private_window: what made the focused window private, or nothing.
 friday_private_window() {
   command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 0
-  local win hay pat own="${XDG_CONFIG_HOME:-$HOME/.config}/friday/private-windows" drop
+  local win hay pat own="${XDG_CONFIG_HOME:-$HOME/.config}/friday/private-windows" drop never
   win=$(timeout 2 hyprctl activewindow -j 2>/dev/null) || return 0
   hay=$(jq -r '"\(.class // "") \(.title // "")"' <<<"$win" 2>/dev/null | tr '[:upper:]' '[:lower:]') || return 0
   drop=$(sed -n 's/^[[:space:]]*!//p' "$own" 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
   while IFS= read -r pat; do
     pat=$(tr '[:upper:]' '[:lower:]' <<<"$pat" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    [[ -n "$pat" && "$pat" != \#* && "$pat" != !* ]] || continue
+    [[ -n "$pat" && "$pat" != \#* && "$pat" != !* && "$pat" != /* && "$pat" != "~/"* ]] || continue
+    never=""
+    if [[ "$pat" == "never "* ]]; then never="never:"; pat="${pat#never }"; pat="${pat#"${pat%%[![:space:]]*}"}"; fi
+    [ -n "$pat" ] || continue
     grep -qxF -- "$pat" <<<"$drop" && continue
-    if [[ "$hay" == *"$pat"* ]]; then printf '%s' "$pat"; return 0; fi
-  done < <(printf '%s\n' "$FRIDAY_PRIVATE_WINDOWS"; cat "$own" 2>/dev/null || true)
+    if [[ "$hay" == *"$pat"* ]]; then printf '%s%s' "$never" "$pat"; return 0; fi
+  done < <(cat "$own" 2>/dev/null | grep -i '^[[:space:]]*never ' || true; printf '%s\n' "$FRIDAY_PRIVATE_WINDOWS"; cat "$own" 2>/dev/null || true)
+}
+
+# friday_private_folder <folder>: the private-windows line (a folder: /… or
+# ~/…) that folder is in, or nothing. Commands run there are private.
+friday_private_folder() {
+  local dir="$1" own="${XDG_CONFIG_HOME:-$HOME/.config}/friday/private-windows" line path
+  [ -n "$dir" ] || return 0
+  while IFS= read -r line; do
+    line=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<<"$line")
+    line="${line#never }"
+    case "$line" in /*|"~/"*) ;; *) continue ;; esac
+    path="${line/#\~/$HOME}"; path="${path%/}"
+    if [ "$dir" = "$path" ] || [[ "$dir" == "$path"/* ]]; then printf '%s' "$line"; return 0; fi
+  done < <(cat "$own" 2>/dev/null || true)
 }
 
 # friday_ask_local <prompt>: the local model's answer, asked directly on this
@@ -3133,6 +3150,8 @@ case "${1:-}" in
           # The end matters most (the error is usually last).
           [ "${#context}" -le 8000 ] || context="${context: -8000}"
           explaining_error=true
+          # A command run in a private folder (private-windows: /… or ~/…).
+          private_win=$(friday_private_folder "$le_cwd")
         fi
       else
         goal=$(fuzzel --dmenu --prompt-only="FRIDAY › " --width=60 \
@@ -3416,6 +3435,11 @@ case "${1:-}" in
 
     # A private window: its text goes only to the local model, asked here
     # directly; a screenshot of it never leaves.
+    # "never <name>" in private-windows: not even the local model reads it.
+    if [[ "$private_win" == never:* ]]; then
+      notify-send -a FRIDAY -- "FRIDAY" "FRIDAY doesn't read this window at all (your rule \"never ${private_win#never:}\" in ~/.config/friday/private-windows)." 2>/dev/null || true
+      exit 0
+    fi
     if [ -n "$private_win" ]; then
       if $use_screen; then
         notify-send -a FRIDAY -- "FRIDAY" "This window looks private (\"$private_win\"), so no screenshot of it leaves this computer. Select the text instead to ask the local model about it." 2>/dev/null || true
