@@ -2534,21 +2534,24 @@ friday_ask_local() {
 }
 
 # What works right now, in a few quick looks (a second or so in all):
-# "online", "local" (a local model answers), "daemon" (FRIDAY's daemon is
-# up). One word a line, only for those that are. Shared by a failed ask's
-# message and friday doctor.
+# "online" (unless NetworkManager says there's no network at all or, without
+# it, there's no default route: a VPN or a captive portal still counts) and
+# "local" (a local model answers). One word a line, only for those that are.
+# Shared by a failed ask's message and friday doctor.
 friday_what_works() {
-  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" base
-  if [ "$(timeout 1 nmcli -t networking connectivity 2>/dev/null)" = full ] \
-      || { ! command -v nmcli >/dev/null 2>&1 && timeout 1 ip route get 192.0.2.1 >/dev/null 2>&1; }; then
-    echo online
-  fi
-  base=$(sed -n 's/^LLAMACPP_BASE_URL=//p' "$env_file" 2>/dev/null | tail -n1)
-  if grep -qx 'LLAMACPP_ENABLED=1' "$env_file" 2>/dev/null && [[ "$base" == http://127.0.0.1:* || "$base" == http://localhost:* ]] \
-      && timeout 1 curl -fs "$base/models" >/dev/null 2>&1; then
+  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" base nm
+  nm=$(timeout 1 nmcli -t networking connectivity 2>/dev/null) || nm=""
+  case "$nm" in
+    none) ;;
+    full|limited|portal) echo online ;;
+    *) [ -n "$(timeout 1 ip route show default 2>/dev/null)" ] && echo online ;;
+  esac
+  base=$(sed -n 's/^LLAMACPP_BASE_URL=//p' "$env_file" 2>/dev/null | tail -n1) || base=""
+  if grep -qx 'LLAMACPP_ENABLED=1' "$env_file" 2>/dev/null && [[ "$base" != *@* ]] \
+      && [[ "$base" == http://127.0.0.1:* || "$base" == http://localhost:* ]] \
+      && timeout 1 curl -fs --noproxy '*' "$base/models" >/dev/null 2>&1; then
     echo local
   fi
-  systemctl --user is-active --quiet friday-linux-daemon 2>/dev/null && echo daemon
   return 0
 }
 
@@ -3858,6 +3861,7 @@ case "${1:-}" in
               pending|installing)
                 answer="Local AI is still downloading, and no cloud provider answered. Ask again once it's on (friday local-ai status)." ;;
               *) details=""
+                 local still
                  still=$(friday_what_still_works)
                  [ -z "$still" ] || answer="$answer $still" ;;
             esac ;;
