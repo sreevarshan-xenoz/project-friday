@@ -782,6 +782,26 @@ while IFS=$'\t' read -r ask want; do
 done <"$REPO_ROOT/tests/fixtures/resume-phrases.tsv"
 [[ -z "$resume_bad" ]] && pass "every ask in the table restores the project it names (or none)" || fail "resume grammar:$resume_bad"
 
+echo "that was wrong: a repro without the text"
+rm -rf "$state/repros"
+: >"$LOG"; bash "$F" ask "what is the capital of peru"; sleep 0.3
+expect "each answer leaves its shape in last-ask.json" test -s "$state/last-ask.json"
+if grep -q "peru\|Line one" "$state/last-ask.json"; then fail "last-ask.json holds the question or answer"; else pass "last-ask.json holds no question or answer text"; fi
+contains "it says how long the question was" "$(cat "$state/last-ask.json")" '"question_chars": 27'
+out=$(bash "$F" wrong "Made something up")
+contains "friday wrong saves a repro" "$out" "Saved a repro of that answer"
+R=$(ls "$state/repros"/*.json | head -n1)
+contains "with the reason" "$(cat "$R")" '"reason": "Made something up"'
+if grep -q "peru" "$R"; then fail "the repro holds the question"; else pass "the repro holds no question text"; fi
+contains "repros are owner-only" "$(stat -c %a "$state/repros")" "700"
+contains "--list shows them" "$(bash "$F" wrong --list)" "Made something up · plain"
+contains "the report includes them" "$(bash "$F" report "$W/report.txt" >/dev/null 2>&1; cat "$W/report.txt")" '"reason": "Made something up"'
+: >"$LOG"; bash "$F" ask "this will fail"; sleep 0.3
+contains "a failed answer keeps only the error's kind" "$(cat "$state/last-ask.json")" '"error": "unreachable"'
+if grep -q "network unreachable" "$state/last-ask.json"; then fail "last-ask.json holds the error text"; else pass "no error text in last-ask.json"; fi
+rm -f "$state/last-ask.json"
+contains "nothing to report before an answer" "$(bash "$F" wrong x 2>&1 || true)" "No answer to report yet"
+
 echo "answers know their project"
 : >"$LOG"; WS_PROJECT=/home/me/code/project-friday bash "$F" ask "why does the build fail"; sleep 0.3
 contains "the saved answer names the project in front" "$(cat "$HOME/.local/state/friday/last-answer.md")" "_project: /home/me/code/project-friday_"
