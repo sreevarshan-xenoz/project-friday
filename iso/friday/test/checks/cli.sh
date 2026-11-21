@@ -269,6 +269,20 @@ if grep -qE "Summarize|Explain the selected" "$W/menu.txt"; then fail "suggested
 printf '#!/bin/bash\necho "fuzzel $*" >> %q\necho "$PICK"\n' "$LOG" >"$S/fuzzel"; chmod +x "$S/fuzzel"
 rm -f "$S/hyprctl"
 
+echo "per-app instructions"
+printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s "$HYPR_WIN"\nexit 0\n' >"$S/hyprctl"; chmod +x "$S/hyprctl"
+out=$(bash "$F" app-instructions set kitty "answer with commands only")
+contains "an app's instruction is kept" "$out" "In kitty, FRIDAY will: answer with commands only"
+contains "and listed" "$(bash "$F" app-instructions list)" "kitty: answer with commands only"
+: >"$LOG"; HYPR_WIN='{"class":"kitty","title":"zsh"}' bash "$F" ask "list big files"; sleep 0.3
+contains "an ask in that app carries it" "$(cat "$LOG")" "[app instructions]"
+contains "and the answer says it was used" "$(cat "$LOG")" "your instructions for kitty"
+: >"$LOG"; HYPR_WIN='{"class":"firefox","title":"x"}' bash "$F" ask "what is this page about"; sleep 0.3
+if grep "what is this page about" "$LOG" | grep -q "app instructions"; then fail "another app got kitty's instruction"; else pass "another app doesn't get it"; fi
+bash "$F" app-instructions rm kitty >/dev/null
+if bash "$F" app-instructions list | grep -q "kitty:"; then fail "rm left the instruction"; else pass "rm takes it off"; fi
+rm -f "$S/hyprctl"
+
 echo "explain the last error (kitty)"
 # A focused kitty window (pid 4242) whose last command failed; kitty's own
 # remote control answers ls and get-text (stubbed), on its real socket path.
