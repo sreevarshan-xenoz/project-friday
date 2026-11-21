@@ -38,6 +38,8 @@ Autonomous Agent & Cognitive Loop:
                                    answer text) to turn into a test
   friday shell-hook [zsh|bash]     Lines for your shell's rc file: Super+Y explains a failed
                                    command, or says when one finishes, in any terminal
+  friday sync [init|trust|folder|project|now]  Share chosen projects' thoughts and
+                                   workspaces between your machines, end-to-end encrypted
   friday folders [add|rm|list|update] Folders whose notes and PDFs FRIDAY searches, quoting
                                    the file
   friday mcp [allow|deny <tool>]   Let other AI apps use FRIDAY (MCP); each tool off until allowed
@@ -1471,6 +1473,104 @@ EOF2
       if out=$(timeout 8 friday-ctl browser tab 2>&1); then echo "Browser extension: connected (the tab in front: $(jq -r '.title' <<<"$out" | cut -c1-60))"
       else echo "Browser extension: not connected. Set it up: friday browser setup"; fi ;;
     *) echo "Usage: friday browser [setup|status]" >&2; return 1 ;;
+  esac
+}
+
+# `friday sync`: the thoughts and workspaces of the projects you choose,
+# shared between your own machines through a folder you already sync
+# (Syncthing, a USB stick…), end-to-end encrypted with age: each machine has
+# its own key, a bundle opens only with the keys of the machines you trusted,
+# and a bundle is taken in only when the trusted machine it names signed it.
+# Off until you set it up; nothing is synced for a project you didn't turn on.
+#   friday sync init | trust <line> | folder <dir> | project <name> on|off | now
+friday_sync() {
+  local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/friday/sync" state="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
+  local ws="${XDG_DATA_HOME:-$HOME/.local/share}/friday/workspaces" key id dir f bundle tmp added=0 copied=0 r name
+  local tid tage ttype tb64 allowed
+  key="$cfg/key.txt"
+  command -v age >/dev/null 2>&1 && command -v age-keygen >/dev/null 2>&1 && command -v ssh-keygen >/dev/null 2>&1 \
+    || { echo "friday sync needs age and ssh-keygen: sudo pacman -S age openssh" >&2; return 1; }
+  # What another machine pastes into friday sync trust: this machine's id,
+  # its age key (to encrypt to it) and its signing key (to check its bundles).
+  me() { printf '%s %s %s\n' "$(cat "$cfg/id")" "$(age-keygen -y "$key")" "$(cut -d' ' -f1,2 "$cfg/sign.pub")"; }
+  case "${1:-status}" in
+    status)
+      if [ ! -s "$key" ]; then echo "Sync: not set up. Start with: friday sync init"; return 0; fi
+      echo "On your other machines: friday sync trust $(me)"
+      echo "Trusted machines: $(grep -c . "$cfg/recipients" 2>/dev/null || echo 0)"
+      echo "Folder: $(cat "$cfg/folder" 2>/dev/null || echo "none (friday sync folder <dir>)")"
+      echo "Projects: $(paste -sd, "$cfg/projects" 2>/dev/null || echo "none (friday sync project <name> on)")" ;;
+    init)
+      mkdir -p "$cfg" && chmod 700 "$cfg"
+      [ -s "$key" ] || (umask 077; age-keygen -o "$key" >/dev/null 2>&1)
+      [ -s "$cfg/sign" ] || (umask 077; ssh-keygen -q -t ed25519 -N "" -C friday-sync -f "$cfg/sign" >/dev/null)
+      [ -s "$cfg/id" ] || (umask 077; od -An -N8 -tx1 /dev/urandom | tr -d ' \n' >"$cfg/id")
+      echo "On each of your other machines run:"
+      echo "  friday sync trust $(me)"
+      echo "and trust each of them here the same way." ;;
+    trust)
+      [[ "${2:-}" =~ ^[0-9a-f]{16}$ && "${3:-}" =~ ^age1[0-9a-z]{50,}$ && "${4:-}" = ssh-ed25519 && "${5:-}" =~ ^[A-Za-z0-9+/=]{40,}$ ]] \
+        || { echo "Usage: friday sync trust <the line friday sync init printed on the other machine>" >&2; return 1; }
+      mkdir -p "$cfg"
+      (umask 077; { grep -v "^$2 " "$cfg/recipients" 2>/dev/null || true; echo "$2 $3 $4 $5"; } >"$cfg/recipients.tmp" && mv -f "$cfg/recipients.tmp" "$cfg/recipients")
+      echo "Trusted. That machine can open this one's bundles, and this one takes only bundles it signed." ;;
+    folder)
+      [ -n "${2:-}" ] && [ -d "$2" ] || { echo "Usage: friday sync folder <a folder you already sync>" >&2; return 1; }
+      mkdir -p "$cfg"; (cd "$2" && pwd) >"$cfg/folder"
+      echo "Bundles go to $(cat "$cfg/folder")." ;;
+    project)
+      name="${2:-}"
+      [[ "$name" =~ ^[A-Za-z0-9._-]+$ && "${3:-}" =~ ^(on|off)$ ]] || { echo "Usage: friday sync project <name> on|off" >&2; return 1; }
+      mkdir -p "$cfg"
+      (umask 077; { grep -vxF "$name" "$cfg/projects" 2>/dev/null || true; [ "$3" = off ] || echo "$name"; } >"$cfg/projects.tmp" && mv -f "$cfg/projects.tmp" "$cfg/projects")
+      echo "Sync for $name: $3." ;;
+    now)
+      [ -s "$key" ] && [ -s "$cfg/sign" ] || { echo "Not set up: friday sync init" >&2; return 1; }
+      dir=$(cat "$cfg/folder" 2>/dev/null) && [ -d "$dir" ] || { echo "No folder: friday sync folder <dir>" >&2; return 1; }
+      grep -q . "$cfg/projects" 2>/dev/null || { echo "No project is synced: friday sync project <name> on" >&2; return 1; }
+      grep -q . "$cfg/recipients" 2>/dev/null || { echo "No other machine is trusted yet: friday sync trust <its line from friday sync init>" >&2; return 1; }
+      id=$(cat "$cfg/id")
+      # A project is chosen by its folder's name (the last part of its path).
+      local pick='($p | split("\n") | map(select(length > 0))) as $ps | (.project // "" | rtrimstr("/") | split("/") | last) as $n | ($n != "" and ($ps | index([$n]) != null))'
+      # Out: this machine's thoughts and workspaces for the chosen projects.
+      bundle=$(jq -n --slurpfile th <(jq -c --rawfile p "$cfg/projects" "select($pick)" "$state/thoughts.jsonl" 2>/dev/null || true) \
+          --argjson w "$( { for f in "$ws"/*.json; do [ -f "$f" ] || continue; name=$(basename "$f" .json)
+              if grep -qxF "$name" "$cfg/projects"; then jq -c --arg n "$name" '{($n): .}' "$f" || true; fi; done; } | jq -s 'add // {}')" \
+          '{thoughts: $th, workspaces: $w}')
+      local args=(-r "$(age-keygen -y "$key")")
+      while read -r tid tage _; do [ -n "$tage" ] && args+=(-r "$tage"); done <"$cfg/recipients"
+      tmp="$dir/.$id.tmp"
+      rm -f "$tmp" "$tmp.sig"
+      if printf '%s' "$bundle" | age "${args[@]}" -o "$tmp" && ssh-keygen -q -Y sign -f "$cfg/sign" -n friday-sync "$tmp" >/dev/null 2>&1; then
+        mv -f "$tmp.sig" "$dir/$id.age.sig" && mv -f "$tmp" "$dir/$id.age"
+      else
+        rm -f "$tmp" "$tmp.sig"; echo "Couldn't write the bundle." >&2; return 1
+      fi
+      # In: bundles from trusted machines only, each checked against the
+      # signing key that machine gave (anyone can encrypt to a public key).
+      mkdir -p -m 700 "$state" "$ws"
+      allowed=$(mktemp)
+      while read -r tid tage ttype tb64; do
+        f="$dir/$tid.age"
+        [ -f "$f" ] && [ -f "$f.sig" ] && [ "$tid" != "$id" ] || continue
+        printf '%s %s %s\n' "$tid" "$ttype" "$tb64" >"$allowed"
+        ssh-keygen -q -Y verify -f "$allowed" -I "$tid" -n friday-sync -s "$f.sig" <"$f" >/dev/null 2>&1 || { echo "A bundle from $tid isn't signed by it; skipped." >&2; continue; }
+        bundle=$(age -d -i "$key" "$f" 2>/dev/null) || continue
+        while IFS= read -r r; do
+          [ -n "$r" ] || continue
+          grep -qxF -- "$r" "$state/thoughts.jsonl" 2>/dev/null && continue
+          (umask 077; printf '%s\n' "$r" >>"$state/thoughts.jsonl"); added=$((added + 1))
+        done < <(jq -c --rawfile p "$cfg/projects" ".thoughts[]? | select(type == \"object\" and (.text | type) == \"string\") | select($pick)" <<<"$bundle" 2>/dev/null || true)
+        while IFS= read -r name; do
+          [[ "$name" =~ ^[a-z0-9-]+$ ]] && grep -qxF "$name" "$cfg/projects" || continue
+          [ -e "$ws/$name.json" ] && continue
+          (umask 077; jq -e --arg n "$name" '.workspaces[$n] | objects' <<<"$bundle" >"$ws/.$name.tmp" 2>/dev/null) \
+            && mv -f "$ws/.$name.tmp" "$ws/$name.json" && copied=$((copied + 1)) || rm -f "$ws/.$name.tmp"
+        done < <(jq -r '.workspaces | objects | keys[]' <<<"$bundle" 2>/dev/null || true)
+      done <"$cfg/recipients"
+      rm -f "$allowed"
+      echo "Synced: wrote this machine's bundle; took $added thought(s) and $copied workspace(s) from your other machines." ;;
+    *) echo "Usage: friday sync [init | trust <line> | folder <dir> | project <name> on|off | now]" >&2; return 1 ;;
   esac
 }
 
@@ -3996,6 +4096,10 @@ case "${1:-}" in
   browser)
     shift
     friday_browser "$@"
+    ;;
+  sync)
+    shift
+    friday_sync "$@"
     ;;
   folders)
     shift
