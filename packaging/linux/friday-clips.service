@@ -1,0 +1,15 @@
+[Unit]
+Description=FRIDAY: keep the last 200 texts you copy (friday clips)
+# Off unless the person turns it on (friday clips on enables it).
+ConditionUser=!@system
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/wl-paste --type text --watch /usr/bin/friday clips add
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical-session.target

@@ -13,6 +13,8 @@ _friday() {
     'wake:Say "hey Friday" to ask, hands free (status|on|off)'
     'show:Ring a control in the window in front'
     'recall:Keep window text for 3 hours to ask what was that (status|on|off)'
+    'clips:Keep the last 200 texts you copy; pick pastes one (status|on|off|pick)'
+    'snippet:Text you paste often, by name (add|rm|list)'
     'routine:Save what FRIDAY just did on the desktop and run it by name'
     'undo:Put back the last thing FRIDAY changed'
     'watch:Say when an area of the screen changes (region|stop)'

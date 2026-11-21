@@ -349,6 +349,52 @@ contains "in a terminal it pastes with Shift+Insert" "$(cat "$LOG")" 'mods = "SH
 if grep -q "^friday-ctl" "$LOG"; then fail "paste-as sent a password-shaped clipboard"; else pass "paste-as never sends a password-shaped clipboard"; fi
 : >"$LOG"; CLIP="" PICK="Shorter" bash "$F" paste-as; sleep 0.3
 contains "an empty clipboard says what to do" "$(cat "$LOG")" "Copy some text first"
+
+echo "clips and snippets"
+CLIPS="$state/clips.jsonl"
+rm -f "$CLIPS" "$W/looks"
+printf 'first note' | bash "$F" clips add
+printf 'second note\nwith two lines' | bash "$F" clips add
+printf 'first note' | bash "$F" clips add
+expect "a copied text is kept" test "$(wc -l <"$CLIPS")" -eq 2
+contains "copying it again moves it to the top" "$(tail -n1 "$CLIPS")" '"text":"first note"'
+contains "clips are owner-only" "$(stat -c %a "$CLIPS")" "600"
+printf 'hunter2Secret99xyz' | bash "$F" clips add
+if grep -q hunter2 "$CLIPS"; then fail "kept a password-shaped clip"; else pass "a password-shaped clip isn't kept"; fi
+printf 'vault words' | CLIPBOARD_STATE=sensitive bash "$F" clips add
+if grep -q "vault words" "$CLIPS"; then fail "kept a clip marked sensitive"; else pass "a clip marked sensitive isn't kept"; fi
+printf '   ' | bash "$F" clips add
+expect "blank text isn't kept" test "$(wc -l <"$CLIPS")" -eq 2
+for i in $(seq 1 205); do printf '{"ts":1,"text":"old %s"}\n' "$i"; done >"$CLIPS"
+printf 'newest' | bash "$F" clips add
+expect "only the last 200 are kept" test "$(wc -l <"$CLIPS")" -eq 200
+printf '{"ts":1,"text":"first note"}\n{"ts":2,"text":"second note\\nwith two lines"}\n' >"$CLIPS"
+bash "$F" snippet add sig "Best, Sam" >/dev/null
+contains "snippets are listed by name" "$(bash "$F" snippet list)" ";sig  Best, Sam"
+printf '#!/bin/bash\ncat >%q\necho "$PICK"\n' "$W/menu.txt" >"$S/fuzzel"
+: >"$LOG"; PICK=";sig  Best, Sam" bash "$F" clips pick; sleep 0.3
+contains "the picker lists snippets" "$(cat "$W/menu.txt")" ";sig  Best, Sam"
+contains "and clips newest first, on one line" "$(sed -n 2p "$W/menu.txt")" "1  second note with two lines"
+contains "a picked snippet is pasted as it is" "$(cat "$LOG")" "wl-copy: Best, Sam"
+: >"$LOG"; PICK="2  first note" bash "$F" clips pick; sleep 0.3
+contains "a picked clip offers As it is first" "$(head -n1 "$W/menu.txt")" "As it is"
+printf '#!/bin/bash\necho "fuzzel $*" >> %q\nif [[ "$*" == *Clips* ]]; then echo "2  first note"; else echo "Shorter"; fi\n' "$LOG" >"$S/fuzzel"
+: >"$LOG"; bash "$F" clips pick; sleep 0.3
+contains "a clip can be rewritten (paste as)" "$(cat "$LOG")" "Rewrite the text below Shorter"
+contains "the clip goes to the model, not the clipboard" "$(grep -A2 'Rewrite the text below' "$LOG")" "first note"
+printf '#!/bin/bash\necho "fuzzel $*" >> %q\necho "$PICK"\n' "$LOG" >"$S/fuzzel"; chmod +x "$S/fuzzel"
+bash "$F" snippet rm sig >/dev/null
+contains "the snippet file stays owner-only" "$(stat -c %a "$HOME/.config/friday/snippets.jsonl")" "600"
+if bash "$F" snippet list | grep -q ";sig"; then fail "snippet rm left it"; else pass "snippet rm removes it"; fi
+refuse "a snippet name with spaces is refused" bash "$F" snippet add "two words" x
+: >"$LOG"; bash "$F" clips off >/dev/null
+expect "clips off forgets them all" test ! -e "$CLIPS"
+contains "and stops the service" "$(cat "$LOG")" "systemctl --user disable --now friday-clips.service"
+rm -f "$S/hyprctl"
+# A private window in front: nothing is kept.
+printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s %q\nexit 0\n' '{"class":"org.keepassxc.KeePassXC","title":"vault"}' >"$S/hyprctl"; chmod +x "$S/hyprctl"
+printf 'copied in the vault' | bash "$F" clips add
+expect "nothing is kept from a private window" test ! -s "$CLIPS"
 rm -f "$S/hyprctl"
 
 echo "private windows"

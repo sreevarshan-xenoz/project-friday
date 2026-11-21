@@ -172,6 +172,7 @@ Signing in to Claude Code, Codex, Antigravity or Cline needs a browser and your 
 | Ask | `Super+Y` (`friday ask`) | `Win+Y` (`Ctrl+Alt+Y`) |
 | Ask about the selection | `Super+Alt+Y` (`friday ask --selection`) | `Win+Alt+Y` (`Ctrl+Alt+Shift+Y`) |
 | Paste the clipboard transformed | `Super+Alt+V` (`friday paste-as`) | not yet |
+| Paste something copied earlier, or a snippet | `Super+Ctrl+V` (`friday clips pick`; `friday clips on` first) | not yet |
 | Ask about the screen | `Super+Ctrl+Y` (`friday ask --screen`) | `Win+Ctrl+Y` (`Ctrl+Alt+Shift+S`) |
 | Ask about an area you drag out | `friday ask --region` | tray menu, "Ask about an area…" |
 
@@ -198,6 +199,8 @@ In kitty (FRIDAY OS's terminal), `Super+Y` right after a command failed offers "
 With highlighted text, `Super+Alt+Y` also offers "Rewrite: fix grammar / shorter / more formal / friendlier / translate to English": the answer replaces the selection (pasted into the same window if it still has focus, never into a terminal; otherwise it's left on the clipboard), and your clipboard is put back. Hyprland only, for now.
 
 `Super+Alt+V` (`friday paste-as`) pastes the clipboard transformed: as a bullet list, as JSON, as a Markdown table, cleaned up, shorter, more formal or translated (or type how). It pastes into the window you're in (Shift+Insert in a terminal); the clipboard keeps the original. FRIDAY OS homes from before get the key with `friday keys update`.
+
+`Super+Ctrl+V` (`friday clips pick`) lists your snippets and the last 200 texts you copied, newest first; type to search, or `;name` for a snippet. A snippet pastes as it is; a clip pastes as it is or rewritten, like Paste as. Keeping clips is off until `friday clips on`: they stay on this computer, never from a private window, never what a password manager marks as a password or anything shaped like a token, and `friday clips off` forgets them. Save a snippet with `friday snippet add <name> [text]` (no text: the clipboard's).
 
 The bindings ship in `packaging/linux/hyprland/friday.lua` and `packaging/linux/niri/friday.kdl`; on Windows the tray registers them, retrying the Win+ key briefly before falling back.
 
