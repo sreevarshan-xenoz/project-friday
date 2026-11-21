@@ -314,7 +314,11 @@ mod tests {
             "Inbox - work",
             "never thunderbird\n"
         ));
-        assert!(!private("code", "notes", "~/work/clients\n/srv/private\nC:\\Users\\me\\code\n"));
+        assert!(!private(
+            "code",
+            "notes",
+            "~/work/clients\n/srv/private\nC:\\Users\\me\\code\n"
+        ));
         assert!(private("firefox", "My Bank — Mozilla Firefox", ""));
         assert!(!private("firefox", "My Bank — Mozilla Firefox", "!bank"));
         assert!(private("org.gnome.TextEditor", "diary.txt", "Diary\n"));
