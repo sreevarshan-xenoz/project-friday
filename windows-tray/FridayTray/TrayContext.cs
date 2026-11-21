@@ -148,6 +148,7 @@ internal sealed class TrayContext : ApplicationContext
                 area = picker.Picked;
             }
             var targetWindow = Native.GetForegroundWindow();
+            _askTarget = targetWindow;
             // A password manager, a private browser window, a bank: neither a
             // screenshot of it nor text selected in it is sent anywhere.
             if (kind is AskKind.Screen or AskKind.Selection
@@ -363,6 +364,8 @@ internal sealed class TrayContext : ApplicationContext
         if (_asking)
             return;
         _asking = true;
+        // Asked from the tray or a standing task: no window to type into.
+        _askTarget = IntPtr.Zero;
         try
         {
             _log.Remember(question);
@@ -564,10 +567,23 @@ internal sealed class TrayContext : ApplicationContext
         form.Closed += (_, _) => { if (Speaking.Enabled(_install.Paths)) Ctl.StopSaying(_install); };
         form.CanAskAnother = kind != AskKind.Screen;
         form.AskAgain += () => _ = AskAsync(kind);
+        form.TypeIt += text => _ = TypeItAsync(text);
         form.StartFriday += RestartChildren;
         FluentApp.Show(form);
         form.Activate();
         return form;
+    }
+
+    /// <summary>The window the last question was asked from ("Type it" puts the answer there).</summary>
+    private IntPtr _askTarget;
+
+    private async Task TypeItAsync(string text)
+    {
+        if (_askTarget == IntPtr.Zero || !await Selection.PasteAsync(_askTarget, text))
+        {
+            Clipboard.SetDataObject(text, copy: true, retryTimes: 10, retryDelay: 50);
+            Notify("FRIDAY", "The answer is on your clipboard: paste it with Ctrl+V.", ToolTipIcon.Info);
+        }
     }
 
     /// <summary>The streaming answer to <paramref name="request"/> so far, if any.</summary>
