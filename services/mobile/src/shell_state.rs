@@ -111,6 +111,11 @@ pub struct ShellState {
     pub current: Option<GoalState>,
     /// The last goal that reached a terminal state (completed/failed/cancelled).
     pub last_goal: Option<GoalState>,
+    /// Goals still running after a newer one took `current` (an asker that
+    /// went away, a second ask): their outcome lands in `last_goal` under
+    /// their own goal, never in the newer one's.
+    #[serde(skip)]
+    pub running: Vec<GoalState>,
     /// Cognition summary — list of named slots the daemon last observed.
     pub cognition: HashMap<String, serde_json::Value>,
     /// Voice capability state: `on` | `off` | `misconfigured`.
@@ -168,6 +173,7 @@ impl ShellState {
             version: 1,
             current: None,
             last_goal: None,
+            running: Vec::new(),
             cognition: HashMap::new(),
             voice: "off".into(),
             telemetry: None,
@@ -257,6 +263,16 @@ pub fn apply_event(mut state: ShellState, ev: &Event) -> ShellState {
                 .unwrap_or("goal")
                 .to_string();
             if !goal.is_empty() {
+                // A goal already running keeps its own record; a merely
+                // accepted one (plan.goal, no id yet) is the same ask starting.
+                if let Some(cur) = state.current.take() {
+                    if cur.active && cur.phase != "accepted" && cur.id != id {
+                        state.running.push(cur);
+                        if state.running.len() > 16 {
+                            state.running.remove(0);
+                        }
+                    }
+                }
                 state.current = Some(GoalState {
                     id,
                     goal,
@@ -286,6 +302,28 @@ pub fn apply_event(mut state: ShellState, ev: &Event) -> ShellState {
         }
         "goal.completed" | "goal.failed" | "goal.cancelled" | "goal.paused"
         | "goal.recoverable" => {
+            // The goal this event is about: `current`, or one still running
+            // behind it.
+            let id = ev.payload.get("id").and_then(|v| v.as_str());
+            let behind = id
+                .filter(|id| state.current.as_ref().is_none_or(|c| c.id != *id))
+                .and_then(|id| state.running.iter().position(|g| g.id == id));
+            if let Some(i) = behind {
+                let mut goal = state.running.remove(i);
+                let mut solo = ShellState {
+                    current: Some(goal.clone()),
+                    running: Vec::new(),
+                    ..state.clone()
+                };
+                solo = apply_event(solo, ev);
+                if let Some(g) = solo.current.take() {
+                    goal = g;
+                    state.running.insert(i, goal);
+                } else {
+                    state.last_goal = solo.last_goal;
+                }
+                return state;
+            }
             if let Some(cur) = &mut state.current {
                 cur.completed_ms = Some(now_ms());
                 cur.active = false;
@@ -500,6 +538,64 @@ mod tests {
         assert_eq!(cur.phase, "active");
         assert!(cur.active);
         assert_eq!(cur.id, "g-2");
+    }
+
+    #[test]
+    fn an_older_goal_finishing_never_takes_the_newer_ones_place() {
+        let ev = |kind: &str, p: serde_json::Value| Event::new(kind, "planner", p);
+        // A starts; its asker leaves; B is asked and starts while A still runs.
+        let mut s = apply_event(
+            state(),
+            &ev(
+                "goal.started",
+                serde_json::json!({"goal": "A", "id": "g-a"}),
+            ),
+        );
+        s = apply_event(
+            s,
+            &ev(
+                "plan.goal",
+                serde_json::json!({"goal": "B", "trace_id": "t-b"}),
+            ),
+        );
+        s = apply_event(
+            s,
+            &ev(
+                "goal.started",
+                serde_json::json!({"goal": "B", "id": "g-b"}),
+            ),
+        );
+        assert_eq!(s.running.len(), 1, "the accepted B is not a second goal");
+        s = apply_event(
+            s,
+            &ev(
+                "goal.completed",
+                serde_json::json!({"id": "g-a", "result": "answer A"}),
+            ),
+        );
+        let cur = s.current.as_ref().expect("B still in flight");
+        assert_eq!(
+            (cur.goal.as_str(), cur.active, cur.result.as_deref()),
+            ("B", true, None)
+        );
+        let last = s.last_goal.as_ref().expect("A finished");
+        assert_eq!(
+            (last.goal.as_str(), last.result.as_deref()),
+            ("A", Some("answer A"))
+        );
+        s = apply_event(
+            s,
+            &ev(
+                "goal.completed",
+                serde_json::json!({"id": "g-b", "result": "answer B"}),
+            ),
+        );
+        let last = s.last_goal.as_ref().unwrap();
+        assert_eq!(
+            (last.goal.as_str(), last.result.as_deref()),
+            ("B", Some("answer B"))
+        );
+        assert!(s.current.is_none() && s.running.is_empty());
     }
 
     #[test]
