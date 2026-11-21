@@ -3484,16 +3484,29 @@ case "${1:-}" in
     # The window you're asking about (its selection or its screen): private?
     private_win=""
     if $use_selection || $use_screen; then private_win=$(friday_private_window); fi
-    # The project in front (a terminal's git repo), kept with the answer so
-    # "continue building X" finds X's history.
-    ask_project=$(timeout 2 friday-ctl workspace project 2>/dev/null || true)
     state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
     history_file="$state_dir/ask-history"
     notify() { notify-send -a FRIDAY -- "$@" 2>/dev/null || true; }
     # FRIDAY Shell's answer pill (services/Answer.qml); fails when it isn't running.
     pill() { command -v quickshell >/dev/null 2>&1 && timeout 3 bash "$0" shell ipc answer "$@" >/dev/null 2>&1; }
-    use_pill=false
-    pill state && use_pill=true
+    # Looked up while the ask box is open, not before it (each can take a
+    # few seconds): the project in front (a terminal's git repo, kept with
+    # the answer so "continue building X" finds X's history) and whether
+    # FRIDAY Shell's pill is there. ask_lookups waits for them.
+    lookups=$(mktemp -d)
+    { timeout 2 friday-ctl workspace project >"$lookups/project" 2>/dev/null || true; } &
+    lookup_pids=$!
+    { pill state && : >"$lookups/pill"; } &
+    lookup_pids+=" $!"
+    ask_project="" use_pill=false
+    ask_lookups() {
+      [ -d "$lookups" ] || return 0
+      # shellcheck disable=SC2086
+      wait $lookup_pids 2>/dev/null || true
+      ask_project=$(cat "$lookups/project" 2>/dev/null || true)
+      [ ! -e "$lookups/pill" ] || use_pill=true
+      rm -rf "$lookups"
+    }
 
     context=""
     if $use_followup; then
@@ -3687,6 +3700,7 @@ case "${1:-}" in
         && friday_show "$goal"; then
       exit 0
     fi
+    ask_lookups
     # Questions, selected text and answers are private: only you can open
     # this directory (also fixes one made world-readable by an older version).
     mkdir -p "$state_dir" && chmod 700 "$state_dir"
@@ -3754,6 +3768,7 @@ case "${1:-}" in
     }
 
     show_answer() {
+      ask_lookups
       local ans_ok="$1" summary_json="$2" raw_out="$3"
       local answer title details preview urgency actions meta=""
       local local_only=false
