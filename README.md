@@ -244,7 +244,7 @@ Per-user, no administrator rights: installs to `%LOCALAPPDATA%\Programs\FRIDAY`,
 CLEAN_WORK=true bash iso/friday/build-iso.sh
 ```
 
-Builds `friday-git` and an Arch ISO whose installer sets up the whole desktop. The installer asks which browsers you want besides Chromium (Brave, Firefox, Zen, Vivaldi; Brave and Zen are built from the AUR into the ISO) and which one opens links. FRIDAY's browser extension is already loaded in Chromium, Brave and Vivaldi. Prebuilt ISOs are on the [releases page](https://github.com/sreevarshan-xenoz/project-friday/releases).
+Builds `friday-git` and an Arch ISO whose installer sets up the whole desktop. The installer asks which browsers you want besides Chromium (Brave, Firefox, Zen, Vivaldi; Brave and Zen are built from the AUR while it installs) and which one opens links. FRIDAY's browser extension is already loaded in Chromium, Brave and Vivaldi. Prebuilt ISOs are on the [releases page](https://github.com/sreevarshan-xenoz/project-friday/releases).
 
 ### Updates
 

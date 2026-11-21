@@ -70,6 +70,10 @@ STEPS = [
     (1, ENTER),
     *(
         [
+            (4, "x"),  # browsers: Brave
+            (1, DOWN * 2 + "x"),  # Zen
+            (1, ENTER),
+            (3, DOWN + ENTER),  # links: Zen
             (6, DOWN + "x"),  # AI: Gemini
             (1, DOWN + "x"),  # Groq
             (1, DOWN * 6 + "x"),  # Local AI (last)
@@ -81,6 +85,7 @@ STEPS = [
         ]
         if MULTI
         else [
+            (4, ENTER),  # browsers: default (Chromium only)
             (6, ENTER),  # AI: OpenCode Zen (first, default)
             (3, ENTER),  # no key: free models
         ]
@@ -150,6 +155,7 @@ checks = {
     "encryption defaults to on": "Disk will be encrypted (LUKS2)" in text,
     "review shows encryption": "(encrypted)" in text,
     "review lists what FRIDAY may do": "Allowed" in text and "app name" in text,
+    "review lists browsers": "Browsers" in text,
     "installer received the spec": bool(env_lines),
     "keyboard is chosen before the password": 0
     <= text.find("Keyboard: uk")
@@ -163,10 +169,12 @@ if MULTI:
             "the preset says text only": "qwen3:4b" in text and "text only" in text,
             "review lists every choice": "Gemini (key ••••3456)" in text
             and "Local: qwen3:4b on Ollama (text only, backs up cloud)" in text,
+            "review shows chosen browsers": "Zen (default)" in text and "Brave" in text,
         }
     )
 else:
     checks["AI defaults to OpenCode Zen free models"] = "OpenCode Zen free models (no key)" in text
+    checks["review shows default browser"] = "Chromium (default)" in text
 if ALONGSIDE:
     checks.update(
         {
@@ -183,35 +191,44 @@ ai_spec = (
     if MULTI
     else [("ai", "[]"), ("keys", "[]"), ("local", "[::]")]
 )
-for key, want in ai_spec + [
-    ("disk", "/dev/vda"),
-    *(
-        [
-            ("erase", ""),
-            ("mode", "alongside"),
-            ("alongside", "/dev/vda"),
-            ("size", "81920"),
-            ("bootdefault", "other"),
-            ("bitlocker_ack", "1"),
-        ]
-        if ALONGSIDE
-        else [("erase", "/dev/vda"), ("mode", "erase")]
-    ),
-    ("host", "mybox"),
-    ("user", "alice"),
-    ("pw", "secret1"),
-    ("tz", "Asia/Kolkata"),
-    ("kb", "uk"),
-    ("autologin", "false"),
-    ("encrypt", "true"),
-    ("interactive", "1"),
-    ("session", "niri"),
-    ("style", "Island"),
-    ("desktop", "false"),
-    ("tasks", "true"),
-    ("appname", "true"),
-    ("screentext", "false"),
-]:
+browser_spec = (
+    [("browsers", "[brave zen]"), ("default_browser", "zen")]
+    if MULTI
+    else [("browsers", "[]"), ("default_browser", "chromium")]
+)
+for key, want in (
+    ai_spec
+    + browser_spec
+    + [
+        ("disk", "/dev/vda"),
+        *(
+            [
+                ("erase", ""),
+                ("mode", "alongside"),
+                ("alongside", "/dev/vda"),
+                ("size", "81920"),
+                ("bootdefault", "other"),
+                ("bitlocker_ack", "1"),
+            ]
+            if ALONGSIDE
+            else [("erase", "/dev/vda"), ("mode", "erase")]
+        ),
+        ("host", "mybox"),
+        ("user", "alice"),
+        ("pw", "secret1"),
+        ("tz", "Asia/Kolkata"),
+        ("kb", "uk"),
+        ("autologin", "false"),
+        ("encrypt", "true"),
+        ("interactive", "1"),
+        ("session", "niri"),
+        ("style", "Island"),
+        ("desktop", "false"),
+        ("tasks", "true"),
+        ("appname", "true"),
+        ("screentext", "false"),
+    ]
+):
     checks[f"spec {key}={want}"] = f"{key}={want}" in env
 
 ok = True
