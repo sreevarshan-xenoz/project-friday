@@ -1227,6 +1227,9 @@ async fn wait_for_goal(
             if let Some(sb) = done.get("served_by").filter(|v| !v.is_null()) {
                 summary["served_by"] = sb.clone();
             }
+            if let Some(u) = done.get("used").filter(|v| !v.is_null()) {
+                summary["used"] = u.clone();
+            }
             if let Some(m) = done.get("masked").filter(|v| !v.is_null()) {
                 summary["masked"] = m.clone();
             }

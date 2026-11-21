@@ -1076,6 +1076,58 @@ fn compose_goal_with_context(goal: &str, prior: &SessionContext, recalled: &[Str
     out
 }
 
+/// What went into an answer besides the question, in words, for the line
+/// under it ("used: this conversation, your timeline, a lesson"): the
+/// session, each kind of `[memory]` line, and a web search or page read.
+/// The host adds what it sent itself (selection, screenshot, docs).
+fn used_labels(
+    prior: &SessionContext,
+    recalled: &[String],
+    web: Option<&SearchResponse>,
+) -> Vec<String> {
+    let mut used = Vec::new();
+    if !prior.history.is_empty() {
+        used.push("this conversation".to_string());
+    }
+    let count = |p: &str| recalled.iter().filter(|l| l.starts_with(p)).count();
+    let some = |n: usize, one: &str, many: &str| match n {
+        0 => None,
+        1 => Some(one.to_string()),
+        n => Some(format!("{n} {many}")),
+    };
+    used.extend(some(
+        count("goal: "),
+        "an earlier answer",
+        "earlier answers",
+    ));
+    if count("timeline (") > 0 {
+        used.push("your timeline".to_string());
+    }
+    if count("the project's repository") > 0 {
+        used.push("the project's git status".to_string());
+    }
+    if count("thoughts the person kept") > 0 {
+        used.push("your kept thoughts".to_string());
+    }
+    used.extend(some(
+        count("lesson: "),
+        "a lesson from a failure",
+        "lessons from failures",
+    ));
+    match web {
+        Some(w) if w.backend == "the page" => used.push(format!(
+            "the page {}",
+            w.results
+                .first()
+                .map(|r| r.url.as_str())
+                .unwrap_or_default()
+        )),
+        Some(w) => used.push(format!("a web search ({})", w.backend)),
+        None => {}
+    }
+    used
+}
+
 /// Format one recalled episode as a `[memory]` block line: the episode's goal
 /// and its result, both size-capped.
 fn format_recalled_memory(ep: &CognitiveEpisode) -> String {
@@ -2127,6 +2179,8 @@ impl GoalRunner {
             }
         }
 
+        let used = used_labels(&prior, &recalled, web_response.as_ref());
+
         // The answer step: the cycle ran a tool and gathered evidence; the
         // model now writes the reply from them. Only for a goal that ran to
         // completion. If the model fails, the cycle's own result stands when
@@ -2409,6 +2463,9 @@ impl GoalRunner {
             );
             payload["session_id"] = json!(session_id);
             payload["session_turn"] = json!(next_turn);
+            if answered_by_model && !used.is_empty() {
+                payload["used"] = json!(used);
+            }
             let _ = self
                 .bus
                 .publish(Event::new("goal.completed", "planner", payload))
@@ -3171,8 +3228,10 @@ mod tests {
             format!("<!-- friday answer -->\n# why does the site build fail\n\n_{yesterday}_\n\n_project: /home/me/code/site_\n\nThe image path is wrong.\n\n---\n\n"),
         )
         .unwrap();
+        let last_done = Arc::new(Mutex::new(json!(null)));
         let ask = |goal: &'static str| {
             let dir = dir.clone();
+            let last_done = last_done.clone();
             async move {
                 let answerer = Arc::new(ScriptedAnswerer {
                     reply: Ok("You were fixing the site build.".to_string()),
@@ -3184,8 +3243,9 @@ mod tests {
                     .with_answerer(answerer.clone())
                     .with_timeline(dir)
                     .start();
-                drive_goal(&bus, &mut rx, json!({ "goal": goal })).await;
+                let (_, done) = drive_goal(&bus, &mut rx, json!({ "goal": goal })).await;
                 let prompt = answerer.prompts.lock().unwrap().join("\n");
+                *last_done.lock().unwrap() = done;
                 prompt
             }
         };
@@ -3205,6 +3265,13 @@ mod tests {
             "{prompt}"
         );
         assert!(prompt.contains("why does the site build fail"), "{prompt}");
+        // The line under the answer says what went in.
+        let used = last_done.lock().unwrap()["used"].clone();
+        assert_eq!(
+            used,
+            json!(["your timeline", "your kept thoughts"]),
+            "{used}"
+        );
         assert!(
             prompt.contains("thoughts the person kept")
                 && prompt.contains("question [site]: should the images move to a CDN?"),
@@ -4087,6 +4154,35 @@ mod tests {
         // When absent, served_by is not in the payload
         let p_none = completed_payload("g", "id-nosb", &report, Some(&served), None, 0);
         assert!(p_none.get("served_by").is_none());
+    }
+
+    #[test]
+    fn used_labels_say_what_went_into_an_answer() {
+        let prior = SessionContext::new();
+        let recalled = vec![
+            "goal: a\nresult: b".to_string(),
+            "goal: c\nresult: d".to_string(),
+            "lesson: an earlier ask \"x\" failed: y".to_string(),
+            "the project's repository right now (facts from git…):\n…".to_string(),
+        ];
+        let page = SearchResponse {
+            backend: "the page".into(),
+            results: vec![SearchResult {
+                title: "t".into(),
+                url: "https://example.com/post".into(),
+                snippet: "s".into(),
+            }],
+        };
+        assert_eq!(
+            used_labels(&prior, &recalled, Some(&page)),
+            [
+                "2 earlier answers",
+                "the project's git status",
+                "a lesson from a failure",
+                "the page https://example.com/post"
+            ]
+        );
+        assert!(used_labels(&prior, &[], None).is_empty());
     }
 
     #[test]

@@ -158,7 +158,7 @@ public partial class AnswerWindow : Window
             AutomationProperties.SetAutomationId(failed, "Answer");
             Blocks.Children.Add(failed);
         }
-        Footer.Text = Providers.FormatFooter(outcome.Ok ? outcome.ServedBy : null, outcome.Masked) ?? "";
+        Footer.Text = Providers.FormatFooter(outcome.Ok ? outcome.ServedBy : null, outcome.Masked, outcome.Ok ? outcome.Used : null) ?? "";
         Footer.Visibility = Footer.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
 
         var buttons = new List<Button>();

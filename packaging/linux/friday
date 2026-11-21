@@ -3332,6 +3332,25 @@ case "${1:-}" in
           preview="$preview\nIncluded the app name and window title"
           meta="${meta:+$meta · }Included the app name and window title"
         fi
+        # What went into the answer besides the question: what this script
+        # sent, then what the daemon added (its "used" list).
+        local -a used_parts=()
+        if $use_selection && [ -n "${context:-}" ]; then
+          if [ "$source_label" = Clipboard ]; then used_parts+=("your clipboard"); else used_parts+=("your selection"); fi
+        fi
+        if ${use_region:-false}; then used_parts+=("the area you picked")
+        elif $use_screen; then used_parts+=("the window in front"); fi
+        [ -z "${docs:-}" ] || used_parts+=("docs on this computer")
+        [ -z "${ws_report:-}" ] || used_parts+=("the windows FRIDAY put back")
+        local u
+        while IFS= read -r u; do [ -z "$u" ] || used_parts+=("$u"); done \
+          < <(jq -r '.used[]? // empty' <<<"$summary_json" 2>/dev/null || true)
+        if (( ${#used_parts[@]} )); then
+          local used_line="Used: ${used_parts[0]}" i
+          for (( i = 1; i < ${#used_parts[@]}; i++ )); do used_line+=", ${used_parts[$i]}"; done
+          preview="$preview\n$used_line"
+          meta="${meta:+$meta · }$used_line"
+        fi
       fi
       # The pill shows the whole answer and its own buttons; a notification
       # only when it isn't there, or for "Start FRIDAY", which only a

@@ -116,6 +116,7 @@ if [[ "\$target_arg" == *slowgoal* ]]; then echo '{"accepted":true}'; echo "time
 if [[ "\$target_arg" == *refused* ]]; then printf '{\n "outcome": "failed",\n "error": "Couldn'"'"'t reach your AI provider. Check your internet connection (or that your local model server is running)."\n}\n'; echo "llamacpp: tcp connect error: Connection refused" >&2; exit 1; fi
 if [[ "\$target_arg" == *limit* ]]; then printf '{\n "outcome": "failed",\n "error": "provider opencode: 429 FreeUsageLimitError"\n}\n'; exit 1; fi
 if [[ "\$target_arg" == *"rewritten text"* && "\$target_arg" == *teh* ]]; then printf '{\n "outcome": "completed",\n "result": "\\\\"The quick fox.\\\\""\n}\n'; exit 0; fi
+if [[ "\$target_arg" == *useditems* ]]; then printf '{\n "outcome": "completed",\n "result": "Done.",\n "used": ["your timeline", "a lesson from a failure"]\n}\n'; exit 0; fi
 if [[ "\$target_arg" == *"word: ready"* && -n "\${READY_FAILS:-}" ]]; then printf '{\n "outcome": "failed",\n "error": "All candidates failed (2 tried). opencode: 429"\n}\n'; exit 1; fi
 if [[ "\$target_arg" == *"word: ready"* && -n "\${READY_TIMES_OUT:-}" ]]; then printf '{"accepted":true}\n'; echo "timed out after 60s waiting for the goal to finish" >&2; exit 1; fi
 if [[ "\$target_arg" == *"word: ready"* ]]; then printf '{\n "outcome": "completed",\n "result": "ready",\n "served_by": {"provider": "kilo", "model": "m", "ms": 940}\n}\n'; exit 0; fi
@@ -714,6 +715,12 @@ contains "and asks with what came back" "$(cat "$LOG")" "opening foot in friday"
 contains "with no such workspace it is an ordinary question" "$(cat "$LOG")" "continue\\ building\\ the\\ site"
 : >"$LOG"; WS_SAVED=1 bash "$F" ask "continue where we stopped"; sleep 0.3
 if grep -q "workspace restore" "$LOG"; then fail "\"continue where we stopped\" restored a workspace called \"where\""; else pass "\"continue where we stopped\" restores nothing by name"; fi
+
+echo "what FRIDAY used"
+: >"$LOG"; bash "$F" ask "useditems please"; sleep 0.3
+contains "the answer says what the daemon added" "$(cat "$LOG")" "Used: your timeline, a lesson from a failure"
+: >"$LOG"; bash "$F" ask "what is the capital of peru"; sleep 0.3
+if grep -q "Used:" "$LOG"; then fail "an answer with nothing extra said it used something"; else pass "nothing extra: no used line"; fi
 
 echo "one resume grammar: friday ask and the daemon read the same table"
 # timeline.rs checks the daemon against tests/fixtures/resume-phrases.tsv;
