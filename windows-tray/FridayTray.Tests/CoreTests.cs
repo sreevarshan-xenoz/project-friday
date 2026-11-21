@@ -158,6 +158,23 @@ public class ProviderMappingTests
     }
 
     [Fact]
+    public void Asking_interpret_says_what_the_answer_used()
+    {
+        var output = """
+            {
+              "outcome": "completed",
+              "result": "Done.",
+              "used": ["your timeline", "a lesson from a failure"]
+            }
+            """;
+        var outcome = Asking.Interpret(AskKind.Selection, "explain this", 0, output);
+        Assert.Equal(new[] { "your selection", "your timeline", "a lesson from a failure" }, outcome.Used);
+        Assert.Equal("Used: your selection, your timeline, a lesson from a failure",
+            Providers.FormatFooter(null, 0, outcome.Used));
+        Assert.Equal("", Providers.FormatFooter(null, 0, Asking.Interpret(AskKind.Plain, "hi", 0, "{\"outcome\":\"completed\",\"result\":\"x\"}").Used));
+    }
+
+    [Fact]
     public void Asking_interpret_leaves_served_by_null_when_absent()
     {
         var output = """
