@@ -38,7 +38,7 @@ Autonomous Agent & Cognitive Loop:
                                    answer text) to turn into a test
   friday shell-hook [zsh|bash]     Lines for your shell's rc file: Super+Y explains a failed
                                    command, or says when one finishes, in any terminal
-  friday recall [status|on|off]    Keep the text of windows you look at for 3 hours, here
+  friday recall [status|on|off|keep 3h|24h|7d]  Keep the text of windows you look at, here
                                    only, so you can ask "what was that…" (off forgets it)
   friday clips [status|on|off|pick] Keep the last 200 texts you copy; Super+Ctrl+V pastes one
   friday snippet add|rm|list       Text you paste often, by name (;name in Super+Ctrl+V)
@@ -1270,11 +1270,14 @@ friday_show() {
 # you look at, kept on this computer for three hours (friday-ctl recall, run
 # by the friday-recall user service). Off forgets everything kept.
 friday_recall() {
-  local file="${XDG_STATE_HOME:-$HOME/.local/state}/friday/recall.jsonl"
+  local file="${XDG_STATE_HOME:-$HOME/.local/state}/friday/recall.jsonl" keep hours label
+  keep="$(dirname "$file")/recall-keep"
+  hours=$(cat "$keep" 2>/dev/null || echo 3)
+  case "$hours" in 24) label="24 hours" ;; 168) label="7 days" ;; *) label="3 hours" ;; esac
   case "${1:-status}" in
     status)
       if systemctl --user is-enabled --quiet friday-recall.service 2>/dev/null; then
-        echo "Recall: on (the text of the windows you look at is kept here for 3 hours; ask \"what was that …\"). Turn off: friday recall off"
+        echo "Recall: on (the text of the windows you look at is kept here for $label; ask \"what was that …\"). Turn off: friday recall off · keep longer or shorter: friday recall keep 3h|24h|7d"
       else
         echo "Recall: off. Turn on: friday recall on"
       fi ;;
@@ -1282,7 +1285,8 @@ friday_recall() {
       if [ "${2:-}" != "--yes" ]; then
         cat <<'EOF2'
 With recall on, FRIDAY keeps the text of the window in front every 30 seconds,
-on this computer only, for three hours: no screenshots, never password fields or
+on this computer only, for three hours (friday recall keep 24h or 7d keeps it
+longer): no screenshots, never password fields or
 private windows (password managers, private browsing, banks, and your own list in
 ~/.config/friday/private-windows). When you ask "what was that…",
 the few passages that match go to your local model; with no local model set
@@ -1297,9 +1301,17 @@ EOF2
       echo "Recall: on" ;;
     off)
       systemctl --user disable --now friday-recall.service >/dev/null 2>&1 || true
-      rm -f "$file" "${file%.jsonl}.tmp"
+      rm -f "$file" "${file%.jsonl}.tmp" "$keep"
       echo "Recall: off, and everything it kept is forgotten." ;;
-    *) echo "Usage: friday recall [status|on|off]" >&2; return 1 ;;
+    keep)
+      case "${2:-}" in
+        3h) hours=3 ;; 24h) hours=24 ;; 7d) hours=168 ;;
+        *) echo "Usage: friday recall keep 3h|24h|7d (now: $label)" >&2; return 1 ;;
+      esac
+      mkdir -p "$(dirname "$keep")"
+      if [ "$hours" = 3 ]; then rm -f "$keep"; else (umask 077; echo "$hours" >"$keep"); fi
+      echo "Recall keeps what it saw for ${2/h/ hours}." | sed 's/7d/7 days/' ;;
+    *) echo "Usage: friday recall [status|on|off|keep 3h|24h|7d]" >&2; return 1 ;;
   esac
 }
 
