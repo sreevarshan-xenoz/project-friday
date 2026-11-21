@@ -166,28 +166,122 @@ pub fn collect(state_dir: &Path) -> Vec<Entry> {
     all
 }
 
-/// The entries of the project an ask names ("continue building FRIDAY"
-/// keeps FRIDAY's), or all of them when it names none.
-pub fn for_project(entries: Vec<Entry>, goal: &str) -> Vec<Entry> {
-    let named: Vec<Entry> = entries
+/// Words after "continue building" / "get back to" that aren't a project.
+const NOT_A_PROJECT: [&str; 11] = [
+    "where", "from", "it", "that", "this", "me", "you", "us", "him", "her", "them",
+];
+
+/// The rest of a name: without "the"/"my", and `None` when it isn't one.
+fn name_in(rest: &str) -> Option<String> {
+    let rest = rest.trim();
+    let rest = rest
+        .strip_prefix("the ")
+        .or_else(|| rest.strip_prefix("my "))
+        .unwrap_or(rest)
+        .trim();
+    let first = rest.split_whitespace().next()?;
+    (!NOT_A_PROJECT.contains(&first) && rest.chars().count() <= 40).then(|| rest.to_string())
+}
+
+/// The project an ask picks back up, with the grammar `friday ask` restores
+/// a workspace for: "Friday, let's continue building FRIDAY", "keep working
+/// on the site", "get back to the planner", "prepare my desk for rust".
+/// Only the first line counts (`friday ask` adds what it restored below).
+fn resumed(goal: &str) -> Option<String> {
+    let g = goal.lines().next().unwrap_or_default().to_lowercase();
+    let g = g.trim().trim_end_matches(['.', '!', '?']);
+    let g = g
+        .strip_prefix("friday")
+        .unwrap_or(g)
+        .trim_start_matches([',', ' ']);
+    let g = ["let's ", "lets "]
         .iter()
-        .filter(|e| {
-            e.project
-                .as_deref()
-                .is_some_and(|p| crate::thoughts::named(goal, p))
-        })
-        .cloned()
-        .collect();
-    if named.is_empty() {
-        entries
-    } else {
-        named
+        .find_map(|p| g.strip_prefix(p))
+        .unwrap_or(g);
+    if let Some(rest) = g.strip_prefix("get back to ") {
+        return name_in(rest);
     }
+    if let Some(rest) = g.strip_prefix("prepare my ") {
+        return ["world for ", "workspace for ", "desk for ", "setup for "]
+            .iter()
+            .find_map(|p| rest.strip_prefix(p))
+            .and_then(name_in);
+    }
+    let rest = ["continue ", "resume ", "keep "]
+        .iter()
+        .find_map(|v| g.strip_prefix(v))?;
+    ["building ", "working on ", "with ", "on "]
+        .iter()
+        .find_map(|c| rest.strip_prefix(c))
+        .and_then(name_in)
+}
+
+/// The project an ask names: a resume ("continue building X") or the end
+/// of an ask about it ("what did I do on Atlas yesterday", "where are we on
+/// the site").
+fn project_named(goal: &str) -> Option<String> {
+    if let Some(name) = resumed(goal) {
+        return Some(name);
+    }
+    let g = goal.lines().next().unwrap_or_default().to_lowercase();
+    let (_, rest) = g.rsplit_once(" on ")?;
+    let mut rest = rest.trim_end_matches(['.', '!', '?']).to_string();
+    for when in [
+        "yesterday",
+        "today",
+        "this week",
+        "last week",
+        "past week",
+        "so far",
+    ] {
+        rest = rest.replace(when, " ");
+    }
+    let name = name_in(&rest)?;
+    let weekdays = [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+    ];
+    (!weekdays.contains(&name.as_str())).then_some(name)
+}
+
+/// The entries of the project an ask names ("continue building FRIDAY"
+/// keeps FRIDAY's), or all of them when it names none. Desktop actions and
+/// lessons carry no project: those within half an hour of the project's own
+/// entries stay with it. A named project with no history of its own gets
+/// only those, never another project's.
+pub fn for_project(entries: Vec<Entry>, goal: &str) -> Vec<Entry> {
+    let mine = |e: &Entry| {
+        e.project
+            .as_deref()
+            .is_some_and(|p| crate::thoughts::named(goal, p))
+    };
+    let named: Vec<i64> = entries.iter().filter(|e| mine(e)).map(|e| e.ts).collect();
+    if named.is_empty() {
+        return if project_named(goal).is_some() {
+            entries
+                .into_iter()
+                .filter(|e| e.project.is_none())
+                .collect()
+        } else {
+            entries
+        };
+    }
+    entries
+        .into_iter()
+        .filter(|e| {
+            mine(e) || (e.project.is_none() && named.iter().any(|t| e.ts.abs_diff(*t) <= 30 * 60))
+        })
+        .collect()
 }
 
 /// Which days an ask is about, or `None` when it isn't about the past.
-/// "continue where we stopped" / "where was I" mean the last day with
-/// anything on it.
+/// "continue where we stopped" / "where was I" / "continue building X"
+/// mean the last day with anything on it.
 pub fn wants(
     goal: &str,
     entries: &[Entry],
@@ -208,7 +302,7 @@ pub fn wants(
         "what did i do",
         "what did we do",
         "what have i done",
-    ]);
+    ]) || resumed(goal).is_some();
     if !about_past {
         return None;
     }
@@ -343,6 +437,48 @@ mod tests {
     }
 
     #[test]
+    fn a_project_keeps_its_actions_and_never_borrows_another_projects() {
+        let t = |hm: &str| at("2026-11-20", hm).timestamp();
+        let e = |hm: &str, text: &str, project: Option<&str>| Entry {
+            ts: t(hm),
+            text: text.into(),
+            project: project.map(String::from),
+        };
+        let all = vec![
+            e("10:00", "asked about the build", Some("project-friday")),
+            e("10:20", "did move_window", None),
+            e("10:25", "lesson: restart failed", None),
+            e("13:00", "asked about the budget", Some("money")),
+            e("19:00", "asked what's for dinner", None),
+        ];
+        let texts = |v: Vec<Entry>| v.into_iter().map(|e| e.text).collect::<Vec<_>>();
+        assert_eq!(
+            texts(for_project(all.clone(), "continue building FRIDAY")),
+            [
+                "asked about the build",
+                "did move_window",
+                "lesson: restart failed"
+            ]
+        );
+        let atlas = texts(for_project(all.clone(), "let's keep working on Atlas"));
+        assert!(
+            !atlas
+                .iter()
+                .any(|t| t.contains("budget") || t.contains("build")),
+            "{atlas:?}"
+        );
+        assert_eq!(atlas.len(), 3, "{atlas:?}");
+        let atlas = texts(for_project(
+            all.clone(),
+            "what did I do on Atlas yesterday?",
+        ));
+        assert_eq!(atlas.len(), 3, "{atlas:?}");
+        assert_eq!(for_project(all.clone(), "where was I").len(), 5);
+        assert_eq!(for_project(all.clone(), "what did I do on monday").len(), 5);
+        assert_eq!(for_project(all, "continue where we stopped").len(), 5);
+    }
+
+    #[test]
     fn asks_about_the_past_pick_their_days() {
         let now = at("2026-11-21", "09:00");
         let entries = vec![Entry {
@@ -355,6 +491,19 @@ mod tests {
             wants("Continue where we stopped", &entries, now),
             Some((d("2026-11-19"), d("2026-11-19")))
         );
+        for ask in [
+            "Friday, let's continue building FRIDAY",
+            "keep working on the site",
+            "get back to the garden planner",
+            "continue with the site.",
+            "prepare my desk for rust",
+        ] {
+            assert_eq!(
+                wants(ask, &entries, now),
+                Some((d("2026-11-19"), d("2026-11-19"))),
+                "{ask}"
+            );
+        }
         assert_eq!(
             wants("what was I doing yesterday?", &entries, now),
             Some((d("2026-11-20"), d("2026-11-20")))
@@ -367,6 +516,13 @@ mod tests {
             wants("what's the weather yesterday in Paris", &entries, now),
             None
         );
+        for ask in [
+            "get back to me on the budget",
+            "can you keep building on this idea",
+            "keep calm",
+        ] {
+            assert_eq!(wants(ask, &entries, now), None, "{ask}");
+        }
         assert_eq!(
             wants("where was I", &[], now),
             None,

@@ -85,24 +85,34 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
 
 /// Branch, uncommitted files and the last commits, as `[memory]` lines.
 pub fn facts(dir: &Path) -> Option<String> {
-    let branch = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])?;
-    let status = git(dir, &["status", "--porcelain"]);
+    // All three at once: a slow repository costs three seconds, not nine.
+    let (branch, status, log) = std::thread::scope(|s| {
+        let branch = s.spawn(|| git(dir, &["rev-parse", "--abbrev-ref", "HEAD"]));
+        let status = s.spawn(|| git(dir, &["status", "--porcelain"]));
+        let log = s.spawn(|| {
+            git(
+                dir,
+                &[
+                    "log",
+                    "-5",
+                    "--date=format:%Y-%m-%d %H:%M",
+                    "--format=%ad %s",
+                ],
+            )
+        });
+        (
+            branch.join().ok().flatten(),
+            status.join().ok().flatten(),
+            log.join().ok().flatten().unwrap_or_default(),
+        )
+    });
+    let branch = branch?;
     let changed: Vec<&str> = status
         .as_deref()
         .unwrap_or_default()
         .lines()
         .filter(|l| !l.trim().is_empty())
         .collect();
-    let log = git(
-        dir,
-        &[
-            "log",
-            "-5",
-            "--date=format:%Y-%m-%d %H:%M",
-            "--format=%ad %s",
-        ],
-    )
-    .unwrap_or_default();
     let mut out = format!(
         "{} (git): on branch {}; {}",
         crate::thoughts::project_name(&dir.to_string_lossy()),

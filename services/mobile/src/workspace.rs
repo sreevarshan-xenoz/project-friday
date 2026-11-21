@@ -462,8 +462,10 @@ impl Report {
         }
         out.push_str(": ");
         let mut parts = Vec::new();
+        // Launched, not yet seen: a window can take a few seconds (or fail
+        // to come up), so this says "opening" rather than "started".
         if !self.started.is_empty() {
-            parts.push(format!("started {}", self.started.join(", ")));
+            parts.push(format!("opening {}", self.started.join(", ")));
         }
         if !self.moved.is_empty() {
             parts.push(format!("moved {}", self.moved.join(", ")));
@@ -681,7 +683,7 @@ mod tests {
         assert!(
             report
                 .text(&saved)
-                .contains("started kitty in site (nvim), firefox"),
+                .contains("opening kitty in site (nvim), firefox"),
             "{}",
             report.text(&saved)
         );

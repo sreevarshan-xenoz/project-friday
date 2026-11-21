@@ -67,7 +67,7 @@ if [[ "\$1" == workspace ]]; then
   [[ "\$2" == list ]] && [ -n "\${WS_SAVED:-}" ] && echo "friday  3 window(s)  saved 2026-11-21 09:00"
   if [[ "\$2" == restore ]]; then
     [ -n "\${WS_SAVED:-}" ] || exit 1
-    echo 'Workspace "friday": started foot in friday (nvim).'
+    echo 'Workspace "friday": opening foot in friday (nvim).'
   fi
   exit 0
 fi
@@ -660,7 +660,7 @@ contains "autosave off says how to turn it on" "$(STUB_INACTIVE=1 bash "$F" work
 contains "autosave on starts the session timer" "$(cat "$LOG")" "systemctl --user enable --now friday-session-save.timer"
 : >"$LOG"; WS_SAVED=1 bash "$F" ask "Friday, let's continue building FRIDAY"; sleep 0.3
 contains "\"continue building X\" restores X's workspace" "$(cat "$LOG")" "friday-ctl-workspace workspace restore friday"
-contains "and asks with what came back" "$(cat "$LOG")" "started foot in friday"
+contains "and asks with what came back" "$(cat "$LOG")" "opening foot in friday"
 : >"$LOG"; bash "$F" ask "continue building the site"; sleep 0.3
 contains "with no such workspace it is an ordinary question" "$(cat "$LOG")" "continue\\ building\\ the\\ site"
 : >"$LOG"; WS_SAVED=1 bash "$F" ask "continue where we stopped"; sleep 0.3

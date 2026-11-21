@@ -3131,8 +3131,8 @@ mod tests {
         prompt
     }
 
-    /// "Continue where we stopped" gets the timeline from the state
-    /// directory in its prompt; another ask doesn't.
+    /// "Continue where we stopped" and "continue building the site" get the
+    /// timeline and the kept thoughts in their prompt; another ask doesn't.
     #[tokio::test]
     async fn an_ask_about_the_past_gets_the_timeline() {
         let dir =
@@ -3182,6 +3182,13 @@ mod tests {
             prompt.contains("thoughts the person kept")
                 && prompt.contains("question [site]: should the images move to a CDN?"),
             "{prompt}"
+        );
+        // The N1 ask, as `friday ask` sends it after putting the windows back.
+        let resume = ask("Friday, let's continue building the site\n\nFRIDAY just put the windows of this project back:\n\"\"\"\nkitty: already in place\n\"\"\"").await;
+        assert!(resume.contains("why does the site build fail"), "{resume}");
+        assert!(
+            resume.contains("question [site]: should the images move to a CDN?"),
+            "{resume}"
         );
         let other = ask("What does the Rust error E0308 mean?").await;
         assert!(!other.contains("timeline ("), "{other}");
