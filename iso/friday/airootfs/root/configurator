@@ -15,6 +15,7 @@ STEPS=(NETWORK DISK REGION IDENTITY SECURITY LOOK FEATURES AI REVIEW)
 
 # Defaults (also what an unattended run would use).
 TARGET_DISK="" TARGET_LABEL=""
+INSTALL_MODE="erase" FRIDAY_SIZE_MB="" BOOT_DEFAULT="friday" ALONGSIDE_OS=""
 # Empty until named, so typing replaces the placeholder (empty input means "friday").
 HOSTNAME="" USERNAME="" PASSWORD=""
 KEYBOARD="us" TIMEZONE="UTC"
@@ -145,13 +146,111 @@ step_disk() {
   done < <(lsblk -d -n -o NAME,TYPE,SIZE,MODEL)
 
   if (( ${#labels[@]} == 0 )); then
-    leave_menu "I couldn't find a disk to install onto (the USB stick I booted from is excluded)."
+    leave_menu "I couldn't find a disk to install onto (the USB stick I booted from is excluded). On a laptop whose storage is in Intel RST/RAID mode, Linux can't see the disk: don't switch it to AHCI without preparing Windows first."
   fi
   [[ -n "$boot_dev" ]] && friday_note "  Your boot USB ($boot_dev) is protected and not listed."
   friday_head "Where should FRIDAY live?"
-  friday_note "  The whole disk will be erased."
   TARGET_LABEL=$(printf '%s\n' "${labels[@]}" | gum choose --cursor="$FRIDAY_CURSOR" --height=8) || leave_menu
   TARGET_DISK=$(awk -F'│' '{print $1}' <<<"$TARGET_LABEL" | xargs)
+  step_disk_mode
+}
+
+# Erase the disk, or (when it already holds a system and has free space)
+# install alongside it. Sets INSTALL_MODE, FRIDAY_SIZE_MB, BOOT_DEFAULT.
+step_disk_mode() {
+  INSTALL_MODE=erase FRIDAY_SIZE_MB="" BOOT_DEFAULT=friday
+  local scan table parts free esp esp_free windows others bitlocker os
+  scan=$(friday_disk_scan "$TARGET_DISK")
+  get() { sed -n "s/^$1=//p" <<<"$scan"; }
+  table=$(get table) parts=$(get parts) free=$(get free_mb) esp=$(get esp)
+  esp_free=$(get esp_free_mb) windows=$(get windows) others=$(get others) bitlocker=$(get bitlocker)
+  if (( ${parts:-0} == 0 )); then
+    friday_note "  The disk is empty: FRIDAY gets all of it."
+    return 0
+  fi
+  os="the system on it"
+  [[ "$windows" == 1 ]] && os="Windows"
+  [[ "$windows" != 1 && -n "$others" ]] && os="$others"
+  echo
+  friday_say "This disk already has $os on it."
+  local why=""
+  if [[ "$table" != gpt ]]; then
+    why="it uses the old MBR partition style, and FRIDAY installs alongside only on GPT disks"
+  elif [[ -z "$esp" ]]; then
+    why="it has no EFI partition to share for the start menu"
+  elif (( ${esp_free:-0} < 5 )); then
+    why="its EFI partition is full (FRIDAY's start menu needs about 5 MB there)"
+  elif (( ${free:-0} < FRIDAY_MIN_MB )); then
+    why="it has $(friday_gb "${free:-0}") of free space, and FRIDAY needs at least $(friday_gb "$FRIDAY_MIN_MB")"
+  fi
+  local keep
+  keep="Install alongside $os (uses the $(friday_gb "${free:-0}") of free space)"
+  local choices=()
+  if [[ -z "$why" ]]; then
+    choices+=("$keep")
+  else
+    friday_warn "I can't put FRIDAY next to $os: $why."
+    [[ "$windows" == 1 ]] && (( ${free:-0} < FRIDAY_MIN_MB )) && [[ "$table" == gpt ]] && {
+      friday_note "  To make room, start Windows, open Disk Management (right-click Start),"
+      friday_note "  right-click C: › Shrink Volume, shrink it by 60 GB or more, then start setup again."
+    }
+  fi
+  choices+=("Erase the whole disk (removes $os and everything on it)" "Pick another disk" "Quit setup (nothing is written)")
+  case "$(printf '%s\n' "${choices[@]}" | gum choose --cursor="$FRIDAY_CURSOR")" in
+    "$keep") ;;
+    Erase*) return 0 ;;
+    "Pick another disk") step_disk; return ;;
+    *) leave_menu "Nothing was written to disk." ;;
+  esac
+  INSTALL_MODE=alongside
+  if [[ "$bitlocker" == 1 ]]; then
+    echo
+    friday_warn "$os's drive is encrypted with BitLocker."
+    friday_note "  After FRIDAY is installed (and with Secure Boot off), Windows may stop at start and ask"
+    friday_note "  for its 48-digit recovery key. Without it, Windows and its files stay locked."
+    friday_note "  Get the key first (aka.ms/myrecoverykey), or turn BitLocker off in Windows and come back."
+    gum confirm --default=false --affirmative="I have the key (or BitLocker is off)" --negative="Stop, I'll get it" \
+      "Carry on?" || leave_menu "Nothing was written. Get the BitLocker recovery key (or turn BitLocker off), then start setup again."
+  fi
+  [[ "$windows" == 1 ]] && friday_note "  Shut Windows down fully before installing (turn off Fast Startup), or its drive stays locked."
+  step_disk_size "$free"
+  echo
+  friday_head "When the computer starts"
+  case "$(gum choose --cursor="$FRIDAY_CURSOR" \
+      "$os starts as it does now; pick FRIDAY OS from the boot menu key (the next restart goes to FRIDAY once)" \
+      "FRIDAY's menu every time, with $os in it")" in
+    FRIDAY*) BOOT_DEFAULT=friday ;;
+    *) BOOT_DEFAULT=other ;;
+  esac
+  ALONGSIDE_OS="$os"
+}
+
+# How much of the free space FRIDAY gets, with advice on the size.
+step_disk_size() {
+  local free="$1" model=0 rec v mb advice presets
+  # The biggest local model this computer can run (local-ai presets know).
+  presets=$(FRIDAY_DISK_FREE_MB="$free" friday local-ai presets 2>/dev/null) || presets=""
+  model=$(awk -F'|' '$8 == 1 && $5 ~ /^[0-9]+$/ && $5 > m { m = $5 } END { print m + 0 }' <<<"$presets")
+  rec=$(friday_size_recommend "$free" "$model")
+  echo
+  friday_head "How much space for FRIDAY?"
+  friday_note "  Free: $(friday_gb "$free"). At least 40 GB; 60 to 80 GB is comfortable;"
+  (( model > 0 )) && friday_note "  local AI on this computer adds its model ($(friday_gb "$model")) and room to update it."
+  friday_note "  I'd use $(friday_gb "$rec"). What's left stays free for the other system."
+  while true; do
+    v=$(gum input --value="$(( rec / 1024 ))" --prompt="Size in GB › " --placeholder="$(( rec / 1024 ))") || leave_menu
+    v="${v// /}"; v="${v%[Gg][Bb]}"; v="${v%[Gg]}"
+    [[ "$v" =~ ^[0-9]+$ ]] || { friday_err "A number of GB, like $(( rec / 1024 ))."; continue; }
+    mb=$(( v * 1024 ))
+    if ! advice=$(friday_size_advice "$mb" "$free" "$model"); then
+      friday_err "$advice"
+      continue
+    fi
+    case "$advice" in Good*) friday_ok "$advice" ;; *) friday_warn "$advice" ;; esac
+    gum confirm --affirmative="Use $v GB" --negative="Change it" "$(friday_gb $(( free - mb ))) stays free. Use $v GB?" || continue
+    FRIDAY_SIZE_MB=$mb
+    return 0
+  done
 }
 
 step_identity() {
@@ -406,9 +505,14 @@ step_local_ai() {
     "Ollama (simplest; installed from the Arch repos)" \
     "llama.cpp (lighter; llama.cpp's official build)") || engine="Ollama"
   case "$engine" in llama.cpp*) eng=llamacpp ;; *) eng=ollama ;; esac
-  # Free space: the target disk less ~20 GB for the system.
-  size_mb=$(lsblk -b -d -n -o SIZE "$TARGET_DISK" 2>/dev/null | head -n1 | xargs)
-  if [[ "$size_mb" =~ ^[0-9]+$ ]]; then size_mb=$(( size_mb / 1048576 - 20480 )); else size_mb=1000000; fi
+  # Free space: FRIDAY's share (the whole disk, or the size chosen next to
+  # another system) less ~20 GB for the system.
+  if [[ "$INSTALL_MODE" == alongside ]]; then
+    size_mb=$(( FRIDAY_SIZE_MB - 20480 ))
+  else
+    size_mb=$(lsblk -b -d -n -o SIZE "$TARGET_DISK" 2>/dev/null | head -n1 | xargs)
+    if [[ "$size_mb" =~ ^[0-9]+$ ]]; then size_mb=$(( size_mb / 1048576 - 20480 )); else size_mb=1000000; fi
+  fi
   presets=$(FRIDAY_DISK_FREE_MB="$size_mb" friday local-ai presets 2>/dev/null) || presets=""
   local -a options=() ids=()
   local id label budget model dl vision fast available note speed
@@ -445,9 +549,12 @@ step_local_ai() {
 review() {
   while true; do
     screen 9 "REVIEW"
+    local disk_lines=("Disk        $TARGET_LABEL$([[ $ENCRYPT == true ]] && echo "  (encrypted)")")
+    [[ "$INSTALL_MODE" == alongside ]] \
+      && disk_lines+=("            alongside $ALONGSIDE_OS: $(friday_gb "$FRIDAY_SIZE_MB") of its free space")
     gum style --foreground "$FRIDAY_ACCENT" --border "$FRIDAY_BORDER_STYLE" --border-foreground "$FRIDAY_BORDER" \
       --margin "0 0 0 $FRIDAY_INDENT" --padding "1 2" --width "$FRIDAY_WIDTH" \
-      "Disk        $TARGET_LABEL$([[ $ENCRYPT == true ]] && echo "  (encrypted)")" \
+      "${disk_lines[@]}" \
       "Computer    $HOSTNAME" \
       "User        $USERNAME   (password set, $([[ $AUTOLOGIN == true ]] && echo "automatic login" || echo "asked at login"))" \
       "Region      $TIMEZONE · keyboard $KEYBOARD" \
@@ -456,14 +563,24 @@ review() {
       "Allowed     $(friday_features_label)" \
       "AI          $FRIDAY_AI_LABEL"
     echo
-    gum style --margin "0 0 0 $FRIDAY_INDENT" --foreground "$FRIDAY_WARNING" --bold "Installing erases everything on $TARGET_DISK."
+    if [[ "$INSTALL_MODE" == alongside ]]; then
+      gum style --margin "0 0 0 $FRIDAY_INDENT" --foreground "$FRIDAY_SUCCESS" --bold \
+        "Installing adds FRIDAY in $(friday_gb "$FRIDAY_SIZE_MB") of free space; $ALONGSIDE_OS and its files stay as they are."
+    else
+      gum style --margin "0 0 0 $FRIDAY_INDENT" --foreground "$FRIDAY_WARNING" --bold "Installing erases everything on $TARGET_DISK."
+    fi
     echo
     case "$(gum choose --cursor="$FRIDAY_CURSOR" \
         "Install FRIDAY OS" "Change disk" "Change names" "Change password" \
         "Change region" "Change desktop" "Change what FRIDAY may do" "Change AI" "Quit setup")" in
       "Install FRIDAY OS")
-        gum confirm --default=false --affirmative="Erase and install" --negative="Back" \
-          "Last check: erase $TARGET_DISK and install?" && return 0 ;;
+        if [[ "$INSTALL_MODE" == alongside ]]; then
+          gum confirm --default=false --affirmative="Install alongside" --negative="Back" \
+            "Last check: add FRIDAY next to $ALONGSIDE_OS on $TARGET_DISK?" && return 0
+        else
+          gum confirm --default=false --affirmative="Erase and install" --negative="Back" \
+            "Last check: erase $TARGET_DISK and install?" && return 0
+        fi ;;
       "Change disk") step_disk ;;
       "Change names") step_identity ;;
       "Change password") step_security ;;
@@ -499,9 +616,14 @@ friday_banner
 friday_say "Thanks, $USERNAME. I'll take it from here."
 sleep 1
 FRIDAY_HOSTNAME="$HOSTNAME"
-export TARGET_DISK KEYBOARD HOSTNAME FRIDAY_HOSTNAME USERNAME PASSWORD TIMEZONE THEME SHELL_STYLE SESSION SDDM_THEME FRIDAY_AI_PROVIDERS FRIDAY_AI_KEYS FRIDAY_LOCAL_ENGINE FRIDAY_LOCAL_BUDGET_MB FRIDAY_LOCAL_MODEL AUTOLOGIN ENCRYPT FEAT_DESKTOP FEAT_TASKS FEAT_APPNAME FEAT_SCREENTEXT FEAT_PHONE
-# The person confirmed erasing this disk on the review screen.
-export ERASE_DISK="$TARGET_DISK"
+export INSTALL_MODE FRIDAY_SIZE_MB BOOT_DEFAULT TARGET_DISK KEYBOARD HOSTNAME FRIDAY_HOSTNAME USERNAME PASSWORD TIMEZONE THEME SHELL_STYLE SESSION SDDM_THEME FRIDAY_AI_PROVIDERS FRIDAY_AI_KEYS FRIDAY_LOCAL_ENGINE FRIDAY_LOCAL_BUDGET_MB FRIDAY_LOCAL_MODEL AUTOLOGIN ENCRYPT FEAT_DESKTOP FEAT_TASKS FEAT_APPNAME FEAT_SCREENTEXT FEAT_PHONE
+# The person confirmed erasing this disk (or adding FRIDAY next to what's on
+# it) on the review screen.
+if [[ "$INSTALL_MODE" == alongside ]]; then
+  export ALONGSIDE_DISK="$TARGET_DISK"
+else
+  export ERASE_DISK="$TARGET_DISK"
+fi
 export FRIDAY_INTERACTIVE=1
 # On failure the setup screen replaces the installer's, so carry its last line over.
 /root/installer || leave_menu "The install stopped: $(tail -n 1 /tmp/friday-installer.log 2>/dev/null) The full log is in /tmp/friday-installer.log."

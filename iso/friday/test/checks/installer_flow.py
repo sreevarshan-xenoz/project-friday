@@ -10,6 +10,7 @@ usage: installer_flow.py <configurator> <stub_dir> [multi]
 
 multi: pick Gemini, Groq (no key) and local AI (Ollama, Light) instead of
 the default free models.
+alongside: the disk has Windows (STUB_WINDOWS=1): install next to it.
 """
 
 import fcntl
@@ -24,12 +25,24 @@ import time
 
 configurator, stub_dir = sys.argv[1], sys.argv[2]
 MULTI = sys.argv[3:] == ["multi"]
+ALONGSIDE = sys.argv[3:] == ["alongside"]
 UP, DOWN, ENTER, CTRL_U = "\x1b[A", "\x1b[B", "\r", "\x15"
 
 # (seconds to wait for the screen, keys to send)
 STEPS = [
     (6, ENTER),  # welcome: Let's begin
     (8, ENTER),  # disk: first (vda)
+    *(
+        [
+            (4, ENTER),  # install alongside Windows (first)
+            (3, "y"),  # BitLocker: I have the key
+            (4, ENTER),  # size: the suggested one
+            (3, ENTER),  # use it
+            (3, ENTER),  # Windows starts as now
+        ]
+        if ALONGSIDE
+        else []
+    ),
     (4, "kolkata"),
     (2, ENTER),  # timezone search
     (4, "uk"),
@@ -127,7 +140,12 @@ checks = {
     "invalid hostname re-prompts": "Use lowercase letters" in text,
     "invalid username re-prompts": "Start with a lowercase letter" in text,
     "password mismatch re-prompts": "didn't match" in text,
-    "review screen shown": "Last check: erase /dev/vda" in text,
+    "review screen shown": (
+        "Last check: add FRIDAY next to Windows on /dev/vda"
+        if ALONGSIDE
+        else "Last check: erase /dev/vda"
+    )
+    in text,
     "autologin defaults to off": "Password required at login" in text,
     "encryption defaults to on": "Disk will be encrypted (LUKS2)" in text,
     "review shows encryption": "(encrypted)" in text,
@@ -149,6 +167,16 @@ if MULTI:
     )
 else:
     checks["AI defaults to OpenCode Zen free models"] = "OpenCode Zen free models (no key)" in text
+if ALONGSIDE:
+    checks.update(
+        {
+            "the system on the disk is named": "This disk already has Windows on it." in text,
+            "BitLocker is warned about": "encrypted with BitLocker" in text,
+            "a size is suggested": "I'd use 80 GB" in text,
+            "the size is judged": "Good: room for FRIDAY" in text,
+            "the review says nothing is erased": "Windows and its files stay as they are" in text,
+        }
+    )
 env = env_lines[-1] if env_lines else ""
 ai_spec = (
     [("ai", "[gemini]"), ("keys", "[gemini]"), ("local", "[ollama:qwen3:4b:4096]")]
@@ -157,7 +185,17 @@ ai_spec = (
 )
 for key, want in ai_spec + [
     ("disk", "/dev/vda"),
-    ("erase", "/dev/vda"),
+    *(
+        [
+            ("erase", ""),
+            ("mode", "alongside"),
+            ("alongside", "/dev/vda"),
+            ("size", "81920"),
+            ("bootdefault", "other"),
+        ]
+        if ALONGSIDE
+        else [("erase", "/dev/vda"), ("mode", "erase")]
+    ),
     ("host", "mybox"),
     ("user", "alice"),
     ("pw", "secret1"),
