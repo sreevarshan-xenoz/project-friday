@@ -3183,7 +3183,8 @@ case "${1:-}" in
         if $use_selection && [ -n "${context:-}" ]; then
           if [ "$source_label" = Clipboard ]; then used_parts+=("your clipboard"); else used_parts+=("your selection"); fi
         fi
-        $use_screen && used_parts+=("the window in front")
+        if ${use_region:-false}; then used_parts+=("the area you picked")
+        elif $use_screen; then used_parts+=("the window in front"); fi
         [ -z "${docs:-}" ] || used_parts+=("docs on this computer")
         [ -z "${ws_report:-}" ] || used_parts+=("the windows FRIDAY put back")
         local u

@@ -76,6 +76,9 @@ pub struct GoalState {
     /// Number of secrets masked before sending to the model (if any were masked).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub masked: Option<usize>,
+    /// What went into the answer besides the question ("your timeline", …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub used: Option<Vec<String>>,
 }
 
 /// Details of the provider and model that served the answer.
@@ -277,6 +280,7 @@ pub fn apply_event(mut state: ShellState, ev: &Event) -> ShellState {
                     needs_confirmation: None,
                     served_by: None,
                     masked: None,
+                    used: None,
                 });
             }
         }
@@ -329,6 +333,9 @@ pub fn apply_event(mut state: ShellState, ev: &Event) -> ShellState {
                 }
                 if let Some(m) = ev.payload.get("masked").and_then(|v| v.as_u64()) {
                     cur.masked = Some(m as usize);
+                }
+                if let Some(u) = ev.payload.get("used") {
+                    cur.used = serde_json::from_value(u.clone()).ok();
                 }
             }
             if matches!(kind, "goal.completed" | "goal.failed" | "goal.cancelled") {
@@ -806,7 +813,8 @@ mod tests {
                     "provider": "opencode-zen",
                     "model": "inclusionai/ling-3.0-flash:free",
                     "ms": 2300,
-                }
+                },
+                "used": ["your timeline"],
             }),
         );
         let s2 = apply_event(s1, &done);
@@ -825,6 +833,8 @@ mod tests {
             "inclusionai/ling-3.0-flash:free"
         );
         assert_eq!(last_rendered["served_by"]["ms"], 2300);
+        // and what the answer used (friday-ctl ask reads it from here)
+        assert_eq!(last_rendered["used"], serde_json::json!(["your timeline"]));
     }
 
     #[test]
