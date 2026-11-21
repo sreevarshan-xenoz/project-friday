@@ -36,6 +36,7 @@ public static class ActiveWindow
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr h, StringBuilder s, int n);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT r, int size);
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
 
     public static int Run()
     {
@@ -62,7 +63,11 @@ public static class ActiveWindow
 
             var json = JsonSerializer.Serialize(new Dictionary<string, object>
             {
-                ["class"] = cls,
+                // The app, as Hyprland's class is: its process name
+                // ("notepad", "chrome"), which is how the window-text reader
+                // and the private-window list name apps. The Win32 class too.
+                ["class"] = ProcessName(h) ?? cls,
+                ["win32_class"] = cls,
                 ["title"] = Text(h, GetWindowText),
                 ["at"] = new[] { bounds.X, bounds.Y },
                 ["size"] = new[] { bounds.Width, bounds.Height },
@@ -74,6 +79,20 @@ public static class ActiveWindow
         {
             Console.Error.WriteLine($"active window: {e.Message}");
             return 1;
+        }
+    }
+
+    private static string? ProcessName(IntPtr h)
+    {
+        try
+        {
+            GetWindowThreadProcessId(h, out var pid);
+            using var p = System.Diagnostics.Process.GetProcessById((int)pid);
+            return p.ProcessName.ToLowerInvariant();
+        }
+        catch (Exception)
+        {
+            return null;
         }
     }
 
