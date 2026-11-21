@@ -42,7 +42,8 @@ Autonomous Agent & Cognitive Loop:
                                    folders, editor files, the project); put them back
                                    ("save this as my X workspace" in the ask box too)
   friday undo                      Put back the last thing FRIDAY changed (volume, mute,
-                                   Do not disturb, a rewrite or paste); "undo" in the ask box too
+                                   Do not disturb, a rewrite or paste, a window it moved);
+                                   "undo" in the ask box too
   friday watch [region|stop]       Drag an area; FRIDAY says when it changes (or stops
                                    changing). A kitty command: "Tell me when this finishes"
   friday ask --new ["<objective>"] Start a new conversation (asks within 15 minutes of
@@ -1192,6 +1193,16 @@ friday_undo() {
       else
         echo "That window isn't in front any more: go back to it and press Ctrl+Z."
       fi ;;
+    window)
+      # The daemon wrote it (desktop_tool::window_undo): a window address and
+      # the workspace it was on, both checked again before use.
+      if ! [[ "$a0" =~ ^0x[0-9a-fA-F]+$ && "$a1" =~ ^[A-Za-z0-9_-]{1,24}$ ]]; then echo "Can't undo that."; return 1; fi
+      if ! timeout 2 hyprctl clients -j 2>/dev/null | jq -e --arg a "$a0" 'any(.[]; .address == $a)' >/dev/null 2>&1; then
+        echo "That window is closed, so there's nothing to put back."; return 1
+      fi
+      timeout 2 hyprctl dispatch "hl.dsp.window.move({ workspace = \"$a1\", follow = false, window = \"address:$a0\" })" >/dev/null 2>&1 \
+        || { echo "Couldn't move it back."; return 1; }
+      echo "Undid $said: it's back on workspace $a1." ;;
     *) echo "Can't undo that."; return 1 ;;
   esac
 }

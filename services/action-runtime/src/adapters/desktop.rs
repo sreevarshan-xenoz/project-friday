@@ -315,7 +315,10 @@ impl DesktopAdapter {
                 let w = self.pick(p("target").ok_or("name the window to move")?)?;
                 let ws = workspace_arg(p("workspace").ok_or("name the workspace")?)?;
                 self.move_to_workspace(&w.address, &ws)?;
-                Ok(json!({"moved": w.class, "workspace": ws}))
+                // Where it was, so it can be put back (friday undo).
+                Ok(
+                    json!({"moved": w.class, "workspace": ws, "address": w.address, "from": w.workspace}),
+                )
             }
             "switch_workspace" => {
                 let ws = workspace_arg(p("workspace").ok_or("name the workspace")?)?;
