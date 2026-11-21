@@ -3494,6 +3494,8 @@ case "${1:-}" in
     # the answer so "continue building X" finds X's history) and whether
     # FRIDAY Shell's pill is there. ask_lookups waits for them.
     lookups=$(mktemp -d)
+    # Gone however the ask ends (a closed box exits early).
+    trap 'rm -rf "$lookups"' EXIT
     { timeout 2 friday-ctl workspace project >"$lookups/project" 2>/dev/null || true; } &
     lookup_pids=$!
     { pill state && : >"$lookups/pill"; } &
@@ -3619,6 +3621,7 @@ case "${1:-}" in
         if [ -n "$suggestions" ]; then
           picked=$(awk -F'\t' -v g="$goal" '$1 == g { print $2 "\t" $3; exit }' <<<"$suggestions")
           if [ -n "$picked" ]; then
+            rm -rf "$lookups"
             FRIDAY_SUGGESTED=1 exec bash "$0" ask "$(cut -f1 <<<"$picked")" "$(cut -f2- <<<"$picked")"
           fi
         fi

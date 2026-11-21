@@ -237,12 +237,14 @@ echo "the ask box opens first"
 # not wait for them.
 mkdir -p "$W/slow-bin"
 printf '#!/bin/bash\n[ "$1 $2" = "workspace project" ] && { sleep 2; echo /home/me/code/x; exit 0; }\nexec %q "$@"\n' "$S/friday-ctl" >"$W/slow-bin/friday-ctl"
-printf '#!/bin/bash\nsleep 3\n' >"$W/slow-bin/quickshell"
 printf '#!/bin/bash\ndate +%%s%%N >%q\nexit 1\n' "$W/box-at" >"$W/slow-bin/fuzzel"
 chmod +x "$W/slow-bin"/*
-t0=$(date +%s%N); PATH="$W/slow-bin:$PATH" bash "$F" ask >/dev/null 2>&1 || true
-box_ms=$(( ( $(cat "$W/box-at" 2>/dev/null || echo 99999999999999999) - t0 ) / 1000000 ))
-(( box_ms < 1500 )) && pass "the ask box opens in ${box_ms} ms with slow lookups behind it" || fail "the ask box took ${box_ms} ms (lookups ran first)"
+rm -f "$W/box-at"; t0=$(date +%s%N); PATH="$W/slow-bin:$PATH" bash "$F" ask >/dev/null 2>&1 || true
+if [ -s "$W/box-at" ]; then
+  box_ms=$(( ( $(cat "$W/box-at") - t0 ) / 1000000 ))
+  (( box_ms < 1500 )) && pass "the ask box opens in ${box_ms} ms with slow lookups behind it" || fail "the ask box took ${box_ms} ms (lookups ran first)"
+else fail "the ask box never opened"; fi
+sleep 2.5  # the slow lookups end before the next checks read the log
 
 echo "suggestions for the app you're in"
 printf '#!/bin/bash\necho "hyprctl $*" >> %q\n[[ "$*" == "activewindow -j" ]] && printf %%s "$HYPR_WIN"\nexit 0\n' "$LOG" >"$S/hyprctl"; chmod +x "$S/hyprctl"
