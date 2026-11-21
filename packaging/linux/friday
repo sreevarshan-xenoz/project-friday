@@ -38,6 +38,8 @@ Autonomous Agent & Cognitive Loop:
                                    answer text) to turn into a test
   friday shell-hook [zsh|bash]     Lines for your shell's rc file: Super+Y explains a failed
                                    command, or says when one finishes, in any terminal
+  friday folders [add|rm|list|update] Folders whose notes and PDFs FRIDAY searches, quoting
+                                   the file
   friday recall [status|on|off|keep 3h|24h|7d]  Keep the text of windows you look at, here
                                    only, so you can ask "what was that…" (off forgets it)
   friday clips [status|on|off|pick] Keep the last 200 texts you copy; Super+Ctrl+V pastes one
@@ -1349,6 +1351,41 @@ friday_wrong() {
   )
   echo "Saved a repro of that answer (no question or answer text): $f"
   notify-send -a FRIDAY -- "FRIDAY" "Thanks: saved what went wrong (no question or answer text). friday wrong --list shows it." 2>/dev/null || true
+}
+
+# `friday folders [add|rm <folder>|list|update]`: folders whose notes (.md,
+# .txt, .org…) and PDFs FRIDAY searches for asks they fit, quoting the file.
+# Indexed on this computer (~/.cache/friday/folders.txt); private folders
+# (folder lines in private-windows) and hidden ones are skipped.
+friday_folders() {
+  local file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/search-folders" dir="${2:-}"
+  case "${1:-list}" in
+    list)
+      if [ -s "$file" ]; then cat "$file"; else echo "No folders yet: friday folders add <folder>"; fi ;;
+    add)
+      [ -n "$dir" ] && [ -d "$dir" ] || { echo "Usage: friday folders add <folder>" >&2; return 1; }
+      dir=$(cd "$dir" && pwd)
+      if [ "${3:-}" != "--yes" ]; then
+        cat <<EOF2
+FRIDAY will read the notes and PDFs in $dir, on this computer, and keep their
+text in ~/.cache/friday/folders.txt (only you can read it). When a question
+fits a passage, that passage (and the file's name) goes with the question to
+your AI provider. Folders listed in ~/.config/friday/private-windows are skipped.
+EOF2
+        local a; read -r -p "Add it? [y/N] " a || a=n
+        [[ "$a" =~ ^[Yy] ]] || { echo "Nothing changed."; return 0; }
+      fi
+      mkdir -p "$(dirname "$file")"
+      (umask 077; { grep -vxF "$dir" "$file" 2>/dev/null || true; echo "$dir"; } >"$file.tmp" && mv -f "$file.tmp" "$file")
+      friday-ctl docs --prepare-folders ;;
+    rm)
+      dir="${dir%/}"; [ -d "$dir" ] && dir=$(cd "$dir" && pwd)
+      grep -qxF "$dir" "$file" 2>/dev/null || { echo "Not a search folder: $dir" >&2; return 1; }
+      (umask 077; grep -vxF "$dir" "$file" >"$file.tmp" || true; mv -f "$file.tmp" "$file")
+      friday-ctl docs --prepare-folders ;;
+    update) friday-ctl docs --prepare-folders ;;
+    *) echo "Usage: friday folders [add|rm <folder>|list|update]" >&2; return 1 ;;
+  esac
 }
 
 # `friday routine save|run|list|rm <name>`: save what FRIDAY just did on the
@@ -3765,6 +3802,10 @@ case "${1:-}" in
   recall)
     shift
     friday_recall "$@"
+    ;;
+  folders)
+    shift
+    friday_folders "$@"
     ;;
   wrong)
     shift

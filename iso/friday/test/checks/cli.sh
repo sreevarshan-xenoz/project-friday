@@ -699,6 +699,16 @@ contains "recall off stops the service" "$(cat "$LOG")" "systemctl --user disabl
 [ -e "$rf" ] && fail "recall off left the kept text" || pass "recall off forgets the kept text"
 expect "and the keep goes back to 3 hours" test ! -e "$state/recall-keep"
 
+echo "search a folder you pick"
+mkdir -p "$W/notes"
+contains "adding a folder asks first" "$(bash "$F" folders add "$W/notes" </dev/null)" "Nothing changed."
+: >"$LOG"; bash "$F" folders add "$W/notes" --yes >/dev/null
+contains "a folder added is listed" "$(bash "$F" folders list)" "$W/notes"
+contains "and indexed" "$(cat "$LOG")" "docs --prepare-folders"
+contains "the folder list is owner-only" "$(stat -c %a "$HOME/.config/friday/search-folders")" "600"
+bash "$F" folders rm "$W/notes" >/dev/null
+contains "rm takes it off" "$(bash "$F" folders list)" "No folders yet"
+
 echo "documentation on this computer"
 : >"$LOG"; DOCS_REPLY=$'[Arch wiki: Pacman]\nTo upgrade the system, run pacman -Syu.' bash "$F" ask "how do I upgrade with pacman"; sleep 0.3
 contains "a typed question looks in the local docs" "$(cat "$LOG")" "friday-ctl-docs docs -- how do I upgrade with pacman"
