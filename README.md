@@ -266,6 +266,8 @@ Server = https://github.com/sreevarshan-xenoz/project-friday/releases/download/p
 
 pacman refuses any package or database that key didn't sign. On Windows, install the newer MSI over the old one.
 
+**Safe upgrades.** `friday upgrade now` upgrades the whole system, FRIDAY included, and `friday upgrade auto on` does it once a day (off until you turn it on). It runs only on mains power, online and with room on disk. First it saves the package list, takes a Btrfs snapshot when snapper is set up, and backs up your FRIDAY settings. pacman doesn't restart your apps: they pick up the new versions when next started, and a new kernel at the next restart (it tells you); FRIDAY's own daemon restarts itself onto its new version. Afterwards, if FRIDAY's daemon, its command or the desktop no longer starts, the previous versions go back from pacman's cache. `friday upgrade status` shows how the last run went.
+
 ## Commands
 
 | Command | What it does |
