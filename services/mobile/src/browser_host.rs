@@ -43,17 +43,64 @@ pub fn write_message(w: &mut impl Write, msg: &Value) -> std::io::Result<()> {
     w.flush()
 }
 
+/// The browser's half of the host: questions go out on stdout, the
+/// extension's answers come in on stdin and go back to whoever asked.
+struct Relay {
+    waiting: std::sync::Mutex<std::collections::HashMap<u64, std::sync::mpsc::Sender<Value>>>,
+    out: std::sync::Mutex<std::io::Stdout>,
+    next: std::sync::atomic::AtomicU64,
+}
+
+impl Relay {
+    /// Starts reading the browser's pipe; `on_end` runs when the browser
+    /// closes it, and then the host leaves.
+    fn start(on_end: impl FnOnce() + Send + 'static) -> std::sync::Arc<Self> {
+        let relay = std::sync::Arc::new(Relay {
+            waiting: Default::default(),
+            out: std::sync::Mutex::new(std::io::stdout()),
+            next: std::sync::atomic::AtomicU64::new(1),
+        });
+        let r = relay.clone();
+        std::thread::spawn(move || {
+            let mut input = std::io::stdin().lock();
+            while let Some(msg) = read_message(&mut input) {
+                let id = msg.get("id").and_then(Value::as_u64).unwrap_or(0);
+                if let Some(tx) = r.waiting.lock().unwrap().remove(&id) {
+                    let _ = tx.send(msg);
+                }
+            }
+            on_end();
+            std::process::exit(0);
+        });
+        relay
+    }
+
+    /// Asks the extension for the tab in front and waits up to 5 s.
+    fn ask(&self) -> Value {
+        let id = self.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.waiting.lock().unwrap().insert(id, tx);
+        let asked = write_message(
+            &mut *self.out.lock().unwrap(),
+            &serde_json::json!({"type": "tab", "id": id}),
+        );
+        let reply = asked
+            .ok()
+            .and_then(|_| rx.recv_timeout(std::time::Duration::from_secs(5)).ok())
+            .unwrap_or_else(|| serde_json::json!({"error": "the browser didn't answer"}));
+        self.waiting.lock().unwrap().remove(&id);
+        reply
+    }
+}
+
 /// The host: relays each "tab" asked on the socket to the extension and its
 /// answer back. Ends when the browser closes the pipe.
 #[cfg(unix)]
 pub fn run_host() -> u8 {
-    use std::collections::HashMap;
     use std::io::{BufRead, BufReader};
-    use std::os::unix::net::UnixListener;
-    use std::sync::mpsc;
-    use std::sync::{Arc, Mutex};
-
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    use std::os::unix::net::UnixListener;
+
     let Some(path) = socket() else {
         return 1;
     };
@@ -70,27 +117,12 @@ pub fn run_host() -> u8 {
         return 1;
     };
     let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-
-    let waiting: Arc<Mutex<HashMap<u64, mpsc::Sender<Value>>>> = Arc::default();
-    let out = Arc::new(Mutex::new(std::io::stdout()));
-    {
-        // The extension's answers, matched to whoever asked.
-        let waiting = waiting.clone();
+    let relay = Relay::start({
         let path = path.clone();
-        std::thread::spawn(move || {
-            let mut input = std::io::stdin().lock();
-            while let Some(msg) = read_message(&mut input) {
-                let id = msg.get("id").and_then(Value::as_u64).unwrap_or(0);
-                if let Some(tx) = waiting.lock().unwrap().remove(&id) {
-                    let _ = tx.send(msg);
-                }
-            }
-            // The browser went away: so does the host.
+        move || {
             let _ = std::fs::remove_file(&path);
-            std::process::exit(0);
-        });
-    }
-    let mut next = 1u64;
+        }
+    });
     for conn in listener.incoming() {
         let Ok(mut conn) = conn else { continue };
         // A client that never says anything can't hold the host up.
@@ -99,22 +131,139 @@ pub fn run_host() -> u8 {
         if BufReader::new(&conn).read_line(&mut line).is_err() || line.trim() != "tab" {
             continue;
         }
-        let id = next;
-        next += 1;
-        let (tx, rx) = mpsc::channel();
-        waiting.lock().unwrap().insert(id, tx);
-        let asked = write_message(
-            &mut *out.lock().unwrap(),
-            &serde_json::json!({"type": "tab", "id": id}),
-        );
-        let reply = asked
-            .ok()
-            .and_then(|_| rx.recv_timeout(std::time::Duration::from_secs(5)).ok())
-            .unwrap_or_else(|| serde_json::json!({"error": "the browser didn't answer"}));
-        waiting.lock().unwrap().remove(&id);
-        let _ = writeln!(conn, "{reply}");
+        let _ = writeln!(conn, "{}", relay.ask());
     }
     0
+}
+
+/// On Windows: where the host leaves its pipe's name
+/// (`%LOCALAPPDATA%\\friday\\browser-pipe`, a folder only this user can read).
+/// The name is random, so no other account can create the pipe first or
+/// find it to ask.
+#[cfg(windows)]
+fn pipe_file() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("friday").join("browser-pipe"))
+}
+
+#[cfg(windows)]
+pub fn run_host() -> u8 {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+    let Some(file) = pipe_file() else {
+        return 1;
+    };
+    let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
+        return 1;
+    };
+    let name = format!(r"\\.\pipe\friday-browser-{}", uuid::Uuid::new_v4().simple());
+    let relay = Relay::start({
+        let (file, name) = (file.clone(), name.clone());
+        // The browser went away: forget the pipe, unless a newer host
+        // (another browser) has written its own since.
+        move || {
+            if std::fs::read_to_string(&file).is_ok_and(|n| n == name) {
+                let _ = std::fs::remove_file(&file);
+            }
+        }
+    });
+    async fn answer(server: NamedPipeServer, relay: std::sync::Arc<Relay>) {
+        let mut conn = BufReader::new(server);
+        let mut line = String::new();
+        // A client that never says anything can't hold its slot.
+        let read =
+            tokio::time::timeout(std::time::Duration::from_secs(2), conn.read_line(&mut line))
+                .await;
+        if !matches!(read, Ok(Ok(_))) || line.trim() != "tab" {
+            return;
+        }
+        let reply = tokio::task::spawn_blocking(move || relay.ask())
+            .await
+            .unwrap_or_default();
+        let _ = conn
+            .get_mut()
+            .write_all(format!("{reply}\n").as_bytes())
+            .await;
+        let _ = conn.get_mut().flush().await;
+    }
+    rt.block_on(async move {
+        let new = |first| {
+            ServerOptions::new()
+                .first_pipe_instance(first)
+                .reject_remote_clients(true)
+                .create(&name)
+        };
+        let Ok(mut server) = new(true) else {
+            return 1;
+        };
+        if let Some(dir) = file.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if std::fs::write(&file, &name).is_err() {
+            return 1;
+        }
+        loop {
+            if server.connect().await.is_err() {
+                continue;
+            }
+            // The next instance before this one is answered: always one
+            // waiting, so a second asker never finds the pipe gone.
+            let Ok(next) = new(false) else {
+                return 1;
+            };
+            let client = std::mem::replace(&mut server, next);
+            tokio::spawn(answer(client, relay.clone()));
+        }
+    })
+}
+
+/// Asks the host for the tab in front: its answer, or why there is none.
+#[cfg(windows)]
+pub fn tab() -> Result<Value, String> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::windows::named_pipe::ClientOptions;
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?;
+    rt.block_on(async {
+        let not_connected =
+            || "FRIDAY's browser extension isn't connected (Settings, Browser)".to_string();
+        let name = pipe_file()
+            .and_then(|f| std::fs::read_to_string(f).ok())
+            .filter(|n| n.starts_with(r"\\.\pipe\friday-browser-"))
+            .ok_or_else(not_connected)?;
+        let mut tries = 0;
+        let client = loop {
+            match ClientOptions::new().open(&name) {
+                Ok(c) => break c,
+                // Busy answering someone else: a moment later.
+                Err(_) if tries < 20 => {
+                    tries += 1;
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+                Err(_) => return Err(not_connected()),
+            }
+        };
+        let mut conn = BufReader::new(client);
+        conn.get_mut()
+            .write_all(b"tab\n")
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut line = String::new();
+        tokio::time::timeout(std::time::Duration::from_secs(8), conn.read_line(&mut line))
+            .await
+            .map_err(|_| "no answer from the browser".to_string())?
+            .map_err(|e| e.to_string())?;
+        let v: Value =
+            serde_json::from_str(&line).map_err(|_| "no answer from the browser".to_string())?;
+        match v.get("error").and_then(Value::as_str) {
+            Some(e) => Err(e.to_string()),
+            None => Ok(v),
+        }
+    })
 }
 
 /// Asks the host for the tab in front: its answer, or why there is none.

@@ -63,6 +63,8 @@ foreach ($project in @("$repo\windows-tray\FridayTray\FridayTray.csproj", "$repo
         '-p:PublishSingleFile=false', "-p:Version=$version", '-o', $stage)
 }
 Copy-Item "$repo\LICENSE-MIT", "$repo\LICENSE-APACHE" $stage
+# FRIDAY's browser extension (Settings, Browser loads it from here).
+Copy-Item -Recurse "$repo\packaging\browser\extension" "$stage\browser-extension"
 
 # The Visual C++ runtime that the Rust programs (the daemon, friday-ctl and
 # agent-desktop) load. A clean Windows doesn't have it (CI runners do), and
