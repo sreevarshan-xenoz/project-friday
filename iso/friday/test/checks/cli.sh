@@ -640,9 +640,17 @@ printf '#!/bin/bash\necho "curl $*" >>%q\necho "{\\"choices\\":[{\\"message\\":{
 contains "a local model answers recalled text" "$(cat "$LOG")" "It was E0425 in kitty."
 if grep -q "^friday-ctl '" "$LOG"; then fail "recalled text went to the daemon despite a local model"; else pass "recalled text stays local when it can"; fi
 cp "$W/env.saved2" "$envf"; mv "$W/curl.saved2" "$S/curl"
+contains "recall keep 24h keeps a day" "$(bash "$F" recall keep 24h)" "Recall keeps what it saw for 24 hours."
+expect "it says so beside the kept text" test "$(cat "$state/recall-keep")" = 24
+contains "7d keeps a week" "$(bash "$F" recall keep 7d)" "for 7 days."
+refuse "other keeps are refused" bash "$F" recall keep 1y
+bash "$F" recall keep 3h >/dev/null
+expect "3h (the default) leaves no file" test ! -e "$state/recall-keep"
+bash "$F" recall keep 24h >/dev/null
 : >"$LOG"; bash "$F" recall off >/dev/null
 contains "recall off stops the service" "$(cat "$LOG")" "systemctl --user disable --now friday-recall.service"
 [ -e "$rf" ] && fail "recall off left the kept text" || pass "recall off forgets the kept text"
+expect "and the keep goes back to 3 hours" test ! -e "$state/recall-keep"
 
 echo "documentation on this computer"
 : >"$LOG"; DOCS_REPLY=$'[Arch wiki: Pacman]\nTo upgrade the system, run pacman -Syu.' bash "$F" ask "how do I upgrade with pacman"; sleep 0.3
