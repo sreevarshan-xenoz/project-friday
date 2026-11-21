@@ -290,7 +290,8 @@ echo "explain the last error (any terminal, friday shell-hook)"
 contains "the zsh hook records each command" "$(bash "$F" shell-hook zsh)" "add-zsh-hook preexec _friday_preexec"
 contains "the bash hook too" "$(bash "$F" shell-hook bash)" 'PROMPT_COMMAND="_friday_prompt'
 # A foot window (its pid) with a shell under it that left a record.
-bash -c 'sleep 30; :' & TERM_WIN=$!
+# script gives the shell a terminal of its own (WezTerm's pane is found by it).
+script -qc "bash -c 'sleep 30; :'" /dev/null </dev/null >/dev/null 2>&1 & TERM_WIN=$!
 for _ in 1 2 3 4 5 6 7 8 9 10; do TERM_SH=$(pgrep -P "$TERM_WIN" | head -n1); [ -n "$TERM_SH" ] && break; sleep 0.1; done
 mkdir -p "$RUN/friday-term"
 printf 'done\t%s\t2\t/home/me/app\tmake test\n' "$(date +%s)" >"$RUN/friday-term/$TERM_SH"
@@ -305,11 +306,12 @@ contains "and the model gets the command and exit code" "$(cat "$LOG")" "Command
 cat >"$S/wezterm" <<'STUB'
 #!/bin/bash
 case "$*" in
-  "cli list-clients --format json") echo '[{"focused_pane_id":3,"idle_time":{"secs":1}}]' ;;
+  "cli list --format json") printf '[{"pane_id":2,"tty_name":"/dev/pts/999"},{"pane_id":3,"tty_name":"%s"}]' "$PANE_TTY" ;;
   "cli get-text --pane-id 3 --start-line -150") printf 'make: *** No rule to make target test.  Stop.\n' ;;
 esac
 STUB
 chmod +x "$S/wezterm"
+export PANE_TTY="/dev/$(ps -o tty= -p "$TERM_SH" | tr -d ' ')"
 export HYPR_WIN="{\"class\":\"org.wezfurlong.wezterm\",\"pid\":$TERM_WIN,\"title\":\"zsh\"}"
 : >"$LOG"; XDG_RUNTIME_DIR="$RUN" PICK="Explain the error from: make test (exit 2)" bash "$F" ask; sleep 0.3
 contains "in WezTerm the model gets the pane's text" "$(cat "$LOG")" "No rule to make target test"
