@@ -1,0 +1,11 @@
+[Unit]
+Description=FRIDAY: upgrade the system safely (off unless friday upgrade auto on)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/friday/friday-upgrade
+# A lower priority: whatever the person is doing comes first.
+Nice=10
+IOSchedulingClass=idle
