@@ -61,6 +61,11 @@ release page). `friday doctor` first on Linux; it should be all green.
       building FRIDAY": the workspace comes back, and the answer says where
       you stopped (from your earlier asks and actions) and your open
       thoughts. Time it (the goal is under five seconds to the windows).
+- [ ] **Editor comes back** (v0.7.2): with the terminal still open in the
+      repo but nvim closed, "restore my friday workspace" opens a terminal
+      with nvim on the file (it used to say "already in place").
+- [ ] **Unknown project** (v0.7.2): "continue building Atlas" (no such
+      project) answers without your FRIDAY history or thoughts.
 - [ ] **Timeline**: `friday-ctl timeline yesterday` lists what you asked and
       did; Super+Y "what did I do yesterday?" answers from it.
 - [ ] **Thoughts**: in a terminal in the repo, Super+Y "keep this idea:
