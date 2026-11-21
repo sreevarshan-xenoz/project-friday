@@ -98,13 +98,14 @@ impl DefaultPageReader {
         if !resp.status().is_success() {
             return Err(format!("the site answered {}", resp.status()));
         }
+        let final_url = resp.url().to_string();
         let html = resp.text().await.map_err(|e| e.to_string())?;
         let (title, text) = html_to_text(&html);
         if text.is_empty() {
             return Err("the page has no text without a browser".into());
         }
         Ok(Page {
-            url: url.to_string(),
+            url: final_url,
             title,
             text: cap(&text),
         })
@@ -126,6 +127,16 @@ impl PageReader for DefaultPageReader {
                 tracing::info!("page read: browser failed ({chrome}); downloading instead");
                 self.with_download(url).await
             }
+        };
+        // A web page that leads to this computer or the home network (a
+        // redirect to a router, a local service) isn't read: what's there
+        // would go to the model. An address the person typed themselves
+        // still is.
+        let result = match result {
+            Ok(page) if !reaches_local(url).await && reaches_local(&page.url).await => Err(
+                "the page sent me to an address on your own network, so I didn't read it".into(),
+            ),
+            other => other,
         };
         let ctx = friday_intelligence::current_egress_context();
         friday_intelligence::append_entry(
@@ -150,6 +161,74 @@ impl PageReader for DefaultPageReader {
 fn host(url: &str) -> &str {
     let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
     rest.split(['/', '?', '#']).next().unwrap_or(rest)
+}
+
+/// Whether a host (with or without a port) is this computer or the local
+/// network: localhost, `.local`-style names, loopback, private, link-local
+/// and shared (CGNAT) addresses.
+fn is_local(host: &str) -> bool {
+    let name = split_host(host).0.to_ascii_lowercase();
+    let name = name.trim_end_matches('.');
+    if name == "localhost"
+        || [".localhost", ".local", ".lan", ".home.arpa", ".internal"]
+            .iter()
+            .any(|s| name.ends_with(s))
+    {
+        return true;
+    }
+    name.parse().is_ok_and(local_ip)
+}
+
+/// A host without its user part, as (name, port).
+fn split_host(host: &str) -> (&str, Option<u16>) {
+    let host = host.rsplit_once('@').map(|(_, h)| h).unwrap_or(host);
+    if let Some(rest) = host.strip_prefix('[') {
+        let (name, after) = rest.split_once(']').unwrap_or((rest, ""));
+        return (name, after.strip_prefix(':').and_then(|p| p.parse().ok()));
+    }
+    match host.rsplit_once(':') {
+        Some((h, port)) if !h.contains(':') => (h, port.parse().ok()),
+        _ => (host, None),
+    }
+}
+
+fn local_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ip) => local_v4(ip),
+        std::net::IpAddr::V6(ip) => {
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || (ip.segments()[0] & 0xfe00) == 0xfc00
+                || (ip.segments()[0] & 0xffc0) == 0xfe80
+                || ip.to_ipv4_mapped().is_some_and(local_v4)
+        }
+    }
+}
+
+/// [`is_local`], or a name that resolves to a local address
+/// (`127.0.0.1.nip.io`, a home DNS entry). A name that doesn't resolve
+/// counts as not local.
+async fn reaches_local(url: &str) -> bool {
+    let host = host(url);
+    if is_local(host) {
+        return true;
+    }
+    let (name, port) = split_host(host);
+    let lookup = tokio::net::lookup_host((name, port.unwrap_or(80)));
+    match tokio::time::timeout(Duration::from_secs(3), lookup).await {
+        Ok(Ok(mut addrs)) => addrs.any(|a| local_ip(a.ip())),
+        _ => false,
+    }
+}
+
+fn local_v4(ip: std::net::Ipv4Addr) -> bool {
+    let o = ip.octets();
+    ip.is_loopback()
+        || ip.is_private()
+        || ip.is_link_local()
+        || ip.is_unspecified()
+        || ip.is_broadcast()
+        || (o[0] == 100 && (o[1] & 0xc0) == 64)
 }
 
 fn collapse(text: &str) -> String {
@@ -282,6 +361,42 @@ mod tests {
         assert!(cap(&long).ends_with("[the rest of the page was cut]"));
         assert_eq!(host("https://example.com/a?b"), "example.com");
         assert_eq!(host("http://127.0.0.1:8080"), "127.0.0.1:8080");
+    }
+
+    #[test]
+    fn local_addresses_are_told_apart_from_the_web() {
+        for h in [
+            "localhost:8080",
+            "127.0.0.1",
+            "192.168.1.1",
+            "10.0.0.5:80",
+            "172.16.3.4",
+            "169.254.169.254",
+            "100.100.1.2",
+            "[::1]:8080",
+            "[fd00::1]",
+            "[fe80::1]",
+            "router.lan",
+            "printer.local",
+            "user@192.168.0.1",
+            "user@[::1]:8080",
+        ] {
+            assert!(is_local(h), "{h}");
+        }
+        for h in [
+            "example.com",
+            "93.184.216.34",
+            "[2001:db8::1]",
+            "8.8.8.8:443",
+        ] {
+            assert!(!is_local(h), "{h}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_name_for_a_local_address_is_local() {
+        assert!(reaches_local("http://localhost:9/x").await);
+        assert!(!reaches_local("https://nosuch.invalid/").await);
     }
 
     #[tokio::test]
