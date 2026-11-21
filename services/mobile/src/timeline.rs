@@ -58,6 +58,7 @@ fn answers(text: &str) -> Vec<Entry> {
             continue;
         };
         let mut project = None;
+        let mut failed = false;
         let answer = lines
             .find(|l| {
                 if let Some(p) = l
@@ -67,10 +68,13 @@ fn answers(text: &str) -> Vec<Entry> {
                     project = Some(crate::thoughts::project_name(p).to_string());
                     return false;
                 }
+                if *l == "_failed_" {
+                    failed = true;
+                    return false;
+                }
                 !l.starts_with('>') && *l != "---" && !l.starts_with('<')
             })
             .unwrap_or_default();
-        let failed = goal.starts_with("FRIDAY ✗");
         out.push(Entry {
             ts: when.timestamp(),
             text: short(&format!(
@@ -377,7 +381,8 @@ mod tests {
         std::fs::write(
             d.join("answers.md"),
             "<!-- friday answer -->\n# why does cargo build fail\n\n_2026-11-20 10:05_\n\n> error[E0425]\n\nThe `cfg` value is missing.\n\n---\n\n\
-             <!-- friday answer -->\n# summarise my bank statement\n\n_2026-11-20 10:30_\n\n_On this computer · nothing was sent_\n\nYou spent…\n\n---\n\n",
+             <!-- friday answer -->\n# summarise my bank statement\n\n_2026-11-20 10:30_\n\n_On this computer · nothing was sent_\n\nYou spent…\n\n---\n\n\
+             <!-- friday answer -->\n# restart nosuch.service\n\n_2026-11-20 10:40_\n\n_failed_\n\nCouldn't restart it.\n\n---\n\n",
         )
         .unwrap();
         let ts = at("2026-11-20", "11:00").to_rfc3339();
@@ -395,18 +400,20 @@ mod tests {
         )
         .unwrap();
         let all = collect(&d);
-        assert_eq!(all.len(), 3, "{all:?}");
+        assert_eq!(all.len(), 4, "{all:?}");
         let day = at("2026-11-20", "00:00").date_naive();
         let text = render(&all, day, day);
+        assert!(
+            text.contains("10:40 asked \"restart nosuch.service\" (failed) → Couldn't restart it."),
+            "{text}"
+        );
         assert!(text.starts_with("Fri 2026-11-20:\n10:05 asked \"why does cargo build fail\" → The `cfg` value is missing."), "{text}");
         assert!(
             text.contains("11:00 did move_window {\"target\":\"kitty\"}, failed"),
             "{text}"
         );
         assert!(
-            text.contains(
-                "12:00 opencode worked on \"add a README\" in /home/me/code/site (done) [site]"
-            ),
+            text.contains("12:00 opencode worked on \"add a README\" in site (done) [site]"),
             "{text}"
         );
         assert!(

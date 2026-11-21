@@ -671,6 +671,9 @@ echo "answers know their project"
 contains "the saved answer names the project in front" "$(cat "$HOME/.local/state/friday/last-answer.md")" "_project: /home/me/code/project-friday_"
 : >"$LOG"; bash "$F" ask "what is the capital of peru"; sleep 0.3
 if grep -q "_project:" "$HOME/.local/state/friday/last-answer.md"; then fail "an answer with no project in front named one"; else pass "no project in front: none named"; fi
+: >"$LOG"; bash "$F" ask "this will fail"; sleep 0.3
+contains "a failed answer is marked for the timeline" "$(cat "$HOME/.local/state/friday/last-answer.md")" "_failed_"
+if grep -q "_failed_" <(bash "$F" ask "what is the capital of peru" >/dev/null 2>&1; sleep 0.3; cat "$HOME/.local/state/friday/last-answer.md"); then fail "an answer that worked was marked failed"; else pass "an answer that worked isn't marked failed"; fi
 
 echo "thoughts"
 : >"$LOG"; bash "$F" ask "Keep this idea: Memory as an INDEX, not a store."; sleep 0.3
