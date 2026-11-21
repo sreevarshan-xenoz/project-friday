@@ -219,13 +219,13 @@ fn resumed(goal: &str) -> Option<String> {
 
 /// The project an ask names: a resume ("continue building X") or the end
 /// of an ask about it ("what did I do on Atlas yesterday", "where are we on
-/// the site").
-fn project_named(goal: &str) -> Option<String> {
+/// the site", "what did we decide about the planner").
+pub fn project_named(goal: &str) -> Option<String> {
     if let Some(name) = resumed(goal) {
         return Some(name);
     }
     let g = goal.lines().next().unwrap_or_default().to_lowercase();
-    let (_, rest) = g.rsplit_once(" on ")?;
+    let (_, rest) = g.rsplit_once(" on ").or_else(|| g.rsplit_once(" about "))?;
     let mut rest = rest.trim_end_matches(['.', '!', '?']).to_string();
     for when in [
         "yesterday",
@@ -254,7 +254,7 @@ fn project_named(goal: &str) -> Option<String> {
 /// keeps FRIDAY's), or all of them when it names none. Desktop actions and
 /// lessons carry no project: those within half an hour of the project's own
 /// entries stay with it. A named project with no history of its own gets
-/// only those, never another project's.
+/// nothing.
 pub fn for_project(entries: Vec<Entry>, goal: &str) -> Vec<Entry> {
     let mine = |e: &Entry| {
         e.project
@@ -263,11 +263,10 @@ pub fn for_project(entries: Vec<Entry>, goal: &str) -> Vec<Entry> {
     };
     let named: Vec<i64> = entries.iter().filter(|e| mine(e)).map(|e| e.ts).collect();
     if named.is_empty() {
+        // A project with no history of its own gets none: not another
+        // project's, and not the actions of whatever else went on.
         return if project_named(goal).is_some() {
-            entries
-                .into_iter()
-                .filter(|e| e.project.is_none())
-                .collect()
+            Vec::new()
         } else {
             entries
         };
@@ -461,19 +460,9 @@ mod tests {
                 "lesson: restart failed"
             ]
         );
-        let atlas = texts(for_project(all.clone(), "let's keep working on Atlas"));
-        assert!(
-            !atlas
-                .iter()
-                .any(|t| t.contains("budget") || t.contains("build")),
-            "{atlas:?}"
-        );
-        assert_eq!(atlas.len(), 3, "{atlas:?}");
-        let atlas = texts(for_project(
-            all.clone(),
-            "what did I do on Atlas yesterday?",
-        ));
-        assert_eq!(atlas.len(), 3, "{atlas:?}");
+        // Atlas has no history: nothing, not FRIDAY's actions or dinner.
+        assert!(for_project(all.clone(), "let's keep working on Atlas").is_empty());
+        assert!(for_project(all.clone(), "what did I do on Atlas yesterday?").is_empty());
         assert_eq!(for_project(all.clone(), "where was I").len(), 5);
         assert_eq!(for_project(all.clone(), "what did I do on monday").len(), 5);
         assert_eq!(for_project(all, "continue where we stopped").len(), 5);

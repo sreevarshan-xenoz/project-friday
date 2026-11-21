@@ -75,7 +75,8 @@ pub fn named(goal: &str, project: &str) -> bool {
 const UNNAMED: usize = 5;
 
 /// The thoughts an ask should see, oldest first: those of the project it
-/// names (at most `limit`), or, when it names none, only the last few.
+/// names (at most `limit`), none for a named project with none kept, or,
+/// when it names none, only the last few.
 pub fn recent(state_dir: &Path, goal: &str, limit: usize) -> Vec<Thought> {
     let all = load(state_dir);
     let of_project: Vec<Thought> = all
@@ -84,6 +85,11 @@ pub fn recent(state_dir: &Path, goal: &str, limit: usize) -> Vec<Thought> {
         .cloned()
         .collect();
     let (chosen, keep) = if of_project.is_empty() {
+        // A project the ask names but nothing was kept for gets nothing,
+        // not another project's thoughts.
+        if crate::timeline::project_named(goal).is_some() {
+            return Vec::new();
+        }
         (all, UNNAMED.min(limit))
     } else {
         (of_project, limit)
@@ -185,14 +191,14 @@ mod tests {
         // Common words in a folder name don't make a question about it.
         assert!(!named("what's the weather in the app store", "/c/the-app"));
         assert!(named("continue building the garden", "/c/garden"));
-        // An unknown project gets only the last few, not every thought.
+        // An ask naming no project gets only the last few, not every
+        // thought; a named project with none kept gets none of another's.
         for i in 0..10 {
             add(&d, &t(10 + i, Some("/c/garden"), "idea", "g")).unwrap();
         }
-        assert_eq!(
-            recent(&d, "what did we decide about Atlas", 15).len(),
-            UNNAMED
-        );
+        assert_eq!(recent(&d, "what did we decide?", 15).len(), UNNAMED);
+        assert!(recent(&d, "what did we decide about Atlas", 15).is_empty());
+        assert!(recent(&d, "let's continue building Atlas", 15).is_empty());
         let text = render(&mine);
         assert!(text.contains(" idea [project-friday]: A\n"), "{text}");
         assert!(text.contains(" decision [project-friday]: C\n"), "{text}");
