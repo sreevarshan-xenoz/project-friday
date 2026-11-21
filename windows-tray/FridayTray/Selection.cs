@@ -58,6 +58,27 @@ internal static class Selection
         }
     }
 
+    /// <summary>
+    /// Pastes <paramref name="text"/> into <paramref name="target"/> with
+    /// Ctrl+V (it must be in front again), then puts the clipboard back.
+    /// False when the window couldn't be brought back.
+    /// </summary>
+    public static async Task<bool> PasteAsync(IntPtr target, string text)
+    {
+        Native.RestoreForeground(target);
+        await FocusWait.WaitForForegroundAsync(target, Native.GetForegroundWindow);
+        if (Native.GetForegroundWindow() != target)
+            return false;
+        var saved = SnapshotClipboard();
+        Clipboard.SetDataObject(text, copy: true, retryTimes: 10, retryDelay: 50);
+        await WaitForModifiersUpAsync();
+        SendChord(Native.VK_V);
+        // The app reads the clipboard after the paste; put the old one back a moment later.
+        await Task.Delay(1000);
+        RestoreClipboard(saved);
+        return true;
+    }
+
     private static string? TryGetClipboardText()
     {
         for (var attempt = 0; attempt < 10; attempt++)
@@ -132,7 +153,9 @@ internal static class Selection
             await Task.Delay(25);
     }
 
-    private static void SendCtrlC()
+    private static void SendCtrlC() => SendChord(Native.VK_C);
+
+    private static void SendChord(int vk)
     {
         static Native.INPUT Key(int vk, bool up) => new()
         {
@@ -141,8 +164,8 @@ internal static class Selection
         };
         Native.INPUT[] inputs =
         [
-            Key(Native.VK_CONTROL, false), Key(Native.VK_C, false),
-            Key(Native.VK_C, true), Key(Native.VK_CONTROL, true),
+            Key(Native.VK_CONTROL, false), Key(vk, false),
+            Key(vk, true), Key(Native.VK_CONTROL, true),
         ];
         Native.SendInput((uint)inputs.Length, inputs, System.Runtime.InteropServices.Marshal.SizeOf<Native.INPUT>());
     }

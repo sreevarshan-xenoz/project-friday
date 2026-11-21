@@ -160,6 +160,7 @@ internal sealed class TrayContext : ApplicationContext
             string? context = null;
             string? preview = null;
             string? appLine = null;
+            var selected = false;
             if (kind == AskKind.Selection)
             {
                 var sel = await Selection.CaptureAsync();
@@ -169,6 +170,7 @@ internal sealed class TrayContext : ApplicationContext
                     return;
                 }
                 context = sel.Text!.Length > Asking.MaxContextChars ? sel.Text[..Asking.MaxContextChars] : sel.Text;
+                selected = sel.Source == "Selected";
                 preview = $"{sel.Source}: {context.ReplaceLineEndings(" ")}";
                 preview = preview.Length > 60 ? preview[..60] : preview;
                 // Read now, while the window the text came from is still in front.
@@ -179,13 +181,20 @@ internal sealed class TrayContext : ApplicationContext
             var form = new AskWindow(kind, preview, kind switch
             {
                 AskKind.Plain => _log.History(),
-                AskKind.Selection => QuickActions.All(_install.Paths.PromptsFile),
+                AskKind.Selection => QuickActions.All(_install.Paths.PromptsFile, selected),
                 _ => [],
             });
             if (form.ShowDialog() != true)
                 return;
             var question = form.Question;
             _log.Remember(question);
+
+            // "Rewrite: …" on selected text: the rewrite replaces the selection.
+            if (selected && context != null && Rewrite.How(question) is { } how)
+            {
+                await RewriteAsync(targetWindow, question, how, context);
+                return;
+            }
 
             // The battery, a timer, a settings page: answered here, nothing sent.
             if (kind == AskKind.Plain && LocalCommands.Parse(question) is { } local)
@@ -208,6 +217,29 @@ internal sealed class TrayContext : ApplicationContext
         finally
         {
             _asking = false;
+        }
+    }
+
+    /// <summary>
+    /// Asks for the rewrite and pastes it over the selection; into a terminal
+    /// (whose selection can't be replaced) or a window that went away, it is
+    /// left on the clipboard instead.
+    /// </summary>
+    private async Task RewriteAsync(IntPtr target, string question, string how, string text)
+    {
+        Notify("FRIDAY", $"Rewriting: {how}…", ToolTipIcon.Info);
+        var r = await Ctl.RunAsync(_install, Asking.CtlArguments(AskKind.Plain, question, Rewrite.Request(how, text)), TimeSpan.FromMinutes(3));
+        var outcome = Asking.Interpret(AskKind.Plain, question, r.ExitCode, r.Output);
+        var rewritten = outcome.Ok ? Rewrite.Clean(outcome.Answer) : "";
+        if (rewritten.Length == 0)
+        {
+            Notify("FRIDAY", "Couldn't rewrite it: " + outcome.Answer, ToolTipIcon.Warning);
+            return;
+        }
+        if (Terminals.IsTerminalClass(Native.GetClassName(target)) || !await Selection.PasteAsync(target, rewritten))
+        {
+            Clipboard.SetDataObject(rewritten, copy: true, retryTimes: 10, retryDelay: 50);
+            Notify("FRIDAY", "The rewrite is on your clipboard: paste it with Ctrl+V.", ToolTipIcon.Info);
         }
     }
 
