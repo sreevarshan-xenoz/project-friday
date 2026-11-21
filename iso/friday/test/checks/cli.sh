@@ -782,6 +782,16 @@ while IFS=$'\t' read -r ask want; do
 done <"$REPO_ROOT/tests/fixtures/resume-phrases.tsv"
 [[ -z "$resume_bad" ]] && pass "every ask in the table restores the project it names (or none)" || fail "resume grammar:$resume_bad"
 
+echo "FRIDAY as an MCP server"
+contains "friday mcp says how to connect an app" "$(bash "$F" mcp)" '"command": "friday-ctl", "args": ["mcp"]'
+contains "every tool starts not allowed" "$(bash "$F" mcp)" "friday_ask: not allowed"
+contains "allow says what it lets apps do" "$(bash "$F" mcp allow friday_ask)" "apps you connect can ask FRIDAY questions"
+contains "and it shows as allowed" "$(bash "$F" mcp)" "friday_ask: allowed"
+contains "the allow list is owner-only" "$(stat -c %a "$HOME/.config/friday/mcp-allow")" "600"
+bash "$F" mcp deny friday_ask >/dev/null
+contains "deny takes it back" "$(bash "$F" mcp)" "friday_ask: not allowed"
+refuse "an unknown tool can't be allowed" bash "$F" mcp allow rm_rf
+
 echo "answers know their project"
 : >"$LOG"; WS_PROJECT=/home/me/code/project-friday bash "$F" ask "why does the build fail"; sleep 0.3
 contains "the saved answer names the project in front" "$(cat "$HOME/.local/state/friday/last-answer.md")" "_project: /home/me/code/project-friday_"
