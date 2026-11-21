@@ -123,6 +123,8 @@ Singleton {
     args.push("--another", root.served || "none/none", root.goal);
     Quickshell.execDetached(args);
   }
+  // A repro of this answer, no question or answer text (friday wrong).
+  function markWrong() { Quickshell.execDetached(["friday", "wrong"]); }
   function openFull() { Quickshell.execDetached(["foot", "-H", "-T", "FRIDAY · " + root.goal, "friday", "answers", "--last"]); }
 
   IpcHandler {

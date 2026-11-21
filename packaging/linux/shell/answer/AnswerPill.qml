@@ -191,6 +191,7 @@ PanelWindow {
         }
         Chip { icon: Icons.history; text: "Full answer"; onClicked: Answer.openFull() }
         Chip { icon: Icons.restart; text: "Ask again"; onClicked: { Answer.askAgain(); Answer.dismiss(); } }
+        Chip { visible: Answer.goal !== ""; icon: Icons.close; text: "That was wrong"; onClicked: { Answer.markWrong(); Answer.dismiss(); } }
         Chip {
           visible: Answer.ok && Answer.canTryAnother
           icon: Icons.restart
