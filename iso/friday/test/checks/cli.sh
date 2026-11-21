@@ -827,7 +827,10 @@ expect "it keeps the recorder's pid" test -s "$XDG_RUNTIME_DIR/friday-recording.
 REC_PID=$(cat "$XDG_RUNTIME_DIR/friday-recording.pid")
 : >"$LOG"; bash "$F" routine stop morning setup >/dev/null 2>&1 || true
 contains "stop turns the recording into a routine" "$(cat "$LOG")" "routine finish morning setup"
-sleep 0.2; if kill -0 "$REC_PID" 2>/dev/null; then fail "the recorder kept running"; kill "$REC_PID"; else pass "stop ends the recorder itself"; fi
+# Gone, or a zombie nobody reaps (a container without init): either way stopped.
+rec_alive() { local st; st=$(ps -o stat= -p "$REC_PID" 2>/dev/null | cut -c1); [ -n "$st" ] && [ "$st" != Z ]; }
+for _ in 1 2 3 4 5 6 7 8 9 10; do rec_alive || break; sleep 0.2; done
+if rec_alive; then fail "the recorder kept running"; kill "$REC_PID"; else pass "stop ends the recorder itself"; fi
 expect "and forgets the recorder" test ! -e "$XDG_RUNTIME_DIR/friday-recording.pid"
 contains "stop when not recording says so" "$(bash "$F" routine stop x 2>&1 || true)" "Not recording"
 mkdir -p "$HOME/.local/share/friday/routines"; echo '{}' >"$HOME/.local/share/friday/routines/morning-setup.json"
