@@ -224,7 +224,7 @@ friday_rail() {
 FEAT_DESKTOP="${FEAT_DESKTOP:-true}"       # control windows, apps, volume, media
 FEAT_TASKS="${FEAT_TASKS:-true}"           # standing tasks ("every morning at 8 ...")
 FEAT_APPNAME="${FEAT_APPNAME:-true}"       # name the app a selection came from
-FEAT_SCREENTEXT="${FEAT_SCREENTEXT:-false}" # send a window's text, not a screenshot
+FEAT_SCREENTEXT="${FEAT_SCREENTEXT:-true}"  # send a window's text, not a screenshot
 FEAT_PHONE="${FEAT_PHONE:-true}"            # offer to pair a phone (Pocketdesk) at first login
 
 # friday_write_features <config-dir>: the chosen settings, in the files the
@@ -238,7 +238,7 @@ friday_write_features() {
     touch "$env"
     [[ "$FEAT_DESKTOP" == true ]] || echo "FRIDAY_DESKTOP=0" >>"$env"
     [[ "$FEAT_TASKS" == true ]] || echo "FRIDAY_STANDING_TASKS=0" >>"$env"
-    [[ "$FEAT_SCREENTEXT" != true ]] || echo "FRIDAY_SCREEN_TEXT=1" >>"$env"
+    [[ "$FEAT_SCREENTEXT" == true ]] || echo "FRIDAY_SCREEN_TEXT=0" >>"$env"
     [[ -s "$env" ]] || rm -f "$env"
   )
   [[ "$FEAT_APPNAME" == true ]] || : >"$dir/no-app-context"

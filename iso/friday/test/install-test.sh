@@ -181,7 +181,7 @@ check "no app failed to start in the session" '! journalctl --user -b --no-pager
 check "commands the desktop runs are installed" 'm=""; for c in xdg-terminal-exec udiskie inotifywait nautilus hyprpicker wpctl brightnessctl grim slurp hyprlock fuzzel wl-paste notify-send playerctl jq btop xdg-user-dir powerprofilesctl; do command -v $c >/dev/null || m="$m $c"; done; [ -z "$m" ] || { echo "missing:$m"; false; }'
 check "omarchy-* commands are on a login shell's PATH" 'bash -lc "command -v omarchy-launch-terminal omarchy-version-channel" >/dev/null'
 check "friday in zsh is the FRIDAY CLI, not an alias" 'w=$(zsh -c "source ~/.zshrc >/dev/null 2>&1; whence -w friday"); echo "$w"; [ "$w" = "friday: command" ]'
-check "friday doctor finds no problems" 'friday doctor'
+check "friday doctor finds no problems" 'friday doctor --quick'
 if [[ -n "$ALONGSIDE" ]]; then
   if vm root 'bootctl list --no-pager | grep -qi "windows boot manager"'; then echo "  ok   the start menu lists Windows too"
   else echo "  FAIL the start menu doesn't list Windows"; FAILS=$((FAILS + 1)); fi

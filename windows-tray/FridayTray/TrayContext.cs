@@ -72,6 +72,18 @@ internal sealed class TrayContext : ApplicationContext
             ShowWelcome();
         else
             Notify("FRIDAY is running", $"Press {_hotkeys.Labels[AskKind.Plain]} to ask anything.", ToolTipIcon.Info);
+
+        _ = TellAboutUpdateAsync();
+    }
+
+    /// <summary>Once per start, a minute in: a balloon when a newer FRIDAY is out.</summary>
+    private async Task TellAboutUpdateAsync()
+    {
+        var ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+        await Task.Delay(TimeSpan.FromMinutes(1));
+        var r = await Updater.NewerAsync();
+        if (r is not null)
+            ui.Post(_ => Notify($"FRIDAY {r.Version} is out", "Settings, Health & updates, Check for updates installs it.", ToolTipIcon.Info), null);
     }
 
     /// <summary>The tray menu, built as it opens so every check mark says what is true now.</summary>
@@ -594,27 +606,19 @@ internal sealed class TrayContext : ApplicationContext
         SourceApp.SetEnabled(_install.Paths, !SourceApp.Enabled(_install.Paths));
     }
 
-    private bool ScreenTextOn() =>
-        EnvFile.Load(_install.Paths.EnvFile).TryGetValue("FRIDAY_SCREEN_TEXT", out var v) && v is "1" or "true";
+    private bool ScreenTextOn() => AppSettings.ScreenTextOn(EnvFile.Load(_install.Paths.EnvFile));
 
     /// <summary>
-    /// Off unless the person turns it on here: a window's text can include
-    /// words that are not on screen, and goes to the AI provider they use.
+    /// On by default: a screen ask sends the window's text when the app
+    /// offers enough of it (faster, and less than a screenshot). It can
+    /// include words that are not on screen, so it can be turned off here.
     /// </summary>
     private void ToggleScreenText()
     {
         var turnOn = !ScreenTextOn();
-        if (turnOn && MessageBox.Show(
-                "When you ask about your screen, FRIDAY can send the window's text instead of a screenshot, when the app offers enough of it.\n\n" +
-                "That text can include words you can't see (scrolled out of view, in other tabs) and goes to whichever AI provider you use. Password fields are skipped and key-like secrets are masked.\n\n" +
-                "Turn it on?",
-                "Read a window's text", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
-        {
-            return;
-        }
         WriteScreenText(turnOn);
         _daemon.Restart();
-        Notify("FRIDAY", turnOn ? "Screen asks may now send a window's text." : "Screen asks send one screenshot again.", ToolTipIcon.Info);
+        Notify("FRIDAY", turnOn ? "Screen asks send a window's text when the app offers it." : "Screen asks send one screenshot.", ToolTipIcon.Info);
     }
 
     private bool _askForAdministrator;
@@ -645,7 +649,7 @@ internal sealed class TrayContext : ApplicationContext
         var path = _install.Paths.EnvFile;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var tmp = path + ".tmp";
-        File.WriteAllText(tmp, EnvFile.WithSetting(File.Exists(path) ? File.ReadAllText(path) : "", "FRIDAY_SCREEN_TEXT", on ? "1" : null));
+        File.WriteAllText(tmp, AppSettings.WithScreenText(File.Exists(path) ? File.ReadAllText(path) : "", on));
         File.Move(tmp, path, overwrite: true);
     }
 
@@ -660,11 +664,16 @@ internal sealed class TrayContext : ApplicationContext
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(@"Software\FRIDAY\Options", writable: true);
+            // Screen text is on by default: the installer ran without it ticked means off.
             if (key?.GetValue("ScreenText") is 1)
             {
                 WriteScreenText(true);
                 key.DeleteValue("ScreenText");
             }
+            else if (key?.GetValue("ScreenTextAsked") is 1)
+                WriteScreenText(false);
+            if (key?.GetValue("ScreenTextAsked") is 1)
+                key.DeleteValue("ScreenTextAsked");
             // The administrator choice needs a Windows prompt, so it waits until
             // the tray is up (see AskForAdministrator); once is enough.
             if (key?.GetValue("AdminAccess") is 1)

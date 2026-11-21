@@ -163,14 +163,43 @@ internal sealed partial class SettingsWindow : FluentWindow
     private IEnumerable<UIElement> HealthAndUpdates()
     {
         yield return Pair("This version", Version());
-        yield return Note("FRIDAY doesn't update itself. To get the newest version, download it and run it over this one; your settings and data are kept.");
-        yield return Row(Pill("Open the download page", SymbolRegular.ArrowDownload24, primary: true),
-            () => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
-                "https://github.com/sreevarshan-xenoz/project-friday/releases/latest") { UseShellExecute = true }));
+        yield return Note("When you sign in, FRIDAY asks GitHub whether a newer version is out. Updating downloads the new installer, checks it against the release's checksum and opens it; your settings and data are kept.");
+        yield return Row(Pill("Check for updates", SymbolRegular.ArrowDownload24, primary: true), CheckForUpdates);
         yield return Row(Pill("Check my computer's health", SymbolRegular.HeartPulse24), () => _do.AskText("How is my computer doing?"));
         yield return Row(Pill("Restart FRIDAY", SymbolRegular.ArrowSync24), () => { _do.RestartDaemon(); Said("FRIDAY restarted."); });
         yield return Note("Something wrong? Save a short report to your desktop to send to whoever is helping. It has versions and which switches are on; no questions, answers, logs or keys.");
         yield return Row(Pill("Save a support report", SymbolRegular.DocumentSave24), SaveReport);
+    }
+
+    private async void CheckForUpdates()
+    {
+        // async void: anything unexpected is shown here instead of ending the tray.
+        try
+        {
+            await CheckForUpdatesAsync();
+        }
+        catch (Exception e)
+        {
+            MessageBox.Show(this, "FRIDAY wasn't updated:\n\n" + e.Message, "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private async Task CheckForUpdatesAsync()
+    {
+        Said("Checking for a newer FRIDAY…");
+        var r = await Updater.NewerAsync();
+        if (r is null)
+        {
+            Said($"You have the newest FRIDAY ({Version()}), or GitHub couldn't be reached.");
+            return;
+        }
+        if (MessageBox.Show(this, $"FRIDAY {r.Version} is out (you have {Version()}). Download and install it now?\n\nFRIDAY closes while the installer runs and starts again when it finishes.",
+                "FRIDAY", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
+        Said($"Downloading FRIDAY {r.Version}…");
+        var problem = await Updater.InstallAsync(r);
+        if (problem is not null)
+            MessageBox.Show(this, "FRIDAY wasn't updated:\n\n" + problem, "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     private void SaveReport()

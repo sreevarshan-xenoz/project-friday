@@ -394,12 +394,12 @@ step_features() {
   local a="Handle my windows and apps plus volume and music when I ask"
   local b="Run tasks I schedule (\"every morning at 8 ...\")"
   local c="Tell the AI which app a selected text came from"
-  local d="Send a window's text instead of a screenshot (it can include text you can't see)"
+  local d="Send a window's text instead of a screenshot when the app offers it (faster; it can include text scrolled out of view)"
   local e="Offer to pair my Android phone at first login (Pocketdesk; it stays off until I pair)"
   local picks
   picks=$(printf '%s\n' "$a" "$b" "$c" "$d" "$e" \
     | gum choose --no-limit --cursor="$FRIDAY_CURSOR" --height=7 \
-        --selected="$a,$b,$c,$e") || return 0
+        --selected="$a,$b,$c,$d,$e") || return 0
   FEAT_DESKTOP=false FEAT_TASKS=false FEAT_APPNAME=false FEAT_SCREENTEXT=false FEAT_PHONE=false
   [[ $picks == *"$a"* ]] && FEAT_DESKTOP=true
   [[ $picks == *"$b"* ]] && FEAT_TASKS=true
