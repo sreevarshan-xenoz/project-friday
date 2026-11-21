@@ -118,6 +118,12 @@ public class AskingTests
     [InlineData("hello world this is text", false)]
     [InlineData("onlyletterslongword", false)]
     [InlineData("short1", false)]
+    [InlineData("https://github.com/x/y/issues/1234", false)]
+    [InlineData(@"C:\Users\me\file2.txt", false)]
+    [InlineData("/home/me/notes/file2.txt", false)]
+    [InlineData("report2026.pdf", false)]
+    [InlineData("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcDEF123456ghiJKL789", true)]
+    [InlineData("https://api.x.com/v1?key=sk_live_abcd1234efgh5678ijkl", true)]
     public void Clipboard_secrets_are_recognised(string text, bool secret) =>
         Assert.Equal(secret, Asking.LooksLikeSecret(text));
 

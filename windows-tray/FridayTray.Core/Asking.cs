@@ -166,10 +166,19 @@ public static partial class Asking
     /// <summary>
     /// Clipboard text that looks like a password or token (one long run of
     /// non-space characters mixing letters and digits) must not be sent to a
-    /// cloud model by accident.
+    /// cloud model by accident. A URL, a path or a file name isn't one,
+    /// unless one of its parts is such a run of 20 or more (a key in a URL, a
+    /// JWT). Same rule as `friday_secret_shaped` on Linux.
     /// </summary>
-    public static bool LooksLikeSecret(string text) =>
-        TokenRun().IsMatch(text) && text.Any(char.IsLetter) && text.Any(char.IsDigit);
+    public static bool LooksLikeSecret(string text)
+    {
+        static bool Mixed(string t) => t.Any(char.IsLetter) && t.Any(char.IsDigit);
+        if (!TokenRun().IsMatch(text) || !Mixed(text))
+            return false;
+        if (text.IndexOfAny(['/', '\\', '.']) < 0)
+            return true;
+        return text.Split(['/', '\\', '.', ':', '?', '=', '&', '#']).Any(p => p.Length >= 20 && Mixed(p));
+    }
 
     [GeneratedRegex(@"^\S{12,}$")]
     private static partial Regex TokenRun();

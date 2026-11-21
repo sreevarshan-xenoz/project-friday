@@ -232,6 +232,13 @@ bash "$F" app-context on >/dev/null
 contains "app-context status says on" "$(bash "$F" app-context status)" "On"
 rm -f "$S/hyprctl"
 
+echo "password-shaped text"
+shaped=$(bash -c 'source <(sed -n "/^friday_secret_shaped() {/,/^}/p" "$1"); shift; for t in "$@"; do friday_secret_shaped "$t" && printf "S" || printf "."; done' _ "$F" \
+  "https://github.com/x/y/issues/1234" "/home/me/notes/file2.txt" 'C:\Users\me\file2.txt' "report2026.pdf" "hello world 123" \
+  "ghp_abc123def456ghi789jkl012" "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcDEF123456ghiJKL789" \
+  "https://api.x.com/v1?key=sk_live_abcd1234efgh5678ijkl" "hunter2hunter2")
+[[ "$shaped" == ".....SSSS" ]] && pass "URLs, paths and file names go; tokens, JWTs and keys in URLs don't" || fail "password-shaped rule: got $shaped, wanted .....SSSS"
+
 echo "suggestions for the app you're in"
 printf '#!/bin/bash\necho "hyprctl $*" >> %q\n[[ "$*" == "activewindow -j" ]] && printf %%s "$HYPR_WIN"\nexit 0\n' "$LOG" >"$S/hyprctl"; chmod +x "$S/hyprctl"
 printf '#!/bin/bash\ncat >%q\necho "$PICK"\n' "$W/menu.txt" >"$S/fuzzel"
