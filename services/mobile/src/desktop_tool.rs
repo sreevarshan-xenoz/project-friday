@@ -144,6 +144,65 @@ pub(crate) fn append_audit(dir: &std::path::Path, line: &Value) {
     }
 }
 
+/// The `friday undo` entry for a window FRIDAY moved: the window and the
+/// workspace it was on, or None when the output can't be put back (no
+/// address, an unnamed or special workspace, or it didn't move).
+pub(crate) fn window_undo(out: &str) -> Option<Value> {
+    let v: Value = serde_json::from_str(out).ok()?;
+    let address = v.get("address")?.as_str()?;
+    let from = v.get("from")?.as_str()?;
+    let to = v.get("workspace").and_then(Value::as_str).unwrap_or("");
+    let plain = |w: &str| {
+        !w.is_empty()
+            && w.len() <= 24
+            && w.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+    };
+    let hex = address
+        .strip_prefix("0x")
+        .is_some_and(|h| !h.is_empty() && h.chars().all(|c| c.is_ascii_hexdigit()));
+    if !hex || !plain(from) || from == to {
+        return None;
+    }
+    let app = v.get("moved").and_then(Value::as_str).unwrap_or("a window");
+    Some(json!({
+        "ts": chrono::Local::now().to_rfc3339(),
+        "said": format!("moving {app} to workspace {to}"),
+        "kind": "window",
+        "args": [address, from],
+    }))
+}
+
+/// Adds one entry to `undo.jsonl` in `dir` (the journal `friday undo`
+/// reads), keeping the last 20, owner-readable only.
+pub(crate) fn append_undo(dir: &std::path::Path, line: &Value) {
+    let path = dir.join("undo.jsonl");
+    let old = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut lines: Vec<&str> = old.lines().filter(|l| !l.trim().is_empty()).collect();
+    let keep = lines.len().saturating_sub(19);
+    lines.drain(..keep);
+    let text = format!(
+        "{}{line}\n",
+        lines.iter().map(|l| format!("{l}\n")).collect::<String>()
+    );
+    let tmp = dir.join("undo.jsonl.tmp");
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let _ = std::fs::create_dir_all(dir);
+    let written = opts.open(&tmp).and_then(|mut f| {
+        use std::io::Write;
+        f.write_all(text.as_bytes())
+    });
+    if written.is_ok() {
+        let _ = std::fs::rename(&tmp, &path);
+    }
+}
+
 impl DesktopControlTool {
     #[cfg(test)]
     pub(crate) fn new(
@@ -406,6 +465,7 @@ impl Tool for DesktopControlTool {
             .trim()
             .to_string();
         let mut steps: Vec<String> = Vec::new();
+        let mut undoable = false;
         let mut log = String::new();
         for n in 1..=MAX_STEPS {
             if self.abort.load(Ordering::SeqCst) {
@@ -436,6 +496,9 @@ impl Tool for DesktopControlTool {
                 let mut out = format!("Done: {done}");
                 if !steps.is_empty() {
                     out.push_str(&format!("\nSteps taken:\n{}", steps.join("\n")));
+                }
+                if undoable {
+                    out.push_str("\nSaying \"undo\" puts the moved window back; end your answer by saying so.");
                 }
                 return ToolResult::success(out);
             }
@@ -497,6 +560,12 @@ impl Tool for DesktopControlTool {
             }
             let (ok, out) = self.run_verb(verb, params.clone()).await;
             self.record(verb, &params, ok, &goal);
+            if ok && verb == "move_window" {
+                if let (Some(dir), Some(undo)) = (&self.audit_dir, window_undo(&out)) {
+                    append_undo(dir, &undo);
+                    undoable = true;
+                }
+            }
             let line = format!(
                 "{n}. {verb} {} -> {}{}",
                 serde_json::to_string(&params).unwrap_or_default(),
@@ -525,6 +594,51 @@ impl Tool for DesktopControlTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_moved_window_can_be_put_back() {
+        let undo =
+            window_undo(r#"{"moved":"kitty","workspace":"2","address":"0xabc1","from":"1"}"#)
+                .expect("an undo entry");
+        assert_eq!(undo["kind"], "window");
+        assert_eq!(undo["args"], json!(["0xabc1", "1"]));
+        assert_eq!(undo["said"], "moving kitty to workspace 2");
+        // Nothing to put back: no move, a special workspace, an odd address.
+        for out in [
+            r#"{"moved":"kitty","workspace":"2","address":"0xabc1","from":"2"}"#,
+            r#"{"moved":"kitty","workspace":"2","address":"0xabc1","from":"special:magic"}"#,
+            r#"{"moved":"kitty","workspace":"2","address":"abc\" })","from":"1"}"#,
+            r#"{"moved":"kitty","workspace":"2"}"#,
+            "not json",
+        ] {
+            assert!(window_undo(out).is_none(), "{out}");
+        }
+    }
+
+    #[test]
+    fn the_undo_journal_keeps_the_last_twenty_owner_only() {
+        let dir = std::env::temp_dir().join(format!("friday-undo-{}", uuid::Uuid::new_v4()));
+        for i in 0..25 {
+            append_undo(
+                &dir,
+                &json!({"kind": "window", "said": format!("move {i}"), "args": ["0x1", "1"]}),
+            );
+        }
+        let text = std::fs::read_to_string(dir.join("undo.jsonl")).unwrap();
+        assert_eq!(text.lines().count(), 20, "{text}");
+        assert!(text.lines().last().unwrap().contains("move 24"));
+        assert!(text.lines().next().unwrap().contains("move 5"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(dir.join("undo.jsonl"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     use friday_actions::DesktopExec;
 
     const CLIENTS: &str = r#"[
@@ -886,6 +1000,38 @@ mod tests {
             started.elapsed() < std::time::Duration::from_secs(5),
             "waited for the model"
         );
+    }
+
+    #[tokio::test]
+    async fn a_window_move_can_be_undone_and_the_answer_says_so() {
+        let dir = temp_dir("undo");
+        let model = Script::new(&[
+            r#"{"action":"move_window","params":{"target":"firefox","workspace":"3"}}"#,
+            r#"{"done":"Moved Firefox to workspace 3."}"#,
+        ]);
+        let t = DesktopControlTool::new(
+            model,
+            DesktopAdapter::with_exec(Arc::new(Stub::default())),
+            Arc::default(),
+            Arc::default(),
+            Some(dir.clone()),
+            None,
+        );
+        let r = run(&t, "put firefox on 3").await;
+        assert!(
+            r.output
+                .contains("Saying \"undo\" puts the moved window back"),
+            "{}",
+            r.output
+        );
+        let undo: Value = serde_json::from_str(
+            std::fs::read_to_string(dir.join("undo.jsonl"))
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
+        assert_eq!(undo["kind"], "window");
+        assert_eq!(undo["args"], json!(["0xaaa1", "1"]));
     }
 
     #[tokio::test]

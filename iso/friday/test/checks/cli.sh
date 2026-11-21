@@ -769,6 +769,26 @@ contains "undo: the volume goes back" "$(cat "$LOG")" "wpctl set-volume @DEFAULT
 contains "undo: and its mute" "$(cat "$LOG")" "wpctl set-mute @DEFAULT_AUDIO_SINK@ 0"
 contains "undo: says what it undid" "$out" "Undid the volume change: volume back to 55%."
 contains "undo: then there's nothing left" "$(bash "$F" undo)" "Nothing to undo."
+# A window the daemon moved (desktop_tool writes this entry): undo moves it back.
+cat >"$S/hyprctl" <<STUB
+#!/bin/bash
+echo "hyprctl \$*" >>"$LOG"
+c=\${CLIENTS:-}; [ -n "\$c" ] || c='[{"address":"0xabc1"}]'
+[[ "\$*" == "clients -j" ]] && printf %s "\$c"
+exit 0
+STUB
+chmod +x "$S/hyprctl"
+printf '{"ts":"t","said":"moving kitty to workspace 2","kind":"window","args":["0xabc1","1"]}\n' >"$state/undo.jsonl"
+: >"$LOG"; out=$(bash "$F" undo)
+contains "undo: a moved window goes back" "$(cat "$LOG")" 'hl.dsp.window.move({ workspace = "1", follow = false, window = "address:0xabc1" })'
+contains "undo: and says where" "$out" "Undid moving kitty to workspace 2: it's back on workspace 1."
+printf '{"ts":"t","said":"moving kitty to workspace 2","kind":"window","args":["0xabc1","1"]}\n' >"$state/undo.jsonl"
+: >"$LOG"; out=$(CLIENTS='[]' bash "$F" undo || true)
+contains "undo: a closed window is said so" "$out" "That window is closed"
+printf '{"ts":"t","said":"x","kind":"window","args":["0xabc1","1\\" })"]}\n' >"$state/undo.jsonl"
+: >"$LOG"; out=$(bash "$F" undo || true)
+if grep -q "dispatch" "$LOG"; then fail "undo dispatched an odd workspace"; else pass "undo: an odd entry is refused"; fi
+rm -f "$S/hyprctl" "$state/undo.jsonl"
 : >"$LOG"; MUTED=1 bash "$F" ask "unmute"; sleep 0.3; : >"$LOG"; bash "$F" ask "undo"; sleep 0.3
 contains "\"undo\" in the ask box undoes too" "$(cat "$LOG")" "wpctl set-mute @DEFAULT_AUDIO_SINK@ 1"
 contains "and says so" "$(cat "$state/last-answer.md")" "Undid the unmute: volume back to 55%, muted."
