@@ -27,7 +27,7 @@ public partial class WelcomeWindow : Window
     /// <summary>Closed; the tray makes a new one when asked again.</summary>
     public bool IsClosed { get; private set; }
 
-    public WelcomeWindow(IReadOnlyDictionary<AskKind, string> keys, Action chooseProvider, Action openSettings, Action tryIt)
+    public WelcomeWindow(IReadOnlyDictionary<AskKind, string> keys, Action chooseProvider, Action openSettings, Action tryIt, Action? connectBrowser = null)
     {
         InitializeComponent();
         string Key(AskKind k, string fallback) => keys.TryGetValue(k, out var l) ? l : fallback;
@@ -37,6 +37,9 @@ public partial class WelcomeWindow : Window
 
         var provider = Pill("Choose my AI…", "Pill");
         provider.Click += (_, _) => chooseProvider();
+        // The browsers already on this PC: offered right away.
+        var browser = Pill("Connect my browser…", "Pill");
+        browser.Click += (_, _) => (connectBrowser ?? openSettings)();
         var settings = Pill("Settings…", "Pill");
         settings.Click += (_, _) => openSettings();
         var done = Pill("Done", "Pill");
@@ -45,7 +48,7 @@ public partial class WelcomeWindow : Window
         var tryNow = Pill("Try it now", "PrimaryPill");
         tryNow.IsDefault = true;
         tryNow.Click += (_, _) => { Close(); tryIt(); };
-        foreach (var b in new[] { provider, settings, done, tryNow })
+        foreach (var b in new[] { provider, browser, settings, done, tryNow })
             Buttons.Children.Add(b);
 
         CloseButton.Click += (_, _) => Close();
