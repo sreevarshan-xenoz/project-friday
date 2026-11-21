@@ -311,11 +311,14 @@ if [[ "$FRIDAY_LOCAL_ENGINE" == ollama ]]; then arch-chroot /mnt systemctl enabl
 browser_pkgs=() browser_files=()
 for b in $BROWSERS; do
   case "$b" in
-    brave)   browser_files+=("$(find /opt/friday/repo -maxdepth 1 -name 'brave-bin-*.pkg.tar.zst' | sort | tail -n1)") ;;
-    firefox) browser_pkgs+=("firefox") ;;
-    zen)     browser_files+=("$(find /opt/friday/repo -maxdepth 1 -name 'zen-browser-bin-*.pkg.tar.zst' | sort | tail -n1)") ;;
-    vivaldi) browser_pkgs+=("vivaldi") ;;
+    brave)   f=$(find /opt/friday/repo -maxdepth 1 -name 'brave-bin-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1) ;;
+    zen)     f=$(find /opt/friday/repo -maxdepth 1 -name 'zen-browser-bin-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1) ;;
+    firefox) browser_pkgs+=("firefox"); continue ;;
+    vivaldi) browser_pkgs+=("vivaldi"); continue ;;
+    *) continue ;;
   esac
+  if [[ -n "$f" ]]; then browser_files+=("$f")
+  else echo "This ISO has no $b package; skipping it (install it later with yay)." >&2; fi
 done
 if (( ${#browser_pkgs[@]} )); then pacstrap_with_retry /mnt "${browser_pkgs[@]}"; fi
 if (( ${#browser_files[@]} )); then pacstrap_with_retry -U /mnt "${browser_files[@]}"; fi
@@ -655,6 +658,8 @@ friday_default_browser() {
   if [ -f "$f" ]; then
     sed -i '\#^text/html=#d;\#^x-scheme-handler/http=#d;\#^x-scheme-handler/https=#d' "$f"
   fi
+  # A file that doesn't end in a newline would glue the header to its last line.
+  if [ -s "$f" ] && [ -n "$(tail -c1 "$f")" ]; then echo >>"$f"; fi
   grep -q '^\[Default Applications\]' "$f" 2>/dev/null || printf '[Default Applications]\n' >>"$f"
   sed -i "/^\[Default Applications\]/a text/html=$desktop\nx-scheme-handler/http=$desktop\nx-scheme-handler/https=$desktop" "$f"
 }

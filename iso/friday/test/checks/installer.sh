@@ -336,7 +336,22 @@ rm -f "$W/pacstrap.log" "$W/mnt/home/alice/.config/mimeapps.list"
 } | sed "s#/mnt#$W/mnt#g; s#/opt/friday/repo#$W/opt/friday/repo#g" >"$W/run-none.sh"
 bash "$W/run-none.sh"
 [[ ! -f "$W/pacstrap.log" ]] && pass "nothing is pacstrapped when no browsers are chosen" || fail "pacstrap was called when none chosen"
+
 contains "default browser is chromium when none chosen" "$(cat "$W/mnt/home/alice/.config/mimeapps.list" 2>/dev/null)" "x-scheme-handler/https=chromium.desktop"
+# A browser whose package the ISO lacks is skipped, not passed as ""
+rm -f "$W/pacstrap.log" "$W/opt/friday/repo/zen-browser-bin-1.0-1-x86_64.pkg.tar.zst"
+printf 'x=1' >"$W/mnt/home/alice/.config/mimeapps.list"
+{
+  cat "$W/test-browser.sh"
+  echo 'BROWSERS="brave zen" DEFAULT_BROWSER=brave'
+  awk '/^# Web browsers chosen in addition to Chromium/,/pacstrap_with_retry -U \/mnt "\$\{browser_files\[@\]\}"/' "$ROOT/installer"
+  sed -n '/^# Default web browser/,/^friday_default_browser "/p' "$ROOT/installer"
+} | sed "s#/mnt#$W/mnt#g; s#/opt/friday/repo#$W/opt/friday/repo#g" >"$W/run-missing.sh"
+skipped=$(bash "$W/run-missing.sh" 2>&1)
+contains "a missing AUR package is skipped with a message" "$skipped" "no zen package"
+contains "only the present package is installed" "$(cat "$W/pacstrap.log")" "pacstrap: $W/opt/friday/repo/brave-bin-1.0-1-x86_64.pkg.tar.zst"
+! grep -q ' $\|zen' "$W/pacstrap.log" && pass "no empty package path" || fail "an empty or missing package was passed to pacstrap"
+contains "mimeapps.list without a final newline still gets the header" "$(cat "$W/mnt/home/alice/.config/mimeapps.list")" $'x=1\n[Default Applications]'
 
 echo "installer progress and failure screens"
 if need gum python3; then

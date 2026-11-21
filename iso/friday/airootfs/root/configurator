@@ -432,7 +432,7 @@ step_browsers() {
   friday_note "  Press x to turn a line on or off, Enter to confirm."
   echo
   local a="Brave" b="Firefox" c="Zen" d="Vivaldi"
-  local sel=()
+  local sel=() before="$BROWSERS"
   [[ " $BROWSERS " == *" brave "* ]] && sel+=("$a")
   [[ " $BROWSERS " == *" firefox "* ]] && sel+=("$b")
   [[ " $BROWSERS " == *" zen "* ]] && sel+=("$c")
@@ -459,8 +459,9 @@ step_browsers() {
     local pick
     local -a sel_link=()
     # On a first visit the cursor starts on the first browser just picked;
-    # coming back, on the one chosen before.
+    # coming back, on the one chosen before (Chromium included).
     local def_label=""
+    [[ -n "$before" && "$DEFAULT_BROWSER" == chromium ]] && def_label="Chromium"
     case "$DEFAULT_BROWSER" in
       brave) def_label="Brave" ;;
       firefox) def_label="Firefox" ;;
