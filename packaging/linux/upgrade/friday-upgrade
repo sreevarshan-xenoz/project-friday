@@ -5,8 +5,9 @@
 #      pacman not busy.
 #   2. Before: the package list, a Btrfs snapshot when snapper is set up, and
 #      each person's FRIDAY settings backed up.
-#   3. The upgrade itself. Nothing running is restarted: programs pick up the
+#   3. The upgrade itself. pacman doesn't restart your apps: they pick up the
 #      new versions when next started, a new kernel at the next restart.
+#      (FRIDAY's own daemon notices its new version and restarts by itself.)
 #   4. After: FRIDAY's daemon, its CLI and the desktop must still start; if
 #      one doesn't, the previous versions go back from pacman's cache.
 # The outcome is in $STATE/last.json (read by `friday upgrade status`).
@@ -15,6 +16,7 @@ set -uo pipefail
 STATE="${FRIDAY_UPGRADE_STATE:-/var/lib/friday/upgrade}"
 CACHE="${FRIDAY_PACMAN_CACHE:-/var/cache/pacman/pkg}"
 HOMES="${FRIDAY_UPGRADE_HOMES:-/home}"
+BIN="${FRIDAY_UPGRADE_BIN:-/usr/bin}"
 SYS="${FRIDAY_SYS:-/sys}"
 LOG="$STATE/upgrade.log"
 # The outcome (last.json) is for everyone to read; the log, the package
@@ -56,10 +58,15 @@ snapshot=""
 if command -v snapper >/dev/null 2>&1 && [ "$(stat -f -c %T / 2>/dev/null)" = btrfs ]; then
   snapshot=$(snapper create -t pre -p -d "FRIDAY upgrade $ts" 2>>"$LOG" || true)
 fi
+# Small regular files only (under 1 MB each, two levels deep): a symlink
+# or a huge file someone put there can't make root copy what it shouldn't
+# or fill the disk.
 backup="$STATE/settings-$ts.tar"
 (
   umask 077
-  cd "$HOMES" 2>/dev/null && tar -cf "$backup" --ignore-failed-read ./*/.config/friday 2>/dev/null || true
+  cd "$HOMES" 2>/dev/null || exit 0
+  find . -mindepth 3 -maxdepth 5 -path './*/.config/friday/*' -type f -size -1024k -print0 2>/dev/null \
+    | head -z -n 2000 | tar -cf "$backup" --null --no-recursion -T - 2>/dev/null || true
 )
 # Keep the newest three of each.
 ls -1t "$STATE"/before-*.txt 2>/dev/null | tail -n +4 | xargs -r rm -f
@@ -76,33 +83,45 @@ fi
 [ -z "$snapshot" ] || snapper create -t post --pre-number "$snapshot" -d "FRIDAY upgrade $ts" >>"$LOG" 2>&1 || true
 
 # 4. After: does what FRIDAY needs still start?
-# (Loads: every library it needs is there. Nothing is started.)
+# (Loads: every library it needs is there. Nothing is started; only the
+# packaged programs in /usr/bin are looked at.)
 healthy() {
   local bin path
   for bin in friday-linux-daemon friday-ctl Hyprland quickshell niri; do
-    path=$(command -v "$bin" 2>/dev/null) || continue
+    path="$BIN/$bin"
+    [ -x "$path" ] || continue
     if ldd "$path" 2>&1 | grep -q 'not found'; then
       log "broken after the upgrade: $bin is missing a library"
       return 1
     fi
   done
-  if path=$(command -v friday 2>/dev/null) && ! bash -n "$path" 2>>"$LOG"; then
+  if path="$BIN/friday" && [ -f "$path" ] && ! bash -n "$path" 2>>"$LOG"; then
     log "broken after the upgrade: the friday command doesn't parse"
     return 1
   fi
 }
 revert() {
   # Every package whose version changed goes back to the one in $before,
-  # from pacman's cache.
-  local name old files=()
+  # from pacman's cache: all of them or none (half a downgrade is worse).
+  local name old files=() missing=()
   while read -r name old; do
     [ "$(pacman -Q "$name" 2>/dev/null | cut -d' ' -f2)" = "$old" ] && continue
     f=$(find "$CACHE" -maxdepth 1 -name "$name-$old-*.pkg.tar.zst" ! -name '*.sig' 2>/dev/null | head -n1)
-    if [ -n "$f" ]; then files+=("$f"); else log "no cached $name $old to go back to"; fi
+    if [ -n "$f" ]; then files+=("$f"); else missing+=("$name $old"); fi
   done <"$before"
+  if (( ${#missing[@]} )); then
+    log "can't go back: not in pacman's cache: ${missing[*]}"
+    return 1
+  fi
   (( ${#files[@]} )) || return 1
   pacman -U --noconfirm "${files[@]}" >>"$LOG" 2>&1
 }
+# A failed upgrade that changed nothing (a download that didn't finish) has
+# nothing to undo.
+if $failed_upgrade && cmp -s "$before" <(pacman -Q); then
+  result failed "the upgrade didn't go through; nothing was changed (see $LOG)"
+  exit 0
+fi
 if $failed_upgrade || ! healthy; then
   why="the upgrade failed"
   $failed_upgrade || why="something didn't start after the upgrade"
