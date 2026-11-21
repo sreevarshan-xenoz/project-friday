@@ -232,6 +232,19 @@ fi
 kill $CLOUD_FAKE 2>/dev/null; wait $CLOUD_FAKE 2>/dev/null || true
 CLOUD_FAKE=""
 
+# Askers that leave before their answer (Ctrl+C, a cancelled --wait): the
+# daemon used to stop answering anyone once a result found no client.
+echo "an asker that leaves"
+# Three askers that don't wait: each leaves once its goal is accepted, so the
+# goals overlap the one asked next and finish after it started.
+for _ in 1 2 3; do
+  "${priv[@]}" timeout 20 "$CTL_BIN" goal "What is 2 plus 2?" >/dev/null 2>&1 || true
+done
+q="What does the Rust error E0599 mean?"
+out=$("${priv[@]}" timeout 180 "$CTL_BIN" goal --wait "$q" 2>&1) || true
+if grep -qF "\"result\": \"FAKE-MODEL-ANSWER: $q" <<<"$out"; then pass "still answers after askers left, with its own answer"
+else fail "no answer of its own after askers left"; sed 's/^/       /' <<<"$out" | tail -8; fi
+
 # No model reachable at all (the local one down, and every remote one behind
 # a dead proxy): the ask fails and says why in plain words, instead of
 # "completing" with an empty memory lookup.

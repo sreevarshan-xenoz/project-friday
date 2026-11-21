@@ -21,6 +21,8 @@ New here? [Using FRIDAY](docs/USING.md) is the short tour: the keys, the answer 
 - **Answers out loud, made on your computer**: a CPU voice (tiny voca by default, 50 MB and starting at once, running inside FRIDAY; Kokoro, with Bella and seven more, is the expressive option, and the lighter Kitten and Supertonic voices are there too), no GPU, nothing sent anywhere to speak. FRIDAY can talk you through the install, too.
 - **Control apps and windows** by name on both platforms (open, focus, volume, media, desktops); anything that deletes or sends asks first.
 - **"How is my computer doing?"**: a read-only look at services, errors, disk, memory and battery, in plain words.
+- **Remembers your work, if you want it to**: recall of what you looked at (3 hours to 7 days, local), meeting notes as project thoughts, your own folders searchable, and encrypted sync between your machines.
+- **The page you're on**, through FRIDAY's browser extension instead of a screenshot.
 - **A settings app on each platform** for people who don't use a terminal ([the pages](docs/SETTINGS-PAGES.md)), and a first-login tour (a welcome window on Windows).
 - **Private by default where it counts**: free models are the starting point and are labelled as such; your own key, an account you already have, or a local model are one click away; a log shows what left the machine.
 
@@ -192,7 +194,11 @@ In kitty (FRIDAY OS's terminal), `Super+Y` right after a command failed offers "
 
 **Show me.** Ask "where's output devices?" or "show me the yes button" in Super+Y (or run `friday show <what>`), and FRIDAY Shell draws a ring round that control in the window in front, with a label. It fades after 6 seconds. The control's position comes from the accessibility bus. When no control's name fits, the model picks one from the names of the visible controls; it only gets the names, and nothing at all from a private window. Works with GTK and Qt apps on Hyprland. Chromium shows FRIDAY only its window frame for now, so there the question is answered in words.
 
-**What was that?** Opt-in (`friday recall on`, or Settings → Privacy): FRIDAY keeps the text of the window in front every 30 seconds, on this computer only, for 3 hours. No screenshots; never password fields or private windows. Ask "what was that error…?" or "where did I see…" in Super+Y and the matching passages answer it: your local model answers when one is set up, otherwise they go to your cloud provider. A mark in the bar shows while it's on; `friday recall off` stops it and forgets everything.
+**What was that?** Opt-in (`friday recall on`, or Settings → Privacy): FRIDAY keeps the text of the window in front every 30 seconds, on this computer only, for 3 hours (`friday recall keep 24h` or `7d` keeps it longer). No screenshots; never password fields or private windows. Ask "what was that error…?" or "where did I see…" in Super+Y and the matching passages answer it: your local model answers when one is set up, otherwise they go to your cloud provider. A mark in the bar shows while it's on; `friday recall off` stops it and forgets everything.
+
+**Other AI apps can use FRIDAY.** `friday-ctl mcp` is an MCP server (over stdio) for Claude Desktop, editors and other AI apps: they can read your kept thoughts and FRIDAY's timeline, or ask FRIDAY a question. Each tool is off until you allow it: `friday mcp allow friday_thoughts` (or `friday_timeline`, `friday_ask`); `friday mcp` shows which are on, `friday mcp deny <tool>` turns one off again.
+
+**That was wrong.** "That was wrong" on an answer (or `friday wrong [reason]`) keeps a repro to turn into a test: how you asked, who answered and how fast, what went into it and your reason. Never the question's or the answer's text. `friday wrong --list` shows them, and `friday report` includes them.
 
 **Sync between your machines.** Off until you set it up, and only for the projects you choose: `friday sync init` gives each machine its own [age](https://age-encryption.org) key and signing key and prints a `friday sync trust …` line to run on your other machines (and theirs here); `friday sync folder <dir>` points at a folder you already sync (Syncthing, a USB stick); `friday sync project <name> on` picks a project; `friday sync now` writes this machine's bundle (that project's kept thoughts and its saved workspace), encrypted so only your trusted machines can open it and signed so they know it's yours, and takes in theirs (a bundle not signed by the trusted machine it names is skipped). Nothing is overwritten: thoughts are added once, a workspace only when this machine has none by that name. Needs `age` and `ssh-keygen` (`sudo pacman -S age openssh`).
 
@@ -238,7 +244,7 @@ Per-user, no administrator rights: installs to `%LOCALAPPDATA%\Programs\FRIDAY`,
 CLEAN_WORK=true bash iso/friday/build-iso.sh
 ```
 
-Builds `friday-git` and an Arch ISO whose installer sets up the whole desktop. Prebuilt ISOs are on the [releases page](https://github.com/sreevarshan-xenoz/project-friday/releases).
+Builds `friday-git` and an Arch ISO whose installer sets up the whole desktop. The installer asks which browsers you want besides Chromium (Brave, Firefox, Zen, Vivaldi; Brave and Zen are built from the AUR into the ISO) and which one opens links. FRIDAY's browser extension is already loaded in Chromium, Brave and Vivaldi. Prebuilt ISOs are on the [releases page](https://github.com/sreevarshan-xenoz/project-friday/releases).
 
 ### Updates
 
@@ -283,6 +289,16 @@ pacman refuses any package or database that key didn't sign. On Windows, install
 | `friday app [page]` | Open FRIDAY Settings (a window for voice, AI, privacy and health; no terminal needed) |
 | `friday tour` | Take the first-login tour again |
 | `friday screen-text [on\|off]` / `friday app-context [on\|off]` | What a screen or selection ask sends: the window's text instead of a screenshot; the app's name |
+| `friday recall [on\|off\|keep 3h\|24h\|7d]` | "What was that?": window text kept on this computer, opt-in |
+| `friday clips [on\|off\|pick]` / `friday snippet add <name>` | Clipboard history and snippets |
+| `friday folders [add\|rm\|update]` | Folders whose notes and PDFs answers can quote |
+| `friday browser [setup\|status]` | FRIDAY's browser extension |
+| `friday routine [save\|run\|record\|stop\|list\|edit\|rm]` | Do a set of desktop steps again, with no model |
+| `friday captions [on\|off] [--mic]` / `friday meeting` | Live captions; a meeting's decisions and actions as thoughts |
+| `friday wake [on\|off]` | "Hey Friday", processed on this computer |
+| `friday sync [init\|trust\|folder\|project\|now]` | Encrypted sync of chosen projects between your machines |
+| `friday mcp [allow\|deny <tool>]` | Let other AI apps use FRIDAY (MCP) |
+| `friday wrong [reason\|--list]` | Keep a repro of a bad answer (no text) |
 | `friday forget [what] [--yes]` | Show what FRIDAY keeps on this computer, or wipe it |
 | `friday phone [on\|off]` | Pair a phone with Pocketdesk (it asks first) |
 
@@ -298,6 +314,8 @@ The phases in [AGENTS.md](AGENTS.md), top to bottom; a later phase doesn't start
 4. Standalone packages (`friday-git`, the MSI, `vX.Y.Z` releases gated on CI)
 5. Deeper integration (system interfaces, each behind consent)
 6. The [ecosystem backlog](docs/roadmap/ecosystem-backlog.md)
+
+The work queues inside phases 3 to 5: [after v0.7.3](docs/roadmap/after-0.7.3.md) (twenty items, first pass done) and [after v0.8.0](docs/roadmap/after-0.8.0.md) (the second brainstorm, in progress).
 
 ## Repository layout
 

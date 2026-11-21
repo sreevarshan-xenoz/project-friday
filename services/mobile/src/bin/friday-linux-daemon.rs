@@ -524,9 +524,10 @@ async fn main() {
                 });
                 write_state(&state_cmd_path, &render(&st));
             }
-            if result_out.send(result).is_err() {
-                break;
-            }
+            // A broadcast send fails when no client is connected (the asker
+            // went away first): drop the result, never the loop, or every
+            // later command goes unanswered (same as the bus bridge).
+            let _ = result_out.send(result);
         }
     });
 
