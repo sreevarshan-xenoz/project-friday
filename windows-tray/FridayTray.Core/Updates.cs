@@ -4,16 +4,46 @@ using System.Text.Json;
 namespace FridayTray.Core;
 
 /// <summary>A published FRIDAY release: its version, its MSI and the checksum file beside it.</summary>
-public sealed record Release(string Version, string MsiName, string MsiUrl, string SumsUrl);
+public sealed record Release(string Version, string MsiName, string MsiUrl, string SumsUrl)
+{
+    /// <summary>FRIDAY's signature over SHA256SUMS, published beside it.</summary>
+    public string SigUrl => SumsUrl + ".sig";
+}
 
 /// <summary>
 /// Updating FRIDAY on Windows: the newest GitHub release is read from the
 /// releases API, its MSI is downloaded, checked against the release's
 /// SHA256SUMS and run with its normal installer window (the MSI closes the
-/// running tray and starts the new one when it finishes).
+/// running tray and starts the new one when it finishes). SHA256SUMS counts
+/// only when FRIDAY's update key signed it (release.yml, the
+/// FRIDAY_UPDATE_KEY secret): a checksum beside a tampered MSI proves
+/// nothing on its own.
 /// </summary>
 public static class Updates
 {
+    /// <summary>FRIDAY's update key (ECDSA P-256), also in installer/windows/friday-update-key.pub.</summary>
+    public const string UpdateKey = """
+-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEvCTYlxXRfuT1xMQC8wsLUV0l3GkX
+vSpfZge9Uiz7oJrnZ35a/mstGcgqB1nmEdvVo8VJRrs2sTi9/Kzm559PFA==
+-----END PUBLIC KEY-----
+""";
+
+    /// <summary>Whether FRIDAY's update key signed these SHA256SUMS bytes.</summary>
+    public static bool Signed(byte[] sums, byte[] signature, string publicKey = UpdateKey)
+    {
+        try
+        {
+            using var key = ECDsa.Create();
+            key.ImportFromPem(publicKey);
+            return key.VerifyData(sums, signature, HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence);
+        }
+        catch (CryptographicException)
+        {
+            return false;
+        }
+    }
+
     public const string LatestUrl = "https://api.github.com/repos/sreevarshan-xenoz/project-friday/releases/latest";
 
     /// <summary>The release in a releases-API answer, or null when it has no MSI or no SHA256SUMS.</summary>
@@ -34,9 +64,12 @@ public static class Updates
                 else if (name.StartsWith("FRIDAY-", StringComparison.Ordinal) && name.EndsWith("-x64.msi", StringComparison.Ordinal))
                     (msiName, msiUrl) = (name, url);
             }
-            if (msiName is null || msiUrl is null || sumsUrl is null)
+            var version = tag.TrimStart('v');
+            // The MSI must be the tag's own: an older signed MSI under a newer
+            // tag would otherwise install as an "update" (a downgrade).
+            if (msiName is null || msiUrl is null || sumsUrl is null || msiName != $"FRIDAY-{version}-x64.msi")
                 return null;
-            return new Release(tag.TrimStart('v'), msiName, msiUrl, sumsUrl);
+            return new Release(version, msiName, msiUrl, sumsUrl);
         }
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
         {
