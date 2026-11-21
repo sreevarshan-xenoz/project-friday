@@ -1805,7 +1805,7 @@ friday_paste_as() {
     | fuzzel --dmenu --prompt="Paste › " --width=60 --lines=7 \
       --placeholder="\"$(tr '\n\t' '  ' <<<"$clip" | cut -c1-40)…\" · pick or type how") || return 0
   [ -n "${pick// /}" ] || return 0
-  if [ -n "$first" ] && [ "$pick" = "$first" ]; then friday_replace_selection "$clip" "$addr" terminals; return 0; fi
+  if [ -n "$first" ] && [ "$pick" = "$first" ]; then friday_replace_selection "$1" "$addr" terminals; return 0; fi
   how="$pick"
   case "$pick" in
     "As JSON") how="as JSON (only the JSON)" ;;
@@ -1860,8 +1860,12 @@ EOF2
       # One clipboard change on stdin (wl-paste --watch, from the service).
       text=$(head -c 20000)
       [ -n "${text//[[:space:]]/}" ] || return 0
+      # wl-paste --watch marks what a password manager copied as sensitive.
+      [ "${CLIPBOARD_STATE:-}" = sensitive ] && return 0
       timeout 2 wl-paste --list-types 2>/dev/null | grep -qi 'passwordmanagerhint' && return 0
       [[ "$text" =~ ^[^[:space:]]{12,}$ && "$text" =~ [A-Za-z] && "$text" =~ [0-9] ]] && return 0
+      # A window that can't be read might be a private one: keep nothing.
+      if command -v hyprctl >/dev/null 2>&1; then timeout 2 hyprctl activewindow -j >/dev/null 2>&1 || return 0; fi
       [ -z "$(friday_private_window)" ] || return 0
       mkdir -p "$(dirname "$file")"
       line=$(jq -cn --arg t "$text" --argjson ts "$(date +%s)" '{ts: $ts, text: $t}')
@@ -1920,7 +1924,7 @@ friday_snippet() {
       echo "Saved ;$name. Super+Ctrl+V, then type ;$name." ;;
     rm)
       jq -e --arg n "$name" 'select(.name == $n)' "$file" >/dev/null 2>&1 || { echo "No snippet called $name." >&2; return 1; }
-      jq -c --arg n "$name" 'select(.name != $n)' "$file" >"$file.tmp" && mv -f "$file.tmp" "$file"
+      (umask 077; jq -c --arg n "$name" 'select(.name != $n)' "$file" >"$file.tmp" && mv -f "$file.tmp" "$file")
       echo "Removed ;$name." ;;
     list)
       jq -r '";\(.name)  \(.text | gsub("\\s+"; " ") | .[0:60])"' "$file" 2>/dev/null | grep . || echo "No snippets yet. friday snippet add <name> [text]" ;;

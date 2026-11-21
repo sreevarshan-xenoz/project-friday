@@ -358,6 +358,8 @@ contains "copying it again moves it to the top" "$(tail -n1 "$CLIPS")" '"text":"
 contains "clips are owner-only" "$(stat -c %a "$CLIPS")" "600"
 printf 'hunter2Secret99xyz' | bash "$F" clips add
 if grep -q hunter2 "$CLIPS"; then fail "kept a password-shaped clip"; else pass "a password-shaped clip isn't kept"; fi
+printf 'vault words' | CLIPBOARD_STATE=sensitive bash "$F" clips add
+if grep -q "vault words" "$CLIPS"; then fail "kept a clip marked sensitive"; else pass "a clip marked sensitive isn't kept"; fi
 printf '   ' | bash "$F" clips add
 expect "blank text isn't kept" test "$(wc -l <"$CLIPS")" -eq 2
 for i in $(seq 1 205); do printf '{"ts":1,"text":"old %s"}\n' "$i"; done >"$CLIPS"
@@ -379,6 +381,7 @@ contains "a clip can be rewritten (paste as)" "$(cat "$LOG")" "Rewrite the text 
 contains "the clip goes to the model, not the clipboard" "$(grep -A2 'Rewrite the text below' "$LOG")" "first note"
 printf '#!/bin/bash\necho "fuzzel $*" >> %q\necho "$PICK"\n' "$LOG" >"$S/fuzzel"; chmod +x "$S/fuzzel"
 bash "$F" snippet rm sig >/dev/null
+contains "the snippet file stays owner-only" "$(stat -c %a "$HOME/.config/friday/snippets.jsonl")" "600"
 if bash "$F" snippet list | grep -q ";sig"; then fail "snippet rm left it"; else pass "snippet rm removes it"; fi
 refuse "a snippet name with spaces is refused" bash "$F" snippet add "two words" x
 : >"$LOG"; bash "$F" clips off >/dev/null
