@@ -848,31 +848,40 @@ chmod +x "$S/age" "$S/age-keygen"
 SYNC="$W/syncdir"; mkdir -p "$SYNC"
 mA() { XDG_CONFIG_HOME="$W/A/cfg" XDG_STATE_HOME="$W/A/state" XDG_DATA_HOME="$W/A/data" bash "$F" sync "$@"; }
 mB() { XDG_CONFIG_HOME="$W/B/cfg" XDG_STATE_HOME="$W/B/state" XDG_DATA_HOME="$W/B/data" bash "$F" sync "$@"; }
+mC() { XDG_CONFIG_HOME="$W/C/cfg" XDG_STATE_HOME="$W/C/state" XDG_DATA_HOME="$W/C/data" bash "$F" sync "$@"; }
+if need ssh-keygen; then
 contains "sync is off until set up" "$(mA)" "not set up"
-KA=$(mA init | sed -n 's/^This machine.s key: //p'); KB=$(mB init | sed -n 's/^This machine.s key: //p')
+LA=$(mA init | sed -n 's/^  friday sync trust //p'); LB=$(mB init | sed -n 's/^  friday sync trust //p'); LC=$(mC init | sed -n 's/^  friday sync trust //p')
 contains "the key file is owner-only" "$(stat -c %a "$W/A/cfg/friday/sync/key.txt")" "600"
-mA trust "$KB" >/dev/null; mB trust "$KA" >/dev/null
-mA folder "$SYNC" >/dev/null; mB folder "$SYNC" >/dev/null
-mA project site on >/dev/null; mB project site on >/dev/null
+mA folder "$SYNC" >/dev/null; mB folder "$SYNC" >/dev/null; mC folder "$SYNC" >/dev/null
+mA project site on >/dev/null; mB project site on >/dev/null; mC project site on >/dev/null
+contains "no bundle until another machine is trusted" "$(mA now 2>&1 || true)" "No other machine is trusted yet"
+# shellcheck disable=SC2086
+mA trust $LB >/dev/null; mB trust $LA >/dev/null
 mkdir -p "$W/A/state/friday" "$W/A/data/friday/workspaces"
 printf '%s\n' '{"ts":1,"project":"/home/me/code/site","kind":"decision","text":"move images to a CDN"}' \
-  '{"ts":2,"project":"/home/me/code/diary","kind":"idea","text":"private diary idea"}' >"$W/A/state/friday/thoughts.jsonl"
+  '{"ts":2,"project":"/home/me/code/diary/","kind":"idea","text":"private diary idea"}' >"$W/A/state/friday/thoughts.jsonl"
 echo '{"windows":[]}' >"$W/A/data/friday/workspaces/site.json"
+echo '{"windows":[]}' >"$W/A/data/friday/workspaces/zzz-other.json"
 mA now >/dev/null
-if grep -q "diary\|CDN" "$SYNC"/*.age; then
-  if grep -q "diary" "$SYNC"/*.age; then fail "a project that isn't synced went into the bundle"; else pass "only synced projects go in the bundle"; fi
-else pass "only synced projects go in the bundle"; fi
+if grep -q "diary" "$SYNC"/*.age; then fail "a project that isn't synced went into the bundle"; else pass "only synced projects go in the bundle"; fi
+expect "the bundle is signed" test -s "$SYNC/$(cut -d' ' -f1 <<<"$LA").age.sig"
 out=$(mB now)
 contains "the other machine takes the thoughts" "$out" "took 1 thought(s) and 1 workspace(s)"
 contains "and keeps them" "$(cat "$W/B/state/friday/thoughts.jsonl")" "move images to a CDN"
-expect "and the workspace" test -s "$W/B/data/friday/workspaces/site.json"
+contains "an imported workspace is owner-only" "$(stat -c %a "$W/B/data/friday/workspaces/site.json")" "600"
 contains "a second sync adds nothing twice" "$(mB now)" "took 0 thought(s) and 0 workspace(s)"
-# A machine that wasn't trusted can't open the bundle.
-XDG_CONFIG_HOME="$W/C/cfg" bash "$F" sync init >/dev/null
-XDG_CONFIG_HOME="$W/C/cfg" bash "$F" sync folder "$SYNC" >/dev/null
-XDG_CONFIG_HOME="$W/C/cfg" bash "$F" sync project site on >/dev/null
-contains "an untrusted machine gets nothing" "$(XDG_CONFIG_HOME="$W/C/cfg" XDG_STATE_HOME="$W/C/state" XDG_DATA_HOME="$W/C/data" bash "$F" sync now)" "took 0 thought(s)"
-refuse "a key that isn't an age key is refused" mA trust not-a-key
+# Machine C (B doesn't trust it) puts its bundle in A's name: B must not take it.
+# shellcheck disable=SC2086
+mC trust $LB >/dev/null
+mkdir -p "$W/C/state/friday"; echo '{"ts":3,"project":"/x/site","kind":"idea","text":"planted"}' >"$W/C/state/friday/thoughts.jsonl"
+mC now >/dev/null
+cp "$SYNC/$(cut -d' ' -f1 <<<"$LC").age" "$SYNC/$(cut -d' ' -f1 <<<"$LA").age"
+out=$(mB now 2>&1)
+contains "a bundle in a trusted machine's name but not signed by it is skipped" "$out" "isn't signed by it; skipped"
+if grep -q planted "$W/B/state/friday/thoughts.jsonl"; then fail "took a planted thought"; else pass "nothing planted is taken in"; fi
+refuse "a line that isn't a trust line is refused" mA trust not-a-key
+else skip "sync (needs ssh-keygen)"; fi
 rm -f "$S/age" "$S/age-keygen"
 
 echo "answers know their project"
