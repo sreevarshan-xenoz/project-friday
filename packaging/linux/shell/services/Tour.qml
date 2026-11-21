@@ -13,6 +13,8 @@ Singleton {
 
   property bool active: false
   property int step: 0
+  // The step whose ask failed (its card says where to look), or -1.
+  property int failedStep: -1
   property string name: ""
   property bool freeModels: false
   property bool phone: false
@@ -29,7 +31,7 @@ Singleton {
       waits: true },
     { title: "Ask about your screen",
       keys: "Super+Ctrl+Y",
-      body: "Ask about the window in front of you, like \"what does this error mean?\". A screenshot goes to your AI provider only when you press it.",
+      body: "Ask about the window in front of you, like \"what does this error mean?\". Its text (or, when the app offers too little, a screenshot) goes to your AI provider only when you press it.",
       waits: true },
     { title: "Let me talk",
       keys: "",
@@ -55,6 +57,7 @@ Singleton {
     root.freeModels = freeModels;
     root.phone = phone;
     root.step = 0;
+    root.failedStep = -1;
     root.active = true;
   }
   function next() { if (root.last) root.finish(); else root.step++; }
@@ -66,8 +69,12 @@ Singleton {
   Connections {
     target: Answer
     function onStateChanged() {
-      if (root.active && root.current.waits && Answer.state === "answer" && Answer.ok)
+      if (!root.active || !root.current.waits || Answer.state !== "answer")
+        return;
+      if (Answer.ok)
         root.next();
+      else
+        root.failedStep = root.step;
     }
   }
 

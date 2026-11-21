@@ -116,6 +116,9 @@ if [[ "\$target_arg" == *slowgoal* ]]; then echo '{"accepted":true}'; echo "time
 if [[ "\$target_arg" == *refused* ]]; then printf '{\n "outcome": "failed",\n "error": "Couldn'"'"'t reach your AI provider. Check your internet connection (or that your local model server is running)."\n}\n'; echo "llamacpp: tcp connect error: Connection refused" >&2; exit 1; fi
 if [[ "\$target_arg" == *limit* ]]; then printf '{\n "outcome": "failed",\n "error": "provider opencode: 429 FreeUsageLimitError"\n}\n'; exit 1; fi
 if [[ "\$target_arg" == *"rewritten text"* && "\$target_arg" == *teh* ]]; then printf '{\n "outcome": "completed",\n "result": "\\\\"The quick fox.\\\\""\n}\n'; exit 0; fi
+if [[ "\$target_arg" == *"word: ready"* && -n "\${READY_FAILS:-}" ]]; then printf '{\n "outcome": "failed",\n "error": "All candidates failed (2 tried). opencode: 429"\n}\n'; exit 1; fi
+if [[ "\$target_arg" == *"word: ready"* && -n "\${READY_TIMES_OUT:-}" ]]; then printf '{"accepted":true}\n'; echo "timed out after 60s waiting for the goal to finish" >&2; exit 1; fi
+if [[ "\$target_arg" == *"word: ready"* ]]; then printf '{\n "outcome": "completed",\n "result": "ready",\n "served_by": {"provider": "kilo", "model": "m", "ms": 940}\n}\n'; exit 0; fi
 if [[ "\$target_arg" == *bullets* ]]; then printf '{\n "outcome": "completed",\n "result": "- first point\\\\n- second point"\n}\n'; exit 0; fi
 if [[ "\$target_arg" == *fail* ]]; then printf '{\n "outcome": "failed",\n "error": "network unreachable"\n}\n'; exit 1; fi
 printf '{\n "outcome": "completed",\n "result": "Line one.\\\\nLine two.\\\\nLast line."\n}\n'
@@ -1242,6 +1245,22 @@ rm -f "$W/agent-desktop"
 printf '{"status":"running","token":"t","listen":"127.0.0.1:1"}' >"$state/state.json"
 out=$(bash "$F" doctor 2>&1 || true)
 contains "probes the address the daemon published" "$out" "nothing listening on 127.0.0.1:1"
+contains "no daemon: the real ask is skipped" "$out" "skipped: the daemon isn't listening"
+# A listener standing in for the daemon: the real ask goes through friday-ctl.
+python3 -c 'import socket,time; s=socket.socket(); s.bind(("127.0.0.1",0)); s.listen(5); print(s.getsockname()[1], flush=True); time.sleep(30)' >"$W/port" &
+LISTENER=$!; for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$W/port" ] && break; sleep 0.2; done
+printf '{"status":"running","token":"t","listen":"127.0.0.1:%s"}' "$(cat "$W/port")" >"$state/state.json"
+out=$(bash "$F" doctor 2>&1 || true)
+contains "a real ask answers, with who and how fast" "$out" "answered in 0.9 s by kilo/m"
+out=$(READY_FAILS=1 bash "$F" doctor 2>&1 || true)
+contains "a failed ask says why and where to look" "$out" "no answer: All candidates failed (2 tried). opencode: 429"
+contains "and names the next step" "$out" "friday providers"
+out=$(READY_TIMES_OUT=1 bash "$F" doctor 2>&1 || true)
+contains "a timed-out ask shows friday-ctl's reason" "$out" "no answer: timed out after 60s"
+out=$(bash "$F" doctor --quick 2>&1 || true)
+if [[ "$out" == *"A real ask"* ]]; then fail "--quick still made a real ask"; else pass "--quick makes no ask"; fi
+kill "$LISTENER" 2>/dev/null || true
+printf '{"status":"running","token":"t","listen":"127.0.0.1:1"}' >"$state/state.json"
 out=$(STUB_INACTIVE=1 bash "$F" doctor 2>&1 || true)
 contains "stale state (running, but service dead) is flagged" "$out" "stale: the daemon crashed or was killed"
 contains "names the key variable" "$out" "GEMINI_API_KEY is set"
