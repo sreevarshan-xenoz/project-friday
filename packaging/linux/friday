@@ -3450,7 +3450,7 @@ case "${1:-}" in
     #   friday ask [text]               ask (prompts if no text)
     #   friday ask --selection [text]   ask about the selected/copied text (SUPER+ALT+Y)
     #   friday ask --screen [text]      ask about what's on screen (SUPER+CTRL+Y);
-    #                                   a screenshot goes to the AI provider, this once
+    #                                   its text (or a screenshot) goes to the AI provider, this once
     #   friday ask --region [text]      drag out an area of the screen and ask about
     #                                   just that (any monitor)
     #   friday ask --follow-up [text]   ask about the last answer (the answer pill's
@@ -3545,7 +3545,7 @@ case "${1:-}" in
           --placeholder="Follow up on: $(head -n 1 <<<"$context" | sed 's/^# //' | cut -c1-50)" </dev/null) || exit 0
       elif $use_screen; then
         goal=$(fuzzel --dmenu --prompt-only="FRIDAY 👁 " --width=70 \
-          --placeholder="Ask about your screen (a screenshot goes to your AI provider)" </dev/null) || exit 0
+          --placeholder="Ask about your screen (its text, or a screenshot if it has too little, goes to your AI provider)" </dev/null) || exit 0
       elif $use_selection; then
         # Quick actions, then your own prompts (one per line in
         # ~/.config/friday/prompts); Shift+Enter sends what you typed instead.
@@ -3886,7 +3886,7 @@ case "${1:-}" in
           if [ "$source_label" = Clipboard ]; then used_parts+=("your clipboard"); else used_parts+=("your selection"); fi
         fi
         if ${use_region:-false}; then used_parts+=("the area you picked")
-        elif $use_screen; then used_parts+=("the window in front")
+        elif $use_screen && [ -z "$(jq -r '.used[0]? // empty' <<<"$summary_json" 2>/dev/null)" ]; then used_parts+=("the window in front")
         elif [ -n "${tab:-}" ]; then used_parts+=("the page's text (browser extension)"); fi
         [ -z "${docs:-}" ] || used_parts+=("docs on this computer")
         [ -z "${ws_report:-}" ] || used_parts+=("the windows FRIDAY put back")
@@ -3994,7 +3994,7 @@ case "${1:-}" in
       $use_pill || nid=$(notify-send -a FRIDAY -p -- "FRIDAY" "Looking at your screen: $goal" 2>/dev/null || true)
       [[ "$nid" =~ ^[0-9]+$ ]] || nid=""
       stream_ctl friday-ctl context screen --yes --ask "$goal" ${region:+--region "$region"}
-      summary=$(jq -s 'map(select(type == "object" and (has("partial") | not))) | last // {} | {result: .response, error: .error}' <<<"$out" 2>/dev/null || echo '{}')
+      summary=$(jq -s 'map(select(type == "object" and (has("partial") | not))) | last // {} | {result: .response, error: .error, used: .used}' <<<"$out" 2>/dev/null || echo '{}')
     else
       nid=""
       $use_pill || nid=$(notify-send -a FRIDAY -p -- "FRIDAY" "Working on: $goal" 2>/dev/null || true)

@@ -1535,8 +1535,17 @@ impl crate::context_read::ScreenText for AgentDesktopUi {
             )
             .await
             .ok()?;
-        let text = tree_text(snap.get("data")?.get("tree")?, MAX_SCREEN_TEXT);
-        (text.chars().count() >= MIN_SCREEN_TEXT).then_some(text)
+        let tree = snap.get("data")?.get("tree")?;
+        let mut text = tree_text(tree, MAX_SCREEN_TEXT);
+        if text.chars().count() < MIN_SCREEN_TEXT {
+            return None;
+        }
+        // More than fits: say so, to the model and in the answer.
+        if tree_text(tree, MAX_SCREEN_TEXT + 1).len() > text.len() {
+            text.push('\n');
+            text.push_str(crate::context_read::SCREEN_TEXT_CUT);
+        }
+        Some(text)
     }
 }
 
@@ -2543,9 +2552,30 @@ mod tests {
         let got = AgentDesktopUi::new(stub.clone())
             .window_text("org.gnome.Nautilus")
             .await;
-        assert!(got.unwrap().contains("word word"));
+        let got = got.unwrap();
+        assert!(got.contains("word word"));
+        assert!(
+            !got.ends_with(crate::context_read::SCREEN_TEXT_CUT),
+            "a short window isn't marked cut"
+        );
         let calls = stub.calls();
         assert_eq!(calls[1].0, ["snapshot", "--app", "Nautilus", "--compact"]);
+
+        // More than fits: the words end with the line that says so.
+        let huge = json!({"ok": true, "data": {"tree": {"role": "window", "children":
+            [{"role": "statictext", "name": "word ".repeat(4000)}]}}});
+        let stub = StubSpawn::new();
+        stub.push_response("list-apps", Ok(apps.to_string()));
+        stub.push_response("snapshot", Ok(huge.to_string()));
+        let got = AgentDesktopUi::new(stub.clone())
+            .window_text("nautilus")
+            .await
+            .unwrap();
+        assert!(
+            got.ends_with(crate::context_read::SCREEN_TEXT_CUT),
+            "{}",
+            &got[got.len() - 60..]
+        );
 
         let stub = StubSpawn::new();
         stub.push_response("list-apps", Ok(apps.to_string()));
