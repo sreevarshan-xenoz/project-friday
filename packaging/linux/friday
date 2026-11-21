@@ -3243,6 +3243,7 @@ case "${1:-}" in
           # Checked now, while the terminal still has the focus.
           term_private=$(friday_private_window)
           IFS=$'\t' read -r t_state t_when t_exit t_cwd t_cmd t_pid t_class <<<"$term"
+          [ -n "$term_private" ] || term_private=$(friday_private_folder "$t_cwd")
           if [ "$t_state" = done ] && [[ "$t_exit" =~ ^[0-9]+$ ]] && [ "$t_exit" != 0 ] && [ "$t_exit" != 130 ] \
               && (( $(date +%s) - ${t_when:-0} < 600 )); then
             explain="Explain the error from: $(cut -c1-60 <<<"$t_cmd") (exit $t_exit)"
