@@ -1299,7 +1299,8 @@ EOF2
 # `friday wrong [reason]` ("That was wrong" on an answer): keep a repro of
 # the last answer to turn into a test: how it was asked (selection, screen…),
 # who answered and how fast, what went into it, the reason and FRIDAY's
-# version. Never the question's or the answer's text; an error is redacted.
+# version. Never the question's or the answer's text; an error only as its
+# kind (timeout, rate_limited, …).
 # `friday wrong --list` shows them; friday report includes them.
 friday_wrong() {
   local state="${XDG_STATE_HOME:-$HOME/.local/state}/friday" dir reason f
@@ -1324,7 +1325,7 @@ friday_wrong() {
   (
     umask 077
     jq --arg reason "${reason:0:120}" --arg version "$(pacman -Q friday-git 2>/dev/null | cut -d' ' -f2 || true)" --arg ts "$(date -Is)" \
-      '. + {reason: $reason, version: $version, ts: $ts} | .error |= (if . then .[0:200] else . end)' \
+      '. + {reason: $reason, version: $version, ts: $ts}' \
       "$state/last-ask.json" | friday_redact >"$f"
   )
   echo "Saved a repro of that answer (no question or answer text): $f"
@@ -3328,11 +3329,24 @@ case "${1:-}" in
       { printf '<!-- friday answer -->\n'; cat "$answer_file"; printf '\n---\n\n'; } >>"$state_dir/answers.md"
       # What friday wrong saves about this answer: how it was asked and
       # answered, never the question's or the answer's text.
+      # An error is kept as its kind only: its text can echo the answer.
+      local shape
+      shape=$(jq -c 'if type == "object" then . else {} end' <<<"${summary_json:-{\}}" 2>/dev/null || true)
+      [ -n "$shape" ] || shape='{}'
       jq -n --arg mode "${ask_args[0]:-plain}" --argjson ok "$ans_ok" --argjson local "$local_only" \
-        --argjson q "${#goal}" --argjson a "${#answer}" --argjson s "$(jq -c 'if type == "object" then . else {} end' <<<"$summary_json" 2>/dev/null || echo '{}')" \
+        --argjson q "${#goal}" --argjson a "${#answer}" --argjson s "$shape" \
         '{mode: ($mode | ltrimstr("--")), ok: $ok, local: $local, served_by: ($s.served_by // null),
-          used: ($s.used // []), masked: ($s.masked // 0), error: ($s.error // null),
-          question_chars: $q, answer_chars: $a}' >"$state_dir/last-ask.json" 2>/dev/null || true
+          used: ($s.used // []), masked: ($s.masked // 0),
+          error: ($s.error // null | if . == null then null else (tostring | ascii_downcase |
+            if test("timed out") then "timeout"
+            elif test("429|rate.?limit|usage limit") then "rate_limited"
+            elif test("see images") then "no_vision"
+            elif test("reach|connect|network") then "unreachable"
+            elif test("confirm") then "needs_confirmation"
+            elif test("all candidates failed") then "all_failed"
+            else "other" end) end),
+          question_chars: $q, answer_chars: $a}' >"$state_dir/last-ask.json.tmp" 2>/dev/null \
+        && mv -f "$state_dir/last-ask.json.tmp" "$state_dir/last-ask.json" || rm -f "$state_dir/last-ask.json.tmp"
 
       # Spoken answers (friday voice speak on): the answer is read aloud while
       # the card shows it; a new answer, or friday say --stop, ends it.

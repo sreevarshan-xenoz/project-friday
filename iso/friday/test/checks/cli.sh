@@ -749,6 +749,9 @@ if grep -q "peru" "$R"; then fail "the repro holds the question"; else pass "the
 contains "repros are owner-only" "$(stat -c %a "$state/repros")" "700"
 contains "--list shows them" "$(bash "$F" wrong --list)" "Made something up · plain"
 contains "the report includes them" "$(bash "$F" report "$W/report.txt" >/dev/null 2>&1; cat "$W/report.txt")" '"reason": "Made something up"'
+: >"$LOG"; bash "$F" ask "this will fail"; sleep 0.3
+contains "a failed answer keeps only the error's kind" "$(cat "$state/last-ask.json")" '"error": "unreachable"'
+if grep -q "network unreachable" "$state/last-ask.json"; then fail "last-ask.json holds the error text"; else pass "no error text in last-ask.json"; fi
 rm -f "$state/last-ask.json"
 contains "nothing to report before an answer" "$(bash "$F" wrong x 2>&1 || true)" "No answer to report yet"
 
