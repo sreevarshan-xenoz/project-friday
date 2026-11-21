@@ -1395,7 +1395,22 @@ async fn main() -> std::process::ExitCode {
                 return std::process::ExitCode::FAILURE;
             }
         };
-        return run_context(&addr_str, &cmd_token, question.as_deref(), region, stream).await;
+        // The conversation `goal` asks keep: a screen ask joins it, so
+        // "how do I fix it?" next knows what was on screen.
+        let conversation = conversation_id(
+            &state_path.with_file_name("conversation"),
+            new_conversation,
+            now_ms(),
+        );
+        return run_context(
+            &addr_str,
+            &cmd_token,
+            question.as_deref(),
+            region,
+            &conversation,
+            stream,
+        )
+        .await;
     }
     if sub == "cancel" {
         // Cancel the goal the daemon reports as in flight (state.json
@@ -1716,9 +1731,11 @@ async fn run_context(
     token: &str,
     question: Option<&str>,
     region: Option<serde_json::Value>,
+    conversation: &str,
     stream: bool,
 ) -> std::process::ExitCode {
-    let mut params = serde_json::json!({ "token": token, "consent": true });
+    let mut params =
+        serde_json::json!({ "token": token, "consent": true, "conversation": conversation });
     if let Some(q) = question {
         params["question"] = serde_json::Value::String(q.to_string());
     }
