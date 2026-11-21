@@ -11,7 +11,7 @@ export PATH="$OMARCHY_PATH/bin:$PATH"
 source "$(dirname "$(readlink -f "$0")")/friday-tui.sh"
 friday_console_theme
 
-STEPS=(NETWORK DISK REGION IDENTITY SECURITY LOOK FEATURES AI REVIEW)
+STEPS=(NETWORK DISK REGION IDENTITY SECURITY LOOK FEATURES BROWSERS AI REVIEW)
 
 # Defaults (also what an unattended run would use).
 TARGET_DISK="" TARGET_LABEL=""
@@ -23,6 +23,8 @@ THEME="FRIDAY Shell (Ember, made for FRIDAY)"
 SHELL_STYLE="Ember (bar flush with the top edge)"
 SESSION="Hyprland (tiling, the FRIDAY OS default)"
 SDDM_THEME="SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)"
+BROWSERS=""
+DEFAULT_BROWSER="chromium"
 FRIDAY_AI_PROVIDERS="" FRIDAY_AI_KEYS=""
 FRIDAY_LOCAL_ENGINE="" FRIDAY_LOCAL_BUDGET_MB="" FRIDAY_LOCAL_MODEL="" FRIDAY_LOCAL_LABEL=""
 AUTOLOGIN="false"
@@ -423,8 +425,91 @@ friday_features_label() {
   echo "$out"
 }
 
-step_ai() {
+step_browsers() {
   screen 8
+  friday_head "Which browsers do you want?"
+  friday_say "Chromium is always installed for web apps and the desktop. Choose any others you want."
+  friday_note "  Press x to turn a line on or off, Enter to confirm."
+  echo
+  local a="Brave" b="Firefox" c="Zen" d="Vivaldi"
+  local sel=()
+  [[ " $BROWSERS " == *" brave "* ]] && sel+=("$a")
+  [[ " $BROWSERS " == *" firefox "* ]] && sel+=("$b")
+  [[ " $BROWSERS " == *" zen "* ]] && sel+=("$c")
+  [[ " $BROWSERS " == *" vivaldi "* ]] && sel+=("$d")
+  local -a sel_arg=()
+  if ((${#sel[@]} > 0)); then
+    local IFS=,
+    sel_arg=(--selected="${sel[*]}")
+  fi
+  local picks
+  picks=$(printf '%s\n' "$a" "$b" "$c" "$d" \
+    | gum choose --no-limit --cursor="$FRIDAY_CURSOR" --height=6 "${sel_arg[@]}") || picks=""
+  local -a chosen=() chosen_labels=()
+  [[ $picks == *"$a"* ]] && { chosen+=("brave"); chosen_labels+=("$a"); }
+  [[ $picks == *"$b"* ]] && { chosen+=("firefox"); chosen_labels+=("$b"); }
+  [[ $picks == *"$c"* ]] && { chosen+=("zen"); chosen_labels+=("$c"); }
+  [[ $picks == *"$d"* ]] && { chosen+=("vivaldi"); chosen_labels+=("$d"); }
+  BROWSERS="${chosen[*]:-}"
+
+  local -a avail=("${chosen_labels[@]}" "Chromium")
+  if ((${#chosen[@]} > 0)); then
+    echo
+    friday_say "Which one opens links?"
+    local pick
+    local -a sel_link=()
+    # On a first visit the cursor starts on the first browser just picked;
+    # coming back, on the one chosen before.
+    local def_label=""
+    case "$DEFAULT_BROWSER" in
+      brave) def_label="Brave" ;;
+      firefox) def_label="Firefox" ;;
+      zen) def_label="Zen" ;;
+      vivaldi) def_label="Vivaldi" ;;
+    esac
+    for item in "${avail[@]}"; do
+      if [[ "$item" == "$def_label" ]]; then
+        sel_link=(--selected="$def_label")
+        break
+      fi
+    done
+    pick=$(printf '%s\n' "${avail[@]}" \
+      | gum choose --cursor="$FRIDAY_CURSOR" --height=$(( ${#avail[@]} + 1 )) "${sel_link[@]}") || pick="${avail[0]}"
+    case "$pick" in
+      Brave) DEFAULT_BROWSER="brave" ;;
+      Firefox) DEFAULT_BROWSER="firefox" ;;
+      Zen) DEFAULT_BROWSER="zen" ;;
+      Vivaldi) DEFAULT_BROWSER="vivaldi" ;;
+      *) DEFAULT_BROWSER="chromium" ;;
+    esac
+  else
+    DEFAULT_BROWSER="chromium"
+  fi
+  friday_ok "$(friday_browsers_label)"
+}
+
+friday_browsers_label() {
+  local -a names=()
+  local b name
+  for b in chromium $BROWSERS; do
+    case "$b" in
+      brave) name="Brave" ;;
+      firefox) name="Firefox" ;;
+      zen) name="Zen" ;;
+      vivaldi) name="Vivaldi" ;;
+      chromium) name="Chromium" ;;
+      *) name="$b" ;;
+    esac
+    [[ "$b" == "$DEFAULT_BROWSER" ]] && name+=" (default)"
+    names+=("$name")
+  done
+  local out="${names[0]}"
+  for name in "${names[@]:1}"; do out+=", $name"; done
+  echo "$out"
+}
+
+step_ai() {
+  screen 9
   friday_head "Give FRIDAY a brain"
   friday_say "I think with language models. Pick one or more: cloud providers, a model on this computer, or both."
   friday_note "  Tab or x picks, Enter goes on. OpenCode Zen's free models need no account and back up the rest."
@@ -549,7 +634,7 @@ step_local_ai() {
 
 review() {
   while true; do
-    screen 9 "REVIEW"
+    screen 10 "REVIEW"
     local disk_lines=("Disk        $TARGET_LABEL$([[ $ENCRYPT == true ]] && echo "  (encrypted)")")
     [[ "$INSTALL_MODE" == alongside ]] \
       && disk_lines+=("            alongside $ALONGSIDE_OS: $(friday_gb "$FRIDAY_SIZE_MB") of its free space")
@@ -561,6 +646,7 @@ review() {
       "Region      $TIMEZONE · keyboard $KEYBOARD" \
       "Desktop     $THEME$([[ $THEME != *Dots-Hyprland* ]] && echo " · ${SHELL_STYLE%% (*} · ${SESSION%% (*}")" \
       "Login       $SDDM_THEME" \
+      "Browsers    $(friday_browsers_label)" \
       "Allowed     $(friday_features_label)" \
       "AI          $FRIDAY_AI_LABEL"
     echo
@@ -573,7 +659,7 @@ review() {
     echo
     case "$(gum choose --cursor="$FRIDAY_CURSOR" \
         "Install FRIDAY OS" "Change disk" "Change names" "Change password" \
-        "Change region" "Change desktop" "Change what FRIDAY may do" "Change AI" "Quit setup")" in
+        "Change region" "Change desktop" "Change what FRIDAY may do" "Change browsers" "Change AI" "Quit setup")" in
       "Install FRIDAY OS")
         if [[ "$INSTALL_MODE" == alongside ]]; then
           gum confirm --default=false --affirmative="Install alongside" --negative="Back" \
@@ -594,6 +680,7 @@ review() {
         fi ;;
       "Change desktop") step_look choose ;;
       "Change what FRIDAY may do") step_features ;;
+      "Change browsers") step_browsers ;;
       "Change AI") step_ai ;;
       *) leave_menu "Nothing was written to disk." ;;
     esac
@@ -610,6 +697,7 @@ step_identity
 step_security
 step_look
 step_features
+step_browsers
 step_ai
 review
 
@@ -617,7 +705,7 @@ friday_banner
 friday_say "Thanks, $USERNAME. I'll take it from here."
 sleep 1
 FRIDAY_HOSTNAME="$HOSTNAME"
-export INSTALL_MODE FRIDAY_SIZE_MB BOOT_DEFAULT BITLOCKER_ACK TARGET_DISK KEYBOARD HOSTNAME FRIDAY_HOSTNAME USERNAME PASSWORD TIMEZONE THEME SHELL_STYLE SESSION SDDM_THEME FRIDAY_AI_PROVIDERS FRIDAY_AI_KEYS FRIDAY_LOCAL_ENGINE FRIDAY_LOCAL_BUDGET_MB FRIDAY_LOCAL_MODEL AUTOLOGIN ENCRYPT FEAT_DESKTOP FEAT_TASKS FEAT_APPNAME FEAT_SCREENTEXT FEAT_PHONE
+export INSTALL_MODE FRIDAY_SIZE_MB BOOT_DEFAULT BITLOCKER_ACK TARGET_DISK KEYBOARD HOSTNAME FRIDAY_HOSTNAME USERNAME PASSWORD TIMEZONE THEME SHELL_STYLE SESSION SDDM_THEME FRIDAY_AI_PROVIDERS FRIDAY_AI_KEYS FRIDAY_LOCAL_ENGINE FRIDAY_LOCAL_BUDGET_MB FRIDAY_LOCAL_MODEL AUTOLOGIN ENCRYPT FEAT_DESKTOP FEAT_TASKS FEAT_APPNAME FEAT_SCREENTEXT FEAT_PHONE BROWSERS DEFAULT_BROWSER
 # The person confirmed erasing this disk (or adding FRIDAY next to what's on
 # it) on the review screen.
 if [[ "$INSTALL_MODE" == alongside ]]; then

@@ -61,6 +61,22 @@ if [[ "${SKIP_PACKAGE_BUILD:-false}" != "true" ]]; then
   cp "$PROJECT_ROOT/packaging/arch/pocketdesk/PKGBUILD" "$PROJECT_ROOT/packaging/arch/pocketdesk/pocketdesk.install" "$PD_BUILD_DIR/"
   (cd "$PD_BUILD_DIR" && PKGDEST="$FRIDAY_REPO_DIR" makepkg -f --noconfirm --syncdeps --nocheck)
   rm -rf "$PD_BUILD_DIR"
+
+  # Browsers that are only in the AUR (Brave, Zen), offered by the installer:
+  # their recipes fetched with yay (or git where yay isn't installed, as on
+  # CI), built here into the same local repo. Never Flathub.
+  echo "Building AUR packages (brave-bin, zen-browser-bin)..."
+  find "$FRIDAY_REPO_DIR" -maxdepth 1 \( -name 'brave-bin*' -o -name 'zen-browser-bin*' \) -type f -delete
+  AUR_BUILD_DIR=$(mktemp -d)
+  for aur in brave-bin zen-browser-bin; do
+    if command -v yay >/dev/null 2>&1; then
+      (cd "$AUR_BUILD_DIR" && yay -G "$aur")
+    else
+      git clone -q "https://aur.archlinux.org/$aur.git" "$AUR_BUILD_DIR/$aur"
+    fi
+    (cd "$AUR_BUILD_DIR/$aur" && PKGDEST="$FRIDAY_REPO_DIR" makepkg -f --noconfirm --syncdeps --nocheck)
+  done
+  rm -rf "$AUR_BUILD_DIR"
 fi
 FRIDAY_PKG=$(find "$FRIDAY_REPO_DIR" -maxdepth 1 -name 'friday-git-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1)
 if [[ -z "$FRIDAY_PKG" ]]; then
@@ -74,8 +90,20 @@ if [[ -z "$POCKETDESK_PKG" ]]; then
   echo "  Run without SKIP_PACKAGE_BUILD=true." >&2
   exit 1
 fi
+BRAVE_PKG=$(find "$FRIDAY_REPO_DIR" -maxdepth 1 -name 'brave-bin-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1)
+if [[ -z "$BRAVE_PKG" ]]; then
+  echo "Error: no brave-bin package in $FRIDAY_REPO_DIR" >&2
+  echo "  Run without SKIP_PACKAGE_BUILD=true." >&2
+  exit 1
+fi
+ZEN_PKG=$(find "$FRIDAY_REPO_DIR" -maxdepth 1 -name 'zen-browser-bin-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1)
+if [[ -z "$ZEN_PKG" ]]; then
+  echo "Error: no zen-browser-bin package in $FRIDAY_REPO_DIR" >&2
+  echo "  Run without SKIP_PACKAGE_BUILD=true." >&2
+  exit 1
+fi
 rm -f "$FRIDAY_REPO_DIR"/friday.db* "$FRIDAY_REPO_DIR"/friday.files*
-repo-add -q "$FRIDAY_REPO_DIR/friday.db.tar.gz" "$FRIDAY_PKG" "$POCKETDESK_PKG"
+repo-add -q "$FRIDAY_REPO_DIR/friday.db.tar.gz" "$FRIDAY_PKG" "$POCKETDESK_PKG" "$BRAVE_PKG" "$ZEN_PKG"
 # The profile's pacman.conf plus the local repo, for this build only.
 BUILD_PACMAN_CONF=$(mktemp)
 trap 'rm -f "$BUILD_PACMAN_CONF"' EXIT

@@ -43,6 +43,10 @@ FRIDAY_AI_KEYS="${FRIDAY_AI_KEYS:-}"
 if [[ -n "${FRIDAY_AI_PROVIDER:-}" && -n "${FRIDAY_AI_KEY:-}" ]]; then
   FRIDAY_AI_KEYS+="$FRIDAY_AI_PROVIDER=$FRIDAY_AI_KEY"$'\n'
 fi
+# Web browsers to install (one or more of: brave, firefox, zen, vivaldi;
+# chromium is always installed) and which one opens links by default.
+BROWSERS="${BROWSERS:-}"
+DEFAULT_BROWSER="${DEFAULT_BROWSER:-chromium}"
 # Local AI: ollama|llamacpp, its memory budget and model (friday local-ai presets).
 FRIDAY_LOCAL_ENGINE="${FRIDAY_LOCAL_ENGINE:-}"
 FRIDAY_LOCAL_BUDGET_MB="${FRIDAY_LOCAL_BUDGET_MB:-}"
@@ -302,6 +306,19 @@ if [[ "$FRIDAY_LOCAL_ENGINE" == ollama || "$FRIDAY_LOCAL_ENGINE" == llamacpp ]];
 fi
 if (( ${#local_pkgs[@]} )); then pacstrap_with_retry /mnt "${local_pkgs[@]}"; fi
 if [[ "$FRIDAY_LOCAL_ENGINE" == ollama ]]; then arch-chroot /mnt systemctl enable ollama 2>/dev/null || true; fi
+# Web browsers chosen in addition to Chromium. Brave and Zen are only in the
+# AUR: build-iso.sh built them into the ISO's own repo, so they go in as files.
+browser_pkgs=() browser_files=()
+for b in $BROWSERS; do
+  case "$b" in
+    brave)   browser_files+=("$(find /opt/friday/repo -maxdepth 1 -name 'brave-bin-*.pkg.tar.zst' | sort | tail -n1)") ;;
+    firefox) browser_pkgs+=("firefox") ;;
+    zen)     browser_files+=("$(find /opt/friday/repo -maxdepth 1 -name 'zen-browser-bin-*.pkg.tar.zst' | sort | tail -n1)") ;;
+    vivaldi) browser_pkgs+=("vivaldi") ;;
+  esac
+done
+if (( ${#browser_pkgs[@]} )); then pacstrap_with_retry /mnt "${browser_pkgs[@]}"; fi
+if (( ${#browser_files[@]} )); then pacstrap_with_retry -U /mnt "${browser_files[@]}"; fi
 # Updates: each FRIDAY release publishes friday-git to this pacman repo, so
 # pacman -Syu keeps FRIDAY current. Packages and the database are signed with
 # FRIDAY's release key (shipped in friday-git); pacman trusts that one key and
@@ -621,6 +638,27 @@ if [[ "$FRIDAY_LOCAL_ENGINE" == ollama || "$FRIDAY_LOCAL_ENGINE" == llamacpp ]] 
     "/mnt$USER_HOME/.config/systemd/user/default.target.wants/friday-local-ai.service"
   echo "Local AI: $FRIDAY_LOCAL_MODEL on $FRIDAY_LOCAL_ENGINE, downloaded after the first login."
 fi
+
+# Default web browser: the one picked opens links (mimeapps.list, what
+# xdg-open and every desktop app read).
+friday_default_browser() {
+  local home="$1" desktop
+  case "$2" in
+    brave) desktop=brave-browser.desktop ;;
+    firefox) desktop=firefox.desktop ;;
+    zen) desktop=zen.desktop ;;
+    vivaldi) desktop=vivaldi-stable.desktop ;;
+    *) desktop=chromium.desktop ;;
+  esac
+  local f="$home/.config/mimeapps.list"
+  mkdir -p "$home/.config"
+  if [ -f "$f" ]; then
+    sed -i '\#^text/html=#d;\#^x-scheme-handler/http=#d;\#^x-scheme-handler/https=#d' "$f"
+  fi
+  grep -q '^\[Default Applications\]' "$f" 2>/dev/null || printf '[Default Applications]\n' >>"$f"
+  sed -i "/^\[Default Applications\]/a text/html=$desktop\nx-scheme-handler/http=$desktop\nx-scheme-handler/https=$desktop" "$f"
+}
+friday_default_browser "/mnt$USER_HOME" "$DEFAULT_BROWSER"
 
 if [ "$USERNAME" != "root" ]; then
   arch-chroot /mnt chown -R "$USERNAME:$USERNAME" "$USER_HOME" 2>/dev/null || true
