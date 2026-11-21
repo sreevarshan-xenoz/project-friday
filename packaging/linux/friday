@@ -45,6 +45,7 @@ Autonomous Agent & Cognitive Loop:
   friday mcp [allow|deny <tool>]   Let other AI apps use FRIDAY (MCP); each tool off until allowed
   friday meeting [notes] [--yes]   A meeting's captions become decisions, actions and open
                                    questions, kept with the project
+  friday browser [setup|status]    The tab you're on goes to FRIDAY as text (its extension)
   friday recall [status|on|off|keep 3h|24h|7d]  Keep the text of windows you look at, here
                                    only, so you can ask "what was that…" (off forgets it)
   friday clips [status|on|off|pick] Keep the last 200 texts you copy; Super+Ctrl+V pastes one
@@ -1421,6 +1422,58 @@ friday_wrong() {
   )
   echo "Saved a repro of that answer (no question or answer text): $f"
   notify-send -a FRIDAY -- "FRIDAY" "Thanks: saved what went wrong (no question or answer text). friday wrong --list shows it." 2>/dev/null || true
+}
+
+# `friday browser [setup|status]`: FRIDAY's browser extension reads the tab
+# you're on when you ask about the page (title, address, selection, text),
+# instead of a screenshot. The browser starts FRIDAY's host itself (native
+# messaging); there is no debugging port.
+FRIDAY_EXTENSION_ID=eiblopljacafgajanhkngbhejpjjmfff
+# friday_tab_in_front <tab json>: the tab the extension read is the one in
+# the focused window (its title is in the window's). A private window the
+# extension can't see would otherwise give the last normal window's tab.
+friday_tab_in_front() {
+  local t w
+  t=$(jq -r '.title // empty' <<<"$1" 2>/dev/null)
+  w=$(timeout 2 hyprctl activewindow -j 2>/dev/null | jq -r '.title // empty' 2>/dev/null)
+  [ -n "$t" ] && [[ "$w" == *"$t"* ]]
+}
+
+# The focused window's app, lower case (nothing without Hyprland).
+friday_app_class() {
+  timeout 2 hyprctl activewindow -j 2>/dev/null | jq -r '.class // empty' 2>/dev/null | tr '[:upper:]' '[:lower:]' || true
+}
+friday_browser() {
+  local host=/usr/lib/friday/friday-browser-host ext=/usr/share/friday/browser-extension d manifest
+  case "${1:-status}" in
+    setup)
+      [ -x "$host" ] || host="$(dirname "$(readlink -f "$0")")/../browser/friday-browser-host"
+      for d in "${XDG_CONFIG_HOME:-$HOME/.config}/chromium" "${XDG_CONFIG_HOME:-$HOME/.config}/google-chrome" \
+          "${XDG_CONFIG_HOME:-$HOME/.config}/BraveSoftware/Brave-Browser" "${XDG_CONFIG_HOME:-$HOME/.config}/microsoft-edge" \
+          "${XDG_CONFIG_HOME:-$HOME/.config}/vivaldi"; do
+        mkdir -p "$d/NativeMessagingHosts"
+        jq -n --arg p "$host" --arg id "$FRIDAY_EXTENSION_ID" \
+          '{name: "org.friday.browser", description: "FRIDAY", path: $p, type: "stdio", allowed_origins: ["chrome-extension://\($id)/"]}' \
+          >"$d/NativeMessagingHosts/org.friday.browser.json"
+      done
+      mkdir -p "$HOME/.mozilla/native-messaging-hosts"
+      jq -n --arg p "$host" '{name: "org.friday.browser", description: "FRIDAY", path: $p, type: "stdio", allowed_extensions: ["browser@friday-os"]}' \
+        >"$HOME/.mozilla/native-messaging-hosts/org.friday.browser.json"
+      cat <<EOF2
+FRIDAY's host is registered with Chromium, Chrome, Brave, Edge, Vivaldi and Firefox.
+Now add the extension once:
+  Chromium, Chrome, Brave, Edge: open chrome://extensions, turn on Developer mode,
+    "Load unpacked", and pick $ext
+  Firefox: open about:debugging, "This Firefox", "Load Temporary Add-on", and pick
+    $ext/manifest.json (Firefox forgets it on restart until it's signed)
+It reads the tab only when you ask about the page, and never private windows.
+EOF2
+      ;;
+    status)
+      if out=$(timeout 8 friday-ctl browser tab 2>&1); then echo "Browser extension: connected (the tab in front: $(jq -r '.title' <<<"$out" | cut -c1-60))"
+      else echo "Browser extension: not connected. Set it up: friday browser setup"; fi ;;
+    *) echo "Usage: friday browser [setup|status]" >&2; return 1 ;;
+  esac
 }
 
 # `friday sync`: the thoughts and workspaces of the projects you choose,
@@ -3833,7 +3886,8 @@ case "${1:-}" in
           if [ "$source_label" = Clipboard ]; then used_parts+=("your clipboard"); else used_parts+=("your selection"); fi
         fi
         if ${use_region:-false}; then used_parts+=("the area you picked")
-        elif $use_screen; then used_parts+=("the window in front"); fi
+        elif $use_screen; then used_parts+=("the window in front")
+        elif [ -n "${tab:-}" ]; then used_parts+=("the page's text (browser extension)"); fi
         [ -z "${docs:-}" ] || used_parts+=("docs on this computer")
         [ -z "${ws_report:-}" ] || used_parts+=("the windows FRIDAY put back")
         local u
@@ -3925,6 +3979,14 @@ case "${1:-}" in
       exit 0
     fi
 
+    # A browser in front with FRIDAY's extension: the tab's own text instead
+    # of a screenshot (an area you dragged out is still a screenshot).
+    if $use_screen && [ -z "${region:-}" ] && [[ "$(friday_app_class)" =~ firefox|chromium|chrome|brave|librewolf|zen|vivaldi|edge ]] \
+        && tab=$(timeout 8 friday-ctl browser tab 2>/dev/null) && [ -n "$(jq -r '.text // empty' <<<"$tab" 2>/dev/null)" ] \
+        && friday_tab_in_front "$tab"; then
+      request=$(jq -r --arg q "$goal" '"\($q)\n\nThe page in front (read from the browser when asked):\nTitle: \(.title)\nAddress: \(.url)\n" + (if (.selection // "") != "" then "Selected: \(.selection)\n" else "" end) + "Text:\n\"\"\"\n\(.text)\n\"\"\""' <<<"$tab")
+      use_screen=false
+    fi
     if $use_screen; then
       # Pressing the key and typing the question is the per-use consent;
       # the daemon's ContextGate still enforces it.
@@ -4030,6 +4092,10 @@ case "${1:-}" in
   recall)
     shift
     friday_recall "$@"
+    ;;
+  browser)
+    shift
+    friday_browser "$@"
     ;;
   sync)
     shift

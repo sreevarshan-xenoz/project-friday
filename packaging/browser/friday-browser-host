@@ -1,0 +1,5 @@
+#!/bin/sh
+# FRIDAY's native-messaging host: the browser starts this for FRIDAY's
+# extension (org.friday.browser.json names it). The browser passes the
+# extension's origin; friday-ctl doesn't need it.
+exec friday-ctl browser-host

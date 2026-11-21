@@ -846,6 +846,31 @@ if grep -q "network unreachable" "$state/last-ask.json"; then fail "last-ask.jso
 rm -f "$state/last-ask.json"
 contains "nothing to report before an answer" "$(bash "$F" wrong x 2>&1 || true)" "No answer to report yet"
 
+echo "the browser extension"
+# friday-ctl browser tab answers as the extension would; a browser is in front.
+mkdir -p "$W/bt-bin"
+cat >"$W/bt-bin/friday-ctl" <<STUB
+#!/bin/bash
+if [ "\$1 \$2" = "browser tab" ]; then printf '%s\n' '{"title":"Rust book","url":"https://example.com/book","selection":"","text":"Ownership rules: each value has one owner."}'; exit 0; fi
+exec "$S/friday-ctl" "\$@"
+STUB
+chmod +x "$W/bt-bin/friday-ctl"
+printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s %q\nexit 0\n' '{"class":"firefox","title":"Rust book — Mozilla Firefox"}' >"$S/hyprctl"; chmod +x "$S/hyprctl"
+: >"$LOG"; PATH="$W/bt-bin:$PATH" bash "$F" ask --screen "summarize this page"; sleep 0.3
+if grep -q "context screen" "$LOG"; then fail "took a screenshot though the extension had the page"; else pass "a browser with the extension sends the page's text, no screenshot"; fi
+contains "with its address" "$(cat "$LOG")" "Address: https://example.com/book"
+contains "and its text" "$(cat "$LOG")" "Ownership rules"
+: >"$LOG"; bash "$F" ask --screen "summarize this page"; sleep 0.3
+contains "without the extension it's a screenshot as before" "$(cat "$LOG")" "context screen"
+# A private window the extension can't see: its tab answer is another window's.
+printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s %q\nexit 0\n' '{"class":"firefox","title":"Mozilla Firefox Private Browsing"}' >"$S/hyprctl"
+: >"$LOG"; PATH="$W/bt-bin:$PATH" bash "$F" ask --screen "summarize this page"; sleep 0.3
+if grep -q "Ownership rules" "$LOG"; then fail "sent another window's tab"; else pass "a tab that isn't the one in front isn't sent"; fi
+rm -f "$S/hyprctl"
+H2="$W/bhome"; mkdir -p "$H2"
+HOME="$H2" XDG_CONFIG_HOME="$H2/.config" bash "$F" browser setup >/dev/null
+contains "setup registers the host with Chromium for FRIDAY's extension only" "$(cat "$H2/.config/chromium/NativeMessagingHosts/org.friday.browser.json")" "chrome-extension://eiblopljacafgajanhkngbhejpjjmfff/"
+contains "and with Firefox" "$(cat "$H2/.mozilla/native-messaging-hosts/org.friday.browser.json")" "browser@friday-os"
 echo "encrypted sync between your machines"
 # A stand-in for age: "encrypts" by naming the recipients; only a key among
 # them opens it (the flow is tested here, age itself does the cryptography).
