@@ -377,7 +377,7 @@ friday_disk_scan() {
     done
     echo "others=$others"
     echo "esp_free_mb=$(df -m --output=avail "$mnt" | tail -n1 | xargs)"
-    umount "$mnt"
+    umount "$mnt" || true
   else
     echo windows=0
     echo esp_free_mb=0

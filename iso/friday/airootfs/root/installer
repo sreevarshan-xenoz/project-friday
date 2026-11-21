@@ -716,13 +716,23 @@ if [[ -n "$ESP_PART" ]]; then
   # unless FRIDAY's menu was chosen, and the next start goes to FRIDAY once.
   esp_disk="/dev/$(lsblk -n -d -o PKNAME "$ESP_PART")"
   esp_num=$(cat "/sys/class/block/$(basename "$ESP_PART")/partition")
+  # An entry left by an earlier attempt goes first, so the new one is the
+  # only "FRIDAY OS"; it's found as the entry that wasn't there before.
+  for old in $(efibootmgr | sed -n 's/^Boot\([0-9A-Fa-f]\{4\}\)\*\{0,1\} FRIDAY OS\(\t.*\)\{0,1\}$/\1/p'); do
+    efibootmgr -q --bootnum "$old" --delete-bootnum
+  done
+  entries_before=$(efibootmgr | grep -o '^Boot[0-9A-Fa-f]\{4\}' | sort)
   order=$(efibootmgr | sed -n 's/^BootOrder: //p')
   efibootmgr -q --create --disk "$esp_disk" --part "$esp_num" --label "FRIDAY OS" \
     --loader '\EFI\systemd\systemd-bootx64.efi'
-  friday_entry=$(efibootmgr | awk '/FRIDAY OS/ { sub(/^Boot/, "", $1); sub(/\*$/, "", $1); print $1 }' | tail -n1)
-  if [[ "$BOOT_DEFAULT" == other && -n "$order" && -n "$friday_entry" ]]; then
-    efibootmgr -q --bootorder "$order,$friday_entry"
+  friday_entry=$(comm -13 <(echo "$entries_before") <(efibootmgr | grep -o '^Boot[0-9A-Fa-f]\{4\}' | sort) | head -n1)
+  friday_entry=${friday_entry#Boot}
+  [[ -n "$friday_entry" ]] || { echo "The firmware didn't keep FRIDAY's boot entry." >&2; false; }
+  if [[ "$BOOT_DEFAULT" == other ]]; then
+    efibootmgr -q --bootorder "${order:+$order,}$friday_entry"
     efibootmgr -q --bootnext "$friday_entry"
+  else
+    efibootmgr -q --bootorder "$friday_entry${order:+,$order}"
   fi
   mkdir -p /mnt/var/lib/friday/install
   cp "$GPT_BACKUP" /run/friday-esp-before.txt /mnt/var/lib/friday/install/
