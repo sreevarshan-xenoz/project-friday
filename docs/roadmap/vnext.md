@@ -126,12 +126,9 @@ refuse local-network redirects. Since then (after-0.7.3 #2) one project
 identity is carried through the timeline, thoughts, lessons and git facts,
 `friday ask` and the daemon share one resume grammar
 (`tests/fixtures/resume-phrases.tsv`), and lessons keep their project.
-Still open from them:
-- **Browser page reads are checked after the load.** The download path
-  refuses a redirect to the local network before following it; headless
-  Chrome is checked only on where it ended up, so a local service may still
-  get the request (its text never reaches the model). Closing it needs
-  request interception in the browser adapter.
+Browser page reads now refuse a redirect to the local network before Chrome
+contacts it too (CDP request interception in the browser adapter). Gaps found
+since are in `after-0.8.0.md`.
 
 ### N2 · Continuity: project understanding
 
