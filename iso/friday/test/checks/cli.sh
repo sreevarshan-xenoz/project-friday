@@ -719,6 +719,7 @@ cat >"$S/hyprctl" <<STUB
 echo "hyprctl \$*" >>"$LOG"
 c=\${CLIENTS:-}; [ -n "\$c" ] || c='[{"address":"0xabc1"}]'
 [[ "\$*" == "clients -j" ]] && printf %s "\$c"
+[[ -n "\${OLD_HYPR:-}" && "\$*" == "dispatch hl.dsp"* ]] && echo "Invalid dispatcher"
 exit 0
 STUB
 chmod +x "$S/hyprctl"
@@ -726,6 +727,9 @@ printf '{"ts":"t","said":"moving kitty to workspace 2","kind":"window","args":["
 : >"$LOG"; out=$(bash "$F" undo)
 contains "undo: a moved window goes back" "$(cat "$LOG")" 'hl.dsp.window.move({ workspace = "1", follow = false, window = "address:0xabc1" })'
 contains "undo: and says where" "$out" "Undid moving kitty to workspace 2: it's back on workspace 1."
+printf '{"ts":"t","said":"moving kitty to workspace 2","kind":"window","args":["0xabc1","1"]}\n' >"$state/undo.jsonl"
+: >"$LOG"; out=$(OLD_HYPR=1 bash "$F" undo)
+contains "undo: an older Hyprland gets the classic dispatch" "$(cat "$LOG")" "hyprctl dispatch movetoworkspacesilent 1,address:0xabc1"
 printf '{"ts":"t","said":"moving kitty to workspace 2","kind":"window","args":["0xabc1","1"]}\n' >"$state/undo.jsonl"
 : >"$LOG"; out=$(CLIENTS='[]' bash "$F" undo || true)
 contains "undo: a closed window is said so" "$out" "That window is closed"

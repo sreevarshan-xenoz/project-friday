@@ -1161,7 +1161,7 @@ friday_sound_now() {
 
 # `friday undo`: put back the last thing FRIDAY changed, and say what.
 friday_undo() {
-  local f last kind said a0 a1 pct win
+  local f last kind said a0 a1 pct win out
   f=$(friday_undo_file)
   last=$(tail -n 1 "$f" 2>/dev/null || true)
   if [ -z "$last" ]; then echo "Nothing to undo."; return 0; fi
@@ -1200,8 +1200,13 @@ friday_undo() {
       if ! timeout 2 hyprctl clients -j 2>/dev/null | jq -e --arg a "$a0" 'any(.[]; .address == $a)' >/dev/null 2>&1; then
         echo "That window is closed, so there's nothing to put back."; return 1
       fi
-      timeout 2 hyprctl dispatch "hl.dsp.window.move({ workspace = \"$a1\", follow = false, window = \"address:$a0\" })" >/dev/null 2>&1 \
-        || { echo "Couldn't move it back."; return 1; }
+      # Hyprland answers "ok" (exit 0 either way); before 0.55 it takes the
+      # classic dispatch instead of Lua.
+      out=$(timeout 2 hyprctl dispatch "hl.dsp.window.move({ workspace = \"$a1\", follow = false, window = \"address:$a0\" })" 2>&1 || echo failed)
+      if [[ -n "$out" && "$out" != ok ]]; then
+        out=$(timeout 2 hyprctl dispatch movetoworkspacesilent "$a1,address:$a0" 2>&1 || echo failed)
+      fi
+      if [[ -n "$out" && "$out" != ok ]]; then echo "Couldn't move it back."; return 1; fi
       echo "Undid $said: it's back on workspace $a1." ;;
     *) echo "Can't undo that."; return 1 ;;
   esac
