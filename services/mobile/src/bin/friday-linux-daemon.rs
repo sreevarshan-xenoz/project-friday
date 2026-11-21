@@ -352,7 +352,8 @@ async fn main() {
                 .unwrap_or_default(),
         )
         .start();
-    let screen_ask = friday_mobile::context_read::ScreenAskManager::new(screen_reader.clone());
+    let screen_ask = friday_mobile::context_read::ScreenAskManager::new(screen_reader.clone())
+        .with_bus(bus.clone());
 
     // Watch for package upgrades: if the binary on disk was replaced (e.g. pacman -Syu)
     // and no goal or screen ask is in flight, restart the daemon so systemd starts
