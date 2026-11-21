@@ -475,6 +475,21 @@ printf 'LLAMACPP_ENABLED=1\nLLAMACPP_BASE_URL=http://127.0.0.1:8080/v1\n' >"$env
 : >"$LOG"; bash "$F" ask --screen "what is this"; sleep 0.3
 if grep -q "context screen" "$LOG"; then fail "took a screenshot of a private window"; else pass "no screenshot of a private window"; fi
 contains "and says so" "$(cat "$LOG")" "no screenshot of it leaves"
+# "never <name>": not even the local model reads that window.
+cp "$HOME/.config/friday/private-windows" "$W/pw.saved" 2>/dev/null || : >"$W/pw.saved"
+printf 'never thunderbird\n~/work/clients\n' >"$HOME/.config/friday/private-windows"
+export HYPR_WIN='{"class":"thunderbird","title":"Inbox"}'
+: >"$LOG"; LOCAL_REPLY="x" PRIMARY="the contract terms" PICK="explain" bash "$F" ask --selection; sleep 0.3
+if grep -q "chat/completions\|^friday-ctl" "$LOG"; then fail "a never window was read"; else pass "a never window isn't read, not even locally"; fi
+contains "and it says which rule" "$(cat "$LOG")" 'your rule "never thunderbird"'
+contains "a folder line marks folders private" "$(bash -c 'source <(sed -n "/^friday_private_folder()/,/^}/p" "$1"); friday_private_folder "$HOME/work/clients/acme"' _ "$F")" "~/work/clients"
+if [ -n "$(bash -c 'source <(sed -n "/^friday_private_folder()/,/^}/p" "$1"); friday_private_folder "$HOME/work/clientside"' _ "$F")" ]; then fail "a folder rule matched a sibling folder"; else pass "a folder rule matches only inside it"; fi
+printf 'never ~/vault\n' >"$HOME/.config/friday/private-windows"
+contains "a never folder stays never" "$(bash -c 'source <(sed -n "/^friday_private_folder()/,/^}/p" "$1"); friday_private_folder "$HOME/vault/"' _ "$F")" "never:~/vault"
+export HYPR_WIN='{"class":"foot","title":"~/vault notes"}'
+: >"$LOG"; PRIMARY="x" PICK="explain" bash "$F" ask --selection; sleep 0.3
+if grep -q "your rule" "$LOG"; then fail "a folder line was matched against a window title"; else pass "folder lines aren't matched against windows"; fi
+cp "$W/pw.saved" "$HOME/.config/friday/private-windows"
 export HYPR_WIN='{"class":"firefox","title":"Bank statement — Mozilla Firefox Private Browsing"}'
 : >"$LOG"; LOCAL_REPLY="ok" PRIMARY="balance 12" PICK="explain" bash "$F" ask --selection; sleep 0.3
 contains "private browsing counts" "$(cat "$LOG")" "127.0.0.1:8080"
