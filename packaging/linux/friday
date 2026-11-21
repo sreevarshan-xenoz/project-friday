@@ -1806,23 +1806,26 @@ EOF2
 # are units to qalc, so only these shapes go).
 friday_calc_expr() {
   local q="$1" units='km|m|cm|mm|mi|miles?|ft|feet|foot|in|inch(es)?|yd|yards?|kg|g|lb|lbs|pounds?|oz|ounces?|l|ml|gal|gallons?|c|f|celsius|fahrenheit|kph|mph|kb|mb|gb|tb'
-  local pct='^([0-9.]+) ?% of ([0-9.]+)$' conv arith='^[-0-9. ()+*/^x×÷]+$' op='[0-9] *[-+*/^x×÷] *[0-9(]'
-  conv="^([0-9.]+) ?($units) (to|in|into) ($units)\$"
+  local pct='^([0-9.]+) ?% of ([0-9.]+)$' conv arith='^[-0-9. ()+*/^x×÷]+$'
+  # An operator that can't be a date, version, phone number or "24/7":
+  # + * x × ÷ ^ anywhere, or - and / only with spaces around them.
+  local op='[0-9)] *[+*^x×÷] *[0-9(]|[0-9)] [-/] [0-9(]' dots='[0-9]*\.[0-9]*\.'
+  conv="^(-?[0-9.]+) ?($units) (to|in|into) ($units)\$"
   q=$(sed -E -e "s/^(what is|what's|calculate|calc|compute|convert|how much is) //" -e 's/,//g' <<<"$q")
   if [[ "$q" =~ $pct ]]; then
     echo "${BASH_REMATCH[1]}/100*${BASH_REMATCH[2]}"
   elif [[ "$q" =~ $conv ]]; then
     # qalc's names where ours are ambiguous (c is the speed of light, gb a
-    # gram-bit to it).
-    local from="${BASH_REMATCH[2]}" to="${BASH_REMATCH[5]}" u
+    # gram-bit to it, lbs pound-seconds).
+    local from="${BASH_REMATCH[2]}" to="${BASH_REMATCH[5]}" n="${BASH_REMATCH[1]}" u
     for u in from to; do
       case "${!u}" in
-        c) printf -v "$u" '°C' ;; f) printf -v "$u" '°F' ;;
+        c) printf -v "$u" '°C' ;; f) printf -v "$u" '°F' ;; lbs) printf -v "$u" 'lb' ;;
         kb) printf -v "$u" 'kB' ;; mb) printf -v "$u" 'MB' ;; gb) printf -v "$u" 'GB' ;; tb) printf -v "$u" 'TB' ;;
       esac
     done
-    echo "${BASH_REMATCH[1]} $from to $to"
-  elif [[ "$q" =~ $arith && "$q" =~ $op ]]; then
+    echo "$n $from to $to"
+  elif [[ "$q" =~ $arith && "$q" =~ $op && ! "$q" =~ $dots ]]; then
     sed -e 's/[x×]/*/g' -e 's/÷/\//g' <<<"$q"
   else
     return 1
@@ -1867,7 +1870,10 @@ friday_local_command() {
     disown 2>/dev/null || true
     echo "Timer set for $label."
   elif command -v qalc >/dev/null 2>&1 && expr=$(friday_calc_expr "$q") \
-      && out=$(timeout 3 qalc -t "$expr" </dev/null 2>/dev/null) && [ -n "$out" ]; then
+      && out=$(timeout 3 qalc -t -- "$expr" </dev/null 2>/dev/null) && [ -n "$out" ] \
+      && { [[ "$expr" != *" to "* ]] || [[ "$out" == *"${expr##* to }"* ]]; }; then
+    # (A conversion counts only when the answer is in the unit asked for:
+    # km to kg is no conversion.)
     # Worked out here, at once: no model, nothing sent.
     echo "$expr = $out"
   elif [[ "$q" =~ ^(open\ )?(the\ )?(wi-?fi|network|bluetooth)\ (settings|controls)$ ]]; then
