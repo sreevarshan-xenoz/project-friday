@@ -17,7 +17,7 @@ disturb, and the `friday` commands below are Linux only so far.
 |---|---|---|
 | Super+Y | whatever you type | your question |
 | Super+Alt+Y | the text you selected (or copied) | the question, the text, the app name and window title |
-| Super+Ctrl+Y | your screen | the question and one screenshot. After `friday screen-text on` (Windows: the tray menu's "Read a window's text for screen asks"), the window's text instead when the app offers enough of it (it can include text you can't see, and goes to any provider you use) |
+| Super+Ctrl+Y | your screen | the question and the window's text when the app offers enough of it (faster, and less than a picture; it can include text scrolled out of view), otherwise one screenshot. `friday screen-text off` (Windows: the tray menu's "Read a window's text for screen asks") always sends the screenshot |
 
 You can also just say it in the question: "what is on my screen" or "what am I looking at" takes the screen path
 (same one-screenshot rule as Super+Ctrl+Y), while a how-to like "how do I change my screen brightness" does not.
@@ -166,9 +166,9 @@ and accounts, desktop control, coding agents, and the keys FRIDAY answers to.
 Setup asks what FRIDAY may do (FRIDAY OS: the "What may FRIDAY do?" step; Windows:
 the installer's Customize page and the tray menu): control windows, apps, volume
 and music; run scheduled tasks; name the app a selection came from; send a
-window's text instead of a screenshot. Everything is on except the last, and each
+window's text instead of a screenshot. All are on by default, and each
 can be changed later (`FRIDAY_DESKTOP=0`, `FRIDAY_STANDING_TASKS=0`,
-`friday app-context off`, `friday screen-text on` or the Windows tray menu).
+`friday app-context off`, `friday screen-text off` or the Windows tray menu).
 
 ## The launcher
 

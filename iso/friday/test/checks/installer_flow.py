@@ -66,7 +66,7 @@ STEPS = [
     (2, ENTER),  # login theme
     (4, "x"),  # features: desktop control off
     (1, DOWN * 3),
-    (1, "x"),  # window text on
+    (1, "x"),  # window text off (on by default)
     (1, ENTER),
     *(
         [
@@ -149,7 +149,7 @@ checks = {
     "autologin defaults to off": "Password required at login" in text,
     "encryption defaults to on": "Disk will be encrypted (LUKS2)" in text,
     "review shows encryption": "(encrypted)" in text,
-    "review lists what FRIDAY may do": "Allowed" in text and "window text" in text,
+    "review lists what FRIDAY may do": "Allowed" in text and "app name" in text,
     "installer received the spec": bool(env_lines),
     "keyboard is chosen before the password": 0
     <= text.find("Keyboard: uk")
@@ -210,7 +210,7 @@ for key, want in ai_spec + [
     ("desktop", "false"),
     ("tasks", "true"),
     ("appname", "true"),
-    ("screentext", "true"),
+    ("screentext", "false"),
 ]:
     checks[f"spec {key}={want}"] = f"{key}={want}" in env
 

@@ -3,8 +3,8 @@ namespace FridayTray.Core;
 /// <summary>
 /// The on/off settings kept in friday.env, read and written the way the daemon
 /// reads them (so the Settings window and `friday.env` never disagree):
-/// `FRIDAY_DESKTOP=0` turns desktop control off, `FRIDAY_SCREEN_TEXT=1` turns
-/// reading a window's text on. Only a value that differs from the default is
+/// `FRIDAY_DESKTOP=0` turns desktop control off, `FRIDAY_SCREEN_TEXT=0` turns
+/// reading a window's text (instead of a screenshot) off. Only a value that differs from the default is
 /// written, so a default install keeps an empty file.
 /// </summary>
 public static class AppSettings
@@ -21,9 +21,9 @@ public static class AppSettings
     public static bool AgentsOn(IReadOnlyDictionary<string, string> env) =>
         !env.TryGetValue(Agents, out var v) || v != "0";
 
-    /// <summary>Off unless "1" or "true" (the daemon's rule for settings that default off).</summary>
+    /// <summary>On unless "0" or "false" (the daemon's rule for screen text).</summary>
     public static bool ScreenTextOn(IReadOnlyDictionary<string, string> env) =>
-        env.TryGetValue(ScreenText, out var v) && v is "1" or "true";
+        !env.TryGetValue(ScreenText, out var v) || v is not ("0" or "false");
 
     /// <summary>No key or agent account in friday.env: FRIDAY is on the free models.</summary>
     public static bool UsingFreeModels(IReadOnlyDictionary<string, string> env) =>
@@ -37,5 +37,5 @@ public static class AppSettings
         EnvFile.WithSetting(existing, Agents, on ? null : "0");
 
     public static string WithScreenText(string existing, bool on) =>
-        EnvFile.WithSetting(existing, ScreenText, on ? "1" : null);
+        EnvFile.WithSetting(existing, ScreenText, on ? null : "0");
 }

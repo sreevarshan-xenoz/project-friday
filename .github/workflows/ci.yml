@@ -182,8 +182,10 @@ jobs:
           if ($trayVersion -notlike "$crate.*") { throw "friday-tray.exe says version $trayVersion, not $crate.x" }
           # The options that are off unless asked for.
           if (Test-Path "$env:USERPROFILE\Desktop\FRIDAY.lnk") { throw "a default install made a desktop shortcut" }
-          if (Test-Path 'HKCU:\Software\FRIDAY\Options') { throw "a default install turned on screen text" }
-          Write-Host "installed to $dir with Run entry, PATH and shortcut (no desktop shortcut, no screen text)"
+          if ((Get-ItemProperty 'HKCU:\Software\FRIDAY\Options').ScreenText -ne 1) { throw "a default install didn't turn on screen text" }
+          if ((Get-ItemProperty 'HKCU:\Software\FRIDAY\Options').AdminAccess) { throw "a default install asked for administrator rights" }
+          if ((Get-ItemProperty 'HKCU:\Software\FRIDAY\Options').ScreenTextAsked -ne 1) { throw "the installer didn't record that it asked about screen text" }
+          Write-Host "installed to $dir with Run entry, PATH, shortcut and screen text (no desktop shortcut, no administrator rights)"
       - name: Administrator start-up task (the elevated half of the Settings switch)
         run: |
           # The runner is an administrator, so the tray's --apply-elevated mode

@@ -8,12 +8,12 @@ public class SettingsTests
     private static Dictionary<string, string> Env(string text) => EnvFile.Parse(text);
 
     [Fact]
-    public void Defaults_are_desktop_control_on_and_screen_text_off()
+    public void Defaults_are_desktop_control_on_and_screen_text_on()
     {
         var empty = Env("");
         Assert.True(AppSettings.DesktopControlOn(empty));
         Assert.True(AppSettings.AgentsOn(empty));
-        Assert.False(AppSettings.ScreenTextOn(empty));
+        Assert.True(AppSettings.ScreenTextOn(empty));
     }
 
     [Fact]
@@ -33,11 +33,12 @@ public class SettingsTests
     }
 
     [Fact]
-    public void Screen_text_is_on_for_one_or_true()
+    public void Screen_text_is_off_only_for_zero_or_false()
     {
         Assert.True(AppSettings.ScreenTextOn(Env("FRIDAY_SCREEN_TEXT=1")));
         Assert.True(AppSettings.ScreenTextOn(Env("FRIDAY_SCREEN_TEXT=true")));
         Assert.False(AppSettings.ScreenTextOn(Env("FRIDAY_SCREEN_TEXT=0")));
+        Assert.False(AppSettings.ScreenTextOn(Env("FRIDAY_SCREEN_TEXT=false")));
     }
 
     [Fact]
@@ -48,9 +49,10 @@ public class SettingsTests
         var off = AppSettings.WithDesktopControl(key, false);
         Assert.Equal("OPENAI_API_KEY=sk-test\nFRIDAY_DESKTOP=0\n", off);
         Assert.Equal(key, AppSettings.WithDesktopControl(off, true));
-        var on = AppSettings.WithScreenText(key, true);
-        Assert.Contains("FRIDAY_SCREEN_TEXT=1", on);
-        Assert.Equal(key, AppSettings.WithScreenText(on, false));
+        Assert.Equal(key, AppSettings.WithScreenText(key, true));
+        var textOff = AppSettings.WithScreenText(key, false);
+        Assert.Contains("FRIDAY_SCREEN_TEXT=0", textOff);
+        Assert.Equal(key, AppSettings.WithScreenText(textOff, true));
         var agentsOff = AppSettings.WithAgents(key, false);
         Assert.Equal("OPENAI_API_KEY=sk-test\nFRIDAY_AGENTS=0\n", agentsOff);
         Assert.Equal(key, AppSettings.WithAgents(agentsOff, true));

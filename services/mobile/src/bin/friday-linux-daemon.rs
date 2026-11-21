@@ -288,11 +288,12 @@ async fn main() {
         ),
         context_label,
     );
-    // Off unless the person turned it on (`friday screen-text on`): a window's
-    // words can include text that isn't on screen, so the default stays the
-    // one screenshot they consented to. When on, a window whose app exposes
-    // enough words is asked about as text instead.
-    if std::env::var("FRIDAY_SCREEN_TEXT").is_ok_and(|v| matches!(v.trim(), "1" | "true")) {
+    // On unless turned off (`friday screen-text off`, FRIDAY_SCREEN_TEXT=0): a
+    // window whose app exposes enough words is asked about as text, which is
+    // faster and sends less than a screenshot; otherwise the screenshot goes.
+    // (A window's words can include text scrolled out of view, so it can be
+    // turned off.)
+    if !std::env::var("FRIDAY_SCREEN_TEXT").is_ok_and(|v| matches!(v.trim(), "0" | "false")) {
         if let Some(ui) = friday_mobile::agent_desktop::detect().await {
             screen_reader = screen_reader.with_text(Arc::new(ui));
         }

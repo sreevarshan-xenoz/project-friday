@@ -854,15 +854,13 @@ expect "face setup changes nothing when declined" bash -c "printf 'n\\n' | bash 
 expect "face rejects an unknown action" bash -c "! bash '$F' face bogus"
 
 echo "screen-text"
-contains "screen-text is off by default" "$(bash "$F" screen-text status)" "Screen text: off"
-contains "screen-text on asks first and declining changes nothing" "$(printf 'n\n' | bash "$F" screen-text on 2>&1)" "Nothing changed"
-contains "screen-text still off after declining" "$(bash "$F" screen-text status)" "Screen text: off"
-bash "$F" screen-text on --yes >/dev/null
-contains "screen-text on is saved" "$(bash "$F" screen-text status)" "Screen text: on"
-[[ "$(stat -c %a "$HOME/.config/friday/friday.env")" == 600 ]] && pass "screen-text keeps the env file private" || fail "friday.env is not 0600"
+contains "screen-text is on by default" "$(bash "$F" screen-text status)" "Screen text: on"
 bash "$F" screen-text off >/dev/null
 contains "screen-text off is saved" "$(bash "$F" screen-text status)" "Screen text: off"
-[[ "$(grep -c '^FRIDAY_SCREEN_TEXT=' "$HOME/.config/friday/friday.env" 2>/dev/null || true)" == 0 ]] && pass "screen-text off leaves no setting" || fail "FRIDAY_SCREEN_TEXT left in friday.env"
+[[ "$(stat -c %a "$HOME/.config/friday/friday.env")" == 600 ]] && pass "screen-text keeps the env file private" || fail "friday.env is not 0600"
+bash "$F" screen-text on >/dev/null
+contains "screen-text on is saved" "$(bash "$F" screen-text status)" "Screen text: on"
+[[ "$(grep -c '^FRIDAY_SCREEN_TEXT=' "$HOME/.config/friday/friday.env" 2>/dev/null || true)" == 0 ]] && pass "screen-text on (the default) leaves no setting" || fail "FRIDAY_SCREEN_TEXT left in friday.env"
 
 echo "desktop control and standing tasks switches"
 contains "desktop control is on by default" "$(bash "$F" desktop status)" "Desktop control: on"
