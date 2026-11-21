@@ -173,6 +173,19 @@ internal sealed partial class SettingsWindow : FluentWindow
 
     private async void CheckForUpdates()
     {
+        // async void: anything unexpected is shown here instead of ending the tray.
+        try
+        {
+            await CheckForUpdatesAsync();
+        }
+        catch (Exception e)
+        {
+            MessageBox.Show(this, "FRIDAY wasn't updated:\n\n" + e.Message, "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private async Task CheckForUpdatesAsync()
+    {
         Said("Checking for a newer FRIDAY…");
         var r = await Updater.NewerAsync();
         if (r is null)
