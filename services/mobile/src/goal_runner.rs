@@ -1154,6 +1154,33 @@ fn truncate(s: &str, max: usize) -> String {
     out
 }
 
+/// A `conversation.turn` (a screen ask answered in a conversation):
+/// recorded like a goal's turn, and saved unless in private mode.
+fn note_turn(
+    sessions: &Mutex<HashMap<String, SessionContext>>,
+    conversations: Option<&std::path::Path>,
+    private_mode: bool,
+    payload: &serde_json::Value,
+) {
+    let field = |k: &str| payload.get(k).and_then(|v| v.as_str()).unwrap_or("");
+    let (session_id, goal, result) = (field("session_id"), field("goal"), field("result"));
+    if session_id.is_empty() || goal.trim().is_empty() {
+        return;
+    }
+    {
+        let mut map = sessions.lock().unwrap();
+        let ctx = map
+            .entry(session_id.to_string())
+            .or_insert_with(SessionContext::new);
+        ctx.turn += 1;
+        ctx.record(goal, truncate(result, MAX_CONTEXT_CHARS));
+    }
+    evict_lru(sessions, MAX_SESSIONS);
+    if let (Some(path), false) = (conversations, private_mode) {
+        save_conversations(path, &sessions.lock().unwrap());
+    }
+}
+
 /// Keep the session map bounded: drop the least-recently-seen entries until
 /// the map is at most `max` sessions.
 fn evict_lru(sessions: &Mutex<HashMap<String, SessionContext>>, max: usize) {
@@ -1204,7 +1231,7 @@ pub struct GoalRunner {
     /// Per-session conversational context (`session_id` → context), bounded by
     /// [`MAX_SESSIONS`] with LRU eviction. Locked only in short critical
     /// sections — never held across an await.
-    sessions: Mutex<HashMap<String, SessionContext>>,
+    sessions: Arc<Mutex<HashMap<String, SessionContext>>>,
     /// Where conversations are saved between daemon runs (`None`: memory only).
     conversations: Option<std::path::PathBuf>,
     /// Where lessons from failed goals are kept (`None`: not learned).
@@ -1682,7 +1709,7 @@ impl GoalRunner {
             workspace,
             answerer: fabric.clone().map(|f| f as Arc<dyn LlmStrategyClient>),
             fabric,
-            sessions: Mutex::new(HashMap::new()),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
             conversations: None,
             lessons: None,
             timeline: None,
@@ -1784,6 +1811,26 @@ impl GoalRunner {
     /// before the send).
     pub fn start(self) -> GoalRunnerHandle {
         let handle = self.handle();
+        // A screen ask answered in a conversation becomes its last turn, at
+        // once: on its own listener, not queued behind a goal being run.
+        {
+            let mut turns = self.bus.subscribe();
+            let sessions = self.sessions.clone();
+            let conversations = self.conversations.clone();
+            let private_mode = self.private_mode;
+            tokio::spawn(async move {
+                while let Some(ev) = crate::next_event(&mut turns).await {
+                    if ev.kind == "conversation.turn" {
+                        note_turn(
+                            &sessions,
+                            conversations.as_deref(),
+                            private_mode,
+                            &ev.payload,
+                        );
+                    }
+                }
+            });
+        }
         let mut rx = self.bus.subscribe();
         let mut control_rx = self.bus.subscribe();
         let control_bus = self.bus.clone();
@@ -4651,6 +4698,34 @@ mod tests {
         assert_eq!(s3_started["session_turn"], 1, "sess-b starts fresh");
         assert_eq!(s3_done["session_id"], "sess-b");
         assert_eq!(s3_done["session_turn"], 1);
+    }
+
+    /// A screen ask answered in a conversation is that conversation's last
+    /// turn: the next goal there follows on from it (turn 2).
+    #[tokio::test]
+    async fn a_screen_ask_joins_its_conversation() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let runner = GoalRunner::new(bus.clone());
+        runner.start();
+        let _ = bus
+            .publish(Event::new(
+                "conversation.turn",
+                "context",
+                json!({
+                    "session_id": "sess-s",
+                    "goal": "(about the window on screen) what is this error?",
+                    "result": "E0308: mismatched types",
+                }),
+            ))
+            .await;
+        let (started, _done) = drive_goal(
+            &bus,
+            &mut rx,
+            json!({ "goal": "git status", "confirm": "git status", "session_id": "sess-s" }),
+        )
+        .await;
+        assert_eq!(started["session_turn"], 2, "the screen ask was turn 1");
     }
 
     /// S1 acceptance: backward compatibility — a `plan.goal` without a

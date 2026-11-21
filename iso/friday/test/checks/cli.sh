@@ -232,6 +232,69 @@ bash "$F" app-context on >/dev/null
 contains "app-context status says on" "$(bash "$F" app-context status)" "On"
 rm -f "$S/hyprctl"
 
+echo "safe upgrade"
+U="$W/upgrade"; rm -rf "$U"; mkdir -p "$U/bin" "$U/state" "$U/cache" "$U/sys/class/power_supply/AC" "$U/home/alice/.config/friday"
+echo "pref=1" >"$U/home/alice/.config/friday/friday.env"
+echo "root only" >"$U/secret"; ln -s "$U/secret" "$U/home/alice/.config/friday/link"
+truncate -s 5M "$U/home/alice/.config/friday/huge"
+# A pacman that keeps what's installed in a file: -Su takes the pending
+# versions, -U puts back the ones named by the cached files.
+cat >"$U/bin/pacman" <<'STUB'
+#!/bin/bash
+db="$UP/installed"; new="$UP/pending"
+case "$1" in
+  -Sy) exit 0 ;;
+  -Qu) [ -s "$new" ] && awk '{print $1" x -> "$2}' "$new"; exit 0 ;;
+  -Q) if [ -n "${2:-}" ]; then grep "^$2 " "$db"; else cat "$db"; fi ;;
+  -Su) [ -n "${FAIL_SU:-}" ] && exit 1
+       while read -r n v; do sed -i "s/^$n .*/$n $v/" "$db"; done <"$new"; : >"$new" ;;
+  -U) shift; for f in "$@"; do [ "$f" = --noconfirm ] && continue
+        b=$(basename "$f" .pkg.tar.zst); b=${b%-x86_64}; n=${b%-*-*}; v=${b#"$n"-}; v=${v%-*}
+        sed -i "s/^$n .*/$n $v/" "$db"; echo "restored $n $v" >>"$UP/log"; done; rm -f "$UP/broken" ;;
+esac
+STUB
+printf '#!/bin/bash\n[ -e "$UP/broken" ] && [[ "$1" == *friday-linux-daemon ]] && echo "libgone.so => not found"\nexit 0\n' >"$U/bin/ldd"
+printf '#!/bin/bash\necho "Filesystem 1M-blocks Used Available"; echo "/dev/x 100000 1000 ${FREE_MB:-50000}"\n' >"$U/bin/df"
+printf '#!/bin/bash\nexit 0\n' >"$U/bin/friday-linux-daemon"
+chmod +x "$U/bin"/*
+up() { # <installed> <pending> [env…]: run friday-upgrade, print last.json
+  printf '%s\n' "$1" >"$U/installed"; if [ -n "$2" ]; then printf '%s\n' "$2" >"$U/pending"; else : >"$U/pending"; fi; shift 2
+  env UP="$U" PATH="$U/bin:$PATH" FRIDAY_UPGRADE_STATE="$U/state" FRIDAY_PACMAN_CACHE="$U/cache" \
+    FRIDAY_UPGRADE_HOMES="$U/home" FRIDAY_SYS="$U/sys" FRIDAY_UPGRADE_BIN="$U/bin" "$@" bash "$REPO_ROOT/packaging/linux/upgrade/friday-upgrade" >/dev/null 2>&1
+  cat "$U/state/last.json"
+}
+echo 1 >"$U/sys/class/power_supply/AC/online"
+contains "nothing to do: says it's current" "$(up 'friday-git 1.0' '')" '"outcome": "current"'
+echo 0 >"$U/sys/class/power_supply/AC/online"
+contains "on battery: waits for mains power" "$(up 'friday-git 1.0' 'friday-git 1.1')" '"outcome": "skipped"'
+echo 1 >"$U/sys/class/power_supply/AC/online"
+contains "low on disk: waits" "$(up 'friday-git 1.0' 'friday-git 1.1' FREE_MB=100)" "less than 2 GB free"
+out=$(up $'friday-git 1.0\nhyprland 0.40' $'friday-git 1.1\nhyprland 0.41\nlinux 6.19')
+contains "an upgrade that works is kept" "$out" '"outcome": "upgraded"'
+contains "a new kernel asks for a restart" "$out" '"restart_for_kernel": true'
+contains "the new versions are installed" "$(cat "$U/installed")" "friday-git 1.1"
+backup_list=$(tar -tf "$(ls -1t "$U"/state/settings-*.tar | head -n1)")
+contains "the person's FRIDAY settings were backed up first" "$backup_list" "alice/.config/friday/friday.env"
+[[ "$backup_list" != *link* && "$backup_list" != *huge* ]] && pass "a symlink or a huge file in there isn't copied as root" || fail "the backup took a symlink or a huge file: $backup_list"
+[ "$(stat -c %a "$U/state/last.json")" = 644 ] && [ "$(stat -c %a "$(ls -1 "$U"/state/before-*.txt | head -n1)")" = 600 ] \
+  && pass "the outcome is readable by all, the package list only by root" || fail "upgrade file permissions"
+# Broken afterwards: the previous versions come back from the cache.
+touch "$U/cache/friday-git-1.1-1-x86_64.pkg.tar.zst" "$U/cache/hyprland-0.41-1-x86_64.pkg.tar.zst"
+: >"$U/log"; touch "$U/broken"
+out=$(up $'friday-git 1.1\nhyprland 0.41' $'friday-git 1.2\nhyprland 0.42')
+contains "something broken afterwards is reverted" "$out" '"outcome": "reverted"'
+contains "FRIDAY goes back to the version before" "$(cat "$U/installed")" "friday-git 1.1"
+contains "and so does what came with it" "$(cat "$U/installed")" "hyprland 0.41"
+# A failed upgrade that changed nothing has nothing to undo.
+out=$(up 'friday-git 1.2' 'friday-git 1.3' FAIL_SU=1)
+contains "a failed download changes nothing and isn't called broken" "$out" '"outcome": "failed"'
+# Broken with an old version missing from the cache: no half downgrade.
+rm -f "$U/cache"/*; touch "$U/broken"; out=$(up $'friday-git 1.2\nhyprland 0.42' $'friday-git 1.3\nhyprland 0.43')
+contains "broken with nothing cached: says so and where to look" "$out" '"outcome": "broken"'
+contains "and doesn't half-revert" "$(cat "$U/installed")" "hyprland 0.43"
+FRIDAY_UPGRADE_STATE="$U/state" bash "$F" upgrade status >"$U/status" 2>&1 || true
+contains "friday upgrade status shows the last run" "$(cat "$U/status")" "Last run"
+
 echo "the ask box opens first"
 # The project lookup and FRIDAY Shell's pill can take seconds; the box must
 # not wait for them.
