@@ -55,7 +55,7 @@ public class AskingTests
     public void A_follow_up_carries_the_answer_it_follows_capped()
     {
         var r = Asking.BuildFollowUp("give an example", "A monad wraps a value.");
-        Assert.Equal("give an example\n\nThis follows up on my previous question and your answer:\n\"\"\"\nA monad wraps a value.\n\"\"\"", r);
+        Assert.Equal("give an example\n\n[follow-up]\nThis follows up on my previous question and your answer:\n\"\"\"\nA monad wraps a value.\n\"\"\"", r);
         Assert.DoesNotContain(new string('x', Asking.MaxFollowUpContextChars + 1), Asking.BuildFollowUp("q", new string('x', 9000)));
     }
 

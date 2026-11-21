@@ -2300,7 +2300,7 @@ friday_paste_as() {
     "As JSON") how="as JSON (only the JSON)" ;;
     "Cleaned up"*) how="cleaned up: fix spacing, line breaks and typos, change nothing else" ;;
   esac
-  request=$(printf 'Rewrite the text below %s. Keep its language unless told to translate. Reply with only the result: no quotes, no notes, no introduction.\n"""\n%s\n"""' "$how" "$clip")
+  request=$(printf 'Rewrite the text below %s. Keep its language unless told to translate. Reply with only the result: no quotes, no notes, no introduction.\n\n[text to rewrite]\n"""\n%s\n"""' "$how" "$clip")
   out=$(friday-ctl goal --wait "$request" 2>&1) || true
   summary=$(jq -s 'map(select(type == "object" and .outcome? != null)) | last // {}' <<<"$out" 2>/dev/null || echo '{}')
   text=$(friday_rewrite_clean "$(jq -r 'select(.outcome == "completed") | .result // empty' <<<"$summary" 2>/dev/null || true)")
@@ -3699,10 +3699,10 @@ case "${1:-}" in
 
     request="$goal"
     if $use_followup; then
-      request=$(printf '%s\n\nThis follows up on my previous question and your answer:\n"""\n%s\n"""' "$goal" "$context")
+      request=$(printf '%s\n\n[follow-up]\nThis follows up on my previous question and your answer:\n"""\n%s\n"""' "$goal" "$context")
     elif [[ "$goal" == "Rewrite: "* ]] && $use_selection && [ "$source_label" = Selected ]; then
       rewrite="${goal#Rewrite: }"
-      request=$(printf 'Rewrite the text below: %s. Keep its language unless told to translate. Reply with only the rewritten text: no quotes, no notes, no introduction.\n"""\n%s\n"""' "$rewrite" "$context")
+      request=$(printf 'Rewrite the text below: %s. Keep its language unless told to translate. Reply with only the rewritten text: no quotes, no notes, no introduction.\n\n[text to rewrite]\n"""\n%s\n"""' "$rewrite" "$context")
     elif [ -n "$context" ]; then
       request=$(printf '%s\n\nUse this text as context:\n"""\n%s\n"""' "$goal" "$context")
       [ -z "${app_context:-}" ] || request="$request"$'\n'"$app_context"
@@ -3711,17 +3711,17 @@ case "${1:-}" in
         && [[ "${goal,,}" =~ ^(what\ was\ (that|the|it)|what\ did\ i\ (just\ )?(see|read)|where\ did\ i\ (see|read)|earlier|i\ (just\ )?saw)[[:space:][:punct:]] ]] \
         && recalled=$(timeout 3 friday-ctl recall search "$goal" 2>/dev/null) && [ -n "$recalled" ]; then
       # "What was that …?" with recall on: what was on screen earlier.
-      request=$(printf '%s\n\nThis is text that was on my screen in the last few hours, kept on this computer. Answer from it and say which window it was in:\n"""\n%s\n"""' "$goal" "$recalled")
+      request=$(printf '%s\n\n[recall]\nThis is text that was on my screen in the last few hours, kept on this computer. Answer from it and say which window it was in:\n"""\n%s\n"""' "$goal" "$recalled")
       from_recall=true
     elif ! $use_screen && [ -z "$local_answer" ] && ws_report=$(friday_continue_restore "$goal"); then
       # "Continue building FRIDAY": its workspace is put back first; the
       # daemon adds where you stopped (the timeline).
-      request=$(printf '%s\n\nFRIDAY just put the windows of this project back:\n"""\n%s\n"""' "$goal" "$ws_report")
+      request=$(printf '%s\n\n[workspace]\nFRIDAY just put the windows of this project back:\n"""\n%s\n"""' "$goal" "$ws_report")
     elif ! $use_screen && [ -z "$local_answer" ]; then
       # A typed question: documentation on this computer that fits it well
       # (Arch wiki, tldr, man pages; friday-ctl docs prints nothing otherwise).
       docs=$(timeout 2 friday-ctl docs -- "$goal" 2>/dev/null || true)
-      [ -z "$docs" ] || request=$(printf '%s\n\nThese excerpts from documentation on this computer may help. Use them only if they fit, and name the one you use (for example "Arch wiki: Pacman"):\n"""\n%s\n"""' "$goal" "$docs")
+      [ -z "$docs" ] || request=$(printf '%s\n\n[docs]\nThese excerpts from documentation on this computer may help. Use them only if they fit, and name the one you use (for example "Arch wiki: Pacman"):\n"""\n%s\n"""' "$goal" "$docs")
     fi
 
     ok=true
