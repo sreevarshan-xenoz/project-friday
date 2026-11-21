@@ -116,6 +116,7 @@ if [[ "\$target_arg" == *slowgoal* ]]; then echo '{"accepted":true}'; echo "time
 if [[ "\$target_arg" == *refused* ]]; then printf '{\n "outcome": "failed",\n "error": "Couldn'"'"'t reach your AI provider. Check your internet connection (or that your local model server is running)."\n}\n'; echo "llamacpp: tcp connect error: Connection refused" >&2; exit 1; fi
 if [[ "\$target_arg" == *limit* ]]; then printf '{\n "outcome": "failed",\n "error": "provider opencode: 429 FreeUsageLimitError"\n}\n'; exit 1; fi
 if [[ "\$target_arg" == *"rewritten text"* && "\$target_arg" == *teh* ]]; then printf '{\n "outcome": "completed",\n "result": "\\\\"The quick fox.\\\\""\n}\n'; exit 0; fi
+if [[ "\$target_arg" == *useditems* ]]; then printf '{\n "outcome": "completed",\n "result": "Done.",\n "used": ["your timeline", "a lesson from a failure"]\n}\n'; exit 0; fi
 if [[ "\$target_arg" == *bullets* ]]; then printf '{\n "outcome": "completed",\n "result": "- first point\\\\n- second point"\n}\n'; exit 0; fi
 if [[ "\$target_arg" == *fail* ]]; then printf '{\n "outcome": "failed",\n "error": "network unreachable"\n}\n'; exit 1; fi
 printf '{\n "outcome": "completed",\n "result": "Line one.\\\\nLine two.\\\\nLast line."\n}\n'
@@ -665,6 +666,12 @@ contains "and asks with what came back" "$(cat "$LOG")" "opening foot in friday"
 contains "with no such workspace it is an ordinary question" "$(cat "$LOG")" "continue\\ building\\ the\\ site"
 : >"$LOG"; WS_SAVED=1 bash "$F" ask "continue where we stopped"; sleep 0.3
 if grep -q "workspace restore" "$LOG"; then fail "\"continue where we stopped\" restored a workspace called \"where\""; else pass "\"continue where we stopped\" restores nothing by name"; fi
+
+echo "what FRIDAY used"
+: >"$LOG"; bash "$F" ask "useditems please"; sleep 0.3
+contains "the answer says what the daemon added" "$(cat "$LOG")" "Used: your timeline, a lesson from a failure"
+: >"$LOG"; bash "$F" ask "what is the capital of peru"; sleep 0.3
+if grep -q "Used:" "$LOG"; then fail "an answer with nothing extra said it used something"; else pass "nothing extra: no used line"; fi
 
 echo "answers know their project"
 : >"$LOG"; WS_PROJECT=/home/me/code/project-friday bash "$F" ask "why does the build fail"; sleep 0.3
