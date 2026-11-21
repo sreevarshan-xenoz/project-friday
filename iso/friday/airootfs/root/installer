@@ -17,6 +17,9 @@ INSTALL_MODE="${INSTALL_MODE:-erase}"
 ALONGSIDE_DISK="${ALONGSIDE_DISK:-}"
 FRIDAY_SIZE_MB="${FRIDAY_SIZE_MB:-}"
 BOOT_DEFAULT="${BOOT_DEFAULT:-friday}"
+# A BitLocker drive on the disk needs BITLOCKER_ACK=1: the person has its
+# recovery key (or turned BitLocker off).
+BITLOCKER_ACK="${BITLOCKER_ACK:-}"
 KEYBOARD="${KEYBOARD:-us}"
 # Not $HOSTNAME: bash sets that to the live system's name ("archiso").
 HOSTNAME="${FRIDAY_HOSTNAME:-friday}"
@@ -171,6 +174,8 @@ if [[ "$INSTALL_MODE" == alongside ]]; then
   ESP_PART=$(sed -n 's/^esp=//p' <<<"$scan")
   [[ "$(sed -n 's/^table=//p' <<<"$scan")" == gpt && -n "$ESP_PART" ]] \
     || refuse "$TARGET_DISK needs a GPT partition table with an EFI partition to install alongside."
+  [[ "$(sed -n 's/^bitlocker=//p' <<<"$scan")" != 1 || "$BITLOCKER_ACK" == 1 ]] \
+    || refuse "$TARGET_DISK has a BitLocker drive; have its recovery key (or turn BitLocker off) and set BITLOCKER_ACK=1."
   (( $(sed -n 's/^free_mb=//p' <<<"$scan") >= FRIDAY_SIZE_MB )) \
     || refuse "$TARGET_DISK has less free space than the $FRIDAY_SIZE_MB MB chosen."
   GPT_BACKUP=/run/friday-gpt-backup.bin
@@ -701,7 +706,8 @@ phase_msg 6 "Installing the bootloader"
 if [[ -n "$ESP_PART" ]]; then
   # Windows keeps a copy of its boot manager as the firmware's fallback
   # (EFI/BOOT/BOOTX64.EFI); bootctl would replace it, so it's put back.
-  fallback=$(find /mnt/efi/EFI -maxdepth 2 -ipath '*/EFI/BOOT/BOOTX64.EFI' 2>/dev/null | head -n1)
+  # (|| true: under pipefail an empty match would stop the install here.)
+  fallback=$(find /mnt/efi/EFI -maxdepth 2 -ipath '*/EFI/BOOT/BOOTX64.EFI' 2>/dev/null | head -n1 || true)
   [[ -n "$fallback" ]] && cp -p "$fallback" /run/friday-fallback.efi
   bootctl --esp-path=/mnt/efi --boot-path=/mnt/boot --variables=no install
   [[ -n "$fallback" ]] && cp -p /run/friday-fallback.efi "$fallback"
@@ -723,7 +729,7 @@ if [[ -n "$ESP_PART" ]]; then
   for old in $(efibootmgr | sed -n 's/^Boot\([0-9A-Fa-f]\{4\}\)\*\{0,1\} FRIDAY OS\(\t.*\)\{0,1\}$/\1/p'); do
     efibootmgr -q --bootnum "$old" --delete-bootnum
   done
-  entries_before=$(efibootmgr | grep -o '^Boot[0-9A-Fa-f]\{4\}' | sort)
+  entries_before=$(efibootmgr | grep -o '^Boot[0-9A-Fa-f]\{4\}' | sort || true)
   order=$(efibootmgr | sed -n 's/^BootOrder: //p')
   efibootmgr -q --create --disk "$esp_disk" --part "$esp_num" --label "FRIDAY OS" \
     --loader '\EFI\systemd\systemd-bootx64.efi'
@@ -731,6 +737,9 @@ if [[ -n "$ESP_PART" ]]; then
   friday_entry=${friday_entry#Boot}
   [[ -n "$friday_entry" ]] || { echo "The firmware didn't keep FRIDAY's boot entry." >&2; false; }
   if [[ "$BOOT_DEFAULT" == other ]]; then
+    # No boot order at all: Windows Boot Manager's entry goes first, so the
+    # other system still starts by default.
+    [[ -n "$order" ]] || order=$(efibootmgr | sed -n 's/^Boot\([0-9A-Fa-f]\{4\}\)\*\{0,1\} Windows Boot Manager.*/\1/p' | head -n1)
     efibootmgr -q --bootorder "${order:+$order,}$friday_entry"
     efibootmgr -q --bootnext "$friday_entry"
   else

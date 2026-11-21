@@ -192,6 +192,7 @@ for key, want in ai_spec + [
             ("alongside", "/dev/vda"),
             ("size", "81920"),
             ("bootdefault", "other"),
+            ("bitlocker_ack", "1"),
         ]
         if ALONGSIDE
         else [("erase", "/dev/vda"), ("mode", "erase")]
