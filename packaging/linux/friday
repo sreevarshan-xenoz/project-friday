@@ -3112,6 +3112,8 @@ case "${1:-}" in
         # Kept on this computer: the timeline never sends these to a cloud model.
         ! $local_only || printf '_On this computer · nothing was sent_\n\n'
         [ -z "${ask_project:-}" ] || printf '_project: %s_\n\n' "$ask_project"
+        # The timeline shows a failed ask as failed.
+        case "$title" in "FRIDAY ✗"*) printf '_failed_\n\n' ;; esac
         [ -n "$context" ] && printf '> %s\n\n' "$(head -c 300 <<<"$context" | tr '\n' ' ')"
         printf '%s\n' "$answer"
         [ -z "${details:-}" ] || printf '\n<details>\n\n```\n%s\n```\n' "$details"

@@ -3141,7 +3141,7 @@ mod tests {
         let yesterday = (chrono::Local::now() - chrono::Duration::days(1)).format("%Y-%m-%d 17:40");
         std::fs::write(
             dir.join("answers.md"),
-            format!("<!-- friday answer -->\n# why does the site build fail\n\n_{yesterday}_\n\nThe image path is wrong.\n\n---\n\n"),
+            format!("<!-- friday answer -->\n# why does the site build fail\n\n_{yesterday}_\n\n_project: /home/me/code/site_\n\nThe image path is wrong.\n\n---\n\n"),
         )
         .unwrap();
         let ask = |goal: &'static str| {

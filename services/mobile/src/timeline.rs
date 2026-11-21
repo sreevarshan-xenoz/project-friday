@@ -58,6 +58,7 @@ fn answers(text: &str) -> Vec<Entry> {
             continue;
         };
         let mut project = None;
+        let mut failed = false;
         let answer = lines
             .find(|l| {
                 if let Some(p) = l
@@ -67,10 +68,13 @@ fn answers(text: &str) -> Vec<Entry> {
                     project = Some(crate::thoughts::project_name(p).to_string());
                     return false;
                 }
+                if *l == "_failed_" {
+                    failed = true;
+                    return false;
+                }
                 !l.starts_with('>') && *l != "---" && !l.starts_with('<')
             })
             .unwrap_or_default();
-        let failed = goal.starts_with("FRIDAY ✗");
         out.push(Entry {
             ts: when.timestamp(),
             text: short(&format!(
@@ -122,7 +126,8 @@ fn agent_run(text: &str) -> Option<Entry> {
             "{} worked on \"{}\" in {} ({})",
             v["agent"].as_str().unwrap_or("an agent"),
             v["request"].as_str().unwrap_or_default(),
-            folder,
+            // The folder's name, not its path (it goes to the model).
+            project.as_deref().unwrap_or("?"),
             v["status"].as_str().unwrap_or("?")
         )),
         project,
@@ -218,13 +223,13 @@ fn resumed(goal: &str) -> Option<String> {
 
 /// The project an ask names: a resume ("continue building X") or the end
 /// of an ask about it ("what did I do on Atlas yesterday", "where are we on
-/// the site").
-fn project_named(goal: &str) -> Option<String> {
+/// the site", "what did we decide about the planner").
+pub fn project_named(goal: &str) -> Option<String> {
     if let Some(name) = resumed(goal) {
         return Some(name);
     }
     let g = goal.lines().next().unwrap_or_default().to_lowercase();
-    let (_, rest) = g.rsplit_once(" on ")?;
+    let (_, rest) = g.rsplit_once(" on ").or_else(|| g.rsplit_once(" about "))?;
     let mut rest = rest.trim_end_matches(['.', '!', '?']).to_string();
     for when in [
         "yesterday",
@@ -253,7 +258,7 @@ fn project_named(goal: &str) -> Option<String> {
 /// keeps FRIDAY's), or all of them when it names none. Desktop actions and
 /// lessons carry no project: those within half an hour of the project's own
 /// entries stay with it. A named project with no history of its own gets
-/// only those, never another project's.
+/// nothing.
 pub fn for_project(entries: Vec<Entry>, goal: &str) -> Vec<Entry> {
     let mine = |e: &Entry| {
         e.project
@@ -262,11 +267,10 @@ pub fn for_project(entries: Vec<Entry>, goal: &str) -> Vec<Entry> {
     };
     let named: Vec<i64> = entries.iter().filter(|e| mine(e)).map(|e| e.ts).collect();
     if named.is_empty() {
+        // A project with no history of its own gets none: not another
+        // project's, and not the actions of whatever else went on.
         return if project_named(goal).is_some() {
-            entries
-                .into_iter()
-                .filter(|e| e.project.is_none())
-                .collect()
+            Vec::new()
         } else {
             entries
         };
@@ -377,7 +381,8 @@ mod tests {
         std::fs::write(
             d.join("answers.md"),
             "<!-- friday answer -->\n# why does cargo build fail\n\n_2026-11-20 10:05_\n\n> error[E0425]\n\nThe `cfg` value is missing.\n\n---\n\n\
-             <!-- friday answer -->\n# summarise my bank statement\n\n_2026-11-20 10:30_\n\n_On this computer · nothing was sent_\n\nYou spent…\n\n---\n\n",
+             <!-- friday answer -->\n# summarise my bank statement\n\n_2026-11-20 10:30_\n\n_On this computer · nothing was sent_\n\nYou spent…\n\n---\n\n\
+             <!-- friday answer -->\n# restart nosuch.service\n\n_2026-11-20 10:40_\n\n_failed_\n\nCouldn't restart it.\n\n---\n\n",
         )
         .unwrap();
         let ts = at("2026-11-20", "11:00").to_rfc3339();
@@ -395,18 +400,20 @@ mod tests {
         )
         .unwrap();
         let all = collect(&d);
-        assert_eq!(all.len(), 3, "{all:?}");
+        assert_eq!(all.len(), 4, "{all:?}");
         let day = at("2026-11-20", "00:00").date_naive();
         let text = render(&all, day, day);
+        assert!(
+            text.contains("10:40 asked \"restart nosuch.service\" (failed) → Couldn't restart it."),
+            "{text}"
+        );
         assert!(text.starts_with("Fri 2026-11-20:\n10:05 asked \"why does cargo build fail\" → The `cfg` value is missing."), "{text}");
         assert!(
             text.contains("11:00 did move_window {\"target\":\"kitty\"}, failed"),
             "{text}"
         );
         assert!(
-            text.contains(
-                "12:00 opencode worked on \"add a README\" in /home/me/code/site (done) [site]"
-            ),
+            text.contains("12:00 opencode worked on \"add a README\" in site (done) [site]"),
             "{text}"
         );
         assert!(
@@ -460,19 +467,9 @@ mod tests {
                 "lesson: restart failed"
             ]
         );
-        let atlas = texts(for_project(all.clone(), "let's keep working on Atlas"));
-        assert!(
-            !atlas
-                .iter()
-                .any(|t| t.contains("budget") || t.contains("build")),
-            "{atlas:?}"
-        );
-        assert_eq!(atlas.len(), 3, "{atlas:?}");
-        let atlas = texts(for_project(
-            all.clone(),
-            "what did I do on Atlas yesterday?",
-        ));
-        assert_eq!(atlas.len(), 3, "{atlas:?}");
+        // Atlas has no history: nothing, not FRIDAY's actions or dinner.
+        assert!(for_project(all.clone(), "let's keep working on Atlas").is_empty());
+        assert!(for_project(all.clone(), "what did I do on Atlas yesterday?").is_empty());
         assert_eq!(for_project(all.clone(), "where was I").len(), 5);
         assert_eq!(for_project(all.clone(), "what did I do on monday").len(), 5);
         assert_eq!(for_project(all, "continue where we stopped").len(), 5);

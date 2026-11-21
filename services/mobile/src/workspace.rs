@@ -457,8 +457,10 @@ pub struct Report {
 impl Report {
     pub fn text(&self, saved: &Saved) -> String {
         let mut out = format!("Workspace \"{}\"", saved.name);
+        // The folder's name, not its path: this goes to the model, and a
+        // home path carries the account name.
         if let Some(p) = &saved.project {
-            out.push_str(&format!(" ({p})"));
+            out.push_str(&format!(" ({})", program(p)));
         }
         out.push_str(": ");
         let mut parts = Vec::new();
@@ -504,9 +506,14 @@ pub fn restore(hypr: &dyn Hypr, proc_root: &Path, saved: &Saved) -> Result<Repor
     let mut used = vec![false; now.len()];
     let mut report = Report::default();
     for w in &saved.windows {
-        // The same app (and for a terminal, the same folder) already open.
+        // The same app (and for a terminal, the same folder and editor
+        // files) already open. A terminal in the folder without the editor
+        // isn't it: the saved one is started.
         let open = now.iter().enumerate().position(|(i, n)| {
-            !used[i] && n.class == w.class && (w.cwd.is_none() || n.cwd == w.cwd)
+            !used[i]
+                && n.class == w.class
+                && (w.cwd.is_none() || n.cwd == w.cwd)
+                && (w.run.is_empty() || n.run == w.run)
         });
         if let Some(i) = open {
             used[i] = true;
@@ -703,6 +710,24 @@ mod tests {
             ]
         );
         assert_eq!(report.already.len(), 1);
+        assert!(
+            !report.text(&saved).contains(repo.to_str().unwrap()),
+            "the folder's name only: {}",
+            report.text(&saved)
+        );
+
+        // The terminal is open in the folder but the editor isn't running
+        // there: the saved one (with its file) is started, not "in place".
+        std::fs::remove_dir_all(proc_root.join("102")).unwrap();
+        let bare = FakeHypr {
+            clients: clients(),
+            calls: Mutex::default(),
+        };
+        let report = restore(&bare, &proc_root, &saved).unwrap();
+        let calls = bare.calls.lock().unwrap().clone();
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        assert!(calls[0].contains(" nvim src/main.rs\""), "{calls:?}");
+        assert_eq!(report.started, vec!["kitty in site (nvim)"]);
     }
 
     #[test]
