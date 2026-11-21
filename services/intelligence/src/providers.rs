@@ -1239,6 +1239,12 @@ pub struct InferenceFabric {
     /// in the daemon), gives vision models sufficient time to process multi-megabyte
     /// screenshot payloads while keeping fast (15 s) text ask timeouts.
     pub screen_request_timeout: Option<std::time::Duration>,
+    /// How long a streaming text answer may take to start while another
+    /// candidate is still left to try: a busy free provider that has said
+    /// nothing after this is dropped for the next one instead of costing the
+    /// whole [`request_timeout`]. Not for screen asks, providers with their own
+    /// minimum (connected accounts start a whole app) or the last candidate.
+    pub first_words_timeout: Option<std::time::Duration>,
     /// Where provider health (scores + circuit state) persists. Defaults to
     /// `.fabric/provider_health.json` (cwd-relative). Chaos laboratory Phase 2
     /// scenarios point this at a controlled file so corruption is injectable.
@@ -1278,6 +1284,7 @@ impl InferenceFabric {
             qualification_profiles: Arc::new(Mutex::new(HashMap::new())),
             request_timeout: None,
             screen_request_timeout: None,
+            first_words_timeout: None,
             health_state_path: std::path::PathBuf::from(".fabric/provider_health.json"),
             fabric_dir: std::path::PathBuf::from(".fabric"),
             egress: None,
@@ -3495,25 +3502,38 @@ pub fn zhipu_models() -> Vec<ModelInfo> {
 /// is never cut off.
 async fn run_streaming_attempt(
     deadline: Option<std::time::Duration>,
+    first_words: Option<std::time::Duration>,
     provider: &dyn Provider,
     model_id: &str,
     prompt: &str,
     progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
 ) -> Result<String, String> {
-    let last = std::sync::Mutex::new(std::time::Instant::now());
+    // (when the last words came, whether any have)
+    let last = std::sync::Mutex::new((tokio::time::Instant::now(), false));
     let report = |text: &str| {
-        *last.lock().unwrap() = std::time::Instant::now();
+        *last.lock().unwrap() = (tokio::time::Instant::now(), true);
         progress(text);
     };
     let attempt = provider.complete_streaming(model_id, prompt, false, &report);
-    let Some(d) = deadline else {
+    if deadline.is_none() && first_words.is_none() {
         return attempt.await;
-    };
+    }
     tokio::pin!(attempt);
     loop {
-        let quiet = last.lock().unwrap().elapsed();
+        let (at, started) = *last.lock().unwrap();
+        let quiet = at.elapsed();
+        let d = match (started, first_words, deadline) {
+            (false, Some(f), Some(d)) => f.min(d),
+            (false, Some(f), None) => f,
+            (_, _, Some(d)) => d,
+            (true, _, None) | (false, None, None) => return attempt.await,
+        };
         if quiet >= d {
-            return Err(format!("request timed out: no answer for {:?}", d));
+            return Err(if started {
+                format!("request timed out: no answer for {:?}", d)
+            } else {
+                format!("request timed out: no first words for {:?}", d)
+            });
         }
         tokio::select! {
             res = &mut attempt => return res,
@@ -3841,7 +3861,8 @@ impl InferenceFabric {
         let mut attempts = 0;
         let start = Instant::now();
 
-        for (model, provider) in candidates {
+        let count = candidates.len();
+        for (index, (model, provider)) in candidates.into_iter().enumerate() {
             tracing::info!(
                 "[Inference Request {}] Attempting candidate: {}/{}...",
                 request_id,
@@ -3871,8 +3892,16 @@ impl InferenceFabric {
                 self.timeout_for_prompt(&prompt),
                 provider.min_request_timeout(),
             );
+            let first_words = self.first_words_timeout.filter(|_| {
+                index + 1 < count
+                    && provider.min_request_timeout().is_none()
+                    && parse_screen_capture(&prompt).is_none()
+            });
             let attempt = match progress {
-                Some(p) => run_streaming_attempt(timeout, provider, &model.id, &prompt, p).await,
+                Some(p) => {
+                    run_streaming_attempt(timeout, first_words, provider, &model.id, &prompt, p)
+                        .await
+                }
                 None => run_attempt(timeout, provider.complete(&model.id, &prompt, false)).await,
             };
             let is_local = model.capabilities.contains(&ModelCapability::Local)
@@ -5803,7 +5832,8 @@ mod tests {
             gap: ms(40),
             chunks: 10,
         };
-        let out = run_streaming_attempt(Some(ms(150)), &steady, "m", "p", &|_: &str| {}).await;
+        let out =
+            run_streaming_attempt(Some(ms(150)), None, &steady, "m", "p", &|_: &str| {}).await;
         assert_eq!(out.unwrap(), "xxxxxxxxxx");
         // Silence past the deadline before the first words: timed out.
         let silent = PacedProvider {
@@ -5811,7 +5841,8 @@ mod tests {
             gap: ms(1),
             chunks: 1,
         };
-        let out = run_streaming_attempt(Some(ms(150)), &silent, "m", "p", &|_: &str| {}).await;
+        let out =
+            run_streaming_attempt(Some(ms(150)), None, &silent, "m", "p", &|_: &str| {}).await;
         assert!(out.unwrap_err().contains("timed out"));
         // A stall midway: timed out too.
         let stalls = PacedProvider {
@@ -5819,8 +5850,122 @@ mod tests {
             gap: ms(400),
             chunks: 3,
         };
-        let out = run_streaming_attempt(Some(ms(150)), &stalls, "m", "p", &|_: &str| {}).await;
+        let out =
+            run_streaming_attempt(Some(ms(150)), None, &stalls, "m", "p", &|_: &str| {}).await;
         assert!(out.unwrap_err().contains("timed out"));
+    }
+
+    #[tokio::test]
+    async fn a_provider_slow_to_start_gets_the_first_words_deadline() {
+        let ms = std::time::Duration::from_millis;
+        // Silent for 400 ms: dropped at 150 ms though the deadline is 1 s.
+        let silent = PacedProvider {
+            first: ms(400),
+            gap: ms(1),
+            chunks: 1,
+        };
+        let out = run_streaming_attempt(
+            Some(ms(1000)),
+            Some(ms(150)),
+            &silent,
+            "m",
+            "p",
+            &|_: &str| {},
+        )
+        .await;
+        assert!(out.unwrap_err().contains("no first words"));
+        // Once it has started, pauses are judged by the deadline again.
+        let started = PacedProvider {
+            first: ms(20),
+            gap: ms(100),
+            chunks: 4,
+        };
+        let out = run_streaming_attempt(
+            Some(ms(150)),
+            Some(ms(50)),
+            &started,
+            "m",
+            "p",
+            &|_: &str| {},
+        )
+        .await;
+        assert_eq!(out.unwrap(), "xxxx");
+    }
+
+    /// A free provider that's busy (says nothing) costs the first-words
+    /// deadline, not the whole per-attempt one, before the next answers.
+    #[tokio::test]
+    async fn a_busy_first_provider_hands_over_after_the_first_words_deadline() {
+        struct Busy;
+        #[async_trait]
+        impl Provider for Busy {
+            fn name(&self) -> &str {
+                "busy"
+            }
+            async fn complete(&self, _m: &str, _p: &str, _j: bool) -> Result<String, String> {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                Ok("late".into())
+            }
+            async fn complete_streaming(
+                &self,
+                m: &str,
+                p: &str,
+                j: bool,
+                _progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+            ) -> Result<String, String> {
+                self.complete(m, p, j).await
+            }
+            async fn check_health(&self) -> bool {
+                true
+            }
+        }
+        let mut fabric = InferenceFabric::new();
+        // (milliseconds standing in for the daemon's 15 s and 8 s)
+        fabric.request_timeout = Some(std::time::Duration::from_millis(1500));
+        fabric.first_words_timeout = Some(std::time::Duration::from_millis(300));
+        let (busy, groq) = (
+            Busy,
+            ScriptedProvider {
+                name: "groq",
+                fail: false,
+            },
+        );
+        let candidates: Vec<(ModelInfo, &dyn Provider)> = vec![
+            (mi("free-a", "busy", 50, &[]), &busy),
+            (mi("free-b", "groq", 200, &[]), &groq),
+        ];
+        let start = tokio::time::Instant::now();
+        let text = fabric
+            .complete_candidates_reporting("r", candidates, "hello", Some(&|_: &str| {}))
+            .await
+            .expect("the second provider answers");
+        assert_eq!(text, "ok");
+        let waited = start.elapsed();
+        assert!(
+            waited >= std::time::Duration::from_millis(300)
+                && waited < std::time::Duration::from_millis(1200),
+            "{waited:?}"
+        );
+        let d = fabric.last_decision().expect("decision");
+        assert_eq!(d.failures[0].provider, "busy");
+        assert!(
+            d.failures[0].error.contains("no first words"),
+            "{}",
+            d.failures[0].error
+        );
+        // The last one left keeps the whole deadline: slow to start, it still
+        // answers (there's nothing to hand over to).
+        let slow = PacedProvider {
+            first: std::time::Duration::from_millis(500),
+            gap: std::time::Duration::from_millis(1),
+            chunks: 2,
+        };
+        let candidates: Vec<(ModelInfo, &dyn Provider)> = vec![(mi("m", "paced", 50, &[]), &slow)];
+        let text = fabric
+            .complete_candidates_reporting("r2", candidates, "hello", Some(&|_: &str| {}))
+            .await
+            .expect("the only candidate keeps its whole deadline");
+        assert_eq!(text, "xx");
     }
 
     #[test]

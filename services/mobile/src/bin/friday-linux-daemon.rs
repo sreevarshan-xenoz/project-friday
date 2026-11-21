@@ -195,6 +195,9 @@ async fn main() {
     // Vision models require extra transmission and token encoding time for large
     // screenshot PNGs (2-8 MB), so screen asks get 45 s while text asks stay at 15 s.
     fabric.screen_request_timeout = Some(Duration::from_secs(45));
+    // A busy free provider that hasn't started answering after 8 s hands over
+    // to the next one instead of costing the whole 15 s (text asks only).
+    fabric.first_words_timeout = Some(Duration::from_secs(8));
     // OpenCode Zen (the keyless default) rotates its free models: swap the
     // static fallback for the live free lineup. Bounded so a slow or offline
     // network never delays startup.
