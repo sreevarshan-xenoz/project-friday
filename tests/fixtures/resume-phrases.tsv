@@ -1,0 +1,24 @@
+# Asks that pick a project back up, and the project each names (empty: not
+# a resume). Both `friday ask` (friday_continue_restore, which restores the
+# workspace) and the daemon (timeline::resumed, which adds the history) are
+# tested against this table, so they can't drift apart.
+# ask<TAB>project
+Friday, let's continue building FRIDAY	friday
+let's continue building the site	site
+continue working on my garden planner	garden planner
+continue FRIDAY	friday
+continue with the site.	site
+resume the planner	planner
+resume work on rust book	work on rust book
+get back to the planner	planner
+get back to working on FRIDAY	friday
+keep working on the site	site
+keep building FRIDAY	friday
+prepare my world for rust	rust
+prepare my desk for the site	site
+keep calm	
+continue where we stopped	
+get back to me on the budget	
+continue from here	
+keep it simple	
+what's the weather	

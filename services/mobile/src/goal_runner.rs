@@ -1950,8 +1950,21 @@ impl GoalRunner {
                     .collect(),
             };
             let mut lines: Vec<String> = hits.iter().map(format_recalled_memory).collect();
+            // The one project the ask names, carried through the timeline,
+            // thoughts, git facts and lessons below.
+            let project_dir = self
+                .timeline
+                .as_ref()
+                .and_then(|dir| crate::project::resolve(dir, &crate::workspace::dir(), &goal));
+            let project = project_dir
+                .as_ref()
+                .map(|p| crate::thoughts::project_name(&p.to_string_lossy()).to_string());
             if let Some(dir) = &self.timeline {
-                let entries = crate::timeline::for_project(crate::timeline::collect(dir), &goal);
+                let entries = crate::timeline::for_project(
+                    crate::timeline::collect(dir),
+                    &goal,
+                    project.as_deref(),
+                );
                 if let Some((from, to)) =
                     crate::timeline::wants(&goal, &entries, chrono::Local::now())
                 {
@@ -1986,15 +1999,22 @@ impl GoalRunner {
                 let about_past =
                     crate::timeline::wants(&goal, &entries, chrono::Local::now()).is_some();
                 if about_thoughts || about_past {
-                    if let Some(facts) = crate::project::find(dir, &crate::workspace::dir(), &goal)
-                        .and_then(|p| crate::project::facts(&p))
+                    if let Some(facts) = project_dir
+                        .as_ref()
+                        .filter(|p| p.join(".git").exists())
+                        .and_then(|p| crate::project::facts(p))
                     {
                         lines.push(format!(
                             "the project's repository right now (facts from git; mention what is \
                              unfinished):\n{facts}"
                         ));
                     }
-                    let text = crate::thoughts::render(&crate::thoughts::recent(dir, &goal, 15));
+                    let text = crate::thoughts::render(&crate::thoughts::recent(
+                        dir,
+                        &goal,
+                        15,
+                        project.as_deref(),
+                    ));
                     if !text.is_empty() {
                         let (text, _) = friday_goal_execution::mask_secrets(&text);
                         lines.push(format!(
@@ -2009,6 +2029,7 @@ impl GoalRunner {
                     path,
                     chrono::Utc::now().timestamp(),
                     &goal,
+                    project.as_deref(),
                 ));
             }
             lines
@@ -2239,12 +2260,18 @@ impl GoalRunner {
         ) {
             if r.tool.as_deref() != Some("web_search") {
                 let (text, _) = friday_goal_execution::mask_secrets(&r.text);
+                let project = self
+                    .timeline
+                    .as_ref()
+                    .and_then(|dir| crate::project::resolve(dir, &crate::workspace::dir(), &goal))
+                    .map(|p| crate::thoughts::project_name(&p.to_string_lossy()).to_string());
                 let _ = crate::lessons::learn(
                     path,
                     chrono::Utc::now().timestamp(),
                     &goal,
                     r.success,
                     &text,
+                    project.as_deref(),
                 );
             }
         }
@@ -3209,6 +3236,7 @@ mod tests {
             "What does the Rust error E0308 mean in closures?",
             false,
             "the explanation was cut off",
+            None,
         )
         .unwrap();
         let goal = "What does the Rust error E0308 mean?";

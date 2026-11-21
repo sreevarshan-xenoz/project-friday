@@ -674,7 +674,10 @@ fn thought(args: &[String]) -> std::process::ExitCode {
         }
         Some("list") | None => {
             let goal = args.get(1..).unwrap_or_default().join(" ");
-            let text = th::render(&th::recent(&state, &goal, 50));
+            let project =
+                friday_mobile::project::resolve(&state, &friday_mobile::workspace::dir(), &goal)
+                    .map(|p| th::project_name(&p.to_string_lossy()).to_string());
+            let text = th::render(&th::recent(&state, &goal, 50, project.as_deref()));
             if text.is_empty() {
                 println!("No thoughts kept yet. Say \"keep this idea: …\" in the ask box.");
             }
