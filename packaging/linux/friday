@@ -36,6 +36,8 @@ Autonomous Agent & Cognitive Loop:
                                    and "show me …" in the ask box do the same)
   friday recall [status|on|off]    Keep the text of windows you look at for 3 hours, here
                                    only, so you can ask "what was that…" (off forgets it)
+  friday clips [status|on|off|pick] Keep the last 200 texts you copy; Super+Ctrl+V pastes one
+  friday snippet add|rm|list       Text you paste often, by name (;name in Super+Ctrl+V)
   friday routine save|run|list|rm  Save what FRIDAY just did on your desktop, then do it again
                                    by name ("run <name>" in the ask box works too)
   friday workspace save|restore|list|rm  Keep your windows and the work in them (terminal
@@ -792,6 +794,7 @@ friday_keys() {
       done <<'KEYS'
 friday hold start --type|"friday hold end", { release = true })|o.bind("SUPER + SHIFT + Y", "FRIDAY: Voice typing", "friday hold start --type")\no.bind("SUPER + SHIFT + Y", "FRIDAY: Voice typing (let go)", "friday hold end --type", { release = true })|Added voice typing: hold Super+Shift+Y, speak, let go (friday voice setup first).
 friday paste-as|"friday ask --selection")|o.bind("SUPER + ALT + V", "FRIDAY: Paste as…", "friday paste-as")|Added Paste as: copy text, press Super+Alt+V, pick how to paste it.
+friday clips pick|"friday paste-as")|o.bind("SUPER + CTRL + V", "FRIDAY: Clips and snippets", "friday clips pick")|Added clips: Super+Ctrl+V pastes something you copied earlier or a snippet (friday clips on first).
 KEYS
       $added || echo "Your keys are up to date." ;;
     *) echo "Usage: friday keys update" >&2; return 1 ;;
@@ -1780,9 +1783,12 @@ friday_replace_selection() {
 
 # `friday paste-as` (Super+Alt+V): the clipboard's text, transformed, pasted
 # where you are. The clipboard itself keeps the original.
+# With a text argument (a clip from friday clips), that text instead, and
+# "As it is" first.
 friday_paste_as() {
-  local clip win addr pick how request out summary text
-  clip=$(timeout 2 wl-paste --no-newline 2>/dev/null || true)
+  local clip win addr pick how request out summary text first=""
+  if [ $# -gt 0 ]; then clip="$1" first="As it is"
+  else clip=$(timeout 2 wl-paste --no-newline 2>/dev/null || true); fi
   if [ -z "${clip//[[:space:]]/}" ]; then
     notify-send -a FRIDAY -- "FRIDAY" "Copy some text first, then press Super+Alt+V." 2>/dev/null || true
     return 0
@@ -1794,11 +1800,12 @@ friday_paste_as() {
   fi
   clip="${clip:0:4000}"
   addr=$(timeout 2 hyprctl activewindow -j 2>/dev/null | jq -r '.address // empty' 2>/dev/null || true)
-  pick=$(printf '%s\n' "As a bullet list" "As JSON" "As a Markdown table" "Cleaned up (spacing, line breaks, typos)" \
+  pick=$(printf '%s\n' ${first:+"$first"} "As a bullet list" "As JSON" "As a Markdown table" "Cleaned up (spacing, line breaks, typos)" \
       "Shorter" "More formal" "Translated to English" \
     | fuzzel --dmenu --prompt="Paste › " --width=60 --lines=7 \
       --placeholder="\"$(tr '\n\t' '  ' <<<"$clip" | cut -c1-40)…\" · pick or type how") || return 0
   [ -n "${pick// /}" ] || return 0
+  if [ -n "$first" ] && [ "$pick" = "$first" ]; then friday_replace_selection "$clip" "$addr" terminals; return 0; fi
   how="$pick"
   case "$pick" in
     "As JSON") how="as JSON (only the JSON)" ;;
@@ -1813,6 +1820,112 @@ friday_paste_as() {
     return 1
   fi
   friday_replace_selection "$text" "$addr" terminals "the paste"
+}
+
+# `friday clips [status|on|off|pick]` (Super+Ctrl+V picks): the last 200
+# texts you copied, kept on this computer (friday-clips user service). Never
+# from a private window, never what a password manager marks as a password,
+# never something shaped like a password or token. Off forgets them all.
+friday_clips() {
+  local file="${XDG_STATE_HOME:-$HOME/.local/state}/friday/clips.jsonl" text line
+  case "${1:-status}" in
+    status)
+      if systemctl --user is-enabled --quiet friday-clips.service 2>/dev/null; then
+        echo "Clips: on (the last 200 texts you copied; Super+Ctrl+V). Turn off: friday clips off"
+      else
+        echo "Clips: off. Turn on: friday clips on"
+      fi ;;
+    on)
+      if [ "${2:-}" != "--yes" ]; then
+        cat <<'EOF2'
+With clips on, FRIDAY keeps the last 200 texts you copy, on this computer only,
+so Super+Ctrl+V can paste any of them again, as it is or rewritten. Never from
+private windows (password managers, private browsing, banks, and your own list in
+~/.config/friday/private-windows), never what a password manager marks as a
+password, never anything shaped like a password or token. Turning clips off
+forgets them all.
+EOF2
+        local a
+        read -r -p "Turn it on? [y/N] " a || a=n
+        [[ "$a" =~ ^[Yy] ]] || { echo "Nothing changed."; return 0; }
+      fi
+      systemctl --user enable --now friday-clips.service >/dev/null 2>&1 \
+        || { echo "Couldn't start clips (systemctl --user enable --now friday-clips.service)." >&2; return 1; }
+      echo "Clips: on" ;;
+    off)
+      systemctl --user disable --now friday-clips.service >/dev/null 2>&1 || true
+      rm -f "$file" "$file.tmp"
+      echo "Clips: off, and every kept clip is forgotten." ;;
+    add)
+      # One clipboard change on stdin (wl-paste --watch, from the service).
+      text=$(head -c 20000)
+      [ -n "${text//[[:space:]]/}" ] || return 0
+      timeout 2 wl-paste --list-types 2>/dev/null | grep -qi 'passwordmanagerhint' && return 0
+      [[ "$text" =~ ^[^[:space:]]{12,}$ && "$text" =~ [A-Za-z] && "$text" =~ [0-9] ]] && return 0
+      [ -z "$(friday_private_window)" ] || return 0
+      mkdir -p "$(dirname "$file")"
+      line=$(jq -cn --arg t "$text" --argjson ts "$(date +%s)" '{ts: $ts, text: $t}')
+      (
+        umask 077
+        { jq -c --arg t "$text" 'select(.text != $t)' "$file" 2>/dev/null || true
+          printf '%s\n' "$line"; } | tail -n 200 >"$file.tmp"
+        mv -f "$file.tmp" "$file"
+      ) ;;
+    pick) friday_clips_pick ;;
+    *) echo "Usage: friday clips [status|on|off|pick]" >&2; return 1 ;;
+  esac
+}
+
+# The Super+Ctrl+V picker: snippets first (type ;name), then clips, newest
+# first. A snippet is pasted as it is; a clip can also be rewritten.
+friday_clips_pick() {
+  local clips="${XDG_STATE_HOME:-$HOME/.local/state}/friday/clips.jsonl"
+  local snippets="${XDG_CONFIG_HOME:-$HOME/.config}/friday/snippets.jsonl" rows pick key text addr
+  rows=$( { jq -r '";\(.name)  \(.text | gsub("\\s+"; " ") | .[0:80])"' "$snippets" 2>/dev/null || true
+    tac "$clips" 2>/dev/null | jq -r '"\(input_line_number)  \(.text | gsub("\\s+"; " ") | .[0:80])"' 2>/dev/null || true; } )
+  if [ -z "$rows" ]; then
+    notify-send -a FRIDAY -- "FRIDAY" "No clips or snippets yet. friday clips on keeps what you copy; friday snippet add <name> saves a snippet." 2>/dev/null || true
+    return 0
+  fi
+  addr=$(timeout 2 hyprctl activewindow -j 2>/dev/null | jq -r '.address // empty' 2>/dev/null || true)
+  pick=$(printf '%s\n' "$rows" | fuzzel --dmenu --prompt="Clips › " --width=70 --lines=12 \
+    --placeholder="type to search, ;name for a snippet") || return 0
+  key="${pick%%  *}"
+  if [[ "$key" == \;* ]]; then
+    text=$(jq -r --arg n "${key#;}" 'select(.name == $n) | .text' "$snippets" 2>/dev/null | head -c 20000)
+    [ -n "$text" ] && friday_replace_selection "$text" "$addr" terminals
+    return 0
+  fi
+  [[ "$key" =~ ^[0-9]+$ ]] || return 0
+  text=$(tac "$clips" 2>/dev/null | sed -n "${key}p" | jq -r '.text' 2>/dev/null)
+  [ -n "$text" ] && friday_paste_as "$text"
+}
+
+# `friday snippet add <name> [text] | rm <name> | list`: text you paste often,
+# by name (Super+Ctrl+V, then ;name). With no text, the clipboard's.
+friday_snippet() {
+  local file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/snippets.jsonl" name="${2:-}" text
+  case "${1:-list}" in
+    add)
+      [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "Usage: friday snippet add <name: letters, digits, - or _> [text]" >&2; return 1; }
+      if [ $# -gt 2 ]; then text="${*:3}"; else text=$(timeout 2 wl-paste --no-newline 2>/dev/null || true); fi
+      [ -n "${text//[[:space:]]/}" ] || { echo "No text: give it after the name, or copy it first." >&2; return 1; }
+      mkdir -p "$(dirname "$file")"
+      (
+        umask 077
+        { jq -c --arg n "$name" 'select(.name != $n)' "$file" 2>/dev/null || true
+          jq -cn --arg n "$name" --arg t "$text" '{name: $n, text: $t}'; } >"$file.tmp"
+        mv -f "$file.tmp" "$file"
+      )
+      echo "Saved ;$name. Super+Ctrl+V, then type ;$name." ;;
+    rm)
+      jq -e --arg n "$name" 'select(.name == $n)' "$file" >/dev/null 2>&1 || { echo "No snippet called $name." >&2; return 1; }
+      jq -c --arg n "$name" 'select(.name != $n)' "$file" >"$file.tmp" && mv -f "$file.tmp" "$file"
+      echo "Removed ;$name." ;;
+    list)
+      jq -r '";\(.name)  \(.text | gsub("\\s+"; " ") | .[0:60])"' "$file" 2>/dev/null | grep . || echo "No snippets yet. friday snippet add <name> [text]" ;;
+    *) echo "Usage: friday snippet add <name> [text] | rm <name> | list" >&2; return 1 ;;
+  esac
 }
 
 # Suggestions for the focused app, shown first in the Super+Y ask box:
@@ -3370,6 +3483,14 @@ case "${1:-}" in
   recall)
     shift
     friday_recall "$@"
+    ;;
+  clips)
+    shift
+    friday_clips "$@"
+    ;;
+  snippet)
+    shift
+    friday_snippet "$@"
     ;;
   routine)
     shift
