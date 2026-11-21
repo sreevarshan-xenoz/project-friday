@@ -7,6 +7,30 @@ failure here becomes a test (AGENTS.md, phase 2).
 Use the newest release (`gh release list`; the ISO and the MSI are on the
 release page). `friday doctor` first on Linux; it should be all green.
 
+## Dual boot next to Windows (someone else's laptop: keep Windows)
+
+Before you start, in Windows:
+- [ ] Save the BitLocker recovery key (aka.ms/myrecoverykey, or Manage
+      BitLocker › Back up your recovery key), then turn BitLocker off
+      (Settings › Privacy & security › Device encryption) and wait until it
+      says off; or suspend it until resumed:
+      `manage-bde -protectors -disable C: -RebootCount 0` (admin PowerShell).
+- [ ] Turn off Fast Startup (Control Panel › Power Options › Choose what the
+      power buttons do), then shut down fully.
+- [ ] Disk Management › right-click C: › Shrink Volume by 60–100 GB.
+- [ ] In the firmware: Secure Boot off, then boot the USB.
+
+In the installer:
+- [ ] The disk step says "This disk already has Windows on it" and offers
+      "Install alongside Windows (uses the N GB of free space)".
+- [ ] It suggests a size and says whether a size is too small, tight, good
+      or generous; it warns about BitLocker if still on.
+- [ ] "Windows starts as it does now": after install, the next start goes
+      into FRIDAY once; later starts go to Windows, and the boot menu key
+      (F12/F9/Esc) lists FRIDAY OS.
+- [ ] Windows still starts, with its files, and no recovery-key prompt.
+- [ ] In FRIDAY: `sudo bootctl list` shows Windows Boot Manager too.
+
 ## FRIDAY OS install (Linux, GPU PC)
 
 - [ ] Boot the ISO, install with the defaults. The installer finds the GPU and
