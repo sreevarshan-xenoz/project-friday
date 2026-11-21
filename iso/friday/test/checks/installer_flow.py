@@ -186,7 +186,13 @@ ai_spec = (
 for key, want in ai_spec + [
     ("disk", "/dev/vda"),
     *(
-        [("erase", ""), ("mode", "alongside"), ("alongside", "/dev/vda"), ("size", "81920"), ("bootdefault", "other")]
+        [
+            ("erase", ""),
+            ("mode", "alongside"),
+            ("alongside", "/dev/vda"),
+            ("size", "81920"),
+            ("bootdefault", "other"),
+        ]
         if ALONGSIDE
         else [("erase", "/dev/vda"), ("mode", "erase")]
     ),
