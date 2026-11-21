@@ -219,7 +219,7 @@ The package installs the daemon, `friday-ctl`, the `friday` CLI, the systemd use
 msiexec /i FRIDAY-<version>-x64.msi        # add /qn for a silent install
 ```
 
-Per-user, no administrator rights: installs to `%LOCALAPPDATA%\Programs\FRIDAY`, starts the tray at login, adds the tools to the user `PATH` and the Start menu, and runs entirely in your desktop session (it needs the desktop for UI Automation, screenshots and hotkeys). Upgrades and uninstalls close the tray, daemon and host first.
+Per-user, no administrator rights: installs to `%LOCALAPPDATA%\Programs\FRIDAY`, starts the tray at login, adds the tools to the user `PATH` and the Start menu, and runs entirely in your desktop session (it needs the desktop for UI Automation, screenshots and hotkeys). Upgrades and uninstalls close the tray, daemon and host first. The tray tells you when a newer release is out, and Settings → Health & updates → Check for updates downloads its MSI, checks it against the release's SHA256SUMS and opens it.
 
 **First run and settings.** The first launch opens a welcome window (the keys, which AI is in use, "Choose my AI…", Settings, "Try it now"). Settings opens on a Home page; the Start menu entry opens it too, and it has Health & updates and a "Save a support report" button. The installer has an options page (start at login, administrator start-up, read a window's text, desktop shortcut).
 
