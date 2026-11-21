@@ -61,7 +61,13 @@ public static class BrowserLink
             var tab = JsonDocument.Parse(ctlOutput.Trim()).RootElement;
             string Get(string k) => tab.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()! : "";
             var (title, text) = (Get("title"), Get("text"));
-            if (text.Length == 0 || title.Length == 0 || !windowTitle.Contains(title, StringComparison.Ordinal))
+            // The window's title is the tab's, then " - " and the browser's
+            // name: anything looser ("Home" inside "Home Assistant") could be
+            // another window's tab.
+            var front = windowTitle == title
+                || windowTitle.StartsWith(title + " - ", StringComparison.Ordinal)
+                || windowTitle.StartsWith(title + " \u2014 ", StringComparison.Ordinal);
+            if (text.Length == 0 || title.Length == 0 || !front)
                 return null;
             var sel = Get("selection");
             return $"The page in front (read from the browser when asked):\nTitle: {title}\nAddress: {Get("url")}\n"

@@ -1206,7 +1206,7 @@ async fn main() -> std::process::ExitCode {
     let started_by_browser = raw.first().is_some_and(|a| {
         a == "browser-host"
             || a.starts_with("chrome-extension://")
-            || a.ends_with("org.friday.browser.json")
+            || (a.contains("org.friday.browser") && a.ends_with(".json"))
     });
     if started_by_browser {
         return std::process::ExitCode::from(friday_mobile::browser_host::run_host());

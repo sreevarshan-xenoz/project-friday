@@ -45,6 +45,11 @@ public class BrowserLinkTests
         Assert.Contains("Address: https://example.com/book", ctx);
         Assert.Contains("Ownership rules", ctx);
         Assert.Null(BrowserLink.PageContext(tab, "New Incognito tab - Google Chrome"));
+        Assert.NotNull(BrowserLink.PageContext(tab, "Rust book \u2014 Mozilla Firefox"));
+        // Only the window whose title starts with the tab's, not one that
+        // merely contains it.
+        Assert.Null(BrowserLink.PageContext(tab, "Notes on Rust book - Google Chrome"));
+        Assert.Null(BrowserLink.PageContext(tab, "Rust bookshelf - Google Chrome"));
         Assert.Null(BrowserLink.PageContext("""{"error":"x"}""", "Rust book - Google Chrome"));
         Assert.Null(BrowserLink.PageContext("not json", "x"));
     }

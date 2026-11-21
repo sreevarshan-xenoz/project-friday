@@ -136,62 +136,85 @@ pub fn run_host() -> u8 {
     0
 }
 
-/// On Windows: a named pipe of this user's (`\\.\pipe\friday-browser-<user>`),
-/// local clients only. Its default access lets other accounts read at most,
-/// and the host answers only a client that writes "tab".
+/// On Windows: where the host leaves its pipe's name
+/// (`%LOCALAPPDATA%\\friday\\browser-pipe`, a folder only this user can read).
+/// The name is random, so no other account can create the pipe first or
+/// find it to ask.
 #[cfg(windows)]
-pub fn pipe_name() -> String {
-    let user: String = std::env::var("USERNAME")
-        .unwrap_or_default()
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .collect();
-    format!(r"\\.\pipe\friday-browser-{user}")
+fn pipe_file() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("friday").join("browser-pipe"))
 }
 
 #[cfg(windows)]
 pub fn run_host() -> u8 {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use tokio::net::windows::named_pipe::ServerOptions;
+    use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+    let Some(file) = pipe_file() else {
+        return 1;
+    };
     let Ok(rt) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
     else {
         return 1;
     };
-    let relay = Relay::start(|| {});
+    let name = format!(r"\\.\pipe\friday-browser-{}", uuid::Uuid::new_v4().simple());
+    let relay = Relay::start({
+        let (file, name) = (file.clone(), name.clone());
+        // The browser went away: forget the pipe, unless a newer host
+        // (another browser) has written its own since.
+        move || {
+            if std::fs::read_to_string(&file).is_ok_and(|n| n == name) {
+                let _ = std::fs::remove_file(&file);
+            }
+        }
+    });
+    async fn answer(server: NamedPipeServer, relay: std::sync::Arc<Relay>) {
+        let mut conn = BufReader::new(server);
+        let mut line = String::new();
+        // A client that never says anything can't hold its slot.
+        let read =
+            tokio::time::timeout(std::time::Duration::from_secs(2), conn.read_line(&mut line))
+                .await;
+        if !matches!(read, Ok(Ok(_))) || line.trim() != "tab" {
+            return;
+        }
+        let reply = tokio::task::spawn_blocking(move || relay.ask())
+            .await
+            .unwrap_or_default();
+        let _ = conn
+            .get_mut()
+            .write_all(format!("{reply}\n").as_bytes())
+            .await;
+        let _ = conn.get_mut().flush().await;
+    }
     rt.block_on(async move {
-        let name = pipe_name();
-        let mut first = true;
-        loop {
-            let Ok(server) = ServerOptions::new()
+        let new = |first| {
+            ServerOptions::new()
                 .first_pipe_instance(first)
                 .reject_remote_clients(true)
                 .create(&name)
-            else {
-                return 1;
-            };
-            first = false;
+        };
+        let Ok(mut server) = new(true) else {
+            return 1;
+        };
+        if let Some(dir) = file.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if std::fs::write(&file, &name).is_err() {
+            return 1;
+        }
+        loop {
             if server.connect().await.is_err() {
                 continue;
             }
-            let mut conn = BufReader::new(server);
-            let mut line = String::new();
-            let read =
-                tokio::time::timeout(std::time::Duration::from_secs(2), conn.read_line(&mut line))
-                    .await;
-            if !matches!(read, Ok(Ok(_))) || line.trim() != "tab" {
-                continue;
-            }
-            let relay = relay.clone();
-            let reply = tokio::task::spawn_blocking(move || relay.ask())
-                .await
-                .unwrap_or_default();
-            let _ = conn
-                .get_mut()
-                .write_all(format!("{reply}\n").as_bytes())
-                .await;
-            let _ = conn.get_mut().flush().await;
+            // The next instance before this one is answered: always one
+            // waiting, so a second asker never finds the pipe gone.
+            let Ok(next) = new(false) else {
+                return 1;
+            };
+            let client = std::mem::replace(&mut server, next);
+            tokio::spawn(answer(client, relay.clone()));
         }
     })
 }
@@ -206,21 +229,22 @@ pub fn tab() -> Result<Value, String> {
         .build()
         .map_err(|e| e.to_string())?;
     rt.block_on(async {
+        let not_connected =
+            || "FRIDAY's browser extension isn't connected (Settings, Browser)".to_string();
+        let name = pipe_file()
+            .and_then(|f| std::fs::read_to_string(f).ok())
+            .filter(|n| n.starts_with(r"\\.\pipe\friday-browser-"))
+            .ok_or_else(not_connected)?;
         let mut tries = 0;
         let client = loop {
-            match ClientOptions::new().open(pipe_name()) {
+            match ClientOptions::new().open(&name) {
                 Ok(c) => break c,
                 // Busy answering someone else: a moment later.
                 Err(_) if tries < 20 => {
                     tries += 1;
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
-                Err(_) => {
-                    return Err(
-                        "FRIDAY's browser extension isn't connected (Settings, Browser)"
-                            .to_string(),
-                    )
-                }
+                Err(_) => return Err(not_connected()),
             }
         };
         let mut conn = BufReader::new(client);
