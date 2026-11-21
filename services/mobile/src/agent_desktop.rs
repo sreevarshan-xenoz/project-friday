@@ -486,7 +486,19 @@ pub fn pick_app(apps: &[String], class: &str) -> Option<String> {
         if want.is_empty() {
             continue;
         }
-        let hits: Vec<&String> = apps.iter().filter(|a| squash(a) == *want).collect();
+        // Windows names an app by its program ("Notepad.exe" or "notepad").
+        let hits: Vec<&String> = apps
+            .iter()
+            .filter(|a| {
+                let a = match a.len().checked_sub(4) {
+                    Some(i) if a.is_char_boundary(i) && a[i..].eq_ignore_ascii_case(".exe") => {
+                        &a[..i]
+                    }
+                    _ => a.as_str(),
+                };
+                squash(a) == *want
+            })
+            .collect();
         if hits.len() == 1 {
             return Some(hits[0].clone());
         }
@@ -2552,6 +2564,14 @@ mod tests {
         assert_eq!(pick_app(&apps, "firefox").as_deref(), Some("firefox"));
         assert_eq!(pick_app(&apps, "foot").as_deref(), Some("foot"));
         assert_eq!(pick_app(&apps, "foo"), None);
+        // On Windows the window's app is its process name.
+        let win: Vec<String> = ["Notepad.exe", "chrome", "EXPLORER.Exe"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(pick_app(&win, "notepad").as_deref(), Some("Notepad.exe"));
+        assert_eq!(pick_app(&win, "chrome").as_deref(), Some("chrome"));
+        assert_eq!(pick_app(&win, "explorer").as_deref(), Some("EXPLORER.Exe"));
         assert_eq!(pick_app(&apps, "kitty"), None);
         assert_eq!(pick_app(&apps, ""), None);
     }

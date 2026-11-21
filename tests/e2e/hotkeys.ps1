@@ -5,7 +5,8 @@
 #   Win+Y        the ask box opens; the answer window opens with the model's
 #                answer to the typed question
 #   Win+Alt+Y    the same, about text selected in Notepad (which reaches the model)
-#   Win+Ctrl+Y   the same, about the screen (the model gets the screenshot)
+#   Win+Ctrl+Y   the same, about the screen (the model gets the window's text,
+#                or a screenshot of just that window when it has too little)
 # If another program owns a Win key, the tray falls back to Ctrl+Alt (+Shift);
 # that is reported, and the fallback is pressed instead.
 #
@@ -195,22 +196,25 @@ try {
     } else { Fail "Win+Alt+Y: Notepad did not come to the front (foreground: '$([Keys]::ForegroundTitle())')" }
     if ($notepad) { Stop-Process -Id $notepad.Id -Force -ErrorAction SilentlyContinue; $notepad = $null }
 
-    # The screen ask captures just the focused window: Notepad, not the desktop.
+    # The screen ask is about just the focused window: Notepad's own words go
+    # (its text, read through UI Automation), or a screenshot of just it.
     Set-Content "$work\window.txt" "FRIDAY should see only this window."
     $notepad = Start-Process notepad.exe "`"$work\window.txt`"" -PassThru -WindowStyle Normal
     if (-not (WaitFor { [Keys]::ForegroundTitle() -match 'window' } 15)) {
         Fail "Win+Ctrl+Y: Notepad did not come to the front (foreground: '$([Keys]::ForegroundTitle())')"
     }
     Ask "Win+Ctrl+Y" @((@($VK.WIN, $VK.CTRL), $VK.Y, "Win+Ctrl+Y"), (@($VK.CTRL, $VK.ALT, $VK.SHIFT), $VK.S, "Ctrl+Alt+Shift+S")) `
-        "what is on my screen" "FAKE-MODEL-ANSWER: what is on my screen \[saw a [1-9][0-9]*-byte [0-9]+x[0-9]+ image/png\]" -Streams
+        "what is on my screen" "FAKE-MODEL-ANSWER: (QUESTION: )?what is on my screen" -Streams
     $saved = if (Test-Path "$state\last-answer.md") { Get-Content "$state\last-answer.md" -Raw } else { "" }
     $desktop = [System.Windows.Forms.SystemInformation]::VirtualScreen
-    if ($saved -match '-byte (\d+)x(\d+) image/png') {
+    if ((Get-Content "$work\model.log" -Raw) -match "FRIDAY should see only this window") {
+        Pass "Win+Ctrl+Y: Notepad's own text went to the model (no screenshot)"
+    } elseif ($saved -match '-byte (\d+)x(\d+) image/png') {
         $w, $h = [int]$Matches[1], [int]$Matches[2]
         if ($w -gt 0 -and $h -gt 0 -and $w -lt $desktop.Width -and $h -lt $desktop.Height) {
             Pass "Win+Ctrl+Y: captured just the focused window (${w}x${h} of a $($desktop.Width)x$($desktop.Height) desktop)"
         } else { Fail "Win+Ctrl+Y: the image (${w}x${h}) is not the focused window inside the $($desktop.Width)x$($desktop.Height) desktop" }
-    } else { Fail "Win+Ctrl+Y: no image size in the answer" }
+    } else { Fail "Win+Ctrl+Y: neither the window's text nor a screenshot of it reached the model" }
     if ($notepad) { Stop-Process -Id $notepad.Id -Force -ErrorAction SilentlyContinue; $notepad = $null }
 }
 catch { Fail $_ }
