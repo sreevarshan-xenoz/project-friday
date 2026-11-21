@@ -72,6 +72,18 @@ internal sealed class TrayContext : ApplicationContext
             ShowWelcome();
         else
             Notify("FRIDAY is running", $"Press {_hotkeys.Labels[AskKind.Plain]} to ask anything.", ToolTipIcon.Info);
+
+        _ = TellAboutUpdateAsync();
+    }
+
+    /// <summary>Once per start, a minute in: a balloon when a newer FRIDAY is out.</summary>
+    private async Task TellAboutUpdateAsync()
+    {
+        var ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+        await Task.Delay(TimeSpan.FromMinutes(1));
+        var r = await Updater.NewerAsync();
+        if (r is not null)
+            ui.Post(_ => Notify($"FRIDAY {r.Version} is out", "Settings, Health & updates, Check for updates installs it.", ToolTipIcon.Info), null);
     }
 
     /// <summary>The tray menu, built as it opens so every check mark says what is true now.</summary>
