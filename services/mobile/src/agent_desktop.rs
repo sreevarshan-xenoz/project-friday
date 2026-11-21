@@ -1501,6 +1501,27 @@ pub async fn detect() -> Option<AgentDesktopUi> {
     }
 }
 
+/// The id of `app`'s window that is in front: the one with the focused
+/// window's exact title, else the app's only window. Anything less certain
+/// (no title match, two with that title) is None, so a window the person
+/// isn't looking at, a private one, is never read in its place.
+fn front_window(windows: &[Value], app: &str, title: &str) -> Option<String> {
+    let own: Vec<&Value> = windows
+        .iter()
+        .filter(|w| w.get("app_name").and_then(Value::as_str) == Some(app))
+        .collect();
+    let titled: Vec<&&Value> = own
+        .iter()
+        .filter(|w| w.get("title").and_then(Value::as_str) == Some(title))
+        .collect();
+    let w = match (titled.as_slice(), own.as_slice()) {
+        ([w], _) => **w,
+        ([], [w]) => *w,
+        _ => return None,
+    };
+    w.get("id").and_then(Value::as_str).map(str::to_string)
+}
+
 /// Not much to say about a window whose tree gives less than this: ask with a
 /// screenshot instead.
 const MIN_SCREEN_TEXT: usize = 200;
@@ -1509,7 +1530,7 @@ const MAX_SCREEN_TEXT: usize = 12_000;
 
 #[async_trait]
 impl crate::context_read::ScreenText for AgentDesktopUi {
-    async fn window_text(&self, class: &str) -> Option<String> {
+    async fn window_text(&self, class: &str, title: &str) -> Option<String> {
         let listed = self
             .run_cli_envelope(&["list-apps".to_string()], None)
             .await
@@ -1523,12 +1544,20 @@ impl crate::context_read::ScreenText for AgentDesktopUi {
             .collect();
         let app = pick_app(&names, class)?;
         validate_app(&app).ok()?;
+        // Only the window in front: another window of the same app (a private
+        // one, another document) never goes with the ask.
+        let listed = self
+            .run_cli_envelope(&["list-windows".to_string()], None)
+            .await
+            .ok()?;
+        let id = front_window(listed.get("data")?.as_array()?, &app, title)?;
         let snap = self
             .run_cli_envelope(
                 &[
                     "snapshot".to_string(),
                     "--app".to_string(),
                     app,
+                    format!("--window-id={id}"),
                     "--compact".to_string(),
                 ],
                 None,
@@ -2522,6 +2551,8 @@ mod tests {
     async fn window_text_is_none_for_a_thin_tree_and_some_for_a_full_one() {
         use crate::context_read::ScreenText;
         let apps = json!({"ok": true, "data": {"apps": [{"name": "Nautilus"}]}});
+        let wins =
+            json!({"ok": true, "data": [{"id": "w-1", "title": "Home", "app_name": "Nautilus"}]});
         let thin = json!({"ok": true, "data": {"tree": {"role": "window", "name": "Home"}}});
         let long = "word ".repeat(80);
         let full = json!({"ok": true, "data": {"tree": {"role": "window", "children":
@@ -2529,31 +2560,78 @@ mod tests {
 
         let stub = StubSpawn::new();
         stub.push_response("list-apps", Ok(apps.to_string()));
+        stub.push_response("list-windows", Ok(wins.to_string()));
         stub.push_response("snapshot", Ok(thin.to_string()));
         assert_eq!(
             AgentDesktopUi::new(stub.clone())
-                .window_text("nautilus")
+                .window_text("nautilus", "Home")
                 .await,
             None
         );
 
         let stub = StubSpawn::new();
         stub.push_response("list-apps", Ok(apps.to_string()));
+        stub.push_response("list-windows", Ok(wins.to_string()));
         stub.push_response("snapshot", Ok(full.to_string()));
         let got = AgentDesktopUi::new(stub.clone())
-            .window_text("org.gnome.Nautilus")
+            .window_text("org.gnome.Nautilus", "Home")
             .await;
         assert!(got.unwrap().contains("word word"));
         let calls = stub.calls();
-        assert_eq!(calls[1].0, ["snapshot", "--app", "Nautilus", "--compact"]);
+        assert_eq!(
+            calls[2].0,
+            [
+                "snapshot",
+                "--app",
+                "Nautilus",
+                "--window-id=w-1",
+                "--compact"
+            ]
+        );
 
         let stub = StubSpawn::new();
         stub.push_response("list-apps", Ok(apps.to_string()));
         assert_eq!(
-            AgentDesktopUi::new(stub.clone()).window_text("kitty").await,
+            AgentDesktopUi::new(stub.clone())
+                .window_text("kitty", "")
+                .await,
             None
         );
         assert_eq!(stub.calls().len(), 1);
+    }
+
+    #[test]
+    fn only_the_window_in_front_is_read() {
+        let w = |id: &str, title: &str, app: &str, focused: bool| json!({"id": id, "title": title, "app_name": app, "is_focused": focused});
+        let two = [
+            w("w-1", "Notes - Firefox", "firefox", false),
+            w("w-2", "Private Browsing - Firefox", "firefox", true),
+            w("w-3", "Notes", "foot", false),
+        ];
+        // The focused window's title picks it, whatever the desktop reports.
+        assert_eq!(
+            front_window(&two, "firefox", "Notes - Firefox").as_deref(),
+            Some("w-1")
+        );
+        // No title match is no window, never the "focused" (private) one.
+        assert_eq!(front_window(&two, "firefox", "Other"), None);
+        assert_eq!(front_window(&two, "firefox", ""), None);
+        // Two windows, neither focused nor matching: none (a screenshot instead).
+        let unsure = [
+            w("w-1", "A", "firefox", false),
+            w("w-2", "B", "firefox", false),
+        ];
+        assert_eq!(front_window(&unsure, "firefox", "C"), None);
+        // Two windows with the same title can't be told apart either.
+        let same = [
+            w("w-1", "A", "firefox", false),
+            w("w-2", "A", "firefox", false),
+        ];
+        assert_eq!(front_window(&same, "firefox", "A"), None);
+        // An app's only window is that window.
+        assert_eq!(front_window(&two, "foot", "").as_deref(), Some("w-3"));
+        assert_eq!(front_window(&two, "foot", "Notes ").as_deref(), Some("w-3"));
+        assert_eq!(front_window(&two, "kitty", ""), None);
     }
 
     /// Against a live desktop: the words of one running app, read the way a
@@ -2565,7 +2643,8 @@ mod tests {
         use crate::context_read::ScreenText;
         let class = std::env::var("FRIDAY_LIVE_APP_CLASS").expect("set FRIDAY_LIVE_APP_CLASS");
         let ui = detect().await.expect("agent-desktop is not installed");
-        let text = ui.window_text(&class).await;
+        let title = std::env::var("FRIDAY_LIVE_APP_TITLE").unwrap_or_default();
+        let text = ui.window_text(&class, &title).await;
         println!(
             "window text for {class}: {} chars, {} lines",
             text.as_ref().map_or(0, |t| t.chars().count()),
