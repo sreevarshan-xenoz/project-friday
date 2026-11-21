@@ -297,6 +297,10 @@ async fn main() {
         if let Some(ui) = friday_mobile::agent_desktop::detect().await {
             screen_reader = screen_reader.with_text(Arc::new(ui));
         }
+        // A picked area's words, read by tesseract here; without tesseract
+        // (or with too few words) the picture goes, as before.
+        screen_reader =
+            screen_reader.with_area_text(Arc::new(friday_mobile::context_read::Tesseract));
     }
     let screen_reader = Arc::new(screen_reader);
     tracing::info!(
