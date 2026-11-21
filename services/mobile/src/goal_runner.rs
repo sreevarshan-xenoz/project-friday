@@ -1154,6 +1154,33 @@ fn truncate(s: &str, max: usize) -> String {
     out
 }
 
+/// A `conversation.turn` (a screen ask answered in a conversation):
+/// recorded like a goal's turn, and saved unless in private mode.
+fn note_turn(
+    sessions: &Mutex<HashMap<String, SessionContext>>,
+    conversations: Option<&std::path::Path>,
+    private_mode: bool,
+    payload: &serde_json::Value,
+) {
+    let field = |k: &str| payload.get(k).and_then(|v| v.as_str()).unwrap_or("");
+    let (session_id, goal, result) = (field("session_id"), field("goal"), field("result"));
+    if session_id.is_empty() || goal.trim().is_empty() {
+        return;
+    }
+    {
+        let mut map = sessions.lock().unwrap();
+        let ctx = map
+            .entry(session_id.to_string())
+            .or_insert_with(SessionContext::new);
+        ctx.turn += 1;
+        ctx.record(goal, truncate(result, MAX_CONTEXT_CHARS));
+    }
+    evict_lru(sessions, MAX_SESSIONS);
+    if let (Some(path), false) = (conversations, private_mode) {
+        save_conversations(path, &sessions.lock().unwrap());
+    }
+}
+
 /// Keep the session map bounded: drop the least-recently-seen entries until
 /// the map is at most `max` sessions.
 fn evict_lru(sessions: &Mutex<HashMap<String, SessionContext>>, max: usize) {
@@ -1204,7 +1231,7 @@ pub struct GoalRunner {
     /// Per-session conversational context (`session_id` → context), bounded by
     /// [`MAX_SESSIONS`] with LRU eviction. Locked only in short critical
     /// sections — never held across an await.
-    sessions: Mutex<HashMap<String, SessionContext>>,
+    sessions: Arc<Mutex<HashMap<String, SessionContext>>>,
     /// Where conversations are saved between daemon runs (`None`: memory only).
     conversations: Option<std::path::PathBuf>,
     /// Where lessons from failed goals are kept (`None`: not learned).
@@ -1682,7 +1709,7 @@ impl GoalRunner {
             workspace,
             answerer: fabric.clone().map(|f| f as Arc<dyn LlmStrategyClient>),
             fabric,
-            sessions: Mutex::new(HashMap::new()),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
             conversations: None,
             lessons: None,
             timeline: None,
@@ -1772,28 +1799,6 @@ impl GoalRunner {
         }
     }
 
-    /// A `conversation.turn` (a screen ask answered in a conversation):
-    /// recorded like a goal's turn, and saved unless in private mode.
-    fn note_turn(&self, payload: &serde_json::Value) {
-        let field = |k: &str| payload.get(k).and_then(|v| v.as_str()).unwrap_or("");
-        let (session_id, goal, result) = (field("session_id"), field("goal"), field("result"));
-        if session_id.is_empty() || goal.trim().is_empty() {
-            return;
-        }
-        {
-            let mut sessions = self.sessions.lock().unwrap();
-            let ctx = sessions
-                .entry(session_id.to_string())
-                .or_insert_with(SessionContext::new);
-            ctx.turn += 1;
-            ctx.record(goal, truncate(result, MAX_CONTEXT_CHARS));
-        }
-        evict_lru(&self.sessions, MAX_SESSIONS);
-        if let (Some(path), false) = (&self.conversations, self.private_mode) {
-            save_conversations(path, &self.sessions.lock().unwrap());
-        }
-    }
-
     /// Subscribe to `plan.goal` and run each goal through the Executive,
     /// publishing lifecycle events so the portal chat responds. A second,
     /// dedicated subscriber consumes the human-control events (`task.cancel` /
@@ -1806,6 +1811,26 @@ impl GoalRunner {
     /// before the send).
     pub fn start(self) -> GoalRunnerHandle {
         let handle = self.handle();
+        // A screen ask answered in a conversation becomes its last turn, at
+        // once: on its own listener, not queued behind a goal being run.
+        {
+            let mut turns = self.bus.subscribe();
+            let sessions = self.sessions.clone();
+            let conversations = self.conversations.clone();
+            let private_mode = self.private_mode;
+            tokio::spawn(async move {
+                while let Some(ev) = crate::next_event(&mut turns).await {
+                    if ev.kind == "conversation.turn" {
+                        note_turn(
+                            &sessions,
+                            conversations.as_deref(),
+                            private_mode,
+                            &ev.payload,
+                        );
+                    }
+                }
+            });
+        }
         let mut rx = self.bus.subscribe();
         let mut control_rx = self.bus.subscribe();
         let control_bus = self.bus.clone();
@@ -1900,12 +1925,6 @@ impl GoalRunner {
         tokio::spawn(async move {
             tracing::info!("goal runner subscribed to plan.goal");
             while let Some(ev) = crate::next_event(&mut rx).await {
-                // A screen ask answered in a conversation: its question and
-                // answer become that conversation's last turn.
-                if ev.kind == "conversation.turn" {
-                    self.note_turn(&ev.payload);
-                    continue;
-                }
                 if ev.kind != "plan.goal" {
                     continue;
                 }
