@@ -457,8 +457,10 @@ pub struct Report {
 impl Report {
     pub fn text(&self, saved: &Saved) -> String {
         let mut out = format!("Workspace \"{}\"", saved.name);
+        // The folder's name, not its path: this goes to the model, and a
+        // home path carries the account name.
         if let Some(p) = &saved.project {
-            out.push_str(&format!(" ({p})"));
+            out.push_str(&format!(" ({})", program(p)));
         }
         out.push_str(": ");
         let mut parts = Vec::new();

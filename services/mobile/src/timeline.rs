@@ -122,7 +122,8 @@ fn agent_run(text: &str) -> Option<Entry> {
             "{} worked on \"{}\" in {} ({})",
             v["agent"].as_str().unwrap_or("an agent"),
             v["request"].as_str().unwrap_or_default(),
-            folder,
+            // The folder's name, not its path (it goes to the model).
+            project.as_deref().unwrap_or("?"),
             v["status"].as_str().unwrap_or("?")
         )),
         project,
