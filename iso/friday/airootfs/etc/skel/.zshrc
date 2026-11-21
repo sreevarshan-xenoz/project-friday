@@ -26,6 +26,12 @@ alias grep='grep --color=auto'
 alias diff='diff --color=auto'
 alias update='sudo pacman -Syu'
 
+# FRIDAY: Super+Y can explain the last failed command, or say when one
+# finishes, in any terminal (the command, its folder and exit code; never its output)
+if command -v friday >/dev/null 2>&1; then
+    eval "$(friday shell-hook zsh)"
+fi
+
 # Prompt initialization (Starship)
 if command -v starship >/dev/null 2>&1; then
     eval "$(starship init zsh)"
