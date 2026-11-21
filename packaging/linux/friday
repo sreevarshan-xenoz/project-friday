@@ -40,6 +40,7 @@ Autonomous Agent & Cognitive Loop:
                                    command, or says when one finishes, in any terminal
   friday folders [add|rm|list|update] Folders whose notes and PDFs FRIDAY searches, quoting
                                    the file
+  friday mcp [allow|deny <tool>]   Let other AI apps use FRIDAY (MCP); each tool off until allowed
   friday meeting [notes] [--yes]   A meeting's captions become decisions, actions and open
                                    questions, kept with the project
   friday recall [status|on|off|keep 3h|24h|7d]  Keep the text of windows you look at, here
@@ -1316,6 +1317,39 @@ EOF2
       if [ "$hours" = 3 ]; then rm -f "$keep"; else (umask 077; echo "$hours" >"$keep"); fi
       echo "Recall keeps what it saw for ${2/h/ hours}." | sed 's/7d/7 days/' ;;
     *) echo "Usage: friday recall [status|on|off|keep 3h|24h|7d]" >&2; return 1 ;;
+  esac
+}
+
+# `friday mcp [allow|deny <tool>]`: other AI apps (Claude Desktop, editors…)
+# can use FRIDAY as an MCP server, `friday-ctl mcp`. Each tool is off until
+# allowed here: friday_thoughts, friday_timeline, friday_ask.
+friday_mcp() {
+  local file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/mcp-allow" tool="${2:-}" t
+  local tools="friday_thoughts friday_timeline friday_ask"
+  case "${1:-status}" in
+    status)
+      echo "FRIDAY as an MCP server: add this to the app's MCP settings:"
+      echo '  {"mcpServers": {"friday": {"command": "friday-ctl", "args": ["mcp"]}}}'
+      for t in $tools; do
+        if grep -qx "$t" "$file" 2>/dev/null; then echo "  $t: allowed (friday mcp deny $t)"; else echo "  $t: not allowed (friday mcp allow $t)"; fi
+      done ;;
+    allow|deny)
+      [[ " $tools " == *" $tool "* ]] || { echo "Usage: friday mcp allow|deny <$(tr ' ' '|' <<<"$tools")>" >&2; return 1; }
+      mkdir -p "$(dirname "$file")"
+      (
+        umask 077
+        { grep -vx "$tool" "$file" 2>/dev/null || true; [ "$1" = deny ] || echo "$tool"; } >"$file.tmp"
+        mv -f "$file.tmp" "$file"
+      )
+      if [ "$1" = allow ]; then
+        case "$tool" in
+          friday_ask) echo "Allowed friday_ask: apps you connect can ask FRIDAY questions, answered by your AI provider." ;;
+          *) echo "Allowed $tool: apps you connect can read it." ;;
+        esac
+      else
+        echo "Denied $tool."
+      fi ;;
+    *) echo "Usage: friday mcp [allow|deny <tool>]" >&2; return 1 ;;
   esac
 }
 
@@ -3870,6 +3904,10 @@ case "${1:-}" in
   folders)
     shift
     friday_folders "$@"
+    ;;
+  mcp)
+    shift
+    friday_mcp "$@"
     ;;
   meeting)
     shift

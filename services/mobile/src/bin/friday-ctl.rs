@@ -608,6 +608,89 @@ fn workspace(args: &[String]) -> std::process::ExitCode {
     }
 }
 
+/// `friday-ctl mcp`: FRIDAY as an MCP server over stdio, one JSON-RPC
+/// message per line (`friday_mobile::mcp_serve`). The allow list is read
+/// again for every message, so `friday mcp allow` takes effect at once.
+fn mcp_serve() -> std::process::ExitCode {
+    use friday_mobile::{mcp_serve as mcp, thoughts as th, timeline};
+    use std::io::{BufRead, Write};
+    let state = friday_intelligence::default_state_dir();
+    let run = |tool: &str, args: &serde_json::Value| -> Result<String, String> {
+        let arg = |k: &str| {
+            args.get(k)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string()
+        };
+        match tool {
+            "friday_thoughts" => {
+                let text = th::render(&th::recent(&state, &arg("project"), 50, None));
+                Ok(if text.is_empty() {
+                    "No thoughts kept yet.".into()
+                } else {
+                    text
+                })
+            }
+            "friday_timeline" => {
+                let entries = timeline::collect(&state);
+                let ask = match arg("when").as_str() {
+                    "today" => "what did I do today",
+                    "yesterday" => "what did I do yesterday",
+                    "week" => "what did I do this week",
+                    _ => "where was I",
+                };
+                Ok(match timeline::wants(ask, &entries, chrono::Local::now()) {
+                    Some((from, to)) if !timeline::render(&entries, from, to).is_empty() => {
+                        timeline::render(&entries, from, to)
+                    }
+                    _ => "Nothing in FRIDAY's logs for that yet.".into(),
+                })
+            }
+            _ => {
+                let question = arg("question");
+                if question.is_empty() {
+                    return Err("Ask a question (the question argument).".into());
+                }
+                let me = std::env::current_exe().map_err(|e| e.to_string())?;
+                let out = std::process::Command::new(me)
+                    .args(["goal", "--wait", &question])
+                    .stderr(std::process::Stdio::null())
+                    .output()
+                    .map_err(|e| e.to_string())?;
+                let text = String::from_utf8_lossy(&out.stdout);
+                let last = serde_json::Deserializer::from_str(&text)
+                    .into_iter::<serde_json::Value>()
+                    .filter_map(Result::ok)
+                    .filter(|v| v.get("outcome").is_some())
+                    .last()
+                    .unwrap_or_default();
+                match (last["outcome"].as_str(), last["result"].as_str()) {
+                    (Some("completed"), Some(answer)) => Ok(answer.to_string()),
+                    _ => Err(last["error"]
+                        .as_str()
+                        .unwrap_or("FRIDAY didn't answer (is it running?)")
+                        .to_string()),
+                }
+            }
+        }
+    };
+    let stdin = std::io::stdin();
+    let mut out = std::io::stdout();
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else { break };
+        let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        let allow = std::fs::read_to_string(mcp::allow_file()).unwrap_or_default();
+        if let Some(reply) = mcp::handle(&msg, &allow, &run) {
+            let _ = writeln!(out, "{reply}");
+            let _ = out.flush();
+        }
+    }
+    std::process::ExitCode::SUCCESS
+}
+
 /// `friday-ctl timeline [today|yesterday|week]`: what FRIDAY's logs say
 /// happened (the same text an ask about the past gets). Default: the last
 /// day with anything on it.
@@ -1015,6 +1098,9 @@ async fn main() -> std::process::ExitCode {
     }
     if raw.first().map(String::as_str) == Some("workspace") {
         return workspace(&raw[1..]);
+    }
+    if raw.first().map(String::as_str) == Some("mcp") {
+        return mcp_serve();
     }
     if raw.first().map(String::as_str) == Some("thought") {
         return thought(&raw[1..]);
