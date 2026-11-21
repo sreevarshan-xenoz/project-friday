@@ -25,7 +25,7 @@ internal static class Selection
                 string? text = TryGetClipboardText();
                 if (string.IsNullOrWhiteSpace(text))
                     return new Result(null, "", "Select or copy some text first, then press the hotkey again.");
-                if (Asking.LooksLikeSecret(text))
+                if (Asking.LooksLikeSecret(text) || MarkedPrivate())
                     return new Result(null, "", "The clipboard looks like a password or token, so I won't send it. Select the text you mean instead.");
                 return new Result(text, "Clipboard", null);
             }
@@ -33,6 +33,7 @@ internal static class Selection
             await WaitForModifiersUpAsync();
             var savedClipboard = SnapshotClipboard();
             string? before = TryGetClipboardText();
+            var beforePrivate = MarkedPrivate();
             var seq = Native.GetClipboardSequenceNumber();
             SendCtrlC();
             for (var i = 0; i < 20 && Native.GetClipboardSequenceNumber() == seq; i++)
@@ -48,13 +49,78 @@ internal static class Selection
 
             if (string.IsNullOrWhiteSpace(before))
                 return new Result(null, "", "Select or copy some text first, then press the hotkey again.");
-            if (Asking.LooksLikeSecret(before))
+            if (Asking.LooksLikeSecret(before) || beforePrivate)
                 return new Result(null, "", "The clipboard looks like a password or token, so I won't send it. Select the text you mean instead.");
             return new Result(before, "Clipboard", null);
         }
         catch (ExternalException)
         {
             return new Result(null, "", "The clipboard is busy. Try again.");
+        }
+    }
+
+    /// <summary>
+    /// Pastes <paramref name="text"/> into <paramref name="target"/> with
+    /// Ctrl+V (it must be in front again), then puts the clipboard back.
+    /// False when the window couldn't be brought back.
+    /// </summary>
+    public static async Task<bool> PasteAsync(IntPtr target, string text)
+    {
+        Native.RestoreForeground(target);
+        await FocusWait.WaitForForegroundAsync(target, Native.GetForegroundWindow);
+        await WaitForModifiersUpAsync();
+        if (Native.GetForegroundWindow() != target)
+            return false;
+        var saved = SnapshotClipboard();
+        if (!TrySetText(text))
+            return false;
+        var ours = Native.GetClipboardSequenceNumber();
+        try
+        {
+            // Checked again: the paste goes only to the window it was meant for.
+            if (Native.GetForegroundWindow() != target)
+                return false;
+            SendChord(Native.VK_V);
+            // The app reads the clipboard after the paste; put the old one back a moment later.
+            await Task.Delay(1000);
+            return true;
+        }
+        finally
+        {
+            // Unless something else was copied meanwhile, or the old one couldn't be read.
+            if (saved != null && Native.GetClipboardSequenceNumber() == ours)
+                RestoreClipboard(saved);
+        }
+    }
+
+    /// <summary>Puts text on the clipboard; false when another program holds it.</summary>
+    public static bool TrySetText(string text)
+    {
+        try
+        {
+            Clipboard.SetDataObject(text, copy: true, retryTimes: 10, retryDelay: 50);
+            return true;
+        }
+        catch (ExternalException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Password managers mark what they copy so clipboard history and other
+    /// tools leave it alone; FRIDAY does too.
+    /// </summary>
+    private static bool MarkedPrivate()
+    {
+        try
+        {
+            return Clipboard.ContainsData("ExcludeClipboardContentFromMonitorProcessing")
+                || Clipboard.ContainsData("Clipboard Viewer Ignore");
+        }
+        catch (ExternalException)
+        {
+            return false;
         }
     }
 
@@ -132,7 +198,9 @@ internal static class Selection
             await Task.Delay(25);
     }
 
-    private static void SendCtrlC()
+    private static void SendCtrlC() => SendChord(Native.VK_C);
+
+    private static void SendChord(int vk)
     {
         static Native.INPUT Key(int vk, bool up) => new()
         {
@@ -141,8 +209,8 @@ internal static class Selection
         };
         Native.INPUT[] inputs =
         [
-            Key(Native.VK_CONTROL, false), Key(Native.VK_C, false),
-            Key(Native.VK_C, true), Key(Native.VK_CONTROL, true),
+            Key(Native.VK_CONTROL, false), Key(vk, false),
+            Key(vk, true), Key(Native.VK_CONTROL, true),
         ];
         Native.SendInput((uint)inputs.Length, inputs, System.Runtime.InteropServices.Marshal.SizeOf<Native.INPUT>());
     }

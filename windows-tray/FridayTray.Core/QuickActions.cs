@@ -16,9 +16,15 @@ public static class QuickActions
     ];
 
     /// <summary>The built-in actions followed by the prompts in <paramref name="promptsFile"/>, if it can be read.</summary>
-    public static IReadOnlyList<string> All(string promptsFile)
+    public static IReadOnlyList<string> All(string promptsFile) => All(promptsFile, selected: false);
+
+    /// <summary>
+    /// As <see cref="All(string)"/>; text that was selected (not only copied)
+    /// can be rewritten in place, so the rewrites come first.
+    /// </summary>
+    public static IReadOnlyList<string> All(string promptsFile, bool selected)
     {
-        var list = new List<string>(Defaults);
+        var list = new List<string>(selected ? Rewrite.Actions.Concat(Defaults) : Defaults);
         try
         {
             foreach (var raw in File.ReadLines(promptsFile))
