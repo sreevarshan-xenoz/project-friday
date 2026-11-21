@@ -1,0 +1,10 @@
+[Unit]
+Description=FRIDAY: daily safe upgrade (off unless friday upgrade auto on)
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=2h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

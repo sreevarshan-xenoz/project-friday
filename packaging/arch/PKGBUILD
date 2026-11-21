@@ -97,6 +97,8 @@ package() {
   # root helper binary (inert until explicitly enabled via `friday helper enable`)
   install -Dm755 target/release/friday-os-helper "$pkgdir/usr/lib/friday/friday-os-helper"
   install -Dm755 "$lin/friday" -t "$pkgdir/usr/bin"
+  install -Dm755 "$lin/upgrade/friday-upgrade" -t "$pkgdir/usr/lib/friday"
+  install -Dm644 "$lin/upgrade/friday-upgrade.service" "$lin/upgrade/friday-upgrade.timer" -t "$pkgdir/usr/lib/systemd/system"
   # FRIDAY's browser extension (load it from here) and its native host.
   install -Dm644 "packaging/browser/extension/manifest.json" \
     "packaging/browser/extension/background.js" -t "$pkgdir/usr/share/friday/browser-extension"
