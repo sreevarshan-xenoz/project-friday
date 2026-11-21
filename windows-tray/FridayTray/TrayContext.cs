@@ -138,6 +138,15 @@ internal sealed class TrayContext : ApplicationContext
         _asking = true;
         try
         {
+            // The window in front, read before anything of ours opens. "Ask
+            // again" from an answer card means the window asked about before;
+            // the taskbar or tray is no window to look at or type into.
+            var targetWindow = Native.GetForegroundWindow();
+            if (string.Equals(Native.ProcessNameOf(targetWindow), "friday-tray", StringComparison.OrdinalIgnoreCase))
+                targetWindow = _askTarget;
+            if (Native.GetClassName(targetWindow) is "Shell_TrayWnd" or "NotifyIconOverflowWindow" or "Shell_SecondaryTrayWnd")
+                targetWindow = IntPtr.Zero;
+            _askTarget = targetWindow;
             // Drag out the area first: only that part of the screen is captured.
             PickedRegion? area = null;
             if (pickArea)
@@ -147,8 +156,6 @@ internal sealed class TrayContext : ApplicationContext
                     return;
                 area = picker.Picked;
             }
-            var targetWindow = Native.GetForegroundWindow();
-            _askTarget = targetWindow;
             // A password manager, a private browser window, a bank: neither a
             // screenshot of it nor text selected in it is sent anywhere.
             if (kind is AskKind.Screen or AskKind.Selection
@@ -238,10 +245,9 @@ internal sealed class TrayContext : ApplicationContext
             return;
         }
         if (Terminals.IsTerminalClass(Native.GetClassName(target)) || !await Selection.PasteAsync(target, rewritten))
-        {
-            Clipboard.SetDataObject(rewritten, copy: true, retryTimes: 10, retryDelay: 50);
-            Notify("FRIDAY", "The rewrite is on your clipboard: paste it with Ctrl+V.", ToolTipIcon.Info);
-        }
+            Notify("FRIDAY", Selection.TrySetText(rewritten)
+                ? "The rewrite is on your clipboard: paste it with Ctrl+V."
+                : "The clipboard is busy, so the rewrite couldn't be put there.", ToolTipIcon.Info);
     }
 
     /// <summary>
@@ -567,7 +573,9 @@ internal sealed class TrayContext : ApplicationContext
         form.Closed += (_, _) => { if (Speaking.Enabled(_install.Paths)) Ctl.StopSaying(_install); };
         form.CanAskAnother = kind != AskKind.Screen;
         form.AskAgain += () => _ = AskAsync(kind);
-        form.TypeIt += text => _ = TypeItAsync(text);
+        // This card's own window: a later ask doesn't move where it types.
+        var target = _askTarget;
+        form.TypeIt += text => _ = TypeItAsync(target, text);
         form.StartFriday += RestartChildren;
         FluentApp.Show(form);
         form.Activate();
@@ -577,13 +585,13 @@ internal sealed class TrayContext : ApplicationContext
     /// <summary>The window the last question was asked from ("Type it" puts the answer there).</summary>
     private IntPtr _askTarget;
 
-    private async Task TypeItAsync(string text)
+    private async Task TypeItAsync(IntPtr target, string text)
     {
-        if (_askTarget == IntPtr.Zero || !await Selection.PasteAsync(_askTarget, text))
-        {
-            Clipboard.SetDataObject(text, copy: true, retryTimes: 10, retryDelay: 50);
-            Notify("FRIDAY", "The answer is on your clipboard: paste it with Ctrl+V.", ToolTipIcon.Info);
-        }
+        if (target != IntPtr.Zero && await Selection.PasteAsync(target, text))
+            return;
+        Notify("FRIDAY", Selection.TrySetText(text)
+            ? "The answer is on your clipboard: paste it with Ctrl+V."
+            : "The clipboard is busy, so the answer couldn't be put there. Use Copy on the answer.", ToolTipIcon.Info);
     }
 
     /// <summary>The streaming answer to <paramref name="request"/> so far, if any.</summary>
