@@ -319,3 +319,10 @@ PY
   if [[ -z "$missing" ]]; then pass "setup draws only glyphs the console font (Terminus) has"
   else fail "setup draws glyphs Terminus lacks: $missing"; fi
 else skip "console glyph check (needs psfgettable, python3, terminus-font)"; fi
+
+# FRIDAY's browser extension: Chromium on FRIDAY OS loads it, and the package
+# lets every browser find its host with no setup step.
+contains "FRIDAY OS's Chromium loads FRIDAY's extension" "$(cat "$REPO_ROOT/iso/friday/airootfs/etc/skel/.config/chromium-flags.conf")" "/usr/share/friday/browser-extension"
+contains "the package installs the host for Chromium" "$(cat "$REPO_ROOT/packaging/arch/PKGBUILD")" "etc/chromium/native-messaging-hosts"
+contains "and for Firefox" "$(cat "$REPO_ROOT/packaging/arch/PKGBUILD")" "usr/lib/mozilla/native-messaging-hosts"
+contains "the host manifest allows only FRIDAY's extension" "$(cat "$REPO_ROOT/packaging/browser/org.friday.browser.chromium.json")" "chrome-extension://eiblopljacafgajanhkngbhejpjjmfff/"

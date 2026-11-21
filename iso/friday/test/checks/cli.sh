@@ -715,6 +715,16 @@ contains "recall off stops the service" "$(cat "$LOG")" "systemctl --user disabl
 [ -e "$rf" ] && fail "recall off left the kept text" || pass "recall off forgets the kept text"
 expect "and the keep goes back to 3 hours" test ! -e "$state/recall-keep"
 
+echo "search a folder you pick"
+mkdir -p "$W/notes"
+contains "adding a folder asks first" "$(bash "$F" folders add "$W/notes" </dev/null)" "Nothing changed."
+: >"$LOG"; bash "$F" folders add "$W/notes" --yes >/dev/null
+contains "a folder added is listed" "$(bash "$F" folders list)" "$W/notes"
+contains "and indexed" "$(cat "$LOG")" "docs --prepare-folders"
+contains "the folder list is owner-only" "$(stat -c %a "$HOME/.config/friday/search-folders")" "600"
+bash "$F" folders rm "$W/notes" >/dev/null
+contains "rm takes it off" "$(bash "$F" folders list)" "No folders yet"
+
 echo "documentation on this computer"
 : >"$LOG"; DOCS_REPLY=$'[Arch wiki: Pacman]\nTo upgrade the system, run pacman -Syu.' bash "$F" ask "how do I upgrade with pacman"; sleep 0.3
 contains "a typed question looks in the local docs" "$(cat "$LOG")" "friday-ctl-docs docs -- how do I upgrade with pacman"
@@ -836,6 +846,88 @@ if grep -q "network unreachable" "$state/last-ask.json"; then fail "last-ask.jso
 rm -f "$state/last-ask.json"
 contains "nothing to report before an answer" "$(bash "$F" wrong x 2>&1 || true)" "No answer to report yet"
 
+echo "the browser extension"
+# friday-ctl browser tab answers as the extension would; a browser is in front.
+mkdir -p "$W/bt-bin"
+cat >"$W/bt-bin/friday-ctl" <<STUB
+#!/bin/bash
+if [ "\$1 \$2" = "browser tab" ]; then printf '%s\n' '{"title":"Rust book","url":"https://example.com/book","selection":"","text":"Ownership rules: each value has one owner."}'; exit 0; fi
+exec "$S/friday-ctl" "\$@"
+STUB
+chmod +x "$W/bt-bin/friday-ctl"
+printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s %q\nexit 0\n' '{"class":"firefox","title":"Rust book — Mozilla Firefox"}' >"$S/hyprctl"; chmod +x "$S/hyprctl"
+: >"$LOG"; PATH="$W/bt-bin:$PATH" bash "$F" ask --screen "summarize this page"; sleep 0.3
+if grep -q "context screen" "$LOG"; then fail "took a screenshot though the extension had the page"; else pass "a browser with the extension sends the page's text, no screenshot"; fi
+contains "with its address" "$(cat "$LOG")" "Address: https://example.com/book"
+contains "and its text" "$(cat "$LOG")" "Ownership rules"
+: >"$LOG"; bash "$F" ask --screen "summarize this page"; sleep 0.3
+contains "without the extension it's a screenshot as before" "$(cat "$LOG")" "context screen"
+# A private window the extension can't see: its tab answer is another window's.
+printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s %q\nexit 0\n' '{"class":"firefox","title":"Mozilla Firefox Private Browsing"}' >"$S/hyprctl"
+: >"$LOG"; PATH="$W/bt-bin:$PATH" bash "$F" ask --screen "summarize this page"; sleep 0.3
+if grep -q "Ownership rules" "$LOG"; then fail "sent another window's tab"; else pass "a tab that isn't the one in front isn't sent"; fi
+rm -f "$S/hyprctl"
+H2="$W/bhome"; mkdir -p "$H2"
+HOME="$H2" XDG_CONFIG_HOME="$H2/.config" bash "$F" browser setup >/dev/null
+contains "setup registers the host with Chromium for FRIDAY's extension only" "$(cat "$H2/.config/chromium/NativeMessagingHosts/org.friday.browser.json")" "chrome-extension://eiblopljacafgajanhkngbhejpjjmfff/"
+contains "and with Firefox" "$(cat "$H2/.mozilla/native-messaging-hosts/org.friday.browser.json")" "browser@friday-os"
+echo "encrypted sync between your machines"
+# A stand-in for age: "encrypts" by naming the recipients; only a key among
+# them opens it (the flow is tested here, age itself does the cryptography).
+cat >"$S/age-keygen" <<'STUB'
+#!/bin/bash
+if [ "$1" = -o ]; then echo "SECRET-$RANDOM$RANDOM" >"$2"; exit 0; fi
+[ "$1" = -y ] && printf 'age1%s\n' "$(sha256sum "$2" | cut -c1-58)"
+STUB
+cat >"$S/age" <<'STUB'
+#!/bin/bash
+if [ "$1" = -d ]; then
+  me=$(age-keygen -y "$3"); head -n1 "$4" | grep -qw "$me" || { echo "no identity matched" >&2; exit 1; }
+  tail -n +2 "$4"; exit 0
+fi
+rec=""; out=""
+while [ $# -gt 0 ]; do case "$1" in -r) rec="$rec $2"; shift 2 ;; -o) out="$2"; shift 2 ;; *) shift ;; esac; done
+{ echo "AGE:$rec"; cat; } >"$out"
+STUB
+chmod +x "$S/age" "$S/age-keygen"
+SYNC="$W/syncdir"; mkdir -p "$SYNC"
+mA() { XDG_CONFIG_HOME="$W/A/cfg" XDG_STATE_HOME="$W/A/state" XDG_DATA_HOME="$W/A/data" bash "$F" sync "$@"; }
+mB() { XDG_CONFIG_HOME="$W/B/cfg" XDG_STATE_HOME="$W/B/state" XDG_DATA_HOME="$W/B/data" bash "$F" sync "$@"; }
+mC() { XDG_CONFIG_HOME="$W/C/cfg" XDG_STATE_HOME="$W/C/state" XDG_DATA_HOME="$W/C/data" bash "$F" sync "$@"; }
+if need ssh-keygen; then
+contains "sync is off until set up" "$(mA)" "not set up"
+LA=$(mA init | sed -n 's/^  friday sync trust //p'); LB=$(mB init | sed -n 's/^  friday sync trust //p'); LC=$(mC init | sed -n 's/^  friday sync trust //p')
+contains "the key file is owner-only" "$(stat -c %a "$W/A/cfg/friday/sync/key.txt")" "600"
+mA folder "$SYNC" >/dev/null; mB folder "$SYNC" >/dev/null; mC folder "$SYNC" >/dev/null
+mA project site on >/dev/null; mB project site on >/dev/null; mC project site on >/dev/null
+contains "no bundle until another machine is trusted" "$(mA now 2>&1 || true)" "No other machine is trusted yet"
+# shellcheck disable=SC2086
+mA trust $LB >/dev/null; mB trust $LA >/dev/null
+mkdir -p "$W/A/state/friday" "$W/A/data/friday/workspaces"
+printf '%s\n' '{"ts":1,"project":"/home/me/code/site","kind":"decision","text":"move images to a CDN"}' \
+  '{"ts":2,"project":"/home/me/code/diary/","kind":"idea","text":"private diary idea"}' >"$W/A/state/friday/thoughts.jsonl"
+echo '{"windows":[]}' >"$W/A/data/friday/workspaces/site.json"
+echo '{"windows":[]}' >"$W/A/data/friday/workspaces/zzz-other.json"
+mA now >/dev/null
+if grep -q "diary" "$SYNC"/*.age; then fail "a project that isn't synced went into the bundle"; else pass "only synced projects go in the bundle"; fi
+expect "the bundle is signed" test -s "$SYNC/$(cut -d' ' -f1 <<<"$LA").age.sig"
+out=$(mB now)
+contains "the other machine takes the thoughts" "$out" "took 1 thought(s) and 1 workspace(s)"
+contains "and keeps them" "$(cat "$W/B/state/friday/thoughts.jsonl")" "move images to a CDN"
+contains "an imported workspace is owner-only" "$(stat -c %a "$W/B/data/friday/workspaces/site.json")" "600"
+contains "a second sync adds nothing twice" "$(mB now)" "took 0 thought(s) and 0 workspace(s)"
+# Machine C (B doesn't trust it) puts its bundle in A's name: B must not take it.
+# shellcheck disable=SC2086
+mC trust $LB >/dev/null
+mkdir -p "$W/C/state/friday"; echo '{"ts":3,"project":"/x/site","kind":"idea","text":"planted"}' >"$W/C/state/friday/thoughts.jsonl"
+mC now >/dev/null
+cp "$SYNC/$(cut -d' ' -f1 <<<"$LC").age" "$SYNC/$(cut -d' ' -f1 <<<"$LA").age"
+out=$(mB now 2>&1)
+contains "a bundle in a trusted machine's name but not signed by it is skipped" "$out" "isn't signed by it; skipped"
+if grep -q planted "$W/B/state/friday/thoughts.jsonl"; then fail "took a planted thought"; else pass "nothing planted is taken in"; fi
+refuse "a line that isn't a trust line is refused" mA trust not-a-key
+else skip "sync (needs ssh-keygen)"; fi
+rm -f "$S/age" "$S/age-keygen"
 echo "teach a routine by showing it"
 RUNTIME_SAVE="${XDG_RUNTIME_DIR:-}"; export XDG_RUNTIME_DIR="$W/rt"; mkdir -p "$XDG_RUNTIME_DIR"
 # The recorder (friday-ctl routine record) writes its own pid and listens.

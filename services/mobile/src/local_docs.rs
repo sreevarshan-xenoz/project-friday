@@ -28,6 +28,9 @@ pub struct Sources {
     /// tldr pages (`.../pages.en` or `.../pages`), if fetched.
     pub tldr: Option<PathBuf>,
     pub man: bool,
+    /// The text of the folders the person chose to search (`friday folders`),
+    /// one article per file, titled with its path.
+    pub folders: PathBuf,
 }
 
 impl Sources {
@@ -53,6 +56,7 @@ impl Sources {
             cache: cache_home.join("friday/arch-wiki-en.txt"),
             tldr,
             man: true,
+            folders: cache_home.join("friday/folders.txt"),
         }
     }
 
@@ -385,7 +389,127 @@ pub fn find(question: &str, s: &Sources) -> Vec<Excerpt> {
                 }),
         );
     }
+    // The person's own folders: two passages at most, named by file.
+    if let Ok(text) = std::fs::read_to_string(&s.folders) {
+        out.extend(
+            passages(question, &text)
+                .into_iter()
+                .take(2)
+                .map(|e| Excerpt {
+                    source: format!("File: {}", e.source),
+                    text: e.text,
+                }),
+        );
+    }
     out
+}
+
+/// Kinds of file read from a chosen folder (PDFs through `pdftotext`).
+const FOLDER_TEXT: &[&str] = &["md", "txt", "org", "rst", "adoc", "tex"];
+/// The most text kept from one file, and from all of them, in bytes.
+const FILE_BYTES: usize = 1_000_000;
+const FOLDERS_BYTES: usize = 50_000_000;
+
+/// Writes the text of the notes and PDFs under `folders` to `cache`, one
+/// article per file titled with its path; folders under `private` (and
+/// hidden ones, `node_modules`, `target`) are skipped. Returns how many files
+/// went in.
+pub fn prepare_folders(
+    folders: &[PathBuf],
+    private: &[PathBuf],
+    cache: &Path,
+) -> std::io::Result<usize> {
+    // Symlinks are never followed: they could lead into a private or hidden
+    // place, or round in a loop.
+    fn walk(dir: &Path, depth: usize, private: &[PathBuf], files: &mut Vec<PathBuf>) {
+        if depth > 8 || private.iter().any(|p| dir.starts_with(p)) {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut entries: Vec<_> = entries
+            .flatten()
+            .filter_map(|e| Some((e.path(), e.file_type().ok()?)))
+            .collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        for (path, kind) in entries {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name.starts_with('.')
+                || name == "node_modules"
+                || name == "target"
+                || kind.is_symlink()
+            {
+                continue;
+            }
+            if kind.is_dir() {
+                walk(&path, depth + 1, private, files);
+            } else if kind.is_file() && !private.iter().any(|p| path.starts_with(p)) {
+                files.push(path);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    for f in folders {
+        walk(f, 0, private, &mut files);
+    }
+    if let Some(dir) = cache.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = cache.with_extension("tmp");
+    // A new file every time, so it is created owner-only.
+    let _ = std::fs::remove_file(&tmp);
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+    let mut out = std::io::BufWriter::new(opts.open(&tmp)?);
+    let (mut total, mut count) = (0usize, 0usize);
+    for path in files {
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_lowercase)
+            .unwrap_or_default();
+        let text = if FOLDER_TEXT.contains(&ext.as_str()) {
+            // Only the first megabyte is read: a huge file can't fill memory.
+            let mut buf = Vec::new();
+            std::fs::File::open(&path)
+                .and_then(|f| {
+                    std::io::Read::read_to_end(
+                        &mut std::io::Read::take(f, FILE_BYTES as u64),
+                        &mut buf,
+                    )
+                })
+                .ok()
+                .map(|_| String::from_utf8_lossy(&buf).into_owned())
+        } else if ext == "pdf" {
+            Command::new("pdftotext")
+                .arg(&path)
+                .arg("-")
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        } else {
+            None
+        };
+        let Some(text) = text.filter(|t| !t.trim().is_empty()) else {
+            continue;
+        };
+        let text = clip(&text.replace(TITLE_MARK, " "), FILE_BYTES);
+        if total + text.len() > FOLDERS_BYTES {
+            break;
+        }
+        total += text.len();
+        count += 1;
+        writeln!(out, "{TITLE_MARK}{}", path.display())?;
+        writeln!(out, "{text}")?;
+    }
+    out.flush()?;
+    drop(out);
+    std::fs::rename(&tmp, cache)?;
+    Ok(count)
 }
 
 /// The excerpts as one block of text for a prompt ("" when there are none).
@@ -402,6 +526,52 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    #[test]
+    fn chosen_folders_are_searched_and_cited_by_file() {
+        let (dir, s) = fixture();
+        let notes = dir.join("notes");
+        std::fs::create_dir_all(notes.join("private")).unwrap();
+        std::fs::create_dir_all(notes.join(".git")).unwrap();
+        std::fs::write(
+            notes.join("router.md"),
+            "# Router\n\nThe router admin password rotation happens every quarter on the first Monday.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            notes.join("private/salary.md"),
+            "router salary rotation quarter Monday",
+        )
+        .unwrap();
+        std::fs::write(notes.join(".git/config"), "router rotation quarter").unwrap();
+        std::fs::write(notes.join("photo.jpg"), [0xff, 0xd8, 0xff]).unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(notes.join("private"), notes.join("linked")).unwrap();
+            std::os::unix::fs::symlink(&notes, notes.join("loop")).unwrap();
+        }
+        let n = prepare_folders(
+            std::slice::from_ref(&notes),
+            &[notes.join("private")],
+            &s.folders,
+        )
+        .unwrap();
+        assert_eq!(n, 1);
+        let found = find("when does the router password rotation happen", &s);
+        let file = found
+            .iter()
+            .find(|e| e.source.starts_with("File: "))
+            .expect("a file passage");
+        assert!(
+            Path::new(file.source.trim_start_matches("File: "))
+                .ends_with(Path::new("notes").join("router.md")),
+            "{}",
+            file.source
+        );
+        assert!(file.text.contains("first Monday"), "{}", file.text);
+        let all = std::fs::read_to_string(&s.folders).unwrap();
+        assert!(!all.contains("salary"), "a private folder was indexed");
+    }
+
     fn sources(dir: &Path) -> Sources {
         Sources {
             wiki_gz: dir.join("arch-wiki.txt.gz"),
@@ -409,6 +579,7 @@ mod tests {
             cache: dir.join("cache/arch-wiki-en.txt"),
             tldr: Some(dir.join("tldr")),
             man: false,
+            folders: dir.join("cache/folders.txt"),
         }
     }
 

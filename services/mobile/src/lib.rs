@@ -15,6 +15,7 @@ pub mod agent_policy;
 pub mod agent_runs;
 pub mod auth;
 pub mod bridge;
+pub mod browser_host;
 pub mod commands;
 pub mod context_read;
 pub mod desktop_tool;
