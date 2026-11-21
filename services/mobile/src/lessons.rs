@@ -30,6 +30,10 @@ pub struct Lesson {
     pub failed: String,
     /// What a later, similar goal did that worked.
     pub fixed: Option<String>,
+    /// The project the ask named (its folder's name), when it named one: the
+    /// lesson then comes back only for that project or asks naming none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
 }
 
 fn load(path: &Path, now: i64) -> Vec<Lesson> {
@@ -81,7 +85,14 @@ fn short(text: &str) -> String {
 /// Learns from a finished goal: a failure is kept; a success closes the
 /// newest open lesson for a similar ask. `goal` and `text` must already be
 /// masked.
-pub fn learn(path: &Path, now: i64, goal: &str, ok: bool, text: &str) -> std::io::Result<()> {
+pub fn learn(
+    path: &Path,
+    now: i64,
+    goal: &str,
+    ok: bool,
+    text: &str,
+    project: Option<&str>,
+) -> std::io::Result<()> {
     let text = short(text);
     if text.is_empty() {
         return Ok(());
@@ -91,7 +102,7 @@ pub fn learn(path: &Path, now: i64, goal: &str, ok: bool, text: &str) -> std::io
         let open = all
             .iter_mut()
             .rev()
-            .find(|l| l.fixed.is_none() && alike(goal, &l.goal));
+            .find(|l| l.fixed.is_none() && alike(goal, &l.goal) && l.project.as_deref() == project);
         match open {
             Some(l) => l.fixed = Some(text),
             None => return Ok(()),
@@ -99,7 +110,7 @@ pub fn learn(path: &Path, now: i64, goal: &str, ok: bool, text: &str) -> std::io
     } else if let Some(l) = all
         .iter_mut()
         .rev()
-        .find(|l| l.fixed.is_none() && l.goal == goal)
+        .find(|l| l.fixed.is_none() && l.goal == goal && l.project.as_deref() == project)
     {
         l.ts = now;
         l.failed = text;
@@ -109,16 +120,28 @@ pub fn learn(path: &Path, now: i64, goal: &str, ok: bool, text: &str) -> std::io
             goal: short(goal),
             failed: text,
             fixed: None,
+            project: project.map(String::from),
         });
     }
     save(path, &all)
 }
 
+/// Whether a lesson comes back for an ask about `project`: one kept for a
+/// project goes only with that project (or an ask naming none). Learning is
+/// stricter: a lesson is refreshed or closed only by an ask about its own
+/// project (or, for one kept without, an ask naming none).
+fn fits(lesson: &Lesson, project: Option<&str>) -> bool {
+    match (lesson.project.as_deref(), project) {
+        (Some(kept), Some(asked)) => kept == asked,
+        _ => true,
+    }
+}
+
 /// `[memory]` lines for the lessons that fit this ask, best first.
-pub fn recall(path: &Path, now: i64, goal: &str) -> Vec<String> {
+pub fn recall(path: &Path, now: i64, goal: &str, project: Option<&str>) -> Vec<String> {
     let mut hits: Vec<(usize, Lesson)> = load(path, now)
         .into_iter()
-        .filter(|l| alike(goal, &l.goal))
+        .filter(|l| alike(goal, &l.goal) && fits(l, project))
         .map(|l| (recall_score(goal, &l.goal), l))
         .collect();
     hits.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.ts.cmp(&a.1.ts)));
@@ -153,14 +176,53 @@ mod tests {
             "restart the nginx service",
             false,
             "systemctl: access denied",
+            None,
         )
         .unwrap();
-        let again = recall(&p, 2_000, "please restart nginx service now");
+        let again = recall(&p, 2_000, "please restart nginx service now", None);
         assert_eq!(again.len(), 1, "{again:?}");
         assert!(again[0].contains("access denied"), "{again:?}");
-        assert!(recall(&p, 2_000, "what is the weather in Paris").is_empty());
+        assert!(recall(&p, 2_000, "what is the weather in Paris", None).is_empty());
         // One shared word of a longer ask isn't alike.
-        assert!(recall(&p, 2_000, "restart my laptop after the update").is_empty());
+        assert!(recall(&p, 2_000, "restart my laptop after the update", None).is_empty());
+    }
+
+    #[test]
+    fn a_lesson_kept_for_one_project_stays_with_it() {
+        let p = tmp();
+        learn(
+            &p,
+            1_000,
+            "run the tests for the site",
+            false,
+            "npm: missing script test",
+            Some("site"),
+        )
+        .unwrap();
+        assert_eq!(
+            recall(&p, 2_000, "run the tests for the site", Some("site")).len(),
+            1
+        );
+        assert_eq!(
+            recall(&p, 2_000, "run the tests for the site", None).len(),
+            1
+        );
+        assert!(recall(&p, 2_000, "run the tests for the site", Some("garden")).is_empty());
+        // A success in another project, or in an ask naming none, doesn't close it.
+        learn(
+            &p,
+            1_500,
+            "run the tests for the site",
+            true,
+            "ok",
+            Some("garden"),
+        )
+        .unwrap();
+        learn(&p, 1_600, "run the tests for the site", true, "ok", None).unwrap();
+        assert!(
+            !recall(&p, 2_000, "run the tests for the site", Some("site"))[0]
+                .contains("what worked")
+        );
     }
 
     #[test]
@@ -172,6 +234,7 @@ mod tests {
             "restart the nginx service",
             false,
             "access denied",
+            None,
         )
         .unwrap();
         learn(
@@ -180,9 +243,10 @@ mod tests {
             "restart nginx service with sudo",
             true,
             "Restarted nginx.\nok",
+            None,
         )
         .unwrap();
-        let lines = recall(&p, 2_000, "restart the nginx service");
+        let lines = recall(&p, 2_000, "restart the nginx service", None);
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(lines[0].contains("access denied"), "{lines:?}");
         assert!(
@@ -196,15 +260,16 @@ mod tests {
             "restart the nginx service",
             true,
             "something else",
+            None,
         )
         .unwrap();
-        assert!(!recall(&p, 2_000, "restart the nginx service")[0].contains("something else"));
+        assert!(!recall(&p, 2_000, "restart the nginx service", None)[0].contains("something else"));
     }
 
     #[test]
     fn a_success_with_no_failure_before_it_writes_nothing() {
         let p = tmp();
-        learn(&p, 1_000, "restart the nginx service", true, "done").unwrap();
+        learn(&p, 1_000, "restart the nginx service", true, "done", None).unwrap();
         assert!(!p.exists());
     }
 
@@ -217,6 +282,7 @@ mod tests {
             "restart the nginx service",
             false,
             "access denied",
+            None,
         )
         .unwrap();
         learn(
@@ -225,6 +291,7 @@ mod tests {
             "restart the nginx service",
             false,
             "still denied",
+            None,
         )
         .unwrap();
         let text = std::fs::read_to_string(&p).unwrap();
@@ -235,14 +302,22 @@ mod tests {
     #[test]
     fn lessons_are_owner_only_bounded_and_expire() {
         let p = tmp();
-        learn(&p, 0, "restart the nginx service", false, "access denied").unwrap();
+        learn(
+            &p,
+            0,
+            "restart the nginx service",
+            false,
+            "access denied",
+            None,
+        )
+        .unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let mode = std::fs::metadata(&p).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600);
         }
-        assert!(recall(&p, KEEP_SECS + 1, "restart the nginx service").is_empty());
+        assert!(recall(&p, KEEP_SECS + 1, "restart the nginx service", None).is_empty());
         // A new failure rewrites the file without the expired line.
         learn(
             &p,
@@ -250,13 +325,22 @@ mod tests {
             "mount the backup drive",
             false,
             "no such device",
+            None,
         )
         .unwrap();
         assert!(!std::fs::read_to_string(&p).unwrap().contains("nginx"));
         // A long cause is cut.
         let long = "x".repeat(CAP * 3);
-        learn(&p, KEEP_SECS + 2, "compile the kernel module", false, &long).unwrap();
-        let line = recall(&p, KEEP_SECS + 3, "compile the kernel module").remove(0);
+        learn(
+            &p,
+            KEEP_SECS + 2,
+            "compile the kernel module",
+            false,
+            &long,
+            None,
+        )
+        .unwrap();
+        let line = recall(&p, KEEP_SECS + 3, "compile the kernel module", None).remove(0);
         assert!(line.chars().count() < CAP + 120, "{}", line.chars().count());
     }
 }

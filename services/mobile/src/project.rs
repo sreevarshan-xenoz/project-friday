@@ -22,6 +22,11 @@ fn known_folders(state_dir: &Path, workspaces: &Path) -> Vec<String> {
             .and_then(|p| p.strip_suffix('_'))
             .map(String::from)
     }));
+    out.extend(
+        crate::thoughts::load(state_dir)
+            .into_iter()
+            .filter_map(|t| t.project),
+    );
     if let Ok(dir) = std::fs::read_dir(state_dir.join("agents")) {
         for f in dir.flatten() {
             let v: serde_json::Value = std::fs::read_to_string(f.path())
@@ -36,14 +41,57 @@ fn known_folders(state_dir: &Path, workspaces: &Path) -> Vec<String> {
     out
 }
 
-/// The folder of the project an ask names, if FRIDAY knows one.
-pub fn find(state_dir: &Path, workspaces: &Path, goal: &str) -> Option<PathBuf> {
-    known_folders(state_dir, workspaces)
-        .into_iter()
-        .rev()
-        .find(|f| crate::thoughts::named(goal, f))
-        .map(PathBuf::from)
-        .filter(|p| p.join(".git").exists())
+/// The one project an ask names, as its folder, resolved once and carried
+/// through the timeline, thoughts, lessons and git facts (so "FRIDAY" never
+/// mixes `project-friday` with `friday-mobile`). Of the known folders the ask
+/// names, the best match wins: the folder's whole name in the ask, then all
+/// of its distinctive words, then any; the newest knowledge breaks a tie.
+/// Only the ask's first line counts (`friday ask` adds what it restored
+/// below, which may name other folders).
+pub fn resolve(state_dir: &Path, workspaces: &Path, goal: &str) -> Option<PathBuf> {
+    use friday_goal_execution::significant_tokens;
+    let goal = goal.lines().next().unwrap_or_default().to_lowercase();
+    // "on Friday" / "last Friday" is a day, not the FRIDAY project.
+    let mut goal = goal;
+    for when in ["on ", "last ", "this ", "next "] {
+        for day in [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        ] {
+            goal = goal.replace(&format!("{when}{day}"), " ");
+        }
+    }
+    let words = significant_tokens(&goal);
+    // (how well, how many of its words): the whole name, then all its
+    // distinctive words (more of them is more specific), then any.
+    let score = |folder: &str| {
+        let name = crate::thoughts::project_name(folder).to_lowercase();
+        if words.contains(&name) {
+            return (3, 0);
+        }
+        let own: Vec<String> = significant_tokens(&name)
+            .into_iter()
+            .filter(|w| w != "project" && w != "code")
+            .collect();
+        if !own.is_empty() && own.iter().all(|w| words.contains(w)) {
+            (2, own.len())
+        } else {
+            (usize::from(crate::thoughts::named(&goal, folder)), 0)
+        }
+    };
+    let mut best: Option<((usize, usize), String)> = None;
+    for folder in known_folders(state_dir, workspaces) {
+        let s = score(&folder);
+        if s.0 > 0 && best.as_ref().is_none_or(|(b, _)| s >= *b) {
+            best = Some((s, folder));
+        }
+    }
+    best.map(|(_, f)| PathBuf::from(f))
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
@@ -180,9 +228,9 @@ mod tests {
         )
         .unwrap();
         let ws = root.join("workspaces");
-        let found = find(&state, &ws, "let's continue building FRIDAY").unwrap();
+        let found = resolve(&state, &ws, "let's continue building FRIDAY").unwrap();
         assert_eq!(found, repo);
-        assert!(find(&state, &ws, "what's the weather").is_none());
+        assert!(resolve(&state, &ws, "what's the weather").is_none());
 
         let text = facts(&found).unwrap();
         assert!(
@@ -193,5 +241,42 @@ mod tests {
         );
         assert!(text.contains("add the workspace module"), "{text}");
         assert!(facts(&root).is_none(), "not a repository");
+    }
+
+    #[test]
+    fn friday_means_project_friday_not_friday_mobile() {
+        let root = std::env::temp_dir().join(format!("friday-resolve-{}", uuid::Uuid::new_v4()));
+        let state = root.join("state");
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(
+            state.join("answers.md"),
+            "<!-- friday answer -->\n# a\n\n_2026-11-20 10:00_\n\n_project: /c/project-friday_\n\nA\n\n---\n\n\
+             <!-- friday answer -->\n# b\n\n_2026-11-20 11:00_\n\n_project: /c/friday-mobile_\n\nB\n\n---\n\n",
+        )
+        .unwrap();
+        let ws = root.join("workspaces");
+        let r = |goal: &str| resolve(&state, &ws, goal).map(|p| p.display().to_string());
+        // friday-mobile is newer, but FRIDAY alone is all of project-friday's
+        // distinctive words and only half of friday-mobile's.
+        assert_eq!(
+            r("let's continue building FRIDAY").as_deref(),
+            Some("/c/project-friday")
+        );
+        assert_eq!(
+            r("what's left on friday mobile").as_deref(),
+            Some("/c/friday-mobile")
+        );
+        assert_eq!(r("open friday-mobile").as_deref(), Some("/c/friday-mobile"));
+        assert_eq!(r("what's the weather"), None);
+        assert_eq!(
+            r("what did I do on Friday?"),
+            None,
+            "a day, not the project"
+        );
+        // Only the first line: what `friday ask` restored below doesn't count.
+        assert_eq!(
+            r("continue building FRIDAY\n\nFRIDAY just put back: foot in friday-mobile").as_deref(),
+            Some("/c/project-friday")
+        );
     }
 }
