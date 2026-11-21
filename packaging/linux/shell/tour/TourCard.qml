@@ -103,6 +103,16 @@ PanelWindow {
 
       Label {
         Layout.fillWidth: true
+        // A waiting step stays when the answer failed; say where to look.
+        visible: Tour.current.waits && Answer.state === "answer" && !Answer.ok
+        text: "That one didn't work. friday doctor (in a terminal) checks why, or skip this step."
+        wrapMode: Text.Wrap
+        elide: Text.ElideNone
+        color: Theme.warn
+      }
+
+      Label {
+        Layout.fillWidth: true
         visible: Tour.last && Tour.freeModels
         text: "You're on free models (OpenCode Zen, then Kilo or OVHcloud), which may keep what you send. For private work, connect your own account or key."
         wrapMode: Text.Wrap

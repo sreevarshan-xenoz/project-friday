@@ -64,7 +64,7 @@ Autonomous Agent & Cognitive Loop:
   friday status | system-info      Inspect daemon state, memory, and telemetry
   friday context screen [--yes]    Share screen context with assistant
   friday daemon <status|restart|logs> Control friday-linux-daemon service
-  friday doctor                    Check daemon, AI provider and desktop health
+  friday doctor [--quick]          Check daemon, AI provider and desktop health, then a real ask (--quick: no ask)
   friday report [file]             Write a redacted bug report to read and share
   friday setup-ai [--keep-others|--only] [provider]
                                    Set or change the AI provider key (local: a model on this computer)
@@ -395,7 +395,14 @@ friday_doctor() {
     if [ "${ACCESSIBILITY_ENABLED:-}" = 1 ]; then ok "Chromium browsers are visible to FRIDAY"
     else warn "Chromium browsers are hidden from FRIDAY" "add hl.env(\"ACCESSIBILITY_ENABLED\", \"1\") to hyprland.lua (FRIDAY OS has it), then sign in again"; fi
   fi
-  if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then ok "inside a Hyprland session"
+  if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
+    ok "inside a Hyprland session"
+    # The key everything starts from: bound, or nothing happens on Super+Y.
+    if hyprctl binds -j 2>/dev/null | jq -e 'any(.[]; .description == "FRIDAY: Ask")' >/dev/null 2>&1; then
+      ok "Super+Y is bound to FRIDAY"
+    else
+      bad "Super+Y isn't bound to FRIDAY (pressing it does nothing)" "friday keys update, then sign in again"
+    fi
   else warn "not inside a Hyprland session" "desktop checks below may not apply over SSH/TTY"; fi
   # FRIDAY OS copies its key file into a new home once; keys added later
   # (voice typing) don't reach a home made before them.
@@ -432,6 +439,28 @@ friday_doctor() {
   for tool in friday-ctl fuzzel notify-send jq; do
     command -v "$tool" >/dev/null 2>&1 || bad "$tool not on PATH" "reinstall the package that provides $tool"
   done
+
+  # A real ask, end to end: the daemon, the provider and an answer back
+  # (skipped with --quick, or when the daemon isn't listening).
+  if [ "${1:-}" != "--quick" ]; then
+    echo
+    echo "A real ask"
+    if ! (exec 3<>"/dev/tcp/$host/$port") 2>/dev/null; then
+      warn "skipped: the daemon isn't listening" "fix the daemon above first"
+    else
+      local out outcome served secs
+      out=$(timeout 90 friday-ctl goal --wait "Reply with only the word: ready" 2>&1 || true)
+      outcome=$(jq -rs 'map(select(.outcome)) | last | .outcome // empty' <<<"$out" 2>/dev/null || true)
+      if [ "$outcome" = completed ]; then
+        served=$(jq -rs 'map(select(.outcome)) | last | .served_by | if . then "\(.provider)/\(.model)" else empty end' <<<"$out" 2>/dev/null || true)
+        secs=$(jq -rs 'map(select(.outcome)) | last | .served_by.ms // empty | . / 100 | round / 10' <<<"$out" 2>/dev/null || true)
+        ok "answered${secs:+ in $secs s}${served:+ by $served}"
+      else
+        bad "no answer: $(jq -rs 'map(select(.outcome)) | last | .error // empty' <<<"$out" 2>/dev/null | head -c 160 || true)${outcome:+ ($outcome)}" \
+          "friday providers (who's failing); friday setup-ai (a key or local model); friday daemon logs"
+      fi
+    fi
+  fi
 
   echo
   if [ "$fails" -eq 0 ] && [ "$warns" -eq 0 ]; then
@@ -3338,7 +3367,8 @@ case "${1:-}" in
     fi
     ;;
   doctor)
-    friday_doctor
+    shift
+    friday_doctor "$@"
     ;;
   report)
     shift

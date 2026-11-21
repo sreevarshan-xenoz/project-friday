@@ -29,7 +29,7 @@ Singleton {
       waits: true },
     { title: "Ask about your screen",
       keys: "Super+Ctrl+Y",
-      body: "Ask about the window in front of you, like \"what does this error mean?\". A screenshot goes to your AI provider only when you press it.",
+      body: "Ask about the window in front of you, like \"what does this error mean?\". Its text (or, when the app offers too little, a screenshot) goes to your AI provider only when you press it.",
       waits: true },
     { title: "Let me talk",
       keys: "",
