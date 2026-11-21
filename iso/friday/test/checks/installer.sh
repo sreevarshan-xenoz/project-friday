@@ -309,48 +309,52 @@ set -euo pipefail
 USER_HOME=/home/alice
 USERNAME=alice
 LOG="$WORK/browser-section/pacstrap.log"
-pacstrap_with_retry() { [ "$1" = -U ] && shift; shift; echo "pacstrap: $*" >> "$LOG"; }
+pacstrap_with_retry() { shift; echo "pacstrap: $*" >> "$LOG"; }
+# arch-chroot: log what runs as whom; "mktemp" gives a folder; a build of
+# a package named in FAIL_AUR fails.
+arch-chroot() {
+  shift
+  case "$*" in
+    *mktemp*) mkdir -p "$WORK/browser-section/mnt/tmp/b"; echo /tmp/b ;;
+    *makepkg*) echo "build: $*" >> "$LOG"; [[ -z "${FAIL_AUR:-}" || "$*" != *"$FAIL_AUR"* ]] ;;
+    *) echo "chroot: $*" >> "$LOG" ;;
+  esac
+}
 EOF
-mkdir -p "$W/opt/friday/repo"
-touch "$W/opt/friday/repo/brave-bin-1.0-1-x86_64.pkg.tar.zst" "$W/opt/friday/repo/zen-browser-bin-1.0-1-x86_64.pkg.tar.zst"
+browsers() {
+  {
+    cat "$W/test-browser.sh"
+    echo "BROWSERS=\"$1\" DEFAULT_BROWSER=$2"
+    awk '/^# Web browsers chosen in addition to Chromium/,/pacstrap_with_retry \/mnt "\$\{browser_pkgs\[@\]\}"/' "$ROOT/installer"
+    sed -n '/^friday_aur_install() {/,/^if (( \${#aur_pkgs/p' "$ROOT/installer"
+    sed -n '/^# Default web browser/,/^friday_default_browser "/p' "$ROOT/installer"
+  } | sed "s#/mnt#$W/mnt#g" >"$W/run.sh"
+  WORK="$WORK" bash "$W/run.sh"
+}
 
-# Chosen browsers are pacstrapped, default is set
-{
-  cat "$W/test-browser.sh"
-  echo 'BROWSERS="brave firefox zen" DEFAULT_BROWSER=zen'
-  awk '/^# Web browsers chosen in addition to Chromium/,/pacstrap_with_retry -U \/mnt "\$\{browser_files\[@\]\}"/' "$ROOT/installer"
-  sed -n '/^# Default web browser/,/^friday_default_browser "/p' "$ROOT/installer"
-} | sed "s#/mnt#$W/mnt#g; s#/opt/friday/repo#$W/opt/friday/repo#g" >"$W/run-chosen.sh"
-bash "$W/run-chosen.sh"
-contains "repo browsers pacstrapped" "$(cat "$W/pacstrap.log" 2>/dev/null)" "pacstrap: firefox"
-contains "AUR browsers installed from the ISO's repo" "$(cat "$W/pacstrap.log" 2>/dev/null)" "pacstrap: $W/opt/friday/repo/brave-bin-1.0-1-x86_64.pkg.tar.zst $W/opt/friday/repo/zen-browser-bin-1.0-1-x86_64.pkg.tar.zst"
+# Chosen browsers: repo ones pacstrapped, AUR ones built as the user and
+# installed by pacman; the default is set
+browsers "brave firefox zen" zen 2>"$W/err"
+log=$(cat "$W/pacstrap.log" 2>/dev/null)
+contains "repo browsers pacstrapped" "$log" "pacstrap: firefox"
+contains "the AUR build tools come first" "$log" "pacstrap: base-devel git"
+contains "brave-bin is built as the user from the AUR" "$log" "build: runuser -u alice -- bash -c"
+contains "zen-browser-bin too" "$log" "/tmp/b zen-browser-bin"
+contains "pacman installs what was built" "$log" "chroot: bash -c pacman -U --noconfirm --needed"
 contains "default browser set in mimeapps.list" "$(cat "$W/mnt/home/alice/.config/mimeapps.list" 2>/dev/null)" "x-scheme-handler/https=zen.desktop"
 
-# Nothing is pacstrapped when none chosen, default is chromium
+# None chosen: nothing installed, Chromium opens links
 rm -f "$W/pacstrap.log" "$W/mnt/home/alice/.config/mimeapps.list"
-{
-  cat "$W/test-browser.sh"
-  echo 'BROWSERS="" DEFAULT_BROWSER=chromium'
-  awk '/^# Web browsers chosen in addition to Chromium/,/pacstrap_with_retry -U \/mnt "\$\{browser_files\[@\]\}"/' "$ROOT/installer"
-  sed -n '/^# Default web browser/,/^friday_default_browser "/p' "$ROOT/installer"
-} | sed "s#/mnt#$W/mnt#g; s#/opt/friday/repo#$W/opt/friday/repo#g" >"$W/run-none.sh"
-bash "$W/run-none.sh"
-[[ ! -f "$W/pacstrap.log" ]] && pass "nothing is pacstrapped when no browsers are chosen" || fail "pacstrap was called when none chosen"
-
+browsers "" chromium
+[[ ! -f "$W/pacstrap.log" ]] && pass "nothing is installed when no browsers are chosen" || fail "something was installed when none chosen"
 contains "default browser is chromium when none chosen" "$(cat "$W/mnt/home/alice/.config/mimeapps.list" 2>/dev/null)" "x-scheme-handler/https=chromium.desktop"
-# A browser whose package the ISO lacks is skipped, not passed as ""
-rm -f "$W/pacstrap.log" "$W/opt/friday/repo/zen-browser-bin-1.0-1-x86_64.pkg.tar.zst"
+
+# A failed AUR build is skipped with a way out, and the install goes on
+rm -f "$W/pacstrap.log"
 printf 'x=1' >"$W/mnt/home/alice/.config/mimeapps.list"
-{
-  cat "$W/test-browser.sh"
-  echo 'BROWSERS="brave zen" DEFAULT_BROWSER=brave'
-  awk '/^# Web browsers chosen in addition to Chromium/,/pacstrap_with_retry -U \/mnt "\$\{browser_files\[@\]\}"/' "$ROOT/installer"
-  sed -n '/^# Default web browser/,/^friday_default_browser "/p' "$ROOT/installer"
-} | sed "s#/mnt#$W/mnt#g; s#/opt/friday/repo#$W/opt/friday/repo#g" >"$W/run-missing.sh"
-skipped=$(bash "$W/run-missing.sh" 2>&1)
-contains "a missing AUR package is skipped with a message" "$skipped" "no zen package"
-contains "only the present package is installed" "$(cat "$W/pacstrap.log")" "pacstrap: $W/opt/friday/repo/brave-bin-1.0-1-x86_64.pkg.tar.zst"
-! grep -q ' $\|zen' "$W/pacstrap.log" && pass "no empty package path" || fail "an empty or missing package was passed to pacstrap"
+out=$(FAIL_AUR=zen-browser-bin browsers "brave zen" brave 2>&1) && pass "a failed AUR build doesn't stop the install" || fail "a failed AUR build stopped the install"
+contains "it says how to get it later" "$out" "yay -S zen-browser-bin"
+contains "the other one is still installed" "$out" "Installed brave-bin from the AUR."
 contains "mimeapps.list without a final newline still gets the header" "$(cat "$W/mnt/home/alice/.config/mimeapps.list")" $'x=1\n[Default Applications]'
 
 echo "installer progress and failure screens"

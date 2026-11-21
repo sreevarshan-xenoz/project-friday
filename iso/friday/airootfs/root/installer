@@ -307,21 +307,17 @@ fi
 if (( ${#local_pkgs[@]} )); then pacstrap_with_retry /mnt "${local_pkgs[@]}"; fi
 if [[ "$FRIDAY_LOCAL_ENGINE" == ollama ]]; then arch-chroot /mnt systemctl enable ollama 2>/dev/null || true; fi
 # Web browsers chosen in addition to Chromium. Brave and Zen are only in the
-# AUR: build-iso.sh built them into the ISO's own repo, so they go in as files.
-browser_pkgs=() browser_files=()
+# AUR: they're built once the user exists (below).
+browser_pkgs=() aur_pkgs=()
 for b in $BROWSERS; do
   case "$b" in
-    brave)   f=$(find /opt/friday/repo -maxdepth 1 -name 'brave-bin-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1) ;;
-    zen)     f=$(find /opt/friday/repo -maxdepth 1 -name 'zen-browser-bin-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1) ;;
-    firefox) browser_pkgs+=("firefox"); continue ;;
-    vivaldi) browser_pkgs+=("vivaldi"); continue ;;
-    *) continue ;;
+    brave)   aur_pkgs+=("brave-bin") ;;
+    firefox) browser_pkgs+=("firefox") ;;
+    zen)     aur_pkgs+=("zen-browser-bin") ;;
+    vivaldi) browser_pkgs+=("vivaldi") ;;
   esac
-  if [[ -n "$f" ]]; then browser_files+=("$f")
-  else echo "This ISO has no $b package; skipping it (install it later with yay)." >&2; fi
 done
 if (( ${#browser_pkgs[@]} )); then pacstrap_with_retry /mnt "${browser_pkgs[@]}"; fi
-if (( ${#browser_files[@]} )); then pacstrap_with_retry -U /mnt "${browser_files[@]}"; fi
 # Updates: each FRIDAY release publishes friday-git to this pacman repo, so
 # pacman -Syu keeps FRIDAY current. Packages and the database are signed with
 # FRIDAY's release key (shipped in friday-git); pacman trusts that one key and
@@ -470,6 +466,26 @@ fi
 mkdir -p /mnt/etc/sudoers.d
 echo "%wheel ALL=(ALL:ALL) ALL" > /mnt/etc/sudoers.d/wheel
 chmod 440 /mnt/etc/sudoers.d/wheel
+
+# AUR browsers: built on the new system as the new user from the AUR's own
+# recipe (they repackage the vendor's build, so it's quick), then installed
+# by pacman with their dependencies. Never Flathub. One that fails is
+# skipped with a note: the rest of the install goes on.
+friday_aur_install() {
+  local pkg dir
+  pacstrap_with_retry /mnt base-devel git
+  for pkg in "$@"; do
+    dir=$(arch-chroot /mnt runuser -u "$USERNAME" -- mktemp -d) || continue
+    if arch-chroot /mnt runuser -u "$USERNAME" -- bash -c 'cd "$1" && git clone -q "https://aur.archlinux.org/$2.git" p && cd p && makepkg --nodeps --noconfirm --nocheck' _ "$dir" "$pkg" \
+        && arch-chroot /mnt bash -c 'pacman -U --noconfirm --needed "$1"/p/*.pkg.tar.zst' _ "$dir"; then
+      echo "Installed $pkg from the AUR."
+    else
+      echo "Couldn't build $pkg from the AUR; install it later with: yay -S $pkg" >&2
+    fi
+    rm -rf "/mnt$dir"
+  done
+}
+if (( ${#aur_pkgs[@]} )) && [ "$USERNAME" != root ]; then friday_aur_install "${aur_pkgs[@]}"; fi
 
 # Populate User Home from /etc/skel
 mkdir -p "/mnt$USER_HOME"
