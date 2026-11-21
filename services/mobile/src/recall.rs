@@ -161,6 +161,21 @@ pub const PRIVATE: &[&str] = &[
     "paypal",
 ];
 
+/// The person's own list of private windows (`private-windows` in FRIDAY's
+/// config folder; `%APPDATA%\\friday` on Windows), or nothing.
+pub fn own_list() -> String {
+    #[cfg(windows)]
+    let base = std::env::var_os("APPDATA").map(std::path::PathBuf::from);
+    #[cfg(not(windows))]
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")));
+    base.map(|b| b.join("friday").join("private-windows"))
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_default()
+}
+
 /// Whether this window is private, given the person's own list.
 pub fn private(app: &str, title: &str, own: &str) -> bool {
     let hay = format!("{app} {title}").to_lowercase();
@@ -170,7 +185,7 @@ pub fn private(app: &str, title: &str, own: &str) -> bool {
         .map(str::to_lowercase)
         .collect();
     // "never <name>" is private too (and stricter for the CLI); folder
-    // lines (/… or ~/…) are about commands, not windows.
+    // lines (/…, ~/… or C:\…) are about commands, not windows.
     PRIVATE
         .iter()
         .map(|p| p.to_string())
@@ -180,7 +195,7 @@ pub fn private(app: &str, title: &str, own: &str) -> bool {
                 .map_or(l.clone(), |r| r.trim().to_string())
         }))
         .filter(|p| !p.is_empty() && !p.starts_with('#') && !p.starts_with('!'))
-        .filter(|p| !p.starts_with('/') && !p.starts_with("~/"))
+        .filter(|p| !p.starts_with('/') && !p.starts_with("~/") && !p.contains(":\\"))
         .filter(|p| !dropped.contains(p))
         .any(|p| hay.contains(&p))
 }
@@ -299,7 +314,11 @@ mod tests {
             "Inbox - work",
             "never thunderbird\n"
         ));
-        assert!(!private("code", "notes", "~/work/clients\n/srv/private\n"));
+        assert!(!private(
+            "code",
+            "notes",
+            "~/work/clients\n/srv/private\nC:\\Users\\me\\code\n"
+        ));
         assert!(private("firefox", "My Bank — Mozilla Firefox", ""));
         assert!(!private("firefox", "My Bank — Mozilla Firefox", "!bank"));
         assert!(private("org.gnome.TextEditor", "diary.txt", "Diary\n"));

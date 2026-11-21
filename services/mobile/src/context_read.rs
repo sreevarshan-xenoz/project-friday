@@ -106,6 +106,9 @@ pub enum ContextReadError {
     EgressBlocked { reason: String },
     /// The provider seam refused or errored after receiving an allowed payload.
     Provider(String),
+    /// The window in front is private (a password manager, a private browser
+    /// window, a bank, the person's own list): nothing is read or sent.
+    PrivateWindow,
 }
 
 impl std::fmt::Display for ContextReadError {
@@ -116,6 +119,7 @@ impl std::fmt::Display for ContextReadError {
             ContextReadError::NotAuthorized { reason, .. } => write!(f, "not authorized: {reason}"),
             ContextReadError::EgressBlocked { reason } => write!(f, "egress blocked: {reason}"),
             ContextReadError::Provider(m) => write!(f, "provider error: {m}"),
+            ContextReadError::PrivateWindow => write!(f, "the window in front is private"),
         }
     }
 }
@@ -259,6 +263,17 @@ where
         }
 
         if region.is_none() {
+            // Every host and client gets this, not only FRIDAY's own CLI: a
+            // private window is neither read nor captured.
+            if let Ok(CapturedContext::AppInfo { class, title, .. }) = self
+                .collector
+                .capture(ContextChannel::App, &CaptureOptions::default())
+            {
+                if crate::recall::private(&class, &title, &crate::recall::own_list()) {
+                    self.revoke();
+                    return Err(ContextReadError::PrivateWindow);
+                }
+            }
             if let Some(answer) = self.ask_from_text(question, progress).await {
                 return answer;
             }
@@ -347,6 +362,8 @@ where
             }
             None => ("Describe what the person is looking at.".to_string(), 0),
         };
+        // A title can carry a token too (a URL with a key in it, a terminal).
+        let (title, masked_title) = friday_goal_execution::mask_secrets(&title);
         let title = title.replace(['\n', '\r'], " ");
         let payload = format!(
             "The person asked about the window they are looking at ({class}: {title}). \
@@ -361,7 +378,7 @@ where
         let ctx = if current.masked.is_none() {
             friday_intelligence::EgressContext {
                 goal_id: current.goal_id,
-                masked: Some(masked_words + masked_q),
+                masked: Some(masked_words + masked_q + masked_title),
             }
         } else {
             current
@@ -1670,6 +1687,44 @@ mod tests {
                 br#"{"class":"nautilus","title":"Home","at":[0,0],"size":[800,600]}"#,
             );
         ContextCollector::new(runner)
+    }
+
+    #[tokio::test]
+    async fn a_private_window_is_neither_read_nor_captured() {
+        struct NeverRead;
+        #[async_trait]
+        impl ScreenText for NeverRead {
+            async fn window_text(&self, _: &str, _: &str) -> Option<String> {
+                panic!("a private window's text was read")
+            }
+        }
+        let win = friday_context_collector::window_command();
+        let full = friday_context_collector::screen_command(None);
+        let runner = FakeCommandRunner::new()
+            .script_stdout(&full.0, &strs(&full.1), PNG)
+            .script_stdout(
+                &win.0,
+                &strs(&win.1),
+                br#"{"class":"firefox","title":"Private Browsing - Mozilla Firefox","at":[0,0],"size":[800,600]}"#,
+            );
+        let reader = ScreenReader::new(
+            ContextCollector::new(runner),
+            RecordingSeam::default(),
+            "fabric",
+        )
+        .with_text(Arc::new(NeverRead));
+        reader.consent();
+        let got = reader.ask(Some("what is this?")).await;
+        assert_eq!(got, Err(ContextReadError::PrivateWindow));
+        assert!(
+            reader.provider.last().is_none(),
+            "nothing reaches the model"
+        );
+        // The consent is used up: the next ask needs a new one.
+        assert!(matches!(
+            reader.ask(None).await,
+            Err(ContextReadError::NotAuthorized { .. })
+        ));
     }
 
     #[tokio::test]
