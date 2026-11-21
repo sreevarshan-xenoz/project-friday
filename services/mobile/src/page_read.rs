@@ -45,6 +45,21 @@ impl Default for DefaultPageReader {
                 .user_agent(
                     "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
                 )
+                .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                    // A web page's redirect to a local address isn't even
+                    // followed (the browser path is checked after the load).
+                    let from_web = attempt
+                        .previous()
+                        .first()
+                        .is_some_and(|u| !is_local(host(u.as_str())));
+                    if from_web && is_local(host(attempt.url().as_str())) {
+                        attempt.error("a redirect to the local network")
+                    } else if attempt.previous().len() >= 10 {
+                        attempt.stop()
+                    } else {
+                        attempt.follow()
+                    }
+                }))
                 .build()
                 .unwrap_or_default(),
             egress_log_path: if cfg!(test) {
@@ -132,10 +147,19 @@ impl PageReader for DefaultPageReader {
         // redirect to a router, a local service) isn't read: what's there
         // would go to the model. An address the person typed themselves
         // still is.
+        // A page that ends up on another host whose address can't be
+        // looked up counts as local too.
         let result = match result {
-            Ok(page) if !reaches_local(url).await && reaches_local(&page.url).await => Err(
-                "the page sent me to an address on your own network, so I didn't read it".into(),
-            ),
+            Ok(page)
+                if host(&page.url) != host(url)
+                    && !reaches_local(url, false).await
+                    && reaches_local(&page.url, true).await =>
+            {
+                Err(
+                    "the page sent me to an address on your own network, so I didn't read it"
+                        .into(),
+                )
+            }
             other => other,
         };
         let ctx = friday_intelligence::current_egress_context();
@@ -207,8 +231,8 @@ fn local_ip(ip: std::net::IpAddr) -> bool {
 
 /// [`is_local`], or a name that resolves to a local address
 /// (`127.0.0.1.nip.io`, a home DNS entry). A name that doesn't resolve
-/// counts as not local.
-async fn reaches_local(url: &str) -> bool {
+/// counts as `unknown`.
+async fn reaches_local(url: &str, unknown: bool) -> bool {
     let host = host(url);
     if is_local(host) {
         return true;
@@ -217,7 +241,7 @@ async fn reaches_local(url: &str) -> bool {
     let lookup = tokio::net::lookup_host((name, port.unwrap_or(80)));
     match tokio::time::timeout(Duration::from_secs(3), lookup).await {
         Ok(Ok(mut addrs)) => addrs.any(|a| local_ip(a.ip())),
-        _ => false,
+        _ => unknown,
     }
 }
 
@@ -395,8 +419,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_name_for_a_local_address_is_local() {
-        assert!(reaches_local("http://localhost:9/x").await);
-        assert!(!reaches_local("https://nosuch.invalid/").await);
+        assert!(reaches_local("http://localhost:9/x", false).await);
+        assert!(!reaches_local("https://nosuch.invalid/", false).await);
+        assert!(reaches_local("https://nosuch.invalid/", true).await);
     }
 
     #[tokio::test]
