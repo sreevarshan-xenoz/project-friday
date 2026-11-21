@@ -398,7 +398,7 @@ friday_doctor() {
   if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
     ok "inside a Hyprland session"
     # The key everything starts from: bound, or nothing happens on Super+Y.
-    if hyprctl binds -j 2>/dev/null | jq -e 'any(.[]; .description == "FRIDAY: Ask")' >/dev/null 2>&1; then
+    if hyprctl binds -j 2>/dev/null | jq -e 'any(.[]; .modmask == 64 and .key == "Y" and .description == "FRIDAY: Ask")' >/dev/null 2>&1; then
       ok "Super+Y is bound to FRIDAY"
     else
       bad "Super+Y isn't bound to FRIDAY (pressing it does nothing)" "friday keys update, then sign in again"
@@ -448,17 +448,23 @@ friday_doctor() {
     if ! (exec 3<>"/dev/tcp/$host/$port") 2>/dev/null; then
       warn "skipped: the daemon isn't listening" "fix the daemon above first"
     else
-      local out outcome served secs
-      out=$(timeout 90 friday-ctl goal --wait "Reply with only the word: ready" 2>&1 || true)
+      local out err outcome served secs
+      # friday-ctl gives up after 60 s and says so on stderr; its JSON is on stdout.
+      err=$(mktemp)
+      out=$(FRIDAY_CTL_WAIT_SECS=60 timeout 75 friday-ctl goal --wait "Reply with only the word: ready" 2>"$err" </dev/null || true)
       outcome=$(jq -rs 'map(select(.outcome)) | last | .outcome // empty' <<<"$out" 2>/dev/null || true)
       if [ "$outcome" = completed ]; then
         served=$(jq -rs 'map(select(.outcome)) | last | .served_by | if . then "\(.provider)/\(.model)" else empty end' <<<"$out" 2>/dev/null || true)
         secs=$(jq -rs 'map(select(.outcome)) | last | .served_by.ms // empty | . / 100 | round / 10' <<<"$out" 2>/dev/null || true)
         ok "answered${secs:+ in $secs s}${served:+ by $served}"
       else
-        bad "no answer: $(jq -rs 'map(select(.outcome)) | last | .error // empty' <<<"$out" 2>/dev/null | head -c 160 || true)${outcome:+ ($outcome)}" \
+        local why
+        why=$(jq -rs 'map(select(.outcome)) | last | .error // empty' <<<"$out" 2>/dev/null || true)
+        [ -n "$why" ] || why=$(grep . "$err" | tail -n1 || true)
+        bad "no answer: ${why:0:160}${outcome:+ ($outcome)}" \
           "friday providers (who's failing); friday setup-ai (a key or local model); friday daemon logs"
       fi
+      rm -f "$err"
     fi
   fi
 
@@ -529,7 +535,7 @@ friday_report() {
       section "Session"
       echo "desktop: ${XDG_CURRENT_DESKTOP:-unknown}, session: ${XDG_SESSION_TYPE:-unknown}, wayland: $([ -n "${WAYLAND_DISPLAY:-}" ] && echo yes || echo no)"
       section "Doctor"
-      friday_doctor 2>&1 || true
+      friday_doctor --quick 2>&1 || true
       section "AI providers (names only)"
       if [ -r "$env_file" ]; then
         grep -oE '^[A-Z_]+_API_KEY=' "$env_file" | tr -d = | sed 's/^/key set: /' || true

@@ -117,6 +117,7 @@ if [[ "\$target_arg" == *refused* ]]; then printf '{\n "outcome": "failed",\n "e
 if [[ "\$target_arg" == *limit* ]]; then printf '{\n "outcome": "failed",\n "error": "provider opencode: 429 FreeUsageLimitError"\n}\n'; exit 1; fi
 if [[ "\$target_arg" == *"rewritten text"* && "\$target_arg" == *teh* ]]; then printf '{\n "outcome": "completed",\n "result": "\\\\"The quick fox.\\\\""\n}\n'; exit 0; fi
 if [[ "\$target_arg" == *"word: ready"* && -n "\${READY_FAILS:-}" ]]; then printf '{\n "outcome": "failed",\n "error": "All candidates failed (2 tried). opencode: 429"\n}\n'; exit 1; fi
+if [[ "\$target_arg" == *"word: ready"* && -n "\${READY_TIMES_OUT:-}" ]]; then printf '{"accepted":true}\n'; echo "timed out after 60s waiting for the goal to finish" >&2; exit 1; fi
 if [[ "\$target_arg" == *"word: ready"* ]]; then printf '{\n "outcome": "completed",\n "result": "ready",\n "served_by": {"provider": "kilo", "model": "m", "ms": 940}\n}\n'; exit 0; fi
 if [[ "\$target_arg" == *bullets* ]]; then printf '{\n "outcome": "completed",\n "result": "- first point\\\\n- second point"\n}\n'; exit 0; fi
 if [[ "\$target_arg" == *fail* ]]; then printf '{\n "outcome": "failed",\n "error": "network unreachable"\n}\n'; exit 1; fi
@@ -1256,6 +1257,8 @@ contains "a real ask answers, with who and how fast" "$out" "answered in 0.9 s b
 out=$(READY_FAILS=1 bash "$F" doctor 2>&1 || true)
 contains "a failed ask says why and where to look" "$out" "no answer: All candidates failed (2 tried). opencode: 429"
 contains "and names the next step" "$out" "friday providers"
+out=$(READY_TIMES_OUT=1 bash "$F" doctor 2>&1 || true)
+contains "a timed-out ask shows friday-ctl's reason" "$out" "no answer: timed out after 60s"
 out=$(bash "$F" doctor --quick 2>&1 || true)
 if [[ "$out" == *"A real ask"* ]]; then fail "--quick still made a real ask"; else pass "--quick makes no ask"; fi
 kill "$LISTENER" 2>/dev/null || true

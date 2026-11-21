@@ -103,8 +103,8 @@ PanelWindow {
 
       Label {
         Layout.fillWidth: true
-        // A waiting step stays when the answer failed; say where to look.
-        visible: Tour.current.waits && Answer.state === "answer" && !Answer.ok
+        // This step's ask failed (it stays on it); say where to look.
+        visible: Tour.failedStep === Tour.step
         text: "That one didn't work. friday doctor (in a terminal) checks why, or skip this step."
         wrapMode: Text.Wrap
         elide: Text.ElideNone
