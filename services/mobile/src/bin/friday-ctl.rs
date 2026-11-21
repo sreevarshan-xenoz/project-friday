@@ -892,6 +892,54 @@ fn project_in_front() -> Option<String> {
 fn docs(args: &[String]) -> std::process::ExitCode {
     use friday_mobile::local_docs;
     let s = local_docs::Sources::system();
+    // `friday folders`: the chosen folders (one per line in
+    // ~/.config/friday/search-folders), minus private ones (folder lines in
+    // private-windows), made searchable.
+    if args.first().map(String::as_str) == Some("--prepare-folders") {
+        let config = std::env::var_os("XDG_CONFIG_HOME")
+            .filter(|v| !v.is_empty())
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
+            })
+            .unwrap_or_default()
+            .join("friday");
+        let home = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_default();
+        let paths = |file: &str, folders_only: bool| -> Vec<std::path::PathBuf> {
+            std::fs::read_to_string(config.join(file))
+                .unwrap_or_default()
+                .lines()
+                .map(|l| l.trim())
+                .map(|l| l.strip_prefix("never ").map_or(l, str::trim))
+                .filter(|l| !folders_only || l.starts_with('/') || l.starts_with("~/"))
+                .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                .map(|l| {
+                    l.strip_prefix("~/")
+                        .map_or_else(|| l.into(), |r| home.join(r))
+                })
+                .collect()
+        };
+        let folders = paths("search-folders", false);
+        return match local_docs::prepare_folders(
+            &folders,
+            &paths("private-windows", true),
+            &s.folders,
+        ) {
+            Ok(n) => {
+                println!(
+                    "{n} files from {} folder(s) are ready to search.",
+                    folders.len()
+                );
+                std::process::ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("friday-ctl: couldn't read the folders: {e}");
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
     if args.first().map(String::as_str) == Some("--prepare") {
         let mut code = std::process::ExitCode::SUCCESS;
         if s.wiki_gz.exists() {
