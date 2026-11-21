@@ -97,6 +97,8 @@
          validates. -->
     <Component Id="Integration" Directory="INSTALLFOLDER" Guid="9a0d2f64-5f0a-4f39-8f87-4d1c2a7b6e01">
       <RegistryValue Root="HKCU" Key="Software\FRIDAY" Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+      <!-- Says the installer ran: with no ScreenText beside it, the person unticked it. -->
+      <RegistryValue Root="HKCU" Key="Software\FRIDAY\Options" Name="ScreenTextAsked" Type="integer" Value="1" />
       <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="FRIDAY"
                 Description="Ask FRIDAY (Win+Y)" Target="[INSTALLFOLDER]friday-tray.exe" WorkingDirectory="INSTALLFOLDER" />
       <RemoveFolder Id="RemoveProgramsDir" Directory="ProgramsDir" On="uninstall" />
@@ -119,9 +121,9 @@
                 Description="Ask FRIDAY (Win+Y)" Target="[INSTALLFOLDER]friday-tray.exe" WorkingDirectory="INSTALLFOLDER" />
     </Component>
 
-    <!-- The tray reads ScreenText once on its first start, turns the setting
-         on in friday.env and deletes the value, so the tray menu's toggle is
-         the only switch afterwards. ScreenTextChoice (the one the installer
+    <!-- The tray reads ScreenText (and ScreenTextAsked) once on its first
+         start, turns the setting on or off in friday.env and deletes the
+         values, so the tray menu's toggle is the only switch afterwards. ScreenTextChoice (the one the installer
          tracks) stays so uninstall removes the keys. -->
     <!-- Same one-shot pattern: the tray reads AdminAccess on its first start,
          asks Windows once, creates the sign-in task and deletes the value. -->

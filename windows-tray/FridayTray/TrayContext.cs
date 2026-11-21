@@ -652,11 +652,16 @@ internal sealed class TrayContext : ApplicationContext
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(@"Software\FRIDAY\Options", writable: true);
+            // Screen text is on by default: the installer ran without it ticked means off.
             if (key?.GetValue("ScreenText") is 1)
             {
                 WriteScreenText(true);
                 key.DeleteValue("ScreenText");
             }
+            else if (key?.GetValue("ScreenTextAsked") is 1)
+                WriteScreenText(false);
+            if (key?.GetValue("ScreenTextAsked") is 1)
+                key.DeleteValue("ScreenTextAsked");
             // The administrator choice needs a Windows prompt, so it waits until
             // the tray is up (see AskForAdministrator); once is enough.
             if (key?.GetValue("AdminAccess") is 1)
