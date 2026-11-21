@@ -253,9 +253,19 @@ async fn recall(args: &[String]) -> std::process::ExitCode {
                 let app = win["class"].as_str().unwrap_or_default();
                 let title = win["title"].as_str().unwrap_or_default();
                 let own_list = std::fs::read_to_string(&own).unwrap_or_default();
-                // The reader takes only the window in front, so another
-                // window of the app (a private one) is never read.
-                if !app.is_empty() && !recall::private(app, title, &own_list) {
+                // The reader takes only the window in front; still, while
+                // any window of the app is private, none of it is kept.
+                let clients: serde_json::Value = std::process::Command::new("hyprctl")
+                    .args(["clients", "-j"])
+                    .output()
+                    .ok()
+                    .and_then(|o| serde_json::from_slice(&o.stdout).ok())
+                    .unwrap_or_default();
+                let any_private = clients.as_array().into_iter().flatten().any(|c| {
+                    c["class"].as_str() == Some(app)
+                        && recall::private(app, c["title"].as_str().unwrap_or_default(), &own_list)
+                });
+                if !app.is_empty() && !any_private && !recall::private(app, title, &own_list) {
                     if let Some(text) = reader.window_text(app, title).await {
                         let _ = recall::add(
                             &path,

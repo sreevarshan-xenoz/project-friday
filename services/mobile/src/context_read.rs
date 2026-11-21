@@ -1650,8 +1650,8 @@ mod tests {
 
     #[async_trait]
     impl ScreenText for FakeText {
-        async fn window_text(&self, class: &str, _title: &str) -> Option<String> {
-            assert_eq!(class, "nautilus");
+        async fn window_text(&self, class: &str, title: &str) -> Option<String> {
+            assert_eq!((class, title), ("nautilus", "Home"));
             self.0.clone()
         }
     }
