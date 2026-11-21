@@ -586,6 +586,16 @@ internal sealed class TrayContext : ApplicationContext
         form.Closed += (_, _) => { if (Speaking.Enabled(_install.Paths)) Ctl.StopSaying(_install); };
         form.CanAskAnother = kind != AskKind.Screen;
         form.AskAgain += () => _ = AskAsync(kind);
+        form.Wrong += outcome =>
+        {
+            try
+            {
+                var version = typeof(TrayContext).Assembly.GetName().Version?.ToString(3) ?? "";
+                Repro.Save(_install.Paths, kind, outcome, question.Length, "Wrong", version);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        };
         // This card's own window: a later ask doesn't move where it types.
         var target = _askTarget;
         form.TypeIt += text => _ = TypeItAsync(target, text);
