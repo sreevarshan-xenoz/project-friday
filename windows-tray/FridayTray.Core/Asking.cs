@@ -166,13 +166,30 @@ public static partial class Asking
     /// <summary>
     /// Clipboard text that looks like a password or token (one long run of
     /// non-space characters mixing letters and digits) must not be sent to a
-    /// cloud model by accident.
+    /// cloud model by accident. A URL (…://…), a path (/…, ~/…, ./…, C:\…)
+    /// or a dotted file name isn't one, unless one of its parts is such a run
+    /// of 16 or more (a key in a URL, a JWT). Anything else with a slash
+    /// (base64, an AWS secret) still is. Same rule as `friday_secret_shaped`
+    /// on Linux (ASCII letters and digits, as there).
     /// </summary>
-    public static bool LooksLikeSecret(string text) =>
-        TokenRun().IsMatch(text) && text.Any(char.IsLetter) && text.Any(char.IsDigit);
+    public static bool LooksLikeSecret(string text)
+    {
+        static bool Mixed(string t) => t.Any(char.IsAsciiLetter) && t.Any(char.IsAsciiDigit);
+        if (!TokenRun().IsMatch(text) || !Mixed(text))
+            return false;
+        if (!text.Contains("://") && !PathStart().IsMatch(text) && !DottedName().IsMatch(text))
+            return true;
+        return text.Split(['/', '\\', '.', ':', '?', '=', '&', '#']).Any(p => p.Length >= 16 && Mixed(p));
+    }
 
     [GeneratedRegex(@"^\S{12,}$")]
     private static partial Regex TokenRun();
+
+    [GeneratedRegex(@"^(/|~/|\./|\.\./|[A-Za-z]:[\\/])")]
+    private static partial Regex PathStart();
+
+    [GeneratedRegex(@"^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+$")]
+    private static partial Regex DottedName();
 
     /// <summary>
     /// Every top-level JSON object in friday-ctl's output, which mixes
@@ -283,13 +300,17 @@ public static partial class Asking
         // then what the daemon added (its "used" list).
         var used = new List<string>();
         if (kind == AskKind.Selection) used.Add("your selection");
-        if (kind == AskKind.Screen) used.Add("the window in front");
         if (kind == AskKind.Screen)
         {
             // The result, not one of the {"partial": ...} lines before it.
             var last = objects.LastOrDefault(o => !o.TryGetProperty("partial", out _));
             result = last.ValueKind == JsonValueKind.Object ? Str(last, "response") : null;
             error = last.ValueKind == JsonValueKind.Object ? Str(last, "error") : null;
+            // The daemon says what it sent (the window's text or a screenshot).
+            if (last.ValueKind == JsonValueKind.Object && last.TryGetProperty("used", out var su) && su.ValueKind == JsonValueKind.Array)
+                used.AddRange(su.EnumerateArray().Where(u => u.ValueKind == JsonValueKind.String).Select(u => u.GetString()!));
+            else
+                used.Add("the window in front");
         }
         else
         {

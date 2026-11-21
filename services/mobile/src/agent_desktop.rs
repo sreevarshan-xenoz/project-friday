@@ -486,7 +486,19 @@ pub fn pick_app(apps: &[String], class: &str) -> Option<String> {
         if want.is_empty() {
             continue;
         }
-        let hits: Vec<&String> = apps.iter().filter(|a| squash(a) == *want).collect();
+        // Windows names an app by its program ("Notepad.exe" or "notepad").
+        let hits: Vec<&String> = apps
+            .iter()
+            .filter(|a| {
+                let a = match a.len().checked_sub(4) {
+                    Some(i) if a.is_char_boundary(i) && a[i..].eq_ignore_ascii_case(".exe") => {
+                        &a[..i]
+                    }
+                    _ => a.as_str(),
+                };
+                squash(a) == *want
+            })
+            .collect();
         if hits.len() == 1 {
             return Some(hits[0].clone());
         }
@@ -1564,8 +1576,17 @@ impl crate::context_read::ScreenText for AgentDesktopUi {
             )
             .await
             .ok()?;
-        let text = tree_text(snap.get("data")?.get("tree")?, MAX_SCREEN_TEXT);
-        (text.chars().count() >= MIN_SCREEN_TEXT).then_some(text)
+        let tree = snap.get("data")?.get("tree")?;
+        let mut text = tree_text(tree, MAX_SCREEN_TEXT);
+        if text.chars().count() < MIN_SCREEN_TEXT {
+            return None;
+        }
+        // More than fits: say so, to the model and in the answer.
+        if tree_text(tree, MAX_SCREEN_TEXT + 1).len() > text.len() {
+            text.push('\n');
+            text.push_str(crate::context_read::SCREEN_TEXT_CUT);
+        }
+        Some(text)
     }
 }
 
@@ -2543,6 +2564,14 @@ mod tests {
         assert_eq!(pick_app(&apps, "firefox").as_deref(), Some("firefox"));
         assert_eq!(pick_app(&apps, "foot").as_deref(), Some("foot"));
         assert_eq!(pick_app(&apps, "foo"), None);
+        // On Windows the window's app is its process name.
+        let win: Vec<String> = ["Notepad.exe", "chrome", "EXPLORER.Exe"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(pick_app(&win, "notepad").as_deref(), Some("Notepad.exe"));
+        assert_eq!(pick_app(&win, "chrome").as_deref(), Some("chrome"));
+        assert_eq!(pick_app(&win, "explorer").as_deref(), Some("EXPLORER.Exe"));
         assert_eq!(pick_app(&apps, "kitty"), None);
         assert_eq!(pick_app(&apps, ""), None);
     }
@@ -2576,7 +2605,12 @@ mod tests {
         let got = AgentDesktopUi::new(stub.clone())
             .window_text("org.gnome.Nautilus", "Home")
             .await;
-        assert!(got.unwrap().contains("word word"));
+        let got = got.unwrap();
+        assert!(got.contains("word word"));
+        assert!(
+            !got.ends_with(crate::context_read::SCREEN_TEXT_CUT),
+            "a short window isn't marked cut"
+        );
         let calls = stub.calls();
         assert_eq!(
             calls[2].0,
@@ -2587,6 +2621,23 @@ mod tests {
                 "--window-id=w-1",
                 "--compact"
             ]
+        );
+
+        // More than fits: the words end with the line that says so.
+        let huge = json!({"ok": true, "data": {"tree": {"role": "window", "children":
+            [{"role": "statictext", "name": "word ".repeat(4000)}]}}});
+        let stub = StubSpawn::new();
+        stub.push_response("list-apps", Ok(apps.to_string()));
+        stub.push_response("list-windows", Ok(wins.to_string()));
+        stub.push_response("snapshot", Ok(huge.to_string()));
+        let got = AgentDesktopUi::new(stub.clone())
+            .window_text("nautilus", "Home")
+            .await
+            .unwrap();
+        assert!(
+            got.ends_with(crate::context_read::SCREEN_TEXT_CUT),
+            "{}",
+            &got[got.len() - 60..]
         );
 
         let stub = StubSpawn::new();

@@ -295,6 +295,28 @@ contains "and doesn't half-revert" "$(cat "$U/installed")" "hyprland 0.43"
 FRIDAY_UPGRADE_STATE="$U/state" bash "$F" upgrade status >"$U/status" 2>&1 || true
 contains "friday upgrade status shows the last run" "$(cat "$U/status")" "Last run"
 
+echo "the ask box opens first"
+# The project lookup and FRIDAY Shell's pill can take seconds; the box must
+# not wait for them.
+mkdir -p "$W/slow-bin"
+printf '#!/bin/bash\n[ "$1 $2" = "workspace project" ] && { sleep 2; echo /home/me/code/x; exit 0; }\nexec %q "$@"\n' "$S/friday-ctl" >"$W/slow-bin/friday-ctl"
+printf '#!/bin/bash\ndate +%%s%%N >%q\nexit 1\n' "$W/box-at" >"$W/slow-bin/fuzzel"
+chmod +x "$W/slow-bin"/*
+rm -f "$W/box-at"; t0=$(date +%s%N); PATH="$W/slow-bin:$PATH" bash "$F" ask >/dev/null 2>&1 || true
+if [ -s "$W/box-at" ]; then
+  box_ms=$(( ( $(cat "$W/box-at") - t0 ) / 1000000 ))
+  (( box_ms < 1500 )) && pass "the ask box opens in ${box_ms} ms with slow lookups behind it" || fail "the ask box took ${box_ms} ms (lookups ran first)"
+else fail "the ask box never opened"; fi
+sleep 2.5  # the slow lookups end before the next checks read the log
+
+echo "password-shaped text"
+shaped=$(bash -c 'source <(sed -n "/^friday_secret_shaped() {/,/^}/p" "$1"); shift; for t in "$@"; do friday_secret_shaped "$t" && printf "S" || printf "."; done' _ "$F" \
+  "https://github.com/x/y/issues/1234" "/home/me/notes/file2.txt" 'C:\Users\me\file2.txt' "report2026.pdf" "hello world 123" \
+  "tok_abc123def456ghi789jkl012" "abcdefghij1234567890.klmnopqrst0987654321.uvwxyzABC123def456" \
+  "https://api.x.com/v1?key=zz_abcd1234efgh5678ijkl" "hunter2hunter2" \
+  "https://x.com/cb?id=ab12ab12ab12ab12" "Zq8rTk2LmN0p/Wx4Yb7Vc1Ds/Ee9Ff3Gh5Jk6" "hunter2hunter2." "pass/12345678abc")
+[[ "$shaped" == ".....SSSSSSSS" ]] && pass "URLs, paths and file names go; tokens, JWTs, keys in URLs and base64 don't" || fail "password-shaped rule: got $shaped, wanted .....SSSSSSSS"
+
 echo "suggestions for the app you're in"
 printf '#!/bin/bash\necho "hyprctl $*" >> %q\n[[ "$*" == "activewindow -j" ]] && printf %%s "$HYPR_WIN"\nexit 0\n' "$LOG" >"$S/hyprctl"; chmod +x "$S/hyprctl"
 printf '#!/bin/bash\ncat >%q\necho "$PICK"\n' "$W/menu.txt" >"$S/fuzzel"
@@ -660,7 +682,7 @@ contains "Ask again: selection preserves --selection kind" "$(cat "$LOG")" "sele
 contains "empty selection explains what to do" "$(cat "$LOG")" "Select or copy some text first"
 PICK="what does this error mean" bash "$F" ask --screen; sleep 0.3
 contains "screen: asks the daemon with consent and the question" "$(cat "$LOG")" "friday-ctl-context context screen --yes --ask what does this error mean"
-contains "screen: prompt says a screenshot is shared" "$(cat "$LOG")" "a screenshot goes to your AI provider"
+contains "screen: prompt says what is shared" "$(cat "$LOG")" "its text, or a screenshot if it has too little, goes to your AI provider"
 contains "screen: full answer saved" "$(cat "$state/last-answer.md")" $'The error says E0308.\nFix the type.'
 # Asking about the screen in words looks at it; a how-to about the screen does not.
 : >"$LOG"; bash "$F" ask "what is on my screen right now" >/dev/null 2>&1; sleep 0.4

@@ -37,6 +37,8 @@ public partial class AnswerWindow : Window
     public event Action? TryAnother;
     public event Action? FollowUp;
     public event Action? StartFriday;
+    /// <summary>"That was wrong": keep a repro of this answer (no text).</summary>
+    public event Action<AskOutcome>? Wrong;
     public event Action<string>? ConfirmRun;
     /// <summary>Puts the answer into the window the question was asked from.</summary>
     public event Action<string>? TypeIt;
@@ -192,6 +194,18 @@ public partial class AnswerWindow : Window
                     another.Click += (_, _) => { TryAnother?.Invoke(); CloseSoftly(); };
                     buttons.Add(another);
                 }
+            }
+            if (Wrong is not null)
+            {
+                var wrong = Pill("That was wrong", SymbolRegular.ThumbDislike24);
+                wrong.ToolTip = "Keep a note of how this was asked and answered, to fix it (no question or answer text)";
+                wrong.Click += (_, _) =>
+                {
+                    Wrong?.Invoke(outcome);
+                    wrong.Content = "Thanks, noted";
+                    wrong.IsEnabled = false;
+                };
+                buttons.Add(wrong);
             }
             var again = Pill("Ask again", SymbolRegular.ArrowClockwise24);
             again.Click += (_, _) => { AskAgain?.Invoke(); CloseSoftly(); };

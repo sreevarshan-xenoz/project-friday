@@ -36,6 +36,9 @@ public static class ActiveWindow
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr h, StringBuilder s, int n);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT r, int size);
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    private delegate bool EnumProc(IntPtr h, IntPtr param);
+    [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr parent, EnumProc proc, IntPtr param);
 
     public static int Run()
     {
@@ -62,7 +65,11 @@ public static class ActiveWindow
 
             var json = JsonSerializer.Serialize(new Dictionary<string, object>
             {
-                ["class"] = cls,
+                // The app, as Hyprland's class is: its process name
+                // ("notepad", "chrome"), which is how the window-text reader
+                // and the private-window list name apps. The Win32 class too.
+                ["class"] = ProcessName(h) ?? cls,
+                ["win32_class"] = cls,
                 ["title"] = Text(h, GetWindowText),
                 ["at"] = new[] { bounds.X, bounds.Y },
                 ["size"] = new[] { bounds.Width, bounds.Height },
@@ -74,6 +81,42 @@ public static class ActiveWindow
         {
             Console.Error.WriteLine($"active window: {e.Message}");
             return 1;
+        }
+    }
+
+    private static string? ProcessName(IntPtr h)
+    {
+        var name = NameOf(h);
+        // A Store app's frame belongs to ApplicationFrameHost; the app is
+        // the process of a child window that isn't the frame's own.
+        if (name == "applicationframehost")
+        {
+            GetWindowThreadProcessId(h, out var frame);
+            string? app = null;
+            EnumChildWindows(h, (child, _) =>
+            {
+                GetWindowThreadProcessId(child, out var pid);
+                if (pid == frame)
+                    return true;
+                app = NameOf(child);
+                return false;
+            }, IntPtr.Zero);
+            name = app ?? name;
+        }
+        return name;
+    }
+
+    private static string? NameOf(IntPtr h)
+    {
+        try
+        {
+            GetWindowThreadProcessId(h, out var pid);
+            using var p = System.Diagnostics.Process.GetProcessById((int)pid);
+            return p.ProcessName.ToLowerInvariant();
+        }
+        catch (Exception)
+        {
+            return null;
         }
     }
 

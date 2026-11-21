@@ -2310,6 +2310,23 @@ friday_replace_selection() {
 # where you are. The clipboard itself keeps the original.
 # With a text argument (a clip from friday clips), that text instead, and
 # "As it is" first.
+# Whether text is shaped like a password or token: one long run with no
+# spaces, mixing letters and digits. A URL (…://…), a path (/…, ~/…, ./…,
+# C:\…) or a dotted file name isn't, unless one of its parts is such a run
+# of 16 or more (a key in a URL, a JWT). Anything else with a slash (base64,
+# an AWS secret) still is. Same rule as the Windows tray (Asking.LooksLikeSecret).
+friday_secret_shaped() {
+  local t="${1:-}" part
+  [[ "$t" =~ ^[^[:space:]]{12,}$ && "$t" =~ [A-Za-z] && "$t" =~ [0-9] ]] || return 1
+  [[ "$t" == *://* || "$t" =~ ^(/|~/|\./|\.\./|[A-Za-z]:[\\/]) || "$t" =~ ^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+$ ]] || return 0
+  local -a parts
+  IFS=$'/\\.:?=&#' read -ra parts <<<"$t"
+  for part in "${parts[@]}"; do
+    [[ ${#part} -ge 16 && "$part" =~ [A-Za-z] && "$part" =~ [0-9] ]] && return 0
+  done
+  return 1
+}
+
 friday_paste_as() {
   local clip win addr pick how request out summary text first=""
   if [ $# -gt 0 ]; then clip="$1" first="As it is"
@@ -2319,7 +2336,7 @@ friday_paste_as() {
     return 0
   fi
   # Never send something shaped like a password or token (as ask --selection).
-  if [[ "$clip" =~ ^[^[:space:]]{12,}$ && "$clip" =~ [A-Za-z] && "$clip" =~ [0-9] ]]; then
+  if friday_secret_shaped "$clip"; then
     notify-send -a FRIDAY -- "FRIDAY" "The clipboard looks like a password or token, so I won't send it." 2>/dev/null || true
     return 0
   fi
@@ -2388,7 +2405,7 @@ EOF2
       # wl-paste --watch marks what a password manager copied as sensitive.
       [ "${CLIPBOARD_STATE:-}" = sensitive ] && return 0
       timeout 2 wl-paste --list-types 2>/dev/null | grep -qi 'passwordmanagerhint' && return 0
-      [[ "$text" =~ ^[^[:space:]]{12,}$ && "$text" =~ [A-Za-z] && "$text" =~ [0-9] ]] && return 0
+      friday_secret_shaped "$text" && return 0
       # A window that can't be read might be a private one: keep nothing.
       if command -v hyprctl >/dev/null 2>&1; then timeout 2 hyprctl activewindow -j >/dev/null 2>&1 || return 0; fi
       [ -z "$(friday_private_window)" ] || return 0
@@ -3486,7 +3503,7 @@ case "${1:-}" in
     #   friday ask [text]               ask (prompts if no text)
     #   friday ask --selection [text]   ask about the selected/copied text (SUPER+ALT+Y)
     #   friday ask --screen [text]      ask about what's on screen (SUPER+CTRL+Y);
-    #                                   a screenshot goes to the AI provider, this once
+    #                                   its text (or a screenshot) goes to the AI provider, this once
     #   friday ask --region [text]      drag out an area of the screen and ask about
     #                                   just that (any monitor)
     #   friday ask --follow-up [text]   ask about the last answer (the answer pill's
@@ -3520,16 +3537,31 @@ case "${1:-}" in
     # The window you're asking about (its selection or its screen): private?
     private_win=""
     if $use_selection || $use_screen; then private_win=$(friday_private_window); fi
-    # The project in front (a terminal's git repo), kept with the answer so
-    # "continue building X" finds X's history.
-    ask_project=$(timeout 2 friday-ctl workspace project 2>/dev/null || true)
     state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
     history_file="$state_dir/ask-history"
     notify() { notify-send -a FRIDAY -- "$@" 2>/dev/null || true; }
     # FRIDAY Shell's answer pill (services/Answer.qml); fails when it isn't running.
     pill() { command -v quickshell >/dev/null 2>&1 && timeout 3 bash "$0" shell ipc answer "$@" >/dev/null 2>&1; }
-    use_pill=false
-    pill state && use_pill=true
+    # Looked up while the ask box is open, not before it (each can take a
+    # few seconds): the project in front (a terminal's git repo, kept with
+    # the answer so "continue building X" finds X's history) and whether
+    # FRIDAY Shell's pill is there. ask_lookups waits for them.
+    lookups=$(mktemp -d)
+    # Gone however the ask ends (a closed box exits early).
+    trap 'rm -rf "$lookups"' EXIT
+    { timeout 2 friday-ctl workspace project >"$lookups/project" 2>/dev/null || true; } &
+    lookup_pids=$!
+    { pill state && : >"$lookups/pill"; } &
+    lookup_pids+=" $!"
+    ask_project="" use_pill=false
+    ask_lookups() {
+      [ -d "$lookups" ] || return 0
+      # shellcheck disable=SC2086
+      wait $lookup_pids 2>/dev/null || true
+      ask_project=$(cat "$lookups/project" 2>/dev/null || true)
+      [ ! -e "$lookups/pill" ] || use_pill=true
+      rm -rf "$lookups"
+    }
 
     context=""
     if $use_followup; then
@@ -3554,7 +3586,7 @@ case "${1:-}" in
         # The clipboard often holds a just-copied password or token. Never
         # send something shaped like one (a single long token mixing letters
         # and digits) to a cloud model by accident.
-        if [[ "$context" =~ ^[^[:space:]]{12,}$ && "$context" =~ [A-Za-z] && "$context" =~ [0-9] ]]; then
+        if friday_secret_shaped "$context"; then
           notify "FRIDAY" "The clipboard looks like a password or token, so I won't send it. Highlight the text you mean instead."
           exit 0
         fi
@@ -3584,7 +3616,7 @@ case "${1:-}" in
           --placeholder="Follow up on: $(head -n 1 <<<"$context" | sed 's/^# //' | cut -c1-50)" </dev/null) || exit 0
       elif $use_screen; then
         goal=$(fuzzel --dmenu --prompt-only="FRIDAY 👁 " --width=70 \
-          --placeholder="Ask about your screen (a screenshot goes to your AI provider)" </dev/null) || exit 0
+          --placeholder="Ask about your screen (its text, or a screenshot if it has too little, goes to your AI provider)" </dev/null) || exit 0
       elif $use_selection; then
         # Quick actions, then your own prompts (one per line in
         # ~/.config/friday/prompts); Shift+Enter sends what you typed instead.
@@ -3643,6 +3675,7 @@ case "${1:-}" in
         if [ -n "$suggestions" ]; then
           picked=$(awk -F'\t' -v g="$goal" '$1 == g { print $2 "\t" $3; exit }' <<<"$suggestions")
           if [ -n "$picked" ]; then
+            rm -rf "$lookups"
             FRIDAY_SUGGESTED=1 exec bash "$0" ask "$(cut -f1 <<<"$picked")" "$(cut -f2- <<<"$picked")"
           fi
         fi
@@ -3724,6 +3757,7 @@ case "${1:-}" in
         && friday_show "$goal"; then
       exit 0
     fi
+    ask_lookups
     # Questions, selected text and answers are private: only you can open
     # this directory (also fixes one made world-readable by an older version).
     mkdir -p "$state_dir" && chmod 700 "$state_dir"
@@ -3791,6 +3825,7 @@ case "${1:-}" in
     }
 
     show_answer() {
+      ask_lookups
       local ans_ok="$1" summary_json="$2" raw_out="$3"
       local answer title details preview urgency actions meta=""
       local local_only=false
@@ -3926,7 +3961,10 @@ case "${1:-}" in
         if $use_selection && [ -n "${context:-}" ]; then
           if [ "$source_label" = Clipboard ]; then used_parts+=("your clipboard"); else used_parts+=("your selection"); fi
         fi
-        if ${use_region:-false}; then used_parts+=("the area you picked")
+        # A screen ask's own "used" (the window's text or a screenshot) comes
+        # from the daemon; this is only for an older one that doesn't say.
+        if $use_screen && [ -n "$(jq -r '.used[0]? // empty' <<<"$summary_json" 2>/dev/null)" ]; then :
+        elif ${use_region:-false}; then used_parts+=("the area you picked")
         elif $use_screen; then used_parts+=("the window in front")
         elif [ -n "${tab:-}" ]; then used_parts+=("the page's text (browser extension)"); fi
         [ -z "${docs:-}" ] || used_parts+=("docs on this computer")
@@ -4044,7 +4082,7 @@ case "${1:-}" in
       $use_pill || nid=$(notify-send -a FRIDAY -p -- "FRIDAY" "Looking at your screen: $goal" 2>/dev/null || true)
       [[ "$nid" =~ ^[0-9]+$ ]] || nid=""
       stream_ctl friday-ctl context screen --yes --ask "$goal" ${region:+--region "$region"}
-      summary=$(jq -s 'map(select(type == "object" and (has("partial") | not))) | last // {} | {result: .response, error: .error}' <<<"$out" 2>/dev/null || echo '{}')
+      summary=$(jq -s 'map(select(type == "object" and (has("partial") | not))) | last // {} | {result: .response, error: .error, used: .used}' <<<"$out" 2>/dev/null || echo '{}')
     else
       nid=""
       $use_pill || nid=$(notify-send -a FRIDAY -p -- "FRIDAY" "Working on: $goal" 2>/dev/null || true)
