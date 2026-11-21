@@ -1051,6 +1051,24 @@ async fn main() -> std::process::ExitCode {
     if raw.first().map(String::as_str) == Some("workspace") {
         return workspace(&raw[1..]);
     }
+    // The browser starts the host with the extension's origin as its argument.
+    #[cfg(unix)]
+    if raw.first().map(String::as_str) == Some("browser-host") {
+        return std::process::ExitCode::from(friday_mobile::browser_host::run_host());
+    }
+    #[cfg(unix)]
+    if raw.first().map(String::as_str) == Some("browser") && raw.get(1).map(String::as_str) == Some("tab") {
+        return match friday_mobile::browser_host::tab() {
+            Ok(v) => {
+                println!("{v}");
+                std::process::ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("friday-ctl: {e}");
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
     if raw.first().map(String::as_str) == Some("mcp") {
         return mcp_serve();
     }

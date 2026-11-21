@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "FRIDAY",
+  "version": "1.0",
+  "description": "Lets FRIDAY, on this computer, read the tab you're on when you ask it about the page. Nothing is read until you ask; private windows never.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvtghy/ynwu7HcPsfgByVPZgIKGAW5vWxXmVMl3jHOTXSKo2OZe8TdmIrrvdheVgX8RMkHGcSf7vS4yWDGoV2S/VCWCfca3VWmZouGnGYWfuK/jYjnPPAdbU5p64TKsucA285ZkLZ6+Tgynm7jkFwADvRkoEnt1QMdghh3PbOKh/Dq0drxP+LfFGUITXu16YHw1+xVi8xTR/TA7BFKw/LnLzqqEhBKEHnsO8ndSTLfw08BQKsZT20KXaL0HNacsExmSGJujhvPbn1e8e5YbT8tJTPHDigWEliICSpE4x9fiHBS+OHRR4OtD5JLQXpQ8cAWG/MjsXKkgWoKcmu32JuDwIDAQAB",
+  "permissions": ["nativeMessaging", "tabs", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js", "scripts": ["background.js"] },
+  "browser_specific_settings": { "gecko": { "id": "browser@friday-os", "strict_min_version": "128.0" } }
+}
