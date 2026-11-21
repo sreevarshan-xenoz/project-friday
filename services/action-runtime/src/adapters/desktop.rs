@@ -315,9 +315,10 @@ impl DesktopAdapter {
                 let w = self.pick(p("target").ok_or("name the window to move")?)?;
                 let ws = workspace_arg(p("workspace").ok_or("name the workspace")?)?;
                 self.move_to_workspace(&w.address, &ws)?;
-                // Done only when it's there: look again (a relative
-                // workspace, +1, can't be checked by name).
-                if !ws.starts_with(['+', '-']) {
+                // Done only when it's there: look again. Only a numbered
+                // workspace can be compared (a named, special or relative
+                // one is reported differently from how it's asked for).
+                if ws.chars().all(|c| c.is_ascii_digit()) {
                     if let Some(now) = self.windows()?.iter().find(|x| x.address == w.address) {
                         if now.workspace != ws {
                             return Err(format!(
