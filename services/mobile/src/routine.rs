@@ -129,6 +129,59 @@ pub fn last_task(log: &str) -> Option<Recorded> {
     })
 }
 
+/// The steps you took while `friday routine record` watched Hyprland's
+/// events: apps opened (`openwindow`), windows moved (`movewindowv2`) and
+/// workspaces switched to (`workspacev2`), given the windows already open
+/// (address → app) when it began. Repeats collapse: the last of several
+/// switches in a row, the last move of the same window.
+pub fn from_events(events: &str, open: &[(String, String)]) -> Vec<Step> {
+    use serde_json::json;
+    let bare = |a: &str| a.trim().trim_start_matches("0x").to_lowercase();
+    let mut apps: std::collections::HashMap<String, String> =
+        open.iter().map(|(a, c)| (bare(a), c.clone())).collect();
+    let mut steps: Vec<Step> = Vec::new();
+    for line in events.lines() {
+        let Some((event, data)) = line.split_once(">>") else {
+            continue;
+        };
+        let f: Vec<&str> = data.splitn(4, ',').collect();
+        let step = match (event, f.as_slice()) {
+            ("openwindow", [addr, _ws, class, ..]) if !class.is_empty() => {
+                apps.insert(bare(addr), class.to_string());
+                Step {
+                    verb: "launch_app".into(),
+                    params: json!({ "app": class.to_lowercase() }),
+                }
+            }
+            ("movewindowv2", [addr, _id, name, ..]) if !name.starts_with("special") => {
+                let Some(app) = apps.get(&bare(addr)) else {
+                    continue;
+                };
+                Step {
+                    verb: "move_window".into(),
+                    params: json!({ "target": app, "workspace": name }),
+                }
+            }
+            ("workspacev2", [_id, name, ..]) if !name.starts_with("special") => Step {
+                verb: "switch_workspace".into(),
+                params: json!({ "workspace": name }),
+            },
+            _ => continue,
+        };
+        let same = steps.last().is_some_and(|last| {
+            last.verb == step.verb
+                && (step.verb == "switch_workspace"
+                    || (step.verb == "move_window"
+                        && last.params["target"] == step.params["target"]))
+        });
+        if same {
+            steps.pop();
+        }
+        steps.push(step);
+    }
+    steps
+}
+
 pub fn save(dir: &Path, routine: &Routine) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     std::fs::write(
@@ -181,6 +234,29 @@ pub async fn replay(routine: &Routine, runner: &mut dyn Runner) -> Result<usize,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn your_own_steps_become_a_routine() {
+        let open = [("0xaaa1".to_string(), "kitty".to_string())];
+        let events =
+            "workspacev2>>2,2\nworkspacev2>>3,3\nopenwindow>>bbb2,3,firefox,Mozilla Firefox\n\
+            movewindowv2>>bbb2,1,1\nmovewindowv2>>bbb2,4,4\nmovewindowv2>>aaa1,2,2\n\
+            activewindow>>kitty,zsh\nworkspacev2>>-98,special:magic\nmovewindowv2>>ccc3,1,1\n";
+        let steps = from_events(events, &open);
+        let shown: Vec<String> = steps
+            .iter()
+            .map(|s| format!("{} {}", s.verb, s.params))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                r#"switch_workspace {"workspace":"3"}"#,
+                r#"launch_app {"app":"firefox"}"#,
+                r#"move_window {"target":"firefox","workspace":"4"}"#,
+                r#"move_window {"target":"kitty","workspace":"2"}"#,
+            ]
+        );
+    }
     use serde_json::json;
 
     fn line(verb: &str, risk: &str, ok: bool, goal: &str) -> String {

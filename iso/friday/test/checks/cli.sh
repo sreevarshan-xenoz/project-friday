@@ -810,6 +810,20 @@ if grep -q "network unreachable" "$state/last-ask.json"; then fail "last-ask.jso
 rm -f "$state/last-ask.json"
 contains "nothing to report before an answer" "$(bash "$F" wrong x 2>&1 || true)" "No answer to report yet"
 
+echo "teach a routine by showing it"
+RUNTIME_SAVE="${XDG_RUNTIME_DIR:-}"; export XDG_RUNTIME_DIR="$W/rt"; mkdir -p "$XDG_RUNTIME_DIR"
+: >"$LOG"; out=$(bash "$F" routine record)
+contains "recording starts and says how to stop" "$out" "friday routine stop <name>"
+contains "a notification shows it records the whole time" "$(cat "$LOG")" "FRIDAY is recording a routine"
+expect "it keeps the recorder's pid" test -s "$XDG_RUNTIME_DIR/friday-recording.pid"
+: >"$LOG"; bash "$F" routine stop morning setup >/dev/null 2>&1 || true
+contains "stop turns the recording into a routine" "$(cat "$LOG")" "routine finish morning setup"
+expect "and forgets the recorder" test ! -e "$XDG_RUNTIME_DIR/friday-recording.pid"
+contains "stop when not recording says so" "$(bash "$F" routine stop x 2>&1 || true)" "Not recording"
+mkdir -p "$HOME/.local/share/friday/routines"; echo '{}' >"$HOME/.local/share/friday/routines/morning-setup.json"
+contains "edit opens the routine's file" "$(EDITOR=echo bash "$F" routine edit Morning Setup)" "friday/routines/morning-setup.json"
+rm -rf "$HOME/.local/share/friday/routines"; export XDG_RUNTIME_DIR="$RUNTIME_SAVE"
+
 echo "answers know their project"
 : >"$LOG"; WS_PROJECT=/home/me/code/project-friday bash "$F" ask "why does the build fail"; sleep 0.3
 contains "the saved answer names the project in front" "$(cat "$HOME/.local/state/friday/last-answer.md")" "_project: /home/me/code/project-friday_"

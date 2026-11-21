@@ -1355,9 +1355,35 @@ friday_wrong() {
 # desktop, and do it again by name (friday-ctl routine).
 friday_routine() {
   command -v friday-ctl >/dev/null 2>&1 || { echo "friday: friday-ctl is not installed" >&2; return 1; }
+  local pidf="${XDG_RUNTIME_DIR:-/tmp}/friday-recording.pid" nidf="${XDG_RUNTIME_DIR:-/tmp}/friday-recording.nid" pid nid
   case "${1:-list}" in
     save|run|rm|list) friday-ctl routine "$@" ;;
-    *) echo "Usage: friday routine save <name> | run <name> | list | rm <name>" >&2; return 1 ;;
+    # Teach one by doing it: apps you open, windows you move, workspaces you
+    # switch to (never what you type), with a notification showing the
+    # whole time that it records.
+    record)
+      pid=$(cat "$pidf" 2>/dev/null || true)
+      if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then echo "Already recording: friday routine stop <name>"; return 0; fi
+      setsid friday-ctl routine record </dev/null >/dev/null 2>&1 &
+      echo $! >"$pidf"
+      nid=$(notify-send -a FRIDAY -u critical -p -- "● FRIDAY is recording a routine" "Open apps, move windows, switch workspaces. Then: friday routine stop <name>" 2>/dev/null || true)
+      echo "$nid" >"$nidf"
+      echo "Recording. Do the steps, then: friday routine stop <name>" ;;
+    stop)
+      shift
+      pid=$(cat "$pidf" 2>/dev/null || true)
+      [[ "$pid" =~ ^[0-9]+$ ]] || { echo "Not recording (friday routine record starts it)." >&2; return 1; }
+      kill "$pid" 2>/dev/null || true
+      nid=$(cat "$nidf" 2>/dev/null || true)
+      [[ "$nid" =~ ^[0-9]+$ ]] && notify-send -a FRIDAY -r "$nid" -t 1500 -- "FRIDAY" "Stopped recording." 2>/dev/null || true
+      rm -f "$pidf" "$nidf"
+      friday-ctl routine finish "$@" && echo "Change a step: friday routine edit $*" ;;
+    edit)
+      shift
+      local f="${XDG_DATA_HOME:-$HOME/.local/share}/friday/routines/$(tr '[:upper:]' '[:lower:]' <<<"$*" | xargs | tr ' ' '-').json"
+      [ -f "$f" ] || { echo "There's no routine called \"$*\"." >&2; return 1; }
+      "${EDITOR:-nano}" "$f" ;;
+    *) echo "Usage: friday routine save <name> | record | stop <name> | edit <name> | run <name> | list | rm <name>" >&2; return 1 ;;
   esac
 }
 

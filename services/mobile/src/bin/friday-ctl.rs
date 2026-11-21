@@ -304,7 +304,103 @@ async fn routine(args: &[String]) -> std::process::ExitCode {
         );
         Err(ExitCode::from(2))
     };
+    // `friday routine record`: Hyprland's events while you work, kept in the
+    // runtime folder until `finish <name>` turns them into a routine.
+    let recording = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("friday-recording.txt");
     match args.first().map(String::as_str) {
+        #[cfg(unix)]
+        Some("record") => {
+            use std::io::{BufRead, Write};
+            let socket = std::env::var_os("XDG_RUNTIME_DIR")
+                .zip(std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE"))
+                .map(|(run, sig)| {
+                    std::path::PathBuf::from(run)
+                        .join("hypr")
+                        .join(sig)
+                        .join(".socket2.sock")
+                });
+            let Some(Ok(stream)) = socket.map(std::os::unix::net::UnixStream::connect) else {
+                eprintln!("friday-ctl: recording a routine needs Hyprland");
+                return ExitCode::FAILURE;
+            };
+            let clients: serde_json::Value = std::process::Command::new("hyprctl")
+                .args(["-j", "clients"])
+                .output()
+                .ok()
+                .and_then(|o| serde_json::from_slice(&o.stdout).ok())
+                .unwrap_or_default();
+            let open: Vec<(String, String)> = clients
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|c| {
+                    (
+                        c["address"].as_str().unwrap_or("").to_string(),
+                        c["class"].as_str().unwrap_or("").to_string(),
+                    )
+                })
+                .collect();
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create(true).truncate(true);
+            std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+            let Ok(mut file) = opts.open(&recording) else {
+                eprintln!("friday-ctl: couldn't write {}", recording.display());
+                return ExitCode::FAILURE;
+            };
+            let _ = writeln!(
+                file,
+                "#open {}",
+                serde_json::to_string(&open).unwrap_or_default()
+            );
+            for line in std::io::BufReader::new(stream).lines() {
+                let Ok(line) = line else { break };
+                // Only the events a routine can do again; never window titles.
+                if let Some((event, data)) = line.split_once(">>") {
+                    let keep = match event {
+                        "openwindow" => data.splitn(4, ',').take(3).collect::<Vec<_>>().join(","),
+                        "movewindowv2" | "workspacev2" => data.to_string(),
+                        _ => continue,
+                    };
+                    let _ = writeln!(file, "{event}>>{keep}");
+                }
+            }
+            ExitCode::SUCCESS
+        }
+        Some("finish") => {
+            if let Err(c) = named("finish") {
+                return c;
+            }
+            let text = std::fs::read_to_string(&recording).unwrap_or_default();
+            let open: Vec<(String, String)> = text
+                .lines()
+                .next()
+                .and_then(|l| l.strip_prefix("#open "))
+                .and_then(|j| serde_json::from_str(j).ok())
+                .unwrap_or_default();
+            let steps = r::from_events(&text, &open);
+            let _ = std::fs::remove_file(&recording);
+            if steps.is_empty() {
+                eprintln!("Nothing to save: open an app, move a window or switch workspaces while recording.");
+                return ExitCode::FAILURE;
+            }
+            let routine = Routine {
+                name: name.trim().to_string(),
+                goal: "recorded by you".into(),
+                steps,
+            };
+            if let Err(e) = r::save(&dir, &routine) {
+                eprintln!("friday-ctl: couldn't save it: {e}");
+                return ExitCode::FAILURE;
+            }
+            println!("Saved \"{}\": {} steps.", routine.name, routine.steps.len());
+            for s in &routine.steps {
+                println!("  {} {}", s.verb, s.params);
+            }
+            ExitCode::SUCCESS
+        }
         Some("list") => {
             for x in r::list(&dir) {
                 println!("{}\t{} steps\t{}", x.name, x.steps.len(), x.goal);
