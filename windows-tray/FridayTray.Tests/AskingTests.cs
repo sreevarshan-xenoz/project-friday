@@ -124,6 +124,11 @@ public class AskingTests
     [InlineData("report2026.pdf", false)]
     [InlineData("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcDEF123456ghiJKL789", true)]
     [InlineData("https://api.x.com/v1?key=sk_live_abcd1234efgh5678ijkl", true)]
+    [InlineData("https://x.com/cb?token=a1b2c3d4e5f6g7h8", true)]
+    [InlineData("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", true)]
+    [InlineData("hunter2hunter2.", true)]
+    [InlineData("pass/12345678abc", true)]
+    [InlineData("com.example.app2.v3", false)]
     public void Clipboard_secrets_are_recognised(string text, bool secret) =>
         Assert.Equal(secret, Asking.LooksLikeSecret(text));
 

@@ -166,22 +166,30 @@ public static partial class Asking
     /// <summary>
     /// Clipboard text that looks like a password or token (one long run of
     /// non-space characters mixing letters and digits) must not be sent to a
-    /// cloud model by accident. A URL, a path or a file name isn't one,
-    /// unless one of its parts is such a run of 20 or more (a key in a URL, a
-    /// JWT). Same rule as `friday_secret_shaped` on Linux.
+    /// cloud model by accident. A URL (…://…), a path (/…, ~/…, ./…, C:\…)
+    /// or a dotted file name isn't one, unless one of its parts is such a run
+    /// of 16 or more (a key in a URL, a JWT). Anything else with a slash
+    /// (base64, an AWS secret) still is. Same rule as `friday_secret_shaped`
+    /// on Linux (ASCII letters and digits, as there).
     /// </summary>
     public static bool LooksLikeSecret(string text)
     {
-        static bool Mixed(string t) => t.Any(char.IsLetter) && t.Any(char.IsDigit);
+        static bool Mixed(string t) => t.Any(char.IsAsciiLetter) && t.Any(char.IsAsciiDigit);
         if (!TokenRun().IsMatch(text) || !Mixed(text))
             return false;
-        if (text.IndexOfAny(['/', '\\', '.']) < 0)
+        if (!text.Contains("://") && !PathStart().IsMatch(text) && !DottedName().IsMatch(text))
             return true;
-        return text.Split(['/', '\\', '.', ':', '?', '=', '&', '#']).Any(p => p.Length >= 20 && Mixed(p));
+        return text.Split(['/', '\\', '.', ':', '?', '=', '&', '#']).Any(p => p.Length >= 16 && Mixed(p));
     }
 
     [GeneratedRegex(@"^\S{12,}$")]
     private static partial Regex TokenRun();
+
+    [GeneratedRegex(@"^(/|~/|\./|\.\./|[A-Za-z]:[\\/])")]
+    private static partial Regex PathStart();
+
+    [GeneratedRegex(@"^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+$")]
+    private static partial Regex DottedName();
 
     /// <summary>
     /// Every top-level JSON object in friday-ctl's output, which mixes
