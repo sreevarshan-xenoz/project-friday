@@ -34,6 +34,8 @@ Autonomous Agent & Cognitive Loop:
   friday wake [status|on|off]      Say "hey Friday" and your question, hands free (opt-in)
   friday show <what>               Ring that control in the window in front ("where's …"
                                    and "show me …" in the ask box do the same)
+  friday wrong [reason|--list]     The last answer was wrong: keep a repro (no question or
+                                   answer text) to turn into a test
   friday recall [status|on|off]    Keep the text of windows you look at for 3 hours, here
                                    only, so you can ask "what was that…" (off forgets it)
   friday clips [status|on|off|pick] Keep the last 200 texts you copy; Super+Ctrl+V pastes one
@@ -554,6 +556,8 @@ friday_report() {
       else
         echo "no state.json"
       fi
+      section "Answers marked wrong (no question or answer text)"
+      cat "${XDG_STATE_HOME:-$HOME/.local/state}/friday/repros/"*.json 2>/dev/null || echo "none"
       section "Daemon log (last 300 lines)"
       journalctl --user -u friday-linux-daemon -n 300 --no-pager -o short-iso 2>/dev/null || echo "journalctl not available"
     } | friday_redact >"$out"
@@ -1290,6 +1294,41 @@ EOF2
       echo "Recall: off, and everything it kept is forgotten." ;;
     *) echo "Usage: friday recall [status|on|off]" >&2; return 1 ;;
   esac
+}
+
+# `friday wrong [reason]` ("That was wrong" on an answer): keep a repro of
+# the last answer to turn into a test: how it was asked (selection, screen…),
+# who answered and how fast, what went into it, the reason and FRIDAY's
+# version. Never the question's or the answer's text; an error is redacted.
+# `friday wrong --list` shows them; friday report includes them.
+friday_wrong() {
+  local state="${XDG_STATE_HOME:-$HOME/.local/state}/friday" dir reason f
+  dir="$state/repros"
+  if [ "${1:-}" = --list ]; then
+    ls "$dir"/*.json >/dev/null 2>&1 || { echo "No repros yet."; return 0; }
+    for f in "$dir"/*.json; do
+      jq -r --arg f "${f##*/}" '"\($f): \(.reason) · \(.mode) · \(.served_by.provider // "none")/\(.served_by.model // "-") · \(if .ok then "answered" else "failed" end)"' "$f" 2>/dev/null || true
+    done
+    return 0
+  fi
+  [ -s "$state/last-ask.json" ] || { echo "No answer to report yet."; return 1; }
+  reason="${*:-}"
+  if [ -z "$reason" ]; then
+    reason=$(printf '%s\n' "Wrong" "Didn't answer what I asked" "Didn't use what I selected or showed" \
+        "Too slow" "Refused or failed for no good reason" "Made something up" \
+      | fuzzel --dmenu --prompt="What was wrong › " --width=50 --lines=6 --placeholder="pick or type") || return 0
+  fi
+  [ -n "${reason// /}" ] || return 0
+  mkdir -p "$dir" && chmod 700 "$dir"
+  f="$dir/$(date +%Y%m%d-%H%M%S).json"
+  (
+    umask 077
+    jq --arg reason "${reason:0:120}" --arg version "$(pacman -Q friday-git 2>/dev/null | cut -d' ' -f2 || true)" --arg ts "$(date -Is)" \
+      '. + {reason: $reason, version: $version, ts: $ts} | .error |= (if . then .[0:200] else . end)' \
+      "$state/last-ask.json" | friday_redact >"$f"
+  )
+  echo "Saved a repro of that answer (no question or answer text): $f"
+  notify-send -a FRIDAY -- "FRIDAY" "Thanks: saved what went wrong (no question or answer text). friday wrong --list shows it." 2>/dev/null || true
 }
 
 # `friday routine save|run|list|rm <name>`: save what FRIDAY just did on the
@@ -3287,6 +3326,13 @@ case "${1:-}" in
       # Each entry opens with a marker line, so a "---" inside an answer
       # never splits it (FRIDAY Shell's answer history reads these).
       { printf '<!-- friday answer -->\n'; cat "$answer_file"; printf '\n---\n\n'; } >>"$state_dir/answers.md"
+      # What friday wrong saves about this answer: how it was asked and
+      # answered, never the question's or the answer's text.
+      jq -n --arg mode "${ask_args[0]:-plain}" --argjson ok "$ans_ok" --argjson local "$local_only" \
+        --argjson q "${#goal}" --argjson a "${#answer}" --argjson s "$(jq -c 'if type == "object" then . else {} end' <<<"$summary_json" 2>/dev/null || echo '{}')" \
+        '{mode: ($mode | ltrimstr("--")), ok: $ok, local: $local, served_by: ($s.served_by // null),
+          used: ($s.used // []), masked: ($s.masked // 0), error: ($s.error // null),
+          question_chars: $q, answer_chars: $a}' >"$state_dir/last-ask.json" 2>/dev/null || true
 
       # Spoken answers (friday voice speak on): the answer is read aloud while
       # the card shows it; a new answer, or friday say --stop, ends it.
@@ -3372,7 +3418,7 @@ case "${1:-}" in
       fi
       urgency=normal; $ans_ok || urgency=critical
       if $ans_ok; then
-        actions=(-A copy="Copy" -A again="Ask again" -A open="Open full answer")
+        actions=(-A copy="Copy" -A again="Ask again" -A open="Open full answer" -A wrong="That was wrong")
       else
         actions=(-A open="Open full answer")
         [ "${daemon_down:-false}" = true ] && actions=(-A start="Start FRIDAY")
@@ -3396,6 +3442,8 @@ case "${1:-}" in
             [ -x "$0" ] && exec "$0" ask "${ask_args[@]}" || exec bash "$0" ask "${ask_args[@]}" ;;
           open)
             open_answer ;;
+          wrong)
+            bash "$0" wrong ;;
           start)
             systemctl --user restart friday-linux-daemon 2>/dev/null \
               && notify-send -a FRIDAY "FRIDAY" "Started. Ask again with Super+Y." 2>/dev/null || true ;;
@@ -3540,6 +3588,10 @@ case "${1:-}" in
   recall)
     shift
     friday_recall "$@"
+    ;;
+  wrong)
+    shift
+    friday_wrong "$@"
     ;;
   clips)
     shift
