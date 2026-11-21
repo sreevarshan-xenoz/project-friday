@@ -196,29 +196,67 @@ if need gum; then
     local want=$1 out; shift
     out=$(env -i PATH="$PATH" HOME="$HOME" TERM=dumb FRIDAY_FAST=1 FRIDAY_ASSUME_UEFI=1 PASSWORD=x "$@" \
       bash "$ROOT/installer" 2>&1 </dev/null) && return 1
-    grep -q "Nothing was erased" <<<"$out" && grep -q "$want" <<<"$out"
+    grep -q "Nothing was written" <<<"$out" && grep -q "$want" <<<"$out"
   }
   refused "No disk was chosen" && pass "no TARGET_DISK: refused" || fail "the installer runs with no TARGET_DISK"
   refused "wasn't confirmed" TARGET_DISK="$F" && pass "TARGET_DISK without ERASE_DISK: refused" \
     || fail "the installer erases a disk nobody confirmed"
   refused "isn't a whole disk" TARGET_DISK="$F" ERASE_DISK="$F" && pass "a target that isn't a whole disk: refused" \
     || fail "the installer accepts a target that isn't a whole disk"
+  refused "wasn't confirmed" INSTALL_MODE=alongside TARGET_DISK="$F" ERASE_DISK="$F" \
+    && pass "alongside without ALONGSIDE_DISK: refused (ERASE_DISK doesn't stand in)" \
+    || fail "the installer goes alongside a disk nobody confirmed"
+  refused "FRIDAY_SIZE_MB" INSTALL_MODE=alongside TARGET_DISK="$F" ALONGSIDE_DISK="$F" FRIDAY_SIZE_MB=1000 \
+    && pass "alongside with less than 40 GB: refused" || fail "the installer goes alongside in 1 GB"
 fi
+
+echo "dual boot: how much space FRIDAY suggests and how it judges a size"
+# (friday-tui.sh is sourced above, for the validators)
+[[ $(friday_size_recommend 102400) == 81920 ]] && pass "100 GB free: 80 GB suggested" || fail "100 GB free: $(friday_size_recommend 102400)"
+[[ $(friday_size_recommend 70000 8192) == 69632 ]] && pass "never more than what's free" || fail "70000 free: $(friday_size_recommend 70000 8192)"
+[[ $(friday_size_recommend 30000) == 0 ]] && pass "under 40 GB free: nothing fits" || fail "30000 free: $(friday_size_recommend 30000)"
+[[ $(friday_size_recommend 409600 20480) == 102400 ]] && pass "a 20 GB local model: 100 GB suggested" || fail "with a 20 GB model: $(friday_size_recommend 409600 20480)"
+friday_size_advice 30000 102400 >/dev/null && fail "30 GB accepted" || pass "30 GB: too small"
+friday_size_advice 110000 102400 >/dev/null && fail "more than the free space accepted" || pass "more than what's free: refused"
+contains "50 GB with local AI: tight" "$(friday_size_advice 51200 102400 8192)" "too little for local AI"
+contains "80 GB: good" "$(friday_size_advice 81920 102400)" "Good: room for FRIDAY"
+contains "300 GB of 400: generous, says what sits unused" "$(friday_size_advice 307200 409600)" "Generous: about 220 GB"
+[[ $(friday_part_dev /dev/nvme0n1 5) == /dev/nvme0n1p5 && $(friday_part_dev /dev/sda 5) == /dev/sda5 ]] \
+  && pass "partition names: nvme0n1p5, sda5" || fail "partition names"
 
 echo "configurator flow (pty)"
 if need gum python3; then
   W="$WORK/installer"; mkdir -p "$W/stub"
   cp "$ROOT/configurator" "$ROOT/friday-tui.sh" "$W/"
   sed -i "s#/root/installer#$W/stub/installer#" "$W/configurator"
+  # STUB_WINDOWS=1: the disk has Windows (BitLocker on) and 100 GB free.
   cat >"$W/stub/lsblk" <<'EOF'
 #!/bin/bash
-if [[ "$*" == *"-d -n -o NAME,TYPE,SIZE,MODEL"* ]]; then echo "vda disk 25G QEMU_HARDDISK"; else echo ext4; fi
+if [[ "$*" == *"-d -n -o NAME,TYPE,SIZE,MODEL"* ]]; then echo "vda disk 25G QEMU_HARDDISK"; exit; fi
+if [[ -n "${STUB_WINDOWS:-}" ]]; then
+  case "$*" in
+    *"-d -o PTTYPE"*) echo gpt ;;
+    *"-o TYPE"*) printf 'disk\npart\npart\n' ;;
+    *"NAME,PARTTYPE"*) echo "/dev/vda1 c12a7328-f81f-11d2-ba4b-00a0c93ec93b" ;;
+    *"-o FSTYPE"*) printf 'vfat\nBitLocker\n' ;;
+  esac
+  exit
+fi
+echo ext4
 EOF
+  cat >"$W/stub/sgdisk" <<'EOF'
+#!/bin/bash
+case "$1" in -F) echo 2048 ;; -E) echo 209717247 ;; esac
+EOF
+  printf '#!/bin/bash\necho 512\n' >"$W/stub/blockdev"
+  printf '#!/bin/bash\nmkdir -p "${@: -1}/EFI/Microsoft/Boot"; : >"${@: -1}/EFI/Microsoft/Boot/bootmgfw.efi"\n' >"$W/stub/mount"
+  printf '#!/bin/bash\nrm -rf "$1/EFI"\n' >"$W/stub/umount"
+  printf '#!/bin/bash\nprintf "Avail\\n  80\\n"\n' >"$W/stub/df"
   printf '#!/bin/bash\nexit 1\n' >"$W/stub/findmnt"
   printf '#!/bin/bash\nexit 0\n' >"$W/stub/curl"   # pretend we're online
   cat >"$W/stub/installer" <<'EOF'
 #!/bin/bash
-echo "INSTALLER-ENV disk=$TARGET_DISK erase=$ERASE_DISK host=$FRIDAY_HOSTNAME user=$USERNAME pw=$PASSWORD tz=$TIMEZONE kb=$KEYBOARD ai=[$FRIDAY_AI_PROVIDERS] keys=[$(cut -d= -f1 <<<"$FRIDAY_AI_KEYS" | xargs)] local=[$FRIDAY_LOCAL_ENGINE:$FRIDAY_LOCAL_MODEL:$FRIDAY_LOCAL_BUDGET_MB] autologin=$AUTOLOGIN encrypt=$ENCRYPT interactive=$FRIDAY_INTERACTIVE session=$SESSION style=$SHELL_STYLE desktop=$FEAT_DESKTOP tasks=$FEAT_TASKS appname=$FEAT_APPNAME screentext=$FEAT_SCREENTEXT"
+echo "INSTALLER-ENV disk=$TARGET_DISK erase=$ERASE_DISK mode=$INSTALL_MODE alongside=$ALONGSIDE_DISK size=$FRIDAY_SIZE_MB bootdefault=$BOOT_DEFAULT host=$FRIDAY_HOSTNAME user=$USERNAME pw=$PASSWORD tz=$TIMEZONE kb=$KEYBOARD ai=[$FRIDAY_AI_PROVIDERS] keys=[$(cut -d= -f1 <<<"$FRIDAY_AI_KEYS" | xargs)] local=[$FRIDAY_LOCAL_ENGINE:$FRIDAY_LOCAL_MODEL:$FRIDAY_LOCAL_BUDGET_MB] autologin=$AUTOLOGIN encrypt=$ENCRYPT interactive=$FRIDAY_INTERACTIVE session=$SESSION style=$SHELL_STYLE desktop=$FEAT_DESKTOP tasks=$FEAT_TASKS appname=$FEAT_APPNAME screentext=$FEAT_SCREENTEXT"
 EOF
   # friday-git is on the live ISO: the real CLI, on a fake 16 GB machine with no GPU.
   mkdir -p "$W/hw/proc"
@@ -229,6 +267,8 @@ EOF
   if python3 "$CHECKS/installer_flow.py" "$W/configurator" "$W/stub"; then :; else FAILS=$((FAILS + 1)); fi
   echo "configurator flow: several providers and local AI (pty)"
   if python3 "$CHECKS/installer_flow.py" "$W/configurator" "$W/stub" multi; then :; else FAILS=$((FAILS + 1)); fi
+  echo "configurator flow: alongside Windows (pty)"
+  if STUB_WINDOWS=1 python3 "$CHECKS/installer_flow.py" "$W/configurator" "$W/stub" alongside; then :; else FAILS=$((FAILS + 1)); fi
 else skip "configurator flow (needs gum + python3)"; fi
 
 echo "installer: AI keys and local AI"

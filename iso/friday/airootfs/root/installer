@@ -10,6 +10,13 @@ export PATH="$OMARCHY_PATH/bin:$PATH"
 # as the go-ahead to erase it.
 TARGET_DISK="${TARGET_DISK:-}"
 ERASE_DISK="${ERASE_DISK:-}"
+# Or install alongside the system already on it: INSTALL_MODE=alongside,
+# ALONGSIDE_DISK repeating the disk, FRIDAY_SIZE_MB of its free space, and
+# BOOT_DEFAULT=other to leave that system starting first.
+INSTALL_MODE="${INSTALL_MODE:-erase}"
+ALONGSIDE_DISK="${ALONGSIDE_DISK:-}"
+FRIDAY_SIZE_MB="${FRIDAY_SIZE_MB:-}"
+BOOT_DEFAULT="${BOOT_DEFAULT:-friday}"
 KEYBOARD="${KEYBOARD:-us}"
 # Not $HOSTNAME: bash sets that to the live system's name ("archiso").
 HOSTNAME="${FRIDAY_HOSTNAME:-friday}"
@@ -128,13 +135,20 @@ fi
 
 # Nothing is erased unless the target is a whole disk, named twice, and not
 # the USB stick this live system runs from.
-refuse() { echo "$1 Nothing was erased."; { friday_err "$1 Nothing was erased."; } >&3 2>&1; exit 1; }
+refuse() { echo "$1 Nothing was written."; { friday_err "$1 Nothing was written."; } >&3 2>&1; exit 1; }
 [[ -n "$TARGET_DISK" ]] || refuse "No disk was chosen (TARGET_DISK)."
 # A /dev/disk/by-id link becomes the device it names (/dev/sda), whose
 # partitions the steps below name by appending 1 and 2 (or p1, p2).
 TARGET_DISK=$(readlink -f -- "$TARGET_DISK" || echo "$TARGET_DISK")
 ERASE_DISK=$(readlink -f -- "$ERASE_DISK" || true)
-[[ "$ERASE_DISK" == "$TARGET_DISK" ]] || refuse "Erasing $TARGET_DISK wasn't confirmed (ERASE_DISK must name it too)."
+ALONGSIDE_DISK=$(readlink -f -- "$ALONGSIDE_DISK" || true)
+if [[ "$INSTALL_MODE" == alongside ]]; then
+  [[ "$ALONGSIDE_DISK" == "$TARGET_DISK" ]] || refuse "Installing next to what's on $TARGET_DISK wasn't confirmed (ALONGSIDE_DISK must name it too)."
+  [[ "$FRIDAY_SIZE_MB" =~ ^[0-9]+$ ]] && (( FRIDAY_SIZE_MB >= FRIDAY_MIN_MB )) \
+    || refuse "FRIDAY_SIZE_MB must be at least $FRIDAY_MIN_MB."
+else
+  [[ "$ERASE_DISK" == "$TARGET_DISK" ]] || refuse "Erasing $TARGET_DISK wasn't confirmed (ERASE_DISK must name it too)."
+fi
 [[ -b "$TARGET_DISK" && "$(lsblk -n -d -o TYPE "$TARGET_DISK" 2>/dev/null)" == disk ]] \
   || refuse "$TARGET_DISK isn't a whole disk."
 [[ "$TARGET_DISK" != "$(friday_live_disk)" ]] \
@@ -148,24 +162,42 @@ umount -R /mnt 2>/dev/null || true
 cryptsetup close cryptroot 2>/dev/null || true   # left open by an earlier attempt
 swapoff -a 2>/dev/null || true
 
-parted -s "$TARGET_DISK" mklabel gpt
-parted -s "$TARGET_DISK" mkpart ESP fat32 1MiB 1024MiB
-parted -s "$TARGET_DISK" set 1 esp on
-parted -s "$TARGET_DISK" mkpart primary ext4 1024MiB 100%
-
-# The kernel's rule: a disk whose name ends in a digit (nvme0n1, mmcblk0,
-# md0, nbd0) names its partitions with a "p".
-if [[ "$TARGET_DISK" =~ [0-9]$ ]]; then
-  BOOT_PART="${TARGET_DISK}p1"
-  ROOT_PART="${TARGET_DISK}p2"
+ESP_PART=""
+if [[ "$INSTALL_MODE" == alongside ]]; then
+  # Into the free space only: the partition table is backed up first, and
+  # every partition that was there is checked to be unchanged after.
+  scan=$(friday_disk_scan "$TARGET_DISK")
+  echo "$scan"
+  ESP_PART=$(sed -n 's/^esp=//p' <<<"$scan")
+  [[ "$(sed -n 's/^table=//p' <<<"$scan")" == gpt && -n "$ESP_PART" ]] \
+    || refuse "$TARGET_DISK needs a GPT partition table with an EFI partition to install alongside."
+  (( $(sed -n 's/^free_mb=//p' <<<"$scan") >= FRIDAY_SIZE_MB )) \
+    || refuse "$TARGET_DISK has less free space than the $FRIDAY_SIZE_MB MB chosen."
+  GPT_BACKUP=/run/friday-gpt-backup.bin
+  if ! why=$(friday_disk_alongside "$TARGET_DISK" "$FRIDAY_SIZE_MB" "$GPT_BACKUP"); then
+    { friday_err "$why"; friday_note "  The partition table from before is saved in $GPT_BACKUP (sgdisk --load-backup)."; } >&3 2>&1
+    echo "$why"
+    exit 1
+  fi
+  BOOT_PART="$FRIDAY_BOOT_PART"
+  ROOT_PART="$FRIDAY_ROOT_PART"
+  sleep 1
+  udevadm settle
 else
-  BOOT_PART="${TARGET_DISK}1"
-  ROOT_PART="${TARGET_DISK}2"
-fi
+  parted -s "$TARGET_DISK" mklabel gpt
+  parted -s "$TARGET_DISK" mkpart ESP fat32 1MiB 1024MiB
+  parted -s "$TARGET_DISK" set 1 esp on
+  parted -s "$TARGET_DISK" mkpart primary ext4 1024MiB 100%
 
-# Wait for kernel partition table refresh
-sleep 1
-udevadm settle
+  # The kernel's rule: a disk whose name ends in a digit (nvme0n1, mmcblk0,
+  # md0, nbd0) names its partitions with a "p".
+  BOOT_PART=$(friday_part_dev "$TARGET_DISK" 1)
+  ROOT_PART=$(friday_part_dev "$TARGET_DISK" 2)
+
+  # Wait for kernel partition table refresh
+  sleep 1
+  udevadm settle
+fi
 
 mkfs.vfat -F32 "$BOOT_PART"
 ROOT_DEV="$ROOT_PART"
@@ -184,6 +216,14 @@ mkdir -p /mnt/boot
 # Root-only ESP: it holds the systemd-boot random seed, which bootctl flags
 # as a security hole when world-readable. genfstab carries the options over.
 mount -o fmask=0077,dmask=0077 "$BOOT_PART" /mnt/boot
+if [[ -n "$ESP_PART" ]]; then
+  # The other system's EFI partition: systemd-boot goes here, kernels stay
+  # on FRIDAY's own boot partition. What's on it now is recorded, and
+  # checked after the bootloader goes in.
+  mkdir -p /mnt/efi
+  mount -o fmask=0077,dmask=0077 "$ESP_PART" /mnt/efi
+  friday_esp_files /mnt/efi >/run/friday-esp-before.txt
+fi
 
 phase_msg 3 "Downloading and installing packages (the long one)"
 # A single slow or unreachable mirror ("Operation too slow") aborts pacstrap.
@@ -656,11 +696,43 @@ cat << EOF_INFO > /mnt/var/lib/omarchy/provisioning/install-info.json
 EOF_INFO
 
 phase_msg 6 "Installing the bootloader"
-bootctl --path=/mnt/boot install
-cat << EOF_LOADER > /mnt/boot/loader/loader.conf
+if [[ -n "$ESP_PART" ]]; then
+  # Windows keeps a copy of its boot manager as the firmware's fallback
+  # (EFI/BOOT/BOOTX64.EFI); bootctl would replace it, so it's put back.
+  fallback=$(find /mnt/efi/EFI -maxdepth 2 -ipath '*/EFI/BOOT/BOOTX64.EFI' 2>/dev/null | head -n1)
+  [[ -n "$fallback" ]] && cp -p "$fallback" /run/friday-fallback.efi
+  bootctl --esp-path=/mnt/efi --boot-path=/mnt/boot --variables=no install
+  [[ -n "$fallback" ]] && cp -p /run/friday-fallback.efi "$fallback"
+  # Its own menu settings, unless another Linux already keeps some there.
+  if [[ ! -e /mnt/efi/loader/loader.conf ]] || grep -q '^# FRIDAY OS' /mnt/efi/loader/loader.conf; then
+    printf '# FRIDAY OS\ndefault arch.conf\ntimeout 5\n' >/mnt/efi/loader/loader.conf
+  fi
+  friday_esp_files /mnt/efi >/run/friday-esp-after.txt
+  while IFS= read -r line; do
+    [[ "$line" == *"/loader/loader.conf" ]] && continue
+    grep -qxF -- "$line" /run/friday-esp-after.txt || { echo "A file on the EFI partition changed: $line" >&2; false; }
+  done </run/friday-esp-before.txt
+  # The firmware's own entry for FRIDAY; the other system stays first
+  # unless FRIDAY's menu was chosen, and the next start goes to FRIDAY once.
+  esp_disk="/dev/$(lsblk -n -d -o PKNAME "$ESP_PART")"
+  esp_num=$(cat "/sys/class/block/$(basename "$ESP_PART")/partition")
+  order=$(efibootmgr | sed -n 's/^BootOrder: //p')
+  efibootmgr -q --create --disk "$esp_disk" --part "$esp_num" --label "FRIDAY OS" \
+    --loader '\EFI\systemd\systemd-bootx64.efi'
+  friday_entry=$(efibootmgr | awk '/FRIDAY OS/ { sub(/^Boot/, "", $1); sub(/\*$/, "", $1); print $1 }' | tail -n1)
+  if [[ "$BOOT_DEFAULT" == other && -n "$order" && -n "$friday_entry" ]]; then
+    efibootmgr -q --bootorder "$order,$friday_entry"
+    efibootmgr -q --bootnext "$friday_entry"
+  fi
+  mkdir -p /mnt/var/lib/friday/install
+  cp "$GPT_BACKUP" /run/friday-esp-before.txt /mnt/var/lib/friday/install/
+else
+  bootctl --path=/mnt/boot install
+  cat << EOF_LOADER > /mnt/boot/loader/loader.conf
 default arch.conf
 timeout 2
 EOF_LOADER
+fi
 
 if [[ "$ENCRYPT" == "true" ]]; then
   LUKS_UUID=$(cryptsetup luksUUID "$ROOT_PART")
@@ -699,6 +771,15 @@ gum style --foreground "$FRIDAY_SUCCESS" --border "$FRIDAY_BORDER_STYLE" --borde
   "Press Super+Y any time to ask me something." \
   "" \
   "Remove the USB stick before you restart."
+if [[ "$INSTALL_MODE" == alongside ]]; then
+  if [[ "$BOOT_DEFAULT" == other ]]; then
+    friday_note "  The next start goes into FRIDAY once. After that the other system starts as before:"
+    friday_note "  to pick FRIDAY OS, press the boot menu key as the computer starts (often F12, F9, F8 or Esc)."
+  else
+    friday_note "  Each start shows FRIDAY's menu; the other system is in it."
+  fi
+  friday_note "  The partition table from before is kept in /var/lib/friday/install/."
+fi
 echo
 friday_say "All done, $USERNAME. Remove the USB stick and I'll see you on the other side."
 echo

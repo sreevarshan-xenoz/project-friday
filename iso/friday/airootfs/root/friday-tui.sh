@@ -332,3 +332,133 @@ friday_add_crypt_hook() {
   grep -qE "^HOOKS=\(.*\b$hook filesystems\b" "$conf" || return 1
   printf '%s root=/dev/mapper/%s\n' "$params" "$name"
 }
+
+# ------------------------------------------------------------ dual boot
+# "Install alongside": FRIDAY goes into free space that already exists on a
+# GPT disk with an EFI partition. Existing partitions are never moved,
+# resized or formatted; the EFI partition only gains systemd-boot.
+
+FRIDAY_MIN_MB=40960        # 40 GB: the system, updates and a little room
+FRIDAY_ESP_TYPE=c12a7328-f81f-11d2-ba4b-00a0c93ec93b
+FRIDAY_XBOOTLDR_TYPE=bc13c2ff-59e6-4262-a352-b275fd6f7172
+FRIDAY_ROOT_TYPE=4f68bce3-e8cd-4db1-96e7-fbcaf984b709
+
+# The partition device for number N of a disk (nvme0n1 → nvme0n1p3).
+friday_part_dev() { if [[ "$1" =~ [0-9]$ ]]; then echo "${1}p$2"; else echo "${1}$2"; fi; }
+
+# What's on a disk, as key=value lines: table (gpt/dos/empty), parts (how
+# many partitions), free_mb (the largest free block), esp (its device),
+# esp_free_mb, windows (1 when Windows Boot Manager is on the ESP), others
+# (other systems' folders on the ESP), bitlocker (1 when a partition is
+# BitLocker-encrypted). Read-only: the ESP is mounted read-only to look.
+friday_disk_scan() {
+  local disk="$1" ss first last esp mnt d others=""
+  echo "table=$(lsblk -n -d -o PTTYPE "$disk" 2>/dev/null | xargs)"
+  echo "parts=$(lsblk -l -n -o TYPE "$disk" 2>/dev/null | grep -c '^part$')"
+  ss=$(blockdev --getss "$disk" 2>/dev/null || echo 512)
+  first=$(sgdisk -F "$disk" 2>/dev/null | tail -n1)
+  last=$(sgdisk -E "$disk" 2>/dev/null | tail -n1)
+  if [[ "$first" =~ ^[0-9]+$ && "$last" =~ ^[0-9]+$ ]] && (( last > first )); then
+    echo "free_mb=$(( (last - first + 1) * ss / 1048576 ))"
+  else
+    echo "free_mb=0"
+  fi
+  esp=$(lsblk -l -n -p -o NAME,PARTTYPE "$disk" 2>/dev/null \
+    | awk -v t="$FRIDAY_ESP_TYPE" 'tolower($2) == t { print $1; exit }')
+  echo "esp=$esp"
+  if lsblk -l -n -o FSTYPE "$disk" 2>/dev/null | grep -qx BitLocker; then echo bitlocker=1; else echo bitlocker=0; fi
+  [[ -n "$esp" ]] || return 0
+  mnt=$(mktemp -d /tmp/friday-esp.XXXXXX)
+  if mount -o ro "$esp" "$mnt" 2>/dev/null; then
+    [[ -e "$mnt/EFI/Microsoft/Boot/bootmgfw.efi" ]] && echo windows=1 || echo windows=0
+    for d in "$mnt"/EFI/*/; do
+      d=$(basename "$d")
+      [[ "${d,,}" =~ ^(microsoft|boot|systemd|linux)$ ]] || others+="${others:+, }$d"
+    done
+    echo "others=$others"
+    echo "esp_free_mb=$(df -m --output=avail "$mnt" | tail -n1 | xargs)"
+    umount "$mnt"
+  else
+    echo windows=0
+    echo esp_free_mb=0
+  fi
+  rmdir "$mnt" 2>/dev/null || true
+}
+
+# The size FRIDAY suggests, in MB: 80 GB, or 60 GB plus room for the
+# biggest local model this computer runs twice over; never more than the
+# free space (rounded down to a GB), 0 when even the minimum doesn't fit.
+#   friday_size_recommend <free_mb> [model_mb]
+friday_size_recommend() {
+  local free="$1" model="${2:-0}" rec
+  (( free >= FRIDAY_MIN_MB )) || { echo 0; return; }
+  rec=$(( 61440 + 2 * model ))
+  (( rec < 81920 )) && rec=81920
+  rec=$(( (rec + 10239) / 10240 * 10240 ))
+  (( rec > free )) && rec=$(( free / 1024 * 1024 ))
+  echo "$rec"
+}
+
+# Megabytes as whole gigabytes ("82 GB").
+friday_gb() { awk -v m="$1" 'BEGIN { printf "%.0f GB", m / 1024 }'; }
+
+# One line on how a size will work out; fails when it can't be used.
+#   friday_size_advice <size_mb> <free_mb> [model_mb]
+friday_size_advice() {
+  local size="$1" free="$2" model="${3:-0}" rec ai
+  if (( size > free )); then echo "There's only $(friday_gb "$free") free."; return 1; fi
+  if (( size < FRIDAY_MIN_MB )); then echo "Too small: FRIDAY needs at least $(friday_gb "$FRIDAY_MIN_MB")."; return 1; fi
+  rec=$(friday_size_recommend "$free" "$model")
+  ai=$(( FRIDAY_MIN_MB + 2 * model ))
+  if (( size < 61440 )); then
+    echo -n "Tight: enough to try FRIDAY, with little room for your files"
+    if (( model > 0 && size < ai )); then echo " and too little for local AI."; else echo "."; fi
+  elif (( model > 0 && size < ai )); then
+    echo "Fine for FRIDAY, but tight for local AI: its model is $(friday_gb "$model"), and updates need room for a second copy."
+  elif (( size > 2 * rec && size > 204800 )); then
+    echo "Generous: about $(friday_gb $(( size - rec ))) will likely sit unused, and the other system can't use it."
+  else
+    echo "Good: room for FRIDAY and your files$( (( model > 0 )) && echo ", and local AI")."
+  fi
+}
+
+# Puts FRIDAY into the largest free block of a GPT disk: a 1 GiB XBOOTLDR
+# partition (kernels; the EFI partition is often too small for them) and a
+# root partition of the rest of <size_mb>. Backs up the partition table
+# first and checks afterwards that every partition that was there is
+# exactly as it was. Sets FRIDAY_BOOT_PART and FRIDAY_ROOT_PART.
+#   friday_disk_alongside <disk> <size_mb> <backup-file>
+friday_disk_alongside() {
+  local disk="$1" size="$2" backup="$3" before after used n boot_n="" root_n="" line
+  sgdisk --backup="$backup" "$disk" >/dev/null || { echo "Couldn't back up the partition table of $disk."; return 1; }
+  before=$(sfdisk -d "$disk" | grep '^/dev/')
+  used=$(sgdisk -p "$disk" | awk '$1 ~ /^[0-9]+$/ { print $1 }')
+  for n in $(seq 1 128); do
+    grep -qx "$n" <<<"$used" && continue
+    if [[ -z "$boot_n" ]]; then boot_n=$n; else root_n=$n; break; fi
+  done
+  [[ -n "$root_n" ]] || { echo "$disk has no free partition slots."; return 1; }
+  # Start and end 0: the largest free block, so nothing in use is touched.
+  sgdisk -n "$boot_n:0:+1024M" -t "$boot_n:$FRIDAY_XBOOTLDR_TYPE" -c "$boot_n:FRIDAY boot" \
+         -n "$root_n:0:+$(( size - 1024 ))M" -t "$root_n:$FRIDAY_ROOT_TYPE" -c "$root_n:FRIDAY OS" \
+         "$disk" >/dev/null || { echo "Couldn't add FRIDAY's partitions to $disk."; return 1; }
+  partprobe "$disk" 2>/dev/null || partx -u "$disk" 2>/dev/null || true
+  udevadm settle 2>/dev/null || true
+  after=$(sfdisk -d "$disk" | grep '^/dev/')
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    grep -qxF -- "$line" <<<"$after" || { echo "A partition that was there changed: $line"; return 1; }
+  done <<<"$before"
+  FRIDAY_BOOT_PART=$(friday_part_dev "$disk" "$boot_n")
+  FRIDAY_ROOT_PART=$(friday_part_dev "$disk" "$root_n")
+  [[ "$(lsblk -n -d -o PARTTYPE "$FRIDAY_BOOT_PART" 2>/dev/null)" == "$FRIDAY_XBOOTLDR_TYPE" ]] \
+    || { echo "The new boot partition $FRIDAY_BOOT_PART isn't there."; return 1; }
+  [[ -b "$FRIDAY_ROOT_PART" ]] || { echo "The new partition $FRIDAY_ROOT_PART isn't there."; return 1; }
+}
+
+# The files on an EFI partition with their checksums (the check that
+# installing only added to it). systemd-boot's own folder may be updated.
+#   friday_esp_files <mounted-esp>
+friday_esp_files() {
+  (cd "$1" && find . -type f ! -ipath './EFI/systemd/*' -print0 | sort -z | xargs -0 -r sha256sum)
+}
