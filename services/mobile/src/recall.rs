@@ -169,11 +169,18 @@ pub fn private(app: &str, title: &str, own: &str) -> bool {
         .filter_map(|l| l.trim().strip_prefix('!'))
         .map(str::to_lowercase)
         .collect();
+    // "never <name>" is private too (and stricter for the CLI); folder
+    // lines (/… or ~/…) are about commands, not windows.
     PRIVATE
         .iter()
         .map(|p| p.to_string())
-        .chain(own.lines().map(|l| l.trim().to_lowercase()))
+        .chain(own.lines().map(|l| {
+            let l = l.trim().to_lowercase();
+            l.strip_prefix("never ")
+                .map_or(l.clone(), |r| r.trim().to_string())
+        }))
         .filter(|p| !p.is_empty() && !p.starts_with('#') && !p.starts_with('!'))
+        .filter(|p| !p.starts_with('/') && !p.starts_with("~/"))
         .filter(|p| !dropped.contains(p))
         .any(|p| hay.contains(&p))
 }
@@ -287,6 +294,12 @@ mod tests {
     #[test]
     fn private_windows_are_never_kept() {
         assert!(private("org.keepassxc.KeePassXC", "Passwords.kdbx", ""));
+        assert!(private(
+            "thunderbird",
+            "Inbox - work",
+            "never thunderbird\n"
+        ));
+        assert!(!private("code", "notes", "~/work/clients\n/srv/private\n"));
         assert!(private("firefox", "My Bank — Mozilla Firefox", ""));
         assert!(!private("firefox", "My Bank — Mozilla Firefox", "!bank"));
         assert!(private("org.gnome.TextEditor", "diary.txt", "Diary\n"));

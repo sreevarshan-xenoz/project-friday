@@ -120,6 +120,7 @@ if [[ "\$target_arg" == *useditems* ]]; then printf '{\n "outcome": "completed",
 if [[ "\$target_arg" == *"word: ready"* && -n "\${READY_FAILS:-}" ]]; then printf '{\n "outcome": "failed",\n "error": "All candidates failed (2 tried). opencode: 429"\n}\n'; exit 1; fi
 if [[ "\$target_arg" == *"word: ready"* && -n "\${READY_TIMES_OUT:-}" ]]; then printf '{"accepted":true}\n'; echo "timed out after 60s waiting for the goal to finish" >&2; exit 1; fi
 if [[ "\$target_arg" == *"word: ready"* ]]; then printf '{\n "outcome": "completed",\n "result": "ready",\n "served_by": {"provider": "kilo", "model": "m", "ms": 940}\n}\n'; exit 0; fi
+if [[ "\$target_arg" == *"meeting transcript"* ]]; then printf '{\n "outcome": "completed",\n "result": "decision|10:02:15|Ship v0.8 on Friday\\\\naction|10:04:01|Sam writes the release notes\\\\nquestion|10:05:30|Do we need a beta?\\\\nsome chatter"\n}\n'; exit 0; fi
 if [[ "\$target_arg" == *bullets* ]]; then printf '{\n "outcome": "completed",\n "result": "- first point\\\\n- second point"\n}\n'; exit 0; fi
 if [[ "\$target_arg" == *fail* ]]; then printf '{\n "outcome": "failed",\n "error": "network unreachable"\n}\n'; exit 1; fi
 printf '{\n "outcome": "completed",\n "result": "Line one.\\\\nLine two.\\\\nLast line."\n}\n'
@@ -475,6 +476,21 @@ printf 'LLAMACPP_ENABLED=1\nLLAMACPP_BASE_URL=http://127.0.0.1:8080/v1\n' >"$env
 : >"$LOG"; bash "$F" ask --screen "what is this"; sleep 0.3
 if grep -q "context screen" "$LOG"; then fail "took a screenshot of a private window"; else pass "no screenshot of a private window"; fi
 contains "and says so" "$(cat "$LOG")" "no screenshot of it leaves"
+# "never <name>": not even the local model reads that window.
+cp "$HOME/.config/friday/private-windows" "$W/pw.saved" 2>/dev/null || : >"$W/pw.saved"
+printf 'never thunderbird\n~/work/clients\n' >"$HOME/.config/friday/private-windows"
+export HYPR_WIN='{"class":"thunderbird","title":"Inbox"}'
+: >"$LOG"; LOCAL_REPLY="x" PRIMARY="the contract terms" PICK="explain" bash "$F" ask --selection; sleep 0.3
+if grep -q "chat/completions\|^friday-ctl" "$LOG"; then fail "a never window was read"; else pass "a never window isn't read, not even locally"; fi
+contains "and it says which rule" "$(cat "$LOG")" 'your rule "never thunderbird"'
+contains "a folder line marks folders private" "$(bash -c 'source <(sed -n "/^friday_private_folder()/,/^}/p" "$1"); friday_private_folder "$HOME/work/clients/acme"' _ "$F")" "~/work/clients"
+if [ -n "$(bash -c 'source <(sed -n "/^friday_private_folder()/,/^}/p" "$1"); friday_private_folder "$HOME/work/clientside"' _ "$F")" ]; then fail "a folder rule matched a sibling folder"; else pass "a folder rule matches only inside it"; fi
+printf 'never ~/vault\n' >"$HOME/.config/friday/private-windows"
+contains "a never folder stays never" "$(bash -c 'source <(sed -n "/^friday_private_folder()/,/^}/p" "$1"); friday_private_folder "$HOME/vault/"' _ "$F")" "never:~/vault"
+export HYPR_WIN='{"class":"foot","title":"~/vault notes"}'
+: >"$LOG"; PRIMARY="x" PICK="explain" bash "$F" ask --selection; sleep 0.3
+if grep -q "your rule" "$LOG"; then fail "a folder line was matched against a window title"; else pass "folder lines aren't matched against windows"; fi
+cp "$W/pw.saved" "$HOME/.config/friday/private-windows"
 export HYPR_WIN='{"class":"firefox","title":"Bank statement — Mozilla Firefox Private Browsing"}'
 : >"$LOG"; LOCAL_REPLY="ok" PRIMARY="balance 12" PICK="explain" bash "$F" ask --selection; sleep 0.3
 contains "private browsing counts" "$(cat "$LOG")" "127.0.0.1:8080"
@@ -832,6 +848,18 @@ if grep -q "_failed_" <(bash "$F" ask "what is the capital of peru" >/dev/null 2
 echo "thoughts"
 : >"$LOG"; bash "$F" ask "Keep this idea: Memory as an INDEX, not a store."; sleep 0.3
 contains "\"keep this idea\" keeps it, as typed" "$(cat "$LOG")" "friday-ctl-thought thought add idea Memory as an INDEX, not a store"
+mkdir -p "$HOME/.local/share/friday/captions"
+printf '10:02:15 lets ship v0.8 on friday\n10:04:01 sam can you write the release notes\n' >"$HOME/.local/share/friday/captions/2026-11-21-1000.txt"
+: >"$LOG"; out=$(bash "$F" meeting --yes)
+contains "a meeting becomes decisions" "$(cat "$LOG")" "friday-ctl-thought thought add decision (meeting 2026-11-21-1000, 10:02:15) Ship v0.8 on Friday"
+contains "actions" "$(cat "$LOG")" "thought add action (meeting 2026-11-21-1000, 10:04:01) Sam writes the release notes"
+contains "and open questions" "$(cat "$LOG")" "thought add question (meeting 2026-11-21-1000, 10:05:30) Do we need a beta?"
+if grep -q "chatter" "$LOG"; then fail "kept a line that wasn't a decision, action or question"; else pass "anything else in the reply is dropped"; fi
+contains "it says what it kept" "$out" "Kept 3 under the project in front"
+: >"$LOG"; out=$(bash "$F" meeting </dev/null)
+contains "without --yes and no local model it asks first" "$out" "Nothing sent."
+if grep -q "meeting transcript" "$LOG"; then fail "sent a transcript without a yes"; else pass "no transcript sent without a yes"; fi
+rm -rf "$HOME/.local/share/friday/captions"
 if grep -q "^friday-ctl '" "$LOG"; then fail "keeping an idea asked the AI"; else pass "keeping an idea asks no AI"; fi
 : >"$LOG"; bash "$F" ask "we decided to compute the index from the logs"; sleep 0.3
 contains "\"we decided …\" keeps a decision" "$(cat "$LOG")" "friday-ctl-thought thought add decision compute the index from the logs"

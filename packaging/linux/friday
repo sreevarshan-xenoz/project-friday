@@ -40,6 +40,8 @@ Autonomous Agent & Cognitive Loop:
                                    command, or says when one finishes, in any terminal
   friday folders [add|rm|list|update] Folders whose notes and PDFs FRIDAY searches, quoting
                                    the file
+  friday meeting [notes] [--yes]   A meeting's captions become decisions, actions and open
+                                   questions, kept with the project
   friday recall [status|on|off|keep 3h|24h|7d]  Keep the text of windows you look at, here
                                    only, so you can ask "what was that…" (off forgets it)
   friday clips [status|on|off|pick] Keep the last 200 texts you copy; Super+Ctrl+V pastes one
@@ -1317,6 +1319,38 @@ EOF2
   esac
 }
 
+# `friday meeting [notes file] [--yes]`: a meeting's captions (friday captions
+# notes; the newest by default) become decisions, actions and open questions,
+# each with the time it was said, kept as thoughts under the project in front.
+# The local model reads the transcript when there is one; otherwise it goes to
+# your AI provider, after you say yes.
+friday_meeting() {
+  local notes="" yes=false arg dir request out reply line kind at text kept=0
+  for arg in "$@"; do
+    case "$arg" in --yes) yes=true ;; *) notes="$arg" ;; esac
+  done
+  dir="${XDG_DATA_HOME:-$HOME/.local/share}/friday/captions"
+  [ -n "$notes" ] || notes=$(ls -t "$dir"/*.txt 2>/dev/null | head -n1 || true)
+  [ -s "$notes" ] || { echo "No meeting notes yet: friday captions on keeps them (in $dir)." >&2; return 1; }
+  request=$(printf 'Below is a meeting transcript; each line starts with the time it was said. List only what was actually said, one per line, exactly in this form:\ndecision|HH:MM:SS|what was decided\naction|HH:MM:SS|who does what (when said)\nquestion|HH:MM:SS|a question left open\nNo other lines. If there are none, reply NONE.\n"""\n%s\n"""' "$(tail -c 12000 "$notes")")
+  if ! reply=$(friday_ask_local "$request" 2>/dev/null); then
+    if ! $yes; then
+      echo "There's no local model, so the transcript ($(wc -l <"$notes") lines) would go to your AI provider."
+      local a; read -r -p "Send it? [y/N] " a || a=n
+      [[ "$a" =~ ^[Yy] ]] || { echo "Nothing sent."; return 0; }
+    fi
+    out=$(friday-ctl goal --wait "$request" 2>&1) || true
+    reply=$(jq -rs 'map(select(type == "object" and .outcome? == "completed")) | last | .result // empty' <<<"$out" 2>/dev/null || true)
+  fi
+  while IFS='|' read -r kind at text; do
+    kind=$(tr -d '[:space:]' <<<"$kind" | tr '[:upper:]' '[:lower:]')
+    [[ "$kind" =~ ^(decision|action|question)$ && "$at" =~ ^[[:space:]]*[0-9]{1,2}:[0-9]{2}(:[0-9]{2})?[[:space:]]*$ && -n "${text// /}" ]] || continue
+    friday-ctl thought add "$kind" "(meeting $(basename "$notes" .txt), ${at// /}) ${text# }" >/dev/null 2>&1 && kept=$((kept + 1))
+    echo "$kind at ${at// /}: ${text# }"
+  done <<<"$reply"
+  if [ "$kept" -eq 0 ]; then echo "Nothing to keep from that meeting."; else echo "Kept $kept under the project in front (friday-ctl thought list)."; fi
+}
+
 # `friday wrong [reason]` ("That was wrong" on an answer): keep a repro of
 # the last answer to turn into a test: how it was asked (selection, screen…),
 # who answered and how fast, what went into it, the reason and FRIDAY's
@@ -2212,16 +2246,36 @@ paypal"
 # friday_private_window: what made the focused window private, or nothing.
 friday_private_window() {
   command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 0
-  local win hay pat own="${XDG_CONFIG_HOME:-$HOME/.config}/friday/private-windows" drop
+  local win hay pat own="${XDG_CONFIG_HOME:-$HOME/.config}/friday/private-windows" drop never
   win=$(timeout 2 hyprctl activewindow -j 2>/dev/null) || return 0
   hay=$(jq -r '"\(.class // "") \(.title // "")"' <<<"$win" 2>/dev/null | tr '[:upper:]' '[:lower:]') || return 0
   drop=$(sed -n 's/^[[:space:]]*!//p' "$own" 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
   while IFS= read -r pat; do
     pat=$(tr '[:upper:]' '[:lower:]' <<<"$pat" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     [[ -n "$pat" && "$pat" != \#* && "$pat" != !* ]] || continue
+    never=""
+    if [[ "$pat" == "never "* ]]; then never="never:"; pat="${pat#never }"; pat="${pat#"${pat%%[![:space:]]*}"}"; fi
+    # Folder lines are about commands (friday_private_folder), not windows.
+    [[ -n "$pat" && "$pat" != /* && "$pat" != "~/"* ]] || continue
     grep -qxF -- "$pat" <<<"$drop" && continue
-    if [[ "$hay" == *"$pat"* ]]; then printf '%s' "$pat"; return 0; fi
-  done < <(printf '%s\n' "$FRIDAY_PRIVATE_WINDOWS"; cat "$own" 2>/dev/null || true)
+    if [[ "$hay" == *"$pat"* ]]; then printf '%s%s' "$never" "$pat"; return 0; fi
+  done < <(cat "$own" 2>/dev/null | grep -i '^[[:space:]]*never ' || true; printf '%s\n' "$FRIDAY_PRIVATE_WINDOWS"; cat "$own" 2>/dev/null || true)
+}
+
+# friday_private_folder <folder>: the private-windows line (a folder: /… or
+# ~/…) that folder is in, or nothing. Commands run there are private.
+friday_private_folder() {
+  local dir="${1%/}" own="${XDG_CONFIG_HOME:-$HOME/.config}/friday/private-windows" line path never
+  [ -n "$1" ] || return 0
+  while IFS= read -r line; do
+    line=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<<"$line")
+    never=""
+    if [[ "$line" == "never "* ]]; then never="never:"; line=$(sed 's/^never[[:space:]]*//' <<<"$line"); fi
+    case "$line" in /*|"~/"*) ;; *) continue ;; esac
+    path="${line/#\~/$HOME}"; path="${path%/}"
+    # "/" alone: every folder.
+    if [ -z "$path" ] || [ "$dir" = "$path" ] || [[ "$dir" == "$path"/* ]]; then printf '%s%s' "$never" "$line"; return 0; fi
+  done < <(cat "$own" 2>/dev/null || true)
 }
 
 # friday_ask_local <prompt>: the local model's answer, asked directly on this
@@ -3315,6 +3369,7 @@ case "${1:-}" in
           # Checked now, while the terminal still has the focus.
           term_private=$(friday_private_window)
           IFS=$'\t' read -r t_state t_when t_exit t_cwd t_cmd t_pid t_class <<<"$term"
+          [ -n "$term_private" ] || term_private=$(friday_private_folder "$t_cwd")
           if [ "$t_state" = done ] && [[ "$t_exit" =~ ^[0-9]+$ ]] && [ "$t_exit" != 0 ] && [ "$t_exit" != 130 ] \
               && (( $(date +%s) - ${t_when:-0} < 600 )); then
             explain="Explain the error from: $(cut -c1-60 <<<"$t_cmd") (exit $t_exit)"
@@ -3368,6 +3423,10 @@ case "${1:-}" in
           # The end matters most (the error is usually last).
           [ "${#context}" -le 8000 ] || context="${context: -8000}"
           explaining_error=true
+          # A private terminal window, or a command run in a private folder
+          # (private-windows: /… or ~/…).
+          private_win=$(friday_private_window)
+          [ -n "$private_win" ] || private_win=$(friday_private_folder "$le_cwd")
         fi
       else
         goal=$(fuzzel --dmenu --prompt-only="FRIDAY › " --width=60 \
@@ -3673,6 +3732,11 @@ case "${1:-}" in
 
     # A private window: its text goes only to the local model, asked here
     # directly; a screenshot of it never leaves.
+    # "never <name>" in private-windows: not even the local model reads it.
+    if [[ "$private_win" == never:* ]]; then
+      notify-send -a FRIDAY -- "FRIDAY" "FRIDAY doesn't read this window at all (your rule \"never ${private_win#never:}\" in ~/.config/friday/private-windows)." 2>/dev/null || true
+      exit 0
+    fi
     if [ -n "$private_win" ]; then
       if $use_screen; then
         notify-send -a FRIDAY -- "FRIDAY" "This window looks private (\"$private_win\"), so no screenshot of it leaves this computer. Select the text instead to ask the local model about it." 2>/dev/null || true
@@ -3806,6 +3870,10 @@ case "${1:-}" in
   folders)
     shift
     friday_folders "$@"
+    ;;
+  meeting)
+    shift
+    friday_meeting "$@"
     ;;
   wrong)
     shift

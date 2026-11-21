@@ -201,12 +201,27 @@ pub fn heard(text: &str, conversing: bool, speaking: bool) -> Heard {
             .collect::<Vec<_>>()
             .join(" ")
     };
+    let stop_words = |t: &str| {
+        matches!(
+            t,
+            "stop listening"
+                | "thats all"
+                | "that is all"
+                | "goodbye"
+                | "thank you thats all"
+                | "thanks thats all"
+        )
+    };
     if let Some(rest) = wake_phrase(text) {
         if matches!(
             plain(&rest).as_str(),
             "keep listening" | "lets talk" | "let us talk" | "stay with me"
         ) {
             return Heard::Start;
+        }
+        // "Hey Friday, stop listening": ends the conversation (and the speech).
+        if conversing && stop_words(&plain(&rest)) {
+            return Heard::Stop;
         }
         return if speaking {
             Heard::Interrupt(rest)
@@ -220,13 +235,8 @@ pub fn heard(text: &str, conversing: bool, speaking: bool) -> Heard {
     let said = plain(text);
     match said.as_str() {
         "" => Heard::Ignore,
-        "stop"
-        | "stop listening"
-        | "thats all"
-        | "that is all"
-        | "goodbye"
-        | "thank you thats all"
-        | "thanks thats all" => Heard::Stop,
+        "stop" => Heard::Stop,
+        t if stop_words(t) => Heard::Stop,
         _ => Heard::Ask(text.trim().to_string()),
     }
 }
@@ -386,6 +396,10 @@ pub fn run_wake() -> u8 {
     let mut quiet_until = std::time::Instant::now();
     // A hands-free conversation: on since this moment, ends after a minute of quiet.
     let mut conversing: Option<std::time::Instant> = None;
+    // When an answer was last heard being spoken (its echo is ignored).
+    let mut last_spoke = std::time::Instant::now()
+        .checked_sub(std::time::Duration::from_secs(60))
+        .unwrap_or_else(std::time::Instant::now);
     let note = |text: &str| {
         let _ = std::process::Command::new("notify-send")
             .args(["-a", "FRIDAY", "-t", "4000", "--", "FRIDAY", text])
@@ -399,6 +413,9 @@ pub fn run_wake() -> u8 {
             conversing = None;
             note("Stopped listening.");
         }
+        if conversing.is_some() && crate::speech::speaking() {
+            last_spoke = std::time::Instant::now();
+        }
         let Some(piece) = seg.feed(&frame) else {
             continue;
         };
@@ -408,8 +425,10 @@ pub fn run_wake() -> u8 {
         let Some(text) = transcribe(&whisper, &model, &piece) else {
             continue;
         };
-        let (rest, follow_up) = match heard(&text, conversing.is_some(), crate::speech::speaking())
-        {
+        // Its own voice can still be in the piece just after it stopped speaking.
+        let echo = crate::speech::speaking()
+            || last_spoke.elapsed() < std::time::Duration::from_millis(1500);
+        let (rest, follow_up) = match heard(&text, conversing.is_some(), echo) {
             Heard::Ignore => continue,
             Heard::Start => {
                 conversing = Some(std::time::Instant::now());
@@ -418,6 +437,7 @@ pub fn run_wake() -> u8 {
                 continue;
             }
             Heard::Stop => {
+                crate::speech::stop_running();
                 conversing = None;
                 note("Stopped listening.");
                 continue;
@@ -520,6 +540,11 @@ mod tests {
         );
         assert_eq!(heard("Stop listening.", true, false), Heard::Stop);
         assert_eq!(heard("Thanks, that's all!", true, false), Heard::Stop);
+        assert_eq!(
+            heard("Hey Friday, stop listening", true, false),
+            Heard::Stop
+        );
+        assert_eq!(heard("Hey Friday, stop listening", true, true), Heard::Stop);
         assert_eq!(
             heard("hey friday what is rust", false, false),
             Heard::Ask("what is rust".into())

@@ -633,7 +633,7 @@ fn timeline(args: &[String]) -> std::process::ExitCode {
     std::process::ExitCode::SUCCESS
 }
 
-/// `friday-ctl thought add [idea|decision|question] <text> | list [words]`:
+/// `friday-ctl thought add [idea|decision|question|action] <text> | list [words]`:
 /// keep a thought under the project in front (the terminal's git repo), and
 /// read a thread back (`friday_mobile::thoughts`).
 fn thought(args: &[String]) -> std::process::ExitCode {
@@ -648,7 +648,7 @@ fn thought(args: &[String]) -> std::process::ExitCode {
             };
             let text = words.join(" ");
             if text.trim().is_empty() {
-                eprintln!("usage: friday-ctl thought add [idea|decision|question] <text>");
+                eprintln!("usage: friday-ctl thought add [idea|decision|question|action] <text>");
                 return ExitCode::from(2);
             }
             let project = project_in_front();
