@@ -33,6 +33,13 @@ internal sealed class TrayContext : ApplicationContext
             if (e.ExceptionObject is Exception ex)
                 LogUnhandledException("UnhandledException", ex);
         };
+        // The windows are WPF: their exceptions go to WPF's dispatcher, not to
+        // ThreadException above, and unhandled there they ended the tray.
+        System.Windows.Threading.Dispatcher.CurrentDispatcher.UnhandledException += (_, e) =>
+        {
+            LogUnhandledException("DispatcherUnhandledException", e.Exception);
+            e.Handled = true;
+        };
 
         _log = new AnswerLog(install.Paths);
         ApplyInstallerChoices();
