@@ -920,6 +920,11 @@ internal sealed class TrayContext : ApplicationContext
     private void ChooseProvider()
     {
         var form = new ProviderWindow(_install.Paths.EnvFile, () => _daemon.Restart());
+        // Owned by Settings when it's open: the dialog stays above it, and
+        // minimizing or restoring Settings brings it along (an unowned modal
+        // dialog could end up hidden while Settings stays blocked).
+        if (_settings is { IsClosed: false } owner)
+            form.Owner = owner;
         if (form.ShowDialog() == true)
         {
             _daemon.Restart();
@@ -1068,7 +1073,10 @@ internal sealed class TrayContext : ApplicationContext
             ChooseProvider: ChooseProvider,
             ConnectAccounts: () =>
             {
-                new AccountsWindow(_install.Paths.EnvFile, () => _daemon.Restart()).ShowDialog();
+                var accounts = new AccountsWindow(_install.Paths.EnvFile, () => _daemon.Restart());
+                if (_settings is { IsClosed: false } owner)
+                    accounts.Owner = owner;
+                accounts.ShowDialog();
             },
             ShowEgress: ShowEgress,
             ForgetSavedData: ForgetSavedData,
