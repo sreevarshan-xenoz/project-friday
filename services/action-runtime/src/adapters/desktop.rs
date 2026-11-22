@@ -575,6 +575,7 @@ impl ActionAdapter for DesktopAdapter {
             "workspaces",
             "focus_window",
             "move_window",
+            "place_window",
             "switch_workspace",
             "close_window",
             "launch_app",
