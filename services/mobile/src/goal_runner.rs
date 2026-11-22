@@ -2198,6 +2198,7 @@ impl GoalRunner {
         let page_url = (!web && !opens_a_page(&goal))
             .then(|| url_from_instruction(friday_goal_execution::planning::goal_segment(&goal)))
             .flatten();
+        let page_asked = page_url.is_some();
         if let Some(url) = page_url {
             if self.private_mode {
                 page_note = Some(format!(
@@ -2228,7 +2229,11 @@ impl GoalRunner {
             }
         }
 
-        let used = used_labels(&prior, &recalled, web_response.as_ref());
+        let mut used = used_labels(&prior, &recalled, web_response.as_ref());
+        // Decided before the answer replaces the cycle's own result.
+        // A web or page ask looked elsewhere, even when it found nothing.
+        let unchecked =
+            !web && !page_asked && checked_nothing(&composed, &report, web_response.as_ref());
 
         // The answer step: the cycle ran a tool and gathered evidence; the
         // model now writes the reply from them. Only for a goal that ran to
@@ -2507,6 +2512,9 @@ impl GoalRunner {
             );
             payload["session_id"] = json!(session_id);
             payload["session_turn"] = json!(next_turn);
+            if answered_by_model && used.is_empty() && unchecked {
+                used.push(USED_NOTHING.to_string());
+            }
             if answered_by_model && !used.is_empty() {
                 payload["used"] = json!(used);
             }
@@ -2572,6 +2580,32 @@ fn stands_without_the_model(result: Option<&GoalResult>) -> bool {
         }
     }
 }
+
+/// Whether nothing was looked at for this request: no tool ran (an empty
+/// memory lookup aside), no evidence was looked for, no web results, and
+/// nothing quoted with it (a selection, a page, the conversation, recalled
+/// memory: every such block opens with a "[…]" line).
+fn checked_nothing(request: &str, report: &ExecutiveReport, web: Option<&SearchResponse>) -> bool {
+    let tool_ran = report.result.as_ref().is_some_and(|r| {
+        r.tool.as_deref().is_some_and(|t| !t.is_empty())
+            && !(r.tool.as_deref() == Some("memory") && r.text.trim() == "no memory matches yet")
+    });
+    let quoted = request.lines().any(|l| {
+        let l = l.trim();
+        (l.starts_with('[') && l.ends_with(']')) || l.starts_with("Use this text as context:")
+    });
+    !tool_ran
+        && report.evidence_trail.is_empty()
+        && report
+            .evidence
+            .as_ref()
+            .is_none_or(|e| e.set.items.is_empty())
+        && web.is_none_or(|w| w.results.is_empty())
+        && !quoted
+}
+
+/// The "used" line of an answer that had nothing behind it.
+const USED_NOTHING: &str = "general knowledge only (nothing on this computer was checked)";
 
 /// How often a streaming answer is published as `goal.progress` (each one is
 /// a state.json write, so not on every token).
@@ -2649,6 +2683,14 @@ fn answer_prompt(
                 p.push_str("\nAnswer the request using the sources above when relevant. Cite sources as [1], [2], etc. If the sources do not contain enough information to answer the question, say so plainly.\n\n");
             }
         }
+    }
+    if checked_nothing(request, report, web_response) {
+        p.push_str(
+            "FRIDAY looked at nothing on this computer for this request (no command, file, \
+             window, page or log). If the request is about this computer (its files, settings, \
+             hardware, network or what happened on it), say first in one short line that you \
+             couldn't check, then answer generally and say how to check.\n\n",
+        );
     }
     p.push_str("Request:\n");
     p.push_str(request.trim());
@@ -3864,6 +3906,60 @@ mod tests {
         let p = answer_prompt("what is in this file", &report, None);
         assert!(!p.contains(key), "{p}");
         assert!(p.contains("[secret masked]"), "{p}");
+    }
+
+    #[test]
+    fn an_answer_with_nothing_behind_it_is_told_to_say_so() {
+        let said = |request: &str, report: &ExecutiveReport| {
+            answer_prompt(request, report, None).contains("FRIDAY looked at nothing")
+        };
+        let nothing = ExecutiveReport::default();
+        assert!(said("how much disk space do I have", &nothing));
+        let no_match = ExecutiveReport {
+            result: Some(
+                GoalResult::from_tool_result(&ToolResult::success("no memory matches yet"))
+                    .with_tool("memory"),
+            ),
+            ..Default::default()
+        };
+        assert!(said("why is my wifi slow", &no_match));
+        let ran = ExecutiveReport {
+            result: Some(
+                GoalResult::from_tool_result(&ToolResult::success("/dev/sda1 40G 12G"))
+                    .with_tool("terminal"),
+            ),
+            ..Default::default()
+        };
+        assert!(!said("how much disk space do I have", &ran));
+        let failed = ExecutiveReport {
+            result: Some(
+                GoalResult::from_tool_result(&ToolResult::error("df: permission denied"))
+                    .with_tool("terminal"),
+            ),
+            ..Default::default()
+        };
+        assert!(!said("how much disk space do I have", &failed), "it tried");
+        let silent = ExecutiveReport {
+            result: Some(
+                GoalResult::from_tool_result(&ToolResult::success("")).with_tool("terminal"),
+            ),
+            ..Default::default()
+        };
+        assert!(!said("make a folder called x", &silent), "it ran, quietly");
+        assert!(!said("fix this\r\n\r\n[follow-up]\r\nx", &nothing), "CRLF");
+        assert!(!said("[page]\nsome page text", &nothing), "a block first");
+        assert!(!said("fix this\n\n[follow-up]\n\"\"\"x\"\"\"", &nothing));
+        assert!(!said("explain\n\nUse this text as context:\nabc", &nothing));
+    }
+
+    #[tokio::test]
+    async fn an_answer_with_nothing_behind_it_says_so_under_it() {
+        let answerer = Arc::new(ScriptedAnswerer {
+            reply: Ok("Rust is a language.".to_string()),
+            prompts: Mutex::new(Vec::new()),
+        });
+        let payload = run_with_answerer("what is rust", answerer).await;
+        assert_eq!(payload["used"], json!([USED_NOTHING]), "{payload}");
     }
 
     /// The prompt carries the request, what the tool produced, and evidence.
