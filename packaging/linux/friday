@@ -4545,6 +4545,8 @@ case "${1:-}" in
         (
           printf '%s' "$answer" | friday-ctl say - || exit 0
           [ -n "${FRIDAY_SPOKEN:-}" ] && friday_feature_on voice-followup && friday_voice_ready || exit 0
+          # With "hey Friday" on, its own conversation hears the follow-up.
+          ! systemctl --user is-active --quiet friday-wake.service 2>/dev/null || exit 0
           heard=$(friday-ctl listen answer 2>/dev/null | while IFS= read -r line; do
             if [ "$line" = listening ]; then friday_chime; else printf '%s' "$line"; break; fi
           done) || true

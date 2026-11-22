@@ -676,7 +676,8 @@ internal sealed class TrayContext : ApplicationContext
     /// </summary>
     private async Task SayThenListenAsync(AnswerWindow answer, string said)
     {
-        if (await Ctl.SayAsync(_install, said) != 0 || answer.IsClosed)
+        // With "Hey Friday" on, its own conversation hears the follow-up.
+        if (await Ctl.SayAsync(_install, said) != 0 || answer.IsClosed || _wake is not null)
             return;
         var heard = await ListenOnceAsync(answer, "After the sound, ask a follow-up, or say stop.");
         if (string.IsNullOrWhiteSpace(heard) || Listening.EndsConversation(heard))
@@ -1141,6 +1142,8 @@ internal sealed class TrayContext : ApplicationContext
                     var (kind, text) = heard;
                     if (kind == "note")
                         Notify("FRIDAY", text, ToolTipIcon.None);
+                    else if (_asking)
+                        Notify("FRIDAY", $"Still answering, so this wasn't asked: \"{text}\". Ask again in a moment.", ToolTipIcon.Info);
                     else if (kind == "ask")
                         _ = AskTextAsync(text);
                     else
