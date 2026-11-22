@@ -2576,7 +2576,11 @@ friday_app_suggestions() {
     *firefox*|*chromium*|*chrome*|*brave*|*librewolf*|zen|zen-*|*vivaldi*|*qutebrowser*|*zathura*|*okular*|*evince*|*papers*|*foliate*)
       printf 'Summarize this page\t--screen\tSummarize this page\n' ;;
     *thunderbird*|*geary*|*evolution*)
-      printf 'Summarize this email\t--screen\tSummarize this email\n' ;;
+      printf 'Summarize this email\t--screen\tSummarize this email\n'
+      printf 'Draft a reply\t--screen\tDraft a short reply to this email, in my voice, ready to paste\n' ;;
+    *slack*|*discord*|*vesktop*|*telegram*|*signal*|*element*|*whatsapp*|*fractal*|*teams*)
+      printf 'Draft a reply\t--screen\tDraft a short reply to the last message here, ready to paste\n'
+      printf 'Catch me up\t--screen\tSummarize what this conversation is about and what is asked of me\n' ;;
   esac
   sel=$(timeout 1 wl-paste --primary --no-newline 2>/dev/null | head -c 200 || true)
   [ -n "${sel//[[:space:]]/}" ] || return 0

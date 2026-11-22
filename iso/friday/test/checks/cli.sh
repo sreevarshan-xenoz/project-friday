@@ -406,6 +406,10 @@ contains "with that question" "$(cat "$LOG")" "Summarize this page"
 : >"$LOG"; HYPR_WIN='{"class":"code"}' PRIMARY="fn main() { let x: i32 = \"a\"; }" PICK="Explain the selected code" bash "$F" ask; sleep 0.3
 contains "an editor with a selection offers to explain the code" "$(cat "$W/menu.txt")" "Explain the selected code"
 contains "picking it sends the selection" "$(cat "$LOG")" "let x: i32"
+: >"$LOG"; HYPR_WIN='{"class":"Slack"}' PICK="Draft a reply" bash "$F" ask; sleep 0.3
+contains "a chat app offers a reply" "$(cat "$W/menu.txt")" "Draft a reply"
+contains "and a catch-up" "$(cat "$W/menu.txt")" "Catch me up"
+contains "picking it drafts from the screen" "$(cat "$LOG")" "Draft a short reply to the last message"
 : >"$LOG"; HYPR_WIN='{"class":"org.gnome.Calculator"}' PICK="what is rust" bash "$F" ask; sleep 0.3
 if grep -qE "Summarize|Explain the selected" "$W/menu.txt"; then fail "suggested something for an app with nothing to offer"; else pass "an app with no page and no selection: no suggestions"; fi
 printf '#!/bin/bash\necho "fuzzel $*" >> %q\necho "$PICK"\n' "$LOG" >"$S/fuzzel"; chmod +x "$S/fuzzel"
