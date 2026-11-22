@@ -215,6 +215,19 @@ contains "ask 'search the web for q' strips prefix" "$(cat "$LOG")" "rust releas
 contains "ask 'look up q' passes --web flag" "$(cat "$LOG")" "friday-ctl-web"
 contains "ask 'look up q' strips prefix" "$(cat "$LOG")" "rust documentation"
 
+# "What changed …": the project's commits and the package log since then.
+mkdir -p "$W/wc"; git -C "$W/wc" init -q -b main; printf 'x\n' >"$W/wc/a.txt"
+git -C "$W/wc" add a.txt; git -C "$W/wc" -c user.name=t -c user.email=t@example.com commit -q -m "add the parser"
+printf 'y\n' >"$W/wc/b.txt"
+printf '[%s] [ALPM] upgraded rust (1:1.99-1 -> 1:1.100-1)\n[2020-01-01T00:00:00+0000] [ALPM] installed oldpkg (1-1)\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" >"$W/pacman.log"
+: >"$LOG"; FRIDAY_PACMAN_LOG="$W/pacman.log" WS_PROJECT="$W/wc" bash "$F" ask "what changed today?"; sleep 0.3
+contains "what changed: the project's commits" "$(cat "$LOG")" "add the parser"
+contains "and its uncommitted files" "$(cat "$LOG")" "b.txt"
+contains "and today's packages" "$(cat "$LOG")" "upgraded rust"
+if grep -q "oldpkg" "$LOG"; then fail "what changed today listed an old package"; else pass "older packages aren't listed"; fi
+: >"$LOG"; FRIDAY_PACMAN_LOG="$W/pacman.log" bash "$F" ask "what changed in rust 1.90"; sleep 0.3
+if grep -q "upgraded rust" "$LOG"; then fail "a general 'what changed in X' got this computer's changes"; else pass "'what changed in X' is a general question"; fi
+
 : >"$LOG"; rm -f "$W/again_done"
 ACTION_AGAIN=1 PICK="re-asked question" bash "$F" ask "first question"; sleep 0.5
 contains "Ask again re-invokes the ask" "$(cat "$LOG")" "friday-ctl re-asked\\ question"
