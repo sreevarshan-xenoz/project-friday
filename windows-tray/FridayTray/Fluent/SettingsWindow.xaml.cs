@@ -263,12 +263,13 @@ internal sealed partial class SettingsWindow : FluentWindow
             (Elevation.IsElevated() ? "FRIDAY is running as administrator now." : "Takes effect the next time FRIDAY starts."),
             admin,
             SetAdministrator);
-        // The tray's own features, each with its switch (all on to start).
+        // Features, each with its switch (all on to start). The daemon reads
+        // its own (couldnt-check) when it starts, so those restart it.
         yield return Caption("Features");
         var env = EnvFile.Load(_install.Paths.EnvFile);
         foreach (var (name, what) in AppSettings.Features)
             yield return Switch(what, "Switch off if you don't want it.", AppSettings.FeatureOn(env, name),
-                on => ChangeEnv(e => AppSettings.WithFeature(e, name, on), restart: false));
+                on => ChangeEnv(e => AppSettings.WithFeature(e, name, on), restart: name == "couldnt-check"));
         yield return Row(Pill("Restart FRIDAY", SymbolRegular.ArrowSync24), () => { _do.RestartDaemon(); Said("FRIDAY restarted."); });
         yield return Row(Pill("Open logs", SymbolRegular.DocumentBulletList24), _do.OpenLogs);
     }
