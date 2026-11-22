@@ -2610,9 +2610,52 @@ friday_private_folder() {
   done < <(cat "$own" 2>/dev/null || true)
 }
 
-# friday_ask_local <prompt>: the local model's answer, asked directly on this
-# computer (not through the daemon, so nothing can fall back to the cloud).
-# Fails when no local model is set up.
+# "What changed …": since when (since <a day or date>, today, yesterday,
+# this week, the last hour, else since the last answer, else a day), then
+# the project's commits and uncommitted files (when $2 is a git folder not
+# in a private folder) and packages installed, upgraded or removed, as plain
+# lines. Nothing when nothing changed.
+friday_what_changed() {
+  local q="${1,,}" project="$2" since="" iso epoch out="" log commits files pkgs rest
+  if [[ "$q" =~ \ since\ (.+)$ ]]; then
+    rest="${BASH_REMATCH[1]%%[?.!]*}"
+    case "$rest" in
+      monday|tuesday|wednesday|thursday|friday|saturday|sunday) since="last $rest 00:00" ;;
+      *"last ask"*|*"last answer"*|*"i asked"*) ;;
+      *) date -d "$rest" >/dev/null 2>&1 && since="$rest" ;;
+    esac
+  fi
+  if [ -z "$since" ]; then
+    case "$q" in
+      *"last hour"*|*"past hour"*) since="1 hour ago" ;;
+      *today*|*"this morning"*) since="today 00:00" ;;
+      *yesterday*) since="yesterday 00:00" ;;
+      *week*) since="7 days ago" ;;
+      *)
+        log="${XDG_STATE_HOME:-$HOME/.local/state}/friday/last-answer.md"
+        if [ -f "$log" ]; then since="@$(stat -c %Y "$log")"; else since="1 day ago"; fi ;;
+    esac
+  fi
+  epoch=$(date -d "$since" +%s 2>/dev/null) || return 0
+  iso=$(date -d "@$epoch" '+%Y-%m-%dT%H:%M:%S')
+  if [ -n "$project" ] && [ -z "$(friday_private_folder "$project")" ] \
+      && git -C "$project" rev-parse --git-dir >/dev/null 2>&1; then
+    commits=$(timeout 3 git -C "$project" log --since="@$epoch" --format='%h %ad %s' --date=format:'%a %H:%M' -n 30 2>/dev/null || true)
+    files=$(timeout 3 git -C "$project" status --short 2>/dev/null | head -n 30 || true)
+    out+="Project $(basename -- "$project"), commits since $iso:"$'\n'"${commits:-(none)}"$'\n'
+    [ -z "$files" ] || out+="Not committed yet:"$'\n'"$files"$'\n'
+  fi
+  # pacman.log stamps carry their own offset: compared as moments, not text.
+  pkgs=$(gawk -v t="$epoch" '$2 == "[ALPM]" && $3 ~ /^(installed|upgraded|removed|downgraded)$/ {
+      if (!match($1, /^\[([0-9]+)-([0-9]+)-([0-9]+)T([0-9]+):([0-9]+):([0-9]+)([+-])([0-9][0-9])([0-9][0-9])\]$/, m)) next
+      at = mktime(m[1] " " m[2] " " m[3] " " m[4] " " m[5] " " m[6], 1) - (m[7] "1") * (m[8] * 3600 + m[9] * 60)
+      if (at < t) next
+      sub(/^\[[^]]*\] \[ALPM\] /, ""); print }' \
+    "${FRIDAY_PACMAN_LOG:-/var/log/pacman.log}" 2>/dev/null | tail -n 40 || true)
+  [ -z "$pkgs" ] || out+="Packages since $iso:"$'\n'"$pkgs"$'\n'
+  printf '%s' "$out"
+}
+
 # Whether a local model on this computer is set up (friday setup-ai local),
 # not whether it's up.
 friday_local_ready() {
@@ -2622,6 +2665,9 @@ friday_local_ready() {
     && [[ "$base" == http://127.0.0.1:* || "$base" == http://localhost:* ]]
 }
 
+# friday_ask_local <prompt>: the local model's answer, asked directly on this
+# computer (not through the daemon, so nothing can fall back to the cloud).
+# Fails when no local model is set up.
 friday_ask_local() {
   local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" base model body
   grep -qx 'LLAMACPP_ENABLED=1' "$env_file" 2>/dev/null || return 2
@@ -4016,6 +4062,12 @@ case "${1:-}" in
       # "What was that …?" with recall on: what was on screen earlier.
       request=$(printf '%s\n\n[recall]\nThis is text that was on my screen in the last few hours, kept on this computer. Answer from it and say which window it was in:\n"""\n%s\n"""' "$goal" "$recalled")
       from_recall=true
+    elif ! $use_screen && [ -z "$local_answer" ] \
+        && [[ "${goal,,}" =~ ^what(\'s|\ has|\ have)?\ changed(\ since\ .*|\ today|\ yesterday|\ this\ (morning|week)|\ (in|over)\ the\ (last|past)\ (hour|day|week)|\ recently)?[[:space:]?.!]*$ ]] \
+        && changes=$(friday_what_changed "$goal" "${ask_project:-}") && [ -n "$changes" ]; then
+      # "What changed since yesterday?": the project's commits and files and
+      # the system's packages since then, read here.
+      request=$(printf '%s\n\n[changes]\nWhat changed on this computer in that time, from git and the package log. Summarise it; say what is unfinished:\n"""\n%s\n"""' "$goal" "$changes")
     elif ! $use_screen && [ -z "$local_answer" ] && ws_report=$(friday_continue_restore "$goal"); then
       # "Continue building FRIDAY": its workspace is put back first; the
       # daemon adds where you stopped (the timeline).
