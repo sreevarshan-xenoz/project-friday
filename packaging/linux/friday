@@ -2571,30 +2571,47 @@ friday_ask_local() {
 # "app: instruction" per line in app-instructions in FRIDAY's config folder.
 # The app is matched against the focused window's class.
 friday_app_instructions_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/app-instructions"; }
+friday_app_instructions_same() { # <a> <b>: the same app (any case, .exe or not, or a reverse-DNS id's last part)
+  local a="${1,,}" b="${2,,}"
+  a="${a%.exe}"; b="${b%.exe}"
+  [ -n "$a" ] && [ -n "$b" ] && { [ "$a" = "$b" ] || [ "${a##*.}" = "$b" ] || [ "$a" = "${b##*.}" ]; }
+}
 friday_app_instructions() { # <app class>: its instruction, if any
-  local app="${1,,}" line name
-  [ -n "$app" ] || return 1
+  local app="$1" line name f
+  f=$(friday_app_instructions_file)
+  [ -n "$app" ] && [ -f "$f" ] || return 1
   while IFS= read -r line; do
     [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
-    name="${line%%:*}"; name="${name,,}"; name="${name//[[:space:]]/}"
-    [ -n "$name" ] && [[ "$app" == *"$name"* ]] && { sed 's/^[^:]*:[[:space:]]*//' <<<"$line" | cut -c1-300; return 0; }
-  done <"$(friday_app_instructions_file)" 2>/dev/null
+    name="${line%%:*}"; name="${name//[[:space:]]/}"
+    friday_app_instructions_same "$app" "$name" && { sed 's/^[^:]*:[[:space:]]*//' <<<"$line" | cut -c1-300; return 0; }
+  done <"$f"
   return 1
+}
+friday_app_instructions_drop() { # <file> <app>: the file without that app's line
+  local line name
+  [ -f "$1" ] || return 0
+  while IFS= read -r line; do
+    name="${line%%:*}"; name="${name//[[:space:]]/}"
+    [[ "$line" != *:* || "$line" =~ ^[[:space:]]*# ]] || ! friday_app_instructions_same "$name" "$2" || continue
+    printf '%s\n' "$line"
+  done <"$1"
 }
 friday_app_instructions_cmd() {
   local f; f=$(friday_app_instructions_file)
   case "${1:-list}" in
-    list) if [ -s "$f" ]; then grep -v '^[[:space:]]*#' "$f"; else echo "No app instructions yet. Add one: friday app-instructions set kitty \"answer with commands only\""; fi ;;
-    set)
-      [ -n "${2:-}" ] && [ -n "${3:-}" ] || { echo "Usage: friday app-instructions set <app> <instruction>" >&2; return 1; }
+    list) if [ -s "$f" ] && grep -q '^[[:space:]]*[^#[:space:]]' "$f"; then grep -v '^[[:space:]]*#' "$f" || true
+          else echo "No app instructions yet. Add one: friday app-instructions set kitty \"answer with commands only\""; fi ;;
+    set|rm)
+      [ -n "${2:-}" ] && { [ "$1" = rm ] || [ -n "${3:-}" ]; } || { echo "Usage: friday app-instructions set <app> <instruction> | rm <app>" >&2; return 1; }
       [[ "$2" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "friday: an app is named like its window class (kitty, firefox, org.gnome.Nautilus)" >&2; return 1; }
       mkdir -p "$(dirname "$f")"
-      { grep -viE "^[[:space:]]*$2[[:space:]]*:" "$f" 2>/dev/null || true; printf '%s: %s\n' "$2" "${*:3}"; } >"$f.tmp" && mv -f "$f.tmp" "$f"
-      echo "In $2, FRIDAY will: ${*:3}" ;;
-    rm)
-      [ -n "${2:-}" ] || { echo "Usage: friday app-instructions rm <app>" >&2; return 1; }
-      { grep -viE "^[[:space:]]*$2[[:space:]]*:" "$f" 2>/dev/null || true; } >"$f.tmp" && mv -f "$f.tmp" "$f"
-      echo "No instructions for $2 now." ;;
+      if [ "$1" = set ]; then
+        { friday_app_instructions_drop "$f" "$2"; printf '%s: %s\n' "$2" "$(tr '\n\r' '  ' <<<"${*:3}" | sed 's/[[:space:]]*$//')"; } >"$f.tmp" && mv -f "$f.tmp" "$f"
+        echo "In $2, FRIDAY will: ${*:3}"
+      else
+        [ ! -f "$f" ] || { friday_app_instructions_drop "$f" "$2" >"$f.tmp" && mv -f "$f.tmp" "$f"; }
+        echo "No instructions for $2 now."
+      fi ;;
     *) echo "Usage: friday app-instructions [list|set <app> <instruction>|rm <app>]" >&2; return 1 ;;
   esac
 }
@@ -3837,9 +3854,13 @@ case "${1:-}" in
       [ -z "$docs" ] || request=$(printf '%s\n\n[docs]\nThese excerpts from documentation on this computer may help. Use them only if they fit, and name the one you use (for example "Arch wiki: Pacman"):\n"""\n%s\n"""' "$goal" "$docs")
     fi
     # What the person asked FRIDAY to do in this app (friday app-instructions).
-    if [ -z "${rewrite:-}" ] && ! $use_screen && app_rule=$(friday_app_instructions "$ask_app") && [ -n "$app_rule" ]; then
-      request=$(printf '%s\n\n[app instructions]\nIn %s, the person asked: %s' "$request" "$ask_app" "$app_rule")
+    # Never for a private window: neither the app nor the instruction goes.
+    app_rule=""
+    if [ -z "${rewrite:-}" ] && ! $use_screen && [ -z "$private_win" ] \
+        && app_rule=$(friday_app_instructions "$ask_app") && [ -n "$app_rule" ] && [ -n "$(friday_private_window)" ]; then
+      app_rule=""
     fi
+    [ -z "$app_rule" ] || request=$(printf '%s\n\n[app instructions]\nIn %s, the person asked FRIDAY to follow this (their own setting):\n"""\n%s\n"""' "$request" "$ask_app" "$app_rule")
 
     ok=true
     ctl_rc=0
