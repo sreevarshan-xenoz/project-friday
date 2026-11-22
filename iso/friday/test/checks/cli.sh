@@ -169,8 +169,14 @@ printf '#!/bin/bash\necho "curl $*" >> %q\n[[ -n "$OFFLINE" ]] && exit 6\nexit 0
 printf '#!/bin/bash\necho "sudo $*" >> %q\n"$@"\n' "$LOG" >"$S/sudo"
 printf '#!/bin/bash\necho "pacman $*" >> %q\nexit 0\n' "$LOG" >"$S/pacman"
 printf '#!/bin/bash\necho "ollama $*" >> %q\nexit 0\n' "$LOG" >"$S/ollama"
+# Never the real thing from a test: no Pocketdesk prompt reaches a paired
+# phone (a section that needs one puts its own stub first), and nothing from
+# the person's home folder runs (~/.local/bin holds their codex, claude, agy:
+# a test that expects "not installed" would sign them in).
+printf '#!/bin/sh\necho "pocketdesk $*" >> %q\nexit 2\n' "$LOG" >"$S/pocketdesk"
 chmod +x "$S"/*
-export PATH="$S:$PATH"
+real_home=$(getent passwd "$(id -u)" | cut -d: -f6)
+export PATH="$S:$(tr ':' '\n' <<<"$PATH" | grep -v "^${real_home:-/nonexistent}/" | paste -sd: -)"
 state="$HOME/.local/state/friday"
 
 echo "ask"
@@ -1553,11 +1559,13 @@ rm -rf "$HOME/.config/hypr"
 contains "keys update without a FRIDAY OS key file does nothing" "$(bash "$F" keys update)" "nothing to update"
 
 echo "phone"
-# `friday phone`, without Pocketdesk installed.
+# `friday phone`, without Pocketdesk installed (the global stub hidden).
+mv "$S/pocketdesk" "$W/pocketdesk.stub"
 if ! command -v pocketdesk >/dev/null 2>&1; then
   contains "phone status says Pocketdesk is not installed" "$(bash "$F" phone status 2>&1)" "not installed"
   expect "phone on needs Pocketdesk" bash -c "! bash '$F' phone on </dev/null"
 fi
+mv "$W/pocketdesk.stub" "$S/pocketdesk"
 # With a stub Pocketdesk: declining changes nothing.
 CS="$W/confirm-stub"; mkdir -p "$CS"
 printf '#!/bin/sh\nexit 0\n' >"$CS/pocketdesk"; chmod +x "$CS/pocketdesk"
