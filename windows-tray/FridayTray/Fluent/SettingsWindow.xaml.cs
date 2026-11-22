@@ -36,6 +36,7 @@ internal sealed record SettingsActions(
     Action WakeChanged,
     Action LocalAiChanged,
     Action StopLlama,
+    Func<TimeSpan> LlamaUptime,
     IReadOnlyDictionary<AskKind, string> Hotkeys);
 
 /// <summary>
@@ -456,7 +457,12 @@ internal sealed partial class SettingsWindow : FluentWindow
                             _do.LocalAiChanged();
                             progressText.Text = "Starting llama.cpp...";
                         });
-                        return await LlamaReadyAsync() ? (true, null) : (false, LlamaNotReady);
+                        return await LlamaReadyAsync() switch
+                        {
+                            LlamaStart.Ready => (true, null),
+                            LlamaStart.Loading => (true, LlamaLoading),
+                            _ => (false, LlamaNotReady),
+                        };
                     }
                     if (!ProcessRunner.IsOllamaInstalled(out var ollamaExe))
                     {
@@ -527,9 +533,13 @@ internal sealed partial class SettingsWindow : FluentWindow
 
             if (success)
             {
-                progressText.Visibility = Visibility.Collapsed;
+                // Still loading: on, and says so until it answers.
+                progressText.Text = errorMsg ?? "";
+                progressText.Visibility = errorMsg is null ? Visibility.Collapsed : Visibility.Visible;
                 errorText.Visibility = Visibility.Collapsed;
-                stateVal.Text = $"on: {model}";
+                stateVal.Text = errorMsg is null ? $"on: {model}" : $"on: {model} (still loading)";
+                if (errorMsg is not null)
+                    WhenLlamaReady(() => { stateVal.Text = $"on: {model}"; progressText.Visibility = Visibility.Collapsed; });
                 turnOffBtn.Visibility = Visibility.Visible;
             }
             else
@@ -619,14 +629,22 @@ internal sealed partial class SettingsWindow : FluentWindow
             }
             ChangeEnv(e => LocalAi.WithLocalAi(e, m.Name, m.Vision, outText.Trim() == "1", engine.BaseUrl));
             _do.LocalAiChanged();
-            if (ownLlama && !await LlamaReadyAsync())
+            var start = ownLlama ? await LlamaReadyAsync() : LlamaStart.Ready;
+            if (start == LlamaStart.Failed)
             {
                 errorText.Text = LlamaNotReady;
                 errorText.Visibility = Visibility.Visible;
                 button.IsEnabled = true;
                 return;
             }
-            stateVal.Text = $"on: {m.Name} ({(engine.Engine == "ollama" ? "Ollama" : "llama.cpp")}, already on this PC)";
+            var on = $"on: {m.Name} ({(engine.Engine == "ollama" ? "Ollama" : "llama.cpp")}, already on this PC";
+            stateVal.Text = on + (start == LlamaStart.Loading ? ", still loading)" : ")");
+            if (start == LlamaStart.Loading)
+            {
+                progressText.Text = LlamaLoading;
+                progressText.Visibility = Visibility.Visible;
+                WhenLlamaReady(() => { stateVal.Text = on + ")"; progressText.Visibility = Visibility.Collapsed; });
+            }
             turnOffBtn.Visibility = Visibility.Visible;
             button.IsEnabled = true;
         }
@@ -1194,23 +1212,47 @@ internal sealed partial class SettingsWindow : FluentWindow
     private const string LlamaNotReady =
         "llama.cpp didn't start answering. Another program may be using port 8080, or the model doesn't fit this PC's memory; FRIDAY's logs say more.";
 
-    /// <summary>Whether FRIDAY's llama-server answers its health check within 3 minutes (a big model loads slowly).</summary>
-    private static async Task<bool> LlamaReadyAsync()
+    private const string LlamaLoading =
+        "llama.cpp is still loading the model (slow on this PC); FRIDAY uses it as soon as it's ready and the free models until then.";
+
+    private enum LlamaStart { Ready, Loading, Failed }
+
+    private static readonly string LlamaHealth =
+        LocalAi.LlamaBaseUrl[..LocalAi.LlamaBaseUrl.LastIndexOf("/v1", StringComparison.Ordinal)] + "/health";
+
+    private static async Task<bool> LlamaHealthyAsync(System.Net.Http.HttpClient http)
+    {
+        try
+        {
+            return (await http.GetAsync(LlamaHealth)).IsSuccessStatusCode;
+        }
+        catch (Exception e) when (e is System.Net.Http.HttpRequestException or TaskCanceledException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Runs <paramref name="ready"/> on the UI thread once llama-server answers (up to 30 minutes).</summary>
+    private void WhenLlamaReady(Action ready) => _ = Task.Run(async () =>
     {
         using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-        var health = LocalAi.LlamaBaseUrl[..LocalAi.LlamaBaseUrl.LastIndexOf("/v1", StringComparison.Ordinal)] + "/health";
+        for (var deadline = DateTime.UtcNow.AddMinutes(30); DateTime.UtcNow < deadline; await Task.Delay(5000))
+            if (await LlamaHealthyAsync(http))
+            {
+                await Dispatcher.InvokeAsync(ready);
+                return;
+            }
+    });
+
+    /// <summary>Whether FRIDAY's llama-server answers its health check within 3 minutes (a big model loads
+    /// slowly); FRIDAY's own still running after that, and for over 90 s (not crash-looping), is loading.</summary>
+    private async Task<LlamaStart> LlamaReadyAsync()
+    {
+        using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(3) };
         for (var deadline = DateTime.UtcNow.AddMinutes(3); DateTime.UtcNow < deadline; await Task.Delay(1000))
-        {
-            try
-            {
-                if ((await http.GetAsync(health)).IsSuccessStatusCode)
-                    return true;
-            }
-            catch (Exception e) when (e is System.Net.Http.HttpRequestException or TaskCanceledException)
-            {
-            }
-        }
-        return false;
+            if (await LlamaHealthyAsync(http))
+                return LlamaStart.Ready;
+        return _do.LlamaUptime() > TimeSpan.FromSeconds(90) ? LlamaStart.Loading : LlamaStart.Failed;
     }
 
     /// <summary>Rewrites friday.env with <paramref name="change"/>; the daemon

@@ -40,6 +40,11 @@ internal sealed class Supervised : IDisposable
 
     public bool Running { get { lock (_lock) return _process is { HasExited: false }; } }
 
+    /// <summary>How long the current run has lasted (zero when not running).</summary>
+    public TimeSpan Uptime { get { lock (_lock) return _process is { HasExited: false } ? DateTime.Now - _started : TimeSpan.Zero; } }
+
+    private DateTime _started;
+
     public void Start()
     {
         lock (_lock)
@@ -77,6 +82,7 @@ internal sealed class Supervised : IDisposable
         p.BeginOutputReadLine();
         p.BeginErrorReadLine();
         _process = p;
+        _started = DateTime.Now;
         Write($"--- {_name} started (pid {p.Id}) {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
     }
 
