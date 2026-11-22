@@ -629,7 +629,7 @@ fn local_ai(args: &[String]) -> std::process::ExitCode {
             );
         }
         _ => {
-            eprintln!("usage: friday-ctl local-ai detect | presets [--json] | engines [--json] | pull <model> | model <mb> | local-first <model> <order> [tps]");
+            eprintln!("usage: friday-ctl local-ai detect | presets [--json] | engines [--json] | pull <model> | install-llamacpp <model> [--gpu] | model <mb> | local-first <model> <order> [tps]");
             return std::process::ExitCode::from(2);
         }
     }
@@ -1274,6 +1274,34 @@ async fn main() -> std::process::ExitCode {
                     "usage: friday-ctl listen captions [--mic] | wake | hold | answer | barge | setup"
                 );
                 std::process::ExitCode::from(2)
+            }
+        };
+    }
+    if raw.first().map(String::as_str) == Some("local-ai")
+        && raw.get(1).map(String::as_str) == Some("install-llamacpp")
+    {
+        let Some(model) = raw.get(2) else {
+            eprintln!("usage: friday-ctl local-ai install-llamacpp <model|file.gguf> [--gpu]");
+            return std::process::ExitCode::from(2);
+        };
+        // The same "progress" lines as pull; "done vision=0|1" at the end.
+        let gpu = raw.iter().any(|a| a == "--gpu");
+        let result = friday_mobile::local_ai::install_llamacpp(model, gpu, |e| {
+            use std::io::Write;
+            if let friday_mobile::local_ai::PullEvent::Progress(p, d, t) = e {
+                println!("progress {p} {d} {t}");
+            }
+            let _ = std::io::stdout().flush();
+        })
+        .await;
+        return match result {
+            Ok(vision) => {
+                println!("done vision={}", u8::from(vision));
+                std::process::ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("friday-ctl: {e}");
+                std::process::ExitCode::from(1)
             }
         };
     }
