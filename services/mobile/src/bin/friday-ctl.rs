@@ -1225,6 +1225,7 @@ async fn main() -> std::process::ExitCode {
             )),
             Some("wake") => std::process::ExitCode::from(friday_mobile::listen::run_wake()),
             Some("hold") => std::process::ExitCode::from(friday_mobile::listen::run_hold()),
+            Some("answer") => std::process::ExitCode::from(friday_mobile::listen::run_answer()),
             Some("setup") => {
                 match friday_mobile::listen::setup(&friday_mobile::listen::whisper_dir()) {
                     Ok(()) => {
@@ -1238,7 +1239,9 @@ async fn main() -> std::process::ExitCode {
                 }
             }
             _ => {
-                eprintln!("usage: friday-ctl listen captions [--mic] | wake | hold | setup");
+                eprintln!(
+                    "usage: friday-ctl listen captions [--mic] | wake | hold | answer | setup"
+                );
                 std::process::ExitCode::from(2)
             }
         };

@@ -17,6 +17,37 @@ public static class Listening
         File.Exists(Path.Combine(WhisperDir(p), "Release", "whisper-cli.exe"))
         && File.Exists(Path.Combine(WhisperDir(p), "ggml-base.en.bin"));
 
+    /// <summary>
+    /// "run" or "cancel" when the words, all of them, are a yes or a no (as
+    /// `friday_yes_no` on Linux); null otherwise.
+    /// </summary>
+    public static string? YesNo(string? said)
+    {
+        var q = (said ?? "").Trim().Trim(Punctuation).Trim().ToLowerInvariant();
+        return q switch
+        {
+            "yes" or "y" or "yep" or "yeah" or "ok" or "okay" or "sure" or "go ahead" or "do it" or "run it" or "run" or "go" => "run",
+            "no" or "n" or "nope" or "cancel" or "stop" or "don't" or "dont" or "don't do it" => "cancel",
+            _ => null,
+        };
+    }
+
+    private static readonly char[] Punctuation = ".,!?;:\"'“”‘’…-".ToCharArray();
+
+    /// <summary>
+    /// Can't be undone (as `friday_irreversible` on Linux): closing a window,
+    /// clicking in an app, deleting, shutting down. A spoken "run" doesn't run
+    /// these; a click does.
+    /// </summary>
+    public static bool Irreversible(string action)
+    {
+        var a = System.Text.RegularExpressions.Regex.Replace($" {action.ToLowerInvariant()} ", "\"[^\"]*\"|'[^']*'", "");
+        return System.Text.RegularExpressions.Regex.IsMatch(a,
+            @"(^|[\s;|&(`])(rm|rmdir|del|erase|rd|remove-item|format|shred|dd|mkfs[.a-z0-9]*|diskpart|sudo|runas|kill|killall|pkill|taskkill|stop-process|shutdown|reboot|restart-computer|stop-computer|poweroff|halt|truncate)\s")
+            || System.Text.RegularExpressions.Regex.IsMatch(a,
+                @"git +(push +.*(-f|--force)|reset +--hard|clean)|close_window|ui_click|> */");
+    }
+
     /// <summary>What to tell the person when `listen hold` exits with <paramref name="exitCode"/>, or null when it heard something (0) or the key was only tapped (5).</summary>
     public static string? Problem(int exitCode, string key) => exitCode switch
     {

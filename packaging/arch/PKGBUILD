@@ -48,6 +48,7 @@ optdepends=(
   'opencode: more free answers when Zen refuses other apps (same free quota)'
   'arch-wiki-lite: answers from the Arch wiki on this computer, offline too'
   'tealdeer: answers from tldr pages on this computer (after tldr --update)'
+  'sound-theme-freedesktop: the sound before FRIDAY listens for a spoken run or cancel'
 )
 provides=("$_name")
 conflicts=("$_name")

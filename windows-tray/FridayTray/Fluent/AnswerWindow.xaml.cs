@@ -115,6 +115,7 @@ public partial class AnswerWindow : Window
     /// <summary>The final answer, the step waiting for an OK, or the failure, with what to do next.</summary>
     public void ShowOutcome(AskOutcome outcome)
     {
+        _pendingAction = outcome.Confirmation?.Action;
         var streamed = _stream is not null;
         _stream = null;
         Wave(false);
@@ -296,6 +297,26 @@ public partial class AnswerWindow : Window
         caret.BeginAnimation(OpacityProperty, new DoubleAnimation(1, 0.15, TimeSpan.FromMilliseconds(520))
             { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = new SineEase() });
         return caret;
+    }
+
+    private string? _pendingAction;
+
+    /// <summary>A spoken run or cancel, as if its button was pressed.</summary>
+    public void AnswerByVoice(bool run)
+    {
+        if (IsClosed || _pendingAction is null)
+            return;
+        if (run)
+            ConfirmRun?.Invoke(_pendingAction);
+        else
+            CloseSoftly();
+    }
+
+    /// <summary>Says, under the step waiting for an OK, that FRIDAY listens for it.</summary>
+    public void ShowVoiceHint(string hint)
+    {
+        Footer.Text = hint;
+        Footer.Visibility = Visibility.Visible;
     }
 
     private void CloseSoftly()

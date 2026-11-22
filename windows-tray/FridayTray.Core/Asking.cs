@@ -9,9 +9,10 @@ public enum AskKind { Plain, Selection, Screen }
 /// <summary>
 /// How a question is asked beyond its words: search the web first, or answer
 /// again with more care from a model other than <see cref="Avoid"/> (the
-/// "provider/model" that gave the answer being retried).
+/// "provider/model" that gave the answer being retried). <see cref="Spoken"/>:
+/// asked by voice, so a confirmation can be answered by voice too.
 /// </summary>
-public sealed record AskOptions(bool Web = false, bool Thorough = false, string? Avoid = null, string? Region = null);
+public sealed record AskOptions(bool Web = false, bool Thorough = false, string? Avoid = null, string? Region = null, bool Spoken = false);
 
 /// <summary>A tool action pending explicit confirmation before execution.</summary>
 public sealed record NeedsConfirmation(string Tool, string Action);

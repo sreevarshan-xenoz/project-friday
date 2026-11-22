@@ -1617,6 +1617,7 @@ eval "$(sed -n '/^friday_confirm_pending() {/p;/^friday_confirm() {/,/^}/p' "$F"
 cat >"$CS/notify-send" <<'EOF2'
 #!/bin/sh
 # NS_ANSWER after NS_DELAY seconds, as a clicked action prints its key.
+echo "$*" >>"${NS_LOG:-/dev/null}"
 sleep "${NS_DELAY:-0}"
 [ -z "${NS_ANSWER:-}" ] || echo "$NS_ANSWER"
 EOF2
@@ -1659,6 +1660,36 @@ contains "phone status counts the paired phones" "$(PATH="$CS:$PATH" bash "$F" p
 rm -f "$CS/systemctl"
 rm -f "$CS/pocketdesk"
 [[ "$(NS_ANSWER=run conf)" == run ]] && pass "confirm: works with no Pocketdesk at all" || fail "confirm: no Pocketdesk"
+# Asked by voice: after a chime, a spoken "run" or "cancel" answers it; a
+# thing that can't be undone can only be cancelled by voice.
+eval "$(sed -n '/^friday_yes_no() {/,/^}/p;/^friday_chime() {/,/^}/p;/^friday_irreversible() {/,/^}/p;/^friday_feature_on() {/p;/^friday_features_file() {/p;/^friday_voice_ready() {/p;/^friday_voice_model() {/p;/^friday_whisper() {/p' "$F")"
+[[ "$(friday_yes_no " Yes.")" == run && "$(friday_yes_no "Run it!")" == run && "$(friday_yes_no "Cancel.")" == cancel ]] && pass "spoken yes/run/cancel are answers" || fail "friday_yes_no"
+if friday_yes_no "yes and delete the rest" >/dev/null; then fail "a longer sentence counted as yes"; else pass "only a whole yes or no is an answer"; fi
+mkdir -p "$HOME/.local/share/friday/whisper"; head -c 100 /dev/zero >"$HOME/.local/share/friday/whisper/ggml-base.en.bin"
+cat >"$CS/friday-ctl" <<EOF2
+#!/bin/sh
+echo "friday-ctl \$*" >>"$W/va.log"
+[ "\$1 \$2" = "listen answer" ] || exit 0
+echo listening
+sleep "\${VA_DELAY:-0.3}"
+[ -z "\$VA_SAID" ] || echo "\$VA_SAID"
+EOF2
+printf '#!/bin/sh\necho "pw-play $*" >>"%s"\n' "$W/va.log" >"$CS/pw-play"; chmod +x "$CS/friday-ctl" "$CS/pw-play"
+vconf() { PATH="$CS:$PATH" friday_confirm "${1:-git push origin main}" ""; }
+: >"$W/va.log"; start=$SECONDS; r=$(FRIDAY_SPOKEN=1 VA_SAID="Run." NS_ANSWER= NS_DELAY=6 NS_LOG="$W/ns.log" vconf)
+[[ "$r" == run && $((SECONDS - start)) -lt 5 ]] && pass "voice: a spoken run runs it" || fail "voice: spoken run ($r after $((SECONDS - start))s)"
+contains "voice: FRIDAY stops speaking before it listens" "$(cat "$W/va.log")" "friday-ctl say --stop"
+contains "voice: the notice says what to say" "$(cat "$W/ns.log")" "after the sound, say run or cancel"
+[[ "$(FRIDAY_SPOKEN=1 VA_SAID="cancel" NS_ANSWER= NS_DELAY=6 vconf)" == cancel ]] && pass "voice: a spoken cancel cancels" || fail "voice: spoken cancel"
+[[ "$(FRIDAY_SPOKEN=1 VA_SAID="yes and also delete" NS_ANSWER=cancel NS_DELAY=2 vconf)" == cancel ]] && pass "voice: other words answer nothing" || fail "voice: other words"
+: >"$W/ns.log"; [[ "$(FRIDAY_SPOKEN=1 VA_SAID="run" NS_ANSWER= NS_DELAY=2 NS_LOG="$W/ns.log" vconf "rm -rf build")" == cancel ]] && pass "voice: can't run what can't be undone" || fail "voice: irreversible ran by voice"
+contains "voice: and the notice says Run needs a click" "$(cat "$W/ns.log")" "Run needs a click"
+[[ "$(FRIDAY_SPOKEN=1 VA_SAID="cancel" NS_ANSWER= NS_DELAY=6 vconf "rm -rf build")" == cancel ]] && pass "voice: but can cancel it" || fail "voice: irreversible cancel"
+: >"$W/va.log"; [[ "$(VA_SAID="run" NS_ANSWER= NS_DELAY=1 vconf)" == cancel ]] && pass "voice: a typed ask isn't answered by voice" || fail "voice: typed ask took a voice answer"
+if grep -q "listen answer" "$W/va.log"; then fail "voice: listened for a typed ask"; else pass "voice: a typed ask doesn't open the microphone"; fi
+mkdir -p "$HOME/.config/friday"; echo voice-confirm >"$HOME/.config/friday/features-off"
+: >"$W/va.log"; [[ "$(FRIDAY_SPOKEN=1 VA_SAID="run" NS_ANSWER= NS_DELAY=1 vconf)" == cancel ]] && ! grep -q "listen answer" "$W/va.log" && pass "voice: voice-confirm off doesn't listen" || fail "voice: voice-confirm off"
+rm -f "$HOME/.config/friday/features-off" "$HOME/.local/share/friday/whisper/ggml-base.en.bin" "$CS/friday-ctl" "$CS/pw-play"
 unset PD_LOG
 echo "helper"
 contains "help lists helper" "$(bash "$F" help 2>&1)" "helper"

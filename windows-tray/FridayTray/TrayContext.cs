@@ -481,12 +481,12 @@ internal sealed class TrayContext : ApplicationContext
             RunLocal(text, local);
             return;
         }
-        await AskTextAsync(text);
+        await AskTextAsync(text, spoken: true);
     }
 
     private static bool YHeld() => (Native.GetAsyncKeyState('Y') & 0x8000) != 0;
 
-    private async Task AskTextAsync(string question)
+    private async Task AskTextAsync(string question, bool spoken = false)
     {
         if (_asking)
             return;
@@ -497,7 +497,7 @@ internal sealed class TrayContext : ApplicationContext
         {
             _log.Remember(question);
             var (asked, web) = Asking.WebQuestion(question);
-            await RunRequestAsync(AskKind.Plain, asked, null, Asking.BuildRequest(asked, null), confirm: null, answer: null, new AskOptions(Web: web));
+            await RunRequestAsync(AskKind.Plain, asked, null, Asking.BuildRequest(asked, null), confirm: null, answer: null, new AskOptions(Web: web, Spoken: spoken));
         }
         finally
         {
@@ -644,6 +644,68 @@ internal sealed class TrayContext : ApplicationContext
         }
         ShowAnswer(answer, outcome);
         answer.Activate();
+        if (outcome.Confirmation is { } spokenConf && options.Spoken && Listening.Installed(_install.Paths)
+            && AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "voice-confirm"))
+            _ = ListenForAnswerAsync(answer, spokenConf.Action);
+    }
+
+    /// <summary>
+    /// Asked by voice: after a sound, a spoken "run" or "cancel" answers the
+    /// step on screen, heard while it is there only. What can't be undone is
+    /// cancelled by voice but needs a click to run.
+    /// </summary>
+    private async Task ListenForAnswerAsync(AnswerWindow answer, string action)
+    {
+        var irreversible = Listening.Irreversible(action);
+        Ctl.StopSaying(_install);
+        var psi = new System.Diagnostics.ProcessStartInfo(_install.Ctl)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+        };
+        psi.ArgumentList.Add("listen");
+        psi.ArgumentList.Add("answer");
+        foreach (var (k, v) in _install.ChildEnvironment())
+            psi.Environment[k] = v;
+        System.Diagnostics.Process? p;
+        try { p = System.Diagnostics.Process.Start(psi); }
+        catch (System.ComponentModel.Win32Exception) { return; }
+        if (p is null)
+            return;
+        void Stop()
+        {
+            try { if (!p.HasExited) p.Kill(); } catch (InvalidOperationException) { }
+        }
+        EventHandler closed = (_, _) => Stop();
+        answer.Closed += closed;
+        answer.ShowVoiceHint(irreversible ? "After the sound, say cancel. Run needs a click." : "After the sound, say run or cancel.");
+        try
+        {
+            _ = p.StandardError.ReadToEndAsync();
+            while (await p.StandardOutput.ReadLineAsync() is { } line)
+            {
+                if (line == "listening")
+                {
+                    if (!answer.IsClosed)
+                        System.Media.SystemSounds.Asterisk.Play();
+                    continue;
+                }
+                var said = Listening.YesNo(line);
+                if (said == "cancel" || (said == "run" && !irreversible))
+                    answer.AnswerByVoice(said == "run");
+                break;
+            }
+        }
+        catch (IOException) { }
+        finally
+        {
+            answer.Closed -= closed;
+            Stop();
+            p.Dispose();
+        }
     }
 
     private async Task RunAgainAsync(Func<Task> run)
