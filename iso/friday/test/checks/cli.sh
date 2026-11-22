@@ -215,6 +215,37 @@ contains "ask 'search the web for q' strips prefix" "$(cat "$LOG")" "rust releas
 contains "ask 'look up q' passes --web flag" "$(cat "$LOG")" "friday-ctl-web"
 contains "ask 'look up q' strips prefix" "$(cat "$LOG")" "rust documentation"
 
+# @-mentions pick what goes with the question, and leave it.
+: >"$LOG"; bash "$F" ask "@web latest rust release"; sleep 0.3
+contains "@web searches the web" "$(cat "$LOG")" "friday-ctl-web"
+if grep -q "@web" "$LOG"; then fail "@web stayed in the question"; else pass "@web is taken out of the question"; fi
+: >"$LOG"; CLIP="cargo: linker cc not found" bash "$F" ask "why @clip"; sleep 0.3
+contains "@clip sends the clipboard" "$(cat "$LOG")" "linker"
+contains "as context" "$(cat "$LOG")" "Use this text as context"
+: >"$LOG"; CLIP="hunter2SecretToken99" bash "$F" ask "@clip what is this"; sleep 0.3
+if grep -q "hunter2SecretToken99" "$LOG"; then fail "@clip sent a token-shaped clipboard"; else pass "@clip refuses a token-shaped clipboard"; fi
+mkdir -p "$W/mention"; printf 'fn main() { let x: u32 = "a"; }\n' >"$W/mention/main.rs"
+: >"$LOG"; bash "$F" ask "what's wrong in @file $W/mention/main.rs"; sleep 0.3
+contains "@file sends the file's text" "$(cat "$LOG")" "let x: u32"
+contains "and the answer says which file" "$(cat "$LOG")" "the file main.rs"
+mkdir -p "$HOME/.config/friday"; cp "$HOME/.config/friday/private-windows" "$W/pw.mention" 2>/dev/null || : >"$W/pw.mention"
+printf '%s\n' "$W/mention" >>"$HOME/.config/friday/private-windows"
+: >"$LOG"; bash "$F" ask "what's wrong in @file $W/mention/main.rs"; sleep 0.3
+if grep -q "let x: u32" "$LOG"; then fail "@file sent a file from a private folder"; else pass "@file refuses a private folder's file"; fi
+# A symlink to it from elsewhere is still the private folder's file.
+ln -sfn "$W/mention" "$W/mention-link"
+: >"$LOG"; bash "$F" ask "what's wrong in @file $W/mention-link/main.rs"; sleep 0.3
+if grep -q "let x: u32" "$LOG"; then fail "@file through a symlink left a private folder"; else pass "@file through a symlink still sees the private folder"; fi
+cp "$W/pw.mention" "$HOME/.config/friday/private-windows"
+printf 'API_KEY=x\n' >"$W/mention/.env"
+: >"$LOG"; bash "$F" ask "what is in @file $W/mention/.env"; sleep 0.3
+if grep -q "API_KEY" "$LOG"; then fail "@file sent a .env file"; else pass "@file refuses key and password files by name"; fi
+: >"$LOG"; CLIP="some words" bash "$F" ask "compare @clip with @file $W/mention/main.rs"; sleep 0.3
+if grep -q "^friday-ctl" "$LOG"; then fail "@clip with @file asked anyway"; else pass "@clip and @file together are refused, not half-used"; fi
+: >"$LOG"; bash "$F" ask "@screen and @file $W/mention/main.rs"; sleep 0.3
+if grep -qE "^friday-ctl|context screen" "$LOG"; then fail "@screen with @file asked anyway"; else pass "@screen with @file is refused"; fi
+: >"$LOG"; bash "$F" ask "summarise @file /nonexistent/x.txt"; sleep 0.3
+if grep -q "^friday-ctl" "$LOG"; then fail "@file with no such file still asked"; else pass "@file with no such file asks nothing"; fi
 # "What changed …": the project's commits and the package log since then.
 mkdir -p "$W/wc"; git -C "$W/wc" init -q -b main; printf 'x\n' >"$W/wc/a.txt"
 git -C "$W/wc" add a.txt; git -C "$W/wc" -c user.name=t -c user.email=t@example.com commit -q -m "add the parser"
@@ -1461,7 +1492,7 @@ contains "phone on asks first and declining changes nothing" "$(printf 'n\n' | P
 rm -f "$CS/pocketdesk"
 # A confirmation goes to the screen and, with a paired phone set to answer, the
 # phone too: the first answer wins; no answer is a cancel.
-eval "$(sed -n '/^friday_confirm() {/,/^}/p' "$F")"
+eval "$(sed -n '/^friday_confirm_pending() {/p;/^friday_confirm() {/,/^}/p' "$F")"
 cat >"$CS/notify-send" <<'EOF2'
 #!/bin/sh
 # NS_ANSWER after NS_DELAY seconds, as a clicked action prints its key.
@@ -1485,6 +1516,21 @@ start=$SECONDS; r=$(NS_ANSWER=run NS_DELAY=5 PD_ANSWER=yes conf)
 [[ "$(NS_ANSWER=run NS_DELAY=5 PD_ANSWER=no conf)" == cancel ]] && pass "confirm: the phone's No cancels" || fail "confirm: phone No"
 [[ "$(NS_ANSWER= PD_ANSWER=none conf)" == cancel ]] && pass "confirm: no answer anywhere is a cancel" || fail "confirm: no answer"
 contains "confirm: the phone is asked the exact action" "$(cat "$PD_LOG")" "FRIDAY wants to run: git push origin main"
+# "yes" typed in the ask box answers it too; "no" cancels.
+start=$SECONDS; (NS_ANSWER= NS_DELAY=8 PD_ANSWER=none conf >"$W/conf.out") &
+sleep 1; said=$(bash "$F" ask "yes" 2>&1; cat "$LOG" | tail -n 3); wait
+[[ "$(cat "$W/conf.out")" == run && $((SECONDS - start)) -lt 6 ]] && pass "confirm: \"yes\" in the ask box runs it" || fail "confirm: typed yes ($(cat "$W/conf.out") after $((SECONDS - start))s)"
+(NS_ANSWER= NS_DELAY=8 PD_ANSWER=none conf >"$W/conf.out") &
+sleep 1; bash "$F" ask "no thanks" >/dev/null 2>&1; bash "$F" ask "cancel" >/dev/null 2>&1; wait
+[[ "$(cat "$W/conf.out")" == cancel ]] && pass "confirm: \"cancel\" in the ask box cancels" || fail "confirm: typed cancel"
+[ ! -e "$HOME/.local/state/friday/confirm-pending" ] && pass "confirm: nothing is left waiting" || fail "confirm-pending left behind"
+# A pending file left by a killed confirmation doesn't take a later "yes".
+mkdir -p "$W/stale"; printf '%s\nrm -rf x\n%s\n' "$W/stale" 999999 >"$HOME/.local/state/friday/confirm-pending"
+: >"$LOG"; bash "$F" ask "yes"; sleep 0.3
+[ ! -e "$W/stale/typed" ] && grep -q "friday-ctl" "$LOG" && pass "confirm: a stale wait doesn't take \"yes\"" || fail "confirm: a stale wait took the answer"
+rm -f "$HOME/.local/state/friday/confirm-pending"
+: >"$LOG"; bash "$F" ask "yes"; sleep 0.3
+contains "with nothing waiting, \"yes\" is just a question" "$(cat "$LOG")" "friday-ctl"
 # `friday phone status` counts the paired phones from `pocketdesk devices --json`.
 printf '#!/bin/sh\necho "{\\"api\\":1,\\"devices\\":[{\\"id\\":\\"a\\"},{\\"id\\":\\"b\\"}],\\"server_running\\":true}"\n' >"$CS/pocketdesk"; chmod +x "$CS/pocketdesk"
 printf '#!/bin/sh\nexit 0\n' >"$CS/systemctl"; chmod +x "$CS/systemctl"
