@@ -2631,6 +2631,41 @@ inprivate
 bank
 paypal"
 
+# Mail and chat apps: their text is mostly someone else's words, so FRIDAY
+# says where it goes before sending it (or answers with the local model).
+# Add your own, one per line, in ~/.config/friday/sensitive-windows; "!slack"
+# there drops a default.
+FRIDAY_SENSITIVE_WINDOWS="thunderbird
+evolution
+geary
+outlook
+signal
+telegram
+discord
+vesktop
+slack
+whatsapp
+element
+fractal
+teams"
+
+# friday_sensitive_window [window JSON]: the line that makes that window (or
+# the one in front) a mail or chat app, or nothing.
+friday_sensitive_window() {
+  friday_feature_on sensitive-warn || return 0
+  command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 0
+  local win="${1:-}" hay pat own="${XDG_CONFIG_HOME:-$HOME/.config}/friday/sensitive-windows" drop
+  [ -n "$win" ] || win=$(timeout 2 hyprctl activewindow -j 2>/dev/null) || return 0
+  hay=$(jq -r '"\(.class // "") \(.title // "")"' <<<"$win" 2>/dev/null | tr '[:upper:]' '[:lower:]') || return 0
+  drop=$(sed -n 's/^[[:space:]]*!//p' "$own" 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
+  while IFS= read -r pat; do
+    pat=$(tr '[:upper:]' '[:lower:]' <<<"$pat" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    [[ -n "$pat" && "$pat" != \#* && "$pat" != !* ]] || continue
+    grep -qxF -- "$pat" <<<"$drop" && continue
+    if [[ "$hay" == *"$pat"* ]]; then printf '%s' "$pat"; return 0; fi
+  done < <(printf '%s\n' "$FRIDAY_SENSITIVE_WINDOWS"; cat "$own" 2>/dev/null || true)
+}
+
 # friday_private_window: what made the focused window private, or nothing.
 friday_private_window() { # [window JSON, else the one in front now]
   command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 0
@@ -3316,6 +3351,7 @@ couldnt-check|Say when an answer comes from general knowledge, with nothing on t
 easy-local|With local AI set up, short general questions are answered on this computer first
 agent-resume|A follow-up to a coding agent goes on in its session (\"tell opencode to also add tests\")
 self-docs|Questions about FRIDAY are answered from its own guide
+sensitive-warn|Mail and chat apps: say where their text goes before sending it, or answer with the local model
 place-window|Put a window on one side of the screen (\"put Firefox on the left\")"
 friday_features_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/features-off"; }
 # friday_feature_on <name>: on unless switched off.
@@ -3918,6 +3954,16 @@ case "${1:-}" in
     # another window focused meanwhile.
     priv_win=""
     if $use_screen && [ -n "$private_win" ]; then priv_win=$(timeout 2 hyprctl activewindow -j 2>/dev/null || true); fi
+    # A mail or chat app: the ask box says where its text goes (sens_note).
+    sensitive_win="" sens_json="" sens_note="" sens_seen=false
+    if { $use_selection || $use_screen; } && [ -z "$private_win" ]; then
+      sens_json=$(timeout 2 hyprctl activewindow -j 2>/dev/null || true)
+      sensitive_win=$(friday_sensitive_window "$sens_json")
+    fi
+    if [ -n "$sensitive_win" ]; then
+      if friday_local_ready; then sens_note=" · from $sensitive_win: answered on this computer"
+      else sens_note=" · from $sensitive_win, so someone else's words: Enter sends them to your AI provider"; fi
+    fi
     state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
     history_file="$state_dir/ask-history"
     notify() { notify-send -a FRIDAY -- "$@" 2>/dev/null || true; }
@@ -4002,13 +4048,15 @@ case "${1:-}" in
     if [ -z "$goal" ]; then
       if $use_region; then
         goal=$(fuzzel --dmenu --prompt-only="FRIDAY ⬚ " --width=70 \
-          --placeholder="Ask about the area you picked (a screenshot of it goes to your AI provider)" </dev/null) || exit 0
+          --placeholder="Ask about the area you picked (a screenshot of it goes to your AI provider)$sens_note" </dev/null) || exit 0
+        [ -z "$sens_note" ] || sens_seen=true
       elif $use_followup; then
         goal=$(fuzzel --dmenu --prompt-only="FRIDAY › " --width=70 \
           --placeholder="Follow up on: $(head -n 1 <<<"$context" | sed 's/^# //' | cut -c1-50)" </dev/null) || exit 0
       elif $use_screen; then
         goal=$(fuzzel --dmenu --prompt-only="FRIDAY 👁 " --width=70 \
-          --placeholder="Ask about your screen (its text, or a screenshot if it has too little, goes to your AI provider)" </dev/null) || exit 0
+          --placeholder="Ask about your screen (its text, or a screenshot if it has too little, goes to your AI provider)$sens_note" </dev/null) || exit 0
+        [ -z "$sens_note" ] || sens_seen=true
       elif $use_selection; then
         # Quick actions, then your own prompts (one per line in
         # ~/.config/friday/prompts); Shift+Enter sends what you typed instead.
@@ -4023,7 +4071,8 @@ case "${1:-}" in
             "Fix the grammar and spelling; reply with only the corrected text"
           sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "${XDG_CONFIG_HOME:-$HOME/.config}/friday/prompts" 2>/dev/null || true
         } | fuzzel --dmenu --prompt="FRIDAY › " --width=70 --lines=8 \
-          --placeholder="$source_label: \"$preview…\" · pick or type (Shift+Enter sends it)") || exit 0
+          --placeholder="$source_label: \"$preview…\"$sens_note · pick or type (Shift+Enter sends it)") || exit 0
+        [ -z "$sens_note" ] || sens_seen=true
       elif last_error=$(friday_last_error) && running=$(friday_kitty_running) \
           && suggestions=$(friday_app_suggestions) \
           && term=$([ -n "$last_error$running" ] || friday_term_record) \
@@ -4187,6 +4236,20 @@ case "${1:-}" in
     if { $use_screen || $use_selection; } && [ -z "$private_win" ] && [ "$source_label" != File ]; then
       private_win=$(friday_private_window)
       if $use_screen && [ -n "$private_win" ]; then priv_win=$(timeout 2 hyprctl activewindow -j 2>/dev/null || true); fi
+    fi
+    # A mail or chat app the box didn't warn about (a suggestion picked, a
+    # question passed straight in): ask once more, unless the local model
+    # answers it here anyway.
+    if { $use_screen || $use_selection; } && [ -z "$private_win" ] && [ "$source_label" != File ]; then
+      if [ -z "$sens_json" ]; then
+        sens_json=$(timeout 2 hyprctl activewindow -j 2>/dev/null || true)
+        sensitive_win=$(friday_sensitive_window "$sens_json")
+      fi
+      if [ -n "$sensitive_win" ] && ! $sens_seen && ! friday_local_ready; then
+        [ "$(friday_confirm "send what's in $sensitive_win to your AI provider")" = run ] || exit 0
+      fi
+    else
+      sensitive_win=""
     fi
     # Asking about the screen in words is asking to look at it, the same as
     # Super+Ctrl+Y: never answer "I can't see your screen" to that. Narrow on
@@ -4555,6 +4618,31 @@ case "${1:-}" in
     # "never <name>" in private-windows: not even the local model reads it.
     if [[ "$private_win" == never:* ]]; then
       notify-send -a FRIDAY -- "FRIDAY" "FRIDAY doesn't read this window at all (your rule \"never ${private_win#never:}\" in ~/.config/friday/private-windows)." 2>/dev/null || true
+      exit 0
+    fi
+    # A mail or chat app with a local model set up: answered here (its text,
+    # never a screenshot); nothing goes to the cloud if that fails.
+    if [ -n "$sensitive_win" ] && [ -z "$private_win" ] && friday_local_ready; then
+      if $use_screen; then
+        win_text=""
+        if [ -n "$sens_json" ] \
+            && win_text=$(timeout 15 friday-ctl window-text "$(jq -r '.class // ""' <<<"$sens_json")" "$(jq -r '.title // ""' <<<"$sens_json")" 2>/dev/null) \
+            && [ -n "$win_text" ]; then
+          request=$(printf '%s\n\n[window]\nThe text of the window in front (%s, kept on this computer):\n"""\n%s\n"""' "$goal" "$sensitive_win" "$win_text")
+        else
+          notify "FRIDAY" "Couldn't read the text of this $sensitive_win window to answer on this computer, so nothing was sent. To send it to your AI provider instead: friday feature sensitive-warn off"
+          exit 0
+        fi
+      fi
+      if ! reply=$(friday_ask_local "$request"); then
+        notify "FRIDAY" "Your local model didn't answer, so nothing from $sensitive_win was sent."
+        exit 0
+      fi
+      if [ -n "${rewrite:-}" ]; then
+        friday_replace_selection "$(friday_rewrite_clean "$reply")" "${sel_window:-}" "" "the rewrite" "$context"
+        exit 0
+      fi
+      show_answer true "$(jq -n --arg r "$reply" '{result: $r, local: true}')" ""
       exit 0
     fi
     if [ -n "$private_win" ]; then
