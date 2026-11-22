@@ -4885,6 +4885,8 @@ case "${1:-}" in
         fi
         case "$action" in
           run)
+            # Run clicked: this is the answer being waited for now.
+            [ -z "${ask_token:-}" ] || printf '%s' "$ask_token" >"$state_dir/ask-newest" 2>/dev/null || true
             conf_ok=true
             conf_args=(goal --wait --confirm "$action_to_confirm")
             $use_web && conf_args+=(--web)
