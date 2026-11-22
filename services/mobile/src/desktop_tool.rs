@@ -187,15 +187,25 @@ pub(crate) fn append_undo(dir: &std::path::Path, line: &Value) {
         use std::os::unix::fs::OpenOptionsExt;
         lock_opts.mode(0o600);
     }
-    // Released when `_lock` closes at the end.
-    let _lock = lock_opts.open(dir.join("undo.jsonl.lock")).inspect(|_l| {
-        #[cfg(unix)]
-        {
-            use std::os::fd::AsRawFd;
+    // Released when `_lock` closes at the end. Not got within 2 s (a stuck
+    // CLI): the entry is dropped rather than written over another.
+    let _lock = lock_opts.open(dir.join("undo.jsonl.lock"));
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        let Ok(l) = &_lock else { return };
+        let got = (0..40).any(|_| {
             // SAFETY: flock on a descriptor this function owns.
-            unsafe { libc::flock(_l.as_raw_fd(), libc::LOCK_EX) };
+            let ok = unsafe { libc::flock(l.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
+            if !ok {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            ok
+        });
+        if !got {
+            return;
         }
-    });
+    }
     let old = std::fs::read_to_string(&path).unwrap_or_default();
     let mut lines: Vec<&str> = old.lines().filter(|l| !l.trim().is_empty()).collect();
     let keep = lines.len().saturating_sub(19);

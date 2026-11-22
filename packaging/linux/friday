@@ -1198,13 +1198,15 @@ friday_undo_add() {
   local f said="$1" kind="$2"; shift 2
   f=$(friday_undo_file)
   mkdir -p "$(dirname "$f")" && chmod 700 "$(dirname "$f")"
-  # The daemon rewrites this journal too: both hold undo.jsonl.lock.
+  # The daemon rewrites this journal too: both hold undo.jsonl.lock (and
+  # an entry that can't get it in 5 s is dropped, never written over another).
   (umask 077
-   flock -w 5 9 2>/dev/null || true
-   { tail -n 19 "$f" 2>/dev/null || true
+   exec 9>"$f.lock"
+   flock -w 5 9 2>/dev/null || ! command -v flock >/dev/null || exit 0
+   { grep -v '^[[:space:]]*$' "$f" 2>/dev/null | tail -n 19 || true
      jq -nc --arg ts "$(date -Is)" --arg said "$said" --arg kind "$kind" \
        '{ts: $ts, said: $said, kind: $kind, args: $ARGS.positional}' --args "$@"
-   } >"$f.tmp" && mv -f "$f.tmp" "$f") 9>"$f.lock" || true
+   } >"$f.tmp" && mv -f "$f.tmp" "$f") || true
 }
 
 # The sound's volume (0..1.5) and mute (0|1), as an undo entry's args.
@@ -1223,10 +1225,11 @@ friday_undo() {
   # fails isn't tried again by the next one.
   [ -d "$(dirname "$f")" ] || { echo "Nothing to undo."; return 0; }
   last=$( (umask 077
-           flock -w 5 9 2>/dev/null || true
-           l=$(tail -n 1 "$f" 2>/dev/null || true)
-           [ -z "$l" ] || { head -n -1 "$f" >"$f.tmp" && mv -f "$f.tmp" "$f"; }
-           printf '%s' "$l") 9>"$f.lock" || true)
+           exec 9>"$f.lock"
+           flock -w 5 9 2>/dev/null || ! command -v flock >/dev/null || exit 0
+           l=$(grep -v '^[[:space:]]*$' "$f" 2>/dev/null | tail -n 1 || true)
+           [ -z "$l" ] || { grep -v '^[[:space:]]*$' "$f" | head -n -1 >"$f.tmp" && mv -f "$f.tmp" "$f"; }
+           printf '%s' "$l") || true)
   if [ -z "$last" ]; then echo "Nothing to undo."; return 0; fi
   kind=$(jq -r '.kind' <<<"$last") said=$(jq -r '.said' <<<"$last")
   a0=$(jq -r '.args[0] // ""' <<<"$last") a1=$(jq -r '.args[1] // ""' <<<"$last")
@@ -2700,7 +2703,7 @@ friday_forget() {
   done
   local n_answers n_asks n_sent n_mem n_actions
   n_actions=$(wc -l <"$state_dir/actions.jsonl" 2>/dev/null || true)
-  n_answers=$(grep -c '^<!-- friday answer -->' "$state_dir/answers.md" 2>/dev/null || true)
+  n_answers=$(cat "$state_dir/answers.1.md" "$state_dir/answers.md" 2>/dev/null | grep -c '^<!-- friday answer -->' || true)
   n_asks=$(wc -l <"$state_dir/ask-history" 2>/dev/null || true)
   n_sent=$(wc -l <"$state_dir/egress.jsonl" 2>/dev/null || true)
   n_mem=$(wc -l <"$mem_dir/episodes.jsonl" 2>/dev/null || true)
@@ -2721,7 +2724,7 @@ friday_forget() {
     [[ "$reply" =~ ^[Yy]$ ]] || { echo "Nothing deleted."; return 0; }
   fi
   if [ "$what" = answers ] || [ "$what" = all ]; then
-    rm -f "$state_dir/answers.md" "$state_dir/answers.1.md" "$state_dir/last-answer.md" "$state_dir/ask-history"
+    rm -f "$state_dir/answers.md" "$state_dir/answers.1.md" "$state_dir/answers.lock" "$state_dir/last-answer.md" "$state_dir/ask-history"
     echo "Deleted ${n_answers:-0} saved answers and ${n_asks:-0} remembered questions."
   fi
   if [ "$what" = sent ] || [ "$what" = all ]; then
@@ -3968,12 +3971,25 @@ case "${1:-}" in
       } >"$answer_file"
       # Each entry opens with a marker line, so a "---" inside an answer
       # never splits it (FRIDAY Shell's answer history reads these).
-      # Past 2 MiB it becomes answers.1.md (the one before goes), so the
-      # history, the timeline and the shell read a bounded file.
-      if [ "$(stat -c %s "$state_dir/answers.md" 2>/dev/null || echo 0)" -gt 2097152 ]; then
-        mv -f "$state_dir/answers.md" "$state_dir/answers.1.md" 2>/dev/null || true
-      fi
-      { printf '<!-- friday answer -->\n'; cat "$answer_file"; printf '\n---\n\n'; } >>"$state_dir/answers.md"
+      # Past 2 MiB its older half (whole entries) becomes answers.1.md, the
+      # one before going, so the history, the timeline and the shell read a
+      # bounded file that still has hundreds of answers. Under a lock: two
+      # answers at once neither interleave nor rotate twice.
+      (umask 077
+       exec 9>"$state_dir/answers.lock"
+       flock -w 5 9 2>/dev/null || ! command -v flock >/dev/null || exit 0
+       a="$state_dir/answers.md"
+       size=$(stat -c %s "$a" 2>/dev/null || echo 0)
+       if [ "$size" -gt 2097152 ]; then
+         n=$(awk -v h=$((size / 2)) '{ b += length($0) + 1 } b > h && /^<!-- friday answer -->$/ { print NR; exit }' "$a")
+         if [ -n "$n" ]; then
+           head -n $((n - 1)) "$a" >"$a.old.tmp" && tail -n +"$n" "$a" >"$a.tmp" \
+             && mv -f "$a.old.tmp" "$state_dir/answers.1.md" && mv -f "$a.tmp" "$a"
+         else
+           mv -f "$a" "$state_dir/answers.1.md"
+         fi
+       fi
+       { printf '<!-- friday answer -->\n'; cat "$answer_file"; printf '\n---\n\n'; } >>"$a") || true
       # What friday wrong saves about this answer: how it was asked and
       # answered, never the question's or the answer's text.
       # An error is kept as its kind only: its text can echo the answer.
