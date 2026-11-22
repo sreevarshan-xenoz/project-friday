@@ -71,7 +71,7 @@ PanelWindow {
     border.color: Answer.ok ? Theme.glassEdge : Theme.error
     clip: true
     focus: true
-    Keys.onEscapePressed: Answer.dismiss()
+    Keys.onEscapePressed: Answer.close()
     opacity: Answer.visible ? 1 : Math.min(1, height / 40)
     property bool followUpOpen: false
 
@@ -129,7 +129,7 @@ PanelWindow {
           icon: Icons.close
           size: 26
           tooltip: "Close (Esc)"
-          onClicked: Answer.dismiss()
+          onClicked: Answer.close()
         }
         IconButton {
           visible: Answer.state === "working"
@@ -223,7 +223,7 @@ PanelWindow {
             Answer.followUp(text);
             Answer.dismiss();
           }
-          Keys.onEscapePressed: Answer.dismiss()
+          Keys.onEscapePressed: Answer.close()
 
           Label {
             anchors.fill: parent

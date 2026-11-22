@@ -15,7 +15,7 @@ cat >"$S/friday-ctl" <<EOF
 if [[ "\$1" == say ]]; then
   if [[ "\$2" == "-" ]]; then text=\$(cat); else text="\${*:2}"; fi
   printf 'friday-ctl-say %s\n' "\$text" >> "$LOG"
-  exit 0
+  exit "\${SAY_EXIT:-0}"
 fi
 if [[ "\$1" == watch ]]; then
   printf 'friday-ctl-watch %s\n' "\$*" >> "$LOG"
@@ -78,6 +78,12 @@ if [[ "\$1" == workspace ]]; then
 fi
 if [[ "\$1" == listen ]]; then
   printf 'friday-ctl-listen %s\n' "\$*" >> "$LOG"
+  if [[ "\$2" == answer ]]; then
+    # What was said once (the file goes, so a follow-up isn't heard twice).
+    echo listening
+    [ -f "$W/heard" ] && { cat "$W/heard"; rm -f "$W/heard"; exit 0; }
+    exit 1
+  fi
   echo "/notes/2026-11-20-0905.txt"
   sleep 30
   exit 0
@@ -1500,6 +1506,11 @@ contains "voice status says it's on" "$(bash "$F" voice status)" "hold Super+Y a
 : >"$LOG"; PICK="tapped with voice on" bash "$F" hold start; PICK="tapped with voice on" bash "$F" hold end; sleep 0.3
 contains "voice on: a quick tap still opens the prompt" "$(cat "$LOG")" "tapped with voice on"
 if grep -q "pw-record" "$LOG"; then fail "a quick tap started recording"; else pass "a quick tap records nothing"; fi
+# The key stops FRIDAY talking at once (a test runtime folder, not the real one).
+RT="$W/rt-say"; mkdir -p "$RT"; chmod 700 "$RT"; echo 4242 >"$RT/friday-say.pid"
+: >"$LOG"; XDG_RUNTIME_DIR="$RT" PICK="x" bash "$F" hold start; XDG_RUNTIME_DIR="$RT" PICK="x" bash "$F" hold end; sleep 0.3
+contains "the talk key stops FRIDAY talking" "$(cat "$LOG")" "friday-ctl-say --stop"
+rm -rf "$RT"
 : >"$LOG"; bash "$F" hold start; sleep 0.9; bash "$F" hold end; sleep 0.3
 contains "hold: records 16 kHz mono" "$(cat "$LOG")" "pw-record --rate 16000 --channels 1"
 contains "hold: the spoken words are asked" "$(cat "$LOG")" "what time is it in Tokyo"
@@ -1830,6 +1841,22 @@ bash "$F" voice speak on >/dev/null
 contains "on" "$(bash "$F" voice speak status)" "Spoken answers: on"
 : >"$LOG"; bash "$F" ask "what is rust" >/dev/null 2>&1; sleep 0.6
 contains "an answer is spoken when it is on" "$(cat "$LOG")" "friday-ctl-say"
+# Asked by voice and said to the end: after a sound, a follow-up needs no key.
+mkdir -p "$HOME/.local/share/friday/whisper"; head -c 100 /dev/zero >"$HOME/.local/share/friday/whisper/ggml-base.en.bin"
+echo "and in Go?" >"$W/heard"; : >"$LOG"; FRIDAY_SPOKEN=1 bash "$F" ask "what is rust" >/dev/null 2>&1; sleep 1.5
+contains "voice: after a spoken answer FRIDAY listens for a follow-up" "$(cat "$LOG")" "friday-ctl-listen listen answer"
+contains "voice: what was said is asked as a follow-up" "$(grep -v "^friday-ctl-" "$LOG")" "and in Go?"
+echo "Thanks." >"$W/heard"; : >"$LOG"; FRIDAY_SPOKEN=1 bash "$F" ask "what is rust" >/dev/null 2>&1; sleep 1.5
+if grep -v "^friday-ctl-" "$LOG" | grep -q "Thanks"; then fail "voice: thanks was asked as a question"; else pass "voice: thanks ends the conversation"; fi
+echo "and in Go?" >"$W/heard"; : >"$LOG"; FRIDAY_SPOKEN=1 SAY_EXIT=5 bash "$F" ask "what is rust" >/dev/null 2>&1; sleep 1
+if grep -q "listen answer" "$LOG"; then fail "voice: listened after the answer was stopped"; else pass "voice: a stopped answer doesn't listen"; fi
+: >"$LOG"; bash "$F" ask "what is rust" >/dev/null 2>&1; sleep 1
+if grep -q "listen answer" "$LOG"; then fail "voice: a typed ask listened for a follow-up"; else pass "voice: a typed ask doesn't listen"; fi
+bash "$F" feature voice-followup off >/dev/null
+: >"$LOG"; FRIDAY_SPOKEN=1 bash "$F" ask "what is rust" >/dev/null 2>&1; sleep 1
+if grep -q "listen answer" "$LOG"; then fail "voice: voice-followup off still listened"; else pass "voice: voice-followup off doesn't listen"; fi
+bash "$F" feature voice-followup on >/dev/null
+rm -f "$W/heard" "$HOME/.local/share/friday/whisper/ggml-base.en.bin"
 bash "$F" voice speak voice 4 >/dev/null
 contains "the chosen voice is kept" "$(cat "$VD/settings.json")" '"speaker": 4'
 if bash "$F" voice speak voice loud >/dev/null 2>&1; then fail "a voice that isn't a number was accepted"; else pass "a voice must be a number"; fi

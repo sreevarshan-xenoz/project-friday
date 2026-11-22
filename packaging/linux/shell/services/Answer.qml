@@ -76,6 +76,11 @@ Singleton {
   }
 
   function dismiss() { root.state = "idle"; }
+  // Put away by the person (Esc, the close button): the reading stops too.
+  function close() {
+    root.dismiss();
+    Quickshell.execDetached(["friday", "say", "--stop"]);
+  }
 
   // What the pill says to do when the key is let go.
   property string listenHint: "let go of Super+Y to ask"
