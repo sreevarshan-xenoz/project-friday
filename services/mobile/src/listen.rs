@@ -515,16 +515,103 @@ fn mic_frames() -> Option<Box<dyn Iterator<Item = Vec<i16>>>> {
     }
     #[cfg(not(windows))]
     {
-        frames(false)
+        // With talk-over on, the echo-cancelled microphone: FRIDAY's own voice
+        // is taken out of it.
+        frames_from(talk_over_on().then_some(ECHO_SOURCE))
             .ok()
             .map(|f| Box::new(f) as Box<dyn Iterator<Item = Vec<i16>>>)
     }
 }
 
+/// Talk-over (`friday voice talk-over on`, Linux): PipeWire's echo
+/// cancellation gives FRIDAY its own speaker and microphone, so what it says
+/// is taken out of what the microphone hears and the person can talk over it.
+pub const ECHO_SINK: &str = "friday-echo-sink";
+pub const ECHO_SOURCE: &str = "friday-echo-source";
+
+/// The PipeWire setting `friday voice talk-over on` writes.
+pub fn talk_over_conf() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
+        })?;
+    Some(base.join("pipewire/pipewire.conf.d/friday-echo-cancel.conf"))
+}
+
+pub fn talk_over_on() -> bool {
+    cfg!(not(windows)) && talk_over_conf().is_some_and(|p| p.is_file())
+}
+
+/// Frames that are clearly speech before FRIDAY stops talking for it.
+pub const BARGE_FRAMES: usize = 3;
+
+/// Talking over FRIDAY (talk-over on): while it speaks, listens on the
+/// echo-cancelled microphone; once the person has spoken for a moment, the
+/// speech stops and what they say is printed. Exit 0 with the text; 1 when
+/// nothing was said before the speech ended; 3 without voice or talk-over.
+pub fn run_barge() -> u8 {
+    let Some((whisper, model)) = find_whisper() else {
+        return 3;
+    };
+    if !talk_over_on() {
+        return 3;
+    }
+    let Ok(frames) = frames_from(Some(ECHO_SOURCE)) else {
+        return 3;
+    };
+    let mut seg = Segmenter::new(8, 150);
+    let mut loud = 0;
+    let mut stopped = false;
+    for frame in frames {
+        if !stopped && !crate::speech::speaking() {
+            return 1;
+        }
+        let piece = seg.feed(&frame);
+        if !stopped {
+            loud = if seg.speaking { loud + 1 } else { 0 };
+            if loud >= BARGE_FRAMES {
+                crate::speech::stop_running();
+                stopped = true;
+            }
+        }
+        if let Some(p) = piece {
+            if !stopped {
+                continue;
+            }
+            return match transcribe(&whisper, &model, &p) {
+                Some(text) => {
+                    println!("{text}");
+                    0
+                }
+                None => 1,
+            };
+        }
+    }
+    1
+}
+
 /// Frames of 100 ms from PipeWire: what is heard (`sink`: the sound the
 /// computer plays) or the microphone. Ends when the recorder does.
 fn frames(sink: bool) -> std::io::Result<impl Iterator<Item = Vec<i16>>> {
-    use std::io::Read;
+    let mut cmd = recorder();
+    if sink {
+        cmd.args(["-P", "stream.capture.sink=true"]);
+    }
+    read_frames(cmd)
+}
+
+/// Frames of 100 ms from one PipeWire source (`None`: the default microphone).
+fn frames_from(target: Option<&str>) -> std::io::Result<impl Iterator<Item = Vec<i16>>> {
+    let mut cmd = recorder();
+    if let Some(t) = target {
+        cmd.args(["--target", t]);
+    }
+    read_frames(cmd)
+}
+
+fn recorder() -> std::process::Command {
     let mut cmd = std::process::Command::new("pw-record");
     cmd.args([
         "--raw",
@@ -535,9 +622,11 @@ fn frames(sink: bool) -> std::io::Result<impl Iterator<Item = Vec<i16>>> {
         "--format",
         "s16",
     ]);
-    if sink {
-        cmd.args(["-P", "stream.capture.sink=true"]);
-    }
+    cmd
+}
+
+fn read_frames(mut cmd: std::process::Command) -> std::io::Result<impl Iterator<Item = Vec<i16>>> {
+    use std::io::Read;
     let mut child = cmd
         .arg("-")
         .stdout(std::process::Stdio::piped())
