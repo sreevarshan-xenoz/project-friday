@@ -223,6 +223,8 @@ contains "an error question says what this computer runs" "$(cat "$LOG")" "[this
 contains "with the installed version of what it names" "$(cat "$LOG")" "installed: firefox 160.0-1"
 : >"$LOG"; bash "$F" ask "what is rust"; sleep 0.3
 if grep -q "this computer\]" "$LOG"; then fail "a plain question carried this computer's facts"; else pass "a plain question doesn't"; fi
+: >"$LOG"; bash "$F" ask "how are you"; sleep 0.3
+if grep -q "this computer\]" "$LOG"; then fail "\"how are you\" carried this computer's facts"; else pass "small talk doesn't"; fi
 if [ -e "$W/pacman.saved" ]; then mv -f "$W/pacman.saved" "$S/pacman"; else rm -f "$S/pacman"; fi
 
 # @-mentions pick what goes with the question, and leave it.
