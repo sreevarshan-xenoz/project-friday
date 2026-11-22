@@ -1248,7 +1248,13 @@ async fn main() -> std::process::ExitCode {
             || (a.contains("org.friday.browser") && a.ends_with(".json"))
     });
     if started_by_browser {
-        return std::process::ExitCode::from(friday_mobile::browser_host::run_host());
+        // On a thread of its own: main is already inside a Tokio runtime, and
+        // the Windows host starts its own (a nested block_on panics, so Brave
+        // saw "Native host has exited").
+        let code = std::thread::spawn(friday_mobile::browser_host::run_host)
+            .join()
+            .unwrap_or(1);
+        return std::process::ExitCode::from(code);
     }
     if raw.first().map(String::as_str) == Some("browser")
         && raw.get(1).map(String::as_str) == Some("tab")
