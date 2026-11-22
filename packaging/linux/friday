@@ -120,6 +120,7 @@ Desktop & System Substrate:
   friday theme [list|set <name>]   Switch desktop visual theme (22 available)
   friday bar [toggle|reload]       Configure Quickshell bar and widgets
   friday update                    Update system and OS components
+  friday app-instructions [list|set <app> <text>|rm <app>]  How FRIDAY answers in an app
   friday upgrade [status|now|auto on|off]  Upgrade safely: settings saved, reverted if FRIDAY breaks
   friday wifi [scan|connect]        Manage network connections
   friday audio [mute|vol-up]        Audio volume and device control
@@ -2645,6 +2646,56 @@ friday_what_still_works() {
 # The app and window title the selected text came from, as one line for the
 # model ("" when off, or when Hyprland can't say). Called before the ask box
 # opens, while that window still has focus. `friday app-context off` stops it.
+# `friday app-instructions [list | set <app> <instruction> | rm <app>]`: how
+# FRIDAY should answer in an app ("kitty: answer with commands only"), one
+# "app: instruction" per line in app-instructions in FRIDAY's config folder.
+# The app is matched against the focused window's class.
+friday_app_instructions_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/app-instructions"; }
+friday_app_instructions_same() { # <a> <b>: the same app (any case, .exe or not, or a reverse-DNS id's last part)
+  local a="${1,,}" b="${2,,}"
+  a="${a%.exe}"; b="${b%.exe}"
+  [ -n "$a" ] && [ -n "$b" ] && { [ "$a" = "$b" ] || [ "${a##*.}" = "$b" ] || [ "$a" = "${b##*.}" ]; }
+}
+friday_app_instructions() { # <app class>: its instruction, if any
+  local app="$1" line name f
+  f=$(friday_app_instructions_file)
+  [ -n "$app" ] && [ -f "$f" ] || return 1
+  while IFS= read -r line; do
+    [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+    name="${line%%:*}"; name="${name//[[:space:]]/}"
+    friday_app_instructions_same "$app" "$name" && { sed 's/^[^:]*:[[:space:]]*//' <<<"$line" | cut -c1-300; return 0; }
+  done <"$f"
+  return 1
+}
+friday_app_instructions_drop() { # <file> <app>: the file without that app's line
+  local line name
+  [ -f "$1" ] || return 0
+  while IFS= read -r line; do
+    name="${line%%:*}"; name="${name//[[:space:]]/}"
+    [[ "$line" != *:* || "$line" =~ ^[[:space:]]*# ]] || ! friday_app_instructions_same "$name" "$2" || continue
+    printf '%s\n' "$line"
+  done <"$1"
+}
+friday_app_instructions_cmd() {
+  local f; f=$(friday_app_instructions_file)
+  case "${1:-list}" in
+    list) if [ -s "$f" ] && grep -q '^[[:space:]]*[^#[:space:]]' "$f"; then grep -v '^[[:space:]]*#' "$f" || true
+          else echo "No app instructions yet. Add one: friday app-instructions set kitty \"answer with commands only\""; fi ;;
+    set|rm)
+      [ -n "${2:-}" ] && { [ "$1" = rm ] || [ -n "${3:-}" ]; } || { echo "Usage: friday app-instructions set <app> <instruction> | rm <app>" >&2; return 1; }
+      [[ "$2" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "friday: an app is named like its window class (kitty, firefox, org.gnome.Nautilus)" >&2; return 1; }
+      mkdir -p "$(dirname "$f")"
+      if [ "$1" = set ]; then
+        { friday_app_instructions_drop "$f" "$2"; printf '%s: %s\n' "$2" "$(tr '\n\r' '  ' <<<"${*:3}" | sed 's/[[:space:]]*$//')"; } >"$f.tmp" && mv -f "$f.tmp" "$f"
+        echo "In $2, FRIDAY will: ${*:3}"
+      else
+        [ ! -f "$f" ] || { friday_app_instructions_drop "$f" "$2" >"$f.tmp" && mv -f "$f.tmp" "$f"; }
+        echo "No instructions for $2 now."
+      fi ;;
+    *) echo "Usage: friday app-instructions [list|set <app> <instruction>|rm <app>]" >&2; return 1 ;;
+  esac
+}
+
 friday_app_context() {
   [ ! -e "${XDG_CONFIG_HOME:-$HOME/.config}/friday/no-app-context" ] || return 0
   command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 0
@@ -3633,12 +3684,18 @@ case "${1:-}" in
     lookup_pids=$!
     { pill state && : >"$lookups/pill"; } &
     lookup_pids+=" $!"
-    ask_project="" use_pill=false
+    # The app in front now (the box doesn't take that), for its instructions.
+    if [ -s "$(friday_app_instructions_file)" ]; then
+      { friday_app_class >"$lookups/app" 2>/dev/null || true; } &
+      lookup_pids+=" $!"
+    fi
+    ask_project="" use_pill=false ask_app=""
     ask_lookups() {
       [ -d "$lookups" ] || return 0
       # shellcheck disable=SC2086
       wait $lookup_pids 2>/dev/null || true
       ask_project=$(cat "$lookups/project" 2>/dev/null || true)
+      ask_app=$(cat "$lookups/app" 2>/dev/null || true)
       [ ! -e "$lookups/pill" ] || use_pill=true
       rm -rf "$lookups"
     }
@@ -3876,6 +3933,14 @@ case "${1:-}" in
       docs=$(timeout 2 friday-ctl docs -- "$goal" 2>/dev/null || true)
       [ -z "$docs" ] || request=$(printf '%s\n\n[docs]\nThese excerpts from documentation on this computer may help. Use them only if they fit, and name the one you use (for example "Arch wiki: Pacman"):\n"""\n%s\n"""' "$goal" "$docs")
     fi
+    # What the person asked FRIDAY to do in this app (friday app-instructions).
+    # Never for a private window: neither the app nor the instruction goes.
+    app_rule=""
+    if [ -z "${rewrite:-}" ] && ! $use_screen && [ -z "$private_win" ] \
+        && app_rule=$(friday_app_instructions "$ask_app") && [ -n "$app_rule" ] && [ -n "$(friday_private_window)" ]; then
+      app_rule=""
+    fi
+    [ -z "$app_rule" ] || request=$(printf '%s\n\n[app instructions]\nIn %s, the person asked FRIDAY to follow this (their own setting):\n"""\n%s\n"""' "$request" "$ask_app" "$app_rule")
 
     ok=true
     ctl_rc=0
@@ -4052,6 +4117,7 @@ case "${1:-}" in
         elif [ -n "${tab:-}" ]; then used_parts+=("the page's text (browser extension)"); fi
         [ -z "${docs:-}" ] || used_parts+=("docs on this computer")
         [ -z "${ws_report:-}" ] || used_parts+=("the windows FRIDAY put back")
+        [ -z "${app_rule:-}" ] || used_parts+=("your instructions for $ask_app")
         local u
         while IFS= read -r u; do [ -z "$u" ] || used_parts+=("$u"); done \
           < <(jq -r '.used[]? // empty' <<<"$summary_json" 2>/dev/null || true)
@@ -4283,6 +4349,10 @@ case "${1:-}" in
   meeting)
     shift
     friday_meeting "$@"
+    ;;
+  app-instructions)
+    shift
+    friday_app_instructions_cmd "$@"
     ;;
   upgrade)
     shift
