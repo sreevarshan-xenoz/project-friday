@@ -25,7 +25,6 @@ You can also just say it in the question: "what is on my screen" or "what am I l
 Hold Super+Y instead of tapping it to talk (`friday voice setup` first). The
 speech is turned into text on your computer; only the text is sent. On niri, which can't see a key being released, press Mod+Y once to speak and again to ask.
 On Windows, hold Win+Y the same way after Settings, Voice, "Set up talking" (whisper.cpp and its model, about 150 MB, checked against pinned checksums); a tap still opens the ask box, and `hold-to-talk` under Features switches it off.
-When something you asked by voice needs your OK, FRIDAY stops talking, plays a short sound and listens once (about six seconds, only while the Run/Cancel prompt is on screen): say "run" or "cancel" ("yes", "no" and the like work too, but only as the whole answer). Something that can't be undone, like deleting files or closing a window, can be cancelled by voice but needs a click (or your phone) to run. A question you typed never opens the microphone. `friday feature voice-confirm off` (Windows: Features, voice-confirm) turns it off.
 
 **Voice typing:** hold Super+Shift+Y (Mod+Shift+Y on niri: press once to speak, again to type), speak, and let go:
 the words are typed into the field you were in, and nothing is asked or sent. It uses the same voice setup
@@ -94,6 +93,10 @@ that could delete or send something (Delete, Send, Pay, Install, Allow...) asks
 first and shows the button's name. Passwords are never read or typed into. What
 it reads inside an app goes to the AI model answering you; in private mode that
 model is on your computer.
+
+## Talking to FRIDAY
+
+When something you asked by voice needs your OK, FRIDAY stops talking, plays a short sound and listens once (about six seconds, only while the Run/Cancel prompt is on screen): say "run" or "cancel" ("yes", "no" and the like work too, but only as the whole answer). Something that can't be undone, like deleting files or closing a window, can be cancelled by voice but needs a click (or your phone) to run. A question you typed never opens the microphone. `friday feature voice-confirm off` (Windows: Features, voice-confirm) turns it off.
 
 ## Spoken answers (FRIDAY OS)
 
