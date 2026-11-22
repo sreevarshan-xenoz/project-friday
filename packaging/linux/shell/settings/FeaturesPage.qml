@@ -18,7 +18,7 @@ ColumnLayout {
     color: Theme.subtext
   }
 
-  // [{ name, what }] from the list's lines: "on|off  <name>  <what it does>".
+  // [{ on, name, what }] from the list's lines: "on|off  <name>  <what it does>".
   property var features: []
   Cmd {
     id: list
@@ -27,7 +27,7 @@ ColumnLayout {
       const out = [];
       for (const line of output.split("\n")) {
         const m = line.match(/^(on|off)\s+([a-z-]+)\s+(.+)$/);
-        if (m) out.push({ name: m[2], what: m[3] });
+        if (m) out.push({ on: m[1] === "on", name: m[2], what: m[3] });
       }
       page.features = out;
     }
@@ -44,6 +44,7 @@ ColumnLayout {
       onArgs: ["feature", modelData.name, "on"]
       offArgs: ["feature", modelData.name, "off"]
       onText: modelData.name + ": on"
+      checked: modelData.on
     }
   }
 }

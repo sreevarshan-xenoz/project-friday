@@ -99,7 +99,8 @@ if [[ "\$*" == *"--confirm"* ]]; then
 fi
 if [[ "\$*" == *gated* ]]; then
   echo '{"accepted":true}'
-  printf '{\n "outcome": "failed",\n "error": "Confirm to run: git status",\n "needs_confirmation": {\n   "tool": "terminal",\n   "action": "git status"\n }\n}\n'
+  act="\${GATED_ACTION:-git status}"
+  printf '{\n "outcome": "failed",\n "error": "Confirm to run: %s",\n "needs_confirmation": {\n   "tool": "terminal",\n   "action": "%s"\n }\n}\n' "\$act" "\$act"
   exit 3
 fi
 target_arg="\$3"
@@ -1373,6 +1374,10 @@ bash "$F" autonomy act >/dev/null
 contains "act: it runs without asking" "$(cat "$LOG")" "friday-ctl-confirm"
 contains "and says it acted on its own" "$(cat "$LOG")" "FRIDAY acted on its own"
 if grep -q "run=Run" "$LOG"; then fail "act still asked"; else pass "act doesn't ask"; fi
+# ...but what can't be taken back still asks.
+: >"$LOG"; GATED_ACTION="kill 123" CANCEL_CONFIRM=1 bash "$F" ask "gated action"; sleep 0.4
+contains "act: killing a process still asks" "$(cat "$LOG")" "run=Run"
+if grep -q "friday-ctl-confirm" "$LOG"; then fail "act ran an irreversible action unasked"; else pass "act leaves the irreversible action to you"; fi
 contains "ask-all says it asks before every action" "$(bash "$F" autonomy ask-all)" "asks before every action"
 grep -qx 'FRIDAY_AUTONOMY=ask-all' "$HOME/.config/friday/friday.env" && pass "the daemon gets FRIDAY_AUTONOMY" || fail "FRIDAY_AUTONOMY not in friday.env"
 bash "$F" autonomy ask-risky >/dev/null

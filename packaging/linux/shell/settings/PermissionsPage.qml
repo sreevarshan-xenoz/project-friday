@@ -36,7 +36,7 @@ ColumnLayout {
   }
   Label {
     Layout.fillWidth: true
-    text: autonomyStatus.output.replace(/^Autonomy: [a-z-]+ /, "")
+    text: autonomyStatus.output.replace(/^Autonomy: [a-z-]+ \(?/, "").replace(/\)\s*$/, "")
     wrapMode: Text.Wrap
     elide: Text.ElideNone
     color: Theme.subtext
