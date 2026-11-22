@@ -390,6 +390,10 @@ contains "by app and title" "$(cat "$LOG")" 'is kitty (title: "zsh")'
 if grep -q "window in front when asked" "$LOG"; then fail "a question not about this window named it"; else pass "other questions don't name the window"; fi
 : >"$LOG"; HYPR_WIN='{"class":"org.keepassxc.KeePassXC","title":"Passwords"}' bash "$F" ask "close this window"; sleep 0.3
 if grep -q "KeePassXC" "$LOG"; then fail "a private window was named"; else pass "a private window isn't named"; fi
+: >"$LOG"; HYPR_WIN='{"class":"kitty","title":"zsh"}' bash "$F" ask "is this application safe"; sleep 0.3
+if grep -q "window in front when asked" "$LOG"; then fail "\"this application\" named the window"; else pass "\"this application\" isn't \"this app\""; fi
+: >"$LOG"; HYPR_WIN='{"class":"evil\" app\nlaunch","title":"a \"b\"\rc"}' bash "$F" ask "close this window"; sleep 0.3
+contains "an odd app name and title are made plain" "$(cat "$LOG")" 'is evilapplaunch (title: "a bc")'
 out=$(bash "$F" app-instructions set kitty "answer with commands only")
 contains "an app's instruction is kept" "$out" "In kitty, FRIDAY will: answer with commands only"
 contains "and listed" "$(bash "$F" app-instructions list)" "kitty: answer with commands only"

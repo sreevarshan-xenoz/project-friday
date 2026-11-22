@@ -4017,11 +4017,13 @@ case "${1:-}" in
     fi
     # "Close this window" / "move this app": the one in front at the keypress
     # (its app and title), unless it's private or app context is off.
-    if [ -z "${rewrite:-}" ] && ! $use_screen && [ -n "$front_win" ] \
-        && [[ "${goal,,}" =~ (this|current)\ (window|app|tab) ]] \
+    if [ -z "${rewrite:-}" ] && ! $use_screen && ! $use_selection && [ -n "$front_win" ] \
+        && [[ "${goal,,}" =~ (^|[^a-z])(this|current)\ (window|app|tab)([^a-z]|$) ]] \
         && [ ! -e "${XDG_CONFIG_HOME:-$HOME/.config}/friday/no-app-context" ]; then
-      fw_class=$(jq -r '.class // empty' <<<"$front_win" 2>/dev/null || true)
-      fw_title=$(jq -r '.title // empty' <<<"$front_win" 2>/dev/null | tr -d '"\n' | cut -c1-120 || true)
+      # An app may name itself anything, and a title is a page's to choose:
+      # plain characters only, no quotes or line breaks.
+      fw_class=$(jq -r '.class // empty' <<<"$front_win" 2>/dev/null | tr -cd 'A-Za-z0-9._-' | cut -c1-60 || true)
+      fw_title=$(jq -r '.title // empty' <<<"$front_win" 2>/dev/null | tr -d '"\n\r' | tr -d '[:cntrl:]' | cut -c1-120 || true)
       if [ -n "$fw_class" ] && [ -z "$(friday_private_window "$front_win")" ]; then
         request=$(printf '%s\n\n[window in front when asked]\n"this window" is %s (title: "%s"), even if another is in front now.' "$request" "$fw_class" "$fw_title")
       fi
