@@ -215,6 +215,18 @@ contains "ask 'search the web for q' strips prefix" "$(cat "$LOG")" "rust releas
 contains "ask 'look up q' passes --web flag" "$(cat "$LOG")" "friday-ctl-web"
 contains "ask 'look up q' strips prefix" "$(cat "$LOG")" "rust documentation"
 
+# How-to and error questions say what this computer runs.
+cp -p "$S/pacman" "$W/pacman.saved" 2>/dev/null || true
+printf '#!/bin/bash\n[ "$1 $2" = "-Q --" ] && [ "$3" = firefox ] && { echo "firefox 160.0-1"; exit 0; }\nexit 1\n' >"$S/pacman"; chmod +x "$S/pacman"
+: >"$LOG"; bash "$F" ask "why does firefox crash on start"; sleep 0.3
+contains "an error question says what this computer runs" "$(cat "$LOG")" "[this computer]"
+contains "with the installed version of what it names" "$(cat "$LOG")" "installed: firefox 160.0-1"
+: >"$LOG"; bash "$F" ask "what is rust"; sleep 0.3
+if grep -q "this computer\]" "$LOG"; then fail "a plain question carried this computer's facts"; else pass "a plain question doesn't"; fi
+: >"$LOG"; bash "$F" ask "how are you"; sleep 0.3
+if grep -q "this computer\]" "$LOG"; then fail "\"how are you\" carried this computer's facts"; else pass "small talk doesn't"; fi
+if [ -e "$W/pacman.saved" ]; then mv -f "$W/pacman.saved" "$S/pacman"; else rm -f "$S/pacman"; fi
+
 # @-mentions pick what goes with the question, and leave it.
 : >"$LOG"; bash "$F" ask "summarise @tab"; sleep 0.3
 contains "@tab asks about what's in front (the page, in a browser)" "$(cat "$LOG")" "context screen --yes --ask summarise"

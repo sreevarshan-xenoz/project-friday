@@ -2691,6 +2691,27 @@ friday_what_changed() {
   printf '%s' "$out"
 }
 
+# What this computer runs, in a line or two: distro, kernel, desktop, and the
+# installed version of each package the question names (at most 3).
+friday_machine_facts() {
+  local q="${1,,}" distro kernel desk="" w pkgs="" n=0 v
+  distro=$(sed -n 's/^PRETTY_NAME="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' /etc/os-release 2>/dev/null | head -n1 || true)
+  kernel=$(uname -r 2>/dev/null || true)
+  # The desktop that's running (its socket), not whichever is installed.
+  if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
+    desk=$(timeout 1 hyprctl version 2>/dev/null | grep -m1 -oE '^Hyprland [0-9.]+' || true)
+  elif [ -n "${NIRI_SOCKET:-}" ]; then
+    desk=$(timeout 1 niri --version 2>/dev/null | grep -m1 -oE '^niri [0-9.]+' || true)
+  fi
+  if command -v pacman >/dev/null 2>&1; then
+    for w in $(grep -oE '[a-z0-9][a-z0-9.+_-]{2,}' <<<"$q" | sort -u | head -n 12); do
+      v=$(timeout 1 pacman -Q -- "$w" 2>/dev/null) && [ -n "$v" ] || continue
+      pkgs+="${pkgs:+, }$v"; n=$((n + 1)); [ "$n" -lt 3 ] || break
+    done
+  fi
+  printf '%s' "${distro:+$distro; }${kernel:+kernel $kernel; }${desk:+$desk; }${pkgs:+installed: $pkgs}" | sed 's/; *$//'
+}
+
 # Whether a local model on this computer is set up (friday setup-ai local),
 # not whether it's up.
 friday_local_ready() {
@@ -4123,6 +4144,15 @@ case "${1:-}" in
       # (Arch wiki, tldr, man pages; friday-ctl docs prints nothing otherwise).
       docs=$(timeout 2 friday-ctl docs -- "$goal" 2>/dev/null || true)
       [ -z "$docs" ] || request=$(printf '%s\n\n[docs]\nThese excerpts from documentation on this computer may help. Use them only if they fit, and name the one you use (for example "Arch wiki: Pacman"):\n"""\n%s\n"""' "$goal" "$docs")
+    fi
+    # How-to, error and "why doesn't …" questions: what this computer runs
+    # (distro, kernel, desktop, the installed version of a package the
+    # question names), so the answer fits it. Nothing that identifies anyone.
+    trouble_re="^(how (do|can|to|should|would) |why (does|do|did|won.?t|can.?t|isn.?t|is my|am i) |fix |can.?t |cannot |won.?t |doesn.?t |does not |what.?s wrong|what is wrong)|(^|[^a-z])(error|errors|failed|failing|crash|crashes|crashed|crashing|broken|not working)([^a-z]|$)"
+    if [ -z "${rewrite:-}" ] && ! $use_screen && [ -z "$private_win" ] && [ -z "$local_answer" ] \
+        && [[ "${goal,,}" =~ $trouble_re ]] && [ -z "$(friday_private_window)" ] \
+        && facts=$(friday_machine_facts "$goal") && [ -n "$facts" ]; then
+      request=$(printf '%s\n\n[this computer]\n%s' "$request" "$facts")
     fi
     # "Close this window" / "move this app": the one in front at the keypress
     # (its app and title), unless it's private or app context is off.
