@@ -552,6 +552,19 @@ internal sealed partial class SettingsWindow : FluentWindow
     private IEnumerable<UIElement> Voice()
     {
         var paths = _install.Paths;
+        // Talking to FRIDAY: hold the ask key and speak.
+        var key = _do.Hotkeys.TryGetValue(AskKind.Plain, out var k) ? k : "Win+Y";
+        yield return Caption("Talk to FRIDAY");
+        if (!Listening.Installed(paths))
+        {
+            yield return Note($"Hold {key} and speak; let go and FRIDAY answers. Your speech becomes text on this PC (whisper.cpp) and only the text is asked, like a typed question. " +
+                "It downloads once (about 150 MB, checked against a fixed checksum). A tap still opens the ask box.");
+            yield return Download("Set up talking", primary: true, setup: ["listen", "setup"]);
+        }
+        else
+            yield return Note($"Hold {key} and speak; let go and FRIDAY answers. A tap opens the ask box. " +
+                "Your speech becomes text on this PC and is never kept. Switch it off under Features (hold-to-talk).");
+        yield return Caption("Spoken answers");
         if (!Speaking.Installed(paths))
         {
             yield return Note("FRIDAY can read its answers out loud in a voice that is made on this PC: nothing is sent anywhere to speak. " +

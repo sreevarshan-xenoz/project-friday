@@ -1049,7 +1049,7 @@ fn fetch(pin: (&str, &str, &str), into: &Path) -> Result<PathBuf, String> {
 }
 
 /// Downloads `url` to `dest` with `curl` and removes it unless it matches `sha`.
-fn download(url: &str, dest: &Path, sha: &str) -> Result<(), String> {
+pub(crate) fn download(url: &str, dest: &Path, sha: &str) -> Result<(), String> {
     let file = dest.file_name().unwrap_or_default().to_string_lossy();
     let status = Command::new("curl")
         .args(["-fL", "--silent", "--show-error", "-o"])

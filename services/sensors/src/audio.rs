@@ -726,6 +726,23 @@ fn open_default_capture() -> Option<WasapiCapture> {
     None
 }
 
+/// The default microphone on its own, for push-to-talk: whatever was heard
+/// since the last read, as 16 kHz mono. `None` from `open` when there is no
+/// device (and always off Windows, where `pw-record` does this job).
+pub struct Mic(WasapiCapture);
+
+impl Mic {
+    pub fn open() -> Option<Self> {
+        open_default_capture().map(Mic)
+    }
+
+    /// What was heard since the last read (empty when nothing yet); `None`
+    /// once the stream is gone.
+    pub fn read(&self) -> Option<Vec<i16>> {
+        self.0.read_available()
+    }
+}
+
 /// Linear-interpolation resample of i16 mono `from`→`to` Hz. Speech-grade: it
 /// keeps the amplitude continuous so the VAD and whisper.cpp (both 16 kHz)
 /// see the same signal regardless of the capture endpoint's native rate. The
