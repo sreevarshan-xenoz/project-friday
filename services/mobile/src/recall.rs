@@ -96,6 +96,8 @@ pub fn load(path: &Path, now: i64) -> Vec<Seen> {
     }
     all.retain(|s| (0..=keep).contains(&(now - s.ts)));
     all.sort_by_key(|s| s.ts);
+    // A move from the single file cut short can leave a look in both.
+    all.dedup();
     all
 }
 
@@ -144,7 +146,7 @@ fn append(file: &Path, seen: &Seen) -> std::io::Result<()> {
 }
 
 /// Drops the hours past the keep, then the oldest while the rest is over
-/// [`MAX_BYTES`] (never the newest hour).
+/// [`MAX_BYTES`] (never the hour of `now`).
 fn prune(path: &Path, now: i64) {
     let keep = keep_secs(path);
     let mut kept = Vec::new();
@@ -153,12 +155,12 @@ fn prune(path: &Path, now: i64) {
             let _ = std::fs::remove_file(p);
         } else {
             let size = std::fs::metadata(&p).map(|m| m.len() as usize).unwrap_or(0);
-            kept.push((p, size));
+            kept.push((hour, p, size));
         }
     }
-    let mut total: usize = kept.iter().map(|(_, n)| n).sum();
-    for (p, n) in kept.iter().take(kept.len().saturating_sub(1)) {
-        if total <= MAX_BYTES {
+    let mut total: usize = kept.iter().map(|(_, _, n)| n).sum();
+    for (hour, p, n) in &kept {
+        if total <= MAX_BYTES || *hour == now.div_euclid(HOUR) {
             break;
         }
         let _ = std::fs::remove_file(p);
@@ -268,13 +270,19 @@ pub fn private(app: &str, title: &str, own: &str) -> bool {
         .any(|p| has_words(&hay, &p))
 }
 
-/// Whether `hay` has `words` as whole words ("bank" is in "My Bank —", not
-/// in "Embankment").
+/// Whether `hay` has `words` starting at a word ("bank" is in "My Bank —"
+/// and "Online banking", not in "Embankment"). A pattern that doesn't start
+/// with a Latin letter or digit (CJK, say, written without spaces) matches
+/// anywhere.
 fn has_words(hay: &str, words: &str) -> bool {
+    if !words.starts_with(|c: char| c.is_ascii_alphanumeric()) {
+        return hay.contains(words);
+    }
     hay.match_indices(words).any(|(i, _)| {
-        let before = hay[..i].chars().next_back();
-        let after = hay[i + words.len()..].chars().next();
-        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+        !hay[..i]
+            .chars()
+            .next_back()
+            .is_some_and(char::is_alphanumeric)
     })
 }
 
@@ -343,6 +351,16 @@ mod tests {
         assert!(!p.exists());
         let texts: Vec<String> = load(&p, 1_200).into_iter().map(|s| s.text).collect();
         assert_eq!(texts, ["old look", "a page"]);
+        // Cut short after copying (the old file came back): read once.
+        std::fs::write(
+            &p,
+            format!(
+                "{}\n",
+                serde_json::to_string(&seen(1_000, "kitty", "old look")).unwrap()
+            ),
+        )
+        .unwrap();
+        assert_eq!(load(&p, 1_200).len(), 2, "no look twice");
     }
 
     #[test]
@@ -406,7 +424,7 @@ mod tests {
             "{left}"
         );
         // A look from the future (the clock went back) isn't kept on.
-        assert!(load(&p, 0).is_empty());
+        assert!(load(&p2, 0).is_empty());
     }
 
     #[test]
@@ -454,7 +472,8 @@ mod tests {
         assert!(!private("firefox", "My Bank — Mozilla Firefox", "!bank"));
         assert!(private("org.gnome.TextEditor", "diary.txt", "Diary\n"));
         assert!(!private("firefox", "Victoria Embankment — Maps", ""));
-        assert!(private("firefox", "Online banking | My bank", ""));
+        assert!(private("firefox", "Online banking — Mozilla Firefox", ""));
+        assert!(private("firefox", "我的银行账户", "银行\n"));
         assert!(private("chromium", "New Incognito Tab", ""));
         assert!(!private("kitty", "zsh", "# a comment\n"));
     }

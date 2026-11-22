@@ -240,8 +240,9 @@ async fn recall(args: &[String]) -> std::process::ExitCode {
                 // Nothing is read while the screen is locked: what changes
                 // behind the lock (a chat, a notification) wasn't looked at.
                 let locked = std::process::Command::new("pidof")
-                    .args(["hyprlock", "swaylock", "gtklock"])
+                    .args(["hyprlock", "swaylock", "gtklock", "waylock"])
                     .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
                     .status()
                     .is_ok_and(|s| s.success());
                 if locked {

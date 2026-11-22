@@ -856,7 +856,7 @@ contains "and goes with the question (no local model: to the provider)" "$(cat "
 : >"$LOG"; RECALL_REPLY="[x]" bash "$F" ask "what is rust"; sleep 0.3
 if grep -q "friday-ctl-recall" "$LOG"; then fail "an ordinary question searched recall"; else pass "an ordinary question doesn't search recall"; fi
 # Only the hourly files (no single recall.jsonl): still searched.
-mv "$rf" "$W/recall.saved"; mkdir -p "${rf%.jsonl}"; echo '{"ts":1}' >"${rf%.jsonl}/1.jsonl"
+mv "$rf" "$W/recall.saved"; mkdir -p "${rf%.jsonl}"; echo '{"ts":1}' >"${rf%.jsonl}/0.jsonl"
 : >"$LOG"; RECALL_REPLY="[kitty]" bash "$F" ask "what was that error I saw?"; sleep 0.3
 contains "hourly recall files are searched too" "$(cat "$LOG")" "friday-ctl-recall recall search"
 mv "$W/recall.saved" "$rf"
