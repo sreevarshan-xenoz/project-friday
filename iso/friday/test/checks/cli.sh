@@ -722,6 +722,28 @@ contains "timeout: explains it may still be running" "$(cat "$state/last-answer.
 contains "model server down: says so plainly" "$(cat "$state/last-answer.md")" "Couldn't reach your AI provider"
 if grep -q "start=Start FRIDAY" "$LOG"; then fail "a model server refusing was taken for FRIDAY being down"
 else pass "a model server refusing is not FRIDAY being down"; fi
+# Offline: the answer says so and what still works.
+printf '#!/bin/bash\n[ "$*" = "-t networking connectivity" ] && echo "${NM_STATE:-full}"\nexit 0\n' >"$S/nmcli"; chmod +x "$S/nmcli"
+: >"$LOG"; NM_STATE=full bash "$F" ask "model refused test"; sleep 0.3
+if grep -q "offline" "$state/last-answer.md"; then fail "an online failure said it was offline"; else pass "online: no offline note"; fi
+: >"$LOG"; NM_STATE=none bash "$F" ask "model refused test"; sleep 0.3
+contains "offline: the answer says so" "$(cat "$state/last-answer.md")" "You're offline"
+contains "and what still works" "$(cat "$state/last-answer.md")" "Window, app and routine commands still work"
+: >"$LOG"; NM_STATE=limited bash "$F" ask "model refused test"; sleep 0.3
+if grep -q "offline" "$state/last-answer.md"; then fail "a VPN or captive portal (limited) was called offline"; else pass "limited connectivity isn't offline"; fi
+# NetworkManager not running: the default route decides.
+printf '#!/bin/bash
+exit 8
+' >"$S/nmcli"
+printf '#!/bin/bash
+[ "$*" = "route show default" ] && [ -n "${ROUTE:-}" ] && echo "default via 192.0.2.1 dev eth0"
+exit 0
+' >"$S/ip"; chmod +x "$S/ip"
+: >"$LOG"; ROUTE=1 bash "$F" ask "model refused test"; sleep 0.3
+if grep -q "offline" "$state/last-answer.md"; then fail "no NetworkManager but a default route was called offline"; else pass "without NetworkManager, a default route is online"; fi
+: >"$LOG"; ROUTE= bash "$F" ask "model refused test"; sleep 0.3
+contains "without NetworkManager or a route: offline" "$(cat "$state/last-answer.md")" "You're offline"
+rm -f "$S/nmcli" "$S/ip"
 mkdir -p "$HOME/.config/friday"; printf 'engine=ollama\nstate=installing\n' >"$HOME/.config/friday/local-ai.conf"
 bash "$F" ask "model refused test"; sleep 0.3
 contains "local AI still downloading: says so" "$(cat "$state/last-answer.md")" "Local AI is still downloading"

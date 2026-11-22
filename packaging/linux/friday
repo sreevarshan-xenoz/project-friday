@@ -380,6 +380,13 @@ friday_doctor() {
   ok "search backends: $b_str"
 
   echo
+  echo "Right now"
+  local works
+  works=$(friday_what_works)
+  if grep -qx online <<<"$works"; then ok "online"; else warn "offline: cloud models can't answer" "a local model still can: friday setup-ai local"; fi
+  if grep -qx local <<<"$works"; then ok "a local model answers (works offline)"; fi
+  echo
+
   echo "Offline docs"
   local tldr_pages="${TEALDEER_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/tealdeer}"
   if [ -f /usr/share/doc/arch-wiki/text/arch-wiki.txt.gz ]; then ok "Arch wiki (arch-wiki-lite)"
@@ -2562,6 +2569,41 @@ friday_ask_local() {
     | jq -er '.choices[0].message.content | select(. != null and . != "")' 2>/dev/null
 }
 
+# What works right now, in a few quick looks (a second or so in all):
+# "online" (unless NetworkManager says there's no network at all or, without
+# it, there's no default route: a VPN or a captive portal still counts) and
+# "local" (a local model answers). One word a line, only for those that are.
+# Shared by a failed ask's message and friday doctor.
+friday_what_works() {
+  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" base nm
+  nm=$(timeout 1 nmcli -t networking connectivity 2>/dev/null) || nm=""
+  case "$nm" in
+    none) ;;
+    full|limited|portal) echo online ;;
+    *) [ -n "$(timeout 1 ip route show default 2>/dev/null)" ] && echo online ;;
+  esac
+  base=$(sed -n 's/^LLAMACPP_BASE_URL=//p' "$env_file" 2>/dev/null | tail -n1) || base=""
+  if grep -qx 'LLAMACPP_ENABLED=1' "$env_file" 2>/dev/null && [[ "$base" != *@* ]] \
+      && [[ "$base" == http://127.0.0.1:* || "$base" == http://localhost:* ]] \
+      && timeout 1 curl -fs --noproxy '*' "$base/models" >/dev/null 2>&1; then
+    echo local
+  fi
+  return 0
+}
+
+# The sentence a failed ask adds: what's down, and what still works.
+friday_what_still_works() {
+  local works
+  works=$(friday_what_works)
+  if ! grep -qx online <<<"$works"; then
+    if grep -qx local <<<"$works"; then
+      echo "You're offline: your local model still answers (friday private on keeps every ask there), and window, app and routine commands still work."
+    else
+      echo "You're offline, and no local model is set up, so nothing can answer. Window, app and routine commands still work; friday setup-ai local adds a model that works offline."
+    fi
+  fi
+}
+
 # The app and window title the selected text came from, as one line for the
 # model ("" when off, or when Hyprland can't say). Called before the ask box
 # opens, while that window still has focus. `friday app-context off` stops it.
@@ -3854,7 +3896,10 @@ case "${1:-}" in
             case "$(friday_local_conf_get state)" in
               pending|installing)
                 answer="Local AI is still downloading, and no cloud provider answered. Ask again once it's on (friday local-ai status)." ;;
-              *) details="" ;;
+              *) details=""
+                 local still
+                 still=$(friday_what_still_works)
+                 [ -z "$still" ] || answer="$answer $still" ;;
             esac ;;
           *) details="" ;;
         esac
