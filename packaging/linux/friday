@@ -97,6 +97,7 @@ Autonomous Agent & Cognitive Loop:
   friday face [status|setup|remove] Face unlock for the lock screen (Gaze)
   friday voice [status|setup|remove] Hold Super+Y and speak (speech to text on this computer)
   friday voice speak [setup [tinyvoca|kokoro|kitten|supertonic]|on|off|voices|voice N|status]
+  friday voice talk-over [on|off|status]  Talk over a spoken answer to stop it and ask (echo cancellation)
                                    FRIDAY answers out loud, in a voice made on this computer
   friday say "text"                Say something now (friday say --stop to stop)
   friday hold start|end --type     Voice typing: Super+Shift+Y, hold and speak, the words are typed where you are
@@ -2065,6 +2066,56 @@ friday_local_command() {
 friday_voice_model() { echo "${XDG_DATA_HOME:-$HOME/.local/share}/friday/whisper/ggml-base.en.bin"; }
 friday_whisper() { command -v whisper-cli 2>/dev/null || command -v whisper-cpp 2>/dev/null; }
 friday_voice_ready() { [ -s "$(friday_voice_model)" ] && [ -n "$(friday_whisper)" ] && command -v pw-record >/dev/null 2>&1; }
+
+# Talk-over: PipeWire's echo cancellation gives FRIDAY its own speaker and
+# microphone (your default devices stay as they are), so what FRIDAY says is
+# taken out of what the microphone hears: talking over a spoken answer stops
+# it and asks what you said.
+friday_talk_over_conf() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/pipewire/pipewire.conf.d/friday-echo-cancel.conf"; }
+friday_talk_over_on() { [ -f "$(friday_talk_over_conf)" ]; }
+friday_talk_over() {
+  local conf; conf=$(friday_talk_over_conf)
+  case "${1:-status}" in
+    status)
+      if friday_talk_over_on; then echo "Talk-over: on (talk over a spoken answer to stop it and ask)"
+      else echo "Talk-over: off (turn it on: friday voice talk-over on)"; fi
+      ;;
+    on)
+      if [ ! -e "${FRIDAY_AEC_LIB:-/usr/lib/spa-0.2/aec/libspa-aec-webrtc.so}" ]; then
+        echo "friday: talk-over needs PipeWire's echo cancellation (libspa-aec-webrtc, part of the pipewire package)" >&2
+        return 1
+      fi
+      mkdir -p "$(dirname "$conf")"
+      cat >"$conf" <<'CONF'
+# Added by FRIDAY (friday voice talk-over on; off: friday voice talk-over off).
+# FRIDAY's own echo-cancelled microphone and speaker; the default devices
+# stay as they are.
+context.modules = [
+  { name = libpipewire-module-echo-cancel
+    args = {
+      library.name = aec/libspa-aec-webrtc
+      capture.props = { node.name = "friday-echo-capture" node.passive = true }
+      source.props = { node.name = "friday-echo-source" node.description = "FRIDAY (echo-cancelled microphone)" priority.session = 0 }
+      sink.props = { node.name = "friday-echo-sink" node.description = "FRIDAY (voice)" priority.session = 0 }
+      playback.props = { node.name = "friday-echo-playback" node.passive = true }
+    }
+  }
+]
+CONF
+      echo "Restarting PipeWire to add FRIDAY's echo-cancelled microphone (sound pauses for a second)…"
+      systemctl --user restart pipewire pipewire-pulse wireplumber 2>/dev/null || true
+      echo "Talk-over is on: while FRIDAY reads an answer to something you asked by voice, just talk to stop it and ask."
+      ;;
+    off)
+      if friday_talk_over_on; then
+        rm -f "$conf"
+        systemctl --user restart pipewire pipewire-pulse wireplumber 2>/dev/null || true
+      fi
+      echo "Talk-over is off (the talk key and closing the answer still stop FRIDAY talking)."
+      ;;
+    *) echo "Usage: friday voice talk-over [on|off|status]" >&2; return 1 ;;
+  esac
+}
 
 friday_voice() {
   local model; model=$(friday_voice_model)
@@ -4543,6 +4594,15 @@ case "${1:-}" in
       # listens a few seconds for a follow-up, no key needed.
       if $ans_ok && [ -e "$(friday_speak_flag)" ] && friday_speak_ready; then
         (
+          # Talk-over on: talking while it speaks stops it, and what was said
+          # is asked as a follow-up (the reading ends, so nothing else listens).
+          if [ -n "${FRIDAY_SPOKEN:-}" ] && friday_talk_over_on && friday_voice_ready; then
+            (
+              said=$(friday-ctl listen barge 2>/dev/null) || exit 0
+              [ -n "$said" ] && ! friday_conversation_end "$said" || exit 0
+              FRIDAY_SPOKEN=1 exec bash "$0" ask --follow-up "$said"
+            ) &
+          fi
           printf '%s' "$answer" | friday-ctl say - || exit 0
           [ -n "${FRIDAY_SPOKEN:-}" ] && friday_feature_on voice-followup && friday_voice_ready || exit 0
           # With "hey Friday" on, its own conversation hears the follow-up.
@@ -4997,7 +5057,9 @@ case "${1:-}" in
     ;;
   voice)
     shift
-    if [ "${1:-}" = speak ]; then shift; friday_voice_speak "$@"; else friday_voice "$@"; fi
+    if [ "${1:-}" = speak ]; then shift; friday_voice_speak "$@"
+    elif [ "${1:-}" = talk-over ]; then shift; friday_talk_over "$@"
+    else friday_voice "$@"; fi
     ;;
   say)
     shift

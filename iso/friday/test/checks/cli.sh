@@ -78,6 +78,10 @@ if [[ "\$1" == workspace ]]; then
 fi
 if [[ "\$1" == listen ]]; then
   printf 'friday-ctl-listen %s\n' "\$*" >> "$LOG"
+  if [[ "\$2" == barge ]]; then
+    [ -f "$W/barge" ] && { cat "$W/barge"; rm -f "$W/barge"; exit 0; }
+    exit 1
+  fi
   if [[ "\$2" == answer ]]; then
     # What was said once (the file goes, so a follow-up isn't heard twice).
     echo listening
@@ -1861,6 +1865,21 @@ unset STUB_INACTIVE
 : >"$LOG"; echo "and in Go?" >"$W/heard"; FRIDAY_SPOKEN=1 bash "$F" ask "what is rust" >/dev/null 2>&1; sleep 1
 if grep -q "listen answer" "$LOG"; then fail "voice: listened for a follow-up while hey Friday is on"; else pass "voice: with hey Friday on, its conversation hears the follow-up"; fi
 rm -f "$W/heard"
+# Talk-over: PipeWire's echo cancellation, then talking over an answer stops it and asks.
+contains "talk-over starts off" "$(bash "$F" voice talk-over status)" "Talk-over: off"
+if FRIDAY_AEC_LIB="$W/no-aec.so" bash "$F" voice talk-over on >/dev/null 2>&1; then fail "talk-over turned on without echo cancellation"; else pass "talk-over needs PipeWire's echo cancellation"; fi
+: >"$W/aec.so"; : >"$LOG"; FRIDAY_AEC_LIB="$W/aec.so" bash "$F" voice talk-over on >/dev/null
+TOC="$HOME/.config/pipewire/pipewire.conf.d/friday-echo-cancel.conf"
+contains "talk-over adds FRIDAY's echo-cancelled microphone" "$(cat "$TOC")" 'node.name = "friday-echo-source"'
+contains "and restarts PipeWire" "$(cat "$LOG")" "restart pipewire"
+contains "talk-over status: on" "$(bash "$F" voice talk-over status)" "Talk-over: on"
+echo "and in Go?" >"$W/barge"; : >"$LOG"; FRIDAY_SPOKEN=1 SAY_EXIT=5 bash "$F" ask "what is rust" >/dev/null 2>&1; sleep 1.5
+contains "talk-over: what was said over the answer is asked" "$(grep -v "^friday-ctl-" "$LOG")" "and in Go?"
+echo "and in Go?" >"$W/barge"; : >"$LOG"; SAY_EXIT=5 bash "$F" ask "what is rust" >/dev/null 2>&1; sleep 1
+if grep -q "listen barge" "$LOG"; then fail "talk-over listened over a typed ask"; else pass "talk-over: a typed ask isn't listened over"; fi
+rm -f "$W/barge"
+bash "$F" voice talk-over off >/dev/null
+if [ -e "$TOC" ]; then fail "talk-over off left the PipeWire setting"; else pass "talk-over off removes it"; fi
 rm -f "$W/heard" "$HOME/.local/share/friday/whisper/ggml-base.en.bin"
 bash "$F" voice speak voice 4 >/dev/null
 contains "the chosen voice is kept" "$(cat "$VD/settings.json")" '"speaker": 4'

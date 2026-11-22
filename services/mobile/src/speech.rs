@@ -749,7 +749,13 @@ fn play_command(wav: &Path) -> Option<Command> {
                 .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(tool).is_file()));
             if found {
                 let mut c = Command::new(tool);
-                c.args(args).arg(wav);
+                c.args(args);
+                // Talk-over on: through the echo-cancelled speaker, so the
+                // microphone hears the person, not FRIDAY.
+                if tool == "pw-play" && crate::listen::talk_over_on() {
+                    c.args(["--target", crate::listen::ECHO_SINK]);
+                }
+                c.arg(wav);
                 return Some(c);
             }
         }
