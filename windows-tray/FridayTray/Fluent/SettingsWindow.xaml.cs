@@ -496,7 +496,14 @@ internal sealed partial class SettingsWindow : FluentWindow
                 return;
             }
             var (ok, outText) = await Ctl.RunAsync(_install, ["local-ai", "local-first", m.Name, "auto"], TimeSpan.FromSeconds(15));
-            ChangeEnv(e => LocalAi.WithLocalAi(e, m.Name, m.Vision, ok && outText.Trim() == "1", engine.BaseUrl));
+            if (!ok)
+            {
+                errorText.Text = "Couldn't turn it on: " + outText.Trim();
+                errorText.Visibility = Visibility.Visible;
+                button.IsEnabled = true;
+                return;
+            }
+            ChangeEnv(e => LocalAi.WithLocalAi(e, m.Name, m.Vision, outText.Trim() == "1", engine.BaseUrl));
             stateVal.Text = $"on: {m.Name} ({(engine.Engine == "ollama" ? "Ollama" : "llama.cpp")}, already on this PC)";
             turnOffBtn.Visibility = Visibility.Visible;
             button.IsEnabled = true;

@@ -572,18 +572,27 @@ pub async fn engines() -> Vec<Engine> {
     // Ollama: its models, and whether each one sees images (`/api/show`).
     let tags = get(format!("{OLLAMA_URL}/api/tags")).await;
     let mut ollama_models = tags.as_deref().map(parse_ollama_tags).unwrap_or_default();
-    for m in &mut ollama_models {
-        if let Ok(r) = http
-            .post(format!("{OLLAMA_URL}/api/show"))
-            .json(&serde_json::json!({ "model": m.name }))
-            .send()
-            .await
-        {
-            if let Ok(v) = r.json::<serde_json::Value>().await {
-                if let Some(caps) = v["capabilities"].as_array() {
-                    m.vision = caps.iter().any(|c| c == "vision");
-                }
-            }
+    // All at once: many models mustn't add up to a long wait.
+    let shows = futures::future::join_all(ollama_models.iter().map(|m| {
+        let http = http.clone();
+        let name = m.name.clone();
+        async move {
+            let r = http
+                .post(format!("{OLLAMA_URL}/api/show"))
+                .json(&serde_json::json!({ "model": name }))
+                .send()
+                .await
+                .ok()?;
+            let v = r.json::<serde_json::Value>().await.ok()?;
+            v["capabilities"]
+                .as_array()
+                .map(|caps| caps.iter().any(|c| c == "vision"))
+        }
+    }))
+    .await;
+    for (m, vision) in ollama_models.iter_mut().zip(shows) {
+        if let Some(v) = vision {
+            m.vision = v;
         }
     }
     let ollama = Engine {
