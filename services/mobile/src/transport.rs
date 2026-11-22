@@ -438,7 +438,6 @@ mod tests {
     use crate::auth::sign_pairing;
     use crate::protocol::{ClientInfo, ClientMessage, ServerMessage};
     use futures::{SinkExt, Stream, StreamExt};
-    use std::net::SocketAddr;
     use tokio_tungstenite::tungstenite::Message;
 
     async fn recv_server_msg<S>(ws: &mut S) -> ServerMessage
@@ -526,18 +525,19 @@ mod tests {
 
     #[tokio::test]
     async fn full_handshake_command_and_broadcast() {
-        let addr: SocketAddr = "127.0.0.1:18128".parse().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
         let server = WsServer::new(addr);
         let mut cmd_rx = server.subscribe_commands();
         let outbound = server.broadcast_tx();
         let code = server.begin_pairing();
 
         tokio::spawn(async move {
-            server.run().await.unwrap();
+            server.run_on(listener).await.unwrap();
         });
         tokio::time::sleep(Duration::from_millis(150)).await;
 
-        let url = "ws://127.0.0.1:18128";
+        let url = format!("ws://{addr}");
         let (mut client, _resp) = tokio_tungstenite::connect_async(url).await.unwrap();
 
         // 1. Welcome
@@ -596,16 +596,17 @@ mod tests {
 
     #[tokio::test]
     async fn open_mode_skips_pairing_and_delivers_commands() {
-        let addr: SocketAddr = "127.0.0.1:18131".parse().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
         let server = WsServer::new(addr).with_require_auth(false);
         let mut cmd_rx = server.subscribe_commands();
         let outbound = server.broadcast_tx();
         tokio::spawn(async move {
-            server.run().await.unwrap();
+            server.run_on(listener).await.unwrap();
         });
         tokio::time::sleep(Duration::from_millis(150)).await;
 
-        let (mut client, _resp) = tokio_tungstenite::connect_async("ws://127.0.0.1:18131")
+        let (mut client, _resp) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
             .await
             .unwrap();
 
@@ -644,15 +645,16 @@ mod tests {
 
     #[tokio::test]
     async fn unauthenticated_command_is_ignored() {
-        let addr: SocketAddr = "127.0.0.1:18129".parse().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
         let server = WsServer::new(addr);
         let mut cmd_rx = server.subscribe_commands();
         tokio::spawn(async move {
-            server.run().await.unwrap();
+            server.run_on(listener).await.unwrap();
         });
         tokio::time::sleep(Duration::from_millis(150)).await;
 
-        let (mut client, _resp) = tokio_tungstenite::connect_async("ws://127.0.0.1:18129")
+        let (mut client, _resp) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
             .await
             .unwrap();
         let _welcome = recv_server_msg(&mut client).await;
@@ -711,7 +713,8 @@ mod tests {
         use crate::bridge::BusBridge;
         use friday_core::event::{Event, EventBus};
 
-        let addr: SocketAddr = "127.0.0.1:18132".parse().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
         let bus = EventBus::new();
         let server = WsServer::new(addr).with_require_auth(false);
         let outbound = server.broadcast_tx();
@@ -719,7 +722,7 @@ mod tests {
         BusBridge::new(bus.clone(), outbound.clone()).start();
 
         tokio::spawn(async move {
-            server.run().await.unwrap();
+            server.run_on(listener).await.unwrap();
         });
         tokio::time::sleep(Duration::from_millis(150)).await;
 
@@ -732,7 +735,7 @@ mod tests {
         .await
         .unwrap();
 
-        let (mut client, _resp) = tokio_tungstenite::connect_async("ws://127.0.0.1:18132")
+        let (mut client, _resp) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
             .await
             .unwrap();
         let _welcome = recv_server_msg(&mut client).await;
@@ -766,7 +769,8 @@ mod tests {
         use crate::probe::SystemProbe;
         use friday_core::event::EventBus;
 
-        let addr: SocketAddr = "127.0.0.1:18130".parse().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
         let bus = EventBus::new();
         let server = WsServer::new(addr);
         let outbound = server.broadcast_tx();
@@ -790,11 +794,11 @@ mod tests {
         });
 
         tokio::spawn(async move {
-            server.run().await.unwrap();
+            server.run_on(listener).await.unwrap();
         });
         tokio::time::sleep(Duration::from_millis(150)).await;
 
-        let url = "ws://127.0.0.1:18130";
+        let url = format!("ws://{addr}");
         let (mut client, _resp) = tokio_tungstenite::connect_async(url).await.unwrap();
         let _welcome = recv_server_msg(&mut client).await;
 
