@@ -89,27 +89,39 @@ internal sealed class AccountsWindow : CardWindow
                 Grid.SetColumn(tag, 1);
                 row.Children.Add(tag);
             }
-            var card = new Border
+            // A real button: clicks, taps, pen and the keyboard all pick it.
+            var card = new Button
             {
-                CornerRadius = new CornerRadius(10),
-                BorderThickness = new Thickness(1),
-                BorderBrush = i == _selected ? R("Ember") : R("Hairline"),
-                Background = i == _selected ? new SolidColorBrush(Picked) : R("Well"),
-                Padding = new Thickness(14, 10, 14, 10),
+                Content = row,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
                 Margin = new Thickness(0, 0, 0, 6),
                 Cursor = System.Windows.Input.Cursors.Hand,
-                Child = row,
+                Template = CardTemplate(i == _selected),
             };
             AutomationProperties.SetName(card, cli.Label + (connected.Contains(cli.Id) ? ", connected" : ""));
-            card.MouseLeftButtonUp += (_, e) =>
+            card.Click += (_, _) =>
             {
-                e.Handled = true;
                 _selected = index;
                 RefreshList();
                 UpdateSelection();
             };
             _list.Children.Add(card);
         }
+    }
+
+    /// <summary>An account card: rounded, tinted ember when picked.</summary>
+    private ControlTemplate CardTemplate(bool picked)
+    {
+        var border = new FrameworkElementFactory(typeof(Border));
+        border.SetValue(Border.CornerRadiusProperty, new CornerRadius(10));
+        border.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+        border.SetValue(Border.BorderBrushProperty, picked ? R("Ember") : R("Hairline"));
+        border.SetValue(Border.BackgroundProperty, picked ? new SolidColorBrush(Picked) : R("Well"));
+        border.SetValue(Border.PaddingProperty, new Thickness(14, 10, 14, 10));
+        var content = new FrameworkElementFactory(typeof(ContentPresenter));
+        content.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+        border.AppendChild(content);
+        return new ControlTemplate(typeof(Button)) { VisualTree = border };
     }
 
     private void Status(string text, string color)

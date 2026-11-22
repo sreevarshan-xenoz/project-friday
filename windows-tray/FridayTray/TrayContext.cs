@@ -33,6 +33,13 @@ internal sealed class TrayContext : ApplicationContext
             if (e.ExceptionObject is Exception ex)
                 LogUnhandledException("UnhandledException", ex);
         };
+        // The windows are WPF: their exceptions go to WPF's dispatcher, not to
+        // ThreadException above, and unhandled there they ended the tray.
+        System.Windows.Threading.Dispatcher.CurrentDispatcher.UnhandledException += (_, e) =>
+        {
+            LogUnhandledException("DispatcherUnhandledException", e.Exception);
+            e.Handled = true;
+        };
 
         _log = new AnswerLog(install.Paths);
         ApplyInstallerChoices();
@@ -920,6 +927,11 @@ internal sealed class TrayContext : ApplicationContext
     private void ChooseProvider()
     {
         var form = new ProviderWindow(_install.Paths.EnvFile, () => _daemon.Restart());
+        // Owned by Settings when it's open: the dialog stays above it, and
+        // minimizing or restoring Settings brings it along (an unowned modal
+        // dialog could end up hidden while Settings stays blocked).
+        if (_settings is { IsClosed: false } owner)
+            form.Owner = owner;
         if (form.ShowDialog() == true)
         {
             _daemon.Restart();
@@ -1068,7 +1080,10 @@ internal sealed class TrayContext : ApplicationContext
             ChooseProvider: ChooseProvider,
             ConnectAccounts: () =>
             {
-                new AccountsWindow(_install.Paths.EnvFile, () => _daemon.Restart()).ShowDialog();
+                var accounts = new AccountsWindow(_install.Paths.EnvFile, () => _daemon.Restart());
+                if (_settings is { IsClosed: false } owner)
+                    accounts.Owner = owner;
+                accounts.ShowDialog();
             },
             ShowEgress: ShowEgress,
             ForgetSavedData: ForgetSavedData,

@@ -33,6 +33,10 @@ internal sealed class Install
             ["FRIDAY_STATE_FILE"] = Paths.StateFile,
             ["FRIDAY_MEMORY_DIR"] = Paths.MemoryDir,
         };
+        // The daemon and friday-ctl look for coding agents and account apps on
+        // PATH: give them the one Windows has now, not the one from sign-in.
+        if (!env.ContainsKey("PATH"))
+            env["PATH"] = AgentClis.SearchPath();
         return env;
     }
 
