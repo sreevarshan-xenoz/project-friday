@@ -679,8 +679,12 @@ internal sealed class TrayContext : ApplicationContext
         {
             try { if (!p.HasExited) p.Kill(); } catch (InvalidOperationException) { }
         }
+        // Answered by a click (Run goes on to work in the same card) or closed:
+        // the microphone closes too.
         EventHandler closed = (_, _) => Stop();
+        Action<string> clicked = _ => Stop();
         answer.Closed += closed;
+        answer.ConfirmRun += clicked;
         answer.ShowVoiceHint(irreversible ? "After the sound, say cancel. Run needs a click." : "After the sound, say run or cancel.");
         try
         {
@@ -694,7 +698,7 @@ internal sealed class TrayContext : ApplicationContext
                     continue;
                 }
                 var said = Listening.YesNo(line);
-                if (said == "cancel" || (said == "run" && !irreversible))
+                if (answer.Waiting && (said == "cancel" || (said == "run" && !irreversible)))
                     answer.AnswerByVoice(said == "run");
                 break;
             }
@@ -703,6 +707,7 @@ internal sealed class TrayContext : ApplicationContext
         finally
         {
             answer.Closed -= closed;
+            answer.ConfirmRun -= clicked;
             Stop();
             p.Dispose();
         }
