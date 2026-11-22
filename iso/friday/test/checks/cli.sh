@@ -99,7 +99,8 @@ if [[ "\$*" == *"--confirm"* ]]; then
 fi
 if [[ "\$*" == *gated* ]]; then
   echo '{"accepted":true}'
-  printf '{\n "outcome": "failed",\n "error": "Confirm to run: git status",\n "needs_confirmation": {\n   "tool": "terminal",\n   "action": "git status"\n }\n}\n'
+  act="\${GATED_ACTION:-git status}"
+  printf '{\n "outcome": "failed",\n "error": "Confirm to run: %s",\n "needs_confirmation": {\n   "tool": "terminal",\n   "action": "%s"\n }\n}\n' "\$act" "\$act"
   exit 3
 fi
 target_arg="\$3"
@@ -405,6 +406,15 @@ contains "a percentage too" "$(cat "$state/last-answer.md")" "= 36"
 contains "and a unit conversion, with f and c as degrees" "$(cat "$state/last-answer.md")" "100 °F to °C = 37.77777778 °C"
 : >"$LOG"; bash "$F" ask "what is a monad"; sleep 0.3
 if grep -q "^qalc" "$LOG"; then fail "a question in words went to qalc"; else pass "a question in words goes to the model, not qalc"; fi
+# Every feature can be switched off on its own.
+contains "feature list shows each feature, on" "$(bash "$F" feature list)" "on   instant-answers"
+contains "a feature switches off" "$(bash "$F" feature instant-answers off)" "instant-answers: off"
+: >"$LOG"; bash "$F" ask "what is 12 x 7"; sleep 0.3
+contains "switched off, arithmetic goes to the model" "$(cat "$LOG")" "friday-ctl"
+contains "and its status says so" "$(bash "$F" feature instant-answers status)" "instant-answers: off"
+bash "$F" feature instant-answers on >/dev/null
+contains "and on again" "$(bash "$F" feature list)" "on   instant-answers"
+refuse "an unknown feature is refused" bash "$F" feature nosuchthing off
 rm -f "$S/qalc"
 shapes=$(bash -c 'source <(sed -n "/^friday_calc_expr() {/,/^}/p" "$1"); shift; for q in "$@"; do friday_calc_expr "$q" >/dev/null && printf "Y" || printf "."; done' _ "$F" \
   "2026-11-22" "123-456-7890" "192.0.2.1/24" "1.0.0-1" "24/7" "50/50" "--5 + 2" "10 - 3" "-40 c to f")
@@ -1357,6 +1367,20 @@ contains "confirmed answer saved" "$(cat "$state/last-answer.md")" "Confirmed an
 contains "cancel option presented" "$(cat "$LOG")" "cancel=Cancel"
 if grep -q "friday-ctl-confirm" "$LOG"; then fail "cancel still ran confirmed goal"
 else pass "cancel does not re-send or run action"; fi
+# friday autonomy act: no question; it runs, then says what it did.
+contains "autonomy is ask-risky to start with" "$(bash "$F" autonomy)" "Autonomy: ask-risky"
+bash "$F" autonomy act >/dev/null
+: >"$LOG"; CANCEL_CONFIRM=1 bash "$F" ask "gated action"; sleep 0.4
+contains "act: it runs without asking" "$(cat "$LOG")" "friday-ctl-confirm"
+contains "and says it acted on its own" "$(cat "$LOG")" "FRIDAY acted on its own"
+if grep -q "run=Run" "$LOG"; then fail "act still asked"; else pass "act doesn't ask"; fi
+# ...but what can't be taken back still asks.
+: >"$LOG"; GATED_ACTION="kill 123" CANCEL_CONFIRM=1 bash "$F" ask "gated action"; sleep 0.4
+contains "act: killing a process still asks" "$(cat "$LOG")" "run=Run"
+if grep -q "friday-ctl-confirm" "$LOG"; then fail "act ran an irreversible action unasked"; else pass "act leaves the irreversible action to you"; fi
+contains "ask-all says it asks before every action" "$(bash "$F" autonomy ask-all)" "asks before every action"
+grep -qx 'FRIDAY_AUTONOMY=ask-all' "$HOME/.config/friday/friday.env" && pass "the daemon gets FRIDAY_AUTONOMY" || fail "FRIDAY_AUTONOMY not in friday.env"
+bash "$F" autonomy ask-risky >/dev/null
 
 echo "cancel"
 : >"$LOG"

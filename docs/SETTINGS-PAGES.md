@@ -13,8 +13,9 @@ Space presses, and the arrow keys move a slider.
 | Home | status, ask, "how is my computer doing?", tour or welcome | `ask`, `tour` | Home |
 | AI | choose the AI and key (adds to saved keys), free models only (asks first), connect an account, private mode | `setup-ai`, `connect`, `private` | AI |
 | Voice | read answers aloud, download the voice, hear it, stop, pick a voice | `voice speak`, `say` | Voice |
-| Permissions | control windows and apps, run things on a schedule, pair a phone, see face unlock and the system helper | `desktop`, `tasks`, `phone`, `face`, `helper` | Desktop control |
+| Permissions | how much FRIDAY may do on its own (ask before every action / only risky ones / act, then tell me), control windows and apps, run things on a schedule, pair a phone, see face unlock and the system helper | `autonomy`, `desktop`, `tasks`, `phone`, `face`, `helper` | Desktop control |
 | Privacy | name the app, read a window's text, what left this computer, forget my data | `app-context`, `screen-text`, `sent`, `forget` | Privacy |
+| Features | a switch for each feature that can be turned off on its own (instant answers, @-mentions, "what changed", machine facts, typed yes, suggestions…) | `feature list`, `feature <name> on\|off` | (Linux only for now) |
 | Health | health look, check FRIDAY, restart, save a report | `ask`, `doctor`, `daemon restart`, `report` | Health & updates |
 | Shortcuts | the keys and what they do | (shown on Home) | Shortcuts |
 

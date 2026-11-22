@@ -117,6 +117,9 @@ pub struct DesktopControlTool {
     audit_dir: Option<PathBuf>,
     /// Looking inside apps and pressing their controls (`ui_*` actions).
     ui: Option<Arc<dyn UiControl>>,
+    /// `friday autonomy ask-all` (FRIDAY_AUTONOMY): every change is asked
+    /// about, not only what can't be undone (looking never is).
+    ask_all: bool,
 }
 
 /// The directory of `actions.jsonl`: beside state.json (`FRIDAY_STATE_FILE`,
@@ -286,6 +289,7 @@ impl DesktopControlTool {
             abort,
             audit_dir,
             ui,
+            ask_all: std::env::var("FRIDAY_AUTONOMY").is_ok_and(|v| v.trim() == "ask-all"),
         }
     }
 
@@ -422,6 +426,15 @@ fn clip(text: &str) -> String {
 
 /// The exact text the person confirms, and the gate compares: the verb and
 /// its parameters, which is also all that runs once confirmed.
+/// What the person confirms under ask-all: the whole task, by its words.
+fn task_action(goal: &str) -> String {
+    let words: String = goal.split_whitespace().collect::<Vec<_>>().join(" ");
+    format!(
+        "desktop task {}",
+        words.chars().take(200).collect::<String>()
+    )
+}
+
 fn exact_action(verb: &str, params: &Value) -> String {
     format!(
         "desktop {verb} {}",
@@ -508,18 +521,25 @@ impl Tool for DesktopControlTool {
     }
 
     async fn execute(&self, action: &Action, _ctx: &ExecutionContext) -> ToolResult {
-        // A confirmed destructive action: run exactly that and nothing else.
+        let goal = friday_goal_execution::planning::goal_segment(&action.instruction)
+            .trim()
+            .to_string();
+        // ask-all asks once for the whole task (its steps can't each be
+        // confirmed: a yes covers one exact action); after that yes the task
+        // runs, and a destructive step still asks with its own exact action.
+        let task = task_action(&goal);
         let confirmed = self.gate.lock().unwrap().confirm.clone();
-        if let Some(c) = confirmed.filter(|c| c.trim_start().starts_with("desktop ")) {
+        let task_confirmed = confirmed.as_deref().map(str::trim) == Some(task.as_str());
+        // A confirmed destructive action: run exactly that and nothing else.
+        if let Some(c) =
+            confirmed.filter(|c| c.trim_start().starts_with("desktop ") && !task_confirmed)
+        {
             if let Err(err) = self.gate.lock().unwrap().check_or_record("desktop", &c) {
                 return err;
             }
             return self.run_confirmed(c.trim()).await;
         }
 
-        let goal = friday_goal_execution::planning::goal_segment(&action.instruction)
-            .trim()
-            .to_string();
         // Its own line, as data: a title is whatever the page or file says.
         let front = front_window_note(&action.instruction)
             .map(|(app, title)| {
@@ -612,6 +632,13 @@ impl Tool for DesktopControlTool {
                             risk = DesktopRisk::Destructive;
                         }
                     }
+                }
+            }
+            // Looking inside an app is never asked about, under ask-all either.
+            let looks = is_ui && matches!(&verb[3..], "apps" | "tree" | "find" | "read");
+            if self.ask_all && !task_confirmed && risk == DesktopRisk::Reversible && !looks {
+                if let Err(err) = self.gate.lock().unwrap().check_or_record("desktop", &task) {
+                    return err;
                 }
             }
             if risk == DesktopRisk::Destructive {
@@ -1127,6 +1154,59 @@ mod tests {
             started.elapsed() < std::time::Duration::from_secs(5),
             "waited for the model"
         );
+    }
+
+    #[tokio::test]
+    async fn ask_all_asks_before_a_window_move_too() {
+        let model = Script::new(&[
+            r#"{"action":"move_window","params":{"target":"firefox","workspace":"3"}}"#,
+            r#"{"done":"Moved."}"#,
+        ]);
+        let stub = Arc::new(Stub::default());
+        let mut t = DesktopControlTool::new(
+            model,
+            DesktopAdapter::with_exec(stub.clone()),
+            Arc::default(),
+            Arc::default(),
+            None,
+            None,
+        );
+        t.ask_all = true;
+        let r = run(&t, "put firefox on 3").await;
+        assert!(!r.success, "asked first: {}", r.output);
+        assert!(
+            !stub.calls().iter().any(|c| c.contains("dispatch")),
+            "nothing moved before the yes"
+        );
+    }
+
+    #[tokio::test]
+    async fn ask_all_runs_every_step_of_a_task_after_one_yes() {
+        let model = Script::new(&[
+            r#"{"action":"focus_window","params":{"target":"firefox"}}"#,
+            r#"{"action":"move_window","params":{"target":"firefox","workspace":"3"}}"#,
+            r#"{"done":"Moved."}"#,
+        ]);
+        let stub = Arc::new(Stub::default());
+        let gate = Arc::new(Mutex::new(ConfirmationGate::default()));
+        gate.lock().unwrap().confirm = Some(task_action("put firefox on 3"));
+        let mut t = DesktopControlTool::new(
+            model,
+            DesktopAdapter::with_exec(stub.clone()),
+            gate,
+            Arc::default(),
+            None,
+            None,
+        );
+        t.ask_all = true;
+        let r = run(&t, "put firefox on 3").await;
+        assert!(r.success, "{}", r.output);
+        let dispatched = stub
+            .calls()
+            .iter()
+            .filter(|c| c.contains("dispatch"))
+            .count();
+        assert_eq!(dispatched, 2, "both steps ran: {:?}", stub.calls());
     }
 
     #[tokio::test]
