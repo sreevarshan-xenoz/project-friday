@@ -54,6 +54,15 @@ internal static class Motion
     /// <summary>Fades and slides <paramref name="e"/> into place from <paramref name="dy"/> below, after <paramref name="delayMs"/>.</summary>
     public static void RiseIn(UIElement e, double dy = 14, int delayMs = 0, int ms = 520, double fromScale = 1)
     {
+        // A button's style presses it by scaling its own RenderTransform;
+        // replacing that made the first press throw and crash the tray.
+        if (e is System.Windows.Controls.Primitives.ButtonBase)
+        {
+            e.Opacity = 0;
+            e.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(Math.Min(ms, 240)))
+                { BeginTime = TimeSpan.FromMilliseconds(delayMs), EasingFunction = Out });
+            return;
+        }
         var move = new TranslateTransform(0, dy);
         var scale = new ScaleTransform(fromScale, fromScale);
         e.RenderTransformOrigin = new System.Windows.Point(0.5, 1);
