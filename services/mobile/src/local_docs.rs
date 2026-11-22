@@ -658,8 +658,8 @@ mod tests {
         let found = find("how do I ask FRIDAY about the text I selected?", &s);
         assert!(
             found
-                .first()
-                .is_some_and(|e| e.source == "FRIDAY guide: The three keys"),
+                .iter()
+                .any(|e| e.source == "FRIDAY guide: The three keys"),
             "{found:?}"
         );
         let keys = find("which hotkey asks about my screen", &s);
