@@ -503,8 +503,9 @@ internal sealed class TrayContext : ApplicationContext
         // "Act, then tell me" (Settings, Desktop control): what FRIDAY would
         // have asked about runs now, once, and a balloon says what it did. The
         // daemon still runs only that exact action.
-        if (outcome.Confirmation is { } autoConf && confirm is null
-            && AppSettings.AutonomyMode(EnvFile.Load(_install.Paths.EnvFile)) == "act")
+        if (outcome.Confirmation is { } autoConf
+            && AppSettings.AutoConfirm(AppSettings.AutonomyMode(EnvFile.Load(_install.Paths.EnvFile)),
+                screenAsk: kind == AskKind.Screen, alreadyConfirming: confirm is not null))
         {
             Notify("FRIDAY acted on its own", outcome.Answer + "\n(Settings, Desktop control: How much FRIDAY may do)", ToolTipIcon.Info);
             await RunRequestAsync(kind, question, context, request, autoConf.Action, answer, options);

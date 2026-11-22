@@ -44,13 +44,19 @@ public static class AppSettings
     /// only before commands, files, launches and what can't be undone, "act"
     /// runs what it would have asked about and says so afterwards.</summary>
     public const string Autonomy = "FRIDAY_AUTONOMY";
-    public static readonly string[] AutonomyModes = ["ask-all", "ask-risky", "act"];
 
     public static string AutonomyMode(IReadOnlyDictionary<string, string> env) =>
         env.TryGetValue(Autonomy, out var v) && v is "ask-all" or "act" ? v : "ask-risky";
 
     public static string WithAutonomy(string existing, string mode) =>
         EnvFile.WithSetting(existing, Autonomy, mode is "ask-all" or "act" ? mode : null);
+
+    /// <summary>Whether the tray runs an action the daemon asked to confirm
+    /// without asking: only in "act", only on the first answer (never one that
+    /// was already a confirmed run, so it can't loop), and never for a screen
+    /// ask (it carries no confirmation).</summary>
+    public static bool AutoConfirm(string mode, bool screenAsk, bool alreadyConfirming) =>
+        mode == "act" && !screenAsk && !alreadyConfirming;
 
     /// <summary>The tray's features that can be switched off one by one, as
     /// (name, what it does). Off ones are listed in FRIDAY_FEATURES_OFF.</summary>

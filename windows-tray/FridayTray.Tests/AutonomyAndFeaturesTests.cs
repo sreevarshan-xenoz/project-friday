@@ -19,6 +19,23 @@ public class AutonomyAndFeaturesTests
     }
 
     [Fact]
+    public void Only_act_confirms_by_itself_once_and_never_for_a_screen_ask()
+    {
+        Assert.True(AppSettings.AutoConfirm("act", screenAsk: false, alreadyConfirming: false));
+        Assert.False(AppSettings.AutoConfirm("act", screenAsk: false, alreadyConfirming: true));
+        Assert.False(AppSettings.AutoConfirm("act", screenAsk: true, alreadyConfirming: false));
+        Assert.False(AppSettings.AutoConfirm("ask-risky", screenAsk: false, alreadyConfirming: false));
+        Assert.False(AppSettings.AutoConfirm("ask-all", screenAsk: false, alreadyConfirming: false));
+    }
+
+    [Fact]
+    public void A_features_list_with_spaces_and_empty_entries_still_reads()
+    {
+        Assert.False(AppSettings.FeatureOn(Env("FRIDAY_FEATURES_OFF= ,update-check ,, \n"), "update-check"));
+        Assert.True(AppSettings.FeatureOn(Env("FRIDAY_FEATURES_OFF= ,update-check ,, \n"), "wrong-button"));
+    }
+
+    [Fact]
     public void Features_are_on_until_switched_off_one_by_one()
     {
         Assert.All(AppSettings.Features, f => Assert.True(AppSettings.FeatureOn(Env(""), f.Name)));

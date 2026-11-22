@@ -980,9 +980,9 @@ internal sealed partial class SettingsWindow : FluentWindow
         Toast.BeginAnimation(OpacityProperty, fade);
     }
 
-    /// <summary>Rewrites friday.env with <paramref name="change"/> and restarts the daemon so it takes effect.</summary>
-    /// <summary>Changes friday.env; the daemon restarts to read it unless the
-    /// setting is only the tray's (<paramref name="restart"/> false).</summary>
+    /// <summary>Rewrites friday.env with <paramref name="change"/>; the daemon
+    /// restarts to read it unless the setting is only the tray's
+    /// (<paramref name="restart"/> false).</summary>
     private void ChangeEnv(Func<string, string> change, bool restart = true)
     {
         var path = _install.Paths.EnvFile;
