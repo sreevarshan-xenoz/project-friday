@@ -4592,8 +4592,11 @@ case "${1:-}" in
           question_chars: $q, answer_chars: $a}' >"$state_dir/last-ask.json.tmp" 2>/dev/null \
         && mv -f "$state_dir/last-ask.json.tmp" "$state_dir/last-ask.json" || rm -f "$state_dir/last-ask.json.tmp"
 
-      if [ -n "${ask_token:-}" ] && [ -s "$state_dir/ask-newest" ] \
+      if [ -n "${ask_token:-}" ] && [ -z "${conf_clicked:-}" ] && [ -s "$state_dir/ask-newest" ] \
           && [ "$(cat "$state_dir/ask-newest" 2>/dev/null)" != "$ask_token" ]; then
+        # Its progress card says where the answer went instead of going stale.
+        [ -z "${nid:-}" ] || notify-send -a FRIDAY -t 3000 -r "$nid" -- "FRIDAY" \
+          "Replaced by your newer question (this answer is in friday answers)." 2>/dev/null || true
         return 0
       fi
       # Spoken answers (friday voice speak on): the answer is read aloud while
@@ -4885,8 +4888,9 @@ case "${1:-}" in
         fi
         case "$action" in
           run)
-            # Run clicked: this is the answer being waited for now.
-            [ -z "${ask_token:-}" ] || printf '%s' "$ask_token" >"$state_dir/ask-newest" 2>/dev/null || true
+            # Run clicked: its result is shown even after a newer question
+            # (which stays the newest, so its own answer shows too).
+            conf_clicked=true
             conf_ok=true
             conf_args=(goal --wait --confirm "$action_to_confirm")
             $use_web && conf_args+=(--web)

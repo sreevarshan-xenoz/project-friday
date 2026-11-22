@@ -602,6 +602,8 @@ internal sealed class TrayContext : ApplicationContext
         }
         // A screen answer streams through friday-ctl's own output; its
         // window opens with the first words (the capture is done by then).
+        using var inflight = new CancellationTokenSource();
+        _inflight = inflight;
         var ui = SynchronizationContext.Current;
         Action<string>? onLine = kind != AskKind.Screen || ui is null ? null : line =>
         {
@@ -609,13 +611,14 @@ internal sealed class TrayContext : ApplicationContext
                 return;
             ui.Post(_ =>
             {
+                // Replaced by a newer question: its late lines open nothing.
+                if (inflight.IsCancellationRequested)
+                    return;
                 if (answer is null || answer.IsClosed)
                     answer = NewAnswerWindow(kind, question, "");
                 answer.ShowPartial(partial);
             }, null);
         };
-        using var inflight = new CancellationTokenSource();
-        _inflight = inflight;
         var (ok, output, exitCode) = await Ctl.RunAsync(
             _install,
             Asking.CtlArguments(kind, question, request, confirm, options),
