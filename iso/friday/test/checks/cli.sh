@@ -317,6 +317,22 @@ shaped=$(bash -c 'source <(sed -n "/^friday_secret_shaped() {/,/^}/p" "$1"); shi
   "https://x.com/cb?id=ab12ab12ab12ab12" "Zq8rTk2LmN0p/Wx4Yb7Vc1Ds/Ee9Ff3Gh5Jk6" "hunter2hunter2." "pass/12345678abc")
 [[ "$shaped" == ".....SSSSSSSS" ]] && pass "URLs, paths and file names go; tokens, JWTs, keys in URLs and base64 don't" || fail "password-shaped rule: got $shaped, wanted .....SSSSSSSS"
 
+echo "instant answers"
+printf '#!/bin/bash\necho "qalc $*" >>%q\ncase "$3" in "12 * 7") echo 84 ;; "15/100*240") echo 36 ;; "100 °F to °C") echo "37.77777778 °C" ;; *) echo "?" ;; esac\n' "$LOG" >"$S/qalc"; chmod +x "$S/qalc"
+: >"$LOG"; bash "$F" ask "what is 12 x 7"; sleep 0.3
+contains "arithmetic is worked out here" "$(cat "$state/last-answer.md")" "12 * 7 = 84"
+if grep -q "^friday-ctl" "$LOG"; then fail "arithmetic went to the model"; else pass "arithmetic goes to no model"; fi
+: >"$LOG"; bash "$F" ask "15% of 240"; sleep 0.3
+contains "a percentage too" "$(cat "$state/last-answer.md")" "= 36"
+: >"$LOG"; bash "$F" ask "100 f to c"; sleep 0.3
+contains "and a unit conversion, with f and c as degrees" "$(cat "$state/last-answer.md")" "100 °F to °C = 37.77777778 °C"
+: >"$LOG"; bash "$F" ask "what is a monad"; sleep 0.3
+if grep -q "^qalc" "$LOG"; then fail "a question in words went to qalc"; else pass "a question in words goes to the model, not qalc"; fi
+rm -f "$S/qalc"
+shapes=$(bash -c 'source <(sed -n "/^friday_calc_expr() {/,/^}/p" "$1"); shift; for q in "$@"; do friday_calc_expr "$q" >/dev/null && printf "Y" || printf "."; done' _ "$F" \
+  "2026-11-22" "123-456-7890" "192.0.2.1/24" "1.0.0-1" "24/7" "50/50" "--5 + 2" "10 - 3" "-40 c to f")
+[[ "$shapes" == "......YYY" ]] && pass "dates, phone numbers, IPs, versions and 24/7 aren't sums" || fail "calc shapes: got $shapes, wanted ......YYY"
+
 echo "suggestions for the app you're in"
 printf '#!/bin/bash\necho "hyprctl $*" >> %q\n[[ "$*" == "activewindow -j" ]] && printf %%s "$HYPR_WIN"\nexit 0\n' "$LOG" >"$S/hyprctl"; chmod +x "$S/hyprctl"
 printf '#!/bin/bash\ncat >%q\necho "$PICK"\n' "$W/menu.txt" >"$S/fuzzel"
@@ -722,6 +738,28 @@ contains "timeout: explains it may still be running" "$(cat "$state/last-answer.
 contains "model server down: says so plainly" "$(cat "$state/last-answer.md")" "Couldn't reach your AI provider"
 if grep -q "start=Start FRIDAY" "$LOG"; then fail "a model server refusing was taken for FRIDAY being down"
 else pass "a model server refusing is not FRIDAY being down"; fi
+# Offline: the answer says so and what still works.
+printf '#!/bin/bash\n[ "$*" = "-t networking connectivity" ] && echo "${NM_STATE:-full}"\nexit 0\n' >"$S/nmcli"; chmod +x "$S/nmcli"
+: >"$LOG"; NM_STATE=full bash "$F" ask "model refused test"; sleep 0.3
+if grep -q "offline" "$state/last-answer.md"; then fail "an online failure said it was offline"; else pass "online: no offline note"; fi
+: >"$LOG"; NM_STATE=none bash "$F" ask "model refused test"; sleep 0.3
+contains "offline: the answer says so" "$(cat "$state/last-answer.md")" "You're offline"
+contains "and what still works" "$(cat "$state/last-answer.md")" "Window, app and routine commands still work"
+: >"$LOG"; NM_STATE=limited bash "$F" ask "model refused test"; sleep 0.3
+if grep -q "offline" "$state/last-answer.md"; then fail "a VPN or captive portal (limited) was called offline"; else pass "limited connectivity isn't offline"; fi
+# NetworkManager not running: the default route decides.
+printf '#!/bin/bash
+exit 8
+' >"$S/nmcli"
+printf '#!/bin/bash
+[ "$*" = "route show default" ] && [ -n "${ROUTE:-}" ] && echo "default via 192.0.2.1 dev eth0"
+exit 0
+' >"$S/ip"; chmod +x "$S/ip"
+: >"$LOG"; ROUTE=1 bash "$F" ask "model refused test"; sleep 0.3
+if grep -q "offline" "$state/last-answer.md"; then fail "no NetworkManager but a default route was called offline"; else pass "without NetworkManager, a default route is online"; fi
+: >"$LOG"; ROUTE= bash "$F" ask "model refused test"; sleep 0.3
+contains "without NetworkManager or a route: offline" "$(cat "$state/last-answer.md")" "You're offline"
+rm -f "$S/nmcli" "$S/ip"
 mkdir -p "$HOME/.config/friday"; printf 'engine=ollama\nstate=installing\n' >"$HOME/.config/friday/local-ai.conf"
 bash "$F" ask "model refused test"; sleep 0.3
 contains "local AI still downloading: says so" "$(cat "$state/last-answer.md")" "Local AI is still downloading"
