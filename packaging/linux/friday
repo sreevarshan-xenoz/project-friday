@@ -381,6 +381,13 @@ friday_doctor() {
   ok "search backends: $b_str"
 
   echo
+  echo "Right now"
+  local works
+  works=$(friday_what_works)
+  if grep -qx online <<<"$works"; then ok "online"; else warn "offline: cloud models can't answer" "a local model still can: friday setup-ai local"; fi
+  if grep -qx local <<<"$works"; then ok "a local model answers (works offline)"; fi
+  echo
+
   echo "Offline docs"
   local tldr_pages="${TEALDEER_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/tealdeer}"
   if [ -f /usr/share/doc/arch-wiki/text/arch-wiki.txt.gz ]; then ok "Arch wiki (arch-wiki-lite)"
@@ -1838,6 +1845,37 @@ EOF2
 # Requests this computer handles itself, with no AI and nothing sent: prints
 # what it did and succeeds, or fails so the question goes to the model.
 #   volume 40 | mute | unmute | dnd on|off | battery | timer 5 min | wifi settings | undo
+# Arithmetic, a percentage or a unit conversion, as an expression qalc takes
+# ("12*7+3", "15/100*240", "5 km to mi"); nothing for anything else (words
+# are units to qalc, so only these shapes go).
+friday_calc_expr() {
+  local q="$1" units='km|m|cm|mm|mi|miles?|ft|feet|foot|in|inch(es)?|yd|yards?|kg|g|lb|lbs|pounds?|oz|ounces?|l|ml|gal|gallons?|c|f|celsius|fahrenheit|kph|mph|kb|mb|gb|tb'
+  local pct='^([0-9.]+) ?% of ([0-9.]+)$' conv arith='^[-0-9. ()+*/^x×÷]+$'
+  # An operator that can't be a date, version, phone number or "24/7":
+  # + * x × ÷ ^ anywhere, or - and / only with spaces around them.
+  local op='[0-9)] *[+*^x×÷] *[0-9(]|[0-9)] [-/] [0-9(]' dots='[0-9]*\.[0-9]*\.'
+  conv="^(-?[0-9.]+) ?($units) (to|in|into) ($units)\$"
+  q=$(sed -E -e "s/^(what is|what's|calculate|calc|compute|convert|how much is) //" -e 's/,//g' <<<"$q")
+  if [[ "$q" =~ $pct ]]; then
+    echo "${BASH_REMATCH[1]}/100*${BASH_REMATCH[2]}"
+  elif [[ "$q" =~ $conv ]]; then
+    # qalc's names where ours are ambiguous (c is the speed of light, gb a
+    # gram-bit to it, lbs pound-seconds).
+    local from="${BASH_REMATCH[2]}" to="${BASH_REMATCH[5]}" n="${BASH_REMATCH[1]}" u
+    for u in from to; do
+      case "${!u}" in
+        c) printf -v "$u" '°C' ;; f) printf -v "$u" '°F' ;; lbs) printf -v "$u" 'lb' ;;
+        kb) printf -v "$u" 'kB' ;; mb) printf -v "$u" 'MB' ;; gb) printf -v "$u" 'GB' ;; tb) printf -v "$u" 'TB' ;;
+      esac
+    done
+    echo "$n $from to $to"
+  elif [[ "$q" =~ $arith && "$q" =~ $op && ! "$q" =~ $dots ]]; then
+    sed -e 's/[x×]/*/g' -e 's/÷/\//g' <<<"$q"
+  else
+    return 1
+  fi
+}
+
 friday_local_command() {
   local q n unit secs label before
   q=$(tr '[:upper:]' '[:lower:]' <<<"$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]?.!]*$//')
@@ -1875,6 +1913,13 @@ friday_local_command() {
     ( sleep "$secs"; notify-send -a FRIDAY -u critical "Timer" "$label is up." ) </dev/null >/dev/null 2>&1 &
     disown 2>/dev/null || true
     echo "Timer set for $label."
+  elif command -v qalc >/dev/null 2>&1 && expr=$(friday_calc_expr "$q") \
+      && out=$(timeout 3 qalc -t -- "$expr" </dev/null 2>/dev/null) && [ -n "$out" ] \
+      && { [[ "$expr" != *" to "* ]] || [[ "$out" == *"${expr##* to }"* ]]; }; then
+    # (A conversion counts only when the answer is in the unit asked for:
+    # km to kg is no conversion.)
+    # Worked out here, at once: no model, nothing sent.
+    echo "$expr = $out"
   elif [[ "$q" =~ ^(open\ )?(the\ )?(wi-?fi|network|bluetooth)\ (settings|controls)$ ]]; then
     bash "$0" shell ipc shell open control >/dev/null 2>&1 || return 1
     echo "Opened the controls (Wi-Fi, Bluetooth, sound)."
@@ -2561,6 +2606,41 @@ friday_ask_local() {
   body=$(jq -nc --arg m "$model" --arg p "$1" '{model: $m, messages: [{role: "user", content: $p}]}')
   timeout 180 curl -s -H 'Content-Type: application/json' -d "$body" "$base/chat/completions" 2>/dev/null \
     | jq -er '.choices[0].message.content | select(. != null and . != "")' 2>/dev/null
+}
+
+# What works right now, in a few quick looks (a second or so in all):
+# "online" (unless NetworkManager says there's no network at all or, without
+# it, there's no default route: a VPN or a captive portal still counts) and
+# "local" (a local model answers). One word a line, only for those that are.
+# Shared by a failed ask's message and friday doctor.
+friday_what_works() {
+  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" base nm
+  nm=$(timeout 1 nmcli -t networking connectivity 2>/dev/null) || nm=""
+  case "$nm" in
+    none) ;;
+    full|limited|portal) echo online ;;
+    *) [ -n "$(timeout 1 ip route show default 2>/dev/null)" ] && echo online ;;
+  esac
+  base=$(sed -n 's/^LLAMACPP_BASE_URL=//p' "$env_file" 2>/dev/null | tail -n1) || base=""
+  if grep -qx 'LLAMACPP_ENABLED=1' "$env_file" 2>/dev/null && [[ "$base" != *@* ]] \
+      && [[ "$base" == http://127.0.0.1:* || "$base" == http://localhost:* ]] \
+      && timeout 1 curl -fs --noproxy '*' "$base/models" >/dev/null 2>&1; then
+    echo local
+  fi
+  return 0
+}
+
+# The sentence a failed ask adds: what's down, and what still works.
+friday_what_still_works() {
+  local works
+  works=$(friday_what_works)
+  if ! grep -qx online <<<"$works"; then
+    if grep -qx local <<<"$works"; then
+      echo "You're offline: your local model still answers (friday private on keeps every ask there), and window, app and routine commands still work."
+    else
+      echo "You're offline, and no local model is set up, so nothing can answer. Window, app and routine commands still work; friday setup-ai local adds a model that works offline."
+    fi
+  fi
 }
 
 # The app and window title the selected text came from, as one line for the
@@ -3919,7 +3999,10 @@ case "${1:-}" in
             case "$(friday_local_conf_get state)" in
               pending|installing)
                 answer="Local AI is still downloading, and no cloud provider answered. Ask again once it's on (friday local-ai status)." ;;
-              *) details="" ;;
+              *) details=""
+                 local still
+                 still=$(friday_what_still_works)
+                 [ -z "$still" ] || answer="$answer $still" ;;
             esac ;;
           *) details="" ;;
         esac
