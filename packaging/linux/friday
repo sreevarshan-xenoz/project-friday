@@ -2597,6 +2597,11 @@ friday_private_folder() {
 # friday_ask_local <prompt>: the local model's answer, asked directly on this
 # computer (not through the daemon, so nothing can fall back to the cloud).
 # Fails when no local model is set up.
+# Whether a local model is set up (friday setup-ai local), not whether it's up.
+friday_local_ready() {
+  grep -qx 'LLAMACPP_ENABLED=1' "${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" 2>/dev/null
+}
+
 friday_ask_local() {
   local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" base model body
   grep -qx 'LLAMACPP_ENABLED=1' "$env_file" 2>/dev/null || return 2
@@ -4185,8 +4190,15 @@ case "${1:-}" in
     fi
     if [ -n "$private_win" ]; then
       if $use_screen; then
-        notify-send -a FRIDAY -- "FRIDAY" "This window looks private (\"$private_win\"), so no screenshot of it leaves this computer. Select the text instead to ask the local model about it." 2>/dev/null || true
-        exit 0
+        # Its text to the local model only (read here, never a screenshot),
+        # when there's a local model and the window has words to read.
+        win_text=""
+        if friday_local_ready && win_text=$(timeout 15 friday-ctl window-text 2>/dev/null) && [ -n "$win_text" ]; then
+          request=$(printf '%s\n\n[window]\nThe text of the window in front (private, so it stays on this computer):\n"""\n%s\n"""' "$goal" "$win_text")
+        else
+          notify-send -a FRIDAY -- "FRIDAY" "This window looks private (\"$private_win\"), so no screenshot of it leaves this computer. With local AI set up (friday setup-ai local), its text is asked about here instead." 2>/dev/null || true
+          exit 0
+        fi
       fi
       if ! reply=$(friday_ask_local "$request"); then
         notify-send -a FRIDAY -- "FRIDAY" "This window looks private (\"$private_win\"), so I won't send its text to a cloud model. Set up local AI to ask about it here: friday setup-ai local" 2>/dev/null || true
