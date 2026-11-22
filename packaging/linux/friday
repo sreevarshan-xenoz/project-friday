@@ -2571,10 +2571,10 @@ bank
 paypal"
 
 # friday_private_window: what made the focused window private, or nothing.
-friday_private_window() {
+friday_private_window() { # [window JSON, else the one in front now]
   command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 0
-  local win hay pat own="${XDG_CONFIG_HOME:-$HOME/.config}/friday/private-windows" drop never
-  win=$(timeout 2 hyprctl activewindow -j 2>/dev/null) || return 0
+  local win="${1:-}" hay pat own="${XDG_CONFIG_HOME:-$HOME/.config}/friday/private-windows" drop never
+  [ -n "$win" ] || win=$(timeout 2 hyprctl activewindow -j 2>/dev/null) || return 0
   hay=$(jq -r '"\(.class // "") \(.title // "")"' <<<"$win" 2>/dev/null | tr '[:upper:]' '[:lower:]') || return 0
   drop=$(sed -n 's/^[[:space:]]*!//p' "$own" 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
   while IFS= read -r pat; do
@@ -3754,18 +3754,23 @@ case "${1:-}" in
     lookup_pids=$!
     { pill state && : >"$lookups/pill"; } &
     lookup_pids+=" $!"
+    # The window in front at the keypress: "this window" means it, even if
+    # another is in front by the time FRIDAY acts.
+    { timeout 2 hyprctl activewindow -j >"$lookups/front" 2>/dev/null || true; } &
+    lookup_pids+=" $!"
     # The app in front now (the box doesn't take that), for its instructions.
     if [ -s "$(friday_app_instructions_file)" ]; then
       { friday_app_class >"$lookups/app" 2>/dev/null || true; } &
       lookup_pids+=" $!"
     fi
-    ask_project="" use_pill=false ask_app=""
+    ask_project="" use_pill=false ask_app="" front_win=""
     ask_lookups() {
       [ -d "$lookups" ] || return 0
       # shellcheck disable=SC2086
       wait $lookup_pids 2>/dev/null || true
       ask_project=$(cat "$lookups/project" 2>/dev/null || true)
       ask_app=$(cat "$lookups/app" 2>/dev/null || true)
+      front_win=$(cat "$lookups/front" 2>/dev/null || true)
       [ ! -e "$lookups/pill" ] || use_pill=true
       rm -rf "$lookups"
     }
@@ -4009,6 +4014,17 @@ case "${1:-}" in
       # (Arch wiki, tldr, man pages; friday-ctl docs prints nothing otherwise).
       docs=$(timeout 2 friday-ctl docs -- "$goal" 2>/dev/null || true)
       [ -z "$docs" ] || request=$(printf '%s\n\n[docs]\nThese excerpts from documentation on this computer may help. Use them only if they fit, and name the one you use (for example "Arch wiki: Pacman"):\n"""\n%s\n"""' "$goal" "$docs")
+    fi
+    # "Close this window" / "move this app": the one in front at the keypress
+    # (its app and title), unless it's private or app context is off.
+    if [ -z "${rewrite:-}" ] && ! $use_screen && [ -n "$front_win" ] \
+        && [[ "${goal,,}" =~ (this|current)\ (window|app|tab) ]] \
+        && [ ! -e "${XDG_CONFIG_HOME:-$HOME/.config}/friday/no-app-context" ]; then
+      fw_class=$(jq -r '.class // empty' <<<"$front_win" 2>/dev/null || true)
+      fw_title=$(jq -r '.title // empty' <<<"$front_win" 2>/dev/null | tr -d '"\n' | cut -c1-120 || true)
+      if [ -n "$fw_class" ] && [ -z "$(friday_private_window "$front_win")" ]; then
+        request=$(printf '%s\n\n[window in front when asked]\n"this window" is %s (title: "%s"), even if another is in front now.' "$request" "$fw_class" "$fw_title")
+      fi
     fi
     # What the person asked FRIDAY to do in this app (friday app-instructions).
     # Never for a private window: neither the app nor the instruction goes.

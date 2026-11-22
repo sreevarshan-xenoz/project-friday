@@ -382,6 +382,14 @@ rm -f "$S/hyprctl"
 
 echo "per-app instructions"
 printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s "$HYPR_WIN"\nexit 0\n' >"$S/hyprctl"; chmod +x "$S/hyprctl"
+# "This window" is the one in front at the keypress.
+: >"$LOG"; HYPR_WIN='{"class":"kitty","title":"zsh"}' bash "$F" ask "close this window"; sleep 0.3
+contains "\"this window\" names the window in front when asked" "$(cat "$LOG")" "[window in front when asked]"
+contains "by app and title" "$(cat "$LOG")" 'is kitty (title: "zsh")'
+: >"$LOG"; HYPR_WIN='{"class":"kitty","title":"zsh"}' bash "$F" ask "what is rust"; sleep 0.3
+if grep -q "window in front when asked" "$LOG"; then fail "a question not about this window named it"; else pass "other questions don't name the window"; fi
+: >"$LOG"; HYPR_WIN='{"class":"org.keepassxc.KeePassXC","title":"Passwords"}' bash "$F" ask "close this window"; sleep 0.3
+if grep -q "KeePassXC" "$LOG"; then fail "a private window was named"; else pass "a private window isn't named"; fi
 out=$(bash "$F" app-instructions set kitty "answer with commands only")
 contains "an app's instruction is kept" "$out" "In kitty, FRIDAY will: answer with commands only"
 contains "and listed" "$(bash "$F" app-instructions list)" "kitty: answer with commands only"
@@ -521,8 +529,9 @@ contains "and is pasted over the selection (Ctrl+V down)" "$(cat "$LOG")" 'send_
 contains "and up again" "$(cat "$LOG")" 'state = "up"'
 if grep -q "Rewrite: fix grammar" "$HOME/.local/state/friday/ask-history" 2>/dev/null; then fail "a rewrite went into ask history"; else pass "a rewrite stays out of ask history"; fi
 # The person moved to another window while the model answered: no paste.
-# (Looks 1-3 are taken with the selection and the private check; the 4th is when the answer is back.)
-: >"$LOG"; rm -f "$W/looks"; MOVE_AFTER=4 PRIMARY="teh quick fox" PICK="Rewrite: fix grammar and spelling" bash "$F" ask --selection; sleep 0.5
+# (Looks 1-4 are taken with the selection, the private check and the window
+# in front at the keypress; the 5th is when the answer is back.)
+: >"$LOG"; rm -f "$W/looks"; MOVE_AFTER=5 PRIMARY="teh quick fox" PICK="Rewrite: fix grammar and spelling" bash "$F" ask --selection; sleep 0.5
 if grep -q "send_key_state" "$LOG"; then fail "pasted into a window the person moved to"; else pass "another window by then: no paste"; fi
 contains "it says the rewrite is on the clipboard" "$(cat "$LOG")" "on your clipboard"
 rm -f "$W/looks"
