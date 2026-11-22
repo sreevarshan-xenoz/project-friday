@@ -1832,6 +1832,15 @@ printf '#!/bin/bash\necho "quickshell $*" >>"%s"\n' "$LOG" >"$TOUR/bin/quickshel
 contains "with FRIDAY Shell, the welcome starts its tour" "$(cat "$LOG")" "ipc call tour begin"
 if grep -q "^notify " "$LOG"; then fail "the tour welcome also notified"; else pass "the tour replaces the welcome notification"; fi
 
+# The newest question wins: a slow answer that lands after a later question is kept, not shown.
+mkdir -p "$W/slow-ask"
+printf '#!/bin/bash\n[ "$1" = goal ] && [[ "$*" == *bullets* ]] && sleep 2\nexec %q "$@"\n' "$S/friday-ctl" >"$W/slow-ask/friday-ctl"; chmod +x "$W/slow-ask/friday-ctl"
+: >"$LOG"; PATH="$W/slow-ask:$PATH" bash "$F" ask "the slow one in bullets" >/dev/null 2>&1 &
+sleep 0.5; bash "$F" ask "the quick one" >/dev/null 2>&1; wait
+shown=$(grep "^notify .*-A copy" "$LOG")
+contains "newest: the later question's answer is shown" "$shown" "Line one."
+if [[ "$shown" == *"first point"* ]]; then fail "newest: an older answer was shown after a newer question"; else pass "newest: an older answer isn't shown over a newer one"; fi
+contains "newest: but it is still kept" "$(cat "$HOME/.local/state/friday/answers.md" 2>/dev/null)" "first point"
 echo "spoken answers (friday voice speak)"
 VD="$HOME/.local/share/friday/voice"; SPK="$HOME/.config/friday/speak"
 contains "speak status: not installed" "$(bash "$F" voice speak status)" "voice speak setup"

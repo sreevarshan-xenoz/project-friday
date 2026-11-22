@@ -4375,6 +4375,10 @@ case "${1:-}" in
       notify "FRIDAY" "$said"
       exit 0
     fi
+    # The newest question wins: an answer that comes back after a later
+    # question was asked is kept (history, answers) but not shown or spoken.
+    ask_token="$$-$RANDOM"
+    (umask 077; mkdir -p "$state_dir" && printf '%s' "$ask_token" >"$state_dir/ask-newest") 2>/dev/null || true
     # Things this computer can answer or do itself go nowhere.
     local_answer=""
     if ! $use_selection && ! $use_screen && ! $use_followup && ! ${explaining_error:-false}; then
@@ -4588,6 +4592,10 @@ case "${1:-}" in
           question_chars: $q, answer_chars: $a}' >"$state_dir/last-ask.json.tmp" 2>/dev/null \
         && mv -f "$state_dir/last-ask.json.tmp" "$state_dir/last-ask.json" || rm -f "$state_dir/last-ask.json.tmp"
 
+      if [ -n "${ask_token:-}" ] && [ -s "$state_dir/ask-newest" ] \
+          && [ "$(cat "$state_dir/ask-newest" 2>/dev/null)" != "$ask_token" ]; then
+        return 0
+      fi
       # Spoken answers (friday voice speak on): the answer is read aloud while
       # the card shows it; a new answer, or friday say --stop, ends it. Asked
       # by voice and said to the end (not stopped): after a sound, FRIDAY
