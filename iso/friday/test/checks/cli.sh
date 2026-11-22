@@ -1453,6 +1453,11 @@ sleep 1; said=$(bash "$F" ask "yes" 2>&1; cat "$LOG" | tail -n 3); wait
 sleep 1; bash "$F" ask "no thanks" >/dev/null 2>&1; bash "$F" ask "cancel" >/dev/null 2>&1; wait
 [[ "$(cat "$W/conf.out")" == cancel ]] && pass "confirm: \"cancel\" in the ask box cancels" || fail "confirm: typed cancel"
 [ ! -e "$HOME/.local/state/friday/confirm-pending" ] && pass "confirm: nothing is left waiting" || fail "confirm-pending left behind"
+# A pending file left by a killed confirmation doesn't take a later "yes".
+mkdir -p "$W/stale"; printf '%s\nrm -rf x\n%s\n' "$W/stale" 999999 >"$HOME/.local/state/friday/confirm-pending"
+: >"$LOG"; bash "$F" ask "yes"; sleep 0.3
+[ ! -e "$W/stale/typed" ] && grep -q "friday-ctl" "$LOG" && pass "confirm: a stale wait doesn't take \"yes\"" || fail "confirm: a stale wait took the answer"
+rm -f "$HOME/.local/state/friday/confirm-pending"
 : >"$LOG"; bash "$F" ask "yes"; sleep 0.3
 contains "with nothing waiting, \"yes\" is just a question" "$(cat "$LOG")" "friday-ctl"
 # `friday phone status` counts the paired phones from `pocketdesk devices --json`.

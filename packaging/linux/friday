@@ -986,7 +986,11 @@ friday_confirm() {
   local action="$1" nid="${2:-}" t desk_pid phone_pid="" got="" pending
   t=$(mktemp -d) || return 1
   pending=$(friday_confirm_pending)
-  (umask 077; mkdir -p "$(dirname "$pending")"; printf '%s\n%s\n' "$t" "$action" >"$pending")
+  # Its wait folder, the action, and who waits (a typed answer counts only
+  # while this is still waiting); gone however this ends.
+  local me=$BASHPID
+  (umask 077; mkdir -p "$(dirname "$pending")"; printf '%s\n%s\n%s\n' "$t" "$action" "$me" >"$pending")
+  trap '[ "$(head -n1 "'"$pending"'" 2>/dev/null)" != "'"$t"'" ] || rm -f "'"$pending"'"; rm -rf "'"$t"'"' EXIT
   local acts=(-A run="Run" -A cancel="Cancel")
   [ -z "$nid" ] || acts+=(-r "$nid")
   notify-send -a FRIDAY -u normal "${acts[@]}" -- "FRIDAY wants to run" "$action"$'\n'"(or say yes in the ask box)" >"$t/desk" 2>/dev/null &
@@ -1032,9 +1036,12 @@ friday_confirm_typed() {
     *) return 1 ;;
   esac
   pending=$(friday_confirm_pending)
-  [ -f "$pending" ] && [ $(( $(date +%s) - $(stat -c %Y "$pending") )) -le 180 ] || return 1
-  t=$(head -n1 "$pending")
-  [ -d "$t" ] || return 1
+  local age pid
+  age=$(( $(date +%s) - $(stat -c %Y "$pending" 2>/dev/null || echo 0) ))
+  [ -f "$pending" ] && [ "$age" -ge 0 ] && [ "$age" -le 180 ] || return 1
+  t=$(sed -n 1p "$pending") pid=$(sed -n 3p "$pending")
+  # Only a confirmation still being waited on, in a folder of this user's.
+  [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null && [ -d "$t" ] && [ -O "$t" ] && [ ! -L "$t/typed" ] || return 1
   printf '%s\n' "$answer" >"$t/typed"
   if [ "$answer" = run ]; then echo "Running: $(sed -n 2p "$pending")"; else echo "Cancelled: $(sed -n 2p "$pending")"; fi
 }
@@ -3931,7 +3938,7 @@ case "${1:-}" in
     shopt -u nocasematch
     [ -n "${goal// /}" ] || exit 0
     # "Yes" or "no" to a confirmation FRIDAY is waiting on.
-    if ! $use_selection && ! $use_screen && ! $use_followup && said=$(friday_confirm_typed "$goal"); then
+    if ! $use_selection && ! $use_screen && ! $use_followup && ! $use_web && said=$(friday_confirm_typed "$goal"); then
       notify "FRIDAY" "$said"
       exit 0
     fi
