@@ -677,7 +677,7 @@ internal sealed class TrayContext : ApplicationContext
             return;
         void Stop()
         {
-            try { if (!p.HasExited) p.Kill(); } catch (InvalidOperationException) { }
+            try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
         }
         // Answered by a click (Run goes on to work in the same card) or closed:
         // the microphone closes too.
