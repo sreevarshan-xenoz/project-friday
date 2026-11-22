@@ -997,6 +997,17 @@ friday_yes_no() {
     *) return 1 ;;
   esac
 }
+# friday_conversation_end <words>: true for "no", "stop", "thanks", "that's
+# all" and the like, said where a follow-up could go.
+friday_conversation_end() {
+  local q="${1,,}"
+  q=$(sed 's/^[[:space:][:punct:]]*//;s/[[:space:][:punct:]]*$//' <<<"$q")
+  [ "$(friday_yes_no "$q" 2>/dev/null)" = cancel ] && return 0
+  case "$q" in
+    thanks|"thank you"|"thanks friday"|"thank you friday"|"that's all"|"thats all"|"that's it"|nothing|"never mind"|nevermind|bye|"no thanks"|"no thank you") return 0 ;;
+  esac
+  return 1
+}
 # friday_chime: the short sound that means "FRIDAY is listening now".
 friday_chime() {
   local f=/usr/share/sounds/freedesktop/stereo/message.oga
@@ -3384,6 +3395,7 @@ machine-facts|Error and how-to questions say what this computer runs
 this-window|\"This window\" names the window in front at the keypress
 typed-confirm|Answer a confirmation by typing yes or no
 voice-confirm|Asked by voice: say run or cancel after the sound to answer a confirmation
+voice-followup|Asked by voice: after a spoken answer and a sound, a follow-up needs no key
 suggestions|Suggested asks for the app you're in, in the ask box
 phone-send|\"Send the answer to my phone\"
 area-text|A picked screen area goes as its text when it has enough (read here by tesseract)
@@ -4522,9 +4534,19 @@ case "${1:-}" in
         && mv -f "$state_dir/last-ask.json.tmp" "$state_dir/last-ask.json" || rm -f "$state_dir/last-ask.json.tmp"
 
       # Spoken answers (friday voice speak on): the answer is read aloud while
-      # the card shows it; a new answer, or friday say --stop, ends it.
+      # the card shows it; a new answer, or friday say --stop, ends it. Asked
+      # by voice and said to the end (not stopped): after a sound, FRIDAY
+      # listens a few seconds for a follow-up, no key needed.
       if $ans_ok && [ -e "$(friday_speak_flag)" ] && friday_speak_ready; then
-        ( printf '%s' "$answer" | friday-ctl say - ) </dev/null >/dev/null 2>&1 &
+        (
+          printf '%s' "$answer" | friday-ctl say - || exit 0
+          [ -n "${FRIDAY_SPOKEN:-}" ] && friday_feature_on voice-followup && friday_voice_ready || exit 0
+          heard=$(friday-ctl listen answer 2>/dev/null | while IFS= read -r line; do
+            if [ "$line" = listening ]; then friday_chime; else printf '%s' "$line"; break; fi
+          done) || true
+          [ -n "$heard" ] && ! friday_conversation_end "$heard" || exit 0
+          FRIDAY_SPOKEN=1 exec bash "$0" ask --follow-up "$heard"
+        ) </dev/null >/dev/null 2>&1 &
         disown 2>/dev/null || true
       fi
 

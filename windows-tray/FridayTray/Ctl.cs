@@ -90,6 +90,39 @@ internal static class Ctl
         }
     }
 
+    /// <summary>
+    /// Reads <paramref name="text"/> aloud and waits: 0 when it was said to
+    /// the end, other when it was stopped or couldn't be said.
+    /// </summary>
+    public static async Task<int> SayAsync(Install install, string text)
+    {
+        var psi = new ProcessStartInfo(install.Ctl)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardInput = true,
+            StandardInputEncoding = new UTF8Encoding(false),
+        };
+        psi.ArgumentList.Add("say");
+        psi.ArgumentList.Add("-");
+        foreach (var (k, v) in install.ChildEnvironment())
+            psi.Environment[k] = v;
+        try
+        {
+            using var p = Process.Start(psi);
+            if (p is null)
+                return -1;
+            await p.StandardInput.WriteAsync(text);
+            p.StandardInput.Close();
+            await p.WaitForExitAsync();
+            return p.ExitCode;
+        }
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception or IOException)
+        {
+            return -1;
+        }
+    }
+
     /// <summary>Stops whatever FRIDAY is reading aloud.</summary>
     public static void StopSaying(Install install)
     {

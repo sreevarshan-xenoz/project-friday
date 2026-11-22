@@ -642,7 +642,7 @@ internal sealed class TrayContext : ApplicationContext
                     options with { Thorough = true, Avoid = Asking.AvoidFor(outcome.ServedBy) }));
             answer.FollowUp += () => _ = FollowUpAsync(outcome.Answer);
         }
-        ShowAnswer(answer, outcome);
+        ShowAnswer(answer, outcome, options.Spoken);
         answer.Activate();
         if (outcome.Confirmation is { } spokenConf && options.Spoken && Listening.Installed(_install.Paths)
             && AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "voice-confirm"))
@@ -658,6 +658,38 @@ internal sealed class TrayContext : ApplicationContext
     {
         var irreversible = Listening.Irreversible(action);
         Ctl.StopSaying(_install);
+        var said = Listening.YesNo(await ListenOnceAsync(answer,
+            irreversible ? "After the sound, say cancel. Run needs a click." : "After the sound, say run or cancel."));
+        if (answer.Waiting && (said == "cancel" || (said == "run" && !irreversible)))
+            answer.AnswerByVoice(said == "run");
+    }
+
+    /// <summary>
+    /// Asked by voice and read aloud to the end (not stopped, the card still
+    /// open): after a sound, a follow-up needs no key.
+    /// </summary>
+    private async Task SayThenListenAsync(AnswerWindow answer, string said)
+    {
+        if (await Ctl.SayAsync(_install, said) != 0 || answer.IsClosed)
+            return;
+        var heard = await ListenOnceAsync(answer, "After the sound, ask a follow-up, or say stop.");
+        if (string.IsNullOrWhiteSpace(heard) || Listening.EndsConversation(heard))
+            return;
+        await RunAgainAsync(() =>
+        {
+            _log.Remember(heard);
+            return RunRequestAsync(AskKind.Plain, heard, null, Asking.BuildFollowUp(heard, said),
+                confirm: null, answer: null, new AskOptions(Spoken: true));
+        });
+    }
+
+    /// <summary>
+    /// One short spoken answer while <paramref name="answer"/> is on screen
+    /// (`friday-ctl listen answer`: a sound when it listens, about six
+    /// seconds); null when nothing was said or the card closed.
+    /// </summary>
+    private async Task<string?> ListenOnceAsync(AnswerWindow answer, string hint)
+    {
         var psi = new System.Diagnostics.ProcessStartInfo(_install.Ctl)
         {
             UseShellExecute = false,
@@ -672,9 +704,9 @@ internal sealed class TrayContext : ApplicationContext
             psi.Environment[k] = v;
         System.Diagnostics.Process? p;
         try { p = System.Diagnostics.Process.Start(psi); }
-        catch (System.ComponentModel.Win32Exception) { return; }
+        catch (System.ComponentModel.Win32Exception) { return null; }
         if (p is null)
-            return;
+            return null;
         void Stop()
         {
             try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
@@ -685,25 +717,23 @@ internal sealed class TrayContext : ApplicationContext
         Action<string> clicked = _ => Stop();
         answer.Closed += closed;
         answer.ConfirmRun += clicked;
-        answer.ShowVoiceHint(irreversible ? "After the sound, say cancel. Run needs a click." : "After the sound, say run or cancel.");
+        answer.ShowVoiceHint(hint);
         try
         {
             _ = p.StandardError.ReadToEndAsync();
             while (await p.StandardOutput.ReadLineAsync() is { } line)
             {
-                if (line == "listening")
-                {
-                    if (!answer.IsClosed)
-                        System.Media.SystemSounds.Asterisk.Play();
-                    continue;
-                }
-                var said = Listening.YesNo(line);
-                if (answer.Waiting && (said == "cancel" || (said == "run" && !irreversible)))
-                    answer.AnswerByVoice(said == "run");
-                break;
+                if (line != "listening")
+                    return answer.IsClosed ? null : line;
+                if (!answer.IsClosed)
+                    System.Media.SystemSounds.Asterisk.Play();
             }
+            return null;
         }
-        catch (IOException) { }
+        catch (IOException)
+        {
+            return null;
+        }
         finally
         {
             answer.Closed -= closed;
@@ -756,12 +786,20 @@ internal sealed class TrayContext : ApplicationContext
         }
     }
 
-    /// <summary>Shows the answer, and reads a good one aloud when spoken answers are on.</summary>
-    private void ShowAnswer(AnswerWindow form, AskOutcome outcome)
+    /// <summary>
+    /// Shows the answer, and reads a good one aloud when spoken answers are
+    /// on; asked by voice, a follow-up can be spoken after it.
+    /// </summary>
+    private void ShowAnswer(AnswerWindow form, AskOutcome outcome, bool spoken = false)
     {
         form.ShowOutcome(outcome);
-        if (outcome.Ok && outcome.Confirmation is null && !string.IsNullOrWhiteSpace(outcome.Answer)
-            && Speaking.Enabled(_install.Paths))
+        if (!outcome.Ok || outcome.Confirmation is not null || string.IsNullOrWhiteSpace(outcome.Answer)
+            || !Speaking.Enabled(_install.Paths))
+            return;
+        if (spoken && Listening.Installed(_install.Paths)
+            && AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "voice-followup"))
+            _ = SayThenListenAsync(form, outcome.Answer);
+        else
             Ctl.Say(_install, outcome.Answer);
     }
 

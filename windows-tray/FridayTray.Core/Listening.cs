@@ -32,6 +32,16 @@ public static class Listening
         };
     }
 
+    /// <summary>"Stop", "no", "thanks", "that's all": said where a follow-up could go, the conversation ends.</summary>
+    public static bool EndsConversation(string? said)
+    {
+        if (YesNo(said) == "cancel")
+            return true;
+        var q = (said ?? "").Trim().Trim(Punctuation).Trim().ToLowerInvariant();
+        return q is "thanks" or "thank you" or "thanks friday" or "thank you friday" or "that's all" or "thats all"
+            or "that's it" or "nothing" or "never mind" or "nevermind" or "bye" or "no thanks" or "no thank you";
+    }
+
     private static readonly char[] Punctuation = ".,!?;:\"'“”‘’…-".ToCharArray();
 
     /// <summary>

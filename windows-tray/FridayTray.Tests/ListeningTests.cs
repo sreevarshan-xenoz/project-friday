@@ -66,3 +66,15 @@ public class VoiceAnswerTests
     public void What_cant_be_undone_needs_a_click(string action, bool irreversible) =>
         Assert.Equal(irreversible, Listening.Irreversible(action));
 }
+
+public class FollowUpTests
+{
+    [Theory]
+    [InlineData("Thanks.", true)]
+    [InlineData("That's all", true)]
+    [InlineData("stop", true)]
+    [InlineData("and what about tomorrow?", false)]
+    [InlineData("Thanks, and what about tomorrow?", false)]
+    public void Some_words_end_the_conversation(string said, bool ends) =>
+        Assert.Equal(ends, Listening.EndsConversation(said));
+}
