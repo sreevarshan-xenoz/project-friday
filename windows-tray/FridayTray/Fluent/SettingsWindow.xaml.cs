@@ -400,12 +400,18 @@ internal sealed partial class SettingsWindow : FluentWindow
                     if (!ProcessRunner.IsOllamaInstalled(out var ollamaExe))
                     {
                         await Dispatcher.InvokeAsync(() => progressText.Text = "Installing Ollama (via winget)...");
-                        var (wingetOk, _) = await ProcessRunner.RunAsync("winget",
-                            ["install", "--id", "Ollama.Ollama", "-e", "--accept-source-agreements", "--accept-package-agreements"],
+                        // winget is an app alias in WindowsApps, which a tray started at sign-in may not have on PATH.
+                        var winget = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WindowsApps", "winget.exe");
+                        var (wingetOk, wingetOut) = await ProcessRunner.RunAsync(File.Exists(winget) ? winget : "winget",
+                            ["install", "--id", "Ollama.Ollama", "-e", "--disable-interactivity", "--accept-source-agreements", "--accept-package-agreements"],
                             TimeSpan.FromMinutes(10),
                             line => Dispatcher.InvokeAsync(() => progressText.Text = line));
-                        if (!wingetOk)
-                            return (false, "Could not install Ollama with winget.");
+                        // An installer can end non-zero (say, a reboot is wanted) and still have installed it.
+                        if (!wingetOk && !ProcessRunner.IsOllamaInstalled(out _))
+                        {
+                            var last = wingetOut.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).LastOrDefault() ?? "";
+                            return (false, "Could not install Ollama with winget" + (last.Length > 0 ? $": {last}" : ".") + " You can install it from ollama.com, then press Set up local AI again.");
+                        }
 
                         if (!ProcessRunner.IsOllamaInstalled(out ollamaExe))
                             ollamaExe = "ollama";

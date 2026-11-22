@@ -52,7 +52,7 @@ internal abstract class CardWindow : Window
         var head = new Grid { Margin = new Thickness(0, 0, 0, 14) };
         head.ColumnDefinitions.Add(new ColumnDefinition());
         head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        head.Children.Add(new TextBlock
+        var headingText = new TextBlock
         {
             Text = heading,
             FontFamily = (FontFamily)FindResource("DisplayFont"),
@@ -60,7 +60,8 @@ internal abstract class CardWindow : Window
             FontWeight = FontWeights.SemiBold,
             Foreground = R("Text"),
             VerticalAlignment = VerticalAlignment.Center,
-        });
+        };
+        head.Children.Add(headingText);
         Grid.SetColumn(close, 1);
         head.Children.Add(close);
 
@@ -88,7 +89,15 @@ internal abstract class CardWindow : Window
         var frame = new Grid { Margin = new Thickness(24), Children = { shadow, card } };
         Content = frame;
 
-        card.MouseLeftButtonDown += (_, e) => { if (e.ButtonState == MouseButtonState.Pressed) DragMove(); };
+        // The title row and the card's empty space move the window; a press
+        // on anything inside it (a list row, a key box) is that thing's own.
+        // DragMove swallows the button-up, so a row clicked there never saw it.
+        head.Background = Brushes.Transparent;
+        card.MouseLeftButtonDown += (_, e) =>
+        {
+            if (e.ButtonState == MouseButtonState.Pressed && (e.OriginalSource == card || e.OriginalSource == head || e.OriginalSource == headingText))
+                DragMove();
+        };
         KeyDown += (_, e) => { if (e.Key == Key.Escape) Close(); };
         Closed += (_, _) => IsClosed = true;
         Loaded += (_, _) => Motion.RiseIn(frame, dy: 12, ms: 560, fromScale: 0.97);

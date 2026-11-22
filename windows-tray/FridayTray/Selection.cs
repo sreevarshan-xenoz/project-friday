@@ -191,11 +191,26 @@ internal static class Selection
         }
     }
 
+    /// <summary>
+    /// Waits up to 3 s for the hotkey's modifiers to come up; any still held
+    /// (Ctrl+Alt+Shift+Y takes three fingers) get a key-up, or the app would
+    /// see Ctrl+Alt+Shift+C instead of Ctrl+C and copy nothing.
+    /// </summary>
     private static async Task WaitForModifiersUpAsync()
     {
         int[] keys = [Native.VK_LWIN, Native.VK_RWIN, Native.VK_MENU, Native.VK_CONTROL, Native.VK_SHIFT];
-        for (var i = 0; i < 40 && keys.Any(k => (Native.GetAsyncKeyState(k) & 0x8000) != 0); i++)
+        for (var i = 0; i < 120 && keys.Any(Down); i++)
             await Task.Delay(25);
+        // Never a lone Win key-up: that opens the Start menu.
+        var held = keys.Where(k => k is not (Native.VK_LWIN or Native.VK_RWIN) && Down(k)).Select(k => new Native.INPUT
+        {
+            type = Native.INPUT_KEYBOARD,
+            ki = new Native.KEYBDINPUT { wVk = (ushort)k, dwFlags = Native.KEYEVENTF_KEYUP },
+        }).ToArray();
+        if (held.Length > 0)
+            Native.SendInput((uint)held.Length, held, Marshal.SizeOf<Native.INPUT>());
+
+        static bool Down(int k) => (Native.GetAsyncKeyState(k) & 0x8000) != 0;
     }
 
     private static void SendCtrlC() => SendChord(Native.VK_C);
