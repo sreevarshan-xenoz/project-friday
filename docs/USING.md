@@ -102,6 +102,8 @@ With spoken answers on, an answer to something you asked by voice is followed by
 
 To stop FRIDAY talking, press the talk key or close the answer (Esc). On Linux, `friday voice talk-over on` lets you simply talk over a spoken answer: PipeWire's echo cancellation gives FRIDAY its own microphone and speaker (your default devices stay as they are), so it hears you and not itself; it stops and asks what you said. `friday voice talk-over off` removes it.
 
+Asking something new while an answer is still on its way replaces it: the newest question wins (on Windows the old one is stopped; on Linux its answer is still kept in `friday answers`, just not shown or read out).
+
 ## Spoken answers (FRIDAY OS)
 
 FRIDAY can read its answers out loud in a small voice that is made on your computer: nothing is sent

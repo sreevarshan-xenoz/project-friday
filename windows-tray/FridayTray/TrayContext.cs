@@ -134,8 +134,22 @@ internal sealed class TrayContext : ApplicationContext
         FluentApp.Show(_welcome);
     }
 
+    // The request on its way now; a newer question cancels it.
+    private CancellationTokenSource? _inflight;
+
+    /// <summary>The newest question wins: an answer still on its way is cancelled.</summary>
+    private async Task ReplaceInflightAsync()
+    {
+        if (!_asking || _inflight is not { } current)
+            return;
+        current.Cancel();
+        for (var i = 0; i < 40 && _asking; i++)
+            await Task.Delay(50);
+    }
+
     private async Task AskAsync(AskKind kind, bool pickArea = false)
     {
+        await ReplaceInflightAsync();
         if (_asking)
             return;
         _asking = true;
@@ -405,6 +419,7 @@ internal sealed class TrayContext : ApplicationContext
         if (Speaking.Enabled(_install.Paths))
             Ctl.StopSaying(_install);
         try { if (_listener is { HasExited: false } waiting) waiting.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+        await ReplaceInflightAsync();
         if (_asking || !Listening.Installed(_install.Paths)
             || !AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "hold-to-talk"))
         {
@@ -599,12 +614,24 @@ internal sealed class TrayContext : ApplicationContext
                 answer.ShowPartial(partial);
             }, null);
         };
+        using var inflight = new CancellationTokenSource();
+        _inflight = inflight;
         var (ok, output, exitCode) = await Ctl.RunAsync(
             _install,
             Asking.CtlArguments(kind, question, request, confirm, options),
             TimeSpan.FromSeconds(240),
-            onLine);
+            onLine,
+            inflight.Token);
+        if (_inflight == inflight)
+            _inflight = null;
         poll.Stop();
+        // A newer question replaced this one: its card goes, nothing is shown.
+        if (inflight.IsCancellationRequested)
+        {
+            if (answer is { IsClosed: false })
+                answer.Close();
+            return;
+        }
         var outcome = Asking.Interpret(kind, question, exitCode, output);
         _log.Save(question, context, outcome, DateTime.Now);
 
@@ -1140,6 +1167,8 @@ internal sealed class TrayContext : ApplicationContext
                     if (Listening.WakeLine(line) is not { } heard)
                         continue;
                     var (kind, text) = heard;
+                    if (kind != "note")
+                        await ReplaceInflightAsync();
                     if (kind == "note")
                         Notify("FRIDAY", text, ToolTipIcon.None);
                     else if (_asking)
