@@ -67,6 +67,7 @@ public partial class AskWindow : Window
         }
 
         Input.TextChanged += (_, _) => OnTyped();
+        FolderChip.MouseLeftButtonUp += (_, _) => PickFolder();
         PreviewKeyDown += OnKey;
         Activated += (_, _) => _wasActive = true;
         Closing += (_, _) => _done = true; // closing deactivates it too
@@ -91,8 +92,14 @@ public partial class AskWindow : Window
         };
     }
 
+    /// <summary>Agents' folders, for the folder chip (null: agents are off).</summary>
+    public AgentFolders? Folders { get; init; }
+
     private void OnTyped()
     {
+        var chip = Folders?.Chip(Input.Text);
+        FolderChip.Visibility = chip is null ? Visibility.Collapsed : Visibility.Visible;
+        FolderText.Text = chip ?? "";
         var empty = Input.Text.Length == 0;
         Placeholder.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
         EnterKey.BeginAnimation(OpacityProperty, new DoubleAnimation(empty ? 0 : 1, TimeSpan.FromMilliseconds(160)) { EasingFunction = Motion.Out });
@@ -118,6 +125,27 @@ public partial class AskWindow : Window
                 return;
         }
         e.Handled = true;
+    }
+
+    /// <summary>The folders agents have worked in; picking one adds "in &lt;folder&gt;" to the request.</summary>
+    private void PickFolder()
+    {
+        if (Folders is not { Known.Count: > 0 } folders)
+            return;
+        var menu = new ContextMenu { PlacementTarget = FolderChip };
+        foreach (var folder in folders.Known)
+        {
+            var shown = folders.Tilde(folder);
+            var item = new System.Windows.Controls.MenuItem { Header = shown };
+            item.Click += (_, _) =>
+            {
+                Input.Text = Input.Text.TrimEnd() + " in " + shown;
+                Input.CaretIndex = Input.Text.Length;
+                Input.Focus();
+            };
+            menu.Items.Add(item);
+        }
+        menu.IsOpen = true;
     }
 
     /// <summary>Puts the <paramref name="i"/>th recent question or quick action in the field.</summary>

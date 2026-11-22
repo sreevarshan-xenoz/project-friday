@@ -455,6 +455,15 @@ if grep -qE "Summarize|Explain the selected" "$W/menu.txt"; then fail "suggested
 printf '#!/bin/bash\necho "fuzzel $*" >> %q\necho "$PICK"\n' "$LOG" >"$S/fuzzel"; chmod +x "$S/fuzzel"
 rm -f "$S/hyprctl"
 
+echo "agent folder hint"
+mkdir -p "$state/agents"; printf '{"id":"r1","folder":"%s/code/site"}' "$HOME" >"$state/agents/r1.json"
+: >"$LOG"; PICK="" bash "$F" ask; sleep 0.3
+contains "the ask box says where agents work" "$(cat "$LOG")" "agents work in ~/code/site unless you name a folder"
+echo FRIDAY_AGENTS=0 >>"$HOME/.config/friday/friday.env"
+: >"$LOG"; PICK="" bash "$F" ask; sleep 0.3
+if grep -q "agents work in" "$LOG"; then fail "agent folder hint shown with agents off"; else pass "no agent folder hint with agents off"; fi
+sed -i '/^FRIDAY_AGENTS=0$/d' "$HOME/.config/friday/friday.env"; rm -rf "$state/agents"
+
 echo "per-app instructions"
 printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s "$HYPR_WIN"\nexit 0\n' >"$S/hyprctl"; chmod +x "$S/hyprctl"
 # "This window" is the one in front at the keypress.
