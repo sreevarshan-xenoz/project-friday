@@ -13,6 +13,34 @@ public static class Listening
 
     public static string WhisperDir(Paths p) => Path.Combine(p.StateDir, "whisper");
 
+    /// <summary>"Hey Friday": the switch (off unless turned on) and whether it can run.</summary>
+    public static string WakeFlag(Paths p) => Path.Combine(p.ConfigDir, "wake");
+
+    public static bool WakeOn(Paths p) => File.Exists(WakeFlag(p)) && Installed(p);
+
+    public static void SetWake(Paths p, bool on)
+    {
+        if (on)
+        {
+            Directory.CreateDirectory(p.ConfigDir);
+            File.WriteAllText(WakeFlag(p), "");
+        }
+        else
+        {
+            try { File.Delete(WakeFlag(p)); } catch (IOException) { }
+        }
+    }
+
+    /// <summary>A line from `friday-ctl listen wake`: (note|ask|followup, text), or null.</summary>
+    public static (string Kind, string Text)? WakeLine(string line)
+    {
+        var tab = line.IndexOf('\t');
+        if (tab <= 0)
+            return null;
+        var (kind, text) = (line[..tab], line[(tab + 1)..].Trim());
+        return kind is "note" or "ask" or "followup" && text.Length > 0 ? (kind, text) : null;
+    }
+
     public static bool Installed(Paths p) =>
         File.Exists(Path.Combine(WhisperDir(p), "Release", "whisper-cli.exe"))
         && File.Exists(Path.Combine(WhisperDir(p), "ggml-base.en.bin"));

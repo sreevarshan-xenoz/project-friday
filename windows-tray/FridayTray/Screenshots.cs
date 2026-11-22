@@ -24,7 +24,7 @@ internal static class Screenshots
             [AskKind.Plain] = "Win+Y", [AskKind.Selection] = "Win+Alt+Y", [AskKind.Screen] = "Win+Ctrl+Y",
         };
         var nothing = new SettingsActions(() => { }, () => { }, () => { }, () => { }, () => { }, () => { },
-            () => { }, () => { }, _ => { }, () => { }, keys);
+            () => { }, () => { }, _ => { }, () => { }, () => { }, keys);
 
         foreach (var section in new[] { "Home", "General", "Privacy", "AI", "Voice", "Desktop control", "Tasks", "Shortcuts", "Health & updates", "About" })
             SaveWpf(new SettingsWindow(install, nothing, section), folder, "settings-" + section.Replace(" & ", "-").Replace(' ', '-').ToLowerInvariant());

@@ -626,8 +626,8 @@ pub fn run_wake() -> u8 {
         eprintln!("friday-ctl: the wake word needs voice first: friday voice setup");
         return 1;
     };
-    let Ok(mut frames) = frames(false) else {
-        eprintln!("friday-ctl: couldn't start pw-record");
+    let Some(mut frames) = mic_frames() else {
+        eprintln!("friday-ctl: couldn't open the microphone");
         return 1;
     };
     let mut seg = Segmenter::new(8, 50);
@@ -638,12 +638,7 @@ pub fn run_wake() -> u8 {
     let mut last_spoke = std::time::Instant::now()
         .checked_sub(std::time::Duration::from_secs(60))
         .unwrap_or_else(std::time::Instant::now);
-    let note = |text: &str| {
-        let _ = std::process::Command::new("notify-send")
-            .args(["-a", "FRIDAY", "-t", "4000", "--", "FRIDAY", text])
-            .stderr(std::process::Stdio::null())
-            .status();
-    };
+    let note = |text: &str| tell("note", text);
     while let Some(frame) = frames.next() {
         if conversing.is_some_and(|t| t.elapsed() > std::time::Duration::from_secs(60))
             && !crate::speech::speaking()
@@ -700,10 +695,7 @@ pub fn run_wake() -> u8 {
         }
         let mut question = rest;
         if question.trim().is_empty() {
-            let _ = std::process::Command::new("notify-send")
-                .args(["-a", "FRIDAY", "-t", "4000", "--", "FRIDAY", "Listening…"])
-                .stderr(std::process::Stdio::null())
-                .status();
+            note("Listening…");
             // The question: the next piece, if it starts within 8 seconds.
             let mut ask = seg.continuing(12, 150);
             let mut waited = 0;
@@ -723,18 +715,36 @@ pub fn run_wake() -> u8 {
             // On its own thread: the answer streams for a while, and the
             // microphone's pipe mustn't back up meanwhile. In a conversation
             // each question follows on from the last answer.
-            std::thread::spawn(move || {
-                if follow_up {
-                    friday(&["ask", "--follow-up", &question]);
-                } else {
-                    friday(&["ask", &question]);
-                }
-            });
+            std::thread::spawn(move || tell(if follow_up { "followup" } else { "ask" }, &question));
         }
         quiet_until = std::time::Instant::now() + std::time::Duration::from_secs(3);
         seg = Segmenter::new(8, 50);
     }
     0
+}
+
+/// What the wake word heard, handed on: on Linux a notification or `friday
+/// ask` (`--follow-up` in a conversation); on Windows a line `<kind>\t<text>`
+/// for the tray, which asks it.
+fn tell(kind: &str, text: &str) {
+    #[cfg(windows)]
+    {
+        use std::io::Write;
+        let mut out = std::io::stdout().lock();
+        let _ = writeln!(out, "{kind}\t{}", text.replace(['\n', '\t'], " "));
+        let _ = out.flush();
+    }
+    #[cfg(not(windows))]
+    match kind {
+        "note" => {
+            let _ = std::process::Command::new("notify-send")
+                .args(["-a", "FRIDAY", "-t", "4000", "--", "FRIDAY", text])
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+        "followup" => friday(&["ask", "--follow-up", text]),
+        _ => friday(&["ask", text]),
+    }
 }
 
 /// Where captions' notes are kept: `captions/<date>-<time>.txt` under
