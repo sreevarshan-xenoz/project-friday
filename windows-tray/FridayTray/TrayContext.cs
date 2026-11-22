@@ -1105,6 +1105,7 @@ internal sealed class TrayContext : ApplicationContext
             WakeChanged: WakeChanged,
             LocalAiChanged: LocalAiChanged,
             StopLlama: () => _llama.Stop(),
+            LlamaUptime: () => _llama.Uptime,
             Hotkeys: _hotkeys.Labels), section);
         FluentApp.Show(_settings);
     }
