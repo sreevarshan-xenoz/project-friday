@@ -634,6 +634,96 @@ pub async fn engines() -> Vec<Engine> {
     vec![ollama, llamacpp]
 }
 
+/// How far a download is, from Ollama's `/api/pull` lines: each layer
+/// reports its own total and how much of it is in, so the whole is their sum.
+#[derive(Debug, Default)]
+pub struct PullProgress {
+    layers: std::collections::BTreeMap<String, (u64, u64)>,
+}
+
+/// What one `/api/pull` line means.
+#[derive(Debug, PartialEq)]
+pub enum PullEvent {
+    /// (percent, megabytes in, megabytes in all)
+    Progress(u8, u64, u64),
+    Done,
+    Failed(String),
+    Other,
+}
+
+impl PullProgress {
+    pub fn feed(&mut self, line: &str) -> PullEvent {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            return PullEvent::Other;
+        };
+        if let Some(e) = v["error"].as_str() {
+            return PullEvent::Failed(e.to_string());
+        }
+        if v["status"] == "success" {
+            return PullEvent::Done;
+        }
+        let (Some(digest), Some(total)) = (v["digest"].as_str(), v["total"].as_u64()) else {
+            return PullEvent::Other;
+        };
+        let done = v["completed"].as_u64().unwrap_or(0).min(total);
+        self.layers.insert(digest.to_string(), (done, total));
+        let (done, total) = self
+            .layers
+            .values()
+            .fold((0, 0), |(d, t), (ld, lt)| (d + ld, t + lt));
+        if total == 0 {
+            return PullEvent::Other;
+        }
+        PullEvent::Progress(
+            (done * 100 / total) as u8,
+            done / 1_048_576,
+            total / 1_048_576,
+        )
+    }
+}
+
+/// Downloads `model` with Ollama's API, calling `on` with each change in
+/// progress (a percent at most once).
+pub async fn ollama_pull(model: &str, mut on: impl FnMut(&PullEvent)) -> Result<(), String> {
+    use futures::StreamExt;
+    let http = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let r = http
+        .post(format!("{OLLAMA_URL}/api/pull"))
+        .json(&serde_json::json!({ "model": model, "stream": true }))
+        .send()
+        .await
+        .map_err(|_| "Ollama isn't running".to_string())?;
+    if !r.status().is_success() {
+        return Err(format!("Ollama said {}", r.status()));
+    }
+    let mut stream = r.bytes_stream();
+    let (mut buf, mut progress, mut last) = (Vec::new(), PullProgress::default(), None);
+    while let Some(chunk) = stream.next().await {
+        buf.extend_from_slice(&chunk.map_err(|e| e.to_string())?);
+        while let Some(at) = buf.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = buf.drain(..=at).collect();
+            match progress.feed(&String::from_utf8_lossy(&line)) {
+                PullEvent::Failed(e) => return Err(e),
+                PullEvent::Done => {
+                    on(&PullEvent::Done);
+                    return Ok(());
+                }
+                PullEvent::Progress(p, d, t) => {
+                    if last != Some(p) {
+                        last = Some(p);
+                        on(&PullEvent::Progress(p, d, t));
+                    }
+                }
+                PullEvent::Other => {}
+            }
+        }
+    }
+    Err("the download stopped before it finished".into())
+}
+
 /// One line per engine, for `friday local-ai status` and the settings pages.
 pub fn engine_line(e: &Engine) -> String {
     let label = if e.name == "ollama" {
@@ -874,5 +964,24 @@ mod tests {
         let line = engine_line(&e);
         assert!(line.starts_with("Ollama: running, gemma3:4b ("), "{line}");
         assert!(line.contains("sees screenshots"), "{line}");
+    }
+
+    #[test]
+    fn pull_progress_adds_up_the_layers() {
+        let mut p = PullProgress::default();
+        assert_eq!(p.feed(r#"{"status":"pulling manifest"}"#), PullEvent::Other);
+        assert_eq!(
+            p.feed(r#"{"status":"pulling a","digest":"sha256:a","total":3145728000,"completed":1048576000}"#),
+            PullEvent::Progress(33, 1000, 3000)
+        );
+        assert_eq!(
+            p.feed(r#"{"status":"pulling b","digest":"sha256:b","total":1048576000,"completed":1048576000}"#),
+            PullEvent::Progress(50, 2000, 4000)
+        );
+        assert_eq!(p.feed(r#"{"status":"success"}"#), PullEvent::Done);
+        assert_eq!(
+            p.feed(r#"{"error":"pull model manifest: file does not exist"}"#),
+            PullEvent::Failed("pull model manifest: file does not exist".into())
+        );
     }
 }

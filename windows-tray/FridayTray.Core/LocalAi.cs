@@ -256,6 +256,20 @@ public static class LocalAi
         return text;
     }
 
+    /// <summary>A `friday-ctl local-ai pull` line "progress 42 1536 3482": (percent, MB in, MB in all), or null.</summary>
+    public static (int Percent, long DoneMb, long TotalMb)? ParseProgress(string line)
+    {
+        var parts = line.Trim().Split(' ');
+        return parts.Length == 4 && parts[0] == "progress"
+            && int.TryParse(parts[1], out var p) && long.TryParse(parts[2], out var d) && long.TryParse(parts[3], out var t) && t > 0
+            ? (Math.Clamp(p, 0, 100), d, t)
+            : null;
+    }
+
+    /// <summary>"42% · 1.5 of 3.4 GB"</summary>
+    public static string FormatProgress(int percent, long doneMb, long totalMb) =>
+        $"{percent}% · {doneMb / 1024.0:0.0} of {totalMb / 1024.0:0.0} GB";
+
     /// <summary>The engines on this PC, from `friday-ctl local-ai engines --json` (none when it can't be read).</summary>
     public static IReadOnlyList<LocalEngine> ParseEngines(string json)
     {

@@ -181,6 +181,26 @@ echo "packages per GPU"
 [[ "$(FRIDAY_HW_ROOT="$hw" bash "$F" local-ai packages llamacpp)" == "vulkan-icd-loader vulkan-radeon" ]] && pass "llama.cpp on AMD: Vulkan" || fail "llama.cpp AMD packages"
 [[ -z "$(FRIDAY_HW_ROOT="$hw_none" bash "$F" local-ai packages llamacpp)" ]] && pass "llama.cpp with no GPU: nothing extra" || fail "llama.cpp CPU packages"
 
+echo "download progress"
+# Ollama's API says how far the download is; status shows it while it runs.
+cat >"$S/friday-ctl" <<'STUB'
+#!/bin/bash
+[ "$1 $2" = "local-ai pull" ] || exit 0
+echo "progress 10 300 3000"; echo "progress 100 3000 3000"; echo done
+STUB
+chmod +x "$S/friday-ctl"
+printf 'engine=ollama\nbudget_mb=6144\nstate=pending\n' >"$CONF"; : >"$LOG"
+FRIDAY_HW_ROOT="$hw" bash "$F" local-ai install >/dev/null 2>&1
+if grep -q "ollama pull" "$LOG"; then fail "progress: fell back to ollama pull"; else pass "progress: the model comes through Ollama's API"; fi
+contains "progress: the last progress is kept" "$(cat "$CONF")" "progress=100 3000 3000"
+sed -i 's/^state=.*/state=installing/; s/^progress=.*/progress=42 1536 3482/' "$CONF"
+contains "progress: status shows how far" "$(bash "$F" local-ai status)" "42% (1.5 GB of 3.4 GB)"
+printf '#!/bin/bash\n[ "$1 $2" = "local-ai pull" ] && exit 1\nexit 0\n' >"$S/friday-ctl"
+printf 'engine=ollama\nbudget_mb=6144\nstate=pending\n' >"$CONF"; : >"$LOG"
+FRIDAY_HW_ROOT="$hw" bash "$F" local-ai install >/dev/null 2>&1
+contains "progress: an older friday-ctl falls back to ollama pull" "$(cat "$LOG")" "ollama pull gemma3:4b"
+rm -f "$S/friday-ctl"
+
 echo "engines already on this computer"
 # friday-ctl local-ai engines: a running Ollama with two models, FRIDAY's llama.cpp with one file.
 cat >"$S/friday-ctl" <<'STUB'

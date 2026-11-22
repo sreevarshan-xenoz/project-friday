@@ -3593,11 +3593,30 @@ friday_local_conf_set() { # friday_local_conf_set key value...
   mv "$tmp" "$FRIDAY_LOCAL_CONF"
 }
 
+# friday_local_progress <percent> <MB in> <MB in all>: how far the download
+# is, for `friday local-ai status` and FRIDAY Settings.
+friday_local_progress() {
+  friday_local_conf_set progress "$1 $2 $3"
+  [ -t 2 ] && printf '\r  %s%% (%s of %s)   ' "$1" "$(friday_gb "$2")" "$(friday_gb "$3")" >&2
+  return 0
+}
+
 # friday_fetch <url> <sha256> <dest>: download, check, then move into place.
+# How far it is goes to friday_local_progress while it downloads.
 friday_fetch() {
-  local part="$3.part"
+  local part="$3.part" total pid size
   mkdir -p "$(dirname "$3")"
-  curl -fL --retry 3 -o "$part" "$1" || { rm -f "$part"; echo "download failed: $1"; return 1; }
+  total=$(curl -sIL --max-time 20 "$1" 2>/dev/null | tr -d '\r' | awk 'tolower($1) == "content-length:" { n = $2 } END { print n + 0 }' || true)
+  curl -fsSL --retry 3 -o "$part" "$1" &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if (( ${total:-0} > 0 )); then
+      size=$(stat -c %s "$part" 2>/dev/null || echo 0)
+      friday_local_progress $(( size * 100 / total )) $(( size / 1048576 )) $(( total / 1048576 ))
+    fi
+    sleep 1
+  done
+  wait "$pid" || { rm -f "$part"; echo "download failed: $1"; return 1; }
   if ! echo "$2  $part" | sha256sum -c --status 2>/dev/null; then
     rm -f "$part"; echo "checksum mismatch for $(basename "$3")"; return 1
   fi
@@ -3626,7 +3645,18 @@ friday_local_failed() {
 friday_local_install_ollama() {
   command -v ollama >/dev/null 2>&1 || { echo "Ollama isn't installed (friday setup-ai local installs it)"; return 1; }
   friday_wait_http "http://127.0.0.1:11434/" 60 || { echo "Ollama isn't running (sudo systemctl enable --now ollama)"; return 1; }
-  ollama pull "$1" >&2 || { echo "ollama pull $1 failed"; return 1; }
+  # Through Ollama's own API, which says how far it is; `ollama pull` when
+  # that can't be had (an older friday-ctl).
+  local line p d t ok=false
+  if command -v friday-ctl >/dev/null 2>&1; then
+    while IFS=' ' read -r line p d t; do
+      case "$line" in
+        progress) friday_local_progress "$p" "$d" "$t" ;;
+        done) ok=true ;;
+      esac
+    done < <(friday-ctl local-ai pull "$1" 2>/dev/null || true)
+  fi
+  $ok || ollama pull "$1" >&2 || { echo "ollama pull $1 failed"; return 1; }
   LOCAL_BASE_URL="http://127.0.0.1:11434/v1"
 }
 
@@ -3696,6 +3726,7 @@ friday_local_ai_install() {
   friday_local_conf_set model "$model"
   friday_local_conf_set state installing
   friday_local_conf_set reason ""
+  friday_local_conf_set progress ""
   echo "Setting up $model on $engine ($(friday_gb "$dl") download)..."
   # The engine step prints only its failure reason on stdout (progress goes
   # to stderr) and sets LOCAL_BASE_URL, so it runs here, not in $( ).
@@ -3793,7 +3824,14 @@ friday_local_ai_status() {
   engine=$(friday_local_conf_get engine); reason=$(friday_local_conf_get reason)
   case "$state" in
     ready) echo "Local AI: on, ${model:-?} on $engine"; friday_local_ai_order ;;
-    installing) echo "Local AI: downloading ${model:-the model} for $engine" ;;
+    installing)
+      local p d t
+      read -r p d t <<<"$(friday_local_conf_get progress)"
+      if [[ "$p" =~ ^[0-9]+$ && "$t" =~ ^[0-9]+$ ]] && (( t > 0 )); then
+        echo "Local AI: downloading ${model:-the model} for $engine: $p% ($(friday_gb "$d") of $(friday_gb "$t"))"
+      else
+        echo "Local AI: downloading ${model:-the model} for $engine"
+      fi ;;
     pending) echo "Local AI: waits for the next login to download (or run: friday local-ai install)" ;;
     failed) echo "Local AI: setup failed: $reason (try again: friday local-ai install)" ;;
     *) echo "Local AI: ${state:-unknown}" ;;

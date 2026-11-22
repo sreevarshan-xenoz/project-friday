@@ -352,6 +352,15 @@ internal sealed partial class SettingsWindow : FluentWindow
             Margin = new Thickness(0, 8, 0, 0),
             Visibility = Visibility.Collapsed,
         };
+        var progressBar = new System.Windows.Controls.ProgressBar
+        {
+            Minimum = 0,
+            Maximum = 100,
+            Height = 6,
+            Margin = new Thickness(0, 6, 0, 0),
+            Visibility = Visibility.Collapsed,
+        };
+        AutomationProperties.SetName(progressBar, "Download progress");
         var errorText = new TextBlock
         {
             FontSize = 12.5,
@@ -422,11 +431,25 @@ internal sealed partial class SettingsWindow : FluentWindow
                     if (!await ProcessRunner.EnsureOllamaRunningAsync(ollamaExe))
                         return (false, "Ollama is installed but didn't start. Open Ollama once from the Start menu, then try again.");
 
-                    await Dispatcher.InvokeAsync(() => progressText.Text = $"Downloading {model}...");
-                    var (pullOk, _) = await ProcessRunner.RunAsync(ollamaExe,
-                        ["pull", model],
-                        TimeSpan.FromMinutes(30),
-                        line => Dispatcher.InvokeAsync(() => progressText.Text = line));
+                    // Through Ollama's own API, which says how far it is; `ollama
+                    // pull` if that can't be had.
+                    await Dispatcher.InvokeAsync(() => { progressText.Text = $"Downloading {model}..."; progressBar.Visibility = Visibility.Visible; });
+                    var (pullOk, _) = await Ctl.RunAsync(_install, ["local-ai", "pull", model], TimeSpan.FromMinutes(60),
+                        line =>
+                        {
+                            if (LocalAi.ParseProgress(line) is var (p, d, t))
+                                Dispatcher.InvokeAsync(() =>
+                                {
+                                    progressBar.Value = p;
+                                    progressText.Text = $"Downloading {model}: {LocalAi.FormatProgress(p, d, t)}";
+                                });
+                        });
+                    if (!pullOk)
+                        (pullOk, _) = await ProcessRunner.RunAsync(ollamaExe,
+                            ["pull", model],
+                            TimeSpan.FromMinutes(30),
+                            line => Dispatcher.InvokeAsync(() => progressText.Text = line));
+                    await Dispatcher.InvokeAsync(() => progressBar.Visibility = Visibility.Collapsed);
                     if (!pullOk)
                         return (false, $"Could not download {model} with Ollama.");
 
@@ -472,6 +495,7 @@ internal sealed partial class SettingsWindow : FluentWindow
         stack.Children.Add(new Border { Height = 1, Background = Resource("Hairline"), Opacity = 0.6 });
         stack.Children.Add(PairRow("Current state", stateVal));
         stack.Children.Add(progressText);
+        stack.Children.Add(progressBar);
         stack.Children.Add(errorText);
 
         var btnPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 14, 0, 4) };

@@ -37,4 +37,13 @@ public class LocalAiEnginesTests
         Assert.Contains("LLAMACPP_VISION=1", env);
         Assert.Contains("GEMINI_API_KEY=k", env);
     }
+
+    [Fact]
+    public void Download_progress_reads_and_reads_out()
+    {
+        Assert.Equal((42, 1536L, 3482L), LocalAi.ParseProgress("progress 42 1536 3482"));
+        Assert.Null(LocalAi.ParseProgress("done"));
+        Assert.Null(LocalAi.ParseProgress("progress 5 1 0"));
+        Assert.Equal("42% · 1.5 of 3.4 GB", LocalAi.FormatProgress(42, 1536, 3482));
+    }
 }

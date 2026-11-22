@@ -629,7 +629,7 @@ fn local_ai(args: &[String]) -> std::process::ExitCode {
             );
         }
         _ => {
-            eprintln!("usage: friday-ctl local-ai detect | presets [--json] | engines [--json] | model <mb> | local-first <model> <order> [tps]");
+            eprintln!("usage: friday-ctl local-ai detect | presets [--json] | engines [--json] | pull <model> | model <mb> | local-first <model> <order> [tps]");
             return std::process::ExitCode::from(2);
         }
     }
@@ -1274,6 +1274,34 @@ async fn main() -> std::process::ExitCode {
                     "usage: friday-ctl listen captions [--mic] | wake | hold | answer | barge | setup"
                 );
                 std::process::ExitCode::from(2)
+            }
+        };
+    }
+    if raw.first().map(String::as_str) == Some("local-ai")
+        && raw.get(1).map(String::as_str) == Some("pull")
+    {
+        let Some(model) = raw.get(2) else {
+            eprintln!("usage: friday-ctl local-ai pull <model>");
+            return std::process::ExitCode::from(2);
+        };
+        // "progress <percent> <MB in> <MB in all>" lines, then "done".
+        let result = friday_mobile::local_ai::ollama_pull(model, |e| {
+            use std::io::Write;
+            match e {
+                friday_mobile::local_ai::PullEvent::Progress(p, d, t) => {
+                    println!("progress {p} {d} {t}")
+                }
+                friday_mobile::local_ai::PullEvent::Done => println!("done"),
+                _ => {}
+            }
+            let _ = std::io::stdout().flush();
+        })
+        .await;
+        return match result {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("friday-ctl: {e}");
+                std::process::ExitCode::from(1)
             }
         };
     }

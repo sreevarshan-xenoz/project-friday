@@ -159,6 +159,25 @@ ColumnLayout {
     Chip { text: "Set up local AI"; onClicked: page.inTerminal("local AI", "friday setup-ai local") }
   }
   Output { text: localAi.output }
+  // A download on its way: how far it is, refreshed every two seconds.
+  readonly property int downloadPercent: {
+    const m = localAi.output.match(/downloading .*: (\d+)%/);
+    return m ? parseInt(m[1]) : -1;
+  }
+  Rectangle {
+    visible: page.downloadPercent >= 0
+    Layout.fillWidth: true
+    implicitHeight: 6
+    radius: 3
+    color: Theme.glassEdge
+    Rectangle { width: parent.width * page.downloadPercent / 100; height: parent.height; radius: 3; color: Theme.accent }
+  }
+  Timer {
+    interval: 2000
+    repeat: true
+    running: page.visible && localAi.output.indexOf("downloading") >= 0
+    onTriggered: { localAi.args = ["local-ai", "status"]; localAi.run(); }
+  }
 
   // Engines already on this computer (Ollama, llama.cpp) and the models they
   // have: "Use" answers with one, nothing downloaded.
