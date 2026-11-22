@@ -564,7 +564,10 @@ impl Tool for DesktopControlTool {
                 _ = self.cancelled() => return ToolResult::error(stopped_message(&steps)),
                 r = tokio::time::timeout(MODEL_TIMEOUT, self.model.complete(&prompt)) => match r {
                     Ok(Ok(r)) => r,
-                    Ok(Err(e)) => return ToolResult::error(format!("couldn't ask the model: {e}")),
+                    Ok(Err(e)) => {
+                tracing::warn!("couldn't ask the model: {e}");
+                return ToolResult::error(crate::failures::plain_model_error(&e.to_string()));
+            }
                     Err(_) => {
                         return ToolResult::error("the model took too long to choose the next step")
                     }
@@ -1048,7 +1051,7 @@ mod tests {
         let t = tool(model, Arc::new(Stub::default()), Arc::default());
         let r = run(&t, "pause the music").await;
         assert!(!r.success);
-        assert!(r.error.unwrap().contains("couldn't ask the model"));
+        assert!(r.error.unwrap().contains("AI provider"));
     }
 
     /// Sets the abort flag as it answers its first question, like a Stop

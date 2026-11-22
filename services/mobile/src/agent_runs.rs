@@ -883,7 +883,10 @@ impl friday_goal_execution::Tool for AgentsTool {
             format!("{GUIDE}\n\nThe person's request: {request}\n\nYour reply (JSON only):");
         let reply = match tokio::time::timeout(MODEL_TIMEOUT, self.model.complete(&prompt)).await {
             Ok(Ok(r)) => r,
-            Ok(Err(e)) => return ToolResult::error(format!("couldn't ask the model: {e}")),
+            Ok(Err(e)) => {
+                tracing::warn!("couldn't ask the model: {e}");
+                return ToolResult::error(crate::failures::plain_model_error(&e.to_string()));
+            }
             Err(_) => {
                 return ToolResult::error("the model took too long to understand the request")
             }

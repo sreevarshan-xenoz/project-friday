@@ -431,12 +431,16 @@ impl Tool for DiagnoseTool {
                 "{GUIDE}\n\nThe computer runs {system}.\nThe person's problem: {problem}\n\nWhat you've seen so far:\n{}{last}\n\nYour reply (JSON only):",
                 if notes.is_empty() { "(nothing yet)" } else { notes.as_str() }
             );
-            let reply =
-                match tokio::time::timeout(MODEL_TIMEOUT, self.model.complete(&prompt)).await {
-                    Ok(Ok(r)) => r,
-                    Ok(Err(e)) => return ToolResult::error(format!("couldn't ask the model: {e}")),
-                    Err(_) => return ToolResult::error("the model took too long"),
-                };
+            let reply = match tokio::time::timeout(MODEL_TIMEOUT, self.model.complete(&prompt))
+                .await
+            {
+                Ok(Ok(r)) => r,
+                Ok(Err(e)) => {
+                    tracing::warn!("couldn't ask the model: {e}");
+                    return ToolResult::error(crate::failures::plain_model_error(&e.to_string()));
+                }
+                Err(_) => return ToolResult::error("the model took too long"),
+            };
             let Some(choice) = first_json(&reply) else {
                 return ToolResult::error("couldn't tell what to check");
             };
