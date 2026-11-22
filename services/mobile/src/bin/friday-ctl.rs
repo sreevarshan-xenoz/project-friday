@@ -629,7 +629,7 @@ fn local_ai(args: &[String]) -> std::process::ExitCode {
             );
         }
         _ => {
-            eprintln!("usage: friday-ctl local-ai detect | presets [--json] | engines [--json] | pull <model> | install-llamacpp <model> [--gpu] | model <mb> | local-first <model> <order> [tps]");
+            eprintln!("usage: friday-ctl local-ai detect | presets [--json] | engines [--json] | pull <model> | install-llamacpp <model> [--gpu|--cpu] | model <mb> | local-first <model> <order> [tps]");
             return std::process::ExitCode::from(2);
         }
     }
@@ -1281,11 +1281,20 @@ async fn main() -> std::process::ExitCode {
         && raw.get(1).map(String::as_str) == Some("install-llamacpp")
     {
         let Some(model) = raw.get(2) else {
-            eprintln!("usage: friday-ctl local-ai install-llamacpp <model|file.gguf> [--gpu]");
+            eprintln!(
+                "usage: friday-ctl local-ai install-llamacpp <model|file.gguf> [--gpu|--cpu]"
+            );
             return std::process::ExitCode::from(2);
         };
         // The same "progress" lines as pull; "done vision=0|1" at the end.
-        let gpu = raw.iter().any(|a| a == "--gpu");
+        // Neither: the build already set up (a "Use" of another model).
+        let gpu = if raw.iter().any(|a| a == "--gpu") {
+            Some(true)
+        } else if raw.iter().any(|a| a == "--cpu") {
+            Some(false)
+        } else {
+            None
+        };
         let result = friday_mobile::local_ai::install_llamacpp(model, gpu, |e| {
             use std::io::Write;
             if let friday_mobile::local_ai::PullEvent::Progress(p, d, t) = e {

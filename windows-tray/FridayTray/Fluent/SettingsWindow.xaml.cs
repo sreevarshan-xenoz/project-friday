@@ -35,6 +35,7 @@ internal sealed record SettingsActions(
     Action ShowWelcome,
     Action WakeChanged,
     Action LocalAiChanged,
+    Action StopLlama,
     IReadOnlyDictionary<AskKind, string> Hotkeys);
 
 /// <summary>
@@ -434,7 +435,9 @@ internal sealed partial class SettingsWindow : FluentWindow
                     {
                         await Dispatcher.InvokeAsync(() => { progressText.Text = $"Downloading llama.cpp and {model}..."; progressBar.Visibility = Visibility.Visible; });
                         var vis = vision;
-                        var (llOk, llOut) = await Ctl.RunAsync(_install, gpu ? ["local-ai", "install-llamacpp", model, "--gpu"] : ["local-ai", "install-llamacpp", model],
+                        // A running llama-server would lock the build being replaced.
+                        await Dispatcher.InvokeAsync(_do.StopLlama);
+                        var (llOk, llOut) = await Ctl.RunAsync(_install, ["local-ai", "install-llamacpp", model, gpu ? "--gpu" : "--cpu"],
                             TimeSpan.FromMinutes(90),
                             line =>
                             {
@@ -451,8 +454,9 @@ internal sealed partial class SettingsWindow : FluentWindow
                         {
                             ChangeEnv(e => LocalAi.WithLocalAi(e, model, vis, lfOk && lfOut.Trim() == "1", LocalAi.LlamaBaseUrl));
                             _do.LocalAiChanged();
+                            progressText.Text = "Starting llama.cpp...";
                         });
-                        return (true, null);
+                        return await LlamaReadyAsync() ? (true, null) : (false, LlamaNotReady);
                     }
                     if (!ProcessRunner.IsOllamaInstalled(out var ollamaExe))
                     {
@@ -562,7 +566,23 @@ internal sealed partial class SettingsWindow : FluentWindow
         // before; "Use" answers with one, nothing downloaded.
         var found = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
         stack.Children.Add(found);
+        var busy = false;
         async Task UseAsync(LocalEngine engine, LocalModel m, Button button)
+        {
+            // One at a time: two would write the same files.
+            if (busy)
+                return;
+            busy = true;
+            try
+            {
+                await UseOneAsync(engine, m, button);
+            }
+            finally
+            {
+                busy = false;
+            }
+        }
+        async Task UseOneAsync(LocalEngine engine, LocalModel m, Button button)
         {
             button.IsEnabled = false;
             errorText.Visibility = Visibility.Collapsed;
@@ -574,8 +594,10 @@ internal sealed partial class SettingsWindow : FluentWindow
                 button.IsEnabled = true;
                 return;
             }
-            // FRIDAY's own llama.cpp file: llama-server gets that model.
-            var ownLlama = engine.Engine == "llamacpp" && !engine.Running;
+            // FRIDAY's own llama.cpp file: its llama-server gets that model
+            // (also when it is already serving another one).
+            var ownLlama = engine.Engine == "llamacpp"
+                && File.Exists(Path.Combine(LocalAi.LlamaDir(_install.Paths), "models", m.Name));
             if (ownLlama)
             {
                 var (llOk, llOut) = await Ctl.RunAsync(_install, ["local-ai", "install-llamacpp", m.Name], TimeSpan.FromMinutes(5));
@@ -597,6 +619,13 @@ internal sealed partial class SettingsWindow : FluentWindow
             }
             ChangeEnv(e => LocalAi.WithLocalAi(e, m.Name, m.Vision, outText.Trim() == "1", engine.BaseUrl));
             _do.LocalAiChanged();
+            if (ownLlama && !await LlamaReadyAsync())
+            {
+                errorText.Text = LlamaNotReady;
+                errorText.Visibility = Visibility.Visible;
+                button.IsEnabled = true;
+                return;
+            }
             stateVal.Text = $"on: {m.Name} ({(engine.Engine == "ollama" ? "Ollama" : "llama.cpp")}, already on this PC)";
             turnOffBtn.Visibility = Visibility.Visible;
             button.IsEnabled = true;
@@ -1160,6 +1189,28 @@ internal sealed partial class SettingsWindow : FluentWindow
         fade.KeyFrames.Add(new LinearDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(2600))));
         fade.KeyFrames.Add(new EasingDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(3000))));
         Toast.BeginAnimation(OpacityProperty, fade);
+    }
+
+    private const string LlamaNotReady =
+        "llama.cpp didn't start answering. Another program may be using port 8080, or the model doesn't fit this PC's memory; FRIDAY's logs say more.";
+
+    /// <summary>Whether FRIDAY's llama-server answers its health check within 3 minutes (a big model loads slowly).</summary>
+    private static async Task<bool> LlamaReadyAsync()
+    {
+        using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+        var health = LocalAi.LlamaBaseUrl[..LocalAi.LlamaBaseUrl.LastIndexOf("/v1", StringComparison.Ordinal)] + "/health";
+        for (var deadline = DateTime.UtcNow.AddMinutes(3); DateTime.UtcNow < deadline; await Task.Delay(1000))
+        {
+            try
+            {
+                if ((await http.GetAsync(health)).IsSuccessStatusCode)
+                    return true;
+            }
+            catch (Exception e) when (e is System.Net.Http.HttpRequestException or TaskCanceledException)
+            {
+            }
+        }
+        return false;
     }
 
     /// <summary>Rewrites friday.env with <paramref name="change"/>; the daemon

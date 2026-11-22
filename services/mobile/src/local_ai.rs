@@ -856,26 +856,33 @@ async fn fetch_checked(
         .map_err(|e| format!("couldn't download {name}: {e}"))?;
     let total = r.content_length().unwrap_or(0);
     let part = dest.with_extension("part");
-    let mut file = std::fs::File::create(&part).map_err(|e| e.to_string())?;
-    let (mut hash, mut done, mut last) = (Sha256::new(), 0u64, None);
-    let mut stream = r.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("the download of {name} stopped: {e}"))?;
-        file.write_all(&chunk).map_err(|e| e.to_string())?;
-        hash.update(&chunk);
-        done += chunk.len() as u64;
-        if let Some(p) = (done * 100).checked_div(total).map(|p| p as u8) {
-            if last != Some(p) {
-                last = Some(p);
-                on(&PullEvent::Progress(p, done / 1_048_576, total / 1_048_576));
+    let fetched = async {
+        let mut file = std::fs::File::create(&part).map_err(|e| e.to_string())?;
+        let (mut hash, mut done, mut last) = (Sha256::new(), 0u64, None);
+        let mut stream = r.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| format!("the download of {name} stopped: {e}"))?;
+            file.write_all(&chunk).map_err(|e| e.to_string())?;
+            hash.update(&chunk);
+            done += chunk.len() as u64;
+            if let Some(p) = (done * 100).checked_div(total).map(|p| p as u8) {
+                if last != Some(p) {
+                    last = Some(p);
+                    on(&PullEvent::Progress(p, done / 1_048_576, total / 1_048_576));
+                }
             }
         }
+        let got: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        if got != sha {
+            return Err(format!("{name} doesn't match its checksum; not using it"));
+        }
+        Ok(())
     }
-    drop(file);
-    let got: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
-    if got != sha {
+    .await;
+    // A stopped or refused download leaves nothing behind (models are GBs).
+    if let Err(e) = fetched {
         let _ = std::fs::remove_file(&part);
-        return Err(format!("{name} doesn't match its checksum; not using it"));
+        return Err(e);
     }
     std::fs::rename(&part, dest).map_err(|e| e.to_string())
 }
@@ -883,10 +890,11 @@ async fn fetch_checked(
 /// llama.cpp on Windows: its release build, then the model (`model`: a ladder
 /// id, or a `.gguf` already in FRIDAY's models folder), and the arguments
 /// the tray runs llama-server with (`llama.args`, one per line). What is
-/// already there isn't fetched again. Returns whether the model sees images.
+/// already there isn't fetched again. `gpu`: None keeps the last choice.
+/// Returns whether the model sees images.
 pub async fn install_llamacpp(
     model: &str,
-    gpu: bool,
+    gpu: Option<bool>,
     mut on: impl FnMut(&PullEvent),
 ) -> Result<bool, String> {
     let dir = llama_dir();
@@ -895,8 +903,11 @@ pub async fn install_llamacpp(
         .connect_timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| e.to_string())?;
-    if !dir.join("llama-server.exe").is_file() {
-        let (_, file, sha) = LLAMA_WIN[usize::from(gpu)];
+    // Which build is unpacked (`llama.build`: its zip's name).
+    let built = std::fs::read_to_string(dir.join("llama.build")).unwrap_or_default();
+    let gpu = gpu.unwrap_or(built.trim() == LLAMA_WIN[1].1);
+    let (_, file, sha) = LLAMA_WIN[usize::from(gpu)];
+    if !dir.join("llama-server.exe").is_file() || built.trim() != file {
         let zip = dir.join("downloads").join(file);
         let url =
             format!("https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA_BUILD}/{file}");
@@ -914,6 +925,7 @@ pub async fn install_llamacpp(
         if !ok {
             return Err("couldn't unpack llama.cpp".into());
         }
+        std::fs::write(dir.join("llama.build"), file).map_err(|e| e.to_string())?;
     }
     let (file, projector) = if model.ends_with(".gguf") {
         let file = models.join(model);

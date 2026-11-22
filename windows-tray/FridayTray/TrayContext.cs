@@ -1099,6 +1099,7 @@ internal sealed class TrayContext : ApplicationContext
             ShowWelcome: ShowWelcome,
             WakeChanged: WakeChanged,
             LocalAiChanged: LocalAiChanged,
+            StopLlama: () => _llama.Stop(),
             Hotkeys: _hotkeys.Labels), section);
         FluentApp.Show(_settings);
     }
