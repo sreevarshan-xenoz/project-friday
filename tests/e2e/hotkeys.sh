@@ -10,7 +10,10 @@
 #   - every shipped config binds it to exactly its command and nothing else
 #     (Super+Y once also opened ii's search overview),
 #   - pressing it ends in a notification with the model's answer to that
-#     question (for the screen, an answer about the screenshot it was sent).
+#     question (for the screen, an answer about the screenshot it was sent),
+#   - the ask box opens and the first words arrive within a budget,
+#   - a screen ask whose window has words (agent-desktop, stubbed) sends them
+#     and takes no screenshot, even with no model that can see images.
 # Neither compositor can run on a GPU-less runner (no GBM allocator), so the
 # keymap comes from loading the configs with hypr_binds.lua and niri_binds.lua.
 #
@@ -109,10 +112,12 @@ PORT=$(cat "$W/port")
 # Desktop stand-ins. The `friday` CLI itself is the packaged one.
 S="$W/stub"; mkdir -p "$S" "$W/home"
 ln -s "$REPO/packaging/linux/friday" "$S/friday"
-printf '#!/bin/bash\necho "$PICK"\n' >"$S/fuzzel"
+# fuzzel: the ask box; when it opened goes to box.ts (the keypress budget).
+printf '#!/bin/bash\ndate +%%s.%%N >>%q\necho "$PICK"\n' "$W/box.ts" >"$S/fuzzel"
 printf '#!/bin/bash\n[[ "$*" == *--primary* ]] && { printf %%s "$PRIMARY"; exit 0; }\nprintf %%s "$CLIP"\n' >"$S/wl-paste"
 # notify-send: logs its arguments (tab-separated); -p prints an id, as libnotify does.
-printf '#!/bin/bash\nprintf "%%s\\t" "$@" >>%q; echo >>%q\nfor a in "$@"; do [[ "$a" == -p ]] && echo 7; done; true\n' "$W/notify.log" "$W/notify.log" >"$S/notify-send"
+# Each streamed update's time goes to words.ts (the first-words budget).
+printf '#!/bin/bash\nprintf "%%s\\t" "$@" >>%q; echo >>%q\n[[ "$*" == *"FRIDAY · "* ]] && date +%%s.%%N >>%q\nfor a in "$@"; do [[ "$a" == -p ]] && echo 7; done; true\n' "$W/notify.log" "$W/notify.log" "$W/words.ts" >"$S/notify-send"
 # A real 1x1 PNG on stdout, as `grim -` writes.
 printf '#!/bin/bash\necho "grim $*" >>%q\nbase64 -d <<<iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==\n' "$W/grim.log" >"$S/grim"
 # hyprctl: the focused window a screen ask should capture (just it).
@@ -154,7 +159,8 @@ press() {
     [[ -z "$up" ]] || cmd="$cmd; $up"
     runner=(sh -c "$cmd")
   fi
-  : >"$W/notify.log"
+  : >"$W/notify.log"; : >"$W/box.ts"; : >"$W/words.ts"
+  local t0; t0=$(date +%s.%N)
   "${offline[@]}" PICK="$question" "$@" timeout 150 setsid -w "${runner[@]}" </dev/null >>"$W/press.log" 2>&1 \
     || { fail "$key (\`$cmd\`) exited non-zero"; tail -5 "$W/press.log" | sed 's/^/       /'; return; }
   local line=""
@@ -171,6 +177,17 @@ press() {
   local updates; updates=$(grep -cE $'^-a\tFRIDAY\t-r\t7\t(--\t)?FRIDAY · ' "$W/notify.log" || true)
   if (( updates >= 1 )) && [[ "$line" == *$'-r\t7\t'* ]]; then pass "$key: the answer filled in ($updates updates), then replaced them"
   else fail "$key: expected streaming updates and a final replace (updates: $updates)"; sed 's/^/       /' "$W/notify.log"; fi
+  # Budgets: the box opens at once; the first words come quickly (the fake
+  # model answers at once, so this is FRIDAY's own time). Here ~0.05 s and
+  # ~0.5 s; the margins are for cold CI runners (the cli check holds the box
+  # to 1.5 s).
+  local box words
+  box=$(awk -v t="$t0" 'NR == 1 { printf "%.2f", $1 - t }' "$W/box.ts")
+  words=$(awk -v t="$t0" 'NR == 1 { printf "%.2f", $1 - t }' "$W/words.ts")
+  if [[ -n "$box" ]] && awk -v b="$box" -v m="${BOX_BUDGET:-2.5}" 'BEGIN { exit !(b < m) }'; then pass "$key: the ask box opened ${box}s after the keypress"
+  else fail "$key: the ask box took ${box:-forever}s (budget ${BOX_BUDGET:-2.5}s)"; fi
+  if [[ -n "$words" ]] && awk -v w="$words" -v m="${WORDS_BUDGET:-15}" 'BEGIN { exit !(w < m) }'; then pass "$key: first words ${words}s after the keypress"
+  else fail "$key: first words took ${words:-forever}s (budget ${WORDS_BUDGET:-15}s)"; fi
 }
 
 press SUPER+Y "What does the Rust error E0308 mean?" "FAKE-MODEL-ANSWER: What does the Rust error E0308 mean?*"
@@ -215,6 +232,34 @@ if [[ $(wc -l <"$W/model.log") -eq $lines_before ]]; then pass "no model was sen
 else fail "a model was called for the refused screen ask"; tail -n +$((lines_before + 1)) "$W/model.log" | cut -c1-200; fi
 if grep -q "opencode.ai/zen/v1/chat" "$W/daemon2.log"; then fail "the daemon tried OpenCode Zen for the screen ask"
 else pass "OpenCode Zen was never tried"; fi
+
+# The window's own words: with agent-desktop able to read the window in
+# front, a screen ask needs no screenshot (and so no vision model either).
+echo "screen ask from the window's text"
+long="fn main() { let total: u32 = \"42\"; } error[E0308]: mismatched types: expected u32, found &str. $(printf 'line of code %s; ' $(seq 20))"
+cat >"$S/agent-desktop" <<STUB
+#!/bin/bash
+v='"ok":true,"version":"2.6"'
+case "\$1" in
+  version) echo "{\$v,\"data\":{\"version\":\"1.3.1\"}}" ;;
+  list-apps) echo "{\$v,\"data\":{\"apps\":[{\"name\":\"code\"}]}}" ;;
+  list-windows) echo "{\$v,\"data\":[{\"id\":\"w1\",\"app_name\":\"code\",\"title\":\"main.rs\"}]}" ;;
+  snapshot) echo "{\$v,\"data\":{\"tree\":{\"role\":\"window\",\"name\":\"main.rs\",\"children\":[{\"role\":\"text\",\"name\":\"$long\"}]}}}" ;;
+  *) echo '{"ok":false,"version":"2.6","error":{"code":"UNSUPPORTED","message":"stub"}}' ;;
+esac
+STUB
+chmod +x "$S/agent-desktop"
+kill $DAEMON 2>/dev/null; wait $DAEMON 2>/dev/null || true
+rm -f "$W/state.json"
+"${offline[@]}" FRIDAY_AGENT_DESKTOP="$S/agent-desktop" "$DAEMON_BIN" >"$W/daemon3.log" 2>&1 &
+DAEMON=$!
+for _ in $(seq 120); do grep -q '"status": *"running"' "$W/state.json" 2>/dev/null && break; sleep 0.5; done
+: >"$W/grim.log"
+press CTRL+SUPER+Y "what is on my screen?" "FAKE-MODEL-ANSWER: *what is on my screen?*"
+if grep -q "mismatched types: expected u32" "$W/model.log"; then pass "the window's words reached the model"
+else fail "the window's words never reached the model"; fi
+if [[ -s "$W/grim.log" ]]; then fail "a screenshot was taken although the window had words:"; sed 's/^/       /' "$W/grim.log"
+else pass "no screenshot was taken"; fi
 
 if (( fails > 0 )); then echo "e2e hotkeys: $fails failure(s) (logs in $W)"; exit 1; fi
 echo "e2e hotkeys: ok"
