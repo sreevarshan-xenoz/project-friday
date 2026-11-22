@@ -356,6 +356,19 @@ impl DesktopAdapter {
                     }
                 };
                 self.focus(&w.address)?;
+                // The move is of whatever has focus: only once it's this one.
+                let now: Value = serde_json::from_str(
+                    &self
+                        .exec
+                        .run("hyprctl", &["-j".into(), "activewindow".into()])?,
+                )
+                .unwrap_or_default();
+                if s(&now, "address") != w.address {
+                    return Err(format!(
+                        "couldn't bring {} to the front, so it wasn't moved",
+                        w.class
+                    ));
+                }
                 self.move_focused(dir)?;
                 Ok(json!({"placed": w.class, "side": side, "workspace": w.workspace}))
             }
@@ -640,6 +653,7 @@ mod tests {
         moved: Mutex<Vec<(String, String)>>,
         closed: Mutex<Vec<String>>,
         stuck: Vec<&'static str>,
+        focused: Mutex<String>,
     }
 
     impl Stub {
@@ -653,6 +667,7 @@ mod tests {
                 moved: Mutex::new(Vec::new()),
                 closed: Mutex::new(Vec::new()),
                 stuck: Vec::new(),
+                focused: Mutex::new(String::new()),
             })
         }
         /// An older Hyprland, which takes the classic dispatch syntax.
@@ -665,6 +680,7 @@ mod tests {
                 moved: Mutex::new(Vec::new()),
                 closed: Mutex::new(Vec::new()),
                 stuck: Vec::new(),
+                focused: Mutex::new(String::new()),
             })
         }
         /// A Hyprland that refuses every dispatch.
@@ -677,6 +693,7 @@ mod tests {
                 moved: Mutex::new(Vec::new()),
                 closed: Mutex::new(Vec::new()),
                 stuck: Vec::new(),
+                focused: Mutex::new(String::new()),
             })
         }
         fn calls(&self) -> Vec<String> {
@@ -700,6 +717,7 @@ mod tests {
                 moved: Mutex::new(Vec::new()),
                 closed: Mutex::new(Vec::new()),
                 stuck: stuck.to_vec(),
+                focused: Mutex::new(String::new()),
             })
         }
     }
@@ -729,7 +747,9 @@ mod tests {
                                     .nth(1)
                                     .map(|r| r.split(',').next().unwrap_or("").to_string())
                             });
-                        if line.contains("close") {
+                        if line.contains("focus") {
+                            *self.focused.lock().unwrap() = addr;
+                        } else if line.contains("close") {
                             self.closed.lock().unwrap().push(addr);
                         } else if let Some(ws) = ws {
                             self.moved.lock().unwrap().push((addr, ws));
@@ -749,7 +769,8 @@ mod tests {
                 return Ok(Value::Array(list).to_string());
             }
             if line == "hyprctl -j activewindow" {
-                return Ok(r#"{"class":"foot","title":"zsh"}"#.into());
+                let focused = self.focused.lock().unwrap().clone();
+                return Ok(json!({"class": "foot", "title": "zsh", "address": focused}).to_string());
             }
             if line == "hyprctl -j workspaces" {
                 return Ok(r#"[{"name":"1","windows":1},{"name":"2","windows":2}]"#.into());
@@ -890,6 +911,16 @@ mod tests {
             .success
         );
         assert_eq!(old.last(), "hyprctl dispatch movewindow u");
+        // Focus didn't take: nothing is moved (it would move another window).
+        let stuck = Stub::stuck(&["0xaaa1"]);
+        let r = run(
+            &stuck,
+            "place_window",
+            json!({"target": "firefox", "side": "left"}),
+        )
+        .await;
+        assert!(!r.success && r.error.unwrap().contains("wasn't moved"));
+        assert!(!stuck.calls().iter().any(|c| c.contains("direction")));
     }
 
     #[tokio::test]
