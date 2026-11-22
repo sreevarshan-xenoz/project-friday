@@ -659,8 +659,18 @@ contains "forget lists the sent log" "$out" "3 entries in the log"
 contains "forget lists the memory" "$out" "1 things FRIDAY remembered"
 if bash "$F" forget answers </dev/null >/dev/null 2>&1; then fail "forget deleted without a yes"; else pass "forget wants --yes when it can't ask"; fi
 [[ -f "$FD/answers.md" ]] && pass "and nothing was deleted" || fail "answers.md vanished without a yes"
-contains "forget answers reports counts" "$(bash "$F" forget answers --yes)" "Deleted 2 saved answers and 2 remembered questions"
-[[ ! -e "$FD/answers.md" && ! -e "$FD/ask-history" ]] && pass "forget answers deletes them" || fail "forget answers left files"
+cp "$FD/answers.md" "$W/answers.saved"; cp "$FD/ask-history" "$W/asks.saved"
+pad=$(head -c 2000 /dev/zero | tr '\0' 'x')
+for i in $(seq 1100); do printf '<!-- friday answer -->\n# q%s\n\n%s\n\n---\n\n' "$i" "$pad"; done >"$FD/answers.md"
+: >"$LOG"; bash "$F" ask "Volume 40" >/dev/null; sleep 0.3
+sz=$(stat -c %s "$FD/answers.md")
+[[ -s "$FD/answers.1.md" && $sz -gt 900000 && $sz -lt 1300000 ]] && pass "answers.md past 2 MiB keeps its newer half (the older in answers.1.md)" || fail "answers.md didn't rotate by halves: $sz bytes"
+[[ "$(head -n1 "$FD/answers.md")" == "<!-- friday answer -->" ]] && grep -q "^# q1100$" "$FD/answers.md" && grep -q "^# q1$" "$FD/answers.1.md" && tail -n 20 "$FD/answers.md" | grep -q "Volume" \
+  && pass "cut at an entry, the newest answer last" || fail "rotation cut an entry or lost the new answer"
+mv -f "$W/answers.saved" "$FD/answers.md"; mv -f "$W/asks.saved" "$FD/ask-history"
+printf '<!-- friday answer -->\n# q0\n\nOld\n\n---\n\n' >"$FD/answers.1.md"
+contains "forget answers reports counts (the older half too)" "$(bash "$F" forget answers --yes)" "Deleted 3 saved answers and 2 remembered questions"
+[[ ! -e "$FD/answers.md" && ! -e "$FD/answers.1.md" && ! -e "$FD/ask-history" ]] && pass "forget answers deletes them" || fail "forget answers left files"
 [[ -f "$FD/egress.jsonl" && -f "$FD/memory/episodes.jsonl" ]] && pass "and only them" || fail "forget answers deleted more than asked"
 bash "$F" forget all --yes >/dev/null
 [[ ! -e "$FD/egress.jsonl" && ! -e "$FD/memory/episodes.jsonl" && ! -e "$FD/lessons.jsonl" ]] && pass "forget all deletes the rest, lessons too" || fail "forget all left files"
@@ -1187,6 +1197,15 @@ printf '{"ts":"t","said":"x","kind":"window","args":["0xabc1","1\\" })"]}\n' >"$
 : >"$LOG"; out=$(bash "$F" undo || true)
 if grep -q "dispatch" "$LOG"; then fail "undo dispatched an odd workspace"; else pass "undo: an odd entry is refused"; fi
 rm -f "$S/hyprctl" "$state/undo.jsonl"
+# Writers at once (the daemon does too): the lock keeps every entry.
+bash -c 'source <(sed -n "/^friday_undo_file() {/p;/^friday_undo_add() {/,/^}/p" "$1"); for i in 1 2 3 4 5 6 7 8; do friday_undo_add "w$i" sound 0.5 0 & done; wait' _ "$F"
+[ "$(wc -l <"$state/undo.jsonl")" -eq 8 ] && pass "undo entries written at once are all kept" || fail "concurrent undo writes lost entries: $(wc -l <"$state/undo.jsonl") of 8"
+rm -f "$state/undo.jsonl" "$state/undo.jsonl.lock"
+# A blank line in the journal doesn't hide the entries before it.
+printf '{"ts":"t","said":"x","kind":"sound","args":["0.3","0"]}\n\n' >"$state/undo.jsonl"
+: >"$LOG"; bash "$F" undo >/dev/null || true
+contains "undo: a trailing blank line is skipped" "$(cat "$LOG")" "wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.3"
+rm -f "$state/undo.jsonl" "$state/undo.jsonl.lock"
 : >"$LOG"; MUTED=1 bash "$F" ask "unmute"; sleep 0.3; : >"$LOG"; bash "$F" ask "undo"; sleep 0.3
 contains "\"undo\" in the ask box undoes too" "$(cat "$LOG")" "wpctl set-mute @DEFAULT_AUDIO_SINK@ 1"
 contains "and says so" "$(cat "$state/last-answer.md")" "Undid the unmute: volume back to 55%, muted."

@@ -174,9 +174,38 @@ pub(crate) fn window_undo(out: &str) -> Option<Value> {
 }
 
 /// Adds one entry to `undo.jsonl` in `dir` (the journal `friday undo`
-/// reads), keeping the last 20, owner-readable only.
+/// reads), keeping the last 20, owner-readable only. Holds `undo.jsonl.lock`
+/// while it rewrites, as the `friday` CLI does (`flock`), so an entry added
+/// by one never overwrites the other's.
 pub(crate) fn append_undo(dir: &std::path::Path, line: &Value) {
     let path = dir.join("undo.jsonl");
+    let _ = std::fs::create_dir_all(dir);
+    let mut lock_opts = std::fs::OpenOptions::new();
+    lock_opts.write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        lock_opts.mode(0o600);
+    }
+    // Released when `_lock` closes at the end. Not got within 2 s (a stuck
+    // CLI): the entry is dropped rather than written over another.
+    let _lock = lock_opts.open(dir.join("undo.jsonl.lock"));
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        let Ok(l) = &_lock else { return };
+        let got = (0..40).any(|_| {
+            // SAFETY: flock on a descriptor this function owns.
+            let ok = unsafe { libc::flock(l.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
+            if !ok {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            ok
+        });
+        if !got {
+            return;
+        }
+    }
     let old = std::fs::read_to_string(&path).unwrap_or_default();
     let mut lines: Vec<&str> = old.lines().filter(|l| !l.trim().is_empty()).collect();
     let keep = lines.len().saturating_sub(19);
@@ -613,6 +642,29 @@ mod tests {
         ] {
             assert!(window_undo(out).is_none(), "{out}");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn undo_entries_added_at_once_are_all_kept() {
+        let dir = std::env::temp_dir().join(format!("friday-undo-{}", uuid::Uuid::new_v4()));
+        let threads: Vec<_> = (0..8)
+            .map(|i| {
+                let dir = dir.clone();
+                std::thread::spawn(move || {
+                    append_undo(
+                        &dir,
+                        &json!({"kind": "window", "said": format!("move {i}")}),
+                    )
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        let text = std::fs::read_to_string(dir.join("undo.jsonl")).unwrap();
+        assert_eq!(text.lines().count(), 8, "{text}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
