@@ -63,7 +63,7 @@
       <TextBlock x:Name="Footer" Grid.Row="2" Margin="25,2,6,0" Style="{StaticResource Caption}"
                  TextTrimming="CharacterEllipsis" Visibility="Collapsed" />
 
-      <StackPanel x:Name="Buttons" Grid.Row="3" Margin="25,14,4,0" Orientation="Horizontal" HorizontalAlignment="Right" />
+      <WrapPanel x:Name="Buttons" Grid.Row="3" Margin="25,14,4,0" Orientation="Horizontal" HorizontalAlignment="Right" />
     </Grid>
     </Grid>
   </Border>

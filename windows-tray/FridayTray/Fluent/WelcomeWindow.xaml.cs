@@ -104,9 +104,10 @@ public partial class WelcomeWindow : Window
             caps.Children.Add(Keycap(parts[i]));
         }
         var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(168) });
+        // As wide as the longest key (Ctrl+Alt+Shift+Y), at least 168.
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto, MinWidth = 168 });
         grid.ColumnDefinitions.Add(new ColumnDefinition());
-        var text = new TextBlock { Text = what, Style = (Style)FindResource("Body"), FontSize = 13.5, VerticalAlignment = VerticalAlignment.Center };
+        var text = new TextBlock { Text = what, Style = (Style)FindResource("Body"), FontSize = 13.5, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(12, 0, 0, 0) };
         Grid.SetColumn(text, 1);
         grid.Children.Add(caps);
         grid.Children.Add(text);

@@ -55,7 +55,7 @@
           </StackPanel>
         </Border>
 
-        <StackPanel x:Name="Buttons" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0" />
+        <WrapPanel x:Name="Buttons" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0" />
       </StackPanel>
     </Grid>
   </Border>
