@@ -85,13 +85,27 @@ pub fn resolve(state_dir: &Path, workspaces: &Path, goal: &str) -> Option<PathBu
         }
     };
     let mut best: Option<((usize, usize), String)> = None;
+    // Another project matched as well as the best one: "FRIDAY" with
+    // friday-mobile and friday-desktop names neither.
+    let mut tied = false;
     for folder in known_folders(state_dir, workspaces) {
         let s = score(&folder);
-        if s.0 > 0 && best.as_ref().is_none_or(|(b, _)| s >= *b) {
-            best = Some((s, folder));
+        if s.0 == 0 {
+            continue;
+        }
+        match &best {
+            Some((b, f)) if s == *b => {
+                tied |= crate::thoughts::project_name(f) != crate::thoughts::project_name(&folder);
+                best = Some((s, folder));
+            }
+            Some((b, _)) if s < *b => {}
+            _ => {
+                tied = false;
+                best = Some((s, folder));
+            }
         }
     }
-    best.map(|(_, f)| PathBuf::from(f))
+    best.filter(|_| !tied).map(|(_, f)| PathBuf::from(f))
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
@@ -278,5 +292,36 @@ mod tests {
             r("continue building FRIDAY\n\nFRIDAY just put back: foot in friday-mobile").as_deref(),
             Some("/c/project-friday")
         );
+    }
+
+    #[test]
+    fn a_word_two_projects_share_names_neither() {
+        let root = std::env::temp_dir().join(format!("friday-resolve-{}", uuid::Uuid::new_v4()));
+        let state = root.join("state");
+        std::fs::create_dir_all(&state).unwrap();
+        let answer = |p: &str| {
+            format!("<!-- friday answer -->\n# a\n\n_2026-11-20 10:00_\n\n_project: {p}_\n\nA\n\n---\n\n")
+        };
+        std::fs::write(
+            state.join("answers.md"),
+            [
+                answer("/c/friday-mobile"),
+                answer("/c/friday-desktop"),
+                answer("/old/garden"),
+                answer("/c/garden"),
+            ]
+            .concat(),
+        )
+        .unwrap();
+        let ws = root.join("workspaces");
+        let r = |goal: &str| resolve(&state, &ws, goal).map(|p| p.display().to_string());
+        assert_eq!(r("where are we on FRIDAY"), None);
+        assert_eq!(
+            r("where are we on friday desktop").as_deref(),
+            Some("/c/friday-desktop")
+        );
+        // One project seen in two places isn't two projects: the newest.
+        assert_eq!(r("continue the garden").as_deref(), Some("/c/garden"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

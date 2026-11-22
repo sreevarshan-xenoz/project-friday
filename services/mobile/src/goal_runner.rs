@@ -2037,7 +2037,9 @@ impl GoalRunner {
         // goal (the user's own words), not the composed text. The durable
         // journal is the source of truth when one is attached; otherwise the
         // in-memory episode store backs the same recall.
-        let recalled: Vec<String> = {
+        // The project is picked once here and used again for lessons after
+        // the answer (when answers.md has grown, so a second pick could differ).
+        let (recalled, project): (Vec<String>, Option<String>) = {
             let exec = self.executive.lock().await;
             let hits: Vec<CognitiveEpisode> = match &self.journal {
                 Some(journal) => journal.recall(&goal, MEMORY_RECALL_LIMIT),
@@ -2131,7 +2133,7 @@ impl GoalRunner {
                     project.as_deref(),
                 ));
             }
-            lines
+            (lines, project)
         };
         let composed = compose_goal_with_context(&goal, &prior, &recalled);
         let goal_start = std::time::Instant::now();
@@ -2361,11 +2363,6 @@ impl GoalRunner {
         ) {
             if r.tool.as_deref() != Some("web_search") {
                 let (text, _) = friday_goal_execution::mask_secrets(&r.text);
-                let project = self
-                    .timeline
-                    .as_ref()
-                    .and_then(|dir| crate::project::resolve(dir, &crate::workspace::dir(), &goal))
-                    .map(|p| crate::thoughts::project_name(&p.to_string_lossy()).to_string());
                 let _ = crate::lessons::learn(
                     path,
                     chrono::Utc::now().timestamp(),
