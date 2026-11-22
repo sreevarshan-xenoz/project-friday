@@ -540,12 +540,18 @@ pub fn talk_over_conf() -> Option<std::path::PathBuf> {
     Some(base.join("pipewire/pipewire.conf.d/friday-echo-cancel.conf"))
 }
 
+/// On, and FRIDAY can play through its echo-cancelled speaker (`pw-play`):
+/// without that, the microphone would hear FRIDAY's own voice.
 pub fn talk_over_on() -> bool {
-    cfg!(not(windows)) && talk_over_conf().is_some_and(|p| p.is_file())
+    cfg!(not(windows))
+        && talk_over_conf().is_some_and(|p| p.is_file())
+        && std::env::var_os("PATH")
+            .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("pw-play").is_file()))
 }
 
-/// Frames that are clearly speech before FRIDAY stops talking for it.
-pub const BARGE_FRAMES: usize = 3;
+/// Loud frames in a row (0.4 s) before FRIDAY stops talking for them: a
+/// click or a cough doesn't.
+pub const BARGE_FRAMES: usize = 4;
 
 /// Talking over FRIDAY (talk-over on): while it speaks, listens on the
 /// echo-cancelled microphone; once the person has spoken for a moment, the
@@ -562,18 +568,29 @@ pub fn run_barge() -> u8 {
         return 3;
     };
     let mut seg = Segmenter::new(8, 150);
-    let mut loud = 0;
-    let mut stopped = false;
+    let (mut loud, mut started, mut stopped, mut n) = (0, false, false, 0usize);
     for frame in frames {
-        if !stopped && !crate::speech::speaking() {
+        n += 1;
+        if !stopped {
+            // The reading may not have begun yet; once it has, its end ends this.
+            if crate::speech::speaking() {
+                started = true;
+            } else if started || n > 30 {
+                return 1;
+            }
+        } else if n > 80 {
+            // Stopped for something that never became words.
             return 1;
         }
+        let level = rms(&frame);
         let piece = seg.feed(&frame);
         if !stopped {
-            loud = if seg.speaking { loud + 1 } else { 0 };
+            let clear = seg.heard >= CALIBRATE && level > (seg.floor * 3.0).max(MIN_LOUD);
+            loud = if clear { loud + 1 } else { 0 };
             if loud >= BARGE_FRAMES {
                 crate::speech::stop_running();
                 stopped = true;
+                n = 0;
             }
         }
         if let Some(p) = piece {
