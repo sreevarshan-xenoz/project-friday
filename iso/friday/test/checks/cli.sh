@@ -710,6 +710,19 @@ else pass "the saved answer says there was text, not what it was"; fi
 : >"$LOG"; LOCAL_REPLY="An example." HYPR_WIN='{"class":"kitty","title":"zsh"}' bash "$F" ask --follow-up "give an example"; sleep 0.3
 contains "a follow-up to a local answer stays local" "$(cat "$LOG")" "http://127.0.0.1:8080/v1/chat/completions"
 if grep -q "^friday-ctl" "$LOG"; then fail "a local answer's follow-up went to the daemon"; else pass "a local answer's follow-up skips the daemon"; fi
+# A short general question goes to the local model first; one about this
+# computer, a silent local model or the switch off sends it to the daemon.
+: >"$LOG"; LOCAL_REPLY="Frank Herbert." HYPR_WIN='{"class":"kitty","title":"zsh"}' bash "$F" ask "who wrote Dune"; sleep 0.3
+contains "a short general question is answered locally" "$(cat "$LOG")" "Frank Herbert."
+if grep -q "^friday-ctl '" "$LOG"; then fail "an easy question went to the daemon despite a local model"; else pass "an easy question skips the daemon"; fi
+: >"$LOG"; LOCAL_REPLY="x" HYPR_WIN='{"class":"kitty","title":"zsh"}' bash "$F" ask "why is my battery draining"; sleep 0.3
+if grep -q "chat/completions" "$LOG"; then fail "a question about this computer went to the local model"; else pass "a question about this computer goes to the daemon"; fi
+: >"$LOG"; HYPR_WIN='{"class":"kitty","title":"zsh"}' bash "$F" ask "who wrote Dune"; sleep 0.3
+grep -q "^friday-ctl .*Dune" "$LOG" && pass "a local model with no answer hands over to the daemon" || fail "a silent local model kept the question"
+bash "$F" feature easy-local off >/dev/null
+: >"$LOG"; LOCAL_REPLY="x" HYPR_WIN='{"class":"kitty","title":"zsh"}' bash "$F" ask "who wrote Dune"; sleep 0.3
+if grep -q "chat/completions" "$LOG"; then fail "easy-local off still asked the local model"; else pass "easy-local off sends easy questions to the daemon"; fi
+bash "$F" feature easy-local on >/dev/null
 # A local model that isn't on this computer doesn't count.
 printf 'LLAMACPP_ENABLED=1\nLLAMACPP_BASE_URL=http://192.0.2.7:8080/v1\n' >"$envf"
 : >"$LOG"; LOCAL_REPLY="x" PRIMARY="hunter2" PICK="explain" bash "$F" ask --selection; sleep 0.3

@@ -2745,9 +2745,10 @@ friday_local_ready() {
     && [[ "$base" == http://127.0.0.1:* || "$base" == http://localhost:* ]]
 }
 
-# friday_ask_local <prompt>: the local model's answer, asked directly on this
-# computer (not through the daemon, so nothing can fall back to the cloud).
-# Fails when no local model is set up.
+# friday_ask_local <prompt> [seconds]: the local model's answer, asked
+# directly on this computer (not through the daemon, so nothing can fall back
+# to the cloud). Fails when no local model is set up, or after <seconds>
+# (180 by default).
 friday_ask_local() {
   local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" base model body
   grep -qx 'LLAMACPP_ENABLED=1' "$env_file" 2>/dev/null || return 2
@@ -2755,8 +2756,18 @@ friday_ask_local() {
   model=$(sed -n 's/^LLAMACPP_MODEL=//p' "$env_file" | tail -n1)
   [[ "$base" != *@* ]] && [[ "$base" == http://127.0.0.1:* || "$base" == http://localhost:* ]] || return 2
   body=$(jq -nc --arg m "$model" --arg p "$1" '{model: $m, messages: [{role: "user", content: $p}]}')
-  timeout 180 curl -s -H 'Content-Type: application/json' -d "$body" "$base/chat/completions" 2>/dev/null \
+  timeout "${2:-180}" curl -s -H 'Content-Type: application/json' -d "$body" "$base/chat/completions" 2>/dev/null \
     | jq -er '.choices[0].message.content | select(. != null and . != "")' 2>/dev/null
+}
+
+# Whether a question is short and general enough for the local model: a
+# question of up to 14 words that names nothing on this computer, nothing
+# current and no action ("who wrote Dune", "what is a monad"). The rest goes
+# to the daemon, which can look things up.
+friday_easy_ask() {
+  local q=" ${1,,} " general='^ (what|who|whose|which|when|where|why|how|define|meaning|translate|is|are|was|were|does|do|did|can) ' mine
+  mine="[^a-z](my|me|mine|i|i'm|i've|we|our|us|you|your|this|that|these|here|computer|laptop|pc|system|file|files|folder|disk|drive|battery|wifi|bluetooth|network|ip|gateway|dns|hostname|port|cpu|gpu|ram|memory|usage|temperature|fan|kernel|driver|log|logs|process|service|package|packages|window|screen|app|apps|tab|open|close|install|installed|uninstall|run|running|start|stop|restart|reboot|shutdown|mute|kill|delete|remove|set|turn|play|send|update|remind|today|tonight|now|latest|news|weather|price|current|currently|yesterday|tomorrow)[^a-z]"
+  [ "$(wc -w <<<"$1")" -le 14 ] && [[ "$q" =~ $general ]] && ! [[ "$q" =~ $mine ]] && [[ "$1" != *[\`{}\<\>/]* ]]
 }
 
 # What works right now, in a few quick looks (a second or so in all):
@@ -3301,6 +3312,7 @@ suggestions|Suggested asks for the app you're in, in the ask box
 phone-send|\"Send the answer to my phone\"
 area-text|A picked screen area goes as its text when it has enough (read here by tesseract)
 couldnt-check|Say when an answer comes from general knowledge, with nothing on this computer checked
+easy-local|With local AI set up, short general questions are answered on this computer first
 place-window|Put a window on one side of the screen (\"put Firefox on the left\")"
 friday_features_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/features-off"; }
 # friday_feature_on <name>: on unless switched off.
@@ -4580,6 +4592,15 @@ case "${1:-}" in
     # Recalled text goes to the local model first (with none set up, to the
     # cloud provider, as friday recall on said).
     if ${from_recall:-false} && reply=$(friday_ask_local "$request"); then
+      show_answer true "$(jq -n --arg r "$reply" '{result: $r, local: true}')" ""
+      exit 0
+    fi
+
+    # A short general question with nothing added to it goes to the local
+    # model first when one is set up; if it doesn't answer in 30 s, the
+    # daemon does, as before.
+    if [ "$request" = "$goal" ] && [ -z "$another" ] && ! $use_screen && ! $use_web && friday_feature_on easy-local \
+        && friday_easy_ask "$goal" && friday_local_ready && reply=$(friday_ask_local "$request" 30); then
       show_answer true "$(jq -n --arg r "$reply" '{result: $r, local: true}')" ""
       exit 0
     fi
