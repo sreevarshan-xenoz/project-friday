@@ -2650,20 +2650,25 @@ fractal
 teams"
 
 # friday_sensitive_window [window JSON]: the line that makes that window (or
-# the one in front) a mail or chat app, or nothing.
+# the one in front) a mail or chat app, or nothing. The built-in names match
+# the app only ("element" in a page title is no chat app); your own lines
+# match the app or the title.
 friday_sensitive_window() {
   friday_feature_on sensitive-warn || return 0
   command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 0
-  local win="${1:-}" hay pat own="${XDG_CONFIG_HOME:-$HOME/.config}/friday/sensitive-windows" drop
+  local win="${1:-}" app all pat src own="${XDG_CONFIG_HOME:-$HOME/.config}/friday/sensitive-windows" drop
   [ -n "$win" ] || win=$(timeout 2 hyprctl activewindow -j 2>/dev/null) || return 0
-  hay=$(jq -r '"\(.class // "") \(.title // "")"' <<<"$win" 2>/dev/null | tr '[:upper:]' '[:lower:]') || return 0
+  app=$(jq -r '.class // ""' <<<"$win" 2>/dev/null | tr '[:upper:]' '[:lower:]') || return 0
+  all=$(jq -r '"\(.class // "") \(.title // "")"' <<<"$win" 2>/dev/null | tr '[:upper:]' '[:lower:]') || return 0
   drop=$(sed -n 's/^[[:space:]]*!//p' "$own" 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
-  while IFS= read -r pat; do
+  while IFS=$'\t' read -r src pat; do
     pat=$(tr '[:upper:]' '[:lower:]' <<<"$pat" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     [[ -n "$pat" && "$pat" != \#* && "$pat" != !* ]] || continue
     grep -qxF -- "$pat" <<<"$drop" && continue
-    if [[ "$hay" == *"$pat"* ]]; then printf '%s' "$pat"; return 0; fi
-  done < <(printf '%s\n' "$FRIDAY_SENSITIVE_WINDOWS"; cat "$own" 2>/dev/null || true)
+    if [ "$src" = own ]; then [[ "$all" == *"$pat"* ]] || continue
+    else [[ "$app" == *"$pat"* ]] || continue; fi
+    printf '%s' "$pat"; return 0
+  done < <(sed 's/^/built-in\t/' <<<"$FRIDAY_SENSITIVE_WINDOWS"; sed 's/^/own\t/' "$own" 2>/dev/null || true)
 }
 
 # friday_private_window: what made the focused window private, or nothing.
@@ -4237,9 +4242,18 @@ case "${1:-}" in
       private_win=$(friday_private_window)
       if $use_screen && [ -n "$private_win" ]; then priv_win=$(timeout 2 hyprctl activewindow -j 2>/dev/null || true); fi
     fi
+    # Asking about the screen in words is asking to look at it, the same as
+    # Super+Ctrl+Y: never answer "I can't see your screen" to that. Narrow on
+    # purpose ("how do I change my screen brightness" is not a look).
+    if ! $use_screen && ! $use_selection && ! $use_followup && ! $use_web &&
+      [[ ! "$goal" =~ ^(how|why)[[:space:]]+(do|to|can|should|would|does) ]] &&
+      [[ "$goal" =~ (on|at|in)[[:space:]]+(my|the|this)[[:space:]]+(screen|window|display)|what[[:space:]]+am[[:space:]]+i[[:space:]]+(looking|looking[[:space:]]+at)|what.s[[:space:]]+on[[:space:]]+(my[[:space:]]+)?screen|look[[:space:]]+at[[:space:]]+(my|this)[[:space:]]+screen ]]; then
+      use_screen=true
+      ask_args+=(--screen)
+    fi
     # A mail or chat app the box didn't warn about (a suggestion picked, a
-    # question passed straight in): ask once more, unless the local model
-    # answers it here anyway.
+    # question passed straight in, "what's on my screen" typed in the plain
+    # box): ask once more, unless the local model answers it here anyway.
     if { $use_screen || $use_selection; } && [ -z "$private_win" ] && [ "$source_label" != File ]; then
       if [ -z "$sens_json" ]; then
         sens_json=$(timeout 2 hyprctl activewindow -j 2>/dev/null || true)
@@ -4250,15 +4264,6 @@ case "${1:-}" in
       fi
     else
       sensitive_win=""
-    fi
-    # Asking about the screen in words is asking to look at it, the same as
-    # Super+Ctrl+Y: never answer "I can't see your screen" to that. Narrow on
-    # purpose ("how do I change my screen brightness" is not a look).
-    if ! $use_screen && ! $use_selection && ! $use_followup && ! $use_web &&
-      [[ ! "$goal" =~ ^(how|why)[[:space:]]+(do|to|can|should|would|does) ]] &&
-      [[ "$goal" =~ (on|at|in)[[:space:]]+(my|the|this)[[:space:]]+(screen|window|display)|what[[:space:]]+am[[:space:]]+i[[:space:]]+(looking|looking[[:space:]]+at)|what.s[[:space:]]+on[[:space:]]+(my[[:space:]]+)?screen|look[[:space:]]+at[[:space:]]+(my|this)[[:space:]]+screen ]]; then
-      use_screen=true
-      ask_args+=(--screen)
     fi
     shopt -u nocasematch
     [ -n "${goal// /}" ] || exit 0

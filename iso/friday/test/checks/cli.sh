@@ -803,7 +803,20 @@ bash "$F" feature sensitive-warn on >/dev/null
 printf '!thunderbird\n' >"$HOME/.config/friday/sensitive-windows"
 : >"$LOG"; PRIMARY="Hi" PICK="Summarize this" bash "$F" ask --selection; sleep 0.3
 if grep -q "someone else's words" "$LOG"; then fail "a dropped default still warned"; else pass "your own list can drop a default"; fi
+# Built-in names match the app, not a page title; your own lines match titles too.
+printf 'zulip\n' >"$HOME/.config/friday/sensitive-windows"
+export HYPR_WIN='{"class":"firefox","title":"HTML element - MDN"}'
+: >"$LOG"; PRIMARY="<div>" PICK="Summarize this" bash "$F" ask --selection; sleep 0.3
+if grep -q "someone else's words" "$LOG"; then fail "a page title set off a built-in name"; else pass "a word in a page title isn't a chat app"; fi
+export HYPR_WIN='{"class":"firefox","title":"general - Zulip"}'
+: >"$LOG"; PRIMARY="hi all" PICK="Summarize this" bash "$F" ask --selection; sleep 0.3
+contains "your own line matches a title" "$(cat "$LOG")" "from zulip"
 rm -f "$HOME/.config/friday/sensitive-windows"
+# "What's on my screen" typed in the plain box, in a mail app: asked first.
+export HYPR_WIN='{"class":"thunderbird","title":"Inbox - Thunderbird"}'
+: >"$LOG"; CANCEL_CONFIRM=1 bash "$F" ask "what's on my screen"; sleep 0.3
+contains "a screen question in words asks first in a mail app" "$(cat "$LOG")" "send what's in thunderbird to your AI provider"
+if grep -q "^friday-ctl" "$LOG"; then fail "the screen went out after Cancel"; else pass "and Cancel sends no screenshot"; fi
 unset HYPR_WIN
 rm -f "$HOME/.config/friday/private-windows" "$S/hyprctl"; cp "$W/env.saved" "$envf"; mv "$W/curl.saved" "$S/curl"
 # `friday forget` shows counts, asks before deleting, and wipes only what was named.

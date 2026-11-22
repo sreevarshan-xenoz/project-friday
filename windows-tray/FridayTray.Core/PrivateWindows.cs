@@ -15,16 +15,13 @@ public static class PrivateWindows
     ];
 
     /// <summary>What made the window private, or null.</summary>
-    public static string? Match(string? app, string? title, string? ownList) =>
-        Match(Defaults, app, title, ownList);
-
-    internal static string? Match(string[] defaults, string? app, string? title, string? ownList)
+    public static string? Match(string? app, string? title, string? ownList)
     {
         var hay = $"{app} {title}".ToLowerInvariant();
         var own = (ownList ?? "").Split('\n').Select(l => l.Trim().ToLowerInvariant())
             .Where(l => l.Length > 0 && !l.StartsWith('#')).ToList();
         var dropped = own.Where(l => l.StartsWith('!')).Select(l => l[1..].Trim()).ToHashSet();
-        return defaults.Where(d => !dropped.Contains(d))
+        return Defaults.Where(d => !dropped.Contains(d))
             .Concat(own.Where(l => !l.StartsWith('!')))
             .FirstOrDefault(pattern => hay.Contains(pattern));
     }
