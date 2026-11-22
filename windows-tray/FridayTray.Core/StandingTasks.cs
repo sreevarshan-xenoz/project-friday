@@ -51,6 +51,9 @@ public static class StandingTasks
                 return $"every {m} minutes";
             case "battery_below":
                 return $"when the battery is under {Int("percent")}%";
+            case "once":
+                var at = DateTimeOffset.FromUnixTimeSeconds(trigger["at"]?.GetValue<long>() ?? 0).ToLocalTime();
+                return $"once at {at:HH:mm} on {at:d MMM}";
             default:
                 return "on a schedule";
         }
