@@ -26,7 +26,7 @@ for f in usr/bin/friday usr/bin/friday-linux-daemon usr/bin/friday-ctl \
   usr/share/friday/helper/friday-os-helper.service \
   usr/share/friday/helper/org.friday.Helper1.service \
   usr/share/friday/helper/org.friday.Helper1.conf \
-  usr/share/friday/helper/org.friday.helper.policy; do
+  usr/share/friday/helper/org.friday.helper.policy usr/share/doc/friday/USING.md; do
   grep -qx "$f" <<<"$files" && ok "$f" || bad "missing $f"
 done
 if bsdtar -tvf "$pkg" | grep -E '^-[rwx-]*x[rwx-]* .*usr/lib/friday/friday-os-helper$' >/dev/null; then

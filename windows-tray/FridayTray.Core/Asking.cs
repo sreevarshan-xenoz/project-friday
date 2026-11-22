@@ -51,6 +51,18 @@ public static partial class Asking
         return $"{question}\n\nUse this text as context:\n\"\"\"\n{ctx}\n\"\"\"";
     }
 
+    /// <summary>Whether a typed question is about FRIDAY itself (it names FRIDAY,
+    /// a hotkey or a shortcut): then FRIDAY's guide goes with it, as on Linux.</summary>
+    public static bool AboutFriday(string question) =>
+        System.Text.RegularExpressions.Regex.Split(question.ToLowerInvariant(), "[^a-z0-9']+")
+            .Any(w => w is "friday" or "friday's" or "hotkey" or "hotkeys" or "shortcut" or "shortcuts");
+
+    /// <summary>The request with excerpts from FRIDAY's guide (friday-ctl docs), if any.</summary>
+    public static string WithDocs(string request, string docs) =>
+        string.IsNullOrWhiteSpace(docs)
+            ? request
+            : $"{request}\n\n[docs]\nThese excerpts from documentation on this computer may help. Use them only if they fit, and name the one you use (for example \"FRIDAY guide: The three keys\"):\n\"\"\"\n{docs.Trim()}\n\"\"\"";
+
     /// <summary>friday-ctl's arguments for this ask.</summary>
     public static string[] CtlArguments(AskKind kind, string question, string request) =>
         CtlArguments(kind, question, request, null);

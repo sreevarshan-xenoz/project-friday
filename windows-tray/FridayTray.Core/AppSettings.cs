@@ -67,6 +67,7 @@ public static class AppSettings
         ("wrong-button", "\"That was wrong\" on answers (keeps how it was asked and answered, no text)"),
         ("couldnt-check", "Say when an answer comes from general knowledge, with nothing on this computer checked"),
         ("agent-resume", "A follow-up to a coding agent goes on in its session (\"tell opencode to also add tests\")"),
+        ("self-docs", "Questions about FRIDAY are answered from its own guide"),
     ];
 
     public static bool FeatureOn(IReadOnlyDictionary<string, string> env, string name) =>
