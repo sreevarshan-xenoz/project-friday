@@ -104,7 +104,7 @@ Autonomous Agent & Cognitive Loop:
   friday tour                      Take the first-login tour again
   friday screen-text [status|on|off]
                                    Ask about the screen with the window's text, not a screenshot
-  friday phone [status|on|off]     Pair a phone with Pocketdesk; answer FRIDAY's questions from it
+  friday phone [status|on|off|send] Pair a phone with Pocketdesk; send it the last answer
   friday helper [status|enable|disable]
                                    System helper for package updates and installs
 
@@ -971,8 +971,9 @@ EOF2
       systemctl --user disable --now pocketdesk 2>/dev/null || true
       echo "Phone: off"
       ;;
+    send) friday_phone_send ;;
     *)
-      echo "Usage: friday phone [status|on|off]" >&2
+      echo "Usage: friday phone [status|on|off|send]" >&2
       return 1
       ;;
   esac
@@ -1920,6 +1921,24 @@ friday_calc_expr() {
   fi
 }
 
+# `friday phone send` / "send the answer to my phone": the last answer, as a
+# file, to the paired phone (Pocketdesk, on your network or tailnet).
+friday_phone_send() {
+  local d="${XDG_STATE_HOME:-$HOME/.local/state}/friday" out
+  [ -s "$d/last-answer.md" ] || { echo "There's no answer to send yet."; return 1; }
+  command -v pocketdesk >/dev/null 2>&1 || { echo "No phone is set up: friday phone on pairs one."; return 1; }
+  (umask 077; mkdir -p "$d/phone"; cp -f "$d/last-answer.md" "$d/phone/FRIDAY answer.md")
+  if out=$(timeout 20 pocketdesk send-to-phone "$d/phone/FRIDAY answer.md" 2>&1); then
+    echo "Sent the last answer to your phone."
+  else
+    case $? in
+      3) echo "Pocketdesk isn't running: friday phone on starts it." ;;
+      *) echo "Couldn't send it to your phone${out:+: $(tail -n1 <<<"$out")}." ;;
+    esac
+    return 1
+  fi
+}
+
 friday_local_command() {
   local q n unit secs label before
   q=$(tr '[:upper:]' '[:lower:]' <<<"$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]?.!]*$//')
@@ -1946,6 +1965,8 @@ friday_local_command() {
       friday_undo_add "Do not disturb $([ "$want" = true ] && echo on || echo off)" dnd "$before"
     fi
     $want && echo "Do not disturb is on." || echo "Do not disturb is off."
+  elif [[ "$q" =~ ^(send|share)\ (this|that|it|the\ answer|the\ last\ answer|this\ answer)\ to\ (my\ )?phone$ ]]; then
+    friday_phone_send || true
   elif [[ "$q" =~ ^(battery|battery\ (level|status)|how\ much\ battery(\ is\ left|\ do\ i\ have)?)$ ]]; then
     local b; b=$(ls -d /sys/class/power_supply/BAT* 2>/dev/null | head -n 1)
     [ -n "$b" ] || { echo "This computer has no battery."; return 0; }
