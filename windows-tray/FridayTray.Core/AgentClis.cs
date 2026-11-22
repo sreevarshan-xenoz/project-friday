@@ -124,9 +124,42 @@ public static class AgentClis
     /// can't hand safely to an npm .cmd/.bat shim, so a shim-only install
     /// isn't usable by FRIDAY there yet.
     /// </summary>
+    /// <summary>
+    /// Finds the app on <see cref="SearchPath"/>: an .exe, or the .cmd/.bat
+    /// launcher npm installs (codex, cline, claude installed with npm are those).
+    /// </summary>
     public static string? FindCli(AgentCli cli, string? path = null, string? pathext = null) =>
-        FindOnPath(cli.BinaryName, path,
-            pathext ?? (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : null));
+        FindOnPath(cli.BinaryName, path ?? SearchPath(), pathext);
+
+    /// <summary>
+    /// Where to look for apps: this process's PATH, plus the user's and the
+    /// machine's PATH as Windows has them now (an app installed after sign-in
+    /// is on those, not on the PATH the tray started with), plus npm's
+    /// global folder.
+    /// </summary>
+    public static string SearchPath()
+    {
+        var parts = new List<string>();
+        void Add(string? p)
+        {
+            foreach (var d in (p ?? "").Split(Path.PathSeparator))
+            {
+                var dir = Environment.ExpandEnvironmentVariables(d.Trim().Trim('"'));
+                if (dir.Length > 0 && !parts.Contains(dir, StringComparer.OrdinalIgnoreCase))
+                    parts.Add(dir);
+            }
+        }
+        Add(Environment.GetEnvironmentVariable("PATH"));
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            Add(Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User));
+            Add(Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine));
+            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            if (appData.Length > 0)
+                Add(Path.Combine(appData, "npm"));
+        }
+        return string.Join(Path.PathSeparator, parts);
+    }
 
     public static bool IsInstalled(AgentCli cli, string? path = null, string? pathext = null) =>
         FindCli(cli, path, pathext) != null;

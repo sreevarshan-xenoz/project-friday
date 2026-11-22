@@ -237,4 +237,27 @@ public class AgentClisTests
         Assert.Equal("opencode", first.Id);
         Assert.Equal("Free models: OpenCode Zen, then Kilo or OVHcloud (no key, no sign-in)", first.Name);
     }
+
+    [Fact]
+    public void An_npm_launcher_counts_as_installed()
+    {
+        var dir = Directory.CreateTempSubdirectory();
+        try
+        {
+            File.WriteAllText(Path.Combine(dir.FullName, "codex.cmd"), "");
+            var codex = AgentClis.All.First(c => c.BinaryName == "codex");
+            Assert.Equal(Path.Combine(dir.FullName, "codex.cmd"), AgentClis.FindCli(codex, dir.FullName));
+        }
+        finally
+        {
+            dir.Delete(true);
+        }
+    }
+
+    [Fact]
+    public void The_search_path_keeps_this_processs_path()
+    {
+        var first = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).First(d => d.Length > 0);
+        Assert.Contains(first, AgentClis.SearchPath().Split(Path.PathSeparator));
+    }
 }
