@@ -221,7 +221,12 @@ internal sealed class TrayContext : ApplicationContext
                 AskKind.Plain => _log.History(),
                 AskKind.Selection => QuickActions.All(_install.Paths.PromptsFile, selected),
                 _ => [],
-            });
+            })
+            {
+                Folders = kind == AskKind.Plain && AppSettings.AgentsOn(EnvFile.Load(_install.Paths.EnvFile))
+                    ? AgentFolders.Load(_install.Paths.AgentsDir, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile))
+                    : null,
+            };
             if (form.ShowDialog() != true)
                 return;
             var question = form.Question;

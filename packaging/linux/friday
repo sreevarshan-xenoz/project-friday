@@ -877,6 +877,20 @@ KEYS
 # A switch that is on unless FRIDAY_<NAME>=0 is in friday.env. The daemon reads
 # it when it starts, so changing it restarts the daemon.
 # usage: friday_switch <VAR> <label> <command> <what on means> <what off means> [status|on|off]
+# The folder the newest agent run worked in, with ~ (the ask box's hint: a
+# run that names no folder goes where that agent last worked).
+friday_agent_folder() {
+  grep -qE '^FRIDAY_AGENTS=0$' "${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" 2>/dev/null && return 0
+  local f home="${HOME%/}"
+  f=$(jq -rs 'map(select(.folder? // "" | length > 0)) | max_by(.started // 0) | .folder // empty' \
+    "${XDG_STATE_HOME:-$HOME/.local/state}/friday/agents/"r*.json 2>/dev/null || true)
+  case "$f" in
+    "") ;;
+    "$home"|"$home"/*) printf '~%s' "${f#"$home"}" ;;
+    *) printf '%s' "$f" ;;
+  esac
+}
+
 friday_switch() {
   local var="$1" label="$2" cmd="$3" on_text="$4" off_text="$5" action="${6:-status}"
   local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" want
@@ -4282,6 +4296,7 @@ case "${1:-}" in
           && suggestions=$(friday_app_suggestions) \
           && term=$([ -n "$last_error$running" ] || friday_term_record) \
           && { [ -s "$history_file" ] || [ -n "$last_error$running$suggestions$term" ]; }; then
+        agent_folder=$(friday_agent_folder)
         # Recent asks, newest first. Enter re-runs the highlighted one;
         # Shift+Enter sends exactly what was typed (fuzzel execute-input).
         # A kitty window whose last command failed offers to explain it first.
@@ -4317,7 +4332,7 @@ case "${1:-}" in
           [ -z "$suggestions" ] || cut -f1 <<<"$suggestions"
           cat "$history_file" 2>/dev/null || true; } \
           | fuzzel --dmenu --prompt="FRIDAY › " --width=60 --minimal-lines --lines=8 \
-          --placeholder="Ask anything · Shift+Enter sends your text as typed") || exit 0
+          --placeholder="Ask anything${agent_folder:+ · agents work in $agent_folder unless you name a folder} · Shift+Enter sends your text as typed") || exit 0
         if [ -n "$suggestions" ]; then
           picked=$(awk -F'\t' -v g="$goal" '$1 == g { print $2 "\t" $3; exit }' <<<"$suggestions")
           if [ -n "$picked" ]; then
@@ -4364,8 +4379,9 @@ case "${1:-}" in
           [ -n "$private_win" ] || private_win=$(friday_private_folder "$le_cwd")
         fi
       else
+        agent_folder=$(friday_agent_folder)
         goal=$(fuzzel --dmenu --prompt-only="FRIDAY › " --width=60 \
-          --placeholder="Ask anything" </dev/null) || exit 0
+          --placeholder="Ask anything${agent_folder:+ · agents work in $agent_folder unless you name a folder}" </dev/null) || exit 0
       fi
     fi
     # Privacy rule: web search happens ONLY when explicitly asked (--web, or question prefixes)

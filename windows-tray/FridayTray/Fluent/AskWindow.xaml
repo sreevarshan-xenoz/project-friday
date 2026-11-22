@@ -50,6 +50,14 @@
           </StackPanel>
         </Border>
 
+        <!-- Where a coding agent will work; click to pick another folder. -->
+        <Border x:Name="FolderChip" Style="{StaticResource Chip}" HorizontalAlignment="Left" Margin="30,12,0,0" Visibility="Collapsed" Cursor="Hand">
+          <StackPanel Orientation="Horizontal">
+            <ui:SymbolIcon Symbol="Folder24" FontSize="13" Margin="0,0,6,0" VerticalAlignment="Center" Foreground="{StaticResource Subtext}" />
+            <TextBlock x:Name="FolderText" FontSize="12" MaxWidth="560" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Foreground="{StaticResource Subtext}" />
+          </StackPanel>
+        </Border>
+
         <!-- Quick actions for a selection: a soft highlight follows the keys. -->
         <ItemsControl x:Name="Quick" Margin="22,10,0,0" Visibility="Collapsed" Focusable="False" />
 
