@@ -345,6 +345,7 @@ Actions:
   workspaces         the workspaces. params: none
   focus_window       params: {"target": "<app or part of its title>"}
   move_window        params: {"target": "<app or part of its title>", "workspace": "<number or name>"}
+  place_window       params: {"target": "<app or part of its title>", "side": "left" | "right" | "up" | "down"}   (side by side: move both to one workspace, then place each)
   switch_workspace   params: {"workspace": "<number, +1, -1 or name>"}
   close_window       params: {"target": "<app or part of its title>"}   (the person is asked to confirm)
   find_app           look up installed apps by name or by what they do. params: {"query": "<e.g. brave, terminal, text editor>"}

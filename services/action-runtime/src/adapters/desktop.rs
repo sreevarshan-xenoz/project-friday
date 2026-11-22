@@ -36,8 +36,8 @@ pub fn risk_of(action: &str) -> Option<Risk> {
     Some(match action {
         "windows" | "active_window" | "workspaces" | "now_playing" | "find_app"
         | "system_health" => Risk::Read,
-        "focus_window" | "move_window" | "switch_workspace" | "launch_app" | "media" | "volume"
-        | "brightness" | "power_profile" => Risk::Reversible,
+        "focus_window" | "move_window" | "place_window" | "switch_workspace" | "launch_app"
+        | "media" | "volume" | "brightness" | "power_profile" => Risk::Reversible,
         "close_window" => Risk::Destructive,
         _ => return None,
     })
@@ -156,6 +156,16 @@ impl DesktopAdapter {
             ))
         } else {
             self.dispatch(&["movetoworkspacesilent", &format!("{ws},address:{address}")])
+        }
+    }
+
+    /// Moves the focused window one place in `dir` (l, r, u or d) in the
+    /// workspace's layout.
+    fn move_focused(&self, dir: &str) -> Result<String, String> {
+        if self.lua_dispatch() {
+            self.hypr_lua(&format!("hl.dsp.window.move({{ direction = \"{dir}\" }})"))
+        } else {
+            self.dispatch(&["movewindow", dir])
         }
     }
 
@@ -332,6 +342,35 @@ impl DesktopAdapter {
                 Ok(
                     json!({"moved": w.class, "workspace": ws, "address": w.address, "from": w.workspace}),
                 )
+            }
+            "place_window" => {
+                let w = self.pick(p("target").ok_or("name the window to place")?)?;
+                let side = p("side").ok_or("say which side: left, right, up or down")?;
+                let dir = match side.to_ascii_lowercase().as_str() {
+                    "left" | "l" => "l",
+                    "right" | "r" => "r",
+                    "up" | "top" | "u" => "u",
+                    "down" | "bottom" | "d" => "d",
+                    other => {
+                        return Err(format!("\"{other}\" isn't a side: left, right, up or down"))
+                    }
+                };
+                self.focus(&w.address)?;
+                // The move is of whatever has focus: only once it's this one.
+                let now: Value = serde_json::from_str(
+                    &self
+                        .exec
+                        .run("hyprctl", &["-j".into(), "activewindow".into()])?,
+                )
+                .unwrap_or_default();
+                if s(&now, "address") != w.address {
+                    return Err(format!(
+                        "couldn't bring {} to the front, so it wasn't moved",
+                        w.class
+                    ));
+                }
+                self.move_focused(dir)?;
+                Ok(json!({"placed": w.class, "side": side, "workspace": w.workspace}))
             }
             "switch_workspace" => {
                 let ws = workspace_arg(p("workspace").ok_or("name the workspace")?)?;
@@ -549,6 +588,7 @@ impl ActionAdapter for DesktopAdapter {
             "workspaces",
             "focus_window",
             "move_window",
+            "place_window",
             "switch_workspace",
             "close_window",
             "launch_app",
@@ -613,6 +653,7 @@ mod tests {
         moved: Mutex<Vec<(String, String)>>,
         closed: Mutex<Vec<String>>,
         stuck: Vec<&'static str>,
+        focused: Mutex<String>,
     }
 
     impl Stub {
@@ -626,6 +667,7 @@ mod tests {
                 moved: Mutex::new(Vec::new()),
                 closed: Mutex::new(Vec::new()),
                 stuck: Vec::new(),
+                focused: Mutex::new(String::new()),
             })
         }
         /// An older Hyprland, which takes the classic dispatch syntax.
@@ -638,6 +680,7 @@ mod tests {
                 moved: Mutex::new(Vec::new()),
                 closed: Mutex::new(Vec::new()),
                 stuck: Vec::new(),
+                focused: Mutex::new(String::new()),
             })
         }
         /// A Hyprland that refuses every dispatch.
@@ -650,6 +693,7 @@ mod tests {
                 moved: Mutex::new(Vec::new()),
                 closed: Mutex::new(Vec::new()),
                 stuck: Vec::new(),
+                focused: Mutex::new(String::new()),
             })
         }
         fn calls(&self) -> Vec<String> {
@@ -673,6 +717,7 @@ mod tests {
                 moved: Mutex::new(Vec::new()),
                 closed: Mutex::new(Vec::new()),
                 stuck: stuck.to_vec(),
+                focused: Mutex::new(String::new()),
             })
         }
     }
@@ -702,7 +747,9 @@ mod tests {
                                     .nth(1)
                                     .map(|r| r.split(',').next().unwrap_or("").to_string())
                             });
-                        if line.contains("close") {
+                        if line.contains("focus") {
+                            *self.focused.lock().unwrap() = addr;
+                        } else if line.contains("close") {
                             self.closed.lock().unwrap().push(addr);
                         } else if let Some(ws) = ws {
                             self.moved.lock().unwrap().push((addr, ws));
@@ -722,7 +769,8 @@ mod tests {
                 return Ok(Value::Array(list).to_string());
             }
             if line == "hyprctl -j activewindow" {
-                return Ok(r#"{"class":"foot","title":"zsh"}"#.into());
+                let focused = self.focused.lock().unwrap().clone();
+                return Ok(json!({"class": "foot", "title": "zsh", "address": focused}).to_string());
             }
             if line == "hyprctl -j workspaces" {
                 return Ok(r#"[{"name":"1","windows":1},{"name":"2","windows":2}]"#.into());
@@ -818,6 +866,61 @@ mod tests {
             stub.last(),
             r#"hyprctl dispatch hl.dsp.focus({ window = "address:0xccc3" })"#
         );
+    }
+
+    #[tokio::test]
+    async fn a_window_is_placed_on_the_side_asked() {
+        let stub = Stub::new(&[]);
+        let r = run(
+            &stub,
+            "place_window",
+            json!({"target": "firefox", "side": "left"}),
+        )
+        .await;
+        assert!(r.success, "{:?}", r.error);
+        assert_eq!(
+            stub.last(),
+            r#"hyprctl dispatch hl.dsp.window.move({ direction = "l" })"#
+        );
+        let r = run(
+            &stub,
+            "place_window",
+            json!({"target": "btop", "side": "Right"}),
+        )
+        .await;
+        assert!(r.success);
+        assert_eq!(
+            stub.last(),
+            r#"hyprctl dispatch hl.dsp.window.move({ direction = "r" })"#
+        );
+        let r = run(
+            &stub,
+            "place_window",
+            json!({"target": "firefox", "side": "middle"}),
+        )
+        .await;
+        assert!(!r.success && r.error.unwrap().contains("isn't a side"));
+        let old = Stub::classic(&["btop"]);
+        assert!(
+            run(
+                &old,
+                "place_window",
+                json!({"target": "firefox", "side": "up"})
+            )
+            .await
+            .success
+        );
+        assert_eq!(old.last(), "hyprctl dispatch movewindow u");
+        // Focus didn't take: nothing is moved (it would move another window).
+        let stuck = Stub::stuck(&["0xaaa1"]);
+        let r = run(
+            &stuck,
+            "place_window",
+            json!({"target": "firefox", "side": "left"}),
+        )
+        .await;
+        assert!(!r.success && r.error.unwrap().contains("wasn't moved"));
+        assert!(!stuck.calls().iter().any(|c| c.contains("direction")));
     }
 
     #[tokio::test]
