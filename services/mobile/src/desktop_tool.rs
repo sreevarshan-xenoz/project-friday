@@ -117,6 +117,9 @@ pub struct DesktopControlTool {
     audit_dir: Option<PathBuf>,
     /// Looking inside apps and pressing their controls (`ui_*` actions).
     ui: Option<Arc<dyn UiControl>>,
+    /// `friday autonomy ask-all` (FRIDAY_AUTONOMY): every change is asked
+    /// about, not only what can't be undone (looking never is).
+    ask_all: bool,
 }
 
 /// The directory of `actions.jsonl`: beside state.json (`FRIDAY_STATE_FILE`,
@@ -286,6 +289,7 @@ impl DesktopControlTool {
             abort,
             audit_dir,
             ui,
+            ask_all: std::env::var("FRIDAY_AUTONOMY").is_ok_and(|v| v.trim() == "ask-all"),
         }
     }
 
@@ -614,7 +618,8 @@ impl Tool for DesktopControlTool {
                     }
                 }
             }
-            if risk == DesktopRisk::Destructive {
+            if risk == DesktopRisk::Destructive || (self.ask_all && risk == DesktopRisk::Reversible)
+            {
                 // Ask first, with the exact action; nothing has been closed.
                 let exact = exact_action(verb, &params);
                 let asked = self.gate.lock().unwrap().check_or_record("desktop", &exact);
@@ -1126,6 +1131,30 @@ mod tests {
         assert!(
             started.elapsed() < std::time::Duration::from_secs(5),
             "waited for the model"
+        );
+    }
+
+    #[tokio::test]
+    async fn ask_all_asks_before_a_window_move_too() {
+        let model = Script::new(&[
+            r#"{"action":"move_window","params":{"target":"firefox","workspace":"3"}}"#,
+            r#"{"done":"Moved."}"#,
+        ]);
+        let stub = Arc::new(Stub::default());
+        let mut t = DesktopControlTool::new(
+            model,
+            DesktopAdapter::with_exec(stub.clone()),
+            Arc::default(),
+            Arc::default(),
+            None,
+            None,
+        );
+        t.ask_all = true;
+        let r = run(&t, "put firefox on 3").await;
+        assert!(!r.success, "asked first: {}", r.output);
+        assert!(
+            !stub.calls().iter().any(|c| c.contains("dispatch")),
+            "nothing moved before the yes"
         );
     }
 

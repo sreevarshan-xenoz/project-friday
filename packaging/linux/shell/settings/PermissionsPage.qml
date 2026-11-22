@@ -15,6 +15,34 @@ ColumnLayout {
     color: Theme.subtext
   }
 
+  Label { text: "How much FRIDAY may do on its own"; font.weight: Font.DemiBold }
+  Cmd { id: autonomyStatus; args: ["autonomy", "status"] }
+  Cmd { id: autonomySet; onFinished: autonomyStatus.run() }
+  RowLayout {
+    spacing: 8
+    Repeater {
+      model: [
+        { mode: "ask-all", label: "Ask before every action" },
+        { mode: "ask-risky", label: "Ask only for risky ones" },
+        { mode: "act", label: "Act, then tell me" }
+      ]
+      Chip {
+        required property var modelData
+        text: modelData.label
+        primary: autonomyStatus.output.indexOf("Autonomy: " + modelData.mode + " ") === 0
+        onClicked: { autonomySet.args = ["autonomy", modelData.mode]; autonomySet.run(); }
+      }
+    }
+  }
+  Label {
+    Layout.fillWidth: true
+    text: autonomyStatus.output.replace(/^Autonomy: [a-z-]+ /, "")
+    wrapMode: Text.Wrap
+    elide: Text.ElideNone
+    color: Theme.subtext
+    font.pixelSize: Theme.fontS + 1
+  }
+
   Toggle {
     title: "Control my windows and apps"
     detail: "FRIDAY can focus, move and open windows, change the volume and music, and press buttons in apps. Closing a window or pressing something like Delete asks first. Turning it off restarts FRIDAY."
@@ -36,7 +64,7 @@ ColumnLayout {
   Cmd { id: phoneStatus; args: ["phone", "status"] }
   Cmd { id: phoneOn; args: ["phone", "on", "--yes"]; onFinished: phoneStatus.run() }
   Cmd { id: phoneOff; args: ["phone", "off"]; onFinished: phoneStatus.run() }
-  Component.onCompleted: { phoneStatus.run(); faceStatus.run(); helperStatus.run(); }
+  Component.onCompleted: { phoneStatus.run(); faceStatus.run(); helperStatus.run(); autonomyStatus.run(); }
   Label {
     Layout.fillWidth: true
     text: phoneStatus.output !== "" ? phoneStatus.output : "Checking…"

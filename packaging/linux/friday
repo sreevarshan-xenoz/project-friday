@@ -103,6 +103,8 @@ Autonomous Agent & Cognitive Loop:
   friday app                       Open FRIDAY Settings (a window for all of this, no terminal)
   friday tour                      Take the first-login tour again
   friday screen-text [status|on|off]
+  friday feature [list|<name> on|off]  Switch one of FRIDAY's features off or on again
+  friday autonomy [ask-all|ask-risky|act]  How much FRIDAY may do without asking
                                    Ask about the screen with the window's text, not a screenshot
   friday phone [status|on|off|send] Pair a phone with Pocketdesk; send it the last answer
   friday helper [status|enable|disable]
@@ -1965,7 +1967,7 @@ friday_local_command() {
       friday_undo_add "Do not disturb $([ "$want" = true ] && echo on || echo off)" dnd "$before"
     fi
     $want && echo "Do not disturb is on." || echo "Do not disturb is off."
-  elif [[ "$q" =~ ^(send|share)\ (this|that|it|the\ answer|the\ last\ answer|this\ answer)\ to\ (my\ )?phone$ ]]; then
+  elif friday_feature_on phone-send && [[ "$q" =~ ^(send|share)\ (this|that|it|the\ answer|the\ last\ answer|this\ answer)\ to\ (my\ )?phone$ ]]; then
     friday_phone_send || true
   elif [[ "$q" =~ ^(battery|battery\ (level|status)|how\ much\ battery(\ is\ left|\ do\ i\ have)?)$ ]]; then
     local b; b=$(ls -d /sys/class/power_supply/BAT* 2>/dev/null | head -n 1)
@@ -1978,7 +1980,7 @@ friday_local_command() {
     ( sleep "$secs"; notify-send -a FRIDAY -u critical "Timer" "$label is up." ) </dev/null >/dev/null 2>&1 &
     disown 2>/dev/null || true
     echo "Timer set for $label."
-  elif command -v qalc >/dev/null 2>&1 && expr=$(friday_calc_expr "$q") \
+  elif friday_feature_on instant-answers && command -v qalc >/dev/null 2>&1 && expr=$(friday_calc_expr "$q") \
       && out=$(timeout 3 qalc -t -- "$expr" </dev/null 2>/dev/null) && [ -n "$out" ] \
       && { [[ "$expr" != *" to "* ]] || [[ "$out" == *"${expr##* to }"* ]]; }; then
     # (A conversion counts only when the answer is in the unit asked for:
@@ -2589,6 +2591,7 @@ friday_snippet() {
 # "<label>\t<ask flag>\t<question>" lines. Picking one asks in that mode,
 # so the usual consent applies (a page is read only when you pick it).
 friday_app_suggestions() {
+  friday_feature_on suggestions || return 0
   command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 0
   local cls sel
   cls=$(timeout 2 hyprctl activewindow -j 2>/dev/null | jq -r '.class // empty' 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
@@ -3281,6 +3284,69 @@ friday_local_ai_bench() {
   t1=$(date +%s%N)
   [[ "$tokens" =~ ^[0-9]+$ ]] && (( tokens > 0 && t1 > t0 )) || return 0
   echo $(( tokens * 1000000000 / (t1 - t0) ))
+}
+
+# The features that can be switched off one by one (`friday feature`, and
+# FRIDAY Settings → Features). All are on until switched off; the ones off
+# are listed, one a line, in features-off in FRIDAY's config folder.
+FRIDAY_FEATURES="instant-answers|Arithmetic and unit conversions worked out here at once
+what-works|When FRIDAY is offline, say so and what still works
+app-instructions|Your instructions for each app go with asks from it
+mentions|@screen, @tab, @clip, @web and @file in a question
+what-changed|\"What changed today?\" reads the project's git and the package log
+machine-facts|Error and how-to questions say what this computer runs
+this-window|\"This window\" names the window in front at the keypress
+typed-confirm|Answer a confirmation by typing yes or no
+suggestions|Suggested asks for the app you're in, in the ask box
+phone-send|\"Send the answer to my phone\""
+friday_features_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/features-off"; }
+# friday_feature_on <name>: on unless switched off.
+friday_feature_on() { ! grep -qxF -- "$1" "$(friday_features_file)" 2>/dev/null; }
+friday_feature() {
+  local f name what
+  f=$(friday_features_file)
+  case "${1:-list}" in
+    list)
+      while IFS='|' read -r name what; do
+        if friday_feature_on "$name"; then printf 'on   %-17s %s\n' "$name" "$what"; else printf 'off  %-17s %s\n' "$name" "$what"; fi
+      done <<<"$FRIDAY_FEATURES" ;;
+    *)
+      name="$1"
+      grep -q "^$name|" <<<"$FRIDAY_FEATURES" 2>/dev/null && [[ "$name" =~ ^[a-z-]+$ ]] \
+        || { echo "friday: no feature called \"$name\" (friday feature list)" >&2; return 1; }
+      case "${2:-status}" in
+        status) if friday_feature_on "$name"; then echo "$name: on"; else echo "$name: off"; fi ;;
+        on) [ ! -f "$f" ] || { grep -vxF -- "$name" "$f" >"$f.tmp" || true; mv -f "$f.tmp" "$f"; }; echo "$name: on" ;;
+        off) mkdir -p "$(dirname "$f")"; friday_feature_on "$name" && echo "$name" >>"$f"; echo "$name: off" ;;
+        *) echo "Usage: friday feature [list | <name> status|on|off]" >&2; return 1 ;;
+      esac ;;
+  esac
+}
+
+# `friday autonomy [status|ask-all|ask-risky|act]`: how much FRIDAY may do on
+# its own. ask-risky (the default) asks before commands, file writes, app
+# launches and anything that can't be undone; ask-all asks before every
+# desktop action too (moving a window, the volume); act runs what it would
+# have asked about and says what it did afterwards.
+friday_autonomy_mode() {
+  local m
+  m=$(sed -n 's/^FRIDAY_AUTONOMY=//p' "${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" 2>/dev/null | tail -n1)
+  case "$m" in ask-all|act) echo "$m" ;; *) echo ask-risky ;; esac
+}
+friday_autonomy() {
+  case "${1:-status}" in
+    status)
+      case "$(friday_autonomy_mode)" in
+        ask-all) echo "Autonomy: ask-all (FRIDAY asks before every action, a window move or the volume too)" ;;
+        act) echo "Autonomy: act (FRIDAY does what it would have asked about, then says what it did; friday undo puts back what it can)" ;;
+        *) echo "Autonomy: ask-risky (FRIDAY asks before commands, file writes, app launches and anything that can't be undone)" ;;
+      esac ;;
+    ask-all|ask-risky|act)
+      friday_env_set FRIDAY_AUTONOMY "$1"
+      systemctl --user restart friday-linux-daemon 2>/dev/null || true
+      friday_autonomy status ;;
+    *) echo "Usage: friday autonomy [status|ask-all|ask-risky|act]" >&2; return 1 ;;
+  esac
 }
 
 # friday_env_set <KEY> <value>: replace one line in friday.env (0600).
@@ -4035,7 +4101,7 @@ case "${1:-}" in
     # @clip (the clipboard), @web (a web search), @file <path> (a text file's
     # contents). Each is taken out of the question.
     mention_file=""
-    while [[ "$goal" =~ (^|[[:space:]])@(screen|tab|clip|web|file[[:space:]]+([^[:space:]]+))([[:space:]]|$) ]]; do
+    while friday_feature_on mentions && [[ "$goal" =~ (^|[[:space:]])@(screen|tab|clip|web|file[[:space:]]+([^[:space:]]+))([[:space:]]|$) ]]; do
       case "${BASH_REMATCH[2],,}" in
         screen|tab) $use_screen || ask_args+=(--screen); use_screen=true ;;
         clip) use_clip=true ;;
@@ -4104,7 +4170,8 @@ case "${1:-}" in
     shopt -u nocasematch
     [ -n "${goal// /}" ] || exit 0
     # "Yes" or "no" to a confirmation FRIDAY is waiting on.
-    if ! $use_selection && ! $use_screen && ! $use_followup && ! $use_web && said=$(friday_confirm_typed "$goal"); then
+    if ! $use_selection && ! $use_screen && ! $use_followup && ! $use_web && friday_feature_on typed-confirm \
+        && said=$(friday_confirm_typed "$goal"); then
       notify "FRIDAY" "$said"
       exit 0
     fi
@@ -4150,7 +4217,7 @@ case "${1:-}" in
       # "What was that …?" with recall on: what was on screen earlier.
       request=$(printf '%s\n\n[recall]\nThis is text that was on my screen in the last few hours, kept on this computer. Answer from it and say which window it was in:\n"""\n%s\n"""' "$goal" "$recalled")
       from_recall=true
-    elif ! $use_screen && [ -z "$local_answer" ] \
+    elif ! $use_screen && [ -z "$local_answer" ] && friday_feature_on what-changed \
         && [[ "${goal,,}" =~ ^what(\'s|\ has|\ have)?\ changed(\ since\ .*|\ today|\ yesterday|\ this\ (morning|week)|\ (in|over)\ the\ (last|past)\ (hour|day|week)|\ recently)?[[:space:]?.!]*$ ]] \
         && changes=$(friday_what_changed "$goal" "${ask_project:-}") && [ -n "$changes" ]; then
       # "What changed since yesterday?": the project's commits and files and
@@ -4171,13 +4238,13 @@ case "${1:-}" in
     # question names), so the answer fits it. Nothing that identifies anyone.
     trouble_re="^(how (do|can|to|should|would) |why (does|do|did|won.?t|can.?t|isn.?t|is my|am i) |fix |can.?t |cannot |won.?t |doesn.?t |does not |what.?s wrong|what is wrong)|(^|[^a-z])(error|errors|failed|failing|crash|crashes|crashed|crashing|broken|not working)([^a-z]|$)"
     if [ -z "${rewrite:-}" ] && ! $use_screen && [ -z "$private_win" ] && [ -z "$local_answer" ] \
-        && [[ "${goal,,}" =~ $trouble_re ]] && [ -z "$(friday_private_window)" ] \
+        && friday_feature_on machine-facts && [[ "${goal,,}" =~ $trouble_re ]] && [ -z "$(friday_private_window)" ] \
         && facts=$(friday_machine_facts "$goal") && [ -n "$facts" ]; then
       request=$(printf '%s\n\n[this computer]\n%s' "$request" "$facts")
     fi
     # "Close this window" / "move this app": the one in front at the keypress
     # (its app and title), unless it's private or app context is off.
-    if [ -z "${rewrite:-}" ] && ! $use_screen && ! $use_selection && [ -n "$front_win" ] \
+    if [ -z "${rewrite:-}" ] && ! $use_screen && ! $use_selection && [ -n "$front_win" ] && friday_feature_on this-window \
         && [[ "${goal,,}" =~ (^|[^a-z])(this|current)\ (window|app|tab)([^a-z]|$) ]] \
         && [ ! -e "${XDG_CONFIG_HOME:-$HOME/.config}/friday/no-app-context" ]; then
       # An app may name itself anything, and a title is a page's to choose:
@@ -4191,7 +4258,7 @@ case "${1:-}" in
     # What the person asked FRIDAY to do in this app (friday app-instructions).
     # Never for a private window: neither the app nor the instruction goes.
     app_rule=""
-    if [ -z "${rewrite:-}" ] && ! $use_screen && [ -z "$private_win" ] \
+    if [ -z "${rewrite:-}" ] && ! $use_screen && [ -z "$private_win" ] && friday_feature_on app-instructions \
         && app_rule=$(friday_app_instructions "$ask_app") && [ -n "$app_rule" ] && [ -n "$(friday_private_window)" ]; then
       app_rule=""
     fi
@@ -4256,7 +4323,7 @@ case "${1:-}" in
                 answer="Local AI is still downloading, and no cloud provider answered. Ask again once it's on (friday local-ai status)." ;;
               *) details=""
                  local still
-                 still=$(friday_what_still_works)
+                 still=""; ! friday_feature_on what-works || still=$(friday_what_still_works)
                  [ -z "$still" ] || answer="$answer $still" ;;
             esac ;;
           *) details="" ;;
@@ -4544,7 +4611,13 @@ case "${1:-}" in
     action_to_confirm=$(jq -r '.needs_confirmation.action // empty' <<<"$summary" 2>/dev/null || true)
     if [ "$ctl_rc" -eq 3 ] && [ -n "$action_to_confirm" ]; then
       (
-        action=$(friday_confirm "$action_to_confirm" "${nid:-}")
+        # "act" (friday autonomy): no question; the answer says what was done.
+        if [ "$(friday_autonomy_mode)" = act ]; then
+          action=run
+          notify-send -a FRIDAY -- "FRIDAY acted on its own" "$action_to_confirm"$'\n'"(Settings → Permissions; friday undo puts back what it can)" 2>/dev/null || true
+        else
+          action=$(friday_confirm "$action_to_confirm" "${nid:-}")
+        fi
         case "$action" in
           run)
             conf_ok=true
@@ -4748,6 +4821,14 @@ case "${1:-}" in
   screen-text)
     shift
     friday_screen_text "$@"
+    ;;
+  feature|features)
+    shift
+    friday_feature "$@"
+    ;;
+  autonomy)
+    shift
+    friday_autonomy "$@"
     ;;
   helper)
     shift
