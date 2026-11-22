@@ -236,7 +236,7 @@ else pass "OpenCode Zen was never tried"; fi
 # The window's own words: with agent-desktop able to read the window in
 # front, a screen ask needs no screenshot (and so no vision model either).
 echo "screen ask from the window's text"
-long="fn main() { let total: u32 = \"42\"; } error[E0308]: mismatched types: expected u32, found &str. $(printf 'line of code %s; ' $(seq 20))"
+long="WINDOW-TEXT-MARKER fn main() { let total: u32 = 42; } expected u32, found str. $(printf 'line of code %s; ' $(seq 20))"
 cat >"$S/agent-desktop" <<STUB
 #!/bin/bash
 v='"ok":true,"version":"2.6"'
@@ -255,8 +255,9 @@ rm -f "$W/state.json"
 DAEMON=$!
 for _ in $(seq 120); do grep -q '"status": *"running"' "$W/state.json" 2>/dev/null && break; sleep 0.5; done
 : >"$W/grim.log"
+lines_before=$(wc -l <"$W/model.log")
 press CTRL+SUPER+Y "what is on my screen?" "FAKE-MODEL-ANSWER: *what is on my screen?*"
-if grep -q "mismatched types: expected u32" "$W/model.log"; then pass "the window's words reached the model"
+if tail -n +$((lines_before + 1)) "$W/model.log" | grep -q "WINDOW-TEXT-MARKER"; then pass "the window's words reached the model"
 else fail "the window's words never reached the model"; fi
 if [[ -s "$W/grim.log" ]]; then fail "a screenshot was taken although the window had words:"; sed 's/^/       /' "$W/grim.log"
 else pass "no screenshot was taken"; fi
