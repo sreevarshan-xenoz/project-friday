@@ -1479,7 +1479,7 @@ contains "phone on asks first and declining changes nothing" "$(printf 'n\n' | P
 rm -f "$CS/pocketdesk"
 # A confirmation goes to the screen and, with a paired phone set to answer, the
 # phone too: the first answer wins; no answer is a cancel.
-eval "$(sed -n '/^friday_confirm() {/,/^}/p' "$F")"
+eval "$(sed -n '/^friday_confirm_pending() {/p;/^friday_confirm() {/,/^}/p' "$F")"
 cat >"$CS/notify-send" <<'EOF2'
 #!/bin/sh
 # NS_ANSWER after NS_DELAY seconds, as a clicked action prints its key.
@@ -1503,6 +1503,21 @@ start=$SECONDS; r=$(NS_ANSWER=run NS_DELAY=5 PD_ANSWER=yes conf)
 [[ "$(NS_ANSWER=run NS_DELAY=5 PD_ANSWER=no conf)" == cancel ]] && pass "confirm: the phone's No cancels" || fail "confirm: phone No"
 [[ "$(NS_ANSWER= PD_ANSWER=none conf)" == cancel ]] && pass "confirm: no answer anywhere is a cancel" || fail "confirm: no answer"
 contains "confirm: the phone is asked the exact action" "$(cat "$PD_LOG")" "FRIDAY wants to run: git push origin main"
+# "yes" typed in the ask box answers it too; "no" cancels.
+start=$SECONDS; (NS_ANSWER= NS_DELAY=8 PD_ANSWER=none conf >"$W/conf.out") &
+sleep 1; said=$(bash "$F" ask "yes" 2>&1; cat "$LOG" | tail -n 3); wait
+[[ "$(cat "$W/conf.out")" == run && $((SECONDS - start)) -lt 6 ]] && pass "confirm: \"yes\" in the ask box runs it" || fail "confirm: typed yes ($(cat "$W/conf.out") after $((SECONDS - start))s)"
+(NS_ANSWER= NS_DELAY=8 PD_ANSWER=none conf >"$W/conf.out") &
+sleep 1; bash "$F" ask "no thanks" >/dev/null 2>&1; bash "$F" ask "cancel" >/dev/null 2>&1; wait
+[[ "$(cat "$W/conf.out")" == cancel ]] && pass "confirm: \"cancel\" in the ask box cancels" || fail "confirm: typed cancel"
+[ ! -e "$HOME/.local/state/friday/confirm-pending" ] && pass "confirm: nothing is left waiting" || fail "confirm-pending left behind"
+# A pending file left by a killed confirmation doesn't take a later "yes".
+mkdir -p "$W/stale"; printf '%s\nrm -rf x\n%s\n' "$W/stale" 999999 >"$HOME/.local/state/friday/confirm-pending"
+: >"$LOG"; bash "$F" ask "yes"; sleep 0.3
+[ ! -e "$W/stale/typed" ] && grep -q "friday-ctl" "$LOG" && pass "confirm: a stale wait doesn't take \"yes\"" || fail "confirm: a stale wait took the answer"
+rm -f "$HOME/.local/state/friday/confirm-pending"
+: >"$LOG"; bash "$F" ask "yes"; sleep 0.3
+contains "with nothing waiting, \"yes\" is just a question" "$(cat "$LOG")" "friday-ctl"
 # `friday phone status` counts the paired phones from `pocketdesk devices --json`.
 printf '#!/bin/sh\necho "{\\"api\\":1,\\"devices\\":[{\\"id\\":\\"a\\"},{\\"id\\":\\"b\\"}],\\"server_running\\":true}"\n' >"$CS/pocketdesk"; chmod +x "$CS/pocketdesk"
 printf '#!/bin/sh\nexit 0\n' >"$CS/systemctl"; chmod +x "$CS/systemctl"
