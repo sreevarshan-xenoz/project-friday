@@ -949,6 +949,9 @@ fn first_json(reply: &str) -> Option<Value> {
 pub struct AgentsTool {
     model: Arc<dyn LlmStrategyClient>,
     dir: PathBuf,
+    /// Private mode (FRIDAY_PRIVATE): nothing leaves the computer, and a
+    /// coding agent sends the folder's code to its own cloud model.
+    private: bool,
 }
 
 impl AgentsTool {
@@ -966,7 +969,20 @@ impl AgentsTool {
                 );
             }
         }
-        Self { model, dir }
+        let private = std::env::var("FRIDAY_PRIVATE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        Self {
+            model,
+            dir,
+            private,
+        }
+    }
+
+    /// The same tool with private mode on or off (tests).
+    pub fn with_private(mut self, private: bool) -> Self {
+        self.private = private;
+        self
     }
 
     /// Starts a run in the background (after `wait_for`, a run still going,
@@ -1164,6 +1180,9 @@ impl friday_goal_execution::Tool for AgentsTool {
         };
         match choice["op"].as_str() {
             Some("status") => ToolResult::success(describe_runs(&list(&self.dir))),
+            Some("run" | "followup") if self.private => ToolResult::error(
+                "Private mode is on, so FRIDAY doesn't start coding agents: they send the folder's code to their own AI. Turn it off with: friday private off",
+            ),
             Some("run") => {
                 let Some(agent) = Agent::from_name(choice["agent"].as_str().unwrap_or("opencode"))
                 else {
@@ -1639,6 +1658,51 @@ mod tests {
             &friday_goal_execution::ExecutionContext::for_goal("g1"),
         )
         .await
+    }
+
+    #[tokio::test]
+    async fn private_mode_starts_no_agent() {
+        use friday_goal_execution::Tool;
+        let dir = TempDir(
+            std::env::temp_dir().join(format!("friday-agents-private-{}", std::process::id())),
+        );
+        std::fs::create_dir_all(dir.path()).unwrap();
+        let folder = dir.path().display().to_string();
+        let ask = |reply: String| {
+            let tool = AgentsTool::new(
+                Arc::new(Model(Box::leak(reply.into_boxed_str()))),
+                dir.path().to_path_buf(),
+            )
+            .with_private(true);
+            async move {
+                let action = friday_goal_execution::Action::single(
+                    "have opencode add a README",
+                    friday_goal_execution::Capability::Custom(CAPABILITY.into()),
+                    "g1",
+                );
+                tool.execute(
+                    &action,
+                    &friday_goal_execution::ExecutionContext::for_goal("g1"),
+                )
+                .await
+            }
+        };
+        for op in ["run", "followup"] {
+            let r = ask(format!(
+                r#"{{"op": "{op}", "agent": "opencode", "folder": "{folder}", "task": "add a README"}}"#
+            ))
+            .await;
+            assert!(
+                r.error.unwrap_or_default().contains("Private mode is on"),
+                "{op} started"
+            );
+        }
+        assert!(
+            list(dir.path()).is_empty(),
+            "nothing was recorded or started"
+        );
+        // Asking how runs are going still works.
+        assert!(ask(r#"{"op": "status"}"#.into()).await.success);
     }
 
     #[tokio::test]

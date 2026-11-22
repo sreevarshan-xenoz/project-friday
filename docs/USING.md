@@ -153,7 +153,7 @@ Web search happens only when you ask for it, and never in private mode.
 - `friday sent` lists what left this computer: which provider, text or
   screenshot, how many secrets were masked first. Keys, passwords and tokens in
   what you send are masked before sending.
-- `friday private on` answers with a local model (Ollama) and sends nothing.
+- `friday private on` answers with a local model (Ollama) and sends nothing; it also starts no coding agent, since an agent sends the folder's code to its own AI.
 - `friday app-context off` stops sending the app name and window title.
 - `friday forget` shows what FRIDAY keeps (counts only) and wipes it:
   `friday forget answers|sent|memory|all`.
