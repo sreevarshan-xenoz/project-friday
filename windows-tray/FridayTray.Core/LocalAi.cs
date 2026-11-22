@@ -256,6 +256,31 @@ public static class LocalAi
         return text;
     }
 
+    public const string LlamaBaseUrl = "http://127.0.0.1:8080/v1";
+
+    /// <summary>FRIDAY's own llama.cpp on Windows (`friday-ctl local-ai install-llamacpp`).</summary>
+    public static string LlamaDir(Paths p) => Path.Combine(p.StateDir, "llama.cpp");
+    public static string LlamaExe(Paths p) => Path.Combine(LlamaDir(p), "llama-server.exe");
+
+    /// <summary>The arguments llama-server runs with (`llama.args`, one per line).</summary>
+    public static IReadOnlyList<string> LlamaArgs(Paths p)
+    {
+        try
+        {
+            return File.ReadAllLines(Path.Combine(LlamaDir(p), "llama.args")).Where(l => l.Length > 0).ToList();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+    }
+
+    /// <summary>Whether the tray should run FRIDAY's llama-server: local AI on, pointed at it, and installed.</summary>
+    public static bool LlamaWanted(IReadOnlyDictionary<string, string> env, Paths p) =>
+        GetCurrentState(env).IsOn
+        && env.TryGetValue("LLAMACPP_BASE_URL", out var url) && url.TrimEnd('/') == LlamaBaseUrl
+        && File.Exists(LlamaExe(p)) && LlamaArgs(p).Count > 0;
+
     /// <summary>A `friday-ctl local-ai pull` line "progress 42 1536 3482": (percent, MB in, MB in all), or null.</summary>
     public static (int Percent, long DoneMb, long TotalMb)? ParseProgress(string line)
     {

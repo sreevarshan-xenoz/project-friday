@@ -726,6 +726,260 @@ pub async fn ollama_pull(model: &str, mut on: impl FnMut(&PullEvent)) -> Result<
     Err("the download stopped before it finished".into())
 }
 
+// ------------------------------------------------------------ llama.cpp on Windows
+
+/// llama.cpp's own release build (the same one Linux pins), Windows zips:
+/// (kind, file, sha256 GitHub publishes).
+pub const LLAMA_BUILD: &str = "b12556";
+pub const LLAMA_WIN: [(&str, &str, &str); 2] = [
+    (
+        "cpu",
+        "llama-b12556-bin-win-cpu-x64.zip",
+        "98882a3ca45688ffa585c3adba49213ca90c5b2dbbf1bc2af41ac437a0987d17",
+    ),
+    (
+        "vulkan",
+        "llama-b12556-bin-win-vulkan-x64.zip",
+        "73f3346fbbad14db8f5a5b35c4e9dbae7debf306309bfc77aca4a17096cb2f93",
+    ),
+];
+
+/// The GGUF file for each ladder model, pinned like `FRIDAY_LOCAL_GGUF` in
+/// the Linux script (a test keeps the two the same): id, repo, revision,
+/// file, sha256, and the image projector's sha256 for the ones that see.
+pub struct Gguf {
+    pub id: &'static str,
+    pub repo: &'static str,
+    pub rev: &'static str,
+    pub file: &'static str,
+    pub sha: &'static str,
+    pub mmproj_sha: Option<&'static str>,
+}
+
+pub const GGUF: [Gguf; 5] = [
+    Gguf {
+        id: "qwen3:1.7b",
+        repo: "Qwen/Qwen3-1.7B-GGUF",
+        rev: "90862c4b9d2787eaed51d12237eafdfe7c5f6077",
+        file: "Qwen3-1.7B-Q8_0.gguf",
+        sha: "061b54daade076b5d3362dac252678d17da8c68f07560be70818cace6590cb1a",
+        mmproj_sha: None,
+    },
+    Gguf {
+        id: "qwen3:4b",
+        repo: "Qwen/Qwen3-4B-GGUF",
+        rev: "bc640142c66e1fdd12af0bd68f40445458f3869b",
+        file: "Qwen3-4B-Q4_K_M.gguf",
+        sha: "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+        mmproj_sha: None,
+    },
+    Gguf {
+        id: "gemma3:4b",
+        repo: "ggml-org/gemma-3-4b-it-GGUF",
+        rev: "d0976223747697cb51e056d85c532013931fe52e",
+        file: "gemma-3-4b-it-Q4_K_M.gguf",
+        sha: "882e8d2db44dc554fb0ea5077cb7e4bc49e7342a1f0da57901c0802ea21a0863",
+        mmproj_sha: Some("8c0fb064b019a6972856aaae2c7e4792858af3ca4561be2dbf649123ba6c40cb"),
+    },
+    Gguf {
+        id: "gemma3:12b",
+        repo: "ggml-org/gemma-3-12b-it-GGUF",
+        rev: "ec0cbabd8dbff316f659876a50202295c3c4a314",
+        file: "gemma-3-12b-it-Q4_K_M.gguf",
+        sha: "7bb69bff3f48a7b642355d64a90e481182a7794707b3133890646b1efa778ff5",
+        mmproj_sha: Some("30c02d056410848227001830866e0a269fcc28aaf8ca971bded494003de9f5a5"),
+    },
+    Gguf {
+        id: "gemma3:27b",
+        repo: "ggml-org/gemma-3-27b-it-GGUF",
+        rev: "f94c25afed0072339c5fa3b705a7b4222afe5f62",
+        file: "gemma-3-27b-it-Q4_K_M.gguf",
+        sha: "edc9aff4d811a285b9157618130b08688b0768d94ee5355b02dc0cb713012e15",
+        mmproj_sha: Some("54cb61c842fe49ac3c89bc1a614a2778163eb49f3dec2b90ff688b4c0392cb48"),
+    },
+];
+
+/// The arguments llama-server runs with for one model file (as Linux's
+/// friday-llama.service): no thinking out loud, asleep after five idle
+/// minutes, on the GPU when there is one.
+pub fn llama_args(model: &Path, projector: Option<&Path>, gpu: bool) -> Vec<String> {
+    let mut a: Vec<String> = vec![
+        "-m".into(),
+        model.to_string_lossy().into_owned(),
+        "-c".into(),
+        "8192".into(),
+        "--reasoning".into(),
+        "off".into(),
+        "--sleep-idle-seconds".into(),
+        "300".into(),
+        "--host".into(),
+        "127.0.0.1".into(),
+        "--port".into(),
+        "8080".into(),
+    ];
+    if let Some(p) = projector {
+        a.push("--mmproj".into());
+        a.push(p.to_string_lossy().into_owned());
+    }
+    if gpu {
+        a.push("--n-gpu-layers".into());
+        a.push("99".into());
+    }
+    a
+}
+
+/// Downloads `url` to `dest` (through a `.part` file), refused unless its
+/// sha256 matches; `on` hears how far it is.
+async fn fetch_checked(
+    http: &reqwest::Client,
+    url: &str,
+    dest: &Path,
+    sha: &str,
+    on: &mut impl FnMut(&PullEvent),
+) -> Result<(), String> {
+    use futures::StreamExt;
+    use sha2::{Digest, Sha256};
+    use std::io::Write;
+    if let Some(dir) = dest.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let name = dest
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let r = http
+        .get(url)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| format!("couldn't download {name}: {e}"))?;
+    let total = r.content_length().unwrap_or(0);
+    let part = dest.with_extension("part");
+    let fetched = async {
+        let mut file = std::fs::File::create(&part).map_err(|e| e.to_string())?;
+        let (mut hash, mut done, mut last) = (Sha256::new(), 0u64, None);
+        let mut stream = r.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| format!("the download of {name} stopped: {e}"))?;
+            file.write_all(&chunk).map_err(|e| e.to_string())?;
+            hash.update(&chunk);
+            done += chunk.len() as u64;
+            if let Some(p) = (done * 100).checked_div(total).map(|p| p as u8) {
+                if last != Some(p) {
+                    last = Some(p);
+                    on(&PullEvent::Progress(p, done / 1_048_576, total / 1_048_576));
+                }
+            }
+        }
+        let got: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        if got != sha {
+            return Err(format!("{name} doesn't match its checksum; not using it"));
+        }
+        Ok(())
+    }
+    .await;
+    // A stopped or refused download leaves nothing behind (models are GBs).
+    if let Err(e) = fetched {
+        let _ = std::fs::remove_file(&part);
+        return Err(e);
+    }
+    std::fs::rename(&part, dest).map_err(|e| e.to_string())
+}
+
+/// llama.cpp on Windows: its release build, then the model (`model`: a ladder
+/// id, or a `.gguf` already in FRIDAY's models folder), and the arguments
+/// the tray runs llama-server with (`llama.args`, one per line). What is
+/// already there isn't fetched again. `gpu`: None keeps the last choice.
+/// Returns whether the model sees images.
+pub async fn install_llamacpp(
+    model: &str,
+    gpu: Option<bool>,
+    mut on: impl FnMut(&PullEvent),
+) -> Result<bool, String> {
+    let dir = llama_dir();
+    let models = dir.join("models");
+    let http = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    // Which build is unpacked (`llama.build`: its zip's name).
+    let built = std::fs::read_to_string(dir.join("llama.build")).unwrap_or_default();
+    let gpu = gpu.unwrap_or(built.trim() == LLAMA_WIN[1].1);
+    let (_, file, sha) = LLAMA_WIN[usize::from(gpu)];
+    if !dir.join("llama-server.exe").is_file() || built.trim() != file {
+        let zip = dir.join("downloads").join(file);
+        let url =
+            format!("https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA_BUILD}/{file}");
+        fetch_checked(&http, &url, &zip, sha, &mut on).await?;
+        // Windows' own tar unpacks zip files too.
+        let ok = std::process::Command::new("tar")
+            .arg("-xf")
+            .arg(&zip)
+            .arg("-C")
+            .arg(&dir)
+            .status()
+            .map_err(|e| format!("couldn't run tar: {e}"))?
+            .success();
+        let _ = std::fs::remove_file(&zip);
+        if !ok {
+            return Err("couldn't unpack llama.cpp".into());
+        }
+        std::fs::write(dir.join("llama.build"), file).map_err(|e| e.to_string())?;
+    }
+    let (file, projector) = if model.ends_with(".gguf") {
+        let file = models.join(model);
+        if !file.is_file() {
+            return Err(format!("{model} isn't in {}", models.display()));
+        }
+        let p = models.join(format!("{}-mmproj.gguf", model.trim_end_matches(".gguf")));
+        let has = p.is_file();
+        (file, has.then_some(p))
+    } else {
+        let row = GGUF
+            .iter()
+            .find(|g| g.id == model)
+            .ok_or_else(|| format!("no llama.cpp download for {model}"))?;
+        let hf = format!("https://huggingface.co/{}/resolve/{}", row.repo, row.rev);
+        let file = models.join(row.file);
+        if !file.is_file() {
+            fetch_checked(
+                &http,
+                &format!("{hf}/{}", row.file),
+                &file,
+                row.sha,
+                &mut on,
+            )
+            .await?;
+        }
+        let projector = match row.mmproj_sha {
+            Some(sha) => {
+                let p = models.join(format!(
+                    "{}-mmproj.gguf",
+                    row.file.trim_end_matches(".gguf")
+                ));
+                if !p.is_file() {
+                    fetch_checked(
+                        &http,
+                        &format!("{hf}/mmproj-model-f16.gguf"),
+                        &p,
+                        sha,
+                        &mut on,
+                    )
+                    .await?;
+                }
+                Some(p)
+            }
+            None => None,
+        };
+        (file, projector)
+    };
+    let args = llama_args(&file, projector.as_deref(), gpu);
+    std::fs::write(dir.join("llama.args"), args.join("\n") + "\n").map_err(|e| e.to_string())?;
+    on(&PullEvent::Done);
+    Ok(projector.is_some())
+}
+
 /// One line per engine, for `friday local-ai status` and the settings pages.
 pub fn engine_line(e: &Engine) -> String {
     let label = if e.name == "ollama" {
@@ -985,5 +1239,47 @@ mod tests {
             p.feed(r#"{"error":"pull model manifest: file does not exist"}"#),
             PullEvent::Failed("pull model manifest: file does not exist".into())
         );
+    }
+
+    #[test]
+    fn the_gguf_pins_match_the_linux_script() {
+        let script = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packaging/linux/friday"),
+        )
+        .unwrap();
+        for g in &GGUF {
+            let row = format!(
+                "{}|{}|{}|{}|{}|{}",
+                g.id,
+                g.repo,
+                g.rev,
+                g.file,
+                g.sha,
+                g.mmproj_sha.unwrap_or("")
+            );
+            assert!(script.contains(&row), "{row} not in FRIDAY_LOCAL_GGUF");
+        }
+        assert!(script.contains(&format!("FRIDAY_LLAMA_BUILD={LLAMA_BUILD}")));
+    }
+
+    #[test]
+    fn llama_server_runs_like_on_linux() {
+        let a = llama_args(Path::new("m.gguf"), Some(Path::new("m-mmproj.gguf")), true);
+        let s = a.join(" ");
+        assert!(
+            s.starts_with("-m m.gguf -c 8192 --reasoning off --sleep-idle-seconds 300"),
+            "{s}"
+        );
+        assert!(
+            s.contains("--port 8080") && s.contains("--host 127.0.0.1"),
+            "{s}"
+        );
+        assert!(
+            s.contains("--mmproj m-mmproj.gguf") && s.ends_with("--n-gpu-layers 99"),
+            "{s}"
+        );
+        assert!(!llama_args(Path::new("m.gguf"), None, false)
+            .join(" ")
+            .contains("mmproj"));
     }
 }

@@ -18,6 +18,7 @@ internal sealed class Supervised : IDisposable
     private readonly string _name;
     private readonly string _exe;
     private readonly Func<IDictionary<string, string>> _env;
+    private readonly Func<IReadOnlyList<string>>? _args;
     private readonly string _logPath;
     private readonly RestartPolicy _policy = new();
     private readonly object _lock = new();
@@ -25,11 +26,13 @@ internal sealed class Supervised : IDisposable
     private StreamWriter? _log;
     private bool _stopping;
 
-    public Supervised(string name, string exe, Func<IDictionary<string, string>> env, string logDir)
+    /// <param name="args">Read at each start (llama-server's model can change between runs).</param>
+    public Supervised(string name, string exe, Func<IDictionary<string, string>> env, string logDir, Func<IReadOnlyList<string>>? args = null)
     {
         _name = name;
         _exe = exe;
         _env = env;
+        _args = args;
         _logPath = Path.Combine(logDir, name + ".log");
     }
 
@@ -62,6 +65,8 @@ internal sealed class Supervised : IDisposable
         };
         foreach (var (k, v) in _env())
             psi.Environment[k] = v;
+        foreach (var a in _args?.Invoke() ?? [])
+            psi.ArgumentList.Add(a);
         var p = new Process { StartInfo = psi, EnableRaisingEvents = true };
         p.OutputDataReceived += (_, e) => Write(e.Data);
         p.ErrorDataReceived += (_, e) => Write(e.Data);
