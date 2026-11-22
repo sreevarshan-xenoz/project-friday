@@ -979,15 +979,23 @@ EOF2
 }
 
 # A confirmation, asked on the screen and, if a paired phone is set to answer
-# FRIDAY's questions, on the phone too: the first answer wins. Prints run or
+# FRIDAY's questions, on the phone too, and answered by a "yes" or "no" typed
+# in the ask box (friday_confirm_typed): the first answer wins. Prints run or
 # cancel (cancel when nobody answered). The phone's Yes needs its fingerprint
 # or screen lock; with no phone set up, `pocketdesk ask` says so at once.
+friday_confirm_pending() { echo "${XDG_STATE_HOME:-$HOME/.local/state}/friday/confirm-pending"; }
 friday_confirm() {
-  local action="$1" nid="${2:-}" t desk_pid phone_pid="" got=""
+  local action="$1" nid="${2:-}" t desk_pid phone_pid="" got="" pending
   t=$(mktemp -d) || return 1
+  pending=$(friday_confirm_pending)
+  # Its wait folder, the action, and who waits (a typed answer counts only
+  # while this is still waiting); gone however this ends.
+  local me=$BASHPID
+  (umask 077; mkdir -p "$(dirname "$pending")"; printf '%s\n%s\n%s\n' "$t" "$action" "$me" >"$pending")
+  trap '[ "$(head -n1 "'"$pending"'" 2>/dev/null)" != "'"$t"'" ] || rm -f "'"$pending"'"; rm -rf "'"$t"'"' EXIT
   local acts=(-A run="Run" -A cancel="Cancel")
   [ -z "$nid" ] || acts+=(-r "$nid")
-  notify-send -a FRIDAY -u normal "${acts[@]}" -- "FRIDAY wants to run" "$action" >"$t/desk" 2>/dev/null &
+  notify-send -a FRIDAY -u normal "${acts[@]}" -- "FRIDAY wants to run" "$action"$'\n'"(or say yes in the ask box)" >"$t/desk" 2>/dev/null &
   desk_pid=$!
   if command -v pocketdesk >/dev/null 2>&1; then
     (
@@ -1000,21 +1008,44 @@ friday_confirm() {
   fi
   local alive
   while :; do
-    got=$(cat "$t/desk" "$t/phone" 2>/dev/null | grep -m1 -xE 'run|cancel' || true)
+    got=$(cat "$t/typed" "$t/desk" "$t/phone" 2>/dev/null | grep -m1 -xE 'run|cancel' || true)
     [ -z "$got" ] || break
     alive=false
     kill -0 "$desk_pid" 2>/dev/null && alive=true
     [ -z "$phone_pid" ] || ! kill -0 "$phone_pid" 2>/dev/null || alive=true
     if ! $alive; then
       # Both are done: read once more, an answer may have landed just now.
-      got=$(cat "$t/desk" "$t/phone" 2>/dev/null | grep -m1 -xE 'run|cancel' || true)
+      got=$(cat "$t/typed" "$t/desk" "$t/phone" 2>/dev/null | grep -m1 -xE 'run|cancel' || true)
       break
     fi
     sleep 0.3
   done
   kill "$desk_pid" ${phone_pid:+"$phone_pid"} 2>/dev/null || true
+  [ "$(head -n1 "$pending" 2>/dev/null)" != "$t" ] || rm -f "$pending"
   rm -rf "$t"
   printf '%s\n' "${got:-cancel}"
+}
+
+# A "yes"/"ok"/"go ahead" or "no"/"cancel" typed as the whole question
+# answers the confirmation waiting (within 3 minutes). Prints what it
+# answered; fails when the words aren't an answer or nothing is waiting.
+friday_confirm_typed() {
+  local q="${1,,}" pending t answer
+  q=$(sed 's/^[[:space:]]*//;s/[[:space:][:punct:]]*$//' <<<"$q")
+  case "$q" in
+    yes|y|yep|yeah|ok|okay|sure|go\ ahead|do\ it|run\ it|go) answer=run ;;
+    no|n|nope|cancel|stop|"don't"|dont|"don't do it") answer=cancel ;;
+    *) return 1 ;;
+  esac
+  pending=$(friday_confirm_pending)
+  local age pid
+  age=$(( $(date +%s) - $(stat -c %Y "$pending" 2>/dev/null || echo 0) ))
+  [ -f "$pending" ] && [ "$age" -ge 0 ] && [ "$age" -le 180 ] || return 1
+  t=$(sed -n 1p "$pending") pid=$(sed -n 3p "$pending")
+  # Only a confirmation still being waited on, in a folder of this user's.
+  [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null && [ -d "$t" ] && [ -O "$t" ] && [ ! -L "$t/typed" ] || return 1
+  printf '%s\n' "$answer" >"$t/typed"
+  if [ "$answer" = run ]; then echo "Running: $(sed -n 2p "$pending")"; else echo "Cancelled: $(sed -n 2p "$pending")"; fi
 }
 
 # `friday welcome`: one-time first-login greeting (autostarted by Hyprland).
@@ -2573,10 +2604,10 @@ bank
 paypal"
 
 # friday_private_window: what made the focused window private, or nothing.
-friday_private_window() {
+friday_private_window() { # [window JSON, else the one in front now]
   command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 0
-  local win hay pat own="${XDG_CONFIG_HOME:-$HOME/.config}/friday/private-windows" drop never
-  win=$(timeout 2 hyprctl activewindow -j 2>/dev/null) || return 0
+  local win="${1:-}" hay pat own="${XDG_CONFIG_HOME:-$HOME/.config}/friday/private-windows" drop never
+  [ -n "$win" ] || win=$(timeout 2 hyprctl activewindow -j 2>/dev/null) || return 0
   hay=$(jq -r '"\(.class // "") \(.title // "")"' <<<"$win" 2>/dev/null | tr '[:upper:]' '[:lower:]') || return 0
   drop=$(sed -n 's/^[[:space:]]*!//p' "$own" 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
   while IFS= read -r pat; do
@@ -3782,18 +3813,23 @@ case "${1:-}" in
     lookup_pids=$!
     { pill state && : >"$lookups/pill"; } &
     lookup_pids+=" $!"
+    # The window in front at the keypress: "this window" means it, even if
+    # another is in front by the time FRIDAY acts.
+    { timeout 2 hyprctl activewindow -j >"$lookups/front" 2>/dev/null || true; } &
+    lookup_pids+=" $!"
     # The app in front now (the box doesn't take that), for its instructions.
     if [ -s "$(friday_app_instructions_file)" ]; then
       { friday_app_class >"$lookups/app" 2>/dev/null || true; } &
       lookup_pids+=" $!"
     fi
-    ask_project="" use_pill=false ask_app=""
+    ask_project="" use_pill=false ask_app="" front_win=""
     ask_lookups() {
       [ -d "$lookups" ] || return 0
       # shellcheck disable=SC2086
       wait $lookup_pids 2>/dev/null || true
       ask_project=$(cat "$lookups/project" 2>/dev/null || true)
       ask_app=$(cat "$lookups/app" 2>/dev/null || true)
+      front_win=$(cat "$lookups/front" 2>/dev/null || true)
       [ ! -e "$lookups/pill" ] || use_pill=true
       rm -rf "$lookups"
     }
@@ -4041,6 +4077,11 @@ case "${1:-}" in
     fi
     shopt -u nocasematch
     [ -n "${goal// /}" ] || exit 0
+    # "Yes" or "no" to a confirmation FRIDAY is waiting on.
+    if ! $use_selection && ! $use_screen && ! $use_followup && ! $use_web && said=$(friday_confirm_typed "$goal"); then
+      notify "FRIDAY" "$said"
+      exit 0
+    fi
     # Things this computer can answer or do itself go nowhere.
     local_answer=""
     if ! $use_selection && ! $use_screen && ! $use_followup && ! ${explaining_error:-false}; then
@@ -4107,6 +4148,19 @@ case "${1:-}" in
         && [[ "${goal,,}" =~ $trouble_re ]] && [ -z "$(friday_private_window)" ] \
         && facts=$(friday_machine_facts "$goal") && [ -n "$facts" ]; then
       request=$(printf '%s\n\n[this computer]\n%s' "$request" "$facts")
+    fi
+    # "Close this window" / "move this app": the one in front at the keypress
+    # (its app and title), unless it's private or app context is off.
+    if [ -z "${rewrite:-}" ] && ! $use_screen && ! $use_selection && [ -n "$front_win" ] \
+        && [[ "${goal,,}" =~ (^|[^a-z])(this|current)\ (window|app|tab)([^a-z]|$) ]] \
+        && [ ! -e "${XDG_CONFIG_HOME:-$HOME/.config}/friday/no-app-context" ]; then
+      # An app may name itself anything, and a title is a page's to choose:
+      # plain characters only, no quotes or line breaks.
+      fw_class=$(jq -r '.class // empty' <<<"$front_win" 2>/dev/null | tr -cd 'A-Za-z0-9._-' | cut -c1-60 || true)
+      fw_title=$(jq -r '.title // empty' <<<"$front_win" 2>/dev/null | tr -d '"\n\r' | tr -d '[:cntrl:]' | cut -c1-120 || true)
+      if [ -n "$fw_class" ] && [ -z "$(friday_private_window "$front_win")" ]; then
+        request=$(printf '%s\n\n[window in front when asked]\n"this window" is %s (title: "%s"), even if another is in front now.' "$request" "$fw_class" "$fw_title")
+      fi
     fi
     # What the person asked FRIDAY to do in this app (friday app-instructions).
     # Never for a private window: neither the app nor the instruction goes.

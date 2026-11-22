@@ -425,6 +425,18 @@ rm -f "$S/hyprctl"
 
 echo "per-app instructions"
 printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s "$HYPR_WIN"\nexit 0\n' >"$S/hyprctl"; chmod +x "$S/hyprctl"
+# "This window" is the one in front at the keypress.
+: >"$LOG"; HYPR_WIN='{"class":"kitty","title":"zsh"}' bash "$F" ask "close this window"; sleep 0.3
+contains "\"this window\" names the window in front when asked" "$(cat "$LOG")" "[window in front when asked]"
+contains "by app and title" "$(cat "$LOG")" 'is kitty (title: "zsh")'
+: >"$LOG"; HYPR_WIN='{"class":"kitty","title":"zsh"}' bash "$F" ask "what is rust"; sleep 0.3
+if grep -q "window in front when asked" "$LOG"; then fail "a question not about this window named it"; else pass "other questions don't name the window"; fi
+: >"$LOG"; HYPR_WIN='{"class":"org.keepassxc.KeePassXC","title":"Passwords"}' bash "$F" ask "close this window"; sleep 0.3
+if grep -q "KeePassXC" "$LOG"; then fail "a private window was named"; else pass "a private window isn't named"; fi
+: >"$LOG"; HYPR_WIN='{"class":"kitty","title":"zsh"}' bash "$F" ask "is this application safe"; sleep 0.3
+if grep -q "window in front when asked" "$LOG"; then fail "\"this application\" named the window"; else pass "\"this application\" isn't \"this app\""; fi
+: >"$LOG"; HYPR_WIN='{"class":"evil\" app\nlaunch","title":"a \"b\"\rc"}' bash "$F" ask "close this window"; sleep 0.3
+contains "an odd app name and title are made plain" "$(cat "$LOG")" 'is evilapplaunch (title: "a bc")'
 out=$(bash "$F" app-instructions set kitty "answer with commands only")
 contains "an app's instruction is kept" "$out" "In kitty, FRIDAY will: answer with commands only"
 contains "and listed" "$(bash "$F" app-instructions list)" "kitty: answer with commands only"
@@ -564,8 +576,9 @@ contains "and is pasted over the selection (Ctrl+V down)" "$(cat "$LOG")" 'send_
 contains "and up again" "$(cat "$LOG")" 'state = "up"'
 if grep -q "Rewrite: fix grammar" "$HOME/.local/state/friday/ask-history" 2>/dev/null; then fail "a rewrite went into ask history"; else pass "a rewrite stays out of ask history"; fi
 # The person moved to another window while the model answered: no paste.
-# (Looks 1-3 are taken with the selection and the private check; the 4th is when the answer is back.)
-: >"$LOG"; rm -f "$W/looks"; MOVE_AFTER=4 PRIMARY="teh quick fox" PICK="Rewrite: fix grammar and spelling" bash "$F" ask --selection; sleep 0.5
+# (Looks 1-4 are taken with the selection, the private check and the window
+# in front at the keypress; the 5th is when the answer is back.)
+: >"$LOG"; rm -f "$W/looks"; MOVE_AFTER=5 PRIMARY="teh quick fox" PICK="Rewrite: fix grammar and spelling" bash "$F" ask --selection; sleep 0.5
 if grep -q "send_key_state" "$LOG"; then fail "pasted into a window the person moved to"; else pass "another window by then: no paste"; fi
 contains "it says the rewrite is on the clipboard" "$(cat "$LOG")" "on your clipboard"
 rm -f "$W/looks"
@@ -1491,7 +1504,7 @@ contains "phone on asks first and declining changes nothing" "$(printf 'n\n' | P
 rm -f "$CS/pocketdesk"
 # A confirmation goes to the screen and, with a paired phone set to answer, the
 # phone too: the first answer wins; no answer is a cancel.
-eval "$(sed -n '/^friday_confirm() {/,/^}/p' "$F")"
+eval "$(sed -n '/^friday_confirm_pending() {/p;/^friday_confirm() {/,/^}/p' "$F")"
 cat >"$CS/notify-send" <<'EOF2'
 #!/bin/sh
 # NS_ANSWER after NS_DELAY seconds, as a clicked action prints its key.
@@ -1515,6 +1528,21 @@ start=$SECONDS; r=$(NS_ANSWER=run NS_DELAY=5 PD_ANSWER=yes conf)
 [[ "$(NS_ANSWER=run NS_DELAY=5 PD_ANSWER=no conf)" == cancel ]] && pass "confirm: the phone's No cancels" || fail "confirm: phone No"
 [[ "$(NS_ANSWER= PD_ANSWER=none conf)" == cancel ]] && pass "confirm: no answer anywhere is a cancel" || fail "confirm: no answer"
 contains "confirm: the phone is asked the exact action" "$(cat "$PD_LOG")" "FRIDAY wants to run: git push origin main"
+# "yes" typed in the ask box answers it too; "no" cancels.
+start=$SECONDS; (NS_ANSWER= NS_DELAY=8 PD_ANSWER=none conf >"$W/conf.out") &
+sleep 1; said=$(bash "$F" ask "yes" 2>&1; cat "$LOG" | tail -n 3); wait
+[[ "$(cat "$W/conf.out")" == run && $((SECONDS - start)) -lt 6 ]] && pass "confirm: \"yes\" in the ask box runs it" || fail "confirm: typed yes ($(cat "$W/conf.out") after $((SECONDS - start))s)"
+(NS_ANSWER= NS_DELAY=8 PD_ANSWER=none conf >"$W/conf.out") &
+sleep 1; bash "$F" ask "no thanks" >/dev/null 2>&1; bash "$F" ask "cancel" >/dev/null 2>&1; wait
+[[ "$(cat "$W/conf.out")" == cancel ]] && pass "confirm: \"cancel\" in the ask box cancels" || fail "confirm: typed cancel"
+[ ! -e "$HOME/.local/state/friday/confirm-pending" ] && pass "confirm: nothing is left waiting" || fail "confirm-pending left behind"
+# A pending file left by a killed confirmation doesn't take a later "yes".
+mkdir -p "$W/stale"; printf '%s\nrm -rf x\n%s\n' "$W/stale" 999999 >"$HOME/.local/state/friday/confirm-pending"
+: >"$LOG"; bash "$F" ask "yes"; sleep 0.3
+[ ! -e "$W/stale/typed" ] && grep -q "friday-ctl" "$LOG" && pass "confirm: a stale wait doesn't take \"yes\"" || fail "confirm: a stale wait took the answer"
+rm -f "$HOME/.local/state/friday/confirm-pending"
+: >"$LOG"; bash "$F" ask "yes"; sleep 0.3
+contains "with nothing waiting, \"yes\" is just a question" "$(cat "$LOG")" "friday-ctl"
 # `friday phone status` counts the paired phones from `pocketdesk devices --json`.
 printf '#!/bin/sh\necho "{\\"api\\":1,\\"devices\\":[{\\"id\\":\\"a\\"},{\\"id\\":\\"b\\"}],\\"server_running\\":true}"\n' >"$CS/pocketdesk"; chmod +x "$CS/pocketdesk"
 printf '#!/bin/sh\nexit 0\n' >"$CS/systemctl"; chmod +x "$CS/systemctl"
