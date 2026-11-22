@@ -942,6 +942,18 @@ fn is_standing_intent(d: &str) -> bool {
             || d.starts_with("what are my ")
             || d.starts_with("what standing ");
     }
+    // A reminder with a time: "remind me at 1pm to dance", "... in 20 minutes".
+    if d.starts_with("remind me ") || d.starts_with("set a reminder ") {
+        let w: Vec<&str> = d.split_whitespace().collect();
+        let timed = w
+            .windows(2)
+            .any(|p| matches!(p[0], "at" | "in") && p[1].starts_with(|c: char| c.is_ascii_digit()))
+            || w.iter()
+                .any(|x| matches!(*x, "tomorrow" | "tonight" | "noon"));
+        if timed {
+            return true;
+        }
+    }
     let first = d.split_whitespace().next().unwrap_or("");
     if [
         "what", "how", "why", "who", "which", "where", "do", "does", "did", "is", "are",
@@ -1925,6 +1937,9 @@ mod tests {
             "when the battery is under 15 percent warn me",
             "list my standing tasks",
             "what are my scheduled tasks",
+            "remind me today at 12:57PM to dance",
+            "Please remind me in 20 minutes to check the oven",
+            "remind me tomorrow to call mum",
         ] {
             assert_eq!(capability_for_description(yes), st, "{yes}");
         }
@@ -1935,6 +1950,7 @@ mod tests {
             "when my friend arrives tell me a joke",
             "what is a standing desk",
             "tell me about battery drops",
+            "remind me what a monad is",
         ] {
             assert_ne!(capability_for_description(no), st, "{no}");
         }

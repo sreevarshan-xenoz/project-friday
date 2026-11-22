@@ -807,6 +807,11 @@ printf '%s\n' '{"tasks":[{"id":"t1","goal":"tell me the weather","trigger":{"kin
 tl=$(bash "$F" tasks)
 contains "tasks lists a daily task" "$tl" "t1  every day at 08:05  tell me the weather"
 contains "tasks lists a battery task" "$tl" "t2  battery under 20%  say hi"
+cp "$FD/standing.json" "$W/standing.saved"
+printf '%s\n' '{"tasks":[{"id":"t3","goal":"say: Time to dance.","trigger":{"kind":"once","at":1795000000},"created":1}]}' >"$FD/standing.json"
+[[ "$(bash "$F" tasks)" =~ ^t3\ \ once\ at\ [0-9]{2}:[0-9]{2}\ on\ [0-9]{2}\ [A-Z][a-z]{2}\ \ say:\ Time\ to\ dance\.$ ]] \
+  && pass "tasks lists a reminder with its time" || fail "a reminder listed as: $(bash "$F" tasks)"
+mv "$W/standing.saved" "$FD/standing.json"
 bash "$F" tasks pause t1 >/dev/null
 contains "tasks pause marks it" "$(bash "$F" tasks)" "(paused)"
 bash "$F" tasks resume t1 >/dev/null

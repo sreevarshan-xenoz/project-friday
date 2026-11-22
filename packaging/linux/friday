@@ -2979,6 +2979,7 @@ friday_tasks() {
          elif .trigger.kind == "every" then
            (if .trigger.minutes % 60 == 0 then "every " + ((.trigger.minutes / 60) | tostring) + " h"
             else "every " + (.trigger.minutes | tostring) + " min" end)
+         elif .trigger.kind == "once" then "once at " + (.trigger.at | localtime | strftime("%H:%M on %d %b"))
          else "battery under " + (.trigger.percent | tostring) + "%" end),
         .goal, (if .paused then "(paused)" else "" end)] | join("  ")' "$f" 2>/dev/null \
         | sed 's/[[:space:]]*$//' \

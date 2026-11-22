@@ -48,6 +48,8 @@ pub enum Trigger {
     Every { minutes: u32 },
     /// Once each time the battery falls under `percent` while unplugged.
     BatteryBelow { percent: u8 },
+    /// Once, at `at` (unix seconds): a reminder. Removed after it runs.
+    Once { at: i64 },
 }
 
 impl Trigger {
@@ -68,6 +70,9 @@ impl Trigger {
             },
             Trigger::Every { minutes } => format!("every {minutes} minutes"),
             Trigger::BatteryBelow { percent } => format!("when the battery is under {percent}%"),
+            Trigger::Once { at } => {
+                format!("once at {}", local_naive(*at).format("%H:%M on %-d %b"))
+            }
         }
     }
 
@@ -198,10 +203,12 @@ impl Store {
     }
 }
 
-/// Whether a goal is itself a schedule ("every day ...", "when my battery ...").
+/// Whether a goal is itself a schedule ("every day ...", "when my battery ...",
+/// "remind me ...": run, it would make another task).
 fn looks_like_schedule(goal: &str) -> bool {
     let g = goal.to_lowercase();
-    g.starts_with("every ")
+    g.starts_with("remind me")
+        || g.starts_with("every ")
         || g.starts_with("each ")
         || g.starts_with("when ")
         || g.contains(" every day")
@@ -243,7 +250,46 @@ pub fn due(task: &Task, now: NaiveDateTime, now_ts: i64, battery: Option<Battery
         Trigger::BatteryBelow { percent } => {
             task.armed && battery.is_some_and(|b| !b.charging && b.percent < *percent)
         }
+        // Missed while the computer was off: still said if at most CATCH_UP late.
+        Trigger::Once { at } => {
+            task.runs == 0 && now_ts >= *at && now_ts < *at + CATCH_UP.num_seconds()
+        }
     }
+}
+
+/// A one-off's moment from the model's `{"kind": "at", "hour", "minute",
+/// "days"}` (the next such local time, `days` later) or `{"kind": "in",
+/// "minutes"}`. Other triggers pass through unchanged.
+fn resolve_once(when: serde_json::Value, now: NaiveDateTime, now_ts: i64) -> serde_json::Value {
+    let num = |k: &str| when.get(k).and_then(serde_json::Value::as_i64);
+    let at = match when.get("kind").and_then(serde_json::Value::as_str) {
+        Some("in") => num("minutes")
+            .filter(|m| (1..=7 * 24 * 60).contains(m))
+            .map(|m| now_ts + m * 60),
+        Some("at") => (|| {
+            let (h, m) = (
+                u32::try_from(num("hour")?).ok()?,
+                u32::try_from(num("minute").unwrap_or(0)).ok()?,
+            );
+            let days = num("days").unwrap_or(0).clamp(0, 7);
+            let mut t = now.date().and_hms_opt(h, m, 0)? + Span::days(days);
+            if t <= now {
+                t += Span::days(1);
+            }
+            // A time the clocks skip (spring forward) is said an hour later.
+            Local
+                .from_local_datetime(&t)
+                .earliest()
+                .or_else(|| Local.from_local_datetime(&(t + Span::hours(1))).earliest())
+                .map(|d| d.timestamp())
+        })(),
+        _ => return when,
+    };
+    // Unreadable: a kind serde refuses, so the tool says it couldn't tell when.
+    at.map_or(
+        serde_json::json!({"kind": "?"}),
+        |at| serde_json::json!({"kind": "once", "at": at}),
+    )
 }
 
 /// Re-arms battery tasks whose battery has recovered, marks the due tasks as
@@ -271,6 +317,11 @@ pub fn tick(
             run.push((t.id.clone(), t.goal.clone()));
         }
     }
+    // A reminder is done once said, or once too late to say.
+    store.tasks.retain(|t| match t.trigger {
+        Trigger::Once { at } => t.runs == 0 && now_ts < at + CATCH_UP.num_seconds(),
+        _ => true,
+    });
     run
 }
 
@@ -430,7 +481,7 @@ pub fn enabled() -> bool {
 
 const MODEL_TIMEOUT: Duration = Duration::from_secs(45);
 
-const GUIDE: &str = r#"Turn the person's request into a standing task: something FRIDAY does again and again on a schedule.
+const GUIDE: &str = r#"Turn the person's request into a standing task: something FRIDAY does again and again on a schedule, or once at a time (a reminder).
 Reply with ONLY one JSON object, nothing else:
   {"op": "add", "goal": "<what to do, as a short instruction, without the schedule>", "when": <trigger>}
   {"op": "list"}                      the person asked what standing tasks they have
@@ -439,6 +490,9 @@ A trigger is one of:
   {"kind": "daily", "hour": 8, "minute": 0}                       every day at that local time (24-hour); add "weekdays_only": true for Monday to Friday
   {"kind": "every", "minutes": 90}                                 repeat every so many minutes (at least 5)
   {"kind": "battery_below", "percent": 20}                         once each time the battery falls under that level while unplugged
+  {"kind": "at", "hour": 12, "minute": 57}                         once, at the next such local time (24-hour); add "days": 1 for tomorrow
+  {"kind": "in", "minutes": 20}                                    once, that many minutes from now
+For a reminder the goal is what to say, like "say: Time to dance." ("remind me at 1 to dance").
 "morning" is 8:00, "noon" 12:00, "evening" 18:00, "night" 21:00 unless a time is given.
 The goal must not mention the schedule: "every morning tell me the weather" -> goal "tell me the weather"."#;
 
@@ -526,9 +580,11 @@ impl friday_goal_execution::Tool for StandingTool {
                     .get("goal")
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("");
+                let now = chrono::Utc::now().timestamp();
                 let Some(trigger) = choice
                     .get("when")
                     .cloned()
+                    .map(|w| resolve_once(w, Local::now().naive_local(), now))
                     .and_then(|w| serde_json::from_value::<Trigger>(w).ok())
                 else {
                     return ToolResult::error(
@@ -536,7 +592,7 @@ impl friday_goal_execution::Tool for StandingTool {
                     );
                 };
                 let mut store = Store::load(&self.path);
-                let made = match store.add(what, trigger, chrono::Utc::now().timestamp()) {
+                let made = match store.add(what, trigger, now) {
                     Ok(t) => format!("{}: {} · {}", t.id, t.trigger.describe(), t.goal),
                     Err(e) => return ToolResult::error(e),
                 };
@@ -719,6 +775,77 @@ mod tests {
             .collect();
         assert_eq!(goals, ["tell me the weather", "check my mail"]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_reminder_resolves_to_the_next_such_time() {
+        let now = at(2026, 11, 22, 12, 30);
+        let n = ts(now);
+        let once = |w| serde_json::from_value::<Trigger>(resolve_once(w, now, n)).ok();
+        let later = ts(at(2026, 11, 22, 12, 57));
+        assert_eq!(
+            once(serde_json::json!({"kind": "at", "hour": 12, "minute": 57})),
+            Some(Trigger::Once { at: later })
+        );
+        // Already past today: tomorrow.
+        let tomorrow = ts(at(2026, 11, 23, 9, 0));
+        assert_eq!(
+            once(serde_json::json!({"kind": "at", "hour": 9, "minute": 0})),
+            Some(Trigger::Once { at: tomorrow })
+        );
+        assert_eq!(
+            once(serde_json::json!({"kind": "at", "hour": 9, "minute": 0, "days": 1})),
+            Some(Trigger::Once { at: tomorrow })
+        );
+        assert_eq!(
+            once(serde_json::json!({"kind": "in", "minutes": 20})),
+            Some(Trigger::Once { at: n + 1200 })
+        );
+        // Nonsense isn't a trigger; the others pass through.
+        assert_eq!(
+            once(serde_json::json!({"kind": "at", "hour": 25, "minute": 0})),
+            None
+        );
+        assert_eq!(once(serde_json::json!({"kind": "in", "minutes": 0})), None);
+        assert_eq!(
+            once(serde_json::json!({"kind": "every", "minutes": 60})),
+            Some(Trigger::Every { minutes: 60 })
+        );
+    }
+
+    #[test]
+    fn a_reminder_runs_once_then_goes() {
+        let made = at(2026, 11, 22, 12, 30);
+        let due_at = ts(at(2026, 11, 22, 12, 57));
+        let mut store = Store {
+            tasks: vec![task(Trigger::Once { at: due_at }, made)],
+        };
+        store.tasks[0].goal = "say: Time to dance.".into();
+        assert!(tick(&mut store, at(2026, 11, 22, 12, 56), due_at - 60, None).is_empty());
+        assert_eq!(store.tasks.len(), 1);
+        let run = tick(&mut store, at(2026, 11, 22, 12, 57), due_at, None);
+        assert_eq!(
+            run,
+            vec![("t1".to_string(), "say: Time to dance.".to_string())]
+        );
+        assert!(store.tasks.is_empty(), "said once, then removed");
+        // Missed by more than six hours (the computer was off): dropped unsaid.
+        let mut store = Store {
+            tasks: vec![task(Trigger::Once { at: due_at }, made)],
+        };
+        assert!(tick(&mut store, at(2026, 11, 22, 19, 0), due_at + 7 * 3600, None).is_empty());
+        assert!(store.tasks.is_empty());
+    }
+
+    #[test]
+    fn a_reminder_goal_cant_remind_again() {
+        let mut s = Store::default();
+        assert!(s
+            .add("remind me to dance", Trigger::Once { at: 10 }, 0)
+            .is_err());
+        assert!(s
+            .add("say: Time to dance.", Trigger::Once { at: 10 }, 0)
+            .is_ok());
     }
 
     #[test]

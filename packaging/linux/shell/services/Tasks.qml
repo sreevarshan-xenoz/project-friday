@@ -25,6 +25,10 @@ Singleton {
       return t.minutes % 60 === 0 ? "every " + (t.minutes / 60) + " h" : "every " + t.minutes + " min";
     if (t.kind === "battery_below")
       return "battery under " + t.percent + "%";
+    if (t.kind === "once") {
+      const d = new Date(t.at * 1000);
+      return "once at " + pad(d.getHours()) + ":" + pad(d.getMinutes()) + " on " + d.toLocaleDateString(Qt.locale(), "d MMM");
+    }
     return "";
   }
 
