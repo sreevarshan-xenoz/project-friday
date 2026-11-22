@@ -614,6 +614,12 @@ impl Tool for DesktopControlTool {
                 ));
                 continue;
             };
+            if verb == "place_window" && !crate::features::on("place-window") {
+                log.push_str(&format!(
+                    "{n}. {verb}: switched off by the person; don't place windows\n"
+                ));
+                continue;
+            }
             if verb == "ui_click" {
                 // Find the button first without pressing it: the decision uses
                 // its own label, and the action the person confirms names it.

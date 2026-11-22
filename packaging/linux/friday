@@ -3298,7 +3298,10 @@ machine-facts|Error and how-to questions say what this computer runs
 this-window|\"This window\" names the window in front at the keypress
 typed-confirm|Answer a confirmation by typing yes or no
 suggestions|Suggested asks for the app you're in, in the ask box
-phone-send|\"Send the answer to my phone\""
+phone-send|\"Send the answer to my phone\"
+area-text|A picked screen area goes as its text when it has enough (read here by tesseract)
+couldnt-check|Say when an answer comes from general knowledge, with nothing on this computer checked
+place-window|Put a window on one side of the screen (\"put Firefox on the left\")"
 friday_features_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/features-off"; }
 # friday_feature_on <name>: on unless switched off.
 friday_feature_on() { ! grep -qxF -- "$1" "$(friday_features_file)" 2>/dev/null; }

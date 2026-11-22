@@ -65,6 +65,7 @@ public static class AppSettings
     [
         ("update-check", "Tell me when a newer FRIDAY is out (asks GitHub once a minute after sign-in)"),
         ("wrong-button", "\"That was wrong\" on answers (keeps how it was asked and answered, no text)"),
+        ("couldnt-check", "Say when an answer comes from general knowledge, with nothing on this computer checked"),
     ];
 
     public static bool FeatureOn(IReadOnlyDictionary<string, string> env, string name) =>

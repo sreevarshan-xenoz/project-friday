@@ -2232,8 +2232,10 @@ impl GoalRunner {
         let mut used = used_labels(&prior, &recalled, web_response.as_ref());
         // Decided before the answer replaces the cycle's own result.
         // A web or page ask looked elsewhere, even when it found nothing.
-        let unchecked =
-            !web && !page_asked && checked_nothing(&composed, &report, web_response.as_ref());
+        let unchecked = !web
+            && !page_asked
+            && crate::features::on("couldnt-check")
+            && checked_nothing(&composed, &report, web_response.as_ref());
 
         // The answer step: the cycle ran a tool and gathered evidence; the
         // model now writes the reply from them. Only for a goal that ran to
@@ -2684,7 +2686,7 @@ fn answer_prompt(
             }
         }
     }
-    if checked_nothing(request, report, web_response) {
+    if checked_nothing(request, report, web_response) && crate::features::on("couldnt-check") {
         p.push_str(
             "FRIDAY looked at nothing on this computer for this request (no command, file, \
              window, page or log). If the request is about this computer (its files, settings, \

@@ -450,9 +450,13 @@ where
 
         // A picked area: its words first, read here; the picture only when
         // there are too few, or the provider didn't answer them.
-        if let (Some(ocr), Some(r), CapturedContext::Image { bytes, .. }) =
-            (self.area_text.as_ref(), region, &captured)
-        {
+        if let (Some(ocr), Some(r), CapturedContext::Image { bytes, .. }) = (
+            self.area_text
+                .as_ref()
+                .filter(|_| crate::features::on("area-text")),
+            region,
+            &captured,
+        ) {
             if let Some(words) = ocr.image_text(bytes).await {
                 let intro = format!(
                     "The person picked an area of their screen ({}). Its text, read \
