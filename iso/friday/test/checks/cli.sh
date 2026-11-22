@@ -1267,6 +1267,19 @@ contains "\"we decided …\" keeps a decision" "$(cat "$LOG")" "friday-ctl-thoug
 : >"$LOG"; bash "$F" ask "open question: should threads sync between computers?"; sleep 0.3
 contains "\"open question: …\" keeps a question" "$(cat "$LOG")" "friday-ctl-thought thought add question should threads sync between computers"
 
+echo "send the answer to the phone"
+mkdir -p "$W/pd-bin"; printf '#!/bin/bash\necho "pocketdesk $*" >>%q\n[ -f "$2" ] && cp "$2" %q\nexit ${PD_RC:-0}\n' "$LOG" "$W/pd-sent.md" >"$W/pd-bin/pocketdesk"; chmod +x "$W/pd-bin/pocketdesk"
+mkdir -p "$state"; printf '# q\n\nThe answer to send.\n' >"$state/last-answer.md"
+: >"$LOG"; out=$(PATH="$W/pd-bin:$PATH" bash "$F" phone send)
+contains "phone send hands the last answer to Pocketdesk" "$(cat "$LOG")" "pocketdesk send-to-phone"
+contains "the answer itself" "$(cat "$W/pd-sent.md")" "The answer to send."
+contains "and says so" "$out" "Sent the last answer to your phone."
+printf '# q\n\nAnother answer.\n' >"$state/last-answer.md"
+: >"$LOG"; PATH="$W/pd-bin:$PATH" bash "$F" ask "send the answer to my phone"; sleep 0.3
+contains "\"send the answer to my phone\" sends the answer before it" "$(cat "$W/pd-sent.md")" "Another answer."
+if grep -q "^friday-ctl" "$LOG"; then fail "sending to the phone asked the AI"; else pass "sending to the phone asks no AI"; fi
+contains "Pocketdesk not running: says how to start it" "$(PD_RC=3 PATH="$W/pd-bin:$PATH" bash "$F" phone send)" "friday phone on starts it"
+
 echo "local commands (no AI)"
 printf '#!/bin/sh\necho "wpctl $*" >>"%s"\n[ "$1" = get-volume ] && echo "Volume: 0.55${MUTED:+ [MUTED]}"\nexit 0\n' "$LOG" >"$S/wpctl"; chmod +x "$S/wpctl"
 rm -f "$state/undo.jsonl"
