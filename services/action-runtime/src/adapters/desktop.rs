@@ -36,8 +36,8 @@ pub fn risk_of(action: &str) -> Option<Risk> {
     Some(match action {
         "windows" | "active_window" | "workspaces" | "now_playing" | "find_app"
         | "system_health" => Risk::Read,
-        "focus_window" | "move_window" | "switch_workspace" | "launch_app" | "media" | "volume"
-        | "brightness" | "power_profile" => Risk::Reversible,
+        "focus_window" | "move_window" | "place_window" | "switch_workspace" | "launch_app"
+        | "media" | "volume" | "brightness" | "power_profile" => Risk::Reversible,
         "close_window" => Risk::Destructive,
         _ => return None,
     })
@@ -156,6 +156,16 @@ impl DesktopAdapter {
             ))
         } else {
             self.dispatch(&["movetoworkspacesilent", &format!("{ws},address:{address}")])
+        }
+    }
+
+    /// Moves the focused window one place in `dir` (l, r, u or d) in the
+    /// workspace's layout.
+    fn move_focused(&self, dir: &str) -> Result<String, String> {
+        if self.lua_dispatch() {
+            self.hypr_lua(&format!("hl.dsp.window.move({{ direction = \"{dir}\" }})"))
+        } else {
+            self.dispatch(&["movewindow", dir])
         }
     }
 
@@ -332,6 +342,22 @@ impl DesktopAdapter {
                 Ok(
                     json!({"moved": w.class, "workspace": ws, "address": w.address, "from": w.workspace}),
                 )
+            }
+            "place_window" => {
+                let w = self.pick(p("target").ok_or("name the window to place")?)?;
+                let side = p("side").ok_or("say which side: left, right, up or down")?;
+                let dir = match side.to_ascii_lowercase().as_str() {
+                    "left" | "l" => "l",
+                    "right" | "r" => "r",
+                    "up" | "top" | "u" => "u",
+                    "down" | "bottom" | "d" => "d",
+                    other => {
+                        return Err(format!("\"{other}\" isn't a side: left, right, up or down"))
+                    }
+                };
+                self.focus(&w.address)?;
+                self.move_focused(dir)?;
+                Ok(json!({"placed": w.class, "side": side, "workspace": w.workspace}))
             }
             "switch_workspace" => {
                 let ws = workspace_arg(p("workspace").ok_or("name the workspace")?)?;
@@ -818,6 +844,51 @@ mod tests {
             stub.last(),
             r#"hyprctl dispatch hl.dsp.focus({ window = "address:0xccc3" })"#
         );
+    }
+
+    #[tokio::test]
+    async fn a_window_is_placed_on_the_side_asked() {
+        let stub = Stub::new(&[]);
+        let r = run(
+            &stub,
+            "place_window",
+            json!({"target": "firefox", "side": "left"}),
+        )
+        .await;
+        assert!(r.success, "{:?}", r.error);
+        assert_eq!(
+            stub.last(),
+            r#"hyprctl dispatch hl.dsp.window.move({ direction = "l" })"#
+        );
+        let r = run(
+            &stub,
+            "place_window",
+            json!({"target": "btop", "side": "Right"}),
+        )
+        .await;
+        assert!(r.success);
+        assert_eq!(
+            stub.last(),
+            r#"hyprctl dispatch hl.dsp.window.move({ direction = "r" })"#
+        );
+        let r = run(
+            &stub,
+            "place_window",
+            json!({"target": "firefox", "side": "middle"}),
+        )
+        .await;
+        assert!(!r.success && r.error.unwrap().contains("isn't a side"));
+        let old = Stub::classic(&["btop"]);
+        assert!(
+            run(
+                &old,
+                "place_window",
+                json!({"target": "firefox", "side": "up"})
+            )
+            .await
+            .success
+        );
+        assert_eq!(old.last(), "hyprctl dispatch movewindow u");
     }
 
     #[tokio::test]
