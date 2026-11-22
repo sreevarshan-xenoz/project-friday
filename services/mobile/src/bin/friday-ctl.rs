@@ -1192,6 +1192,9 @@ fn say(args: &[String]) -> std::process::ExitCode {
         args.join(" ")
     };
     match friday_mobile::speech::say(&text) {
+        // Stopped before the end (friday say --stop, the talk key, talking
+        // over it): its own exit code, so nothing listens for a follow-up.
+        Ok(spoken) if spoken.stopped => std::process::ExitCode::from(5),
         Ok(_) => std::process::ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("friday-ctl: {e}");

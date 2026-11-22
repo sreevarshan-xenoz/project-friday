@@ -1848,7 +1848,7 @@ contains "voice: after a spoken answer FRIDAY listens for a follow-up" "$(cat "$
 contains "voice: what was said is asked as a follow-up" "$(grep -v "^friday-ctl-" "$LOG")" "and in Go?"
 echo "Thanks." >"$W/heard"; : >"$LOG"; FRIDAY_SPOKEN=1 bash "$F" ask "what is rust" >/dev/null 2>&1; sleep 1.5
 if grep -v "^friday-ctl-" "$LOG" | grep -q "Thanks"; then fail "voice: thanks was asked as a question"; else pass "voice: thanks ends the conversation"; fi
-echo "and in Go?" >"$W/heard"; : >"$LOG"; FRIDAY_SPOKEN=1 SAY_EXIT=143 bash "$F" ask "what is rust" >/dev/null 2>&1; sleep 1
+echo "and in Go?" >"$W/heard"; : >"$LOG"; FRIDAY_SPOKEN=1 SAY_EXIT=5 bash "$F" ask "what is rust" >/dev/null 2>&1; sleep 1
 if grep -q "listen answer" "$LOG"; then fail "voice: listened after the answer was stopped"; else pass "voice: a stopped answer doesn't listen"; fi
 : >"$LOG"; bash "$F" ask "what is rust" >/dev/null 2>&1; sleep 1
 if grep -q "listen answer" "$LOG"; then fail "voice: a typed ask listened for a follow-up"; else pass "voice: a typed ask doesn't listen"; fi
