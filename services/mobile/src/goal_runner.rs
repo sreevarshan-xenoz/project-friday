@@ -1614,10 +1614,13 @@ impl GoalRunner {
         // they turned it off (`FRIDAY_AGENTS=0`).
         let has_agents = match &fabric {
             Some(f) if crate::agent_runs::enabled() => {
-                executive.register_tool(Box::new(crate::agent_runs::AgentsTool::new(
-                    f.clone() as Arc<dyn LlmStrategyClient>,
-                    crate::agent_runs::runs_dir(),
-                )));
+                executive.register_tool(Box::new(
+                    crate::agent_runs::AgentsTool::new(
+                        f.clone() as Arc<dyn LlmStrategyClient>,
+                        crate::agent_runs::runs_dir(),
+                    )
+                    .with_gate(confirmation_gate.clone()),
+                ));
                 true
             }
             _ => false,

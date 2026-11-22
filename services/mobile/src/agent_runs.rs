@@ -972,6 +972,18 @@ fn remember_folder(dir: &Path, agent: Agent, folder: &Path) {
     let _ = std::fs::write(path, v.to_string());
 }
 
+/// A folder as the person reads it: `~/code/site` under the home folder.
+fn shown(folder: &Path) -> String {
+    let home =
+        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from);
+    match home.as_deref().and_then(|h| folder.strip_prefix(h).ok()) {
+        Some(rest) if !rest.as_os_str().is_empty() => {
+            format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display())
+        }
+        _ => folder.display().to_string(),
+    }
+}
+
 /// `~/x` and relative folders, from the home folder.
 fn expand(folder: &str) -> PathBuf {
     let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
@@ -1004,6 +1016,8 @@ pub struct AgentsTool {
     /// Private mode (FRIDAY_PRIVATE): nothing leaves the computer, and a
     /// coding agent sends the folder's code to its own cloud model.
     private: bool,
+    /// Asks before a run in a folder the request didn't name.
+    gate: Option<Arc<std::sync::Mutex<crate::goal_runner::ConfirmationGate>>>,
 }
 
 impl AgentsTool {
@@ -1028,7 +1042,17 @@ impl AgentsTool {
             model,
             dir,
             private,
+            gate: None,
         }
+    }
+
+    /// Asks through `gate` before starting in the agent's last folder.
+    pub(crate) fn with_gate(
+        mut self,
+        gate: Arc<std::sync::Mutex<crate::goal_runner::ConfirmationGate>>,
+    ) -> Self {
+        self.gate = Some(gate);
+        self
     }
 
     /// The same tool with private mode on or off (tests).
@@ -1246,7 +1270,19 @@ impl friday_goal_execution::Tool for AgentsTool {
                 let named = choice["folder"].as_str().unwrap_or("").trim();
                 let folder = if named.is_empty() {
                     match last_folder(&self.dir, agent) {
-                        Some(f) => f,
+                        Some(f) => {
+                            // Never a folder the person didn't see: the last
+                            // one is used once they say yes (or name another).
+                            let exact = format!("start {} in {}", agent.name(), shown(&f));
+                            if let Some(gate) = &self.gate {
+                                if let Err(err) =
+                                    gate.lock().unwrap().check_or_record("agents", &exact)
+                                {
+                                    return err;
+                                }
+                            }
+                            f
+                        }
                         None => {
                             return ToolResult::error(
                                 "say which folder the agent should work in, like ~/code/site",
@@ -1789,6 +1825,54 @@ mod tests {
         );
         // Asking how runs are going still works.
         assert!(ask(r#"{"op": "status"}"#.into()).await.success);
+    }
+
+    #[tokio::test]
+    async fn the_last_folder_is_used_only_after_a_yes() {
+        use friday_goal_execution::Tool;
+        let dir = TempDir(
+            std::env::temp_dir().join(format!("friday-agents-lastdir-{}", std::process::id())),
+        );
+        std::fs::create_dir_all(dir.path().join("site")).unwrap();
+        remember_folder(dir.path(), Agent::Opencode, &dir.path().join("site"));
+        let gate = Arc::new(std::sync::Mutex::new(
+            crate::goal_runner::ConfirmationGate::default(),
+        ));
+        let tool = AgentsTool::new(
+            Arc::new(Model(
+                r#"{"op": "run", "agent": "opencode", "folder": "", "task": "add tests"}"#,
+            )),
+            dir.path().to_path_buf(),
+        )
+        .with_gate(gate.clone());
+        let action = friday_goal_execution::Action::single(
+            "have opencode add tests",
+            friday_goal_execution::Capability::Custom(CAPABILITY.into()),
+            "g1",
+        );
+        let r = tool
+            .execute(
+                &action,
+                &friday_goal_execution::ExecutionContext::for_goal("g1"),
+            )
+            .await;
+        let exact = format!("start opencode in {}", shown(&dir.path().join("site")));
+        assert_eq!(
+            r.error.as_deref(),
+            Some(format!("Confirm to run: {exact}").as_str())
+        );
+        assert_eq!(gate.lock().unwrap().pending.as_ref().unwrap().action, exact);
+        assert!(
+            list(dir.path()).is_empty(),
+            "nothing started before the yes"
+        );
+    }
+
+    #[test]
+    fn a_folder_under_home_is_shown_with_a_tilde() {
+        let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+        assert_eq!(shown(&home.join("code/site")), "~/code/site");
+        assert_eq!(shown(Path::new("/srv/app")), "/srv/app");
     }
 
     #[tokio::test]
