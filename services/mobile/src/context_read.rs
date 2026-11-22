@@ -118,18 +118,26 @@ impl ImageText for Tesseract {
             .spawn()
             .ok()?;
         let mut stdin = child.stdin.take()?;
-        let png = png.to_vec();
         let write = async move {
-            stdin.write_all(&png).await.ok();
+            stdin.write_all(png).await.ok();
         };
+        // Past this the picture goes instead.
         let (_, out) = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
+            std::time::Duration::from_secs(5),
             futures::future::join(write, child.wait_with_output()),
         )
         .await
         .ok()?;
-        area_words(&String::from_utf8_lossy(&out.ok()?.stdout))
+        let out = out.ok().filter(|o| o.status.success())?;
+        area_words(&String::from_utf8_lossy(&out.stdout))
     }
+}
+
+/// Do two areas of the screen share any pixels?
+fn overlaps(a: ScreenRegion, b: ScreenRegion) -> bool {
+    let (ax2, ay2) = (a.x as i64 + a.width as i64, a.y as i64 + a.height as i64);
+    let (bx2, by2) = (b.x as i64 + b.width as i64, b.y as i64 + b.height as i64);
+    (a.x as i64) < bx2 && (b.x as i64) < ax2 && (a.y as i64) < by2 && (b.y as i64) < ay2
 }
 
 /// OCR output as the words to send: blank lines dropped, cut to
@@ -376,19 +384,30 @@ where
             }
         }
 
+        // Every host and client gets this, not only FRIDAY's own CLI: a
+        // private window is neither read nor captured, nor is an area that
+        // covers it (or might: its place unknown).
+        if let Ok(CapturedContext::AppInfo {
+            class,
+            title,
+            geometry,
+            ..
+        }) = self
+            .collector
+            .capture(ContextChannel::App, &CaptureOptions::default())
+        {
+            let covered = match (region, geometry) {
+                (Some(r), Some(w)) => overlaps(r, w),
+                _ => true,
+            };
+            if covered && crate::recall::private(&class, &title, &crate::recall::own_list()) {
+                self.revoke();
+                return Err(ContextReadError::PrivateWindow);
+            }
+        }
+
         let mut text_failed = false;
         if region.is_none() {
-            // Every host and client gets this, not only FRIDAY's own CLI: a
-            // private window is neither read nor captured.
-            if let Ok(CapturedContext::AppInfo { class, title, .. }) = self
-                .collector
-                .capture(ContextChannel::App, &CaptureOptions::default())
-            {
-                if crate::recall::private(&class, &title, &crate::recall::own_list()) {
-                    self.revoke();
-                    return Err(ContextReadError::PrivateWindow);
-                }
-            }
             let front = self.window_in_front();
             match self.ask_from_text(question, progress).await {
                 Some(Ok((answer, cut))) => return Ok((answer, ScreenSent::Text { cut })),
@@ -440,8 +459,21 @@ where
                      from the screen on their computer, follows between the lines.",
                     r.slurp()
                 );
-                match self.send_words(&intro, &words, 0, question, progress).await {
+                // The picture goes after a failed text only when nothing of
+                // an answer was shown yet: never two answers in one.
+                let streamed = std::sync::atomic::AtomicBool::new(false);
+                let watch = |chunk: &str| {
+                    streamed.store(true, std::sync::atomic::Ordering::Relaxed);
+                    progress(chunk);
+                };
+                match self.send_words(&intro, &words, 0, question, &watch).await {
                     Ok(answer) => return Ok((answer, ScreenSent::AreaText)),
+                    Err(ContextReadError::Provider(e))
+                        if streamed.load(std::sync::atomic::Ordering::Relaxed) =>
+                    {
+                        self.revoke();
+                        return Err(ContextReadError::Provider(e));
+                    }
                     Err(ContextReadError::Provider(e)) => {
                         tracing::warn!(
                             "[context.read] the area's text got no answer ({e}); sending the picture"
@@ -2154,6 +2186,103 @@ mod tests {
         let (_, sent) = reader.ask_routed(None, Some(area), &|_| {}).await.unwrap();
         assert_eq!(sent, ScreenSent::Area);
         assert!(seam.0.last().unwrap().starts_with("SCREEN_CAPTURE"));
+    }
+
+    /// A private window at 0,0 800x600, and a capture of any area.
+    fn collector_with_private_window(area: ScreenRegion) -> ContextCollector<FakeCommandRunner> {
+        let win = friday_context_collector::window_command();
+        let shot = friday_context_collector::screen_command(Some(area));
+        let runner = FakeCommandRunner::new()
+            .script_stdout(&shot.0, &strs(&shot.1), PNG)
+            .script_stdout(
+                &win.0,
+                &strs(&win.1),
+                br#"{"class":"firefox","title":"Private Browsing - Mozilla Firefox","at":[0,0],"size":[800,600]}"#,
+            );
+        ContextCollector::new(runner)
+    }
+
+    #[tokio::test]
+    async fn an_area_over_a_private_window_is_refused() {
+        let area = ScreenRegion::new(700, 500, 300, 200);
+        let reader = ScreenReader::new(
+            collector_with_private_window(area),
+            RecordingSeam::default(),
+            "fabric",
+        );
+        reader.consent();
+        let got = reader.ask_routed(None, Some(area), &|_| {}).await;
+        assert_eq!(got.map(|(_, s)| s), Err(ContextReadError::PrivateWindow));
+        assert_eq!(reader.provider.sent(), 0);
+        assert!(!reader.is_consented());
+    }
+
+    #[tokio::test]
+    async fn an_area_beside_a_private_window_is_fine() {
+        let area = ScreenRegion::new(800, 0, 300, 200);
+        let reader = ScreenReader::new(
+            collector_with_private_window(area),
+            RecordingSeam::default(),
+            "fabric",
+        );
+        reader.consent();
+        let (_, sent) = reader.ask_routed(None, Some(area), &|_| {}).await.unwrap();
+        assert_eq!(sent, ScreenSent::Area);
+    }
+
+    #[test]
+    fn areas_overlap_only_when_they_share_pixels() {
+        let w = ScreenRegion::new(0, 0, 800, 600);
+        assert!(overlaps(ScreenRegion::new(799, 599, 10, 10), w));
+        assert!(!overlaps(ScreenRegion::new(800, 0, 10, 10), w));
+        assert!(!overlaps(ScreenRegion::new(-10, -10, 10, 10), w));
+        assert!(overlaps(ScreenRegion::new(-1920, 0, 4000, 10), w));
+    }
+
+    #[tokio::test]
+    async fn secrets_in_an_areas_words_are_masked() {
+        let area = ScreenRegion::new(0, 0, 800, 600);
+        let secret = format!("sk-{}", "a1B2c3D4e5F6g7H8i9J0k1L2");
+        let reader = ScreenReader::new(collector_with_window(), RecordingSeam::default(), "fabric")
+            .with_area_text(Arc::new(FakeOcr(Some(format!(
+                "{AREA_WORDS}\ntoken {secret} shown"
+            )))));
+        reader.consent();
+        let (_, sent) = reader.ask_routed(None, Some(area), &|_| {}).await.unwrap();
+        assert_eq!(sent, ScreenSent::AreaText);
+        assert!(!reader.provider.last().unwrap().contains(&secret));
+    }
+
+    /// A provider that streams a bit of the text's answer, then fails.
+    #[derive(Clone, Default)]
+    struct DropsMidway(RecordingSeam);
+
+    #[async_trait]
+    impl ProviderSeam for DropsMidway {
+        async fn send(&self, payload: &str) -> Result<String, String> {
+            self.0.send(payload).await
+        }
+        async fn send_text_streaming(
+            &self,
+            _: &str,
+            progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+        ) -> Result<String, String> {
+            progress("The error means");
+            Err("connection reset".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn an_area_answer_cut_off_midway_is_not_asked_again_with_the_picture() {
+        let area = ScreenRegion::new(0, 0, 800, 600);
+        let seam = DropsMidway::default();
+        let reader = ScreenReader::new(collector_with_window(), seam.clone(), "fabric")
+            .with_area_text(Arc::new(FakeOcr(Some(AREA_WORDS.into()))));
+        reader.consent();
+        let got = reader.ask_routed(None, Some(area), &|_| {}).await;
+        assert!(matches!(got, Err(ContextReadError::Provider(_))), "{got:?}");
+        assert_eq!(seam.0.sent(), 0, "no second answer from the picture");
+        assert!(!reader.is_consented());
     }
 
     #[test]
