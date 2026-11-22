@@ -33,6 +33,7 @@ internal sealed record SettingsActions(
     Action RestartIntoAdministrator,
     Action<string> AskText,
     Action ShowWelcome,
+    Action WakeChanged,
     IReadOnlyDictionary<AskKind, string> Hotkeys);
 
 /// <summary>
@@ -562,8 +563,17 @@ internal sealed partial class SettingsWindow : FluentWindow
             yield return Download("Set up talking", primary: true, setup: ["listen", "setup"]);
         }
         else
+        {
             yield return Note($"Hold {key} and speak; let go and FRIDAY answers. A tap opens the ask box. " +
                 "Your speech becomes text on this PC and is never kept. Switch it off under Features (hold-to-talk).");
+            yield return Switch(
+                "Listen for \"Hey Friday\"",
+                "No key at all: say \"Hey Friday, what's the weather?\" (\"Hey Friday, keep listening\" for a conversation; \"Hey Friday, stop\" while it talks). " +
+                "The microphone is on all the time while this is on, and uses some processor time whenever someone speaks; what is heard stays on this PC and only your question is asked. " +
+                "The tray icon says when it is listening.",
+                Listening.WakeOn(paths),
+                on => { Listening.SetWake(paths, on); _do.WakeChanged(); });
+        }
         yield return Caption("Spoken answers");
         if (!Speaking.Installed(paths))
         {

@@ -1843,6 +1843,7 @@ contains "on" "$(bash "$F" voice speak status)" "Spoken answers: on"
 contains "an answer is spoken when it is on" "$(cat "$LOG")" "friday-ctl-say"
 # Asked by voice and said to the end: after a sound, a follow-up needs no key.
 mkdir -p "$HOME/.local/share/friday/whisper"; head -c 100 /dev/zero >"$HOME/.local/share/friday/whisper/ggml-base.en.bin"
+export STUB_INACTIVE=1
 echo "and in Go?" >"$W/heard"; : >"$LOG"; FRIDAY_SPOKEN=1 bash "$F" ask "what is rust" >/dev/null 2>&1; sleep 1.5
 contains "voice: after a spoken answer FRIDAY listens for a follow-up" "$(cat "$LOG")" "friday-ctl-listen listen answer"
 contains "voice: what was said is asked as a follow-up" "$(grep -v "^friday-ctl-" "$LOG")" "and in Go?"
@@ -1856,6 +1857,10 @@ bash "$F" feature voice-followup off >/dev/null
 : >"$LOG"; FRIDAY_SPOKEN=1 bash "$F" ask "what is rust" >/dev/null 2>&1; sleep 1
 if grep -q "listen answer" "$LOG"; then fail "voice: voice-followup off still listened"; else pass "voice: voice-followup off doesn't listen"; fi
 bash "$F" feature voice-followup on >/dev/null
+unset STUB_INACTIVE
+: >"$LOG"; echo "and in Go?" >"$W/heard"; FRIDAY_SPOKEN=1 bash "$F" ask "what is rust" >/dev/null 2>&1; sleep 1
+if grep -q "listen answer" "$LOG"; then fail "voice: listened for a follow-up while hey Friday is on"; else pass "voice: with hey Friday on, its conversation hears the follow-up"; fi
+rm -f "$W/heard"
 rm -f "$W/heard" "$HOME/.local/share/friday/whisper/ggml-base.en.bin"
 bash "$F" voice speak voice 4 >/dev/null
 contains "the chosen voice is kept" "$(cat "$VD/settings.json")" '"speaker": 4'

@@ -58,6 +58,7 @@ internal sealed class TrayContext : ApplicationContext
         }) { IsBackground = true, Name = "FRIDAY open-window listener" }.Start();
         _icon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) _ = AskAsync(AskKind.Plain); };
         UpdateStatus();
+        WakeChanged();
         _poll.Tick += (_, _) => { UpdateStatus(); _ = RunDueTasksAsync(); CheckAgentRuns(); };
         _poll.Start();
 
@@ -675,7 +676,8 @@ internal sealed class TrayContext : ApplicationContext
     /// </summary>
     private async Task SayThenListenAsync(AnswerWindow answer, string said)
     {
-        if (await Ctl.SayAsync(_install, said) != 0 || answer.IsClosed)
+        // With "Hey Friday" on, its own conversation hears the follow-up.
+        if (await Ctl.SayAsync(_install, said) != 0 || answer.IsClosed || _wake is not null)
             return;
         var heard = await ListenOnceAsync(answer, "After the sound, ask a follow-up, or say stop.");
         if (string.IsNullOrWhiteSpace(heard) || Listening.EndsConversation(heard))
@@ -875,8 +877,8 @@ internal sealed class TrayContext : ApplicationContext
     private void UpdateStatus()
     {
         var state = DaemonState.Read(_install.Paths.StateFile);
-        var text = state.Detail.Length > 60 ? state.Detail[..60] : state.Detail;
-        _icon.Text = text;
+        var text = _wake is null ? state.Detail : "Hey Friday: listening · " + state.Detail;
+        _icon.Text = text.Length > 60 ? text[..60] : text;
         if (state.Mode == _mode)
             return;
         _mode = state.Mode;
@@ -1045,6 +1047,7 @@ internal sealed class TrayContext : ApplicationContext
             RestartIntoAdministrator: RestartTray,
             AskText: text => _ = string.IsNullOrWhiteSpace(text) ? AskAsync(AskKind.Plain) : AskTextAsync(text),
             ShowWelcome: ShowWelcome,
+            WakeChanged: WakeChanged,
             Hotkeys: _hotkeys.Labels), section);
         FluentApp.Show(_settings);
     }
@@ -1090,8 +1093,88 @@ internal sealed class TrayContext : ApplicationContext
         }
     }
 
+    // "Hey Friday" (Settings, Voice; off unless turned on): friday-ctl listens
+    // on this PC and says what it heard; the tray asks it. Restarted if it
+    // stops, until switched off.
+    private CancellationTokenSource? _wake;
+
+    private void WakeChanged()
+    {
+        _wake?.Cancel();
+        _wake = null;
+        if (Listening.WakeOn(_install.Paths))
+        {
+            _wake = new CancellationTokenSource();
+            _ = WakeLoopAsync(_wake.Token);
+        }
+        UpdateStatus();
+    }
+
+    private async Task WakeLoopAsync(CancellationToken stop)
+    {
+        while (!stop.IsCancellationRequested)
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo(_install.Ctl)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardOutputEncoding = System.Text.Encoding.UTF8,
+            };
+            psi.ArgumentList.Add("listen");
+            psi.ArgumentList.Add("wake");
+            foreach (var (k, v) in _install.ChildEnvironment())
+                psi.Environment[k] = v;
+            try
+            {
+                using var p = System.Diagnostics.Process.Start(psi);
+                if (p is null)
+                    return;
+                using var kill = stop.Register(() => { try { p.Kill(); } catch (InvalidOperationException) { } });
+                _ = p.StandardError.ReadToEndAsync();
+                while (await p.StandardOutput.ReadLineAsync() is { } line)
+                {
+                    if (stop.IsCancellationRequested)
+                        break;
+                    if (Listening.WakeLine(line) is not { } heard)
+                        continue;
+                    var (kind, text) = heard;
+                    if (kind == "note")
+                        Notify("FRIDAY", text, ToolTipIcon.None);
+                    else if (_asking)
+                        Notify("FRIDAY", $"Still answering, so this wasn't asked: \"{text}\". Ask again in a moment.", ToolTipIcon.Info);
+                    else if (kind == "ask")
+                        _ = AskTextAsync(text);
+                    else
+                        _ = WakeFollowUpAsync(text);
+                }
+            }
+            catch (Exception e) when (e is System.ComponentModel.Win32Exception or IOException)
+            {
+            }
+            try { await Task.Delay(TimeSpan.FromSeconds(5), stop); }
+            catch (TaskCanceledException) { return; }
+        }
+    }
+
+    /// <summary>In a hands-free conversation: the question follows on from the last answer.</summary>
+    private Task WakeFollowUpAsync(string question)
+    {
+        string last;
+        try { last = File.ReadAllText(_install.Paths.LastAnswerFile); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return AskTextAsync(question); }
+        return RunAgainAsync(() =>
+        {
+            _log.Remember(question);
+            return RunRequestAsync(AskKind.Plain, question, null, Asking.BuildFollowUp(question, last),
+                confirm: null, answer: null, new AskOptions());
+        });
+    }
+
     protected override void ExitThreadCore()
     {
+        _wake?.Cancel();
         _poll.Stop();
         _hotkeys.Dispose();
         _daemon.Dispose();

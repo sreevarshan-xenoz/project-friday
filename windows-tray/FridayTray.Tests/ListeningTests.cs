@@ -78,3 +78,41 @@ public class FollowUpTests
     public void Some_words_end_the_conversation(string said, bool ends) =>
         Assert.Equal(ends, Listening.EndsConversation(said));
 }
+
+public class WakeTests
+{
+    [Theory]
+    [InlineData("ask\twhat time is it", "ask", "what time is it")]
+    [InlineData("followup\tand tomorrow?", "followup", "and tomorrow?")]
+    [InlineData("note\tListening…", "note", "Listening…")]
+    public void Wake_lines_say_what_to_do(string line, string kind, string text) =>
+        Assert.Equal((kind, text), Listening.WakeLine(line));
+
+    [Theory]
+    [InlineData("ask\t  ")]
+    [InlineData("run\trm -rf x")]
+    [InlineData("no tab here")]
+    public void Anything_else_is_ignored(string line) => Assert.Null(Listening.WakeLine(line));
+
+    [Fact]
+    public void Hey_Friday_is_off_until_turned_on()
+    {
+        var root = Directory.CreateTempSubdirectory();
+        try
+        {
+            var paths = new Paths(root.FullName, root.FullName);
+            Directory.CreateDirectory(Path.Combine(Listening.WhisperDir(paths), "Release"));
+            File.WriteAllText(Path.Combine(Listening.WhisperDir(paths), "Release", "whisper-cli.exe"), "");
+            File.WriteAllText(Path.Combine(Listening.WhisperDir(paths), "ggml-base.en.bin"), "");
+            Assert.False(Listening.WakeOn(paths));
+            Listening.SetWake(paths, true);
+            Assert.True(Listening.WakeOn(paths));
+            Listening.SetWake(paths, false);
+            Assert.False(Listening.WakeOn(paths));
+        }
+        finally
+        {
+            root.Delete(true);
+        }
+    }
+}
