@@ -464,6 +464,63 @@ pub fn run_hold() -> u8 {
     }
 }
 
+/// How long a spoken answer may take to begin after the chime.
+pub const ANSWER_WAIT_FRAMES: usize = 60;
+
+/// One short spoken answer, for Run/Cancel by voice: the first second learns
+/// the room ("listening" is printed then, for the caller's chime), then the
+/// first thing said within six seconds is printed. Exit 0 with the text; 1
+/// when nothing was said; 3 when voice isn't set up; 4 with no microphone.
+pub fn run_answer() -> u8 {
+    use std::io::Write;
+    let Some((whisper, model)) = find_whisper() else {
+        eprintln!("friday-ctl: voice isn't set up yet");
+        return 3;
+    };
+    let Some(frames) = mic_frames() else {
+        eprintln!("friday-ctl: couldn't open the microphone");
+        return 4;
+    };
+    let mut seg = Segmenter::new(6, 40);
+    for (n, frame) in frames.enumerate() {
+        if n >= CALIBRATE + ANSWER_WAIT_FRAMES {
+            break;
+        }
+        let piece = seg.feed(&frame);
+        if n + 1 == CALIBRATE {
+            println!("listening");
+            let _ = std::io::stdout().flush();
+        }
+        if let Some(text) = piece.and_then(|p| transcribe(&whisper, &model, &p)) {
+            println!("{text}");
+            return 0;
+        }
+    }
+    1
+}
+
+/// The microphone as 100 ms frames: PipeWire on Linux, WASAPI on Windows.
+fn mic_frames() -> Option<Box<dyn Iterator<Item = Vec<i16>>>> {
+    #[cfg(windows)]
+    {
+        let mic = friday_sensors::audio::Mic::open()?;
+        let mut buf: Vec<i16> = Vec::new();
+        Some(Box::new(std::iter::from_fn(move || loop {
+            if buf.len() >= FRAME {
+                return Some(buf.drain(..FRAME).collect());
+            }
+            buf.extend(mic.read()?);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        })))
+    }
+    #[cfg(not(windows))]
+    {
+        frames(false)
+            .ok()
+            .map(|f| Box::new(f) as Box<dyn Iterator<Item = Vec<i16>>>)
+    }
+}
+
 /// Frames of 100 ms from PipeWire: what is heard (`sink`: the sound the
 /// computer plays) or the microphone. Ends when the recorder does.
 fn frames(sink: bool) -> std::io::Result<impl Iterator<Item = Vec<i16>>> {

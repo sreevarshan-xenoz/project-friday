@@ -77,6 +77,7 @@ public partial class AnswerWindow : Window
     /// <summary>Back to waiting (a confirmed step running, or asking again).</summary>
     public void ShowWaiting(string waiting = "Thinking…")
     {
+        _pendingAction = null;
         SetOrb(Resource("Ember"), breathing: true);
         Footer.Text = "";
         Footer.Visibility = Visibility.Collapsed;
@@ -115,6 +116,7 @@ public partial class AnswerWindow : Window
     /// <summary>The final answer, the step waiting for an OK, or the failure, with what to do next.</summary>
     public void ShowOutcome(AskOutcome outcome)
     {
+        _pendingAction = outcome.Confirmation?.Action;
         var streamed = _stream is not null;
         _stream = null;
         Wave(false);
@@ -141,7 +143,7 @@ public partial class AnswerWindow : Window
             cancel.IsDefault = true; // Enter doesn't run anything by accident
             cancel.Click += (_, _) => CloseSoftly();
             var run = Pill("Run", SymbolRegular.Play24, primary: true);
-            run.Click += (_, _) => ConfirmRun?.Invoke(conf.Action);
+            run.Click += (_, _) => { _pendingAction = null; ConfirmRun?.Invoke(conf.Action); };
             AddButtons(run, cancel);
             Settle(streamed);
             cancel.Focus();
@@ -296,6 +298,31 @@ public partial class AnswerWindow : Window
         caret.BeginAnimation(OpacityProperty, new DoubleAnimation(1, 0.15, TimeSpan.FromMilliseconds(520))
             { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = new SineEase() });
         return caret;
+    }
+
+    // The step waiting for an OK, until it is answered (by a click or by voice).
+    private string? _pendingAction;
+
+    /// <summary>Whether a step is still waiting for an OK.</summary>
+    public bool Waiting => _pendingAction is not null && !IsClosed;
+
+    /// <summary>A spoken run or cancel, as if its button was pressed.</summary>
+    public void AnswerByVoice(bool run)
+    {
+        if (IsClosed || _pendingAction is not { } action)
+            return;
+        _pendingAction = null;
+        if (run)
+            ConfirmRun?.Invoke(action);
+        else
+            CloseSoftly();
+    }
+
+    /// <summary>Says, under the step waiting for an OK, that FRIDAY listens for it.</summary>
+    public void ShowVoiceHint(string hint)
+    {
+        Footer.Text = hint;
+        Footer.Visibility = Visibility.Visible;
     }
 
     private void CloseSoftly()

@@ -43,3 +43,26 @@ public class ListeningTests
         }
     }
 }
+
+public class VoiceAnswerTests
+{
+    [Theory]
+    [InlineData(" Yes.", "run")]
+    [InlineData("Run it!", "run")]
+    [InlineData("Cancel.", "cancel")]
+    [InlineData("“No.”", "cancel")]
+    [InlineData("yes and delete the rest", null)]
+    [InlineData("", null)]
+    public void Only_a_whole_yes_or_no_answers(string said, string? expected) =>
+        Assert.Equal(expected, Listening.YesNo(said));
+
+    [Theory]
+    [InlineData("close_window: File Explorer · Downloads", true)]
+    [InlineData("ui_click: Send", true)]
+    [InlineData("del /q C:\\build\\*", true)]
+    [InlineData("git commit -m \"rm the old file\"", false)]
+    [InlineData("move_window: Notepad to the left", false)]
+    [InlineData("set_volume 30", false)]
+    public void What_cant_be_undone_needs_a_click(string action, bool irreversible) =>
+        Assert.Equal(irreversible, Listening.Irreversible(action));
+}

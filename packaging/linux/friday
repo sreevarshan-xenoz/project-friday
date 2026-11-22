@@ -986,6 +986,22 @@ EOF2
 # in the ask box (friday_confirm_typed): the first answer wins. Prints run or
 # cancel (cancel when nobody answered). The phone's Yes needs its fingerprint
 # or screen lock; with no phone set up, `pocketdesk ask` says so at once.
+# friday_yes_no <words>: run or cancel when the words, all of them, are a
+# yes or a no (typed, or said to FRIDAY); fails otherwise.
+friday_yes_no() {
+  local q="${1,,}"
+  q=$(sed 's/^[[:space:][:punct:]]*//;s/[[:space:][:punct:]]*$//' <<<"$q")
+  case "$q" in
+    yes|y|yep|yeah|ok|okay|sure|go\ ahead|do\ it|run\ it|run|go) echo run ;;
+    no|n|nope|cancel|stop|"don't"|dont|"don't do it") echo cancel ;;
+    *) return 1 ;;
+  esac
+}
+# friday_chime: the short sound that means "FRIDAY is listening now".
+friday_chime() {
+  local f=/usr/share/sounds/freedesktop/stereo/message.oga
+  [ -f "$f" ] && command -v pw-play >/dev/null 2>&1 && timeout 3 pw-play "$f" >/dev/null 2>&1 || true
+}
 friday_confirm_pending() { echo "${XDG_STATE_HOME:-$HOME/.local/state}/friday/confirm-pending"; }
 friday_confirm() {
   local action="$1" nid="${2:-}" t desk_pid phone_pid="" got="" pending
@@ -996,9 +1012,30 @@ friday_confirm() {
   local me=$BASHPID
   (umask 077; mkdir -p "$(dirname "$pending")"; printf '%s\n%s\n%s\n' "$t" "$action" "$me" >"$pending")
   trap '[ "$(head -n1 "'"$pending"'" 2>/dev/null)" != "'"$t"'" ] || rm -f "'"$pending"'"; rm -rf "'"$t"'"' EXIT
-  local acts=(-A run="Run" -A cancel="Cancel")
+  local acts=(-A run="Run" -A cancel="Cancel") also="(or say yes in the ask box)" voice_pid=""
   [ -z "$nid" ] || acts+=(-r "$nid")
-  notify-send -a FRIDAY -u normal "${acts[@]}" -- "FRIDAY wants to run" "$action"$'\n'"(or say yes in the ask box)" >"$t/desk" 2>/dev/null &
+  # Asked by voice: after a chime, a spoken "run" or "cancel" answers too,
+  # heard while this is on screen only. Something that can't be undone can
+  # be cancelled by voice but needs a click (or the phone) to run.
+  if [ -n "${FRIDAY_SPOKEN:-}" ] && friday_feature_on voice-confirm && friday_voice_ready \
+      && command -v friday-ctl >/dev/null 2>&1; then
+    local irrev=false
+    friday_irreversible "$action" && irrev=true
+    if $irrev; then also="(after the sound, say cancel; Run needs a click)"; else also="(after the sound, say run or cancel)"; fi
+    (
+      friday-ctl say --stop >/dev/null 2>&1 || true
+      friday-ctl listen answer 2>/dev/null | while IFS= read -r line; do
+        if [ "$line" = listening ]; then friday_chime; continue; fi
+        case "$(friday_yes_no "$line")" in
+          run) $irrev || echo run ;;
+          cancel) echo cancel ;;
+        esac
+        break
+      done
+    ) >"$t/voice" 2>/dev/null &
+    voice_pid=$!
+  fi
+  notify-send -a FRIDAY -u normal "${acts[@]}" -- "FRIDAY wants to run" "$action"$'\n'"$also" >"$t/desk" 2>/dev/null &
   desk_pid=$!
   if command -v pocketdesk >/dev/null 2>&1; then
     (
@@ -1011,19 +1048,21 @@ friday_confirm() {
   fi
   local alive
   while :; do
-    got=$(cat "$t/typed" "$t/desk" "$t/phone" 2>/dev/null | grep -m1 -xE 'run|cancel' || true)
+    got=$(cat "$t/typed" "$t/desk" "$t/phone" "$t/voice" 2>/dev/null | grep -m1 -xE 'run|cancel' || true)
     [ -z "$got" ] || break
     alive=false
     kill -0 "$desk_pid" 2>/dev/null && alive=true
     [ -z "$phone_pid" ] || ! kill -0 "$phone_pid" 2>/dev/null || alive=true
     if ! $alive; then
       # Both are done: read once more, an answer may have landed just now.
-      got=$(cat "$t/typed" "$t/desk" "$t/phone" 2>/dev/null | grep -m1 -xE 'run|cancel' || true)
+      got=$(cat "$t/typed" "$t/desk" "$t/phone" "$t/voice" 2>/dev/null | grep -m1 -xE 'run|cancel' || true)
       break
     fi
     sleep 0.3
   done
-  kill "$desk_pid" ${phone_pid:+"$phone_pid"} 2>/dev/null || true
+  # The listener's own children first, so the microphone closes now.
+  [ -z "$voice_pid" ] || pkill -P "$voice_pid" 2>/dev/null || true
+  kill "$desk_pid" ${phone_pid:+"$phone_pid"} ${voice_pid:+"$voice_pid"} 2>/dev/null || true
   [ "$(head -n1 "$pending" 2>/dev/null)" != "$t" ] || rm -f "$pending"
   rm -rf "$t"
   printf '%s\n' "${got:-cancel}"
@@ -1033,13 +1072,8 @@ friday_confirm() {
 # answers the confirmation waiting (within 3 minutes). Prints what it
 # answered; fails when the words aren't an answer or nothing is waiting.
 friday_confirm_typed() {
-  local q="${1,,}" pending t answer
-  q=$(sed 's/^[[:space:]]*//;s/[[:space:][:punct:]]*$//' <<<"$q")
-  case "$q" in
-    yes|y|yep|yeah|ok|okay|sure|go\ ahead|do\ it|run\ it|go) answer=run ;;
-    no|n|nope|cancel|stop|"don't"|dont|"don't do it") answer=cancel ;;
-    *) return 1 ;;
-  esac
+  local pending t answer
+  answer=$(friday_yes_no "$1") || return 1
   pending=$(friday_confirm_pending)
   local age pid
   age=$(( $(date +%s) - $(stat -c %Y "$pending" 2>/dev/null || echo 0) ))
@@ -2147,7 +2181,7 @@ friday_hold() {
           notify-send -a FRIDAY "FRIDAY" "Voice typing needs wtype (sudo pacman -S wtype)." 2>/dev/null || true
           return 1
         fi
-        exec bash "$0" ask "$text"
+        FRIDAY_SPOKEN=1 exec bash "$0" ask "$text"
       fi
       [ "${2:-}" = "--type" ] && return 0
       exec bash "$0" ask
@@ -3349,6 +3383,7 @@ what-changed|\"What changed today?\" reads the project's git and the package log
 machine-facts|Error and how-to questions say what this computer runs
 this-window|\"This window\" names the window in front at the keypress
 typed-confirm|Answer a confirmation by typing yes or no
+voice-confirm|Asked by voice: say run or cancel after the sound to answer a confirmation
 suggestions|Suggested asks for the app you're in, in the ask box
 phone-send|\"Send the answer to my phone\"
 area-text|A picked screen area goes as its text when it has enough (read here by tesseract)
