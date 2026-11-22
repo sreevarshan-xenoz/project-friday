@@ -38,14 +38,21 @@ if [[ -n "$LUAC" ]]; then
 else skip "Lua syntax (no luac)"; fi
 
 echo "Hyprland accepts the shipped configs (Hyprland --verify-config)"
-if need Hyprland runuser; then
+# Hyprland refuses to run as root: as root (CI) the checks run as `nobody`,
+# otherwise as the user running them.
+unpriv=()
+if [ "$(id -u)" = 0 ]; then command -v runuser >/dev/null 2>&1 && unpriv=(runuser -u nobody --) || unpriv=(false); fi
+# Omarchy's own files come from fetch-omarchy.sh (not in git): without them
+# the configs that load Omarchy can't be checked here.
+omarchy_ok=false; [ -f "$AIROOTFS/usr/share/omarchy/default/hypr/bootstrap.lua" ] && omarchy_ok=true
+if need Hyprland && [ "${unpriv[0]:-}" != false ]; then
   for cfg in "usr/share/friday/dots-hyprland/.config/hypr:Dots-Hyprland" "etc/skel/.config/hypr:Omarchy themes"; do
     src="$AIROOTFS/${cfg%%:*}"; label="${cfg##*:}"
+    if [[ "$label" == Omarchy* ]] && ! $omarchy_ok; then skip "$label config (Omarchy not fetched: bash iso/friday/fetch-omarchy.sh)"; continue; fi
     # Outside $WORK: mktemp's 0700 directory is not reachable by `nobody`.
     H=$(mktemp -d /tmp/friday-hypr-verify.XXXXXX); chmod 755 "$H"
     mkdir -p "$H/.config"; cp -a "$src" "$H/.config/hypr"; chmod -R a+rwX "$H"
-    # Hyprland refuses to run as root; verify as an unprivileged user.
-    out=$(cd "$H" && runuser -u nobody -- env HOME="$H" XDG_RUNTIME_DIR="$H" \
+    out=$(cd "$H" && "${unpriv[@]}" env HOME="$H" XDG_RUNTIME_DIR="$H" \
       OMARCHY_PATH="$AIROOTFS/usr/share/omarchy" timeout 60 \
       Hyprland --verify-config -c "$H/.config/hypr/hyprland.lua" 2>&1)
     if grep -q "config ok" <<<"$out"; then pass "$label config"
@@ -74,7 +81,8 @@ done
 grep -q 'dofile(friday_look)' "$AIROOTFS/etc/skel/.config/hypr/hyprland.lua" \
   && pass "FRIDAY OS's hyprland.lua loads FRIDAY Shell's window look" \
   || fail "FRIDAY OS's hyprland.lua does not load ~/.config/friday/hypr-look.lua"
-if need Hyprland runuser jq; then
+if ! $omarchy_ok; then skip "the window looks in Hyprland (Omarchy not fetched)"
+elif need Hyprland jq && [ "${unpriv[0]:-}" != false ]; then
   for look in island:frost dock:omarchy; do
     H=$(mktemp -d /tmp/friday-hypr-look.XXXXXX); chmod 755 "$H"
     mkdir -p "$H/.config/friday"; cp -a "$AIROOTFS/etc/skel/.config/hypr" "$H/.config/hypr"
@@ -82,7 +90,7 @@ if need Hyprland runuser jq; then
     HOME="$H" XDG_CONFIG_HOME="" HYPRLAND_INSTANCE_SIGNATURE="" \
       bash -c 'source <(sed -n "/^shell_window_look() {/,/^}/p" "$1"); shell_window_look' _ "$F_CLI"
     chmod -R a+rwX "$H"
-    out=$(cd "$H" && runuser -u nobody -- env HOME="$H" XDG_RUNTIME_DIR="$H" \
+    out=$(cd "$H" && "${unpriv[@]}" env HOME="$H" XDG_RUNTIME_DIR="$H" \
       OMARCHY_PATH="$AIROOTFS/usr/share/omarchy" timeout 60 \
       Hyprland --verify-config -c "$H/.config/hypr/hyprland.lua" 2>&1)
     if [[ -s "$H/.config/friday/hypr-look.lua" ]] && grep -q "config ok" <<<"$out"; then
@@ -323,3 +331,5 @@ contains "FRIDAY OS's Chromium loads FRIDAY's extension" "$(cat "$REPO_ROOT/iso/
 contains "the package installs the host for Chromium" "$(cat "$REPO_ROOT/packaging/arch/PKGBUILD")" "etc/chromium/native-messaging-hosts"
 contains "and for Firefox" "$(cat "$REPO_ROOT/packaging/arch/PKGBUILD")" "usr/lib/mozilla/native-messaging-hosts"
 contains "the host manifest allows only FRIDAY's extension" "$(cat "$REPO_ROOT/packaging/browser/org.friday.browser.chromium.json")" "chrome-extension://eiblopljacafgajanhkngbhejpjjmfff/"
+
+finish
