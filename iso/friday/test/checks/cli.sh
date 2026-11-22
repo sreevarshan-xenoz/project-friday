@@ -215,6 +215,27 @@ contains "ask 'search the web for q' strips prefix" "$(cat "$LOG")" "rust releas
 contains "ask 'look up q' passes --web flag" "$(cat "$LOG")" "friday-ctl-web"
 contains "ask 'look up q' strips prefix" "$(cat "$LOG")" "rust documentation"
 
+# @-mentions pick what goes with the question, and leave it.
+: >"$LOG"; bash "$F" ask "@web latest rust release"; sleep 0.3
+contains "@web searches the web" "$(cat "$LOG")" "friday-ctl-web"
+if grep -q "@web" "$LOG"; then fail "@web stayed in the question"; else pass "@web is taken out of the question"; fi
+: >"$LOG"; CLIP="cargo: linker cc not found" bash "$F" ask "why @clip"; sleep 0.3
+contains "@clip sends the clipboard" "$(cat "$LOG")" "linker"
+contains "as context" "$(cat "$LOG")" "Use this text as context"
+: >"$LOG"; CLIP="hunter2SecretToken99" bash "$F" ask "@clip what is this"; sleep 0.3
+if grep -q "hunter2SecretToken99" "$LOG"; then fail "@clip sent a token-shaped clipboard"; else pass "@clip refuses a token-shaped clipboard"; fi
+mkdir -p "$W/mention"; printf 'fn main() { let x: u32 = "a"; }\n' >"$W/mention/main.rs"
+: >"$LOG"; bash "$F" ask "what's wrong in @file $W/mention/main.rs"; sleep 0.3
+contains "@file sends the file's text" "$(cat "$LOG")" "let x: u32"
+contains "and the answer says which file" "$(cat "$LOG")" "the file main.rs"
+mkdir -p "$HOME/.config/friday"; cp "$HOME/.config/friday/private-windows" "$W/pw.mention" 2>/dev/null || : >"$W/pw.mention"
+printf '%s\n' "$W/mention" >>"$HOME/.config/friday/private-windows"
+: >"$LOG"; bash "$F" ask "what's wrong in @file $W/mention/main.rs"; sleep 0.3
+if grep -q "let x: u32" "$LOG"; then fail "@file sent a file from a private folder"; else pass "@file refuses a private folder's file"; fi
+cp "$W/pw.mention" "$HOME/.config/friday/private-windows"
+: >"$LOG"; bash "$F" ask "summarise @file /nonexistent/x.txt"; sleep 0.3
+if grep -q "^friday-ctl" "$LOG"; then fail "@file with no such file still asked"; else pass "@file with no such file asks nothing"; fi
+
 : >"$LOG"; rm -f "$W/again_done"
 ACTION_AGAIN=1 PICK="re-asked question" bash "$F" ask "first question"; sleep 0.5
 contains "Ask again re-invokes the ask" "$(cat "$LOG")" "friday-ctl re-asked\\ question"
