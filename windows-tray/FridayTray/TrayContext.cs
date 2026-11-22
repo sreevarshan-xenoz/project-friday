@@ -235,6 +235,13 @@ internal sealed class TrayContext : ApplicationContext
             // "search ..." and "look up ..." ask for a web search, and only they do.
             var (asked, web) = Asking.WebQuestion(question);
             var request = SourceApp.Append(Asking.BuildRequest(asked, context), appLine);
+            // "How do I … in FRIDAY?": FRIDAY's guide goes with the question.
+            if (kind == AskKind.Plain && context is null && !web && Asking.AboutFriday(asked))
+            {
+                var docs = await Ctl.RunAsync(_install, ["docs", "--", asked], TimeSpan.FromSeconds(3));
+                if (docs.Ok)
+                    request = Asking.WithDocs(request, docs.Output);
+            }
             await RunRequestAsync(kind, asked, context, request, confirm: null, answer: null, new AskOptions(Web: web, Region: area?.Arg));
         }
         finally

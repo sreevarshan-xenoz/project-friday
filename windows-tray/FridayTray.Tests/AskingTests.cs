@@ -3,6 +3,24 @@ using Xunit;
 
 public class AskingTests
 {
+    [Theory]
+    [InlineData("how do I change FRIDAY's hotkey", true)]
+    [InlineData("what does friday do with screenshots", true)]
+    [InlineData("which shortcut asks about the screen", true)]
+    [InlineData("what is the capital of France", false)]
+    [InlineData("TGIF, it's Fridays tomorrow", false)]
+    public void Questions_about_friday_are_known(string q, bool about) =>
+        Assert.Equal(about, Asking.AboutFriday(q));
+
+    [Fact]
+    public void The_guide_goes_with_the_question_only_when_there_is_some()
+    {
+        Assert.Equal("q", Asking.WithDocs("q", "  \n"));
+        var with = Asking.WithDocs("q", "[FRIDAY guide: The three keys]\nWin+Y asks.\n");
+        Assert.StartsWith("q\n\n[docs]\n", with);
+        Assert.Contains("Win+Y asks.\n\"\"\"", with);
+    }
+
     [Fact]
     public void Request_adds_selected_text_as_context()
     {

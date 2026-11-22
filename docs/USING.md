@@ -226,6 +226,10 @@ On Windows, a step or question that waits for you opens a small FRIDAY window wi
 
 `friday agents` lists the runs and `friday agents show <id>` reports one: what you asked, what the agent said, and every step approved by FRIDAY, approved by you, or refused. `friday agents off` stops FRIDAY from starting agents (`FRIDAY_AGENTS=0`).
 
+## Questions about FRIDAY
+
+Ask FRIDAY about itself, for example "how do I ask FRIDAY about my screen?" or "which hotkey asks about selected text?". A question that names FRIDAY, a hotkey or a shortcut gets the matching part of this guide, the copy installed with your version, and the answer says so ("FRIDAY guide: The three keys"). Nothing extra is sent beyond that excerpt. `friday feature self-docs off` (Windows: Settings → General → Features) turns it off.
+
 ## Troubleshooting
 
 Tell FRIDAY what's wrong, for example `friday ask "my wifi keeps dropping"`, `"why is my disk full"` or `"troubleshoot my sound"`. FRIDAY looks before it answers: it runs diagnostic commands that only read, such as `nmcli device status`, `journalctl -b -p err`, `df -h` and `wpctl status` (on Windows: `ipconfig`, `Get-NetAdapter`, `Test-NetConnection`). It reads what they print and answers with what it found, in up to four rounds.

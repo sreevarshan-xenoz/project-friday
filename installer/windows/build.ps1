@@ -63,6 +63,8 @@ foreach ($project in @("$repo\windows-tray\FridayTray\FridayTray.csproj", "$repo
         '-p:PublishSingleFile=false', "-p:Version=$version", '-o', $stage)
 }
 Copy-Item "$repo\LICENSE-MIT", "$repo\LICENSE-APACHE" $stage
+# FRIDAY's guide, beside friday-ctl: questions about FRIDAY are answered from it.
+Copy-Item "$repo\docs\USING.md" $stage
 # FRIDAY's browser extension (Settings, Browser loads it from here).
 Copy-Item -Recurse "$repo\packaging\browser\extension" "$stage\browser-extension"
 

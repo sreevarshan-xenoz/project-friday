@@ -3315,6 +3315,7 @@ area-text|A picked screen area goes as its text when it has enough (read here by
 couldnt-check|Say when an answer comes from general knowledge, with nothing on this computer checked
 easy-local|With local AI set up, short general questions are answered on this computer first
 agent-resume|A follow-up to a coding agent goes on in its session (\"tell opencode to also add tests\")
+self-docs|Questions about FRIDAY are answered from its own guide
 place-window|Put a window on one side of the screen (\"put Firefox on the left\")"
 friday_features_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/features-off"; }
 # friday_feature_on <name>: on unless switched off.

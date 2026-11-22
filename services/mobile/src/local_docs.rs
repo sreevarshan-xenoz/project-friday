@@ -1,8 +1,9 @@
 //! `friday-ctl docs "<question>"`: short excerpts from documentation that is
 //! already on this computer, for the model to answer from (and name): the Arch
-//! wiki (`arch-wiki-lite`, plain text), tldr pages (`tealdeer`'s cache) and man
-//! pages. Nothing is sent anywhere; with nothing installed, or nothing that
-//! matches well, it prints nothing.
+//! wiki (`arch-wiki-lite`, plain text), tldr pages (`tealdeer`'s cache), man
+//! pages, and FRIDAY's own guide for questions about FRIDAY. Nothing is sent
+//! anywhere; with nothing installed, or nothing that matches well, it prints
+//! nothing.
 //!
 //! The wiki ships as one gzip file of `NNNNNNNN:line` lines plus an index of
 //! `lang/Title NNNNNNNN`. The English articles are unpacked once into a cache
@@ -31,6 +32,8 @@ pub struct Sources {
     /// The text of the folders the person chose to search (`friday folders`),
     /// one article per file, titled with its path.
     pub folders: PathBuf,
+    /// FRIDAY's guide (`USING.md`) as installed with this version.
+    pub guide: PathBuf,
 }
 
 impl Sources {
@@ -57,6 +60,15 @@ impl Sources {
             tldr,
             man: true,
             folders: cache_home.join("friday/folders.txt"),
+            // Beside friday-ctl.exe on Windows; the package's doc folder on Linux.
+            guide: if cfg!(windows) {
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|e| e.parent().map(|d| d.join("USING.md")))
+                    .unwrap_or_default()
+            } else {
+                PathBuf::from("/usr/share/doc/friday/USING.md")
+            },
         }
     }
 
@@ -363,9 +375,61 @@ fn man(cmd: &str) -> Option<Excerpt> {
     })
 }
 
-/// Excerpts for the question: a command page or two, then the wiki passage.
+/// Whether a question is about FRIDAY itself: it names FRIDAY, a hotkey or a
+/// shortcut.
+pub fn about_friday(question: &str) -> bool {
+    question
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|w| {
+            [
+                "friday",
+                "friday's",
+                "hotkey",
+                "hotkeys",
+                "shortcut",
+                "shortcuts",
+            ]
+            .contains(&w)
+        })
+}
+
+/// The guide as articles, one per `##` section, titled with its heading.
+fn guide_articles(guide: &str) -> String {
+    let mut out = String::new();
+    for line in guide.lines() {
+        match line.strip_prefix("## ") {
+            Some(h) => out.push_str(&format!("{TITLE_MARK}{}\n", h.trim())),
+            // The page title and the lead before the first section.
+            None if out.is_empty() => out.push_str(&format!("{TITLE_MARK}Using FRIDAY\n{line}\n")),
+            None => out.push_str(&format!("{line}\n")),
+        }
+    }
+    out
+}
+
+/// Excerpts for the question: FRIDAY's guide when it's about FRIDAY, a
+/// command page or two, then the wiki passage.
 pub fn find(question: &str, s: &Sources) -> Vec<Excerpt> {
     let mut out = Vec::new();
+    if about_friday(question) && crate::features::on("self-docs") {
+        if let Ok(guide) = std::fs::read_to_string(&s.guide) {
+            // "friday" is in every section: it says nothing about which one.
+            let asked = question
+                .to_lowercase()
+                .replace("friday's", "")
+                .replace("friday", "");
+            out.extend(
+                passages(&asked, &guide_articles(&guide))
+                    .into_iter()
+                    .take(2)
+                    .map(|e| Excerpt {
+                        source: format!("FRIDAY guide: {}", e.source),
+                        text: e.text,
+                    }),
+            );
+        }
+    }
     for cmd in command_words(question) {
         if out.len() == 2 {
             break;
@@ -580,7 +644,39 @@ mod tests {
             tldr: Some(dir.join("tldr")),
             man: false,
             folders: dir.join("cache/folders.txt"),
+            guide: dir.join("USING.md"),
         }
+    }
+
+    #[test]
+    fn questions_about_friday_are_answered_from_its_guide() {
+        let dir = std::env::temp_dir().join(format!("friday-guide-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = sources(&dir);
+        s.tldr = None;
+        s.guide = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/USING.md");
+        let found = find("how do I ask FRIDAY about the text I selected?", &s);
+        assert!(
+            found
+                .iter()
+                .any(|e| e.source == "FRIDAY guide: The three keys"),
+            "{found:?}"
+        );
+        let keys = find("which hotkey asks about my screen", &s);
+        assert!(
+            keys.iter().any(|e| e.source.starts_with("FRIDAY guide:")),
+            "{keys:?}"
+        );
+        // A question that isn't about FRIDAY never gets the guide.
+        let other = find("which key asks about my screen in gnome", &s);
+        assert!(
+            other.iter().all(|e| !e.source.starts_with("FRIDAY guide")),
+            "{other:?}"
+        );
+        // No guide installed: nothing, and no error.
+        s.guide = dir.join("missing.md");
+        assert!(find("how do I ask FRIDAY about a selection", &s).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn fixture() -> (PathBuf, Sources) {
