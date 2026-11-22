@@ -156,7 +156,8 @@ ColumnLayout {
         onClicked: { localAi.args = ["local-ai", "order", modelData[1]]; localAi.run(); }
       }
     }
-    Chip { text: "Set up local AI"; onClicked: page.inTerminal("local AI", "friday setup-ai local") }
+    Chip { text: "Set up with Ollama"; onClicked: page.inTerminal("local AI", "friday setup-ai local --engine ollama") }
+    Chip { text: "Set up with llama.cpp"; onClicked: page.inTerminal("local AI", "friday setup-ai local --engine llamacpp") }
   }
   Output { text: localAi.output }
   // A download on its way: how far it is, refreshed every two seconds.

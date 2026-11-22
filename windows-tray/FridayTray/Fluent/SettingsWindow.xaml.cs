@@ -34,6 +34,7 @@ internal sealed record SettingsActions(
     Action<string> AskText,
     Action ShowWelcome,
     Action WakeChanged,
+    Action LocalAiChanged,
     IReadOnlyDictionary<AskKind, string> Hotkeys);
 
 /// <summary>
@@ -371,6 +372,25 @@ internal sealed partial class SettingsWindow : FluentWindow
             Visibility = Visibility.Collapsed,
         };
 
+        // Which engine runs the model: Ollama (its own app and service) or
+        // llama.cpp (its release build, run by FRIDAY itself).
+        var engine = env.TryGetValue("LLAMACPP_BASE_URL", out var curUrl) && curUrl.TrimEnd('/') == LocalAi.LlamaBaseUrl ? "llamacpp" : "ollama";
+        var useOllama = Pill("Ollama", SymbolRegular.Box24);
+        var useLlama = Pill("llama.cpp", SymbolRegular.Box24);
+        useLlama.Margin = new Thickness(10, 0, 0, 0);
+        var engineNote = new TextBlock { FontSize = 12.5, Foreground = Resource("Subtext"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) };
+        void ShowEngine()
+        {
+            useOllama.Style = (Style)FindResource(engine == "ollama" ? "PrimaryPill" : "Pill");
+            useLlama.Style = (Style)FindResource(engine == "llamacpp" ? "PrimaryPill" : "Pill");
+            engineNote.Text = engine == "ollama"
+                ? "Ollama: installed with winget if it isn't here; it keeps running in the background and other apps can use it too."
+                : "llama.cpp: its official build (pinned, checked) runs inside FRIDAY only while local AI is on, and sleeps after five idle minutes.";
+        }
+        useOllama.Click += (_, _) => { engine = "ollama"; ShowEngine(); };
+        useLlama.Click += (_, _) => { engine = "llamacpp"; ShowEngine(); };
+        ShowEngine();
+
         var setupBtn = Pill("Set up local AI", SymbolRegular.ArrowDownload24, primary: true);
         var turnOffBtn = Pill("Turn off", SymbolRegular.Power24);
         turnOffBtn.Visibility = isOn ? Visibility.Visible : Visibility.Collapsed;
@@ -381,6 +401,7 @@ internal sealed partial class SettingsWindow : FluentWindow
             errorText.Visibility = Visibility.Collapsed;
             progressText.Visibility = Visibility.Collapsed;
             ChangeEnv(LocalAi.TurnOffLocalAi);
+            _do.LocalAiChanged();
             stateVal.Text = "not set up";
             turnOffBtn.Visibility = Visibility.Collapsed;
         };
@@ -403,10 +424,36 @@ internal sealed partial class SettingsWindow : FluentWindow
             progressText.Text = "Starting local AI setup...";
             progressText.Visibility = Visibility.Visible;
 
+            var chosen = engine;
+            var gpu = recommendedInfo.VramMb is > 0;
             var (success, errorMsg) = await Task.Run<(bool Success, string? Error)>(async () =>
             {
                 try
                 {
+                    if (chosen == "llamacpp")
+                    {
+                        await Dispatcher.InvokeAsync(() => { progressText.Text = $"Downloading llama.cpp and {model}..."; progressBar.Visibility = Visibility.Visible; });
+                        var vis = vision;
+                        var (llOk, llOut) = await Ctl.RunAsync(_install, gpu ? ["local-ai", "install-llamacpp", model, "--gpu"] : ["local-ai", "install-llamacpp", model],
+                            TimeSpan.FromMinutes(90),
+                            line =>
+                            {
+                                if (LocalAi.ParseProgress(line) is var (p, d, t))
+                                    Dispatcher.InvokeAsync(() => { progressBar.Value = p; progressText.Text = $"Downloading: {LocalAi.FormatProgress(p, d, t)}"; });
+                                else if (line.StartsWith("done vision="))
+                                    vis = line.EndsWith('1');
+                            });
+                        await Dispatcher.InvokeAsync(() => progressBar.Visibility = Visibility.Collapsed);
+                        if (!llOk)
+                            return (false, "Could not set up llama.cpp: " + llOut.Trim().Split('\n').LastOrDefault());
+                        var (lfOk, lfOut) = await Ctl.RunAsync(_install, ["local-ai", "local-first", model, "auto"], TimeSpan.FromSeconds(15));
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            ChangeEnv(e => LocalAi.WithLocalAi(e, model, vis, lfOk && lfOut.Trim() == "1", LocalAi.LlamaBaseUrl));
+                            _do.LocalAiChanged();
+                        });
+                        return (true, null);
+                    }
                     if (!ProcessRunner.IsOllamaInstalled(out var ollamaExe))
                     {
                         await Dispatcher.InvokeAsync(() => progressText.Text = "Installing Ollama (via winget)...");
@@ -460,6 +507,7 @@ internal sealed partial class SettingsWindow : FluentWindow
                     await Dispatcher.InvokeAsync(() =>
                     {
                         ChangeEnv(e => LocalAi.WithLocalAi(e, model, vision, localFirst));
+                        _do.LocalAiChanged();
                     });
 
                     return (true, null);
@@ -498,6 +546,13 @@ internal sealed partial class SettingsWindow : FluentWindow
         stack.Children.Add(progressBar);
         stack.Children.Add(errorText);
 
+        stack.Children.Add(Caption("Engine"));
+        var engineRow = new StackPanel { Orientation = Orientation.Horizontal };
+        engineRow.Children.Add(useOllama);
+        engineRow.Children.Add(useLlama);
+        stack.Children.Add(engineRow);
+        stack.Children.Add(engineNote);
+
         var btnPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 14, 0, 4) };
         btnPanel.Children.Add(setupBtn);
         btnPanel.Children.Add(turnOffBtn);
@@ -519,6 +574,19 @@ internal sealed partial class SettingsWindow : FluentWindow
                 button.IsEnabled = true;
                 return;
             }
+            // FRIDAY's own llama.cpp file: llama-server gets that model.
+            var ownLlama = engine.Engine == "llamacpp" && !engine.Running;
+            if (ownLlama)
+            {
+                var (llOk, llOut) = await Ctl.RunAsync(_install, ["local-ai", "install-llamacpp", m.Name], TimeSpan.FromMinutes(5));
+                if (!llOk)
+                {
+                    errorText.Text = "Couldn't use it: " + llOut.Trim().Split('\n').LastOrDefault();
+                    errorText.Visibility = Visibility.Visible;
+                    button.IsEnabled = true;
+                    return;
+                }
+            }
             var (ok, outText) = await Ctl.RunAsync(_install, ["local-ai", "local-first", m.Name, "auto"], TimeSpan.FromSeconds(15));
             if (!ok)
             {
@@ -528,6 +596,7 @@ internal sealed partial class SettingsWindow : FluentWindow
                 return;
             }
             ChangeEnv(e => LocalAi.WithLocalAi(e, m.Name, m.Vision, outText.Trim() == "1", engine.BaseUrl));
+            _do.LocalAiChanged();
             stateVal.Text = $"on: {m.Name} ({(engine.Engine == "ollama" ? "Ollama" : "llama.cpp")}, already on this PC)";
             turnOffBtn.Visibility = Visibility.Visible;
             button.IsEnabled = true;
@@ -551,8 +620,9 @@ internal sealed partial class SettingsWindow : FluentWindow
                     {
                         var use = Pill("Use " + m.Label, SymbolRegular.CheckmarkCircle24);
                         use.Margin = new Thickness(0, 0, 8, 8);
-                        // A llama.cpp server that isn't running can't answer (FRIDAY runs its own on Linux).
-                        use.IsEnabled = engine.Engine == "ollama" || engine.Running;
+                        // FRIDAY runs its own llama-server for its files; another server must be running.
+                        use.IsEnabled = engine.Engine == "ollama" || engine.Running
+                            || File.Exists(Path.Combine(LocalAi.LlamaDir(_install.Paths), "models", m.Name));
                         use.Click += async (_, _) => await UseAsync(engine, m, use);
                         row.Children.Add(use);
                     }

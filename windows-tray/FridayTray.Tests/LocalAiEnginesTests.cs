@@ -46,4 +46,28 @@ public class LocalAiEnginesTests
         Assert.Null(LocalAi.ParseProgress("progress 5 1 0"));
         Assert.Equal("42% · 1.5 of 3.4 GB", LocalAi.FormatProgress(42, 1536, 3482));
     }
+
+    [Fact]
+    public void Fridays_llama_server_runs_only_when_chosen_and_installed()
+    {
+        var root = Directory.CreateTempSubdirectory();
+        try
+        {
+            var paths = new Paths(root.FullName, root.FullName);
+            var on = EnvFile.Parse(LocalAi.WithLocalAi("", "gemma3:4b", true, false, LocalAi.LlamaBaseUrl));
+            Assert.False(LocalAi.LlamaWanted(on, paths));
+            Directory.CreateDirectory(LocalAi.LlamaDir(paths));
+            File.WriteAllText(LocalAi.LlamaExe(paths), "");
+            File.WriteAllText(Path.Combine(LocalAi.LlamaDir(paths), "llama.args"), "-m\nm.gguf\n");
+            Assert.True(LocalAi.LlamaWanted(on, paths));
+            Assert.Equal(["-m", "m.gguf"], LocalAi.LlamaArgs(paths));
+            var ollama = EnvFile.Parse(LocalAi.WithLocalAi("", "gemma3:4b", true, false));
+            Assert.False(LocalAi.LlamaWanted(ollama, paths));
+            Assert.False(LocalAi.LlamaWanted(EnvFile.Parse(LocalAi.TurnOffLocalAi(LocalAi.WithLocalAi("", "m", false, false, LocalAi.LlamaBaseUrl))), paths));
+        }
+        finally
+        {
+            root.Delete(true);
+        }
+    }
 }

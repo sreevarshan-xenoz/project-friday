@@ -17,6 +17,8 @@ internal sealed class TrayContext : ApplicationContext
     private readonly Hotkeys _hotkeys = new();
     private readonly Supervised _daemon;
     private readonly Supervised _host;
+    // FRIDAY's own llama-server, when llama.cpp is the local engine (Settings, Local AI).
+    private readonly Supervised _llama;
     private readonly System.Windows.Forms.Timer _poll = new() { Interval = 2000 };
     private string _mode = "";
     private bool _asking;
@@ -45,6 +47,8 @@ internal sealed class TrayContext : ApplicationContext
         ApplyInstallerChoices();
         _daemon = new Supervised("friday-daemon", install.Daemon, install.ChildEnvironment, install.Paths.LogDir);
         _host = new Supervised("friday-windows-host", install.Host, install.ChildEnvironment, install.Paths.LogDir);
+        _llama = new Supervised("llama-server", LocalAi.LlamaExe(install.Paths), install.ChildEnvironment, install.Paths.LogDir,
+            () => LocalAi.LlamaArgs(install.Paths));
         // GaveUp fires on the exited process's thread; the tray icon belongs to this one.
         var ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
         void GaveUp(string name) => ui.Post(_ => Notify("FRIDAY keeps crashing", $"Stopped restarting {name}. Logs: {install.Paths.LogDir}", ToolTipIcon.Error), null);
@@ -70,6 +74,7 @@ internal sealed class TrayContext : ApplicationContext
         _poll.Start();
 
         _host.Start();
+        LocalAiChanged();
         _daemon.Start();
 
         if (_askForAdministrator && !Elevation.Enabled())
@@ -1093,6 +1098,7 @@ internal sealed class TrayContext : ApplicationContext
             AskText: text => _ = string.IsNullOrWhiteSpace(text) ? AskAsync(AskKind.Plain) : AskTextAsync(text),
             ShowWelcome: ShowWelcome,
             WakeChanged: WakeChanged,
+            LocalAiChanged: LocalAiChanged,
             Hotkeys: _hotkeys.Labels), section);
         FluentApp.Show(_settings);
     }
@@ -1136,6 +1142,14 @@ internal sealed class TrayContext : ApplicationContext
         catch
         {
         }
+    }
+
+    /// <summary>llama-server runs while llama.cpp is the local engine; a new model restarts it.</summary>
+    private void LocalAiChanged()
+    {
+        _llama.Stop();
+        if (LocalAi.LlamaWanted(EnvFile.Load(_install.Paths.EnvFile), _install.Paths))
+            _llama.Start();
     }
 
     // "Hey Friday" (Settings, Voice; off unless turned on): friday-ctl listens
@@ -1225,6 +1239,7 @@ internal sealed class TrayContext : ApplicationContext
         _poll.Stop();
         _hotkeys.Dispose();
         _daemon.Dispose();
+        _llama.Dispose();
         _host.Dispose();
         _icon.Visible = false;
         _icon.Dispose();
