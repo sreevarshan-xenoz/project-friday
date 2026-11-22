@@ -1198,11 +1198,13 @@ friday_undo_add() {
   local f said="$1" kind="$2"; shift 2
   f=$(friday_undo_file)
   mkdir -p "$(dirname "$f")" && chmod 700 "$(dirname "$f")"
+  # The daemon rewrites this journal too: both hold undo.jsonl.lock.
   (umask 077
+   flock -w 5 9 2>/dev/null || true
    { tail -n 19 "$f" 2>/dev/null || true
      jq -nc --arg ts "$(date -Is)" --arg said "$said" --arg kind "$kind" \
        '{ts: $ts, said: $said, kind: $kind, args: $ARGS.positional}' --args "$@"
-   } >"$f.tmp" && mv -f "$f.tmp" "$f") || true
+   } >"$f.tmp" && mv -f "$f.tmp" "$f") 9>"$f.lock" || true
 }
 
 # The sound's volume (0..1.5) and mute (0|1), as an undo entry's args.
@@ -1217,12 +1219,17 @@ friday_sound_now() {
 friday_undo() {
   local f last kind said a0 a1 pct win out
   f=$(friday_undo_file)
-  last=$(tail -n 1 "$f" 2>/dev/null || true)
+  # Read and taken off together, under the journal's lock: an undo that
+  # fails isn't tried again by the next one.
+  [ -d "$(dirname "$f")" ] || { echo "Nothing to undo."; return 0; }
+  last=$( (umask 077
+           flock -w 5 9 2>/dev/null || true
+           l=$(tail -n 1 "$f" 2>/dev/null || true)
+           [ -z "$l" ] || { head -n -1 "$f" >"$f.tmp" && mv -f "$f.tmp" "$f"; }
+           printf '%s' "$l") 9>"$f.lock" || true)
   if [ -z "$last" ]; then echo "Nothing to undo."; return 0; fi
   kind=$(jq -r '.kind' <<<"$last") said=$(jq -r '.said' <<<"$last")
   a0=$(jq -r '.args[0] // ""' <<<"$last") a1=$(jq -r '.args[1] // ""' <<<"$last")
-  # Taken off first: an undo that fails isn't tried again by the next one.
-  (umask 077; head -n -1 "$f" >"$f.tmp" && mv -f "$f.tmp" "$f") || true
   case "$kind" in
     sound)
       wpctl set-volume @DEFAULT_AUDIO_SINK@ "$a0" 2>/dev/null || { echo "Couldn't change the sound back."; return 1; }
@@ -2714,7 +2721,7 @@ friday_forget() {
     [[ "$reply" =~ ^[Yy]$ ]] || { echo "Nothing deleted."; return 0; }
   fi
   if [ "$what" = answers ] || [ "$what" = all ]; then
-    rm -f "$state_dir/answers.md" "$state_dir/last-answer.md" "$state_dir/ask-history"
+    rm -f "$state_dir/answers.md" "$state_dir/answers.1.md" "$state_dir/last-answer.md" "$state_dir/ask-history"
     echo "Deleted ${n_answers:-0} saved answers and ${n_asks:-0} remembered questions."
   fi
   if [ "$what" = sent ] || [ "$what" = all ]; then
@@ -3961,6 +3968,11 @@ case "${1:-}" in
       } >"$answer_file"
       # Each entry opens with a marker line, so a "---" inside an answer
       # never splits it (FRIDAY Shell's answer history reads these).
+      # Past 2 MiB it becomes answers.1.md (the one before goes), so the
+      # history, the timeline and the shell read a bounded file.
+      if [ "$(stat -c %s "$state_dir/answers.md" 2>/dev/null || echo 0)" -gt 2097152 ]; then
+        mv -f "$state_dir/answers.md" "$state_dir/answers.1.md" 2>/dev/null || true
+      fi
       { printf '<!-- friday answer -->\n'; cat "$answer_file"; printf '\n---\n\n'; } >>"$state_dir/answers.md"
       # What friday wrong saves about this answer: how it was asked and
       # answered, never the question's or the answer's text.
