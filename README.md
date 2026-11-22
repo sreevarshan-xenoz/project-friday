@@ -87,7 +87,8 @@ sequenceDiagram
   Host->>You: notification / answer window (Copy, Ask again)
 ```
 
-- **Nothing runs unless you asked, and confirmed.** A command, a file write or an app launch shows the exact action first; the confirmation is good for that action and that ask only. Gathering evidence for an answer can only read.
+- **Nothing runs unless you asked, and confirmed.** A command, a file write or an app launch shows the exact action first; the confirmation is good for that action and that ask only (answer it with Run, on a paired phone, or by typing "yes" or "no" in the ask box). Gathering evidence for an answer can only read.
+- **Honest answers.** An answer built on nothing from this computer says "general knowledge only", and questions about this computer then say they couldn't check. Arithmetic and unit conversions are worked out locally at once. "This window" means the one in front when you pressed the key.
 - **Clear failures.** No network, a provider's rate limit, a timeout or a stopped daemon each come back as one plain sentence. A command that hangs is stopped after 60 s.
 - **Upgrades.** After `pacman -Syu` replaces the daemon, it restarts itself the next time it is idle.
 
@@ -116,7 +117,7 @@ sequenceDiagram
   Daemon-->>Host: answer
 ```
 
-A screenshot is taken only for a screen ask, of the window you were looking at (the whole screen only when there is no focused window), and only sent to a model that can see images. The daemon's background observation of the focused window reads its title and size, not its pixels (opt in with `FRIDAY_OBSERVE_PIXELS=1`). A screen ask runs beside the daemon's other work and can be cancelled.
+A screen ask sends the window's own text first, read from its accessibility tree (only the window in front, secrets masked), and takes a screenshot only when the window has too few words or the provider doesn't answer the text; the answer says which it used. An area you drag out (`friday ask --region`) is read on this computer by tesseract and goes as text when it has enough. A private window (a password manager, a private browsing window, anything in `private-windows`) is never captured: with a local model set up, its text is asked about on this computer instead. A screenshot is taken only for a screen ask, of the window you were looking at (the whole screen only when there is no focused window), and only sent to a model that can see images. The daemon's background observation of the focused window reads its title and size, not its pixels (opt in with `FRIDAY_OBSERVE_PIXELS=1`). A screen ask runs beside the daemon's other work and can be cancelled.
 
 ## Which AI answers
 
@@ -272,7 +273,9 @@ pacman refuses any package or database that key didn't sign. On Windows, install
 
 | Command | What it does |
 |---|---|
-| `friday ask [--selection\|--screen\|--web] [text]` | Ask (what the hotkeys run; `--web` searches the web) |
+| `friday ask [--selection\|--screen\|--region\|--web] [text]` | Ask (what the hotkeys run; `--web` searches the web). In the question, `@screen`, `@clip`, `@web` or `@file <path>` pick what goes with it; "what changed today?" reads the project's git and the package log |
+| `friday app-instructions [list\|set <app> <text>\|rm <app>]` | How FRIDAY answers in one app ("in kitty, commands only"), shown in what an answer used |
+| `friday upgrade [status\|now\|auto on\|off]` | Upgrade the system safely, FRIDAY included, reverting if FRIDAY or the desktop breaks |
 | `friday setup-ai [--keep-others\|--only] [provider]` | Use your own API key |
 | `friday connect [--prefer] [claude\|codex\|agy\|cline\|hermes]` / `friday disconnect <name>` | Use an account you already have (a fallback unless `--prefer`) |
 | `friday private [status\|on [model]\|off]` | Local model only; nothing leaves the machine |
