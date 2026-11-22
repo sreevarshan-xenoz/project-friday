@@ -97,6 +97,7 @@ model is on your computer.
 ## Talking to FRIDAY
 
 When something you asked by voice needs your OK, FRIDAY stops talking, plays a short sound and listens once (about six seconds, only while the Run/Cancel prompt is on screen): say "run" or "cancel" ("yes", "no" and the like work too, but only as the whole answer). Something that can't be undone, like deleting files or closing a window, can be cancelled by voice but needs a click (or your phone) to run. A question you typed never opens the microphone. `friday feature voice-confirm off` (Windows: Features, voice-confirm) turns it off.
+
 With spoken answers on, an answer to something you asked by voice is followed by the same sound once it has been read to the end: ask a follow-up right away, no key needed ("thanks" or "stop" ends it; stopping the reading or closing the answer skips it). `friday feature voice-followup off` turns that off.
 
 ## Spoken answers (FRIDAY OS)

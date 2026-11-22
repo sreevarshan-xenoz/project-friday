@@ -1506,6 +1506,11 @@ contains "voice status says it's on" "$(bash "$F" voice status)" "hold Super+Y a
 : >"$LOG"; PICK="tapped with voice on" bash "$F" hold start; PICK="tapped with voice on" bash "$F" hold end; sleep 0.3
 contains "voice on: a quick tap still opens the prompt" "$(cat "$LOG")" "tapped with voice on"
 if grep -q "pw-record" "$LOG"; then fail "a quick tap started recording"; else pass "a quick tap records nothing"; fi
+# The key stops FRIDAY talking at once (a test runtime folder, not the real one).
+RT="$W/rt-say"; mkdir -p "$RT"; chmod 700 "$RT"; echo 4242 >"$RT/friday-say.pid"
+: >"$LOG"; XDG_RUNTIME_DIR="$RT" PICK="x" bash "$F" hold start; XDG_RUNTIME_DIR="$RT" PICK="x" bash "$F" hold end; sleep 0.3
+contains "the talk key stops FRIDAY talking" "$(cat "$LOG")" "friday-ctl-say --stop"
+rm -rf "$RT"
 : >"$LOG"; bash "$F" hold start; sleep 0.9; bash "$F" hold end; sleep 0.3
 contains "hold: records 16 kHz mono" "$(cat "$LOG")" "pw-record --rate 16000 --channels 1"
 contains "hold: the spoken words are asked" "$(cat "$LOG")" "what time is it in Tokyo"

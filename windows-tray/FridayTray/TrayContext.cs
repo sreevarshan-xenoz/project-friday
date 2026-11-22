@@ -399,6 +399,11 @@ internal sealed class TrayContext : ApplicationContext
     /// </summary>
     private async Task AskOrTalkAsync()
     {
+        // The key stops FRIDAY talking at once, tap or hold, and ends a wait
+        // for a spoken follow-up or run/cancel (the key is the answer now).
+        if (Speaking.Enabled(_install.Paths))
+            Ctl.StopSaying(_install);
+        try { if (_listener is { HasExited: false } waiting) waiting.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
         if (_asking || !Listening.Installed(_install.Paths)
             || !AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "hold-to-talk"))
         {
@@ -683,6 +688,9 @@ internal sealed class TrayContext : ApplicationContext
         });
     }
 
+    // The voice listener waiting now, if any (the ask key ends it).
+    private System.Diagnostics.Process? _listener;
+
     /// <summary>
     /// One short spoken answer while <paramref name="answer"/> is on screen
     /// (`friday-ctl listen answer`: a sound when it listens, about six
@@ -707,6 +715,7 @@ internal sealed class TrayContext : ApplicationContext
         catch (System.ComponentModel.Win32Exception) { return null; }
         if (p is null)
             return null;
+        _listener = p;
         void Stop()
         {
             try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
@@ -739,6 +748,8 @@ internal sealed class TrayContext : ApplicationContext
             answer.Closed -= closed;
             answer.ConfirmRun -= clicked;
             Stop();
+            if (_listener == p)
+                _listener = null;
             p.Dispose();
         }
     }

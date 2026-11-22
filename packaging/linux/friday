@@ -2139,6 +2139,10 @@ friday_hold() {
   case "${1:-}" in
     start)
       rm -f "$d/rec.pid" "$d/recording" "$d/rec.wav"
+      # The key stops FRIDAY talking at once, tap or hold, and ends a wait
+      # for a spoken follow-up or run/cancel (the key is the answer now).
+      [ ! -s "${XDG_RUNTIME_DIR:-/tmp}/friday-say.pid" ] || friday-ctl say --stop >/dev/null 2>&1 || true
+      pkill -u "$(id -u)" -f "friday-ctl listen answer" 2>/dev/null || true
       # Each press has its own token, so the timer of an earlier tap can't
       # start a recording for a later press that recreated the marker.
       local token="$$-$RANDOM-$RANDOM"
