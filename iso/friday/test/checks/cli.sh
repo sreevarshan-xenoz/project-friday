@@ -598,9 +598,10 @@ contains "and is pasted over the selection (Ctrl+V down)" "$(cat "$LOG")" 'send_
 contains "and up again" "$(cat "$LOG")" 'state = "up"'
 if grep -q "Rewrite: fix grammar" "$HOME/.local/state/friday/ask-history" 2>/dev/null; then fail "a rewrite went into ask history"; else pass "a rewrite stays out of ask history"; fi
 # The person moved to another window while the model answered: no paste.
-# (Looks 1-4 are taken with the selection, the private check and the window
-# in front at the keypress; the 5th is when the answer is back.)
-: >"$LOG"; rm -f "$W/looks"; MOVE_AFTER=5 PRIMARY="teh quick fox" PICK="Rewrite: fix grammar and spelling" bash "$F" ask --selection; sleep 0.5
+# (Looks 1-5 are taken with the selection, the private check, the mail/chat
+# check and the window in front at the keypress; the 6th is when the answer
+# is back.)
+: >"$LOG"; rm -f "$W/looks"; MOVE_AFTER=6 PRIMARY="teh quick fox" PICK="Rewrite: fix grammar and spelling" bash "$F" ask --selection; sleep 0.5
 if grep -q "send_key_state" "$LOG"; then fail "pasted into a window the person moved to"; else pass "another window by then: no paste"; fi
 contains "it says the rewrite is on the clipboard" "$(cat "$LOG")" "on your clipboard"
 rm -f "$W/looks"
@@ -777,6 +778,45 @@ contains "a dropped built-in goes to the daemon as usual" "$(cat "$LOG")" "frida
 export HYPR_WIN='{"class":"firefox","title":"Rust docs"}'
 : >"$LOG"; PRIMARY="fn main" PICK="explain" bash "$F" ask --selection; sleep 0.3
 if grep -q "127.0.0.1:8080" "$LOG"; then fail "an ordinary window was treated as private"; else pass "an ordinary window asks as usual"; fi
+# Mail and chat apps: the box says where the text goes; without the box,
+# FRIDAY asks; with a local model, it answers here.
+rm -f "$HOME/.config/friday/private-windows"
+export HYPR_WIN='{"class":"thunderbird","title":"Inbox - Thunderbird"}'
+: >"$envf"
+: >"$LOG"; PRIMARY="Hi, can we move the meeting?" PICK="Summarize this" bash "$F" ask --selection; sleep 0.3
+contains "the box says the mail's text goes to the AI" "$(cat "$LOG")" "from thunderbird, so someone else's words: Enter sends them to your AI provider"
+contains "and Enter in that box sends it" "$(cat "$LOG")" "friday-ctl"
+if grep -q "run=Run" "$LOG"; then fail "asked again after the box said so"; else pass "no second question after the box"; fi
+: >"$LOG"; CANCEL_CONFIRM=1 PRIMARY="Hi, can we move the meeting?" bash "$F" ask --selection "summarize this"; sleep 0.3
+contains "a question passed straight in asks first" "$(cat "$LOG")" "send what's in thunderbird to your AI provider"
+if grep -q "^friday-ctl" "$LOG"; then fail "the mail went out after Cancel"; else pass "Cancel sends nothing"; fi
+printf 'LLAMACPP_ENABLED=1\nLLAMACPP_BASE_URL=http://127.0.0.1:8080/v1\n' >"$envf"
+: >"$LOG"; LOCAL_REPLY="They want to move the meeting." PRIMARY="Hi, can we move the meeting?" PICK="Summarize this" bash "$F" ask --selection; sleep 0.3
+contains "with a local model the box says it stays here" "$(cat "$LOG")" "from thunderbird: answered on this computer"
+contains "and the local model answers" "$(cat "$LOG")" "They want to move the meeting."
+if grep -q "^friday-ctl" "$LOG"; then fail "a mail went to the daemon despite a local model"; else pass "a mail stays local when it can"; fi
+: >"$envf"
+bash "$F" feature sensitive-warn off >/dev/null
+: >"$LOG"; PRIMARY="Hi" PICK="Summarize this" bash "$F" ask --selection; sleep 0.3
+if grep -q "someone else's words" "$LOG"; then fail "sensitive-warn off still warned"; else pass "sensitive-warn off drops the warning"; fi
+bash "$F" feature sensitive-warn on >/dev/null
+printf '!thunderbird\n' >"$HOME/.config/friday/sensitive-windows"
+: >"$LOG"; PRIMARY="Hi" PICK="Summarize this" bash "$F" ask --selection; sleep 0.3
+if grep -q "someone else's words" "$LOG"; then fail "a dropped default still warned"; else pass "your own list can drop a default"; fi
+# Built-in names match the app, not a page title; your own lines match titles too.
+printf 'zulip\n' >"$HOME/.config/friday/sensitive-windows"
+export HYPR_WIN='{"class":"firefox","title":"HTML element - MDN"}'
+: >"$LOG"; PRIMARY="<div>" PICK="Summarize this" bash "$F" ask --selection; sleep 0.3
+if grep -q "someone else's words" "$LOG"; then fail "a page title set off a built-in name"; else pass "a word in a page title isn't a chat app"; fi
+export HYPR_WIN='{"class":"firefox","title":"general - Zulip"}'
+: >"$LOG"; PRIMARY="hi all" PICK="Summarize this" bash "$F" ask --selection; sleep 0.3
+contains "your own line matches a title" "$(cat "$LOG")" "from zulip"
+rm -f "$HOME/.config/friday/sensitive-windows"
+# "What's on my screen" typed in the plain box, in a mail app: asked first.
+export HYPR_WIN='{"class":"thunderbird","title":"Inbox - Thunderbird"}'
+: >"$LOG"; CANCEL_CONFIRM=1 bash "$F" ask "what's on my screen"; sleep 0.3
+contains "a screen question in words asks first in a mail app" "$(cat "$LOG")" "send what's in thunderbird to your AI provider"
+if grep -q "^friday-ctl" "$LOG"; then fail "the screen went out after Cancel"; else pass "and Cancel sends no screenshot"; fi
 unset HYPR_WIN
 rm -f "$HOME/.config/friday/private-windows" "$S/hyprctl"; cp "$W/env.saved" "$envf"; mv "$W/curl.saved" "$S/curl"
 # `friday forget` shows counts, asks before deleting, and wipes only what was named.

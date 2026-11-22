@@ -35,4 +35,5 @@ public sealed class Paths
     public string NoAppContextFile => Path.Combine(ConfigDir, "no-app-context");
     public string PromptsFile => Path.Combine(ConfigDir, "prompts");
     public string PrivateWindowsFile => Path.Combine(ConfigDir, "private-windows");
+    public string SensitiveWindowsFile => Path.Combine(ConfigDir, "sensitive-windows");
 }

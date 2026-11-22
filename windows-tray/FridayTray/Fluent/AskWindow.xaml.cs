@@ -34,7 +34,7 @@ public partial class AskWindow : Window
 
     public string Question => Input.Text.Trim();
 
-    public AskWindow(AskKind kind, string? contextPreview, IReadOnlyList<string> history)
+    public AskWindow(AskKind kind, string? contextPreview, string? sensitiveFrom, IReadOnlyList<string> history)
     {
         InitializeComponent();
         _history = history;
@@ -42,7 +42,10 @@ public partial class AskWindow : Window
         switch (kind)
         {
             case AskKind.Selection:
-                ShowContext(SymbolRegular.TextQuote24, $"“{contextPreview}…”", Resource("Subtext"));
+                if (sensitiveFrom is null)
+                    ShowContext(SymbolRegular.TextQuote24, $"“{contextPreview}…”", Resource("Subtext"));
+                else
+                    ShowContext(SymbolRegular.Warning24, $"“{contextPreview}…” · from {sensitiveFrom}, so someone else's words: Enter sends them to your AI provider", Resource("Warn"));
                 Placeholder.Text = history.Count > 0 ? "Ask about it, or pick one below…" : "Ask about it…";
                 Keys.Text = "↑↓ choose   ·   ↵ ask   ·   esc close";
                 foreach (var action in history)
@@ -50,7 +53,9 @@ public partial class AskWindow : Window
                 Quick.Visibility = _rows.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
                 break;
             case AskKind.Screen:
-                ShowContext(SymbolRegular.Camera24, "A screenshot of your screen goes to your AI provider, this once", Resource("Warn"));
+                ShowContext(sensitiveFrom is null ? SymbolRegular.Camera24 : SymbolRegular.Warning24, sensitiveFrom is null
+                    ? "A screenshot of your screen goes to your AI provider, this once"
+                    : $"This is {sensitiveFrom}, so someone else's words: Enter sends a screenshot of it to your AI provider", Resource("Warn"));
                 Placeholder.Text = "Ask about your screen…";
                 Keys.Text = "↵ ask   ·   esc close";
                 break;

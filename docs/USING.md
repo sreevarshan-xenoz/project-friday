@@ -155,6 +155,7 @@ Web search happens only when you ask for it, and never in private mode.
   what you send are masked before sending.
 - `friday private on` answers with a local model (Ollama) and sends nothing; it also starts no coding agent, since an agent sends the folder's code to its own AI.
 - `friday app-context off` stops sending the app name and window title.
+- From a mail or chat app (Thunderbird, Outlook, Signal, Discord, Slack…), the ask box says the text goes to your AI provider first; with a local model it stays on this computer. Your own list: `~/.config/friday/sensitive-windows`; turn off with `friday feature sensitive-warn off`.
 - `friday forget` shows what FRIDAY keeps (counts only) and wipes it:
   `friday forget answers|sent|memory|all`.
 

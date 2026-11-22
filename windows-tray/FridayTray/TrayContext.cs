@@ -167,6 +167,12 @@ internal sealed class TrayContext : ApplicationContext
                     $"Your own list: {_install.Paths.PrivateWindowsFile}", ToolTipIcon.Info);
                 return;
             }
+            // A mail or chat app: the box says its text, mostly someone
+            // else's words, goes to the AI provider.
+            var sensitiveBy = kind is AskKind.Screen or AskKind.Selection
+                && AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "sensitive-warn")
+                ? SensitiveWindows.Match(_install.Paths, Native.ProcessNameOf(targetWindow), Native.GetWindowTitle(targetWindow))
+                : null;
             string? context = null;
             string? preview = null;
             string? appLine = null;
@@ -188,7 +194,7 @@ internal sealed class TrayContext : ApplicationContext
                     appLine = SourceApp.Line(Native.ProcessNameOf(targetWindow), Native.GetWindowTitle(targetWindow));
             }
 
-            var form = new AskWindow(kind, preview, kind switch
+            var form = new AskWindow(kind, preview, sensitiveBy, kind switch
             {
                 AskKind.Plain => _log.History(),
                 AskKind.Selection => QuickActions.All(_install.Paths.PromptsFile, selected),
@@ -566,7 +572,7 @@ internal sealed class TrayContext : ApplicationContext
     {
         string question;
         var preview = previousAnswer.ReplaceLineEndings(" ");
-        var form = new AskWindow(AskKind.Plain, "Follow up on: " + (preview.Length > 50 ? preview[..50] : preview), []);
+        var form = new AskWindow(AskKind.Plain, "Follow up on: " + (preview.Length > 50 ? preview[..50] : preview), null, []);
         if (form.ShowDialog() != true)
             return;
         question = form.Question;

@@ -29,9 +29,9 @@ internal static class Screenshots
         foreach (var section in new[] { "Home", "General", "Privacy", "AI", "Voice", "Desktop control", "Tasks", "Shortcuts", "Health & updates", "About" })
             SaveWpf(new SettingsWindow(install, nothing, section), folder, "settings-" + section.Replace(" & ", "-").Replace(' ', '-').ToLowerInvariant());
         SaveWpf(new WelcomeWindow(keys, () => { }, () => { }, () => { }), folder, "welcome");
-        SaveWpf(new AskWindow(AskKind.Plain, null, ["what's using my disk?"]), folder, "ask");
-        SaveWpf(new AskWindow(AskKind.Selection, "error[E0308]: mismatched types", QuickActions.All(install.Paths.PromptsFile)), folder, "ask-selection");
-        SaveWpf(new AskWindow(AskKind.Screen, null, []), folder, "ask-screen");
+        SaveWpf(new AskWindow(AskKind.Plain, null, null, ["what's using my disk?"]), folder, "ask");
+        SaveWpf(new AskWindow(AskKind.Selection, "error[E0308]: mismatched types", null, QuickActions.All(install.Paths.PromptsFile)), folder, "ask-selection");
+        SaveWpf(new AskWindow(AskKind.Screen, null, null, []), folder, "ask-screen");
         var disk = "What is using my disk?";
         SaveWpf(new AnswerWindow(disk, new AskOutcome(true,
             "Your disk is mostly **photos** (41 GB) and the package cache (12 GB).\n\n- Pictures: 41 GB\n- Downloads: 12 GB\n\nEmpty the Downloads folder with `cleanmgr` to free the most space.",
