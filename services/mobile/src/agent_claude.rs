@@ -160,6 +160,13 @@ impl<W: AsyncWrite + Unpin> Driver<'_, W> {
             let Ok(msg) = serde_json::from_str::<Value>(&line) else {
                 continue;
             };
+            // The session to resume for a follow-up (its id can change on resume).
+            if let Some(id) = msg["session_id"].as_str() {
+                if self.rec.run.session.as_deref() != Some(id) {
+                    self.rec.run.session = Some(id.to_string());
+                    let _ = self.rec.save();
+                }
+            }
             match msg["type"].as_str() {
                 Some("control_request") if msg["request"]["subtype"] == "can_use_tool" => {
                     let response = self.can_use_tool(&msg["request"], &mut replies).await?;
@@ -304,6 +311,8 @@ mod tests {
                 approved_by_friday: 0,
                 approved_by_you: 0,
                 rejected: 0,
+                session: None,
+                follows: None,
             },
         )
         .unwrap()

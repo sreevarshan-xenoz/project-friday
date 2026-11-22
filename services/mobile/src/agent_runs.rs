@@ -113,6 +113,8 @@ impl Agent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
+    /// A follow-up waiting for the run it continues to end.
+    Queued,
     Running,
     WaitingForYou,
     Done,
@@ -151,6 +153,13 @@ pub struct Run {
     pub approved_by_you: usize,
     #[serde(default)]
     pub rejected: usize,
+    /// The agent's session: the one to resume when the run starts (a
+    /// follow-up), then the one it ran in.
+    #[serde(default)]
+    pub session: Option<String>,
+    /// The run this one follows up on.
+    #[serde(default)]
+    pub follows: Option<String>,
 }
 
 /// Where runs are recorded: `agents/` beside `state.json`.
@@ -344,6 +353,8 @@ pub struct Driver<'a, W> {
     /// The last step refused, which usually ends the agent's turn.
     pub(crate) refused: Option<String>,
     pub(crate) poll: Duration,
+    /// A follow-up whose session the agent no longer had: it started fresh.
+    pub(crate) lost_session: bool,
 }
 
 impl<'a, W: AsyncWrite + Unpin> Driver<'a, W> {
@@ -357,6 +368,7 @@ impl<'a, W: AsyncWrite + Unpin> Driver<'a, W> {
             steps: std::collections::HashMap::new(),
             refused: None,
             poll: Duration::from_secs(1),
+            lost_session: false,
         }
     }
 
@@ -585,13 +597,38 @@ impl<'a, W: AsyncWrite + Unpin> Driver<'a, W> {
             .await?;
         self.wait(lines, init).await?;
         let folder = self.rec.run.folder.display().to_string();
-        let new = self
-            .request("session/new", json!({"cwd": folder, "mcpServers": []}))
-            .await?;
-        let session = self.wait(lines, new).await?["sessionId"]
-            .as_str()
-            .ok_or("the agent gave no session")?
-            .to_string();
+        // A follow-up picks its session up again (without replaying it); a
+        // session the agent no longer has means starting fresh, and saying so.
+        let mut session = None;
+        if let Some(old) = self.rec.run.session.clone() {
+            let resume = self
+                .request(
+                    "session/resume",
+                    json!({"sessionId": old, "cwd": folder, "mcpServers": []}),
+                )
+                .await?;
+            match self.wait(lines, resume).await {
+                Ok(_) => session = Some(old),
+                Err(e) => {
+                    self.rec.log(json!({"event": "session_lost", "error": e}));
+                    self.lost_session = true;
+                }
+            }
+        }
+        let session = match session {
+            Some(s) => s,
+            None => {
+                let new = self
+                    .request("session/new", json!({"cwd": folder, "mcpServers": []}))
+                    .await?;
+                self.wait(lines, new).await?["sessionId"]
+                    .as_str()
+                    .ok_or("the agent gave no session")?
+                    .to_string()
+            }
+        };
+        self.rec.run.session = Some(session.clone());
+        let _ = self.rec.save();
         let mut text = self.rec.run.task.clone();
         let mut replies = 0;
         loop {
@@ -672,48 +709,110 @@ pub async fn run_agent(
         .program()
         .ok_or_else(|| format!("{} isn't installed", run.agent.name()))?;
     let mut rec = Recorder::new(&dir, run).map_err(|e| e.to_string())?;
-    let mut command = tokio::process::Command::new(program);
-    match rec.run.agent {
-        // Claude Code's own protocol, its permission prompts handed to FRIDAY.
-        Agent::Claude => {
-            command.args(crate::agent_claude::ARGS);
+    let mut lost = false;
+    loop {
+        let mut command = tokio::process::Command::new(&program);
+        match rec.run.agent {
+            // Claude Code's own protocol, its permission prompts handed to FRIDAY.
+            Agent::Claude => {
+                command.args(crate::agent_claude::ARGS);
+                if let Some(old) = &rec.run.session {
+                    command.args(["--resume", old]);
+                }
+            }
+            // Every edit and command asks, so FRIDAY's rules decide each one,
+            // whatever the person's own opencode settings allow.
+            Agent::Opencode => {
+                command.arg("acp");
+                command.env(
+                    "OPENCODE_CONFIG_CONTENT",
+                    r#"{"permission":{"edit":"ask","bash":"ask","external_directory":"ask"}}"#,
+                );
+            }
+            // agy reads its settings from a folder of FRIDAY's own (the person's
+            // sign-in is shared), set to ask before every step.
+            Agent::Agy => {
+                agy_settings().map_err(|e| format!("couldn't set up agy for FRIDAY: {e}"))?;
+                command.args(["acp", "--cli_dir_name", "friday"]);
+            }
         }
-        // Every edit and command asks, so FRIDAY's rules decide each one,
-        // whatever the person's own opencode settings allow.
-        Agent::Opencode => {
-            command.arg("acp");
-            command.env(
-                "OPENCODE_CONFIG_CONTENT",
-                r#"{"permission":{"edit":"ask","bash":"ask","external_directory":"ask"}}"#,
-            );
+        // Claude Code says a session it no longer has on stderr: keep that.
+        let claude = rec.run.agent == Agent::Claude;
+        let mut child = command
+            .current_dir(&rec.run.folder)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(if claude {
+                std::process::Stdio::piped()
+            } else {
+                std::process::Stdio::null()
+            })
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| format!("couldn't start {}: {e}", rec.run.agent.name()))?;
+        let stderr = child.stderr.take().map(|err| {
+            tokio::spawn(async move {
+                use tokio::io::AsyncReadExt;
+                // Read to the end (a full pipe would stall it), keep the start.
+                let (mut err, mut kept, mut buf) = (err, Vec::new(), [0u8; 4096]);
+                while let Ok(n) = err.read(&mut buf).await {
+                    if n == 0 {
+                        break;
+                    }
+                    if kept.len() < 64 * 1024 {
+                        kept.extend_from_slice(&buf[..n]);
+                    }
+                }
+                String::from_utf8_lossy(&kept).into_owned()
+            })
+        });
+        let stdin = child.stdin.take().ok_or("no stdin")?;
+        let stdout = child.stdout.take().ok_or("no stdout")?;
+        let mut lines = read_lines(stdout);
+        let mut driver = Driver::new(&mut rec, stdin, model.clone());
+        let outcome = if driver.rec.run.agent == Agent::Claude {
+            driver.drive_claude(&mut lines).await
+        } else {
+            driver.drive(&mut lines).await
+        };
+        lost |= driver.lost_session;
+        let _ = child.kill().await;
+        let errors = match stderr {
+            Some(t) => t.await.unwrap_or_default(),
+            None => String::new(),
+        };
+        // Claude Code can't take up a session it no longer has: once more, fresh.
+        let gone = |e: &str| e.contains("No conversation found");
+        if claude
+            && rec.run.session.is_some()
+            && !lost
+            && (gone(&errors)
+                || match &outcome {
+                    Err(e) => gone(e),
+                    Ok(o) => o.failed && gone(&o.summary),
+                })
+        {
+            rec.log(json!({"event": "session_lost"}));
+            rec.run.session = None;
+            lost = true;
+            continue;
         }
-        // agy reads its settings from a folder of FRIDAY's own (the person's
-        // sign-in is shared), set to ask before every step.
-        Agent::Agy => {
-            agy_settings().map_err(|e| format!("couldn't set up agy for FRIDAY: {e}"))?;
-            command.args(["acp", "--cli_dir_name", "friday"]);
-        }
+        finish(&mut rec, outcome.map(|o| started_fresh(o, lost)));
+        return Ok(());
     }
-    let mut child = command
-        .current_dir(&rec.run.folder)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|e| format!("couldn't start {}: {e}", rec.run.agent.name()))?;
-    let stdin = child.stdin.take().ok_or("no stdin")?;
-    let stdout = child.stdout.take().ok_or("no stdout")?;
-    let mut lines = read_lines(stdout);
-    let mut driver = Driver::new(&mut rec, stdin, model);
-    let outcome = if driver.rec.run.agent == Agent::Claude {
-        driver.drive_claude(&mut lines).await
-    } else {
-        driver.drive(&mut lines).await
-    };
-    let _ = child.kill().await;
-    finish(&mut rec, outcome);
-    Ok(())
+}
+
+/// Puts "Started fresh" in front of a follow-up's summary when its session was gone.
+fn started_fresh(o: Outcome, lost: bool) -> Outcome {
+    if !lost {
+        return o;
+    }
+    Outcome {
+        summary: format!("Started fresh: the agent lost the session.\n{}", o.summary)
+            .trim()
+            .to_string(),
+        failed: o.failed,
+    }
 }
 
 /// agy's settings for FRIDAY's runs: ask before every edit and command.
@@ -779,6 +878,7 @@ pub fn describe_runs(runs: &[Run]) -> String {
         .take(10)
         .map(|r| {
             let status = match r.status {
+                Status::Queued => "queued (waits for the run before it)".to_string(),
                 Status::Running => "running".to_string(),
                 Status::WaitingForYou => format!(
                     "waiting for you: {}",
@@ -834,9 +934,10 @@ fn expand(folder: &str) -> PathBuf {
 
 const GUIDE: &str = r#"FRIDAY can run a coding agent for the person: opencode, agy (Antigravity) or Claude Code. Turn the person's request into JSON only, one of:
   {"op": "run", "agent": "opencode" | "agy" | "claude", "folder": "<folder named in the request, or empty>", "task": "<the task for the agent>"}
+  {"op": "followup", "agent": "<agent named, or empty>", "task": "<the follow-up for the agent>"}   the person adds to or continues the agent's latest work ("also add tests", "tell it to use tabs", "and fix the lint too"); not when they ask for a new run
   {"op": "status"}     the person asks how their agent runs are going
   {"op": "none", "say": "<one short sentence>"}   not a request to run an agent
-Write "task" as a clear brief for a capable coding agent: what to do, what done looks like, and to report briefly what it changed at the end. Keep every requirement the person gave; add nothing they didn't ask for. If no agent is named, use "opencode"."#;
+Write "task" as a clear brief for a capable coding agent: what to do, what done looks like, and to report briefly what it changed at the end. Keep every requirement the person gave; add nothing they didn't ask for. For "run", if no agent is named, use "opencode"; for "followup", leave "agent" empty unless one is named."#;
 
 fn first_json(reply: &str) -> Option<Value> {
     let start = reply.find('{')?;
@@ -852,9 +953,176 @@ pub struct AgentsTool {
 
 impl AgentsTool {
     pub fn new(model: Arc<dyn LlmStrategyClient>, dir: PathBuf) -> Self {
+        // A follow-up queued before FRIDAY restarted has nobody waiting to
+        // start it any more.
+        for run in list(&dir)
+            .into_iter()
+            .filter(|r| r.status == Status::Queued)
+        {
+            if let Ok(mut rec) = Recorder::new(&dir, run) {
+                finish(
+                    &mut rec,
+                    Err("FRIDAY restarted before this follow-up could start; ask again.".into()),
+                );
+            }
+        }
         Self { model, dir }
     }
+
+    /// Starts a run in the background (after `wait_for`, a run still going,
+    /// ends) and returns its id.
+    fn start(
+        &self,
+        agent: Agent,
+        folder: &Path,
+        request: String,
+        task: String,
+        session: Option<String>,
+        wait_for: Option<&Run>,
+    ) -> String {
+        let run = Run {
+            id: format!("r{}", &uuid::Uuid::new_v4().simple().to_string()[..6]),
+            agent,
+            folder: folder.to_path_buf(),
+            request,
+            task,
+            status: Status::Running,
+            started: chrono::Utc::now().timestamp(),
+            ended: None,
+            pending: None,
+            summary: String::new(),
+            approved_by_friday: 0,
+            approved_by_you: 0,
+            rejected: 0,
+            session,
+            follows: wait_for.map(|r| r.id.clone()),
+        };
+        let id = run.id.clone();
+        let earlier = wait_for.map(|r| r.id.clone());
+        let (dir, model) = (self.dir.clone(), self.model.clone());
+        let mut run = run;
+        if earlier.is_some() {
+            // Recorded now, so `friday agents` shows it and a later follow-up
+            // waits behind it.
+            run.status = Status::Queued;
+            if let Ok(rec) = Recorder::new(&dir, run.clone()) {
+                let _ = rec.save();
+            }
+        }
+        tokio::spawn(async move {
+            let mut run = run;
+            if let Some(earlier) = earlier {
+                // One turn at a time: the follow-up waits for the run it
+                // continues, then takes up the session it ended in.
+                let mut ready = false;
+                for _ in 0..FOLLOWUP_WAIT_POLLS {
+                    match list(&dir).into_iter().find(|r| r.id == earlier) {
+                        Some(r) if still_going(&r) => {
+                            tokio::time::sleep(Duration::from_secs(2)).await
+                        }
+                        Some(r) => {
+                            run.session = r.session.filter(|_| crate::features::on("agent-resume"));
+                            ready = true;
+                            break;
+                        }
+                        None => {
+                            ready = true;
+                            break;
+                        }
+                    }
+                }
+                if !ready {
+                    // Never two runs at once in one folder.
+                    if let Ok(mut rec) = Recorder::new(&dir, run) {
+                        finish(&mut rec, Err("The run before it was still going after 30 minutes, so this follow-up didn't start; ask again when that one is done.".into()));
+                    }
+                    return;
+                }
+                run.status = Status::Running;
+                run.started = chrono::Utc::now().timestamp();
+            }
+            if let Err(e) = run_agent(dir, run, Some(model)).await {
+                tracing::warn!("agent run failed to start: {e}");
+            }
+        });
+        id
+    }
+
+    /// A follow-up: the latest run (with the agent named, if one is) goes on
+    /// in its session when it ended under 15 minutes ago, or waits for it if
+    /// it's still going; otherwise a new run starts in the same folder.
+    fn follow_up(&self, choice: &Value, request: String) -> friday_goal_execution::ToolResult {
+        use friday_goal_execution::ToolResult;
+        let task = choice["task"].as_str().unwrap_or("").trim().to_string();
+        if task.is_empty() {
+            return ToolResult::error("couldn't tell what the agent should do");
+        }
+        let named = choice["agent"].as_str().and_then(Agent::from_name);
+        let Some(prev) = list(&self.dir)
+            .into_iter()
+            .find(|r| named.is_none_or(|a| r.agent == a))
+        else {
+            return ToolResult::error(
+                "there's no agent run to follow up; say which agent and folder, like \"have opencode fix the tests in ~/code/site\"",
+            );
+        };
+        if !prev.folder.is_dir() {
+            return ToolResult::error(format!(
+                "there's no folder {} any more",
+                prev.folder.display()
+            ));
+        }
+        let (agent, folder) = (prev.agent, prev.folder.clone());
+        let resume = crate::features::on("agent-resume");
+        if still_going(&prev) {
+            let id = self.start(agent, &folder, request, task, None, Some(&prev));
+            return ToolResult::success(format!(
+                "{} is still on run {}; this follow-up (run {id}) goes to it as soon as that's done.\nFollow it with: friday agents",
+                agent.name(),
+                prev.id
+            ));
+        }
+        let session = followup_session(&prev, chrono::Utc::now().timestamp(), resume);
+        let continues = session.is_some();
+        let id = self.start(agent, &folder, request, task, session, None);
+        ToolResult::success(if continues {
+            format!(
+                "{} goes on from run {} in {} (run {id}), in the same session.\nFollow it with: friday agents",
+                agent.name(),
+                prev.id,
+                folder.display()
+            )
+        } else {
+            format!(
+                "Started {} again in {} (run {id}), as a new session{}.\nFollow it with: friday agents",
+                agent.name(),
+                folder.display(),
+                if !resume { "" } else if prev.session.is_none() { ": the last run had none to go on from" } else { ": the last run ended over 15 minutes ago" }
+            )
+        })
+    }
 }
+
+/// Whether a run hasn't ended yet (a queued follow-up counts).
+fn still_going(r: &Run) -> bool {
+    matches!(
+        r.status,
+        Status::Queued | Status::Running | Status::WaitingForYou
+    )
+}
+
+/// The session a follow-up to `prev` goes on in: its own, when resuming is on
+/// and `prev` ended at most 15 minutes before `now`.
+fn followup_session(prev: &Run, now: i64, resume: bool) -> Option<String> {
+    let recent = prev.ended.is_some_and(|t| now - t <= FOLLOWUP_WINDOW_SECS);
+    prev.session.clone().filter(|_| resume && recent)
+}
+
+/// A follow-up goes on in the same session when the run it continues ended
+/// at most this long ago.
+const FOLLOWUP_WINDOW_SECS: i64 = 15 * 60;
+/// How long a follow-up waits for the run it continues: 30 minutes.
+const FOLLOWUP_WAIT_POLLS: u32 = 900;
 
 #[async_trait]
 impl friday_goal_execution::Tool for AgentsTool {
@@ -930,28 +1198,7 @@ impl friday_goal_execution::Tool for AgentsTool {
                     return ToolResult::error("couldn't tell what the agent should do");
                 }
                 remember_folder(&self.dir, agent, &folder);
-                let run = Run {
-                    id: format!("r{}", &uuid::Uuid::new_v4().simple().to_string()[..6]),
-                    agent,
-                    folder: folder.clone(),
-                    request,
-                    task,
-                    status: Status::Running,
-                    started: chrono::Utc::now().timestamp(),
-                    ended: None,
-                    pending: None,
-                    summary: String::new(),
-                    approved_by_friday: 0,
-                    approved_by_you: 0,
-                    rejected: 0,
-                };
-                let id = run.id.clone();
-                let (dir, model) = (self.dir.clone(), self.model.clone());
-                tokio::spawn(async move {
-                    if let Err(e) = run_agent(dir, run, Some(model)).await {
-                        tracing::warn!("agent run failed to start: {e}");
-                    }
-                });
+                let id = self.start(agent, &folder, request, task, None, None);
                 ToolResult::success(format!(
                     "Started {} in {} (run {id}). FRIDAY approves routine steps and asks you before \
                      anything risky; you'll get a notification when it's done.\nFollow it with: friday agents",
@@ -959,6 +1206,7 @@ impl friday_goal_execution::Tool for AgentsTool {
                     folder.display()
                 ))
             }
+            Some("followup") => self.follow_up(&choice, request),
             _ => ToolResult::error(
                 choice["say"]
                     .as_str()
@@ -994,6 +1242,8 @@ mod tests {
                 approved_by_friday: 0,
                 approved_by_you: 0,
                 rejected: 0,
+                session: None,
+                follows: None,
             },
         )
         .unwrap()
@@ -1093,6 +1343,158 @@ mod tests {
         async fn complete(&self, _prompt: &str) -> Result<String, String> {
             Ok(self.0.into())
         }
+    }
+
+    /// An agent that takes up session "s1" again when `keeps` is true and
+    /// refuses it otherwise (a new session is "s2"); it ends one turn and
+    /// returns the methods and session ids it was sent.
+    async fn resuming_agent(
+        to_friday: tokio::io::DuplexStream,
+        from_friday: tokio::io::DuplexStream,
+        keeps: bool,
+    ) -> Vec<String> {
+        let mut out = to_friday;
+        let mut lines = BufReader::new(from_friday).lines();
+        let mut seen = Vec::new();
+        while let Ok(Some(line)) = lines.next_line().await {
+            let msg: Value = serde_json::from_str(&line).unwrap();
+            let id = msg["id"].clone();
+            let method = msg["method"].as_str().unwrap_or("").to_string();
+            seen.push(format!(
+                "{method} {}",
+                msg["params"]["sessionId"].as_str().unwrap_or("")
+            ));
+            let reply = match method.as_str() {
+                "initialize" => {
+                    json!({"jsonrpc": "2.0", "id": id, "result": {"protocolVersion": 1}})
+                }
+                "session/resume" if keeps => json!({"jsonrpc": "2.0", "id": id, "result": {}}),
+                "session/resume" => json!({"jsonrpc": "2.0", "id": id,
+                    "error": {"code": -32002, "message": "Session not found"}}),
+                "session/new" => json!({"jsonrpc": "2.0", "id": id, "result": {"sessionId": "s2"}}),
+                "session/prompt" => {
+                    let chunk = json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "s1",
+                        "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "Added the tests."}}}});
+                    out.write_all(format!("{chunk}\n").as_bytes())
+                        .await
+                        .unwrap();
+                    let end =
+                        json!({"jsonrpc": "2.0", "id": id, "result": {"stopReason": "end_turn"}});
+                    out.write_all(format!("{end}\n").as_bytes()).await.unwrap();
+                    break;
+                }
+                _ => continue,
+            };
+            out.write_all(format!("{reply}\n").as_bytes())
+                .await
+                .unwrap();
+        }
+        seen
+    }
+
+    async fn follow_up_run(keeps: bool) -> (Vec<String>, Outcome, Run) {
+        let dir = TempDir(std::env::temp_dir().join(format!(
+            "friday-agents-resume-{keeps}-{}",
+            std::process::id()
+        )));
+        std::fs::create_dir_all(dir.path()).unwrap();
+        let mut rec = run_in(dir.path(), "/w/site");
+        rec.run.session = Some("s1".into());
+        let (friday_out, agent_in) = duplex(1 << 16);
+        let (agent_out, friday_in) = duplex(1 << 16);
+        let agent = tokio::spawn(resuming_agent(agent_out, agent_in, keeps));
+        let mut lines = read_lines(friday_in);
+        let mut acp = Driver::new(&mut rec, friday_out, None);
+        let outcome = acp.drive(&mut lines).await.unwrap();
+        let lost = acp.lost_session;
+        let outcome = started_fresh(outcome, lost);
+        (agent.await.unwrap(), outcome, rec.run.clone())
+    }
+
+    #[tokio::test]
+    async fn a_follow_up_goes_on_in_the_same_session() {
+        let (seen, outcome, run) = follow_up_run(true).await;
+        assert_eq!(
+            seen,
+            ["initialize ", "session/resume s1", "session/prompt s1"]
+        );
+        assert_eq!(outcome.summary, "Added the tests.");
+        assert_eq!(run.session.as_deref(), Some("s1"));
+    }
+
+    #[tokio::test]
+    async fn a_lost_session_starts_fresh_and_says_so() {
+        let (seen, outcome, run) = follow_up_run(false).await;
+        assert_eq!(
+            seen,
+            [
+                "initialize ",
+                "session/resume s1",
+                "session/new ",
+                "session/prompt s2"
+            ]
+        );
+        assert_eq!(
+            outcome.summary,
+            "Started fresh: the agent lost the session.\nAdded the tests."
+        );
+        assert_eq!(
+            run.session.as_deref(),
+            Some("s2"),
+            "the next follow-up uses the new one"
+        );
+    }
+
+    #[test]
+    fn a_follow_up_queued_before_a_restart_is_marked_stopped() {
+        let dir = TempDir(
+            std::env::temp_dir().join(format!("friday-agents-queued-{}", std::process::id())),
+        );
+        let mut rec = run_in(dir.path(), "/w/site");
+        rec.run.status = Status::Queued;
+        rec.save().unwrap();
+        assert!(
+            still_going(&rec.run),
+            "a queued follow-up holds the next one back"
+        );
+        let _tool = AgentsTool::new(Arc::new(Model("{}")), dir.path().to_path_buf());
+        let run = list(dir.path()).remove(0);
+        assert_eq!(run.status, Status::Failed);
+        assert!(run.summary.contains("restarted"), "{}", run.summary);
+    }
+
+    #[test]
+    fn only_a_recent_run_is_resumed() {
+        let mut prev = run_in(
+            &std::env::temp_dir().join(format!("friday-agents-window-{}", std::process::id())),
+            "/w/site",
+        )
+        .run;
+        prev.session = Some("s1".into());
+        prev.ended = Some(1000);
+        assert_eq!(
+            followup_session(&prev, 1000 + 15 * 60, true).as_deref(),
+            Some("s1")
+        );
+        assert_eq!(
+            followup_session(&prev, 1001 + 15 * 60, true),
+            None,
+            "over 15 minutes: fresh"
+        );
+        assert_eq!(
+            followup_session(&prev, 1010, false),
+            None,
+            "switched off: fresh"
+        );
+        prev.ended = None;
+        assert_eq!(
+            followup_session(&prev, 1010, true),
+            None,
+            "still running: not this way"
+        );
+        let _ = std::fs::remove_dir_all(
+            std::env::temp_dir().join(format!("friday-agents-window-{}", std::process::id())),
+        );
     }
 
     #[tokio::test]
@@ -1260,6 +1662,13 @@ mod tests {
             .error
             .unwrap()
             .contains("opencode, agy or Claude Code"));
+        // A follow-up with no run before it says how to start one.
+        let nothing = ask_tool(
+            r#"{"op": "followup", "task": "also add tests"}"#,
+            dir.path(),
+        )
+        .await;
+        assert!(nothing.error.unwrap().contains("no agent run to follow up"));
     }
 
     #[test]

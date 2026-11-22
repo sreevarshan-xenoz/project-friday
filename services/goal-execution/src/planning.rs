@@ -845,7 +845,9 @@ fn is_agents_intent(d: &str) -> bool {
         // "claude" alone is often the model FRIDAY answers with; only Claude
         // Code, or Claude given a folder, is an agent run.
         || words.windows(2).any(|w| w == ["claude", "code"])
-        || (words.contains(&"claude") && (d.contains("~/") || d.contains(" /")));
+        || (words.contains(&"claude") && (d.contains("~/") || d.contains(" /")))
+        // A follow-up to the latest run: "tell the agent to also add tests".
+        || words.windows(2).any(|w| w == ["the", "agent"]);
     if !named {
         return false;
     }
@@ -1886,6 +1888,8 @@ mod tests {
             "how are my agent runs going",
             "have claude code add tests to ~/code/app",
             "ask claude to fix the build in ~/code/app",
+            "tell the agent to also add tests",
+            "tell opencode to use tabs too",
         ] {
             assert_eq!(capability_for_description(g), runs, "{g}");
         }
