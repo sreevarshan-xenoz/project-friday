@@ -227,6 +227,20 @@ contains "and today's packages" "$(cat "$LOG")" "upgraded rust"
 if grep -q "oldpkg" "$LOG"; then fail "what changed today listed an old package"; else pass "older packages aren't listed"; fi
 : >"$LOG"; FRIDAY_PACMAN_LOG="$W/pacman.log" bash "$F" ask "what changed in rust 1.90"; sleep 0.3
 if grep -q "upgraded rust" "$LOG"; then fail "a general 'what changed in X' got this computer's changes"; else pass "'what changed in X' is a general question"; fi
+# Log stamps in another time zone are compared as moments.
+{ printf '[%s] [ALPM] installed farahead (1-1)\n' "$(TZ=Etc/GMT-14 date -d '2 hours ago' '+%Y-%m-%dT%H:%M:%S%z')"
+  printf '[%s] [ALPM] installed farbehind (1-1)\n' "$(TZ=Etc/GMT+12 date -d '10 minutes ago' '+%Y-%m-%dT%H:%M:%S%z')"; } >"$W/pacman.log"
+: >"$LOG"; FRIDAY_PACMAN_LOG="$W/pacman.log" bash "$F" ask "what changed in the last hour"; sleep 0.3
+contains "a package 10 minutes ago in another zone counts" "$(cat "$LOG")" "farbehind"
+if grep -q "farahead" "$LOG"; then fail "a package 2 hours ago was in the last hour (compared as text)"; else pass "a package 2 hours ago isn't in the last hour"; fi
+printf '[%s] [ALPM] installed sincepkg (1-1)\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" >"$W/pacman.log"
+: >"$LOG"; FRIDAY_PACMAN_LOG="$W/pacman.log" bash "$F" ask "what has changed since monday?"; sleep 0.3
+contains "\"since monday\" reads from Monday" "$(cat "$LOG")" "sincepkg"
+mkdir -p "$HOME/.config/friday"; cp "$HOME/.config/friday/private-windows" "$W/pw.wc" 2>/dev/null || : >"$W/pw.wc"
+printf '%s\n' "$W/wc" >>"$HOME/.config/friday/private-windows"
+: >"$LOG"; FRIDAY_PACMAN_LOG="$W/pacman.log" WS_PROJECT="$W/wc" bash "$F" ask "what changed today?"; sleep 0.3
+if grep -q "add the parser" "$LOG"; then fail "what changed read a private folder's git"; else pass "a private folder's commits aren't read"; fi
+cp "$W/pw.wc" "$HOME/.config/friday/private-windows"
 
 : >"$LOG"; rm -f "$W/again_done"
 ACTION_AGAIN=1 PICK="re-asked question" bash "$F" ask "first question"; sleep 0.5
