@@ -264,12 +264,12 @@ internal sealed partial class SettingsWindow : FluentWindow
             admin,
             SetAdministrator);
         // Features, each with its switch (all on to start). The daemon reads
-        // its own (couldnt-check) when it starts, so those restart it.
+        // its own (couldnt-check, agent-resume) when it starts, so those restart it.
         yield return Caption("Features");
         var env = EnvFile.Load(_install.Paths.EnvFile);
         foreach (var (name, what) in AppSettings.Features)
             yield return Switch(what, "Switch off if you don't want it.", AppSettings.FeatureOn(env, name),
-                on => ChangeEnv(e => AppSettings.WithFeature(e, name, on), restart: name == "couldnt-check"));
+                on => ChangeEnv(e => AppSettings.WithFeature(e, name, on), restart: name is "couldnt-check" or "agent-resume"));
         yield return Row(Pill("Restart FRIDAY", SymbolRegular.ArrowSync24), () => { _do.RestartDaemon(); Said("FRIDAY restarted."); });
         yield return Row(Pill("Open logs", SymbolRegular.DocumentBulletList24), _do.OpenLogs);
     }

@@ -546,6 +546,8 @@ pub fn wait_for_person(
         approved_by_friday: 0,
         approved_by_you: 0,
         rejected: 0,
+        session: None,
+        follows: None,
     };
     let Ok(rec) = Recorder::new(dir, run) else {
         return false;
