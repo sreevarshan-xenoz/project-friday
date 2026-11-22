@@ -68,6 +68,7 @@ public static class AppSettings
         ("couldnt-check", "Say when an answer comes from general knowledge, with nothing on this computer checked"),
         ("agent-resume", "A follow-up to a coding agent goes on in its session (\"tell opencode to also add tests\")"),
         ("self-docs", "Questions about FRIDAY are answered from its own guide"),
+        ("sensitive-warn", "Mail and chat apps: the ask box says their text goes to your AI provider"),
     ];
 
     public static bool FeatureOn(IReadOnlyDictionary<string, string> env, string name) =>
