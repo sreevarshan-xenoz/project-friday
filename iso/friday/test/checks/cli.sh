@@ -232,7 +232,18 @@ mkdir -p "$HOME/.config/friday"; cp "$HOME/.config/friday/private-windows" "$W/p
 printf '%s\n' "$W/mention" >>"$HOME/.config/friday/private-windows"
 : >"$LOG"; bash "$F" ask "what's wrong in @file $W/mention/main.rs"; sleep 0.3
 if grep -q "let x: u32" "$LOG"; then fail "@file sent a file from a private folder"; else pass "@file refuses a private folder's file"; fi
+# A symlink to it from elsewhere is still the private folder's file.
+ln -sfn "$W/mention" "$W/mention-link"
+: >"$LOG"; bash "$F" ask "what's wrong in @file $W/mention-link/main.rs"; sleep 0.3
+if grep -q "let x: u32" "$LOG"; then fail "@file through a symlink left a private folder"; else pass "@file through a symlink still sees the private folder"; fi
 cp "$W/pw.mention" "$HOME/.config/friday/private-windows"
+printf 'API_KEY=x\n' >"$W/mention/.env"
+: >"$LOG"; bash "$F" ask "what is in @file $W/mention/.env"; sleep 0.3
+if grep -q "API_KEY" "$LOG"; then fail "@file sent a .env file"; else pass "@file refuses key and password files by name"; fi
+: >"$LOG"; CLIP="some words" bash "$F" ask "compare @clip with @file $W/mention/main.rs"; sleep 0.3
+if grep -q "^friday-ctl" "$LOG"; then fail "@clip with @file asked anyway"; else pass "@clip and @file together are refused, not half-used"; fi
+: >"$LOG"; bash "$F" ask "@screen and @file $W/mention/main.rs"; sleep 0.3
+if grep -qE "^friday-ctl|context screen" "$LOG"; then fail "@screen with @file asked anyway"; else pass "@screen with @file is refused"; fi
 : >"$LOG"; bash "$F" ask "summarise @file /nonexistent/x.txt"; sleep 0.3
 if grep -q "^friday-ctl" "$LOG"; then fail "@file with no such file still asked"; else pass "@file with no such file asks nothing"; fi
 

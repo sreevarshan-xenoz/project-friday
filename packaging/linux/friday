@@ -2594,7 +2594,7 @@ friday_private_window() {
 # friday_private_folder <folder>: the private-windows line (a folder: /… or
 # ~/…) that folder is in, or nothing. Commands run there are private.
 friday_private_folder() {
-  local dir="${1%/}" own="${XDG_CONFIG_HOME:-$HOME/.config}/friday/private-windows" line path never
+  local dir="${1%/}" own="${XDG_CONFIG_HOME:-$HOME/.config}/friday/private-windows" line path never real
   [ -n "$1" ] || return 0
   while IFS= read -r line; do
     line=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<<"$line")
@@ -2602,8 +2602,11 @@ friday_private_folder() {
     if [[ "$line" == "never "* ]]; then never="never:"; line=$(sed 's/^never[[:space:]]*//' <<<"$line"); fi
     case "$line" in /*|"~/"*) ;; *) continue ;; esac
     path="${line/#\~/$HOME}"; path="${path%/}"
-    # "/" alone: every folder.
-    if [ -z "$path" ] || [ "$dir" = "$path" ] || [[ "$dir" == "$path"/* ]]; then printf '%s%s' "$never" "$line"; return 0; fi
+    # "/" alone: every folder. A listed folder that's a symlink counts as
+    # where it leads too.
+    real=$(realpath -m -- "${path:-/}" 2>/dev/null || echo "$path"); real="${real%/}"
+    if [ -z "$path" ] || [ "$dir" = "$path" ] || [[ "$dir" == "$path"/* ]] \
+        || [ "$dir" = "$real" ] || [[ "$dir" == "$real"/* ]]; then printf '%s%s' "$never" "$line"; return 0; fi
   done < <(cat "$own" 2>/dev/null || true)
 }
 
@@ -3908,12 +3911,20 @@ case "${1:-}" in
         screen) use_screen=true; ask_args+=(--screen) ;;
         clip) use_clip=true ;;
         web) use_web=true ;;
-        file*) mention_file="${BASH_REMATCH[3]}" ;;
+        file*) [ -z "$mention_file" ] || { notify "FRIDAY" "One @file at a time."; exit 0; }
+               mention_file="${BASH_REMATCH[3]}" ;;
       esac
       goal="${goal/"${BASH_REMATCH[0]}"/ }"
     done
     goal=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<<"$goal")
-    if $use_clip && ! $use_selection; then
+    # @clip and @file are the text asked about: one of them, in a plain ask
+    # (not with the screen, a selection or a follow-up, which bring their own).
+    if { $use_clip || [ -n "$mention_file" ]; } \
+        && { $use_screen || $use_selection || $use_followup || { $use_clip && [ -n "$mention_file" ]; }; }; then
+      notify "FRIDAY" "@clip and @file go on their own: not together, and not with the screen, a selection or a follow-up."
+      exit 0
+    fi
+    if $use_clip; then
       context=$(timeout 2 wl-paste --no-newline 2>/dev/null || true)
       if friday_secret_shaped "$context"; then
         notify "FRIDAY" "The clipboard looks like a password or token, so I won't send it."
@@ -3921,14 +3932,22 @@ case "${1:-}" in
       fi
       [ -n "${context//[[:space:]]/}" ] || { notify "FRIDAY" "The clipboard is empty."; exit 0; }
       context="${context:0:4000}" use_selection=true source_label="Clipboard"
-    elif [ -n "$mention_file" ] && ! $use_selection; then
+    elif [ -n "$mention_file" ]; then
       mention_file="${mention_file/#\~/$HOME}"
+      given_dir=$(dirname -- "$(realpath -s -m -- "$mention_file")")
       mention_file=$(realpath -e -- "$mention_file" 2>/dev/null || true)
       if [ ! -f "$mention_file" ] || [ ! -r "$mention_file" ] || ! grep -Iq . "$mention_file" 2>/dev/null; then
         notify "FRIDAY" "@file needs a text file I can read."
         exit 0
       fi
-      if [ -n "$(friday_private_folder "$(dirname "$mention_file")")" ]; then
+      case "${mention_file##*/}" in
+        .env|.env.*|*.pem|*.key|id_rsa*|id_ed25519*|id_ecdsa*|*credentials*|*.kdbx|.netrc|.pgpass)
+          notify "FRIDAY" "That file holds keys or passwords, so it isn't sent."
+          exit 0 ;;
+      esac
+      # The folder as named and as it really is (a symlink can lead into or
+      # out of a private one).
+      if [ -n "$(friday_private_folder "$given_dir")" ] || [ -n "$(friday_private_folder "$(dirname -- "$mention_file")")" ]; then
         notify "FRIDAY" "That file is in a folder you marked private, so it isn't sent."
         exit 0
       fi
