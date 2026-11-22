@@ -216,6 +216,8 @@ contains "ask 'look up q' passes --web flag" "$(cat "$LOG")" "friday-ctl-web"
 contains "ask 'look up q' strips prefix" "$(cat "$LOG")" "rust documentation"
 
 # @-mentions pick what goes with the question, and leave it.
+: >"$LOG"; bash "$F" ask "summarise @tab"; sleep 0.3
+contains "@tab asks about what's in front (the page, in a browser)" "$(cat "$LOG")" "context screen --yes --ask summarise"
 : >"$LOG"; bash "$F" ask "@web latest rust release"; sleep 0.3
 contains "@web searches the web" "$(cat "$LOG")" "friday-ctl-web"
 if grep -q "@web" "$LOG"; then fail "@web stayed in the question"; else pass "@web is taken out of the question"; fi
