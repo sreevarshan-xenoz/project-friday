@@ -711,8 +711,10 @@ pub async fn ollama_pull(model: &str, mut on: impl FnMut(&PullEvent)) -> Result<
                     on(&PullEvent::Done);
                     return Ok(());
                 }
+                // Ollama names its layers one at a time, so the whole grows as
+                // it goes: what is shown only moves forward.
                 PullEvent::Progress(p, d, t) => {
-                    if last != Some(p) {
+                    if last.is_none_or(|l| p > l) {
                         last = Some(p);
                         on(&PullEvent::Progress(p, d, t));
                     }
