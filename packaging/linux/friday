@@ -2597,9 +2597,13 @@ friday_private_folder() {
 # friday_ask_local <prompt>: the local model's answer, asked directly on this
 # computer (not through the daemon, so nothing can fall back to the cloud).
 # Fails when no local model is set up.
-# Whether a local model is set up (friday setup-ai local), not whether it's up.
+# Whether a local model on this computer is set up (friday setup-ai local),
+# not whether it's up.
 friday_local_ready() {
-  grep -qx 'LLAMACPP_ENABLED=1' "${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" 2>/dev/null
+  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" base
+  base=$(sed -n 's/^LLAMACPP_BASE_URL=//p' "$env_file" 2>/dev/null | tail -n1) || base=""
+  grep -qx 'LLAMACPP_ENABLED=1' "$env_file" 2>/dev/null && [[ "$base" != *@* ]] \
+    && [[ "$base" == http://127.0.0.1:* || "$base" == http://localhost:* ]]
 }
 
 friday_ask_local() {
@@ -2607,7 +2611,7 @@ friday_ask_local() {
   grep -qx 'LLAMACPP_ENABLED=1' "$env_file" 2>/dev/null || return 2
   base=$(sed -n 's/^LLAMACPP_BASE_URL=//p' "$env_file" | tail -n1)
   model=$(sed -n 's/^LLAMACPP_MODEL=//p' "$env_file" | tail -n1)
-  [[ "$base" == http://127.0.0.1:* || "$base" == http://localhost:* ]] || return 2
+  [[ "$base" != *@* ]] && [[ "$base" == http://127.0.0.1:* || "$base" == http://localhost:* ]] || return 2
   body=$(jq -nc --arg m "$model" --arg p "$1" '{model: $m, messages: [{role: "user", content: $p}]}')
   timeout 180 curl -s -H 'Content-Type: application/json' -d "$body" "$base/chat/completions" 2>/dev/null \
     | jq -er '.choices[0].message.content | select(. != null and . != "")' 2>/dev/null
@@ -3673,6 +3677,10 @@ case "${1:-}" in
     # The window you're asking about (its selection or its screen): private?
     private_win=""
     if $use_selection || $use_screen; then private_win=$(friday_private_window); fi
+    # The private window itself, so a later read of its text can't land on
+    # another window focused meanwhile.
+    priv_win=""
+    if $use_screen && [ -n "$private_win" ]; then priv_win=$(timeout 2 hyprctl activewindow -j 2>/dev/null || true); fi
     state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
     history_file="$state_dir/ask-history"
     notify() { notify-send -a FRIDAY -- "$@" 2>/dev/null || true; }
@@ -4193,7 +4201,9 @@ case "${1:-}" in
         # Its text to the local model only (read here, never a screenshot),
         # when there's a local model and the window has words to read.
         win_text=""
-        if friday_local_ready && win_text=$(timeout 15 friday-ctl window-text 2>/dev/null) && [ -n "$win_text" ]; then
+        if friday_local_ready && [ -n "$priv_win" ] \
+            && win_text=$(timeout 15 friday-ctl window-text "$(jq -r '.class // ""' <<<"$priv_win")" "$(jq -r '.title // ""' <<<"$priv_win")" 2>/dev/null) \
+            && [ -n "$win_text" ]; then
           request=$(printf '%s\n\n[window]\nThe text of the window in front (private, so it stays on this computer):\n"""\n%s\n"""' "$goal" "$win_text")
         else
           notify-send -a FRIDAY -- "FRIDAY" "This window looks private (\"$private_win\"), so no screenshot of it leaves this computer. With local AI set up (friday setup-ai local), its text is asked about here instead." 2>/dev/null || true
