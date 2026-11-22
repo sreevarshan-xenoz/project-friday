@@ -317,6 +317,22 @@ shaped=$(bash -c 'source <(sed -n "/^friday_secret_shaped() {/,/^}/p" "$1"); shi
   "https://x.com/cb?id=ab12ab12ab12ab12" "Zq8rTk2LmN0p/Wx4Yb7Vc1Ds/Ee9Ff3Gh5Jk6" "hunter2hunter2." "pass/12345678abc")
 [[ "$shaped" == ".....SSSSSSSS" ]] && pass "URLs, paths and file names go; tokens, JWTs, keys in URLs and base64 don't" || fail "password-shaped rule: got $shaped, wanted .....SSSSSSSS"
 
+echo "instant answers"
+printf '#!/bin/bash\necho "qalc $*" >>%q\ncase "$3" in "12 * 7") echo 84 ;; "15/100*240") echo 36 ;; "100 °F to °C") echo "37.77777778 °C" ;; *) echo "?" ;; esac\n' "$LOG" >"$S/qalc"; chmod +x "$S/qalc"
+: >"$LOG"; bash "$F" ask "what is 12 x 7"; sleep 0.3
+contains "arithmetic is worked out here" "$(cat "$state/last-answer.md")" "12 * 7 = 84"
+if grep -q "^friday-ctl" "$LOG"; then fail "arithmetic went to the model"; else pass "arithmetic goes to no model"; fi
+: >"$LOG"; bash "$F" ask "15% of 240"; sleep 0.3
+contains "a percentage too" "$(cat "$state/last-answer.md")" "= 36"
+: >"$LOG"; bash "$F" ask "100 f to c"; sleep 0.3
+contains "and a unit conversion, with f and c as degrees" "$(cat "$state/last-answer.md")" "100 °F to °C = 37.77777778 °C"
+: >"$LOG"; bash "$F" ask "what is a monad"; sleep 0.3
+if grep -q "^qalc" "$LOG"; then fail "a question in words went to qalc"; else pass "a question in words goes to the model, not qalc"; fi
+rm -f "$S/qalc"
+shapes=$(bash -c 'source <(sed -n "/^friday_calc_expr() {/,/^}/p" "$1"); shift; for q in "$@"; do friday_calc_expr "$q" >/dev/null && printf "Y" || printf "."; done' _ "$F" \
+  "2026-11-22" "123-456-7890" "192.0.2.1/24" "1.0.0-1" "24/7" "50/50" "--5 + 2" "10 - 3" "-40 c to f")
+[[ "$shapes" == "......YYY" ]] && pass "dates, phone numbers, IPs, versions and 24/7 aren't sums" || fail "calc shapes: got $shapes, wanted ......YYY"
+
 echo "suggestions for the app you're in"
 printf '#!/bin/bash\necho "hyprctl $*" >> %q\n[[ "$*" == "activewindow -j" ]] && printf %%s "$HYPR_WIN"\nexit 0\n' "$LOG" >"$S/hyprctl"; chmod +x "$S/hyprctl"
 printf '#!/bin/bash\ncat >%q\necho "$PICK"\n' "$W/menu.txt" >"$S/fuzzel"
