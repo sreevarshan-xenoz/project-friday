@@ -23,8 +23,9 @@ internal readonly record struct CtlResult(bool Ok, string Output, int ExitCode)
 internal static class Ctl
 {
     /// <param name="onLine">Called with each line friday-ctl prints, as it prints it.</param>
+    /// <param name="cancel">Stops friday-ctl (a newer question replaced this one).</param>
     public static async Task<CtlResult> RunAsync(Install install, IEnumerable<string> args, TimeSpan timeout,
-        Action<string>? onLine = null)
+        Action<string>? onLine = null, CancellationToken cancel = default)
     {
         var psi = new ProcessStartInfo(install.Ctl)
         {
@@ -51,7 +52,8 @@ internal static class Ctl
         }
         var stdout = ReadLinesAsync(p.StandardOutput, onLine);
         var stderr = p.StandardError.ReadToEndAsync();
-        using var cts = new CancellationTokenSource(timeout);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        cts.CancelAfter(timeout);
         try
         {
             await p.WaitForExitAsync(cts.Token);
@@ -59,6 +61,8 @@ internal static class Ctl
         catch (OperationCanceledException)
         {
             try { p.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+            if (cancel.IsCancellationRequested)
+                return new CtlResult(false, "cancelled: a newer question replaced this one", -2);
             return new CtlResult(false, (await stdout) + (await stderr) + $"\ntimed out after {(int)timeout.TotalSeconds}s waiting for friday-ctl", -1);
         }
         return new CtlResult(p.ExitCode == 0, (await stdout) + (await stderr), p.ExitCode);
