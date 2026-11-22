@@ -479,6 +479,57 @@ internal sealed partial class SettingsWindow : FluentWindow
         btnPanel.Children.Add(turnOffBtn);
         stack.Children.Add(btnPanel);
 
+        // Already on this PC: Ollama or llama.cpp with models downloaded
+        // before; "Use" answers with one, nothing downloaded.
+        var found = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
+        stack.Children.Add(found);
+        async Task UseAsync(LocalEngine engine, LocalModel m, Button button)
+        {
+            button.IsEnabled = false;
+            errorText.Visibility = Visibility.Collapsed;
+            if (engine.Engine == "ollama" && !engine.Running
+                && !(ProcessRunner.IsOllamaInstalled(out var exe) && await ProcessRunner.EnsureOllamaRunningAsync(exe)))
+            {
+                errorText.Text = "Ollama didn't start. Open Ollama once from the Start menu, then try again.";
+                errorText.Visibility = Visibility.Visible;
+                button.IsEnabled = true;
+                return;
+            }
+            var (ok, outText) = await Ctl.RunAsync(_install, ["local-ai", "local-first", m.Name, "auto"], TimeSpan.FromSeconds(15));
+            ChangeEnv(e => LocalAi.WithLocalAi(e, m.Name, m.Vision, ok && outText.Trim() == "1", engine.BaseUrl));
+            stateVal.Text = $"on: {m.Name} ({(engine.Engine == "ollama" ? "Ollama" : "llama.cpp")}, already on this PC)";
+            turnOffBtn.Visibility = Visibility.Visible;
+            button.IsEnabled = true;
+        }
+        _ = Task.Run(async () =>
+        {
+            var (ok, json) = await Ctl.RunAsync(_install, ["local-ai", "engines", "--json"], TimeSpan.FromSeconds(15));
+            var engines = ok ? LocalAi.ParseEngines(json).Where(e => e.Installed).ToList() : [];
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (engines.Count == 0)
+                    return;
+                found.Children.Add(Caption("Already on this PC"));
+                foreach (var engine in engines)
+                {
+                    found.Children.Add(new TextBlock { Text = engine.Title, FontSize = 12.5, Foreground = Resource("Subtext"), Margin = new Thickness(0, 4, 0, 4) });
+                    if (engine.Models.Count == 0)
+                        found.Children.Add(new TextBlock { Text = "No models downloaded yet.", FontSize = 12.5, Foreground = Resource("Subtext") });
+                    var row = new WrapPanel();
+                    foreach (var m in engine.Models)
+                    {
+                        var use = Pill("Use " + m.Label, SymbolRegular.CheckmarkCircle24);
+                        use.Margin = new Thickness(0, 0, 8, 8);
+                        // A llama.cpp server that isn't running can't answer (FRIDAY runs its own on Linux).
+                        use.IsEnabled = engine.Engine == "ollama" || engine.Running;
+                        use.Click += async (_, _) => await UseAsync(engine, m, use);
+                        row.Children.Add(use);
+                    }
+                    found.Children.Add(row);
+                }
+            });
+        });
+
         _ = Task.Run(async () =>
         {
             try

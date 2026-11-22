@@ -14,6 +14,18 @@ public sealed record LocalAiPreset(
     bool Available,
     string Note);
 
+/// <summary>A model an engine on this PC already has.</summary>
+public sealed record LocalModel(string Name, long SizeMb, bool Vision)
+{
+    public string Label => Name + (SizeMb > 0 ? $" · {SizeMb / 1024.0:0.0} GB" : "") + (Vision ? " · sees screenshots" : "");
+}
+
+/// <summary>Ollama or llama.cpp as found on this PC (`friday-ctl local-ai engines --json`).</summary>
+public sealed record LocalEngine(string Engine, bool Installed, bool Running, string BaseUrl, IReadOnlyList<LocalModel> Models)
+{
+    public string Title => (Engine == "ollama" ? "Ollama" : "llama.cpp") + (Running ? " (running)" : " (installed, not running)");
+}
+
 /// <summary>
 /// Parsed local AI recommendation combining machine detection and presets.
 /// </summary>
@@ -242,6 +254,34 @@ public static class LocalAi
         text = EnvFile.WithSetting(text, "LLAMACPP_VISION", vision ? "1" : "0");
         text = EnvFile.WithSetting(text, "FRIDAY_LOCAL_FIRST", localFirst ? "1" : "0");
         return text;
+    }
+
+    /// <summary>The engines on this PC, from `friday-ctl local-ai engines --json` (none when it can't be read).</summary>
+    public static IReadOnlyList<LocalEngine> ParseEngines(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                return [];
+            return doc.RootElement.EnumerateArray().Select(e => new LocalEngine(
+                e.TryGetProperty("engine", out var n) ? n.GetString() ?? "" : "",
+                e.TryGetProperty("installed", out var i) && i.ValueKind == JsonValueKind.True,
+                e.TryGetProperty("running", out var r) && r.ValueKind == JsonValueKind.True,
+                e.TryGetProperty("base_url", out var u) ? u.GetString() ?? DefaultBaseUrl : DefaultBaseUrl,
+                e.TryGetProperty("models", out var ms) && ms.ValueKind == JsonValueKind.Array
+                    ? ms.EnumerateArray().Select(m => new LocalModel(
+                        m.TryGetProperty("name", out var mn) ? mn.GetString() ?? "" : "",
+                        m.TryGetProperty("size_mb", out var sz) && sz.TryGetInt64(out var mb) ? mb : 0,
+                        m.TryGetProperty("vision", out var v) && v.ValueKind == JsonValueKind.True))
+                        .Where(m => m.Name.Length > 0).ToList()
+                    : []))
+                .Where(e => e.Engine is "ollama" or "llamacpp").ToList();
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
     }
 
     /// <summary>

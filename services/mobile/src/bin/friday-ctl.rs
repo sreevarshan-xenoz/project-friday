@@ -629,8 +629,35 @@ fn local_ai(args: &[String]) -> std::process::ExitCode {
             );
         }
         _ => {
-            eprintln!("usage: friday-ctl local-ai detect | presets [--json] | model <mb> | local-first <model> <order> [tps]");
+            eprintln!("usage: friday-ctl local-ai detect | presets [--json] | engines [--json] | model <mb> | local-first <model> <order> [tps]");
             return std::process::ExitCode::from(2);
+        }
+    }
+    std::process::ExitCode::SUCCESS
+}
+
+/// `friday-ctl local-ai engines [--json]`: Ollama and llama.cpp on this
+/// computer, running or not, with the models each already has.
+async fn local_ai_engines(json: bool) -> std::process::ExitCode {
+    use friday_mobile::local_ai as l;
+    let engines = l::engines().await;
+    if json {
+        let v: Vec<serde_json::Value> = engines
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "engine": e.name, "installed": e.installed, "running": e.running,
+                    "base_url": format!("{}/v1", e.base_url),
+                    "models": e.models.iter().map(|m| serde_json::json!({
+                        "name": m.name, "size_mb": m.size_mb, "vision": m.vision,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::Value::Array(v));
+    } else {
+        for e in &engines {
+            println!("{}", l::engine_line(e));
         }
     }
     std::process::ExitCode::SUCCESS
@@ -1249,6 +1276,11 @@ async fn main() -> std::process::ExitCode {
                 std::process::ExitCode::from(2)
             }
         };
+    }
+    if raw.first().map(String::as_str) == Some("local-ai")
+        && raw.get(1).map(String::as_str) == Some("engines")
+    {
+        return local_ai_engines(raw.iter().any(|a| a == "--json")).await;
     }
     if raw.first().map(String::as_str) == Some("local-ai") {
         return local_ai(&raw[1..]);

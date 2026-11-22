@@ -92,6 +92,8 @@ Autonomous Agent & Cognitive Loop:
   friday private [status|on [model]|off]
                                    Local model only; nothing leaves the machine
   friday local-ai [summary|presets|install|status|order|bench|off]
+  friday local-ai engines [--json]  Ollama and llama.cpp on this computer, with the models they already have
+  friday local-ai use <ollama|llamacpp> <model>  Answer with a model you already have (nothing downloaded)
                                    A model on this computer, sized to it; answers first,
                                    cloud covers what it can't (friday setup-ai local)
   friday face [status|setup|remove] Face unlock for the lock screen (Gaze)
@@ -3728,8 +3730,64 @@ friday_local_ai_install() {
   echo "Local AI is on: $model ($sees, $when). Change the order: friday local-ai order local|cloud|auto"
 }
 
+# friday local-ai use <ollama|llamacpp> <model>: answer with a model an
+# engine on this computer already has; nothing is downloaded.
+friday_local_ai_use() {
+  local engine="${1:-}" model="${2:-}" json found url running vision
+  if [[ $engine != ollama && $engine != llamacpp ]] || [ -z "$model" ]; then
+    echo "usage: friday local-ai use <ollama|llamacpp> <model>   (friday local-ai engines lists them)" >&2; return 2
+  fi
+  json=$(friday-ctl local-ai engines --json 2>/dev/null) || { echo "friday: couldn't look for local engines" >&2; return 1; }
+  found=$(jq -c --arg e "$engine" --arg m "$model" '.[] | select(.engine == $e) | {url: .base_url, running, m: (.models[] | select(.name == $m))}' <<<"$json" 2>/dev/null | head -n1 || true)
+  [ -n "$found" ] || { echo "friday: $engine doesn't have $model (friday local-ai engines lists what it has)" >&2; return 1; }
+  url=$(jq -r .url <<<"$found"); running=$(jq -r .running <<<"$found")
+  vision=0; [ "$(jq -r .m.vision <<<"$found")" = true ] && vision=1
+  if [ "$engine" = ollama ] && [ "$running" != true ]; then
+    echo "friday: Ollama isn't running (sudo systemctl enable --now ollama), then try again" >&2; return 1
+  fi
+  if [ "$engine" = llamacpp ]; then
+    # FRIDAY's own llama.cpp serves that file (with its projector, if any).
+    local file="$FRIDAY_LLAMA_DIR/models/$model" args
+    if [ -f "$file" ]; then
+      args="-m $file -c 8192 --reasoning off --sleep-idle-seconds 300"
+      (( vision )) && args="$args --mmproj ${file%.gguf}-mmproj.gguf"
+      [ "$(friday_local_ai_detect | sed -n 's/^gpu=//p')" != none ] && args="$args --n-gpu-layers 99"
+      (umask 077; mkdir -p "$(dirname "$FRIDAY_LOCAL_CONF")"; echo "LLAMA_ARGS=$args" >"$(dirname "$FRIDAY_LOCAL_CONF")/llama.env")
+      systemctl --user daemon-reload 2>/dev/null || true
+      systemctl --user restart friday-llama.service >/dev/null 2>&1 || systemctl --user enable --now friday-llama.service >/dev/null 2>&1 \
+        || { echo "friday: couldn't start friday-llama.service" >&2; return 1; }
+      friday_wait_http "http://127.0.0.1:8080/health" 180 || { echo "friday: the llama.cpp server didn't start (journalctl --user -u friday-llama)" >&2; return 1; }
+    elif [ "$running" != true ]; then
+      echo "friday: that llama.cpp server isn't running; start it, then try again" >&2; return 1
+    fi
+  fi
+  friday_local_conf_set engine "$engine"
+  friday_local_conf_set model "$model"
+  friday_local_conf_set state ready
+  friday_local_conf_set reason ""
+  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" local_first
+  local_first=$(friday_local_ai_local_first "$model" "$(friday_local_conf_get order)" "")
+  (
+    umask 077
+    mkdir -p "$(dirname "$env_file")"
+    { grep -vE '^(LLAMACPP_ENABLED|LLAMACPP_BASE_URL|LLAMACPP_MODEL|LLAMACPP_VISION|FRIDAY_LOCAL_FIRST)=' "$env_file" 2>/dev/null || true
+      echo "LLAMACPP_ENABLED=1"
+      echo "LLAMACPP_BASE_URL=$url"
+      echo "LLAMACPP_MODEL=$model"
+      echo "LLAMACPP_VISION=$vision"
+      echo "FRIDAY_LOCAL_FIRST=$local_first"
+    } >"$env_file.tmp"
+    mv "$env_file.tmp" "$env_file"
+  )
+  systemctl --user restart friday-linux-daemon 2>/dev/null || true
+  local sees="text only"; (( vision )) && sees="sees screenshots"
+  echo "Local AI is on: $model on $engine ($sees), already on this computer, nothing downloaded."
+}
+
 friday_local_ai_status() {
-  if [[ ! -f "$FRIDAY_LOCAL_CONF" ]]; then echo "Local AI: not set up (friday setup-ai local)"; return 0; fi
+  # What is already on this computer, set up by FRIDAY or not.
+  friday-ctl local-ai engines 2>/dev/null || true
+  if [[ ! -f "$FRIDAY_LOCAL_CONF" ]]; then echo "Local AI: not set up (friday setup-ai local, or friday local-ai use <engine> <model>)"; return 0; fi
   local state model engine reason
   state=$(friday_local_conf_get state); model=$(friday_local_conf_get model)
   engine=$(friday_local_conf_get engine); reason=$(friday_local_conf_get reason)
@@ -3896,7 +3954,9 @@ friday_local_ai() {
     packages) friday_local_ai_packages "${2:-}" ;;
     order) friday_local_ai_order "${2:-}" ;;
     bench) friday_local_ai_bench_cmd ;;
-    *) echo "usage: friday local-ai [detect|presets|summary|install|status|order|bench|off|packages]" >&2; return 2 ;;
+    engines) shift; friday-ctl local-ai engines "$@" ;;
+    use) shift; friday_local_ai_use "$@" ;;
+    *) echo "usage: friday local-ai [detect|presets|summary|install|status|engines|use|order|bench|off|packages]" >&2; return 2 ;;
   esac
 }
 

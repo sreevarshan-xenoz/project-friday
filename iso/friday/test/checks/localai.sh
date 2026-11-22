@@ -181,6 +181,39 @@ echo "packages per GPU"
 [[ "$(FRIDAY_HW_ROOT="$hw" bash "$F" local-ai packages llamacpp)" == "vulkan-icd-loader vulkan-radeon" ]] && pass "llama.cpp on AMD: Vulkan" || fail "llama.cpp AMD packages"
 [[ -z "$(FRIDAY_HW_ROOT="$hw_none" bash "$F" local-ai packages llamacpp)" ]] && pass "llama.cpp with no GPU: nothing extra" || fail "llama.cpp CPU packages"
 
+echo "engines already on this computer"
+# friday-ctl local-ai engines: a running Ollama with two models, FRIDAY's llama.cpp with one file.
+cat >"$S/friday-ctl" <<'STUB'
+#!/bin/bash
+[ "$1 $2" = "local-ai engines" ] || exit 0
+if [ "${3:-}" = --json ]; then
+  printf '%s\n' '[{"engine":"ollama","installed":true,"running":true,"base_url":"http://127.0.0.1:11434/v1","models":[{"name":"qwen3:4b","size_mb":2499,"vision":false},{"name":"gemma3:12b","size_mb":7800,"vision":true}]},{"engine":"llamacpp","installed":true,"running":false,"base_url":"http://127.0.0.1:8080/v1","models":[{"name":"Qwen3-4B-Q4_K_M.gguf","size_mb":2400,"vision":false}]}]'
+else
+  echo "Ollama: running, qwen3:4b (2.4 GB); gemma3:12b (7.6 GB, sees screenshots)"
+  echo "llama.cpp: installed, not running, Qwen3-4B-Q4_K_M.gguf (2.3 GB)"
+fi
+STUB
+chmod +x "$S/friday-ctl"
+contains "status lists the engines already here" "$(bash "$F" local-ai status)" "Ollama: running, qwen3:4b"
+: >"$LOG"
+contains "use: a model Ollama already has, nothing downloaded" "$(bash "$F" local-ai use ollama gemma3:12b)" "nothing downloaded"
+envf=$(cat "$ENV")
+contains "use: points FRIDAY at Ollama" "$envf" "LLAMACPP_BASE_URL=http://127.0.0.1:11434/v1"
+contains "use: names that model" "$envf" "LLAMACPP_MODEL=gemma3:12b"
+contains "use: it sees screenshots" "$envf" "LLAMACPP_VISION=1"
+contains "use: a 12B model answers first (auto)" "$envf" "FRIDAY_LOCAL_FIRST=1"
+if grep -q "ollama pull" "$LOG"; then fail "use downloaded a model"; else pass "use downloads nothing"; fi
+contains "use: the state says which" "$(cat "$CONF")" "model=gemma3:12b"
+refuse "use: a model the engine doesn't have is refused" bash "$F" local-ai use ollama llama3:70b
+refuse "use: an unknown engine is refused" bash "$F" local-ai use lmstudio x
+mkdir -p "$HOME/.local/share/friday/llama.cpp/models"; : >"$HOME/.local/share/friday/llama.cpp/models/Qwen3-4B-Q4_K_M.gguf"
+: >"$LOG"
+contains "use: FRIDAY's own llama.cpp file" "$(FRIDAY_HW_ROOT="$hw_none" bash "$F" local-ai use llamacpp Qwen3-4B-Q4_K_M.gguf)" "nothing downloaded"
+contains "use: llama.cpp serves that file" "$(cat "$HOME/.config/friday/llama.env")" "-m $HOME/.local/share/friday/llama.cpp/models/Qwen3-4B-Q4_K_M.gguf"
+contains "use: and its server restarts" "$(cat "$LOG")" "systemctl --user restart friday-llama.service"
+contains "use: FRIDAY points at llama.cpp" "$(cat "$ENV")" "LLAMACPP_BASE_URL=http://127.0.0.1:8080/v1"
+rm -f "$S/friday-ctl"
+
 echo "setup-ai local"
 printf '#!/bin/sh\necho "sudo $*" >>"%s"\n' "$LOG" >"$S/sudo"; chmod +x "$S/sudo"
 rm -f "$CONF"; : >"$LOG"
