@@ -224,6 +224,8 @@ FRIDAY adds itself to Claude Code's settings (`~/.claude/settings.json`) and agy
 
 On Windows, a step or question that waits for you opens a small FRIDAY window with Allow and Deny (or a box for your reply), and a finished run shows a notification from the tray. Settings → Agents lists recent runs and has the switches for agent runs and for approvals in your own Claude Code sessions.
 
+**Your own instructions for an agent:** write them in `~/.config/friday/agents/<agent>.md` (`opencode.md`, `agy.md` or `claude.md`; on Windows `%APPDATA%\friday\agents\`), for example "use tabs, never touch vendor/". FRIDAY puts them in front of the task whenever that agent starts a new session, never writes the file itself, and never lets it change what it approves. The file sits outside any project folder, so an agent that tries to edit it has to ask you first. No file, no instructions.
+
 `friday agents` lists the runs and `friday agents show <id>` reports one: what you asked, what the agent said, and every step approved by FRIDAY, approved by you, or refused. `friday agents off` stops FRIDAY from starting agents (`FRIDAY_AGENTS=0`).
 
 ## Troubleshooting

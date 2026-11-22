@@ -612,6 +612,10 @@ impl<'a, W: AsyncWrite + Unpin> Driver<'a, W> {
                 Err(e) => {
                     self.rec.log(json!({"event": "session_lost", "error": e}));
                     self.lost_session = true;
+                    // A fresh session after all: it gets the person's instructions.
+                    if let Some(text) = instructions(self.rec.run.agent) {
+                        self.rec.run.task = format!("{text}\n\n{}", self.rec.run.task);
+                    }
                 }
             }
         }
@@ -710,7 +714,17 @@ pub async fn run_agent(
         .ok_or_else(|| format!("{} isn't installed", run.agent.name()))?;
     let mut rec = Recorder::new(&dir, run).map_err(|e| e.to_string())?;
     let mut lost = false;
+    let mut told = false;
     loop {
+        // A fresh session gets the person's own instructions for this agent
+        // first; a resumed one already has them.
+        if rec.run.session.is_none() && !told {
+            if let Some(text) = instructions(rec.run.agent) {
+                rec.run.task = format!("{text}\n\n{}", rec.run.task);
+                let _ = rec.save();
+            }
+            told = true;
+        }
         let mut command = tokio::process::Command::new(&program);
         match rec.run.agent {
             // Claude Code's own protocol, its permission prompts handed to FRIDAY.
@@ -800,6 +814,44 @@ pub async fn run_agent(
         finish(&mut rec, outcome.map(|o| started_fresh(o, lost)));
         return Ok(());
     }
+}
+
+/// The person's own instructions for an agent's runs: `agents/<agent>.md` in
+/// FRIDAY's config folder (`~/.config/friday`, `%APPDATA%\friday` on
+/// Windows). FRIDAY reads it and never writes it; its words go to the agent
+/// as part of the task, never to the approval rules.
+pub fn instructions_file(agent: Agent) -> PathBuf {
+    #[cfg(windows)]
+    let base = std::env::var_os("APPDATA").map(PathBuf::from);
+    #[cfg(not(windows))]
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
+    base.unwrap_or_default()
+        .join("friday")
+        .join("agents")
+        .join(format!("{}.md", agent.name()))
+}
+
+fn instructions(agent: Agent) -> Option<String> {
+    instructions_from(&instructions_file(agent), agent)
+}
+
+/// The instructions block from that file: nothing when it's missing or empty;
+/// at most 8000 characters.
+fn instructions_from(file: &Path, agent: Agent) -> Option<String> {
+    let text = std::fs::read_to_string(file).ok()?;
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let text: String = text.chars().take(8000).collect();
+    Some(format!(
+        "The person's own standing instructions for {} (from their file {}); follow them unless the task below says otherwise:\n\"\"\"\n{text}\n\"\"\"",
+        agent.name(),
+        file.display()
+    ))
 }
 
 /// Puts "Started fresh" in front of a follow-up's summary when its session was gone.
@@ -1461,6 +1513,40 @@ mod tests {
         let run = list(dir.path()).remove(0);
         assert_eq!(run.status, Status::Failed);
         assert!(run.summary.contains("restarted"), "{}", run.summary);
+    }
+
+    #[test]
+    fn the_persons_instructions_go_first_and_an_empty_file_is_nothing() {
+        let dir =
+            TempDir(std::env::temp_dir().join(format!("friday-agents-md-{}", std::process::id())));
+        std::fs::create_dir_all(dir.path()).unwrap();
+        let file = dir.path().join("opencode.md");
+        assert_eq!(instructions_from(&file, Agent::Opencode), None, "no file");
+        std::fs::write(&file, "  \n").unwrap();
+        assert_eq!(
+            instructions_from(&file, Agent::Opencode),
+            None,
+            "empty file"
+        );
+        std::fs::write(&file, "Use tabs.\nNever touch vendor/.\n").unwrap();
+        let block = instructions_from(&file, Agent::Opencode).unwrap();
+        assert!(
+            block.contains("standing instructions for opencode"),
+            "{block}"
+        );
+        assert!(
+            block.contains("\"\"\"\nUse tabs.\nNever touch vendor/.\n\"\"\""),
+            "{block}"
+        );
+        std::fs::write(&file, "x".repeat(9000)).unwrap();
+        assert!(
+            instructions_from(&file, Agent::Opencode)
+                .unwrap()
+                .matches('x')
+                .count()
+                <= 8000
+        );
+        assert!(instructions_file(Agent::Claude).ends_with("friday/agents/claude.md"));
     }
 
     #[test]
