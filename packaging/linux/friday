@@ -27,7 +27,7 @@ Autonomous Agent & Cognitive Loop:
   friday ask --region              Drag out an area of the screen and ask about it
   friday ask --follow-up           Ask a follow-up about the last answer
   friday ask --web ["<objective>"] Ask with web search results and cited sources
-                                   In the question: @screen, @clip, @web or @file <path>
+                                   In the question: @screen, @tab, @clip, @web or @file <path>
                                    pick what goes with it
   friday paste-as                  Paste the clipboard transformed: bullets, JSON, shorter,
                                    translated… (Super+Alt+V)
@@ -3985,12 +3985,13 @@ case "${1:-}" in
       goal="${BASH_REMATCH[1]}"
     fi
     # @-mentions pick what goes with the question: @screen (the window in
-    # front), @clip (the clipboard), @web (a web search), @file <path> (a
-    # text file's contents). Each is taken out of the question.
+    # front; in a browser with FRIDAY's extension, @tab too: the page's text),
+    # @clip (the clipboard), @web (a web search), @file <path> (a text file's
+    # contents). Each is taken out of the question.
     mention_file=""
-    while [[ "$goal" =~ (^|[[:space:]])@(screen|clip|web|file[[:space:]]+([^[:space:]]+))([[:space:]]|$) ]]; do
+    while [[ "$goal" =~ (^|[[:space:]])@(screen|tab|clip|web|file[[:space:]]+([^[:space:]]+))([[:space:]]|$) ]]; do
       case "${BASH_REMATCH[2],,}" in
-        screen) use_screen=true; ask_args+=(--screen) ;;
+        screen|tab) $use_screen || ask_args+=(--screen); use_screen=true ;;
         clip) use_clip=true ;;
         web) use_web=true ;;
         file*) [ -z "$mention_file" ] || { notify "FRIDAY" "One @file at a time."; exit 0; }
