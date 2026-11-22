@@ -27,6 +27,8 @@ Autonomous Agent & Cognitive Loop:
   friday ask --region              Drag out an area of the screen and ask about it
   friday ask --follow-up           Ask a follow-up about the last answer
   friday ask --web ["<objective>"] Ask with web search results and cited sources
+                                   In the question: @screen, @clip, @web or @file <path>
+                                   pick what goes with it
   friday paste-as                  Paste the clipboard transformed: bullets, JSON, shorter,
                                    translated… (Super+Alt+V)
   friday captions [on|off|toggle]  Live captions of what you hear (--mic: the microphone), with
@@ -2592,7 +2594,7 @@ friday_private_window() {
 # friday_private_folder <folder>: the private-windows line (a folder: /… or
 # ~/…) that folder is in, or nothing. Commands run there are private.
 friday_private_folder() {
-  local dir="${1%/}" own="${XDG_CONFIG_HOME:-$HOME/.config}/friday/private-windows" line path never
+  local dir="${1%/}" own="${XDG_CONFIG_HOME:-$HOME/.config}/friday/private-windows" line path never real
   [ -n "$1" ] || return 0
   while IFS= read -r line; do
     line=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<<"$line")
@@ -2600,8 +2602,11 @@ friday_private_folder() {
     if [[ "$line" == "never "* ]]; then never="never:"; line=$(sed 's/^never[[:space:]]*//' <<<"$line"); fi
     case "$line" in /*|"~/"*) ;; *) continue ;; esac
     path="${line/#\~/$HOME}"; path="${path%/}"
-    # "/" alone: every folder.
-    if [ -z "$path" ] || [ "$dir" = "$path" ] || [[ "$dir" == "$path"/* ]]; then printf '%s%s' "$never" "$line"; return 0; fi
+    # "/" alone: every folder. A listed folder that's a symlink counts as
+    # where it leads too.
+    real=$(realpath -m -- "${path:-/}" 2>/dev/null || echo "$path"); real="${real%/}"
+    if [ -z "$path" ] || [ "$dir" = "$path" ] || [[ "$dir" == "$path"/* ]] \
+        || [ "$dir" = "$real" ] || [[ "$dir" == "$real"/* ]]; then printf '%s%s' "$never" "$line"; return 0; fi
   done < <(cat "$own" 2>/dev/null || true)
 }
 
@@ -3706,6 +3711,8 @@ case "${1:-}" in
     #   friday ask --follow-up [text]   ask about the last answer (the answer pill's
     #                                   Follow up)
     #   friday ask --web [text]         ask with web search results and cited sources
+    #   @screen / @clip / @web / @file <path> in the question do the same
+    #   (the window in front, the clipboard, a web search, a text file)
     #   friday ask --new [text]         start a new conversation (asks within 15
     #                                   minutes of each other share one: friday-ctl)
     #   friday ask --another provider/model [text]
@@ -3715,7 +3722,7 @@ case "${1:-}" in
     # With FRIDAY Shell running, the answer opens in its answer pill (which also
     # streams it); otherwise it arrives as a notification.
     shift
-    use_selection=false use_screen=false use_region=false use_followup=false use_web=false use_new=false another="" details="" daemon_down=false
+    use_selection=false use_screen=false use_region=false use_followup=false use_web=false use_new=false use_clip=false another="" details="" daemon_down=false
     rewrite="" sel_window="" source_label=""
     ask_args=()
     while [ $# -gt 0 ]; do
@@ -3940,6 +3947,67 @@ case "${1:-}" in
     elif [[ "$goal" =~ ^look[[:space:]]+up[[:space:]]+(.*)$ ]]; then
       use_web=true
       goal="${BASH_REMATCH[1]}"
+    fi
+    # @-mentions pick what goes with the question: @screen (the window in
+    # front), @clip (the clipboard), @web (a web search), @file <path> (a
+    # text file's contents). Each is taken out of the question.
+    mention_file=""
+    while [[ "$goal" =~ (^|[[:space:]])@(screen|clip|web|file[[:space:]]+([^[:space:]]+))([[:space:]]|$) ]]; do
+      case "${BASH_REMATCH[2],,}" in
+        screen) use_screen=true; ask_args+=(--screen) ;;
+        clip) use_clip=true ;;
+        web) use_web=true ;;
+        file*) [ -z "$mention_file" ] || { notify "FRIDAY" "One @file at a time."; exit 0; }
+               mention_file="${BASH_REMATCH[3]}" ;;
+      esac
+      goal="${goal/"${BASH_REMATCH[0]}"/ }"
+    done
+    goal=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<<"$goal")
+    # @clip and @file are the text asked about: one of them, in a plain ask
+    # (not with the screen, a selection or a follow-up, which bring their own).
+    if { $use_clip || [ -n "$mention_file" ]; } \
+        && { $use_screen || $use_selection || $use_followup || { $use_clip && [ -n "$mention_file" ]; }; }; then
+      notify "FRIDAY" "@clip and @file go on their own: not together, and not with the screen, a selection or a follow-up."
+      exit 0
+    fi
+    if $use_clip; then
+      context=$(timeout 2 wl-paste --no-newline 2>/dev/null || true)
+      if friday_secret_shaped "$context"; then
+        notify "FRIDAY" "The clipboard looks like a password or token, so I won't send it."
+        exit 0
+      fi
+      [ -n "${context//[[:space:]]/}" ] || { notify "FRIDAY" "The clipboard is empty."; exit 0; }
+      context="${context:0:4000}" use_selection=true source_label="Clipboard"
+    elif [ -n "$mention_file" ]; then
+      mention_file="${mention_file/#\~/$HOME}"
+      given_dir=$(dirname -- "$(realpath -s -m -- "$mention_file")")
+      mention_file=$(realpath -e -- "$mention_file" 2>/dev/null || true)
+      if [ ! -f "$mention_file" ] || [ ! -r "$mention_file" ] || ! grep -Iq . "$mention_file" 2>/dev/null; then
+        notify "FRIDAY" "@file needs a text file I can read."
+        exit 0
+      fi
+      case "${mention_file##*/}" in
+        .env|.env.*|*.pem|*.key|id_rsa*|id_ed25519*|id_ecdsa*|*credentials*|*.kdbx|.netrc|.pgpass)
+          notify "FRIDAY" "That file holds keys or passwords, so it isn't sent."
+          exit 0 ;;
+      esac
+      # The folder as named and as it really is (a symlink can lead into or
+      # out of a private one).
+      if [ -n "$(friday_private_folder "$given_dir")" ] || [ -n "$(friday_private_folder "$(dirname -- "$mention_file")")" ]; then
+        notify "FRIDAY" "That file is in a folder you marked private, so it isn't sent."
+        exit 0
+      fi
+      context=$(head -c 8000 -- "$mention_file")
+      if friday_secret_shaped "$context"; then
+        notify "FRIDAY" "That file looks like a password or token, so I won't send it."
+        exit 0
+      fi
+      use_selection=true source_label="File"
+    fi
+    # A window named after the box opened: is it private?
+    if { $use_screen || $use_selection; } && [ -z "$private_win" ] && [ "$source_label" != File ]; then
+      private_win=$(friday_private_window)
+      if $use_screen && [ -n "$private_win" ]; then priv_win=$(timeout 2 hyprctl activewindow -j 2>/dev/null || true); fi
     fi
     # Asking about the screen in words is asking to look at it, the same as
     # Super+Ctrl+Y: never answer "I can't see your screen" to that. Narrow on
@@ -4202,7 +4270,11 @@ case "${1:-}" in
         # sent, then what the daemon added (its "used" list).
         local -a used_parts=()
         if $use_selection && [ -n "${context:-}" ]; then
-          if [ "$source_label" = Clipboard ]; then used_parts+=("your clipboard"); else used_parts+=("your selection"); fi
+          case "$source_label" in
+            Clipboard) used_parts+=("your clipboard") ;;
+            File) used_parts+=("the file $(basename -- "$mention_file")") ;;
+            *) used_parts+=("your selection") ;;
+          esac
         fi
         # A screen ask's own "used" (the window's text or a screenshot) comes
         # from the daemon; this is only for an older one that doesn't say.
