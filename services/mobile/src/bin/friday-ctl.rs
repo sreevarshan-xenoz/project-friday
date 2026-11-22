@@ -219,6 +219,37 @@ fn watch(args: &[String]) -> std::process::ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `friday-ctl window-text <class> <title>`: the words of that window (the
+/// one the caller checked, even if another took focus since), read from its
+/// accessibility tree on this computer (nothing is sent anywhere), for an
+/// ask that must stay local (a private window and the local model). Fails
+/// when the window has too few words to read.
+async fn window_text(args: &[String]) -> std::process::ExitCode {
+    use friday_mobile::context_read::ScreenText;
+    let [class, title] = args else {
+        eprintln!("usage: friday-ctl window-text <class> <title>");
+        return std::process::ExitCode::from(2);
+    };
+    if class.is_empty() {
+        eprintln!("friday-ctl: no window given");
+        return std::process::ExitCode::from(2);
+    }
+    let Some(reader) = friday_mobile::agent_desktop::detect().await else {
+        eprintln!("friday-ctl: reading a window needs agent-desktop");
+        return std::process::ExitCode::FAILURE;
+    };
+    match reader.window_text(class, title).await {
+        Some(text) => {
+            println!("{text}");
+            std::process::ExitCode::SUCCESS
+        }
+        None => {
+            eprintln!("friday-ctl: that window has too little text to read");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
 /// `friday-ctl recall watch | search <question>` (see `friday_mobile::recall`).
 async fn recall(args: &[String]) -> std::process::ExitCode {
     use friday_mobile::context_read::ScreenText;
@@ -1180,6 +1211,9 @@ async fn main() -> std::process::ExitCode {
     }
     if raw.first().map(String::as_str) == Some("recall") {
         return recall(&raw[1..]).await;
+    }
+    if raw.first().map(String::as_str) == Some("window-text") {
+        return window_text(&raw[1..]).await;
     }
     if raw.first().map(String::as_str) == Some("routine") {
         return routine(&raw[1..]).await;

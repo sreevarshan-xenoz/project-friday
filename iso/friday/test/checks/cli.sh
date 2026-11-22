@@ -26,6 +26,11 @@ if [[ "\$1" == recall ]]; then
   [ -n "\$RECALL_REPLY" ] && printf '%s\n' "\$RECALL_REPLY"
   exit 0
 fi
+if [[ "\$1" == window-text ]]; then
+  printf 'friday-ctl-window-text [%s] [%s]\n' "\$2" "\$3" >> "$LOG"
+  [ -n "\$WINDOW_TEXT" ] && { printf '%s\n' "\$WINDOW_TEXT"; exit 0; }
+  exit 1
+fi
 if [[ "\$1" == docs ]]; then
   printf 'friday-ctl-docs %s\n' "\$*" >> "$LOG"
   [ -n "\$DOCS_REPLY" ] && printf '%s\n' "\$DOCS_REPLY"
@@ -614,6 +619,17 @@ printf 'LLAMACPP_ENABLED=1\nLLAMACPP_BASE_URL=http://127.0.0.1:8080/v1\n' >"$env
 : >"$LOG"; bash "$F" ask --screen "what is this"; sleep 0.3
 if grep -q "context screen" "$LOG"; then fail "took a screenshot of a private window"; else pass "no screenshot of a private window"; fi
 contains "and says so" "$(cat "$LOG")" "no screenshot of it leaves"
+# With words to read: they go to the local model, never to the daemon.
+: >"$LOG"; LOCAL_REPLY="It's your vault's entry list." WINDOW_TEXT="Entries: email, bank, wifi" bash "$F" ask --screen "what is this"; sleep 0.3
+contains "a private window's text goes to the local model" "$(cat "$LOG")" "http://127.0.0.1:8080/v1/chat/completions"
+contains "and its answer shows" "$(cat "$LOG")" "It's your vault's entry list."
+if grep -qE "context screen|^friday-ctl '" "$LOG"; then fail "a private window's ask left for the daemon"; else pass "a private window's screen ask stays local"; fi
+grep -q "friday-ctl-window-text \[[^]]" "$LOG" && pass "the text read is the private window's own (its class and title)" || fail "window-text wasn't pinned to the window: $(grep window-text "$LOG")"
+# A "local" URL that really points elsewhere (user@host) is not local.
+printf 'LLAMACPP_ENABLED=1\nLLAMACPP_BASE_URL=http://127.0.0.1:8080@cloud.example/v1\n' >"$envf"
+: >"$LOG"; LOCAL_REPLY="x" WINDOW_TEXT="Entries: email" bash "$F" ask --screen "what is this"; sleep 0.3
+if grep -qE "cloud.example|window-text" "$LOG"; then fail "a user@host model URL counted as local"; else pass "a user@host model URL isn't local"; fi
+printf 'LLAMACPP_ENABLED=1\nLLAMACPP_BASE_URL=http://127.0.0.1:8080/v1\n' >"$envf"
 # "never <name>": not even the local model reads that window.
 cp "$HOME/.config/friday/private-windows" "$W/pw.saved" 2>/dev/null || : >"$W/pw.saved"
 printf 'never thunderbird\n~/work/clients\n' >"$HOME/.config/friday/private-windows"
