@@ -865,6 +865,11 @@ contains "what was that: the kept text is searched" "$(cat "$LOG")" "friday-ctl-
 contains "and goes with the question (no local model: to the provider)" "$(cat "$LOG")" "text that was on my screen"
 : >"$LOG"; RECALL_REPLY="[x]" bash "$F" ask "what is rust"; sleep 0.3
 if grep -q "friday-ctl-recall" "$LOG"; then fail "an ordinary question searched recall"; else pass "an ordinary question doesn't search recall"; fi
+# Only the hourly files (no single recall.jsonl): still searched.
+mv "$rf" "$W/recall.saved"; mkdir -p "${rf%.jsonl}"; echo '{"ts":1}' >"${rf%.jsonl}/0.jsonl"
+: >"$LOG"; RECALL_REPLY="[kitty]" bash "$F" ask "what was that error I saw?"; sleep 0.3
+contains "hourly recall files are searched too" "$(cat "$LOG")" "friday-ctl-recall recall search"
+mv "$W/recall.saved" "$rf"
 # With a local model, it answers instead.
 envf="$HOME/.config/friday/friday.env"; mkdir -p "$(dirname "$envf")"; cp "$envf" "$W/env.saved2" 2>/dev/null || : >"$W/env.saved2"
 printf 'LLAMACPP_ENABLED=1\nLLAMACPP_BASE_URL=http://127.0.0.1:8080/v1\n' >"$envf"; cp "$S/curl" "$W/curl.saved2"
@@ -882,7 +887,7 @@ expect "3h (the default) leaves no file" test ! -e "$state/recall-keep"
 bash "$F" recall keep 24h >/dev/null
 : >"$LOG"; bash "$F" recall off >/dev/null
 contains "recall off stops the service" "$(cat "$LOG")" "systemctl --user disable --now friday-recall.service"
-[ -e "$rf" ] && fail "recall off left the kept text" || pass "recall off forgets the kept text"
+[ -e "$rf" ] || [ -e "${rf%.jsonl}" ] && fail "recall off left the kept text" || pass "recall off forgets the kept text"
 expect "and the keep goes back to 3 hours" test ! -e "$state/recall-keep"
 
 echo "search a folder you pick"

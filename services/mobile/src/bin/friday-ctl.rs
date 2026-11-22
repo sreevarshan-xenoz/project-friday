@@ -237,6 +237,18 @@ async fn recall(args: &[String]) -> std::process::ExitCode {
                 return std::process::ExitCode::FAILURE;
             };
             loop {
+                // Nothing is read while the screen is locked: what changes
+                // behind the lock (a chat, a notification) wasn't looked at.
+                let locked = std::process::Command::new("pidof")
+                    .args(["hyprlock", "swaylock", "gtklock", "waylock"])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .is_ok_and(|s| s.success());
+                if locked {
+                    tokio::time::sleep(Duration::from_secs(recall::EVERY_SECS)).await;
+                    continue;
+                }
                 let win: serde_json::Value = std::process::Command::new("hyprctl")
                     .args(["activewindow", "-j"])
                     .output()

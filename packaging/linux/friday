@@ -1336,6 +1336,7 @@ EOF2
     off)
       systemctl --user disable --now friday-recall.service >/dev/null 2>&1 || true
       rm -f "$file" "${file%.jsonl}.tmp" "$keep"
+      rm -rf "${file%.jsonl}"
       echo "Recall: off, and everything it kept is forgotten." ;;
     keep)
       case "${2:-}" in
@@ -3926,7 +3927,8 @@ case "${1:-}" in
     elif [ -n "$context" ]; then
       request=$(printf '%s\n\nUse this text as context:\n"""\n%s\n"""' "$goal" "$context")
       [ -z "${app_context:-}" ] || request="$request"$'\n'"$app_context"
-    elif ! $use_screen && [ -s "${XDG_STATE_HOME:-$HOME/.local/state}/friday/recall.jsonl" ] && [ -z "$local_answer" ] \
+    elif ! $use_screen && { [ -s "${XDG_STATE_HOME:-$HOME/.local/state}/friday/recall.jsonl" ] \
+          || compgen -G "${XDG_STATE_HOME:-$HOME/.local/state}/friday/recall/*.jsonl" >/dev/null; } && [ -z "$local_answer" ] \
         && systemctl --user is-active --quiet friday-recall.service 2>/dev/null \
         && [[ "${goal,,}" =~ ^(what\ was\ (that|the|it)|what\ did\ i\ (just\ )?(see|read)|where\ did\ i\ (see|read)|earlier|i\ (just\ )?saw)[[:space:][:punct:]] ]] \
         && recalled=$(timeout 3 friday-ctl recall search "$goal" 2>/dev/null) && [ -n "$recalled" ]; then
