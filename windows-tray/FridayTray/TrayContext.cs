@@ -44,7 +44,7 @@ internal sealed class TrayContext : ApplicationContext
         _daemon.GaveUp += GaveUp;
         _host.GaveUp += GaveUp;
 
-        _hotkeys.Pressed += kind => _ = AskAsync(kind);
+        _hotkeys.Pressed += kind => _ = kind == AskKind.Plain ? AskOrTalkAsync() : AskAsync(kind);
         _hotkeys.RegisterAll();
         _icon = new NotifyIcon { Visible = true, Text = "FRIDAY" };
         _icon.MouseUp += (_, e) => { if (e.Button == MouseButtons.Right) ShowMenu(); };
@@ -393,6 +393,99 @@ internal sealed class TrayContext : ApplicationContext
     }
 
     /// <summary>Asks a ready-made question (from a button) and shows the answer like any other.</summary>
+    /// <summary>
+    /// The ask key: a tap opens the ask box; held (with voice set up), it
+    /// listens until let go and asks what was said.
+    /// </summary>
+    private async Task AskOrTalkAsync()
+    {
+        if (_asking || !Listening.Installed(_install.Paths)
+            || !AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "hold-to-talk"))
+        {
+            await AskAsync(AskKind.Plain);
+            return;
+        }
+        await Task.Delay(Listening.HoldDelay);
+        if (!YHeld())
+        {
+            await AskAsync(AskKind.Plain);
+            return;
+        }
+        var key = _hotkeys.Labels.TryGetValue(AskKind.Plain, out var l) ? l : "the ask key";
+        string text;
+        int code;
+        _asking = true;
+        try
+        {
+            _icon.Text = "FRIDAY: listening…";
+            var psi = new System.Diagnostics.ProcessStartInfo(_install.Ctl)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardOutputEncoding = System.Text.Encoding.UTF8,
+            };
+            psi.ArgumentList.Add("listen");
+            psi.ArgumentList.Add("hold");
+            foreach (var (k, v) in _install.ChildEnvironment())
+                psi.Environment[k] = v;
+            using var p = System.Diagnostics.Process.Start(psi);
+            if (p is null)
+                return;
+            var output = p.StandardOutput.ReadToEndAsync();
+            _ = p.StandardError.ReadToEndAsync();
+            // friday-ctl stops by itself after 30 s.
+            while (YHeld() && !p.HasExited)
+                await Task.Delay(30);
+            try { p.StandardInput.Close(); } catch (IOException) { }
+            _icon.Text = "FRIDAY: working out what you said…";
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+            try
+            {
+                await p.WaitForExitAsync(cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                try { p.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+            }
+            text = (await output).Trim();
+            code = p.HasExited ? p.ExitCode : -1;
+        }
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception or IOException)
+        {
+            text = "";
+            code = -1;
+        }
+        finally
+        {
+            _asking = false;
+            UpdateStatus();
+        }
+        // Let go almost at once: that was a tap after all.
+        if (code == 5)
+        {
+            await AskAsync(AskKind.Plain);
+            return;
+        }
+        if (code != 0 || text.Length == 0)
+        {
+            Notify("FRIDAY", Listening.Problem(code == 0 ? 1 : code, key)!, ToolTipIcon.Info);
+            return;
+        }
+        // Spoken like typed: "set a timer for 5 minutes" is answered here too.
+        if (LocalCommands.Parse(text) is { } local)
+        {
+            _log.Remember(text);
+            RunLocal(text, local);
+            return;
+        }
+        await AskTextAsync(text);
+    }
+
+    private static bool YHeld() => (Native.GetAsyncKeyState('Y') & 0x8000) != 0;
+
     private async Task AskTextAsync(string question)
     {
         if (_asking)

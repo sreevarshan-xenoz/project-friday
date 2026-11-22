@@ -1224,8 +1224,21 @@ async fn main() -> std::process::ExitCode {
                 raw.iter().any(|a| a == "--mic"),
             )),
             Some("wake") => std::process::ExitCode::from(friday_mobile::listen::run_wake()),
+            Some("hold") => std::process::ExitCode::from(friday_mobile::listen::run_hold()),
+            Some("setup") => {
+                match friday_mobile::listen::setup(&friday_mobile::listen::whisper_dir()) {
+                    Ok(()) => {
+                        println!("Voice is set up. Hold the ask key and speak.");
+                        std::process::ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("friday-ctl: {e}");
+                        std::process::ExitCode::from(1)
+                    }
+                }
+            }
             _ => {
-                eprintln!("usage: friday-ctl listen captions [--mic] | wake");
+                eprintln!("usage: friday-ctl listen captions [--mic] | wake | hold | setup");
                 std::process::ExitCode::from(2)
             }
         };

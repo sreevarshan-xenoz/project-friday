@@ -24,6 +24,7 @@ You can also just say it in the question: "what is on my screen" or "what am I l
 
 Hold Super+Y instead of tapping it to talk (`friday voice setup` first). The
 speech is turned into text on your computer; only the text is sent. On niri, which can't see a key being released, press Mod+Y once to speak and again to ask.
+On Windows, hold Win+Y the same way after Settings, Voice, "Set up talking" (whisper.cpp and its model, about 150 MB, checked against pinned checksums); a tap still opens the ask box, and `hold-to-talk` under Features switches it off.
 
 **Voice typing:** hold Super+Shift+Y (Mod+Shift+Y on niri: press once to speak, again to type), speak, and let go:
 the words are typed into the field you were in, and nothing is asked or sent. It uses the same voice setup

@@ -69,6 +69,7 @@ public static class AppSettings
         ("agent-resume", "A follow-up to a coding agent goes on in its session (\"tell opencode to also add tests\")"),
         ("self-docs", "Questions about FRIDAY are answered from its own guide"),
         ("sensitive-warn", "Mail and chat apps: the ask box says their text goes to your AI provider"),
+        ("hold-to-talk", "Hold the ask key and speak (speech becomes text on this PC); a tap still opens the ask box"),
     ];
 
     public static bool FeatureOn(IReadOnlyDictionary<string, string> env, string name) =>

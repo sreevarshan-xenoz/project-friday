@@ -4,6 +4,9 @@
 //! whisper.cpp (the same model as `friday voice`). Audio is never stored or
 //! sent anywhere; only the text of a piece leaves this module, and wake-word
 //! listening hands on nothing unless a piece starts with "hey Friday".
+//! On Windows, `hold` records the microphone while the talk key is held and
+//! prints what was said (the tray asks it), with whisper.cpp that `setup`
+//! downloads, pinned by sha256.
 
 use std::path::Path;
 
@@ -252,22 +255,71 @@ pub fn transcribe(whisper: &Path, model: &Path, samples: &[i16]) -> Option<Strin
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
     std::io::Write::write_all(&mut opts.open(&file).ok()?, &wav_bytes(samples)).ok()?;
-    let out = std::process::Command::new("timeout")
-        .arg("60")
-        .arg(whisper)
-        .arg("-m")
-        .arg(model)
-        .arg("-f")
-        .arg(&file)
-        .args(["-nt", "-np"])
-        .stderr(std::process::Stdio::null())
-        .output();
+    #[cfg(unix)]
+    let mut cmd = {
+        let mut c = std::process::Command::new("timeout");
+        c.arg("60").arg(whisper);
+        c
+    };
+    #[cfg(windows)]
+    let mut cmd = {
+        // No console window flashing up from the tray.
+        let mut c = std::process::Command::new(whisper);
+        std::os::windows::process::CommandExt::creation_flags(&mut c, 0x0800_0000);
+        c
+    };
+    let out = with_timeout(
+        cmd.arg("-m")
+            .arg(model)
+            .arg("-f")
+            .arg(&file)
+            .args(["-nt", "-np"])
+            .stderr(std::process::Stdio::null()),
+    );
     let _ = std::fs::remove_file(&file);
     let text = clean_text(&String::from_utf8_lossy(&out.ok()?.stdout));
     (!text.is_empty()).then_some(text)
 }
 
+/// Runs whisper.cpp and returns what it printed; `timeout 60` already bounds
+/// it on Linux.
+#[cfg(unix)]
+fn with_timeout(cmd: &mut std::process::Command) -> std::io::Result<std::process::Output> {
+    cmd.output()
+}
+
+/// Runs whisper.cpp and returns what it printed, stopping it after 60 s.
+#[cfg(windows)]
+fn with_timeout(cmd: &mut std::process::Command) -> std::io::Result<std::process::Output> {
+    use std::io::Read;
+    let mut child = cmd.stdout(std::process::Stdio::piped()).spawn()?;
+    let mut out = child.stdout.take().ok_or(std::io::ErrorKind::BrokenPipe)?;
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = out.read_to_end(&mut buf);
+        buf
+    });
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if std::time::Instant::now() > until {
+            let _ = child.kill();
+            break child.wait()?;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    let stdout = reader.join().unwrap_or_default();
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr: Vec::new(),
+    })
+}
+
 /// whisper.cpp and the model `friday voice setup` installs, if both are there.
+#[cfg(not(windows))]
 pub fn find_whisper() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
     let path = std::env::var_os("PATH")?;
     let bin = std::env::split_paths(&path)
@@ -281,6 +333,135 @@ pub fn find_whisper() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
         })?
         .join("friday/whisper/ggml-base.en.bin");
     model.is_file().then_some((bin, model))
+}
+
+/// whisper.cpp and the model `friday-ctl listen setup` installs, if both are there.
+#[cfg(windows)]
+pub fn find_whisper() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let dir = whisper_dir();
+    let (bin, model) = (
+        dir.join("Release").join("whisper-cli.exe"),
+        dir.join(MODEL.0),
+    );
+    (bin.is_file() && model.is_file()).then_some((bin, model))
+}
+
+/// Where Windows keeps whisper.cpp and its model.
+pub fn whisper_dir() -> std::path::PathBuf {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("friday").join("whisper")
+}
+
+/// The English base model (MIT, ggerganov/whisper.cpp on Hugging Face, the
+/// same one `friday voice setup` uses), pinned at one revision by sha256.
+pub const MODEL: (&str, &str, &str) = (
+    "ggml-base.en.bin",
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.en.bin",
+    "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002",
+);
+
+/// whisper.cpp's own Windows build (MIT), pinned by the sha256 GitHub publishes.
+pub const WHISPER_WIN: (&str, &str, &str) = (
+    "whisper-bin-x64.zip",
+    "https://github.com/ggml-org/whisper.cpp/releases/download/b5454/whisper-bin-x64.zip",
+    "6ba69e3482d7826214f90a6a9c84ca07782aec1e1d0c6a7c30c994fd5d816ccb",
+);
+
+/// Downloads whisper.cpp and the model for hold-to-talk (Windows; Linux has
+/// `friday voice setup`). What is already there is kept.
+pub fn setup(dir: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    if !dir.join("Release").join("whisper-cli.exe").is_file() {
+        let zip = dir.join(WHISPER_WIN.0);
+        crate::speech::download(WHISPER_WIN.1, &zip, WHISPER_WIN.2)?;
+        // Windows' own tar unpacks zip files too.
+        let ok = std::process::Command::new("tar")
+            .arg("-xf")
+            .arg(&zip)
+            .arg("-C")
+            .arg(dir)
+            .status()
+            .map_err(|e| format!("couldn't run tar: {e}"))?
+            .success();
+        let _ = std::fs::remove_file(&zip);
+        if !ok {
+            return Err("couldn't unpack whisper.cpp".into());
+        }
+    }
+    let model = dir.join(MODEL.0);
+    if !model.is_file() {
+        let part = dir.join(format!("{}.part", MODEL.0));
+        crate::speech::download(MODEL.1, &part, MODEL.2)?;
+        std::fs::rename(&part, &model).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// The longest hold that is recorded.
+pub const HOLD_MAX_SECS: usize = 30;
+
+/// Reads the microphone until `stop` says so (the key was let go) or `max`
+/// samples are in, then once more for what came in meanwhile.
+pub fn record_with(
+    mut read: impl FnMut() -> Option<Vec<i16>>,
+    stop: impl Fn() -> bool,
+    max: usize,
+) -> Vec<i16> {
+    let mut all = Vec::new();
+    // A microphone with nothing pending reads empty, so time counts too.
+    let until = std::time::Instant::now()
+        + std::time::Duration::from_secs_f64(max as f64 / RATE as f64 + 1.0);
+    while !stop() && all.len() < max && std::time::Instant::now() < until {
+        match read() {
+            Some(piece) => all.extend(piece),
+            None => break,
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    if let Some(piece) = read() {
+        all.extend(piece);
+    }
+    all.truncate(max);
+    all
+}
+
+/// Hold-to-talk: records until stdin closes (the tray closes it when the key
+/// is let go), then prints what was said. Exit 0 with the text; 1 when
+/// nothing was caught; 3 when voice isn't set up; 4 with no microphone; 5
+/// when the key was let go almost at once (a tap: the tray opens the box).
+pub fn run_hold() -> u8 {
+    let Some((whisper, model)) = find_whisper() else {
+        eprintln!("friday-ctl: voice isn't set up yet: friday-ctl listen setup");
+        return 3;
+    };
+    let Some(mic) = friday_sensors::audio::Mic::open() else {
+        eprintln!("friday-ctl: couldn't open the microphone");
+        return 4;
+    };
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stopped = stop.clone();
+    std::thread::spawn(move || {
+        let _ = std::io::copy(&mut std::io::stdin(), &mut std::io::sink());
+        stopped.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+    let samples = record_with(
+        || mic.read(),
+        || stop.load(std::sync::atomic::Ordering::SeqCst),
+        RATE * HOLD_MAX_SECS,
+    );
+    // Under a quarter of a second is a tap of the key, not speech.
+    if samples.len() < RATE / 4 {
+        return 5;
+    }
+    match transcribe(&whisper, &model, &samples) {
+        Some(text) => {
+            println!("{text}");
+            0
+        }
+        None => 1,
+    }
 }
 
 /// Frames of 100 ms from PipeWire: what is heard (`sink`: the sound the
@@ -690,5 +871,51 @@ mod tests {
     fn notes_are_named_by_time() {
         let t = chrono::TimeZone::with_ymd_and_hms(&chrono::Local, 2026, 11, 20, 9, 5, 0).unwrap();
         assert!(notes_file(t).ends_with("friday/captions/2026-11-20-0905.txt"));
+    }
+
+    #[test]
+    fn a_hold_records_until_the_key_is_let_go() {
+        let reads = std::cell::Cell::new(0);
+        let got = record_with(
+            || {
+                reads.set(reads.get() + 1);
+                Some(vec![1; 100])
+            },
+            || reads.get() >= 3,
+            10_000,
+        );
+        // Three reads while held, one more for what came in meanwhile.
+        assert_eq!(got.len(), 400);
+    }
+
+    #[test]
+    fn a_hold_stops_at_its_longest() {
+        let got = record_with(|| Some(vec![1; 300]), || false, 1_000);
+        assert_eq!(got.len(), 1_000);
+    }
+
+    #[test]
+    fn a_microphone_that_goes_away_ends_the_hold() {
+        let n = std::cell::Cell::new(0);
+        let got = record_with(
+            || {
+                n.set(n.get() + 1);
+                (n.get() < 3).then(|| vec![1; 10])
+            },
+            || false,
+            10_000,
+        );
+        assert_eq!(got.len(), 20);
+    }
+
+    #[test]
+    fn the_downloads_are_pinned_by_full_digests() {
+        for (_, url, sha) in [MODEL, WHISPER_WIN] {
+            assert!(url.starts_with("https://"));
+            assert_eq!(sha.len(), 64);
+            assert!(sha.chars().all(|c| c.is_ascii_hexdigit()));
+        }
+        // The model at a fixed revision, not whatever "main" is today.
+        assert!(!MODEL.1.contains("/main/"));
     }
 }
