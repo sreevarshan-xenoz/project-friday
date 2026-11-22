@@ -38,4 +38,42 @@ public static class AppSettings
 
     public static string WithScreenText(string existing, bool on) =>
         EnvFile.WithSetting(existing, ScreenText, on ? null : "0");
+
+    /// <summary>How much FRIDAY may do on its own (`friday autonomy` on Linux):
+    /// "ask-all" asks before every desktop action, "ask-risky" (the default)
+    /// only before commands, files, launches and what can't be undone, "act"
+    /// runs what it would have asked about and says so afterwards.</summary>
+    public const string Autonomy = "FRIDAY_AUTONOMY";
+    public static readonly string[] AutonomyModes = ["ask-all", "ask-risky", "act"];
+
+    public static string AutonomyMode(IReadOnlyDictionary<string, string> env) =>
+        env.TryGetValue(Autonomy, out var v) && v is "ask-all" or "act" ? v : "ask-risky";
+
+    public static string WithAutonomy(string existing, string mode) =>
+        EnvFile.WithSetting(existing, Autonomy, mode is "ask-all" or "act" ? mode : null);
+
+    /// <summary>The tray's features that can be switched off one by one, as
+    /// (name, what it does). Off ones are listed in FRIDAY_FEATURES_OFF.</summary>
+    public const string FeaturesOff = "FRIDAY_FEATURES_OFF";
+    public static readonly (string Name, string What)[] Features =
+    [
+        ("update-check", "Tell me when a newer FRIDAY is out (asks GitHub once a minute after sign-in)"),
+        ("wrong-button", "\"That was wrong\" on answers (keeps how it was asked and answered, no text)"),
+    ];
+
+    public static bool FeatureOn(IReadOnlyDictionary<string, string> env, string name) =>
+        !env.TryGetValue(FeaturesOff, out var v)
+        || !v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Contains(name);
+
+    public static string WithFeature(string existing, string name, bool on)
+    {
+        var env = EnvFile.Parse(existing);
+        var off = (env.TryGetValue(FeaturesOff, out var v) ? v : "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(n => n != name)
+            .ToList();
+        if (!on)
+            off.Add(name);
+        return EnvFile.WithSetting(existing, FeaturesOff, off.Count == 0 ? null : string.Join(",", off));
+    }
 }

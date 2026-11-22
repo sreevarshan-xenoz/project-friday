@@ -263,6 +263,12 @@ internal sealed partial class SettingsWindow : FluentWindow
             (Elevation.IsElevated() ? "FRIDAY is running as administrator now." : "Takes effect the next time FRIDAY starts."),
             admin,
             SetAdministrator);
+        // The tray's own features, each with its switch (all on to start).
+        yield return Caption("Features");
+        var env = EnvFile.Load(_install.Paths.EnvFile);
+        foreach (var (name, what) in AppSettings.Features)
+            yield return Switch(what, "Switch off if you don't want it.", AppSettings.FeatureOn(env, name),
+                on => ChangeEnv(e => AppSettings.WithFeature(e, name, on), restart: false));
         yield return Row(Pill("Restart FRIDAY", SymbolRegular.ArrowSync24), () => { _do.RestartDaemon(); Said("FRIDAY restarted."); });
         yield return Row(Pill("Open logs", SymbolRegular.DocumentBulletList24), _do.OpenLogs);
     }
@@ -598,6 +604,33 @@ internal sealed partial class SettingsWindow : FluentWindow
             "FRIDAY only does this when you ask; closing a window always asks first and shows the exact action. Off: FRIDAY answers questions but does not act.",
             AppSettings.DesktopControlOn(EnvFile.Load(_install.Paths.EnvFile)),
             on => ChangeEnv(env => AppSettings.WithDesktopControl(env, on)));
+        // How much it may do without asking: one of three, the current one highlighted.
+        yield return Caption("How much FRIDAY may do on its own");
+        var mode = AppSettings.AutonomyMode(EnvFile.Load(_install.Paths.EnvFile));
+        var modes = new StackPanel { Orientation = Orientation.Horizontal };
+        foreach (var (m, label, icon) in new[]
+        {
+            ("ask-all", "Ask before every action", SymbolRegular.HandRight24),
+            ("ask-risky", "Ask only for risky ones", SymbolRegular.Shield24),
+            ("act", "Act, then tell me", SymbolRegular.Flash24),
+        })
+        {
+            var pick = Pill(label, icon, primary: m == mode);
+            pick.Margin = new Thickness(0, 0, 8, 0);
+            pick.Click += (_, _) =>
+            {
+                ChangeEnv(env => AppSettings.WithAutonomy(env, m));
+                Show("Desktop control");
+            };
+            modes.Children.Add(pick);
+        }
+        yield return modes;
+        yield return Note(mode switch
+        {
+            "ask-all" => "FRIDAY asks before every action, a window or the volume too.",
+            "act" => "FRIDAY does what it would have asked about, then a notification says what it did. The daemon still runs only that exact action.",
+            _ => "FRIDAY asks before running a command, writing a file, opening an app or anything that can't be undone, like closing a window.",
+        });
         // What FRIDAY did lately, so a window that moved or a program that opened has an explanation.
         var done = ActionLog.ReadNewestFirst(_install.Paths.ActionsFile, 8);
         yield return Caption("What FRIDAY did");
@@ -948,13 +981,20 @@ internal sealed partial class SettingsWindow : FluentWindow
     }
 
     /// <summary>Rewrites friday.env with <paramref name="change"/> and restarts the daemon so it takes effect.</summary>
-    private void ChangeEnv(Func<string, string> change)
+    /// <summary>Changes friday.env; the daemon restarts to read it unless the
+    /// setting is only the tray's (<paramref name="restart"/> false).</summary>
+    private void ChangeEnv(Func<string, string> change, bool restart = true)
     {
         var path = _install.Paths.EnvFile;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var tmp = path + ".tmp";
         File.WriteAllText(tmp, change(File.Exists(path) ? File.ReadAllText(path) : ""));
         File.Move(tmp, path, overwrite: true);
+        if (!restart)
+        {
+            Said("Saved.");
+            return;
+        }
         _do.RestartDaemon();
         Said("Saved. FRIDAY restarted.");
     }

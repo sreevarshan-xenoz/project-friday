@@ -81,6 +81,8 @@ internal sealed class TrayContext : ApplicationContext
     {
         var ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
         await Task.Delay(TimeSpan.FromMinutes(1));
+        if (!AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "update-check"))
+            return;
         var r = await Updater.NewerAsync();
         if (r is not null)
             ui.Post(_ => Notify($"FRIDAY {r.Version} is out", "Settings, Health & updates, Check for updates installs it.", ToolTipIcon.Info), null);
@@ -498,6 +500,16 @@ internal sealed class TrayContext : ApplicationContext
         if (answer is null || answer.IsClosed)
             answer = NewAnswerWindow(kind, question, "");
 
+        // "Act, then tell me" (Settings, Desktop control): what FRIDAY would
+        // have asked about runs now, once, and a balloon says what it did. The
+        // daemon still runs only that exact action.
+        if (outcome.Confirmation is { } autoConf && confirm is null
+            && AppSettings.AutonomyMode(EnvFile.Load(_install.Paths.EnvFile)) == "act")
+        {
+            Notify("FRIDAY acted on its own", outcome.Answer + "\n(Settings, Desktop control: How much FRIDAY may do)", ToolTipIcon.Info);
+            await RunRequestAsync(kind, question, context, request, autoConf.Action, answer, options);
+            return;
+        }
         if (outcome.Confirmation is { } nextConf)
         {
             Action<string>? onConfirm = null;
@@ -586,16 +598,20 @@ internal sealed class TrayContext : ApplicationContext
         form.Closed += (_, _) => { if (Speaking.Enabled(_install.Paths)) Ctl.StopSaying(_install); };
         form.CanAskAnother = kind != AskKind.Screen;
         form.AskAgain += () => _ = AskAsync(kind);
-        form.Wrong += outcome =>
+        // "That was wrong" shows only while its switch is on (Settings, General).
+        if (AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "wrong-button"))
         {
-            try
+            form.Wrong += outcome =>
             {
-                var version = typeof(TrayContext).Assembly.GetName().Version?.ToString(3) ?? "";
-                Repro.Save(_install.Paths, kind, outcome, question.Length, "Wrong", version);
-            }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
-        };
+                try
+                {
+                    var version = typeof(TrayContext).Assembly.GetName().Version?.ToString(3) ?? "";
+                    Repro.Save(_install.Paths, kind, outcome, question.Length, "Wrong", version);
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            };
+        }
         // This card's own window: a later ask doesn't move where it types.
         var target = _askTarget;
         form.TypeIt += text => _ = TypeItAsync(target, text);
