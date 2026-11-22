@@ -418,6 +418,261 @@ pub fn presets(hw: &Hardware) -> Vec<Preset> {
         .collect()
 }
 
+// ------------------------------------------------------------ installed engines
+
+/// A model an engine on this computer already has.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FoundModel {
+    pub name: String,
+    pub size_mb: u64,
+    pub vision: bool,
+}
+
+/// Ollama or llama.cpp as found on this computer: installed, running (its
+/// server answers), where it answers, and the models it already has.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Engine {
+    pub name: &'static str,
+    pub installed: bool,
+    pub running: bool,
+    pub base_url: &'static str,
+    pub models: Vec<FoundModel>,
+}
+
+pub const OLLAMA_URL: &str = "http://127.0.0.1:11434";
+pub const LLAMACPP_URL: &str = "http://127.0.0.1:8080";
+
+/// Models that see images, by family, when the engine doesn't say.
+fn vision_by_name(name: &str) -> bool {
+    let n = name.to_lowercase();
+    [
+        "gemma3",
+        "llava",
+        "-vl",
+        "vl:",
+        "vision",
+        "minicpm-v",
+        "moondream",
+        "pixtral",
+        "mmproj",
+    ]
+    .iter()
+    .any(|f| n.contains(f))
+}
+
+/// Ollama's `/api/tags`: its models and their sizes.
+pub fn parse_ollama_tags(json: &str) -> Vec<FoundModel> {
+    let v: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
+    v["models"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|m| {
+                    let name = m["name"].as_str().or_else(|| m["model"].as_str())?;
+                    Some(FoundModel {
+                        name: name.to_string(),
+                        size_mb: m["size"].as_u64().unwrap_or(0) / 1_048_576,
+                        vision: vision_by_name(name),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// An OpenAI-style `/v1/models` (llama.cpp's server): the model names.
+pub fn parse_openai_models(json: &str) -> Vec<String> {
+    let v: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
+    v["data"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|m| m["id"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The GGUF models in a folder (FRIDAY's own llama.cpp models); one with an
+/// `-mmproj.gguf` beside it sees images. The projector files aren't models.
+pub fn gguf_models(dir: &Path) -> Vec<FoundModel> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut found: Vec<FoundModel> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            if !name.ends_with(".gguf") || name.contains("mmproj") {
+                return None;
+            }
+            let projector = dir.join(format!("{}-mmproj.gguf", name.trim_end_matches(".gguf")));
+            Some(FoundModel {
+                size_mb: e.metadata().map(|m| m.len()).unwrap_or(0) / 1_048_576,
+                vision: projector.is_file(),
+                name,
+            })
+        })
+        .collect();
+    found.sort_by(|a, b| a.name.cmp(&b.name));
+    found
+}
+
+fn on_path(names: &[&str]) -> bool {
+    std::env::var_os("PATH").is_some_and(|p| {
+        std::env::split_paths(&p).any(|d| names.iter().any(|n| d.join(n).is_file()))
+    })
+}
+
+/// Where FRIDAY keeps its own llama.cpp (the release build and its models).
+pub fn llama_dir() -> std::path::PathBuf {
+    if let Some(d) = std::env::var_os("FRIDAY_LLAMA_DIR").filter(|d| !d.is_empty()) {
+        return d.into();
+    }
+    #[cfg(windows)]
+    {
+        std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap_or_default())
+            .join("friday")
+            .join("llama.cpp")
+    }
+    #[cfg(not(windows))]
+    {
+        std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+            .join(".local/share/friday/llama.cpp")
+    }
+}
+
+fn ollama_installed() -> bool {
+    // Windows' per-user install, which a tray started at sign-in may not
+    // have on PATH yet.
+    let per_user = cfg!(windows)
+        && std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap_or_default())
+            .join("Programs/Ollama/ollama.exe")
+            .is_file();
+    per_user || on_path(&["ollama", "ollama.exe"])
+}
+
+/// Ollama and llama.cpp on this computer, each with the models it already
+/// has. A server that doesn't answer within a second counts as not running.
+pub async fn engines() -> Vec<Engine> {
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .connect_timeout(std::time::Duration::from_millis(800))
+        .build()
+        .unwrap_or_default();
+    let get = |url: String| {
+        let http = http.clone();
+        async move {
+            let r = http.get(url).send().await.ok()?;
+            r.status().is_success().then_some(())?;
+            r.text().await.ok()
+        }
+    };
+
+    // Ollama: its models, and whether each one sees images (`/api/show`).
+    let tags = get(format!("{OLLAMA_URL}/api/tags")).await;
+    let mut ollama_models = tags.as_deref().map(parse_ollama_tags).unwrap_or_default();
+    // All at once: many models mustn't add up to a long wait.
+    let shows = futures::future::join_all(ollama_models.iter().map(|m| {
+        let http = http.clone();
+        let name = m.name.clone();
+        async move {
+            let r = http
+                .post(format!("{OLLAMA_URL}/api/show"))
+                .json(&serde_json::json!({ "model": name }))
+                .send()
+                .await
+                .ok()?;
+            let v = r.json::<serde_json::Value>().await.ok()?;
+            v["capabilities"]
+                .as_array()
+                .map(|caps| caps.iter().any(|c| c == "vision"))
+        }
+    }))
+    .await;
+    for (m, vision) in ollama_models.iter_mut().zip(shows) {
+        if let Some(v) = vision {
+            m.vision = v;
+        }
+    }
+    let ollama = Engine {
+        name: "ollama",
+        installed: ollama_installed() || tags.is_some(),
+        running: tags.is_some(),
+        base_url: OLLAMA_URL,
+        models: ollama_models,
+    };
+
+    // llama.cpp: the running server's model, then FRIDAY's own downloads.
+    let dir = llama_dir();
+    let served = get(format!("{LLAMACPP_URL}/v1/models"))
+        .await
+        .map(|j| parse_openai_models(&j));
+    let mut models = gguf_models(&dir.join("models"));
+    for name in served.iter().flatten() {
+        if !models
+            .iter()
+            .any(|m| m.name == *name || name.ends_with(&m.name))
+        {
+            models.push(FoundModel {
+                name: name.clone(),
+                size_mb: 0,
+                vision: vision_by_name(name),
+            });
+        }
+    }
+    let llamacpp = Engine {
+        name: "llamacpp",
+        installed: on_path(&["llama-server", "llama-server.exe"])
+            || dir.join("llama-server").is_file()
+            || dir.join("llama-server.exe").is_file()
+            || served.is_some(),
+        running: served.is_some(),
+        base_url: LLAMACPP_URL,
+        models,
+    };
+    vec![ollama, llamacpp]
+}
+
+/// One line per engine, for `friday local-ai status` and the settings pages.
+pub fn engine_line(e: &Engine) -> String {
+    let label = if e.name == "ollama" {
+        "Ollama"
+    } else {
+        "llama.cpp"
+    };
+    if !e.installed {
+        return format!("{label}: not installed");
+    }
+    let state = if e.running {
+        "running"
+    } else {
+        "installed, not running"
+    };
+    if e.models.is_empty() {
+        return format!("{label}: {state}, no models yet");
+    }
+    let list: Vec<String> = e
+        .models
+        .iter()
+        .map(|m| {
+            let mut s = m.name.clone();
+            let mut notes = Vec::new();
+            if m.size_mb > 0 {
+                notes.push(gb(m.size_mb));
+            }
+            if m.vision {
+                notes.push("sees screenshots".to_string());
+            }
+            if !notes.is_empty() {
+                s += &format!(" ({})", notes.join(", "));
+            }
+            s
+        })
+        .collect();
+    format!("{label}: {state}, {}", list.join("; "))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -558,5 +813,66 @@ mod tests {
         assert_eq!(gb(2048), "2 GB");
         assert_eq!(gb(1536), "1.5 GB");
         assert_eq!(gb(4608), "4.5 GB");
+    }
+
+    #[test]
+    fn ollamas_models_come_with_their_sizes() {
+        let tags = r#"{"models":[{"name":"qwen3:4b","size":2620788019},{"name":"gemma3:4b","size":3338801804}]}"#;
+        let found = parse_ollama_tags(tags);
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].name, "qwen3:4b");
+        assert_eq!(found[0].size_mb, 2499);
+        assert!(!found[0].vision);
+        assert!(found[1].vision, "gemma3 sees images");
+        assert!(parse_ollama_tags("not json").is_empty());
+    }
+
+    #[test]
+    fn a_llama_server_names_its_model() {
+        let v = r#"{"object":"list","data":[{"id":"Qwen3-4B-Q4_K_M.gguf","object":"model"}]}"#;
+        assert_eq!(parse_openai_models(v), vec!["Qwen3-4B-Q4_K_M.gguf"]);
+    }
+
+    #[test]
+    fn fridays_own_gguf_files_are_found_and_projectors_skipped() {
+        let dir = std::env::temp_dir().join(format!("friday-gguf-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("gemma-3-4b-it-Q4_K_M.gguf"), vec![0u8; 2_097_152]).unwrap();
+        std::fs::write(dir.join("gemma-3-4b-it-Q4_K_M-mmproj.gguf"), b"x").unwrap();
+        std::fs::write(dir.join("Qwen3-4B-Q4_K_M.gguf"), b"x").unwrap();
+        std::fs::write(dir.join("notes.txt"), b"x").unwrap();
+        let found = gguf_models(&dir);
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(found[1].name, "gemma-3-4b-it-Q4_K_M.gguf");
+        assert!(found[1].vision);
+        assert_eq!(found[1].size_mb, 2);
+        assert!(!found[0].vision);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_engine_line_says_what_is_there() {
+        let mut e = Engine {
+            name: "ollama",
+            installed: false,
+            running: false,
+            base_url: OLLAMA_URL,
+            models: vec![],
+        };
+        assert_eq!(engine_line(&e), "Ollama: not installed");
+        e.installed = true;
+        assert_eq!(
+            engine_line(&e),
+            "Ollama: installed, not running, no models yet"
+        );
+        e.running = true;
+        e.models = vec![FoundModel {
+            name: "gemma3:4b".into(),
+            size_mb: 3184,
+            vision: true,
+        }];
+        let line = engine_line(&e);
+        assert!(line.starts_with("Ollama: running, gemma3:4b ("), "{line}");
+        assert!(line.contains("sees screenshots"), "{line}");
     }
 }

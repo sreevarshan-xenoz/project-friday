@@ -143,7 +143,7 @@ ColumnLayout {
   // below cloud first while online (friday local-ai order).
   Label { text: "Local AI"; font.weight: Font.DemiBold; Layout.topMargin: 8 }
   Cmd { id: localAi; args: ["local-ai", "status"] }
-  Component.onCompleted: { localAi.run(); providers.run(); }
+  Component.onCompleted: { localAi.run(); providers.run(); engines.run(); }
   Flow {
     Layout.fillWidth: true
     spacing: 8
@@ -159,6 +159,45 @@ ColumnLayout {
     Chip { text: "Set up local AI"; onClicked: page.inTerminal("local AI", "friday setup-ai local") }
   }
   Output { text: localAi.output }
+
+  // Engines already on this computer (Ollama, llama.cpp) and the models they
+  // have: "Use" answers with one, nothing downloaded.
+  Cmd {
+    id: engines
+    args: ["local-ai", "engines", "--json"]
+    property var found: []
+    onFinished: (out) => { try { found = JSON.parse(out); } catch (e) { found = []; } }
+  }
+  Cmd { id: useModel; args: ["local-ai", "use"]; onFinished: { localAi.args = ["local-ai", "status"]; localAi.run(); engines.run(); } }
+  Repeater {
+    model: engines.found
+    ColumnLayout {
+      id: engineRow
+      required property var modelData
+      Layout.fillWidth: true
+      spacing: 4
+      visible: modelData.installed
+      Label {
+        text: (modelData.engine === "ollama" ? "Ollama" : "llama.cpp") + (modelData.running ? " (running)" : " (installed, not running)")
+        color: Theme.faint
+        font.pixelSize: Theme.fontS + 1
+      }
+      Flow {
+        Layout.fillWidth: true
+        spacing: 8
+        Repeater {
+          model: modelData.models
+          Chip {
+            required property var modelData
+            text: "Use " + modelData.name + (modelData.size_mb > 0 ? " · " + (modelData.size_mb / 1024).toFixed(1) + " GB" : "") + (modelData.vision ? " · sees screenshots" : "")
+            primary: localAi.output.indexOf("on, " + modelData.name + " ") >= 0
+            onClicked: useModel.run([engineRow.modelData.engine, modelData.name])
+          }
+        }
+      }
+    }
+  }
+  Output { text: useModel.output }
   Label {
     Layout.fillWidth: true
     text: "Auto: a model above 4B answers first; a smaller one backs up cloud, so questions go to a cloud model first while you're online. Local first keeps them on this computer whenever the local model can answer."
