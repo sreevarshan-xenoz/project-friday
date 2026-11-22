@@ -459,6 +459,9 @@ echo "agent folder hint"
 mkdir -p "$state/agents"; printf '{"id":"r1","folder":"%s/code/site"}' "$HOME" >"$state/agents/r1.json"
 : >"$LOG"; PICK="" bash "$F" ask; sleep 0.3
 contains "the ask box says where agents work" "$(cat "$LOG")" "agents work in ~/code/site unless you name a folder"
+printf '{"id":"r2","folder":"%sx/site","started":5}' "$HOME" >"$state/agents/r2.json"; touch -d '1 hour ago' "$state/agents/r2.json"
+: >"$LOG"; PICK="" bash "$F" ask; sleep 0.3
+contains "the newest run by start time, ~ only for the home folder itself" "$(cat "$LOG")" "agents work in ${HOME}x/site unless"
 echo FRIDAY_AGENTS=0 >>"$HOME/.config/friday/friday.env"
 : >"$LOG"; PICK="" bash "$F" ask; sleep 0.3
 if grep -q "agents work in" "$LOG"; then fail "agent folder hint shown with agents off"; else pass "no agent folder hint with agents off"; fi

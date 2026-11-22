@@ -881,11 +881,14 @@ KEYS
 # run that names no folder goes where that agent last worked).
 friday_agent_folder() {
   grep -qE '^FRIDAY_AGENTS=0$' "${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" 2>/dev/null && return 0
-  local f
-  f=$(ls -t "${XDG_STATE_HOME:-$HOME/.local/state}/friday/agents/"r*.json 2>/dev/null | head -n 1 || true)
-  [ -n "$f" ] || return 0
-  f=$(jq -r '.folder // empty' "$f" 2>/dev/null || true)
-  [ -z "$f" ] || printf '%s' "${f/#"$HOME"/\~}"
+  local f home="${HOME%/}"
+  f=$(jq -rs 'map(select(.folder? // "" | length > 0)) | max_by(.started // 0) | .folder // empty' \
+    "${XDG_STATE_HOME:-$HOME/.local/state}/friday/agents/"r*.json 2>/dev/null || true)
+  case "$f" in
+    "") ;;
+    "$home"|"$home"/*) printf '~%s' "${f#"$home"}" ;;
+    *) printf '%s' "$f" ;;
+  esac
 }
 
 friday_switch() {

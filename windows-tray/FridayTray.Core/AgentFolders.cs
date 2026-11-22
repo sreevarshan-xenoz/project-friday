@@ -13,11 +13,12 @@ public sealed record AgentFolders(IReadOnlyDictionary<string, string> Last, IRea
     /// <summary>Most folders offered when the chip is clicked.</summary>
     public const int MaxKnown = 6;
 
-    private static readonly Regex AgentName = new(@"\b(open ?code|agy|antigravity|claude[ -]code)\b",
+    private static readonly Regex AgentName = new(@"\b(opencode|agy|antigravity|claude[ -]code)\b",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    // ~/x, ~\x, C:\x, or /x: the request already says where.
-    private static readonly Regex FolderName = new(@"~[\\/]|\b[A-Za-z]:\\|(^|\s)/\w", RegexOptions.Compiled);
+    // ~/x, C:\x, \\server\x, /x, or code/site (the daemon reads that from the
+    // home folder): the request already says where.
+    private static readonly Regex FolderName = new(@"~[\\/]|\b[A-Za-z]:\\|\\\\\w|(^|\s)(\.{1,2}[\\/]|/|\w[\w.-]*[\\/])\w", RegexOptions.Compiled);
 
     public static AgentFolders Load(string agentsDir, string home)
     {
@@ -32,7 +33,16 @@ public sealed record AgentFolders(IReadOnlyDictionary<string, string> Last, IRea
         catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException or InvalidOperationException)
         {
         }
-        var known = AgentRuns.Load(agentsDir).Select(r => r.Folder).Concat(last.Values)
+        IReadOnlyList<AgentRun> runs;
+        try
+        {
+            runs = AgentRuns.Load(agentsDir);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            runs = [];
+        }
+        var known = runs.Select(r => r.Folder).Concat(last.Values)
             .Where(f => f.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(MaxKnown)

@@ -22,7 +22,7 @@ public class AgentFoldersTests : IDisposable
         File.WriteAllText(Path.Combine(_dir, "last-folder.json"), $$"""{"opencode": "/home/me/code/site", "claude": "/srv/api"}""");
         var folders = AgentFolders.Load(_dir, "/home/me");
         Assert.Equal("opencode works in ~/code/site", folders.Chip("ask opencode to fix the tests"));
-        Assert.Equal("opencode works in ~/code/site", folders.Chip("have Open Code add a README"));
+        Assert.Equal("opencode works in ~/code/site", folders.Chip("have OpenCode add a README"));
         Assert.Equal("Claude Code works in /srv/api", folders.Chip("Claude Code, tidy the imports"));
         Assert.Equal($"Say which folder agy works in, like ~{S}code{S}site", folders.Chip("get antigravity to write docs"));
     }
@@ -35,9 +35,13 @@ public class AgentFoldersTests : IDisposable
         Assert.Null(folders.Chip("what's using my disk?"));
         Assert.Null(folders.Chip("ask opencode to fix the tests in ~/code/app"));
         Assert.Null(folders.Chip(@"ask opencode to fix the tests in C:\code\app"));
-        Assert.Null(folders.Chip("ask opencode to fix the tests in /srv/app"));
+        Assert.Null(folders.Chip("ask opencode to fix the tests in /srv"));
         Assert.Null(folders.Chip("is the agyle board up?"));
         Assert.Null(folders.Chip("ask claude what a monad is"));
+        Assert.Null(folders.Chip("please open code.py and read it"));
+        Assert.Null(folders.Chip("ask opencode to fix the tests in code/site"));
+        Assert.Null(folders.Chip("ask opencode to fix the tests in ./app"));
+        Assert.Null(folders.Chip(@"ask opencode to fix the tests in \\server\share\app"));
     }
 
     [Fact]
