@@ -17,10 +17,10 @@ public static class Listening
         File.Exists(Path.Combine(WhisperDir(p), "Release", "whisper-cli.exe"))
         && File.Exists(Path.Combine(WhisperDir(p), "ggml-base.en.bin"));
 
-    /// <summary>What to tell the person when `listen hold` exits with <paramref name="exitCode"/>, or null when it heard something.</summary>
+    /// <summary>What to tell the person when `listen hold` exits with <paramref name="exitCode"/>, or null when it heard something (0) or the key was only tapped (5).</summary>
     public static string? Problem(int exitCode, string key) => exitCode switch
     {
-        0 => null,
+        0 or 5 => null,
         1 => $"I didn't catch that. Hold {key} and speak, or tap it to type.",
         3 => "Talking to FRIDAY isn't set up yet: Settings, Voice.",
         4 => "Couldn't open the microphone. Check that one is plugged in and that apps may use it (Windows Settings, Privacy, Microphone).",

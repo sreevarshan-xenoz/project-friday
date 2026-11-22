@@ -8,6 +8,9 @@ public class ListeningTests
     [Fact]
     public void Heard_is_no_problem() => Assert.Null(Listening.Problem(0, "Win+Y"));
 
+    [Fact]
+    public void A_tap_is_no_problem_either() => Assert.Null(Listening.Problem(5, "Win+Y"));
+
     [Theory]
     [InlineData(1, "didn't catch")]
     [InlineData(3, "isn't set up")]

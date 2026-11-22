@@ -460,8 +460,14 @@ internal sealed class TrayContext : ApplicationContext
         }
         finally
         {
-            UpdateStatus();
             _asking = false;
+            UpdateStatus();
+        }
+        // Let go almost at once: that was a tap after all.
+        if (code == 5)
+        {
+            await AskAsync(AskKind.Plain);
+            return;
         }
         if (code != 0 || text.Length == 0)
         {

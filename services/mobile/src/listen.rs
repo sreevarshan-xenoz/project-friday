@@ -268,17 +268,54 @@ pub fn transcribe(whisper: &Path, model: &Path, samples: &[i16]) -> Option<Strin
         std::os::windows::process::CommandExt::creation_flags(&mut c, 0x0800_0000);
         c
     };
-    let out = cmd
-        .arg("-m")
-        .arg(model)
-        .arg("-f")
-        .arg(&file)
-        .args(["-nt", "-np"])
-        .stderr(std::process::Stdio::null())
-        .output();
+    let out = with_timeout(
+        cmd.arg("-m")
+            .arg(model)
+            .arg("-f")
+            .arg(&file)
+            .args(["-nt", "-np"])
+            .stderr(std::process::Stdio::null()),
+    );
     let _ = std::fs::remove_file(&file);
     let text = clean_text(&String::from_utf8_lossy(&out.ok()?.stdout));
     (!text.is_empty()).then_some(text)
+}
+
+/// Runs whisper.cpp and returns what it printed; `timeout 60` already bounds
+/// it on Linux.
+#[cfg(unix)]
+fn with_timeout(cmd: &mut std::process::Command) -> std::io::Result<std::process::Output> {
+    cmd.output()
+}
+
+/// Runs whisper.cpp and returns what it printed, stopping it after 60 s.
+#[cfg(windows)]
+fn with_timeout(cmd: &mut std::process::Command) -> std::io::Result<std::process::Output> {
+    use std::io::Read;
+    let mut child = cmd.stdout(std::process::Stdio::piped()).spawn()?;
+    let mut out = child.stdout.take().ok_or(std::io::ErrorKind::BrokenPipe)?;
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = out.read_to_end(&mut buf);
+        buf
+    });
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if std::time::Instant::now() > until {
+            let _ = child.kill();
+            break child.wait()?;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    let stdout = reader.join().unwrap_or_default();
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr: Vec::new(),
+    })
 }
 
 /// whisper.cpp and the model `friday voice setup` installs, if both are there.
@@ -373,7 +410,10 @@ pub fn record_with(
     max: usize,
 ) -> Vec<i16> {
     let mut all = Vec::new();
-    while !stop() && all.len() < max {
+    // A microphone with nothing pending reads empty, so time counts too.
+    let until = std::time::Instant::now()
+        + std::time::Duration::from_secs_f64(max as f64 / RATE as f64 + 1.0);
+    while !stop() && all.len() < max && std::time::Instant::now() < until {
         match read() {
             Some(piece) => all.extend(piece),
             None => break,
@@ -389,7 +429,8 @@ pub fn record_with(
 
 /// Hold-to-talk: records until stdin closes (the tray closes it when the key
 /// is let go), then prints what was said. Exit 0 with the text; 1 when
-/// nothing was caught; 3 when voice isn't set up; 4 with no microphone.
+/// nothing was caught; 3 when voice isn't set up; 4 with no microphone; 5
+/// when the key was let go almost at once (a tap: the tray opens the box).
 pub fn run_hold() -> u8 {
     let Some((whisper, model)) = find_whisper() else {
         eprintln!("friday-ctl: voice isn't set up yet: friday-ctl listen setup");
@@ -410,9 +451,9 @@ pub fn run_hold() -> u8 {
         || stop.load(std::sync::atomic::Ordering::SeqCst),
         RATE * HOLD_MAX_SECS,
     );
-    // Under a quarter of a second is a slip of the key, not speech.
+    // Under a quarter of a second is a tap of the key, not speech.
     if samples.len() < RATE / 4 {
-        return 1;
+        return 5;
     }
     match transcribe(&whisper, &model, &samples) {
         Some(text) => {
