@@ -67,6 +67,18 @@ if grep -qs "the code word is heron" "$W/config/friday/memory.md" "$W/appdata/fr
 else fail "it isn't in the memory file"; fi
 if grep -q "about you: the code word is heron" <<<"$seen"; then pass "and the next ask carries it"
 else fail "the next ask doesn't carry the memory file"; fi
+# Another assistant's notes come in only after a preview.
+printf '# CLAUDE.md\n- I live in Chennai\n- the code word is heron\n```\n- not code\n```\n' >"$W/notes.md"
+mem="$W/config/friday/memory.md"; [[ -f "$mem" ]] || mem="$W/appdata/friday/memory.md"
+before=$(cat "$mem")
+preview=$("${offline[@]}" "$CTL_BIN" memory import "$W/notes.md" 2>&1)
+if grep -q "Would add 1 line" <<<"$preview" && grep -q "I live in Chennai" <<<"$preview" && [[ "$(cat "$mem")" == "$before" ]]; then
+  pass "an import shows what it would add and adds nothing yet"
+else fail "the import preview: $preview"; fi
+"${offline[@]}" "$CTL_BIN" memory import "$W/notes.md" --apply >/dev/null 2>&1
+if grep -q "^- I live in Chennai" "$mem" && [[ $(grep -c heron "$mem") == 1 ]] && ! grep -q "not code" "$mem"; then
+  pass "--apply adds only the new line"
+else fail "--apply: $(cat "$mem")"; fi
 
 echo "after a restart"
 kill $DAEMON; wait $DAEMON 2>/dev/null || true

@@ -1406,6 +1406,16 @@ async fn main() -> std::process::ExitCode {
     if raw.first().map(String::as_str) == Some("agent-hooks") {
         return agent_hooks(&raw[1..]);
     }
+    // Another assistant's notes into memory.md: a preview first, --apply adds.
+    if raw.first().map(String::as_str) == Some("memory") {
+        return match memory_import(&raw[1..]) {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("friday-ctl: {e}");
+                std::process::ExitCode::from(2)
+            }
+        };
+    }
     // A run's separate copy: brought in (staged) or dropped.
     if raw.first().map(String::as_str) == Some("agents") {
         let dir = friday_mobile::agent_runs::runs_dir();
@@ -2057,6 +2067,50 @@ async fn send_command(
             }
         }
     }
+}
+
+/// `memory import <file> [--apply]`: what another assistant's notes would add
+/// to memory.md, and with --apply, adds it.
+fn memory_import(args: &[String]) -> Result<(), String> {
+    use friday_mobile::about;
+    let file = args.iter().skip(1).find(|a| !a.starts_with("--"));
+    let (Some("import"), Some(file)) = (args.first().map(String::as_str), file) else {
+        return Err("usage: friday-ctl memory import <file> [--apply]".into());
+    };
+    if !friday_mobile::features::on("memory-file") {
+        return Err("the memory file is turned off (friday feature on memory-file)".into());
+    }
+    let apply = args.iter().any(|a| a == "--apply");
+    let meta = std::fs::metadata(file).map_err(|e| format!("{file}: {e}"))?;
+    if meta.len() > 1_000_000 {
+        return Err(format!("{file} is over 1 MB: not a notes file"));
+    }
+    let notes = std::fs::read_to_string(file).map_err(|e| format!("{file}: {e}"))?;
+    let dest = about::path();
+    let have = about::facts(&about::read(&dest).map_err(|e| format!("{}: {e}", dest.display()))?);
+    let new = about::importable(&notes, &have);
+    if new.is_empty() {
+        println!("Nothing new to bring in from {file}.");
+        return Ok(());
+    }
+    let crowded = about::too_long(&[have, new.clone()].concat());
+    if !apply {
+        println!("Would add {} line(s) to {}:", new.len(), dest.display());
+        for f in &new {
+            println!("- {f}");
+        }
+        if crowded {
+            println!("That is more than an ask carries: later lines would be left out. Trim the file after.");
+        }
+        println!("Nothing was added. Run again with --apply to add them.");
+        return Ok(());
+    }
+    let n = about::remember_all(&new).map_err(|e| format!("{}: {e}", dest.display()))?;
+    println!("Added {n} line(s) to {}.", dest.display());
+    if crowded {
+        println!("It is now more than an ask carries: later lines are left out. Trim the file.");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
