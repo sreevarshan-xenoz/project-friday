@@ -325,10 +325,28 @@ impl Tool for FilesystemCapabilityTool {
                 }
             }
         }
+        // What was there before a write, for `friday undo`.
+        let undo_dir = crate::desktop_tool::audit_dir()
+            .filter(|_| verb == "write_file" && crate::features::on("undo-file-writes"));
+        let write_path = params
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(std::path::PathBuf::from);
+        let before = match (&undo_dir, &write_path) {
+            (Some(d), Some(p)) => crate::file_undo::before_write(d, p),
+            _ => None,
+        };
         let res = self
             .adapter
             .execute(ActionRequest::new("filesystem", verb, params.clone()))
             .await;
+        if let (true, Some(d), Some(p), Some(before)) =
+            (res.success, &undo_dir, &write_path, &before)
+        {
+            if let Some(e) = crate::file_undo::entry(p, before) {
+                crate::desktop_tool::append_undo(d, &e);
+            }
+        }
         let output = if verb == "write_file" && res.success && crate::features::on("action-check") {
             let path = params.get("path").and_then(|v| v.as_str()).unwrap_or("");
             let content_len = params

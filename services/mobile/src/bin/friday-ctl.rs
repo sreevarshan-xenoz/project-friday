@@ -1644,6 +1644,29 @@ async fn main() -> std::process::ExitCode {
             }
         };
     }
+    // `friday undo` of a file FRIDAY wrote: put back while it's unchanged.
+    if raw.first().map(String::as_str) == Some("undo-file") {
+        let (Some(path), Some(copy), Some(written), Some(dir)) = (
+            raw.get(1),
+            raw.get(2),
+            raw.get(3),
+            friday_mobile::desktop_tool::audit_dir(),
+        ) else {
+            eprintln!("usage: friday-ctl undo-file <path> <kept copy or \"\"> <hash>");
+            return std::process::ExitCode::from(2);
+        };
+        return match friday_mobile::file_undo::undo(&dir, std::path::Path::new(path), copy, written)
+        {
+            Ok(s) => {
+                println!("{s}");
+                std::process::ExitCode::SUCCESS
+            }
+            Err(e) => {
+                println!("Can't undo that: {e}.");
+                std::process::ExitCode::from(1)
+            }
+        };
+    }
     // A run's separate copy: brought in (staged) or dropped.
     if raw.first().map(String::as_str) == Some("agents") {
         let dir = friday_mobile::agent_runs::runs_dir();

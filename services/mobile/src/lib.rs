@@ -30,6 +30,7 @@ pub mod diagnose;
 pub mod error;
 pub mod failures;
 pub mod features;
+pub mod file_undo;
 pub mod goal_runner;
 pub mod lessons;
 pub mod listen;
