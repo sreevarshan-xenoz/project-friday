@@ -2172,11 +2172,18 @@ fn memory_import(args: &[String]) -> Result<(), String> {
         println!("Nothing new to bring in from {file}.");
         return Ok(());
     }
-    let crowded = about::too_long(&[have, new.clone()].concat());
+    let crowded = about::too_long(&[have.clone(), new.clone()].concat());
     if !apply {
         println!("Would add {} line(s) to {}:", new.len(), dest.display());
-        for f in &new {
-            println!("- {f}");
+        // Worked out as --apply will do it (a later line can replace an earlier one).
+        let text = about::read(&dest).unwrap_or_default();
+        let (_, done) = about::apply(&text, &new, "today");
+        for (f, closed) in &done {
+            if closed.is_empty() {
+                println!("- {f}");
+            } else {
+                println!("- {f}   (replaces: {})", closed.join("; "));
+            }
         }
         if crowded {
             println!("That is more than an ask carries: later lines would be left out. Trim the file after.");

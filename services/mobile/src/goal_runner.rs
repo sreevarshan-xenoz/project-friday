@@ -625,12 +625,18 @@ impl Tool for MemoryRememberTool {
         // Private mode leaves nothing on disk.
         let private = std::env::var("FRIDAY_PRIVATE")
             .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+        let mut said = format!("remembered: {}", action.instruction);
         if let Some(fact) = crate::about::fact_in(request).filter(|_| !private) {
-            if let Err(e) = crate::about::remember(&fact) {
-                tracing::warn!("couldn't write the memory file: {e}");
+            match crate::about::remember(&fact) {
+                // "I moved to Pune" ends "I live in Chennai": say so.
+                Ok(closed) if !closed.is_empty() => {
+                    said.push_str(&format!(" (no longer: {})", closed.join("; ")));
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!("couldn't write the memory file: {e}"),
             }
         }
-        ToolResult::success(format!("remembered: {}", action.instruction))
+        ToolResult::success(said)
     }
 }
 
