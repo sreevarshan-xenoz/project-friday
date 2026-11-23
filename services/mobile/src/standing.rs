@@ -343,9 +343,11 @@ pub fn tick(
             }
         }
         if due(t, now, now_ts, battery) {
-            // Quiet hours hold recurring tasks; the day's limit holds all.
+            // Quiet hours hold recurring tasks; the day's limit holds the rest.
             let recurring = matches!(t.trigger, Trigger::Daily { .. } | Trigger::Every { .. });
-            if (quiet_now && recurring) || ran_today >= cap {
+            // (A reminder is never held by the limit: it would go unsaid.)
+            let reminder = matches!(t.trigger, Trigger::Once { .. });
+            if (quiet_now && recurring) || (ran_today >= cap && !reminder) {
                 continue;
             }
             ran_today += 1;

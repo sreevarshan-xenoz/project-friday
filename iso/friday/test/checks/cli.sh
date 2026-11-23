@@ -544,6 +544,11 @@ bash "$F" tasks quiet off >/dev/null
 contains "and off again" "$(bash "$F" tasks quiet)" "Quiet hours: off"
 contains "a daily limit" "$(bash "$F" tasks limit 20)" "At most 20 task runs a day"
 contains "a bad range is refused" "$(bash "$F" tasks quiet 25-7 2>&1)" "usage: friday tasks quiet"
+contains "hours with a leading zero" "$(bash "$F" tasks quiet 08-09)" "Quiet hours: 8:00 to 9:00"
+jq '.tasks += [{"id":"t9","goal":"late news","trigger":{"kind":"daily","hour":8,"minute":30,"weekdays_only":false},"created":0}]' "$HOME/.local/state/friday/standing.json" >"$W/st.json" && mv "$W/st.json" "$HOME/.local/state/friday/standing.json"
+contains "a daily task inside them is named" "$(bash "$F" tasks quiet 08-09)" "t9 (late news) is set for 8:30, inside the quiet hours"
+jq 'del(.tasks[] | select(.id == "t9"))' "$HOME/.local/state/friday/standing.json" >"$W/st.json" && mv "$W/st.json" "$HOME/.local/state/friday/standing.json"
+bash "$F" tasks quiet off >/dev/null
 
 echo "per-app instructions"
 printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s "$HYPR_WIN"\nexit 0\n' >"$S/hyprctl"; chmod +x "$S/hyprctl"
