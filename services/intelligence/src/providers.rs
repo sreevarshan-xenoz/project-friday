@@ -3795,8 +3795,19 @@ impl InferenceFabric {
         req: &RequestRequirements,
         prompt: &str,
     ) -> Result<String, String> {
+        self.complete_json_preferring(req, None, prompt).await
+    }
+
+    /// [`InferenceFabric::complete_json_with`] in
+    /// [`InferenceFabric::select_preferring`]'s order (a job's own model first).
+    pub async fn complete_json_preferring(
+        &self,
+        req: &RequestRequirements,
+        prefer: Option<&str>,
+        prompt: &str,
+    ) -> Result<String, String> {
         let request_id = uuid::Uuid::new_v4().to_string();
-        let candidates = self.select_for(req);
+        let candidates = self.select_preferring(req, prefer, None);
         self.complete_candidates_as(&request_id, candidates, prompt, None, true)
             .await
     }

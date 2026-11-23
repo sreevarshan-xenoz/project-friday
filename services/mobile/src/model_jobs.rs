@@ -62,6 +62,13 @@ impl LlmStrategyClient for JobModel {
             .await
     }
 
+    async fn complete_json(&self, prompt: &str) -> Result<String, String> {
+        let prefer = pick(self.job);
+        self.fabric
+            .complete_json_preferring(&RequestRequirements::default(), prefer.as_deref(), prompt)
+            .await
+    }
+
     async fn complete_with_progress(
         &self,
         prompt: &str,
