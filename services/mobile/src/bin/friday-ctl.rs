@@ -2175,20 +2175,14 @@ fn memory_import(args: &[String]) -> Result<(), String> {
     let crowded = about::too_long(&[have.clone(), new.clone()].concat());
     if !apply {
         println!("Would add {} line(s) to {}:", new.len(), dest.display());
-        for f in &new {
-            // One that replaces a fact already there ("my editor is Zed").
-            let old: Vec<&String> = about::subject(f)
-                .map(|k| {
-                    have.iter()
-                        .filter(|h| about::subject(h).as_ref() == Some(&k))
-                        .collect()
-                })
-                .unwrap_or_default();
-            if old.is_empty() || !friday_mobile::features::on("memory-changes") {
+        // Worked out as --apply will do it (a later line can replace an earlier one).
+        let text = about::read(&dest).unwrap_or_default();
+        let (_, done) = about::apply(&text, &new, "today");
+        for (f, closed) in &done {
+            if closed.is_empty() {
                 println!("- {f}");
             } else {
-                let old: Vec<&str> = old.iter().map(|s| s.as_str()).collect();
-                println!("- {f}   (replaces: {})", old.join("; "));
+                println!("- {f}   (replaces: {})", closed.join("; "));
             }
         }
         if crowded {

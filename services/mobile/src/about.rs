@@ -75,10 +75,17 @@ pub fn fact_in(request: &str) -> Option<String> {
 /// `have` already says.
 pub fn importable(notes: &str, have: &[String]) -> Vec<String> {
     let (mut listed, mut plain) = (Vec::new(), Vec::new());
-    let mut in_code = false;
+    let (mut in_code, mut closed) = (false, false);
     // A file saved by Windows tools often starts with a BOM.
     for line in notes.trim_start_matches('\u{feff}').lines() {
         let l = line.trim();
+        // A memory file's own past (a backup brought back) stays past.
+        if l.starts_with('#') {
+            closed = l == NO_LONGER;
+        }
+        if closed {
+            continue;
+        }
         if l.starts_with("```") || l.starts_with("~~~") {
             in_code = !in_code;
             continue;
@@ -155,22 +162,31 @@ pub fn subject(fact: &str) -> Option<String> {
     if LIVES.iter().any(|p| f.starts_with(p)) || f.starts_with("i am based in ") {
         return Some("where I live".into());
     }
-    const WORKS: [&str; 5] = [
+    // Not "I joined …": a gym or a choir isn't a job.
+    const WORKS: [&str; 4] = [
         "i work at ",
         "i work for ",
         "i now work at ",
         "i now work for ",
-        "i joined ",
     ];
     if WORKS.iter().any(|p| f.starts_with(p)) {
         return Some("where I work".into());
     }
     let rest = f.strip_prefix("my ")?;
-    let (thing, _) = rest
+    let (thing, value) = rest
         .split_once(" is ")
         .or_else(|| rest.split_once(" are "))?;
+    // "my name is on the list" says where the name is, not what it is.
+    const NOT_A_VALUE: [&str; 9] = [
+        "on ", "in ", "at ", "not ", "also ", "still ", "too ", "very ", "being ",
+    ];
     let thing = thing.trim();
-    (!thing.is_empty() && thing.split_whitespace().count() <= 4).then(|| format!("my {thing}"))
+    (!thing.is_empty()
+        && thing.split_whitespace().count() <= 2
+        && !NOT_A_VALUE
+            .iter()
+            .any(|p| value.trim_start().starts_with(p)))
+    .then(|| format!("my {thing}"))
 }
 
 /// Adds each fact the file doesn't have yet; how many it added.
@@ -193,22 +209,19 @@ pub fn too_long(all: &[String]) -> bool {
     all.iter().map(|f| f.len() + 2).sum::<usize>() + "about you: ".len() > MAX_CHARS
 }
 
-/// Adds each new fact; one with the same [`subject`] as a fact already there
-/// moves that one under [`NO_LONGER`], dated `today` (with `memory-changes`
-/// on). How many it added, and the facts it closed.
-fn remember_at(
-    p: &std::path::Path,
-    new: &[String],
-    today: &str,
-) -> std::io::Result<(usize, Vec<String>)> {
-    let text = read(p)?;
+/// The file's lines with `new` added: one with the same [`subject`] as a
+/// fact already there moves that one under [`NO_LONGER`], dated `today`
+/// (with `memory-changes` on). New facts go after the last current fact,
+/// closed ones at the end of their own section: the person's notes and
+/// headings stay where they are. Each fact added, with what it closed.
+pub fn apply(text: &str, new: &[String], today: &str) -> (Vec<String>, Vec<(String, Vec<String>)>) {
     let mut lines: Vec<String> = if text.trim().is_empty() {
         vec!["# What FRIDAY remembers about you. Edit freely: one \"- \" line each.".to_string()]
     } else {
         text.lines().map(str::to_string).collect()
     };
     let changes = crate::features::on("memory-changes");
-    let (mut added, mut closed) = (0, Vec::new());
+    let mut done = Vec::new();
     for fact in new {
         if facts(&lines.join("\n"))
             .iter()
@@ -216,50 +229,68 @@ fn remember_at(
         {
             continue;
         }
+        let mut closed = Vec::new();
         if let Some(key) = subject(fact).filter(|_| changes) {
-            let old: Vec<usize> = (0..lines.len())
-                .filter(|&i| {
-                    lines[i]
-                        .trim()
-                        .strip_prefix("- ")
-                        .and_then(subject)
-                        .is_some_and(|k| k == key)
-                })
-                .collect();
-            for &i in old.iter().rev() {
+            let mut i = 0;
+            while i < lines.len() {
+                let same = lines[i]
+                    .trim()
+                    .strip_prefix("- ")
+                    .and_then(subject)
+                    .is_some_and(|k| k == key);
+                if !same {
+                    i += 1;
+                    continue;
+                }
                 let was = lines
                     .remove(i)
                     .trim()
                     .trim_start_matches("- ")
                     .trim()
                     .to_string();
-                if !lines.iter().any(|l| l.trim() == NO_LONGER) {
-                    if lines.last().is_some_and(|l| !l.trim().is_empty()) {
-                        lines.push(String::new());
+                let head = match lines.iter().position(|l| l.trim() == NO_LONGER) {
+                    Some(h) => h,
+                    None => {
+                        if lines.last().is_some_and(|l| !l.trim().is_empty()) {
+                            lines.push(String::new());
+                        }
+                        lines.push(NO_LONGER.to_string());
+                        lines.len() - 1
                     }
-                    lines.push(NO_LONGER.to_string());
+                };
+                // The end of that section: the next heading, or the end.
+                let mut end = head + 1;
+                while end < lines.len() && !lines[end].trim_start().starts_with('#') {
+                    end += 1;
                 }
-                lines.push(format!("* {was} (until {today})"));
+                while end > head + 1 && lines[end - 1].trim().is_empty() {
+                    end -= 1;
+                }
+                lines.insert(end, format!("* {was} (until {today})"));
                 closed.push(was);
             }
         }
-        // Current facts stay above the closed ones.
+        // After the last current fact; with none, after the first heading.
         let at = lines
             .iter()
-            .position(|l| l.trim() == NO_LONGER)
-            .map(|i| {
-                let mut i = i;
-                while i > 0 && lines[i - 1].trim().is_empty() {
-                    i -= 1;
-                }
-                i
-            })
-            .unwrap_or(lines.len());
+            .rposition(|l| l.trim_start().starts_with("- "))
+            .or_else(|| lines.iter().position(|l| l.trim_start().starts_with('#')))
+            .map_or(lines.len(), |i| i + 1);
         lines.insert(at, format!("- {fact}"));
-        added += 1;
+        done.push((fact.clone(), closed));
     }
-    if added == 0 {
-        return Ok((0, closed));
+    (lines, done)
+}
+
+fn remember_at(
+    p: &std::path::Path,
+    new: &[String],
+    today: &str,
+) -> std::io::Result<(usize, Vec<String>)> {
+    let text = read(p)?;
+    let (lines, done) = apply(&text, new, today);
+    if done.is_empty() {
+        return Ok((0, Vec::new()));
     }
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir)?;
@@ -267,7 +298,8 @@ fn remember_at(
     let tmp = p.with_extension("md.tmp");
     std::fs::write(&tmp, lines.join("\n") + "\n")?;
     std::fs::rename(tmp, p)?;
-    Ok((added, closed))
+    let closed = done.iter().flat_map(|(_, c)| c.clone()).collect();
+    Ok((done.len(), closed))
 }
 
 #[cfg(test)]
@@ -361,6 +393,9 @@ mod tests {
         assert_eq!(subject("I moved to Pune"), subject("I live in Chennai"));
         assert_eq!(subject("my editor is Helix").as_deref(), Some("my editor"));
         assert_eq!(subject("I use fish"), None);
+        assert_eq!(subject("I joined a gym"), None);
+        assert_eq!(subject("my name is on the list"), None);
+        assert_eq!(subject("my name is Ada").as_deref(), Some("my name"));
         assert_ne!(subject("my editor is Helix"), subject("my shell is fish"));
         let p = std::env::temp_dir().join(format!("friday-test-change-{}.md", std::process::id()));
         std::fs::write(
@@ -389,5 +424,31 @@ mod tests {
             "{text}"
         );
         let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn the_persons_notes_stay_put_and_a_preview_matches() {
+        let text = "# mine\n- I live in Chennai\n\n## Personal notes\nDon't share credentials\n";
+        let (lines, done) = apply(text, &["I moved to Pune".into()], "2026-11-23");
+        assert_eq!(
+            lines.join("\n"),
+            "# mine\n- I moved to Pune\n\n## Personal notes\nDon't share credentials\n\n## No longer true\n* I live in Chennai (until 2026-11-23)"
+        );
+        assert_eq!(done[0].1, vec!["I live in Chennai".to_string()]);
+        // Both in one import: the second closes the first, as --apply does.
+        let (_, done) = apply(
+            "",
+            &["I live in Chennai".into(), "I moved to Pune".into()],
+            "d",
+        );
+        assert_eq!(done[1].1, vec!["I live in Chennai".to_string()]);
+        // A backup's past isn't brought back as current.
+        assert_eq!(
+            importable(
+                "- I use fish\n## No longer true\n* I live in Chennai (until 2026-11-23)\n",
+                &[]
+            ),
+            vec!["I use fish"]
+        );
     }
 }
