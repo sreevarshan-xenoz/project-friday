@@ -45,7 +45,8 @@ workspaces with session resurrection, thought threads, project
 understanding, modes, sovereignty), each milestone with its exit test. The
 owner-approved queue of twenty improvements from the v0.7.3 brainstorm is
 `docs/roadmap/after-0.7.3.md`, worked top to bottom; the second round,
-`docs/roadmap/after-0.8.0.md`, follows it.
+`docs/roadmap/after-0.8.0.md`, follows it; the third, from the 12-repo
+brainstorm, is `docs/roadmap/after-0.8.2.md`.
 
 ## Rules
 
