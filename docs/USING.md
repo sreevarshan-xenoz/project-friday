@@ -21,6 +21,10 @@ disturb, and the `friday` commands below are Linux only so far.
 
 You can also just say it in the question: "what is on my screen" or "what am I looking at" takes the screen path
 (same one-screenshot rule as Super+Ctrl+Y), while a how-to like "how do I change my screen brightness" does not.
+A question that just says "this" with nothing picked ("explain this", "is this right?") makes FRIDAY ask which you
+mean: the text you selected (Linux), the window in front, or just your words. On Windows a chip under the field
+says so: Ctrl+Enter means the window, Enter just your words. `friday feature which-this off` (Windows: Settings →
+Features) turns it off.
 
 Hold Super+Y instead of tapping it to talk (`friday voice setup` first). The
 speech is turned into text on your computer; only the text is sent. On niri, which can't see a key being released, press Mod+Y once to speak and again to ask.

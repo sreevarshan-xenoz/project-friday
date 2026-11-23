@@ -72,6 +72,7 @@ public static class AppSettings
         ("hold-to-talk", "Hold the ask key and speak (speech becomes text on this PC); a tap still opens the ask box"),
         ("voice-confirm", "Asked by voice: say run or cancel after the sound to answer a confirmation"),
         ("voice-followup", "Asked by voice: after a spoken answer and a sound, a follow-up needs no key"),
+        ("which-this", "\"Explain this\" with nothing picked: ask whether it means the window in front"),
     ];
 
     public static bool FeatureOn(IReadOnlyDictionary<string, string> env, string name) =>

@@ -231,11 +231,17 @@ internal sealed class TrayContext : ApplicationContext
                 Folders = kind == AskKind.Plain && AppSettings.AgentsOn(EnvFile.Load(_install.Paths.EnvFile))
                     ? AgentFolders.Load(_install.Paths.AgentsDir, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile))
                     : null,
+                OfferWindow = kind == AskKind.Plain && targetWindow != IntPtr.Zero
+                    && AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "which-this")
+                    && PrivateWindows.Match(_install.Paths, Native.ProcessNameOf(targetWindow), Native.GetWindowTitle(targetWindow)) is null
+                    && SensitiveWindows.Match(_install.Paths, Native.ProcessNameOf(targetWindow), Native.GetWindowTitle(targetWindow)) is null,
             };
             if (form.ShowDialog() != true)
                 return;
             var question = form.Question;
             _log.Remember(question);
+            if (form.AboutWindow)
+                kind = AskKind.Screen;
 
             // "Rewrite: …" on selected text: the rewrite replaces the selection.
             if (selected && context != null && Rewrite.How(question) is { } how)
