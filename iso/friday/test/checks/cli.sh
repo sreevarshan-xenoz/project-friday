@@ -17,6 +17,11 @@ if [[ "\$1" == say ]]; then
   printf 'friday-ctl-say %s\n' "\$text" >> "$LOG"
   exit "\${SAY_EXIT:-0}"
 fi
+if [[ "\$1" == risks ]]; then
+  printf 'friday-ctl-risks\n' >> "$LOG"
+  echo 'Asks first, with the exact action'
+  exit 0
+fi
 if [[ "\$1" == brief ]]; then
   printf 'friday-ctl-brief %s\n' "\$*" >> "$LOG"
   echo 'opencode finished "fix the tests": all pass.'
@@ -545,6 +550,11 @@ bash "$F" agents worktree on >/dev/null
 contains "on writes the setting" "$(cat "$HOME/.config/friday/friday.env")" "FRIDAY_AGENT_WORKTREE=1"
 bash "$F" agents worktree off >/dev/null
 contains "accept needs a run id" "$(bash "$F" agents accept nope 2>&1)" "usage: friday agents accept <id>"
+# What FRIDAY may do on its own, in one table.
+contains "friday risks shows the table" "$(bash "$F" risks)" "Asks first"
+bash "$F" feature risk-table off >/dev/null
+contains "the risk table can be turned off" "$(bash "$F" risks)" "turned off"
+bash "$F" feature risk-table on >/dev/null
 
 echo "checking agents' work"
 contains "off unless turned on" "$(bash "$F" agents check)" "Checking agents' work: off"

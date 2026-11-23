@@ -38,6 +38,7 @@ pub mod project;
 pub mod protocol;
 pub mod provider_status;
 pub mod recall;
+pub mod risk_table;
 pub mod routine;
 pub mod secrets;
 pub mod session;
