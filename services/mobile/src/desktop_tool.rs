@@ -609,7 +609,7 @@ impl Tool for DesktopControlTool {
             );
             let reply = tokio::select! {
                 _ = self.cancelled() => return ToolResult::error(stopped_message(&steps)),
-                r = tokio::time::timeout(MODEL_TIMEOUT, self.model.complete(&prompt)) => match r {
+                r = tokio::time::timeout(MODEL_TIMEOUT, self.model.complete_json(&prompt)) => match r {
                     Ok(Ok(r)) => r,
                     Ok(Err(e)) => {
                 tracing::warn!("couldn't ask the model: {e}");

@@ -1689,16 +1689,17 @@ impl friday_goal_execution::Tool for AgentsTool {
         }
         let prompt =
             format!("{GUIDE}\n\nThe person's request: {request}\n\nYour reply (JSON only):");
-        let reply = match tokio::time::timeout(MODEL_TIMEOUT, self.model.complete(&prompt)).await {
-            Ok(Ok(r)) => r,
-            Ok(Err(e)) => {
-                tracing::warn!("couldn't ask the model: {e}");
-                return ToolResult::error(crate::failures::plain_model_error(&e.to_string()));
-            }
-            Err(_) => {
-                return ToolResult::error("the model took too long to understand the request")
-            }
-        };
+        let reply =
+            match tokio::time::timeout(MODEL_TIMEOUT, self.model.complete_json(&prompt)).await {
+                Ok(Ok(r)) => r,
+                Ok(Err(e)) => {
+                    tracing::warn!("couldn't ask the model: {e}");
+                    return ToolResult::error(crate::failures::plain_model_error(&e.to_string()));
+                }
+                Err(_) => {
+                    return ToolResult::error("the model took too long to understand the request")
+                }
+            };
         let Some(choice) = first_json(&reply) else {
             return ToolResult::error("couldn't tell what the agent should do");
         };

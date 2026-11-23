@@ -405,11 +405,41 @@ pub fn http_client() -> reqwest::Client {
 
 impl OpenAiProvider {
     /// POST one chat completion (headers, body); a non-2xx status is an error.
+    /// The chat request's body. `json`: the answer must be one JSON object;
+    /// a local engine (llama.cpp, Ollama) is then held to it by a grammar,
+    /// so a small model can't answer with prose or broken JSON. Cloud
+    /// providers are only asked in the prompt (some refuse the field).
+    fn chat_body(
+        &self,
+        model_id: &str,
+        prompt: &str,
+        stream: bool,
+        json: bool,
+    ) -> serde_json::Value {
+        let mut body = serde_json::json!({
+            "model": model_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": openai_message_content(prompt)
+                }
+            ]
+        });
+        if stream {
+            body["stream"] = serde_json::Value::Bool(true);
+        }
+        if json && matches!(self.name.as_str(), "llamacpp" | "ollama") {
+            body["response_format"] = serde_json::json!({ "type": "json_object" });
+        }
+        body
+    }
+
     async fn send_chat(
         &self,
         model_id: &str,
         prompt: &str,
         stream: bool,
+        json: bool,
     ) -> Result<reqwest::Response, String> {
         let client = http_client();
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
@@ -441,18 +471,7 @@ impl OpenAiProvider {
             );
         }
 
-        let mut body = serde_json::json!({
-            "model": model_id,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": openai_message_content(prompt)
-                }
-            ]
-        });
-        if stream {
-            body["stream"] = serde_json::Value::Bool(true);
-        }
+        let body = self.chat_body(model_id, prompt, stream, json);
 
         let res = client
             .post(&url)
@@ -537,9 +556,11 @@ impl Provider for OpenAiProvider {
         &self,
         model_id: &str,
         prompt: &str,
-        _require_json: bool,
+        require_json: bool,
     ) -> Result<String, String> {
-        let res = self.send_chat(model_id, prompt, false).await?;
+        let res = self
+            .send_chat(model_id, prompt, false, require_json)
+            .await?;
         let json: serde_json::Value = res
             .json()
             .await
@@ -553,11 +574,11 @@ impl Provider for OpenAiProvider {
         &self,
         model_id: &str,
         prompt: &str,
-        _require_json: bool,
+        require_json: bool,
         progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
     ) -> Result<String, String> {
         use futures::StreamExt;
-        let res = self.send_chat(model_id, prompt, true).await?;
+        let res = self.send_chat(model_id, prompt, true, require_json).await?;
         let is_sse = res
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
@@ -2938,6 +2959,10 @@ impl friday_investigation::LlmStrategyClient for InferenceFabric {
         self.complete_with(&RequestRequirements::default(), prompt)
             .await
     }
+    async fn complete_json(&self, prompt: &str) -> Result<String, String> {
+        self.complete_json_with(&RequestRequirements::default(), prompt)
+            .await
+    }
     async fn complete_with_progress(
         &self,
         prompt: &str,
@@ -3763,6 +3788,30 @@ impl InferenceFabric {
             .await
     }
 
+    /// [`InferenceFabric::complete_with`] for an answer that must be one
+    /// JSON object (a tool's next step): local engines are held to it.
+    pub async fn complete_json_with(
+        &self,
+        req: &RequestRequirements,
+        prompt: &str,
+    ) -> Result<String, String> {
+        self.complete_json_preferring(req, None, prompt).await
+    }
+
+    /// [`InferenceFabric::complete_json_with`] in
+    /// [`InferenceFabric::select_preferring`]'s order (a job's own model first).
+    pub async fn complete_json_preferring(
+        &self,
+        req: &RequestRequirements,
+        prefer: Option<&str>,
+        prompt: &str,
+    ) -> Result<String, String> {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let candidates = self.select_preferring(req, prefer, None);
+        self.complete_candidates_as(&request_id, candidates, prompt, None, true)
+            .await
+    }
+
     /// [`InferenceFabric::complete_with`], streaming: `progress` gets the
     /// answer so far as it arrives (the whole text each time, not a delta).
     pub async fn complete_with_progress(
@@ -3908,6 +3957,20 @@ impl InferenceFabric {
         prompt: &str,
         progress: Option<&(dyn for<'s> Fn(&'s str) + Send + Sync)>,
     ) -> Result<String, String> {
+        self.complete_candidates_as(request_id, candidates, prompt, progress, false)
+            .await
+    }
+
+    /// [`Self::complete_candidates_reporting`]; `json`: the answer must be
+    /// one JSON object (see [`OpenAiProvider`]'s body).
+    async fn complete_candidates_as(
+        &self,
+        request_id: &str,
+        candidates: Vec<(ModelInfo, &dyn Provider)>,
+        prompt: &str,
+        progress: Option<&(dyn for<'s> Fn(&'s str) + Send + Sync)>,
+        json: bool,
+    ) -> Result<String, String> {
         if candidates.is_empty() {
             let err_msg = if self.private_mode {
                 "Private mode is on and no local model is running (start it: friday private on)"
@@ -4016,7 +4079,7 @@ impl InferenceFabric {
                     )
                     .await
                 }
-                None => run_attempt(timeout, provider.complete(&model.id, &prompt, false)).await,
+                None => run_attempt(timeout, provider.complete(&model.id, &prompt, json)).await,
             };
             let first_ms = match *first.lock().unwrap() {
                 (Some(ms), pieces) if pieces > 1 => Some(ms),
@@ -6218,6 +6281,24 @@ mod tests {
         let d = fabric.last_decision().unwrap();
         assert_eq!(d.chosen, Some(("groq".into(), "picked".into())));
         assert_eq!(d.served, Some(("openrouter".into(), "fast".into())));
+    }
+
+    #[test]
+    fn a_json_answer_is_held_to_json_on_local_engines_only() {
+        let p = |name: &str| OpenAiProvider {
+            name: name.to_string(),
+            base_url: "http://127.0.0.1:1".into(),
+            api_key: String::new(),
+        };
+        for local in ["llamacpp", "ollama"] {
+            let body = p(local).chat_body("m", "reply in JSON", false, true);
+            assert_eq!(body["response_format"]["type"], "json_object", "{local}");
+            assert!(p(local).chat_body("m", "hi", false, false)["response_format"].is_null());
+        }
+        assert!(
+            p("openrouter").chat_body("m", "reply in JSON", true, true)["response_format"]
+                .is_null()
+        );
     }
 
     #[test]
