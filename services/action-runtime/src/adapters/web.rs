@@ -178,14 +178,28 @@ impl WebAdapter {
         let mut current = url.to_string();
         for _hop in 0..=MAX_REDIRECTS {
             // A name pointed inside (`127.0.0.1.nip.io`, a home DNS entry)
-            // is refused like the address itself.
-            if name_points_inside(&current).await {
-                return Err(FetchError::EgressDenied(
-                    EgressDenyReason::InternalDestination,
-                ));
-            }
-            let resp = self
-                .client
+            // is refused like the address itself, and the request goes to the
+            // address that was checked: a second lookup can't move it inside.
+            let pinned = match resolve_outside(&current).await {
+                Err(()) => {
+                    return Err(FetchError::EgressDenied(
+                        EgressDenyReason::InternalDestination,
+                    ))
+                }
+                Ok(Some((name, addr))) => Some(
+                    reqwest::Client::builder()
+                        .timeout(Duration::from_secs(10))
+                        .user_agent(concat!("friday-web/", env!("CARGO_PKG_VERSION")))
+                        .redirect(reqwest::redirect::Policy::none())
+                        .resolve(&name, addr)
+                        .build()
+                        .map_err(|e| FetchError::Http(format!("client: {e}")))?,
+                ),
+                Ok(None) => None,
+            };
+            let resp = pinned
+                .as_ref()
+                .unwrap_or(&self.client)
                 .get(&current)
                 .send()
                 .await
@@ -302,6 +316,33 @@ fn parse_search_results(html: &str, limit: usize) -> Vec<serde_json::Value> {
     hits
 }
 
+/// For a `url` that names a host (an address is the kernel's check): the
+/// first address it resolves to, to pin the request to, or `Err` when any
+/// address is this computer or the local network. `Ok(None)`: an address,
+/// or a name that doesn't resolve (the request then fails on its own).
+async fn resolve_outside(url: &str) -> Result<Option<(String, std::net::SocketAddr)>, ()> {
+    let Ok(u) = Url::parse(url) else {
+        return Ok(None);
+    };
+    let Some(url::Host::Domain(name)) = u.host() else {
+        return Ok(None);
+    };
+    let port = u.port_or_known_default().unwrap_or(80);
+    let addrs: Vec<std::net::SocketAddr> = match tokio::time::timeout(
+        Duration::from_secs(3),
+        tokio::net::lookup_host((name.to_string(), port)),
+    )
+    .await
+    {
+        Ok(Ok(a)) => a.collect(),
+        _ => return Ok(None),
+    };
+    if addrs.iter().any(|a| crate::egress::ip_is_internal(a.ip())) {
+        return Err(());
+    }
+    Ok(addrs.first().map(|a| (name.to_string(), *a)))
+}
+
 /// Extract the `<title>…</title>` inner text (tags stripped, whitespace
 /// collapsed, entities decoded). Empty when absent — never an error. Lets the
 /// normalized fetch evidence carry a real page title instead of an empty one.
@@ -312,28 +353,6 @@ fn parse_search_results(html: &str, limit: usize) -> Vec<serde_json::Value> {
 /// lowercased copy invalid for slicing the original. `<title>`/`</title>` are
 /// pure ASCII, and `<` (0x3C) can never be a UTF-8 continuation byte, so a
 /// match position is always on a char boundary.
-/// Whether `url` names a host (not an address: those are the kernel's
-/// check) that resolves to this computer or the local network. A name that
-/// doesn't resolve isn't refused here: the request fails on its own.
-async fn name_points_inside(url: &str) -> bool {
-    let Ok(u) = Url::parse(url) else {
-        return false;
-    };
-    let Some(url::Host::Domain(name)) = u.host() else {
-        return false;
-    };
-    let port = u.port_or_known_default().unwrap_or(80);
-    match tokio::time::timeout(
-        Duration::from_secs(3),
-        tokio::net::lookup_host((name.to_string(), port)),
-    )
-    .await
-    {
-        Ok(Ok(mut addrs)) => addrs.any(|a| crate::egress::ip_is_internal(a.ip())),
-        _ => false,
-    }
-}
-
 pub fn extract_title(html: &str) -> String {
     let bytes = html.as_bytes();
     let needle = b"<title>";
