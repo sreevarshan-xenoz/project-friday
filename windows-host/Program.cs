@@ -26,6 +26,10 @@ public static class Program
         // Windows counterpart of `grim -`); not the pipe service.
         if (args.Length > 0 && args[0] == "--screenshot")
             return OperatingSystem.IsWindows() ? Screenshot.Run(args[1..]) : 2;
+        // Words read off a PNG on stdin (Windows OCR), for a window whose
+        // app gives no text; the counterpart of `tesseract stdin stdout`.
+        if (args.Length > 0 && args[0] == "--ocr")
+            return OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041) ? Ocr.Run() : 2;
         // The focused window's bounds, so a screen ask can capture just it.
         if (args.Length > 0 && args[0] == "--active-window")
             return OperatingSystem.IsWindows() ? ActiveWindow.Run() : 2;
