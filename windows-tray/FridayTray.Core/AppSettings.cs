@@ -95,6 +95,7 @@ public static class AppSettings
         ("memory-changes", "A changed fact (\"I moved to Pune\") closes the old one with a date in the memory file"),
         ("brief", "\"What did I miss?\" answered from FRIDAY's own records (agents, standing tasks, reminders)"),
         ("call-pause", "\"Hey Friday\" rests while a call or meeting app uses the microphone"),
+        ("action-check", "Before a risky action, say what will change; after it, check and say done, partly or failed"),
     ];
 
     public static bool FeatureOn(IReadOnlyDictionary<string, string> env, string name) =>

@@ -164,6 +164,23 @@ impl WindowsDesktop {
                     .pick(p("target").ok_or("name the window to close")?)
                     .await?;
                 self.call("close", json!({ "window_id": w.id })).await?;
+                // WM_CLOSE only asks: an app with unsaved work stays to ask
+                // about it. Look again once it has had a moment.
+                tokio::time::sleep(std::time::Duration::from_millis(if cfg!(test) {
+                    0
+                } else {
+                    1200
+                }))
+                .await;
+                let still_open = self
+                    .windows()
+                    .await
+                    .is_ok_and(|ws| ws.iter().any(|x| x.id == w.id));
+                if still_open {
+                    return Ok(
+                        json!({"still_open": true, "asked_to_close": w.app, "title": w.title}),
+                    );
+                }
                 Ok(json!({"closed": w.app, "title": w.title}))
             }
             "launch_app" => {
@@ -449,10 +466,11 @@ mod tests {
         let host = Host::new(sample());
         let r = run(&host, "close_window", json!({"target": "inbox"})).await;
         assert!(r.success, "{:?}", r.error);
-        assert_eq!(
-            host.calls().last().unwrap(),
-            &("close".to_string(), json!({"window_id": "w3"}))
-        );
+        assert!(host
+            .calls()
+            .contains(&("close".to_string(), json!({"window_id": "w3"}))));
+        // This host keeps listing it: the window asked to stay (unsaved work).
+        assert_eq!(r.output["still_open"], json!(true), "{:?}", r.output);
     }
 
     #[tokio::test]

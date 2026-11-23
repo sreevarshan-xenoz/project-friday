@@ -15,7 +15,7 @@ public enum AskKind { Plain, Selection, Screen }
 public sealed record AskOptions(bool Web = false, bool Thorough = false, string? Avoid = null, string? Region = null, bool Spoken = false);
 
 /// <summary>A tool action pending explicit confirmation before execution.</summary>
-public sealed record NeedsConfirmation(string Tool, string Action);
+public sealed record NeedsConfirmation(string Tool, string Action, string? Preview = null);
 
 /// <summary>Details of the provider and model that served the answer.</summary>
 public sealed record ServedByInfo(string Provider, string Model, long Ms);
@@ -249,8 +249,9 @@ public static partial class Asking
             {
                 var tool = Str(nc, "tool");
                 var action = Str(nc, "action");
+                var preview = Str(nc, "preview");
                 if (!string.IsNullOrEmpty(tool) && !string.IsNullOrEmpty(action))
-                    return new NeedsConfirmation(tool, action);
+                    return new NeedsConfirmation(tool, action, preview);
             }
         }
         return null;

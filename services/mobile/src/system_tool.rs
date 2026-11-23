@@ -101,6 +101,67 @@ impl SysOp {
             SysOp::Install(p) | SysOp::Remove(p) => Some(p),
         }
     }
+
+    /// A plain-words preview of what this operation will change.
+    pub fn preview(&self) -> String {
+        sysop_preview(self)
+    }
+}
+
+/// Check if a package is installed using `pacman -Q <pkg>`.
+/// Whether `pkg` is installed: a package (`pacman -Q`), or a group with any
+/// member installed (`pacman -Qg`, as `base-devel` is). None: couldn't ask.
+fn check_pacman_installed(pkg: &str) -> Option<bool> {
+    let ask = |flag: &str| {
+        std::process::Command::new("pacman")
+            .args([flag, pkg])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .ok()
+            .map(|s| s.success())
+    };
+    match ask("-Q")? {
+        true => Some(true),
+        false => ask("-Qg"),
+    }
+}
+
+/// Builds preview text for a system operation from package presence.
+pub fn sysop_preview_text(op: &SysOp, installed: Option<bool>) -> String {
+    match op {
+        SysOp::Update => "Updates every package on this computer.".to_string(),
+        SysOp::Remove(p) => format!("Removes {p}."),
+        SysOp::Install(p) => match installed {
+            Some(true) => format!("Reinstalls {p} (already installed)."),
+            Some(false) => format!("Installs {p} (not installed now)."),
+            None => format!("Installs {p}."),
+        },
+    }
+}
+
+pub fn sysop_preview(op: &SysOp) -> String {
+    let installed = match op {
+        SysOp::Install(p) => check_pacman_installed(p),
+        _ => None,
+    };
+    sysop_preview_text(op, installed)
+}
+
+/// Formats the completion verdict for a finished system package job.
+pub fn package_job_verdict(op: &SysOp, installed: Option<bool>) -> String {
+    match op {
+        SysOp::Install(p) => match installed {
+            Some(false) => format!("Partly: the helper finished but {p} is not installed."),
+            _ => format!("Done: {p} is installed."),
+        },
+        SysOp::Remove(p) => match installed {
+            Some(true) => format!("Partly: the helper finished but {p} is still installed."),
+            Some(false) => format!("Done: {p} is gone."),
+            None => format!("Done: the helper removed {p} (not checked: pacman didn't answer)."),
+        },
+        SysOp::Update => format!("Done: {}", op.exact()),
+    }
 }
 
 /// The root helper, as seen from the daemon.
@@ -291,11 +352,29 @@ impl SystemTool {
             match self.link.job(&job).await {
                 Ok((state, log)) if state == "done" => {
                     self.record(op, true, goal);
-                    return ToolResult::success(format!("Done: {}\n{}", op.exact(), tail(&log)));
+                    if !crate::features::on("action-check") {
+                        return ToolResult::success(format!(
+                            "Done: {}\n{}",
+                            op.exact(),
+                            tail(&log)
+                        ));
+                    }
+                    let installed = op.package().and_then(check_pacman_installed);
+                    let prefix = package_job_verdict(op, installed);
+                    return ToolResult::success(format!("{prefix}\n{}", tail(&log)));
                 }
                 Ok((state, log)) if state == "failed" => {
                     self.record(op, false, goal);
-                    return ToolResult::error(format!("{} failed.\n{}", op.exact(), tail(&log)));
+                    let failed = if crate::features::on("action-check") {
+                        "Failed: "
+                    } else {
+                        ""
+                    };
+                    return ToolResult::error(format!(
+                        "{failed}{} failed.\n{}",
+                        op.exact(),
+                        tail(&log)
+                    ));
                 }
                 Ok(_) => {}
                 Err(e) => {
@@ -384,11 +463,16 @@ impl Tool for SystemTool {
             }
         };
         // Always ask first, naming the exact action; nothing has been changed.
-        if let Err(err) = self
-            .gate
-            .lock()
-            .unwrap()
-            .check_or_record("system", &op.exact())
+        let preview = if crate::features::on("action-check") {
+            Some(op.preview())
+        } else {
+            None
+        };
+        if let Err(err) =
+            self.gate
+                .lock()
+                .unwrap()
+                .check_or_record_with("system", &op.exact(), preview)
         {
             return err;
         }
@@ -685,5 +769,66 @@ mod tests {
         let err = link.start(&SysOp::Update).await.unwrap_err();
         println!("refusal: {err}");
         assert!(!err.is_empty() && !err.contains("job-"));
+    }
+
+    #[test]
+    fn sysop_preview_decisions() {
+        assert_eq!(
+            sysop_preview_text(&SysOp::Update, None),
+            "Updates every package on this computer."
+        );
+        assert_eq!(
+            sysop_preview_text(&SysOp::Remove("firefox".into()), None),
+            "Removes firefox."
+        );
+        assert_eq!(
+            sysop_preview_text(&SysOp::Install("htop".into()), Some(false)),
+            "Installs htop (not installed now)."
+        );
+        assert_eq!(
+            sysop_preview_text(&SysOp::Install("htop".into()), Some(true)),
+            "Reinstalls htop (already installed)."
+        );
+        assert_eq!(
+            sysop_preview_text(&SysOp::Install("htop".into()), None),
+            "Installs htop."
+        );
+    }
+
+    #[test]
+    fn package_job_verdict_decisions() {
+        // Install
+        assert_eq!(
+            package_job_verdict(&SysOp::Install("htop".into()), Some(true)),
+            "Done: htop is installed."
+        );
+        assert_eq!(
+            package_job_verdict(&SysOp::Install("htop".into()), Some(false)),
+            "Partly: the helper finished but htop is not installed."
+        );
+        assert_eq!(
+            package_job_verdict(&SysOp::Install("htop".into()), None),
+            "Done: htop is installed."
+        );
+
+        // Remove
+        assert_eq!(
+            package_job_verdict(&SysOp::Remove("htop".into()), Some(false)),
+            "Done: htop is gone."
+        );
+        assert_eq!(
+            package_job_verdict(&SysOp::Remove("htop".into()), Some(true)),
+            "Partly: the helper finished but htop is still installed."
+        );
+        assert_eq!(
+            package_job_verdict(&SysOp::Remove("htop".into()), None),
+            "Done: the helper removed htop (not checked: pacman didn't answer)."
+        );
+
+        // Update
+        assert_eq!(
+            package_job_verdict(&SysOp::Update, None),
+            "Done: system update (pacman -Syu)"
+        );
     }
 }

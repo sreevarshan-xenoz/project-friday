@@ -144,6 +144,17 @@ public partial class AnswerWindow : Window
                 Margin = new Thickness(0, 0, 0, 8),
             });
             Blocks.Children.Add(CodeWell(outcome.Answer, Resource("Text")));
+            if (!string.IsNullOrWhiteSpace(conf.Preview))
+            {
+                Blocks.Children.Add(new TextBlock
+                {
+                    Style = (Style)FindResource("Body"),
+                    Foreground = Resource("Subtext"),
+                    Text = conf.Preview,
+                    Margin = new Thickness(0, 8, 0, 0),
+                    TextWrapping = TextWrapping.Wrap,
+                });
+            }
             var cancel = Pill("Cancel", SymbolRegular.Dismiss24);
             cancel.IsCancel = true;
             cancel.IsDefault = true; // Enter doesn't run anything by accident

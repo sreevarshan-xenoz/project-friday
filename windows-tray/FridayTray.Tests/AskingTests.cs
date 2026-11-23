@@ -270,6 +270,28 @@ public class AskingTests
         Assert.NotNull(writeConf);
         Assert.Equal("filesystem.write", writeConf.Tool);
         Assert.Equal("write C:\\notes.txt", writeConf.Action);
+        Assert.Null(writeConf.Preview);
+    }
+
+    [Fact]
+    public void Parse_confirmation_with_preview()
+    {
+        const string output = """
+            {
+              "outcome": "failed",
+              "error": "Confirm to run: write C:\\notes.txt",
+              "needs_confirmation": {
+                "tool": "filesystem.write",
+                "action": "write C:\\notes.txt",
+                "preview": "Replaces C:\\notes.txt (10 bytes now) with 20 bytes."
+              }
+            }
+            """;
+        var conf = Asking.ParseConfirmation(output);
+        Assert.NotNull(conf);
+        Assert.Equal("filesystem.write", conf.Tool);
+        Assert.Equal("write C:\\notes.txt", conf.Action);
+        Assert.Equal("Replaces C:\\notes.txt (10 bytes now) with 20 bytes.", conf.Preview);
     }
 
     [Fact]

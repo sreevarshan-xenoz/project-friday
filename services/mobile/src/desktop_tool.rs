@@ -447,6 +447,42 @@ fn is_ui_verb(v: &str) -> bool {
     matches!(v, "apps" | "tree" | "find" | "read" | "click" | "type_text")
 }
 
+/// Preview for closing a window.
+pub(crate) fn desktop_close_window_preview(params: &Value) -> String {
+    // The adapter names the window by `target` (its class or title).
+    let title_or_class = ["target", "title", "class"]
+        .iter()
+        .filter_map(|k| params.get(*k).and_then(Value::as_str))
+        .find(|s| !s.trim().is_empty());
+    match title_or_class {
+        Some(name) => format!("Closes the window \"{name}\"; unsaved work in it may be lost."),
+        None => "Closes a window; unsaved work in it may be lost.".to_string(),
+    }
+}
+
+/// Checks the result of a confirmed desktop action.
+pub(crate) fn desktop_verdict(ok: bool, output: &str) -> String {
+    if !ok {
+        if output.starts_with("Failed: ") {
+            output.to_string()
+        } else {
+            format!("Failed: {output}")
+        }
+    } else if let Ok(val) = serde_json::from_str::<Value>(output) {
+        if val.get("still_open").and_then(Value::as_bool) == Some(true) {
+            "Partly: the window is still open (it may be asking to save your work).".to_string()
+        } else if output.starts_with("Done: ") {
+            output.to_string()
+        } else {
+            format!("Done: {output}")
+        }
+    } else if output.starts_with("Done: ") {
+        output.to_string()
+    } else {
+        format!("Done: {output}")
+    }
+}
+
 /// What the person is told when they stopped the task partway.
 fn stopped_message(steps: &[String]) -> String {
     if steps.is_empty() {
@@ -492,10 +528,18 @@ impl DesktopControlTool {
         }
         let (ok, out) = self.run_verb(verb, to_run).await;
         self.record(verb, &params, ok, "(confirmed)");
-        if ok {
-            ToolResult::success(format!("Did: {verb} {json_text}\nResult: {out}"))
+        if !crate::features::on("action-check") {
+            return if ok {
+                ToolResult::success(format!("Did: {verb} {json_text}\nResult: {out}"))
+            } else {
+                ToolResult::error(out)
+            };
+        }
+        let verdict = desktop_verdict(ok, &out);
+        if !ok || verdict.starts_with("Failed: ") {
+            ToolResult::error(verdict)
         } else {
-            ToolResult::error(out)
+            ToolResult::success(verdict)
         }
     }
 }
@@ -660,7 +704,16 @@ impl Tool for DesktopControlTool {
             if risk == DesktopRisk::Destructive {
                 // Ask first, with the exact action; nothing has been closed.
                 let exact = exact_action(verb, &params);
-                let asked = self.gate.lock().unwrap().check_or_record("desktop", &exact);
+                let preview = if verb == "close_window" && crate::features::on("action-check") {
+                    Some(desktop_close_window_preview(&params))
+                } else {
+                    None
+                };
+                let asked = self
+                    .gate
+                    .lock()
+                    .unwrap()
+                    .check_or_record_with("desktop", &exact, preview);
                 if let Err(err) = asked {
                     return err;
                 }
@@ -1736,5 +1789,57 @@ mod tests {
         windows.sort();
         windows_guide.sort();
         assert_eq!(windows_guide, windows);
+    }
+
+    #[test]
+    fn desktop_close_window_preview_decisions() {
+        assert_eq!(
+            desktop_close_window_preview(&json!({"title": "Untitled Document"})),
+            "Closes the window \"Untitled Document\"; unsaved work in it may be lost."
+        );
+        assert_eq!(
+            desktop_close_window_preview(&json!({"class": "gedit"})),
+            "Closes the window \"gedit\"; unsaved work in it may be lost."
+        );
+        assert_eq!(
+            desktop_close_window_preview(&json!({"title": "Doc", "class": "editor"})),
+            "Closes the window \"Doc\"; unsaved work in it may be lost."
+        );
+        assert_eq!(
+            desktop_close_window_preview(&json!({})),
+            "Closes a window; unsaved work in it may be lost."
+        );
+        assert_eq!(
+            desktop_close_window_preview(&json!({"target": "firefox"})),
+            "Closes the window \"firefox\"; unsaved work in it may be lost."
+        );
+    }
+
+    #[test]
+    fn desktop_verdict_decisions() {
+        // Failed case
+        assert_eq!(
+            desktop_verdict(false, "no such window"),
+            "Failed: no such window"
+        );
+        assert_eq!(
+            desktop_verdict(false, "Failed: already failed"),
+            "Failed: already failed"
+        );
+
+        // Partly case
+        let still_open = json!({"still_open": true, "asked_to_close": "gedit"}).to_string();
+        assert_eq!(
+            desktop_verdict(true, &still_open),
+            "Partly: the window is still open (it may be asking to save your work)."
+        );
+
+        // Done case
+        let closed = json!({"closed": "gedit"}).to_string();
+        assert_eq!(desktop_verdict(true, &closed), format!("Done: {closed}"));
+        assert_eq!(
+            desktop_verdict(true, "closed window"),
+            "Done: closed window"
+        );
     }
 }
