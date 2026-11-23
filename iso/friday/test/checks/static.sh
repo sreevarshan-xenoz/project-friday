@@ -347,4 +347,10 @@ if [[ -s "$REPO_ROOT/Cargo.lock" ]]; then
   else pass "no telemetry SDK among $(wc -l <<<"$names") shipped packages"; fi
 else fail "Cargo.lock is missing: can't check for telemetry SDKs"; fi
 
+echo "task recipes are the same on Linux and Windows"
+rs_ids=$(sed -n '/pub const RECIPES/,/^];/p' "$REPO_ROOT/services/mobile/src/standing.rs" | sed -nE 's/.*id: "([^"]+)".*/\1/p' | sort)
+cs_ids=$(sed -n '/Recipes =/,/\];/p' "$REPO_ROOT/windows-tray/FridayTray.Core/StandingTasks.cs" | sed -nE 's/.*\("([a-z-]+)",.*/\1/p' | sort)
+if [[ -n "$rs_ids" && "$rs_ids" == "$cs_ids" ]]; then pass "both list: $(tr '\n' ' ' <<<"$rs_ids")"
+else fail "recipes differ: daemon [$(tr '\n' ' ' <<<"$rs_ids")] tray [$(tr '\n' ' ' <<<"$cs_ids")]"; fi
+
 finish

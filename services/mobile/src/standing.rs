@@ -514,6 +514,83 @@ pub async fn run_loop(path: PathBuf, runner: std::sync::Arc<dyn Runner>) {
     }
 }
 
+/// A standing task made in one click (`friday tasks recipes`, Settings):
+/// each asks for something FRIDAY already does.
+pub struct Recipe {
+    pub id: &'static str,
+    pub what: &'static str,
+    pub goal: &'static str,
+    pub trigger: Trigger,
+}
+
+pub const RECIPES: [Recipe; 5] = [
+    Recipe {
+        id: "morning-brief",
+        what: "Weekday mornings at 9: what you missed (agents, tasks, reminders)",
+        goal: "what did I miss?",
+        trigger: Trigger::Daily {
+            hour: 9,
+            minute: 0,
+            weekdays_only: true,
+        },
+    },
+    Recipe {
+        id: "weather",
+        what: "Every morning at 7:30: today's weather",
+        goal: "what's the weather today?",
+        trigger: Trigger::Daily {
+            hour: 7,
+            minute: 30,
+            weekdays_only: false,
+        },
+    },
+    Recipe {
+        id: "plug-in",
+        what: "When the battery is under 20%: a reminder to plug in",
+        goal: "tell me the battery is low and to plug in the charger",
+        trigger: Trigger::BatteryBelow { percent: 20 },
+    },
+    Recipe {
+        id: "health-check",
+        what: "Once a week: how the computer is doing (disk, memory, updates)",
+        goal: "how is my computer doing?",
+        trigger: Trigger::Every {
+            minutes: 7 * 24 * 60,
+        },
+    },
+    Recipe {
+        id: "tech-news",
+        what: "Every evening at 6: the day's top tech news",
+        goal: "what's the top tech news today?",
+        trigger: Trigger::Daily {
+            hour: 18,
+            minute: 0,
+            weekdays_only: false,
+        },
+    },
+];
+
+/// Adds the recipe `id` to the store at `path`; the plain answer.
+pub fn add_recipe(path: &Path, id: &str, now: i64) -> Result<String, String> {
+    let r = RECIPES.iter().find(|r| r.id == id).ok_or_else(|| {
+        let ids: Vec<&str> = RECIPES.iter().map(|r| r.id).collect();
+        format!("there's no recipe {id}; there are: {}", ids.join(", "))
+    })?;
+    let mut store = Store::load(path);
+    if store
+        .tasks
+        .iter()
+        .any(|t| t.goal == r.goal && t.trigger == r.trigger)
+    {
+        return Ok(format!("Already set up: {}.", r.what));
+    }
+    let added = store.add(r.goal, r.trigger.clone(), now)?.id.clone();
+    store
+        .save(path)
+        .map_err(|e| format!("couldn't save {}: {e}", path.display()))?;
+    Ok(format!("Added {added}: {}.", r.what))
+}
+
 /// The capability the planner routes "every morning ..." goals to.
 pub const CAPABILITY: &str = "standing.tasks";
 
@@ -700,6 +777,32 @@ impl friday_goal_execution::Tool for StandingTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_recipe_is_a_valid_task_and_adding_one_twice_adds_it_once() {
+        let path = std::env::temp_dir().join(format!(
+            "friday-recipes-{}-{}.json",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
+        for r in &RECIPES {
+            assert!(r.trigger.valid().is_ok(), "{}", r.id);
+            assert!(!looks_like_schedule(r.goal), "{}", r.id);
+            assert!(
+                add_recipe(&path, r.id, 1_000).unwrap().starts_with("Added"),
+                "{}",
+                r.id
+            );
+        }
+        assert!(add_recipe(&path, "weather", 1_000)
+            .unwrap()
+            .starts_with("Already"));
+        assert_eq!(Store::load(&path).tasks.len(), RECIPES.len());
+        assert!(add_recipe(&path, "nope", 1_000)
+            .unwrap_err()
+            .contains("weather"));
+        let _ = std::fs::remove_file(&path);
+    }
     use chrono::NaiveDate;
 
     fn at(y: i32, m: u32, d: u32, h: u32, mi: u32) -> NaiveDateTime {

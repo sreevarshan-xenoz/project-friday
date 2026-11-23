@@ -1252,6 +1252,18 @@ internal sealed partial class SettingsWindow : FluentWindow
             };
             yield return Card(t.Goal, t.When + (t.Paused ? " · paused" : ""), t.Paused, pause, delete);
         }
+        if (!AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "task-recipes"))
+            yield break;
+        yield return Note("Ready-made: one click sets it up.");
+        foreach (var (id, what) in StandingTasks.Recipes)
+            yield return Row(Pill(what, SymbolRegular.Add24), () => AddRecipe(id));
+    }
+
+    private async void AddRecipe(string id)
+    {
+        var (_, said) = await Ctl.RunAsync(_install, ["tasks", "recipe", id], TimeSpan.FromSeconds(15));
+        Show("Tasks");
+        Said(said.Trim());
     }
 
     private IEnumerable<UIElement> Shortcuts()

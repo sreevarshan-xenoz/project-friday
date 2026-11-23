@@ -37,6 +37,11 @@ if [[ "\$1" == memory && "\$2" == tidy ]]; then
   echo 'Everything fits'
   exit 0
 fi
+if [[ "\$1" == tasks ]]; then
+  printf 'friday-ctl-tasks %s\n' "\${*:2}" >> "$LOG"
+  echo 'weather: Every morning at 7:30'
+  exit 0
+fi
 if [[ "\$1" == risks ]]; then
   printf 'friday-ctl-risks\n' >> "$LOG"
   echo 'Asks first, with the exact action'
@@ -602,6 +607,9 @@ contains "the risk table can be turned off" "$(bash "$F" risks)" "turned off"
 bash "$F" feature risk-table on >/dev/null
 : >"$LOG"; contains "friday doctor --offline proves it" "$(bash "$F" doctor --offline)" "nothing went"
 contains "for the last day by default" "$(cat "$LOG")" "friday-ctl-offline-proof 24"
+: >"$LOG"; contains "friday tasks recipes lists them" "$(bash "$F" tasks recipes)" "weather"
+bash "$F" tasks recipe weather >/dev/null
+contains "a recipe is added through friday-ctl" "$(cat "$LOG")" "friday-ctl-tasks recipe weather"
 contains "friday verify-log checks the chain through friday-ctl" "$(bash "$F" verify-log)" "intact"
 : >"$LOG"; bash "$F" memory tidy >/dev/null 2>&1 || true
 contains "friday memory tidy goes to friday-ctl" "$(cat "$LOG")" "memory tidy"
