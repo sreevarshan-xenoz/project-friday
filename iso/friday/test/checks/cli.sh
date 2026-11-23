@@ -760,6 +760,7 @@ printf 'LLAMACPP_ENABLED=1\nLLAMACPP_BASE_URL=http://127.0.0.1:8080/v1\n' >"$env
 : >"$LOG"; bash "$F" ask --screen "what is this"; sleep 0.3
 if grep -q "context screen" "$LOG"; then fail "took a screenshot of a private window"; else pass "no screenshot of a private window"; fi
 contains "and says so" "$(cat "$LOG")" "no screenshot of it leaves"
+if grep -q "on your screen, sent this once" "$state/last-answer.md" 2>/dev/null; then fail "a screen ask that sent nothing says it was sent"; else pass "a screen ask that sent nothing doesn't say it was sent"; fi
 # With words to read: they go to the local model, never to the daemon.
 : >"$LOG"; LOCAL_REPLY="It's your vault's entry list." WINDOW_TEXT="Entries: email, bank, wifi" bash "$F" ask --screen "what is this"; sleep 0.3
 contains "a private window's text goes to the local model" "$(cat "$LOG")" "http://127.0.0.1:8080/v1/chat/completions"

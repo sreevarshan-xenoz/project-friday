@@ -252,14 +252,14 @@ else fail "no answer of its own after askers left"; sed 's/^/       /' <<<"$out"
 # empty runtime folder, so nothing of this desktop is read.
 if [[ "$(uname -s)" == Linux ]]; then
   echo "screen capture is used once"
-  mkdir -p "$W/shot-bin" "$W/run" "$W/tmp" "$W/xdg"
+  mkdir -p "$W/shot-bin" "$W/run" "$W/tmp" "$W/xdg" "$W/home"
   printf '#!/bin/sh\nprintf "\\211PNG\\r\\n\\032\\n"\nprintf "FRIDAY-CAPTURE-CANARY%%.0s" 1 2 3 4 5 6 7 8\n' >"$W/shot-bin/grim"
   chmod +x "$W/shot-bin/grim"
   kill $DAEMON 2>/dev/null; wait $DAEMON 2>/dev/null || true
   rm -f "$W/state.json"
   shot=(env -u HTTPS_PROXY -u HTTP_PROXY -u https_proxy -u http_proxy -u ALL_PROXY -u all_proxy
     -u DBUS_SESSION_BUS_ADDRESS -u WAYLAND_DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE -u NIRI_SOCKET
-    PATH="$W/shot-bin:$PATH" XDG_RUNTIME_DIR="$W/run" TMPDIR="$W/tmp"
+    PATH="$W/shot-bin:$PATH" HOME="$W/home" XDG_RUNTIME_DIR="$W/run" TMPDIR="$W/tmp"
     XDG_STATE_HOME="$W/xdg/state" XDG_CACHE_HOME="$W/xdg/cache" XDG_CONFIG_HOME="$W/xdg/config" XDG_DATA_HOME="$W/xdg/data"
     FRIDAY_STATE_FILE="$W/state.json" FRIDAY_MEMORY_DIR="$W/memory-shot" FRIDAY_LISTEN=127.0.0.1:0
     LLAMACPP_ENABLED=1 LLAMACPP_VISION=1 LLAMACPP_BASE_URL="http://127.0.0.1:$PORT/v1")
