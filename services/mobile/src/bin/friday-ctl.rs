@@ -10,6 +10,9 @@
 //!   friday-ctl goal "List the files in this folder"
 //!   friday-ctl goal --wait "open chromium"   (block until the goal finishes;
 //!                                            exit status = its outcome)
+//!   friday-ctl goal --json "..."          (for scripts: waits, prints one
+//!                                            JSON object, exit codes in
+//!                                            specs/ask-json.md)
 //!   friday-ctl goal --wait --stream "..."    (meanwhile print the answer so
 //!                                            far: {"partial": ...} lines;
 //!                                            also for context screen)
@@ -1465,6 +1468,7 @@ async fn main() -> std::process::ExitCode {
     let mut token = std::env::var("FRIDAY_CTL_TOKEN").ok().unwrap_or_default();
     let mut wait = false;
     let mut stream = false;
+    let mut json = false;
     // Optional goal fields: `--web`, `--thorough`, `--avoid <provider>/<model>`.
     let mut ask_opts = serde_json::Map::new();
     let mut question: Option<String> = None;
@@ -1497,6 +1501,11 @@ async fn main() -> std::process::ExitCode {
         } else if w == "--wait" {
             wait = true;
             i += 1;
+        } else if w == "--json" {
+            // The stable form for scripts (specs/ask-json.md).
+            json = true;
+            wait = true;
+            i += 1;
         } else if w == "--stream" {
             stream = true;
             i += 1;
@@ -1525,11 +1534,20 @@ async fn main() -> std::process::ExitCode {
     }
 
     let Some(sub) = positional.first() else {
-        eprintln!("usage: friday-ctl <goal|cancel|system-info|context screen> [goal text] [--web] [--thorough [--avoid <provider>/<model>]] [--new-conversation] [--addr <host:port>] [--token <tok>]");
-        return std::process::ExitCode::FAILURE;
+        eprintln!("usage: friday-ctl <goal|cancel|system-info|context screen> [goal text] [--json] [--web] [--thorough [--avoid <provider>/<model>]] [--new-conversation] [--addr <host:port>] [--token <tok>]");
+        return std::process::ExitCode::from(if json { 2 } else { 1 });
     };
     let sub = sub.clone();
     let goal_words = positional.into_iter().skip(1).collect::<Vec<_>>();
+    if json {
+        // The contract (specs/ask-json.md) is for a question only, and its
+        // one object leaves no room for {"partial": ...} lines.
+        if sub != "goal" || goal_words.join(" ").trim().is_empty() {
+            eprintln!("usage: friday-ctl goal --json [--web] [--new-conversation] <question>");
+            return std::process::ExitCode::from(2);
+        }
+        stream = false;
+    }
     if sub == "goal" {
         ask_opts.insert(
             "conversation".into(),
@@ -1572,10 +1590,14 @@ async fn main() -> std::process::ExitCode {
                 } else {
                     "try: friday doctor"
                 };
-                eprintln!(
+                let said = format!(
                     "no token found; FRIDAY isn't running (no {}): {hint}",
                     state_path.display()
                 );
+                if json && sub == "goal" {
+                    return json_unreachable(&said);
+                }
+                eprintln!("{said}");
                 return std::process::ExitCode::FAILURE;
             }
         }
@@ -1636,12 +1658,27 @@ async fn main() -> std::process::ExitCode {
         goal_words,
         confirm.as_deref(),
         &ask_opts,
+        json,
     )
     .await;
     if sub == "goal" && wait && accepted == std::process::ExitCode::SUCCESS {
-        return wait_for_goal(&state_path, &goal, submitted_ms, stream).await;
+        return wait_for_goal(&state_path, &goal, submitted_ms, stream, json).await;
     }
     accepted
+}
+
+/// `--json`'s exit codes (specs/ask-json.md): the contract scripts rely on.
+const JSON_FAILED: u8 = 1;
+const JSON_NEEDS_CONFIRMATION: u8 = 3;
+const JSON_TIMED_OUT: u8 = 4;
+const JSON_UNREACHABLE: u8 = 5;
+
+fn json_unreachable(error: &str) -> std::process::ExitCode {
+    println!(
+        "{}",
+        serde_json::json!({ "outcome": "unreachable", "result": null, "error": error })
+    );
+    std::process::ExitCode::from(JSON_UNREACHABLE)
 }
 
 fn now_ms() -> u64 {
@@ -1662,6 +1699,7 @@ async fn wait_for_goal(
     goal: &str,
     since_ms: u64,
     stream: bool,
+    json: bool,
 ) -> std::process::ExitCode {
     use std::io::Write;
     let mut shown = String::new();
@@ -1684,7 +1722,8 @@ async fn wait_for_goal(
         }
         if let Some(done) = state.and_then(|s| finished_goal(&s, goal, since_ms)) {
             let mut summary = serde_json::json!({
-                "outcome": done["outcome"],
+                // The contract promises one of its words, never null.
+                "outcome": done["outcome"].as_str().unwrap_or("failed"),
                 "result": done["result"],
                 "error": done["error"],
             });
@@ -1700,25 +1739,36 @@ async fn wait_for_goal(
             if let Some(m) = done.get("masked").filter(|v| !v.is_null()) {
                 summary["masked"] = m.clone();
             }
-            println!(
-                "{}",
+            // --json: one line, so a script reads the last line.
+            let shown = if json {
+                summary.to_string()
+            } else {
                 serde_json::to_string_pretty(&summary).unwrap_or_default()
-            );
+            };
+            println!("{shown}");
             return if done["outcome"] == "completed" {
                 std::process::ExitCode::SUCCESS
             } else if done
                 .get("needs_confirmation")
                 .is_some_and(|nc| !nc.is_null())
             {
-                std::process::ExitCode::from(3u8)
+                std::process::ExitCode::from(JSON_NEEDS_CONFIRMATION)
             } else {
-                std::process::ExitCode::FAILURE
+                std::process::ExitCode::from(JSON_FAILED)
             };
         }
         let poll = if stream { 100 } else { 300 };
         tokio::time::sleep(Duration::from_millis(poll)).await;
     }
-    eprintln!("timed out after {limit}s waiting for the goal to finish");
+    let said = format!("timed out after {limit}s waiting for the goal to finish");
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({ "outcome": "timed_out", "result": null, "error": said })
+        );
+        return std::process::ExitCode::from(JSON_TIMED_OUT);
+    }
+    eprintln!("{said}");
     std::process::ExitCode::FAILURE
 }
 
@@ -1888,6 +1938,7 @@ async fn run(
     args: Vec<String>,
     confirm: Option<&str>,
     ask_opts: &serde_json::Map<String, serde_json::Value>,
+    json: bool,
 ) -> std::process::ExitCode {
     // Build the command. Only `goal`, `system-info`, and `context` are wired
     // for now — the "one controlled command" surface.
@@ -1896,7 +1947,7 @@ async fn run(
             let goal = args.join(" ");
             if goal.trim().is_empty() {
                 eprintln!("friday-ctl goal <text>: goal text required");
-                return std::process::ExitCode::FAILURE;
+                return std::process::ExitCode::from(if json { 2 } else { 1 });
             }
             let mut p = serde_json::json!({ "goal": goal, "token": token });
             if let Some(c) = confirm {
@@ -1916,7 +1967,25 @@ async fn run(
             return std::process::ExitCode::FAILURE;
         }
     };
-    send_command(addr, &method, params, Duration::from_secs(10), false).await
+    if !json {
+        return send_command(addr, &method, params, Duration::from_secs(10), false).await;
+    }
+    // --json: the taking-it reply stays off stdout; one object comes at the end.
+    match exchange(addr, &method, params, Duration::from_secs(10), false).await {
+        Ok((true, _)) => std::process::ExitCode::SUCCESS,
+        Ok((false, result)) => {
+            let error = match result.get("error").unwrap_or(&result) {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            println!(
+                "{}",
+                serde_json::json!({ "outcome": "rejected", "result": null, "error": error })
+            );
+            std::process::ExitCode::from(JSON_FAILED)
+        }
+        Err(e) => json_unreachable(&e),
+    }
 }
 
 /// R5-2-5-3: send the Screen `context.read`. `main` has already presented
@@ -1993,15 +2062,39 @@ async fn send_command(
     wait: Duration,
     stream: bool,
 ) -> std::process::ExitCode {
+    match exchange(addr, method, params, wait, stream).await {
+        Ok((ok, result)) => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&result).unwrap_or_default()
+            );
+            if ok {
+                std::process::ExitCode::SUCCESS
+            } else {
+                std::process::ExitCode::FAILURE
+            }
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+/// Sends one command and returns the daemon's answer (whether it took it, and
+/// its result), or why it couldn't be reached.
+async fn exchange(
+    addr: &str,
+    method: &str,
+    params: serde_json::Value,
+    wait: Duration,
+    stream: bool,
+) -> Result<(bool, serde_json::Value), String> {
     use std::io::Write;
     let ws_url = format!("ws://{addr}");
-    let (mut ws, _) = match tokio_tungstenite::connect_async(&ws_url).await {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("cannot reach daemon at {ws_url}: {e}");
-            return std::process::ExitCode::FAILURE;
-        }
-    };
+    let (mut ws, _) = tokio_tungstenite::connect_async(&ws_url)
+        .await
+        .map_err(|e| format!("cannot reach daemon at {ws_url}: {e}"))?;
 
     let id = uuid::Uuid::new_v4().to_string();
     let want_id = id.clone();
@@ -2013,32 +2106,24 @@ async fn send_command(
         method: method.to_string(),
         params,
     };
-    if let Err(e) = ws
-        .send(Message::Text(serde_json::to_string(&client_msg).unwrap()))
+    ws.send(Message::Text(serde_json::to_string(&client_msg).unwrap()))
         .await
-    {
-        eprintln!("couldn't send the command to the daemon: {e}");
-        return std::process::ExitCode::FAILURE;
-    }
+        .map_err(|e| format!("couldn't send the command to the daemon: {e}"))?;
 
     // Loop until we see our CommandResult (skipping welcome/events).
     let deadline = tokio::time::Instant::now() + wait;
     loop {
         if tokio::time::Instant::now() > deadline {
-            eprintln!("timed out waiting for command result");
-            return std::process::ExitCode::FAILURE;
+            return Err("timed out waiting for command result".into());
         }
         let msg = match tokio::time::timeout(Duration::from_secs(5), ws.next()).await {
             Ok(Some(Ok(m))) => m,
-            Ok(Some(Err(e))) => {
-                eprintln!("ws error: {e}");
-                return std::process::ExitCode::FAILURE;
-            }
+            Ok(Some(Err(e))) => return Err(format!("ws error: {e}")),
             Ok(None) => {
-                eprintln!(
+                return Err(
                     "the daemon closed the connection before it answered (is it restarting?)"
-                );
-                return std::process::ExitCode::FAILURE;
+                        .into(),
+                )
             }
             // Nothing for a while: keep waiting until the deadline.
             Err(_) => continue,
@@ -2056,13 +2141,7 @@ async fn send_command(
             }
             if let Ok(ServerMessage::CommandResult { id, ok, result }) = decoded {
                 if id == want_id {
-                    let json = serde_json::to_string_pretty(&result).unwrap_or_default();
-                    println!("{json}");
-                    return if ok {
-                        std::process::ExitCode::SUCCESS
-                    } else {
-                        std::process::ExitCode::FAILURE
-                    };
+                    return Ok((ok, result));
                 }
             }
         }

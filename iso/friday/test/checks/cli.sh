@@ -568,6 +568,12 @@ contains "headings stay too" "$(cat "$HOME/.config/friday/memory.md")" "# mine, 
 bash "$F" forget memory --yes >/dev/null
 [ ! -e "$HOME/.config/friday/memory.md" ] && pass "friday forget memory clears it" || fail "forget memory left the memory file"
 
+echo "friday ask --json"
+: >"$LOG"; bash "$F" ask --json --web --new "jsonq words" >/dev/null 2>&1
+contains "goes straight to friday-ctl goal --json" "$(cat "$LOG")" "friday-ctl-web goal --json --web --new-conversation jsonq words"
+rc=0; bash "$F" ask --json --screen "what is this" >/dev/null 2>&1 || rc=$?
+[ "$rc" = 2 ] && pass "a screen ask has no --json form (exit 2)" || fail "--json --screen exited $rc"
+
 echo "per-app instructions"
 printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s "$HYPR_WIN"\nexit 0\n' >"$S/hyprctl"; chmod +x "$S/hyprctl"
 # "This window" is the one in front at the keypress.
