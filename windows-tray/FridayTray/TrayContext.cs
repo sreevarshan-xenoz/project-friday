@@ -115,11 +115,14 @@ internal sealed class TrayContext : ApplicationContext
                         TryDelete(paths.RollbackDir);
                         return;
                     case RollbackStep.TellReverted:
+                        // The task can't delete itself while it runs: gone now.
+                        await Task.Run(() => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("schtasks.exe", $"/delete /tn \"{Rollback.TaskName}\" /f") { UseShellExecute = false, CreateNoWindow = true })?.WaitForExit(15000));
                         ui.Post(_ => Notify("FRIDAY went back", $"FRIDAY {plan!.To} didn't start properly, so FRIDAY {plan.From} is back. Updates stay offered.", ToolTipIcon.Warning), null);
                         TryDelete(paths.RollbackDir);
                         return;
                     case RollbackStep.Revert:
-                        Revert(plan!, ui);
+                        // Files and schtasks: off the UI thread.
+                        await Task.Run(() => Revert(plan!, ui));
                         return;
                     case RollbackStep.Wait:
                         // Running: the daemon has written state.json since this start, and says so.
@@ -149,22 +152,28 @@ internal sealed class TrayContext : ApplicationContext
             TryDelete(paths.RollbackDir);
             return;
         }
-        if (!Rollback.Verified(paths.RollbackDir, plan.OldMsi) || !Rollback.Verified(paths.RollbackDir, plan.NewMsi))
+        if (!Rollback.Verified(paths.RollbackDir, plan.OldMsi))
         {
             ui.Post(_ => Notify("FRIDAY didn't go back", $"FRIDAY {plan.To} didn't start properly, but the kept copy of {plan.From} no longer checks out. Reinstall FRIDAY from its releases page.", ToolTipIcon.Warning), null);
             TryDelete(paths.RollbackDir);
             return;
         }
         var script = Path.Combine(paths.RollbackDir, "revert.cmd");
-        File.WriteAllText(script, Rollback.RevertScript(plan, Path.Combine(_install.Dir, "friday-tray.exe")));
-        var task = $"/create /f /it /tn \"FRIDAY revert\" /tr \"cmd.exe /c \\\"{script}\\\"\" /sc once /st 23:59";
+        File.WriteAllText(script, Rollback.RevertScript(plan, Path.Combine(_install.Dir, "friday-tray.exe"),
+            fallback: Rollback.Verified(paths.RollbackDir, plan.NewMsi)));
+        var xml = Path.Combine(paths.RollbackDir, "revert.xml");
+        File.WriteAllText(xml, Rollback.TaskXml(script), System.Text.Encoding.Unicode);
         // Marked first: taking this version off closes this tray at once.
         Rollback.Write(paths.RollbackFile, plan with { Reverted = true });
         try
         {
-            var started = Run("schtasks.exe", task) && Run("schtasks.exe", "/run /tn \"FRIDAY revert\"");
+            // A revert cut short (a shutdown between the two installers) runs again at sign-in.
+            using (var runOnce = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\RunOnce"))
+                runOnce.SetValue(Rollback.TaskName, $"\"{script}\"");
+            var started = Run("schtasks.exe", $"/create /f /tn \"{Rollback.TaskName}\" /xml \"{xml}\"")
+                && Run("schtasks.exe", $"/run /tn \"{Rollback.TaskName}\"");
             if (!started)
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c \"{script}\"") { UseShellExecute = false, CreateNoWindow = true });
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/d /s /c \"\"{script}\"\"") { UseShellExecute = false, CreateNoWindow = true });
         }
         catch
         {

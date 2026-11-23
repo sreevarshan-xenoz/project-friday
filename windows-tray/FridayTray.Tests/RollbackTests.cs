@@ -55,6 +55,12 @@ public class RollbackTests
         // The old one failing puts the new one back; FRIDAY starts again either way.
         Assert.Contains("if not \"%rc%\"==\"0\" if not \"%rc%\"==\"3010\" start \"\" /wait msiexec /i \"C:\\r\\new\\FRIDAY-0.8.3-x64.msi\"", script);
         Assert.Contains("start \"\" \"C:\\f\\friday-tray.exe\"", script);
+        Assert.DoesNotContain("3010", Rollback.RevertScript(Plan, @"C:\f\friday-tray.exe", fallback: false));
+        // The task: a path with "&" stays one path; never stopped on battery or for time.
+        var xml = Rollback.TaskXml(@"C:\Users\A & B (work)\revert.cmd");
+        Assert.Contains("<Command>C:\\Users\\A &amp; B (work)\\revert.cmd</Command>", xml);
+        Assert.Contains("<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>", xml);
+        Assert.Contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>", xml);
         Assert.Equal("https://api.github.com/repos/sreevarshan-xenoz/project-friday/releases/tags/v0.8.2", Updates.TagUrl("0.8.2"));
     }
 

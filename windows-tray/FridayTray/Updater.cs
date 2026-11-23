@@ -115,7 +115,19 @@ internal static class Updater
                 File.Copy(f, Path.Combine(newDir, Path.GetFileName(f)), overwrite: true);
             if (Directory.Exists(paths.RollbackDir))
                 Directory.Delete(paths.RollbackDir, recursive: true);
-            Directory.Move(dir, paths.RollbackDir);
+            // A virus scanner often still holds a file it just read: try again for a bit.
+            for (var i = 0; ; i++)
+            {
+                try
+                {
+                    Directory.Move(dir, paths.RollbackDir);
+                    break;
+                }
+                catch (Exception e) when (i < 10 && e is IOException or UnauthorizedAccessException)
+                {
+                    await Task.Delay(1000);
+                }
+            }
             Rollback.Write(paths.RollbackFile, new RollbackPlan(Current, Rollback.Plain(next.Version),
                 Path.Combine(paths.RollbackDir, "old", now.MsiName), Path.Combine(paths.RollbackDir, "new", next.MsiName), DateTime.UtcNow));
         }

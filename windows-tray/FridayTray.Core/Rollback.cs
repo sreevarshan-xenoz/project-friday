@@ -99,17 +99,44 @@ public static class Rollback
         }
     }
 
-    /// <summary>Takes the new version off and puts the old one back, each step waited for;
-    /// if the old one won't go on, the new one goes back on, so FRIDAY is never left off.
-    /// Then FRIDAY starts again.</summary>
-    public static string RevertScript(RollbackPlan plan, string trayExe) => $"""
-        @echo off
-        start "" /wait msiexec /x "{plan.NewMsi}" /passive /norestart
-        start "" /wait msiexec /i "{plan.OldMsi}" /passive /norestart
-        set rc=%errorlevel%
-        if not "%rc%"=="0" if not "%rc%"=="3010" start "" /wait msiexec /i "{plan.NewMsi}" /passive /norestart
-        start "" "{trayExe}"
-        schtasks /delete /tn "FRIDAY revert" /f >nul 2>&1
+    /// <summary>The name of the task (and the sign-in entry) that runs a revert.</summary>
+    public const string TaskName = "FRIDAY revert";
 
-        """.Replace("\n", "\r\n");
+    /// <summary>Takes the new version off and puts the old one back, each step waited for;
+    /// with <paramref name="fallback"/> (the new MSI still checks out), the new one goes back
+    /// on if the old one won't, so FRIDAY is never left off. Then FRIDAY starts again. Until
+    /// it finishes, a sign-in entry runs it again (a revert cut short by a shutdown).</summary>
+    public static string RevertScript(RollbackPlan plan, string trayExe, bool fallback = true)
+    {
+        var lines = new List<string>
+        {
+            "@echo off",
+            $"start \"\" /wait msiexec /x \"{plan.NewMsi}\" /passive /norestart",
+            $"start \"\" /wait msiexec /i \"{plan.OldMsi}\" /passive /norestart",
+            "set rc=%errorlevel%",
+        };
+        if (fallback)
+            lines.Add($"if not \"%rc%\"==\"0\" if not \"%rc%\"==\"3010\" start \"\" /wait msiexec /i \"{plan.NewMsi}\" /passive /norestart");
+        lines.Add($"reg delete \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce\" /v \"{TaskName}\" /f >nul 2>&1");
+        lines.Add($"schtasks /delete /tn \"{TaskName}\" /f >nul 2>&1");
+        lines.Add($"start \"\" \"{trayExe}\"");
+        return string.Join("\r\n", lines) + "\r\n";
+    }
+
+    /// <summary>The task that runs the script: on battery too, never stopped for time or for
+    /// unplugging (a revert stopped between its two installers leaves no FRIDAY at all).</summary>
+    public static string TaskXml(string script) => $"""
+        <?xml version="1.0" encoding="UTF-16"?>
+        <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+          <Principals><Principal id="Author"><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+          <Settings>
+            <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+            <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+            <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+            <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+            <Enabled>true</Enabled>
+          </Settings>
+          <Actions Context="Author"><Exec><Command>{System.Security.SecurityElement.Escape(script)}</Command></Exec></Actions>
+        </Task>
+        """;
 }
