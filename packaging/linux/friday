@@ -113,6 +113,7 @@ Autonomous Agent & Cognitive Loop:
   friday autonomy [ask-all|ask-risky|act]  How much FRIDAY may do without asking
                                    Ask about the screen with the window's text, not a screenshot
   friday phone [status|on|off|send] Pair a phone with Pocketdesk; send it the last answer
+  friday phone devices|unpair <phone>  The paired phones, last heard from; cut one off
   friday helper [status|enable|disable]
                                    System helper for package updates and installs
 
@@ -994,8 +995,10 @@ EOF2
       echo "Phone: off"
       ;;
     send) friday_phone_send ;;
+    devices) friday_phone_devices ;;
+    unpair) shift; friday_phone_unpair "$@" ;;
     *)
-      echo "Usage: friday phone [status|on|off|send]" >&2
+      echo "Usage: friday phone [status|on|off|send|devices|unpair <phone>]" >&2
       return 1
       ;;
   esac
@@ -1986,6 +1989,65 @@ friday_calc_expr() {
   else
     return 1
   fi
+}
+
+# The paired phones (Pocketdesk's list): each one's name, id, when it was last
+# heard from and what it may do here, so one can be cut off.
+friday_phone_devices() {
+  local js
+  js=$(friday_phone_list) || return 1
+  if [ "$(jq '.devices | length' <<<"$js")" = 0 ]; then
+    echo "No phone is paired. friday phone on shows a PIN to pair one."
+    return 0
+  fi
+  echo "Paired phones (cut one off: friday phone unpair <name or id>):"
+  jq -r --argjson now "$(date +%s)" '
+    def ago: ($now - .) as $s | if $s < 120 then "just now" elif $s < 3600 then "\($s / 60 | floor) min ago"
+      elif $s < 86400 then "\($s / 3600 | floor) h ago" else "\($s / 86400 | floor) days ago" end;
+    .devices[] |
+    ([.battery.updated_unix, .switches_unix, .quiet.updated_unix] | map(select(. != null)) | max) as $heard |
+    ([.permissions // {} | to_entries[] | select(.value == true and (.key | IN("input", "exec", "files", "mic", "keyboard_and_mouse", "webcam"))) | .key]) as $may |
+    "  \(.name // "a phone")  \(.id[0:8])  " +
+    (if .in_session then "connected now" elif $heard then "last heard from \($heard | ago)" else "not heard from yet" end) +
+    (if .grant_remaining_secs then ", a guest for \(.grant_remaining_secs / 60 | ceil) more min" else "" end) +
+    (if ($may | length) > 0 then "; may use: \($may | join(", "))" else "" end)' <<<"$js"
+}
+
+# Pocketdesk's paired phones as JSON, or a plain reason it can't say.
+friday_phone_list() {
+  local js
+  command -v pocketdesk >/dev/null 2>&1 || { echo "No phone is set up: friday phone on pairs one." >&2; return 1; }
+  js=$(pocketdesk devices --json 2>/dev/null)
+  if ! jq -e '.devices | type == "array"' >/dev/null 2>&1 <<<"$js"; then
+    echo "Couldn't read Pocketdesk's paired phones$(jq -r '.error // empty | ": " + .' <<<"$js" 2>/dev/null)." >&2
+    return 1
+  fi
+  printf '%s\n' "$js"
+}
+
+# `friday phone unpair <name or id>`: that phone loses access at once (after a
+# yes; --yes skips it). One phone at a time: never all by accident.
+friday_phone_unpair() {
+  local yes=false who="" js matches n id name a
+  for a in "$@"; do [ "$a" = --yes ] && yes=true || who="${who:+$who }$a"; done
+  [ -n "$who" ] || { echo "usage: friday phone unpair <name or id> [--yes]   (friday phone devices lists them)" >&2; return 2; }
+  js=$(friday_phone_list) || return 1
+  # Its whole id, 6 or more of its first characters, or its name.
+  matches=$(jq -c --arg w "$who" '[.devices[] | select(.id == $w or (($w | length) >= 6 and (.id | startswith($w))) or ((.name // "") | ascii_downcase) == ($w | ascii_downcase))]' <<<"$js")
+  n=$(jq length <<<"$matches")
+  if [ "$n" = 0 ]; then echo "No paired phone is \"$who\" (friday phone devices lists them)."; return 1; fi
+  if [ "$n" -gt 1 ]; then
+    echo "More than one paired phone is \"$who\"; name it by its id:"
+    jq -r '.[] | "  \(.name // "a phone")  \(.id)"' <<<"$matches"
+    return 1
+  fi
+  id=$(jq -r '.[0].id' <<<"$matches"); name=$(jq -r '.[0].name // "the phone"' <<<"$matches")
+  if ! $yes; then
+    read -r -p "Unpair $name (${id:0:8})? It loses access to this computer at once. [y/N] " a || a=n
+    [[ "$a" =~ ^[Yy] ]] || { echo "Nothing changed."; return 0; }
+  fi
+  pocketdesk unpair "$id" >/dev/null 2>&1 || { echo "Pocketdesk couldn't unpair $name."; return 1; }
+  echo "Unpaired $name: it can't reach this computer any more. Pair it again with friday phone on."
 }
 
 # `friday phone send` / "send the answer to my phone": the last answer, as a
