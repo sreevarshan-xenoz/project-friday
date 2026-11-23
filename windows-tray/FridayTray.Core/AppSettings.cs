@@ -124,6 +124,7 @@ public static class AppSettings
         ("big-output-file", "A very long output is kept whole in a file named under the answer"),
         ("log-chain", "Each action in the action log is chained to the one before, so a changed line shows"),
         ("standing-reversible", "A standing task runs only what can be undone; anything that would ask first is refused and logged"),
+        ("memory-tidy", "When memory is fuller than an ask carries, offer a shorter list to approve"),
         ("activity", "One list of agent steps waiting for you, runs going now, standing tasks and runs finished lately"),
         ("model-per-job", "A model picked for asks, screen questions or chores (AI page) is tried first"),
         ("status-orb", "The answer card's orb shows listening, thinking and speaking"),

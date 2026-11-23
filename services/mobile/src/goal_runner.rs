@@ -923,10 +923,23 @@ impl Tool for MemoryRememberTool {
         if let Some(fact) = crate::about::fact_in(request).filter(|_| !private) {
             match crate::about::remember(&fact) {
                 // "I moved to Pune" ends "I live in Chennai": say so.
-                Ok(closed) if !closed.is_empty() => {
-                    said.push_str(&format!(" (no longer: {})", closed.join("; ")));
+                Ok(closed) => {
+                    if !closed.is_empty() {
+                        said.push_str(&format!(" (no longer: {})", closed.join("; ")));
+                    }
+                    // Past what an ask carries: later facts are left out.
+                    let all = crate::about::read(&crate::about::path())
+                        .map(|t| crate::about::facts(&t))
+                        .unwrap_or_default();
+                    if crate::about::too_long(&all) && crate::features::on("memory-tidy") {
+                        let how = if cfg!(windows) {
+                            "Settings > Privacy > Tidy what FRIDAY remembers"
+                        } else {
+                            "friday memory tidy"
+                        };
+                        said.push_str(&format!(" Memory is now fuller than an ask carries, so the newest facts are left out; {how} proposes a shorter list for you to approve."));
+                    }
                 }
-                Ok(_) => {}
                 Err(e) => tracing::warn!("couldn't write the memory file: {e}"),
             }
         }

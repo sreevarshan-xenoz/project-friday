@@ -3324,7 +3324,11 @@ friday_memory() {
       # a preview of what would be added, then --apply adds it.
       [ -n "${2:-}" ] || { echo "usage: friday memory import <file> [--apply]" >&2; return 2; }
       friday-ctl memory import "${@:2}" ;;
-    *) echo "Usage: friday memory [list|edit|forget <words>|import <file> [--apply]]" >&2; return 2 ;;
+    tidy)
+      # Fuller than an ask carries: your AI provider proposes a shorter list;
+      # `friday memory tidy apply` puts exactly that in place.
+      friday-ctl memory tidy "${@:2}" ;;
+    *) echo "Usage: friday memory [list|edit|forget <words>|import <file> [--apply]|tidy [apply]]" >&2; return 2 ;;
   esac
 }
 
@@ -3788,6 +3792,7 @@ offline-proof|friday doctor --offline: what went off this computer lately and wh
 big-output-file|A very long output is kept whole in a file named under the answer; the model sees its start and end
 log-chain|Each action in the action log is chained to the one before, so a changed line shows (friday verify-log)
 standing-reversible|A standing task runs only what can be undone; anything that would ask first is refused and logged
+memory-tidy|When memory is fuller than an ask carries, friday memory tidy proposes a shorter list to approve
 activity|One list of agent steps waiting for you, runs going now, standing tasks and runs finished lately
 model-per-job|friday model: a model picked for asks, screen questions or chores is tried first
 status-orb|The answer pill's orb shows listening, thinking and speaking
