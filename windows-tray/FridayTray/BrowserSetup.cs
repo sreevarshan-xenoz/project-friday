@@ -30,12 +30,8 @@ internal static class BrowserSetup
         return key?.GetValue(null) is string m && File.Exists(m);
     }
 
-    /// <summary>
-    /// Registers FRIDAY's host for the browser (a manifest in FRIDAY's config
-    /// folder, named under HKCU), then opens its extensions page with the
-    /// extension's folder on the clipboard. Returns what to do there.
-    /// </summary>
-    public static string Connect(KnownBrowser b, Install install)
+    /// <summary>Registers FRIDAY's host manifest for the browser under HKCU.</summary>
+    public static void RegisterHost(KnownBrowser b, Install install)
     {
         var dir = Path.Combine(install.Paths.ConfigDir, "browser");
         Directory.CreateDirectory(dir);
@@ -46,6 +42,16 @@ internal static class BrowserSetup
             using var key = Registry.CurrentUser.CreateSubKey($@"{hostKey}\{BrowserLink.HostName}");
             key.SetValue(null, manifest);
         }
+    }
+
+    /// <summary>
+    /// Registers FRIDAY's host for the browser (a manifest in FRIDAY's config
+    /// folder, named under HKCU), then opens its extensions page with the
+    /// extension's folder on the clipboard. Returns what to do there.
+    /// </summary>
+    public static string Connect(KnownBrowser b, Install install)
+    {
+        RegisterHost(b, install);
         var ext = ExtensionDir(install);
         Selection.TrySetText(b.Firefox ? Path.Combine(ext, "manifest.json") : ext);
         if (ExePath(b) is { } exe)

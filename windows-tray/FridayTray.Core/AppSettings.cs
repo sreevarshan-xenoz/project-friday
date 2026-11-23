@@ -97,7 +97,11 @@ public static class AppSettings
         ("brief", "\"What did I miss?\" answered from FRIDAY's own records (agents, standing tasks, reminders)"),
         ("call-pause", "\"Hey Friday\" rests while a call or meeting app uses the microphone"),
         ("action-check", "Before a risky action, say what will change; after it, check and say done, partly or failed"),
+        ("extension-autoinstall", "Settings installs the browser extension for you (Developer mode, Load unpacked)"),
     ];
+
+    public static bool ExtensionAutoinstallOn(IReadOnlyDictionary<string, string> env) =>
+        FeatureOn(env, "extension-autoinstall");
 
     public static bool FeatureOn(IReadOnlyDictionary<string, string> env, string name) =>
         !env.TryGetValue(FeaturesOff, out var v)
