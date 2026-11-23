@@ -16,6 +16,7 @@ pub mod agent_hooks;
 pub mod agent_opencode;
 pub mod agent_policy;
 pub mod agent_runs;
+pub mod agent_sandbox;
 pub mod auth;
 pub mod backup;
 pub mod bridge;

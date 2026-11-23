@@ -80,7 +80,7 @@ Autonomous Agent & Cognitive Loop:
   friday cancel                    Cancel the goal FRIDAY is working on
   friday tasks [pause|resume|delete <id>|status|on|off]
                                    Standing tasks ("every morning ..."): list, pause, delete, turn all off
-  friday agents [show|allow|deny|reply|accept|discard <id>|hooks|check|worktree [on|off]|status|on|off]
+  friday agents [show|allow|deny|reply|accept|discard <id>|hooks|check|worktree|sandbox [on|off]|status|on|off]
                                    Coding agents FRIDAY runs for you (opencode, agy, Claude Code): follow, answer, turn off
   friday ask --json [--web] [--new] <question>  The answer as one JSON object, for scripts
   friday brief [--say]             What you missed: agents, standing tasks, today's reminders (local only)
@@ -3515,6 +3515,21 @@ friday_agents() {
         status) if grep -qx 'FRIDAY_AGENT_WORKTREE=1' "$wt_env" 2>/dev/null; then echo "Separate copies: on. Turn off: friday agents worktree off"
                 else echo "Separate copies: off. Turn on: friday agents worktree on (each run in a git folder then works on its own branch until you accept it)"; fi ;;
         *) echo "Usage: friday agents worktree [status|on|off]" >&2; return 2 ;;
+      esac
+      ;;
+    sandbox)
+      # Off unless turned on: each agent runs under bubblewrap, writing only
+      # its folder, with ~/.ssh, keyrings and other keys hidden.
+      local sb_env="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
+      case "${id:-status}" in
+        on) command -v bwrap >/dev/null || { echo "The sandbox needs bubblewrap: sudo pacman -S bubblewrap" >&2; return 1; }
+            friday_env_set FRIDAY_AGENT_SANDBOX 1; systemctl --user restart friday-linux-daemon 2>/dev/null || true
+            echo "Agent sandbox: on. Agents write only in their folder and can't read ~/.ssh, keyrings or other keys." ;;
+        off) friday_env_set FRIDAY_AGENT_SANDBOX 0; systemctl --user restart friday-linux-daemon 2>/dev/null || true
+             echo "Agent sandbox: off." ;;
+        status) if grep -qx 'FRIDAY_AGENT_SANDBOX=1' "$sb_env" 2>/dev/null; then echo "Agent sandbox: on. Turn off: friday agents sandbox off"
+                else echo "Agent sandbox: off. Turn on: friday agents sandbox on (agents then write only in their folder, keys hidden)"; fi ;;
+        *) echo "Usage: friday agents sandbox [status|on|off]" >&2; return 2 ;;
       esac
       ;;
     check)
