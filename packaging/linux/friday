@@ -2544,6 +2544,38 @@ friday_replace_selection() {
 # C:\…) or a dotted file name isn't, unless one of its parts is such a run
 # of 16 or more (a key in a URL, a JWT). Anything else with a slash (base64,
 # an AWS secret) still is. Same rule as the Windows tray (Asking.LooksLikeSecret).
+# friday_memory_proposal <question>: what the question says about you, worth
+# remembering, as "you use fish" / "your editor is helix"; nothing when it
+# says nothing like that (or it looks like a secret).
+friday_memory_proposal() {
+  local q=" ${1,,} " what="" verb="" w words=() stop=" and but so how what why can could to for with on in at when where which is "
+  if [[ "$q" =~ [^a-z\'](i\ use|i\'m\ using|i\ am\ using|i\ prefer|i\ work\ with|i\'m\ on|i\ am\ on|i\ run)\ ([a-z0-9][^,.?!\;:]*) ]]; then
+    verb="${BASH_REMATCH[1]}" what="${BASH_REMATCH[2]}"
+    case "$verb" in "i'm using"|"i am using") verb="i use" ;; "i'm on"|"i am on") verb="i'm on" ;; esac
+  elif [[ "$q" =~ [^a-z]my\ (shell|editor|distro|os|terminal|browser|language|ide|laptop|keyboard\ layout|name)\ is\ ([a-z0-9][^,.?!\;:]*) ]]; then
+    verb="my ${BASH_REMATCH[1]} is" what="${BASH_REMATCH[2]}"
+  else
+    return 1
+  fi
+  # At most three words, up to the first one that starts the question.
+  local -a all
+  read -ra all <<<"$what"
+  for w in "${all[@]}"; do
+    [[ "$stop" == *" $w "* ]] && break
+    words+=("$w"); [ "${#words[@]}" -lt 3 ] || break
+  done
+  what="${words[*]:-}"
+  # "I use it for work", "I run into errors" name nothing.
+  case "${words[0]:-}" in ""|it|this|that|these|those|them|a|an|the|into|across|out|up|over) return 1 ;; esac
+  # Nothing shaped like a key or token, word by word.
+  for w in "${words[@]}"; do ! friday_secret_shaped "$w" || return 1; done
+  case "$verb" in
+    "i use") echo "you use $what" ;; "i prefer") echo "you prefer $what" ;;
+    "i work with") echo "you work with $what" ;; "i'm on") echo "you're on $what" ;;
+    "i run") echo "you run $what" ;; *) echo "your ${verb#my } $what" ;;
+  esac
+}
+
 # friday_vague_this <question>: whether a question leans on "this" or "that"
 # with nothing saying what it is ("explain this", "what does that mean", "is
 # this right?"). "This page", "this error in rust" or an @mention name it.
@@ -3488,7 +3520,8 @@ self-docs|Questions about FRIDAY are answered from its own guide
 sensitive-warn|Mail and chat apps: say where their text goes before sending it, or answer with the local model
 place-window|Put a window on one side of the screen (\"put Firefox on the left\")
 which-this|\"Explain this\" with nothing picked: ask whether it means the selected text or the window in front
-dictation-cleanup|Speech drops \"um\" and \"uh\" and uses your own words (~/.config/friday/dictionary)"
+dictation-cleanup|Speech drops \"um\" and \"uh\" and uses your own words (~/.config/friday/dictionary)
+propose-memories|\"I use fish …\" in a question: offer to remember it (nothing is kept unless you say so)"
 friday_features_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/features-off"; }
 # friday_feature_on <name>: on unless switched off.
 friday_feature_on() { ! grep -qxF -- "$1" "$(friday_features_file)" 2>/dev/null; }
@@ -4846,6 +4879,22 @@ case "${1:-}" in
           preview="$preview\n$used_line"
           meta="${meta:+$meta · }$used_line"
         fi
+      fi
+      # "I use fish …": offer to remember it; nothing is kept unless you say so.
+      local proposal=""
+      if $ans_ok && ! $use_selection && ! $use_screen && ! ${is_private:-false} \
+          && friday_feature_on propose-memories && proposal=$(friday_memory_proposal "$goal"); then
+        (
+          pick=$(notify-send -a FRIDAY -t 20000 -A remember="Remember" -- "FRIDAY" "Remember: $proposal?" 2>/dev/null || true)
+          if [ "$pick" = remember ]; then
+            # Said back as the person's own words, so memory keeps it as theirs.
+            mine=$(sed -e 's/^you are /I am /' -e "s/^you're /I'm /" -e 's/^you /I /' -e 's/^your /my /' <<<"$proposal")
+            if timeout 60 friday-ctl goal --wait "remember that $mine" >/dev/null 2>&1; then
+              notify-send -a FRIDAY -- "FRIDAY" "Remembered: $proposal. (friday answers search shows what FRIDAY remembers.)" 2>/dev/null || true
+            fi
+          fi
+        ) </dev/null >/dev/null 2>&1 &
+        disown 2>/dev/null || true
       fi
       # The pill shows the whole answer and its own buttons; a notification
       # only when it isn't there, or for "Start FRIDAY", which only a

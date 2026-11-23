@@ -57,7 +57,11 @@ Questions asked within 15 minutes of each other are one conversation: FRIDAY
 sees your last few questions and its answers, so "and the second one?" works,
 even after FRIDAY restarts. After 15 quiet minutes the next question starts a
 new one; `friday ask --new` starts one at once. `friday forget memory` wipes
-the conversation along with what FRIDAY remembers.
+the conversation along with what FRIDAY remembers. When a question says something
+about you ("I use fish, how do I …", "my editor is Helix"), the answer offers
+"Remember: you use fish" (a notification button on Linux, a button on the
+Windows answer card); nothing is kept unless you click it. `friday feature
+propose-memories off` (Windows: Settings → Features) stops the offers.
 - Past answers are searchable in the FRIDAY drawer.
 
 ## Without a model
