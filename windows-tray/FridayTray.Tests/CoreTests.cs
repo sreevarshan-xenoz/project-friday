@@ -105,6 +105,8 @@ public class AnswerLogTests
         Assert.DoesNotContain("some", text);
         Assert.Contains("```\nraw error\n```", text);
         Assert.Contains("---", File.ReadAllText(paths.AnswersFile));
+        log.Save("what's this?", null, new AskOutcome(true, "a chart", null, false), when, screen: true);
+        Assert.Contains("> (with what was on your screen, sent this once; not kept)", File.ReadAllText(paths.LastAnswerFile));
         Assert.Equal(Path.Combine(dir, "local", "friday", "state.json"), paths.StateFile);
     }
 }

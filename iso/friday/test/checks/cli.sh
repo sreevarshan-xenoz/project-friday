@@ -1239,6 +1239,7 @@ contains "and its text" "$(cat "$LOG")" "Ownership rules"
 contains "the page is marked as quoted material (it can't pick the tool)" "$(cat "$LOG")" "[page]"
 : >"$LOG"; bash "$F" ask --screen "summarize this page"; sleep 0.3
 contains "without the extension it's a screenshot as before" "$(cat "$LOG")" "context screen"
+contains "the saved answer says the screen went once and wasn't kept" "$(cat "$state/last-answer.md")" "> (with what was on your screen, sent this once; not kept)"
 # A private window the extension can't see: its tab answer is another window's.
 printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s %q\nexit 0\n' '{"class":"firefox","title":"Mozilla Firefox Private Browsing"}' >"$S/hyprctl"
 : >"$LOG"; PATH="$W/bt-bin:$PATH" bash "$F" ask --screen "summarize this page"; sleep 0.3

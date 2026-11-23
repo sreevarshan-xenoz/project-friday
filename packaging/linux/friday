@@ -4660,7 +4660,8 @@ case "${1:-}" in
         case "$title" in "FRIDAY ✗"*) printf '_failed_\n\n' ;; esac
         # That there was text, never the text itself.
         if $use_followup; then printf '> (a follow-up)\n\n'
-        elif [ -n "$context" ]; then printf '> (with the text you asked about; not kept)\n\n'; fi
+        elif [ -n "$context" ]; then printf '> (with the text you asked about; not kept)\n\n'
+        elif $use_screen; then printf '> (with what was on your screen, sent this once; not kept)\n\n'; fi
         printf '%s\n' "$answer"
         [ -z "${details:-}" ] || printf '\n<details>\n\n```\n%s\n```\n' "$details"
       } >"$answer_file"

@@ -24,7 +24,7 @@ public sealed class AnswerLog
         File.WriteAllLines(_paths.HistoryFile, lines.Take(50));
     }
 
-    public static string Render(string question, string? context, AskOutcome outcome, DateTime when)
+    public static string Render(string question, string? context, AskOutcome outcome, DateTime when, bool screen = false)
     {
         var sb = new System.Text.StringBuilder();
         sb.Append($"# {question}\n\n_{when:yyyy-MM-dd HH:mm}_\n\n");
@@ -32,16 +32,20 @@ public sealed class AnswerLog
         // anything: a message, a password manager's page).
         if (!string.IsNullOrWhiteSpace(context))
             sb.Append("> (with the text you asked about; not kept)\n\n");
+        // A screen ask's capture (window text or a screenshot) went once and
+        // was never written anywhere (tests/e2e/ask.sh checks that on Linux).
+        else if (screen)
+            sb.Append("> (with what was on your screen, sent this once; not kept)\n\n");
         sb.Append(outcome.Answer).Append('\n');
         if (!string.IsNullOrEmpty(outcome.Details))
             sb.Append($"\n<details>\n\n```\n{outcome.Details}\n```\n");
         return sb.ToString();
     }
 
-    public void Save(string question, string? context, AskOutcome outcome, DateTime when)
+    public void Save(string question, string? context, AskOutcome outcome, DateTime when, bool screen = false)
     {
         Directory.CreateDirectory(_paths.StateDir);
-        var text = Render(question, context, outcome, when);
+        var text = Render(question, context, outcome, when, screen);
         File.WriteAllText(_paths.LastAnswerFile, text);
         File.AppendAllText(_paths.AnswersFile, SavedData.AnswerMarker + "\n" + text + "\n---\n\n");
     }
