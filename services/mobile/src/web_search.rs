@@ -695,6 +695,68 @@ impl WebSearcher for ChainedWebSearcher {
 }
 
 /// Percent-encode a query string safely.
+/// Whether a question asks about something only the web knows now: the
+/// weather, the news, a score, a price ("how is the weather today in
+/// Chennai?"). Such an ask searches the web without "search …" first
+/// (`live-web`); one about this computer or the person's own things doesn't.
+pub fn wants_live(question: &str) -> bool {
+    let q = format!(" {} ", question.to_lowercase());
+    let words: String = q
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '\'' {
+                c
+            } else {
+                ' '
+            }
+        })
+        .collect();
+    let has = |w: &str| words.contains(&format!(" {w} "));
+    // This computer's own state is answered here, not from the web.
+    const MINE: [&str; 12] = [
+        "cpu", "gpu", "battery", "laptop", "computer", "pc", "file", "folder", "screen", "disk",
+        "fan", "my",
+    ];
+    if MINE.iter().any(|w| has(w)) {
+        return false;
+    }
+    const ALWAYS: [&str; 9] = [
+        "weather",
+        "forecast",
+        "humidity",
+        "headlines",
+        "news",
+        "aqi",
+        "rainfall",
+        "monsoon",
+        "temperature",
+    ];
+    if ALWAYS.iter().any(|w| has(w))
+        || words.contains(" will it rain ")
+        || words.contains(" air quality ")
+    {
+        return true;
+    }
+    let now = [
+        "today",
+        "tonight",
+        "now",
+        "currently",
+        "yesterday",
+        "latest",
+        "live",
+    ]
+    .iter()
+    .any(|w| has(w));
+    const TIMELY: [&str; 9] = [
+        "score", "won", "price", "stock", "rate", "match", "election", "result", "results",
+    ];
+    now && TIMELY.iter().any(|w| has(w))
+        || words.contains(" price of ")
+        || words.contains(" stock price ")
+        || words.contains(" exchange rate ")
+}
+
 pub fn urlencode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
@@ -1328,5 +1390,30 @@ mod tests {
             with_sources.contains("Sources (Wikipedia):\n[1] Rust Doc — https://example.com/rust")
         );
         assert!(!with_sources.contains("[2]"));
+    }
+
+    #[test]
+    fn live_questions_search_the_web_without_being_told() {
+        for q in [
+            "How is the weather today in Chennai?",
+            "will it rain tomorrow in Pune",
+            "latest news on the rupee",
+            "what's the score in the India match today",
+            "price of gold",
+            "USD to INR exchange rate",
+            "who won the election yesterday",
+        ] {
+            assert!(super::wants_live(q), "{q}");
+        }
+        for q in [
+            "What does the Rust error E0308 mean?",
+            "what's my cpu temperature",
+            "how is my battery today",
+            "summarise this file",
+            "explain the latest commit in this folder",
+            "write a poem about rain",
+        ] {
+            assert!(!super::wants_live(q), "{q}");
+        }
     }
 }

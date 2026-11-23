@@ -2078,7 +2078,15 @@ impl GoalRunner {
         confirm: Option<String>,
         opts: AskOptions,
     ) {
-        let web = opts.web;
+        // "How is the weather in Chennai?" needs the web even unasked; never
+        // in private mode, where nothing leaves for a search.
+        let web = opts.web
+            || (crate::features::on("live-web")
+                && !std::env::var("FRIDAY_PRIVATE")
+                    .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                && crate::web_search::wants_live(friday_goal_execution::planning::goal_segment(
+                    &goal,
+                )));
         // Lengths only: the question and any selected text (which can hold a
         // password or token) never go to the log.
         let asked = friday_goal_execution::planning::goal_segment(&goal)
