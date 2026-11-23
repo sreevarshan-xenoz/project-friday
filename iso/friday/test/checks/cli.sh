@@ -1485,6 +1485,41 @@ contains "\"send the answer to my phone\" sends the answer before it" "$(cat "$W
 if grep -q "^friday-ctl" "$LOG"; then fail "sending to the phone asked the AI"; else pass "sending to the phone asks no AI"; fi
 contains "Pocketdesk not running: says how to start it" "$(PD_RC=3 PATH="$W/pd-bin:$PATH" bash "$F" phone send)" "friday phone on starts it"
 
+echo "paired phones"
+now=$(date +%s)
+cat >"$W/pd-bin/pocketdesk" <<EOF2
+#!/bin/bash
+echo "pocketdesk \$*" >>"$LOG"
+if [[ "\$1" == devices ]]; then
+  [ -n "\${PD_NONE:-}" ] && { echo '{"api":1,"server_running":true,"devices":[]}'; exit 0; }
+  echo '{"api":1,"server_running":true,"devices":[
+    {"id":null,"name":"Broken"},
+    {"id":"0d7c3a52-aaaa","name":"Galaxy A71","in_session":true,"permissions":{"input":true,"files":true,"clipboard":true}},
+    {"id":"9f1e2b3c-bbbb","name":"Old Pixel","in_session":false,"battery":{"updated_unix":$((now - 7200))},"permissions":{"input":false}},
+    {"id":"77aa0000-cccc","name":"old pixel","in_session":false,"grant_remaining_secs":600,"permissions":{}}]}'
+  exit 0
+fi
+exit 0
+EOF2
+chmod +x "$W/pd-bin/pocketdesk"
+out=$(PATH="$W/pd-bin:$PATH" bash "$F" phone devices)
+contains "lists each phone with its short id" "$out" "Galaxy A71  0d7c3a52  connected now; may use: input, files"
+contains "says when one last reported" "$out" "Old Pixel  9f1e2b3c  last reported 2 h ago"
+contains "and a guest's time left" "$out" "a guest for 10 more min"
+contains "no phone: says how to pair one" "$(PD_NONE=1 PATH="$W/pd-bin:$PATH" bash "$F" phone devices)" "No phone is paired"
+: >"$LOG"; out=$(PATH="$W/pd-bin:$PATH" bash "$F" phone unpair "old pixel" --yes 2>&1)
+contains "two phones with one name: asks for the id" "$out" "More than one paired phone"
+out=$(PATH="$W/pd-bin:$PATH" bash "$F" phone unpair 0d7c3a52 </dev/null 2>&1) || true
+contains "no terminal and no --yes: says to add it" "$out" "add --yes"
+if grep -q "pocketdesk unpair" "$LOG"; then fail "an unclear name unpaired a phone"; else pass "an unclear name unpairs nothing"; fi
+: >"$LOG"; out=$(echo n | PATH="$W/pd-bin:$PATH" bash "$F" phone unpair galaxy\ a71 2>&1) || true
+if grep -q "pocketdesk unpair" "$LOG"; then fail "unpaired without a yes"; else pass "a no leaves it paired"; fi
+: >"$LOG"; out=$(PATH="$W/pd-bin:$PATH" bash "$F" phone unpair 9f1e2b --yes)
+contains "an id prefix unpairs that phone" "$(cat "$LOG")" "pocketdesk unpair 9f1e2b3c-bbbb"
+contains "and says so" "$out" "Unpaired Old Pixel"
+rc=0; PATH="$W/pd-bin:$PATH" bash "$F" phone unpair >/dev/null 2>&1 || rc=$?
+[ "$rc" = 2 ] && pass "no phone named: never all of them (exit 2)" || fail "unpair with no name exited $rc"
+
 echo "local commands (no AI)"
 printf '#!/bin/sh\necho "wpctl $*" >>"%s"\n[ "$1" = get-volume ] && echo "Volume: 0.55${MUTED:+ [MUTED]}"\nexit 0\n' "$LOG" >"$S/wpctl"; chmod +x "$S/wpctl"
 rm -f "$state/undo.jsonl"
