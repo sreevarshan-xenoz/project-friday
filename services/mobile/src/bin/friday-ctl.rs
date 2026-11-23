@@ -2172,11 +2172,24 @@ fn memory_import(args: &[String]) -> Result<(), String> {
         println!("Nothing new to bring in from {file}.");
         return Ok(());
     }
-    let crowded = about::too_long(&[have, new.clone()].concat());
+    let crowded = about::too_long(&[have.clone(), new.clone()].concat());
     if !apply {
         println!("Would add {} line(s) to {}:", new.len(), dest.display());
         for f in &new {
-            println!("- {f}");
+            // One that replaces a fact already there ("my editor is Zed").
+            let old: Vec<&String> = about::subject(f)
+                .map(|k| {
+                    have.iter()
+                        .filter(|h| about::subject(h).as_ref() == Some(&k))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if old.is_empty() || !friday_mobile::features::on("memory-changes") {
+                println!("- {f}");
+            } else {
+                let old: Vec<&str> = old.iter().map(|s| s.as_str()).collect();
+                println!("- {f}   (replaces: {})", old.join("; "));
+            }
         }
         if crowded {
             println!("That is more than an ask carries: later lines would be left out. Trim the file after.");

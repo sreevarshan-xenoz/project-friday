@@ -127,14 +127,56 @@ pub fn importable(notes: &str, have: &[String]) -> Vec<String> {
     out
 }
 
-/// Adds the fact to the file (once), keeping everything else in it.
-pub fn remember(fact: &str) -> std::io::Result<()> {
-    remember_all(&[fact.to_string()]).map(|_| ())
+/// Adds the fact to the file (once), keeping everything else in it; the
+/// facts it replaced ("I moved to Pune" ends "I live in Chennai").
+pub fn remember(fact: &str) -> std::io::Result<Vec<String>> {
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    remember_at(&path(), &[fact.to_string()], &today).map(|(_, closed)| closed)
+}
+
+/// The heading over facts that stopped being true; its lines (`* <fact>
+/// (until <date>)`) are kept for the person, never sent with an ask.
+const NO_LONGER: &str = "## No longer true";
+
+/// What a fact is about, when a newer one can replace it: where the person
+/// lives, where they work, or "my <thing> is …" (their editor, their name).
+pub fn subject(fact: &str) -> Option<String> {
+    let f = fact.trim().to_lowercase();
+    let f = f.trim_start_matches("that ").trim();
+    const LIVES: [&str; 7] = [
+        "i live in ",
+        "i moved to ",
+        "i've moved to ",
+        "i have moved to ",
+        "i'm living in ",
+        "i am living in ",
+        "i'm based in ",
+    ];
+    if LIVES.iter().any(|p| f.starts_with(p)) || f.starts_with("i am based in ") {
+        return Some("where I live".into());
+    }
+    const WORKS: [&str; 5] = [
+        "i work at ",
+        "i work for ",
+        "i now work at ",
+        "i now work for ",
+        "i joined ",
+    ];
+    if WORKS.iter().any(|p| f.starts_with(p)) {
+        return Some("where I work".into());
+    }
+    let rest = f.strip_prefix("my ")?;
+    let (thing, _) = rest
+        .split_once(" is ")
+        .or_else(|| rest.split_once(" are "))?;
+    let thing = thing.trim();
+    (!thing.is_empty() && thing.split_whitespace().count() <= 4).then(|| format!("my {thing}"))
 }
 
 /// Adds each fact the file doesn't have yet; how many it added.
 pub fn remember_all(new: &[String]) -> std::io::Result<usize> {
-    remember_all_at(&path(), new)
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    remember_at(&path(), new, &today).map(|(n, _)| n)
 }
 
 /// What the file says now: empty when there's none yet, an error when it is
@@ -151,36 +193,81 @@ pub fn too_long(all: &[String]) -> bool {
     all.iter().map(|f| f.len() + 2).sum::<usize>() + "about you: ".len() > MAX_CHARS
 }
 
-fn remember_all_at(p: &std::path::Path, new: &[String]) -> std::io::Result<usize> {
+/// Adds each new fact; one with the same [`subject`] as a fact already there
+/// moves that one under [`NO_LONGER`], dated `today` (with `memory-changes`
+/// on). How many it added, and the facts it closed.
+fn remember_at(
+    p: &std::path::Path,
+    new: &[String],
+    today: &str,
+) -> std::io::Result<(usize, Vec<String>)> {
     let text = read(p)?;
-    let mut have = facts(&text);
-    let mut out = if text.trim().is_empty() {
-        "# What FRIDAY remembers about you. Edit freely: one \"- \" line each.\n".to_string()
+    let mut lines: Vec<String> = if text.trim().is_empty() {
+        vec!["# What FRIDAY remembers about you. Edit freely: one \"- \" line each.".to_string()]
     } else {
-        text.clone()
+        text.lines().map(str::to_string).collect()
     };
-    if !out.ends_with('\n') {
-        out.push('\n');
-    }
-    let mut added = 0;
+    let changes = crate::features::on("memory-changes");
+    let (mut added, mut closed) = (0, Vec::new());
     for fact in new {
-        if have.iter().any(|f| f.eq_ignore_ascii_case(fact)) {
+        if facts(&lines.join("\n"))
+            .iter()
+            .any(|f| f.eq_ignore_ascii_case(fact))
+        {
             continue;
         }
-        out.push_str(&format!("- {fact}\n"));
-        have.push(fact.clone());
+        if let Some(key) = subject(fact).filter(|_| changes) {
+            let old: Vec<usize> = (0..lines.len())
+                .filter(|&i| {
+                    lines[i]
+                        .trim()
+                        .strip_prefix("- ")
+                        .and_then(subject)
+                        .is_some_and(|k| k == key)
+                })
+                .collect();
+            for &i in old.iter().rev() {
+                let was = lines
+                    .remove(i)
+                    .trim()
+                    .trim_start_matches("- ")
+                    .trim()
+                    .to_string();
+                if !lines.iter().any(|l| l.trim() == NO_LONGER) {
+                    if lines.last().is_some_and(|l| !l.trim().is_empty()) {
+                        lines.push(String::new());
+                    }
+                    lines.push(NO_LONGER.to_string());
+                }
+                lines.push(format!("* {was} (until {today})"));
+                closed.push(was);
+            }
+        }
+        // Current facts stay above the closed ones.
+        let at = lines
+            .iter()
+            .position(|l| l.trim() == NO_LONGER)
+            .map(|i| {
+                let mut i = i;
+                while i > 0 && lines[i - 1].trim().is_empty() {
+                    i -= 1;
+                }
+                i
+            })
+            .unwrap_or(lines.len());
+        lines.insert(at, format!("- {fact}"));
         added += 1;
     }
     if added == 0 {
-        return Ok(0);
+        return Ok((0, closed));
     }
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir)?;
     }
     let tmp = p.with_extension("md.tmp");
-    std::fs::write(&tmp, out)?;
+    std::fs::write(&tmp, lines.join("\n") + "\n")?;
     std::fs::rename(tmp, p)?;
-    Ok(added)
+    Ok((added, closed))
 }
 
 #[cfg(test)]
@@ -246,20 +333,61 @@ mod tests {
         let p = std::env::temp_dir().join(format!("friday-test-import-{}.md", std::process::id()));
         let _ = std::fs::remove_file(&p);
         assert_eq!(
-            remember_all_at(&p, &["a fact".into(), "A FACT".into(), "two".into()]).unwrap(),
+            remember_at(
+                &p,
+                &["a fact".into(), "A FACT".into(), "two".into()],
+                "2026-11-23"
+            )
+            .unwrap()
+            .0,
             2
         );
-        assert_eq!(remember_all_at(&p, &["two".into()]).unwrap(), 0);
+        assert_eq!(remember_at(&p, &["two".into()], "2026-11-23").unwrap().0, 0);
         let text = std::fs::read_to_string(&p).unwrap();
         assert_eq!(facts(&text), vec!["a fact".to_string(), "two".to_string()]);
         assert!(text.starts_with("# What FRIDAY remembers"));
         // A file that can't be read is never written over.
         let odd = [0xff, 0xfe, b'-', 0, b' ', 0];
         std::fs::write(&p, odd).unwrap();
-        assert!(remember_all_at(&p, &["three".into()]).is_err());
+        assert!(remember_at(&p, &["three".into()], "2026-11-23").is_err());
         assert_eq!(std::fs::read(&p).unwrap(), odd);
         let _ = std::fs::remove_file(&p);
         assert!(!too_long(&["short".into()]));
         assert!(too_long(&vec!["x".repeat(100); 20]));
+    }
+
+    #[test]
+    fn a_changed_fact_closes_the_old_one_with_a_date() {
+        assert_eq!(subject("I moved to Pune"), subject("I live in Chennai"));
+        assert_eq!(subject("my editor is Helix").as_deref(), Some("my editor"));
+        assert_eq!(subject("I use fish"), None);
+        assert_ne!(subject("my editor is Helix"), subject("my shell is fish"));
+        let p = std::env::temp_dir().join(format!("friday-test-change-{}.md", std::process::id()));
+        std::fs::write(
+            &p,
+            "# mine\n- I live in Chennai\n- my editor is Helix\n- I use fish\n",
+        )
+        .unwrap();
+        let (n, closed) = remember_at(&p, &["I moved to Pune".into()], "2026-11-23").unwrap();
+        assert_eq!((n, closed), (1, vec!["I live in Chennai".to_string()]));
+        remember_at(&p, &["my editor is Zed".into()], "2026-12-01").unwrap();
+        remember_at(&p, &["I have a cat".into()], "2026-12-02").unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        // Only what is true now goes with an ask; the old facts stay, dated.
+        assert_eq!(
+            facts(&text),
+            vec![
+                "I use fish",
+                "I moved to Pune",
+                "my editor is Zed",
+                "I have a cat"
+            ]
+        );
+        assert!(text.contains("## No longer true\n* I live in Chennai (until 2026-11-23)\n* my editor is Helix (until 2026-12-01)\n"), "{text}");
+        assert!(
+            text.find("I have a cat").unwrap() < text.find(NO_LONGER).unwrap(),
+            "{text}"
+        );
+        let _ = std::fs::remove_file(&p);
     }
 }
