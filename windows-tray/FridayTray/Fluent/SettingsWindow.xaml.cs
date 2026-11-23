@@ -323,11 +323,20 @@ internal sealed partial class SettingsWindow : FluentWindow
                 ChangeEnv(env => AppSettings.WithScreenText(env, on));
             });
         yield return Row(Pill("What left this PC…", SymbolRegular.ArrowUpload24), _do.ShowEgress);
+        if (AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "risk-table"))
+            yield return Row(Pill("What FRIDAY may do on its own…", SymbolRegular.ShieldCheckmark24), ShowRisks);
         if (AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "usage-page"))
             yield return Row(Pill("Usage and speed…", SymbolRegular.TopSpeed24), ShowUsage);
         yield return Row(Pill("What FRIDAY remembers about you…", SymbolRegular.Bookmark24), OpenMemoryFile);
         yield return Row(Pill("Bring in notes from another assistant…", SymbolRegular.ArrowImport24), ImportMemory);
         yield return Row(Pill("Forget saved data…", SymbolRegular.Delete24), _do.ForgetSavedData);
+    }
+
+    /// <summary>Every tool action and whether it runs, is watched, asks first or never runs.</summary>
+    private async void ShowRisks()
+    {
+        var (_, said) = await Ctl.RunAsync(_install, ["risks"], TimeSpan.FromSeconds(15));
+        MessageBox.Show(this, said.Trim(), "What FRIDAY may do on its own", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     /// <summary>Calls, failures, free-limit hits and speed per provider, from this PC's egress log.</summary>
