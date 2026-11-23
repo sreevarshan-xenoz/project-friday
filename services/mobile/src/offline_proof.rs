@@ -31,70 +31,101 @@ pub fn tally(
     (off, local)
 }
 
+/// What the report knows besides the log.
+pub struct Seen<'a> {
+    /// The egress log, or `None` when there is none.
+    pub egress: Option<&'a str>,
+    pub private: bool,
+    /// FRIDAY's connections off this computer now; `None` when it isn't running.
+    pub connections: Option<&'a [String]>,
+    /// Coding-agent runs in the window: they talk to their own model.
+    pub agent_runs: usize,
+    /// What the connection check covers, in words.
+    pub covers: &'a str,
+}
+
 /// The plain report.
-pub fn report(
-    egress: &str,
-    since: chrono::DateTime<chrono::Utc>,
-    hours: i64,
-    private: bool,
-    connections: Option<&[String]>,
-) -> String {
-    let (off, local) = tally(egress, since);
-    let mut out = vec![if private {
+pub fn report(since: chrono::DateTime<chrono::Utc>, hours: i64, seen: &Seen) -> String {
+    let mut out = vec![if seen.private {
         "Private mode is on.".to_string()
     } else {
         "Private mode is off: your provider answers asks (friday private on keeps them here)."
             .to_string()
     }];
-    let sent: usize = off.values().sum();
-    out.push(if sent == 0 {
-        format!(
-            "In the last {hours} hours nothing went to a provider off this computer ({local} to the local model)."
-        )
-    } else {
-        let who: Vec<String> = off.iter().map(|(p, n)| format!("{p} {n}")).collect();
-        format!(
-            "In the last {hours} hours {sent} went off this computer ({}), {local} to the local model.",
-            who.join(", ")
-        )
-    });
-    out.push(match connections {
+    match seen.egress {
+        None => out.push(
+            "There's no egress log here, so what FRIDAY sent can't be told from it.".to_string(),
+        ),
+        Some(egress) => {
+            let (off, local) = tally(egress, since);
+            let sent: usize = off.values().sum();
+            out.push(if sent == 0 {
+                format!(
+                    "In the last {hours} hours FRIDAY sent no ask to a provider off this computer ({local} to the local model)."
+                )
+            } else {
+                let who: Vec<String> = off.iter().map(|(p, n)| format!("{p} {n}")).collect();
+                format!(
+                    "In the last {hours} hours {sent} asks went off this computer ({}), {local} to the local model.",
+                    who.join(", ")
+                )
+            });
+        }
+    }
+    if seen.agent_runs > 0 {
+        out.push(format!(
+            "{} coding-agent runs in that time talked to their own model; those aren't in FRIDAY's log.",
+            seen.agent_runs
+        ));
+    }
+    out.push(match seen.connections {
         None => "FRIDAY isn't running, so it has no connections now.".to_string(),
-        Some([]) => "Right now FRIDAY has no connection to anything off this computer.".to_string(),
+        Some([]) => format!(
+            "Right now {} has no connection to anything off this computer.",
+            seen.covers
+        ),
         Some(c) => format!(
-            "Right now FRIDAY is connected off this computer to: {}.",
+            "Right now {} is connected off this computer to: {}.",
+            seen.covers,
             c.join(", ")
         ),
     });
     out.join("\n")
 }
 
-/// Whether an address (as /proc/net writes it) is this computer.
+/// An address as /proc/net writes it: 32-bit words in this machine's byte order.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn loopback(addr: &str, v6: bool) -> bool {
-    if v6 {
-        // ::1, or ::ffff:127.x mapped.
-        addr == "00000000000000000000000001000000" || addr.starts_with("0000000000000000FFFF00007F")
-    } else {
-        addr.ends_with("7F") // 127.x.x.x, little-endian
+fn proc_ip(hex: &str) -> Option<std::net::IpAddr> {
+    let word = |i: usize| u32::from_str_radix(hex.get(i * 8..i * 8 + 8)?, 16).ok();
+    match hex.len() {
+        8 => Some(std::net::Ipv4Addr::from(word(0)?.to_ne_bytes()).into()),
+        32 => {
+            let mut b = [0u8; 16];
+            for i in 0..4 {
+                b[i * 4..i * 4 + 4].copy_from_slice(&word(i)?.to_ne_bytes());
+            }
+            Some(std::net::Ipv6Addr::from(b).into())
+        }
+        _ => None,
     }
 }
 
-/// `ip:port` from /proc/net's hex form.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn shown(addr: &str, port: &str, v6: bool) -> String {
-    let port = u16::from_str_radix(port, 16).unwrap_or(0);
-    if v6 {
-        return format!("[{addr}]:{port}");
+/// This computer itself (loopback, also as an IPv4-mapped address).
+fn this_computer(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => v4.is_loopback() || v4.is_unspecified(),
+        std::net::IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
+        }
     }
-    let b = u32::from_str_radix(addr, 16).unwrap_or(0).to_le_bytes();
-    format!("{}.{}.{}.{}:{port}", b[0], b[1], b[2], b[3])
 }
 
-/// Established connections in a /proc/net/tcp(6) table, for these sockets,
-/// to anything off this computer.
+/// Connected sockets (TCP established, connected UDP such as QUIC) in a
+/// /proc/net table, for these sockets, to anything off this computer.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn remote_in(table: &str, inodes: &HashSet<u64>, v6: bool) -> Vec<String> {
+fn remote_in(table: &str, inodes: &HashSet<u64>) -> Vec<String> {
     table
         .lines()
         .skip(1)
@@ -102,29 +133,51 @@ fn remote_in(table: &str, inodes: &HashSet<u64>, v6: bool) -> Vec<String> {
             let f: Vec<&str> = l.split_whitespace().collect();
             let (rem, st, inode) = (f.get(2)?, f.get(3)?, f.get(9)?.parse::<u64>().ok()?);
             let (addr, port) = rem.split_once(':')?;
-            (*st == "01" && inodes.contains(&inode) && !loopback(addr, v6))
-                .then(|| shown(addr, port, v6))
+            let ip = proc_ip(addr)?;
+            let port = u16::from_str_radix(port, 16).ok()?;
+            (*st == "01" && inodes.contains(&inode) && !this_computer(ip))
+                .then(|| std::net::SocketAddr::new(ip, port).to_string())
         })
         .collect()
 }
 
-/// The daemon's connections off this computer now; `None` when it isn't running.
+/// The daemon and everything it started (coding agents too): their
+/// connections off this computer now; `None` when it isn't running.
 #[cfg(target_os = "linux")]
 pub fn daemon_connections() -> Option<Vec<String>> {
-    let pids: Vec<String> = std::fs::read_dir("/proc")
+    // (pid, parent pid, name) of every process.
+    let procs: Vec<(u32, u32, String)> = std::fs::read_dir("/proc")
         .ok()?
         .flatten()
         .filter_map(|e| {
-            let pid = e.file_name().to_string_lossy().to_string();
-            let comm = std::fs::read_to_string(e.path().join("comm")).ok()?;
-            comm.trim().starts_with("friday-linux-da").then_some(pid)
+            let pid: u32 = e.file_name().to_str()?.parse().ok()?;
+            let stat = std::fs::read_to_string(e.path().join("stat")).ok()?;
+            let (name, rest) = stat.split_once(" (")?.1.rsplit_once(") ")?;
+            let ppid = rest.split_whitespace().nth(1)?.parse().ok()?;
+            Some((pid, ppid, name.to_string()))
         })
         .collect();
-    if pids.is_empty() {
+    let mut ours: HashSet<u32> = procs
+        .iter()
+        .filter(|p| p.2.starts_with("friday-linux-da"))
+        .map(|p| p.0)
+        .collect();
+    if ours.is_empty() {
         return None;
     }
+    loop {
+        let more: Vec<u32> = procs
+            .iter()
+            .filter(|p| ours.contains(&p.1) && !ours.contains(&p.0))
+            .map(|p| p.0)
+            .collect();
+        if more.is_empty() {
+            break;
+        }
+        ours.extend(more);
+    }
     let mut inodes = HashSet::new();
-    for pid in &pids {
+    for pid in &ours {
         for fd in std::fs::read_dir(format!("/proc/{pid}/fd"))
             .into_iter()
             .flatten()
@@ -141,15 +194,24 @@ pub fn daemon_connections() -> Option<Vec<String>> {
         }
     }
     let read = |p: &str| std::fs::read_to_string(std::path::Path::new(p)).unwrap_or_default();
-    let mut out = remote_in(&read("/proc/net/tcp"), &inodes, false);
-    out.extend(remote_in(&read("/proc/net/tcp6"), &inodes, true));
+    let mut out = Vec::new();
+    for t in ["tcp", "tcp6", "udp", "udp6"] {
+        out.extend(remote_in(&read(&format!("/proc/net/{t}")), &inodes));
+    }
     out.sort();
     out.dedup();
     Some(out)
 }
 
-/// The daemon's connections off this computer now (`netstat -ano`); `None`
-/// when it isn't running.
+/// What [`daemon_connections`] covers, in words.
+pub const COVERS: &str = if cfg!(windows) {
+    "FRIDAY (its daemon and tray; coding agents it started aren't checked on Windows)"
+} else {
+    "FRIDAY (its daemon and everything it started, coding agents too)"
+};
+
+/// The daemon's and the tray's TCP connections off this computer now
+/// (`netstat -ano`); `None` when FRIDAY isn't running.
 #[cfg(windows)]
 pub fn daemon_connections() -> Option<Vec<String>> {
     use std::os::windows::process::CommandExt;
@@ -161,14 +223,15 @@ pub fn daemon_connections() -> Option<Vec<String>> {
             .ok()
             .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
     };
-    let list = run(
-        "tasklist",
-        &["/FI", "IMAGENAME eq friday-daemon.exe", "/FO", "CSV", "/NH"],
-    )?;
-    let pids: HashSet<String> = list
-        .lines()
-        .filter_map(|l| l.split("\",\"").nth(1).map(str::to_string))
-        .collect();
+    let mut pids: HashSet<String> = HashSet::new();
+    for image in ["friday-daemon.exe", "friday-tray.exe"] {
+        let filter = format!("IMAGENAME eq {image}");
+        let list = run("tasklist", &["/FI", &filter, "/FO", "CSV", "/NH"])?;
+        pids.extend(
+            list.lines()
+                .filter_map(|l| l.split("\",\"").nth(1).map(str::to_string)),
+        );
+    }
     if pids.is_empty() {
         return None;
     }
@@ -189,8 +252,10 @@ fn windows_remote(netstat: &str, pids: &HashSet<String>) -> Vec<String> {
         .filter_map(|l| {
             let f: Vec<&str> = l.split_whitespace().collect();
             let (remote, state, pid) = (f.get(2)?, f.get(3)?, f.get(4)?);
-            let local = remote.starts_with("127.") || remote.starts_with("[::1]");
-            (*state == "ESTABLISHED" && pids.contains(*pid) && !local).then(|| remote.to_string())
+            let here = remote
+                .parse::<std::net::SocketAddr>()
+                .is_ok_and(|a| this_computer(a.ip()));
+            (*state == "ESTABLISHED" && pids.contains(*pid) && !here).then(|| remote.to_string())
         })
         .collect();
     out.sort();
@@ -221,32 +286,84 @@ mod tests {
         ]
         .join("\n");
         let since = now - chrono::Duration::hours(24);
-        let r = report(&log, since, 24, true, Some(&[]));
+        let seen = |egress, conns, runs| Seen {
+            egress,
+            private: true,
+            connections: conns,
+            agent_runs: runs,
+            covers: "FRIDAY",
+        };
+        let r = report(since, 24, &seen(Some(log.as_str()), Some(&[]), 0));
         assert!(
-            r.contains("nothing went to a provider off this computer (2 to the local model)"),
+            r.contains("sent no ask to a provider off this computer (2 to the local model)"),
             "{r}"
         );
-        assert!(r.contains("no connection to anything off this computer"));
-        let log = format!("{log}\n{}", line("duckduckgo", false, 3));
-        let r = report(&log, since, 24, false, Some(&["192.0.2.7:443".into()]));
+        assert!(r.contains("FRIDAY has no connection to anything off this computer"));
+        let log2 = format!("{log}\n{}", line("duckduckgo", false, 3));
+        let c = ["192.0.2.7:443".to_string()];
+        let r = report(since, 24, &seen(Some(log2.as_str()), Some(&c), 2));
         assert!(
-            r.contains("1 went off this computer (duckduckgo 1)") && r.contains("192.0.2.7:443"),
+            r.contains("1 asks went off this computer (duckduckgo 1)")
+                && r.contains("192.0.2.7:443"),
             "{r}"
         );
-        assert!(report(&log, since, 24, true, None).contains("isn't running"));
+        assert!(r.contains("2 coding-agent runs"));
+        // No log: no claim that nothing left.
+        let r = report(since, 24, &seen(None, None, 0));
+        assert!(
+            r.contains("no egress log")
+                && r.contains("isn't running")
+                && !r.contains("sent no ask"),
+            "{r}"
+        );
     }
 
     #[test]
-    fn only_established_connections_off_this_computer_count() {
-        let table = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n\
-   0: 0100007F:B375 0100007F:4370 01 00000000:00000000 00:00000000 00000000  1000        0 11 1\n\
-   1: 0F02000A:C000 070200C0:01BB 01 00000000:00000000 00:00000000 00000000  1000        0 12 1\n\
-   2: 0F02000A:C001 080200C0:01BB 06 00000000:00000000 00:00000000 00000000  1000        0 13 1\n\
-   3: 0F02000A:C002 090200C0:01BB 01 00000000:00000000 00:00000000 00000000  1000        0 99 1\n";
-        let mine: HashSet<u64> = [11, 12, 13].into();
+    fn only_connections_off_this_computer_count() {
+        let v4 = |a: [u8; 4]| format!("{:08X}", u32::from_ne_bytes(a));
+        let v6 = |b: [u8; 16]| {
+            (0..4)
+                .map(|i| {
+                    format!(
+                        "{:08X}",
+                        u32::from_ne_bytes(b[i * 4..i * 4 + 4].try_into().unwrap())
+                    )
+                })
+                .collect::<String>()
+        };
+        let mapped = |a: [u8; 4]| {
+            let mut b = [0u8; 16];
+            b[10] = 0xff;
+            b[11] = 0xff;
+            b[12..].copy_from_slice(&a);
+            v6(b)
+        };
+        let row = |rem: String, st: &str, inode: u32| {
+            format!("   0: 00000000:0000 {rem}:01BB {st} 00000000:00000000 00:00000000 00000000  1000        0 {inode} 1")
+        };
+        let table = [
+            "header".to_string(),
+            row(v4([127, 0, 0, 1]), "01", 11),
+            row(v4([192, 0, 2, 7]), "01", 12),
+            row(v4([192, 0, 2, 8]), "06", 13),
+            row(v4([192, 0, 2, 9]), "01", 99),
+            row(mapped([127, 0, 0, 1]), "01", 14),
+            row(mapped([192, 0, 2, 127]), "01", 15),
+            row(
+                v6(std::net::Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1).octets()),
+                "01",
+                16,
+            ),
+        ]
+        .join("\n");
+        let mine: HashSet<u64> = [11, 12, 13, 14, 15, 16].into();
         assert_eq!(
-            remote_in(table, &mine, false),
-            vec!["192.0.2.7:443".to_string()]
+            remote_in(&table, &mine),
+            vec![
+                "192.0.2.7:443".to_string(),
+                "[::ffff:192.0.2.127]:443".to_string(),
+                "[2001:db8::1]:443".to_string()
+            ]
         );
         let netstat = "  TCP    10.0.2.15:49700   192.0.2.7:443    ESTABLISHED     4242\n  TCP    127.0.0.1:49701   127.0.0.1:18432  ESTABLISHED     4242\n  TCP    10.0.2.15:49702   192.0.2.8:443    ESTABLISHED     9999\n";
         assert_eq!(
