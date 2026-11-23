@@ -94,6 +94,8 @@ pub struct ServedBy {
 pub struct NeedConfirmation {
     pub tool: String,
     pub action: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
 }
 
 /// The live file-backed contract the shell reads.
@@ -661,6 +663,30 @@ mod tests {
         let nc = last.needs_confirmation.expect("needs confirmation set");
         assert_eq!(nc.tool, "terminal");
         assert_eq!(nc.action, "git status");
+        assert_eq!(nc.preview, None);
+    }
+
+    #[test]
+    fn failed_goal_records_needs_confirmation_with_preview() {
+        let s1 = apply_event(state(), &goal_event());
+        let failed = Event::new(
+            "goal.failed",
+            "planner",
+            serde_json::json!({
+                "error": "Confirm to run: write notes.txt",
+                "needs_confirmation": {
+                    "tool": "filesystem.write",
+                    "action": "write notes.txt",
+                    "preview": "Creates notes.txt (12 bytes)."
+                }
+            }),
+        );
+        let s2 = apply_event(s1, &failed);
+        let last = s2.last_goal.expect("failed goal preserved");
+        let nc = last.needs_confirmation.expect("needs confirmation set");
+        assert_eq!(nc.tool, "filesystem.write");
+        assert_eq!(nc.action, "write notes.txt");
+        assert_eq!(nc.preview.as_deref(), Some("Creates notes.txt (12 bytes)."));
     }
 
     #[test]

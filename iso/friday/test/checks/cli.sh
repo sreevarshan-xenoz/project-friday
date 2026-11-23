@@ -115,7 +115,11 @@ fi
 if [[ "\$*" == *gated* ]]; then
   echo '{"accepted":true}'
   act="\${GATED_ACTION:-git status}"
-  printf '{\n "outcome": "failed",\n "error": "Confirm to run: %s",\n "needs_confirmation": {\n   "tool": "terminal",\n   "action": "%s"\n }\n}\n' "\$act" "\$act"
+  if [ -n "\${GATED_PREVIEW:-}" ]; then
+    printf '{\n "outcome": "failed",\n "error": "Confirm to run: %s",\n "needs_confirmation": {\n   "tool": "desktop",\n   "action": "%s",\n   "preview": "%s"\n }\n}\n' "\$act" "\$act" "\$GATED_PREVIEW"
+  else
+    printf '{\n "outcome": "failed",\n "error": "Confirm to run: %s",\n "needs_confirmation": {\n   "tool": "terminal",\n   "action": "%s"\n }\n}\n' "\$act" "\$act"
+  fi
   exit 3
 fi
 target_arg="\$3"
@@ -1616,6 +1620,11 @@ bash "$F" autonomy act >/dev/null
 contains "act: it runs without asking" "$(cat "$LOG")" "friday-ctl-confirm"
 contains "and says it acted on its own" "$(cat "$LOG")" "FRIDAY acted on its own"
 if grep -q "run=Run" "$LOG"; then fail "act still asked"; else pass "act doesn't ask"; fi
+# A risky action says what will change, under the action.
+bash "$F" autonomy ask-risky >/dev/null
+: >"$LOG"; GATED_ACTION="kill 123" GATED_PREVIEW="Closes the window gedit; unsaved work in it may be lost." CANCEL_CONFIRM=1 bash "$F" ask "gated action"; sleep 0.4
+contains "confirm: the preview says what will change" "$(cat "$LOG")" "Closes the window gedit; unsaved work in it may be lost."
+bash "$F" autonomy act >/dev/null
 # ...but what can't be taken back still asks.
 : >"$LOG"; GATED_ACTION="kill 123" CANCEL_CONFIRM=1 bash "$F" ask "gated action"; sleep 0.4
 contains "act: killing a process still asks" "$(cat "$LOG")" "run=Run"

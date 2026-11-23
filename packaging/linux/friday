@@ -1040,7 +1040,7 @@ friday_chime() {
 }
 friday_confirm_pending() { echo "${XDG_STATE_HOME:-$HOME/.local/state}/friday/confirm-pending"; }
 friday_confirm() {
-  local action="$1" nid="${2:-}" t desk_pid phone_pid="" got="" pending
+  local action="$1" nid="${2:-}" preview="${3:-}" t desk_pid phone_pid="" got="" pending
   t=$(mktemp -d) || return 1
   pending=$(friday_confirm_pending)
   # Its wait folder, the action, and who waits (a typed answer counts only
@@ -1071,7 +1071,9 @@ friday_confirm() {
     ) >"$t/voice" 2>/dev/null &
     voice_pid=$!
   fi
-  notify-send -a FRIDAY -u normal "${acts[@]}" -- "FRIDAY wants to run" "$action"$'\n'"$also" >"$t/desk" 2>/dev/null &
+  local body="$action"
+  [ -z "$preview" ] || body="$body"$'\n'"$preview"
+  notify-send -a FRIDAY -u normal "${acts[@]}" -- "FRIDAY wants to run" "$body"$'\n'"$also" >"$t/desk" 2>/dev/null &
   desk_pid=$!
   if command -v pocketdesk >/dev/null 2>&1; then
     (
@@ -3698,7 +3700,8 @@ propose-memories|\"I use fish …\" in a question: offer to remember it (nothing
 memory-file|Every ask carries what you asked FRIDAY to remember (~/.config/friday/memory.md)
 memory-changes|A changed fact (\"I moved to Pune\") closes the old one with a date in memory.md
 brief|\"What did I miss?\" answered from FRIDAY's own records (agents, standing tasks, reminders)
-call-pause|\"Hey Friday\" rests while a call or meeting app uses the microphone"
+call-pause|\"Hey Friday\" rests while a call or meeting app uses the microphone
+action-check|Before a risky action, say what will change; after it, check and say done, partly or failed"
 friday_features_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/features-off"; }
 # friday_feature_on <name>: on unless switched off.
 friday_feature_on() { ! grep -qxF -- "$1" "$(friday_features_file)" 2>/dev/null; }
@@ -5313,6 +5316,7 @@ case "${1:-}" in
     fi
 
     action_to_confirm=$(jq -r '.needs_confirmation.action // empty' <<<"$summary" 2>/dev/null || true)
+    preview_to_confirm=$(jq -r '.needs_confirmation.preview // empty' <<<"$summary" 2>/dev/null || true)
     if [ "$ctl_rc" -eq 3 ] && [ -n "$action_to_confirm" ]; then
       (
         # "act" (friday autonomy): no question; the answer says what was done.
@@ -5322,7 +5326,7 @@ case "${1:-}" in
           action=run
           notify-send -a FRIDAY -- "FRIDAY acted on its own" "$action_to_confirm"$'\n'"(Settings → Permissions to change this)" 2>/dev/null || true
         else
-          action=$(friday_confirm "$action_to_confirm" "${nid:-}")
+          action=$(friday_confirm "$action_to_confirm" "${nid:-}" "$preview_to_confirm")
         fi
         case "$action" in
           run)

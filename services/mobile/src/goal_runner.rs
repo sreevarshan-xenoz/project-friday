@@ -76,15 +76,30 @@ impl ConfirmationGate {
         tool: &str,
         exact_action: &str,
     ) -> Result<(), ToolResult> {
+        self.check_or_record_with(tool, exact_action, None)
+    }
+
+    pub(crate) fn check_or_record_with(
+        &mut self,
+        tool: &str,
+        exact_action: &str,
+        preview: Option<String>,
+    ) -> Result<(), ToolResult> {
         if let Some(c) = &self.confirm {
             if c.trim() == exact_action.trim() {
                 return Ok(());
             }
         }
         if self.pending.is_none() {
+            let preview = if crate::features::on("action-check") {
+                preview
+            } else {
+                None
+            };
             self.pending = Some(crate::shell_state::NeedConfirmation {
                 tool: tool.to_string(),
                 action: exact_action.to_string(),
+                preview,
             });
         }
         Err(ToolResult::error(format!(
@@ -245,11 +260,20 @@ impl Tool for FilesystemCapabilityTool {
         if verb == "write_file" {
             let path = params.get("path").and_then(|v| v.as_str()).unwrap_or("");
             let exact = format!("write {}", path);
-            if let Err(err) = self
-                .gate
-                .lock()
-                .unwrap()
-                .check_or_record("filesystem.write", &exact)
+            let content_len = params
+                .get("content")
+                .and_then(|v| v.as_str())
+                .map(|c| c.len());
+            let preview = if crate::features::on("action-check") {
+                Some(file_write_preview(std::path::Path::new(path), content_len))
+            } else {
+                None
+            };
+            if let Err(err) =
+                self.gate
+                    .lock()
+                    .unwrap()
+                    .check_or_record_with("filesystem.write", &exact, preview)
             {
                 return err;
             }
@@ -279,12 +303,34 @@ impl Tool for FilesystemCapabilityTool {
         }
         let res = self
             .adapter
-            .execute(ActionRequest::new("filesystem", verb, params))
+            .execute(ActionRequest::new("filesystem", verb, params.clone()))
             .await;
+        let output = if verb == "write_file" && res.success && crate::features::on("action-check") {
+            let path = params.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            let content_len = params
+                .get("content")
+                .and_then(|v| v.as_str())
+                .map(|c| c.len());
+            check_file_result(std::path::Path::new(path), content_len)
+        } else {
+            serde_json::to_string_pretty(&res.output).unwrap_or_default()
+        };
+        let success = if verb == "write_file"
+            && crate::features::on("action-check")
+            && output.starts_with("Failed:")
+        {
+            false
+        } else {
+            res.success
+        };
         ToolResult {
-            success: res.success,
-            output: serde_json::to_string_pretty(&res.output).unwrap_or_default(),
-            error: res.error,
+            success,
+            output: output.clone(),
+            error: if !success && res.error.is_none() {
+                Some(output)
+            } else {
+                res.error
+            },
             duration_ms: res
                 .metadata
                 .get("latency_ms")
@@ -855,6 +901,51 @@ fn bare_file_token(instruction: &str, cwd: &str) -> Option<String> {
         .map(|tok| tok.trim_matches(|c: char| c.is_ascii_punctuation()))
         .find(|t| !t.is_empty() && std::path::Path::new(cwd).join(t).is_file())
         .map(String::from)
+}
+
+/// Preview for writing a file: replaces existing or creates new, with byte counts.
+pub(crate) fn file_write_preview(path: &std::path::Path, content_len: Option<usize>) -> String {
+    if let Ok(meta) = std::fs::metadata(path) {
+        let n = meta.len();
+        match content_len {
+            Some(m) => format!(
+                "Replaces {} ({} bytes now) with {} bytes.",
+                path.display(),
+                n,
+                m
+            ),
+            None => format!("Replaces {} ({} bytes now).", path.display(), n),
+        }
+    } else {
+        match content_len {
+            Some(m) => format!("Creates {} ({} bytes).", path.display(), m),
+            None => format!("Creates {}.", path.display()),
+        }
+    }
+}
+
+/// Checks the result of a confirmed file write.
+pub(crate) fn check_file_result(path: &std::path::Path, expected_len: Option<usize>) -> String {
+    match std::fs::metadata(path) {
+        Ok(meta) => {
+            let actual = meta.len();
+            if let Some(expected) = expected_len {
+                if actual == expected as u64 {
+                    format!("Done: wrote {} ({} bytes).", path.display(), actual)
+                } else {
+                    format!(
+                        "Partly: {} is there but holds {} bytes, not {}.",
+                        path.display(),
+                        actual,
+                        expected
+                    )
+                }
+            } else {
+                format!("Done: wrote {} ({} bytes).", path.display(), actual)
+            }
+        }
+        Err(_) => format!("Failed: {} isn't there after the write.", path.display()),
+    }
 }
 
 /// Resolve the path a read goal names: the file as given relative to the
@@ -2520,6 +2611,13 @@ impl GoalRunner {
                 ))
                 .await;
         } else if let Some(pending) = pending_confirmation {
+            let mut nc = json!({
+                "tool": pending.tool,
+                "action": pending.action,
+            });
+            if let Some(preview) = &pending.preview {
+                nc["preview"] = json!(preview);
+            }
             let _ = self
                 .bus
                 .publish(Event::new(
@@ -2531,10 +2629,7 @@ impl GoalRunner {
                         "session_id": session_id,
                         "session_turn": next_turn,
                         "error": format!("Confirm to run: {}", pending.action),
-                        "needs_confirmation": {
-                            "tool": pending.tool,
-                            "action": pending.action,
-                        },
+                        "needs_confirmation": nc,
                         "phases": report.phases_completed.len(),
                     }),
                 ))
@@ -6558,5 +6653,72 @@ mod tests {
         assert!(received_terminal, "must receive terminal event");
         let _ = task.await;
         assert!(handle.is_idle());
+    }
+
+    #[test]
+    fn file_write_preview_decisions() {
+        let dir = std::env::temp_dir().join(format!("friday-actcheck-prev-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("test.txt");
+
+        // Does not exist
+        assert_eq!(
+            file_write_preview(&file, Some(15)),
+            format!("Creates {} (15 bytes).", file.display())
+        );
+        assert_eq!(
+            file_write_preview(&file, None),
+            format!("Creates {}.", file.display())
+        );
+
+        // Exists (10 bytes)
+        std::fs::write(&file, "0123456789").unwrap();
+        assert_eq!(
+            file_write_preview(&file, Some(20)),
+            format!("Replaces {} (10 bytes now) with 20 bytes.", file.display())
+        );
+        assert_eq!(
+            file_write_preview(&file, None),
+            format!("Replaces {} (10 bytes now).", file.display())
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn check_file_result_decisions() {
+        let dir = std::env::temp_dir().join(format!("friday-actcheck-res-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("test.txt");
+
+        // Missing file
+        assert_eq!(
+            check_file_result(&file, Some(10)),
+            format!("Failed: {} isn't there after the write.", file.display())
+        );
+
+        // Matching file
+        std::fs::write(&file, "0123456789").unwrap();
+        assert_eq!(
+            check_file_result(&file, Some(10)),
+            format!("Done: wrote {} (10 bytes).", file.display())
+        );
+        assert_eq!(
+            check_file_result(&file, None),
+            format!("Done: wrote {} (10 bytes).", file.display())
+        );
+
+        // Size mismatch
+        assert_eq!(
+            check_file_result(&file, Some(20)),
+            format!(
+                "Partly: {} is there but holds 10 bytes, not 20.",
+                file.display()
+            )
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
