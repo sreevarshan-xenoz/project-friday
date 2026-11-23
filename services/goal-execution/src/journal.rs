@@ -28,38 +28,66 @@ const STOPWORDS: &[&str] = &[
 
 /// Lowercase alphanumeric tokens that carry meaning, each in its plain form
 /// ("crashes" and "crashed" are "crash"): words of at least 4 chars that are
-/// not stopwords, and codes of any length with a digit in them ("e0308",
-/// "ts2322", "404"), which error questions turn on.
+/// not stopwords, and codes, which error questions turn on: letters with
+/// digits ("e0308", "ts2322") or a three-digit number ("404"). Years and
+/// small numbers aren't codes.
 pub fn significant_tokens(text: &str) -> Vec<String> {
     let lower = text.to_lowercase();
     lower
         .split(|c: char| !c.is_ascii_alphanumeric())
         .filter(|t| {
-            (t.len() >= 4 && !STOPWORDS.contains(t))
-                || (t.len() >= 2 && t.chars().any(|c| c.is_ascii_digit()) && t.len() <= 16)
+            let digits = t.chars().filter(char::is_ascii_digit).count();
+            if digits == 0 {
+                t.len() >= 4 && !STOPWORDS.contains(t)
+            } else {
+                (digits < t.len() && t.len() <= 16) || (digits == 3 && t.len() == 3)
+            }
         })
         .map(plain)
         .collect()
 }
 
-/// A word without its common English ending, so forms of it match.
+/// Whether `t` is a code (has a digit).
+fn is_code(t: &str) -> bool {
+    t.chars().any(|c| c.is_ascii_digit())
+}
+
+/// A word without its common English endings, so its forms match: a plural
+/// first ("settings", "caches", "libraries"), then "-ing" or "-ed".
 fn plain(word: &str) -> String {
-    if word.chars().any(|c| c.is_ascii_digit()) {
+    if is_code(word) {
         return word.to_string();
     }
-    let n = word.len();
-    for (end, keep, min) in [
-        ("ies", "y", 5),
-        ("ing", "", 6),
-        ("ed", "", 5),
-        ("es", "", 6),
-        ("s", "", 4),
-    ] {
-        if n >= min && word.ends_with(end) && !word.ends_with("ss") {
-            return format!("{}{keep}", &word[..n - end.len()]);
-        }
+    let mut w = word.to_string();
+    if w.len() >= 5 && w.ends_with("ies") {
+        w = format!("{}y", &w[..w.len() - 3]);
+    } else if w.len() >= 6
+        && ["ses", "xes", "zes", "ches", "shes"]
+            .iter()
+            .any(|e| w.ends_with(e))
+    {
+        w.truncate(w.len() - 2);
+    } else if w.len() >= 4 && w.ends_with('s') && !w.ends_with("ss") && !w.ends_with("us") {
+        w.truncate(w.len() - 1);
     }
-    word.to_string()
+    if w.len() >= 6 && w.ends_with("ing") {
+        w.truncate(w.len() - 3);
+    } else if w.len() >= 5 && w.ends_with("ed") {
+        w.truncate(w.len() - 2);
+    } else if w.len() >= 5 && w.ends_with('e') {
+        // "cache" and "caches" alike ("caches" lost its "es" as "matches" does).
+        w.truncate(w.len() - 1);
+    }
+    w
+}
+
+/// How many of the query's tokens `text` shares, each counted once.
+pub fn shared_tokens(query: &str, text: &str) -> usize {
+    let text_tokens = significant_tokens(text);
+    significant_tokens(query)
+        .iter()
+        .filter(|tok| text_tokens.contains(tok))
+        .count()
 }
 
 /// How much `text` has to do with `query`: the query's tokens it shares, and
@@ -70,13 +98,7 @@ pub fn recall_score(query: &str, text: &str) -> usize {
     query_tokens
         .iter()
         .filter(|tok| text_tokens.contains(tok))
-        .map(|tok| {
-            if tok.chars().any(|c| c.is_ascii_digit()) {
-                3
-            } else {
-                1
-            }
-        })
+        .map(|tok| if is_code(tok) { 3 } else { 1 })
         .sum()
 }
 
@@ -206,6 +228,15 @@ mod tests {
             "the code counts most"
         );
         assert_eq!(plain("libraries"), "library");
+        assert_eq!(plain("settings"), plain("setting"));
+        assert_eq!(plain("caches"), plain("cache"));
+        assert_eq!(plain("strings"), plain("string"));
+        assert_eq!(plain("status"), "status");
+        assert_eq!(
+            significant_tokens("in 2026 at 10 got a 404"),
+            vec!["404".to_string()],
+            "years and small numbers aren't codes"
+        );
         assert_eq!(plain("process"), "process", "a double s stays");
         assert_eq!(plain("bus"), "bus", "short words stay");
     }

@@ -10,7 +10,7 @@
 
 use std::path::Path;
 
-use friday_goal_execution::{recall_score, significant_tokens};
+use friday_goal_execution::{recall_score, shared_tokens, significant_tokens};
 use serde::{Deserialize, Serialize};
 
 /// How long a lesson is kept, in seconds.
@@ -68,7 +68,7 @@ fn save(path: &Path, all: &[Lesson]) -> std::io::Result<()> {
 /// for a one-word ask) and at least half of the shorter ask's words.
 fn alike(a: &str, b: &str) -> bool {
     let shorter = significant_tokens(a).len().min(significant_tokens(b).len());
-    let shared = recall_score(a, b);
+    let shared = shared_tokens(a, b);
     shared >= shorter.min(2) && shared * 2 >= shorter && shared > 0
 }
 
