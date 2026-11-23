@@ -289,7 +289,7 @@ if [[ "$(uname -s)" == Linux ]]; then
   chmod +x "$W/shot-bin/grim" "$W/shot-bin/hyprctl"
   : >"$W/model.log"
   out=$("${shot[@]}" timeout 120 "$CTL_BIN" context screen --yes --ask "what is this" 2>&1) || true
-  if grep -qi "private" <<<"$out"; then pass "the screen ask is refused as private"
+  if grep -qi "private window" <<<"$out"; then pass "the screen ask is refused as private"
   else fail "a private window's screen ask wasn't refused"; sed 's/^/       /' <<<"$out" | tail -6; fi
   if [[ -s "$W/model.log" ]]; then fail "the model was asked about a private window"; else pass "nothing reached the model"; fi
   kept=$(grep -rlaF "FRIDAY-PRIVATE-CANARY" "$W" 2>/dev/null | grep -v "/shot-bin/" || true)
