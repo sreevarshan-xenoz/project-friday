@@ -76,17 +76,17 @@ while IFS=$'\t' read -r kind question context sees never; do
   : >"$W/model.log"
   rm -f "$W/front.json"
   case "$kind" in
-    plain) out=$("${run[@]}" timeout 120 "$CTL_BIN" goal --wait --new-conversation "$question" 2>&1) || true ;;
+    plain) out=$("${run[@]}" timeout 120 "$CTL_BIN" goal --wait --new-conversation "$question" </dev/null 2>&1) || true ;;
     selection)
       goal=$(printf '%s\n\nUse this text as context:\n"""\n%s\n"""' "$question" "$context")
-      out=$("${run[@]}" timeout 120 "$CTL_BIN" goal --wait --new-conversation "$goal" 2>&1) || true ;;
+      out=$("${run[@]}" timeout 120 "$CTL_BIN" goal --wait --new-conversation "$goal" </dev/null 2>&1) || true ;;
     page)
       goal=$(printf '%s\n\n[page]\nThe page in front (read from the browser when asked):\nTitle: Example\nAddress: https://example.com/\nText:\n"""\n%s\n"""' "$question" "$context")
-      out=$("${run[@]}" timeout 120 "$CTL_BIN" goal --wait --new-conversation "$goal" 2>&1) || true ;;
-    screen) out=$("${run[@]}" timeout 120 "$CTL_BIN" context screen --yes --ask "$question" 2>&1) || true ;;
+      out=$("${run[@]}" timeout 120 "$CTL_BIN" goal --wait --new-conversation "$goal" </dev/null 2>&1) || true ;;
+    screen) out=$("${run[@]}" timeout 120 "$CTL_BIN" context screen --yes --ask "$question" </dev/null 2>&1) || true ;;
     private)
       printf '%s' '{"class":"org.keepassxc.KeePassXC","title":"EVAL-PRIVATE.kdbx","at":[0,0],"size":[800,600]}' >"$W/front.json"
-      out=$("${run[@]}" timeout 120 "$CTL_BIN" context screen --yes --ask "$question" 2>&1) || true ;;
+      out=$("${run[@]}" timeout 120 "$CTL_BIN" context screen --yes --ask "$question" </dev/null 2>&1) || true ;;
     *) echo "unknown kind: $kind" >&2; exit 2 ;;
   esac
   IFS=$'\t' read -r result text <<<"$(outcome <<<"$out")"
