@@ -224,7 +224,8 @@ internal sealed partial class SettingsWindow : FluentWindow
                 "FRIDAY", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
             return;
         Said($"Downloading FRIDAY {r.Version}…");
-        var problem = await Updater.InstallAsync(r);
+        var keep = AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "update-rollback") ? _install.Paths : null;
+        var problem = await Updater.InstallAsync(r, keep);
         if (problem is not null)
             MessageBox.Show(this, "FRIDAY wasn't updated:\n\n" + problem, "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Warning);
     }

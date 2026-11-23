@@ -46,6 +46,9 @@ vSpfZge9Uiz7oJrnZ35a/mstGcgqB1nmEdvVo8VJRrs2sTi9/Kzm559PFA==
 
     public const string LatestUrl = "https://api.github.com/repos/sreevarshan-xenoz/project-friday/releases/latest";
 
+    /// <summary>The releases-API address of one version (the one installed now, for going back to it).</summary>
+    public static string TagUrl(string version) => $"https://api.github.com/repos/sreevarshan-xenoz/project-friday/releases/tags/v{version}";
+
     /// <summary>The release in a releases-API answer, or null when it has no MSI or no SHA256SUMS.</summary>
     public static Release? Parse(string json)
     {
