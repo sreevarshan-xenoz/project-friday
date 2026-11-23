@@ -1486,7 +1486,7 @@ friday_mcp() {
       )
       if [ "$1" = allow ]; then
         case "$tool" in
-          friday_ask) echo "Allowed friday_ask: apps you connect can ask FRIDAY questions, answered by your AI provider." ;;
+          friday_ask) echo "Allowed friday_ask: apps you connect can ask FRIDAY questions, answered by your AI provider. Anything that would ask you first doesn't run from them." ;;
           *) echo "Allowed $tool: apps you connect can read it." ;;
         esac
       else

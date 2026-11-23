@@ -1364,6 +1364,7 @@ echo "FRIDAY as an MCP server"
 contains "friday mcp says how to connect an app" "$(bash "$F" mcp)" '"command": "friday-ctl", "args": ["mcp"]'
 contains "every tool starts not allowed" "$(bash "$F" mcp)" "friday_ask: not allowed"
 contains "allow says what it lets apps do" "$(bash "$F" mcp allow friday_ask)" "apps you connect can ask FRIDAY questions"
+contains "and that what would ask first doesn't run" "$(bash "$F" mcp allow friday_ask)" "doesn't run from them"
 contains "and it shows as allowed" "$(bash "$F" mcp)" "friday_ask: allowed"
 contains "the allow list is owner-only" "$(stat -c %a "$HOME/.config/friday/mcp-allow")" "600"
 bash "$F" mcp deny friday_ask >/dev/null

@@ -23,9 +23,24 @@ pub const TOOLS: &[(&str, &str)] = &[
     (
         "friday_ask",
         "Ask FRIDAY a question: it answers with the person's own AI provider and what it knows \
-         about their work. Argument question.",
+         about their work. Anything that would ask the person first (running a command, \
+         changing a file, opening a page, moving windows) doesn't run from here. \
+         Argument question.",
     ),
 ];
+
+/// The line that marks a goal as sent by another app over MCP: like text
+/// quoted from a page, it may carry instructions that aren't the person's,
+/// so every action that can ask first does (and, with nobody there to say
+/// yes, doesn't run).
+pub const FROM_ANOTHER_APP: &str = "[asked by another app]";
+
+/// `question` as the goal FRIDAY runs for a connected app.
+pub fn from_another_app(question: &str) -> String {
+    format!(
+        "{question}\n\n{FROM_ANOTHER_APP}\nAn app connected to FRIDAY over MCP sent this; it isn't the person's own request."
+    )
+}
 
 /// `mcp-allow` in FRIDAY's config folder (`$XDG_CONFIG_HOME/friday`, or
 /// `%APPDATA%\friday` on Windows).

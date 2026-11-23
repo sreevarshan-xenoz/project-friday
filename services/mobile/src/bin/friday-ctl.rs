@@ -821,7 +821,14 @@ fn mcp_serve() -> std::process::ExitCode {
                 }
                 let me = std::env::current_exe().map_err(|e| e.to_string())?;
                 let out = std::process::Command::new(me)
-                    .args(["goal", "--wait", &question])
+                    // Its own conversation, and every action that can ask
+                    // first does: the app's words aren't the person's.
+                    .args([
+                        "goal",
+                        "--wait",
+                        "--new-conversation",
+                        &mcp::from_another_app(&question),
+                    ])
                     .stderr(std::process::Stdio::null())
                     .output()
                     .map_err(|e| e.to_string())?;
