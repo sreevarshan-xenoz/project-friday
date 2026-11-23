@@ -7,9 +7,12 @@
 //! 4. Wikipedia API (keyless encyclopedia search fallback)
 //!
 //! Privacy rule: web search sends the question to a search engine, so it happens
-//! ONLY when the person explicitly asks for it (`friday ask --web`, `friday-ctl goal --web`,
-//! or explicit search prefixes). Never automatically. Secrets are always masked
-//! before transmission.
+//! only when the person asks for it (`friday ask --web`, `friday-ctl goal --web`,
+//! or explicit search prefixes), or asks something only the web can answer now
+//! (the weather, the news, a score, a price: [`wants_live`], owner's decision
+//! 2026-11-23, switch `live-web`). Only the typed question goes, never selected
+//! text, the screen or memory, and never in private mode. Secrets are always
+//! masked before transmission.
 //!
 //! Egress log: records provider as the backend that was actually contacted, one
 //! entry per backend attempted (`kinds: ["search"]`).
@@ -700,8 +703,7 @@ impl WebSearcher for ChainedWebSearcher {
 /// Chennai?"). Such an ask searches the web without "search …" first
 /// (`live-web`); one about this computer or the person's own things doesn't.
 pub fn wants_live(question: &str) -> bool {
-    let q = format!(" {} ", question.to_lowercase());
-    let words: String = q
+    let words: String = format!(" {} ", question.to_lowercase())
         .chars()
         .map(|c| {
             if c.is_alphanumeric() || c == '\'' {
@@ -711,29 +713,52 @@ pub fn wants_live(question: &str) -> bool {
             }
         })
         .collect();
+    let words = format!(
+        " {} ",
+        words.split_whitespace().collect::<Vec<_>>().join(" ")
+    );
     let has = |w: &str| words.contains(&format!(" {w} "));
-    // This computer's own state is answered here, not from the web.
-    const MINE: [&str; 12] = [
+    // This computer, the person's things, or what is in front of them: answered
+    // here, not from the web.
+    const MINE: [&str; 14] = [
         "cpu", "gpu", "battery", "laptop", "computer", "pc", "file", "folder", "screen", "disk",
-        "fan", "my",
+        "fan", "article", "page", "this",
     ];
-    if MINE.iter().any(|w| has(w)) {
+    // How something works isn't news ("how do RSS news feeds work").
+    const HOW: [&str; 6] = [
+        " how do ",
+        " how does ",
+        " explain ",
+        " what is a ",
+        " why do ",
+        " how to ",
+    ];
+    if MINE.iter().any(|w| has(w)) || HOW.iter().any(|h| words.starts_with(h)) {
         return false;
     }
-    const ALWAYS: [&str; 9] = [
+    const ALWAYS: [&str; 10] = [
         "weather",
         "forecast",
         "humidity",
         "headlines",
         "news",
         "aqi",
-        "rainfall",
+        "raining",
+        "snowing",
+        "sunny",
         "monsoon",
-        "temperature",
     ];
     if ALWAYS.iter().any(|w| has(w))
-        || words.contains(" will it rain ")
-        || words.contains(" air quality ")
+        || [
+            " will it rain ",
+            " air quality ",
+            " who won ",
+            " stock price ",
+            " exchange rate ",
+            " price of ",
+        ]
+        .iter()
+        .any(|p| words.contains(p))
     {
         return true;
     }
@@ -748,13 +773,20 @@ pub fn wants_live(question: &str) -> bool {
     ]
     .iter()
     .any(|w| has(w));
-    const TIMELY: [&str; 9] = [
-        "score", "won", "price", "stock", "rate", "match", "election", "result", "results",
+    // A temperature or a score is the web's only with a place or a time.
+    const TIMELY: [&str; 10] = [
+        "score",
+        "won",
+        "price",
+        "stock",
+        "rate",
+        "match",
+        "election",
+        "result",
+        "results",
+        "temperature",
     ];
-    now && TIMELY.iter().any(|w| has(w))
-        || words.contains(" price of ")
-        || words.contains(" stock price ")
-        || words.contains(" exchange rate ")
+    TIMELY.iter().any(|w| has(w)) && (now || (has("temperature") && has("in")))
 }
 
 pub fn urlencode(s: &str) -> String {
@@ -1402,6 +1434,10 @@ mod tests {
             "price of gold",
             "USD to INR exchange rate",
             "who won the election yesterday",
+            "Who won Wimbledon?",
+            "Is it raining in Pune right now?",
+            "What's my local weather today?",
+            "temperature in Delhi",
         ] {
             assert!(super::wants_live(q), "{q}");
         }
@@ -1412,6 +1448,9 @@ mod tests {
             "summarise this file",
             "explain the latest commit in this folder",
             "write a poem about rain",
+            "How do RSS news feeds work?",
+            "What oven temperature do I need for sourdough?",
+            "Summarize the latest news in this article",
         ] {
             assert!(!super::wants_live(q), "{q}");
         }
