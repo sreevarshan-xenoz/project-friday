@@ -74,7 +74,7 @@ Autonomous Agent & Cognitive Loop:
   friday cancel                    Cancel the goal FRIDAY is working on
   friday tasks [pause|resume|delete <id>|status|on|off]
                                    Standing tasks ("every morning ..."): list, pause, delete, turn all off
-  friday agents [show|allow|deny|reply <id>|hooks [on|off]|status|on|off]
+  friday agents [show|allow|deny|reply <id>|hooks [on|off]|check [on|off]|status|on|off]
                                    Coding agents FRIDAY runs for you (opencode, agy, Claude Code): follow, answer, turn off
   friday desktop [status|on|off]   Let FRIDAY control your windows, apps, volume and music
   friday keys update               Add FRIDAY keys from a newer version to your key file (FRIDAY OS)
@@ -3294,6 +3294,19 @@ friday_agents() {
         || { echo "Run $id isn't waiting for you." >&2; return 1; }
       printf 'reply:%s' "$text" >"$d/$id.answer"
       echo "Told run $id."
+      ;;
+    check)
+      # Off unless turned on: the tests run code the agent just wrote.
+      local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
+      case "${id:-status}" in
+        on) friday_env_set FRIDAY_AGENT_CHECK 1; systemctl --user restart friday-linux-daemon 2>/dev/null || true
+            echo "Checking agents' work: on. When an agent says it's done, FRIDAY runs the project's tests (they run code the agent just wrote)." ;;
+        off) friday_env_set FRIDAY_AGENT_CHECK 0; systemctl --user restart friday-linux-daemon 2>/dev/null || true
+             echo "Checking agents' work: off." ;;
+        status) if grep -qx 'FRIDAY_AGENT_CHECK=1' "$env_file" 2>/dev/null; then echo "Checking agents' work: on. Turn off: friday agents check off"
+                else echo "Checking agents' work: off. Turn on: friday agents check on (FRIDAY then runs the project's tests when an agent says it's done)"; fi ;;
+        *) echo "Usage: friday agents check [status|on|off]" >&2; return 2 ;;
+      esac
       ;;
     status|on|off)
       friday_switch FRIDAY_AGENTS "Coding agents" agents \

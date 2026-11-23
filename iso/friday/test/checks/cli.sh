@@ -501,6 +501,14 @@ bash "$F" feature which-this off >/dev/null
 if grep -q "“this” = " "$LOG"; then fail "which-this off still asked"; else pass "which-this off asks nothing"; fi
 bash "$F" feature which-this on >/dev/null
 
+echo "checking agents' work"
+contains "off unless turned on" "$(bash "$F" agents check)" "Checking agents' work: off"
+bash "$F" agents check on >/dev/null
+contains "on writes the setting" "$(cat "$HOME/.config/friday/friday.env")" "FRIDAY_AGENT_CHECK=1"
+contains "and says so" "$(bash "$F" agents check)" "Checking agents' work: on"
+bash "$F" agents check off >/dev/null
+contains "off again" "$(bash "$F" agents check status)" "Checking agents' work: off"
+
 echo "per-app instructions"
 printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s "$HYPR_WIN"\nexit 0\n' >"$S/hyprctl"; chmod +x "$S/hyprctl"
 # "This window" is the one in front at the keypress.
