@@ -1484,6 +1484,24 @@ async fn main() -> std::process::ExitCode {
         println!("{}", friday_mobile::risk_table::report());
         return std::process::ExitCode::SUCCESS;
     }
+    // Whether the action log is as FRIDAY wrote it (each line chained to
+    // the one before).
+    if raw.first().map(String::as_str) == Some("verify-log") {
+        let Some(dir) = friday_mobile::desktop_tool::audit_dir() else {
+            eprintln!("friday-ctl: no state folder");
+            return std::process::ExitCode::from(1);
+        };
+        return match friday_mobile::action_log::verify(&dir) {
+            Ok(s) => {
+                println!("{s}");
+                std::process::ExitCode::SUCCESS
+            }
+            Err(e) => {
+                println!("Changed: {e}");
+                std::process::ExitCode::from(1)
+            }
+        };
+    }
     // The current conversation as a document (friday phone send thread).
     if raw.first().map(String::as_str) == Some("thread") {
         let state_path = std::env::var("FRIDAY_STATE_FILE")

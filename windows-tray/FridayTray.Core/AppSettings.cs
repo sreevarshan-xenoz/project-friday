@@ -120,6 +120,7 @@ public static class AppSettings
         ("live-web", "Questions about the weather, news, scores or prices search the web without \"search\" first"),
         ("backup", "Back up settings, memory and history, and restore one after checking it"),
         ("risk-table", "Settings shows what FRIDAY may do on its own, what asks first and what never runs"),
+        ("log-chain", "Each action in the action log is chained to the one before, so a changed line shows"),
         ("activity", "One list of agent steps waiting for you, runs going now, standing tasks and runs finished lately"),
         ("model-per-job", "A model picked for asks, screen questions or chores (AI page) is tried first"),
         ("status-orb", "The answer card's orb shows listening, thinking and speaking"),
