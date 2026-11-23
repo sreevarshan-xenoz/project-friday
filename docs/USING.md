@@ -194,6 +194,13 @@ window's text instead of a screenshot. All are on by default, and each
 can be changed later (`FRIDAY_DESKTOP=0`, `FRIDAY_STANDING_TASKS=0`,
 `friday app-context off`, `friday screen-text off` or the Windows tray menu).
 
+API keys you add are kept out of the plain settings file where the system has a keychain. On Windows
+they go to Credential Manager (a key already in `friday.env` moves there when the tray starts; the file
+keeps `NAME=keyring:` in its place). On Linux, `friday secrets keychain` moves them to your desktop
+keyring (GNOME Keyring or KWallet, through `secret-tool`) and `friday secrets file` moves them back; a
+keyring that is still locked when FRIDAY starts leaves those providers out until you unlock it and
+restart FRIDAY (`systemctl --user restart friday-linux-daemon`).
+
 ## The launcher
 
 Click the grid in the bar. Type to find an app, one of FRIDAY's quick commands

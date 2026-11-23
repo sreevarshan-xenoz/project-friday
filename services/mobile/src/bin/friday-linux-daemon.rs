@@ -93,6 +93,8 @@ fn render(state: &ShellState) -> serde_json::Value {
 #[tokio::main]
 async fn main() {
     friday_core::init_telemetry();
+    // Keys kept in the keyring (`friday secrets keychain`), before anything reads them.
+    friday_mobile::secrets::resolve_env();
     tracing::info!("FRIDAY Linux daemon starting (R5-1-1)");
 
     // Snapshot the running executable identity to detect on-disk binary upgrades (e.g. pacman -Syu).

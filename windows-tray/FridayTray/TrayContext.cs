@@ -45,6 +45,7 @@ internal sealed class TrayContext : ApplicationContext
 
         _log = new AnswerLog(install.Paths);
         ApplyInstallerChoices();
+        MigrateSecrets();
         _daemon = new Supervised("friday-daemon", install.Daemon, install.ChildEnvironment, install.Paths.LogDir);
         _host = new Supervised("friday-windows-host", install.Host, install.ChildEnvironment, install.Paths.LogDir);
         _llama = new Supervised("llama-server", LocalAi.LlamaExe(install.Paths), install.ChildEnvironment, install.Paths.LogDir,
@@ -1045,6 +1046,30 @@ internal sealed class TrayContext : ApplicationContext
         var tmp = path + ".tmp";
         File.WriteAllText(tmp, AppSettings.WithScreenText(File.Exists(path) ? File.ReadAllText(path) : "", on));
         File.Move(tmp, path, overwrite: true);
+    }
+
+    /// <summary>Once per start: keys still written in friday.env move to Credential Manager.</summary>
+    private void MigrateSecrets()
+    {
+        try
+        {
+            var path = _install.Paths.EnvFile;
+            if (!File.Exists(path))
+                return;
+            var text = File.ReadAllText(path);
+            var migrated = Keyring.Migrate(text, CredentialStore.Write);
+            if (migrated == text)
+                return;
+            var tmp = path + ".tmp";
+            File.WriteAllText(tmp, migrated);
+            File.Move(tmp, path, overwrite: true);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
     }
 
     /// <summary>
