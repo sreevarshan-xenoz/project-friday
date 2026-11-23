@@ -895,7 +895,8 @@ pub fn run_wake() -> u8 {
         if call_checked.elapsed() > std::time::Duration::from_secs(5) {
             call_checked = std::time::Instant::now();
             let now = if crate::features::on("call-pause") {
-                call_holds_mic()
+                // Couldn't tell: as it was.
+                call_holds_mic().unwrap_or(on_call)
             } else {
                 None
             };
@@ -908,6 +909,8 @@ pub fn run_wake() -> u8 {
             }
             if now.is_some() && on_call.is_none() {
                 conversing = None;
+                // Nothing heard before the call carries over to after it.
+                seg = Segmenter::new(8, 50);
             }
             on_call = now;
         }
@@ -1028,16 +1031,30 @@ pub fn call_in_pw_dump(json: &str) -> Option<&'static str> {
     })
 }
 
-/// The call app using the microphone now, in `reg query … microphone /s`:
-/// an app's key whose `LastUsedTimeStop` is 0 (Windows' own privacy record).
-pub fn call_in_reg(text: &str) -> Option<&'static str> {
-    let mut key = "";
+/// The call app using the microphone now, in `reg query … microphone /s`
+/// (Windows' own privacy record): an app's key whose `LastUsedTimeStop` is 0,
+/// started in the last 12 hours (an app that crashed mid-call never writes
+/// its stop). `now` is the time as a FILETIME. Only the program's own name
+/// counts, never its folders or FRIDAY itself.
+pub fn call_in_reg(text: &str, now: u64) -> Option<&'static str> {
+    let (mut name, mut started) = (String::new(), 0u64);
     for line in text.lines() {
         let line = line.trim();
         if line.starts_with("HKEY_") {
-            key = line;
-        } else if line.starts_with("LastUsedTimeStop") && line.ends_with(" 0x0") {
-            if let Some(app) = call_app(key.rsplit('\\').next().unwrap_or("")) {
+            name = line.rsplit(['\\', '#']).next().unwrap_or("").to_lowercase();
+            started = 0;
+        } else if line.starts_with("LastUsedTimeStart") {
+            started = line
+                .rsplit("0x")
+                .next()
+                .and_then(|h| u64::from_str_radix(h, 16).ok())
+                .unwrap_or(0);
+        } else if line.starts_with("LastUsedTimeStop")
+            && line.ends_with(" 0x0")
+            && !name.starts_with("friday")
+            && now.saturating_sub(started) < 12 * 3600 * 10_000_000
+        {
+            if let Some(app) = call_app(&name) {
                 return Some(app);
             }
         }
@@ -1045,8 +1062,9 @@ pub fn call_in_reg(text: &str) -> Option<&'static str> {
     None
 }
 
-/// The call app using the microphone now, so the wake word pauses for it.
-fn call_holds_mic() -> Option<&'static str> {
+/// The call app using the microphone now, so the wake word pauses for it:
+/// `Some(None)` when none is, `None` when it couldn't be told.
+fn call_holds_mic() -> Option<Option<&'static str>> {
     #[cfg(windows)]
     {
         let mut cmd = std::process::Command::new("reg");
@@ -1059,7 +1077,16 @@ fn call_holds_mic() -> Option<&'static str> {
             ])
             .output()
             .ok()?;
-        call_in_reg(&String::from_utf8_lossy(&out.stdout))
+        // Now as a FILETIME: 100 ns steps since 1601.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_nanos() as u64
+            / 100
+            + 116_444_736_000_000_000;
+        out.status
+            .success()
+            .then(|| call_in_reg(&String::from_utf8_lossy(&out.stdout), now))
     }
     #[cfg(not(windows))]
     {
@@ -1068,7 +1095,10 @@ fn call_holds_mic() -> Option<&'static str> {
             .stderr(std::process::Stdio::null())
             .output()
             .ok()?;
-        call_in_pw_dump(&String::from_utf8_lossy(&out.stdout))
+        let json = String::from_utf8_lossy(&out.stdout);
+        // A timeout or a PipeWire restart: not known, not "no call".
+        serde_json::from_str::<serde_json::Value>(&json).ok()?;
+        Some(call_in_pw_dump(&json))
     }
 }
 
@@ -1137,12 +1167,31 @@ HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessMana
     LastUsedTimeStart    REG_QWORD    0x1db3c
     LastUsedTimeStop    REG_QWORD    0x1db3d
 ";
+        let now = 0x1db3c + 3600 * 10_000_000;
         assert_eq!(
-            call_in_reg(reg),
+            call_in_reg(reg, now),
             None,
             "FRIDAY itself, and a call that ended"
         );
-        assert_eq!(call_in_reg(&reg.replace("0x1db3d", "0x0")), Some("teams"));
+        assert_eq!(
+            call_in_reg(&reg.replace("0x1db3d", "0x0"), now),
+            Some("teams")
+        );
+        let later = 0x1db3c + 13 * 3600 * 10_000_000;
+        assert_eq!(
+            call_in_reg(&reg.replace("0x1db3d", "0x0"), later),
+            None,
+            "a stop never written"
+        );
+        let zen_user = reg.replace(
+            "C:#Program Files#FRIDAY#",
+            "C:#Users#Zenaida#AppData#Local#FRIDAY#",
+        );
+        assert_eq!(
+            call_in_reg(&zen_user, now),
+            None,
+            "folder names don't count"
+        );
     }
 
     #[test]
