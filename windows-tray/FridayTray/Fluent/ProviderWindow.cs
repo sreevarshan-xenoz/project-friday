@@ -111,8 +111,17 @@ internal sealed class ProviderWindow : CardWindow
         Directory.CreateDirectory(Path.GetDirectoryName(_envPath)!);
         var existing = File.Exists(_envPath) ? File.ReadAllText(_envPath) : "";
         var tmp = _envPath + ".tmp";
-        File.WriteAllText(tmp, EnvFile.WithProvider(existing, provider, key, _keepOthers.Visibility == Visibility.Visible && _keepOthers.IsChecked == true));
+        var text = EnvFile.WithProvider(existing, provider, key, _keepOthers.Visibility == Visibility.Visible && _keepOthers.IsChecked == true);
+        // The key goes to Credential Manager; keys of providers just replaced are removed from it.
+        var kept = EnvFile.Parse(text).Keys;
+        var gone = EnvFile.Parse(existing).Keys.Where(k => Keyring.IsSecret(k) && !kept.Contains(k)).ToList();
+        if (key.Length > 0)
+            text = Keyring.Store(text, provider.KeyVar, key, (n, v) => CredentialStore.Write(n, v) && CredentialStore.Read(n) == v, CredentialStore.Delete);
+        File.WriteAllText(tmp, text);
         File.Move(tmp, _envPath, overwrite: true);
+        // Only once the file no longer points at them.
+        foreach (var name in gone)
+            CredentialStore.Delete(name);
         DialogResult = true;
     }
 }

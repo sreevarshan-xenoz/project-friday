@@ -1232,6 +1232,7 @@ fn say(args: &[String]) -> std::process::ExitCode {
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
+    friday_mobile::secrets::resolve_env();
     let raw: Vec<String> = std::env::args().skip(1).collect();
     if raw.first().map(String::as_str) == Some("say") {
         return say(&raw[1..]);

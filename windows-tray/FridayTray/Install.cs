@@ -24,11 +24,11 @@ internal sealed class Install
 
     /// <summary>
     /// What the daemon and friday-ctl run with: where state and memory live,
-    /// plus the user's AI provider settings from friday.env.
+    /// plus the user's AI provider settings from friday.env (keys from Credential Manager).
     /// </summary>
     public IDictionary<string, string> ChildEnvironment()
     {
-        var env = new Dictionary<string, string>(EnvFile.Load(Paths.EnvFile))
+        var env = new Dictionary<string, string>(Keyring.Resolve(EnvFile.Load(Paths.EnvFile), CredentialStore.Read))
         {
             ["FRIDAY_STATE_FILE"] = Paths.StateFile,
             ["FRIDAY_MEMORY_DIR"] = Paths.MemoryDir,

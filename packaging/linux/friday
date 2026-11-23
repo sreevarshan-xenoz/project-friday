@@ -76,6 +76,7 @@ Autonomous Agent & Cognitive Loop:
                                    Standing tasks ("every morning ..."): list, pause, delete, turn all off
   friday agents [show|allow|deny|reply <id>|hooks [on|off]|check [on|off]|status|on|off]
                                    Coding agents FRIDAY runs for you (opencode, agy, Claude Code): follow, answer, turn off
+  friday secrets [status|keychain|file]  API keys in your desktop keyring, or back in friday.env
   friday desktop [status|on|off]   Let FRIDAY control your windows, apps, volume and music
   friday keys update               Add FRIDAY keys from a newer version to your key file (FRIDAY OS)
   friday status | system-info      Inspect daemon state, memory, and telemetry
@@ -3604,6 +3605,57 @@ friday_env_set() {
   ( umask 077; { grep -v "^$1=" "$env_file" 2>/dev/null || true; echo "$1=$2"; } >"$env_file.tmp" && mv "$env_file.tmp" "$env_file" )
 }
 
+# `friday secrets [status|keychain|file]`: API keys in the desktop's keyring
+# (Secret Service, through secret-tool) instead of friday.env, or back. The
+# file then holds NAME=keyring: and the daemon reads the value at start.
+friday_secrets() {
+  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env" name val moved=0
+  local names
+  names=$(grep -oE '^[A-Z0-9_]+_(API_KEY|TOKEN|SECRET)=' "$env_file" 2>/dev/null | tr -d = || true)
+  case "${1:-status}" in
+    status)
+      if [ -z "$names" ]; then echo "No API keys are set."; return 0; fi
+      while IFS= read -r name; do
+        if grep -qx "$name=keyring:" "$env_file"; then echo "$name: in the keyring"; else echo "$name: in friday.env"; fi
+      done <<<"$names"
+      echo "Move them: friday secrets keychain (back: friday secrets file)" ;;
+    keychain)
+      command -v secret-tool >/dev/null 2>&1 \
+        || { echo "friday secrets: needs secret-tool (libsecret) and a keyring such as GNOME Keyring or KWallet." >&2; return 1; }
+      while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        val=$(grep -E "^$name=" "$env_file" | tail -n1 | cut -d= -f2- | tr -d '\r')
+        # As systemd reads it: without surrounding quotes or trailing spaces.
+        val="${val%"${val##*[![:space:]]}"}"
+        if [[ "$val" == \"*\" || "$val" == \'*\' ]]; then val="${val:1:${#val}-2}"; fi
+        [ -n "$val" ] && [ "$val" != "keyring:" ] || continue
+        # Only once the keyring gives it back is the file changed.
+        if printf '%s' "$val" | secret-tool store --label="FRIDAY $name" service friday name "$name" 2>/dev/null \
+            && [ "$(secret-tool lookup service friday name "$name" 2>/dev/null)" = "$val" ]; then
+          friday_env_set "$name" "keyring:"; moved=$((moved + 1))
+        else
+          echo "Couldn't put $name in the keyring (is it unlocked?); it stays in friday.env." >&2
+        fi
+      done <<<"$names"
+      [ "$moved" -eq 0 ] || systemctl --user restart friday-linux-daemon 2>/dev/null || true
+      echo "Moved $moved key(s) to the keyring. If the keyring is locked when FRIDAY starts, those providers wait until you unlock it and restart FRIDAY." ;;
+    file)
+      while IFS= read -r name; do
+        [ -n "$name" ] && grep -qx "$name=keyring:" "$env_file" || continue
+        if val=$(secret-tool lookup service friday name "$name" 2>/dev/null) && [ -n "$val" ]; then
+          friday_env_set "$name" "$val"
+          secret-tool clear service friday name "$name" 2>/dev/null || true
+          moved=$((moved + 1))
+        else
+          echo "The keyring didn't give $name (is it unlocked?); it stays there." >&2
+        fi
+      done <<<"$names"
+      [ "$moved" -eq 0 ] || systemctl --user restart friday-linux-daemon 2>/dev/null || true
+      echo "Moved $moved key(s) back to friday.env." ;;
+    *) echo "Usage: friday secrets [status|keychain|file]" >&2; return 2 ;;
+  esac
+}
+
 friday_gb() { awk -v m="$1" 'BEGIN { g = m / 1024; if (g == int(g)) printf "%d GB", g; else printf "%.1f GB", g }'; }
 
 # One line per preset: id|label|budget_mb|model|download_mb|vision|fast|available|note
@@ -5333,6 +5385,10 @@ case "${1:-}" in
   agents)
     shift
     friday_agents "$@"
+    ;;
+  secrets)
+    shift
+    friday_secrets "$@"
     ;;
   desktop)
     shift

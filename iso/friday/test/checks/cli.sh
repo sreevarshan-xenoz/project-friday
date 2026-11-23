@@ -501,6 +501,33 @@ bash "$F" feature which-this off >/dev/null
 if grep -q "“this” = " "$LOG"; then fail "which-this off still asked"; else pass "which-this off asks nothing"; fi
 bash "$F" feature which-this on >/dev/null
 
+echo "API keys in the keyring"
+# A stand-in keyring: secret-tool keeps values as files.
+mkdir -p "$W/kr"
+cat >"$S/secret-tool" <<STUB
+#!/bin/bash
+case "\$1" in
+  store) cat >"$W/kr/\${@: -1}" ;;
+  lookup) cat "$W/kr/\${@: -1}" 2>/dev/null || exit 1 ;;
+  clear) rm -f "$W/kr/\${@: -1}" ;;
+esac
+STUB
+chmod +x "$S/secret-tool"
+envf="$HOME/.config/friday/friday.env"; cp "$envf" "$W/env.keep" 2>/dev/null || : >"$W/env.keep"
+printf 'GROQ_API_KEY=test-key-value\nFRIDAY_AUTONOMY=ask\n' >"$envf"
+out=$(bash "$F" secrets keychain)
+contains "keys move to the keyring" "$out" "Moved 1 key(s) to the keyring"
+contains "the file keeps only a marker" "$(cat "$envf")" "GROQ_API_KEY=keyring:"
+if grep -q "test-key-value" "$envf"; then fail "the key is still in friday.env"; else pass "the key is out of friday.env"; fi
+contains "other settings stay" "$(cat "$envf")" "FRIDAY_AUTONOMY=ask"
+contains "status says where it is" "$(bash "$F" secrets)" "GROQ_API_KEY: in the keyring"
+bash "$F" secrets file >/dev/null
+contains "and back to the file" "$(cat "$envf")" "GROQ_API_KEY=test-key-value"
+[ ! -e "$W/kr/GROQ_API_KEY" ] && pass "the keyring copy is cleared" || fail "the keyring still holds it"
+printf 'GROQ_API_KEY="quoted-value"  \n' >"$envf"; bash "$F" secrets keychain >/dev/null
+[ "$(cat "$W/kr/GROQ_API_KEY" 2>/dev/null)" = "quoted-value" ] && pass "a quoted key is kept without its quotes" || fail "kept as: $(cat "$W/kr/GROQ_API_KEY" 2>/dev/null)"
+cp "$W/env.keep" "$envf"; rm -f "$S/secret-tool"
+
 echo "checking agents' work"
 contains "off unless turned on" "$(bash "$F" agents check)" "Checking agents' work: off"
 bash "$F" agents check on >/dev/null

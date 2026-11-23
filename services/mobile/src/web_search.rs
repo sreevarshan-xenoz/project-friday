@@ -82,7 +82,8 @@ pub fn read_env_or_config(var: &str) -> Option<String> {
         if let Some((k, v)) = trimmed.split_once('=') {
             if k.trim() == var {
                 let val = v.trim().trim_matches('"').trim_matches('\'').to_string();
-                if !val.is_empty() {
+                // A key kept in the keyring is never the marker itself.
+                if !val.is_empty() && val != crate::secrets::MARKER {
                     return Some(val);
                 }
             }
