@@ -683,6 +683,13 @@ impl Planning {
 fn capability_for_description(description: &str) -> Capability {
     let d = goal_segment(description).to_lowercase();
 
+    // "Remember that I use opencode": a fact to keep, whatever it names
+    // (FRIDAY's own "Remember" button sends this). Before the agent and
+    // diagnose rules, which would read it as a request.
+    if d.starts_with("remember that ") {
+        return Capability::Custom("memory.remember".into());
+    }
+
     // 0. Coding agents: "have opencode add a README to ~/code/site", "ask
     //    agy to fix the tests", "how are my agent runs going". Before the
     //    shell, since "run opencode on …" is a request for an agent run.
@@ -1874,6 +1881,21 @@ mod tests {
             planning.infer_capability(composed, &[]),
             Capability::ExecuteCommand
         );
+    }
+
+    /// FRIDAY's "Remember" button sends "remember that …": kept as a fact
+    /// even when it names an agent, a tree or a troubleshooting word.
+    #[test]
+    fn remember_that_is_always_kept_as_a_fact() {
+        let remember = Capability::Custom("memory.remember".into());
+        for g in [
+            "remember that I use opencode",
+            "remember that I run agy",
+            "remember that I use tree-sitter",
+            "remember that my wifi is slow",
+        ] {
+            assert_eq!(capability_for_description(g), remember, "{g}");
+        }
     }
 
     #[test]
