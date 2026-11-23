@@ -150,7 +150,8 @@ impl MemoryJournal {
         }))
     }
 
-    /// Append an episode as one JSONL line.
+    /// Append an episode as one JSONL line, in one write, synced to disk. A
+    /// line torn by a crash is ended first, so it can't swallow this one.
     pub fn append(&self, episode: &CognitiveEpisode) {
         let line = match serde_json::to_string(episode) {
             Ok(line) => line,
@@ -160,15 +161,34 @@ impl MemoryJournal {
             }
         };
         self.episodes.lock().unwrap().push(episode.clone());
-        match OpenOptions::new()
+        let torn = fs::File::open(&self.path)
+            .and_then(|mut f| {
+                use std::io::{Read, Seek, SeekFrom};
+                if f.seek(SeekFrom::End(0))? == 0 {
+                    return Ok(false);
+                }
+                f.seek(SeekFrom::End(-1))?;
+                let mut last = [0u8; 1];
+                f.read_exact(&mut last)?;
+                Ok(last[0] != b'\n')
+            })
+            .unwrap_or(false);
+        let mut bytes = Vec::with_capacity(line.len() + 2);
+        if torn {
+            bytes.push(b'\n');
+        }
+        bytes.extend_from_slice(line.as_bytes());
+        bytes.push(b'\n');
+        let wrote = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&self.path)
-        {
-            Ok(mut file) => {
-                let _ = writeln!(file, "{line}");
-            }
-            Err(e) => tracing::error!("journal append to {} failed: {e}", self.path.display()),
+            .and_then(|mut file| {
+                file.write_all(&bytes)?;
+                file.sync_data()
+            });
+        if let Err(e) = wrote {
+            tracing::error!("journal append to {} failed: {e}", self.path.display());
         }
     }
 
@@ -325,5 +345,37 @@ mod tests {
             "A valid fact is stored"
         );
         let _ = std::fs::remove_dir_all(&path);
+    }
+
+    /// Killed halfway through a line (kill -9, power cut): the torn line is
+    /// skipped and the next fact starts on a line of its own, so nothing
+    /// saved before or after the crash is lost.
+    #[test]
+    fn a_torn_last_line_never_swallows_the_next_fact() {
+        let path = temp_journal_path("torn");
+        let journal = MemoryJournal::open(&path).expect("open journal");
+        journal.append(&fact_episode("My main project is FRIDAY"));
+        let half = serde_json::to_string(&fact_episode("cut off")).unwrap();
+        {
+            let mut f = OpenOptions::new().append(true).open(&path).unwrap();
+            f.write_all(&half.as_bytes()[..half.len() / 2]).unwrap();
+        }
+        let after = MemoryJournal::open(&path).expect("reopen after the crash");
+        assert_eq!(after.len(), 1);
+        after.append(&fact_episode("The coffee machine lives in the kitchen"));
+        let facts: Vec<String> = MemoryJournal::open(&path)
+            .expect("reopen")
+            .episodes()
+            .into_iter()
+            .map(|e| e.goal.description)
+            .collect();
+        assert_eq!(
+            facts,
+            vec![
+                "My main project is FRIDAY".to_string(),
+                "The coffee machine lives in the kitchen".to_string()
+            ]
+        );
+        let _ = std::fs::remove_file(&path);
     }
 }

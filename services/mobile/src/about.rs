@@ -295,8 +295,13 @@ fn remember_at(
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir)?;
     }
+    // Whole or not at all: a crash leaves the old file or the new one, never
+    // half of either (synced before the swap, so a power cut can't either).
     let tmp = p.with_extension("md.tmp");
-    std::fs::write(&tmp, lines.join("\n") + "\n")?;
+    let mut f = std::fs::File::create(&tmp)?;
+    std::io::Write::write_all(&mut f, (lines.join("\n") + "\n").as_bytes())?;
+    f.sync_all()?;
+    drop(f);
     std::fs::rename(tmp, p)?;
     let closed = done.iter().flat_map(|(_, c)| c.clone()).collect();
     Ok((done.len(), closed))
@@ -357,6 +362,27 @@ mod tests {
             importable("1.5 GB is all the RAM I have\n", &[]),
             vec!["1.5 GB is all the RAM I have"]
         );
+    }
+
+    /// Killed while saving: what's left is a half-written temp file beside
+    /// memory.md. The saved facts are untouched and the next save works.
+    #[test]
+    fn a_save_cut_off_halfway_loses_no_fact() {
+        let p = std::env::temp_dir().join(format!(
+            "friday-test-crash-{}-{}.md",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
+        remember_at(&p, &["I use fish".into()], "2026-11-23").unwrap();
+        std::fs::write(p.with_extension("md.tmp"), "# What FRIDAY rem").unwrap();
+        assert_eq!(facts(&read(&p).unwrap()), vec!["I use fish".to_string()]);
+        remember_at(&p, &["I live in Lisbon".into()], "2026-11-23").unwrap();
+        assert_eq!(
+            facts(&read(&p).unwrap()),
+            vec!["I use fish".to_string(), "I live in Lisbon".to_string()]
+        );
+        assert!(!p.with_extension("md.tmp").exists());
+        let _ = std::fs::remove_file(&p);
     }
 
     #[test]

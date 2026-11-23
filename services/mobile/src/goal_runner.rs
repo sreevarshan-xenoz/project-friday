@@ -1433,9 +1433,10 @@ fn save_conversations(path: &std::path::Path, sessions: &HashMap<String, Session
     opts.write(true).create(true).truncate(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
-    let written = opts
-        .open(&tmp)
-        .and_then(|mut f| std::io::Write::write_all(&mut f, &body));
+    let written = opts.open(&tmp).and_then(|mut f| {
+        std::io::Write::write_all(&mut f, &body)?;
+        f.sync_all()
+    });
     if written.is_ok() {
         let _ = std::fs::rename(&tmp, path);
     }
