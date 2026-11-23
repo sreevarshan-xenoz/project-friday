@@ -67,3 +67,33 @@ public static class Speaking
         File.WriteAllText(SettingsFile(p), settings.ToJsonString());
     }
 }
+
+/// <summary>
+/// An answer read aloud while it streams: each time more of it has arrived,
+/// only the new part is sent to the voice. When the text no longer continues
+/// what was sent (the answer was rewritten), nothing more is sent.
+/// </summary>
+public sealed class StreamedSpeech
+{
+    private string _sent = "";
+    private bool _broken;
+
+    /// <summary>The new text in <paramref name="soFar"/>, "" when nothing is new,
+    /// or null when it doesn't continue what was sent.</summary>
+    public string? Next(string soFar)
+    {
+        // Trailing spaces sent aren't part of what must match (the end of a
+        // streamed piece can differ from the finished answer there).
+        var sent = _sent.TrimEnd();
+        if (_broken || !soFar.StartsWith(sent, StringComparison.Ordinal))
+        {
+            _broken = true;
+            return null;
+        }
+        var add = soFar[sent.Length..];
+        if (_sent.Length > sent.Length && add.StartsWith(_sent[sent.Length..], StringComparison.Ordinal))
+            add = add[(_sent.Length - sent.Length)..];
+        _sent = soFar;
+        return add;
+    }
+}

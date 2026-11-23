@@ -1214,14 +1214,14 @@ fn say(args: &[String]) -> std::process::ExitCode {
         friday_mobile::speech::stop_running();
         return std::process::ExitCode::SUCCESS;
     }
-    let text = if args == ["-"] {
-        let mut t = String::new();
-        let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut t);
-        t
+    // "-": the text is read as it comes, so an answer piped in while it
+    // streams is spoken from its first sentence.
+    let said = if args == ["-"] {
+        friday_mobile::speech::say_reader(std::io::stdin())
     } else {
-        args.join(" ")
+        friday_mobile::speech::say(&args.join(" "))
     };
-    match friday_mobile::speech::say(&text) {
+    match said {
         // Stopped before the end (friday say --stop, the talk key, talking
         // over it): its own exit code, so nothing listens for a follow-up.
         Ok(spoken) if spoken.stopped => std::process::ExitCode::from(5),

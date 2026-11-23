@@ -24,6 +24,26 @@ public class SpeakingTests : IDisposable
     }
 
     [Fact]
+    public void A_streaming_answer_sends_only_what_is_new_and_stops_when_rewritten()
+    {
+        var speech = new StreamedSpeech();
+        Assert.Equal("Sure, I", speech.Next("Sure, I"));
+        Assert.Equal("", speech.Next("Sure, I"));
+        Assert.Equal(" found it.", speech.Next("Sure, I found it."));
+        Assert.Equal("  ", speech.Next("Sure, I found it.  "));
+        Assert.Equal(" Then more.", speech.Next("Sure, I found it. Then more."));
+        Assert.Null(speech.Next("Actually, no."));
+        Assert.Null(speech.Next("Sure, I found it. And more."));
+    }
+
+    [Fact]
+    public void Speaking_as_it_comes_has_a_switch_and_is_on_by_default()
+    {
+        Assert.Contains(AppSettings.Features, f => f.Name == "speak-as-it-comes");
+        Assert.True(AppSettings.FeatureOn(new Dictionary<string, string>(), "speak-as-it-comes"));
+    }
+
+    [Fact]
     public void The_voice_names_are_read_from_the_numbered_lines()
     {
         Assert.Equal(["Bella", "Heart", "Voice 3"], Speaking.ParseVoices("0 Bella\r\n1 Heart\n2 Voice 3\n"));
