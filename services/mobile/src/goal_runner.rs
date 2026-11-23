@@ -4472,7 +4472,9 @@ mod tests {
     async fn goal_runner_with_empty_fabric_falls_back_to_heuristic() {
         let bus = EventBus::new();
         let mut rx = bus.subscribe();
-        let runner = GoalRunner::with_fabric(bus.clone(), Arc::new(InferenceFabric::new()));
+        let mut fabric = InferenceFabric::new();
+        fabric.egress_log_path = std::env::temp_dir().join("friday-test-egress.jsonl");
+        let runner = GoalRunner::with_fabric(bus.clone(), Arc::new(fabric));
         runner.start();
 
         bus.publish(Event::new(

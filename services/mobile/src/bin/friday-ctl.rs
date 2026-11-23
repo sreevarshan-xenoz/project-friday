@@ -1574,6 +1574,45 @@ async fn main() -> std::process::ExitCode {
             }
         };
     }
+    // Proof that nothing left: the egress log and the daemon's connections.
+    if raw.first().map(String::as_str) == Some("offline-proof") {
+        let hours: i64 = raw
+            .get(1)
+            .and_then(|h| h.parse().ok())
+            .unwrap_or(24)
+            .clamp(1, 24 * 30);
+        let state_path = std::env::var("FRIDAY_STATE_FILE")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| ShellState::default_path());
+        let dir = state_path.parent().unwrap_or(std::path::Path::new("."));
+        let egress = std::fs::read_to_string(dir.join("egress.jsonl")).ok();
+        let private = std::fs::read_to_string(&state_path)
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|v| v["private"].as_bool())
+            .unwrap_or(false);
+        let since = chrono::Utc::now() - chrono::Duration::hours(hours);
+        let agent_runs = friday_mobile::agent_runs::list(&friday_mobile::agent_runs::runs_dir())
+            .iter()
+            .filter(|r| r.started >= since.timestamp())
+            .count();
+        let conns = friday_mobile::offline_proof::daemon_connections();
+        println!(
+            "{}",
+            friday_mobile::offline_proof::report(
+                since,
+                hours,
+                &friday_mobile::offline_proof::Seen {
+                    egress: egress.as_deref(),
+                    private,
+                    connections: conns.as_deref(),
+                    agent_runs,
+                    covers: friday_mobile::offline_proof::COVERS,
+                },
+            )
+        );
+        return std::process::ExitCode::SUCCESS;
+    }
     // A run's separate copy: brought in (staged) or dropped.
     if raw.first().map(String::as_str) == Some("agents") {
         let dir = friday_mobile::agent_runs::runs_dir();

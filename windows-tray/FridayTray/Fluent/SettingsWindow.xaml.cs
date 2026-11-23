@@ -324,6 +324,8 @@ internal sealed partial class SettingsWindow : FluentWindow
                 ChangeEnv(env => AppSettings.WithScreenText(env, on));
             });
         yield return Row(Pill("What left this PC…", SymbolRegular.ArrowUpload24), _do.ShowEgress);
+        if (AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "offline-proof"))
+            yield return Row(Pill("Prove what left today…", SymbolRegular.ShieldCheckmark24), OfflineProof);
         if (AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "backup"))
         {
             yield return Row(Pill("Back up FRIDAY…", SymbolRegular.Archive24), BackUp);
@@ -366,6 +368,13 @@ internal sealed partial class SettingsWindow : FluentWindow
         var (ok, said) = await Ctl.RunAsync(_install, ["verify-log"], TimeSpan.FromSeconds(15));
         MessageBox.Show(this, said.Trim(), "Check the action log", MessageBoxButton.OK,
             ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+    }
+
+    /// <summary>What went off this PC in the last day, and what FRIDAY is connected to now.</summary>
+    private async void OfflineProof()
+    {
+        var (_, said) = await Ctl.RunAsync(_install, ["offline-proof", "24"], TimeSpan.FromSeconds(20));
+        MessageBox.Show(this, said.Trim(), "What left this PC", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private async void ShowRisks()
