@@ -925,11 +925,18 @@ internal sealed partial class SettingsWindow : FluentWindow
     /// <summary>Brings a run's separate changes in ("accept") or drops them ("discard"), then says what happened.</summary>
     private async void AgentWorktreeCtl(string id, string verb)
     {
-        var (ok, output) = await Ctl.RunAsync(_install, ["agents", verb, id], TimeSpan.FromSeconds(60));
-        if (ok)
-            Said(output.Trim());
-        else
-            MessageBox.Show(this, output.Trim(), "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Warning);
+        try
+        {
+            var (ok, output) = await Ctl.RunAsync(_install, ["agents", verb, id], TimeSpan.FromSeconds(60));
+            if (ok)
+                Said(output.Trim());
+            else
+                MessageBox.Show(this, output.Trim(), "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        catch (Exception e) when (e is IOException or System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            MessageBox.Show(this, e.Message, "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
         Show("Agents", animate: false);
     }
 

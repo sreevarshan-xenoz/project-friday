@@ -927,35 +927,47 @@ fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        // git says some things (CONFLICT …) on stdout.
+        Err(format!(
+            "{} {}",
+            String::from_utf8_lossy(&out.stderr).trim(),
+            String::from_utf8_lossy(&out.stdout).trim()
+        )
+        .trim()
+        .to_string())
     }
 }
 
 /// A worktree for run `id` of `folder` (a git repository), on its own branch
 /// `friday/<id>`, under `dir/worktrees`; the folder's place inside it. None
 /// when the folder isn't in git or git refuses.
-fn make_worktree(dir: &Path, folder: &Path, id: &str) -> Option<PathBuf> {
-    let top = PathBuf::from(git(folder, &["rev-parse", "--show-toplevel"]).ok()?);
+fn make_worktree(dir: &Path, folder: &Path, id: &str) -> Result<Option<PathBuf>, String> {
+    // Not a git folder: nothing to keep apart, and nothing to say.
+    let Ok(top) = git(folder, &["rev-parse", "--show-toplevel"]) else {
+        return Ok(None);
+    };
+    let top = PathBuf::from(top);
     let inside = folder
         .canonicalize()
-        .ok()?
-        .strip_prefix(top.canonicalize().ok()?)
-        .ok()?
-        .to_path_buf();
+        .ok()
+        .zip(top.canonicalize().ok())
+        .and_then(|(f, t)| f.strip_prefix(t).ok().map(Path::to_path_buf))
+        .unwrap_or_default();
     let tree = dir.join("worktrees").join(id);
     let branch = format!("friday/{id}");
     git(
         &top,
         &[
+            "-c",
+            "core.longpaths=true",
             "worktree",
             "add",
             "-b",
             &branch,
             &tree.display().to_string(),
         ],
-    )
-    .ok()?;
-    Some(tree.join(inside))
+    )?;
+    Ok(Some(tree.join(inside)))
 }
 
 /// The worktree of the newest run in `folder` not yet accepted or
@@ -967,60 +979,93 @@ fn open_worktree(dir: &Path, folder: &Path) -> Option<PathBuf> {
         .and_then(|r| r.worktree)
 }
 
-/// The repository root of a run's worktree, and its branch.
-fn tree_and_branch(run: &Run) -> Result<(PathBuf, String), String> {
+/// The run named `id`, its worktree's root and branch (the one FRIDAY made,
+/// `friday/<first run's id>`), when no run working in that copy is still
+/// going.
+fn copy_of(dir: &Path, id: &str) -> Result<(Run, PathBuf, String), String> {
+    let runs = list(dir);
+    let run = runs
+        .iter()
+        .find(|r| r.id == id)
+        .cloned()
+        .ok_or_else(|| format!("no run {id}"))?;
     let wt = run
         .worktree
-        .as_ref()
+        .clone()
         .filter(|w| w.is_dir())
-        .ok_or_else(|| format!("run {} has no separate copy (any more)", run.id))?;
-    let root = PathBuf::from(git(wt, &["rev-parse", "--show-toplevel"])?);
-    let branch = git(&root, &["rev-parse", "--abbrev-ref", "HEAD"])?;
-    Ok((root, branch))
+        .ok_or_else(|| format!("run {id} has no separate copy (any more)"))?;
+    if runs
+        .iter()
+        .any(|r| r.worktree.as_ref() == Some(&wt) && still_going(r))
+    {
+        return Err(format!("an agent is still working in run {id}'s copy"));
+    }
+    let root = PathBuf::from(git(&wt, &["rev-parse", "--show-toplevel"])?);
+    let made_by = root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(id)
+        .to_string();
+    Ok((run, root, format!("friday/{made_by}")))
+}
+
+/// Every run working in `tree` forgets it (accepted or dropped).
+fn forget_copy(dir: &Path, tree: &Path) {
+    for mut r in list(dir) {
+        if r.worktree.as_ref().is_some_and(|w| w.starts_with(tree)) {
+            r.worktree = None;
+            if let Ok(rec) = Recorder::new(dir, r) {
+                let _ = rec.save();
+            }
+        }
+    }
 }
 
 /// `friday agents accept <id>`: the run's changes come into the folder,
 /// staged for the person to look over and commit; the copy goes.
 pub fn accept(dir: &Path, id: &str) -> Result<String, String> {
-    let mut run = list(dir)
-        .into_iter()
-        .find(|r| r.id == id)
-        .ok_or_else(|| format!("no run {id}"))?;
-    if still_going(&run) {
-        return Err(format!("run {id} is still going"));
-    }
-    let (tree, branch) = tree_and_branch(&run)?;
-    // What the agent left uncommitted counts too (a throwaway commit: only
-    // its changes come in, staged).
+    let (run, tree, branch) = copy_of(dir, id)?;
+    // What the agent left uncommitted counts too: a throwaway commit (only
+    // its changes come in, staged), past the repository's hooks and signing.
     git(&tree, &["add", "-A"])?;
-    let _ = git(
-        &tree,
-        &[
-            "-c",
-            "user.name=FRIDAY",
-            "-c",
-            "user.email=friday@localhost",
-            "commit",
-            "-q",
-            "-m",
-            "agent changes",
-        ],
-    );
-    git(&run.folder, &["merge", "--squash", &branch]).map_err(|e| {
-        format!(
+    if !git(&tree, &["status", "--porcelain"])?.is_empty() {
+        git(
+            &tree,
+            &[
+                "-c",
+                "user.name=FRIDAY",
+                "-c",
+                "user.email=friday@localhost",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-q",
+                "--no-verify",
+                "-m",
+                "agent changes",
+            ],
+        )?;
+    }
+    if !git(&tree, &["status", "--porcelain"])?.is_empty() {
+        return Err(format!(
+            "couldn't gather the changes; the copy stays: {}",
+            tree.display()
+        ));
+    }
+    if let Err(e) = git(&run.folder, &["merge", "--squash", &branch]) {
+        // A conflict leaves nothing half-done in the folder.
+        let _ = git(&run.folder, &["reset", "--merge"]);
+        return Err(format!(
             "couldn't bring the changes in ({e}); the copy stays: {}",
             tree.display()
-        )
-    })?;
+        ));
+    }
     let _ = git(
         &run.folder,
         &["worktree", "remove", "--force", &tree.display().to_string()],
     );
     let _ = git(&run.folder, &["branch", "-D", &branch]);
-    run.worktree = None;
-    if let Ok(rec) = Recorder::new(dir, run.clone()) {
-        let _ = rec.save();
-    }
+    forget_copy(dir, &tree);
     Ok(format!(
         "{}'s changes are in {}, staged: look them over (git diff --staged) and commit.",
         run.agent.name(),
@@ -1031,23 +1076,13 @@ pub fn accept(dir: &Path, id: &str) -> Result<String, String> {
 /// `friday agents discard <id>`: the run's copy and branch go; the folder
 /// is as it was.
 pub fn discard(dir: &Path, id: &str) -> Result<String, String> {
-    let mut run = list(dir)
-        .into_iter()
-        .find(|r| r.id == id)
-        .ok_or_else(|| format!("no run {id}"))?;
-    if still_going(&run) {
-        return Err(format!("run {id} is still going"));
-    }
-    let (tree, branch) = tree_and_branch(&run)?;
+    let (run, tree, branch) = copy_of(dir, id)?;
     git(
         &run.folder,
         &["worktree", "remove", "--force", &tree.display().to_string()],
     )?;
     let _ = git(&run.folder, &["branch", "-D", &branch]);
-    run.worktree = None;
-    if let Ok(rec) = Recorder::new(dir, run.clone()) {
-        let _ = rec.save();
-    }
+    forget_copy(dir, &tree);
     Ok(format!(
         "Dropped {}'s changes; {} is as it was.",
         run.agent.name(),
@@ -1410,11 +1445,17 @@ impl AgentsTool {
         let id = format!("r{}", &uuid::Uuid::new_v4().simple().to_string()[..6]);
         // Its changes kept apart, when the person asked for that: the open
         // copy of this folder (a follow-up), else a new one.
-        let worktree = worktree_on()
-            .then(|| {
-                open_worktree(&self.dir, folder).or_else(|| make_worktree(&self.dir, folder, &id))
+        let worktree = if worktree_on() {
+            open_worktree(&self.dir, folder).or_else(|| {
+                make_worktree(&self.dir, folder, &id).unwrap_or_else(|e| {
+                    // Asked to keep changes apart and couldn't: the log says why.
+                    tracing::warn!("couldn't keep the run apart in {}: {e}", folder.display());
+                    None
+                })
             })
-            .flatten();
+        } else {
+            None
+        };
         let run = Run {
             id,
             agent,
@@ -1701,7 +1742,7 @@ mod tests {
             "first",
         ]);
         let make = |id: &str| {
-            let tree = make_worktree(&dir, &repo, id).expect("a worktree");
+            let tree = make_worktree(&dir, &repo, id).unwrap().expect("a worktree");
             std::fs::write(tree.join("a.txt"), format!("changed by {id}\n")).unwrap();
             let run = Run {
                 id: id.into(),
@@ -1739,6 +1780,12 @@ mod tests {
             "one\n"
         );
         assert!(!dir.join("worktrees/r1").exists(), "the copy is gone");
+        // The repository's own hooks don't stand in the way (nor lose the work).
+        let hook = repo.join(".git/hooks/pre-commit");
+        std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+        #[cfg(unix)]
+        std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
         make("r2");
         let said = accept(&dir, "r2").unwrap();
         assert!(said.contains("staged"), "{said}");
