@@ -568,9 +568,12 @@ impl Tool for MemoryRecallTool {
     }
 
     async fn execute(&self, action: &Action, _ctx: &ExecutionContext) -> ToolResult {
-        let hits = self
-            .journal
-            .recall(&action.instruction, MEMORY_RECALL_LIMIT);
+        // The question only: the context that came with it (the memory file,
+        // the conversation) would find itself.
+        let hits = self.journal.recall(
+            friday_goal_execution::planning::goal_segment(&action.instruction),
+            MEMORY_RECALL_LIMIT,
+        );
         if hits.is_empty() {
             return ToolResult::success("no memory matches yet");
         }
@@ -616,6 +619,14 @@ impl Tool for MemoryRememberTool {
     }
 
     async fn execute(&self, action: &Action, _ctx: &ExecutionContext) -> ToolResult {
+        // "Remember that …" goes in the file the person can read and edit
+        // (crate::about) as well as the episode.
+        let request = friday_goal_execution::planning::goal_segment(&action.instruction);
+        if let Some(fact) = crate::about::fact_in(request) {
+            if let Err(e) = crate::about::remember(&fact) {
+                tracing::warn!("couldn't write the memory file: {e}");
+            }
+        }
         ToolResult::success(format!("remembered: {}", action.instruction))
     }
 }
@@ -1156,6 +1167,9 @@ fn used_labels(
         "an earlier answer",
         "earlier answers",
     ));
+    if count("about you: ") > 0 {
+        used.push("what you asked FRIDAY to remember".to_string());
+    }
     if count("timeline (") > 0 {
         used.push("your timeline".to_string());
     }
@@ -2205,6 +2219,11 @@ impl GoalRunner {
             }
             (lines, project)
         };
+        // What the person asked FRIDAY to remember goes with every ask.
+        let mut recalled = recalled;
+        if let Some(about) = crate::about::context_line() {
+            recalled.insert(0, about);
+        }
         let composed = compose_goal_with_context(&goal, &prior, &recalled);
         let goal_start = std::time::Instant::now();
 

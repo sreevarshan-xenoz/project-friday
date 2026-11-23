@@ -76,6 +76,7 @@ Autonomous Agent & Cognitive Loop:
                                    Standing tasks ("every morning ..."): list, pause, delete, turn all off
   friday agents [show|allow|deny|reply|accept|discard <id>|hooks|check|worktree [on|off]|status|on|off]
                                    Coding agents FRIDAY runs for you (opencode, agy, Claude Code): follow, answer, turn off
+  friday memory [list|edit|forget <words>]  What FRIDAY remembers about you (memory.md)
   friday secrets [status|keychain|file]  API keys in your desktop keyring, or back in friday.env
   friday desktop [status|on|off]   Let FRIDAY control your windows, apps, volume and music
   friday keys update               Add FRIDAY keys from a newer version to your key file (FRIDAY OS)
@@ -3144,11 +3145,41 @@ friday_forget() {
     if systemctl --user is-active --quiet friday-linux-daemon 2>/dev/null; then
       was_up=true; systemctl --user stop friday-linux-daemon 2>/dev/null || true
     fi
-    rm -f "$mem_dir/episodes.jsonl" "$state_dir/conversations.json" "$state_dir/conversation" "$state_dir/lessons.jsonl" "$state_dir/thoughts.jsonl"
+    rm -f "$mem_dir/episodes.jsonl" "$state_dir/conversations.json" "$state_dir/conversation" "$state_dir/lessons.jsonl" "$state_dir/thoughts.jsonl" \
+      "$(friday_memory_file)"
     if $was_up; then systemctl --user start friday-linux-daemon 2>/dev/null || true; fi
     echo "Deleted ${n_mem:-0} remembered things."
   fi
   return 0
+}
+
+# memory.md: what you asked FRIDAY to remember, one "- " line each; every
+# ask carries it. `friday memory [list|edit|forget <words>]`.
+friday_memory_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/memory.md"; }
+friday_memory() {
+  local f; f=$(friday_memory_file)
+  case "${1:-list}" in
+    list)
+      if ! grep -q '^- ' "$f" 2>/dev/null; then
+        echo "FRIDAY remembers nothing about you yet. Say \"remember that I use fish\" (or: friday memory edit)."
+        return 0
+      fi
+      echo "What FRIDAY remembers about you ($f; every ask carries it):"
+      grep '^- ' "$f" ;;
+    edit)
+      mkdir -p "$(dirname "$f")"
+      [ -s "$f" ] || printf '# What FRIDAY remembers about you. Edit freely: one "- " line each.\n' >"$f"
+      "${VISUAL:-${EDITOR:-nano}}" "$f" ;;
+    forget)
+      local words="${*:2}" n
+      [ -n "$words" ] || { echo "usage: friday memory forget <words in the line>" >&2; return 2; }
+      n=$(grep -ciF -- "$words" "$f" 2>/dev/null | head -n1 || true)
+      [ "${n:-0}" -gt 0 ] || { echo "No line of $f has \"$words\"."; return 1; }
+      grep -viF -- "$words" "$f" >"$f.tmp" || true
+      mv -f "$f.tmp" "$f"
+      echo "Forgot $n line(s) with \"$words\"." ;;
+    *) echo "Usage: friday memory [list|edit|forget <words>]" >&2; return 2 ;;
+  esac
 }
 
 # What FRIDAY did on your desktop (actions.jsonl), newest last. Which
@@ -5456,6 +5487,10 @@ case "${1:-}" in
   forget)
     shift
     friday_forget "$@"
+    ;;
+  memory)
+    shift
+    friday_memory "$@"
     ;;
   status|system-info)
     shift

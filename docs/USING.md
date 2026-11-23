@@ -61,7 +61,11 @@ the conversation along with what FRIDAY remembers. When a question says somethin
 about you ("I use fish, how do I …", "my editor is Helix"), the answer offers
 "Remember: you use fish" (a notification button on Linux, a button on the
 Windows answer card); nothing is kept unless you click it. `friday feature
-propose-memories off` (Windows: Settings → Features) stops the offers.
+propose-memories off` (Windows: Settings → Features) stops the offers. What FRIDAY remembers about you lives in one plain file you can read and edit,
+`~/.config/friday/memory.md` (Windows: `%APPDATA%\friday\memory.md`, or Settings → Privacy, "What FRIDAY
+remembers about you"), one `- ` line each; every ask carries it, and the line under an answer says so.
+`friday memory` lists it, `friday memory edit` opens it, `friday memory forget <words>` takes a line out, and
+`friday forget memory` clears it with the rest.
 - Past answers are searchable in the FRIDAY drawer.
 
 ## Without a model

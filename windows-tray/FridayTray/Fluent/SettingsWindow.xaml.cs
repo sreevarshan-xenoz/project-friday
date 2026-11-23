@@ -302,7 +302,27 @@ internal sealed partial class SettingsWindow : FluentWindow
                 ChangeEnv(env => AppSettings.WithScreenText(env, on));
             });
         yield return Row(Pill("What left this PC…", SymbolRegular.ArrowUpload24), _do.ShowEgress);
+        yield return Row(Pill("What FRIDAY remembers about you…", SymbolRegular.Bookmark24), OpenMemoryFile);
         yield return Row(Pill("Forget saved data…", SymbolRegular.Delete24), _do.ForgetSavedData);
+    }
+
+    /// <summary>The memory file in Notepad (made first, with a line saying how).</summary>
+    private void OpenMemoryFile()
+    {
+        var file = _install.Paths.MemoryFile;
+        try
+        {
+            if (!File.Exists(file))
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+                File.WriteAllText(file, "# What FRIDAY remembers about you. Edit freely: one \"- \" line each.\n");
+            }
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("notepad.exe", $"\"{file}\"") { UseShellExecute = false });
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            MessageBox.Show(this, e.Message, "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     private IEnumerable<UIElement> Ai()

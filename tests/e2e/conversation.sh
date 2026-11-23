@@ -32,6 +32,7 @@ for _ in $(seq 300); do [[ -s "$W/port" ]] && break; sleep 0.1; done
 [[ -s "$W/port" ]] || { echo "the fake model never started" >&2; exit 1; }
 offline=(env -u HTTPS_PROXY -u HTTP_PROXY -u https_proxy -u http_proxy -u ALL_PROXY -u all_proxy
   FRIDAY_STATE_FILE="$W/state.json" FRIDAY_MEMORY_DIR="$W/memory" FRIDAY_LISTEN=127.0.0.1:0
+  XDG_CONFIG_HOME="$W/config" APPDATA="$W/appdata"
   LLAMACPP_ENABLED=1 LLAMACPP_BASE_URL="http://127.0.0.1:$(cat "$W/port")/v1")
 
 start_daemon() {
@@ -59,6 +60,13 @@ seen=$(ask "What is the code word?")
 if grep -q "\[session context\]" <<<"$seen" && grep -q "heron" <<<"$seen"; then
   pass "the next ask carries the earlier turn"
 else fail "the next ask lost the earlier turn"; fi
+# "Remember that …" also lands in the memory file the person can edit, and
+# every ask carries it.
+if grep -qs "the code word is heron" "$W/config/friday/memory.md" "$W/appdata/friday/memory.md"; then
+  pass "it is kept in the memory file"
+else fail "it isn't in the memory file"; fi
+if grep -q "about you: the code word is heron" <<<"$seen"; then pass "and the next ask carries it"
+else fail "the next ask doesn't carry the memory file"; fi
 
 echo "after a restart"
 kill $DAEMON; wait $DAEMON 2>/dev/null || true
