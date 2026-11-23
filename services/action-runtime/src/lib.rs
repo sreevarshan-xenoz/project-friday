@@ -11,6 +11,7 @@
 pub mod adapters;
 pub mod agent_driver;
 pub mod audit;
+pub mod blocklist;
 pub mod egress;
 pub mod kernel;
 pub mod permission;

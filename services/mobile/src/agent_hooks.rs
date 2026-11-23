@@ -116,8 +116,8 @@ pub fn decide_session_step(
     log(
         log_dir,
         json!({"agent": label, "folder": folder, "step": what,
-            "decision": match &decision { Decision::Allow => "approved", Decision::Ask(_) => "left to you" },
-            "why": match &decision { Decision::Allow => "", Decision::Ask(w) => w.as_str() }}),
+            "decision": match &decision { Decision::Allow => "approved", Decision::Ask(_) => "left to you", Decision::Deny(_) => "refused" },
+            "why": match &decision { Decision::Allow => "", Decision::Ask(w) | Decision::Deny(w) => w.as_str() }}),
     );
     if let Decision::Ask(why) = &decision {
         notify(
@@ -145,6 +145,9 @@ pub fn claude_permission(input: &Value, log_dir: &Path) -> Option<Value> {
         Decision::Allow => Some(json!({"hookSpecificOutput": {
             "hookEventName": "PermissionRequest",
             "decision": {"behavior": "allow"}}})),
+        Decision::Deny(why) => Some(json!({"hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": {"behavior": "deny", "message": why}}})),
         Decision::Ask(_) => None,
     }
 }
@@ -249,16 +252,25 @@ pub fn agy_args_unattended(args: &[String]) -> bool {
 /// FRIDAY's answer to an agy `PreToolUse` hook: allow it, or hold a risky
 /// step for the person.
 pub fn agy_pre_tool(input: &Value, log_dir: &Path) -> Value {
-    if agy_unattended() {
-        // agy decides as it would without FRIDAY.
-        return json!({"decision": "ask"});
-    }
     let call = &input["toolCall"];
     let tool = call["name"].as_str().unwrap_or("");
     let folder = PathBuf::from(input["cwd"].as_str().unwrap_or(""));
     let step = step_from_agy(tool, &call["args"]);
+    // Never run, unattended or not.
+    if let Some(why) = step
+        .command
+        .as_deref()
+        .and_then(friday_actions::blocklist::never_run)
+    {
+        return json!({"decision": "deny", "reason": format!("FRIDAY never runs this: {why}")});
+    }
+    if agy_unattended() {
+        // agy decides as it would without FRIDAY.
+        return json!({"decision": "ask"});
+    }
     match decide_session_step("agy", &step, &folder, false, log_dir) {
         Decision::Allow => json!({"decision": "allow"}),
+        Decision::Deny(why) => json!({"decision": "deny", "reason": why}),
         // agy goes ahead on "ask" when the person lets it run on its own
         // (auto, always-proceed), so FRIDAY holds the step and asks itself.
         Decision::Ask(why) => {
@@ -623,6 +635,17 @@ mod tests {
             ok.unwrap()["hookSpecificOutput"]["decision"]["behavior"],
             "allow"
         );
+        // Never run: denied with the reason, whoever would approve.
+        let never = claude_permission(
+            &request("Bash", json!({"command": "rm -rf ~"}), cwd),
+            &logs.0,
+        )
+        .unwrap();
+        assert_eq!(never["hookSpecificOutput"]["decision"]["behavior"], "deny");
+        assert!(never["hookSpecificOutput"]["decision"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("never runs"));
         assert!(claude_permission(
             &request("Bash", json!({"command": "git push"}), cwd),
             &logs.0
@@ -634,8 +657,9 @@ mod tests {
             claude_permission(&request("Bash", json!({"command": "ls"}), "/"), &logs.0).is_none()
         );
         let log = std::fs::read_to_string(logs.0.join("hooks.jsonl")).unwrap();
-        assert_eq!(log.lines().count(), 4);
+        assert_eq!(log.lines().count(), 5);
         assert!(log.contains(r#""decision":"approved""#) && log.contains("left to you"));
+        assert!(log.contains(r#""decision":"refused""#));
     }
 
     #[test]
@@ -711,6 +735,9 @@ mod tests {
         std::fs::create_dir_all(&site).unwrap();
         let input = json!({"cwd": site, "toolCall": {"name": "run_command", "args": {"CommandLine": "git status"}}});
         assert_eq!(agy_pre_tool(&input, &logs.0)["decision"], "allow");
+        // Never run: denied before anything else, unattended or not.
+        let wipe = json!({"cwd": site, "toolCall": {"name": "run_command", "args": {"CommandLine": "rm -rf ~"}}});
+        assert_eq!(agy_pre_tool(&wipe, &logs.0)["decision"], "deny");
         let edit = step_from_agy("write_to_file", &json!({"TargetFile": "/w/src/a.rs"}));
         assert_eq!(
             (edit.kind, edit.paths),

@@ -505,6 +505,15 @@ impl<'a, W: AsyncWrite + Unpin> Driver<'a, W> {
             }
             Decision::Allow => "it offers no one-time approval".to_string(),
             Decision::Ask(why) => why,
+            // Refused outright: no one is asked.
+            Decision::Deny(why) => {
+                self.rec.run.rejected += 1;
+                self.refused = Some(what.to_string());
+                self.rec
+                    .log(json!({"event": "rejected", "by": "friday", "step": what, "why": why}));
+                let _ = self.rec.save();
+                return false;
+            }
         };
         let allowed = self.ask_person(what, &why).await && can_allow;
         if allowed {
