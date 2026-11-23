@@ -1409,6 +1409,25 @@ async fn main() -> std::process::ExitCode {
     if raw.first().map(String::as_str) == Some("agent-hooks") {
         return agent_hooks(&raw[1..]);
     }
+    // "What did I miss?": from FRIDAY's own state, nothing sent anywhere.
+    if raw.first().map(String::as_str) == Some("brief") {
+        if !friday_mobile::features::on("brief") {
+            println!("The brief is turned off (friday feature on brief).");
+            return std::process::ExitCode::SUCCESS;
+        }
+        let state = friday_mobile::shell_state::ShellState::default_path();
+        let dir = state.parent().unwrap_or(std::path::Path::new("."));
+        let now = chrono::Local::now().timestamp();
+        let since = friday_mobile::brief::since(dir, now);
+        let said =
+            friday_mobile::brief::text(dir, &friday_mobile::standing::store_path(), since, now);
+        println!("{said}");
+        let _ = friday_mobile::brief::mark_seen(dir, now);
+        if raw.iter().any(|a| a == "--say") {
+            let _ = friday_mobile::speech::say(&said);
+        }
+        return std::process::ExitCode::SUCCESS;
+    }
     // Another assistant's notes into memory.md: a preview first, --apply adds.
     if raw.first().map(String::as_str) == Some("memory") {
         return match memory_import(&raw[1..]) {

@@ -373,9 +373,12 @@ internal sealed class TrayContext : ApplicationContext
             }
 
             // The battery, a timer, a settings page: answered here, nothing sent.
-            if (kind == AskKind.Plain && LocalCommands.Parse(question) is { } local)
+            if (kind == AskKind.Plain && LocalCommands.Parse(question) is { } local && LocalOn(local))
             {
-                RunLocal(question, local);
+                if (local.Kind == LocalKind.Brief)
+                    await RunBriefAsync(question);
+                else
+                    RunLocal(question, local);
                 return;
             }
 
@@ -641,10 +644,13 @@ internal sealed class TrayContext : ApplicationContext
             return;
         }
         // Spoken like typed: "set a timer for 5 minutes" is answered here too.
-        if (LocalCommands.Parse(text) is { } local)
+        if (LocalCommands.Parse(text) is { } local && LocalOn(local))
         {
             _log.Remember(text);
-            RunLocal(text, local);
+            if (local.Kind == LocalKind.Brief)
+                await RunBriefAsync(text);
+            else
+                RunLocal(text, local);
             return;
         }
         await AskTextAsync(text, spoken: true);
@@ -669,6 +675,25 @@ internal sealed class TrayContext : ApplicationContext
         {
             _asking = false;
         }
+    }
+
+    /// <summary>A local command whose feature is off goes to the model like any ask.</summary>
+    private bool LocalOn(LocalCommand cmd) =>
+        cmd.Kind != LocalKind.Brief || AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "brief");
+
+    /// <summary>"What did I miss?": friday-ctl brief reads FRIDAY's own records (nothing is
+    /// sent), shown and read aloud like any answer.</summary>
+    private async Task RunBriefAsync(string question)
+    {
+        // Read aloud the way any answer is (the spoken-answers setting), not here too.
+        var (ok, said) = await Ctl.RunAsync(_install, ["brief"], TimeSpan.FromSeconds(60));
+        var outcome = new AskOutcome(ok, ok ? said.Trim() : "Couldn't put the brief together: " + said.Trim(), null, false);
+        _log.Save(question, null, outcome, DateTime.Now);
+        var answer = NewAnswerWindow(AskKind.Plain, question, "");
+        answer.CanAskAnother = false;
+        answer.FollowUp += () => _ = FollowUpAsync(outcome.Answer);
+        ShowAnswer(answer, outcome);
+        answer.Activate();
     }
 
     /// <summary>Does a <see cref="LocalCommand"/> and shows what it did, like any answer.</summary>

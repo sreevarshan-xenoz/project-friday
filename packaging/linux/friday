@@ -77,6 +77,7 @@ Autonomous Agent & Cognitive Loop:
   friday agents [show|allow|deny|reply|accept|discard <id>|hooks|check|worktree [on|off]|status|on|off]
                                    Coding agents FRIDAY runs for you (opencode, agy, Claude Code): follow, answer, turn off
   friday ask --json [--web] [--new] <question>  The answer as one JSON object, for scripts
+  friday brief [--say]             What you missed: agents, standing tasks, today's reminders (local only)
   friday memory [list|edit|forget <words>]  What FRIDAY remembers about you (memory.md)
   friday memory import <file> [--apply]  Bring in another assistant's notes (a preview first)
   friday secrets [status|keychain|file]  API keys in your desktop keyring, or back in friday.env
@@ -2099,6 +2100,9 @@ friday_local_command() {
     $want && echo "Do not disturb is on." || echo "Do not disturb is off."
   elif friday_feature_on phone-send && [[ "$q" =~ ^(send|share)\ (this|that|it|the\ answer|the\ last\ answer|this\ answer)\ to\ (my\ )?phone$ ]]; then
     friday_phone_send || true
+  elif friday_feature_on brief && [[ "$q" =~ ^((so\ )?what\ did\ i\ miss|catch\ me\ up|brief\ me|(my\ |the\ )?morning\ brief|good\ morning,?(\ friday)?)$ ]]; then
+    # From FRIDAY's own state: nothing is sent anywhere.
+    friday-ctl brief 2>/dev/null || return 1
   elif [[ "$q" =~ ^(battery|battery\ (level|status)|how\ much\ battery(\ is\ left|\ do\ i\ have)?)$ ]]; then
     local b; b=$(ls -d /sys/class/power_supply/BAT* 2>/dev/null | head -n 1)
     [ -n "$b" ] || { echo "This computer has no battery."; return 0; }
@@ -3693,6 +3697,7 @@ dictation-cleanup|Speech drops \"um\" and \"uh\" and uses your own words (~/.con
 propose-memories|\"I use fish …\" in a question: offer to remember it (nothing is kept unless you say so)
 memory-file|Every ask carries what you asked FRIDAY to remember (~/.config/friday/memory.md)
 memory-changes|A changed fact (\"I moved to Pune\") closes the old one with a date in memory.md
+brief|\"What did I miss?\" answered from FRIDAY's own records (agents, standing tasks, reminders)
 call-pause|\"Hey Friday\" rests while a call or meeting app uses the microphone"
 friday_features_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/features-off"; }
 # friday_feature_on <name>: on unless switched off.
@@ -5585,6 +5590,12 @@ case "${1:-}" in
   memory)
     shift
     friday_memory "$@"
+    ;;
+  brief)
+    # What happened while you were away (agents, standing tasks, reminders
+    # today), from FRIDAY's own state; --say reads it aloud.
+    shift
+    exec friday-ctl brief "$@"
     ;;
   status|system-info)
     shift

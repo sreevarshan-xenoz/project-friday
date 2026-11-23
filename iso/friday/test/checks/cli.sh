@@ -17,6 +17,11 @@ if [[ "\$1" == say ]]; then
   printf 'friday-ctl-say %s\n' "\$text" >> "$LOG"
   exit "\${SAY_EXIT:-0}"
 fi
+if [[ "\$1" == brief ]]; then
+  printf 'friday-ctl-brief %s\n' "\$*" >> "$LOG"
+  echo 'opencode finished "fix the tests": all pass.'
+  exit 0
+fi
 if [[ "\$1" == watch ]]; then
   printf 'friday-ctl-watch %s\n' "\$*" >> "$LOG"
   exit 0
@@ -1532,6 +1537,11 @@ contains "local command says nothing was sent" "$(cat "$LOG")" "nothing was sent
 if grep -q "friday-ctl" "$LOG"; then fail "a local command went to the daemon"; else pass "a local command never reaches the daemon"; fi
 : >"$LOG"; bash "$F" ask "timer 1 min"; sleep 0.3
 contains "timer: set" "$(cat "$state/last-answer.md")" "Timer set for 1 minute."
+: >"$LOG"; bash "$F" ask "What did I miss?"; sleep 0.3
+contains "what did I miss: the brief, from FRIDAY's own records" "$(cat "$state/last-answer.md")" 'opencode finished "fix the tests"'
+if grep -q "^friday-ctl " "$LOG"; then fail "what did I miss went to the model"; else pass "what did I miss asks no model"; fi
+: >"$LOG"; bash "$F" ask "Good morning, Friday"; sleep 0.3
+contains "good morning gives the brief too" "$(cat "$LOG")" "friday-ctl-brief brief"
 # Undo puts back what the volume was before (0.55 from get-volume).
 : >"$LOG"; out=$(bash "$F" undo)
 contains "undo: the volume goes back" "$(cat "$LOG")" "wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.55"

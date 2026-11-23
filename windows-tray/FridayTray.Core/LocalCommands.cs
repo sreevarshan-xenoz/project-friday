@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace FridayTray.Core;
 
-public enum LocalKind { Battery, Timer, Settings }
+public enum LocalKind { Battery, Timer, Settings, Brief }
 
 /// <summary>A request this PC answers by itself.</summary>
 public sealed record LocalCommand(LocalKind Kind, int Seconds = 0, string Label = "", string Uri = "");
@@ -25,6 +25,10 @@ public static partial class LocalCommands
     [GeneratedRegex(@"^(open )?(the )?(wi-?fi|network|bluetooth|sound) (settings|controls)$")]
     private static partial Regex SettingsRx();
 
+    /// <summary>"What did I miss?": answered by friday-ctl brief from FRIDAY's own records.</summary>
+    [GeneratedRegex(@"^((so )?what did i miss|catch me up|brief me|(my |the )?morning brief|good morning,?( friday)?)$")]
+    private static partial Regex BriefRx();
+
     public static LocalCommand? Parse(string? question)
     {
         var q = (question ?? "").Trim().ToLowerInvariant().TrimEnd(' ', '\t', '?', '.', '!');
@@ -32,6 +36,8 @@ public static partial class LocalCommands
             return null;
         if (BatteryRx().IsMatch(q))
             return new LocalCommand(LocalKind.Battery);
+        if (BriefRx().IsMatch(q))
+            return new LocalCommand(LocalKind.Brief);
         if (TimerRx().Match(q) is { Success: true } t)
         {
             if (!int.TryParse(t.Groups[4].Value, out var n) || n <= 0)

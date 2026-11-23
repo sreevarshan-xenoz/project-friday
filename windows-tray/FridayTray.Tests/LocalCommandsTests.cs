@@ -62,4 +62,16 @@ public class LocalCommandsTests
         Assert.Equal("This computer has no battery.", LocalCommands.BatteryAnswer(null, true, false));
         Assert.Equal("This computer has no battery.", LocalCommands.BatteryAnswer(255, true, false));
     }
+
+    [Theory]
+    [InlineData("What did I miss?")]
+    [InlineData("catch me up")]
+    [InlineData("Good morning, Friday")]
+    [InlineData("morning brief")]
+    public void What_did_I_miss_is_answered_here(string q) =>
+        Assert.Equal(LocalKind.Brief, LocalCommands.Parse(q)?.Kind);
+
+    [Fact]
+    public void A_question_about_missing_something_else_goes_to_the_model() =>
+        Assert.Null(LocalCommands.Parse("what did i miss in the rust 1.90 release"));
 }
