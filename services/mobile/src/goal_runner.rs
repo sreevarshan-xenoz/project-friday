@@ -515,39 +515,221 @@ impl Tool for WindowsOpenTool {
 /// person's own default browser, where they can see it and are signed in.
 /// FRIDAY's own headless browser is for reading pages (`page_read`), never
 /// for showing them.
-type Opener = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
+/// Opens an address, in the named browser ("brave") when there is one.
+type Opener = Arc<dyn Fn(&str, Option<&str>) -> Result<(), String> + Send + Sync>;
+/// The first YouTube video for a search, as its watch address.
+type VideoLookup = Arc<
+    dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send>>
+        + Send
+        + Sync,
+>;
 
 struct BrowserCapabilityTool {
     open: Opener,
+    first_video: VideoLookup,
     gate: Arc<Mutex<ConfirmationGate>>,
 }
 
 impl BrowserCapabilityTool {
     fn new(gate: Arc<Mutex<ConfirmationGate>>) -> Self {
         Self {
-            open: Arc::new(open_in_default_browser),
+            open: Arc::new(open_in_browser),
+            first_video: Arc::new(|q| Box::pin(first_youtube_video(q))),
             gate,
         }
     }
 }
 
-/// Hands a web address to the desktop's default browser.
-fn open_in_default_browser(url: &str) -> Result<(), String> {
+/// Browsers an ask can name ("open youtube in brave"): the word, its name,
+/// its Windows program and its Linux commands.
+const BROWSERS: [(&str, &str, &str, &[&str]); 5] = [
+    ("brave", "Brave", "brave.exe", &["brave", "brave-browser"]),
+    (
+        "chrome",
+        "Chrome",
+        "chrome.exe",
+        &["google-chrome-stable", "google-chrome", "chromium"],
+    ),
+    ("edge", "Edge", "msedge.exe", &["microsoft-edge-stable"]),
+    ("firefox", "Firefox", "firefox.exe", &["firefox"]),
+    (
+        "vivaldi",
+        "Vivaldi",
+        "vivaldi.exe",
+        &["vivaldi-stable", "vivaldi"],
+    ),
+];
+
+/// The browser an ask names with "in/on/using/with <browser>", if any.
+fn browser_named(instruction: &str) -> Option<&'static str> {
+    let line = instruction
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    BROWSERS.iter().map(|b| b.0).find(|w| {
+        ["in", "on", "using", "with"]
+            .iter()
+            .any(|p| line.contains(&format!("{p} {w}")))
+    })
+}
+
+/// Hands a web address to the named browser, or the desktop's default one
+/// (also when the named one isn't installed).
+fn open_in_browser(url: &str, browser: Option<&str>) -> Result<(), String> {
+    if let Some(b) = browser.and_then(|w| BROWSERS.iter().find(|b| b.0 == w)) {
+        #[cfg(windows)]
+        if let Some(exe) = windows_app_path(b.2) {
+            if spawn_detached(std::process::Command::new(exe).arg(url)).is_ok() {
+                return Ok(());
+            }
+        }
+        #[cfg(not(windows))]
+        for cmd in b.3 {
+            if spawn_detached(std::process::Command::new(cmd).arg(url)).is_ok() {
+                return Ok(());
+            }
+        }
+    }
     #[cfg(windows)]
     let mut cmd = std::process::Command::new("explorer.exe");
     #[cfg(not(windows))]
     let mut cmd = std::process::Command::new("xdg-open");
+    spawn_detached(cmd.arg(url)).map_err(|e| format!("couldn't start the browser: {e}"))
+}
+
+/// Where Windows says a program is installed (its App Paths entry).
+#[cfg(windows)]
+fn windows_app_path(exe: &str) -> Option<String> {
+    ["HKCU", "HKLM"].iter().find_map(|hive| {
+        let key = format!(r"{hive}\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{exe}");
+        let out = std::process::Command::new("reg")
+            .args(["query", &key, "/ve"])
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let path = text
+            .lines()
+            .find_map(|l| l.split_once("REG_SZ").map(|(_, p)| p.trim()))?;
+        let path = path.trim_matches('"');
+        std::path::Path::new(path)
+            .exists()
+            .then(|| path.to_string())
+    })
+}
+
+/// Starts a program without waiting for it (it is reaped in the background).
+fn spawn_detached(cmd: &mut std::process::Command) -> std::io::Result<()> {
     let mut child = cmd
-        .arg(url)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| format!("couldn't start the browser: {e}"))?;
+        .spawn()?;
     std::thread::spawn(move || {
         let _ = child.wait();
     });
     Ok(())
+}
+
+/// What a YouTube ask searches for: "play lofi beats on youtube" → "lofi
+/// beats". None for no search ("open youtube") or a vague one ("play some
+/// song"), which open YouTube itself.
+fn youtube_query(instruction: &str) -> Option<String> {
+    let line = instruction.lines().next().unwrap_or("").trim();
+    let low = line.to_ascii_lowercase();
+    // The last verb that starts the search: "search youtube for cats" → "cats".
+    let start = ["play ", "watch ", "search for ", "search ", "youtube for "]
+        .iter()
+        .filter_map(|v| low.find(v).map(|i| i + v.len()))
+        .max()?;
+    let mut end = low.len();
+    let mut cuts = vec![
+        " on youtube".to_string(),
+        " in youtube".to_string(),
+        " from youtube".to_string(),
+        ",".to_string(),
+    ];
+    for b in BROWSERS {
+        for p in ["in", "on", "using", "with"] {
+            cuts.push(format!(" {p} {}", b.0));
+        }
+    }
+    for cut in &cuts {
+        if let Some(i) = low[start..].find(cut.as_str()) {
+            end = end.min(start + i);
+        }
+    }
+    let mut q = line[start..end].trim();
+    for lead in ["me ", "some ", "a ", "an "] {
+        if q.get(..lead.len())
+            .is_some_and(|w| w.eq_ignore_ascii_case(lead))
+        {
+            q = q[lead.len()..].trim();
+        }
+    }
+    let q = q
+        .trim_end_matches(|c: char| c.is_ascii_punctuation())
+        .trim();
+    const VAGUE: [&str; 10] = [
+        "",
+        "song",
+        "songs",
+        "music",
+        "something",
+        "video",
+        "videos",
+        "youtube",
+        "it",
+        "anything",
+    ];
+    (!VAGUE.contains(&q.to_ascii_lowercase().as_str())).then(|| q.to_string())
+}
+
+/// The first video YouTube lists for `query`, as its watch address; None
+/// when YouTube can't be reached or lists none (the search page opens then).
+/// Logged to the egress log like a web search.
+async fn first_youtube_video(query: String) -> Option<String> {
+    let url = format!(
+        "https://www.youtube.com/results?search_query={}",
+        crate::web_search::urlencode(&query)
+    );
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(6))
+        .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36")
+        .build()
+        .ok()?;
+    let body = match client.get(&url).send().await {
+        Ok(r) if r.status().is_success() => r.text().await.ok(),
+        _ => None,
+    };
+    let id = body.as_deref().and_then(first_video_id);
+    let ctx = friday_intelligence::current_egress_context();
+    friday_intelligence::append_entry(
+        &friday_intelligence::default_egress_path(),
+        &friday_intelligence::EgressEntry {
+            ts: chrono::Utc::now().to_rfc3339(),
+            goal_id: ctx.goal_id,
+            provider: "youtube".to_string(),
+            model: "-".to_string(),
+            kinds: vec!["search".to_string()],
+            text_chars: query.chars().count(),
+            masked: ctx.masked,
+            outcome: if id.is_some() { "ok" } else { "error" }.to_string(),
+            ..Default::default()
+        },
+    );
+    id.map(|id| format!("https://www.youtube.com/watch?v={id}"))
+}
+
+/// The first `"videoId":"…"` on a YouTube results page.
+fn first_video_id(page: &str) -> Option<String> {
+    let at = page.find("\"videoId\":\"")? + "\"videoId\":\"".len();
+    let id: String = page[at..].chars().take_while(|c| *c != '"').collect();
+    (id.len() == 11
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+    .then_some(id)
 }
 
 #[async_trait]
@@ -565,7 +747,33 @@ impl Tool for BrowserCapabilityTool {
     }
 
     async fn execute(&self, action: &Action, _ctx: &ExecutionContext) -> ToolResult {
-        let Some(url) = url_from_instruction(&action.instruction) else {
+        // A YouTube ask without an address: YouTube, or its first video for
+        // "play <x>" (pywhatkit's playonyt does the same), or its search page.
+        let youtube = || {
+            let first = action.instruction.lines().next().unwrap_or("");
+            friday_goal_execution::planning::names_youtube(first).then(|| youtube_query(first))
+        };
+        let url = match (url_from_instruction(&action.instruction), youtube()) {
+            (Some(url), _) => Some(url),
+            (None, Some(None)) => Some("https://www.youtube.com/".to_string()),
+            (None, Some(Some(q))) => {
+                let (q, _) = friday_goal_execution::mask_secrets(&q);
+                let search = format!(
+                    "https://www.youtube.com/results?search_query={}",
+                    crate::web_search::urlencode(&q)
+                );
+                // An ask carrying quoted text asks before anything is sent:
+                // no lookup then, just the search page behind the yes.
+                let quoted = self.gate.lock().unwrap().quoted;
+                Some(if quoted {
+                    search
+                } else {
+                    (self.first_video)(q).await.unwrap_or(search)
+                })
+            }
+            (None, None) => None,
+        };
+        let Some(url) = url else {
             return ToolResult::error(
                 "no URL found in the goal — say which address to open (e.g. \"open example.com\")",
             );
@@ -582,8 +790,15 @@ impl Tool for BrowserCapabilityTool {
         if let Err(err) = asked {
             return err;
         }
-        match (self.open)(&url) {
-            Ok(()) => ToolResult::success(format!("Opened {url} in your browser.")),
+        let browser = browser_named(&action.instruction);
+        let name = browser
+            .and_then(|w| BROWSERS.iter().find(|b| b.0 == w))
+            .map(|b| b.1);
+        match (self.open)(&url, browser) {
+            Ok(()) => ToolResult::success(match name {
+                Some(n) => format!("Opened {url} in {n}."),
+                None => format!("Opened {url} in your browser."),
+            }),
             Err(e) => ToolResult::error(e),
         }
     }
@@ -6376,10 +6591,11 @@ mod tests {
         let opened: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
         let seen = opened.clone();
         let tool = BrowserCapabilityTool {
-            open: Arc::new(move |url: &str| {
+            open: Arc::new(move |url: &str, _browser: Option<&str>| {
                 seen.lock().unwrap().push(url.to_string());
                 Ok(())
             }),
+            first_video: Arc::new(|_| Box::pin(async { None })),
             gate: Arc::default(),
         };
         assert_eq!(
@@ -6413,6 +6629,123 @@ mod tests {
         );
     }
 
+    /// "open youtube in brave and play some song" opens YouTube in Brave
+    /// once; "play <x> on youtube" opens its first video, or the search page
+    /// when YouTube can't be asked.
+    #[test]
+    fn youtube_asks_name_what_to_search_and_which_browser() {
+        assert_eq!(
+            youtube_query("open youtube in brave and play some song"),
+            None
+        );
+        assert_eq!(youtube_query("open youtube"), None);
+        assert_eq!(
+            youtube_query("play Lofi Beats on youtube").as_deref(),
+            Some("Lofi Beats")
+        );
+        assert_eq!(
+            youtube_query("search youtube for rust tutorials in firefox").as_deref(),
+            Some("rust tutorials")
+        );
+        assert_eq!(
+            youtube_query("play the weeknd blinding lights on youtube").as_deref(),
+            Some("the weeknd blinding lights")
+        );
+        assert_eq!(
+            youtube_query("play Simon and Garfunkel on youtube").as_deref(),
+            Some("Simon and Garfunkel")
+        );
+        assert_eq!(youtube_query("play 🎵 on youtube").as_deref(), Some("🎵"));
+        assert_eq!(
+            youtube_query("play música latina on youtube").as_deref(),
+            Some("música latina")
+        );
+        assert_eq!(
+            browser_named("open youtube in brave and play some song"),
+            Some("brave")
+        );
+        assert_eq!(browser_named("play lofi on youtube"), None);
+        assert_eq!(
+            browser_named("open example.com using firefox"),
+            Some("firefox")
+        );
+        let page =
+            r#"..."videoRenderer":{"videoId":"dQw4w9WgXcQ","thumbnail"..."videoId":"aaaaaaaaaaa""#;
+        assert_eq!(first_video_id(page).as_deref(), Some("dQw4w9WgXcQ"));
+        assert_eq!(first_video_id("no results"), None);
+        assert_eq!(first_video_id(r#""videoId":"short""#), None);
+    }
+
+    #[tokio::test]
+    async fn youtube_asks_open_the_first_video_or_the_search_page() {
+        // Each address opened, with the browser it was opened in.
+        type Opened = Arc<std::sync::Mutex<Vec<(String, Option<String>)>>>;
+        let opened: Opened = Arc::default();
+        let tool = |found: Option<&'static str>| {
+            let seen = opened.clone();
+            BrowserCapabilityTool {
+                open: Arc::new(move |url: &str, browser: Option<&str>| {
+                    seen.lock()
+                        .unwrap()
+                        .push((url.to_string(), browser.map(str::to_string)));
+                    Ok(())
+                }),
+                first_video: Arc::new(move |_| {
+                    Box::pin(async move {
+                        found.map(|id| format!("https://www.youtube.com/watch?v={id}"))
+                    })
+                }),
+                gate: Arc::default(),
+            }
+        };
+        let ctx = ExecutionContext::for_goal("goal-1");
+        let ask =
+            |text: &str| Action::single(text, Capability::Custom("web.open".into()), "goal-1");
+        let res = tool(None)
+            .execute(&ask("open youtube in brave and play some song"), &ctx)
+            .await;
+        assert_eq!(res.output, "Opened https://www.youtube.com/ in Brave.");
+        let res = tool(Some("dQw4w9WgXcQ"))
+            .execute(&ask("play lofi beats on youtube"), &ctx)
+            .await;
+        assert_eq!(
+            res.output,
+            "Opened https://www.youtube.com/watch?v=dQw4w9WgXcQ in your browser."
+        );
+        tool(None)
+            .execute(&ask("play lofi beats on youtube"), &ctx)
+            .await;
+        assert_eq!(
+            *opened.lock().unwrap(),
+            vec![
+                (
+                    "https://www.youtube.com/".to_string(),
+                    Some("brave".to_string())
+                ),
+                (
+                    "https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_string(),
+                    None
+                ),
+                (
+                    "https://www.youtube.com/results?search_query=lofi%20beats".to_string(),
+                    None
+                ),
+            ],
+            "one page each, never a second window"
+        );
+        // Quoted text along with the ask: nothing goes to YouTube before the yes.
+        let gate: Arc<Mutex<ConfirmationGate>> = Arc::default();
+        gate.lock().unwrap().quoted = true;
+        let asked = BrowserCapabilityTool {
+            open: Arc::new(|_: &str, _: Option<&str>| Ok(())),
+            first_video: Arc::new(|_| panic!("looked up before the yes")),
+            gate: gate.clone(),
+        }
+        .execute(&ask("play lofi beats on youtube\n\n[page]\nhi"), &ctx)
+        .await;
+        assert!(!asked.success, "asked first: {asked:?}");
+    }
+
     /// Text quoted after the request (a selection, a page) can carry
     /// instructions: an ask with it never opens a page without a yes.
     #[tokio::test]
@@ -6432,10 +6765,11 @@ mod tests {
         let gate: Arc<Mutex<ConfirmationGate>> = Arc::default();
         gate.lock().unwrap().quoted = true;
         let tool = BrowserCapabilityTool {
-            open: Arc::new(move |url: &str| {
+            open: Arc::new(move |url: &str, _browser: Option<&str>| {
                 seen.lock().unwrap().push(url.to_string());
                 Ok(())
             }),
+            first_video: Arc::new(|_| Box::pin(async { None })),
             gate: gate.clone(),
         };
         let ctx = ExecutionContext::for_goal("goal-1");

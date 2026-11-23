@@ -795,6 +795,30 @@ fn capability_for_description(description: &str) -> Capability {
         return Capability::Custom("web.open".into());
     }
 
+    // 9a. YouTube by name ("open youtube in brave", "play lofi on youtube"):
+    //     the browser opens it. Ahead of desktop control, where "play ... song"
+    //     would otherwise send it, and of the app-open rule.
+    //     Questions about YouTube and its windows or tabs ("put the youtube
+    //     window on workspace 2") are not: they stay with the rules below.
+    let question = d.trim_end().ends_with('?')
+        || [
+            "how ", "what ", "why ", "when ", "where ", "who ", "which ", "can ", "is ", "does ",
+            "do ",
+        ]
+        .iter()
+        .any(|w| d.starts_with(w));
+    if names_youtube(&d)
+        && !question
+        && !["window", "tab", "workspace", "desktop"]
+            .iter()
+            .any(|w| has_word(&d, w))
+        && ["open", "launch", "play", "watch", "search"]
+            .iter()
+            .any(|v| has_word(&d, v))
+    {
+        return Capability::Custom("web.open".into());
+    }
+
     // 9b. Control the desktop: windows, workspaces, volume, brightness, media
     //     and the power profile (FRIDAY OS). Only an instruction ("put it on
     //     workspace 2", "pause the music"), never a question about them.
@@ -1373,6 +1397,11 @@ fn has_web_context(d: &str) -> bool {
         || has_word(d, "articles")
 }
 
+/// Does the goal name YouTube (the site, not a URL)?
+pub fn names_youtube(d: &str) -> bool {
+    has_word(&d.to_lowercase(), "youtube")
+}
+
 /// Does the goal name a URL explicitly — a scheme, `www`, or a known domain
 /// suffix? `has_web_context` is about *tone* ("research", "docs"); this is
 /// about an actual address the browser can navigate to.
@@ -1704,7 +1733,27 @@ mod tests {
                 Capability::Custom("web.open".into()),
             ),
             ("go to example.com", Capability::Custom("web.open".into())),
+            (
+                "open youtube in brave and play some song",
+                Capability::Custom("web.open".into()),
+            ),
+            (
+                "play lofi beats on youtube",
+                Capability::Custom("web.open".into()),
+            ),
+            ("open youtube", Capability::Custom("web.open".into())),
         ];
+        for goal in [
+            "put the youtube window on workspace 2",
+            "how do I watch youtube in 4k?",
+            "close the youtube tab",
+        ] {
+            assert_ne!(
+                planning.infer_capability(goal, &[]),
+                Capability::Custom("web.open".into()),
+                "'{goal}' isn't a page to open"
+            );
+        }
         for (goal, expected) in cases {
             assert_eq!(
                 planning.infer_capability(goal, &[]),
