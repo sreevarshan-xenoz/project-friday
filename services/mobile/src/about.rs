@@ -69,16 +69,91 @@ pub fn fact_in(request: &str) -> Option<String> {
     (!fact.is_empty() && fact.len() <= 300 && !fact.ends_with('?')).then(|| fact.to_string())
 }
 
+/// The facts another assistant's notes hold (a CLAUDE.md, an exported memory
+/// list): their list lines, or every plain line when there is no list. Not
+/// headings, code, tables, long lines, anything holding a secret, nor what
+/// `have` already says.
+pub fn importable(notes: &str, have: &[String]) -> Vec<String> {
+    let (mut listed, mut plain) = (Vec::new(), Vec::new());
+    let mut in_code = false;
+    // A file saved by Windows tools often starts with a BOM.
+    for line in notes.trim_start_matches('\u{feff}').lines() {
+        let l = line.trim();
+        if l.starts_with("```") || l.starts_with("~~~") {
+            in_code = !in_code;
+            continue;
+        }
+        if in_code || l.is_empty() || l.starts_with(['#', '|', '<', '>']) {
+            continue;
+        }
+        let digits = l.len() - l.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+        let item = ["- ", "* ", "+ "]
+            .iter()
+            .find_map(|b| l.strip_prefix(b))
+            .or_else(|| {
+                // "1. x" is a list item; "1.5 GB is …" isn't.
+                let rest = l[digits..].strip_prefix(['.', ')'])?;
+                (digits > 0 && rest.starts_with(' ')).then_some(rest)
+            });
+        match item {
+            Some(rest) => {
+                let rest = rest.trim();
+                let rest = ["[ ] ", "[x] ", "[X] "]
+                    .iter()
+                    .find_map(|c| rest.strip_prefix(c))
+                    .unwrap_or(rest);
+                listed.push(rest.trim().to_string())
+            }
+            None => plain.push(l.to_string()),
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    for f in if listed.is_empty() { plain } else { listed } {
+        // "**Style:**" heads a list of its own; one word (a rule like "---",
+        // a line of a pasted key) isn't a fact; a key is never copied in.
+        if f.len() < 3
+            || f.len() > 300
+            || f.trim_end_matches(['*', '_']).ends_with(':')
+            || !f.contains(' ')
+            || !f.chars().any(char::is_alphabetic)
+            || friday_goal_execution::mask_secrets(&f).0 != f
+        {
+            continue;
+        }
+        if !have.iter().chain(&out).any(|h| h.eq_ignore_ascii_case(&f)) {
+            out.push(f);
+        }
+    }
+    out
+}
+
 /// Adds the fact to the file (once), keeping everything else in it.
 pub fn remember(fact: &str) -> std::io::Result<()> {
-    let p = path();
-    let text = std::fs::read_to_string(&p).unwrap_or_default();
-    if facts(&text).iter().any(|f| f.eq_ignore_ascii_case(fact)) {
-        return Ok(());
+    remember_all(&[fact.to_string()]).map(|_| ())
+}
+
+/// Adds each fact the file doesn't have yet; how many it added.
+pub fn remember_all(new: &[String]) -> std::io::Result<usize> {
+    remember_all_at(&path(), new)
+}
+
+/// What the file says now: empty when there's none yet, an error when it is
+/// there but can't be read (so it is never written over).
+pub fn read(p: &std::path::Path) -> std::io::Result<String> {
+    match std::fs::read_to_string(p) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        r => r,
     }
-    if let Some(dir) = p.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
+}
+
+/// Whether these facts would no longer all fit in what an ask carries.
+pub fn too_long(all: &[String]) -> bool {
+    all.iter().map(|f| f.len() + 2).sum::<usize>() + "about you: ".len() > MAX_CHARS
+}
+
+fn remember_all_at(p: &std::path::Path, new: &[String]) -> std::io::Result<usize> {
+    let text = read(p)?;
+    let mut have = facts(&text);
     let mut out = if text.trim().is_empty() {
         "# What FRIDAY remembers about you. Edit freely: one \"- \" line each.\n".to_string()
     } else {
@@ -87,10 +162,25 @@ pub fn remember(fact: &str) -> std::io::Result<()> {
     if !out.ends_with('\n') {
         out.push('\n');
     }
-    out.push_str(&format!("- {fact}\n"));
+    let mut added = 0;
+    for fact in new {
+        if have.iter().any(|f| f.eq_ignore_ascii_case(fact)) {
+            continue;
+        }
+        out.push_str(&format!("- {fact}\n"));
+        have.push(fact.clone());
+        added += 1;
+    }
+    if added == 0 {
+        return Ok(0);
+    }
+    if let Some(dir) = p.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
     let tmp = p.with_extension("md.tmp");
     std::fs::write(&tmp, out)?;
-    std::fs::rename(tmp, p)
+    std::fs::rename(tmp, p)?;
+    Ok(added)
 }
 
 #[cfg(test)]
@@ -114,5 +204,62 @@ mod tests {
         assert_eq!(fact_in("what do you remember"), None);
         assert_eq!(fact_in("remember to buy milk"), None);
         assert_eq!(fact_in("remember that we fixed it?"), None);
+    }
+
+    #[test]
+    fn notes_from_another_assistant_bring_in_their_list_lines_only() {
+        let notes = "# CLAUDE.md\n\nSome intro prose.\n\n## Style\n- Use tabs, not spaces\n* I prefer short answers\n1. My editor is Helix\n- [x] Tests run with cargo nextest\n- Rules:\n  - Nested is fine too\n```\n- not this, it's code\n```\n| a | b |\n- I use fish\n- token: abcdefghijklmnopqrstuvwxyz0123456789ABCD\n- use tabs, NOT spaces\n- **Style:**\n---\n2) 3.11 is my Python\n";
+        let have = vec!["I use fish".to_string()];
+        assert_eq!(
+            importable(notes, &have),
+            vec![
+                "Use tabs, not spaces",
+                "I prefer short answers",
+                "My editor is Helix",
+                "Tests run with cargo nextest",
+                "Nested is fine too",
+                "3.11 is my Python",
+            ]
+        );
+        // A plain export (one memory a line) has no list: each line is one.
+        assert_eq!(
+            importable(
+                "\u{feff}Lives in Chennai.\n---\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA\n\nPrefers dark mode.\n",
+                &[]
+            ),
+            vec!["Lives in Chennai.", "Prefers dark mode."]
+        );
+        assert!(importable("```\nfn main() {}\n```\n# Title\n", &[]).is_empty());
+        assert_eq!(
+            importable("\u{feff}- I live here\n", &[]),
+            vec!["I live here"]
+        );
+        assert_eq!(
+            importable("1.5 GB is all the RAM I have\n", &[]),
+            vec!["1.5 GB is all the RAM I have"]
+        );
+    }
+
+    #[test]
+    fn remember_all_adds_only_what_is_new() {
+        // Its own file: other tests write path() at the same time.
+        let p = std::env::temp_dir().join(format!("friday-test-import-{}.md", std::process::id()));
+        let _ = std::fs::remove_file(&p);
+        assert_eq!(
+            remember_all_at(&p, &["a fact".into(), "A FACT".into(), "two".into()]).unwrap(),
+            2
+        );
+        assert_eq!(remember_all_at(&p, &["two".into()]).unwrap(), 0);
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert_eq!(facts(&text), vec!["a fact".to_string(), "two".to_string()]);
+        assert!(text.starts_with("# What FRIDAY remembers"));
+        // A file that can't be read is never written over.
+        let odd = [0xff, 0xfe, b'-', 0, b' ', 0];
+        std::fs::write(&p, odd).unwrap();
+        assert!(remember_all_at(&p, &["three".into()]).is_err());
+        assert_eq!(std::fs::read(&p).unwrap(), odd);
+        let _ = std::fs::remove_file(&p);
+        assert!(!too_long(&["short".into()]));
+        assert!(too_long(&vec!["x".repeat(100); 20]));
     }
 }

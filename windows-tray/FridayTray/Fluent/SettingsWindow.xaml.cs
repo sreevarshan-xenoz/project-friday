@@ -303,6 +303,7 @@ internal sealed partial class SettingsWindow : FluentWindow
             });
         yield return Row(Pill("What left this PC…", SymbolRegular.ArrowUpload24), _do.ShowEgress);
         yield return Row(Pill("What FRIDAY remembers about you…", SymbolRegular.Bookmark24), OpenMemoryFile);
+        yield return Row(Pill("Bring in notes from another assistant…", SymbolRegular.ArrowImport24), ImportMemory);
         yield return Row(Pill("Forget saved data…", SymbolRegular.Delete24), _do.ForgetSavedData);
     }
 
@@ -323,6 +324,31 @@ internal sealed partial class SettingsWindow : FluentWindow
         {
             MessageBox.Show(this, e.Message, "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
+    }
+
+    /// <summary>Another assistant's notes (a CLAUDE.md, an exported memory list) into the
+    /// memory file: friday-ctl shows what would be added, and adds it only on Yes.</summary>
+    private async void ImportMemory()
+    {
+        var pick = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Notes from another assistant",
+            Filter = "Notes (*.md;*.txt)|*.md;*.txt|All files (*.*)|*.*",
+        };
+        if (pick.ShowDialog(this) != true)
+            return;
+        var (ok, preview) = await Ctl.RunAsync(_install, ["memory", "import", pick.FileName], TimeSpan.FromSeconds(15));
+        if (!ok || !preview.StartsWith("Would add", StringComparison.Ordinal))
+        {
+            MessageBox.Show(this, preview.Trim(), "FRIDAY", MessageBoxButton.OK, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            return;
+        }
+        var lines = preview.Trim().Split('\n').Where(l => !l.StartsWith("Nothing was added", StringComparison.Ordinal)).ToList();
+        var shown = string.Join("\n", lines.Take(21)) + (lines.Count > 21 ? $"\n… and {lines.Count - 21} more" : "");
+        if (MessageBox.Show(this, shown + "\n\nAdd them?", "Bring in notes", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
+            return;
+        var (added, said) = await Ctl.RunAsync(_install, ["memory", "import", pick.FileName, "--apply"], TimeSpan.FromSeconds(15));
+        MessageBox.Show(this, said.Trim(), "FRIDAY", MessageBoxButton.OK, added ? MessageBoxImage.Information : MessageBoxImage.Warning);
     }
 
     private IEnumerable<UIElement> Ai()
