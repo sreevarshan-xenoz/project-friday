@@ -338,6 +338,8 @@ internal sealed partial class SettingsWindow : FluentWindow
             yield return Row(Pill("Usage and speed…", SymbolRegular.TopSpeed24), ShowUsage);
         yield return Row(Pill("What FRIDAY remembers about you…", SymbolRegular.Bookmark24), OpenMemoryFile);
         yield return Row(Pill("Bring in notes from another assistant…", SymbolRegular.ArrowImport24), ImportMemory);
+        if (AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "memory-tidy"))
+            yield return Row(Pill("Tidy what FRIDAY remembers…", SymbolRegular.Broom24), TidyMemory);
         yield return Row(Pill("Forget saved data…", SymbolRegular.Delete24), _do.ForgetSavedData);
     }
 
@@ -418,6 +420,25 @@ internal sealed partial class SettingsWindow : FluentWindow
 
     /// <summary>Another assistant's notes (a CLAUDE.md, an exported memory list) into the
     /// memory file: friday-ctl shows what would be added, and adds it only on Yes.</summary>
+    /// <summary>A shorter list of what FRIDAY remembers, proposed by the AI
+    /// provider and put in place only on a yes.</summary>
+    private async void TidyMemory()
+    {
+        Said("Asking your AI provider for a shorter list…");
+        var (ok, said) = await Ctl.RunAsync(_install, ["memory", "tidy"], TimeSpan.FromSeconds(90));
+        if (!ok || !said.Contains("tidy apply", StringComparison.Ordinal))
+        {
+            MessageBox.Show(this, said.Trim(), "Tidy memory", MessageBoxButton.OK, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            return;
+        }
+        var shown = said.Replace("Nothing changed yet. friday memory tidy apply puts this in place.", "").Trim();
+        if (MessageBox.Show(this, shown + "\n\nUse this list?", "Tidy memory", MessageBoxButton.YesNo,
+                MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
+            return;
+        var (_, applied) = await Ctl.RunAsync(_install, ["memory", "tidy", "apply"], TimeSpan.FromSeconds(15));
+        MessageBox.Show(this, applied.Trim(), "Tidy memory", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
     private async void ImportMemory()
     {
         var pick = new Microsoft.Win32.OpenFileDialog

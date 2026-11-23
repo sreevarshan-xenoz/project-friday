@@ -7,7 +7,8 @@
 use std::path::PathBuf;
 
 /// The most of the file an ask carries.
-const MAX_CHARS: usize = 1500;
+/// The most of the memory file an ask carries.
+pub const MAX_CHARS: usize = 1500;
 
 pub fn path() -> PathBuf {
     // Tests never touch the person's own file.
@@ -204,6 +205,45 @@ pub fn read(p: &std::path::Path) -> std::io::Result<String> {
     }
 }
 
+/// The proposal `friday memory tidy` writes for the person to read, beside
+/// the memory file; `tidy apply` puts exactly it in place.
+pub fn tidy_path() -> PathBuf {
+    path().with_file_name("memory-tidy.md")
+}
+
+/// What the model is asked to do with `facts` (sent as quoted text, so no
+/// action can come of it).
+pub fn tidy_prompt(facts: &[String]) -> String {
+    format!(
+        "Rewrite the list of facts about me below as a shorter list that keeps every fact: merge \
+         facts about the same thing, drop exact repeats, keep my wording where you can, and \
+         never add anything. The whole list must stay under {} characters. Reply with only the \
+         list, one fact per line, each line starting with \"- \".\n\nUse this text as context:\n\"\"\"\n{}\n\"\"\"",
+        MAX_CHARS - 100,
+        facts.iter().map(|f| format!("- {f}")).collect::<Vec<_>>().join("\n")
+    )
+}
+
+/// The memory file with its current facts replaced by `new`, where the first
+/// of them was; headings, notes and what's no longer true stay as they are.
+pub fn with_facts(text: &str, new: &[String]) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let first = lines.iter().position(|l| l.trim_start().starts_with("- "));
+    let mut out: Vec<String> = Vec::new();
+    for (i, l) in lines.iter().enumerate() {
+        if Some(i) == first {
+            out.extend(new.iter().map(|f| format!("- {f}")));
+        }
+        if !l.trim_start().starts_with("- ") {
+            out.push(l.to_string());
+        }
+    }
+    if first.is_none() {
+        out.extend(new.iter().map(|f| format!("- {f}")));
+    }
+    out.join("\n") + "\n"
+}
+
 /// Whether these facts would no longer all fit in what an ask carries.
 pub fn too_long(all: &[String]) -> bool {
     all.iter().map(|f| f.len() + 2).sum::<usize>() + "about you: ".len() > MAX_CHARS
@@ -383,6 +423,26 @@ mod tests {
         );
         assert!(!p.with_extension("md.tmp").exists());
         let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn a_tidied_list_replaces_the_facts_and_keeps_the_rest_of_the_file() {
+        let text = "# What FRIDAY remembers\nmy notes\n- I use fish\n- I use the fish shell\n- I like tea\n\n## No longer true\n* I live in Chennai (until 2026-11-20)\n";
+        let tidy = with_facts(text, &["I use the fish shell".into(), "I like tea".into()]);
+        assert_eq!(
+            tidy,
+            "# What FRIDAY remembers\nmy notes\n- I use the fish shell\n- I like tea\n\n## No longer true\n* I live in Chennai (until 2026-11-20)\n"
+        );
+        assert_eq!(with_facts("", &["a".into()]), "- a\n");
+        let p = tidy_prompt(&["I use fish".into()]);
+        assert!(
+            p.contains("\n\nUse this text as context:\n\"\"\"\n- I use fish\n\"\"\""),
+            "{p}"
+        );
+        assert!(
+            crate::goal_runner::carries_quoted_text(&p),
+            "no action can come of it"
+        );
     }
 
     #[test]

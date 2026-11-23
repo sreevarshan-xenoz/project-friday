@@ -32,6 +32,11 @@ if [[ "\$1" == offline-proof ]]; then
   echo 'nothing went to a provider off this computer'
   exit 0
 fi
+if [[ "\$1" == memory && "\$2" == tidy ]]; then
+  printf 'friday-ctl memory tidy %s\n' "\${*:3}" >> "$LOG"
+  echo 'Everything fits'
+  exit 0
+fi
 if [[ "\$1" == risks ]]; then
   printf 'friday-ctl-risks\n' >> "$LOG"
   echo 'Asks first, with the exact action'
@@ -598,6 +603,8 @@ bash "$F" feature risk-table on >/dev/null
 : >"$LOG"; contains "friday doctor --offline proves it" "$(bash "$F" doctor --offline)" "nothing went"
 contains "for the last day by default" "$(cat "$LOG")" "friday-ctl-offline-proof 24"
 contains "friday verify-log checks the chain through friday-ctl" "$(bash "$F" verify-log)" "intact"
+: >"$LOG"; bash "$F" memory tidy >/dev/null 2>&1 || true
+contains "friday memory tidy goes to friday-ctl" "$(cat "$LOG")" "memory tidy"
 # One list of runs, standing tasks and approvals.
 : >"$LOG"; contains "friday activity shows the list" "$(bash "$F" activity)" "Standing tasks"
 contains "from friday-ctl" "$(cat "$LOG")" "friday-ctl-activity"

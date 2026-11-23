@@ -1566,7 +1566,12 @@ async fn main() -> std::process::ExitCode {
     }
     // Another assistant's notes into memory.md: a preview first, --apply adds.
     if raw.first().map(String::as_str) == Some("memory") {
-        return match memory_import(&raw[1..]) {
+        let done = if raw.get(1).map(String::as_str) == Some("tidy") {
+            memory_tidy(&raw[2..])
+        } else {
+            memory_import(&raw[1..])
+        };
+        return match done {
             Ok(()) => std::process::ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("friday-ctl: {e}");
@@ -2348,6 +2353,99 @@ async fn exchange(
 
 /// `memory import <file> [--apply]`: what another assistant's notes would add
 /// to memory.md, and with --apply, adds it.
+/// `friday-ctl memory tidy [apply]`: when the memory file holds more than an
+/// ask carries, the person's AI provider proposes a shorter list (the facts
+/// go as quoted text: no action can come of it); the proposal is shown and
+/// kept, and `apply` puts exactly it in place, the old file kept beside it.
+fn memory_tidy(args: &[String]) -> Result<(), String> {
+    use friday_mobile::about;
+    if !friday_mobile::features::on("memory-file") || !friday_mobile::features::on("memory-tidy") {
+        return Err("tidying memory is turned off (friday feature memory-tidy on)".into());
+    }
+    let dest = about::path();
+    let text = about::read(&dest).map_err(|e| format!("{}: {e}", dest.display()))?;
+    let have = about::facts(&text);
+    let proposal = about::tidy_path();
+    if args.first().map(String::as_str) == Some("apply") {
+        let tidy = std::fs::read_to_string(&proposal).map_err(|_| {
+            "there's no proposal to apply: run friday memory tidy first".to_string()
+        })?;
+        let new = about::facts(&tidy);
+        if new.is_empty() {
+            return Err("the proposal has no facts in it; nothing was changed".into());
+        }
+        let keep = dest.with_file_name("memory.before-tidy.md");
+        std::fs::copy(&dest, &keep).map_err(|e| format!("{}: {e}", keep.display()))?;
+        let tmp = dest.with_extension("md.tmp");
+        std::fs::write(&tmp, about::with_facts(&text, &new))
+            .and_then(|()| std::fs::rename(&tmp, &dest))
+            .map_err(|e| format!("{}: {e}", dest.display()))?;
+        let _ = std::fs::remove_file(&proposal);
+        println!(
+            "Memory now holds {} facts (was {}). The old file is {}.",
+            new.len(),
+            have.len(),
+            keep.display()
+        );
+        return Ok(());
+    }
+    if !about::too_long(&have) {
+        println!(
+            "Everything fits: {} facts, all carried by every ask. Nothing to tidy.",
+            have.len()
+        );
+        return Ok(());
+    }
+    let me = std::env::current_exe().map_err(|e| e.to_string())?;
+    let out = std::process::Command::new(me)
+        .args([
+            "goal",
+            "--wait",
+            "--new-conversation",
+            &about::tidy_prompt(&have),
+        ])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map_err(|e| e.to_string())?;
+    let text_out = String::from_utf8_lossy(&out.stdout);
+    let last = serde_json::Deserializer::from_str(&text_out)
+        .into_iter::<serde_json::Value>()
+        .filter_map(Result::ok)
+        .filter(|v| v.get("outcome").is_some())
+        .last()
+        .unwrap_or_default();
+    let answer = match (last["outcome"].as_str(), last["result"].as_str()) {
+        (Some("completed"), Some(a)) => a.to_string(),
+        _ => {
+            return Err(last["error"]
+                .as_str()
+                .unwrap_or("FRIDAY didn't answer (is it running?)")
+                .to_string())
+        }
+    };
+    let new = about::facts(&answer);
+    if new.is_empty() {
+        return Err("the model didn't give a list; nothing was proposed".into());
+    }
+    let body = new
+        .iter()
+        .map(|f| format!("- {f}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    std::fs::write(&proposal, &body).map_err(|e| format!("{}: {e}", proposal.display()))?;
+    println!(
+        "Proposed: {} facts instead of {} (check nothing was lost):\n{body}",
+        new.len(),
+        have.len()
+    );
+    if about::too_long(&new) {
+        println!("It's still more than an ask carries; trim it after.");
+    }
+    println!("Nothing changed yet. friday memory tidy apply puts this in place.");
+    Ok(())
+}
+
 fn memory_import(args: &[String]) -> Result<(), String> {
     use friday_mobile::about;
     let file = args.iter().skip(1).find(|a| !a.starts_with("--"));
