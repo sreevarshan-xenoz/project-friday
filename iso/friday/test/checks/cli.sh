@@ -42,6 +42,11 @@ if [[ "\$1" == tasks ]]; then
   echo 'weather: Every morning at 7:30'
   exit 0
 fi
+if [[ "\$1" == undo-file ]]; then
+  printf 'friday-ctl-undo-file %s\n' "\${*:2}" >> "$LOG"
+  echo 'notes.txt is back as it was before FRIDAY wrote it.'
+  exit 0
+fi
 if [[ "\$1" == risks ]]; then
   printf 'friday-ctl-risks\n' >> "$LOG"
   echo 'Asks first, with the exact action'
@@ -1655,6 +1660,10 @@ c=\${CLIENTS:-}; [ -n "\$c" ] || c='[{"address":"0xabc1"}]'
 exit 0
 STUB
 chmod +x "$S/hyprctl"
+# A file FRIDAY wrote: friday-ctl puts it back (and checks it's unchanged).
+printf '{"ts":"t","said":"writing notes.txt","kind":"file","args":["/w/notes.txt","/s/undo-files/abc","deadbeef"]}\n' >"$state/undo.jsonl"
+: >"$LOG"; contains "friday undo puts a written file back" "$(bash "$F" undo)" "is back as it was"
+contains "through friday-ctl, with the kept copy and hash" "$(cat "$LOG")" "friday-ctl-undo-file /w/notes.txt /s/undo-files/abc deadbeef"
 printf '{"ts":"t","said":"moving kitty to workspace 2","kind":"window","args":["0xabc1","1"]}\n' >"$state/undo.jsonl"
 : >"$LOG"; out=$(bash "$F" undo)
 contains "undo: a moved window goes back" "$(cat "$LOG")" 'hl.dsp.window.move({ workspace = "1", follow = false, window = "address:0xabc1" })'
