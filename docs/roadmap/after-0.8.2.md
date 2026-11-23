@@ -1,6 +1,6 @@
 # After v0.8.2: the 12-repo queue
 
-Owner-approved on 2026-11-23: every idea from the 12-repo brainstorm except the "Don't build" list and the ideas the models disagreed on. Worked top to bottom on autopilot, one PR per item.
+Owner-approved on 2026-11-23: every idea from the 12-repo brainstorm except the "Don't build" list and the ideas the models disagreed on. Worked top to bottom on autopilot, one PR per item. Item 6 (GNOME/KDE) moved to the end on the owner's word: it is larger than first thought (the Linux ask box and screenshots need replacements there).
 
 - Order: the top ten, then the next-in-line seven, then the rest by votes (out of 17 models), smaller first.
 - Size: S about a day, M a few days, L a week or more.
@@ -14,7 +14,7 @@ Owner-approved on 2026-11-23: every idea from the 12-repo brainstorm except the 
 | 3 | PRV-1 | Untrusted text can't trigger actions: flag it, force a confirmation | partly there | M | 17 | Page, window and clipboard text with instructions is flagged; an action after reading it always asks. |
 | 4 | PRV-16 | Private-window canary tests across every subsystem | new | S | 5 | A test plants a canary in a private window and proves it never reaches capture, extension, logs, memory, agents or providers. |
 | 5 | PKG-2 | Published eval of the core ask | partly there | M | 15 | CI runs 30 fixed screen/selection asks and publishes the pass rate (fake model labelled as such). |
-| 6 | CTX-2 | Hotkey works on GNOME/KDE through portals or D-Bus | new | M | 15 | Any Linux desktop can bind a key to one D-Bus method or the GlobalShortcuts portal. |
+| 6 | CTX-2 | (moved to the end, owner 2026-11-23) | | | | |
 | 7 | MEM-3 | Proposed memories you approve | new | S | 16 | After an answer a chip says "remember: you use Fish?"; nothing is stored until you accept. |
 | 8 | VOI-1 | Dictation cleanup: fillers and a personal dictionary | new | S | 17 | Voice typing drops "um" and spells your names and tools correctly. |
 | 9 | AGT-12 | Independent check after an agent says "done" | new | M | 9 | FRIDAY runs the project tests itself and shows red if the agent lied. |
@@ -126,6 +126,7 @@ Owner-approved on 2026-11-23: every idea from the 12-repo brainstorm except the 
 | 115 | VOI-16 | Voice activity gating before whisper | partly there | M | 1 | No audio reaches the model when nobody speaks; lower idle load. |
 | 116 | UI-8 | FRIDAY's own accessibility | new | M | 1 | Screen-reader labels, keyboard use and high contrast for the pill and Settings. |
 | 117 | ACT-7 | Safe recovery when a UI step fails | new | L | 1 | A failed click proposes one safe alternative instead of retrying blindly. |
+| 118 | CTX-2 | GNOME and KDE support | new | L | 15 | The keys, the ask box and screen asks work on GNOME and KDE (their own shortcuts or the GlobalShortcuts portal, an ask box and screenshots that work there; grim and fuzzel don't). Needs a GNOME/KDE test VM. |
 
 ## Left out on purpose
 
