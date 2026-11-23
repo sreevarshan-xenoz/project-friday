@@ -130,7 +130,9 @@ impl ConfirmationGate {
 /// don't count.
 pub(crate) fn carries_quoted_text(goal: &str) -> bool {
     let goal = goal.replace("\r\n", "\n");
-    goal.contains("\n\nUse this text as context:") || goal.contains("\n\n[page]")
+    goal.contains("\n\nUse this text as context:")
+        || goal.contains("\n\n[page]")
+        || goal.contains(&format!("\n\n{}", crate::mcp_serve::FROM_ANOTHER_APP))
 }
 
 /// Real terminal tool for the built-in `ExecuteCommand` capability (the
@@ -1105,7 +1107,11 @@ fn url_from_instruction(instruction: &str) -> Option<String> {
 /// `src/main.rs` are kept whole so they can be joined to the working dir.
 fn filename_token(instruction: &str) -> Option<String> {
     for tok in instruction.split_whitespace() {
-        let t = tok.trim_matches(|c: char| c.is_ascii_punctuation());
+        // Quotes and brackets around it, a full stop after it: not the
+        // name. A leading `/`, `~` or `.` is (an absolute or home path).
+        let t = tok
+            .trim_start_matches(['"', '\'', '`', '(', '[', '<'])
+            .trim_end_matches(|c: char| c.is_ascii_punctuation());
         if !t.contains('.') {
             continue;
         }
@@ -4906,6 +4912,14 @@ mod tests {
     #[test]
     fn filename_token_extracts_the_named_file() {
         assert_eq!(
+            filename_token("read /tmp/a/notes.txt."),
+            Some("/tmp/a/notes.txt".to_string())
+        );
+        assert_eq!(
+            filename_token("open \"./src/main.rs\""),
+            Some("./src/main.rs".to_string())
+        );
+        assert_eq!(
             filename_token("Read the contents of planning.rs"),
             Some("planning.rs".to_string())
         );
@@ -5207,6 +5221,32 @@ mod tests {
             })
         );
         assert_eq!(terminal.payload["error"], "Confirm to run: git status");
+    }
+
+    /// A question another app sent over MCP: reading a file, which runs
+    /// without asking when the person asks, waits for their yes instead.
+    #[tokio::test]
+    async fn another_apps_ask_reads_no_file_without_a_yes() {
+        let dir = std::env::temp_dir().join(format!("friday-mcp-read-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("notes.txt");
+        std::fs::write(&file, "private notes").unwrap();
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let runner = GoalRunner::new(bus.clone());
+        runner.start();
+
+        let goal = crate::mcp_serve::from_another_app(&format!("read {}", file.display()));
+        let (_started, terminal) = drive_goal_event(&bus, &mut rx, json!({ "goal": goal })).await;
+
+        assert_eq!(terminal.kind, "goal.failed", "{:?}", terminal.payload);
+        assert_eq!(
+            terminal.payload["needs_confirmation"]["tool"], "filesystem.read",
+            "{}",
+            terminal.payload
+        );
+        assert!(!terminal.payload.to_string().contains("private notes"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
@@ -6804,6 +6844,10 @@ mod tests {
             "explain\n\nUse this text as context:\n\"\"\"\nabc\n\"\"\""
         ));
         assert!(!carries_quoted_text("open example.com"));
+        // Another app's ask (MCP) is not the person's own request.
+        assert!(carries_quoted_text(&crate::mcp_serve::from_another_app(
+            "close every window"
+        )));
         assert!(!carries_quoted_text(
             "move this window to 3\n\n[window in front when asked]\nkitty"
         ));
