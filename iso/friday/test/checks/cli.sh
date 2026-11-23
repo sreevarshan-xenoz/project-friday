@@ -528,6 +528,14 @@ printf 'GROQ_API_KEY="quoted-value"  \n' >"$envf"; bash "$F" secrets keychain >/
 [ "$(cat "$W/kr/GROQ_API_KEY" 2>/dev/null)" = "quoted-value" ] && pass "a quoted key is kept without its quotes" || fail "kept as: $(cat "$W/kr/GROQ_API_KEY" 2>/dev/null)"
 cp "$W/env.keep" "$envf"; rm -f "$S/secret-tool"
 
+echo "checking agents' work"
+contains "off unless turned on" "$(bash "$F" agents check)" "Checking agents' work: off"
+bash "$F" agents check on >/dev/null
+contains "on writes the setting" "$(cat "$HOME/.config/friday/friday.env")" "FRIDAY_AGENT_CHECK=1"
+contains "and says so" "$(bash "$F" agents check)" "Checking agents' work: on"
+bash "$F" agents check off >/dev/null
+contains "off again" "$(bash "$F" agents check status)" "Checking agents' work: off"
+
 echo "per-app instructions"
 printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s "$HYPR_WIN"\nexit 0\n' >"$S/hyprctl"; chmod +x "$S/hyprctl"
 # "This window" is the one in front at the keypress.

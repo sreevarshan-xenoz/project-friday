@@ -21,6 +21,12 @@ public static class AppSettings
     public static bool AgentsOn(IReadOnlyDictionary<string, string> env) =>
         !env.TryGetValue(Agents, out var v) || v != "0";
 
+    public const string AgentCheck = "FRIDAY_AGENT_CHECK";
+
+    /// <summary>Off unless "1": FRIDAY runs the project's tests when an agent says it's done.</summary>
+    public static bool AgentCheckOn(IReadOnlyDictionary<string, string> env) =>
+        env.TryGetValue(AgentCheck, out var v) && v == "1";
+
     /// <summary>On unless "0" or "false" (the daemon's rule for screen text).</summary>
     public static bool ScreenTextOn(IReadOnlyDictionary<string, string> env) =>
         !env.TryGetValue(ScreenText, out var v) || v is not ("0" or "false");
@@ -73,6 +79,7 @@ public static class AppSettings
         ("voice-confirm", "Asked by voice: say run or cancel after the sound to answer a confirmation"),
         ("voice-followup", "Asked by voice: after a spoken answer and a sound, a follow-up needs no key"),
         ("which-this", "\"Explain this\" with nothing picked: ask whether it means the window in front"),
+        ("dictation-cleanup", "Speech drops \"um\" and \"uh\" and uses your own words (dictionary in %APPDATA%\\friday)"),
         ("propose-memories", "\"I use fish …\" in a question: offer to remember it (nothing is kept unless you say so)"),
     ];
 
