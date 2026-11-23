@@ -38,39 +38,79 @@ internal static class Updater
         }
     }
 
-    /// <summary>Downloads the MSI, checks it against SHA256SUMS and opens it. Returns what went wrong, or null.</summary>
-    public static async Task<string?> InstallAsync(Release r)
+    /// <summary>Downloads the MSI, checks it against SHA256SUMS and opens it. With
+    /// <paramref name="keepIn"/>, the MSI of the version installed now is kept first, so a
+    /// bad update can revert itself (<see cref="Rollback"/>). Returns what went wrong, or null.</summary>
+    public static async Task<string?> InstallAsync(Release r, Paths? keepIn = null)
     {
         try
         {
             using var http = Http(TimeSpan.FromMinutes(10));
-            var sums = await http.GetByteArrayAsync(r.SumsUrl);
-            byte[] sig;
-            try { sig = await http.GetByteArrayAsync(r.SigUrl); }
-            catch (HttpRequestException) { sig = []; }
-            if (!Updates.Signed(sums, sig))
-                return "This release isn't signed with FRIDAY's update key, so it wasn't downloaded.";
-            var expected = Updates.ExpectedSha(System.Text.Encoding.UTF8.GetString(sums), r.MsiName);
-            if (expected is null)
-                return $"The release's checksum file doesn't list {r.MsiName}.";
             // A folder of its own each time: nothing else can have put a file there.
             var dir = Path.Combine(Path.GetTempPath(), "friday-update-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(dir);
-            var path = Path.Combine(dir, r.MsiName);
-            await using (var body = await http.GetStreamAsync(r.MsiUrl))
-            await using (var file = File.Create(path))
-                await body.CopyToAsync(file);
-            if (Updates.Sha256(path) != expected)
-            {
-                File.Delete(path);
-                return "The download doesn't match the release's checksum, so it wasn't opened.";
-            }
+            var (path, problem) = await FetchAsync(http, r, dir);
+            if (path is null)
+                return problem;
+            if (keepIn is not null)
+                await KeepForRollbackAsync(http, keepIn, r, path);
             Process.Start(new ProcessStartInfo("msiexec.exe", $"/i \"{path}\"") { UseShellExecute = true });
             return null;
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         {
             return e.Message;
+        }
+    }
+
+    /// <summary>The release's MSI, downloaded into <paramref name="dir"/> and checked
+    /// against its signed SHA256SUMS; or null and what went wrong.</summary>
+    private static async Task<(string? Path, string? Problem)> FetchAsync(HttpClient http, Release r, string dir)
+    {
+        var sums = await http.GetByteArrayAsync(r.SumsUrl);
+        byte[] sig;
+        try { sig = await http.GetByteArrayAsync(r.SigUrl); }
+        catch (HttpRequestException) { sig = []; }
+        if (!Updates.Signed(sums, sig))
+            return (null, "This release isn't signed with FRIDAY's update key, so it wasn't downloaded.");
+        var expected = Updates.ExpectedSha(System.Text.Encoding.UTF8.GetString(sums), r.MsiName);
+        if (expected is null)
+            return (null, $"The release's checksum file doesn't list {r.MsiName}.");
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, r.MsiName);
+        await using (var body = await http.GetStreamAsync(r.MsiUrl))
+        await using (var file = File.Create(path))
+            await body.CopyToAsync(file);
+        if (Updates.Sha256(path) != expected)
+        {
+            File.Delete(path);
+            return (null, "The download doesn't match the release's checksum, so it wasn't opened.");
+        }
+        return (path, null);
+    }
+
+    /// <summary>Keeps this version's MSI and the new one, and the plan that says which is
+    /// which. Without this version's MSI (a build that was never released, GitHub
+    /// unreachable) the update goes ahead with nothing to go back to.</summary>
+    private static async Task KeepForRollbackAsync(HttpClient http, Paths paths, Release next, string nextMsi)
+    {
+        try
+        {
+            if (Directory.Exists(paths.RollbackDir))
+                Directory.Delete(paths.RollbackDir, recursive: true);
+            var now = Updates.Parse(await http.GetStringAsync(Updates.TagUrl(Current)));
+            if (now is null || now.Version != Current)
+                return;
+            var (oldMsi, _) = await FetchAsync(http, now, Path.Combine(paths.RollbackDir, "old"));
+            if (oldMsi is null)
+                return;
+            var newMsi = Path.Combine(paths.RollbackDir, "new", next.MsiName);
+            Directory.CreateDirectory(Path.GetDirectoryName(newMsi)!);
+            File.Copy(nextMsi, newMsi, overwrite: true);
+            Rollback.Write(paths.RollbackFile, new RollbackPlan(Current, next.Version, oldMsi, newMsi, DateTime.UtcNow));
+        }
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException or UnauthorizedAccessException)
+        {
+            // Nothing to go back to: the update itself still goes ahead.
         }
     }
 }

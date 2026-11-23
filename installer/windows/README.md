@@ -77,6 +77,15 @@ Pushing a tag `vX.Y.Z` runs `.github/workflows/release.yml`:
 
 CI builds are numbered 0.1.<commits>, so release 0.2.0 or later.
 
+## Updates
+
+Settings → Health & updates → Check for updates installs the newest release.
+- It runs an MSI only when FRIDAY's update key signed the release's `SHA256SUMS` and the MSI matches it.
+- Before that, it keeps the signed MSI of the version installed now, in `%LOCALAPPDATA%\friday\rollback`.
+- If the new version's daemon hasn't said it's running two minutes after its first start, FRIDAY takes the new version off and puts that one back, then says so.
+- The switch is "update-rollback" (Settings → Features).
+- A version that was never released (a CI build) has nothing to go back to: the update still goes ahead.
+
 ## winget
 
 winget installs from a public URL, so its manifests are generated per

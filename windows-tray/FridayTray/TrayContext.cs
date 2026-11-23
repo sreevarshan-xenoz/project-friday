@@ -88,6 +88,69 @@ internal sealed class TrayContext : ApplicationContext
             Notify("FRIDAY is running", $"Press {_hotkeys.Labels[AskKind.Plain]} to ask anything.", ToolTipIcon.Info);
 
         _ = TellAboutUpdateAsync();
+        _ = CheckUpdateAsync(DateTime.UtcNow);
+    }
+
+    /// <summary>After an update: the new version's daemon has <see cref="Rollback.Grace"/>
+    /// to say it is running, or the version before goes back on (a bad update reverts itself).</summary>
+    private async Task CheckUpdateAsync(DateTime started)
+    {
+        var ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+        var file = _install.Paths.RollbackFile;
+        var plan = Rollback.Read(file);
+        bool? healthy = null;
+        while (true)
+        {
+            var step = Rollback.Decide(plan, Updater.Current, healthy, DateTime.UtcNow);
+            switch (step)
+            {
+                case RollbackStep.None:
+                    return;
+                case RollbackStep.Clear:
+                    TryDelete(_install.Paths.RollbackDir);
+                    return;
+                case RollbackStep.TellReverted:
+                    ui.Post(_ => Notify("FRIDAY went back", $"FRIDAY {plan!.To} didn't start properly, so FRIDAY {plan.From} is back. Updates stay offered.", ToolTipIcon.Warning), null);
+                    TryDelete(_install.Paths.RollbackDir);
+                    return;
+                case RollbackStep.Revert:
+                    if (!AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "update-rollback"))
+                    {
+                        TryDelete(_install.Paths.RollbackDir);
+                        return;
+                    }
+                    Rollback.Write(file, plan! with { Reverted = true });
+                    var script = Path.Combine(_install.Paths.RollbackDir, "revert.cmd");
+                    File.WriteAllText(script, Rollback.RevertScript(plan!));
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c \"{script}\"")
+                    { UseShellExecute = false, CreateNoWindow = true });
+                    ui.Post(_ => Notify("FRIDAY is going back", $"FRIDAY {plan!.To} didn't start properly; putting FRIDAY {plan.From} back.", ToolTipIcon.Warning), null);
+                    return;
+                case RollbackStep.Wait:
+                    // Running means a state.json written since this start says so.
+                    var state = DaemonState.Read(_install.Paths.StateFile);
+                    var fresh = File.Exists(_install.Paths.StateFile) && File.GetLastWriteTimeUtc(_install.Paths.StateFile) > started;
+                    if (fresh && state.Mode is "ready" or "working")
+                        healthy = true;
+                    else if (DateTime.UtcNow - started > Rollback.Grace)
+                        healthy = false;
+                    else
+                        await Task.Delay(TimeSpan.FromSeconds(5));
+                    break;
+            }
+        }
+    }
+
+    private static void TryDelete(string dir)
+    {
+        try
+        {
+            if (Directory.Exists(dir))
+                Directory.Delete(dir, recursive: true);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+        }
     }
 
     /// <summary>Once per start, a minute in: a balloon when a newer FRIDAY is out.</summary>
