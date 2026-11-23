@@ -76,6 +76,7 @@ brainstorm, is `docs/roadmap/after-0.8.2.md`.
 |---|---|
 | Rust | `cargo test -p <crate>`; CI also runs fmt and clippy `-D warnings` |
 | End-to-end ask | `bash tests/e2e/ask.sh` (after `cargo build -p friday-mobile --bin friday-linux-daemon --bin friday-ctl`) |
+| Core-ask eval | `bash tests/e2e/core-eval.sh` (same build; Linux): 30 fixed selection, page, screen and private asks, pass rate in CI's job summary |
 | End-to-end hotkeys | `bash tests/e2e/hotkeys.sh` (same build; needs lua, jq); Windows: `pwsh tests/e2e/hotkeys.ps1` on an installed MSI |
 | Desktop/installer checks | `bash iso/friday/test/run-checks.sh` (Arch; deps in the script header) |
 | Arch package | `cd packaging/arch && makepkg -si`; smoke: `bash packaging/arch/check-package.sh <pkg>` |

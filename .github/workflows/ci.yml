@@ -64,6 +64,8 @@ jobs:
           cargo build -p friday-mobile --bin friday-linux-daemon --bin friday-ctl
           bash tests/e2e/ask.sh
           bash tests/e2e/conversation.sh
+      - name: Core ask eval (30 fixed asks, real daemon, fake model; pass rate in the job summary)
+        run: bash tests/e2e/core-eval.sh
       - name: End-to-end hotkeys (shipped keymaps, each key's command to its answer)
         run: |
           sudo apt-get install -y lua5.4
