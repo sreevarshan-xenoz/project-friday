@@ -287,6 +287,12 @@ shell_supervise() {
 # `friday doctor`: one screen answering "why isn't FRIDAY working?".
 # Read-only; never prints secrets. Exit 1 if any check fails.
 friday_doctor() {
+  # Proof that nothing left: the egress log and the daemon's connections now.
+  if [ "${1:-}" = "--offline" ]; then
+    friday_feature_on offline-proof || { echo "The offline proof is turned off (friday feature offline-proof on)."; return 0; }
+    friday-ctl offline-proof "${2:-24}"
+    return
+  fi
   local fails=0 warns=0
   local state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
   local state="$state_dir/state.json"
@@ -3763,6 +3769,7 @@ live-web|Questions about the weather, news, scores or prices search the web with
 speak-as-it-comes|Spoken answers start with the first sentence while the rest is still coming
 backup|friday backup: a checked backup of settings, memory and history, and a restore that checks first
 risk-table|friday risks: what FRIDAY may do on its own, what asks first and what never runs
+offline-proof|friday doctor --offline: what went off this computer lately and what FRIDAY is connected to now
 log-chain|Each action in the action log is chained to the one before, so a changed line shows (friday verify-log)
 standing-reversible|A standing task runs only what can be undone; anything that would ask first is refused and logged
 activity|One list of agent steps waiting for you, runs going now, standing tasks and runs finished lately

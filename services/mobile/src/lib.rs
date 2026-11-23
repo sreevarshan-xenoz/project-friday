@@ -36,6 +36,7 @@ pub mod local_ai;
 pub mod local_docs;
 pub mod mcp_serve;
 pub mod model_jobs;
+pub mod offline_proof;
 pub mod page_read;
 pub mod probe;
 pub mod project;

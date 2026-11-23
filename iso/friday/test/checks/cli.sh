@@ -27,6 +27,11 @@ if [[ "\$1" == verify-log ]]; then
   echo 'The action log is intact: 3 actions'
   exit 0
 fi
+if [[ "\$1" == offline-proof ]]; then
+  printf 'friday-ctl-offline-proof %s\n' "\${*:2}" >> "$LOG"
+  echo 'nothing went to a provider off this computer'
+  exit 0
+fi
 if [[ "\$1" == risks ]]; then
   printf 'friday-ctl-risks\n' >> "$LOG"
   echo 'Asks first, with the exact action'
@@ -590,6 +595,8 @@ contains "friday risks shows the table" "$(bash "$F" risks)" "Asks first"
 bash "$F" feature risk-table off >/dev/null
 contains "the risk table can be turned off" "$(bash "$F" risks)" "turned off"
 bash "$F" feature risk-table on >/dev/null
+: >"$LOG"; contains "friday doctor --offline proves it" "$(bash "$F" doctor --offline)" "nothing went"
+contains "for the last day by default" "$(cat "$LOG")" "friday-ctl-offline-proof 24"
 contains "friday verify-log checks the chain through friday-ctl" "$(bash "$F" verify-log)" "intact"
 # One list of runs, standing tasks and approvals.
 : >"$LOG"; contains "friday activity shows the list" "$(bash "$F" activity)" "Standing tasks"
