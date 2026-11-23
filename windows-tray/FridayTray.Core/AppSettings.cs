@@ -27,6 +27,12 @@ public static class AppSettings
     public static bool AgentCheckOn(IReadOnlyDictionary<string, string> env) =>
         env.TryGetValue(AgentCheck, out var v) && v == "1";
 
+    public const string AgentWorktree = "FRIDAY_AGENT_WORKTREE";
+
+    /// <summary>Off unless "1": each agent run in a git folder works in its own worktree.</summary>
+    public static bool AgentWorktreeOn(IReadOnlyDictionary<string, string> env) =>
+        env.TryGetValue(AgentWorktree, out var v) && v == "1";
+
     /// <summary>On unless "0" or "false" (the daemon's rule for screen text).</summary>
     public static bool ScreenTextOn(IReadOnlyDictionary<string, string> env) =>
         !env.TryGetValue(ScreenText, out var v) || v is not ("0" or "false");

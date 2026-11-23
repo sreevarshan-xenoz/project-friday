@@ -313,6 +313,7 @@ mod tests {
                 rejected: 0,
                 session: None,
                 follows: None,
+                worktree: None,
             },
         )
         .unwrap()

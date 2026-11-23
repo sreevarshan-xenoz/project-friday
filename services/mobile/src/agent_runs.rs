@@ -160,6 +160,18 @@ pub struct Run {
     /// The run this one follows up on.
     #[serde(default)]
     pub follows: Option<String>,
+    /// Where the agent works when the person keeps its changes apart
+    /// (`friday agents worktree on`): a git worktree on its own branch, in
+    /// FRIDAY's state folder, until they accept or discard it.
+    #[serde(default)]
+    pub worktree: Option<PathBuf>,
+}
+
+impl Run {
+    /// The folder the agent works in: its worktree, else the folder itself.
+    pub fn workdir(&self) -> &Path {
+        self.worktree.as_deref().unwrap_or(&self.folder)
+    }
 }
 
 /// Where runs are recorded: `agents/` beside `state.json`.
@@ -479,7 +491,7 @@ impl<'a, W: AsyncWrite + Unpin> Driver<'a, W> {
     /// false when the agent offers no way to allow it just this once.
     /// Records who decided.
     pub(crate) async fn decide_step(&mut self, what: &str, step: &Step, can_allow: bool) -> bool {
-        let why = match agent_policy::decide(step, &self.rec.run.folder) {
+        let why = match agent_policy::decide(step, self.rec.run.workdir()) {
             Decision::Allow if can_allow => {
                 self.rec.run.approved_by_friday += 1;
                 self.rec
@@ -596,7 +608,7 @@ impl<'a, W: AsyncWrite + Unpin> Driver<'a, W> {
             )
             .await?;
         self.wait(lines, init).await?;
-        let folder = self.rec.run.folder.display().to_string();
+        let folder = self.rec.run.workdir().display().to_string();
         // A follow-up picks its session up again (without replaying it); a
         // session the agent no longer has means starting fresh, and saying so.
         let mut session = None;
@@ -753,7 +765,7 @@ pub async fn run_agent(
         // Claude Code says a session it no longer has on stderr: keep that.
         let claude = rec.run.agent == Agent::Claude;
         let mut child = command
-            .current_dir(&rec.run.folder)
+            .current_dir(rec.run.workdir())
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(if claude {
@@ -817,7 +829,7 @@ pub async fn run_agent(
                 rec.run.summary = format!("{}\n(FRIDAY is running the tests to check)", o.summary);
                 let _ = rec.save();
                 rec.log(json!({"event": "checking"}));
-                Ok(checked(o, &rec.run.folder).await)
+                Ok(checked(o, rec.run.workdir()).await)
             }
             other => other,
         };
@@ -899,6 +911,150 @@ pub fn check_command(folder: &Path) -> Option<(&'static str, Vec<&'static str>)>
 /// off unless the person turned it on (`FRIDAY_AGENT_CHECK=1`; `friday agents
 /// check on`, Settings → Agents), since the tests run code the agent just
 /// wrote, which FRIDAY's approval rules would otherwise ask about.
+fn worktree_on() -> bool {
+    std::env::var("FRIDAY_AGENT_WORKTREE").is_ok_and(|v| v.trim() == "1")
+}
+
+/// Runs git in `dir`; its output when it worked.
+fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("git: {e}"))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+/// A worktree for run `id` of `folder` (a git repository), on its own branch
+/// `friday/<id>`, under `dir/worktrees`; the folder's place inside it. None
+/// when the folder isn't in git or git refuses.
+fn make_worktree(dir: &Path, folder: &Path, id: &str) -> Option<PathBuf> {
+    let top = PathBuf::from(git(folder, &["rev-parse", "--show-toplevel"]).ok()?);
+    let inside = folder
+        .canonicalize()
+        .ok()?
+        .strip_prefix(top.canonicalize().ok()?)
+        .ok()?
+        .to_path_buf();
+    let tree = dir.join("worktrees").join(id);
+    let branch = format!("friday/{id}");
+    git(
+        &top,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            &branch,
+            &tree.display().to_string(),
+        ],
+    )
+    .ok()?;
+    Some(tree.join(inside))
+}
+
+/// The worktree of the newest run in `folder` not yet accepted or
+/// discarded: a follow-up goes on there.
+fn open_worktree(dir: &Path, folder: &Path) -> Option<PathBuf> {
+    list(dir)
+        .into_iter()
+        .find(|r| r.folder == folder && r.worktree.as_ref().is_some_and(|w| w.is_dir()))
+        .and_then(|r| r.worktree)
+}
+
+/// The repository root of a run's worktree, and its branch.
+fn tree_and_branch(run: &Run) -> Result<(PathBuf, String), String> {
+    let wt = run
+        .worktree
+        .as_ref()
+        .filter(|w| w.is_dir())
+        .ok_or_else(|| format!("run {} has no separate copy (any more)", run.id))?;
+    let root = PathBuf::from(git(wt, &["rev-parse", "--show-toplevel"])?);
+    let branch = git(&root, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    Ok((root, branch))
+}
+
+/// `friday agents accept <id>`: the run's changes come into the folder,
+/// staged for the person to look over and commit; the copy goes.
+pub fn accept(dir: &Path, id: &str) -> Result<String, String> {
+    let mut run = list(dir)
+        .into_iter()
+        .find(|r| r.id == id)
+        .ok_or_else(|| format!("no run {id}"))?;
+    if still_going(&run) {
+        return Err(format!("run {id} is still going"));
+    }
+    let (tree, branch) = tree_and_branch(&run)?;
+    // What the agent left uncommitted counts too (a throwaway commit: only
+    // its changes come in, staged).
+    git(&tree, &["add", "-A"])?;
+    let _ = git(
+        &tree,
+        &[
+            "-c",
+            "user.name=FRIDAY",
+            "-c",
+            "user.email=friday@localhost",
+            "commit",
+            "-q",
+            "-m",
+            "agent changes",
+        ],
+    );
+    git(&run.folder, &["merge", "--squash", &branch]).map_err(|e| {
+        format!(
+            "couldn't bring the changes in ({e}); the copy stays: {}",
+            tree.display()
+        )
+    })?;
+    let _ = git(
+        &run.folder,
+        &["worktree", "remove", "--force", &tree.display().to_string()],
+    );
+    let _ = git(&run.folder, &["branch", "-D", &branch]);
+    run.worktree = None;
+    if let Ok(rec) = Recorder::new(dir, run.clone()) {
+        let _ = rec.save();
+    }
+    Ok(format!(
+        "{}'s changes are in {}, staged: look them over (git diff --staged) and commit.",
+        run.agent.name(),
+        run.folder.display()
+    ))
+}
+
+/// `friday agents discard <id>`: the run's copy and branch go; the folder
+/// is as it was.
+pub fn discard(dir: &Path, id: &str) -> Result<String, String> {
+    let mut run = list(dir)
+        .into_iter()
+        .find(|r| r.id == id)
+        .ok_or_else(|| format!("no run {id}"))?;
+    if still_going(&run) {
+        return Err(format!("run {id} is still going"));
+    }
+    let (tree, branch) = tree_and_branch(&run)?;
+    git(
+        &run.folder,
+        &["worktree", "remove", "--force", &tree.display().to_string()],
+    )?;
+    let _ = git(&run.folder, &["branch", "-D", &branch]);
+    run.worktree = None;
+    if let Ok(rec) = Recorder::new(dir, run.clone()) {
+        let _ = rec.save();
+    }
+    Ok(format!(
+        "Dropped {}'s changes; {} is as it was.",
+        run.agent.name(),
+        run.folder.display()
+    ))
+}
+
 fn check_on() -> bool {
     std::env::var("FRIDAY_AGENT_CHECK").is_ok_and(|v| v.trim() == "1")
 }
@@ -1067,6 +1223,13 @@ fn finish(rec: &mut Recorder, outcome: Result<Outcome, String>) {
     let (summary, failed) = match outcome {
         Ok(o) => (o.summary, o.failed),
         Err(e) => (e, true),
+    };
+    let summary = match &rec.run.worktree {
+        Some(_) => format!(
+            "Its changes are in a separate copy: friday agents accept {id} brings them in (staged), friday agents discard {id} drops them.\n{summary}",
+            id = rec.run.id
+        ),
+        None => summary,
     };
     rec.run.summary = summary.chars().take(4000).collect();
     rec.run.status = if failed { Status::Failed } else { Status::Done };
@@ -1244,8 +1407,16 @@ impl AgentsTool {
         session: Option<String>,
         wait_for: Option<&Run>,
     ) -> String {
+        let id = format!("r{}", &uuid::Uuid::new_v4().simple().to_string()[..6]);
+        // Its changes kept apart, when the person asked for that: the open
+        // copy of this folder (a follow-up), else a new one.
+        let worktree = worktree_on()
+            .then(|| {
+                open_worktree(&self.dir, folder).or_else(|| make_worktree(&self.dir, folder, &id))
+            })
+            .flatten();
         let run = Run {
-            id: format!("r{}", &uuid::Uuid::new_v4().simple().to_string()[..6]),
+            id,
             agent,
             folder: folder.to_path_buf(),
             request,
@@ -1260,6 +1431,7 @@ impl AgentsTool {
             rejected: 0,
             session,
             follows: wait_for.map(|r| r.id.clone()),
+            worktree,
         };
         let id = run.id.clone();
         let earlier = wait_for.map(|r| r.id.clone());
@@ -1506,6 +1678,82 @@ mod tests {
         dir
     }
 
+    /// A run kept apart works in its own worktree; accept brings its changes
+    /// in staged, discard leaves the folder as it was.
+    #[test]
+    fn a_runs_copy_is_accepted_staged_or_discarded() {
+        let base = std::env::temp_dir().join(format!("friday-wt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (repo, dir) = (base.join("repo"), base.join("runs"));
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        let g = |args: &[&str]| git(&repo, args).unwrap();
+        g(&["init", "-q"]);
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        g(&["add", "a.txt"]);
+        g(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-qm",
+            "first",
+        ]);
+        let make = |id: &str| {
+            let tree = make_worktree(&dir, &repo, id).expect("a worktree");
+            std::fs::write(tree.join("a.txt"), format!("changed by {id}\n")).unwrap();
+            let run = Run {
+                id: id.into(),
+                agent: Agent::Opencode,
+                folder: repo.clone(),
+                request: "change a".into(),
+                task: "change a".into(),
+                status: Status::Done,
+                started: 0,
+                ended: Some(1),
+                pending: None,
+                summary: String::new(),
+                approved_by_friday: 0,
+                approved_by_you: 0,
+                rejected: 0,
+                session: None,
+                follows: None,
+                worktree: Some(tree),
+            };
+            Recorder::new(&dir, run).unwrap().save().unwrap();
+        };
+        make("r1");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("a.txt")).unwrap(),
+            "one\n",
+            "the folder is untouched"
+        );
+        assert!(
+            open_worktree(&dir, &repo).is_some(),
+            "a follow-up goes on in the copy"
+        );
+        discard(&dir, "r1").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(repo.join("a.txt")).unwrap(),
+            "one\n"
+        );
+        assert!(!dir.join("worktrees/r1").exists(), "the copy is gone");
+        make("r2");
+        let said = accept(&dir, "r2").unwrap();
+        assert!(said.contains("staged"), "{said}");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("a.txt")).unwrap(),
+            "changed by r2\n"
+        );
+        assert!(
+            g(&["diff", "--staged", "--name-only"]).contains("a.txt"),
+            "staged, not committed"
+        );
+        assert!(open_worktree(&dir, &repo).is_none());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[test]
     fn the_projects_own_test_command_is_found() {
         let cargo = project("cargo", &[("Cargo.toml", "[package]")]);
@@ -1612,6 +1860,7 @@ mod tests {
                 rejected: 0,
                 session: None,
                 follows: None,
+                worktree: None,
             },
         )
         .unwrap()
