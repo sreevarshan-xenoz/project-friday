@@ -916,11 +916,17 @@ async fn checked(o: Outcome, folder: &Path) -> Outcome {
     let shown = format!("{program} {}", args.join(" "));
     // Output goes to a file (a test can print without end, or leave a
     // process holding a pipe open), of which the end is read.
+    // Only the person can read it (test output can hold anything).
     let log = std::env::temp_dir().join(format!("friday-check-{}.log", uuid::Uuid::new_v4()));
-    let Ok(file) = std::fs::File::create(&log) else {
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+    let Ok(file) = opts.open(&log) else {
         return o;
     };
     let Ok(file2) = file.try_clone() else {
+        let _ = std::fs::remove_file(&log);
         return o;
     };
     #[cfg(unix)]
@@ -995,6 +1001,23 @@ async fn checked(o: Outcome, folder: &Path) -> Outcome {
     let (note, failed) = match ran {
         Some(Ok(status)) if status.success() => {
             (format!("FRIDAY ran {shown}: the tests pass."), false)
+        }
+        // No test runner installed, or no tests found: nothing was checked.
+        Some(Ok(status))
+            if status.code() == Some(5)
+                || [
+                    "No module named",
+                    "command not found",
+                    "Cannot find module",
+                    "is not recognized",
+                ]
+                .iter()
+                .any(|t| text.contains(t)) =>
+        {
+            (
+                format!("FRIDAY couldn't check with {shown}: it found no tests or no test runner."),
+                false,
+            )
         }
         Some(Ok(_)) => {
             let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
@@ -1549,6 +1572,19 @@ mod tests {
         );
         assert!(
             o.summary.contains("assertion failed: 2 == 3"),
+            "{}",
+            o.summary
+        );
+        let missing = project(
+            "missing",
+            &[(
+                "Makefile",
+                "test:\n\t@echo 'No module named pytest'; false\n",
+            )],
+        );
+        let o = checked(done(), &missing).await;
+        assert!(
+            !o.failed && o.summary.starts_with("FRIDAY couldn't check"),
             "{}",
             o.summary
         );
