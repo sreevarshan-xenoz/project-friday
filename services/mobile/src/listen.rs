@@ -159,7 +159,7 @@ pub fn clean_text(raw: &str) -> String {
 }
 
 /// Sounds whisper writes out that nobody means to type or ask.
-const FILLERS: &[&str] = &["um", "umm", "uh", "uhh", "uhm", "erm", "hmm", "mm"];
+const FILLERS: &[&str] = &["um", "umm", "uh", "uhh", "uhm", "erm", "hmm"];
 
 /// The text without "um" and "uh": "So, um, open it" → "So, open it", and
 /// a first word dropped hands its capital on.
@@ -169,13 +169,21 @@ pub fn drop_fillers(text: &str) -> String {
             .to_lowercase()
     };
     let words: Vec<&str> = text.split_whitespace().collect();
-    let kept: Vec<&str> = words
-        .iter()
-        .copied()
-        .filter(|w| !FILLERS.contains(&bare(w).as_str()))
-        .collect();
+    let mut kept: Vec<String> = Vec::new();
+    for w in &words {
+        if !FILLERS.contains(&bare(w).as_str()) {
+            kept.push(w.to_string());
+            continue;
+        }
+        // "I think so, um." keeps its full stop: the filler's end goes to
+        // the word before it, in place of a comma there.
+        if let (Some(end @ ('.' | '?' | '!')), Some(prev)) = (w.chars().last(), kept.last_mut()) {
+            let trimmed = prev.trim_end_matches(',').to_string();
+            *prev = format!("{trimmed}{end}");
+        }
+    }
     let mut out = kept.join(" ");
-    if kept.first() != words.first() {
+    if kept.first().map(String::as_str) != words.first().copied() {
         if let Some(c) = out.chars().next() {
             out = c.to_uppercase().chain(out.chars().skip(1)).collect();
         }
@@ -240,9 +248,14 @@ impl Dictionary {
                 let matches = want.iter().enumerate().all(|(k, w)| {
                     words[i + k]
                         .trim_matches(|c: char| !c.is_alphanumeric())
-                        .eq_ignore_ascii_case(w)
+                        .to_lowercase()
+                        == *w
                 });
                 if matches {
+                    let head: String = words[i]
+                        .chars()
+                        .take_while(|c| !c.is_alphanumeric())
+                        .collect();
                     let last = &words[i + want.len() - 1];
                     let tail: String = last
                         .chars()
@@ -252,7 +265,7 @@ impl Dictionary {
                         .into_iter()
                         .rev()
                         .collect();
-                    words.splice(i..i + want.len(), [format!("{written}{tail}")]);
+                    words.splice(i..i + want.len(), [format!("{head}{written}{tail}")]);
                 }
                 i += 1;
             }
@@ -347,8 +360,20 @@ pub fn heard(text: &str, conversing: bool, speaking: bool) -> Heard {
     }
 }
 
-/// Runs whisper.cpp on a piece and returns its cleaned text.
+/// Runs whisper.cpp on a piece and returns its cleaned text, without "um"
+/// and with the person's own words (`dictation-cleanup`).
 pub fn transcribe(whisper: &Path, model: &Path, samples: &[i16]) -> Option<String> {
+    transcribe_as(
+        whisper,
+        model,
+        samples,
+        crate::features::on("dictation-cleanup"),
+    )
+}
+
+/// Runs whisper.cpp on a piece: tidied (fillers, dictionary) or word for
+/// word (captions of what the computer plays).
+fn transcribe_as(whisper: &Path, model: &Path, samples: &[i16], tidy: bool) -> Option<String> {
     let dir = std::env::var_os("XDG_RUNTIME_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
@@ -372,7 +397,7 @@ pub fn transcribe(whisper: &Path, model: &Path, samples: &[i16]) -> Option<Strin
         c
     };
     // Your own words go first, so whisper spells them your way.
-    let cleanup = crate::features::on("dictation-cleanup");
+    let cleanup = tidy;
     let dict = if cleanup {
         Dictionary::load()
     } else {
@@ -815,7 +840,8 @@ pub fn run_captions(mic: bool) -> u8 {
         let Some(piece) = seg.feed(&frame) else {
             continue;
         };
-        let Some(text) = transcribe(&whisper, &model, &piece) else {
+        // Captions are word for word.
+        let Some(text) = transcribe_as(&whisper, &model, &piece, false) else {
             continue;
         };
         if text == last {
@@ -994,6 +1020,8 @@ mod tests {
         );
         assert_eq!(drop_fillers("Umbrella or summary"), "Umbrella or summary");
         assert_eq!(drop_fillers("Uh."), "");
+        assert_eq!(drop_fillers("I think so, um."), "I think so.");
+        assert_eq!(drop_fillers("a 10 mm bolt"), "a 10 mm bolt");
     }
 
     #[test]
@@ -1008,6 +1036,7 @@ mod tests {
             "Run kubectl get pods, then kubectl logs."
         );
         assert_eq!(dict.apply("cubes cuddle"), "cubes cuddle");
+        assert_eq!(dict.apply("(cube cuddle get pods)"), "(kubectl get pods)");
     }
 
     fn tone(level: i16) -> Vec<i16> {
