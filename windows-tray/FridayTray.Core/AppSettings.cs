@@ -76,6 +76,7 @@ public static class AppSettings
     public const string FeaturesOff = "FRIDAY_FEATURES_OFF";
     public static readonly (string Name, string What)[] Features =
     [
+        ("screen-secret-check", "No screenshot leaves when the window shows a key or password (its text is checked here first)"),
         ("update-check", "Tell me when a newer FRIDAY is out (asks GitHub once a minute after sign-in)"),
         ("wrong-button", "\"That was wrong\" on answers (keeps how it was asked and answered, no text)"),
         ("couldnt-check", "Say when an answer comes from general knowledge, with nothing on this computer checked"),

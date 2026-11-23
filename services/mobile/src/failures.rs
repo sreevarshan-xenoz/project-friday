@@ -106,6 +106,11 @@ pub fn plain_screen_error(e: &ContextReadError) -> String {
         ContextReadError::NotAuthorized { .. } => {
             "The screenshot needs your go-ahead each time; nothing was sent.".to_string()
         }
+        ContextReadError::EgressBlocked { reason } if reason.contains("key or password") => {
+            "The screen shows what looks like a key or password, so no picture of it was sent. \
+             Select the text you mean instead: keys in text are masked before it goes."
+                .to_string()
+        }
         ContextReadError::EgressBlocked { .. } => {
             "The screenshot looked like it held a secret, so it wasn't sent.".to_string()
         }
