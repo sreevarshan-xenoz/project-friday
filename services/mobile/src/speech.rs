@@ -1177,7 +1177,11 @@ fn swap_in(new: &Path, dir: &Path, parts: &[&str]) -> Result<(), String> {
 pub fn setup(dir: &Path, kind: Kind) -> Result<(), String> {
     // A voice being read aloud holds the engine's libraries open (on Windows that blocks replacing them).
     stop_running();
-    let work = std::env::temp_dir().join(format!("friday-voice-setup-{}", std::process::id()));
+    // Beside the voice folder, not in the temp folder: the files are moved
+    // into place at the end, and a move can't cross disks (/tmp is often RAM).
+    let parent = dir.parent().unwrap_or(dir);
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let work = parent.join(format!(".friday-voice-setup-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&work);
     std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
     let result = (|| {
