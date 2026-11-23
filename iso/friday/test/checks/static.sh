@@ -333,4 +333,12 @@ contains "and for Firefox" "$(cat "$REPO_ROOT/packaging/arch/PKGBUILD")" "usr/li
 contains "the host manifest allows only FRIDAY's extension" "$(cat "$REPO_ROOT/packaging/browser/org.friday.browser.chromium.json")" "chrome-extension://eiblopljacafgajanhkngbhejpjjmfff/"
 contains "and its Edge store copy" "$(cat "$REPO_ROOT/packaging/browser/org.friday.browser.chromium.json")" "chrome-extension://ncbhacgfkbbpmocppmagejakdnkikcpk/"
 
+echo "no usage data leaves (telemetry off by default: there is none)"
+# No analytics, crash-reporting or tracing-export SDK in what FRIDAY ships.
+# Adding one needs a switch that starts off, and this list updated with it.
+TELEMETRY='sentry|posthog|segment|mixpanel|amplitude|applicationinsights|opentelemetry-otlp|datadog|bugsnag|rollbar|appcenter'
+deps=$(grep -E '^name = ' "$REPO_ROOT/Cargo.lock"; grep -hiE 'PackageReference' "$REPO_ROOT"/windows-host/*.csproj "$REPO_ROOT"/windows-tray/*/*.csproj)
+if grep -qiE "$TELEMETRY" <<<"$deps"; then fail "a telemetry SDK is a dependency: $(grep -iE "$TELEMETRY" <<<"$deps" | head -1)"
+else pass "no telemetry SDK in Cargo.lock or the Windows projects"; fi
+
 finish
