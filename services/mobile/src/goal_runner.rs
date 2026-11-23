@@ -6806,7 +6806,11 @@ mod tests {
     async fn the_risk_table_matches_what_the_gated_tools_do() {
         use crate::risk_table::{level, Level};
         type Make = Box<dyn Fn(Arc<Mutex<ConfirmationGate>>) -> Box<dyn Tool>>;
-        let dir = std::env::temp_dir().join(format!("friday-risk-pin-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "friday-risk-pin-{}-{}",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("note.txt");
         std::fs::write(&file, "hi").unwrap();
@@ -6922,8 +6926,10 @@ mod tests {
             for (i, quoted) in [false, true].into_iter().enumerate() {
                 let gate: Arc<Mutex<ConfirmationGate>> = Arc::default();
                 gate.lock().unwrap().quoted = quoted;
-                let _ = make(gate.clone()).execute(act, &ctx).await;
+                let res = make(gate.clone()).execute(act, &ctx).await;
                 asked[i] = gate.lock().unwrap().pending.is_some();
+                // Runs when it didn't ask; stops when it did.
+                assert_eq!(res.success, !asked[i], "{tool}: {what}: {res:?}");
             }
             let seen = match asked {
                 [true, true] => Level::Ask,
@@ -6944,7 +6950,11 @@ mod tests {
             level("browser", "open an address that isn't http or https"),
             Some(Level::Block)
         );
-        opened.lock().unwrap().clear();
+        assert_eq!(
+            std::mem::take(&mut *opened.lock().unwrap()),
+            vec!["https://example.com".to_string()],
+            "the page opened once, on the ask without quoted text"
+        );
         let file_url = action(
             "open file:///etc/passwd",
             Capability::Custom("web.open".into()),
