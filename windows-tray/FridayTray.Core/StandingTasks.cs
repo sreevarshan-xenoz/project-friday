@@ -124,6 +124,25 @@ public static class StandingTasks
         }
     }
 
+    /// <summary>Quiet hours as the daemon reads them (`quiet: [22, 7]`), or null.</summary>
+    public static (int Start, int End)? Quiet(string path) =>
+        Read(path)?["quiet"] is JsonArray { Count: 2 } q ? (q[0]!.GetValue<int>(), q[1]!.GetValue<int>()) : null;
+
+    /// <summary>Recurring tasks wait out 22:00–07:00 (on), or never (off).</summary>
+    public static bool SetQuiet(string path, bool on)
+    {
+        var root = Read(path) as JsonObject ?? new JsonObject { ["tasks"] = new JsonArray() };
+        if (on)
+            root["quiet"] = new JsonArray(22, 7);
+        else
+            root.Remove("quiet");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var tmp = path + ".tmp";
+        File.WriteAllText(tmp, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        File.Move(tmp, path, overwrite: true);
+        return true;
+    }
+
     private static bool Edit(string path, Func<JsonArray, bool> change)
     {
         if (Read(path) is not JsonObject root || root["tasks"] is not JsonArray tasks || !change(tasks))
