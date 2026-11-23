@@ -336,9 +336,15 @@ contains "and its Edge store copy" "$(cat "$REPO_ROOT/packaging/browser/org.frid
 echo "no usage data leaves (telemetry off by default: there is none)"
 # No analytics, crash-reporting or tracing-export SDK in what FRIDAY ships.
 # Adding one needs a switch that starts off, and this list updated with it.
-TELEMETRY='sentry|posthog|segment|mixpanel|amplitude|applicationinsights|opentelemetry-otlp|datadog|bugsnag|rollbar|appcenter'
-deps=$(grep -E '^name = ' "$REPO_ROOT/Cargo.lock"; grep -hiE 'PackageReference' "$REPO_ROOT"/windows-host/*.csproj "$REPO_ROOT"/windows-tray/*/*.csproj)
-if grep -qiE "$TELEMETRY" <<<"$deps"; then fail "a telemetry SDK is a dependency: $(grep -iE "$TELEMETRY" <<<"$deps" | head -1)"
-else pass "no telemetry SDK in Cargo.lock or the Windows projects"; fi
+# Package names only (a crate's or NuGet package's name, split at - _ .),
+# so a word inside another name or a version doesn't count.
+TELEMETRY='(^|[-_.])(sentry|posthog|segment-analytics|analytics-rs|mixpanel|amplitude-analytics|applicationinsights|opentelemetry|datadog|bugsnag|rollbar|appcenter)([-_.]|$)'
+if [[ -s "$REPO_ROOT/Cargo.lock" ]]; then
+  names=$( { sed -nE 's/^name = "([^"]+)"/\1/p' "$REPO_ROOT/Cargo.lock"
+             find "$REPO_ROOT/windows-host" "$REPO_ROOT/windows-tray" -name '*.csproj' -not -path '*/obj/*' -not -path '*Tests*' \
+               -exec sed -nE 's/.*PackageReference Include="([^"]+)".*/\1/p' {} + ; } | tr 'A-Z' 'a-z')
+  if grep -qE "$TELEMETRY" <<<"$names"; then fail "a telemetry SDK is a dependency: $(grep -E "$TELEMETRY" <<<"$names" | head -1)"
+  else pass "no telemetry SDK among $(wc -l <<<"$names") shipped packages"; fi
+else fail "Cargo.lock is missing: can't check for telemetry SDKs"; fi
 
 finish
