@@ -69,6 +69,7 @@ Autonomous Agent & Cognitive Loop:
   friday forget [what]             Show what FRIDAY keeps on this computer, or wipe it
   friday actions [N]               Show what FRIDAY did on your desktop (windows, apps, media)
   friday sent [N]                  Show what left this machine for AI providers (egress log)
+  friday usage [days]              Calls, failures, free-limit hits and speed per AI provider
   friday providers                 How each AI provider is doing (limit hit, OK…) and who answered last
   friday goal "<objective>"        Dispatch an autonomous goal to FRIDAY agent
   friday cancel                    Cancel the goal FRIDAY is working on
@@ -3696,6 +3697,7 @@ which-this|\"Explain this\" with nothing picked: ask whether it means the select
 dictation-cleanup|Speech drops \"um\" and \"uh\" and uses your own words (~/.config/friday/dictionary)
 propose-memories|\"I use fish …\" in a question: offer to remember it (nothing is kept unless you say so)
 memory-file|Every ask carries what you asked FRIDAY to remember (~/.config/friday/memory.md)
+usage-page|friday usage: calls, failures, free-limit hits and speed per AI provider
 memory-changes|A changed fact (\"I moved to Pune\") closes the old one with a date in memory.md
 brief|\"What did I miss?\" answered from FRIDAY's own records (agents, standing tasks, reminders)
 call-pause|\"Hey Friday\" rests while a call or meeting app uses the microphone"
@@ -5590,6 +5592,14 @@ case "${1:-}" in
   memory)
     shift
     friday_memory "$@"
+    ;;
+  usage)
+    # Calls, failures, free-limit hits and speed per AI provider, from this
+    # computer's egress log: `friday usage [days]`.
+    shift
+    friday_feature_on usage-page || { echo "The usage page is turned off (friday feature usage-page on)."; exit 0; }
+    if [ -n "${1:-}" ]; then exec friday-ctl usage --days "$1"; fi
+    exec friday-ctl usage
     ;;
   brief)
     # What happened while you were away (agents, standing tasks, reminders

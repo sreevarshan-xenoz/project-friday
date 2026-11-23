@@ -41,7 +41,7 @@ use crate::secrets::{SecretHit, SecretsVault};
 ///
 /// Records metadata and counts only — NEVER the prompt, answer, key, URL with
 /// secrets, or any content.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EgressEntry {
     /// RFC 3339 UTC timestamp.
     pub ts: String,
@@ -67,6 +67,40 @@ pub struct EgressEntry {
     /// `true` for local providers (llama.cpp/Ollama on localhost); omitted otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local: Option<bool>,
+    /// How long the call took, in milliseconds (`friday usage`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ms: Option<u64>,
+    /// How long until its first words, when it streamed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_ms: Option<u64>,
+    /// The tokens the provider said it used, when it says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<u64>,
+    /// Why it failed, in one word: `free_limit`, `timeout` or `other`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// A failed call's error in one word for the usage page (never its text).
+pub fn error_kind(error: &str) -> &'static str {
+    let e = error.to_lowercase();
+    // A timeout first: its text may hold any number (a duration, an id).
+    if e.contains("timed out") || e.contains("timeout") {
+        return "timeout";
+    }
+    let status_429 = e
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|w| w == "429");
+    if status_429
+        || e.contains("freeusagelimit")
+        || e.contains("free_allowance_used")
+        || e.contains("rate limit")
+        || e.contains("quota")
+    {
+        "free_limit"
+    } else {
+        "other"
+    }
 }
 
 /// Context for the currently running ask, propagated through tokio task-local storage.
@@ -496,6 +530,7 @@ mod tests {
             masked: Some(1),
             outcome: "ok".to_string(),
             local: None,
+            ..Default::default()
         };
         let json = serde_json::to_string(&entry).unwrap();
         // Check fields
@@ -546,6 +581,7 @@ mod tests {
             masked: None,
             outcome: "ok".to_string(),
             local: Some(true),
+            ..Default::default()
         };
 
         append_entry(&path, &entry);
@@ -583,6 +619,7 @@ mod tests {
                 masked: None,
                 outcome: "ok".to_string(),
                 local: None,
+                ..Default::default()
             };
             // Use max_bytes = 1000 so initial writes fit, but by entry 5 it exceeds ~600 bytes
             // Let's use max_bytes = 400
@@ -626,7 +663,29 @@ mod tests {
             masked: None,
             outcome: "ok".to_string(),
             local: None,
+            ..Default::default()
         };
         append_entry(&invalid_path, &entry);
+    }
+
+    #[test]
+    fn a_failure_is_named_by_its_kind_only() {
+        assert_eq!(
+            super::error_kind("Provider opencode returned error status 429: FreeUsageLimitError"),
+            "free_limit"
+        );
+        assert_eq!(
+            super::error_kind("402 {\"error\":{\"code\":\"free_allowance_used\"}}"),
+            "free_limit"
+        );
+        assert_eq!(
+            super::error_kind("request timed out after 429ms"),
+            "timeout"
+        );
+        assert_eq!(
+            super::error_kind("id 963aeee7-2569-dc50673ed429 failed"),
+            "other"
+        );
+        assert_eq!(super::error_kind("connection refused"), "other");
     }
 }
