@@ -1585,6 +1585,64 @@ fn format_recalled_memory(ep: &CognitiveEpisode) -> String {
     )
 }
 
+/// Long output as the model sees it: its start and its end (where errors
+/// and totals usually are), and how long it was in all.
+fn head_and_tail(s: &str, max: usize) -> String {
+    let count = s.chars().count();
+    if count <= max {
+        return s.to_string();
+    }
+    let head: String = s.chars().take(max * 2 / 3).collect();
+    let tail: String = s.chars().skip(count - max / 3).collect();
+    format!(
+        "{head}\n… ({} lines, {count} characters in all; the middle is left out) …\n{tail}",
+        s.lines().count()
+    )
+}
+
+/// Where whole outputs too long for an answer are kept (the last 20).
+fn outputs_dir() -> std::path::PathBuf {
+    if cfg!(test) {
+        return std::env::temp_dir().join(format!("friday-test-outputs-{}", std::process::id()));
+    }
+    crate::shell_state::ShellState::default_path().with_file_name("outputs")
+}
+
+/// Saves an output too long for the answer (secrets masked), owner-only,
+/// keeping the newest 20; its path.
+fn save_whole_output(
+    dir: &std::path::Path,
+    goal_id: &str,
+    text: &str,
+) -> Option<std::path::PathBuf> {
+    std::fs::create_dir_all(dir).ok()?;
+    let name: String = goal_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect();
+    let path = dir.join(format!("{name}.txt"));
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+    let mut f = opts.open(&path).ok()?;
+    std::io::Write::write_all(
+        &mut f,
+        friday_goal_execution::mask_secrets(text).0.as_bytes(),
+    )
+    .ok()?;
+    let mut old: Vec<_> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .collect();
+    old.sort();
+    for (_, p) in old.iter().rev().skip(20) {
+        let _ = std::fs::remove_file(p);
+    }
+    Some(path)
+}
+
 fn truncate(s: &str, max: usize) -> String {
     let count = s.chars().count();
     if count <= max {
@@ -3180,7 +3238,7 @@ fn answer_prompt(
             p.push_str(&format!(
                 "\nWhat FRIDAY did ({tool}, {label}):\n{}\n",
                 // Masked before it is cut, so a key can't be left half showing.
-                truncate(
+                head_and_tail(
                     &friday_goal_execution::mask_secrets(&r.text).0,
                     ANSWER_SOURCE_CHARS
                 )
@@ -3301,12 +3359,28 @@ async fn compose_answer(
     if text.is_empty() {
         return Err("the model returned an empty answer".to_string());
     }
+    // Too long for the answer: the whole of it in a file, named under it.
+    let mut text = text.to_string();
+    if let Some(r) = report
+        .result
+        .as_ref()
+        .filter(|r| r.text.chars().count() > ANSWER_SOURCE_CHARS)
+        .filter(|_| crate::features::on("big-output-file"))
+    {
+        if let Some(path) = save_whole_output(&outputs_dir(), goal_id, &r.text) {
+            text.push_str(&format!(
+                "\n\nThe whole output ({} lines) is in {}",
+                r.text.lines().count(),
+                path.display()
+            ));
+        }
+    }
     let source = report.result.as_ref().map(|r| {
         json!({ "tool": r.tool, "success": r.success, "text": truncate(&r.text, ANSWER_SOURCE_CHARS) })
     });
     Ok(GoalResult {
         kind: GoalResultKind::Text,
-        text: text.to_string(),
+        text,
         structured: source.map(|s| json!({ "source": s })),
         tool: Some("answer".to_string()),
         success: true,
@@ -4374,6 +4448,49 @@ mod tests {
     }
 
     /// A key a tool printed (a file read, a command's output) never goes to the model.
+    #[test]
+    fn a_long_output_shows_its_start_and_end_and_is_kept_whole_in_a_file() {
+        let lines: Vec<String> = (1..=5000).map(|i| format!("line {i}")).collect();
+        let big = lines.join("\n") + "\nerror: the last thing went wrong";
+        let shown = head_and_tail(&big, 600);
+        assert!(shown.starts_with("line 1\n"));
+        assert!(
+            shown.ends_with("error: the last thing went wrong"),
+            "the end, where errors are"
+        );
+        assert!(shown.contains("5001 lines"));
+        assert!(shown.chars().count() < 800);
+        assert_eq!(head_and_tail("short", 600), "short");
+
+        let dir = outputs_dir().join("keep");
+        for i in 0..22 {
+            save_whole_output(&dir, &format!("goal-{i}"), "x").unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let p = save_whole_output(
+            &dir,
+            "goal/../evil",
+            &format!("{big}\nkey sk-ant-api03-{}", "A".repeat(40)),
+        )
+        .unwrap();
+        assert_eq!(
+            p.parent(),
+            Some(dir.as_path()),
+            "a goal id can't name another folder"
+        );
+        let saved = std::fs::read_to_string(&p).unwrap();
+        assert!(
+            saved.contains("line 4999") && !saved.contains("AAAAAAAAAAAAAAAAAAAA"),
+            "whole, masked"
+        );
+        assert_eq!(
+            std::fs::read_dir(&dir).unwrap().count(),
+            20,
+            "the newest 20 kept"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn answer_prompt_masks_secrets_in_tool_output() {
         let key = "sk-ant-api03-FAKEFAKEFAKEFAKEFAKEFAKE";
