@@ -1428,6 +1428,52 @@ async fn main() -> std::process::ExitCode {
         }
         return std::process::ExitCode::SUCCESS;
     }
+    // A checked backup of settings, memory and history, its check, and a
+    // restore that checks first and keeps the current files aside.
+    if raw.first().map(String::as_str) == Some("backup") {
+        if !friday_mobile::features::on("backup") {
+            println!("Backups are turned off (Settings, Features: backup).");
+            return std::process::ExitCode::SUCCESS;
+        }
+        use friday_mobile::backup;
+        let stamp = chrono::Local::now().format("%Y-%m-%d-%H%M%S").to_string();
+        let said = match (raw.get(1).map(String::as_str), raw.get(2)) {
+            (Some("check"), Some(dir)) => backup::check(std::path::Path::new(dir)).map(|m| {
+                format!("The backup is whole: {} files, made {}.", m.files.len(), m.created)
+            }),
+            (Some("restore"), Some(dir)) => {
+                backup::restore(std::path::Path::new(dir), &backup::folders(), &stamp).map(|n| {
+                    format!(
+                        "Restored {n} files. What they replaced is in before-restore-{stamp} in FRIDAY's folders, and your API keys were kept. Restart FRIDAY to use them."
+                    )
+                })
+            }
+            (Some("check" | "restore"), None) => {
+                Err("usage: friday-ctl backup [folder] | check <folder> | restore <folder>".into())
+            }
+            (folder, _) => {
+                let parent = folder
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(backup::default_parent);
+                backup::create(&backup::folders(), &parent, &stamp).map(|(dir, n)| {
+                    format!(
+                        "Backed up {n} files to {} and checked them. API keys and downloaded voices aren't in it.",
+                        dir.display()
+                    )
+                })
+            }
+        };
+        return match said {
+            Ok(s) => {
+                println!("{s}");
+                std::process::ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("friday-ctl: {e}");
+                std::process::ExitCode::from(1)
+            }
+        };
+    }
     // How each AI provider has done lately, from the local egress log.
     if raw.first().map(String::as_str) == Some("usage") {
         let days: u32 = raw

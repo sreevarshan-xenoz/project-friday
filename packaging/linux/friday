@@ -70,6 +70,7 @@ Autonomous Agent & Cognitive Loop:
   friday actions [N]               Show what FRIDAY did on your desktop (windows, apps, media)
   friday sent [N]                  Show what left this machine for AI providers (egress log)
   friday usage [days]              Calls, failures, free-limit hits and speed per AI provider
+  friday backup [folder|check <f>|restore <f>]  Back up settings, memory and history; check or restore one
   friday providers                 How each AI provider is doing (limit hit, OK…) and who answered last
   friday goal "<objective>"        Dispatch an autonomous goal to FRIDAY agent
   friday cancel                    Cancel the goal FRIDAY is working on
@@ -3746,6 +3747,7 @@ propose-memories|\"I use fish …\" in a question: offer to remember it (nothing
 memory-file|Every ask carries what you asked FRIDAY to remember (~/.config/friday/memory.md)
 live-web|Questions about the weather, news, scores or prices search the web without \"search\" first
 speak-as-it-comes|Spoken answers start with the first sentence while the rest is still coming
+backup|friday backup: a checked backup of settings, memory and history, and a restore that checks first
 usage-page|friday usage: calls, failures, free-limit hits and speed per AI provider
 memory-changes|A changed fact (\"I moved to Pune\") closes the old one with a date in memory.md
 brief|\"What did I miss?\" answered from FRIDAY's own records (agents, standing tasks, reminders)
@@ -5677,6 +5679,14 @@ case "${1:-}" in
   memory)
     shift
     friday_memory "$@"
+    ;;
+  backup)
+    # A checked backup of settings, memory and history (no API keys or
+    # voices): `friday backup [folder]`, `friday backup check <folder>`,
+    # `friday backup restore <folder>` (checks first, keeps what it replaces).
+    shift
+    friday_feature_on backup || { echo "Backups are turned off (friday feature backup on)."; exit 0; }
+    exec friday-ctl backup "$@"
     ;;
   usage)
     # Calls, failures, free-limit hits and speed per AI provider, from this

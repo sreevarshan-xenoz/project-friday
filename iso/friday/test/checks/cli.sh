@@ -17,6 +17,11 @@ if [[ "\$1" == say ]]; then
   printf 'friday-ctl-say %s\n' "\$text" >> "$LOG"
   exit "\${SAY_EXIT:-0}"
 fi
+if [[ "\$1" == backup ]]; then
+  printf 'friday-ctl-backup %s\n' "\$*" >> "$LOG"
+  echo 'Backed up 3 files to /tmp/x and checked them.'
+  exit 0
+fi
 if [[ "\$1" == brief ]]; then
   printf 'friday-ctl-brief %s\n' "\$*" >> "$LOG"
   echo 'opencode finished "fix the tests": all pass.'
@@ -545,6 +550,13 @@ bash "$F" agents worktree on >/dev/null
 contains "on writes the setting" "$(cat "$HOME/.config/friday/friday.env")" "FRIDAY_AGENT_WORKTREE=1"
 bash "$F" agents worktree off >/dev/null
 contains "accept needs a run id" "$(bash "$F" agents accept nope 2>&1)" "usage: friday agents accept <id>"
+# A checked backup, and a restore through friday-ctl.
+: >"$LOG"; contains "friday backup makes a checked backup" "$(bash "$F" backup)" "checked them"
+bash "$F" backup restore /tmp/some-backup >/dev/null
+contains "a restore goes to friday-ctl with its folder" "$(cat "$LOG")" "friday-ctl-backup backup restore /tmp/some-backup"
+bash "$F" feature backup off >/dev/null
+contains "backups can be turned off" "$(bash "$F" backup)" "turned off"
+bash "$F" feature backup on >/dev/null
 
 echo "checking agents' work"
 contains "off unless turned on" "$(bash "$F" agents check)" "Checking agents' work: off"
