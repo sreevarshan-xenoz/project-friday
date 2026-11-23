@@ -22,6 +22,11 @@ if [[ "\$1" == backup ]]; then
   echo 'Backed up 3 files to /tmp/x and checked them.'
   exit 0
 fi
+if [[ "\$1" == day ]]; then
+  printf 'friday-ctl-day %s\n' "\${*:2}" >> "$LOG"
+  echo 'friday: 3 things'
+  exit 0
+fi
 if [[ "\$1" == verify-log ]]; then
   printf 'friday-ctl-verify-log\n' >> "$LOG"
   echo 'The action log is intact: 3 actions'
@@ -618,6 +623,14 @@ contains "a recipe is added through friday-ctl" "$(cat "$LOG")" "friday-ctl-task
 contains "friday verify-log checks the chain through friday-ctl" "$(bash "$F" verify-log)" "intact"
 : >"$LOG"; bash "$F" memory tidy >/dev/null 2>&1 || true
 contains "friday memory tidy goes to friday-ctl" "$(cat "$LOG")" "memory tidy"
+: >"$LOG"; contains "friday day sums up a day through friday-ctl" "$(bash "$F" day yesterday)" "friday: 3 things"
+contains "friday day passes the day on" "$(cat "$LOG")" "friday-ctl-day yesterday"
+bash "$F" feature day-summary off >/dev/null
+contains "day summaries have a switch" "$(bash "$F" day)" "turned off"
+bash "$F" feature day-summary on >/dev/null
+mkdir -p "$HOME/.local/state/friday/days" && echo x >"$HOME/.local/state/friday/days/2026-11-20.md"
+bash "$F" forget answers --yes >/dev/null
+[ ! -e "$HOME/.local/state/friday/days" ] && pass "friday forget answers deletes kept day summaries" || fail "friday forget answers deletes kept day summaries"
 # One list of runs, standing tasks and approvals.
 : >"$LOG"; contains "friday activity shows the list" "$(bash "$F" activity)" "Standing tasks"
 contains "from friday-ctl" "$(cat "$LOG")" "friday-ctl-activity"

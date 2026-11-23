@@ -367,9 +367,91 @@ pub fn render(entries: &[Entry], from: NaiveDate, to: NaiveDate) -> String {
     out
 }
 
+/// A short summary of `day`, by project (`friday day`): how many things
+/// happened in each, with the first and the latest. Empty when nothing did.
+pub fn day_summary(entries: &[Entry], day: NaiveDate) -> String {
+    let mut projects: Vec<(String, Vec<&Entry>)> = Vec::new();
+    for e in entries {
+        let Some(t) = Local.timestamp_opt(e.ts, 0).single() else {
+            continue;
+        };
+        if t.date_naive() != day {
+            continue;
+        }
+        let name = e.project.clone().unwrap_or_else(|| "Other".into());
+        match projects.iter_mut().find(|(n, _)| *n == name) {
+            Some((_, list)) => list.push(e),
+            None => projects.push((name, vec![e])),
+        }
+    }
+    if projects.is_empty() {
+        return String::new();
+    }
+    // Projects first, by how much happened; "Other" last.
+    projects.sort_by_key(|(n, list)| (n == "Other", std::cmp::Reverse(list.len())));
+    let at = |e: &Entry| {
+        Local
+            .timestamp_opt(e.ts, 0)
+            .single()
+            .map(|t| t.format("%H:%M").to_string())
+            .unwrap_or_default()
+    };
+    let mut out = format!("{} {}\n", day.weekday(), day.format("%Y-%m-%d"));
+    for (name, list) in &projects {
+        let n = list.len();
+        out.push_str(&format!(
+            "{name}: {n} {}\n",
+            if n == 1 { "thing" } else { "things" }
+        ));
+        let first = list[0];
+        out.push_str(&format!("  {} {}\n", at(first), first.text));
+        if n > 1 {
+            let last = list[n - 1];
+            out.push_str(&format!("  {} {}\n", at(last), last.text));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_day_is_summed_up_by_project() {
+        let e = |day: &str, hm: &str, text: &str, project: Option<&str>| Entry {
+            ts: at(day, hm).timestamp(),
+            text: text.into(),
+            project: project.map(String::from),
+        };
+        let entries = vec![
+            e("2026-11-19", "09:00", "the day before", Some("site")),
+            e("2026-11-20", "09:00", "moved kitty", None),
+            e("2026-11-20", "10:00", "why does cargo fail", Some("friday")),
+            e(
+                "2026-11-20",
+                "11:00",
+                "agent fixed the test",
+                Some("friday"),
+            ),
+            e("2026-11-20", "12:00", "explain the planner", Some("friday")),
+            e("2026-11-20", "13:00", "fix the footer", Some("site")),
+        ];
+        let day = NaiveDate::from_ymd_opt(2026, 11, 20).unwrap();
+        let s = day_summary(&entries, day);
+        assert!(s.starts_with("Fri 2026-11-20\n"), "{s}");
+        assert!(
+            s.contains(
+                "friday: 3 things\n  10:00 why does cargo fail\n  12:00 explain the planner\n"
+            ),
+            "{s}"
+        );
+        assert!(s.contains("site: 1 thing\n  13:00 fix the footer\n"), "{s}");
+        assert!(s.ends_with("Other: 1 thing\n  09:00 moved kitty\n"), "{s}");
+        assert!(!s.contains("the day before"), "{s}");
+        let none = NaiveDate::from_ymd_opt(2026, 11, 21).unwrap();
+        assert_eq!(day_summary(&entries, none), "");
+    }
 
     fn dir() -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("friday-timeline-{}", uuid::Uuid::new_v4()));

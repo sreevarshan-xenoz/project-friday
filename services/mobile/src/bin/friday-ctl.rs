@@ -890,6 +890,64 @@ fn timeline(args: &[String]) -> std::process::ExitCode {
     std::process::ExitCode::SUCCESS
 }
 
+/// `friday-ctl day [today|yesterday|YYYY-MM-DD]`: a short summary of a day
+/// by project, built here from FRIDAY's logs and kept in `days/` (so it
+/// outlasts the logs); `friday-ctl day forget <YYYY-MM-DD|all>` deletes kept
+/// summaries.
+fn day(args: &[String], state: &std::path::Path) -> std::process::ExitCode {
+    use friday_mobile::timeline;
+    use std::process::ExitCode;
+    let days = state.join("days");
+    let date = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok();
+    let today = chrono::Local::now().date_naive();
+    if args.first().map(String::as_str) == Some("forget") {
+        return match args.get(1).map(String::as_str) {
+            Some("all") => {
+                let n = std::fs::read_dir(&days).map(|d| d.count()).unwrap_or(0);
+                let _ = std::fs::remove_dir_all(&days);
+                println!("Deleted {n} kept day summaries.");
+                ExitCode::SUCCESS
+            }
+            Some(s) if date(s).is_some() => {
+                match std::fs::remove_file(days.join(format!("{s}.md"))) {
+                    Ok(()) => println!("Deleted the summary of {s}."),
+                    Err(_) => println!("There's no kept summary of {s}."),
+                }
+                ExitCode::SUCCESS
+            }
+            _ => {
+                eprintln!("usage: friday-ctl day forget <YYYY-MM-DD|all>");
+                ExitCode::from(2)
+            }
+        };
+    }
+    let Some(on) = (match args.first().map(String::as_str) {
+        None | Some("today") => Some(today),
+        Some("yesterday") => today.pred_opt(),
+        Some(s) => date(s),
+    }) else {
+        eprintln!(
+            "usage: friday-ctl day [today|yesterday|YYYY-MM-DD] | day forget <YYYY-MM-DD|all>"
+        );
+        return ExitCode::from(2);
+    };
+    let kept = days.join(format!("{}.md", on.format("%Y-%m-%d")));
+    let text = timeline::day_summary(&timeline::collect(state), on);
+    if text.is_empty() {
+        match std::fs::read_to_string(&kept) {
+            Ok(t) => print!("{t}"),
+            Err(_) => println!("Nothing in FRIDAY's logs for {}.", on.format("%Y-%m-%d")),
+        }
+        return ExitCode::SUCCESS;
+    }
+    let (masked, _) = friday_goal_execution::mask_secrets(&text);
+    print!("{masked}");
+    if std::fs::create_dir_all(&days).is_ok() {
+        let _ = std::fs::write(&kept, &masked);
+    }
+    ExitCode::SUCCESS
+}
+
 /// `friday-ctl thought add [idea|decision|question|action] <text> | list [words]`:
 /// keep a thought under the project in front (the terminal's git repo), and
 /// read a thread back (`friday_mobile::thoughts`).
@@ -1406,6 +1464,9 @@ async fn main() -> std::process::ExitCode {
     }
     if raw.first().map(String::as_str) == Some("timeline") {
         return timeline(&raw[1..]);
+    }
+    if raw.first().map(String::as_str) == Some("day") {
+        return day(&raw[1..], &friday_intelligence::default_state_dir());
     }
     if raw.first().map(String::as_str) == Some("show") {
         return show(&raw[1..]).await;
