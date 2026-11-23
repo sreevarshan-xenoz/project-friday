@@ -6799,6 +6799,167 @@ mod tests {
         );
     }
 
+    /// What each gated tool does, run for real, is the level the risk table
+    /// shows: asks every time (ask), only with quoted text (watched), never
+    /// (safe), refused (block). Change a tool's gate and its row together.
+    #[tokio::test]
+    async fn the_risk_table_matches_what_the_gated_tools_do() {
+        use crate::risk_table::{level, Level};
+        type Make = Box<dyn Fn(Arc<Mutex<ConfirmationGate>>) -> Box<dyn Tool>>;
+        let dir = std::env::temp_dir().join(format!("friday-risk-pin-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("note.txt");
+        std::fs::write(&file, "hi").unwrap();
+        let path = file.display().to_string();
+        let ctx = ExecutionContext::for_goal("g1");
+        let opened: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+
+        let files = || -> Make {
+            Box::new(|gate| {
+                Box::new(FilesystemCapabilityTool {
+                    adapter: FilesystemAdapter::new(),
+                    gate,
+                })
+            })
+        };
+        let seen = opened.clone();
+        let browser = move || -> Make {
+            let seen = seen.clone();
+            Box::new(move |gate| {
+                let seen = seen.clone();
+                Box::new(BrowserCapabilityTool {
+                    open: Arc::new(move |url: &str, _: Option<&str>| {
+                        seen.lock().unwrap().push(url.to_string());
+                        Ok(())
+                    }),
+                    first_video: Arc::new(|_| Box::pin(async { None })),
+                    gate,
+                })
+            })
+        };
+        let store = dir.join("standing.json");
+        let action = |text: &str, cap: Capability, params: serde_json::Value| {
+            let mut a = Action::single(text, cap, "g1");
+            if !params.is_null() {
+                a.parameters = params;
+            }
+            a
+        };
+        let cases: Vec<(&str, &str, Make, Action)> = vec![
+            (
+                "files",
+                "list a folder, show its tree, search files",
+                files(),
+                action(
+                    "list the folder",
+                    Capability::ListDirectory,
+                    json!({ "path": dir.display().to_string() }),
+                ),
+            ),
+            (
+                "files",
+                "read a file",
+                files(),
+                action(
+                    "read note.txt",
+                    Capability::ReadFile,
+                    json!({ "path": path }),
+                ),
+            ),
+            (
+                "files",
+                "write a file",
+                files(),
+                action(
+                    "write note.txt",
+                    Capability::WriteFile,
+                    json!({ "path": path, "content": "changed" }),
+                ),
+            ),
+            (
+                "terminal",
+                "run a command",
+                Box::new(|gate| {
+                    Box::new(TerminalCommandTool {
+                        adapter: TerminalAdapter::new(),
+                        gate,
+                    })
+                }),
+                action("run echo hi", Capability::ExecuteCommand, json!(null)),
+            ),
+            (
+                "browser",
+                "open a web page in your browser",
+                browser(),
+                action(
+                    "open example.com",
+                    Capability::Custom("web.open".into()),
+                    json!(null),
+                ),
+            ),
+            (
+                "tasks",
+                "add, pause or remove a standing task",
+                Box::new(move |gate| {
+                    let model = Arc::new(ScriptedAnswerer {
+                        reply: Ok(r#"{"op":"list"}"#.into()),
+                        prompts: Mutex::default(),
+                    });
+                    Box::new(
+                        crate::standing::StandingTool::new(model, store.clone()).with_gate(gate),
+                    )
+                }),
+                action(
+                    "every morning at 8 tell me the weather",
+                    Capability::Custom(crate::standing::CAPABILITY.into()),
+                    json!(null),
+                ),
+            ),
+        ];
+        for (tool, what, make, act) in &cases {
+            // A fresh gate each time, without and with quoted text.
+            let mut asked = [false; 2];
+            for (i, quoted) in [false, true].into_iter().enumerate() {
+                let gate: Arc<Mutex<ConfirmationGate>> = Arc::default();
+                gate.lock().unwrap().quoted = quoted;
+                let _ = make(gate.clone()).execute(act, &ctx).await;
+                asked[i] = gate.lock().unwrap().pending.is_some();
+            }
+            let seen = match asked {
+                [true, true] => Level::Ask,
+                [false, true] => Level::Watched,
+                [false, false] => Level::Safe,
+                [true, false] => panic!("{tool}: asks without quoted text but not with it"),
+            };
+            assert_eq!(Some(seen), level(tool, what), "{tool}: {what}");
+        }
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "hi",
+            "nothing written without a yes"
+        );
+
+        // Other schemes are refused outright, quoted text or not.
+        assert_eq!(
+            level("browser", "open an address that isn't http or https"),
+            Some(Level::Block)
+        );
+        opened.lock().unwrap().clear();
+        let file_url = action(
+            "open file:///etc/passwd",
+            Capability::Custom("web.open".into()),
+            json!(null),
+        );
+        for quoted in [false, true] {
+            let gate: Arc<Mutex<ConfirmationGate>> = Arc::default();
+            gate.lock().unwrap().quoted = quoted;
+            let res = browser()(gate.clone()).execute(&file_url, &ctx).await;
+            assert!(!res.success && gate.lock().unwrap().pending.is_none());
+        }
+        assert!(opened.lock().unwrap().is_empty(), "nothing opened");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     struct FakePageReader {
         result: Result<crate::page_read::Page, String>,
         reads: std::sync::Mutex<Vec<String>>,
