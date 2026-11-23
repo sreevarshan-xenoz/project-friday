@@ -2166,4 +2166,36 @@ contains "report: home path becomes ~" "$rep" "~/notes/todo.txt"
 mode=$(stat -c %a "$W/report.txt" 2>/dev/null)
 [[ "$mode" == 600 ]] && pass "report: written 0600" || fail "report: mode is $mode, not 600"
 
+
+echo "a private window never leaves (canary)"
+# A password manager in front whose title, selection, page and pixels carry a
+# canary: no ask sends it anywhere or keeps it. No local AI here (a fresh
+# config folder), so nothing could rightly take it.
+printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s "$HYPR_WIN"\nexit 0\n' >"$S/hyprctl"; chmod +x "$S/hyprctl"
+cat >"$W/bt-bin/friday-ctl" <<STUB
+#!/bin/bash
+if [ "\$1 \$2" = "browser tab" ]; then printf '%s\n' '{"title":"FRIDAY-PRIV-CANARY","url":"https://example.com/c","selection":"","text":"FRIDAY-PRIV-CANARY page"}'; exit 0; fi
+exec "$S/friday-ctl" "\$@"
+STUB
+canary_cfg="$W/canary-config"; mkdir -p "$canary_cfg/friday"
+XDG_CONFIG_HOME="$canary_cfg" bash "$F" app-instructions set keepassxc "FRIDAY-PRIV-CANARY be brief" >/dev/null
+XDG_CONFIG_HOME="$canary_cfg" bash "$F" app-instructions set firefox "FRIDAY-PRIV-CANARY be brief" >/dev/null
+: >"$LOG"
+for kind in vault browser; do
+  if [ "$kind" = vault ]; then win='{"class":"org.keepassxc.KeePassXC","title":"FRIDAY-PRIV-CANARY.kdbx"}'
+  else win='{"class":"firefox","title":"FRIDAY-PRIV-CANARY — Mozilla Firefox Private Browsing"}'; fi
+  export HYPR_WIN="$win"
+  XDG_CONFIG_HOME="$canary_cfg" PRIMARY="FRIDAY-PRIV-CANARY selected" PICK="explain" bash "$F" ask --selection; sleep 0.2
+  XDG_CONFIG_HOME="$canary_cfg" PATH="$W/bt-bin:$PATH" bash "$F" ask --screen "what is this"; sleep 0.2
+  XDG_CONFIG_HOME="$canary_cfg" bash "$F" ask "close this window"; sleep 0.2
+  XDG_CONFIG_HOME="$canary_cfg" bash "$F" ask "how do I add an entry"; sleep 0.2
+done
+unset HYPR_WIN
+# (The ask box on this screen may show it: that stays here.)
+if grep -v '^fuzzel ' "$LOG" | grep -q "FRIDAY-PRIV-CANARY"; then fail "a private window reached: $(grep -v '^fuzzel ' "$LOG" | grep -m1 FRIDAY-PRIV-CANARY | cut -c1-120)"
+else pass "nothing from a private window was sent (selection, screen, page, title, app instructions)"; fi
+if grep -rqa "FRIDAY-PRIV-CANARY" "$state" 2>/dev/null; then fail "a private window was kept in: $(grep -rla FRIDAY-PRIV-CANARY "$state" | head -1)"
+else pass "and nothing of it was kept"; fi
+rm -f "$S/hyprctl"
+
 finish
