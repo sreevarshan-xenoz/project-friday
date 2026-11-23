@@ -34,32 +34,39 @@ pub fn facts(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// The line an ask carries, at most `MAX_CHARS`, or None with nothing kept.
+/// The line an ask carries, at most `MAX_CHARS`, secrets masked, or None
+/// with nothing kept (or `memory-file` off).
 pub fn context_line() -> Option<String> {
+    if !crate::features::on("memory-file") {
+        return None;
+    }
     let all = facts(&std::fs::read_to_string(path()).ok()?);
     let mut line = String::from("about you: ");
     for f in all {
         if line.len() + f.len() + 2 > MAX_CHARS {
-            break;
+            continue;
         }
         if !line.ends_with(": ") {
             line.push_str("; ");
         }
         line.push_str(&f);
     }
-    (!line.ends_with(": ")).then_some(line)
+    // A hand-written line might hold a key: never sent as typed.
+    (!line.ends_with(": ")).then(|| friday_goal_execution::mask_secrets(&line).0)
 }
 
 /// The fact a "remember that …" request names, in the person's words.
 pub fn fact_in(request: &str) -> Option<String> {
     let r = request.trim();
     let lower = r.to_lowercase();
-    let rest = ["remember that ", "remember: ", "remember "]
+    // Only "remember that …": "remember to buy milk" or "remember when we
+    // fixed it?" aren't facts about the person.
+    let rest = ["remember that ", "remember: "]
         .iter()
         .find(|p| lower.starts_with(*p))
         .map(|p| r[p.len()..].trim())?;
     let fact = rest.trim_end_matches(['.', '!']).trim();
-    (!fact.is_empty() && fact.len() <= 300).then(|| fact.to_string())
+    (!fact.is_empty() && fact.len() <= 300 && !fact.ends_with('?')).then(|| fact.to_string())
 }
 
 /// Adds the fact to the file (once), keeping everything else in it.
@@ -105,5 +112,7 @@ mod tests {
             Some("my name is Ada".into())
         );
         assert_eq!(fact_in("what do you remember"), None);
+        assert_eq!(fact_in("remember to buy milk"), None);
+        assert_eq!(fact_in("remember that we fixed it?"), None);
     }
 }

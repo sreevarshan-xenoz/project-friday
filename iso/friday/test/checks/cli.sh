@@ -559,11 +559,12 @@ bash "$F" tasks quiet off >/dev/null
 
 echo "the memory file"
 contains "empty at first" "$(bash "$F" memory)" "FRIDAY remembers nothing about you yet"
-printf '# mine\n- I use fish\n- my editor is Helix\n' >"$HOME/.config/friday/memory.md"
+printf '# mine, about helix too\n- I use fish\n- my editor is Helix\n' >"$HOME/.config/friday/memory.md"
 contains "lists what it keeps" "$(bash "$F" memory)" "- my editor is Helix"
 contains "forgets a line" "$(bash "$F" memory forget helix)" "Forgot 1 line(s)"
-if grep -q Helix "$HOME/.config/friday/memory.md"; then fail "the line is still there"; else pass "the line is gone, the rest stays"; fi
+if grep -q "^- my editor is Helix" "$HOME/.config/friday/memory.md"; then fail "the line is still there"; else pass "the line is gone, the rest stays"; fi
 contains "the rest stays" "$(cat "$HOME/.config/friday/memory.md")" "- I use fish"
+contains "headings stay too" "$(cat "$HOME/.config/friday/memory.md")" "# mine, about helix too"
 bash "$F" forget memory --yes >/dev/null
 [ ! -e "$HOME/.config/friday/memory.md" ] && pass "friday forget memory clears it" || fail "forget memory left the memory file"
 

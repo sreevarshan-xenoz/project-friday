@@ -65,7 +65,8 @@ propose-memories off` (Windows: Settings → Features) stops the offers. What FR
 `~/.config/friday/memory.md` (Windows: `%APPDATA%\friday\memory.md`, or Settings → Privacy, "What FRIDAY
 remembers about you"), one `- ` line each; every ask carries it, and the line under an answer says so.
 `friday memory` lists it, `friday memory edit` opens it, `friday memory forget <words>` takes a line out, and
-`friday forget memory` clears it with the rest.
+`friday forget memory` clears it with the rest. Only "remember that …" adds a line ("remember to buy milk" doesn't), anything shaped like
+a key is masked before it goes out, and `friday feature memory-file off` stops asks carrying it.
 - Past answers are searchable in the FRIDAY drawer.
 
 ## Without a model

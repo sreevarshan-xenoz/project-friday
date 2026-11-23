@@ -3173,10 +3173,10 @@ friday_memory() {
     forget)
       local words="${*:2}" n
       [ -n "$words" ] || { echo "usage: friday memory forget <words in the line>" >&2; return 2; }
-      n=$(grep -ciF -- "$words" "$f" 2>/dev/null | head -n1 || true)
+      # Only its "- " lines: headings and notes in the file are yours.
+      n=$(awk -v w="${words,,}" '/^- / && index(tolower($0), w) { n++ } END { print n + 0 }' "$f" 2>/dev/null || echo 0)
       [ "${n:-0}" -gt 0 ] || { echo "No line of $f has \"$words\"."; return 1; }
-      grep -viF -- "$words" "$f" >"$f.tmp" || true
-      mv -f "$f.tmp" "$f"
+      awk -v w="${words,,}" '!(/^- / && index(tolower($0), w))' "$f" >"$f.tmp" && mv -f "$f.tmp" "$f"
       echo "Forgot $n line(s) with \"$words\"." ;;
     *) echo "Usage: friday memory [list|edit|forget <words>]" >&2; return 2 ;;
   esac
@@ -3617,6 +3617,7 @@ place-window|Put a window on one side of the screen (\"put Firefox on the left\"
 which-this|\"Explain this\" with nothing picked: ask whether it means the selected text or the window in front
 dictation-cleanup|Speech drops \"um\" and \"uh\" and uses your own words (~/.config/friday/dictionary)
 propose-memories|\"I use fish …\" in a question: offer to remember it (nothing is kept unless you say so)
+memory-file|Every ask carries what you asked FRIDAY to remember (~/.config/friday/memory.md)
 call-pause|\"Hey Friday\" rests while a call or meeting app uses the microphone"
 friday_features_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/features-off"; }
 # friday_feature_on <name>: on unless switched off.
