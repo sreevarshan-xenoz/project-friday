@@ -885,7 +885,38 @@ pub fn run_wake() -> u8 {
         .checked_sub(std::time::Duration::from_secs(60))
         .unwrap_or_else(std::time::Instant::now);
     let note = |text: &str| tell("note", text);
+    // A call or meeting holds the microphone: the wake word rests meanwhile
+    // (looked at every few seconds; `call-pause` off keeps it listening).
+    let mut on_call: Option<&'static str> = None;
+    let mut call_checked = std::time::Instant::now()
+        .checked_sub(std::time::Duration::from_secs(60))
+        .unwrap_or_else(std::time::Instant::now);
     while let Some(frame) = frames.next() {
+        if call_checked.elapsed() > std::time::Duration::from_secs(5) {
+            call_checked = std::time::Instant::now();
+            let now = if crate::features::on("call-pause") {
+                // Couldn't tell: as it was.
+                call_holds_mic().unwrap_or(on_call)
+            } else {
+                None
+            };
+            match (on_call, now) {
+                (None, Some(app)) => note(&format!(
+                    "Paused \"Hey Friday\" while {app} uses the microphone."
+                )),
+                (Some(_), None) => note("Listening for \"Hey Friday\" again."),
+                _ => {}
+            }
+            if now.is_some() && on_call.is_none() {
+                conversing = None;
+                // Nothing heard before the call carries over to after it.
+                seg = Segmenter::new(8, 50);
+            }
+            on_call = now;
+        }
+        if on_call.is_some() {
+            continue;
+        }
         if conversing.is_some_and(|t| t.elapsed() > std::time::Duration::from_secs(60))
             && !crate::speech::speaking()
         {
@@ -969,6 +1000,108 @@ pub fn run_wake() -> u8 {
     0
 }
 
+/// Apps whose holding the microphone means a call or a meeting (browsers
+/// included: a site with the microphone is nearly always one).
+const CALL_APPS: &[&str] = &[
+    "zoom", "teams", "slack", "discord", "webex", "skype", "signal", "telegram", "whatsapp",
+    "element", "jitsi", "firefox", "chrome", "chromium", "brave", "zen", "vivaldi", "msedge",
+];
+
+/// The call app (as named in `CALL_APPS`) found in `name`, if any.
+fn call_app(name: &str) -> Option<&'static str> {
+    let name = name.to_lowercase();
+    CALL_APPS.iter().copied().find(|a| name.contains(a))
+}
+
+/// The call app recording from the microphone now, in `pw-dump`'s JSON: a
+/// running input stream of one of `CALL_APPS`.
+pub fn call_in_pw_dump(json: &str) -> Option<&'static str> {
+    let nodes: Vec<serde_json::Value> = serde_json::from_str(json).ok()?;
+    nodes.iter().find_map(|n| {
+        let props = &n["info"]["props"];
+        if props["media.class"] != "Stream/Input/Audio" || n["info"]["state"] != "running" {
+            return None;
+        }
+        let who = format!(
+            "{} {}",
+            props["application.process.binary"].as_str().unwrap_or(""),
+            props["application.name"].as_str().unwrap_or("")
+        );
+        call_app(&who)
+    })
+}
+
+/// The call app using the microphone now, in `reg query … microphone /s`
+/// (Windows' own privacy record): an app's key whose `LastUsedTimeStop` is 0,
+/// started in the last 12 hours (an app that crashed mid-call never writes
+/// its stop). `now` is the time as a FILETIME. Only the program's own name
+/// counts, never its folders or FRIDAY itself.
+pub fn call_in_reg(text: &str, now: u64) -> Option<&'static str> {
+    let (mut name, mut started) = (String::new(), 0u64);
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with("HKEY_") {
+            name = line.rsplit(['\\', '#']).next().unwrap_or("").to_lowercase();
+            started = 0;
+        } else if line.starts_with("LastUsedTimeStart") {
+            started = line
+                .rsplit("0x")
+                .next()
+                .and_then(|h| u64::from_str_radix(h, 16).ok())
+                .unwrap_or(0);
+        } else if line.starts_with("LastUsedTimeStop")
+            && line.ends_with(" 0x0")
+            && !name.starts_with("friday")
+            && now.saturating_sub(started) < 12 * 3600 * 10_000_000
+        {
+            if let Some(app) = call_app(&name) {
+                return Some(app);
+            }
+        }
+    }
+    None
+}
+
+/// The call app using the microphone now, so the wake word pauses for it:
+/// `Some(None)` when none is, `None` when it couldn't be told.
+fn call_holds_mic() -> Option<Option<&'static str>> {
+    #[cfg(windows)]
+    {
+        let mut cmd = std::process::Command::new("reg");
+        std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x0800_0000);
+        let out = cmd
+            .args([
+                "query",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone",
+                "/s",
+            ])
+            .output()
+            .ok()?;
+        // Now as a FILETIME: 100 ns steps since 1601.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_nanos() as u64
+            / 100
+            + 116_444_736_000_000_000;
+        out.status
+            .success()
+            .then(|| call_in_reg(&String::from_utf8_lossy(&out.stdout), now))
+    }
+    #[cfg(not(windows))]
+    {
+        let out = std::process::Command::new("timeout")
+            .args(["3", "pw-dump"])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        let json = String::from_utf8_lossy(&out.stdout);
+        // A timeout or a PipeWire restart: not known, not "no call".
+        serde_json::from_str::<serde_json::Value>(&json).ok()?;
+        Some(call_in_pw_dump(&json))
+    }
+}
+
 /// What the wake word heard, handed on: on Linux a notification or `friday
 /// ask` (`--follow-up` in a conversation); on Windows a line `<kind>\t<text>`
 /// for the tray, which asks it.
@@ -1010,6 +1143,56 @@ pub fn notes_file(now: chrono::DateTime<chrono::Local>) -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_call_app_holding_the_microphone_is_found() {
+        let dump = r#"[
+          {"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Input/Audio","application.process.binary":"pw-record","application.name":"pw-record"}}},
+          {"type":"PipeWire:Interface:Node","info":{"state":"idle","props":{"media.class":"Stream/Input/Audio","application.process.binary":"zoom"}}},
+          {"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Output/Audio","application.process.binary":"firefox"}}}
+        ]"#;
+        assert_eq!(
+            call_in_pw_dump(dump),
+            None,
+            "FRIDAY's own recording, an idle call, a tab playing sound"
+        );
+        let call = dump.replace(r#""state":"idle""#, r#""state":"running""#);
+        assert_eq!(call_in_pw_dump(&call), Some("zoom"));
+
+        let reg = r"
+HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\NonPackaged\C:#Program Files#FRIDAY#friday-ctl.exe
+    LastUsedTimeStart    REG_QWORD    0x1db3c
+    LastUsedTimeStop    REG_QWORD    0x0
+HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\MSTeams_8wekyb3d8bbwe
+    LastUsedTimeStart    REG_QWORD    0x1db3c
+    LastUsedTimeStop    REG_QWORD    0x1db3d
+";
+        let now = 0x1db3c + 3600 * 10_000_000;
+        assert_eq!(
+            call_in_reg(reg, now),
+            None,
+            "FRIDAY itself, and a call that ended"
+        );
+        assert_eq!(
+            call_in_reg(&reg.replace("0x1db3d", "0x0"), now),
+            Some("teams")
+        );
+        let later = 0x1db3c + 13 * 3600 * 10_000_000;
+        assert_eq!(
+            call_in_reg(&reg.replace("0x1db3d", "0x0"), later),
+            None,
+            "a stop never written"
+        );
+        let zen_user = reg.replace(
+            "C:#Program Files#FRIDAY#",
+            "C:#Users#Zenaida#AppData#Local#FRIDAY#",
+        );
+        assert_eq!(
+            call_in_reg(&zen_user, now),
+            None,
+            "folder names don't count"
+        );
+    }
 
     #[test]
     fn fillers_go_and_the_sentence_stays() {
