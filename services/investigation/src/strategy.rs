@@ -31,6 +31,13 @@ pub trait LlmStrategyClient: Send + Sync {
     /// Send one prompt and return the model's raw completion.
     async fn complete(&self, prompt: &str) -> Result<String, String>;
 
+    /// Like [`LlmStrategyClient::complete`], for a prompt whose answer must
+    /// be one JSON object (a tool's next step): a client that can hold the
+    /// model to JSON does (a local engine's grammar); others just answer.
+    async fn complete_json(&self, prompt: &str) -> Result<String, String> {
+        self.complete(prompt).await
+    }
+
     /// Like [`LlmStrategyClient::complete`], reporting the answer as it
     /// arrives: `progress` gets the text so far each time it grows. A client
     /// that can't stream reports the whole answer once.
@@ -67,6 +74,9 @@ pub trait LlmStrategyClient: Send + Sync {
 impl<T: LlmStrategyClient + ?Sized> LlmStrategyClient for std::sync::Arc<T> {
     async fn complete(&self, prompt: &str) -> Result<String, String> {
         (**self).complete(prompt).await
+    }
+    async fn complete_json(&self, prompt: &str) -> Result<String, String> {
+        (**self).complete_json(prompt).await
     }
     async fn complete_with_progress(
         &self,

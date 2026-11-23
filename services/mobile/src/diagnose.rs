@@ -431,7 +431,7 @@ impl Tool for DiagnoseTool {
                 "{GUIDE}\n\nThe computer runs {system}.\nThe person's problem: {problem}\n\nWhat you've seen so far:\n{}{last}\n\nYour reply (JSON only):",
                 if notes.is_empty() { "(nothing yet)" } else { notes.as_str() }
             );
-            let reply = match tokio::time::timeout(MODEL_TIMEOUT, self.model.complete(&prompt))
+            let reply = match tokio::time::timeout(MODEL_TIMEOUT, self.model.complete_json(&prompt))
                 .await
             {
                 Ok(Ok(r)) => r,
