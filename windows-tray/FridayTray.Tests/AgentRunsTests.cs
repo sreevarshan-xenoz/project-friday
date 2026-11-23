@@ -74,6 +74,18 @@ public class AgentRunsTests : IDisposable
     }
 
     [Fact]
+    public void Loads_the_worktree_when_the_run_has_one_and_null_when_not()
+    {
+        File.WriteAllText(Path.Combine(_dir, "r20.json"),
+            """{ "id": "r20", "status": "done", "started": 1, "worktree": "C:\\wt\\r20" }""");
+        File.WriteAllText(Path.Combine(_dir, "r21.json"), """{ "id": "r21", "status": "done", "started": 2 }""");
+
+        var runs = AgentRuns.Load(_dir).ToDictionary(r => r.Id);
+        Assert.Equal(@"C:\wt\r20", runs["r20"].Worktree);
+        Assert.Null(runs["r21"].Worktree);
+    }
+
+    [Fact]
     public void Identifies_question_runs()
     {
         File.WriteAllText(Path.Combine(_dir, "r10.json"), """

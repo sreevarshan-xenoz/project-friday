@@ -528,6 +528,13 @@ printf 'GROQ_API_KEY="quoted-value"  \n' >"$envf"; bash "$F" secrets keychain >/
 [ "$(cat "$W/kr/GROQ_API_KEY" 2>/dev/null)" = "quoted-value" ] && pass "a quoted key is kept without its quotes" || fail "kept as: $(cat "$W/kr/GROQ_API_KEY" 2>/dev/null)"
 cp "$W/env.keep" "$envf"; rm -f "$S/secret-tool"
 
+echo "agents in a separate copy"
+contains "off unless turned on" "$(bash "$F" agents worktree)" "Separate copies: off"
+bash "$F" agents worktree on >/dev/null
+contains "on writes the setting" "$(cat "$HOME/.config/friday/friday.env")" "FRIDAY_AGENT_WORKTREE=1"
+bash "$F" agents worktree off >/dev/null
+contains "accept needs a run id" "$(bash "$F" agents accept nope 2>&1)" "usage: friday agents accept <id>"
+
 echo "checking agents' work"
 contains "off unless turned on" "$(bash "$F" agents check)" "Checking agents' work: off"
 bash "$F" agents check on >/dev/null

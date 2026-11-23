@@ -548,6 +548,7 @@ pub fn wait_for_person(
         rejected: 0,
         session: None,
         follows: None,
+        worktree: None,
     };
     let Ok(rec) = Recorder::new(dir, run) else {
         return false;

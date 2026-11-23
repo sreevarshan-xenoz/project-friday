@@ -23,7 +23,8 @@ public sealed record AgentRun(
     [property: JsonPropertyName("summary")] string? Summary = null,
     [property: JsonPropertyName("approved_by_friday")] int ApprovedByFriday = 0,
     [property: JsonPropertyName("approved_by_you")] int ApprovedByYou = 0,
-    [property: JsonPropertyName("rejected")] int Rejected = 0)
+    [property: JsonPropertyName("rejected")] int Rejected = 0,
+    [property: JsonPropertyName("worktree")] string? Worktree = null)
 {
     public bool IsQuestion => Pending?.Why == "has a question for you";
     public bool IsWaiting => Status == "waiting_for_you";

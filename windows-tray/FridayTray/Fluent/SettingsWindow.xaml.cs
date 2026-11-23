@@ -884,6 +884,12 @@ internal sealed partial class SettingsWindow : FluentWindow
             AppSettings.AgentCheckOn(env),
             on => ChangeEnv(e => EnvFile.WithSetting(e, AppSettings.AgentCheck, on ? "1" : null)));
 
+        yield return Switch(
+            "Keep an agent's changes apart",
+            "In a git folder, each run works on its own branch; you bring its changes in (staged) or drop them from the run below.",
+            AppSettings.AgentWorktreeOn(env),
+            on => ChangeEnv(e => EnvFile.WithSetting(e, AppSettings.AgentWorktree, on ? "1" : null)));
+
         yield return AgentHooksSwitch();
 
         var approved = AgentRuns.HooksApprovedSince(_install.Paths.AgentsDir, DateTimeOffset.UtcNow.AddDays(-1).ToUnixTimeSeconds());
@@ -902,8 +908,36 @@ internal sealed partial class SettingsWindow : FluentWindow
             var detail = r.Status == "waiting_for_you" && r.Pending is not null
                 ? $"{r.Pending.Step} ({r.Pending.Why})"
                 : (r.Request ?? "");
-            yield return Card(title, detail, r.Status is "done" or "failed");
+            var buttons = new List<Button>();
+            if (r.Worktree is not null && r.IsFinished)
+            {
+                var bring = Pill("Bring changes in", SymbolRegular.ArrowDownload24);
+                bring.Click += (_, _) => AgentWorktreeCtl(r.Id, "accept");
+                var drop = Pill("Drop changes", SymbolRegular.Delete24);
+                drop.Click += (_, _) => AgentWorktreeCtl(r.Id, "discard");
+                buttons.Add(bring);
+                buttons.Add(drop);
+            }
+            yield return Card(title, detail, r.IsFinished, [.. buttons]);
         }
+    }
+
+    /// <summary>Brings a run's separate changes in ("accept") or drops them ("discard"), then says what happened.</summary>
+    private async void AgentWorktreeCtl(string id, string verb)
+    {
+        try
+        {
+            var (ok, output) = await Ctl.RunAsync(_install, ["agents", verb, id], TimeSpan.FromSeconds(60));
+            if (ok)
+                Said(output.Trim());
+            else
+                MessageBox.Show(this, output.Trim(), "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        catch (Exception e) when (e is IOException or System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            MessageBox.Show(this, e.Message, "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        Show("Agents", animate: false);
     }
 
     private bool _updatingHooks;
