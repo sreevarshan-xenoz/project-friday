@@ -15,6 +15,17 @@ public sealed record StandingTask(string Id, string Goal, string When, bool Paus
 /// </summary>
 public static class StandingTasks
 {
+    /// <summary>Ready-made standing tasks (the daemon's `standing::RECIPES`):
+    /// `friday-ctl tasks recipe &lt;id&gt;` adds one.</summary>
+    public static readonly (string Id, string What)[] Recipes =
+    [
+        ("morning-brief", "Weekday mornings at 9: what you missed"),
+        ("weather", "Every morning at 7:30: today's weather"),
+        ("plug-in", "When the battery is under 20%: a reminder to plug in"),
+        ("health-check", "Once a week: how the computer is doing"),
+        ("tech-news", "Every evening at 6: the day's top tech news"),
+    ];
+
     /// <summary>Longest goal the daemon accepts; anything longer in the queue is not ours.</summary>
     public const int MaxGoal = 300;
 

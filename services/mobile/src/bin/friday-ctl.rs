@@ -1618,6 +1618,32 @@ async fn main() -> std::process::ExitCode {
         );
         return std::process::ExitCode::SUCCESS;
     }
+    // Ready-made standing tasks: listed, or one added by name.
+    if raw.first().map(String::as_str) == Some("tasks") {
+        use friday_mobile::standing;
+        let said = match (raw.get(1).map(String::as_str), raw.get(2)) {
+            (Some("recipes"), _) => Ok(standing::RECIPES
+                .iter()
+                .map(|r| format!("{}: {}", r.id, r.what))
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\nAdd one: friday tasks recipe <name>"),
+            (Some("recipe"), Some(id)) => {
+                standing::add_recipe(&standing::store_path(), id, chrono::Utc::now().timestamp())
+            }
+            _ => Err("usage: friday-ctl tasks recipes | recipe <name>".into()),
+        };
+        return match said {
+            Ok(s) => {
+                println!("{s}");
+                std::process::ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("friday-ctl: {e}");
+                std::process::ExitCode::from(1)
+            }
+        };
+    }
     // A run's separate copy: brought in (staged) or dropped.
     if raw.first().map(String::as_str) == Some("agents") {
         let dir = friday_mobile::agent_runs::runs_dir();
