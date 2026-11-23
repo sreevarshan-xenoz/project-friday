@@ -46,37 +46,54 @@ fn piece(text: &str) -> String {
     out
 }
 
-fn clock(ts: i64) -> String {
-    Local
-        .timestamp_opt(ts, 0)
-        .single()
-        .map_or_else(String::new, |t| t.format("%H:%M").to_string())
+/// "08:30", or "yesterday at 15:00" for a time before today.
+fn clock(ts: i64, now: i64) -> String {
+    let (Some(t), Some(n)) = (
+        Local.timestamp_opt(ts, 0).earliest(),
+        Local.timestamp_opt(now, 0).earliest(),
+    ) else {
+        return String::new();
+    };
+    let hm = t.format("%H:%M").to_string();
+    if t.date_naive() == n.date_naive() {
+        hm
+    } else if n.date_naive().pred_opt() == Some(t.date_naive()) {
+        format!("yesterday at {hm}")
+    } else {
+        format!("{} at {hm}", t.format("%-d %b"))
+    }
 }
 
 /// The first line of the answer `answers.md` kept for `goal` at or after
 /// `after` (a standing task's run), if any.
 fn answer_for(answers: &str, goal: &str, after: i64) -> Option<String> {
+    let mut found = None;
     for block in answers.split("<!-- friday answer -->").skip(1) {
         let mut lines = block.lines().map(str::trim).filter(|l| !l.is_empty());
         if lines.next().and_then(|l| l.strip_prefix("# ")) != Some(goal) {
             continue;
         }
-        let when = lines
+        let Some(when) = lines
             .next()
             .and_then(|l| l.strip_prefix('_')?.strip_suffix('_'))
             .and_then(|d| chrono::NaiveDateTime::parse_from_str(d, "%Y-%m-%d %H:%M").ok())
-            .and_then(|d| Local.from_local_datetime(&d).single())?;
-        // answers.md keeps minutes: a run at 08:00:40 is kept as 08:00.
-        if when.timestamp() + 60 < after {
+            .and_then(|d| Local.from_local_datetime(&d).earliest())
+        else {
+            continue;
+        };
+        // answers.md keeps minutes: a run at 08:00:40 is kept as 08:00, and
+        // one kept at 07:59 is an earlier run.
+        if when.timestamp() + 60 <= after {
             continue;
         }
         if let Some(first) = lines.find(|l| {
             !l.starts_with('_') && !l.starts_with('>') && !l.starts_with('<') && *l != "---"
         }) {
-            return Some(piece(first));
+            // The newest one: answers.md is oldest first.
+            found = Some(piece(first));
         }
     }
-    None
+    found
 }
 
 /// The brief since `since`, one line each, plainly worded to be read or said.
@@ -123,8 +140,8 @@ pub fn text(state_dir: &Path, standing: &Path, since: i64, now: i64) -> String {
     for t in ran {
         let at = t.last_run.unwrap_or_default();
         lines.push(match answer_for(&answers, &t.goal, at) {
-            Some(a) => format!("\"{}\" ran at {}: {a}", piece(&t.goal), clock(at)),
-            None => format!("\"{}\" ran at {}.", piece(&t.goal), clock(at)),
+            Some(a) => format!("\"{}\" ran at {}: {a}", piece(&t.goal), clock(at, now)),
+            None => format!("\"{}\" ran at {}.", piece(&t.goal), clock(at, now)),
         });
     }
 
@@ -132,8 +149,9 @@ pub fn text(state_dir: &Path, standing: &Path, since: i64, now: i64) -> String {
         .timestamp_opt(now, 0)
         .single()
         .and_then(|d| d.date_naive().and_hms_opt(23, 59, 59))
-        .and_then(|d| Local.from_local_datetime(&d).single())
-        .map_or(now, |d| d.timestamp());
+        .and_then(|d| Local.from_local_datetime(&d).earliest())
+        // A clock change at midnight: today ends within a day anyway.
+        .map_or(now + 24 * 3600, |d| d.timestamp());
     let mut later: Vec<(i64, &str)> = store
         .tasks
         .iter()
@@ -145,11 +163,11 @@ pub fn text(state_dir: &Path, standing: &Path, since: i64, now: i64) -> String {
         .collect();
     later.sort();
     for (at, goal) in later {
-        lines.push(format!("Reminder at {}: {}", clock(at), piece(goal)));
+        lines.push(format!("Reminder at {}: {}", clock(at, now), piece(goal)));
     }
 
     if lines.is_empty() {
-        return format!("Nothing new since {}.", clock(since));
+        return format!("Nothing new since {}.", clock(since, now));
     }
     lines.join("\n")
 }
@@ -239,5 +257,33 @@ mod tests {
         let quiet = text(&d, &d.join("none.json"), 99_000, 100_000);
         assert!(quiet.starts_with("Nothing new since "), "{quiet}");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_runs_answer_is_its_own_and_yesterday_says_so() {
+        let at = |h: u32, m: u32, s: u32| {
+            Local
+                .with_ymd_and_hms(2026, 11, 23, h, m, s)
+                .single()
+                .unwrap()
+                .timestamp()
+        };
+        let answers = "<!-- friday answer -->\n# news\n_failed_\nno date\n\
+            <!-- friday answer -->\n# news\n_2026-11-23 07:59_\n\nOld answer\n\
+            <!-- friday answer -->\n# news\n_2026-11-23 08:00_\n\nNew answer\n";
+        assert_eq!(
+            answer_for(answers, "news", at(8, 0, 0)).as_deref(),
+            Some("New answer")
+        );
+        assert_eq!(
+            answer_for(answers, "news", at(8, 0, 40)).as_deref(),
+            Some("New answer")
+        );
+        assert_eq!(answer_for(answers, "news", at(8, 5, 0)), None);
+        assert_eq!(clock(at(8, 30, 0), at(9, 0, 0)), "08:30");
+        assert_eq!(
+            clock(at(8, 30, 0) - 86400, at(9, 0, 0)),
+            "yesterday at 08:30"
+        );
     }
 }

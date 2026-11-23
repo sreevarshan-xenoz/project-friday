@@ -376,7 +376,7 @@ internal sealed class TrayContext : ApplicationContext
             if (kind == AskKind.Plain && LocalCommands.Parse(question) is { } local && LocalOn(local))
             {
                 if (local.Kind == LocalKind.Brief)
-                    await RunBriefAsync(question, spoken: false);
+                    await RunBriefAsync(question);
                 else
                     RunLocal(question, local);
                 return;
@@ -648,7 +648,7 @@ internal sealed class TrayContext : ApplicationContext
         {
             _log.Remember(text);
             if (local.Kind == LocalKind.Brief)
-                await RunBriefAsync(text, spoken: true);
+                await RunBriefAsync(text);
             else
                 RunLocal(text, local);
             return;
@@ -682,11 +682,11 @@ internal sealed class TrayContext : ApplicationContext
         cmd.Kind != LocalKind.Brief || AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "brief");
 
     /// <summary>"What did I miss?": friday-ctl brief reads FRIDAY's own records (nothing is
-    /// sent), shown like any answer; asked aloud, it is read aloud too.</summary>
-    private async Task RunBriefAsync(string question, bool spoken)
+    /// sent), shown and read aloud like any answer.</summary>
+    private async Task RunBriefAsync(string question)
     {
-        var args = spoken ? new[] { "brief", "--say" } : new[] { "brief" };
-        var (ok, said) = await Ctl.RunAsync(_install, args, TimeSpan.FromSeconds(60));
+        // Read aloud the way any answer is (the spoken-answers setting), not here too.
+        var (ok, said) = await Ctl.RunAsync(_install, ["brief"], TimeSpan.FromSeconds(60));
         var outcome = new AskOutcome(ok, ok ? said.Trim() : "Couldn't put the brief together: " + said.Trim(), null, false);
         _log.Save(question, null, outcome, DateTime.Now);
         var answer = NewAnswerWindow(AskKind.Plain, question, "");
