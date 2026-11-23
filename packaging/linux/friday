@@ -4375,6 +4375,8 @@ case "${1:-}" in
       json_args=(goal --json)
       $use_web && json_args+=(--web)
       $use_new && json_args+=(--new-conversation)
+      command -v friday-ctl >/dev/null 2>&1 || {
+        echo '{"outcome":"unreachable","result":null,"error":"friday-ctl is not installed"}'; exit 5; }
       exec friday-ctl "${json_args[@]}" "$goal"
     fi
     # The window you're asking about (its selection or its screen): private?

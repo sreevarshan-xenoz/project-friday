@@ -1525,10 +1525,19 @@ async fn main() -> std::process::ExitCode {
 
     let Some(sub) = positional.first() else {
         eprintln!("usage: friday-ctl <goal|cancel|system-info|context screen> [goal text] [--json] [--web] [--thorough [--avoid <provider>/<model>]] [--new-conversation] [--addr <host:port>] [--token <tok>]");
-        return std::process::ExitCode::FAILURE;
+        return std::process::ExitCode::from(if json { 2 } else { 1 });
     };
     let sub = sub.clone();
     let goal_words = positional.into_iter().skip(1).collect::<Vec<_>>();
+    if json {
+        // The contract (specs/ask-json.md) is for a question only, and its
+        // one object leaves no room for {"partial": ...} lines.
+        if sub != "goal" || goal_words.join(" ").trim().is_empty() {
+            eprintln!("usage: friday-ctl goal --json [--web] [--new-conversation] <question>");
+            return std::process::ExitCode::from(2);
+        }
+        stream = false;
+    }
     if sub == "goal" {
         ask_opts.insert(
             "conversation".into(),
@@ -1703,7 +1712,8 @@ async fn wait_for_goal(
         }
         if let Some(done) = state.and_then(|s| finished_goal(&s, goal, since_ms)) {
             let mut summary = serde_json::json!({
-                "outcome": done["outcome"],
+                // The contract promises one of its words, never null.
+                "outcome": done["outcome"].as_str().unwrap_or("failed"),
                 "result": done["result"],
                 "error": done["error"],
             });
@@ -1954,7 +1964,10 @@ async fn run(
     match exchange(addr, &method, params, Duration::from_secs(10), false).await {
         Ok((true, _)) => std::process::ExitCode::SUCCESS,
         Ok((false, result)) => {
-            let error = result.get("error").cloned().unwrap_or(result);
+            let error = match result.get("error").unwrap_or(&result) {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
             println!(
                 "{}",
                 serde_json::json!({ "outcome": "rejected", "result": null, "error": error })
