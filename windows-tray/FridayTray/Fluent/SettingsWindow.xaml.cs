@@ -323,6 +323,11 @@ internal sealed partial class SettingsWindow : FluentWindow
                 ChangeEnv(env => AppSettings.WithScreenText(env, on));
             });
         yield return Row(Pill("What left this PC…", SymbolRegular.ArrowUpload24), _do.ShowEgress);
+        if (AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "backup"))
+        {
+            yield return Row(Pill("Back up FRIDAY…", SymbolRegular.Archive24), BackUp);
+            yield return Row(Pill("Restore from a backup…", SymbolRegular.ArrowReset24), RestoreBackup);
+        }
         if (AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "risk-table"))
             yield return Row(Pill("What FRIDAY may do on its own…", SymbolRegular.ShieldCheckmark24), ShowRisks);
         if (AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "usage-page"))
@@ -330,6 +335,27 @@ internal sealed partial class SettingsWindow : FluentWindow
         yield return Row(Pill("What FRIDAY remembers about you…", SymbolRegular.Bookmark24), OpenMemoryFile);
         yield return Row(Pill("Bring in notes from another assistant…", SymbolRegular.ArrowImport24), ImportMemory);
         yield return Row(Pill("Forget saved data…", SymbolRegular.Delete24), _do.ForgetSavedData);
+    }
+
+    /// <summary>A checked backup of settings, memory and history, in "FRIDAY backups" in the user folder.</summary>
+    private async void BackUp()
+    {
+        var (_, said) = await Ctl.RunAsync(_install, ["backup"], TimeSpan.FromSeconds(120));
+        MessageBox.Show(this, said.Trim(), "Back up FRIDAY", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    /// <summary>Restores a backup folder: checked first; what it replaces is kept aside.</summary>
+    private async void RestoreBackup()
+    {
+        var pick = new Microsoft.Win32.OpenFolderDialog { Title = "Choose a FRIDAY backup folder" };
+        if (pick.ShowDialog(this) != true)
+            return;
+        if (MessageBox.Show(this,
+                "FRIDAY checks the backup first. Your current settings, memory and history are kept aside (before-restore), and your API keys stay. Restore it?",
+                "Restore from a backup", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
+            return;
+        var (_, said) = await Ctl.RunAsync(_install, ["backup", "restore", pick.FolderName], TimeSpan.FromSeconds(120));
+        MessageBox.Show(this, said.Trim(), "Restore from a backup", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     /// <summary>Every tool action and whether it runs, is watched, asks first or never runs.</summary>

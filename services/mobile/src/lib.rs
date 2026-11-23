@@ -15,6 +15,7 @@ pub mod agent_opencode;
 pub mod agent_policy;
 pub mod agent_runs;
 pub mod auth;
+pub mod backup;
 pub mod bridge;
 pub mod brief;
 pub mod browser_host;
