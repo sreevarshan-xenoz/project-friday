@@ -176,6 +176,10 @@ impl Run {
 
 /// Where runs are recorded: `agents/` beside `state.json`.
 pub fn runs_dir() -> PathBuf {
+    // A test never reads, stops or restarts the person's own runs.
+    if cfg!(test) {
+        return std::env::temp_dir().join(format!("friday-test-agents-{}", std::process::id()));
+    }
     crate::shell_state::ShellState::default_path().with_file_name("agents")
 }
 
@@ -1407,12 +1411,30 @@ impl AgentsTool {
         let private = std::env::var("FRIDAY_PRIVATE")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
-        Self {
+        let tool = Self {
             model,
             dir,
             private,
             gate: None,
-        }
+        };
+        // Runs the last FRIDAY was running when it stopped: they go on, in
+        // their own session, now (a runtime is there to run them in).
+        let can_start = tokio::runtime::Handle::try_current().is_ok() && !private;
+        carry_on_after_restart(
+            &tool.dir,
+            can_start && crate::features::on("agent-resume"),
+            &|run, task| {
+                tool.start(
+                    run.agent,
+                    &run.folder,
+                    run.request.clone(),
+                    task,
+                    run.session.clone(),
+                    None,
+                )
+            },
+        );
+        tool
     }
 
     /// Asks first, through the goal's confirmation gate, when the goal
@@ -1577,6 +1599,42 @@ impl AgentsTool {
                 if !resume { "" } else if prev.session.is_none() { ": the last run had none to go on from" } else { ": the last run ended over 15 minutes ago" }
             )
         })
+    }
+}
+
+/// Runs a restart cut off (left running or waiting for the person, with no
+/// FRIDAY watching them any more). With `resume`, each one that has a
+/// session goes on in it as a new run (`go_on` starts it with the task and
+/// returns its id), so its result still comes back; the rest are marked
+/// stopped with what to do.
+fn carry_on_after_restart(dir: &Path, resume: bool, go_on: &dyn Fn(&Run, String) -> String) {
+    for run in list(dir)
+        .into_iter()
+        .filter(|r| matches!(r.status, Status::Running | Status::WaitingForYou))
+    {
+        let next = (resume && run.session.is_some() && run.folder.is_dir()).then(|| {
+            go_on(
+                &run,
+                format!(
+                    "FRIDAY restarted while you were working on this. Carry on where you left off and finish the task:\n{}",
+                    run.task
+                ),
+            )
+        });
+        let summary = match &next {
+            Some(id) => format!(
+                "FRIDAY restarted while this ran; it goes on in the same session as run {id}."
+            ),
+            None => "FRIDAY restarted while this ran, and it couldn't go on (no session to continue); ask again.".to_string(),
+        };
+        if let Ok(mut rec) = Recorder::new(dir, run) {
+            rec.run.status = Status::Failed;
+            rec.run.summary = summary;
+            rec.run.ended = Some(chrono::Utc::now().timestamp());
+            rec.run.pending = None;
+            let _ = rec.save();
+            rec.log(json!({"event": "restarted", "continued_as": next}));
+        }
     }
 }
 
@@ -2125,6 +2183,50 @@ mod tests {
         let run = list(dir.path()).remove(0);
         assert_eq!(run.status, Status::Failed);
         assert!(run.summary.contains("restarted"), "{}", run.summary);
+    }
+
+    #[test]
+    fn a_run_cut_off_by_a_restart_goes_on_in_its_session() {
+        let dir = TempDir(
+            std::env::temp_dir().join(format!("friday-agents-restart-{}", std::process::id())),
+        );
+        let folder = dir.path().join("site");
+        std::fs::create_dir_all(&folder).unwrap();
+        // run_in saves as rtest1: the other run first, under its own id.
+        let mut other = run_in(dir.path(), folder.to_str().unwrap());
+        other.run.id = "rtest2".into();
+        other.save().unwrap(); // running, no session
+        let mut rec = run_in(dir.path(), folder.to_str().unwrap());
+        rec.run.status = Status::WaitingForYou;
+        rec.run.session = Some("s1".into());
+        rec.save().unwrap();
+
+        let started = std::sync::Mutex::new(Vec::new());
+        carry_on_after_restart(dir.path(), true, &|run, task| {
+            started
+                .lock()
+                .unwrap()
+                .push((run.id.clone(), run.session.clone(), task));
+            "rnew01".to_string()
+        });
+        let started = started.into_inner().unwrap();
+        assert_eq!(started.len(), 1, "only the run with a session goes on");
+        assert_eq!(started[0].0, "rtest1");
+        assert_eq!(started[0].1.as_deref(), Some("s1"));
+        assert!(started[0].2.contains("Carry on") && started[0].2.contains("Add a README."));
+        let runs = list(dir.path());
+        let by = |id: &str| runs.iter().find(|r| r.id == id).unwrap().clone();
+        assert_eq!(by("rtest1").status, Status::Failed);
+        assert!(by("rtest1").summary.contains("run rnew01"));
+        assert!(by("rtest2").summary.contains("ask again"));
+        assert!(runs.iter().all(|r| !still_going(r)), "nothing left hanging");
+
+        // With resuming off, nothing starts; both say what happened.
+        let mut again = run_in(dir.path(), folder.to_str().unwrap());
+        again.run.session = Some("s1".into());
+        again.save().unwrap();
+        carry_on_after_restart(dir.path(), false, &|_, _| panic!("started with resume off"));
+        assert!(list(dir.path()).iter().all(|r| !still_going(r)));
     }
 
     #[test]
