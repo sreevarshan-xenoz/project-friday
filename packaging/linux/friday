@@ -116,7 +116,7 @@ Autonomous Agent & Cognitive Loop:
   friday feature [list|<name> on|off]  Switch one of FRIDAY's features off or on again
   friday autonomy [ask-all|ask-risky|act]  How much FRIDAY may do without asking
                                    Ask about the screen with the window's text, not a screenshot
-  friday phone [status|on|off|send] Pair a phone with Pocketdesk; send it the last answer
+  friday phone [status|on|off|send [thread]] Pair a phone with Pocketdesk; send it the last answer or this conversation
   friday phone devices|unpair <phone>  The paired phones, last heard from; cut one off
   friday helper [status|enable|disable]
                                    System helper for package updates and installs
@@ -998,7 +998,7 @@ EOF2
       systemctl --user disable --now pocketdesk 2>/dev/null || true
       echo "Phone: off"
       ;;
-    send) friday_phone_send ;;
+    send) shift; friday_phone_send "$@" ;;
     devices) friday_phone_devices ;;
     unpair) shift; friday_phone_unpair "$@" ;;
     *)
@@ -2062,13 +2062,21 @@ friday_phone_unpair() {
 
 # `friday phone send` / "send the answer to my phone": the last answer, as a
 # file, to the paired phone (Pocketdesk, on your network or tailnet).
+# `friday phone send thread`: the whole current conversation, to pick up there.
 friday_phone_send() {
-  local d="${XDG_STATE_HOME:-$HOME/.local/state}/friday" out
-  [ -s "$d/last-answer.md" ] || { echo "There's no answer to send yet."; return 1; }
+  local d="${XDG_STATE_HOME:-$HOME/.local/state}/friday" out file what
   command -v pocketdesk >/dev/null 2>&1 || { echo "No phone is set up: friday phone on pairs one."; return 1; }
-  (umask 077; mkdir -p "$d/phone"; cp -f "$d/last-answer.md" "$d/phone/FRIDAY answer.md")
-  if out=$(timeout 20 pocketdesk send-to-phone "$d/phone/FRIDAY answer.md" 2>&1); then
-    echo "Sent the last answer to your phone."
+  (umask 077; mkdir -p "$d/phone")
+  if [ "${1:-}" = thread ]; then
+    file="$d/phone/FRIDAY conversation.md"; what="this conversation"
+    (umask 077; friday-ctl thread >"$file" 2>/dev/null) || { rm -f "$file"; echo "There's no conversation to send yet."; return 1; }
+  else
+    [ -s "$d/last-answer.md" ] || { echo "There's no answer to send yet."; return 1; }
+    file="$d/phone/FRIDAY answer.md"; what="the last answer"
+    (umask 077; cp -f "$d/last-answer.md" "$file")
+  fi
+  if out=$(timeout 20 pocketdesk send-to-phone "$file" 2>&1); then
+    echo "Sent $what to your phone."
   else
     case $? in
       3) echo "Pocketdesk isn't running: friday phone on starts it." ;;
@@ -2106,6 +2114,8 @@ friday_local_command() {
     $want && echo "Do not disturb is on." || echo "Do not disturb is off."
   elif friday_feature_on phone-send && [[ "$q" =~ ^(send|share)\ (this|that|it|the\ answer|the\ last\ answer|this\ answer)\ to\ (my\ )?phone$ ]]; then
     friday_phone_send || true
+  elif friday_feature_on phone-send && [[ "$q" =~ ^(send|share|continue)\ (this|the|our)\ (conversation|chat|thread)\ (to|on)\ (my\ )?phone$ ]]; then
+    friday_phone_send thread || true
   elif friday_feature_on brief && [[ "$q" =~ ^((so\ )?what\ did\ i\ miss|catch\ me\ up|brief\ me|(my\ |the\ )?morning\ brief|good\ morning,?(\ friday)?)$ ]]; then
     # From FRIDAY's own state: nothing is sent anywhere.
     friday-ctl brief 2>/dev/null || return 1

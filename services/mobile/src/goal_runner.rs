@@ -1407,6 +1407,23 @@ fn load_conversations(path: &std::path::Path) -> HashMap<String, SessionContext>
     map
 }
 
+/// Conversation `id`'s turns kept on disk, as a document to read elsewhere
+/// (`friday phone send thread`): each question and FRIDAY's answer. None
+/// when there is no such conversation or it has no turns yet.
+pub fn thread_markdown(path: &std::path::Path, id: &str) -> Option<String> {
+    let sessions = load_conversations(path);
+    let turns = &sessions.get(id)?.history;
+    if turns.is_empty() {
+        return None;
+    }
+    let mut out = String::from("# FRIDAY conversation\n");
+    for t in turns {
+        let asked = friday_goal_execution::planning::goal_segment(&t.goal);
+        out.push_str(&format!("\n**You:** {asked}\n\n{}\n", t.result.trim()));
+    }
+    Some(out)
+}
+
 fn save_conversations(path: &std::path::Path, sessions: &HashMap<String, SessionContext>) {
     let Ok(body) = serde_json::to_vec(sessions) else {
         return;
@@ -5493,6 +5510,32 @@ mod tests {
 
     /// A conversation outlives the daemon: saved after a turn, loaded by the
     /// next run, and a stale one is dropped.
+    #[test]
+    fn a_conversation_reads_as_a_document_without_its_context_blocks() {
+        let path = std::env::temp_dir().join(format!(
+            "friday-thread-{}-{}.json",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
+        let mut c = SessionContext::new();
+        c.record(
+            "what is rust\n\n[page]\nsecret page text",
+            "A language.".into(),
+        );
+        c.record("and go?", " Another one. ".into());
+        let mut map = HashMap::new();
+        map.insert("c1".to_string(), c);
+        save_conversations(&path, &map);
+        let md = thread_markdown(&path, "c1").unwrap();
+        assert_eq!(
+            md,
+            "# FRIDAY conversation\n\n**You:** what is rust\n\nA language.\n\n**You:** and go?\n\nAnother one.\n"
+        );
+        assert!(!md.contains("secret page text"), "context blocks stay home");
+        assert!(thread_markdown(&path, "other").is_none());
+        let _ = std::fs::remove_file(path);
+    }
+
     #[test]
     fn conversations_survive_a_restart() {
         let path = std::env::temp_dir().join(format!("friday-conv-{}.json", std::process::id()));

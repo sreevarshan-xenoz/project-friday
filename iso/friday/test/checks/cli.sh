@@ -22,6 +22,12 @@ if [[ "\$1" == risks ]]; then
   echo 'Asks first, with the exact action'
   exit 0
 fi
+if [[ "\$1" == thread ]]; then
+  printf 'friday-ctl-thread\n' >> "$LOG"
+  [ -n "\$THREAD_NONE" ] && exit 1
+  printf '# FRIDAY conversation\n\n**You:** what is rust\n\nA language.\n'
+  exit 0
+fi
 if [[ "\$1" == brief ]]; then
   printf 'friday-ctl-brief %s\n' "\$*" >> "$LOG"
   echo 'opencode finished "fix the tests": all pass.'
@@ -1508,6 +1514,13 @@ printf '# q\n\nAnother answer.\n' >"$state/last-answer.md"
 contains "\"send the answer to my phone\" sends the answer before it" "$(cat "$W/pd-sent.md")" "Another answer."
 if grep -q "^friday-ctl" "$LOG"; then fail "sending to the phone asked the AI"; else pass "sending to the phone asks no AI"; fi
 contains "Pocketdesk not running: says how to start it" "$(PD_RC=3 PATH="$W/pd-bin:$PATH" bash "$F" phone send)" "friday phone on starts it"
+# The whole conversation, to pick up on the phone.
+: >"$LOG"; out=$(PATH="$W/pd-bin:$PATH" bash "$F" phone send thread)
+contains "phone send thread sends the conversation" "$(cat "$W/pd-sent.md")" "**You:** what is rust"
+contains "and says so" "$out" "Sent this conversation to your phone."
+contains "no conversation yet: says so" "$(THREAD_NONE=1 PATH="$W/pd-bin:$PATH" bash "$F" phone send thread)" "no conversation to send yet"
+: >"$W/pd-sent.md"; PATH="$W/pd-bin:$PATH" bash "$F" ask "continue this conversation on my phone"; sleep 0.3
+contains "\"continue this conversation on my phone\" sends it" "$(cat "$W/pd-sent.md")" "A language."
 
 echo "paired phones"
 now=$(date +%s)

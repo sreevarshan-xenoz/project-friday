@@ -1438,6 +1438,29 @@ async fn main() -> std::process::ExitCode {
         println!("{}", friday_mobile::risk_table::report());
         return std::process::ExitCode::SUCCESS;
     }
+    // The current conversation as a document (friday phone send thread).
+    if raw.first().map(String::as_str) == Some("thread") {
+        let state_path = std::env::var("FRIDAY_STATE_FILE")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| ShellState::default_path());
+        let id = std::fs::read_to_string(state_path.with_file_name("conversation"))
+            .ok()
+            .and_then(|t| t.split_whitespace().next().map(str::to_string))
+            .unwrap_or_default();
+        return match friday_mobile::goal_runner::thread_markdown(
+            &state_path.with_file_name("conversations.json"),
+            &id,
+        ) {
+            Some(md) => {
+                print!("{md}");
+                std::process::ExitCode::SUCCESS
+            }
+            None => {
+                eprintln!("friday-ctl: there's no conversation to send yet");
+                std::process::ExitCode::from(1)
+            }
+        };
+    }
     // How each AI provider has done lately, from the local egress log.
     if raw.first().map(String::as_str) == Some("usage") {
         let days: u32 = raw
