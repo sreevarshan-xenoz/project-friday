@@ -151,6 +151,8 @@ mod tests {
         assert_eq!(ours, theirs);
     }
 
+    // The in-app adapter (AT-SPI) is Linux's; Windows does this in its host.
+    #[cfg(target_os = "linux")]
     #[test]
     fn looking_inside_an_app_is_safe_and_clicking_or_typing_is_watched() {
         use friday_actions::{ui_risk_of, UiRisk};
@@ -180,6 +182,8 @@ mod tests {
         assert!(friday_actions::desktop_risk_of("delete_everything").is_none());
     }
 
+    // The in-app adapter (AT-SPI) is Linux's; Windows does this in its host.
+    #[cfg(target_os = "linux")]
     #[test]
     fn dangerous_app_buttons_ask_and_others_are_watched() {
         for label in ["Delete", "Send", "Submit order"] {
