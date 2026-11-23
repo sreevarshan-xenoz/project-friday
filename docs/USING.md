@@ -117,6 +117,11 @@ When something you asked by voice needs your OK, FRIDAY stops talking, plays a s
 
 With spoken answers on, an answer to something you asked by voice is followed by the same sound once it has been read to the end: ask a follow-up right away, no key needed ("thanks" or "stop" ends it; stopping the reading or closing the answer skips it). `friday feature voice-followup off` turns that off.
 
+With "Hey Friday" on, saying it while FRIDAY is reading an answer stops the reading and listens. While a call
+or meeting app (Zoom, Teams, Slack, Discord, a browser and the like) is using the microphone, "Hey Friday"
+rests, with a notification when it pauses and when it listens again. `friday feature call-pause off`
+(Windows: Settings → Features) keeps it listening during calls.
+
 To stop FRIDAY talking, press the talk key or close the answer (Esc). On Linux, `friday voice talk-over on` lets you simply talk over a spoken answer: PipeWire's echo cancellation gives FRIDAY its own microphone and speaker (your default devices stay as they are), so it hears you and not itself; it stops and asks what you said. `friday voice talk-over off` removes it.
 
 Asking something new while an answer is still on its way replaces it: the newest question wins (on Windows the old one is stopped; on Linux its answer is still kept in `friday answers`, just not shown or read out).
