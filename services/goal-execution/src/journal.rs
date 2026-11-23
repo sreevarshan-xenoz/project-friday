@@ -160,7 +160,10 @@ impl MemoryJournal {
                 return;
             }
         };
-        self.episodes.lock().unwrap().push(episode.clone());
+        // Held through the write: two appends never interleave or both see
+        // the same torn tail.
+        let mut episodes = self.episodes.lock().unwrap();
+        episodes.push(episode.clone());
         let torn = fs::File::open(&self.path)
             .and_then(|mut f| {
                 use std::io::{Read, Seek, SeekFrom};
