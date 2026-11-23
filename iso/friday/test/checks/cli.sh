@@ -163,6 +163,7 @@ if [[ "\$*" == *again=* && -n "\$ACTION_AGAIN" ]]; then
   fi
 fi
 [[ "\$*" == *copy=* && -n "\$ACTION_COPY" ]] && { echo copy; exit 0; }
+[[ "\$*" == *remember=* && -n "\$ACTION_REMEMBER" ]] && { echo remember; exit 0; }
 [[ "\$*" == *open=* ]] && echo open
 [[ "\$*" == *setup=* ]] && echo setup
 [[ "\$*" == *start=* ]] && echo start
@@ -466,6 +467,20 @@ echo FRIDAY_AGENTS=0 >>"$HOME/.config/friday/friday.env"
 : >"$LOG"; PICK="" bash "$F" ask; sleep 0.3
 if grep -q "agents work in" "$LOG"; then fail "agent folder hint shown with agents off"; else pass "no agent folder hint with agents off"; fi
 sed -i '/^FRIDAY_AGENTS=0$/d' "$HOME/.config/friday/friday.env"; rm -rf "$state/agents"
+
+echo "proposed memories"
+props=$(bash -c 'source <(sed -n "/^friday_secret_shaped() {/,/^}/p;/^friday_memory_proposal() {/,/^}/p" "$1"); shift; for q; do friday_memory_proposal "$q" || echo -; done' _ "$F" \
+  "I use fish, how do I set an alias?" "my editor is Helix and it crashes" "I use it for work" "what is rust")
+[ "$props" = "$(printf 'you use fish\nyour editor is helix\n-\n-')" ] && pass "what a question says about you is found" || fail "proposals: $(tr '\n' '|' <<<"$props")"
+: >"$LOG"; bash "$F" ask "I use fish, how do I set an alias?"; sleep 0.5
+contains "the answer offers to remember it" "$(cat "$LOG")" "Remember: you use fish?"
+if grep -q "remember that" "$LOG"; then fail "remembered without a yes"; else pass "nothing is kept without a yes"; fi
+: >"$LOG"; ACTION_REMEMBER=1 bash "$F" ask "I use fish, how do I set an alias?"; sleep 0.8
+contains "a yes keeps it, in your own words" "$(cat "$LOG")" "friday-ctl remember\\ that\\ I\\ use\\ fish"
+bash "$F" feature propose-memories off >/dev/null
+: >"$LOG"; bash "$F" ask "I use fish, how do I set an alias?"; sleep 0.5
+if grep -q "Remember:" "$LOG"; then fail "propose-memories off still offered"; else pass "propose-memories off offers nothing"; fi
+bash "$F" feature propose-memories on >/dev/null
 
 echo "which \"this\""
 vague=$(bash -c 'source <(sed -n "/^friday_vague_this() {/,/^}/p" "$1"); shift; for q; do friday_vague_this "$q" && printf Y || printf .; done' _ "$F" \

@@ -875,6 +875,13 @@ internal sealed class TrayContext : ApplicationContext
         // Closing the card (or asking again) ends the reading.
         form.Closed += (_, _) => { if (Speaking.Enabled(_install.Paths)) Ctl.StopSaying(_install); };
         form.CanAskAnother = kind != AskKind.Screen;
+        // "I use fish …": the card offers to remember it; kept only on a yes.
+        if (kind == AskKind.Plain && AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "propose-memories"))
+        {
+            form.Proposal = MemoryProposal.From(question);
+            form.Remember += proposal => _ = Ctl.RunAsync(_install,
+                ["goal", "--wait", $"remember that {MemoryProposal.InOwnWords(proposal)}"], TimeSpan.FromSeconds(60));
+        }
         form.AskAgain += () => _ = AskAsync(kind);
         // "That was wrong" shows only while its switch is on (Settings, General).
         if (AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "wrong-button"))

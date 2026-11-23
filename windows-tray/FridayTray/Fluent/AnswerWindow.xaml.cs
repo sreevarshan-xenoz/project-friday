@@ -46,6 +46,12 @@ public partial class AnswerWindow : Window
     /// <summary>Whether "Try another model" applies (a text ask, not a screen one).</summary>
     public bool CanAskAnother { get; set; }
 
+    /// <summary>What the question said about you, offered to remember ("you use fish"), or null.</summary>
+    public string? Proposal { get; set; }
+
+    /// <summary>Remember <see cref="Proposal"/> (the person said yes).</summary>
+    public event Action<string>? Remember;
+
     /// <summary>Closed (by the person or the tray); a new ask needs a new window.</summary>
     public bool IsClosed { get; private set; }
 
@@ -196,6 +202,18 @@ public partial class AnswerWindow : Window
                     another.Click += (_, _) => { TryAnother?.Invoke(); CloseSoftly(); };
                     buttons.Add(another);
                 }
+            }
+            if (outcome.Ok && Proposal is { } proposal && Remember is not null)
+            {
+                var keep = Pill($"Remember: {proposal}", SymbolRegular.Bookmark24);
+                keep.ToolTip = "Nothing is kept unless you click this";
+                keep.Click += (_, _) =>
+                {
+                    Remember?.Invoke(proposal);
+                    keep.Content = "Remembered";
+                    keep.IsEnabled = false;
+                };
+                buttons.Add(keep);
             }
             if (Wrong is not null)
             {
