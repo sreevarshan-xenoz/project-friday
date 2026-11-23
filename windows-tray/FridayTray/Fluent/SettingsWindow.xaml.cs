@@ -878,6 +878,12 @@ internal sealed partial class SettingsWindow : FluentWindow
             AppSettings.AgentsOn(env),
             on => ChangeEnv(e => AppSettings.WithAgents(e, on)));
 
+        yield return Switch(
+            "Check an agent's work",
+            "When an agent says it's done, FRIDAY runs the project's tests (cargo, npm, go, pytest or make) and says what they show. They run code the agent just wrote.",
+            AppSettings.AgentCheckOn(env),
+            on => ChangeEnv(e => EnvFile.WithSetting(e, AppSettings.AgentCheck, on ? "1" : null)));
+
         yield return AgentHooksSwitch();
 
         var approved = AgentRuns.HooksApprovedSince(_install.Paths.AgentsDir, DateTimeOffset.UtcNow.AddDays(-1).ToUnixTimeSeconds());

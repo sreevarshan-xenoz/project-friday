@@ -21,6 +21,12 @@ public static class AppSettings
     public static bool AgentsOn(IReadOnlyDictionary<string, string> env) =>
         !env.TryGetValue(Agents, out var v) || v != "0";
 
+    public const string AgentCheck = "FRIDAY_AGENT_CHECK";
+
+    /// <summary>Off unless "1": FRIDAY runs the project's tests when an agent says it's done.</summary>
+    public static bool AgentCheckOn(IReadOnlyDictionary<string, string> env) =>
+        env.TryGetValue(AgentCheck, out var v) && v == "1";
+
     /// <summary>On unless "0" or "false" (the daemon's rule for screen text).</summary>
     public static bool ScreenTextOn(IReadOnlyDictionary<string, string> env) =>
         !env.TryGetValue(ScreenText, out var v) || v is not ("0" or "false");

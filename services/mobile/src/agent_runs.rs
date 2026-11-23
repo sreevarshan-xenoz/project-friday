@@ -811,7 +811,17 @@ pub async fn run_agent(
             lost = true;
             continue;
         }
-        finish(&mut rec, outcome.map(|o| started_fresh(o, lost)));
+        let outcome = match outcome.map(|o| started_fresh(o, lost)) {
+            Ok(o) if !o.failed && check_on() => {
+                // The agent's words are kept before the tests run.
+                rec.run.summary = format!("{}\n(FRIDAY is running the tests to check)", o.summary);
+                let _ = rec.save();
+                rec.log(json!({"event": "checking"}));
+                Ok(checked(o, &rec.run.folder).await)
+            }
+            other => other,
+        };
+        finish(&mut rec, outcome);
         return Ok(());
     }
 }
@@ -852,6 +862,156 @@ fn instructions_from(file: &Path, agent: Agent) -> Option<String> {
         agent.name(),
         file.display()
     ))
+}
+
+/// The project's own test command, from what the folder holds: Cargo.toml,
+/// a package.json with a real test script, go.mod, a Python project with
+/// tests, or a Makefile with a `test` target. None when there is none.
+pub fn check_command(folder: &Path) -> Option<(&'static str, Vec<&'static str>)> {
+    let has = |f: &str| folder.join(f).is_file();
+    let read = |f: &str| std::fs::read_to_string(folder.join(f)).unwrap_or_default();
+    if has("Cargo.toml") {
+        return Some(("cargo", vec!["test", "--quiet"]));
+    }
+    if has("package.json") {
+        let pkg: Value = serde_json::from_str(&read("package.json")).unwrap_or_default();
+        let script = pkg["scripts"]["test"].as_str().unwrap_or("");
+        // npm init's placeholder only fails.
+        if !script.is_empty() && !script.contains("no test specified") {
+            return Some(("npm", vec!["test", "--silent"]));
+        }
+    }
+    if has("go.mod") {
+        return Some(("go", vec!["test", "./..."]));
+    }
+    if (has("pyproject.toml") || has("pytest.ini") || has("setup.py"))
+        && (folder.join("tests").is_dir() || has("pytest.ini"))
+    {
+        return Some(("python3", vec!["-m", "pytest", "-q"]));
+    }
+    if read("Makefile").lines().any(|l| l.starts_with("test:")) {
+        return Some(("make", vec!["test"]));
+    }
+    None
+}
+
+/// Whether FRIDAY checks an agent's work by running the project's tests:
+/// off unless the person turned it on (`FRIDAY_AGENT_CHECK=1`; `friday agents
+/// check on`, Settings → Agents), since the tests run code the agent just
+/// wrote, which FRIDAY's approval rules would otherwise ask about.
+fn check_on() -> bool {
+    std::env::var("FRIDAY_AGENT_CHECK").is_ok_and(|v| v.trim() == "1")
+}
+
+/// How long FRIDAY's own test run may take before it gives up.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// An agent said it was done: FRIDAY runs the project's tests itself (at low
+/// priority, at most ten minutes) and adds what they said to the summary.
+/// Failing tests make the run a failure, whatever the agent claimed.
+async fn checked(o: Outcome, folder: &Path) -> Outcome {
+    let Some((program, args)) = check_command(folder) else {
+        return o;
+    };
+    let shown = format!("{program} {}", args.join(" "));
+    // Output goes to a file (a test can print without end, or leave a
+    // process holding a pipe open), of which the end is read.
+    let log = std::env::temp_dir().join(format!("friday-check-{}.log", uuid::Uuid::new_v4()));
+    let Ok(file) = std::fs::File::create(&log) else {
+        return o;
+    };
+    let Ok(file2) = file.try_clone() else {
+        return o;
+    };
+    #[cfg(unix)]
+    let mut cmd = {
+        let mut c = tokio::process::Command::new("nice");
+        c.args(["-n", "10", program]);
+        // Its own process group, so a timeout stops everything it started.
+        c.process_group(0);
+        c
+    };
+    #[cfg(windows)]
+    let mut cmd = {
+        // npm is npm.cmd: only cmd finds it.
+        let mut c = tokio::process::Command::new("cmd");
+        c.args(["/C", program]);
+        c.creation_flags(0x0800_0000 | 0x0000_4000); // no window, below normal
+        c
+    };
+    cmd.args(&args)
+        .current_dir(folder)
+        .stdin(std::process::Stdio::null())
+        .stdout(file)
+        .stderr(file2)
+        .kill_on_drop(true);
+    // The person's keys are not the tests' business.
+    for (k, _) in std::env::vars() {
+        if k.ends_with("_API_KEY")
+            || k.ends_with("_TOKEN")
+            || k.ends_with("_SECRET")
+            || k.starts_with("FRIDAY_")
+        {
+            cmd.env_remove(&k);
+        }
+    }
+    let ran = match cmd.spawn() {
+        Ok(mut child) => {
+            let pid = child.id();
+            match tokio::time::timeout(CHECK_TIMEOUT, child.wait()).await {
+                Ok(r) => Some(r),
+                Err(_) => {
+                    #[cfg(unix)]
+                    if let Some(pid) = pid {
+                        // SAFETY: a plain signal to the group this run started.
+                        unsafe {
+                            libc::killpg(pid as libc::pid_t, libc::SIGKILL);
+                        }
+                    }
+                    #[cfg(windows)]
+                    if let Some(pid) = pid {
+                        let _ = std::process::Command::new("taskkill")
+                            .args(["/PID", &pid.to_string(), "/T", "/F"])
+                            .status();
+                    }
+                    let _ = child.kill().await;
+                    None
+                }
+            }
+        }
+        Err(e) => Some(Err(e)),
+    };
+    let text = {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut bytes = Vec::new();
+        if let Ok(mut f) = std::fs::File::open(&log) {
+            let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+            let _ = f.seek(SeekFrom::Start(len.saturating_sub(16 * 1024)));
+            let _ = f.read_to_end(&mut bytes);
+        }
+        String::from_utf8_lossy(&bytes).into_owned()
+    };
+    let _ = std::fs::remove_file(&log);
+    let (note, failed) = match ran {
+        Some(Ok(status)) if status.success() => {
+            (format!("FRIDAY ran {shown}: the tests pass."), false)
+        }
+        Some(Ok(_)) => {
+            let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+            let tail = lines[lines.len().saturating_sub(12)..].join("\n");
+            (format!("FRIDAY ran {shown}: the tests fail.\n{tail}"), true)
+        }
+        Some(Err(e)) => (format!("FRIDAY couldn't run {shown} to check: {e}"), false),
+        None => (
+            format!("FRIDAY stopped {shown} after ten minutes, so this wasn't checked."),
+            false,
+        ),
+    };
+    // First, so the summary's length limit never cuts it off.
+    Outcome {
+        summary: format!("{note}\n{}", o.summary),
+        failed: o.failed || failed,
+    }
 }
 
 /// Puts "Started fresh" in front of a follow-up's summary when its session was gone.
@@ -1312,6 +1472,89 @@ impl friday_goal_execution::Tool for AgentsTool {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    fn project(name: &str, files: &[(&str, &str)]) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("friday-check-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (f, text) in files {
+            std::fs::write(dir.join(f), text).unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn the_projects_own_test_command_is_found() {
+        let cargo = project("cargo", &[("Cargo.toml", "[package]")]);
+        assert_eq!(
+            check_command(&cargo),
+            Some(("cargo", vec!["test", "--quiet"]))
+        );
+        let npm = project(
+            "npm",
+            &[("package.json", r#"{"scripts":{"test":"vitest run"}}"#)],
+        );
+        assert_eq!(check_command(&npm).map(|c| c.0), Some("npm"));
+        let placeholder = project(
+            "npm-init",
+            &[(
+                "package.json",
+                r#"{"scripts":{"test":"echo \"Error: no test specified\" && exit 1"}}"#,
+            )],
+        );
+        assert_eq!(
+            check_command(&placeholder),
+            None,
+            "npm init's placeholder isn't a test"
+        );
+        let make = project("make", &[("Makefile", "build:\n\tcc x.c\ntest:\n\t./x\n")]);
+        assert_eq!(check_command(&make), Some(("make", vec!["test"])));
+        assert_eq!(
+            check_command(&project("none", &[("README.md", "hi")])),
+            None
+        );
+    }
+
+    /// The agent said done; FRIDAY's own run of the tests decides.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn failing_tests_make_a_done_run_a_failure() {
+        let done = || Outcome {
+            summary: "All done.".into(),
+            failed: false,
+        };
+        let good = project("good", &[("Makefile", "test:\n\ttrue\n")]);
+        let o = checked(done(), &good).await;
+        assert!(
+            !o.failed
+                && o.summary
+                    .starts_with("FRIDAY ran make test: the tests pass."),
+            "{}",
+            o.summary
+        );
+        let bad = project(
+            "bad",
+            &[(
+                "Makefile",
+                "test:\n\t@echo 'assertion failed: 2 == 3'; false\n",
+            )],
+        );
+        let o = checked(done(), &bad).await;
+        assert!(o.failed, "{}", o.summary);
+        assert!(
+            o.summary
+                .starts_with("FRIDAY ran make test: the tests fail."),
+            "{}",
+            o.summary
+        );
+        assert!(
+            o.summary.contains("assertion failed: 2 == 3"),
+            "{}",
+            o.summary
+        );
+        let none = project("plain", &[("notes.txt", "x")]);
+        assert_eq!(checked(done(), &none).await.summary, "All done.");
+    }
     use tokio::io::{duplex, AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     fn run_in(dir: &Path, folder: &str) -> Recorder {
