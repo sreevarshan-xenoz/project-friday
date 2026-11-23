@@ -1948,6 +1948,8 @@ mod tests {
         });
 
         let mut fabric = friday_intelligence::InferenceFabric::new();
+        // Its egress log in a temp file, never the person's own.
+        fabric.egress_log_path = std::env::temp_dir().join("friday-test-egress.jsonl");
         fabric.request_timeout = Some(std::time::Duration::from_millis(150));
         let provider_name = "mock_pinned_vision";
         fabric.register_provider(Box::new(friday_intelligence::OpenAiProvider {
@@ -2020,7 +2022,9 @@ mod tests {
 
     #[tokio::test]
     async fn fabric_provider_seam_private_mode_fails_when_no_local_vision_model() {
-        let fabric = friday_intelligence::InferenceFabric::new().with_private_mode(true);
+        let mut fabric = friday_intelligence::InferenceFabric::new().with_private_mode(true);
+        fabric.egress_log_path = std::env::temp_dir().join("friday-test-egress.jsonl");
+        let fabric = fabric;
         let seam = FabricProviderSeam::new(Arc::new(fabric), None);
         let payload =
             "SCREEN_CAPTURE mime=image/png geometry=fullscreen bytes=3 data=QUJD\nQUESTION: test";
