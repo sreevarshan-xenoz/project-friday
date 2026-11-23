@@ -885,7 +885,35 @@ pub fn run_wake() -> u8 {
         .checked_sub(std::time::Duration::from_secs(60))
         .unwrap_or_else(std::time::Instant::now);
     let note = |text: &str| tell("note", text);
+    // A call or meeting holds the microphone: the wake word rests meanwhile
+    // (looked at every few seconds; `call-pause` off keeps it listening).
+    let mut on_call: Option<&'static str> = None;
+    let mut call_checked = std::time::Instant::now()
+        .checked_sub(std::time::Duration::from_secs(60))
+        .unwrap_or_else(std::time::Instant::now);
     while let Some(frame) = frames.next() {
+        if call_checked.elapsed() > std::time::Duration::from_secs(5) {
+            call_checked = std::time::Instant::now();
+            let now = if crate::features::on("call-pause") {
+                call_holds_mic()
+            } else {
+                None
+            };
+            match (on_call, now) {
+                (None, Some(app)) => note(&format!(
+                    "Paused \"Hey Friday\" while {app} uses the microphone."
+                )),
+                (Some(_), None) => note("Listening for \"Hey Friday\" again."),
+                _ => {}
+            }
+            if now.is_some() && on_call.is_none() {
+                conversing = None;
+            }
+            on_call = now;
+        }
+        if on_call.is_some() {
+            continue;
+        }
         if conversing.is_some_and(|t| t.elapsed() > std::time::Duration::from_secs(60))
             && !crate::speech::speaking()
         {
@@ -969,6 +997,81 @@ pub fn run_wake() -> u8 {
     0
 }
 
+/// Apps whose holding the microphone means a call or a meeting (browsers
+/// included: a site with the microphone is nearly always one).
+const CALL_APPS: &[&str] = &[
+    "zoom", "teams", "slack", "discord", "webex", "skype", "signal", "telegram", "whatsapp",
+    "element", "jitsi", "firefox", "chrome", "chromium", "brave", "zen", "vivaldi", "msedge",
+];
+
+/// The call app (as named in `CALL_APPS`) found in `name`, if any.
+fn call_app(name: &str) -> Option<&'static str> {
+    let name = name.to_lowercase();
+    CALL_APPS.iter().copied().find(|a| name.contains(a))
+}
+
+/// The call app recording from the microphone now, in `pw-dump`'s JSON: a
+/// running input stream of one of `CALL_APPS`.
+pub fn call_in_pw_dump(json: &str) -> Option<&'static str> {
+    let nodes: Vec<serde_json::Value> = serde_json::from_str(json).ok()?;
+    nodes.iter().find_map(|n| {
+        let props = &n["info"]["props"];
+        if props["media.class"] != "Stream/Input/Audio" || n["info"]["state"] != "running" {
+            return None;
+        }
+        let who = format!(
+            "{} {}",
+            props["application.process.binary"].as_str().unwrap_or(""),
+            props["application.name"].as_str().unwrap_or("")
+        );
+        call_app(&who)
+    })
+}
+
+/// The call app using the microphone now, in `reg query … microphone /s`:
+/// an app's key whose `LastUsedTimeStop` is 0 (Windows' own privacy record).
+pub fn call_in_reg(text: &str) -> Option<&'static str> {
+    let mut key = "";
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with("HKEY_") {
+            key = line;
+        } else if line.starts_with("LastUsedTimeStop") && line.ends_with(" 0x0") {
+            if let Some(app) = call_app(key.rsplit('\\').next().unwrap_or("")) {
+                return Some(app);
+            }
+        }
+    }
+    None
+}
+
+/// The call app using the microphone now, so the wake word pauses for it.
+fn call_holds_mic() -> Option<&'static str> {
+    #[cfg(windows)]
+    {
+        let mut cmd = std::process::Command::new("reg");
+        std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x0800_0000);
+        let out = cmd
+            .args([
+                "query",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone",
+                "/s",
+            ])
+            .output()
+            .ok()?;
+        call_in_reg(&String::from_utf8_lossy(&out.stdout))
+    }
+    #[cfg(not(windows))]
+    {
+        let out = std::process::Command::new("timeout")
+            .args(["3", "pw-dump"])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        call_in_pw_dump(&String::from_utf8_lossy(&out.stdout))
+    }
+}
+
 /// What the wake word heard, handed on: on Linux a notification or `friday
 /// ask` (`--follow-up` in a conversation); on Windows a line `<kind>\t<text>`
 /// for the tray, which asks it.
@@ -1010,6 +1113,37 @@ pub fn notes_file(now: chrono::DateTime<chrono::Local>) -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_call_app_holding_the_microphone_is_found() {
+        let dump = r#"[
+          {"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Input/Audio","application.process.binary":"pw-record","application.name":"pw-record"}}},
+          {"type":"PipeWire:Interface:Node","info":{"state":"idle","props":{"media.class":"Stream/Input/Audio","application.process.binary":"zoom"}}},
+          {"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Output/Audio","application.process.binary":"firefox"}}}
+        ]"#;
+        assert_eq!(
+            call_in_pw_dump(dump),
+            None,
+            "FRIDAY's own recording, an idle call, a tab playing sound"
+        );
+        let call = dump.replace(r#""state":"idle""#, r#""state":"running""#);
+        assert_eq!(call_in_pw_dump(&call), Some("zoom"));
+
+        let reg = r"
+HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\NonPackaged\C:#Program Files#FRIDAY#friday-ctl.exe
+    LastUsedTimeStart    REG_QWORD    0x1db3c
+    LastUsedTimeStop    REG_QWORD    0x0
+HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\MSTeams_8wekyb3d8bbwe
+    LastUsedTimeStart    REG_QWORD    0x1db3c
+    LastUsedTimeStop    REG_QWORD    0x1db3d
+";
+        assert_eq!(
+            call_in_reg(reg),
+            None,
+            "FRIDAY itself, and a call that ended"
+        );
+        assert_eq!(call_in_reg(&reg.replace("0x1db3d", "0x0")), Some("teams"));
+    }
 
     #[test]
     fn fillers_go_and_the_sentence_stays() {
