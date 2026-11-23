@@ -1730,7 +1730,7 @@ impl GoalRunner {
         // so `run_goal` can read the fabric's routing decision afterwards.
         Self::with_investigation_engine(
             bus,
-            InvestigationEngine::llm(Box::new(fabric.clone())),
+            InvestigationEngine::llm(Box::new(crate::model_jobs::for_job(&fabric, "ask"))),
             Some(fabric),
             None,
             None,
@@ -1835,7 +1835,7 @@ impl GoalRunner {
     ) -> Self {
         Self::with_investigation_engine(
             bus,
-            InvestigationEngine::llm(Box::new(fabric.clone())),
+            InvestigationEngine::llm(Box::new(crate::model_jobs::for_job(&fabric, "ask"))),
             Some(fabric),
             None,
             Some(journal),
@@ -1981,7 +1981,7 @@ impl GoalRunner {
             executive.register_tool(Box::new(
                 crate::desktop_tool::DesktopControlTool::with_adapter(
                     crate::desktop_tool::default_adapter(),
-                    f.clone() as Arc<dyn LlmStrategyClient>,
+                    crate::model_jobs::for_job(f, "chores"),
                     confirmation_gate.clone(),
                     executive.abort_token(),
                     crate::desktop_tool::audit_dir(),
@@ -2010,7 +2010,7 @@ impl GoalRunner {
         let has_system = match &fabric {
             Some(f) if crate::system_tool::enabled() => {
                 executive.register_tool(Box::new(crate::system_tool::SystemTool::new(
-                    f.clone() as Arc<dyn LlmStrategyClient>,
+                    crate::model_jobs::for_job(f, "chores"),
                     Arc::new(crate::system_tool::DbusHelper),
                     confirmation_gate.clone(),
                     executive.abort_token(),
@@ -2031,7 +2031,7 @@ impl GoalRunner {
             Some(f) if crate::agent_runs::enabled() => {
                 executive.register_tool(Box::new(
                     crate::agent_runs::AgentsTool::new(
-                        f.clone() as Arc<dyn LlmStrategyClient>,
+                        crate::model_jobs::for_job(f, "chores"),
                         crate::agent_runs::runs_dir(),
                     )
                     .with_gate(confirmation_gate.clone()),
@@ -2044,7 +2044,7 @@ impl GoalRunner {
         let has_diagnose = match &fabric {
             Some(f) if crate::diagnose::enabled() => {
                 executive.register_tool(Box::new(crate::diagnose::DiagnoseTool::new(
-                    f.clone() as Arc<dyn LlmStrategyClient>
+                    crate::model_jobs::for_job(f, "ask"),
                 )));
                 true
             }
@@ -2054,7 +2054,7 @@ impl GoalRunner {
             Some(f) if crate::standing::enabled() => {
                 executive.register_tool(Box::new(
                     crate::standing::StandingTool::new(
-                        f.clone() as Arc<dyn LlmStrategyClient>,
+                        crate::model_jobs::for_job(f, "chores"),
                         crate::standing::store_path(),
                     )
                     .with_gate(confirmation_gate.clone()),
@@ -2128,7 +2128,9 @@ impl GoalRunner {
             bus,
             executive: Arc::new(tokio::sync::Mutex::new(executive)),
             workspace,
-            answerer: fabric.clone().map(|f| f as Arc<dyn LlmStrategyClient>),
+            answerer: fabric
+                .as_ref()
+                .map(|f| crate::model_jobs::for_job(f, "ask")),
             fabric,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             conversations: None,

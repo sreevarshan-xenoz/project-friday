@@ -79,4 +79,22 @@ public class SettingsTests
         var ns = System.Xml.Linq.XNamespace.Get("http://schemas.microsoft.com/windows/2004/02/mit/task");
         Assert.Equal(@"PC\a&b<c>", doc.Descendants(ns + "UserId").First().Value);
     }
+
+    [Fact]
+    public void A_model_pick_is_provider_slash_model_and_auto_clears_it()
+    {
+        Assert.True(AppSettings.IsModelPick("groq/llama-3.3-70b"));
+        Assert.True(AppSettings.IsModelPick("openrouter/nvidia/nemotron:free"));
+        Assert.True(AppSettings.IsModelPick(""));
+        Assert.True(AppSettings.IsModelPick("auto"));
+        foreach (var bad in new[] { "llama", "/x", "groq/", "groq/llama 3" })
+            Assert.False(AppSettings.IsModelPick(bad), bad);
+
+        var picked = AppSettings.WithModelPick("OPENROUTER_API_KEY=k\n", "FRIDAY_MODEL_ASK", " groq/llama-3.3-70b ");
+        Assert.Equal("groq/llama-3.3-70b", Env(picked)["FRIDAY_MODEL_ASK"]);
+        Assert.Equal("k", Env(picked)["OPENROUTER_API_KEY"]);
+        Assert.False(Env(AppSettings.WithModelPick(picked, "FRIDAY_MODEL_ASK", "auto")).ContainsKey("FRIDAY_MODEL_ASK"));
+        Assert.Equal(["FRIDAY_MODEL_ASK", "FRIDAY_MODEL_SCREEN", "FRIDAY_MODEL_CHORES"],
+            AppSettings.ModelJobs.Select(j => j.Var).ToArray());
+    }
 }
