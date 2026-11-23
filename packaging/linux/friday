@@ -3520,6 +3520,7 @@ self-docs|Questions about FRIDAY are answered from its own guide
 sensitive-warn|Mail and chat apps: say where their text goes before sending it, or answer with the local model
 place-window|Put a window on one side of the screen (\"put Firefox on the left\")
 which-this|\"Explain this\" with nothing picked: ask whether it means the selected text or the window in front
+dictation-cleanup|Speech drops \"um\" and \"uh\" and uses your own words (~/.config/friday/dictionary)
 propose-memories|\"I use fish …\" in a question: offer to remember it (nothing is kept unless you say so)"
 friday_features_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/features-off"; }
 # friday_feature_on <name>: on unless switched off.

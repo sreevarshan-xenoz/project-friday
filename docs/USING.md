@@ -34,6 +34,11 @@ On Windows, hold Win+Y the same way after Settings, Voice, "Set up talking" (whi
 the words are typed into the field you were in, and nothing is asked or sent. It uses the same voice setup
 (`friday voice setup`) and needs `wtype`. On a FRIDAY OS install made before this key existed, run `friday keys update` once to add it (`friday doctor` says so).
 
+What you say (typed or asked) comes out without "um" and "uh". To have names and tools spelled your way, list
+them in `~/.config/friday/dictionary` (Windows: `%APPDATA%\friday\dictionary`), one per line: a word on its
+own (`Kubernetes`) is one whisper should know, and `heard => written` (`cube cuddle => kubectl`) fixes what it
+hears. `friday feature dictation-cleanup off` (Windows: Settings → Features) turns both off.
+
 With a selection, the box offers quick actions (Summarize, Explain, Translate,
 Fix the grammar) and your own prompts, one per line in
 `~/.config/friday/prompts` (on Windows `%APPDATA%\friday\prompts`). Shift+Enter sends what you typed instead (on Windows, type your own and press Enter).
