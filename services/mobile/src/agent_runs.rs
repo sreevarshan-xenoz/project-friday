@@ -797,6 +797,7 @@ pub async fn run_agent(
                 .as_ref()
                 .map(|_| rec.run.folder.join(".git"))
                 .filter(|g| g.exists());
+            crate::agent_sandbox::prepare(rec.run.agent, &home);
             let (prog, wrapped) = crate::agent_sandbox::wrap(
                 rec.run.agent,
                 &program,

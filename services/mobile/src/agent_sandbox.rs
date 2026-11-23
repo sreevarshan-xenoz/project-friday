@@ -55,15 +55,34 @@ pub fn wrap(
     home: &Path,
 ) -> (String, Vec<String>) {
     let s = |p: &Path| p.display().to_string();
-    let mut a: Vec<String> = vec![
-        "--die-with-parent".into(),
-        "--dev-bind".into(),
-        "/".into(),
-        "/".into(),
-        "--ro-bind".into(),
-        s(home),
-        s(home),
-    ];
+    // The system read-only, its own /dev, /proc and /tmp, and none of the
+    // session's sockets (the SSH agent, D-Bus and the keyring live there).
+    let mut a: Vec<String> = [
+        "--die-with-parent",
+        "--ro-bind",
+        "/",
+        "/",
+        "--dev",
+        "/dev",
+        "--proc",
+        "/proc",
+        "--tmpfs",
+        "/tmp",
+        "--tmpfs",
+        "/var/tmp",
+        "--unsetenv",
+        "SSH_AUTH_SOCK",
+        "--unsetenv",
+        "DBUS_SESSION_BUS_ADDRESS",
+        "--unsetenv",
+        "GPG_AGENT_INFO",
+    ]
+    .map(String::from)
+    .to_vec();
+    if let Some(run) = std::env::var_os("XDG_RUNTIME_DIR").filter(|r| Path::new(r).is_dir()) {
+        a.extend(["--tmpfs".into(), s(Path::new(&run))]);
+    }
+    a.extend(["--ro-bind".into(), s(home), s(home)]);
     let rw = |p: PathBuf, a: &mut Vec<String>| {
         if p.exists() {
             a.extend(["--bind".into(), s(&p), s(&p)]);
@@ -88,6 +107,22 @@ pub fn wrap(
     a.push(s(program));
     a.extend(args.iter().cloned());
     ("bwrap".into(), a)
+}
+
+/// Makes the agent's own state folders (and `.cache`) before a run: the
+/// home folder is read-only inside, so one missing then couldn't be made.
+pub fn prepare(agent: Agent, home: &Path) {
+    for p in own_state(agent).iter().chain(&[".cache"]) {
+        let p = home.join(p);
+        if p.exists() {
+            continue;
+        }
+        if p.extension().is_some_and(|e| e == "json") {
+            let _ = std::fs::write(&p, "{}");
+        } else {
+            let _ = std::fs::create_dir_all(&p);
+        }
+    }
 }
 
 /// The home folder.
@@ -127,8 +162,16 @@ mod tests {
         }
         std::fs::write(home.join(".ssh/id_ed25519"), "SECRET KEY").unwrap();
         std::fs::write(home.join(".netrc"), "machine x password p").unwrap();
+        prepare(Agent::Opencode, &home);
+        assert!(
+            home.join(".local/share/opencode").is_dir(),
+            "its state folder is made first"
+        );
         let script = format!(
             "cat {h}/.ssh/id_ed25519 {h}/.netrc 2>/dev/null; \
+             echo sock=$SSH_AUTH_SOCK; \
+             echo leak > /var/tmp/friday-sandbox-leak 2>/dev/null; \
+             echo state > {h}/.local/share/opencode/s 2>/dev/null; \
              echo ok > {w}/made.txt; \
              echo bad > {h}/outside.txt 2>/dev/null; \
              echo cfg > {h}/.config/opencode/state 2>/dev/null; true",
@@ -163,6 +206,12 @@ mod tests {
         assert!(
             home.join(".config/opencode/state").exists(),
             "its own state is writable"
+        );
+        assert!(home.join(".local/share/opencode/s").exists());
+        assert!(said.contains("sock=\n"), "no SSH agent: {said}");
+        assert!(
+            !Path::new("/var/tmp/friday-sandbox-leak").exists(),
+            "wrote outside, in /var/tmp"
         );
         assert_eq!(
             std::fs::read_to_string(home.join(".ssh/id_ed25519")).unwrap(),
