@@ -234,7 +234,7 @@ Check whether it is on with `friday helper status`, or turn it off anytime with
 
 ## Standing tasks
 
-Ask for something to happen again and again: `friday ask "every morning at 8 tell me the weather"`, `"every weekday at 9 summarize my unread notes"`, `"when my battery drops below 20% tell me"`. FRIDAY runs each one the way it runs your own ask, so the same rules apply: nothing is sent that a normal ask wouldn't send, and anything that deletes or sends stops and asks you first (you'll see the usual confirmation). Answers arrive as a notification and in `friday answers`.
+Ask for something to happen again and again: `friday ask "every morning at 8 tell me the weather"`, `"every weekday at 9 summarize my unread notes"`, `"when my battery drops below 20% tell me"`. FRIDAY runs each one the way it runs your own ask, so the same rules apply: nothing is sent that a normal ask wouldn't send, and anything that deletes or sends stops and asks you first (you'll see the usual confirmation). Answers arrive as a notification and in `friday answers`. To keep them quiet at night, `friday tasks quiet 22-7` (Windows: Settings → Tasks, "Quiet at night"): tasks that repeat wait until the quiet hours end and catch up then, while reminders and battery alerts still come. At most 50 task runs happen in a day (`friday tasks limit <n>` changes that), so a task gone wrong can't use up your AI provider's day.
 
 The FRIDAY drawer lists them (up to four) with pause/resume and delete buttons. `friday tasks` lists them all; `friday tasks pause t1`, `resume t1` and `delete t1` change one. A morning task missed while the computer was off still runs if it's less than six hours late. Up to 20 tasks, at least 5 minutes apart. `FRIDAY_STANDING_TASKS=0` turns them off.
 
