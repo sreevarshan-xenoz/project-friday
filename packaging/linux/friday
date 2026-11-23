@@ -3842,7 +3842,7 @@ friday_local_ai_presets() {
   for name in light:25:Light balanced:50:Balanced most:75:Most; do
     IFS=: read -r i pct label <<<"$name"
     ids+=("$i"); budgets+=($((ram_mb * pct / 100))); fast+=(0)
-    labels+=("$label (up to $(friday_gb $((ram_mb * pct / 100))) of memory)")
+    labels+=("$label (up to $(friday_gb $((ram_mb * pct / 100))) of memory, on the processor)")
   done
   local model need dl vision available note
   for i in "${!ids[@]}"; do

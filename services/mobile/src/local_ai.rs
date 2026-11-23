@@ -177,11 +177,25 @@ fn disk_free_mb() -> u64 {
 }
 
 fn nvidia_smi_mb() -> Option<u64> {
-    let out = std::process::Command::new("nvidia-smi")
-        .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
+    // On Windows the driver puts it in System32, older ones in NVSMI, and
+    // neither is always on PATH.
+    let tries: &[&str] = if cfg!(windows) {
+        &[
+            "nvidia-smi",
+            r"C:\Windows\System32\nvidia-smi.exe",
+            r"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe",
+        ]
+    } else {
+        &["nvidia-smi"]
+    };
+    let out = tries.iter().find_map(|exe| {
+        std::process::Command::new(exe)
+            .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+    })?;
     let digits: String = String::from_utf8_lossy(&out.stdout)
         .lines()
         .next()?
@@ -259,42 +273,67 @@ pub fn scan_linux(root: &Path) -> Hardware {
     }
 }
 
+/// The graphics card in Windows' display adapters, one line each as
+/// `<device id>|<memory bytes>|<name>` (the driver's registry entries, whose
+/// `qwMemorySize` holds the real video memory; WMI's AdapterRAM stops at
+/// 4 GB). `nvidia` is nvidia-smi's count, which wins for an NVIDIA card. A
+/// card counts as one of its own (discrete) by its video memory: AMD with 2 GB
+/// or more, Intel Arc with 4 GB or more; integrated ones share the memory.
+pub fn windows_gpu(
+    adapters: &str,
+    nvidia: impl Fn() -> Option<u64>,
+) -> (&'static str, bool, Option<u64>) {
+    let mut best: (&'static str, bool, Option<u64>) = ("none", false, None);
+    for line in adapters.lines() {
+        let mut f = line.split('|');
+        let id = f.next().unwrap_or("").to_uppercase();
+        let mem = f
+            .next()
+            .and_then(|m| m.trim().parse::<u64>().ok())
+            .unwrap_or(0)
+            / 1_048_576;
+        let name = f.next().unwrap_or("").to_lowercase();
+        let found: (&'static str, bool, Option<u64>) = if id.contains("VEN_10DE") {
+            ("nvidia", true, nvidia().or(Some(mem).filter(|m| *m > 0)))
+        } else if id.contains("VEN_1002") {
+            ("amd", mem >= 2048, Some(mem).filter(|m| *m >= 2048))
+        } else if id.contains("VEN_8086") {
+            let arc = name.contains("arc") && mem >= 4096;
+            ("intel", arc, arc.then_some(mem))
+        } else {
+            continue;
+        };
+        // A card of its own beats integrated graphics; the most memory wins.
+        let better = match (found.1, best.1) {
+            (true, false) => true,
+            (true, true) => found.2.unwrap_or(0) > best.2.unwrap_or(0),
+            (false, false) => best.0 == "none",
+            (false, true) => false,
+        };
+        if better {
+            best = found;
+        }
+    }
+    best
+}
+
 #[cfg(windows)]
 fn platform() -> Hardware {
     let mut sys = sysinfo::System::new();
     sys.refresh_memory();
     sys.refresh_cpu_all();
-    let (mut gpu, mut discrete, mut vram_mb) = ("none", false, None);
-    // Windows lists its adapters (Win32_VideoController); the vendor is in
-    // the PnP id. NVIDIA memory comes from nvidia-smi (AdapterRAM stops at
-    // 4 GB); AMD's AdapterRAM is a lower bound, good enough to size by.
+    // Every display adapter's driver entry: its id, real video memory, name.
     let ps = std::process::Command::new("powershell")
         .args([
             "-NoProfile",
             "-Command",
-            "Get-CimInstance Win32_VideoController | ForEach-Object { \"$($_.PNPDeviceID)|$($_.AdapterRAM)\" }",
+            r#"Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}' -ErrorAction SilentlyContinue | ForEach-Object { $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue; if ($p.MatchingDeviceId) { "$($p.MatchingDeviceId)|$($p.'HardwareInformation.qwMemorySize')|$($p.DriverDesc)" } }"#,
         ])
         .stderr(std::process::Stdio::null())
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_default();
-    for line in ps.lines() {
-        let (id, ram) = line.split_once('|').unwrap_or((line, ""));
-        let id = id.to_uppercase();
-        let mem = ram.trim().parse::<u64>().unwrap_or(0) / 1_048_576;
-        if id.contains("VEN_10DE") {
-            (gpu, discrete, vram_mb) = ("nvidia", true, nvidia_smi_mb());
-            break;
-        } else if id.contains("VEN_1002") {
-            if mem >= 2048 {
-                (gpu, discrete, vram_mb) = ("amd", true, Some(mem));
-            } else if gpu == "none" {
-                gpu = "amd";
-            }
-        } else if id.contains("VEN_8086") && gpu == "none" {
-            gpu = "intel";
-        }
-    }
+    let (gpu, discrete, vram_mb) = windows_gpu(&ps, nvidia_smi_mb);
     Hardware {
         ram_mb: sys.total_memory() / 1_048_576,
         gpu,
@@ -365,7 +404,13 @@ pub fn presets(hw: &Hardware) -> Vec<Preset> {
         ("most", 75, "Most"),
     ] {
         let b = hw.ram_mb * pct / 100;
-        budgets.push((id, format!("{label} (up to {} of memory)", gb(b)), b, false));
+        // These run on the processor (and integrated graphics): slower.
+        budgets.push((
+            id,
+            format!("{label} (up to {} of memory, on the processor)", gb(b)),
+            b,
+            false,
+        ));
     }
     budgets
         .into_iter()
@@ -1281,5 +1326,43 @@ mod tests {
         assert!(!llama_args(Path::new("m.gguf"), None, false)
             .join(" ")
             .contains("mmproj"));
+    }
+
+    #[test]
+    fn windows_finds_the_graphics_card_and_its_real_memory() {
+        let gb = |n: u64| n * 1024 * 1_048_576;
+        // A laptop: Intel graphics plus an NVIDIA card (nvidia-smi says 8 GB).
+        let laptop = format!(
+            "pci\\ven_8086&dev_a7a0|{}|Intel(R) Iris(R) Xe Graphics\npci\\ven_10de&dev_2860|{}|NVIDIA GeForce RTX 4060 Laptop GPU",
+            gb(1),
+            gb(8)
+        );
+        assert_eq!(
+            windows_gpu(&laptop, || Some(8188)),
+            ("nvidia", true, Some(8188))
+        );
+        // nvidia-smi missing: the driver's own count.
+        assert_eq!(windows_gpu(&laptop, || None), ("nvidia", true, Some(8192)));
+        // An AMD card with 16 GB (WMI would have said 4).
+        let amd = format!("PCI\\VEN_1002&DEV_744C|{}|AMD Radeon RX 7900 XTX", gb(16));
+        assert_eq!(windows_gpu(&amd, || None), ("amd", true, Some(16384)));
+        // An AMD laptop chip with 512 MB carved out: integrated, sized by RAM.
+        let apu = format!(
+            "PCI\\VEN_1002&DEV_15BF|{}|AMD Radeon(TM) Graphics",
+            512 * 1_048_576
+        );
+        assert_eq!(windows_gpu(&apu, || None), ("amd", false, None));
+        // Intel Arc with its own 8 GB counts; Iris alone doesn't.
+        let arc = format!(
+            "PCI\\VEN_8086&DEV_56A0|{}|Intel(R) Arc(TM) A770 Graphics",
+            gb(8)
+        );
+        assert_eq!(windows_gpu(&arc, || None), ("intel", true, Some(8192)));
+        let iris = format!(
+            "PCI\\VEN_8086&DEV_A7A0|{}|Intel(R) Iris(R) Xe Graphics",
+            gb(1)
+        );
+        assert_eq!(windows_gpu(&iris, || None), ("intel", false, None));
+        assert_eq!(windows_gpu("", || None), ("none", false, None));
     }
 }
