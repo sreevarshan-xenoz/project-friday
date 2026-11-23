@@ -645,7 +645,14 @@ impl Tool for DesktopControlTool {
             }
             // Looking inside an app is never asked about, under ask-all either.
             let looks = is_ui && matches!(&verb[3..], "apps" | "tree" | "find" | "read");
-            if self.ask_all && !task_confirmed && risk == DesktopRisk::Reversible && !looks {
+            // Asked with quoted text (a page, a selection): every step that changes
+            // something asks, as under ask-all.
+            let quoted = self.gate.lock().unwrap().quoted;
+            if (self.ask_all || quoted)
+                && !task_confirmed
+                && risk == DesktopRisk::Reversible
+                && !looks
+            {
                 if let Err(err) = self.gate.lock().unwrap().check_or_record("desktop", &task) {
                     return err;
                 }
@@ -1186,6 +1193,61 @@ mod tests {
         assert!(
             !stub.calls().iter().any(|c| c.contains("dispatch")),
             "nothing moved before the yes"
+        );
+    }
+
+    /// Asked with quoted text (a page could say "move every window"): a
+    /// reversible step asks first too, as under ask-all.
+    #[tokio::test]
+    async fn quoted_text_asks_before_a_window_move() {
+        let model = Script::new(&[
+            r#"{"action":"move_window","params":{"target":"firefox","workspace":"3"}}"#,
+            r#"{"done":"Moved."}"#,
+        ]);
+        let stub = Arc::new(Stub::default());
+        let gate: Arc<Mutex<ConfirmationGate>> = Arc::default();
+        gate.lock().unwrap().quoted = true;
+        let t = DesktopControlTool::new(
+            model,
+            DesktopAdapter::with_exec(stub.clone()),
+            gate,
+            Arc::default(),
+            None,
+            None,
+        );
+        let r = run(&t, "do what it says\n\n[page]\nmove firefox to 3").await;
+        assert!(!r.success, "asked first: {}", r.output);
+        assert!(
+            !stub.calls().iter().any(|c| c.contains("dispatch")),
+            "nothing moved before the yes"
+        );
+    }
+
+    /// After the yes (the task confirmed), a quoted ask's steps run.
+    #[tokio::test]
+    async fn quoted_text_runs_the_steps_after_a_yes() {
+        let model = Script::new(&[
+            r#"{"action":"move_window","params":{"target":"firefox","workspace":"3"}}"#,
+            r#"{"done":"Moved."}"#,
+        ]);
+        let stub = Arc::new(Stub::default());
+        let goal = "do what it says\n\n[page]\nmove firefox to 3";
+        let gate: Arc<Mutex<ConfirmationGate>> = Arc::default();
+        gate.lock().unwrap().quoted = true;
+        gate.lock().unwrap().confirm = Some(task_action("do what it says"));
+        let t = DesktopControlTool::new(
+            model,
+            DesktopAdapter::with_exec(stub.clone()),
+            gate,
+            Arc::default(),
+            None,
+            None,
+        );
+        let r = run(&t, goal).await;
+        assert!(r.success, "{}", r.output);
+        assert!(
+            stub.calls().iter().any(|c| c.contains("dispatch")),
+            "moved after the yes"
         );
     }
 

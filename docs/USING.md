@@ -70,7 +70,11 @@ It looks at your windows, takes the steps one at a time and tells you what it di
 
 Looking and reversible changes (focus, move, launch, volume, media, brightness)
 just happen, because you asked. Closing a window always asks first and shows
-the exact action. It stops after 8 steps. Super+Ctrl+Esc (Mod+Ctrl+Esc on niri)
+the exact action. When the ask carries text from outside your own words (selected
+text, the clipboard, a file, a web page), or follows one in the same conversation,
+every action asks first: opening a page, reading a file, moving a window, starting
+a coding agent or a standing task. That text might hold instructions, and only you
+decide what runs. It stops after 8 steps. Super+Ctrl+Esc (Mod+Ctrl+Esc on niri)
 stops whatever it is doing at once, as does Stop on the answer card, and
 The FRIDAY drawer shows the last few things it did (and any that didn't work), and `friday actions` lists everything it did (which action, with what, whether it
 worked, never what was on your screen). Questions ("how do I change the
