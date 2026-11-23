@@ -1,11 +1,14 @@
 //! What FRIDAY may do on its own, in one table: each tool action is safe
 //! (runs), watched (runs; asks first when the ask carries text from a page
 //! or selection), ask (asks with the exact action every time) or block
-//! (refused). The deciders are the tools themselves. The tests below pin the
-//! desktop verbs (both ways), in-app verbs, diagnosing and agent steps to
-//! this table; the tools' own tests pin the rest (terminal and quoted file
-//! reads in goal_runner, the browser's quoted ask, desktop and package
-//! confirmations). `friday risks` and Settings show it.
+//! (refused). The deciders are the tools themselves; when a tool changes how
+//! it asks, change its row here in the same commit. Pinned by tests: the
+//! desktop verbs (both ways), in-app verbs, diagnosing and agent steps
+//! (below); reading, listing and writing files, running a command, opening a
+//! page (and refusing other schemes) and standing tasks
+//! (`the_risk_table_matches_what_the_gated_tools_do` in goal_runner). Not
+//! pinned here: memory, "open an app you name", system packages and
+//! starting an agent run. `friday risks` and Settings show it.
 
 use friday_actions::DesktopRisk;
 
@@ -108,6 +111,14 @@ pub fn report() -> String {
         })
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+/// The level the table gives one tool action (both exactly as written).
+pub fn level(tool: &str, action: &str) -> Option<Level> {
+    TABLE
+        .iter()
+        .find(|r| r.tool == tool && r.action == action)
+        .map(|r| r.level)
 }
 
 /// The level a desktop verb has in this table.
