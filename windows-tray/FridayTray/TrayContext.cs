@@ -1057,7 +1057,7 @@ internal sealed class TrayContext : ApplicationContext
             if (!File.Exists(path))
                 return;
             var text = File.ReadAllText(path);
-            var migrated = Keyring.Migrate(text, CredentialStore.Write);
+            var migrated = Keyring.Migrate(text, (n, v) => CredentialStore.Write(n, v) && CredentialStore.Read(n) == v);
             if (migrated == text)
                 return;
             var tmp = path + ".tmp";

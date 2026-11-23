@@ -13,10 +13,10 @@ pub const MARKER: &str = "keyring:";
 /// passed on as the marker, and the log says which.
 pub fn resolve_env() {
     #[cfg(unix)]
-    for (name, value) in std::env::vars() {
-        if value != MARKER {
+    for (name, value) in std::env::vars_os() {
+        let (Some(name), true) = (name.to_str().map(str::to_string), value == MARKER) else {
             continue;
-        }
+        };
         match lookup(&name) {
             Some(v) => std::env::set_var(&name, v),
             None => {
@@ -27,11 +27,21 @@ pub fn resolve_env() {
     }
 }
 
-/// The keyring's value for `name`, from `secret-tool lookup`.
+/// The keyring's value for `name`, from `secret-tool lookup`. A locked
+/// keyring may wait for an unlock prompt: after five seconds the key counts
+/// as missing, so FRIDAY still starts.
 #[cfg(unix)]
 fn lookup(name: &str) -> Option<String> {
-    let out = std::process::Command::new("secret-tool")
-        .args(["lookup", "service", "friday", "name", name])
+    let out = std::process::Command::new("timeout")
+        .args([
+            "5",
+            "secret-tool",
+            "lookup",
+            "service",
+            "friday",
+            "name",
+            name,
+        ])
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .output()

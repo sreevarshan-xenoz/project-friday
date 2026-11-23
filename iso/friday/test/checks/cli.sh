@@ -524,6 +524,8 @@ contains "status says where it is" "$(bash "$F" secrets)" "GROQ_API_KEY: in the 
 bash "$F" secrets file >/dev/null
 contains "and back to the file" "$(cat "$envf")" "GROQ_API_KEY=test-key-value"
 [ ! -e "$W/kr/GROQ_API_KEY" ] && pass "the keyring copy is cleared" || fail "the keyring still holds it"
+printf 'GROQ_API_KEY="quoted-value"  \n' >"$envf"; bash "$F" secrets keychain >/dev/null
+[ "$(cat "$W/kr/GROQ_API_KEY" 2>/dev/null)" = "quoted-value" ] && pass "a quoted key is kept without its quotes" || fail "kept as: $(cat "$W/kr/GROQ_API_KEY" 2>/dev/null)"
 cp "$W/env.keep" "$envf"; rm -f "$S/secret-tool"
 
 echo "per-app instructions"

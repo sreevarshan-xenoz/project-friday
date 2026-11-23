@@ -3610,7 +3610,10 @@ friday_secrets() {
         || { echo "friday secrets: needs secret-tool (libsecret) and a keyring such as GNOME Keyring or KWallet." >&2; return 1; }
       while IFS= read -r name; do
         [ -n "$name" ] || continue
-        val=$(grep -E "^$name=" "$env_file" | tail -n1 | cut -d= -f2-)
+        val=$(grep -E "^$name=" "$env_file" | tail -n1 | cut -d= -f2- | tr -d '\r')
+        # As systemd reads it: without surrounding quotes or trailing spaces.
+        val="${val%"${val##*[![:space:]]}"}"
+        if [[ "$val" == \"*\" || "$val" == \'*\' ]]; then val="${val:1:${#val}-2}"; fi
         [ -n "$val" ] && [ "$val" != "keyring:" ] || continue
         # Only once the keyring gives it back is the file changed.
         if printf '%s' "$val" | secret-tool store --label="FRIDAY $name" service friday name "$name" 2>/dev/null \
