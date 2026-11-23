@@ -266,13 +266,47 @@ public partial class AnswerWindow : Window
         Scroll.ScrollToTop();
     }
 
-    private void SetOrb(Brush color, bool breathing)
+    /// <summary>The orb shows listening, thinking and speaking; with the
+    /// status-orb switch off it isn't shown.</summary>
+    public bool OrbOn
     {
+        set => OrbHost.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // What the orb shows now: "listening", "speaking" or "" (thinking or
+    // done), and what it showed before listening or speaking began (a step
+    // waiting for an OK keeps its warning color after).
+    private string _orbMode = "";
+    private (Brush Color, bool Breathing) _orbNow, _orbBefore;
+
+    /// <summary>Listening for a spoken answer: the orb breathes in the signal color.</summary>
+    public void ShowListening(bool on) => ShowMode("listening", on, Resource("Signal"), 1100);
+
+    /// <summary>Reading the answer aloud: a quick pulse while it talks.</summary>
+    public void ShowSpeaking(bool on) => ShowMode("speaking", on, Resource("Ember"), 420);
+
+    private void ShowMode(string mode, bool on, Brush color, int periodMs)
+    {
+        if (on)
+        {
+            if (_orbMode == "")
+                _orbBefore = _orbNow;
+            SetOrb(color, breathing: true, periodMs, mode);
+        }
+        else if (_orbMode == mode)
+            SetOrb(_orbBefore.Color ?? Resource("Ember"), _orbBefore.Breathing);
+    }
+
+    private void SetOrb(Brush color, bool breathing, int periodMs = 1100, string mode = "")
+    {
+        _orbMode = mode;
+        if (mode == "")
+            _orbNow = (color, breathing);
         Dot.Fill = color;
         Halo.Fill = color;
         if (breathing)
         {
-            var grow = new DoubleAnimation(0.7, 1.7, TimeSpan.FromMilliseconds(1100))
+            var grow = new DoubleAnimation(0.7, 1.7, TimeSpan.FromMilliseconds(periodMs))
             {
                 AutoReverse = true,
                 RepeatBehavior = RepeatBehavior.Forever,
@@ -280,7 +314,7 @@ public partial class AnswerWindow : Window
             };
             HaloScale.BeginAnimation(ScaleTransform.ScaleXProperty, grow);
             HaloScale.BeginAnimation(ScaleTransform.ScaleYProperty, grow);
-            Halo.BeginAnimation(OpacityProperty, new DoubleAnimation(0.45, 0.08, TimeSpan.FromMilliseconds(1100))
+            Halo.BeginAnimation(OpacityProperty, new DoubleAnimation(0.45, 0.08, TimeSpan.FromMilliseconds(periodMs))
             {
                 AutoReverse = true,
                 RepeatBehavior = RepeatBehavior.Forever,

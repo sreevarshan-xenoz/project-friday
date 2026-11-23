@@ -122,6 +122,7 @@ public static class AppSettings
         ("risk-table", "Settings shows what FRIDAY may do on its own, what asks first and what never runs"),
         ("activity", "One list of agent steps waiting for you, runs going now, standing tasks and runs finished lately"),
         ("model-per-job", "A model picked for asks, screen questions or chores (AI page) is tried first"),
+        ("status-orb", "The answer card's orb shows listening, thinking and speaking"),
         ("usage-page", "Settings shows calls, failures, free-limit hits and speed per AI provider"),
         ("memory-changes", "A changed fact (\"I moved to Pune\") closes the old one with a date in the memory file"),
         ("brief", "\"What did I miss?\" answered from FRIDAY's own records (agents, standing tasks, reminders)"),

@@ -893,7 +893,7 @@ internal sealed class TrayContext : ApplicationContext
     private async Task SayThenListenAsync(AnswerWindow answer, string said, SayStream? saying = null)
     {
         // With "Hey Friday" on, its own conversation hears the follow-up.
-        var read = saying is null ? await Ctl.SayAsync(_install, said) : await saying.EndAsync(said);
+        var read = await SpeakOnCard(answer, saying is null ? Ctl.SayAsync(_install, said) : saying.EndAsync(said));
         if (read != 0 || answer.IsClosed || _wake is not null)
             return;
         var heard = await ListenOnceAsync(answer, "After the sound, ask a follow-up, or say stop.");
@@ -954,7 +954,10 @@ internal sealed class TrayContext : ApplicationContext
                 if (line != "listening")
                     return answer.IsClosed ? null : line;
                 if (!answer.IsClosed)
+                {
                     System.Media.SystemSounds.Asterisk.Play();
+                    answer.ShowListening(true);
+                }
             }
             return null;
         }
@@ -964,6 +967,8 @@ internal sealed class TrayContext : ApplicationContext
         }
         finally
         {
+            if (!answer.IsClosed)
+                answer.ShowListening(false);
             answer.Closed -= closed;
             answer.ConfirmRun -= clicked;
             Stop();
@@ -1034,14 +1039,33 @@ internal sealed class TrayContext : ApplicationContext
             && AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "voice-followup"))
             _ = SayThenListenAsync(form, outcome.Answer, saying);
         else if (saying is not null)
-            _ = saying.EndAsync(outcome.Answer);
+            _ = SpeakOnCard(form, saying.EndAsync(outcome.Answer));
         else
-            Ctl.Say(_install, outcome.Answer);
+            _ = SpeakOnCard(form, Ctl.SayAsync(_install, outcome.Answer));
+    }
+
+    /// <summary>The card's orb pulses while <paramref name="reading"/> is read aloud.</summary>
+    private static async Task<int> SpeakOnCard(AnswerWindow card, Task<int> reading)
+    {
+        if (!card.IsClosed)
+            card.ShowSpeaking(true);
+        try
+        {
+            return await reading;
+        }
+        finally
+        {
+            if (!card.IsClosed)
+                card.ShowSpeaking(false);
+        }
     }
 
     private AnswerWindow NewAnswerWindow(AskKind kind, string question, string waiting)
     {
-        var form = new AnswerWindow(question, waiting);
+        var form = new AnswerWindow(question, waiting)
+        {
+            OrbOn = AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "status-orb"),
+        };
         // Closing the card (or asking again) ends the reading.
         form.Closed += (_, _) => { if (Speaking.Enabled(_install.Paths)) Ctl.StopSaying(_install); };
         form.CanAskAnother = kind != AskKind.Screen;
