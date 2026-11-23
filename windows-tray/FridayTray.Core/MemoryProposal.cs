@@ -13,7 +13,8 @@ public static class MemoryProposal
     private static readonly Regex Mine = new(@"(?:^|[^a-z])my (shell|editor|distro|os|terminal|browser|language|ide|laptop|keyboard layout|name) is ([a-z0-9][^,.?!;:]*)");
     private static readonly HashSet<string> Stop =
         ["and", "but", "so", "how", "what", "why", "can", "could", "to", "for", "with", "on", "in", "at", "when", "where", "which", "is"];
-    private static readonly HashSet<string> Nothing = ["it", "this", "that", "these", "those", "them", "a", "an", "the"];
+    private static readonly HashSet<string> Nothing =
+        ["it", "this", "that", "these", "those", "them", "a", "an", "the", "into", "across", "out", "up", "over"];
 
     /// <summary>"you use fish", "your editor is helix", or null.</summary>
     public static string? From(string question)
@@ -33,12 +34,13 @@ public static class MemoryProposal
         else
             return null;
         // At most three words, up to the first one that starts the question.
-        var words = what.Split(' ', StringSplitOptions.RemoveEmptyEntries).TakeWhile(w => !Stop.Contains(w)).Take(3).ToList();
+        var words = what.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).TakeWhile(w => !Stop.Contains(w)).Take(3).ToList();
         if (words.Count == 0 || Nothing.Contains(words[0]))
             return null;
-        var thing = string.Join(' ', words);
-        if (Asking.LooksLikeSecret(thing))
+        // Nothing shaped like a key or token, word by word.
+        if (words.Any(Asking.LooksLikeSecret))
             return null;
+        var thing = string.Join(' ', words);
         return verb switch
         {
             "i use" => $"you use {thing}",

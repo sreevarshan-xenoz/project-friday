@@ -2558,14 +2558,17 @@ friday_memory_proposal() {
     return 1
   fi
   # At most three words, up to the first one that starts the question.
-  for w in $what; do
+  local -a all
+  read -ra all <<<"$what"
+  for w in "${all[@]}"; do
     [[ "$stop" == *" $w "* ]] && break
     words+=("$w"); [ "${#words[@]}" -lt 3 ] || break
   done
   what="${words[*]:-}"
-  # "I use it for work" names nothing.
-  case "${words[0]:-}" in ""|it|this|that|these|those|them|a|an|the) return 1 ;; esac
-  ! friday_secret_shaped "$what" || return 1
+  # "I use it for work", "I run into errors" name nothing.
+  case "${words[0]:-}" in ""|it|this|that|these|those|them|a|an|the|into|across|out|up|over) return 1 ;; esac
+  # Nothing shaped like a key or token, word by word.
+  for w in "${words[@]}"; do ! friday_secret_shaped "$w" || return 1; done
   case "$verb" in
     "i use") echo "you use $what" ;; "i prefer") echo "you prefer $what" ;;
     "i work with") echo "you work with $what" ;; "i'm on") echo "you're on $what" ;;
@@ -4878,7 +4881,7 @@ case "${1:-}" in
       fi
       # "I use fish …": offer to remember it; nothing is kept unless you say so.
       local proposal=""
-      if $ans_ok && ! $use_selection && ! $use_screen && [ -z "${private_win:-}" ] \
+      if $ans_ok && ! $use_selection && ! $use_screen && ! ${is_private:-false} \
           && friday_feature_on propose-memories && proposal=$(friday_memory_proposal "$goal"); then
         (
           pick=$(notify-send -a FRIDAY -t 20000 -A remember="Remember" -- "FRIDAY" "Remember: $proposal?" 2>/dev/null || true)
