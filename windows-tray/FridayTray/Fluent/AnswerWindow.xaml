@@ -31,7 +31,7 @@
           <ColumnDefinition Width="*" />
           <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
-        <Grid Width="14" Height="14" VerticalAlignment="Center">
+        <Grid x:Name="OrbHost" Width="14" Height="14" VerticalAlignment="Center">
           <Ellipse x:Name="Halo" Fill="{StaticResource Ember}" Opacity="0.3" RenderTransformOrigin="0.5,0.5">
             <Ellipse.RenderTransform><ScaleTransform x:Name="HaloScale" /></Ellipse.RenderTransform>
           </Ellipse>

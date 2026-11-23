@@ -266,13 +266,42 @@ public partial class AnswerWindow : Window
         Scroll.ScrollToTop();
     }
 
-    private void SetOrb(Brush color, bool breathing)
+    /// <summary>The orb shows listening, thinking and speaking; with the
+    /// status-orb switch off it isn't shown.</summary>
+    public bool OrbOn
     {
+        set => OrbHost.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // What the orb shows now: "listening", "speaking" or "" (thinking or done).
+    private string _orbMode = "";
+
+    /// <summary>Listening for a spoken answer: the orb breathes in the signal color.</summary>
+    public void ShowListening(bool on)
+    {
+        if (on)
+            SetOrb(Resource("Signal"), breathing: true, mode: "listening");
+        else if (_orbMode == "listening")
+            SetOrb(Resource("Ember"), breathing: false);
+    }
+
+    /// <summary>Reading the answer aloud: a quick pulse while it talks.</summary>
+    public void ShowSpeaking(bool on)
+    {
+        if (on)
+            SetOrb(Resource("Ember"), breathing: true, periodMs: 420, mode: "speaking");
+        else if (_orbMode == "speaking")
+            SetOrb(Resource("Ember"), breathing: false);
+    }
+
+    private void SetOrb(Brush color, bool breathing, int periodMs = 1100, string mode = "")
+    {
+        _orbMode = mode;
         Dot.Fill = color;
         Halo.Fill = color;
         if (breathing)
         {
-            var grow = new DoubleAnimation(0.7, 1.7, TimeSpan.FromMilliseconds(1100))
+            var grow = new DoubleAnimation(0.7, 1.7, TimeSpan.FromMilliseconds(periodMs))
             {
                 AutoReverse = true,
                 RepeatBehavior = RepeatBehavior.Forever,
@@ -280,7 +309,7 @@ public partial class AnswerWindow : Window
             };
             HaloScale.BeginAnimation(ScaleTransform.ScaleXProperty, grow);
             HaloScale.BeginAnimation(ScaleTransform.ScaleYProperty, grow);
-            Halo.BeginAnimation(OpacityProperty, new DoubleAnimation(0.45, 0.08, TimeSpan.FromMilliseconds(1100))
+            Halo.BeginAnimation(OpacityProperty, new DoubleAnimation(0.45, 0.08, TimeSpan.FromMilliseconds(periodMs))
             {
                 AutoReverse = true,
                 RepeatBehavior = RepeatBehavior.Forever,

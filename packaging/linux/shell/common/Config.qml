@@ -28,6 +28,10 @@ Singleton {
 
   property var settings: ({})
 
+  // Features switched off (`friday feature <name> off`): one name per line.
+  property var featuresOff: []
+  function featureOn(name) { return !root.featuresOff.includes(name); }
+
   readonly property var styles: ["ember", "island", "dock"]
   readonly property var palettes: ["ember", "frost", "moss", "dawn", "classic"]
   readonly property string style: styles.includes(pick("style", "ember")) ? pick("style", "ember") : "ember"
@@ -69,12 +73,22 @@ Singleton {
     onLoadFailed: root.settings = {}
   }
 
+  FileView {
+    id: offFile
+    path: (Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config") + "/friday/features-off"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.featuresOff = text().split("\n").map(l => l.trim()).filter(l => l !== "")
+    onLoadFailed: root.featuresOff = []
+  }
+
   // A watch on a file that doesn't exist yet never fires when it appears, and
   // an atomic replace (friday shell style …) can drop it: re-read now and then.
   Timer {
     interval: 2000
     running: true
     repeat: true
-    onTriggered: file.reload()
+    onTriggered: { file.reload(); offFile.reload(); }
   }
 }
