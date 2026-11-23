@@ -97,6 +97,25 @@ print(len(parts) if ok else "bad:" + json.dumps(parts)[:200])' "$answer" <<<"$ou
   else pass "egress.jsonl does not contain the question text"; fi
 done
 
+# --json, the stable form for scripts (specs/ask-json.md): one JSON object on
+# stdout, a fixed exit code for each kind of end.
+echo "for scripts (--json)"
+rc=0; out=$("${offline[@]}" timeout 90 "$CTL_BIN" goal --json "What does the Rust error E0308 mean?" 2>/dev/null) || rc=$?
+got=$("$PY" -c 'import json,sys
+lines=sys.stdin.read().splitlines()
+o=json.loads(lines[0]) if len(lines)==1 else {}
+print(len(lines), o.get("outcome"), (o.get("result") or "")[:17])' <<<"$out" 2>/dev/null || echo "not json")
+if [[ $rc == 0 && "$got" == "1 completed FAKE-MODEL-ANSWER" ]]; then pass "an answer: one JSON line, exit 0"
+else fail "--json answer: rc=$rc got=$got out=${out:0:200}"; fi
+rc=0; "${offline[@]}" "$CTL_BIN" goal --json "  " >/dev/null 2>&1 || rc=$?
+[[ $rc == 2 ]] && pass "no question: exit 2" || fail "no question: rc=$rc"
+for how in "FRIDAY_STATE_FILE=$W/none.json" "FRIDAY_CTL_TOKEN=t FRIDAY_CTL_ADDR=127.0.0.1:9"; do
+  rc=0; out=$(env $how "$CTL_BIN" goal --json "hi" 2>/dev/null) || rc=$?
+  if [[ $rc == 5 ]] && "$PY" -c 'import json,sys; o=json.loads(sys.stdin.read()); sys.exit(o["outcome"]!="unreachable" or not o["error"])' <<<"$out"; then
+    pass "FRIDAY not reachable ($how): exit 5, outcome unreachable"
+  else fail "unreachable ($how): rc=$rc out=$out"; fi
+done
+
 # A question that mentions a tool is answered, not run as a shell command, and
 # selected text (untrusted: it can come from any web page) never runs either.
 echo "nothing runs unless asked"
@@ -300,6 +319,11 @@ fi
 # No model reachable at all (the local one down, and every remote one behind
 # a dead proxy): the ask fails and says why in plain words, instead of
 # "completing" with an empty memory lookup.
+# Gave up waiting (FRIDAY_CTL_WAIT_SECS): exit 4, outcome timed_out.
+rc=0; out=$("${offline[@]}" FRIDAY_CTL_WAIT_SECS=0 "$CTL_BIN" goal --json "What is 2 plus 2?" 2>/dev/null) || rc=$?
+if [[ $rc == 4 && "$out" == *'"outcome":"timed_out"'* ]]; then pass "a wait that runs out: exit 4, outcome timed_out"
+else fail "timed out: rc=$rc out=$out"; fi
+
 echo "no model reachable"
 kill $DAEMON 2>/dev/null; wait $DAEMON 2>/dev/null || true
 rm -f "$W/state.json"

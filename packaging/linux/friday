@@ -76,6 +76,7 @@ Autonomous Agent & Cognitive Loop:
                                    Standing tasks ("every morning ..."): list, pause, delete, turn all off
   friday agents [show|allow|deny|reply|accept|discard <id>|hooks|check|worktree [on|off]|status|on|off]
                                    Coding agents FRIDAY runs for you (opencode, agy, Claude Code): follow, answer, turn off
+  friday ask --json [--web] [--new] <question>  The answer as one JSON object, for scripts
   friday memory [list|edit|forget <words>]  What FRIDAY remembers about you (memory.md)
   friday secrets [status|keychain|file]  API keys in your desktop keyring, or back in friday.env
   friday desktop [status|on|off]   Let FRIDAY control your windows, apps, volume and music
@@ -4337,6 +4338,10 @@ case "${1:-}" in
     #   (the window in front, the clipboard, a web search, a text file)
     #   friday ask --new [text]         start a new conversation (asks within 15
     #                                   minutes of each other share one: friday-ctl)
+    #   friday ask --json [--web] [--new] text
+    #                                   for scripts: no window or notification,
+    #                                   one JSON object, fixed exit codes
+    #                                   (specs/ask-json.md)
     #   friday ask --another provider/model [text]
     #                                   ask again, answered with more care by a
     #                                   different model (the answer pill's
@@ -4344,7 +4349,7 @@ case "${1:-}" in
     # With FRIDAY Shell running, the answer opens in its answer pill (which also
     # streams it); otherwise it arrives as a notification.
     shift
-    use_selection=false use_screen=false use_region=false use_followup=false use_web=false use_new=false use_clip=false another="" details="" daemon_down=false
+    use_selection=false use_screen=false use_region=false use_followup=false use_web=false use_new=false use_clip=false another="" details="" daemon_down=false use_json=false
     rewrite="" sel_window="" source_label=""
     ask_args=()
     while [ $# -gt 0 ]; do
@@ -4355,11 +4360,23 @@ case "${1:-}" in
         --follow-up|-f) use_followup=true; ask_args+=(--follow-up); shift ;;
         --web) use_web=true; ask_args+=(--web); shift ;;
         --new|-n) use_new=true; shift ;;
+        --json) use_json=true; shift ;;
         --another) another="${2:-}"; shift; [ $# -eq 0 ] || shift ;;
         *) break ;;
       esac
     done
     goal="$*"
+    if $use_json; then
+      # Words only: the screen, the selection and the pill need a person.
+      if $use_selection || $use_screen || $use_followup || [ -n "$another" ] || [ -z "$goal" ]; then
+        echo "usage: friday ask --json [--web] [--new] <question>" >&2
+        exit 2
+      fi
+      json_args=(goal --json)
+      $use_web && json_args+=(--web)
+      $use_new && json_args+=(--new-conversation)
+      exec friday-ctl "${json_args[@]}" "$goal"
+    fi
     # The window you're asking about (its selection or its screen): private?
     private_win=""
     if $use_selection || $use_screen; then private_win=$(friday_private_window); fi
