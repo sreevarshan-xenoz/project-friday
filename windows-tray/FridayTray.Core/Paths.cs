@@ -32,6 +32,8 @@ public sealed class Paths
     public string AgentsDir => Path.Combine(StateDir, "agents");
     public string HooksFile => Path.Combine(AgentsDir, "hooks.jsonl");
     public string EnvFile => Path.Combine(ConfigDir, "friday.env");
+    /// <summary>What the person asked FRIDAY to remember (one "- " line each); every ask carries it.</summary>
+    public string MemoryFile => Path.Combine(ConfigDir, "memory.md");
     public string NoAppContextFile => Path.Combine(ConfigDir, "no-app-context");
     public string PromptsFile => Path.Combine(ConfigDir, "prompts");
     public string PrivateWindowsFile => Path.Combine(ConfigDir, "private-windows");

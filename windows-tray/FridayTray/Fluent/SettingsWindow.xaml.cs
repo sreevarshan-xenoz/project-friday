@@ -273,7 +273,7 @@ internal sealed partial class SettingsWindow : FluentWindow
         var env = EnvFile.Load(_install.Paths.EnvFile);
         foreach (var (name, what) in AppSettings.Features)
             yield return Switch(what, "Switch off if you don't want it.", AppSettings.FeatureOn(env, name),
-                on => ChangeEnv(e => AppSettings.WithFeature(e, name, on), restart: name is "couldnt-check" or "agent-resume"));
+                on => ChangeEnv(e => AppSettings.WithFeature(e, name, on), restart: name is "couldnt-check" or "agent-resume" or "memory-file"));
         yield return Row(Pill("Restart FRIDAY", SymbolRegular.ArrowSync24), () => { _do.RestartDaemon(); Said("FRIDAY restarted."); });
         yield return Row(Pill("Open logs", SymbolRegular.DocumentBulletList24), _do.OpenLogs);
     }
@@ -302,7 +302,27 @@ internal sealed partial class SettingsWindow : FluentWindow
                 ChangeEnv(env => AppSettings.WithScreenText(env, on));
             });
         yield return Row(Pill("What left this PC…", SymbolRegular.ArrowUpload24), _do.ShowEgress);
+        yield return Row(Pill("What FRIDAY remembers about you…", SymbolRegular.Bookmark24), OpenMemoryFile);
         yield return Row(Pill("Forget saved data…", SymbolRegular.Delete24), _do.ForgetSavedData);
+    }
+
+    /// <summary>The memory file in Notepad (made first, with a line saying how).</summary>
+    private void OpenMemoryFile()
+    {
+        var file = _install.Paths.MemoryFile;
+        try
+        {
+            if (!File.Exists(file))
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+                File.WriteAllText(file, "# What FRIDAY remembers about you. Edit freely: one \"- \" line each.\n");
+            }
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("notepad.exe", $"\"{file}\"") { UseShellExecute = false });
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            MessageBox.Show(this, e.Message, "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     private IEnumerable<UIElement> Ai()

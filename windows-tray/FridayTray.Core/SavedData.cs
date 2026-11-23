@@ -32,14 +32,15 @@ public static class SavedData
         foreach (var file in new[]
         {
             p.AnswersFile, p.LastAnswerFile, p.HistoryFile, p.EgressFile,
-            Path.Combine(p.MemoryDir, "episodes.jsonl"),
+            Path.Combine(p.MemoryDir, "episodes.jsonl"), p.MemoryFile,
             // The current conversation (friday-ctl and the daemon keep it).
             Path.Combine(p.StateDir, "conversations.json"), Path.Combine(p.StateDir, "conversation"),
         })
         {
             try
             {
-                File.Delete(file);
+                if (File.Exists(file))
+                    File.Delete(file);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {

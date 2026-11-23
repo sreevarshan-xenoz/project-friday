@@ -557,6 +557,17 @@ contains "a daily task inside them is named" "$(bash "$F" tasks quiet 08-09)" "t
 jq 'del(.tasks[] | select(.id == "t9"))' "$HOME/.local/state/friday/standing.json" >"$W/st.json" && mv "$W/st.json" "$HOME/.local/state/friday/standing.json"
 bash "$F" tasks quiet off >/dev/null
 
+echo "the memory file"
+contains "empty at first" "$(bash "$F" memory)" "FRIDAY remembers nothing about you yet"
+printf '# mine, about helix too\n- I use fish\n- my editor is Helix\n' >"$HOME/.config/friday/memory.md"
+contains "lists what it keeps" "$(bash "$F" memory)" "- my editor is Helix"
+contains "forgets a line" "$(bash "$F" memory forget helix)" "Forgot 1 line(s)"
+if grep -q "^- my editor is Helix" "$HOME/.config/friday/memory.md"; then fail "the line is still there"; else pass "the line is gone, the rest stays"; fi
+contains "the rest stays" "$(cat "$HOME/.config/friday/memory.md")" "- I use fish"
+contains "headings stay too" "$(cat "$HOME/.config/friday/memory.md")" "# mine, about helix too"
+bash "$F" forget memory --yes >/dev/null
+[ ! -e "$HOME/.config/friday/memory.md" ] && pass "friday forget memory clears it" || fail "forget memory left the memory file"
+
 echo "per-app instructions"
 printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s "$HYPR_WIN"\nexit 0\n' >"$S/hyprctl"; chmod +x "$S/hyprctl"
 # "This window" is the one in front at the keypress.
