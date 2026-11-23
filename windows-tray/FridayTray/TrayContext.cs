@@ -76,6 +76,8 @@ internal sealed class TrayContext : ApplicationContext
 
         _host.Start();
         LocalAiChanged();
+        // Before the daemon starts: its first write must count as "since this start".
+        var stateBefore = File.Exists(install.Paths.StateFile) ? File.GetLastWriteTimeUtc(install.Paths.StateFile) : DateTime.MinValue;
         _daemon.Start();
 
         if (_askForAdministrator && !Elevation.Enabled())
@@ -88,19 +90,18 @@ internal sealed class TrayContext : ApplicationContext
             Notify("FRIDAY is running", $"Press {_hotkeys.Labels[AskKind.Plain]} to ask anything.", ToolTipIcon.Info);
 
         _ = TellAboutUpdateAsync();
-        _ = CheckUpdateAsync();
+        _ = CheckUpdateAsync(stateBefore);
     }
 
     /// <summary>After an update: the new version's daemon has <see cref="Rollback.Grace"/>
     /// to say it is running, or the version before goes back on (a bad update reverts itself).</summary>
-    private async Task CheckUpdateAsync()
+    private async Task CheckUpdateAsync(DateTime before)
     {
         var ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
         var paths = _install.Paths;
         // A stopwatch, not the clock: a clock set right after sign-in mustn't cut the wait short.
         var waited = System.Diagnostics.Stopwatch.StartNew();
         DateTime Written() => File.Exists(paths.StateFile) ? File.GetLastWriteTimeUtc(paths.StateFile) : DateTime.MinValue;
-        var before = Written();
         var plan = Rollback.Read(paths.RollbackFile);
         bool? healthy = null;
         try
@@ -117,6 +118,8 @@ internal sealed class TrayContext : ApplicationContext
                     case RollbackStep.TellReverted:
                         // The task can't delete itself while it runs: gone now.
                         await Task.Run(() => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("schtasks.exe", $"/delete /tn \"{Rollback.TaskName}\" /f") { UseShellExecute = false, CreateNoWindow = true })?.WaitForExit(15000));
+                        // The plan first: a folder something still holds mustn't bring this back at every start.
+                        try { File.Delete(paths.RollbackFile); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
                         ui.Post(_ => Notify("FRIDAY went back", $"FRIDAY {plan!.To} didn't start properly, so FRIDAY {plan.From} is back. Updates stay offered.", ToolTipIcon.Warning), null);
                         TryDelete(paths.RollbackDir);
                         return;
@@ -152,15 +155,15 @@ internal sealed class TrayContext : ApplicationContext
             TryDelete(paths.RollbackDir);
             return;
         }
-        if (!Rollback.Verified(paths.RollbackDir, plan.OldMsi))
+        // Both: msiexec runs each (the new one to take it off, or to put it back).
+        if (!Rollback.Verified(paths.RollbackDir, plan.OldMsi) || !Rollback.Verified(paths.RollbackDir, plan.NewMsi))
         {
             ui.Post(_ => Notify("FRIDAY didn't go back", $"FRIDAY {plan.To} didn't start properly, but the kept copy of {plan.From} no longer checks out. Reinstall FRIDAY from its releases page.", ToolTipIcon.Warning), null);
             TryDelete(paths.RollbackDir);
             return;
         }
         var script = Path.Combine(paths.RollbackDir, "revert.cmd");
-        File.WriteAllText(script, Rollback.RevertScript(plan, Path.Combine(_install.Dir, "friday-tray.exe"),
-            fallback: Rollback.Verified(paths.RollbackDir, plan.NewMsi)));
+        File.WriteAllText(script, Rollback.RevertScript(plan, Path.Combine(_install.Dir, "friday-tray.exe")));
         var xml = Path.Combine(paths.RollbackDir, "revert.xml");
         File.WriteAllText(xml, Rollback.TaskXml(script), System.Text.Encoding.Unicode);
         // Marked first: taking this version off closes this tray at once.

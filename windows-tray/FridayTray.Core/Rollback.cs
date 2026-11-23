@@ -85,7 +85,9 @@ public static class Rollback
             var folder = Path.GetDirectoryName(full)!;
             var name = Path.GetFileName(full);
             var root = Path.GetFullPath(dir);
-            if (!(folder == Path.Combine(root, "old") || folder == Path.Combine(root, "new"))
+            // Windows paths: case doesn't matter (c:\ and C:\ are one drive).
+            if (!(string.Equals(folder, Path.Combine(root, "old"), StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(folder, Path.Combine(root, "new"), StringComparison.OrdinalIgnoreCase))
                 || !name.StartsWith("FRIDAY-", StringComparison.Ordinal) || !name.EndsWith("-x64.msi", StringComparison.Ordinal))
                 return false;
             var sums = File.ReadAllBytes(Path.Combine(folder, "SHA256SUMS"));
@@ -103,10 +105,9 @@ public static class Rollback
     public const string TaskName = "FRIDAY revert";
 
     /// <summary>Takes the new version off and puts the old one back, each step waited for;
-    /// with <paramref name="fallback"/> (the new MSI still checks out), the new one goes back
-    /// on if the old one won't, so FRIDAY is never left off. Then FRIDAY starts again. Until
+    /// the new one goes back on if the old one won't, so FRIDAY is never left off. Then FRIDAY starts again. Until
     /// it finishes, a sign-in entry runs it again (a revert cut short by a shutdown).</summary>
-    public static string RevertScript(RollbackPlan plan, string trayExe, bool fallback = true)
+    public static string RevertScript(RollbackPlan plan, string trayExe)
     {
         var lines = new List<string>
         {
@@ -115,8 +116,7 @@ public static class Rollback
             $"start \"\" /wait msiexec /i \"{plan.OldMsi}\" /passive /norestart",
             "set rc=%errorlevel%",
         };
-        if (fallback)
-            lines.Add($"if not \"%rc%\"==\"0\" if not \"%rc%\"==\"3010\" start \"\" /wait msiexec /i \"{plan.NewMsi}\" /passive /norestart");
+        lines.Add($"if not \"%rc%\"==\"0\" if not \"%rc%\"==\"3010\" start \"\" /wait msiexec /i \"{plan.NewMsi}\" /passive /norestart");
         lines.Add($"reg delete \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce\" /v \"{TaskName}\" /f >nul 2>&1");
         lines.Add($"schtasks /delete /tn \"{TaskName}\" /f >nul 2>&1");
         lines.Add($"start \"\" \"{trayExe}\"");
