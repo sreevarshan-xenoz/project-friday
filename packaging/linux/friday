@@ -76,6 +76,7 @@ Autonomous Agent & Cognitive Loop:
                                    Standing tasks ("every morning ..."): list, pause, delete, turn all off
   friday agents [show|allow|deny|reply|accept|discard <id>|hooks|check|worktree [on|off]|status|on|off]
                                    Coding agents FRIDAY runs for you (opencode, agy, Claude Code): follow, answer, turn off
+  friday ask --json [--web] [--new] <question>  The answer as one JSON object, for scripts
   friday memory [list|edit|forget <words>]  What FRIDAY remembers about you (memory.md)
   friday memory import <file> [--apply]  Bring in another assistant's notes (a preview first)
   friday secrets [status|keychain|file]  API keys in your desktop keyring, or back in friday.env
@@ -113,6 +114,7 @@ Autonomous Agent & Cognitive Loop:
   friday autonomy [ask-all|ask-risky|act]  How much FRIDAY may do without asking
                                    Ask about the screen with the window's text, not a screenshot
   friday phone [status|on|off|send] Pair a phone with Pocketdesk; send it the last answer
+  friday phone devices|unpair <phone>  The paired phones, last heard from; cut one off
   friday helper [status|enable|disable]
                                    System helper for package updates and installs
 
@@ -994,8 +996,10 @@ EOF2
       echo "Phone: off"
       ;;
     send) friday_phone_send ;;
+    devices) friday_phone_devices ;;
+    unpair) shift; friday_phone_unpair "$@" ;;
     *)
-      echo "Usage: friday phone [status|on|off|send]" >&2
+      echo "Usage: friday phone [status|on|off|send|devices|unpair <phone>]" >&2
       return 1
       ;;
   esac
@@ -1986,6 +1990,67 @@ friday_calc_expr() {
   else
     return 1
   fi
+}
+
+# The paired phones (Pocketdesk's list): each one's name, id, its last report
+# (battery or switches: a phone in a session may report nothing newer) and
+# what it may do here, so one can be cut off.
+friday_phone_devices() {
+  local js
+  js=$(friday_phone_list) || return 1
+  if [ "$(jq '.devices | length' <<<"$js")" = 0 ]; then
+    echo "No phone is paired. friday phone on shows a PIN to pair one."
+    return 0
+  fi
+  echo "Paired phones (cut one off: friday phone unpair <name or id>):"
+  jq -r --argjson now "$(date +%s)" '
+    def ago: ($now - .) as $s | if $s < 120 then "just now" elif $s < 3600 then "\($s / 60 | floor) min ago"
+      elif $s < 86400 then "\($s / 3600 | floor) h ago" else "\($s / 86400 | floor) days ago" end;
+    .devices[] |
+    ([.battery.updated_unix, .switches_unix, .quiet.updated_unix] | map(select(. != null)) | max) as $heard |
+    ([.permissions // {} | to_entries[] | select(.value == true and (.key | IN("input", "exec", "files", "mic", "power", "tasks", "keyboard_and_mouse", "webcam"))) | .key]) as $may |
+    "  \(if (.name // "") == "" then "a phone" else .name end)  \((.id // "")[0:8])  " +
+    (if .in_session then "connected now" elif $heard then "last reported \($heard | ago)" else "no report yet" end) +
+    (if .grant_remaining_secs then ", a guest for \(.grant_remaining_secs / 60 | ceil) more min" else "" end) +
+    (if ($may | length) > 0 then "; may use: \($may | join(", "))" else "" end)' <<<"$js"
+}
+
+# Pocketdesk's paired phones as JSON, or a plain reason it can't say.
+friday_phone_list() {
+  local js
+  command -v pocketdesk >/dev/null 2>&1 || { echo "No phone is set up: friday phone on pairs one." >&2; return 1; }
+  js=$(pocketdesk devices --json 2>/dev/null)
+  if ! jq -e '.devices | type == "array"' >/dev/null 2>&1 <<<"$js"; then
+    echo "Couldn't read Pocketdesk's paired phones$(jq -r '.error // empty | ": " + .' <<<"$js" 2>/dev/null)." >&2
+    return 1
+  fi
+  printf '%s\n' "$js"
+}
+
+# `friday phone unpair <name or id>`: that phone loses access at once (after a
+# yes; --yes skips it). One phone at a time: never all by accident.
+friday_phone_unpair() {
+  local yes=false who="" js matches n id name a
+  for a in "$@"; do [ "$a" = --yes ] && yes=true || who="${who:+$who }$a"; done
+  [ -n "$who" ] || { echo "usage: friday phone unpair <name or id> [--yes]   (friday phone devices lists them)" >&2; return 2; }
+  js=$(friday_phone_list) || return 1
+  # Its whole id, 6 or more of its first characters, or its name.
+  matches=$(jq -c --arg w "$who" '[.devices[] | select((.id // "") != "") | select(.id == $w or (($w | length) >= 6 and (.id | startswith($w))) or ((.name // "") | ascii_downcase) == ($w | ascii_downcase))]' <<<"$js")
+  n=$(jq length <<<"$matches")
+  if [ "$n" = 0 ]; then echo "No paired phone is \"$who\" (friday phone devices lists them)." >&2; return 2; fi
+  if [ "$n" -gt 1 ]; then
+    echo "More than one paired phone is \"$who\"; name it by its id:" >&2
+    jq -r '.[] | "  \(.name // "a phone")  \(.id)"' <<<"$matches" >&2
+    return 2
+  fi
+  id=$(jq -r '.[0].id' <<<"$matches"); name=$(jq -r '.[0].name // "the phone"' <<<"$matches")
+  if ! $yes; then
+    [ -t 0 ] || { echo "friday phone unpair: add --yes to unpair $name without a terminal to ask in" >&2; return 1; }
+    read -r -p "Unpair $name (${id:0:8})? It loses access to this computer at once. [y/N] " a || a=n
+    [[ "$a" =~ ^[Yy] ]] || { echo "Nothing changed."; return 1; }
+  fi
+  pocketdesk unpair "$id" >/dev/null 2>&1 || { echo "Pocketdesk couldn't unpair $name."; return 1; }
+  echo "Unpaired $name: it can't reach this computer any more. Pair it again with friday phone on."
 }
 
 # `friday phone send` / "send the answer to my phone": the last answer, as a
@@ -4343,6 +4408,10 @@ case "${1:-}" in
     #   (the window in front, the clipboard, a web search, a text file)
     #   friday ask --new [text]         start a new conversation (asks within 15
     #                                   minutes of each other share one: friday-ctl)
+    #   friday ask --json [--web] [--new] text
+    #                                   for scripts: no window or notification,
+    #                                   one JSON object, fixed exit codes
+    #                                   (specs/ask-json.md)
     #   friday ask --another provider/model [text]
     #                                   ask again, answered with more care by a
     #                                   different model (the answer pill's
@@ -4350,7 +4419,7 @@ case "${1:-}" in
     # With FRIDAY Shell running, the answer opens in its answer pill (which also
     # streams it); otherwise it arrives as a notification.
     shift
-    use_selection=false use_screen=false use_region=false use_followup=false use_web=false use_new=false use_clip=false another="" details="" daemon_down=false
+    use_selection=false use_screen=false use_region=false use_followup=false use_web=false use_new=false use_clip=false another="" details="" daemon_down=false use_json=false
     rewrite="" sel_window="" source_label=""
     ask_args=()
     while [ $# -gt 0 ]; do
@@ -4361,11 +4430,25 @@ case "${1:-}" in
         --follow-up|-f) use_followup=true; ask_args+=(--follow-up); shift ;;
         --web) use_web=true; ask_args+=(--web); shift ;;
         --new|-n) use_new=true; shift ;;
+        --json) use_json=true; shift ;;
         --another) another="${2:-}"; shift; [ $# -eq 0 ] || shift ;;
         *) break ;;
       esac
     done
     goal="$*"
+    if $use_json; then
+      # Words only: the screen, the selection and the pill need a person.
+      if $use_selection || $use_screen || $use_followup || [ -n "$another" ] || [ -z "$goal" ]; then
+        echo "usage: friday ask --json [--web] [--new] <question>" >&2
+        exit 2
+      fi
+      json_args=(goal --json)
+      $use_web && json_args+=(--web)
+      $use_new && json_args+=(--new-conversation)
+      command -v friday-ctl >/dev/null 2>&1 || {
+        echo '{"outcome":"unreachable","result":null,"error":"friday-ctl is not installed"}'; exit 5; }
+      exec friday-ctl "${json_args[@]}" "$goal"
+    fi
     # The window you're asking about (its selection or its screen): private?
     private_win=""
     if $use_selection || $use_screen; then private_win=$(friday_private_window); fi

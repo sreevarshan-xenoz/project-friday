@@ -97,6 +97,40 @@ print(len(parts) if ok else "bad:" + json.dumps(parts)[:200])' "$answer" <<<"$ou
   else pass "egress.jsonl does not contain the question text"; fi
 done
 
+# --json, the stable form for scripts (specs/ask-json.md): one JSON object on
+# stdout, a fixed exit code for each kind of end.
+echo "for scripts (--json)"
+rc=0; out=$("${offline[@]}" timeout 90 "$CTL_BIN" goal --json "What does the Rust error E0308 mean?" 2>/dev/null) || rc=$?
+got=$("$PY" -c 'import json,sys
+lines=sys.stdin.read().splitlines()
+o=json.loads(lines[0]) if len(lines)==1 else {}
+print(len(lines), o.get("outcome"), (o.get("result") or "")[:17])' <<<"$out" 2>/dev/null || echo "not json")
+if [[ $rc == 0 && "$got" == "1 completed FAKE-MODEL-ANSWER" ]]; then pass "an answer: one JSON line, exit 0"
+else fail "--json answer: rc=$rc got=$got out=${out:0:200}"; fi
+rc=0; env FRIDAY_STATE_FILE="$W/none.json" "$CTL_BIN" goal --json "  " >/dev/null 2>&1 || rc=$?
+[[ $rc == 2 ]] && pass "no question: exit 2" || fail "no question: rc=$rc"
+rc=0; out=$("${offline[@]}" "$CTL_BIN" context screen --yes --json 2>/dev/null) || rc=$?
+[[ $rc == 2 && -z "$out" ]] && pass "--json is for goal only: exit 2" || fail "context --json: rc=$rc out=$out"
+rc=0; out=$("${offline[@]}" timeout 90 "$CTL_BIN" goal --json --stream "Summarise this text: one two three." 2>/dev/null) || rc=$?
+[[ $rc == 0 && $(wc -l <<<"$out") == 1 && "$out" != *partial* ]] && pass "--stream adds no lines to --json" || fail "--json --stream: rc=$rc out=${out:0:200}"
+for how in "no state file" "nothing listening"; do
+  if [[ $how == "no state file" ]]; then away=(env FRIDAY_STATE_FILE="$W/none.json")
+  else away=(env FRIDAY_STATE_FILE="$W/away/state.json" FRIDAY_CTL_TOKEN=t FRIDAY_CTL_ADDR=127.0.0.1:9); fi
+  rc=0; out=$("${away[@]}" "$CTL_BIN" goal --json "hi" 2>/dev/null) || rc=$?
+  if [[ $rc == 5 ]] && "$PY" -c 'import json,sys; o=json.loads(sys.stdin.read()); sys.exit(o["outcome"]!="unreachable" or not o["error"])' <<<"$out"; then
+    pass "FRIDAY not reachable ($how): exit 5, outcome unreachable"
+  else fail "unreachable ($how): rc=$rc out=$out"; fi
+done
+
+# Gave up waiting (FRIDAY_CTL_WAIT_SECS): exit 4, outcome timed_out.
+rc=0; out=$("${offline[@]}" FRIDAY_CTL_WAIT_SECS=0 "$CTL_BIN" goal --json "What is 2 plus 2?" 2>/dev/null) || rc=$?
+if [[ $rc == 4 && "$out" == *'"outcome":"timed_out"'* ]]; then pass "a wait that runs out: exit 4, outcome timed_out"
+else fail "timed out: rc=$rc out=$out"; fi
+# That ask goes on: let it finish before the next check.
+for _ in $(seq 60); do
+  grep -q '"active": *true' "$W/state.json" 2>/dev/null || break; sleep 0.5
+done
+
 # A question that mentions a tool is answered, not run as a shell command, and
 # selected text (untrusted: it can come from any web page) never runs either.
 echo "nothing runs unless asked"
