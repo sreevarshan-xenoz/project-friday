@@ -467,6 +467,25 @@ echo FRIDAY_AGENTS=0 >>"$HOME/.config/friday/friday.env"
 if grep -q "agents work in" "$LOG"; then fail "agent folder hint shown with agents off"; else pass "no agent folder hint with agents off"; fi
 sed -i '/^FRIDAY_AGENTS=0$/d' "$HOME/.config/friday/friday.env"; rm -rf "$state/agents"
 
+echo "which \"this\""
+vague=$(bash -c 'source <(sed -n "/^friday_vague_this() {/,/^}/p" "$1"); shift; for q; do friday_vague_this "$q" && printf Y || printf .; done' _ "$F" \
+  "explain this" "What does this mean?" "is this right?" "translate this to French" \
+  "what is this page about" "close this window" "is this application safe" "@screen what is this" "what is rust")
+[ "$vague" = "YYYY....." ] && pass "vague \"this\" is told from a named one" || fail "vague \"this\": got $vague"
+: >"$LOG"; PRIMARY="some words" PICK="Just my words" bash "$F" ask "explain this"; sleep 0.3
+contains "\"explain this\" asks which this" "$(cat "$LOG")" "fuzzel --dmenu --prompt=“this” = "
+contains "and \"just my words\" asks it as typed" "$(cat "$LOG")" "friday-ctl explain\\ this"
+: >"$LOG"; PRIMARY="selected words here" PICK="The text I selected" bash "$F" ask "explain this"; sleep 0.3
+contains "\"the text I selected\" sends the selection" "$(cat "$LOG")" "selected words here"
+: >"$LOG"; PICK="The window in front" bash "$F" ask "what does this mean"; sleep 0.3
+contains "\"the window in front\" asks about the screen" "$(cat "$LOG")" "context screen"
+: >"$LOG"; PICK="The window in front" bash "$F" ask --another opencode/x "explain this"; sleep 0.3
+if grep -q "“this” = " "$LOG"; then fail "a retry with another model asked which this"; else pass "a retry with another model asks nothing"; fi
+bash "$F" feature which-this off >/dev/null
+: >"$LOG"; PICK="" bash "$F" ask "explain this"; sleep 0.3
+if grep -q "“this” = " "$LOG"; then fail "which-this off still asked"; else pass "which-this off asks nothing"; fi
+bash "$F" feature which-this on >/dev/null
+
 echo "per-app instructions"
 printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s "$HYPR_WIN"\nexit 0\n' >"$S/hyprctl"; chmod +x "$S/hyprctl"
 # "This window" is the one in front at the keypress.

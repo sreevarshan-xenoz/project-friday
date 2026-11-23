@@ -68,6 +68,11 @@ public partial class AskWindow : Window
 
         Input.TextChanged += (_, _) => OnTyped();
         FolderChip.MouseLeftButtonUp += (_, _) => PickFolder();
+        ThisChip.MouseLeftButtonUp += (_, _) =>
+        {
+            AboutWindow = true;
+            Finish(true);
+        };
         PreviewKeyDown += OnKey;
         Activated += (_, _) => _wasActive = true;
         Closing += (_, _) => _done = true; // closing deactivates it too
@@ -95,11 +100,18 @@ public partial class AskWindow : Window
     /// <summary>Agents' folders, for the folder chip (null: agents are off).</summary>
     public AgentFolders? Folders { get; init; }
 
+    /// <summary>Whether a vague "this" may mean the window in front (one is there, not private or mail).</summary>
+    public bool OfferWindow { get; init; }
+
+    /// <summary>The question's "this" is the window in front: ask about the screen.</summary>
+    public bool AboutWindow { get; private set; }
+
     private void OnTyped()
     {
         var chip = Folders?.Chip(Input.Text);
         FolderChip.Visibility = chip is null ? Visibility.Collapsed : Visibility.Visible;
         FolderText.Text = chip ?? "";
+        ThisChip.Visibility = OfferWindow && VagueThis.Matches(Input.Text) ? Visibility.Visible : Visibility.Collapsed;
         var empty = Input.Text.Length == 0;
         Placeholder.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
         EnterKey.BeginAnimation(OpacityProperty, new DoubleAnimation(empty ? 0 : 1, TimeSpan.FromMilliseconds(160)) { EasingFunction = Motion.Out });
@@ -113,6 +125,7 @@ public partial class AskWindow : Window
                 Finish(false);
                 break;
             case Key.Enter when Question.Length > 0:
+                AboutWindow = ThisChip.Visibility == Visibility.Visible && (Keyboard.Modifiers & ModifierKeys.Control) != 0;
                 Finish(true);
                 break;
             case Key.Up when _history.Count > 0:

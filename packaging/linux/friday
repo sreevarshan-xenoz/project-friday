@@ -2544,6 +2544,17 @@ friday_replace_selection() {
 # C:\…) or a dotted file name isn't, unless one of its parts is such a run
 # of 16 or more (a key in a URL, a JWT). Anything else with a slash (base64,
 # an AWS secret) still is. Same rule as the Windows tray (Asking.LooksLikeSecret).
+# friday_vague_this <question>: whether a question leans on "this" or "that"
+# with nothing saying what it is ("explain this", "what does that mean", "is
+# this right?"). "This page", "this error in rust" or an @mention name it.
+friday_vague_this() {
+  local q="${1,,}"
+  [ "${#q}" -le 80 ] && [[ "$q" != *@* ]] || return 1
+  [[ "$q" =~ (^|[^a-z])(this|that|these|those)[[:space:]]*(mean|means|say|says|do|does|for[[:space:]]+me|please)?[[:space:]]*[?.!]*$ ]] \
+    || [[ "$q" =~ ^(is|are)[[:space:]]+(this|that|these|those)[[:space:]]+(right|correct|ok|okay|true|safe|good|real|legit|a[[:space:]]+scam)[[:space:]]*[?.!]*$ ]] \
+    || [[ "$q" =~ ^(translate|summari[sz]e|explain|rewrite|fix|check|proofread|shorten|simplify)[[:space:]]+(this|that|these|those|it)([^a-z]|$) ]]
+}
+
 friday_secret_shaped() {
   local t="${1:-}" part
   [[ "$t" =~ ^[^[:space:]]{12,}$ && "$t" =~ [A-Za-z] && "$t" =~ [0-9] ]] || return 1
@@ -3475,7 +3486,8 @@ easy-local|With local AI set up, short general questions are answered on this co
 agent-resume|A follow-up to a coding agent goes on in its session (\"tell opencode to also add tests\")
 self-docs|Questions about FRIDAY are answered from its own guide
 sensitive-warn|Mail and chat apps: say where their text goes before sending it, or answer with the local model
-place-window|Put a window on one side of the screen (\"put Firefox on the left\")"
+place-window|Put a window on one side of the screen (\"put Firefox on the left\")
+which-this|\"Explain this\" with nothing picked: ask whether it means the selected text or the window in front"
 friday_features_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/features-off"; }
 # friday_feature_on <name>: on unless switched off.
 friday_feature_on() { ! grep -qxF -- "$1" "$(friday_features_file)" 2>/dev/null; }
@@ -4483,6 +4495,20 @@ case "${1:-}" in
     fi
     shopt -u nocasematch
     [ -n "${goal// /}" ] || exit 0
+    # "Explain this" with nothing picked: ask which "this" (the selected text,
+    # the window in front, or no context) instead of guessing. Each choice
+    # starts over as that kind of ask, with its own privacy checks.
+    # (Not for a retry, a new conversation or a spoken ask: no menu there.)
+    if ! $use_screen && ! $use_selection && ! $use_followup && ! $use_web && ! $use_new \
+        && [ -z "$another" ] && [ -z "${FRIDAY_SPOKEN:-}" ] && friday_feature_on which-this && friday_vague_this "$goal"; then
+      sel=$(timeout 1 wl-paste --primary --no-newline 2>/dev/null | head -c 200 || true)
+      pick=$({ [ -z "${sel//[[:space:]]/}" ] || echo "The text I selected"; echo "The window in front"; echo "Just my words"; } \
+        | fuzzel --dmenu --prompt="“this” = " --width=50 --lines=3 --placeholder="Which do you mean? (a window or selection goes to your AI provider)") || exit 0
+      case "$pick" in
+        "The text I selected") rm -rf "$lookups"; exec bash "$0" ask --selection "$goal" ;;
+        "The window in front") rm -rf "$lookups"; exec bash "$0" ask --screen "$goal" ;;
+      esac
+    fi
     # "Yes" or "no" to a confirmation FRIDAY is waiting on.
     if ! $use_selection && ! $use_screen && ! $use_followup && ! $use_web && friday_feature_on typed-confirm \
         && said=$(friday_confirm_typed "$goal"); then

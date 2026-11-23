@@ -58,6 +58,14 @@
           </StackPanel>
         </Border>
 
+        <!-- "Explain this" with nothing picked: which "this"? Click for the window. -->
+        <Border x:Name="ThisChip" Style="{StaticResource Chip}" HorizontalAlignment="Left" Margin="30,12,0,0" Visibility="Collapsed" Cursor="Hand">
+          <StackPanel Orientation="Horizontal">
+            <ui:SymbolIcon Symbol="QuestionCircle24" FontSize="13" Margin="0,0,6,0" VerticalAlignment="Center" Foreground="{StaticResource Subtext}" />
+            <TextBlock Text="Which “this”?   Ctrl+↵ the window in front (sent to your AI provider)   ·   ↵ just my words" FontSize="12" VerticalAlignment="Center" Foreground="{StaticResource Subtext}" />
+          </StackPanel>
+        </Border>
+
         <!-- Quick actions for a selection: a soft highlight follows the keys. -->
         <ItemsControl x:Name="Quick" Margin="22,10,0,0" Visibility="Collapsed" Focusable="False" />
 
