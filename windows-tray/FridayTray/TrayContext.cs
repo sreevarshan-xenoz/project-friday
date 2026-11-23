@@ -670,7 +670,7 @@ internal sealed class TrayContext : ApplicationContext
         // daemon still runs only that exact action.
         if (outcome.Confirmation is { } autoConf
             && AppSettings.AutoConfirm(AppSettings.AutonomyMode(EnvFile.Load(_install.Paths.EnvFile)),
-                screenAsk: kind == AskKind.Screen, alreadyConfirming: confirm is not null))
+                screenAsk: kind == AskKind.Screen, alreadyConfirming: confirm is not null, autoConf.Action))
         {
             Notify("FRIDAY acted on its own", outcome.Answer + "\n(Settings, Desktop control: How much FRIDAY may do)", ToolTipIcon.Info);
             await RunRequestAsync(kind, question, context, request, autoConf.Action, answer, options);

@@ -26,6 +26,8 @@ public class AutonomyAndFeaturesTests
         Assert.False(AppSettings.AutoConfirm("act", screenAsk: true, alreadyConfirming: false));
         Assert.False(AppSettings.AutoConfirm("ask-risky", screenAsk: false, alreadyConfirming: false));
         Assert.False(AppSettings.AutoConfirm("ask-all", screenAsk: false, alreadyConfirming: false));
+        // What can't be taken back still asks, in "act" too.
+        Assert.False(AppSettings.AutoConfirm("act", screenAsk: false, alreadyConfirming: false, "desktop close_window {\"target\":\"notepad\"}"));
     }
 
     [Fact]

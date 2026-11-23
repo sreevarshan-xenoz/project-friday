@@ -60,9 +60,10 @@ public static class AppSettings
     /// <summary>Whether the tray runs an action the daemon asked to confirm
     /// without asking: only in "act", only on the first answer (never one that
     /// was already a confirmed run, so it can't loop), and never for a screen
-    /// ask (it carries no confirmation).</summary>
-    public static bool AutoConfirm(string mode, bool screenAsk, bool alreadyConfirming) =>
-        mode == "act" && !screenAsk && !alreadyConfirming;
+    /// ask (it carries no confirmation). What can't be taken back still asks,
+    /// as on Linux.</summary>
+    public static bool AutoConfirm(string mode, bool screenAsk, bool alreadyConfirming, string action = "") =>
+        mode == "act" && !screenAsk && !alreadyConfirming && !Listening.Irreversible(action);
 
     /// <summary>The tray's features that can be switched off one by one, as
     /// (name, what it does). Off ones are listed in FRIDAY_FEATURES_OFF.</summary>
