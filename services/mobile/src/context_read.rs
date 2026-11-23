@@ -80,8 +80,9 @@ pub trait ProviderSeam: Send + Sync {
 
 /// The words in the focused window, read from its accessibility tree, for a
 /// screen ask that needs no screenshot. `class` is the compositor's name for
-/// the app. `None` when there is no tree worth sending (the ask then uses a
-/// screenshot).
+/// the app. `None` when there is no tree; too few words (under
+/// [`MIN_SCREEN_TEXT`]) send a screenshot instead, once they are checked
+/// for secrets.
 #[async_trait]
 pub trait ScreenText: Send + Sync {
     /// The words of `class`'s window titled `title` (the one in front), never
@@ -90,8 +91,8 @@ pub trait ScreenText: Send + Sync {
 }
 
 /// The words in a picture of the screen (an area the person picked), read on
-/// this computer. `None` when there are too few to answer from (the picture
-/// goes instead).
+/// this computer. Too few to answer from (under [`MIN_AREA_TEXT`]) and the
+/// picture goes instead, once they are checked for secrets.
 #[async_trait]
 pub trait ImageText: Send + Sync {
     async fn image_text(&self, png: &[u8]) -> Option<String>;
@@ -99,6 +100,20 @@ pub trait ImageText: Send + Sync {
 
 /// An area with fewer letters and digits than this goes as a picture.
 const MIN_AREA_TEXT: usize = 40;
+/// A window whose tree gives less than this is asked about with a screenshot.
+pub const MIN_SCREEN_TEXT: usize = 200;
+
+/// Whether these words, read from what a screenshot would show, hold a key
+/// or password: the picture then never leaves (`screen-secret-check`).
+fn shows_secret(words: &str) -> bool {
+    crate::features::on("screen-secret-check") && friday_goal_execution::mask_secrets(words).1 > 0
+}
+
+fn secret_on_screen() -> ContextReadError {
+    ContextReadError::EgressBlocked {
+        reason: "the screen shows what looks like a key or password".into(),
+    }
+}
 /// The most text of one area sent to a model.
 const MAX_AREA_TEXT: usize = 12_000;
 
@@ -129,7 +144,7 @@ impl ImageText for Tesseract {
         .await
         .ok()?;
         let out = out.ok().filter(|o| o.status.success())?;
-        area_words(&String::from_utf8_lossy(&out.stdout))
+        Some(area_words(&String::from_utf8_lossy(&out.stdout)))
     }
 }
 
@@ -141,18 +156,20 @@ fn overlaps(a: ScreenRegion, b: ScreenRegion) -> bool {
 }
 
 /// OCR output as the words to send: blank lines dropped, cut to
-/// [`MAX_AREA_TEXT`]; `None` when there are too few.
-fn area_words(raw: &str) -> Option<String> {
+/// [`MAX_AREA_TEXT`].
+fn area_words(raw: &str) -> String {
     let text: String = raw
         .lines()
         .map(str::trim_end)
         .filter(|l| !l.trim().is_empty())
         .collect::<Vec<_>>()
         .join("\n");
-    if text.chars().filter(|c| c.is_alphanumeric()).count() < MIN_AREA_TEXT {
-        return None;
-    }
-    Some(text.chars().take(MAX_AREA_TEXT).collect())
+    text.chars().take(MAX_AREA_TEXT).collect()
+}
+
+/// Enough of an area's words to answer from.
+fn enough_area_words(words: &str) -> bool {
+    words.chars().filter(|c| c.is_alphanumeric()).count() >= MIN_AREA_TEXT
 }
 
 /// The line a [`ScreenText`] ends the words with when the window had more
@@ -270,6 +287,9 @@ where
     target: ProviderTarget,
     text: Option<Arc<dyn ScreenText>>,
     area_text: Option<Arc<dyn ImageText>>,
+    /// Whether the window's words may go instead of a screenshot (screen text
+    /// on). Off, they are still read here, only to check for a key.
+    text_route: bool,
 }
 
 impl<C, P> ScreenReader<C, P>
@@ -291,7 +311,15 @@ where
             target: ProviderTarget::FreeTier,
             text: None,
             area_text: None,
+            text_route: true,
         }
+    }
+
+    /// Screen text off: the window's words never go to a model; they are
+    /// read only to keep a screenshot that shows a key from leaving.
+    pub fn check_only(mut self) -> Self {
+        self.text_route = false;
+        self
     }
 
     /// Answer from the focused window's accessibility text, when it has
@@ -409,7 +437,14 @@ where
         let mut text_failed = false;
         if region.is_none() {
             let front = self.window_in_front();
-            match self.ask_from_text(question, progress).await {
+            let mut secret = false;
+            let from_text = self.ask_from_text(question, progress, &mut secret).await;
+            // The text went masked; a picture can't be: it never goes.
+            if secret && !matches!(from_text, Some(Ok(_))) {
+                self.revoke();
+                return Err(secret_on_screen());
+            }
+            match from_text {
                 Some(Ok((answer, cut))) => return Ok((answer, ScreenSent::Text { cut })),
                 // A busy or refusing provider on the text route: the
                 // screenshot (consent was given for this ask) rather than no
@@ -450,14 +485,21 @@ where
 
         // A picked area: its words first, read here; the picture only when
         // there are too few, or the provider didn't answer them.
+        // Its words are read here even with area-text off, when they are
+        // only checked for a secret.
         if let (Some(ocr), Some(r), CapturedContext::Image { bytes, .. }) = (
-            self.area_text
-                .as_ref()
-                .filter(|_| crate::features::on("area-text")),
+            self.area_text.as_ref().filter(|_| {
+                crate::features::on("area-text") || crate::features::on("screen-secret-check")
+            }),
             region,
             &captured,
         ) {
-            if let Some(words) = ocr.image_text(bytes).await {
+            let words = ocr.image_text(bytes).await;
+            let secret = words.as_deref().is_some_and(shows_secret);
+            let words = words.filter(|w| {
+                self.text_route && crate::features::on("area-text") && enough_area_words(w)
+            });
+            if let Some(words) = words {
                 let intro = format!(
                     "The person picked an area of their screen ({}). Its text, read \
                      from the screen on their computer, follows between the lines.",
@@ -483,8 +525,15 @@ where
                             "[context.read] the area's text got no answer ({e}); sending the picture"
                         );
                     }
-                    Err(e) => return Err(e),
+                    Err(e) => {
+                        self.revoke();
+                        return Err(e);
+                    }
                 }
+            }
+            if secret {
+                self.revoke();
+                return Err(secret_on_screen());
             }
         }
 
@@ -554,6 +603,7 @@ where
         &self,
         question: Option<&str>,
         progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+        secret: &mut bool,
     ) -> Option<Result<(String, bool), ContextReadError>> {
         let source = self.text.as_ref()?;
         let CapturedContext::AppInfo { class, title, .. } = self
@@ -564,6 +614,11 @@ where
             return None;
         };
         let words = source.window_text(&class, &title).await?;
+        // The title too: a browser's address or a terminal's prompt is in the picture.
+        *secret = shows_secret(&words) || shows_secret(&title);
+        if !self.text_route || words.chars().count() < MIN_SCREEN_TEXT {
+            return None;
+        }
         let cut = words.ends_with(SCREEN_TEXT_CUT);
         // A title can carry a token too (a URL with a key in it, a terminal).
         let (title, masked_title) = friday_goal_execution::mask_secrets(&title);
@@ -1385,6 +1440,7 @@ mod tests {
             target: reader.target,
             text: None,
             area_text: None,
+            text_route: true,
         };
         let second_err = working_reader.read().await.unwrap_err();
         assert!(matches!(second_err, ContextReadError::NotAuthorized { .. }));
@@ -1938,7 +1994,10 @@ mod tests {
     impl ScreenText for FakeText {
         async fn window_text(&self, class: &str, title: &str) -> Option<String> {
             assert_eq!((class, title), ("nautilus", "Home"));
-            self.0.clone()
+            // Long enough to go as text (a window with a real tree).
+            self.0
+                .clone()
+                .map(|t| format!("{}\n{t}", "row: item ".repeat(MIN_SCREEN_TEXT / 10)))
         }
     }
 
@@ -2192,6 +2251,116 @@ mod tests {
         assert!(seam.0.last().unwrap().starts_with("SCREEN_CAPTURE"));
     }
 
+    /// A window whose few words are given as they are (no padding).
+    struct FewWords(&'static str);
+
+    #[async_trait]
+    impl ScreenText for FewWords {
+        async fn window_text(&self, _: &str, _: &str) -> Option<String> {
+            Some(self.0.to_string())
+        }
+    }
+
+    const ON_SCREEN_KEY: &str = "password: not-a-real-one";
+
+    #[tokio::test]
+    async fn a_key_on_screen_never_leaves_as_a_picture() {
+        // Too few words for the text route: the screenshot would go, and
+        // would show the key.
+        let reader = ScreenReader::new(collector_with_window(), RecordingSeam::default(), "fabric")
+            .with_text(Arc::new(FewWords(ON_SCREEN_KEY)));
+        reader.consent();
+        let got = reader
+            .ask_routed(Some("what is this?"), None, &|_| {})
+            .await;
+        assert!(
+            matches!(got, Err(ContextReadError::EgressBlocked { .. })),
+            "{got:?}"
+        );
+        assert_eq!(reader.provider.sent(), 0, "no screenshot went");
+        assert!(!reader.is_consented());
+
+        // A key in the title only (an address bar, a prompt): no picture.
+        let full = friday_context_collector::screen_command(None);
+        let win = friday_context_collector::window_command();
+        let titled =
+            format!(r#"{{"class":"foot","title":"{ON_SCREEN_KEY}","at":[0,0],"size":[800,600]}}"#);
+        let runner = FakeCommandRunner::new()
+            .script_stdout(&full.0, &strs(&full.1), PNG)
+            .script_stdout(&win.0, &strs(&win.1), titled.as_bytes());
+        let reader = ScreenReader::new(
+            ContextCollector::new(runner),
+            RecordingSeam::default(),
+            "fabric",
+        )
+        .with_text(Arc::new(FewWords("a few words")));
+        reader.consent();
+        let got = reader.ask_routed(None, None, &|_| {}).await;
+        assert!(
+            matches!(got, Err(ContextReadError::EgressBlocked { .. })),
+            "{got:?}"
+        );
+        assert_eq!(reader.provider.sent(), 0);
+
+        // The text route busy: no screenshot of the window instead.
+        let seam = TextRefused::default();
+        let reader = ScreenReader::new(collector_with_window(), seam.clone(), "fabric")
+            .with_text(Arc::new(FakeText(Some(ON_SCREEN_KEY.into()))));
+        reader.consent();
+        let got = reader.ask_routed(None, None, &|_| {}).await;
+        assert!(
+            matches!(got, Err(ContextReadError::EgressBlocked { .. })),
+            "{got:?}"
+        );
+        assert!(!seam.0.last().unwrap_or_default().contains("SCREEN_CAPTURE"));
+
+        // A picked area whose words show a key: neither its words nor its picture.
+        let area = ScreenRegion::new(0, 0, 800, 600);
+        let seam = TextRefused::default();
+        let reader = ScreenReader::new(collector_with_window(), seam.clone(), "fabric")
+            .with_area_text(Arc::new(FakeOcr(Some(format!(
+                "{AREA_WORDS}\n{ON_SCREEN_KEY}"
+            )))));
+        reader.consent();
+        let got = reader.ask_routed(None, Some(area), &|_| {}).await;
+        assert!(
+            matches!(got, Err(ContextReadError::EgressBlocked { .. })),
+            "{got:?}"
+        );
+        assert!(!seam.0.last().unwrap_or_default().contains("SCREEN_CAPTURE"));
+        // Too few of its words to send, and one is a key: no picture either.
+        let reader = ScreenReader::new(collector_with_window(), RecordingSeam::default(), "fabric")
+            .with_area_text(Arc::new(FakeOcr(Some(ON_SCREEN_KEY.into()))));
+        reader.consent();
+        let got = reader.ask_routed(None, Some(area), &|_| {}).await;
+        assert!(
+            matches!(got, Err(ContextReadError::EgressBlocked { .. })),
+            "{got:?}"
+        );
+        assert_eq!(reader.provider.sent(), 0);
+    }
+
+    #[tokio::test]
+    async fn screen_text_off_still_checks_for_a_key_but_sends_no_words() {
+        let reader = ScreenReader::new(collector_with_window(), RecordingSeam::default(), "fabric")
+            .with_text(Arc::new(FakeText(Some("Report.pdf".into()))))
+            .check_only();
+        reader.consent();
+        let (_, sent) = reader.ask_routed(None, None, &|_| {}).await.unwrap();
+        assert_eq!(sent, ScreenSent::Screenshot { text_failed: false });
+        assert!(!reader.provider.last().unwrap().contains("Report.pdf"));
+        let reader = ScreenReader::new(collector_with_window(), RecordingSeam::default(), "fabric")
+            .with_text(Arc::new(FakeText(Some(ON_SCREEN_KEY.into()))))
+            .check_only();
+        reader.consent();
+        let got = reader.ask_routed(None, None, &|_| {}).await;
+        assert!(
+            matches!(got, Err(ContextReadError::EgressBlocked { .. })),
+            "{got:?}"
+        );
+        assert_eq!(reader.provider.sent(), 0);
+    }
+
     /// A private window at 0,0 800x600, and a capture of any area.
     fn collector_with_private_window(area: ScreenRegion) -> ContextCollector<FakeCommandRunner> {
         let win = friday_context_collector::window_command();
@@ -2291,15 +2460,16 @@ mod tests {
 
     #[test]
     fn area_words_drops_blank_lines_and_refuses_too_few() {
-        assert_eq!(area_words("  \n\x0c\nOK\n"), None);
+        assert!(!enough_area_words(&area_words("  \n\x0c\nOK\n")));
         let many = "The quick brown fox\n\n   \njumps over the lazy dog again";
         assert_eq!(
-            area_words(many).as_deref(),
-            Some("The quick brown fox\njumps over the lazy dog again")
+            area_words(many),
+            "The quick brown fox\njumps over the lazy dog again"
         );
+        assert!(enough_area_words(&area_words(many)));
         assert_eq!(
-            area_words(&"a".repeat(MAX_AREA_TEXT + 50)).map(|t| t.len()),
-            Some(MAX_AREA_TEXT)
+            area_words(&"a".repeat(MAX_AREA_TEXT + 50)).len(),
+            MAX_AREA_TEXT
         );
     }
 
