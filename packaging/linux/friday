@@ -3764,6 +3764,7 @@ speak-as-it-comes|Spoken answers start with the first sentence while the rest is
 backup|friday backup: a checked backup of settings, memory and history, and a restore that checks first
 risk-table|friday risks: what FRIDAY may do on its own, what asks first and what never runs
 log-chain|Each action in the action log is chained to the one before, so a changed line shows (friday verify-log)
+standing-reversible|A standing task runs only what can be undone; anything that would ask first is refused and logged
 activity|One list of agent steps waiting for you, runs going now, standing tasks and runs finished lately
 model-per-job|friday model: a model picked for asks, screen questions or chores is tried first
 status-orb|The answer pill's orb shows listening, thinking and speaking
@@ -5433,6 +5434,8 @@ case "${1:-}" in
       ctl_args=(goal --wait)
       $use_web && ctl_args+=(--web)
       $use_new && ctl_args+=(--new-conversation)
+      # A standing task on its own (the daemon runs it with FRIDAY_STANDING=1).
+      [ "${FRIDAY_STANDING:-}" = 1 ] && ctl_args+=(--scheduled)
       [ -z "$another" ] || ctl_args+=(--thorough --avoid "$another")
       ctl_args+=("$request")
       stream_ctl friday-ctl "${ctl_args[@]}"

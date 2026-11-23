@@ -85,6 +85,10 @@ impl CommandGateway {
                 if cmd.params.get("thorough").and_then(|v| v.as_bool()) == Some(true) {
                     payload["thorough"] = json!(true);
                 }
+                // A standing task asking on its own: only what can be undone runs.
+                if cmd.params.get("scheduled").and_then(|v| v.as_bool()) == Some(true) {
+                    payload["scheduled"] = json!(true);
+                }
                 if let Some(avoid) = cmd.params.get("avoid").filter(|v| v.is_object()) {
                     payload["avoid"] = avoid.clone();
                 }
@@ -267,5 +271,19 @@ mod tests {
             .expect("plan.goal must be published")
             .expect("bus alive");
         assert_eq!(ev.payload["confirm"], "git status");
+
+        // A standing task's ask keeps its mark on the way to the runner.
+        let scheduled = Command {
+            id: "cmd-3".into(),
+            method: method::PLANNER_GOAL.into(),
+            params: json!({ "goal": "tidy my downloads", "scheduled": true }),
+            session_id: "sess-abc".into(),
+        };
+        g.dispatch(&scheduled).await;
+        let ev = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await
+            .expect("plan.goal must be published")
+            .expect("bus alive");
+        assert_eq!(ev.payload["scheduled"], true);
     }
 }

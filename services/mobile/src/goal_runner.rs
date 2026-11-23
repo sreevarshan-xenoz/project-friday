@@ -68,6 +68,9 @@ pub(crate) struct ConfirmationGate {
     /// The goal carries text from outside the request (a selection, a page,
     /// a window's text): it may hold instructions, so every action asks.
     pub(crate) quoted: bool,
+    /// The goal is a standing task running on its own (`scheduled`): nobody
+    /// is there to say yes, so what would ask first is refused and logged.
+    pub(crate) scheduled: bool,
 }
 
 impl ConfirmationGate {
@@ -89,6 +92,25 @@ impl ConfirmationGate {
             if c.trim() == exact_action.trim() {
                 return Ok(());
             }
+        }
+        // A standing task does only what can be undone (`standing-reversible`).
+        if self.scheduled && crate::features::on("standing-reversible") {
+            if let Some(dir) = crate::desktop_tool::audit_dir() {
+                crate::desktop_tool::append_audit(
+                    &dir,
+                    &serde_json::json!({
+                        "ts": chrono::Local::now().to_rfc3339(),
+                        "verb": "blocked",
+                        "tool": tool,
+                        "action": exact_action,
+                        "why": "a standing task runs only what can be undone",
+                        "ok": false,
+                    }),
+                );
+            }
+            return Err(ToolResult::error(format!(
+                "A standing task runs only what can be undone, so this wasn't done: {exact_action}. Ask for it yourself to do it."
+            )));
         }
         if self.pending.is_none() {
             let preview = if crate::features::on("action-check") {
@@ -2453,6 +2475,7 @@ impl GoalRunner {
             g.confirm = confirm;
             g.pending = None;
             g.quoted = carries_quoted_text(&goal);
+            g.scheduled = opts.scheduled;
         }
 
         // Read the session's prior turn (short lock) and reserve the next turn
@@ -3198,6 +3221,8 @@ pub struct AskOptions {
     pub thorough: bool,
     /// The `(provider, model)` that gave the answer being retried.
     pub avoid: Option<(String, String)>,
+    /// A standing task asked it, on its own.
+    pub scheduled: bool,
 }
 
 impl AskOptions {
@@ -3216,6 +3241,7 @@ impl AskOptions {
             web: flag("web"),
             thorough: flag("thorough"),
             avoid,
+            scheduled: flag("scheduled"),
         }
     }
 }
@@ -5247,6 +5273,38 @@ mod tests {
         );
         assert!(!terminal.payload.to_string().contains("private notes"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A standing task on its own: what would ask first (a command here)
+    /// is refused, not left waiting for a yes nobody will give.
+    #[tokio::test]
+    async fn a_standing_task_runs_nothing_that_would_ask_first() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let runner = GoalRunner::new(bus.clone());
+        runner.start();
+
+        let (_started, terminal) = drive_goal_event(
+            &bus,
+            &mut rx,
+            json!({ "goal": "git status", "scheduled": true }),
+        )
+        .await;
+
+        assert_eq!(terminal.kind, "goal.failed");
+        assert!(
+            terminal.payload["needs_confirmation"].is_null(),
+            "{}",
+            terminal.payload
+        );
+        assert!(
+            terminal.payload["error"]
+                .as_str()
+                .unwrap_or("")
+                .contains("only what can be undone"),
+            "{}",
+            terminal.payload
+        );
     }
 
     #[tokio::test]

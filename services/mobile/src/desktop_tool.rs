@@ -125,6 +125,12 @@ pub struct DesktopControlTool {
 /// The directory of `actions.jsonl`: beside state.json (`FRIDAY_STATE_FILE`,
 /// else `$XDG_STATE_HOME/friday`).
 pub fn audit_dir() -> Option<PathBuf> {
+    // A test never writes the person's own log.
+    if cfg!(test) {
+        return Some(
+            std::env::temp_dir().join(format!("friday-test-state-{}", std::process::id())),
+        );
+    }
     crate::shell_state::ShellState::default_path()
         .parent()
         .map(|d| d.to_path_buf())
