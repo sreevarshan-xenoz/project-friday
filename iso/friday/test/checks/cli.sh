@@ -1367,6 +1367,7 @@ rm -f "$S/hyprctl"
 H2="$W/bhome"; mkdir -p "$H2"
 HOME="$H2" XDG_CONFIG_HOME="$H2/.config" bash "$F" browser setup >/dev/null
 contains "setup registers the host with Chromium for FRIDAY's extension only" "$(cat "$H2/.config/chromium/NativeMessagingHosts/org.friday.browser.json")" "chrome-extension://eiblopljacafgajanhkngbhejpjjmfff/"
+contains "and for its Edge store copy" "$(cat "$H2/.config/chromium/NativeMessagingHosts/org.friday.browser.json")" "chrome-extension://ncbhacgfkbbpmocppmagejakdnkikcpk/"
 contains "and with Firefox" "$(cat "$H2/.mozilla/native-messaging-hosts/org.friday.browser.json")" "browser@friday-os"
 echo "encrypted sync between your machines"
 # A stand-in for age: "encrypts" by naming the recipients; only a key among

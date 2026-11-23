@@ -106,6 +106,7 @@ package() {
   # FRIDAY's browser extension (load it from here) and its native host.
   install -Dm644 "packaging/browser/extension/manifest.json" \
     "packaging/browser/extension/background.js" -t "$pkgdir/usr/share/friday/browser-extension"
+  install -Dm644 packaging/browser/extension/icons/*.png -t "$pkgdir/usr/share/friday/browser-extension/icons"
   install -Dm755 "packaging/browser/friday-browser-host" -t "$pkgdir/usr/lib/friday"
   # Every browser finds the host by itself: no setup step.
   local d

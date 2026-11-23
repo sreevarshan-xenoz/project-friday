@@ -28,6 +28,8 @@ public static class BrowserLink
 {
     public const string HostName = "org.friday.browser";
     public const string ExtensionId = "eiblopljacafgajanhkngbhejpjjmfff";
+    /// <summary>The same extension from the Edge Add-ons store, which gives it its own id.</summary>
+    public const string EdgeStoreId = "ncbhacgfkbbpmocppmagejakdnkikcpk";
     public const string FirefoxId = "browser@friday-os";
 
     public static readonly KnownBrowser[] All =
@@ -39,7 +41,7 @@ public static class BrowserLink
         new("Firefox", "firefox.exe", [@"Software\Mozilla\NativeMessagingHosts"], "about:debugging#/runtime/this-firefox", true),
     ];
 
-    /// <summary>The host manifest: friday-ctl.exe, allowed to talk only to FRIDAY's extension.</summary>
+    /// <summary>The host manifest: friday-ctl.exe, allowed to talk only to FRIDAY's extension (loaded by FRIDAY, or from the Edge store).</summary>
     public static string Manifest(string hostExe, bool firefox)
     {
         var m = new Dictionary<string, object>
@@ -52,7 +54,7 @@ public static class BrowserLink
         if (firefox)
             m["allowed_extensions"] = new[] { FirefoxId };
         else
-            m["allowed_origins"] = new[] { $"chrome-extension://{ExtensionId}/" };
+            m["allowed_origins"] = new[] { $"chrome-extension://{ExtensionId}/", $"chrome-extension://{EdgeStoreId}/" };
         return JsonSerializer.Serialize(m, new JsonSerializerOptions { WriteIndented = true });
     }
 

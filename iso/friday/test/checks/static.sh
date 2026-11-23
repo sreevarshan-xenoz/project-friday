@@ -331,5 +331,6 @@ contains "FRIDAY OS's Chromium loads FRIDAY's extension" "$(cat "$REPO_ROOT/iso/
 contains "the package installs the host for Chromium" "$(cat "$REPO_ROOT/packaging/arch/PKGBUILD")" "etc/chromium/native-messaging-hosts"
 contains "and for Firefox" "$(cat "$REPO_ROOT/packaging/arch/PKGBUILD")" "usr/lib/mozilla/native-messaging-hosts"
 contains "the host manifest allows only FRIDAY's extension" "$(cat "$REPO_ROOT/packaging/browser/org.friday.browser.chromium.json")" "chrome-extension://eiblopljacafgajanhkngbhejpjjmfff/"
+contains "and its Edge store copy" "$(cat "$REPO_ROOT/packaging/browser/org.friday.browser.chromium.json")" "chrome-extension://ncbhacgfkbbpmocppmagejakdnkikcpk/"
 
 finish

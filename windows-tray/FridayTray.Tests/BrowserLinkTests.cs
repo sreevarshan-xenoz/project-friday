@@ -14,7 +14,7 @@ public class BrowserLinkTests
         Assert.Equal("stdio", doc.GetProperty("type").GetString());
         Assert.EndsWith("friday-ctl.exe", doc.GetProperty("path").GetString());
         var origins = doc.GetProperty("allowed_origins").EnumerateArray().Select(e => e.GetString()).ToList();
-        Assert.Equal(["chrome-extension://eiblopljacafgajanhkngbhejpjjmfff/"], origins);
+        Assert.Equal(["chrome-extension://eiblopljacafgajanhkngbhejpjjmfff/", "chrome-extension://ncbhacgfkbbpmocppmagejakdnkikcpk/"], origins);
         Assert.False(doc.TryGetProperty("allowed_extensions", out _));
     }
 

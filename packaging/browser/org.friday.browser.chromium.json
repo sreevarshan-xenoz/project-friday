@@ -3,5 +3,5 @@
   "description": "FRIDAY",
   "path": "/usr/lib/friday/friday-browser-host",
   "type": "stdio",
-  "allowed_origins": ["chrome-extension://eiblopljacafgajanhkngbhejpjjmfff/"]
+  "allowed_origins": ["chrome-extension://eiblopljacafgajanhkngbhejpjjmfff/", "chrome-extension://ncbhacgfkbbpmocppmagejakdnkikcpk/"]
 }
