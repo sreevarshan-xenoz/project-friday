@@ -1474,6 +1474,16 @@ async fn main() -> std::process::ExitCode {
             }
         };
     }
+    // What FRIDAY may do on its own: every tool action and whether it runs,
+    // is watched, asks first or never runs.
+    if raw.first().map(String::as_str) == Some("risks") {
+        if !friday_mobile::features::on("risk-table") {
+            println!("The risk table is turned off (Settings, Features: risk-table).");
+            return std::process::ExitCode::SUCCESS;
+        }
+        println!("{}", friday_mobile::risk_table::report());
+        return std::process::ExitCode::SUCCESS;
+    }
     // How each AI provider has done lately, from the local egress log.
     if raw.first().map(String::as_str) == Some("usage") {
         let days: u32 = raw

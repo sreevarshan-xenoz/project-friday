@@ -30,7 +30,7 @@ pub use adapters::{
     GeminiAdapter, GenericWebAgent, GitAdapter, GrokAdapter, MeasuredOutcome, PerplexityAdapter,
     ProviderCapabilities, ProviderCapability, ProviderEntry, ProviderId, ProviderRegistry,
     ProviderStats, ProviderTelemetry, ReasoningAdapter, ReasoningProvider, TerminalAdapter,
-    Transport, WebAdapter, WebAgent, WebAgentAdapter, WebAgentResponse,
+    Transport, WebAdapter, WebAgent, WebAgentAdapter, WebAgentResponse, DESKTOP_VERBS,
 };
 #[cfg(target_os = "linux")]
 pub use adapters::{

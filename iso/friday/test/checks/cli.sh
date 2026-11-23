@@ -22,6 +22,11 @@ if [[ "\$1" == backup ]]; then
   echo 'Backed up 3 files to /tmp/x and checked them.'
   exit 0
 fi
+if [[ "\$1" == risks ]]; then
+  printf 'friday-ctl-risks\n' >> "$LOG"
+  echo 'Asks first, with the exact action'
+  exit 0
+fi
 if [[ "\$1" == brief ]]; then
   printf 'friday-ctl-brief %s\n' "\$*" >> "$LOG"
   echo 'opencode finished "fix the tests": all pass.'
@@ -557,6 +562,11 @@ contains "a restore goes to friday-ctl with its folder" "$(cat "$LOG")" "friday-
 bash "$F" feature backup off >/dev/null
 contains "backups can be turned off" "$(bash "$F" backup)" "turned off"
 bash "$F" feature backup on >/dev/null
+# What FRIDAY may do on its own, in one table.
+contains "friday risks shows the table" "$(bash "$F" risks)" "Asks first"
+bash "$F" feature risk-table off >/dev/null
+contains "the risk table can be turned off" "$(bash "$F" risks)" "turned off"
+bash "$F" feature risk-table on >/dev/null
 
 echo "checking agents' work"
 contains "off unless turned on" "$(bash "$F" agents check)" "Checking agents' work: off"

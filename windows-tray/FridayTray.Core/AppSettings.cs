@@ -93,6 +93,7 @@ public static class AppSettings
         ("memory-file", "Every ask carries what you asked FRIDAY to remember (memory.md in %APPDATA%\\friday)"),
         ("live-web", "Questions about the weather, news, scores or prices search the web without \"search\" first"),
         ("backup", "Back up settings, memory and history, and restore one after checking it"),
+        ("risk-table", "Settings shows what FRIDAY may do on its own, what asks first and what never runs"),
         ("usage-page", "Settings shows calls, failures, free-limit hits and speed per AI provider"),
         ("memory-changes", "A changed fact (\"I moved to Pune\") closes the old one with a date in the memory file"),
         ("brief", "\"What did I miss?\" answered from FRIDAY's own records (agents, standing tasks, reminders)"),

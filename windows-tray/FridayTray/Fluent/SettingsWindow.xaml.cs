@@ -328,6 +328,8 @@ internal sealed partial class SettingsWindow : FluentWindow
             yield return Row(Pill("Back up FRIDAY…", SymbolRegular.Archive24), BackUp);
             yield return Row(Pill("Restore from a backup…", SymbolRegular.ArrowReset24), RestoreBackup);
         }
+        if (AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "risk-table"))
+            yield return Row(Pill("What FRIDAY may do on its own…", SymbolRegular.ShieldCheckmark24), ShowRisks);
         if (AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "usage-page"))
             yield return Row(Pill("Usage and speed…", SymbolRegular.TopSpeed24), ShowUsage);
         yield return Row(Pill("What FRIDAY remembers about you…", SymbolRegular.Bookmark24), OpenMemoryFile);
@@ -354,6 +356,13 @@ internal sealed partial class SettingsWindow : FluentWindow
             return;
         var (_, said) = await Ctl.RunAsync(_install, ["backup", "restore", pick.FolderName], TimeSpan.FromSeconds(120));
         MessageBox.Show(this, said.Trim(), "Restore from a backup", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    /// <summary>Every tool action and whether it runs, is watched, asks first or never runs.</summary>
+    private async void ShowRisks()
+    {
+        var (_, said) = await Ctl.RunAsync(_install, ["risks"], TimeSpan.FromSeconds(15));
+        MessageBox.Show(this, said.Trim(), "What FRIDAY may do on its own", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     /// <summary>Calls, failures, free-limit hits and speed per provider, from this PC's egress log.</summary>

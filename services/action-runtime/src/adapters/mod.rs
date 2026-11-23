@@ -35,7 +35,7 @@ pub use browser::{browser_capability_specs, register_browser_capabilities, Brows
 pub use codeintel::CodeIntelAdapter;
 pub use desktop::{
     hypr_signature, risk_of as desktop_risk_of, DesktopAdapter, Exec as DesktopExec,
-    Risk as DesktopRisk,
+    Risk as DesktopRisk, VERBS as DESKTOP_VERBS,
 };
 pub use docs::DocsAdapter;
 pub use document::{
