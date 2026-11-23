@@ -73,6 +73,7 @@ Autonomous Agent & Cognitive Loop:
   friday backup [folder|check <f>|restore <f>]  Back up settings, memory and history; check or restore one
   friday risks                     What FRIDAY may do on its own, what asks first and what never runs
   friday verify-log                Check the action log wasn't changed: each action is chained to the one before
+  friday day [today|yesterday|YYYY-MM-DD|forget <date|all>]  A short summary of a day by project, kept here
   friday activity                  Agent steps waiting for you, runs going now, standing tasks, runs finished lately
   friday providers                 How each AI provider is doing (limit hit, OK…) and who answered last
   friday model [ask|screen|chores] [provider/model|auto]  The model each job tries first
@@ -3255,7 +3256,7 @@ friday_forget() {
   n_mem=$(wc -l <"$mem_dir/episodes.jsonl" 2>/dev/null || true)
   if [ -z "$what" ]; then
     echo "FRIDAY keeps this on your computer:"
-    echo "  answers  ${n_answers:-0} saved answers, ${n_asks:-0} remembered questions   ($state_dir)"
+    echo "  answers  ${n_answers:-0} saved answers, ${n_asks:-0} remembered questions, day summaries   ($state_dir)"
     echo "  sent     ${n_sent:-0} entries in the log of what was sent to AI providers"
     echo "  memory   ${n_mem:-0} things FRIDAY remembered between questions   ($mem_dir),"
     echo "           and the current conversation's last few turns"
@@ -3271,6 +3272,7 @@ friday_forget() {
   fi
   if [ "$what" = answers ] || [ "$what" = all ]; then
     rm -f "$state_dir/answers.md" "$state_dir/answers.1.md" "$state_dir/answers.lock" "$state_dir/last-answer.md" "$state_dir/ask-history"
+    rm -rf "$state_dir/days"
     echo "Deleted ${n_answers:-0} saved answers and ${n_asks:-0} remembered questions."
   fi
   if [ "$what" = sent ] || [ "$what" = all ]; then
@@ -3800,6 +3802,7 @@ offline-proof|friday doctor --offline: what went off this computer lately and wh
 big-output-file|A very long output is kept whole in a file named under the answer; the model sees its start and end
 task-recipes|Ready-made standing tasks in one click (friday tasks recipes)
 undo-file-writes|friday undo puts back a file FRIDAY wrote (kept while it's unchanged since)
+day-summary|friday day: a short summary of a day by project, from FRIDAY's own logs, kept on this computer
 log-chain|Each action in the action log is chained to the one before, so a changed line shows (friday verify-log)
 standing-reversible|A standing task runs only what can be undone; anything that would ask first is refused and logged
 memory-tidy|When memory is fuller than an ask carries, friday memory tidy proposes a shorter list to approve
@@ -5790,6 +5793,13 @@ case "${1:-}" in
   verify-log)
     # Whether the action log is as FRIDAY wrote it (hash-chained lines).
     exec friday-ctl verify-log
+    ;;
+  day)
+    # A short summary of a day by project, from FRIDAY's own logs; kept in
+    # the state folder, deleted with `friday day forget <date|all>`.
+    shift
+    friday_feature_on day-summary || { echo "Day summaries are turned off (friday feature day-summary on)."; exit 0; }
+    exec friday-ctl day "$@"
     ;;
   risks)
     # What FRIDAY may do on its own: each tool action runs, is watched, asks
