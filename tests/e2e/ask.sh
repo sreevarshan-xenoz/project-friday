@@ -279,6 +279,22 @@ if [[ "$(uname -s)" == Linux ]]; then
   kept=$(grep -rlaF "${pats[@]}" "$W" 2>/dev/null | grep -v "/shot-bin/" || true)
   if [[ -z "$kept" ]]; then pass "no file keeps the capture"
   else fail "the capture was written to: $kept"; fi
+
+  # A private window never leaves: a password manager in front whose title
+  # and pixels carry a canary. The screen ask is refused, nothing reaches
+  # the model, and no file (logs, state, memory, egress log) holds the canary.
+  echo "a private window never leaves"
+  printf '#!/bin/sh\nprintf "\\211PNG\\r\\n\\032\\nFRIDAY-PRIVATE-CANARY"\n' >"$W/shot-bin/grim"
+  printf '#!/bin/sh\nprintf %%s %s\n' "'{\"class\":\"org.keepassxc.KeePassXC\",\"title\":\"FRIDAY-PRIVATE-CANARY.kdbx\",\"at\":[0,0],\"size\":[800,600]}'" >"$W/shot-bin/hyprctl"
+  chmod +x "$W/shot-bin/grim" "$W/shot-bin/hyprctl"
+  : >"$W/model.log"
+  out=$("${shot[@]}" timeout 120 "$CTL_BIN" context screen --yes --ask "what is this" 2>&1) || true
+  if grep -qi "private window" <<<"$out"; then pass "the screen ask is refused as private"
+  else fail "a private window's screen ask wasn't refused"; sed 's/^/       /' <<<"$out" | tail -6; fi
+  if [[ -s "$W/model.log" ]]; then fail "the model was asked about a private window"; else pass "nothing reached the model"; fi
+  kept=$(grep -rlaF "FRIDAY-PRIVATE-CANARY" "$W" 2>/dev/null | grep -v "/shot-bin/" || true)
+  if [[ -z "$kept" ]]; then pass "no file keeps the private window's name or pixels"
+  else fail "the private window reached: $kept"; fi
 fi
 
 # No model reachable at all (the local one down, and every remote one behind
