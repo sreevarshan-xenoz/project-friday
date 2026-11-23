@@ -1437,8 +1437,9 @@ fn save_conversations(path: &std::path::Path, sessions: &HashMap<String, Session
         std::io::Write::write_all(&mut f, &body)?;
         f.sync_all()
     });
-    if written.is_ok() {
-        let _ = std::fs::rename(&tmp, path);
+    match written.and_then(|()| std::fs::rename(&tmp, path)) {
+        Ok(()) => {}
+        Err(e) => tracing::warn!("conversations: couldn't save {}: {e}", path.display()),
     }
 }
 
