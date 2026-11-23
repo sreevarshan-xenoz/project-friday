@@ -1105,7 +1105,11 @@ fn url_from_instruction(instruction: &str) -> Option<String> {
 /// `src/main.rs` are kept whole so they can be joined to the working dir.
 fn filename_token(instruction: &str) -> Option<String> {
     for tok in instruction.split_whitespace() {
-        let t = tok.trim_matches(|c: char| c.is_ascii_punctuation());
+        // Quotes and brackets around it, a full stop after it: not the
+        // name. A leading `/`, `~` or `.` is (an absolute or home path).
+        let t = tok
+            .trim_start_matches(['"', '\'', '`', '(', '[', '<'])
+            .trim_end_matches(|c: char| c.is_ascii_punctuation());
         if !t.contains('.') {
             continue;
         }
@@ -4905,6 +4909,14 @@ mod tests {
 
     #[test]
     fn filename_token_extracts_the_named_file() {
+        assert_eq!(
+            filename_token("read /tmp/a/notes.txt."),
+            Some("/tmp/a/notes.txt".to_string())
+        );
+        assert_eq!(
+            filename_token("open \"./src/main.rs\""),
+            Some("./src/main.rs".to_string())
+        );
         assert_eq!(
             filename_token("Read the contents of planning.rs"),
             Some("planning.rs".to_string())
