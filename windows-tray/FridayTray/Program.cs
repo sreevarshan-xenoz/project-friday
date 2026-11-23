@@ -28,6 +28,24 @@ internal static class Program
             return Screenshots.Run(install, args[shots + 1]);
         if (args.Contains("--smoke"))
             return Smoke(install).GetAwaiter().GetResult();
+        // Settings' "Install in <browser>", without the window: for checking
+        // it on a test machine. Prints what it did.
+        var ext = Array.IndexOf(args, "--install-extension");
+        if (ext >= 0 && args.Length > ext + 1)
+        {
+            var b = BrowserLink.All.FirstOrDefault(x => x.Name.Contains(args[ext + 1], StringComparison.OrdinalIgnoreCase));
+            if (b is null || b.Firefox)
+            {
+                Console.Error.WriteLine("usage: friday-tray --install-extension <Chrome|Edge|Brave|Vivaldi>");
+                return 2;
+            }
+            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+            Selection.TrySetText(BrowserSetup.ExtensionDir(install));
+            // UI Automation from a blocked STA thread can hang: run it on the pool.
+            var said = Task.Run(() => ExtensionInstaller.InstallAsync(b, install, cts.Token)).GetAwaiter().GetResult();
+            Console.WriteLine(said);
+            return said.Contains("is on in", StringComparison.Ordinal) ? 0 : 1;
+        }
         // The elevated half of "Start with administrator rights": run with the
         // person's one Windows prompt, do the one thing, exit.
         var apply = Array.IndexOf(args, "--apply-elevated");

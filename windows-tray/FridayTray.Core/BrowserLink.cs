@@ -6,6 +6,18 @@ namespace FridayTray.Core;
 /// <param name="HostKeys">Where (under HKCU) it looks for native-messaging hosts.</param>
 public sealed record KnownBrowser(string Name, string Exe, string[] HostKeys, string ExtensionsPage, bool Firefox);
 
+/// <summary>The steps in automating browser extension installation.</summary>
+public enum ExtensionInstallStep
+{
+    Window,
+    DeveloperMode,
+    LoadUnpacked,
+    FolderDialog,
+    FolderInput,
+    SelectFolder,
+    Verify,
+}
+
 /// <summary>
 /// FRIDAY's browser extension on Windows: the browser starts friday-ctl.exe
 /// as its native-messaging host (no port; the extension asks only when FRIDAY
@@ -48,6 +60,48 @@ public static class BrowserLink
     public static string Steps(KnownBrowser b, string extensionDir) => b.Firefox
         ? $"In Firefox's page that just opened, click \"Load Temporary Add-on\" and pick manifest.json in {extensionDir} (Firefox forgets it on restart until the extension is signed)."
         : $"In {b.Name}'s extensions page that just opened, turn on Developer mode, click \"Load unpacked\" and pick {extensionDir} (its path is on your clipboard).";
+
+    /// <summary>Whether a window title is a browser's extensions page.</summary>
+    public static bool IsExtensionsWindow(string? windowTitle) =>
+        !string.IsNullOrWhiteSpace(windowTitle)
+        && windowTitle.Contains("Extensions", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Whether a dialog title or class name is the folder picker for unpacked extensions.</summary>
+    public static bool IsFolderPickerDialog(string? title, string? className = null) =>
+        (!string.IsNullOrWhiteSpace(title) && title.Contains("Select the extension directory", StringComparison.OrdinalIgnoreCase))
+        || string.Equals(className, "#32770", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>One-line message on successful extension installation.</summary>
+    public static string SuccessMessage(KnownBrowser b) => SuccessMessage(b.Name);
+
+    /// <summary>One-line message on successful extension installation.</summary>
+    public static string SuccessMessage(string browserName) =>
+        $"FRIDAY's extension is on in {browserName}. If it asks to turn off developer-mode extensions, choose Not now.";
+
+    /// <summary>Plain-English fallback message when a step in extension installation cannot be completed automatically.</summary>
+    public static string FailureMessage(ExtensionInstallStep step, KnownBrowser b) => FailureMessage(step, b.Name);
+
+    /// <summary>Plain-English fallback message when a step in extension installation cannot be completed automatically.</summary>
+    public static string FailureMessage(ExtensionInstallStep step, string? browserName = null) => step switch
+    {
+        ExtensionInstallStep.Window =>
+            "Couldn't find the extensions page; the folder is on the clipboard: turn on Developer mode, click Load unpacked and paste it.",
+        ExtensionInstallStep.DeveloperMode =>
+            "Couldn't find Developer mode; the folder is on the clipboard: turn on Developer mode, click Load unpacked and paste it.",
+        ExtensionInstallStep.LoadUnpacked =>
+            "Couldn't find Load unpacked; the folder is on the clipboard: click Load unpacked and paste it.",
+        ExtensionInstallStep.FolderDialog =>
+            "Couldn't find the folder dialog; the folder is on the clipboard: click Load unpacked and paste it.",
+        ExtensionInstallStep.FolderInput =>
+            "Couldn't set the folder path; the folder is on the clipboard: paste it into Folder: and click Select Folder.",
+        ExtensionInstallStep.SelectFolder =>
+            "Couldn't click Select Folder; the folder is on the clipboard: click Select Folder in the dialog.",
+        ExtensionInstallStep.Verify =>
+            string.IsNullOrEmpty(browserName)
+                ? "Couldn't verify FRIDAY in extensions; check the extensions page to make sure it loaded."
+                : $"Couldn't verify FRIDAY in {browserName}'s extensions; check the extensions page to make sure it loaded.",
+        _ => "Extension installation didn't finish; the folder is on the clipboard.",
+    };
 
     /// <summary>
     /// The page text to send instead of a screenshot, from `friday-ctl browser

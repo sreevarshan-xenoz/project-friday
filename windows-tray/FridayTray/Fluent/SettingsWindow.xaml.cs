@@ -171,16 +171,36 @@ internal sealed partial class SettingsWindow : FluentWindow
         yield return Note("With FRIDAY's extension in your browser, asking about your screen while a page is in front sends the page's text (title, address, selection) instead of a screenshot. " +
             "The browser starts FRIDAY itself and talks to it over a private pipe: no port, nothing from the web can reach it. It reads the tab only when you ask, and never in a private window.");
         var any = false;
+        var env = EnvFile.Load(_install.Paths.EnvFile);
+        var autoInstall = AppSettings.FeatureOn(env, "extension-autoinstall");
         foreach (var b in BrowserSetup.Installed())
         {
             any = true;
             var browser = b;
             yield return Pair(b.Name, BrowserSetup.Connected(b) ? "Connected" : "Not connected");
-            yield return Row(Pill($"Connect {b.Name}", SymbolRegular.PlugConnected24, primary: !BrowserSetup.Connected(b)), () =>
+            var auto = !b.Firefox && autoInstall;
+            var label = auto ? $"Install in {b.Name}" : $"Connect {b.Name}";
+            yield return Row(Pill(label, SymbolRegular.PlugConnected24, primary: !BrowserSetup.Connected(b)), async () =>
             {
-                var steps = BrowserSetup.Connect(browser, _install);
-                MessageBox.Show(this, steps, "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Information);
-                Show("Browser");
+                if (auto)
+                {
+                    var folder = BrowserSetup.ExtensionDir(_install);
+                    var msg = $"FRIDAY will open {browser.Name}'s extensions page, turn on Developer mode and load its extension from {folder}. Don't touch the mouse for a few seconds. Go ahead?";
+                    if (MessageBox.Show(this, msg, "FRIDAY", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+                        return;
+                    // The folder on the clipboard first (here, on the window's thread), for any
+                    // step it can't do by itself.
+                    Selection.TrySetText(folder);
+                    var result = await Task.Run(() => ExtensionInstaller.InstallAsync(browser, _install, CancellationToken.None));
+                    MessageBox.Show(this, result, "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Information);
+                    Show("Browser");
+                }
+                else
+                {
+                    var steps = BrowserSetup.Connect(browser, _install);
+                    MessageBox.Show(this, steps, "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Information);
+                    Show("Browser");
+                }
             });
         }
         if (!any)
