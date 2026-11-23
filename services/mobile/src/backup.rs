@@ -38,7 +38,7 @@ pub fn default_parent() -> PathBuf {
 /// Folders and files that aren't the person's: large downloads, programs,
 /// what a running FRIDAY holds open, and earlier restores' leftovers.
 const SKIP_DIRS: &[&str] = &[
-    "voice", "whisper", "local-ai", "models", "engine", "bin", "logs", "cache", "tmp",
+    "voice", "whisper", "local-ai", "models", "engine", "bin", "logs", "cache", "tmp", "outputs",
 ];
 const SKIP_PREFIXES: &[&str] = &["before-restore-", ".friday-voice-setup-", "friday-backup-"];
 /// The running daemon's state: its session token and address, not the person's.

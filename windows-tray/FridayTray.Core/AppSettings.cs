@@ -121,6 +121,7 @@ public static class AppSettings
         ("backup", "Back up settings, memory and history, and restore one after checking it"),
         ("risk-table", "Settings shows what FRIDAY may do on its own, what asks first and what never runs"),
         ("offline-proof", "Settings proves what went off this PC lately and what FRIDAY is connected to now"),
+        ("big-output-file", "A very long output is kept whole in a file named under the answer"),
         ("log-chain", "Each action in the action log is chained to the one before, so a changed line shows"),
         ("standing-reversible", "A standing task runs only what can be undone; anything that would ask first is refused and logged"),
         ("activity", "One list of agent steps waiting for you, runs going now, standing tasks and runs finished lately"),
