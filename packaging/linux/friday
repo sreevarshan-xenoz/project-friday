@@ -3200,6 +3200,29 @@ friday_tasks() {
       friday_switch FRIDAY_STANDING_TASKS "Standing tasks" tasks \
         "FRIDAY can run what you ask to repeat, each with the usual rules" \
         "nothing repeats and no new ones can be made" "$cmd" ;;
+    quiet|limit)
+      # Quiet hours (recurring tasks wait them out) and the most runs a day.
+      local edit tmp="$f.tmp.$$"
+      if [ "$cmd" = quiet ]; then
+        case "${id:-status}" in
+          off) edit='del(.quiet)' ;;
+          status)
+            jq -r 'if .quiet then "Quiet hours: \(.quiet[0]):00 to \(.quiet[1]):00 (repeating tasks wait; reminders still come). Off: friday tasks quiet off"
+                   else "Quiet hours: off. On: friday tasks quiet 22-7" end' "$f" 2>/dev/null || echo "Quiet hours: off. On: friday tasks quiet 22-7"
+            return 0 ;;
+          *) [[ "$id" =~ ^([0-9]{1,2})-([0-9]{1,2})$ ]] && (( BASH_REMATCH[1] < 24 && BASH_REMATCH[2] < 24 )) \
+               || { echo "usage: friday tasks quiet <from>-<to> (hours, like 22-7) | off" >&2; return 2; }
+             edit=".quiet = [${BASH_REMATCH[1]#0}, ${BASH_REMATCH[2]#0}]" ;;
+        esac
+      else
+        [[ "$id" =~ ^[0-9]+$ ]] && [ "$id" -ge 1 ] || { echo "usage: friday tasks limit <runs a day>" >&2; return 2; }
+        edit=".daily_cap = $id"
+      fi
+      [ -s "$f" ] || { mkdir -p "$(dirname "$f")"; echo '{"tasks":[]}' >"$f"; }
+      ( umask 077; jq "$edit" "$f" >"$tmp" ) && mv -f "$tmp" "$f" \
+        || { rm -f "$tmp"; echo "FRIDAY couldn't change $f" >&2; return 1; }
+      [ "$cmd" = quiet ] && friday_tasks quiet status || echo "At most $id task runs a day."
+      ;;
     pause|resume|delete)
       [[ "$id" =~ ^t[0-9]+$ ]] || { echo "usage: friday tasks $cmd <id>   (ids are in: friday tasks)" >&2; return 2; }
       [ -s "$f" ] && jq -e --arg id "$id" '.tasks | any(.id == $id)' "$f" >/dev/null 2>&1 \

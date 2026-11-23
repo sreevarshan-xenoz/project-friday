@@ -88,4 +88,17 @@ public class StandingTasksTests : IDisposable
         Assert.False(File.Exists(Queue));
         Assert.Empty(StandingTasks.TakeDue(Queue));
     }
+
+    [Fact]
+    public void Quiet_hours_are_set_and_cleared_keeping_the_tasks()
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(File_, DaemonFile);
+        Assert.Null(StandingTasks.Quiet(File_));
+        StandingTasks.SetQuiet(File_, true);
+        Assert.Equal((22, 7), StandingTasks.Quiet(File_));
+        Assert.Equal(3, StandingTasks.Load(File_).Count);
+        StandingTasks.SetQuiet(File_, false);
+        Assert.Null(StandingTasks.Quiet(File_));
+    }
 }

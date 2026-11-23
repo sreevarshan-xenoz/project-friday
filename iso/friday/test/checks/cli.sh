@@ -536,6 +536,15 @@ contains "and says so" "$(bash "$F" agents check)" "Checking agents' work: on"
 bash "$F" agents check off >/dev/null
 contains "off again" "$(bash "$F" agents check status)" "Checking agents' work: off"
 
+echo "quiet hours for standing tasks"
+contains "quiet hours off at first" "$(bash "$F" tasks quiet)" "Quiet hours: off"
+contains "set them" "$(bash "$F" tasks quiet 22-7)" "Quiet hours: 22:00 to 7:00"
+contains "stored for the daemon" "$(jq -c .quiet "$HOME/.local/state/friday/standing.json")" "[22,7]"
+bash "$F" tasks quiet off >/dev/null
+contains "and off again" "$(bash "$F" tasks quiet)" "Quiet hours: off"
+contains "a daily limit" "$(bash "$F" tasks limit 20)" "At most 20 task runs a day"
+contains "a bad range is refused" "$(bash "$F" tasks quiet 25-7 2>&1)" "usage: friday tasks quiet"
+
 echo "per-app instructions"
 printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s "$HYPR_WIN"\nexit 0\n' >"$S/hyprctl"; chmod +x "$S/hyprctl"
 # "This window" is the one in front at the keypress.

@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use chrono::{Datelike, Duration as Span, Local, NaiveDateTime, TimeZone, Weekday};
+use chrono::{Datelike, Duration as Span, Local, NaiveDateTime, TimeZone, Timelike, Weekday};
 use serde::{Deserialize, Serialize};
 
 /// How often the daemon looks for a due task.
@@ -130,6 +130,32 @@ pub struct Battery {
 pub struct Store {
     #[serde(default)]
     pub tasks: Vec<Task>,
+    /// Quiet hours, start and end hour (`[22, 7]`): recurring tasks wait
+    /// until they end (`friday tasks quiet 22-7`). Reminders and battery
+    /// alerts still come.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quiet: Option<[u32; 2]>,
+    /// Most task runs in a day (`friday tasks limit 50`); unset: the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily_cap: Option<u32>,
+    /// The day the runs below were counted on, and how many.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ran_on: Option<String>,
+    #[serde(default)]
+    pub ran_today: u32,
+}
+
+/// Task runs a day when the person set no limit: enough for any real use,
+/// and a stop for a task gone wrong (free models have daily limits too).
+pub const DEFAULT_DAILY_CAP: u32 = 50;
+
+/// Whether `hour` is inside quiet hours `[start, end]` (which may cross midnight).
+fn in_quiet(hour: u32, [start, end]: [u32; 2]) -> bool {
+    if start <= end {
+        (start..end).contains(&hour)
+    } else {
+        hour >= start || hour < end
+    }
 }
 
 /// Where the tasks live: beside `state.json`.
@@ -301,6 +327,14 @@ pub fn tick(
     battery: Option<Battery>,
 ) -> Vec<(String, String)> {
     let mut run = Vec::new();
+    let quiet_now = store.quiet.is_some_and(|q| in_quiet(now.hour(), q));
+    let today = now.date().to_string();
+    let mut ran_today = if store.ran_on.as_deref() == Some(today.as_str()) {
+        store.ran_today
+    } else {
+        0
+    };
+    let cap = store.daily_cap.unwrap_or(DEFAULT_DAILY_CAP);
     for t in &mut store.tasks {
         if let Trigger::BatteryBelow { percent } = t.trigger {
             let low = battery.is_some_and(|b| !b.charging && b.percent < percent);
@@ -309,6 +343,12 @@ pub fn tick(
             }
         }
         if due(t, now, now_ts, battery) {
+            // Quiet hours hold recurring tasks; the day's limit holds all.
+            let recurring = matches!(t.trigger, Trigger::Daily { .. } | Trigger::Every { .. });
+            if (quiet_now && recurring) || ran_today >= cap {
+                continue;
+            }
+            ran_today += 1;
             t.last_run = Some(now_ts);
             t.runs += 1;
             if matches!(t.trigger, Trigger::BatteryBelow { .. }) {
@@ -316,6 +356,10 @@ pub fn tick(
             }
             run.push((t.id.clone(), t.goal.clone()));
         }
+    }
+    if ran_today > 0 || store.ran_on.is_some() {
+        store.ran_on = Some(today);
+        store.ran_today = ran_today;
     }
     // A reminder is done once said, or once too late to say.
     store.tasks.retain(|t| match t.trigger {
@@ -454,6 +498,8 @@ pub async fn run_loop(path: PathBuf, runner: std::sync::Arc<dyn Runner>) {
                     l.armed = t.armed;
                 }
             }
+            latest.ran_on = store.ran_on.clone();
+            latest.ran_today = store.ran_today;
             if let Err(e) = latest.save(&path) {
                 tracing::warn!("[standing] couldn't save {}: {e}", path.display());
                 continue;
@@ -844,6 +890,7 @@ mod tests {
         let due_at = ts(at(2026, 11, 22, 12, 57));
         let mut store = Store {
             tasks: vec![task(Trigger::Once { at: due_at }, made)],
+            ..Default::default()
         };
         store.tasks[0].goal = "say: Time to dance.".into();
         assert!(tick(&mut store, at(2026, 11, 22, 12, 56), due_at - 60, None).is_empty());
@@ -857,6 +904,7 @@ mod tests {
         // Missed by more than six hours (the computer was off): dropped unsaid.
         let mut store = Store {
             tasks: vec![task(Trigger::Once { at: due_at }, made)],
+            ..Default::default()
         };
         assert!(tick(&mut store, at(2026, 11, 22, 19, 0), due_at + 7 * 3600, None).is_empty());
         assert!(store.tasks.is_empty());
@@ -883,6 +931,72 @@ mod tests {
             ts(at(2026, 11, 16, 9, 0)),
             None
         ));
+    }
+
+    /// Quiet hours hold recurring tasks until morning (a missed one catches
+    /// up then), never a reminder; the day's limit holds everything.
+    #[test]
+    fn quiet_hours_and_the_days_limit_hold_tasks() {
+        let created = at(2026, 11, 16, 20, 0);
+        let mut store = Store {
+            quiet: Some([22, 7]),
+            ..Default::default()
+        };
+        store
+            .add("tell me the news", daily(6, 30), ts(created))
+            .unwrap();
+        let reminder = ts(at(2026, 11, 16, 23, 0));
+        store
+            .add("say: Bed.", Trigger::Once { at: reminder }, ts(created))
+            .unwrap();
+        let night = at(2026, 11, 16, 23, 0);
+        let run = tick(&mut store, night, ts(night), None);
+        assert_eq!(
+            run,
+            vec![("t2".to_string(), "say: Bed.".to_string())],
+            "a reminder still comes"
+        );
+        let early = at(2026, 11, 17, 6, 31);
+        assert!(
+            tick(&mut store, early, ts(early), None).is_empty(),
+            "6:30 is quiet"
+        );
+        let morning = at(2026, 11, 17, 7, 0);
+        assert_eq!(
+            tick(&mut store, morning, ts(morning), None).len(),
+            1,
+            "caught up after"
+        );
+
+        let mut store = Store {
+            daily_cap: Some(2),
+            ..Default::default()
+        };
+        store
+            .add(
+                "check the build",
+                Trigger::Every { minutes: 5 },
+                ts(created),
+            )
+            .unwrap();
+        let mut ran = 0;
+        for m in (0..60).step_by(5) {
+            let now = at(2026, 11, 16, 21, m);
+            ran += tick(&mut store, now, ts(now), None).len();
+        }
+        assert_eq!(ran, 2, "no more than the day's limit");
+        let next_day = at(2026, 11, 17, 9, 0);
+        assert_eq!(
+            tick(&mut store, next_day, ts(next_day), None).len(),
+            1,
+            "a new day, a new count"
+        );
+        assert!(
+            in_quiet(23, [22, 7])
+                && in_quiet(3, [22, 7])
+                && !in_quiet(7, [22, 7])
+                && in_quiet(13, [12, 14])
+        );
     }
 
     #[test]

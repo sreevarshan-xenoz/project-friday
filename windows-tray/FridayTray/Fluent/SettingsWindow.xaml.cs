@@ -986,6 +986,11 @@ internal sealed partial class SettingsWindow : FluentWindow
             "or \"when the battery is under 20% tell me\". Each one runs like your own ask: the answer opens, and anything risky still asks first. " +
             "They run while FRIDAY is running.");
         var path = _install.Paths.StandingFile;
+        yield return Switch(
+            "Quiet at night",
+            "From 22:00 to 07:00 tasks that repeat wait until morning; reminders and battery alerts still come. At most 50 task runs a day either way.",
+            StandingTasks.Quiet(path) is not null,
+            on => { StandingTasks.SetQuiet(path, on); Show("Tasks"); });
         var tasks = StandingTasks.Load(path);
         if (tasks.Count == 0)
             yield return Pair("Standing tasks", "None yet");
