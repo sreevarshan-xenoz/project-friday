@@ -117,15 +117,38 @@ fn secret_on_screen() -> ContextReadError {
 /// The most text of one area sent to a model.
 const MAX_AREA_TEXT: usize = 12_000;
 
-/// [`ImageText`] by `tesseract`, run locally on the PNG.
-pub struct Tesseract;
+/// [`ImageText`] read on this computer from the PNG: `tesseract` on Linux,
+/// Windows' own OCR through FRIDAY's host (`friday-windows-host --ocr`).
+pub struct LocalOcr {
+    program: String,
+    args: Vec<&'static str>,
+}
+
+impl LocalOcr {
+    pub fn for_this_os() -> Self {
+        if cfg!(windows) {
+            Self {
+                program: friday_context_collector::collector::windows_host_program(),
+                args: vec!["--ocr"],
+            }
+        } else {
+            Self {
+                program: "tesseract".into(),
+                args: vec!["stdin", "stdout"],
+            }
+        }
+    }
+}
 
 #[async_trait]
-impl ImageText for Tesseract {
+impl ImageText for LocalOcr {
     async fn image_text(&self, png: &[u8]) -> Option<String> {
         use tokio::io::AsyncWriteExt;
-        let mut child = tokio::process::Command::new("tesseract")
-            .args(["stdin", "stdout"])
+        let mut command = tokio::process::Command::new(&self.program);
+        #[cfg(windows)]
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        let mut child = command
+            .args(&self.args)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
@@ -188,6 +211,9 @@ pub enum ScreenSent {
     Area,
     /// The words in the area the person picked, read on this computer.
     AreaText,
+    /// The window's words read off its screenshot on this computer (its app
+    /// gave no text of its own): the picture stayed here.
+    ScreenOcr,
 }
 
 impl ScreenSent {
@@ -202,6 +228,7 @@ impl ScreenSent {
             }
             ScreenSent::Area => "a screenshot of the area you picked",
             ScreenSent::AreaText => "the text in the area you picked (read on this computer)",
+            ScreenSent::ScreenOcr => "the window's text, read from the screen on this computer",
         }
     }
 }
@@ -483,28 +510,44 @@ where
             }
         };
 
-        // A picked area: its words first, read here; the picture only when
-        // there are too few, or the provider didn't answer them.
-        // Its words are read here even with area-text off, when they are
+        // A picked area, or a window whose app gave no text (Electron, a
+        // canvas, a remote desktop): its words first, read here; the picture
+        // only when there are too few, or the provider didn't answer them.
+        // The words are read here even with the switch off, when they are
         // only checked for a secret.
-        if let (Some(ocr), Some(r), CapturedContext::Image { bytes, .. }) = (
-            self.area_text.as_ref().filter(|_| {
-                crate::features::on("area-text") || crate::features::on("screen-secret-check")
-            }),
-            region,
+        let words_on = if region.is_some() {
+            crate::features::on("area-text")
+        } else {
+            // A window's own text the provider didn't answer: the picture.
+            crate::features::on("screen-ocr") && !text_failed
+        };
+        if let (Some(ocr), CapturedContext::Image { bytes, .. }) = (
+            self.area_text
+                .as_ref()
+                .filter(|_| words_on || crate::features::on("screen-secret-check")),
             &captured,
         ) {
             let words = ocr.image_text(bytes).await;
             let secret = words.as_deref().is_some_and(shows_secret);
-            let words = words.filter(|w| {
-                self.text_route && crate::features::on("area-text") && enough_area_words(w)
-            });
+            let words = words.filter(|w| self.text_route && words_on && enough_area_words(w));
             if let Some(words) = words {
-                let intro = format!(
-                    "The person picked an area of their screen ({}). Its text, read \
-                     from the screen on their computer, follows between the lines.",
-                    r.slurp()
-                );
+                let intro = match region {
+                    Some(r) => format!(
+                        "The person picked an area of their screen ({}). Its text, read \
+                         from the screen on their computer, follows between the lines.",
+                        r.slurp()
+                    ),
+                    None => "The person asked about the window in front. Its app gives \
+                             no text of its own, so its words were read from the screen \
+                             on their computer (OCR: layout lost, a word may be misread); \
+                             they follow between the lines."
+                        .to_string(),
+                };
+                let route = if region.is_some() {
+                    ScreenSent::AreaText
+                } else {
+                    ScreenSent::ScreenOcr
+                };
                 // The picture goes after a failed text only when nothing of
                 // an answer was shown yet: never two answers in one.
                 let streamed = std::sync::atomic::AtomicBool::new(false);
@@ -513,7 +556,7 @@ where
                     progress(chunk);
                 };
                 match self.send_words(&intro, &words, 0, question, &watch).await {
-                    Ok(answer) => return Ok((answer, ScreenSent::AreaText)),
+                    Ok(answer) => return Ok((answer, route)),
                     Err(ContextReadError::Provider(e))
                         if streamed.load(std::sync::atomic::Ordering::Relaxed) =>
                     {
@@ -2249,6 +2292,42 @@ mod tests {
         let (_, sent) = reader.ask_routed(None, Some(area), &|_| {}).await.unwrap();
         assert_eq!(sent, ScreenSent::Area);
         assert!(seam.0.last().unwrap().starts_with("SCREEN_CAPTURE"));
+    }
+
+    /// An app with no accessibility text (Electron, a canvas, a remote
+    /// desktop): its words are read from the screenshot on this computer and
+    /// go instead of the picture, and the card names where they came from.
+    #[tokio::test]
+    async fn a_window_with_no_text_answers_from_words_read_off_the_screen() {
+        let reader = ScreenReader::new(collector_with_window(), RecordingSeam::default(), "fabric")
+            .with_area_text(Arc::new(FakeOcr(Some(AREA_WORDS.into()))));
+        reader.consent();
+        let (_, sent) = reader
+            .ask_routed(Some("why?"), None, &|_| {})
+            .await
+            .unwrap();
+        assert_eq!(sent, ScreenSent::ScreenOcr);
+        let payload = reader.provider.last().unwrap();
+        assert!(!payload.contains("SCREEN_CAPTURE"), "{payload}");
+        assert!(payload.contains("mismatched types") && payload.ends_with("QUESTION: why?"));
+        assert!(sent
+            .used()
+            .contains("read from the screen on this computer"));
+        assert!(!reader.is_consented(), "consent is spent");
+    }
+
+    #[tokio::test]
+    async fn a_window_with_too_few_words_on_screen_sends_the_screenshot() {
+        let reader = ScreenReader::new(collector_with_window(), RecordingSeam::default(), "fabric")
+            .with_area_text(Arc::new(FakeOcr(Some("OK".into()))));
+        reader.consent();
+        let (_, sent) = reader.ask_routed(None, None, &|_| {}).await.unwrap();
+        assert_eq!(sent, ScreenSent::Screenshot { text_failed: false });
+        assert!(reader
+            .provider
+            .last()
+            .unwrap()
+            .starts_with("SCREEN_CAPTURE"));
     }
 
     /// A window whose few words are given as they are (no padding).

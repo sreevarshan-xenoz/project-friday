@@ -301,7 +301,9 @@ async fn main() {
     }
     // A picked area's words, read by tesseract here; without tesseract (or
     // with too few words) the picture goes, as before.
-    screen_reader = screen_reader.with_area_text(Arc::new(friday_mobile::context_read::Tesseract));
+    screen_reader = screen_reader.with_area_text(Arc::new(
+        friday_mobile::context_read::LocalOcr::for_this_os(),
+    ));
     if std::env::var("FRIDAY_SCREEN_TEXT").is_ok_and(|v| matches!(v.trim(), "0" | "false")) {
         screen_reader = screen_reader.check_only();
     }

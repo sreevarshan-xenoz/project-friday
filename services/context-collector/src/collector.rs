@@ -396,7 +396,7 @@ pub fn screen_command(region: Option<ScreenRegion>) -> (String, Vec<String>) {
 
 /// `friday-windows-host.exe` next to the running daemon (the installer puts
 /// them together), else the bare name for PATH lookup.
-fn windows_host_program() -> String {
+pub fn windows_host_program() -> String {
     std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(|d| d.join("friday-windows-host.exe")))

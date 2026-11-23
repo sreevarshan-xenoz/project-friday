@@ -282,6 +282,23 @@ jobs:
           $sig = [byte[]](0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
           if ($bytes.Length -lt 100 -or (Compare-Object $bytes[0..7] $sig)) { throw "not a PNG ($($bytes.Length) bytes)" }
           Write-Host "captured a $($bytes.Length)-byte PNG of the desktop"
+      - name: Words off the screen (the host's --ocr, for apps that give no text)
+        run: |
+          $host_exe = "$env:LOCALAPPDATA\Programs\FRIDAY\friday-windows-host.exe"
+          Add-Type -AssemblyName System.Drawing
+          $bmp = New-Object System.Drawing.Bitmap 900, 160
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.Clear([System.Drawing.Color]::White)
+          $font = New-Object System.Drawing.Font 'Segoe UI', 40
+          $g.DrawString('FRIDAY reads this window', $font, [System.Drawing.Brushes]::Black, 20, 40)
+          $png = "$env:RUNNER_TEMP\words.png"
+          $bmp.Save($png, [System.Drawing.Imaging.ImageFormat]::Png)
+          $g.Dispose(); $bmp.Dispose()
+          $out = cmd /c "`"$host_exe`" --ocr < `"$png`""
+          if ($LASTEXITCODE -eq 1) { Write-Host "::warning::no OCR language on this runner; --ocr not checked"; exit 0 }
+          if ($LASTEXITCODE -ne 0) { throw "--ocr exited $LASTEXITCODE" }
+          if ("$out" -notmatch 'reads this window') { throw "--ocr read: $out" }
+          Write-Host "OCR read: $out"
       - name: agent-desktop (bundled; reads what an app shows through UI Automation)
         run: |
           $exe = "$env:LOCALAPPDATA\Programs\FRIDAY\agent-desktop.exe"
