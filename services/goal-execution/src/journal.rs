@@ -26,24 +26,58 @@ const STOPWORDS: &[&str] = &[
     "would", "your", "told", "tell", "whats", "please",
 ];
 
-/// Lowercase alphanumeric tokens of at least 4 chars that are not stopwords.
+/// Lowercase alphanumeric tokens that carry meaning, each in its plain form
+/// ("crashes" and "crashed" are "crash"): words of at least 4 chars that are
+/// not stopwords, and codes of any length with a digit in them ("e0308",
+/// "ts2322", "404"), which error questions turn on.
 pub fn significant_tokens(text: &str) -> Vec<String> {
     let lower = text.to_lowercase();
     lower
         .split(|c: char| !c.is_ascii_alphanumeric())
-        .filter(|t| t.len() >= 4 && !STOPWORDS.contains(t))
-        .map(|t| t.to_string())
+        .filter(|t| {
+            (t.len() >= 4 && !STOPWORDS.contains(t))
+                || (t.len() >= 2 && t.chars().any(|c| c.is_ascii_digit()) && t.len() <= 16)
+        })
+        .map(plain)
         .collect()
 }
 
-/// Number of query tokens that also appear in the text (0 = no overlap).
+/// A word without its common English ending, so forms of it match.
+fn plain(word: &str) -> String {
+    if word.chars().any(|c| c.is_ascii_digit()) {
+        return word.to_string();
+    }
+    let n = word.len();
+    for (end, keep, min) in [
+        ("ies", "y", 5),
+        ("ing", "", 6),
+        ("ed", "", 5),
+        ("es", "", 6),
+        ("s", "", 4),
+    ] {
+        if n >= min && word.ends_with(end) && !word.ends_with("ss") {
+            return format!("{}{keep}", &word[..n - end.len()]);
+        }
+    }
+    word.to_string()
+}
+
+/// How much `text` has to do with `query`: the query's tokens it shares, and
+/// twice more for each shared code (an error number names the problem).
 pub fn recall_score(query: &str, text: &str) -> usize {
     let query_tokens = significant_tokens(query);
     let text_tokens = significant_tokens(text);
     query_tokens
         .iter()
         .filter(|tok| text_tokens.contains(tok))
-        .count()
+        .map(|tok| {
+            if tok.chars().any(|c| c.is_ascii_digit()) {
+                3
+            } else {
+                1
+            }
+        })
+        .sum()
 }
 
 // ── Journal ─────────────────────────────────────────────────────────
@@ -156,6 +190,25 @@ impl MemoryJournal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn forms_of_a_word_and_error_codes_match() {
+        assert!(
+            recall_score(
+                "why does firefox keep crashing",
+                "Firefox crashed on start: a bad extension"
+            ) >= 2
+        );
+        assert!(recall_score("what does E0308 mean", "error[E0308]: mismatched types") >= 3);
+        assert!(
+            recall_score("npm ERR 404 on install", "npm install failed with 404")
+                > recall_score("npm ERR 404 on install", "npm install failed"),
+            "the code counts most"
+        );
+        assert_eq!(plain("libraries"), "library");
+        assert_eq!(plain("process"), "process", "a double s stays");
+        assert_eq!(plain("bus"), "bus", "short words stay");
+    }
     use crate::goal::Goal;
     use crate::memory::{CognitiveEpisode, EpisodeOutcome};
     use crate::verification::ToolResult;
