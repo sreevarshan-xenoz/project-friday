@@ -584,6 +584,14 @@ contains "from friday-ctl" "$(cat "$LOG")" "friday-ctl-activity"
 bash "$F" feature activity off >/dev/null
 contains "activity can be turned off" "$(bash "$F" activity)" "turned off"
 bash "$F" feature activity on >/dev/null
+# A model picked per job goes in friday.env; auto takes it out.
+contains "friday model lists each job" "$(bash "$F" model)" "chores: auto"
+bash "$F" model ask groq/llama-3.3-70b >/dev/null
+contains "a pick is kept for the daemon" "$(cat "$HOME/.config/friday/friday.env")" "FRIDAY_MODEL_ASK=groq/llama-3.3-70b"
+contains "and shown" "$(bash "$F" model)" "ask: groq/llama-3.3-70b"
+bash "$F" model ask auto >/dev/null
+if grep -q FRIDAY_MODEL_ASK "$HOME/.config/friday/friday.env"; then fail "auto clears the pick"; else pass "auto clears the pick"; fi
+contains "a pick needs provider/model" "$(bash "$F" model ask llama 2>&1)" "provider/model"
 
 echo "checking agents' work"
 contains "off unless turned on" "$(bash "$F" agents check)" "Checking agents' work: off"

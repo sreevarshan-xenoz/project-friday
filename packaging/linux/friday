@@ -74,6 +74,7 @@ Autonomous Agent & Cognitive Loop:
   friday risks                     What FRIDAY may do on its own, what asks first and what never runs
   friday activity                  Agent steps waiting for you, runs going now, standing tasks, runs finished lately
   friday providers                 How each AI provider is doing (limit hit, OK…) and who answered last
+  friday model [ask|screen|chores] [provider/model|auto]  The model each job tries first
   friday goal "<objective>"        Dispatch an autonomous goal to FRIDAY agent
   friday cancel                    Cancel the goal FRIDAY is working on
   friday tasks [pause|resume|delete <id>|status|on|off]
@@ -3762,6 +3763,7 @@ speak-as-it-comes|Spoken answers start with the first sentence while the rest is
 backup|friday backup: a checked backup of settings, memory and history, and a restore that checks first
 risk-table|friday risks: what FRIDAY may do on its own, what asks first and what never runs
 activity|One list of agent steps waiting for you, runs going now, standing tasks and runs finished lately
+model-per-job|friday model: a model picked for asks, screen questions or chores is tried first
 usage-page|friday usage: calls, failures, free-limit hits and speed per AI provider
 memory-changes|A changed fact (\"I moved to Pune\") closes the old one with a date in memory.md
 brief|\"What did I miss?\" answered from FRIDAY's own records (agents, standing tasks, reminders)
@@ -4115,6 +4117,40 @@ friday_local_ai_install() {
   (( local_first )) || when="backs up cloud"
   notify-send -a FRIDAY "Local AI is on" "$model on this computer ($sees, $when)" 2>/dev/null || true
   echo "Local AI is on: $model ($sees, $when). Change the order: friday local-ai order local|cloud|auto"
+}
+
+# friday model [job] [provider/model|auto]: the model a job tries first
+# (FRIDAY_MODEL_ASK/SCREEN/CHORES in friday.env); the usual ranking covers it.
+friday_model() {
+  local job="${1:-}" pick="${2:-}" var v
+  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
+  if [ -z "$job" ]; then
+    friday_feature_on model-per-job || echo "Model per job is turned off (friday feature model-per-job on)."
+    for job in ask screen chores; do
+      var="FRIDAY_MODEL_${job^^}"
+      v=$(grep -E "^$var=" "$env_file" 2>/dev/null | tail -n1 | cut -d= -f2- || true)
+      echo "$job: ${v:-auto}"
+    done
+    echo "Set one: friday model <ask|screen|chores> <provider/model>, or auto. The card under an answer names the model that gave it (friday providers lists who answered)."
+    return 0
+  fi
+  case "$job" in ask|screen|chores) ;; *)
+    echo "usage: friday model [ask|screen|chores] [provider/model|auto]" >&2; return 2 ;;
+  esac
+  if [ "$pick" != auto ] && ! [[ $pick =~ ^[^/[:space:]]+/[^[:space:]]+$ ]]; then
+    echo "friday: name the model as provider/model (e.g. groq/llama-3.3-70b-versatile), or auto" >&2; return 2
+  fi
+  var="FRIDAY_MODEL_${job^^}"
+  mkdir -p "$(dirname "$env_file")"
+  (
+    umask 077
+    { grep -v "^$var=" "$env_file" 2>/dev/null || true
+      [ "$pick" = auto ] || echo "$var=$pick"
+    } >"$env_file.tmp"
+    mv "$env_file.tmp" "$env_file"
+  )
+  systemctl --user restart friday-linux-daemon 2>/dev/null || true
+  if [ "$pick" = auto ]; then echo "$job: routed as always"; else echo "$job: $pick first, the usual ranking if it fails"; fi
 }
 
 # friday local-ai use <ollama|llamacpp> <model>: answer with a model an
@@ -5586,6 +5622,10 @@ case "${1:-}" in
     ;;
   providers)
     exec friday-ctl providers
+    ;;
+  model)
+    shift
+    friday_model "$@"
     ;;
   undo)
     friday_undo

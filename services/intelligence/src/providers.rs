@@ -3788,12 +3788,43 @@ impl InferenceFabric {
         prompt: &str,
         progress: Option<&(dyn for<'s> Fn(&'s str) + Send + Sync)>,
     ) -> Result<String, String> {
-        let request_id = uuid::Uuid::new_v4().to_string();
-        let candidates = self
+        self.complete_preferring(req, None, Some(providers), prompt, progress)
+            .await
+    }
+
+    /// The usual ranking with `prefer` ("provider/model", the model the
+    /// person picked for this job) moved to the front: tried first, the rest
+    /// in their usual order when it fails or isn't routable now. `among`
+    /// keeps every try inside those providers.
+    pub fn select_preferring(
+        &self,
+        req: &RequestRequirements,
+        prefer: Option<&str>,
+        among: Option<&[String]>,
+    ) -> Vec<(ModelInfo, &dyn Provider)> {
+        let mut candidates: Vec<_> = self
             .select_for(req)
             .into_iter()
-            .filter(|(m, _)| providers.contains(&m.provider))
+            .filter(|(m, _)| among.is_none_or(|a| a.contains(&m.provider)))
             .collect();
+        if let Some(p) = prefer {
+            candidates.sort_by_key(|(m, _)| format!("{}/{}", m.provider, m.id) != p);
+        }
+        candidates
+    }
+
+    /// [`InferenceFabric::select_preferring`]'s order, answered (streaming
+    /// with `progress`).
+    pub async fn complete_preferring(
+        &self,
+        req: &RequestRequirements,
+        prefer: Option<&str>,
+        among: Option<&[String]>,
+        prompt: &str,
+        progress: Option<&(dyn for<'s> Fn(&'s str) + Send + Sync)>,
+    ) -> Result<String, String> {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let candidates = self.select_preferring(req, prefer, among);
         self.complete_candidates_reporting(&request_id, candidates, prompt, progress)
             .await
     }
@@ -6151,6 +6182,42 @@ mod tests {
         );
         let served = fabric.last_decision().and_then(|d| d.served);
         assert_eq!(served, None, "nothing may be served by another provider");
+    }
+
+    #[tokio::test]
+    async fn a_model_picked_for_the_job_answers_first_and_others_cover_it() {
+        let mut fabric = InferenceFabric::new();
+        for (name, fail) in [("openrouter", false), ("groq", true)] {
+            fabric.register_provider(Box::new(ScriptedProvider { name, fail }));
+        }
+        fabric.register_model(mi("fast", "openrouter", 100, &[]));
+        fabric.register_model(mi("picked", "groq", 900, &[]));
+        let req = RequestRequirements::default();
+        let order = |prefer| -> Vec<String> {
+            fabric
+                .select_preferring(&req, prefer, None)
+                .iter()
+                .map(|(m, _)| format!("{}/{}", m.provider, m.id))
+                .collect()
+        };
+        assert_eq!(order(None), ["openrouter/fast", "groq/picked"]);
+        assert_eq!(
+            order(Some("groq/picked")),
+            ["groq/picked", "openrouter/fast"]
+        );
+        assert_eq!(
+            order(Some("nobody/none")),
+            ["openrouter/fast", "groq/picked"],
+            "a pick that isn't there changes nothing"
+        );
+        // The pick fails: the usual ranking still answers.
+        fabric
+            .complete_preferring(&req, Some("groq/picked"), None, "p", None)
+            .await
+            .expect("covered by the next model");
+        let d = fabric.last_decision().unwrap();
+        assert_eq!(d.chosen, Some(("groq".into(), "picked".into())));
+        assert_eq!(d.served, Some(("openrouter".into(), "fast".into())));
     }
 
     #[test]

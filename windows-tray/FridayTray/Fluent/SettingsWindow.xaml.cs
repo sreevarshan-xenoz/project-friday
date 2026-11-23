@@ -17,6 +17,7 @@ using MessageBoxButton = System.Windows.MessageBoxButton;
 using MessageBoxResult = System.Windows.MessageBoxResult;
 using Orientation = System.Windows.Controls.Orientation;
 using TextBlock = System.Windows.Controls.TextBlock;
+using TextBox = System.Windows.Controls.TextBox;
 using VerticalAlignment = System.Windows.VerticalAlignment;
 
 namespace FridayTray.Fluent;
@@ -294,7 +295,7 @@ internal sealed partial class SettingsWindow : FluentWindow
         var env = EnvFile.Load(_install.Paths.EnvFile);
         foreach (var (name, what) in AppSettings.Features)
             yield return Switch(what, "Switch off if you don't want it.", AppSettings.FeatureOn(env, name),
-                on => ChangeEnv(e => AppSettings.WithFeature(e, name, on), restart: name is "couldnt-check" or "agent-resume" or "memory-file" or "screen-secret-check" or "live-web"));
+                on => ChangeEnv(e => AppSettings.WithFeature(e, name, on), restart: name is "couldnt-check" or "agent-resume" or "memory-file" or "screen-secret-check" or "live-web" or "model-per-job"));
         yield return Row(Pill("Restart FRIDAY", SymbolRegular.ArrowSync24), () => { _do.RestartDaemon(); Said("FRIDAY restarted."); });
         yield return Row(Pill("Open logs", SymbolRegular.DocumentBulletList24), _do.OpenLogs);
     }
@@ -428,6 +429,52 @@ internal sealed partial class SettingsWindow : FluentWindow
         yield return Note("FRIDAY thinks with a language model. Free models work with no account; for anything private use your own key or account. Your key is stored only on this PC, in your profile.");
         yield return Row(Pill("Choose a provider and key…", SymbolRegular.Key24, primary: true), _do.ChooseProvider);
         yield return Row(Pill("Connect an account…", SymbolRegular.PersonAccounts24), _do.ConnectAccounts);
+        yield return Note("Model per job: name a model as provider/model (groq/llama-3.3-70b-versatile) and that job tries it first; the usual order covers it when it fails. Empty is automatic. The card under an answer names the model that gave it.");
+        var env = EnvFile.Load(_install.Paths.EnvFile);
+        foreach (var (job, variable, what) in AppSettings.ModelJobs)
+            yield return ModelPickRow(job, variable, what, env.GetValueOrDefault(variable, ""));
+    }
+
+    private UIElement ModelPickRow(string job, string variable, string what, string current)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 4) };
+        var label = new TextBlock
+        {
+            Text = job,
+            ToolTip = what,
+            Width = 70,
+            FontSize = 13.5,
+            Foreground = Resource("Text"),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var box = new TextBox
+        {
+            Text = current,
+            Width = 280,
+            FontSize = 13,
+            Foreground = Resource("Text"),
+            CaretBrush = Resource("Ember"),
+            Background = Resource("Well"),
+            BorderBrush = Resource("Hairline"),
+            Padding = new Thickness(8, 5, 8, 5),
+            Margin = new Thickness(0, 0, 8, 0),
+            VerticalContentAlignment = VerticalAlignment.Center,
+        };
+        AutomationProperties.SetName(box, $"Model for {job.ToLowerInvariant()}: {what}");
+        var save = Pill("Save", SymbolRegular.Checkmark24);
+        save.Click += (_, _) =>
+        {
+            if (!AppSettings.IsModelPick(box.Text))
+            {
+                Said("Name the model as provider/model, or leave it empty for automatic.");
+                return;
+            }
+            ChangeEnv(e => AppSettings.WithModelPick(e, variable, box.Text));
+        };
+        row.Children.Add(label);
+        row.Children.Add(box);
+        row.Children.Add(save);
+        return row;
     }
 
     private IEnumerable<UIElement> LocalAiSection()

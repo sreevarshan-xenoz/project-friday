@@ -42,6 +42,32 @@ public static class AppSettings
         !env.Any(kv => !string.IsNullOrWhiteSpace(kv.Value)
             && (kv.Key.EndsWith("_API_KEY", StringComparison.Ordinal) || kv.Key == "FRIDAY_AGENT_CLIS"));
 
+    /// <summary>The model each job tries first, as "provider/model" (the
+    /// usual ranking covers it when it fails); unset routes as always. Same
+    /// variables as `friday model` on Linux.</summary>
+    public static readonly (string Job, string Var, string What)[] ModelJobs =
+    [
+        ("Asks", "FRIDAY_MODEL_ASK", "Answers to what you ask, typed or spoken"),
+        ("Screen", "FRIDAY_MODEL_SCREEN", "Questions about what's on the screen"),
+        ("Chores", "FRIDAY_MODEL_CHORES", "Steps FRIDAY plans behind the scenes: desktop, agents, standing tasks"),
+    ];
+
+    /// <summary>Empty or "auto" (routed as always), or provider/model.</summary>
+    public static bool IsModelPick(string pick)
+    {
+        var p = pick.Trim();
+        if (p.Length == 0 || p == "auto")
+            return true;
+        var slash = p.IndexOf('/');
+        return slash > 0 && slash < p.Length - 1 && !p.Any(char.IsWhiteSpace);
+    }
+
+    public static string WithModelPick(string existing, string variable, string pick)
+    {
+        var p = pick.Trim();
+        return EnvFile.WithSetting(existing, variable, p.Length == 0 || p == "auto" ? null : p);
+    }
+
     public static string WithDesktopControl(string existing, bool on) =>
         EnvFile.WithSetting(existing, DesktopControl, on ? null : "0");
 
@@ -95,6 +121,7 @@ public static class AppSettings
         ("backup", "Back up settings, memory and history, and restore one after checking it"),
         ("risk-table", "Settings shows what FRIDAY may do on its own, what asks first and what never runs"),
         ("activity", "One list of agent steps waiting for you, runs going now, standing tasks and runs finished lately"),
+        ("model-per-job", "A model picked for asks, screen questions or chores (AI page) is tried first"),
         ("usage-page", "Settings shows calls, failures, free-limit hits and speed per AI provider"),
         ("memory-changes", "A changed fact (\"I moved to Pune\") closes the old one with a date in the memory file"),
         ("brief", "\"What did I miss?\" answered from FRIDAY's own records (agents, standing tasks, reminders)"),

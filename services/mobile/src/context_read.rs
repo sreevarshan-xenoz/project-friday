@@ -1124,18 +1124,18 @@ impl FabricProviderSeam {
             .collect();
         vision.sort();
         vision.dedup();
+        // The model picked for screen questions goes first, if it can see.
+        let prefer = crate::model_jobs::pick("screen");
+        let prefer = prefer.as_deref();
         match screen_route(&self.fabric.user_providers(), &vision) {
-            ScreenRoute::Defaults => match progress {
-                Some(p) => {
-                    self.fabric
-                        .complete_with_progress(&needs_vision, payload, p)
-                        .await
-                }
-                None => self.fabric.complete_with(&needs_vision, payload).await,
-            },
+            ScreenRoute::Defaults => {
+                self.fabric
+                    .complete_preferring(&needs_vision, prefer, None, payload, progress)
+                    .await
+            }
             ScreenRoute::Among(providers) => {
                 self.fabric
-                    .complete_with_among(&needs_vision, &providers, payload, progress)
+                    .complete_preferring(&needs_vision, prefer, Some(&providers), payload, progress)
                     .await
             }
             ScreenRoute::Refuse(why) => Err(why),
