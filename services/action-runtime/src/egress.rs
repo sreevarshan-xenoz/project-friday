@@ -253,6 +253,14 @@ fn is_internal_host(host: &Host<&str>) -> bool {
         }
     }
 }
+/// An address on this computer or the local network ([`is_internal_host`]).
+pub fn ip_is_internal(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => is_internal_host(&Host::Ipv4(v4)),
+        std::net::IpAddr::V6(v6) => is_internal_host(&Host::Ipv6(v6)),
+    }
+}
+
 fn is_private_ipv4(ip: std::net::Ipv4Addr) -> bool {
     let o = ip.octets();
     // 0.0.0.0/8 — "this host".

@@ -177,6 +177,13 @@ impl WebAdapter {
     async fn get_text(&self, req: &ActionRequest, url: &str) -> Result<String, FetchError> {
         let mut current = url.to_string();
         for _hop in 0..=MAX_REDIRECTS {
+            // A name pointed inside (`127.0.0.1.nip.io`, a home DNS entry)
+            // is refused like the address itself.
+            if name_points_inside(&current).await {
+                return Err(FetchError::EgressDenied(
+                    EgressDenyReason::InternalDestination,
+                ));
+            }
             let resp = self
                 .client
                 .get(&current)
@@ -305,6 +312,28 @@ fn parse_search_results(html: &str, limit: usize) -> Vec<serde_json::Value> {
 /// lowercased copy invalid for slicing the original. `<title>`/`</title>` are
 /// pure ASCII, and `<` (0x3C) can never be a UTF-8 continuation byte, so a
 /// match position is always on a char boundary.
+/// Whether `url` names a host (not an address: those are the kernel's
+/// check) that resolves to this computer or the local network. A name that
+/// doesn't resolve isn't refused here: the request fails on its own.
+async fn name_points_inside(url: &str) -> bool {
+    let Ok(u) = Url::parse(url) else {
+        return false;
+    };
+    let Some(url::Host::Domain(name)) = u.host() else {
+        return false;
+    };
+    let port = u.port_or_known_default().unwrap_or(80);
+    match tokio::time::timeout(
+        Duration::from_secs(3),
+        tokio::net::lookup_host((name.to_string(), port)),
+    )
+    .await
+    {
+        Ok(Ok(mut addrs)) => addrs.any(|a| crate::egress::ip_is_internal(a.ip())),
+        _ => false,
+    }
+}
+
 pub fn extract_title(html: &str) -> String {
     let bytes = html.as_bytes();
     let needle = b"<title>";
@@ -494,4 +523,22 @@ mod tests {
         assert!(!res.success);
         assert!(res.error.unwrap().contains("scheme"));
     }
+}
+/// A name that resolves to this computer is refused like 127.0.0.1:
+/// nothing reaches the server behind it.
+#[tokio::test]
+async fn a_name_pointing_inside_is_refused_before_any_request() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let adapter = WebAdapter::new();
+    let req = ActionRequest::new(
+        "web",
+        "fetch",
+        json!({ "url": format!("http://localhost:{port}/admin") }),
+    );
+    let res = adapter.execute(req).await;
+    assert!(!res.success, "{res:?}");
+    assert_eq!(res.metadata["egress_deny"], "internal_destination");
+    let reached = tokio::time::timeout(Duration::from_millis(200), listener.accept()).await;
+    assert!(reached.is_err(), "the server behind the name was reached");
 }
