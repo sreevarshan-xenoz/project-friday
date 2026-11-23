@@ -127,6 +127,34 @@ internal static class Ctl
         }
     }
 
+    /// <summary>
+    /// Starts reading aloud an answer that is still arriving: <see cref="SayStream.Feed"/>
+    /// it the answer so far, then <see cref="SayStream.EndAsync"/>. Null when the
+    /// voice can't be started.
+    /// </summary>
+    public static SayStream? StartSaying(Install install)
+    {
+        var psi = new ProcessStartInfo(install.Ctl)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardInput = true,
+            StandardInputEncoding = new UTF8Encoding(false),
+        };
+        psi.ArgumentList.Add("say");
+        psi.ArgumentList.Add("-");
+        foreach (var (k, v) in install.ChildEnvironment())
+            psi.Environment[k] = v;
+        try
+        {
+            return Process.Start(psi) is { } p ? new SayStream(install, p) : null;
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            return null;
+        }
+    }
+
     /// <summary>Stops whatever FRIDAY is reading aloud.</summary>
     public static void StopSaying(Install install)
     {
@@ -146,5 +174,55 @@ internal static class Ctl
             onLine?.Invoke(line);
         }
         return all.ToString();
+    }
+}
+
+/// <summary>A `friday-ctl say -` being fed an answer as it streams.</summary>
+internal sealed class SayStream
+{
+    private readonly Install _install;
+    private readonly Process _process;
+    private readonly FridayTray.Core.StreamedSpeech _speech = new();
+
+    internal SayStream(Install install, Process process) => (_install, _process) = (install, process);
+
+    /// <summary>Sends what is new in the answer so far.</summary>
+    public void Feed(string soFar)
+    {
+        if (_speech.Next(soFar) is not { Length: > 0 } add)
+            return;
+        try
+        {
+            _process.StandardInput.Write(add);
+            _process.StandardInput.Flush();
+        }
+        catch (Exception e) when (e is IOException or InvalidOperationException or ObjectDisposedException)
+        {
+            // The voice stopped (a newer answer, Stop): nothing more to send.
+        }
+    }
+
+    /// <summary>The rest of the answer, then waits until it has been read; the say's exit code (5: stopped).</summary>
+    public async Task<int> EndAsync(string answer)
+    {
+        Feed(answer);
+        try
+        {
+            _process.StandardInput.Close();
+            await _process.WaitForExitAsync();
+            return _process.ExitCode;
+        }
+        catch (Exception e) when (e is IOException or InvalidOperationException or ObjectDisposedException)
+        {
+            return -1;
+        }
+    }
+
+    /// <summary>Stops reading (the answer failed, or a newer question replaced it).</summary>
+    public void Stop()
+    {
+        try { _process.StandardInput.Close(); }
+        catch (Exception e) when (e is IOException or InvalidOperationException or ObjectDisposedException) { }
+        Ctl.StopSaying(_install);
     }
 }

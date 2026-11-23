@@ -98,6 +98,7 @@ public static class AppSettings
         ("call-pause", "\"Hey Friday\" rests while a call or meeting app uses the microphone"),
         ("action-check", "Before a risky action, say what will change; after it, check and say done, partly or failed"),
         ("extension-autoinstall", "Settings installs the browser extension for you (Developer mode, Load unpacked)"),
+        ("speak-as-it-comes", "Spoken answers start with the first sentence while the rest is still coming"),
     ];
 
     public static bool ExtensionAutoinstallOn(IReadOnlyDictionary<string, string> env) =>

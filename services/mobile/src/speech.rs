@@ -12,7 +12,9 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+#[cfg(not(windows))]
+use std::process::Child;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -318,7 +320,6 @@ fn is_emoji(c: char) -> bool {
 /// Pieces to speak one after another: sentences, each at most `max` characters
 /// (a long one is cut at a comma or space), so the first is ready quickly.
 pub fn sentences(text: &str, max: usize) -> Vec<String> {
-    const ABBREV: &[&str] = &["e.g", "i.e", "mr", "mrs", "ms", "dr", "vs", "etc", "no"];
     let chars: Vec<char> = text.chars().collect();
     let mut out: Vec<String> = Vec::new();
     let mut cur = String::new();
@@ -482,9 +483,19 @@ pub trait Synth: Send + Sync {
     }
 }
 
-/// Plays one prepared WAV file; `cancel` stops it early.
+/// Where the speech goes: one stream for a whole answer, opened at the
+/// voice's sample rate, so sentences follow each other with no gap.
 pub trait Player: Send + Sync {
-    fn play(&self, wav: &Path, cancel: &AtomicBool) -> Result<(), String>;
+    fn open(&self, rate: u32) -> Result<Box<dyn Sink>, String>;
+}
+
+/// An open audio stream.
+pub trait Sink: Send {
+    /// Hands one sentence to the stream (it may still be playing on return).
+    /// Returns early when `cancel` is set.
+    fn write(&mut self, pcm: &Pcm, cancel: &AtomicBool) -> Result<(), String>;
+    /// Waits until everything written has been heard, or `cancel`.
+    fn finish(&mut self, cancel: &AtomicBool) -> Result<(), String>;
 }
 
 /// What happened: how many sentences were spoken and whether it was stopped.
@@ -494,108 +505,264 @@ pub struct Spoken {
     pub stopped: bool,
 }
 
-/// Speaks `text` sentence by sentence: the next sentences are made while the
-/// current one plays (as many at once as the voice's `workers`), so speech starts
-/// after one sentence's work, not the whole answer's, and is played in order.
-/// Stops at once when `cancel` is set.
+/// Text arriving piece by piece (an answer as it streams), handed on as soon
+/// as it is worth speaking: each finished line, the finished sentences of the
+/// line so far, and a code block once it is closed (it is read as "some code").
+#[derive(Default)]
+pub struct Chunker {
+    buf: String,
+    code: Option<String>,
+}
+
+impl Chunker {
+    pub fn push(&mut self, text: &str) -> Vec<String> {
+        self.buf.push_str(text);
+        self.take(false)
+    }
+
+    /// The rest, once no more text is coming.
+    pub fn finish(&mut self) -> Vec<String> {
+        let mut out = self.take(true);
+        if let Some(code) = self.code.take() {
+            out.push(code);
+        }
+        out
+    }
+
+    fn take(&mut self, end: bool) -> Vec<String> {
+        let mut out = Vec::new();
+        while let Some(nl) = self.buf.find('\n') {
+            let line: String = self.buf.drain(..=nl).collect();
+            self.line(line, &mut out);
+        }
+        if end {
+            let rest = std::mem::take(&mut self.buf);
+            if !rest.trim().is_empty() {
+                self.line(rest, &mut out);
+            }
+        } else if self.code.is_none() && !self.buf.trim_start().starts_with("```") {
+            if let Some(cut) = last_sentence_end(&self.buf) {
+                out.push(self.buf.drain(..cut).collect());
+            }
+        }
+        out
+    }
+
+    fn line(&mut self, line: String, out: &mut Vec<String>) {
+        let fence = line.trim_start().starts_with("```");
+        match (&mut self.code, fence) {
+            (Some(code), true) => {
+                code.push_str(&line);
+                out.push(std::mem::take(code));
+                self.code = None;
+            }
+            (Some(code), false) => code.push_str(&line),
+            (None, true) => self.code = Some(line),
+            (None, false) => {
+                if !line.trim().is_empty() {
+                    out.push(line);
+                }
+            }
+        }
+    }
+}
+
+const ABBREV: &[&str] = &["e.g", "i.e", "mr", "mrs", "ms", "dr", "vs", "etc", "no"];
+
+/// Where the last finished sentence of `s` ends (after its mark, which is
+/// followed by a space): not at "e.g.", "Dr." or a list number like "2.".
+fn last_sentence_end(s: &str) -> Option<usize> {
+    let mut found = None;
+    let mut it = s.char_indices().peekable();
+    while let Some((i, c)) = it.next() {
+        if !matches!(c, '.' | '!' | '?' | '…') {
+            continue;
+        }
+        let Some(&(_, next)) = it.peek() else { break };
+        if !next.is_whitespace() {
+            continue;
+        }
+        let before = &s[..i];
+        let word = before.rsplit(char::is_whitespace).next().unwrap_or("");
+        let lower = word.to_ascii_lowercase();
+        let list_number = c == '.'
+            && !word.is_empty()
+            && word.chars().all(|d| d.is_ascii_digit())
+            && before.trim() == word;
+        if c == '.' && (ABBREV.contains(&lower.as_str()) || list_number) {
+            continue;
+        }
+        found = Some(i + c.len_utf8());
+    }
+    found
+}
+
+/// Speaks `text` sentence by sentence (see `speak_stream`).
 pub fn speak(
     text: &str,
     synth: Arc<dyn Synth>,
     player: &dyn Player,
-    work_dir: &Path,
     cancel: Arc<AtomicBool>,
 ) -> Result<Spoken, String> {
-    let parts = sentences(&clean_for_speech(text), 220);
-    if parts.is_empty() {
-        return Ok(Spoken {
-            sentences: 0,
-            stopped: false,
-        });
+    let (tx, rx) = mpsc::channel();
+    let _ = tx.send(text.to_string());
+    drop(tx);
+    speak_stream(rx, synth, player, cancel)
+}
+
+/// Speaks text as it arrives on `input` (an answer still streaming in), until
+/// the sender is dropped. A sentence is made as soon as it is finished and
+/// played on one audio stream, so speech starts with the first sentence and
+/// has no gaps; the next sentences are made while one plays (as many at once
+/// as the voice's `workers`). Stops at once when `cancel` is set.
+pub fn speak_stream(
+    input: mpsc::Receiver<String>,
+    synth: Arc<dyn Synth>,
+    player: &dyn Player,
+    cancel: Arc<AtomicBool>,
+) -> Result<Spoken, String> {
+    struct State {
+        queue: std::collections::VecDeque<(usize, String)>,
+        total: usize,
+        closed: bool,
+        made: std::collections::BTreeMap<usize, Result<Pcm, String>>,
     }
-    std::fs::create_dir_all(work_dir).map_err(|e| e.to_string())?;
-    let n = parts.len();
+    let shared = Arc::new((
+        Mutex::new(State {
+            queue: Default::default(),
+            total: 0,
+            closed: false,
+            made: Default::default(),
+        }),
+        std::sync::Condvar::new(),
+    ));
+    let tick = Duration::from_millis(50);
     let workers = synth.workers().max(1);
-    // One channel per sentence, so a sentence made early still waits its turn.
-    type Made = Result<PathBuf, String>;
-    let (senders, receivers): (Vec<_>, Vec<_>) = (0..n).map(|_| mpsc::channel::<Made>()).unzip();
-    let senders: Arc<Vec<Mutex<mpsc::Sender<Made>>>> =
-        Arc::new(senders.into_iter().map(Mutex::new).collect());
-    let parts = Arc::new(parts);
-    let next = Arc::new(AtomicUsize::new(0));
     // The sentence being played: no worker starts one more than `workers` ahead of it.
     let playing = Arc::new(AtomicUsize::new(0));
+    let feeder = {
+        let (shared, cancel) = (shared.clone(), cancel.clone());
+        std::thread::spawn(move || {
+            let mut chunker = Chunker::default();
+            let add = |chunks: Vec<String>| {
+                let (lock, cv) = &*shared;
+                let mut st = lock.lock().unwrap();
+                for chunk in chunks {
+                    for s in sentences(&clean_for_speech(&chunk), 220) {
+                        let i = st.total;
+                        st.queue.push_back((i, s));
+                        st.total += 1;
+                    }
+                }
+                cv.notify_all();
+            };
+            loop {
+                match input.recv_timeout(tick) {
+                    Ok(text) => add(chunker.push(&text)),
+                    Err(mpsc::RecvTimeoutError::Timeout) if !cancel.load(Ordering::SeqCst) => {}
+                    Err(_) => break,
+                }
+            }
+            add(chunker.finish());
+            let (lock, cv) = &*shared;
+            lock.lock().unwrap().closed = true;
+            cv.notify_all();
+        })
+    };
     let handles: Vec<_> = (0..workers)
         .map(|_| {
-            let (synth, parts, senders) = (synth.clone(), parts.clone(), senders.clone());
-            let (next, playing, cancel) = (next.clone(), playing.clone(), cancel.clone());
-            let dir = work_dir.to_path_buf();
-            std::thread::spawn(move || loop {
-                let i = next.fetch_add(1, Ordering::SeqCst);
-                if i >= parts.len() {
-                    break;
-                }
-                while i > playing.load(Ordering::SeqCst) + workers && !cancel.load(Ordering::SeqCst)
-                {
-                    std::thread::sleep(Duration::from_millis(30));
-                }
-                if cancel.load(Ordering::SeqCst) {
-                    break;
-                }
-                let made = synth.synth(&parts[i]).map(|mut pcm| {
-                    normalize(&mut pcm, 0.10, 0.89);
-                    pcm
-                });
-                let item = made.and_then(|pcm| {
-                    let path = dir.join(format!("part-{i}.wav"));
-                    std::fs::write(&path, write_wav(&pcm)).map_err(|e| e.to_string())?;
-                    Ok(path)
-                });
-                let failed = item.is_err();
-                let _ = senders[i].lock().map(|tx| tx.send(item));
-                if failed {
-                    break;
+            let (shared, synth) = (shared.clone(), synth.clone());
+            let (playing, cancel) = (playing.clone(), cancel.clone());
+            std::thread::spawn(move || {
+                let (lock, cv) = &*shared;
+                loop {
+                    let (i, text) = {
+                        let mut st = lock.lock().unwrap();
+                        loop {
+                            if cancel.load(Ordering::SeqCst) {
+                                return;
+                            }
+                            let ahead = st.queue.front().is_some_and(|(i, _)| {
+                                *i > playing.load(Ordering::SeqCst) + workers
+                            });
+                            if !ahead {
+                                if let Some(item) = st.queue.pop_front() {
+                                    break item;
+                                }
+                                if st.closed {
+                                    return;
+                                }
+                            }
+                            st = cv.wait_timeout(st, tick).unwrap().0;
+                        }
+                    };
+                    let made = synth.synth(&text).map(|mut pcm| {
+                        normalize(&mut pcm, 0.10, 0.89);
+                        pcm
+                    });
+                    lock.lock().unwrap().made.insert(i, made);
+                    cv.notify_all();
                 }
             })
         })
         .collect();
-    let (mut spoken, mut error) = (0, None);
-    'sentences: for (i, rx) in receivers.into_iter().enumerate() {
-        let item = loop {
-            match rx.recv_timeout(Duration::from_millis(100)) {
-                Ok(item) => break item,
-                Err(mpsc::RecvTimeoutError::Timeout) if !cancel.load(Ordering::SeqCst) => {}
-                Err(_) => break 'sentences,
+    let (mut spoken, mut error, mut sink) = (0, None, None::<Box<dyn Sink>>);
+    let (lock, cv) = &*shared;
+    for i in 0.. {
+        let item = {
+            let mut st = lock.lock().unwrap();
+            loop {
+                if cancel.load(Ordering::SeqCst) {
+                    break None;
+                }
+                if let Some(item) = st.made.remove(&i) {
+                    break Some(item);
+                }
+                if st.closed && st.total <= i {
+                    break None;
+                }
+                st = cv.wait_timeout(st, tick).unwrap().0;
             }
         };
+        let Some(item) = item else { break };
         playing.store(i, Ordering::SeqCst);
-        match item {
-            Ok(path) => {
-                if !cancel.load(Ordering::SeqCst) {
-                    if let Err(e) = player.play(&path, &cancel) {
-                        error = Some(e);
-                        cancel.store(true, Ordering::SeqCst);
-                    } else {
-                        spoken += 1;
-                    }
+        cv.notify_all();
+        let played = item.and_then(|pcm| {
+            if sink.is_none() {
+                sink = Some(player.open(pcm.rate)?);
+            }
+            sink.as_mut().expect("opened above").write(&pcm, &cancel)
+        });
+        match played {
+            Ok(()) => {
+                spoken += 1;
+                if cancel.load(Ordering::SeqCst) {
+                    break;
                 }
-                let _ = std::fs::remove_file(path);
             }
             Err(e) => {
                 error = Some(e);
                 cancel.store(true, Ordering::SeqCst);
+                break;
             }
         }
-        if cancel.load(Ordering::SeqCst) {
-            break;
+    }
+    if let Some(mut sink) = sink {
+        if let Err(e) = sink.finish(&cancel) {
+            error.get_or_insert(e);
         }
     }
-    // Anything still being made is not wanted any more: cancel is set on every early exit.
+    // Anything still being made is not wanted any more.
+    if error.is_some() {
+        cancel.store(true, Ordering::SeqCst);
+    }
+    cv.notify_all();
     for h in handles {
         let _ = h.join();
     }
-    // Sentences made but never played (a stop, a failure) leave their files behind.
-    for i in 0..n {
-        let _ = std::fs::remove_file(work_dir.join(format!("part-{i}.wav")));
+    // The feeder ends with its input; a stop doesn't wait for the sender.
+    if !cancel.load(Ordering::SeqCst) {
+        let _ = feeder.join();
     }
     match error {
         Some(e) if spoken == 0 => Err(e),
@@ -717,85 +884,291 @@ impl Synth for TinyVocaSynth {
     }
 }
 
-/// Plays through the system's audio: PipeWire, PulseAudio or ALSA on Linux,
-/// Windows' own sound player on Windows. With `dump` set (`FRIDAY_SAY_DUMP`
-/// names a folder), each sentence is saved there instead of played, which is
-/// how the speech is checked on a machine with no speakers.
+/// Plays through the system's audio: one PipeWire, PulseAudio or ALSA player
+/// fed the whole answer on Linux, Windows' own audio output on Windows. With
+/// `dump` set (`FRIDAY_SAY_DUMP` names a folder), each sentence is saved there
+/// as a WAV instead of played, which is how the speech is checked on a
+/// machine with no speakers.
 pub struct SystemPlayer {
     pub dump: Option<PathBuf>,
 }
 
-fn play_command(wav: &Path) -> Option<Command> {
-    #[cfg(windows)]
-    {
-        let path = wav.to_string_lossy().replace('\'', "''");
-        let mut c = Command::new("powershell");
-        c.args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            &format!("(New-Object Media.SoundPlayer '{path}').PlaySync()"),
-        ]);
-        Some(c)
-    }
-    #[cfg(not(windows))]
-    {
-        for (tool, args) in [
-            ("pw-play", vec![]),
-            ("paplay", vec![]),
-            ("aplay", vec!["-q"]),
-        ] {
-            let found = std::env::var_os("PATH")
-                .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(tool).is_file()));
-            if found {
-                let mut c = Command::new(tool);
-                c.args(args);
-                // Talk-over on: through the echo-cancelled speaker, so the
-                // microphone hears the person, not FRIDAY.
-                if tool == "pw-play" && crate::listen::talk_over_on() {
-                    c.args(["--target", crate::listen::ECHO_SINK]);
-                }
-                c.arg(wav);
-                return Some(c);
-            }
+impl Player for SystemPlayer {
+    fn open(&self, rate: u32) -> Result<Box<dyn Sink>, String> {
+        if let Some(dir) = &self.dump {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            return Ok(Box::new(DumpSink {
+                dir: dir.clone(),
+                next: 0,
+            }));
         }
-        None
+        #[cfg(windows)]
+        {
+            Ok(Box::new(wave_out::WaveOut::open(rate)?))
+        }
+        #[cfg(not(windows))]
+        {
+            let mut cmd =
+                raw_play_command(rate).ok_or("no audio player found (pw-play, paplay or aplay)")?;
+            let child = cmd
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|e| e.to_string())?;
+            Ok(Box::new(PipeSink { child }))
+        }
     }
 }
 
-impl Player for SystemPlayer {
-    fn play(&self, wav: &Path, cancel: &AtomicBool) -> Result<(), String> {
-        if let Some(dir) = &self.dump {
-            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-            let name = format!(
-                "{}-{}",
-                std::process::id(),
-                wav.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("part.wav")
-            );
-            return std::fs::copy(wav, dir.join(name))
-                .map(|_| ())
-                .map_err(|e| e.to_string());
+/// Each sentence saved as `<pid>-part-<n>.wav`.
+struct DumpSink {
+    dir: PathBuf,
+    next: usize,
+}
+
+impl Sink for DumpSink {
+    fn write(&mut self, pcm: &Pcm, _cancel: &AtomicBool) -> Result<(), String> {
+        let name = format!("{}-part-{}.wav", std::process::id(), self.next);
+        self.next += 1;
+        std::fs::write(self.dir.join(name), write_wav(pcm)).map_err(|e| e.to_string())
+    }
+
+    fn finish(&mut self, _cancel: &AtomicBool) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// A player reading raw 16-bit mono samples from its input, for the whole answer.
+#[cfg(not(windows))]
+fn raw_play_command(rate: u32) -> Option<Command> {
+    let rate = rate.to_string();
+    for tool in ["pw-play", "paplay", "aplay"] {
+        let found = std::env::var_os("PATH")
+            .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(tool).is_file()));
+        if !found {
+            continue;
         }
-        let mut cmd =
-            play_command(wav).ok_or("no audio player found (pw-play, paplay or aplay)")?;
-        let mut child: Child = cmd
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        loop {
+        let mut c = Command::new(tool);
+        match tool {
+            "pw-play" => {
+                c.args([
+                    "--raw",
+                    "--format",
+                    "s16",
+                    "--channels",
+                    "1",
+                    "--rate",
+                    &rate,
+                ]);
+                // Talk-over on: through the echo-cancelled speaker, so the
+                // microphone hears the person, not FRIDAY.
+                if crate::listen::talk_over_on() {
+                    c.args(["--target", crate::listen::ECHO_SINK]);
+                }
+                c.arg("-");
+            }
+            "paplay" => {
+                c.args(["--raw", "--format=s16le", "--channels=1"]);
+                c.arg(format!("--rate={rate}"));
+            }
+            _ => {
+                c.args(["-q", "-t", "raw", "-f", "S16_LE", "-c", "1", "-r", &rate]);
+            }
+        }
+        return Some(c);
+    }
+    None
+}
+
+#[cfg(not(windows))]
+struct PipeSink {
+    child: Child,
+}
+
+#[cfg(not(windows))]
+impl PipeSink {
+    fn stop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[cfg(not(windows))]
+impl Sink for PipeSink {
+    fn write(&mut self, pcm: &Pcm, cancel: &AtomicBool) -> Result<(), String> {
+        let Some(stdin) = self.child.stdin.as_mut() else {
+            return Err("the audio player closed".into());
+        };
+        // A fifth of a second at a time: a stop doesn't wait for a long sentence.
+        for piece in pcm.samples.chunks((pcm.rate as usize / 5).max(1)) {
             if cancel.load(Ordering::SeqCst) {
-                let _ = child.kill();
-                let _ = child.wait();
+                self.stop();
                 return Ok(());
             }
-            match child.try_wait() {
+            let bytes: Vec<u8> = piece.iter().flat_map(|s| s.to_le_bytes()).collect();
+            stdin
+                .write_all(&bytes)
+                .map_err(|e| format!("the audio player stopped: {e}"))?;
+        }
+        Ok(())
+    }
+
+    fn finish(&mut self, cancel: &AtomicBool) -> Result<(), String> {
+        drop(self.child.stdin.take());
+        loop {
+            if cancel.load(Ordering::SeqCst) {
+                self.stop();
+                return Ok(());
+            }
+            match self.child.try_wait() {
                 Ok(Some(_)) => return Ok(()),
                 Ok(None) => std::thread::sleep(Duration::from_millis(40)),
                 Err(e) => return Err(e.to_string()),
             }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+impl Drop for PipeSink {
+    fn drop(&mut self) {
+        if matches!(self.child.try_wait(), Ok(None)) {
+            self.stop();
+        }
+    }
+}
+
+/// Windows' audio output (waveOut), played from this process: sentences are
+/// queued one after another on one device, with no program started for each.
+#[cfg(windows)]
+mod wave_out {
+    use super::{Pcm, Sink};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+    use windows_sys::Win32::Media::Audio::{
+        waveOutClose, waveOutOpen, waveOutPrepareHeader, waveOutReset, waveOutUnprepareHeader,
+        waveOutWrite, CALLBACK_NULL, HWAVEOUT, WAVEFORMATEX, WAVEHDR, WAVE_FORMAT_PCM, WAVE_MAPPER,
+        WHDR_DONE,
+    };
+
+    /// One queued sentence: its header and samples stay put until played.
+    struct Queued {
+        header: Box<WAVEHDR>,
+        _samples: Vec<i16>,
+    }
+
+    pub struct WaveOut {
+        device: HWAVEOUT,
+        queued: Vec<Queued>,
+    }
+
+    // The device handle is used from one thread at a time (the speaker's).
+    unsafe impl Send for WaveOut {}
+
+    impl WaveOut {
+        pub fn open(rate: u32) -> Result<Self, String> {
+            let format = WAVEFORMATEX {
+                wFormatTag: WAVE_FORMAT_PCM as u16,
+                nChannels: 1,
+                nSamplesPerSec: rate,
+                nAvgBytesPerSec: rate * 2,
+                nBlockAlign: 2,
+                wBitsPerSample: 16,
+                cbSize: 0,
+            };
+            let mut device: HWAVEOUT = std::ptr::null_mut();
+            // SAFETY: `format` and `device` outlive the call; no callback is used.
+            let rc = unsafe { waveOutOpen(&mut device, WAVE_MAPPER, &format, 0, 0, CALLBACK_NULL) };
+            if rc != 0 {
+                return Err(format!(
+                    "couldn't open the audio output (waveOut error {rc})"
+                ));
+            }
+            Ok(Self {
+                device,
+                queued: Vec::new(),
+            })
+        }
+
+        /// Frees the sentences that have been played.
+        fn reap(&mut self) {
+            let device = self.device;
+            self.queued.retain_mut(|q| {
+                if q.header.dwFlags & WHDR_DONE == 0 {
+                    return true;
+                }
+                // SAFETY: the header was prepared on this device and is done.
+                unsafe {
+                    waveOutUnprepareHeader(device, &mut *q.header, size_of::<WAVEHDR>() as u32)
+                };
+                false
+            });
+        }
+
+        fn stop(&mut self) {
+            // SAFETY: marks every queued header done, so all can be unprepared.
+            unsafe { waveOutReset(self.device) };
+            self.reap();
+        }
+    }
+
+    impl Sink for WaveOut {
+        fn write(&mut self, pcm: &Pcm, cancel: &AtomicBool) -> Result<(), String> {
+            if cancel.load(Ordering::SeqCst) {
+                self.stop();
+                return Ok(());
+            }
+            self.reap();
+            let mut samples = pcm.samples.clone();
+            let mut header = Box::new(WAVEHDR {
+                lpData: samples.as_mut_ptr().cast(),
+                dwBufferLength: (samples.len() * 2) as u32,
+                dwBytesRecorded: 0,
+                dwUser: 0,
+                dwFlags: 0,
+                dwLoops: 0,
+                lpNext: std::ptr::null_mut(),
+                reserved: 0,
+            });
+            let size = size_of::<WAVEHDR>() as u32;
+            // SAFETY: the header and samples are kept in `queued` until done.
+            let rc = unsafe {
+                match waveOutPrepareHeader(self.device, &mut *header, size) {
+                    0 => waveOutWrite(self.device, &mut *header, size),
+                    rc => rc,
+                }
+            };
+            if rc != 0 {
+                return Err(format!("couldn't play the audio (waveOut error {rc})"));
+            }
+            self.queued.push(Queued {
+                header,
+                _samples: samples,
+            });
+            Ok(())
+        }
+
+        fn finish(&mut self, cancel: &AtomicBool) -> Result<(), String> {
+            loop {
+                if cancel.load(Ordering::SeqCst) {
+                    self.stop();
+                    return Ok(());
+                }
+                self.reap();
+                if self.queued.is_empty() {
+                    return Ok(());
+                }
+                std::thread::sleep(Duration::from_millis(30));
+            }
+        }
+    }
+
+    impl Drop for WaveOut {
+        fn drop(&mut self) {
+            self.stop();
+            // SAFETY: nothing is queued any more.
+            unsafe { waveOutClose(self.device) };
         }
     }
 }
@@ -918,6 +1291,43 @@ fn watch_pid_file(path: PathBuf, cancel: Arc<AtomicBool>, done: Arc<AtomicBool>)
 
 /// Speaks `text` with the installed voice. Replaces whatever is being said.
 pub fn say(text: &str) -> Result<Spoken, String> {
+    let (tx, rx) = mpsc::channel();
+    let _ = tx.send(text.to_string());
+    drop(tx);
+    say_from(rx)
+}
+
+/// Speaks text as it is read from `input` (an answer piped in while it
+/// streams): each sentence as soon as it is finished.
+pub fn say_reader(mut input: impl std::io::Read + Send + 'static) -> Result<Spoken, String> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let (mut buf, mut pending) = ([0u8; 512], Vec::new());
+        while let Ok(n) = input.read(&mut buf) {
+            if n == 0 {
+                break;
+            }
+            pending.extend_from_slice(&buf[..n]);
+            // A character split between two reads waits for its other bytes.
+            let valid = match std::str::from_utf8(&pending) {
+                Ok(_) => pending.len(),
+                Err(e) if e.error_len().is_none() => e.valid_up_to(),
+                Err(_) => pending.len(),
+            };
+            let text = String::from_utf8_lossy(&pending[..valid]).into_owned();
+            pending.drain(..valid);
+            if tx.send(text).is_err() {
+                break;
+            }
+        }
+        if !pending.is_empty() {
+            let _ = tx.send(String::from_utf8_lossy(&pending).into_owned());
+        }
+    });
+    say_from(rx)
+}
+
+fn say_from(input: mpsc::Receiver<String>) -> Result<Spoken, String> {
     let dir = voice_dir();
     let voice = detect(&dir).ok_or("FRIDAY's voice isn't installed (friday voice speak setup)")?;
     let work = std::env::temp_dir().join(format!("friday-say-{}", std::process::id()));
@@ -940,7 +1350,7 @@ pub fn say(text: &str) -> Result<Spoken, String> {
     let player = SystemPlayer {
         dump: std::env::var_os("FRIDAY_SAY_DUMP").map(PathBuf::from),
     };
-    let result = speak(text, synth, &player, &work, cancel);
+    let result = speak_stream(input, synth, &player, cancel);
     done.store(true, Ordering::SeqCst);
     let _ = std::fs::remove_dir_all(&work);
     if std::fs::read_to_string(pid_file())
@@ -1538,17 +1948,40 @@ mod tests {
         }
     }
     struct FakePlayer {
-        played: Mutex<Vec<String>>,
+        played: Arc<Mutex<Vec<String>>>,
         stop_after: Option<usize>,
     }
+    impl FakePlayer {
+        fn new(stop_after: Option<usize>) -> Self {
+            Self {
+                played: Arc::default(),
+                stop_after,
+            }
+        }
+    }
     impl Player for FakePlayer {
-        fn play(&self, wav: &Path, cancel: &AtomicBool) -> Result<(), String> {
-            assert!(wav.is_file(), "the file exists while it plays");
+        fn open(&self, _rate: u32) -> Result<Box<dyn Sink>, String> {
+            Ok(Box::new(FakeSink {
+                played: self.played.clone(),
+                stop_after: self.stop_after,
+            }))
+        }
+    }
+    struct FakeSink {
+        played: Arc<Mutex<Vec<String>>>,
+        stop_after: Option<usize>,
+    }
+    impl Sink for FakeSink {
+        fn write(&mut self, _pcm: &Pcm, cancel: &AtomicBool) -> Result<(), String> {
             let mut played = self.played.lock().unwrap();
-            played.push(wav.file_name().unwrap().to_string_lossy().into_owned());
+            let n = played.len();
+            played.push(format!("part-{n}.wav"));
             if self.stop_after == Some(played.len()) {
                 cancel.store(true, Ordering::SeqCst);
             }
+            Ok(())
+        }
+        fn finish(&mut self, _cancel: &AtomicBool) -> Result<(), String> {
             Ok(())
         }
     }
@@ -1571,19 +2004,12 @@ mod tests {
 
     #[test]
     fn sentences_made_at_the_same_time_still_play_in_order() {
-        let (dir, player) = (
-            work(),
-            FakePlayer {
-                played: Mutex::new(vec![]),
-                stop_after: None,
-            },
-        );
+        let (dir, player) = (work(), FakePlayer::new(None));
         let started = std::time::Instant::now();
         let spoken = speak(
             "1 First. 2 Second. 3 Third. 4 Fourth. 5 Fifth.",
             Arc::new(SlowFirstSynth),
             &player,
-            &dir,
             Arc::new(AtomicBool::new(false)),
         )
         .unwrap();
@@ -1610,24 +2036,16 @@ mod tests {
 
     #[test]
     fn stopping_while_several_are_made_at_once_leaves_no_files() {
-        let (player, dir) = (
-            FakePlayer {
-                played: Mutex::new(vec![]),
-                stop_after: Some(1),
-            },
-            work(),
-        );
+        let (player, dir) = (FakePlayer::new(Some(1)), work());
         let r = speak(
             "1 First. 2 Second. 3 Third. 4 Fourth. 5 Fifth.",
             Arc::new(SlowFirstSynth),
             &player,
-            &dir,
             Arc::new(AtomicBool::new(false)),
         )
         .unwrap();
         assert!(r.stopped);
         assert_eq!(r.sentences, 1);
-        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1646,17 +2064,13 @@ mod tests {
                 made: Mutex::new(vec![]),
                 fail_on: None,
             }),
-            FakePlayer {
-                played: Mutex::new(vec![]),
-                stop_after: None,
-            },
+            FakePlayer::new(None),
             work(),
         );
         let r = speak(
             "First one. Second one! Third one?",
             synth.clone(),
             &player,
-            &dir,
             Arc::new(AtomicBool::new(false)),
         )
         .unwrap();
@@ -1675,11 +2089,6 @@ mod tests {
             *player.played.lock().unwrap(),
             ["part-0.wav", "part-1.wav", "part-2.wav"]
         );
-        assert_eq!(
-            std::fs::read_dir(&dir).unwrap().count(),
-            0,
-            "no audio files are left behind"
-        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1690,33 +2099,25 @@ mod tests {
                 made: Mutex::new(vec![]),
                 fail_on: None,
             }),
-            FakePlayer {
-                played: Mutex::new(vec![]),
-                stop_after: Some(1),
-            },
+            FakePlayer::new(Some(1)),
             work(),
         );
         let r = speak(
             "One. Two. Three. Four. Five.",
             synth,
             &player,
-            &dir,
             Arc::new(AtomicBool::new(false)),
         )
         .unwrap();
         assert!(r.stopped);
         assert_eq!(r.sentences, 1);
         assert_eq!(player.played.lock().unwrap().len(), 1);
-        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn an_engine_failure_is_an_error_only_when_nothing_was_said() {
-        let player = FakePlayer {
-            played: Mutex::new(vec![]),
-            stop_after: None,
-        };
+        let player = FakePlayer::new(None);
         let dir = work();
         let early = speak(
             "Boom now. After.",
@@ -1725,7 +2126,6 @@ mod tests {
                 fail_on: Some("Boom"),
             }),
             &player,
-            &dir,
             Arc::new(AtomicBool::new(false)),
         );
         assert_eq!(early.unwrap_err(), "engine broke");
@@ -1736,7 +2136,6 @@ mod tests {
                 fail_on: Some("Boom"),
             }),
             &player,
-            &dir,
             Arc::new(AtomicBool::new(false)),
         )
         .unwrap();
@@ -1773,23 +2172,143 @@ mod tests {
 
     #[test]
     fn with_a_dump_folder_the_sentences_are_saved_not_played() {
-        let (dir, out) = (work(), work());
-        std::fs::create_dir_all(&dir).unwrap();
-        let wav = dir.join("part-0.wav");
-        std::fs::write(&wav, write_wav(&tone(24000, 0.05, 0.3))).unwrap();
-        SystemPlayer {
+        let out = work();
+        let mut sink = SystemPlayer {
             dump: Some(out.clone()),
         }
-        .play(&wav, &AtomicBool::new(false))
+        .open(24000)
         .unwrap();
+        let no = AtomicBool::new(false);
+        sink.write(&tone(24000, 0.05, 0.3), &no).unwrap();
+        sink.write(&tone(24000, 0.05, 0.3), &no).unwrap();
+        sink.finish(&no).unwrap();
         let saved: Vec<_> = std::fs::read_dir(&out)
             .unwrap()
             .filter_map(|e| e.ok())
             .collect();
-        assert_eq!(saved.len(), 1);
+        assert_eq!(saved.len(), 2);
         assert!(read_wav(&std::fs::read(saved[0].path()).unwrap()).is_ok());
-        let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&out);
+    }
+
+    /// An answer is spoken while it streams in: a sentence as soon as it is
+    /// finished, a code block once it is closed, never a list number alone.
+    #[test]
+    fn streamed_text_is_cut_at_finished_sentences_and_lines() {
+        let mut c = Chunker::default();
+        assert!(
+            c.push("Sure, I found thr").is_empty(),
+            "nothing finished yet"
+        );
+        assert_eq!(
+            c.push("ee meetings. The first "),
+            ["Sure, I found three meetings."]
+        );
+        assert!(
+            c.push("is at 9.30 with Dr. Rao").is_empty(),
+            "no cut at 9.30 or Dr."
+        );
+        assert_eq!(
+            c.push(" today.\n1. Pack"),
+            [" The first is at 9.30 with Dr. Rao today.\n"]
+        );
+        assert!(
+            c.push(" the bag").is_empty(),
+            "\"1.\" starts a list item, not a sentence"
+        );
+        assert_eq!(c.push("\n```rust\nlet x"), ["1. Pack the bag\n"]);
+        assert!(c.push(" = 1;\n").is_empty(), "code waits for its end");
+        assert_eq!(c.push("```\nDone"), ["```rust\nlet x = 1;\n```\n"]);
+        assert_eq!(c.finish(), ["Done"]);
+        let spoken: Vec<String> = [
+            "Sure, I found three meetings.",
+            "1. Pack the bag\n",
+            "```rust\nlet x = 1;\n```\n",
+        ]
+        .iter()
+        .flat_map(|t| sentences(&clean_for_speech(t), 220))
+        .collect();
+        assert_eq!(
+            spoken,
+            [
+                "Sure, I found three meetings.",
+                "Pack the bag.",
+                "There is some code on screen."
+            ]
+        );
+    }
+
+    /// The first sentence plays before the rest of the answer has arrived.
+    #[test]
+    fn speech_starts_before_the_answer_is_complete() {
+        let (tx, rx) = mpsc::channel();
+        let player = FakePlayer::new(None);
+        let played = player.played.clone();
+        let speaker = std::thread::spawn(move || {
+            speak_stream(
+                rx,
+                Arc::new(FakeSynth {
+                    made: Mutex::new(vec![]),
+                    fail_on: None,
+                }),
+                &player,
+                Arc::new(AtomicBool::new(false)),
+            )
+        });
+        tx.send("First one. Second".to_string()).unwrap();
+        let started = std::time::Instant::now();
+        while played.lock().unwrap().is_empty() && started.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            played.lock().unwrap().len(),
+            1,
+            "the finished sentence played"
+        );
+        tx.send(" one.".to_string()).unwrap();
+        drop(tx);
+        let r = speaker.join().unwrap().unwrap();
+        assert_eq!(r.sentences, 2);
+    }
+
+    /// Text that reaches `say -` in pieces, split inside a character, is read whole.
+    #[test]
+    fn a_character_split_between_reads_is_kept_whole() {
+        struct Drip(Vec<Vec<u8>>);
+        impl std::io::Read for Drip {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if self.0.is_empty() {
+                    return Ok(0);
+                }
+                let piece = self.0.remove(0);
+                buf[..piece.len()].copy_from_slice(&piece);
+                Ok(piece.len())
+            }
+        }
+        let text = "Caf\u{e9} ok.".as_bytes().to_vec();
+        let (a, b) = text.split_at(4); // inside the two bytes of "é"
+        let (tx, rx) = mpsc::channel();
+        let mut drip = Drip(vec![a.to_vec(), b.to_vec()]);
+        let mut pending = Vec::new();
+        let mut buf = [0u8; 16];
+        loop {
+            let n = std::io::Read::read(&mut drip, &mut buf).unwrap();
+            if n == 0 {
+                break;
+            }
+            pending.extend_from_slice(&buf[..n]);
+            let valid = match std::str::from_utf8(&pending) {
+                Ok(_) => pending.len(),
+                Err(e) if e.error_len().is_none() => e.valid_up_to(),
+                Err(_) => pending.len(),
+            };
+            tx.send(String::from_utf8_lossy(&pending[..valid]).into_owned())
+                .unwrap();
+            pending.drain(..valid);
+        }
+        drop(tx);
+        let got: String = rx.iter().collect();
+        assert_eq!(got, "Caf\u{e9} ok.");
     }
 
     #[test]
@@ -1799,10 +2318,7 @@ mod tests {
                 made: Mutex::new(vec![]),
                 fail_on: None,
             }),
-            FakePlayer {
-                played: Mutex::new(vec![]),
-                stop_after: None,
-            },
+            FakePlayer::new(None),
             work(),
         );
         assert_eq!(
@@ -1810,7 +2326,6 @@ mod tests {
                 "```\ncode\n```",
                 synth.clone(),
                 &player,
-                &dir,
                 Arc::new(AtomicBool::new(false))
             )
             .unwrap()
@@ -1818,7 +2333,7 @@ mod tests {
             1
         );
         assert_eq!(
-            speak("  ", synth, &player, &dir, Arc::new(AtomicBool::new(false))).unwrap(),
+            speak("  ", synth, &player, Arc::new(AtomicBool::new(false))).unwrap(),
             Spoken {
                 sentences: 0,
                 stopped: false

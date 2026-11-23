@@ -748,6 +748,18 @@ internal sealed class TrayContext : ApplicationContext
         // asked about, so that window opens with the first words.
         using var poll = new System.Windows.Forms.Timer { Interval = 250 };
         string? shown = null;
+        // Spoken answers start with the first sentence while the rest streams
+        // in; the reading stops if the answer fails or is replaced.
+        SayStream? saying = null;
+        var speakEarly = Speaking.Enabled(_install.Paths)
+            && AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "speak-as-it-comes");
+        void SpeakSoFar(string partial)
+        {
+            if (!speakEarly)
+                return;
+            saying ??= Ctl.StartSaying(_install);
+            saying?.Feed(partial);
+        }
         if (kind == AskKind.Screen)
         {
             Notify("FRIDAY", "Looking at your screen: " + question, ToolTipIcon.None);
@@ -766,6 +778,7 @@ internal sealed class TrayContext : ApplicationContext
                 {
                     answer.ShowPartial(partial);
                     shown = partial;
+                    SpeakSoFar(partial);
                 }
             };
             poll.Start();
@@ -787,6 +800,7 @@ internal sealed class TrayContext : ApplicationContext
                 if (answer is null || answer.IsClosed)
                     answer = NewAnswerWindow(kind, question, "");
                 answer.ShowPartial(partial);
+                SpeakSoFar(partial);
             }, null);
         };
         var (ok, output, exitCode) = await Ctl.RunAsync(
@@ -801,6 +815,7 @@ internal sealed class TrayContext : ApplicationContext
         // A newer question replaced this one: its card goes, nothing is shown.
         if (inflight.IsCancellationRequested)
         {
+            saying?.Stop();
             if (answer is { IsClosed: false })
                 answer.Close();
             return;
@@ -820,6 +835,7 @@ internal sealed class TrayContext : ApplicationContext
                 screenAsk: kind == AskKind.Screen, alreadyConfirming: confirm is not null, autoConf.Action))
         {
             Notify("FRIDAY acted on its own", outcome.Answer + "\n(Settings, Desktop control: How much FRIDAY may do)", ToolTipIcon.Info);
+            saying?.Stop();
             await RunRequestAsync(kind, question, context, request, autoConf.Action, answer, options);
             return;
         }
@@ -848,7 +864,7 @@ internal sealed class TrayContext : ApplicationContext
                     options with { Thorough = true, Avoid = Asking.AvoidFor(outcome.ServedBy) }));
             answer.FollowUp += () => _ = FollowUpAsync(outcome.Answer);
         }
-        ShowAnswer(answer, outcome, options.Spoken);
+        ShowAnswer(answer, outcome, options.Spoken, saying);
         answer.Activate();
         if (outcome.Confirmation is { } spokenConf && options.Spoken && Listening.Installed(_install.Paths)
             && AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "voice-confirm"))
@@ -874,10 +890,11 @@ internal sealed class TrayContext : ApplicationContext
     /// Asked by voice and read aloud to the end (not stopped, the card still
     /// open): after a sound, a follow-up needs no key.
     /// </summary>
-    private async Task SayThenListenAsync(AnswerWindow answer, string said)
+    private async Task SayThenListenAsync(AnswerWindow answer, string said, SayStream? saying = null)
     {
         // With "Hey Friday" on, its own conversation hears the follow-up.
-        if (await Ctl.SayAsync(_install, said) != 0 || answer.IsClosed || _wake is not null)
+        var read = saying is null ? await Ctl.SayAsync(_install, said) : await saying.EndAsync(said);
+        if (read != 0 || answer.IsClosed || _wake is not null)
             return;
         var heard = await ListenOnceAsync(answer, "After the sound, ask a follow-up, or say stop.");
         if (string.IsNullOrWhiteSpace(heard) || Listening.EndsConversation(heard))
@@ -1003,15 +1020,21 @@ internal sealed class TrayContext : ApplicationContext
     /// Shows the answer, and reads a good one aloud when spoken answers are
     /// on; asked by voice, a follow-up can be spoken after it.
     /// </summary>
-    private void ShowAnswer(AnswerWindow form, AskOutcome outcome, bool spoken = false)
+    private void ShowAnswer(AnswerWindow form, AskOutcome outcome, bool spoken = false, SayStream? saying = null)
     {
         form.ShowOutcome(outcome);
         if (!outcome.Ok || outcome.Confirmation is not null || string.IsNullOrWhiteSpace(outcome.Answer)
             || !Speaking.Enabled(_install.Paths))
+        {
+            // Begun while it streamed, but not an answer to read: stop.
+            saying?.Stop();
             return;
+        }
         if (spoken && Listening.Installed(_install.Paths)
             && AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "voice-followup"))
-            _ = SayThenListenAsync(form, outcome.Answer);
+            _ = SayThenListenAsync(form, outcome.Answer, saying);
+        else if (saying is not null)
+            _ = saying.EndAsync(outcome.Answer);
         else
             Ctl.Say(_install, outcome.Answer);
     }

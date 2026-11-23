@@ -137,6 +137,8 @@ if [[ "\$*" == *"--thorough"* ]]; then
 fi
 echo '{"accepted":true}'
 if [[ "\$target_arg" == *nodaemon* ]]; then echo "no token found; daemon not running at /x/state.json (is friday-linux-daemon up?)" >&2; exit 1; fi
+if [[ "\$target_arg" == *streamfail* ]]; then echo '{"partial":"Half an ans"}'; sleep 0.7; printf '{\n "outcome": "failed",\n "error": "network unreachable"\n}\n'; exit 1; fi
+if [[ "\$target_arg" == *streamy* ]]; then echo '{"partial":"First part. Sec"}'; sleep 0.7; echo '{"partial":"First part. Second part."}'; sleep 0.7; printf '{\n "outcome": "completed",\n "result": "First part. Second part. Third."\n}\n'; exit 0; fi
 if [[ "\$target_arg" == *slowgoal* ]]; then echo '{"accepted":true}'; echo "timed out after 180s waiting for the goal to finish" >&2; exit 1; fi
 if [[ "\$target_arg" == *refused* ]]; then printf '{\n "outcome": "failed",\n "error": "Couldn'"'"'t reach your AI provider. Check your internet connection (or that your local model server is running)."\n}\n'; echo "llamacpp: tcp connect error: Connection refused" >&2; exit 1; fi
 if [[ "\$target_arg" == *limit* ]]; then printf '{\n "outcome": "failed",\n "error": "provider opencode: 429 FreeUsageLimitError"\n}\n'; exit 1; fi
@@ -2032,6 +2034,12 @@ bash "$F" voice speak on >/dev/null
 contains "on" "$(bash "$F" voice speak status)" "Spoken answers: on"
 : >"$LOG"; bash "$F" ask "what is rust" >/dev/null 2>&1; sleep 0.6
 contains "an answer is spoken when it is on" "$(cat "$LOG")" "friday-ctl-say"
+# Spoken as it streams in: one reading that started with the first words.
+: >"$LOG"; bash "$F" ask "streamy question" >/dev/null 2>&1; sleep 1
+contains "a streamed answer is read whole" "$(cat "$LOG")" "friday-ctl-say First part. Second part. Third."
+[ "$(grep -c "friday-ctl-say First" "$LOG")" -eq 1 ] && pass "and read once" || fail "a streamed answer was read more than once: $(cat "$LOG")"
+: >"$LOG"; bash "$F" ask "streamfail question" >/dev/null 2>&1; sleep 1
+contains "a streamed answer that fails stops the voice" "$(cat "$LOG")" "friday-ctl-say --stop"
 # Asked by voice and said to the end: after a sound, a follow-up needs no key.
 mkdir -p "$HOME/.local/share/friday/whisper"; head -c 100 /dev/zero >"$HOME/.local/share/friday/whisper/ggml-base.en.bin"
 export STUB_INACTIVE=1

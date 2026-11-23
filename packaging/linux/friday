@@ -2242,6 +2242,45 @@ friday_voice() {
 # checksum (the hashes GitHub publishes for these release files).
 friday_speak_dir() { echo "${FRIDAY_VOICE_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/friday/voice}"; }
 friday_speak_flag() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/speak"; }
+
+# An answer read aloud while it streams (speak-as-it-comes): the first
+# friday_say_feed starts one `friday-ctl say -` on a FIFO and each call sends
+# what is new in the answer so far; friday_say_close ends its input, and
+# friday_say_wait gives its exit code once it has spoken (5: stopped).
+friday_say_feed() {
+  local so_far="$1"
+  [ -z "${say_off:-}" ] || return 0
+  if [ -z "${say_fd:-}" ]; then
+    say_dir=$(mktemp -d) || return 0
+    mkfifo "$say_dir/in" || return 0
+    ( friday-ctl say - <"$say_dir/in" >/dev/null 2>&1; echo $? >"$say_dir/rc" ) &
+    exec {say_fd}>"$say_dir/in"
+    say_sent=""
+  fi
+  case "$so_far" in
+    # A write after the voice stopped hits a closed pipe: in a subshell, so
+    # only that subshell gets the signal.
+    "$say_sent"*) ( printf '%s' "${so_far:${#say_sent}}" >&"$say_fd" ) 2>/dev/null || true
+                  say_sent="$so_far" ;;
+    # The answer was rewritten: nothing more is sent.
+    *) say_off=1 ;;
+  esac
+}
+friday_say_close() {
+  [ -n "${say_fd:-}" ] || return 0
+  exec {say_fd}>&-
+  say_fd=""
+}
+friday_say_wait() {
+  local i
+  for i in $(seq 1 6000); do
+    [ ! -s "$say_dir/rc" ] || break
+    sleep 0.1
+  done
+  local rc; rc=$(cat "$say_dir/rc" 2>/dev/null || echo 1)
+  rm -rf "$say_dir"
+  return "$rc"
+}
 friday_speak_ready() { [ -x "$(friday_speak_dir)/bin/sherpa-onnx-offline-tts" ] && [ -d "$(friday_speak_dir)/model" ]; }
 
 friday_voice_speak() {
@@ -3702,6 +3741,7 @@ dictation-cleanup|Speech drops \"um\" and \"uh\" and uses your own words (~/.con
 propose-memories|\"I use fish …\" in a question: offer to remember it (nothing is kept unless you say so)
 memory-file|Every ask carries what you asked FRIDAY to remember (~/.config/friday/memory.md)
 live-web|Questions about the weather, news, scores or prices search the web without \"search\" first
+speak-as-it-comes|Spoken answers start with the first sentence while the rest is still coming
 usage-page|friday usage: calls, failures, free-limit hits and speed per AI provider
 memory-changes|A changed fact (\"I moved to Pune\") closes the old one with a date in memory.md
 brief|\"What did I miss?\" answered from FRIDAY's own records (agents, standing tasks, reminders)
@@ -4902,14 +4942,20 @@ case "${1:-}" in
     # -r replaces it); the final answer replaces it too. friday-ctl --stream
     # prints the answer so far as {"partial": ...} lines.
     stream_ctl() {
-      local outf ctl shown="" partial view
+      local outf ctl shown="" partial view speak_early=false
       outf=$(mktemp)
+      # Spoken answers start with the first sentence while the rest streams in.
+      # Not a rewrite: that text replaces the selection, it isn't read out.
+      [ -z "${rewrite:-}" ] && [ -e "$(friday_speak_flag)" ] && friday_speak_ready \
+        && friday_feature_on speak-as-it-comes && speak_early=true
       "$@" --stream >"$outf" 2>&1 &
       ctl=$!
       while kill -0 "$ctl" 2>/dev/null; do
         sleep 0.4
-        [ -n "$nid" ] || continue
+        $speak_early || [ -n "$nid" ] || continue
         partial=$(grep '^{"partial"' "$outf" | tail -n 1 | jq -r '.partial // empty' 2>/dev/null || true)
+        [ -z "$partial" ] || ! $speak_early || friday_say_feed "$partial"
+        [ -n "$nid" ] || continue
         if [ -n "$partial" ] && [ "$partial" != "$shown" ]; then
           view="$partial"
           [ "${#view}" -le 280 ] || view="…${view: -279}"
@@ -5027,6 +5073,7 @@ case "${1:-}" in
         # Its progress card says where the answer went instead of going stale.
         [ -z "${nid:-}" ] || notify-send -a FRIDAY -t 3000 -r "$nid" -- "FRIDAY" \
           "Replaced by your newer question (this answer is in friday answers)." 2>/dev/null || true
+        friday_say_close
         return 0
       fi
       # Spoken answers (friday voice speak on): the answer is read aloud while
@@ -5034,6 +5081,13 @@ case "${1:-}" in
       # by voice and said to the end (not stopped): after a sound, FRIDAY
       # listens a few seconds for a follow-up, no key needed.
       if $ans_ok && [ -e "$(friday_speak_flag)" ] && friday_speak_ready; then
+        # Begun while it streamed: the rest of the answer, then its end.
+        local streamed=false
+        if [ -n "${say_fd:-}" ]; then
+          friday_say_feed "$answer"
+          friday_say_close
+          streamed=true
+        fi
         (
           # Talk-over on: talking while it speaks stops it, and what was said
           # is asked as a follow-up (the reading ends, so nothing else listens).
@@ -5044,7 +5098,11 @@ case "${1:-}" in
               FRIDAY_SPOKEN=1 exec bash "$0" ask --follow-up "$said"
             ) &
           fi
-          printf '%s' "$answer" | friday-ctl say - || exit 0
+          if $streamed; then
+            friday_say_wait || exit 0
+          else
+            printf '%s' "$answer" | friday-ctl say - || exit 0
+          fi
           [ -n "${FRIDAY_SPOKEN:-}" ] && friday_feature_on voice-followup && friday_voice_ready || exit 0
           # With "hey Friday" on, its own conversation hears the follow-up.
           ! systemctl --user is-active --quiet friday-wake.service 2>/dev/null || exit 0
@@ -5055,6 +5113,13 @@ case "${1:-}" in
           FRIDAY_SPOKEN=1 exec bash "$0" ask --follow-up "$heard"
         ) </dev/null >/dev/null 2>&1 &
         disown 2>/dev/null || true
+      fi
+      # Begun while it streamed, but no answer to read (it failed, or needs a
+      # yes first): stop.
+      if [ -n "${say_fd:-}" ]; then
+        friday_say_close
+        friday-ctl say --stop >/dev/null 2>&1 || true
+        rm -rf "${say_dir:-}"
       fi
 
       preview="$answer"
@@ -5323,6 +5388,11 @@ case "${1:-}" in
     action_to_confirm=$(jq -r '.needs_confirmation.action // empty' <<<"$summary" 2>/dev/null || true)
     preview_to_confirm=$(jq -r '.needs_confirmation.preview // empty' <<<"$summary" 2>/dev/null || true)
     if [ "$ctl_rc" -eq 3 ] && [ -n "$action_to_confirm" ]; then
+      # A question before acting is not an answer to read out.
+      if [ -n "${say_fd:-}" ]; then
+        friday_say_close
+        friday-ctl say --stop >/dev/null 2>&1 || true
+      fi
       (
         # "act" (friday autonomy): no question; the answer says what was done.
         # What can't be taken back still asks (deleting, formatting, root,
