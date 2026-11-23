@@ -177,8 +177,29 @@ impl WebAdapter {
     async fn get_text(&self, req: &ActionRequest, url: &str) -> Result<String, FetchError> {
         let mut current = url.to_string();
         for _hop in 0..=MAX_REDIRECTS {
-            let resp = self
-                .client
+            // A name pointed inside (`127.0.0.1.nip.io`, a home DNS entry)
+            // is refused like the address itself, and the request goes to the
+            // address that was checked: a second lookup can't move it inside.
+            let pinned = match resolve_outside(&current).await {
+                Err(()) => {
+                    return Err(FetchError::EgressDenied(
+                        EgressDenyReason::InternalDestination,
+                    ))
+                }
+                Ok(Some((name, addr))) => Some(
+                    reqwest::Client::builder()
+                        .timeout(Duration::from_secs(10))
+                        .user_agent(concat!("friday-web/", env!("CARGO_PKG_VERSION")))
+                        .redirect(reqwest::redirect::Policy::none())
+                        .resolve(&name, addr)
+                        .build()
+                        .map_err(|e| FetchError::Http(format!("client: {e}")))?,
+                ),
+                Ok(None) => None,
+            };
+            let resp = pinned
+                .as_ref()
+                .unwrap_or(&self.client)
                 .get(&current)
                 .send()
                 .await
@@ -293,6 +314,33 @@ fn parse_search_results(html: &str, limit: usize) -> Vec<serde_json::Value> {
         }
     }
     hits
+}
+
+/// For a `url` that names a host (an address is the kernel's check): the
+/// first address it resolves to, to pin the request to, or `Err` when any
+/// address is this computer or the local network. `Ok(None)`: an address,
+/// or a name that doesn't resolve (the request then fails on its own).
+async fn resolve_outside(url: &str) -> Result<Option<(String, std::net::SocketAddr)>, ()> {
+    let Ok(u) = Url::parse(url) else {
+        return Ok(None);
+    };
+    let Some(url::Host::Domain(name)) = u.host() else {
+        return Ok(None);
+    };
+    let port = u.port_or_known_default().unwrap_or(80);
+    let addrs: Vec<std::net::SocketAddr> = match tokio::time::timeout(
+        Duration::from_secs(3),
+        tokio::net::lookup_host((name.to_string(), port)),
+    )
+    .await
+    {
+        Ok(Ok(a)) => a.collect(),
+        _ => return Ok(None),
+    };
+    if addrs.iter().any(|a| crate::egress::ip_is_internal(a.ip())) {
+        return Err(());
+    }
+    Ok(addrs.first().map(|a| (name.to_string(), *a)))
 }
 
 /// Extract the `<title>…</title>` inner text (tags stripped, whitespace
@@ -494,4 +542,22 @@ mod tests {
         assert!(!res.success);
         assert!(res.error.unwrap().contains("scheme"));
     }
+}
+/// A name that resolves to this computer is refused like 127.0.0.1:
+/// nothing reaches the server behind it.
+#[tokio::test]
+async fn a_name_pointing_inside_is_refused_before_any_request() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let adapter = WebAdapter::new();
+    let req = ActionRequest::new(
+        "web",
+        "fetch",
+        json!({ "url": format!("http://localhost:{port}/admin") }),
+    );
+    let res = adapter.execute(req).await;
+    assert!(!res.success, "{res:?}");
+    assert_eq!(res.metadata["egress_deny"], "internal_destination");
+    let reached = tokio::time::timeout(Duration::from_millis(200), listener.accept()).await;
+    assert!(reached.is_err(), "the server behind the name was reached");
 }
