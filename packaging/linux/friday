@@ -77,6 +77,7 @@ Autonomous Agent & Cognitive Loop:
   friday agents [show|allow|deny|reply|accept|discard <id>|hooks|check|worktree [on|off]|status|on|off]
                                    Coding agents FRIDAY runs for you (opencode, agy, Claude Code): follow, answer, turn off
   friday memory [list|edit|forget <words>]  What FRIDAY remembers about you (memory.md)
+  friday memory import <file> [--apply]  Bring in another assistant's notes (a preview first)
   friday secrets [status|keychain|file]  API keys in your desktop keyring, or back in friday.env
   friday desktop [status|on|off]   Let FRIDAY control your windows, apps, volume and music
   friday keys update               Add FRIDAY keys from a newer version to your key file (FRIDAY OS)
@@ -3154,7 +3155,7 @@ friday_forget() {
 }
 
 # memory.md: what you asked FRIDAY to remember, one "- " line each; every
-# ask carries it. `friday memory [list|edit|forget <words>]`.
+# ask carries it. `friday memory [list|edit|forget <words>|import <file> [--apply]]`.
 friday_memory_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/memory.md"; }
 friday_memory() {
   local f; f=$(friday_memory_file)
@@ -3178,7 +3179,12 @@ friday_memory() {
       [ "${n:-0}" -gt 0 ] || { echo "No line of $f has \"$words\"."; return 1; }
       awk -v w="${words,,}" '!(/^- / && index(tolower($0), w))' "$f" >"$f.tmp" && mv -f "$f.tmp" "$f"
       echo "Forgot $n line(s) with \"$words\"." ;;
-    *) echo "Usage: friday memory [list|edit|forget <words>]" >&2; return 2 ;;
+    import)
+      # Another assistant's notes (a CLAUDE.md, an exported memory list):
+      # a preview of what would be added, then --apply adds it.
+      [ -n "${2:-}" ] || { echo "usage: friday memory import <file> [--apply]" >&2; return 2; }
+      friday-ctl memory import "${@:2}" ;;
+    *) echo "Usage: friday memory [list|edit|forget <words>|import <file> [--apply]]" >&2; return 2 ;;
   esac
 }
 

@@ -1406,6 +1406,16 @@ async fn main() -> std::process::ExitCode {
     if raw.first().map(String::as_str) == Some("agent-hooks") {
         return agent_hooks(&raw[1..]);
     }
+    // Another assistant's notes into memory.md: a preview first, --apply adds.
+    if raw.first().map(String::as_str) == Some("memory") {
+        return match memory_import(&raw[1..]) {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("friday-ctl: {e}");
+                std::process::ExitCode::from(2)
+            }
+        };
+    }
     // A run's separate copy: brought in (staged) or dropped.
     if raw.first().map(String::as_str) == Some("agents") {
         let dir = friday_mobile::agent_runs::runs_dir();
@@ -2057,6 +2067,39 @@ async fn send_command(
             }
         }
     }
+}
+
+/// `memory import <file> [--apply]`: what another assistant's notes would add
+/// to memory.md, and with --apply, adds it.
+fn memory_import(args: &[String]) -> Result<(), String> {
+    use friday_mobile::about;
+    let (Some("import"), Some(file)) = (args.first().map(String::as_str), args.get(1)) else {
+        return Err("usage: friday-ctl memory import <file> [--apply]".into());
+    };
+    let apply = args.iter().any(|a| a == "--apply");
+    let meta = std::fs::metadata(file).map_err(|e| format!("{file}: {e}"))?;
+    if meta.len() > 1_000_000 {
+        return Err(format!("{file} is over 1 MB: not a notes file"));
+    }
+    let notes = std::fs::read_to_string(file).map_err(|e| format!("{file}: {e}"))?;
+    let have = about::facts(&std::fs::read_to_string(about::path()).unwrap_or_default());
+    let new = about::importable(&notes, &have);
+    let dest = about::path();
+    if new.is_empty() {
+        println!("Nothing new to bring in from {file}.");
+        return Ok(());
+    }
+    if !apply {
+        println!("Would add {} line(s) to {}:", new.len(), dest.display());
+        for f in &new {
+            println!("- {f}");
+        }
+        println!("Nothing was added. Run again with --apply to add them.");
+        return Ok(());
+    }
+    let n = about::remember_all(&new).map_err(|e| format!("{}: {e}", dest.display()))?;
+    println!("Added {n} line(s) to {}.", dest.display());
+    Ok(())
 }
 
 #[cfg(test)]
