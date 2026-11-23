@@ -365,6 +365,13 @@ internal sealed partial class SettingsWindow : FluentWindow
         MessageBox.Show(this, said.Trim(), "What FRIDAY may do on its own", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
+    /// <summary>Agent steps waiting for an answer, runs going now, standing tasks and runs finished lately.</summary>
+    private async void ShowActivity()
+    {
+        var (_, said) = await Ctl.RunAsync(_install, ["activity"], TimeSpan.FromSeconds(15));
+        MessageBox.Show(this, said.Trim(), "Everything running", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
     /// <summary>Calls, failures, free-limit hits and speed per provider, from this PC's egress log.</summary>
     private async void ShowUsage()
     {
@@ -1002,6 +1009,9 @@ internal sealed partial class SettingsWindow : FluentWindow
             on => ChangeEnv(e => EnvFile.WithSetting(e, AppSettings.AgentWorktree, on ? "1" : null)));
 
         yield return AgentHooksSwitch();
+
+        if (AppSettings.FeatureOn(env, "activity"))
+            yield return Row(Pill("Everything running…", SymbolRegular.TaskListLtr24), ShowActivity);
 
         var approved = AgentRuns.HooksApprovedSince(_install.Paths.AgentsDir, DateTimeOffset.UtcNow.AddDays(-1).ToUnixTimeSeconds());
         var steps = approved == 1 ? "1 routine step" : $"{approved} routine steps";

@@ -94,6 +94,7 @@ public static class AppSettings
         ("live-web", "Questions about the weather, news, scores or prices search the web without \"search\" first"),
         ("backup", "Back up settings, memory and history, and restore one after checking it"),
         ("risk-table", "Settings shows what FRIDAY may do on its own, what asks first and what never runs"),
+        ("activity", "One list of agent steps waiting for you, runs going now, standing tasks and runs finished lately"),
         ("usage-page", "Settings shows calls, failures, free-limit hits and speed per AI provider"),
         ("memory-changes", "A changed fact (\"I moved to Pune\") closes the old one with a date in the memory file"),
         ("brief", "\"What did I miss?\" answered from FRIDAY's own records (agents, standing tasks, reminders)"),

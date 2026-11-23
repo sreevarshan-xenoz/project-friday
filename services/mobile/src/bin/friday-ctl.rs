@@ -1507,6 +1507,23 @@ async fn main() -> std::process::ExitCode {
             }
         };
     }
+    // Agent steps waiting for an answer, runs going now, standing tasks and
+    // runs finished lately, in one list.
+    if raw.first().map(String::as_str) == Some("activity") {
+        if !friday_mobile::features::on("activity") {
+            println!("The activity list is turned off (Settings, Features: activity).");
+            return std::process::ExitCode::SUCCESS;
+        }
+        println!(
+            "{}",
+            friday_mobile::activity::report(
+                &friday_mobile::agent_runs::runs_dir(),
+                &friday_mobile::standing::store_path(),
+                chrono::Utc::now().timestamp()
+            )
+        );
+        return std::process::ExitCode::SUCCESS;
+    }
     // How each AI provider has done lately, from the local egress log.
     if raw.first().map(String::as_str) == Some("usage") {
         let days: u32 = raw
