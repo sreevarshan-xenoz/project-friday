@@ -328,6 +328,15 @@ impl Tool for FilesystemCapabilityTool {
             output: output.clone(),
             error: if !success && res.error.is_none() {
                 Some(output)
+            } else if verb == "write_file" && crate::features::on("action-check") {
+                // A write that failed outright says so first, like any check.
+                res.error.map(|e| {
+                    if e.starts_with("Failed:") {
+                        e
+                    } else {
+                        format!("Failed: {e}")
+                    }
+                })
             } else {
                 res.error
             },

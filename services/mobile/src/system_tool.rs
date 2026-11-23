@@ -109,14 +109,22 @@ impl SysOp {
 }
 
 /// Check if a package is installed using `pacman -Q <pkg>`.
+/// Whether `pkg` is installed: a package (`pacman -Q`), or a group with any
+/// member installed (`pacman -Qg`, as `base-devel` is). None: couldn't ask.
 fn check_pacman_installed(pkg: &str) -> Option<bool> {
-    std::process::Command::new("pacman")
-        .args(["-Q", pkg])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .ok()
-        .map(|s| s.success())
+    let ask = |flag: &str| {
+        std::process::Command::new("pacman")
+            .args([flag, pkg])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .ok()
+            .map(|s| s.success())
+    };
+    match ask("-Q")? {
+        true => Some(true),
+        false => ask("-Qg"),
+    }
 }
 
 /// Builds preview text for a system operation from package presence.
@@ -149,7 +157,8 @@ pub fn package_job_verdict(op: &SysOp, installed: Option<bool>) -> String {
         },
         SysOp::Remove(p) => match installed {
             Some(true) => format!("Partly: the helper finished but {p} is still installed."),
-            _ => format!("Done: {p} is gone."),
+            Some(false) => format!("Done: {p} is gone."),
+            None => format!("Done: the helper removed {p} (not checked: pacman didn't answer)."),
         },
         SysOp::Update => format!("Done: {}", op.exact()),
     }
@@ -356,7 +365,16 @@ impl SystemTool {
                 }
                 Ok((state, log)) if state == "failed" => {
                     self.record(op, false, goal);
-                    return ToolResult::error(format!("{} failed.\n{}", op.exact(), tail(&log)));
+                    let failed = if crate::features::on("action-check") {
+                        "Failed: "
+                    } else {
+                        ""
+                    };
+                    return ToolResult::error(format!(
+                        "{failed}{} failed.\n{}",
+                        op.exact(),
+                        tail(&log)
+                    ));
                 }
                 Ok(_) => {}
                 Err(e) => {
