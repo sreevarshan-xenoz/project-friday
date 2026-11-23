@@ -3962,14 +3962,17 @@ impl InferenceFabric {
             });
             let began = std::time::Instant::now();
             // When its first words came (`friday usage`).
-            let first = std::sync::Mutex::new(None::<u64>);
+            // (first words, pieces): one piece is a whole answer handed over at
+            // the end, not a stream.
+            let first = std::sync::Mutex::new((None::<u64>, 0u32));
             let attempt = match progress {
                 Some(p) => {
                     let noted = |text: &str| {
-                        first
-                            .lock()
-                            .unwrap()
-                            .get_or_insert_with(|| began.elapsed().as_millis() as u64);
+                        {
+                            let mut f = first.lock().unwrap();
+                            f.0.get_or_insert_with(|| began.elapsed().as_millis() as u64);
+                            f.1 += 1;
+                        }
                         p(text);
                     };
                     run_streaming_attempt(
@@ -3984,7 +3987,10 @@ impl InferenceFabric {
                 }
                 None => run_attempt(timeout, provider.complete(&model.id, &prompt, false)).await,
             };
-            let first_ms = *first.lock().unwrap();
+            let first_ms = match *first.lock().unwrap() {
+                (Some(ms), pieces) if pieces > 1 => Some(ms),
+                _ => None,
+            };
             let is_local = model.capabilities.contains(&ModelCapability::Local)
                 || provider.name() == "ollama"
                 || provider.name() == "llamacpp";

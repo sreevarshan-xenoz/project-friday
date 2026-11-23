@@ -84,14 +84,20 @@ pub struct EgressEntry {
 /// A failed call's error in one word for the usage page (never its text).
 pub fn error_kind(error: &str) -> &'static str {
     let e = error.to_lowercase();
-    if e.contains("freeusagelimit")
-        || e.contains("429")
+    // A timeout first: its text may hold any number (a duration, an id).
+    if e.contains("timed out") || e.contains("timeout") {
+        return "timeout";
+    }
+    let status_429 = e
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|w| w == "429");
+    if status_429
+        || e.contains("freeusagelimit")
+        || e.contains("free_allowance_used")
         || e.contains("rate limit")
         || e.contains("quota")
     {
         "free_limit"
-    } else if e.contains("timed out") || e.contains("timeout") {
-        "timeout"
     } else {
         "other"
     }
@@ -660,5 +666,26 @@ mod tests {
             ..Default::default()
         };
         append_entry(&invalid_path, &entry);
+    }
+
+    #[test]
+    fn a_failure_is_named_by_its_kind_only() {
+        assert_eq!(
+            super::error_kind("Provider opencode returned error status 429: FreeUsageLimitError"),
+            "free_limit"
+        );
+        assert_eq!(
+            super::error_kind("402 {\"error\":{\"code\":\"free_allowance_used\"}}"),
+            "free_limit"
+        );
+        assert_eq!(
+            super::error_kind("request timed out after 429ms"),
+            "timeout"
+        );
+        assert_eq!(
+            super::error_kind("id 963aeee7-2569-dc50673ed429 failed"),
+            "other"
+        );
+        assert_eq!(super::error_kind("connection refused"), "other");
     }
 }

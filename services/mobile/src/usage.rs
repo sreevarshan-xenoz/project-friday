@@ -17,7 +17,7 @@ struct Row {
     tokens: u64,
     /// Calls without a token count: their text, for an estimate.
     uncounted_chars: usize,
-    local: bool,
+    local_calls: usize,
 }
 
 fn median(v: &mut [u64]) -> Option<u64> {
@@ -48,7 +48,7 @@ pub fn report(egress: &str, since: i64, days: u32) -> String {
         }
         let r = rows.entry(e.provider.clone()).or_default();
         r.calls += 1;
-        r.local |= e.local == Some(true);
+        r.local_calls += usize::from(e.local == Some(true));
         if e.outcome != "ok" {
             r.failed += 1;
             match e.error.as_deref() {
@@ -56,11 +56,10 @@ pub fn report(egress: &str, since: i64, days: u32) -> String {
                 Some("timeout") => r.timeouts += 1,
                 _ => {}
             }
-        } else if let Some(ms) = e.ms {
-            r.ms.push(ms);
-        }
-        if let Some(f) = e.first_ms {
-            r.first_ms.push(f);
+        } else {
+            // Answered calls only: a stream that broke off isn't a speed.
+            r.ms.extend(e.ms);
+            r.first_ms.extend(e.first_ms);
         }
         match e.tokens {
             Some(t) => r.tokens += t,
@@ -109,7 +108,7 @@ pub fn report(egress: &str, since: i64, days: u32) -> String {
                 (t, e) => format!("{t} tokens (+ about {e} sent uncounted)"),
             });
         }
-        let label = if r.local {
+        let label = if r.local_calls == r.calls {
             format!("{name} (on this computer)")
         } else {
             name
