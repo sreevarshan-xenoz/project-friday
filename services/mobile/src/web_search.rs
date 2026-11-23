@@ -678,6 +678,7 @@ impl WebSearcher for ChainedWebSearcher {
                     "error".to_string()
                 },
                 local: if backend.is_local() { Some(true) } else { None },
+                ..Default::default()
             };
             friday_intelligence::append_entry(&self.egress_log_path, &entry);
 

@@ -176,6 +176,7 @@ impl PageReader for DefaultPageReader {
                 masked: ctx.masked,
                 outcome: if result.is_ok() { "ok" } else { "error" }.to_string(),
                 local: None,
+                ..Default::default()
             },
         );
         result
