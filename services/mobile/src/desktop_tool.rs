@@ -130,21 +130,10 @@ pub fn audit_dir() -> Option<PathBuf> {
         .map(|d| d.to_path_buf())
 }
 
-/// Appends one line to `actions.jsonl` in `dir`, owner-readable only. A write
-/// that fails never stops the action it records.
+/// Appends one line to `actions.jsonl` in `dir` (chained; see
+/// [`crate::action_log`]). A write that fails never stops the action.
 pub(crate) fn append_audit(dir: &std::path::Path, line: &Value) {
-    let _ = std::fs::create_dir_all(dir);
-    let mut opts = std::fs::OpenOptions::new();
-    opts.create(true).append(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
-    }
-    if let Ok(mut f) = opts.open(dir.join("actions.jsonl")) {
-        use std::io::Write;
-        let _ = writeln!(f, "{line}");
-    }
+    crate::action_log::append(dir, line);
 }
 
 /// The `friday undo` entry for a window FRIDAY moved: the window and the

@@ -8,6 +8,7 @@
 //! All intelligence stays on the Windows PC.
 
 pub mod about;
+pub mod action_log;
 pub mod activity;
 pub mod agent_claude;
 pub mod agent_desktop;

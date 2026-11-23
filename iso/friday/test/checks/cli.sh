@@ -22,6 +22,11 @@ if [[ "\$1" == backup ]]; then
   echo 'Backed up 3 files to /tmp/x and checked them.'
   exit 0
 fi
+if [[ "\$1" == verify-log ]]; then
+  printf 'friday-ctl-verify-log\n' >> "$LOG"
+  echo 'The action log is intact: 3 actions'
+  exit 0
+fi
 if [[ "\$1" == risks ]]; then
   printf 'friday-ctl-risks\n' >> "$LOG"
   echo 'Asks first, with the exact action'
@@ -578,6 +583,7 @@ contains "friday risks shows the table" "$(bash "$F" risks)" "Asks first"
 bash "$F" feature risk-table off >/dev/null
 contains "the risk table can be turned off" "$(bash "$F" risks)" "turned off"
 bash "$F" feature risk-table on >/dev/null
+contains "friday verify-log checks the chain through friday-ctl" "$(bash "$F" verify-log)" "intact"
 # One list of runs, standing tasks and approvals.
 : >"$LOG"; contains "friday activity shows the list" "$(bash "$F" activity)" "Standing tasks"
 contains "from friday-ctl" "$(cat "$LOG")" "friday-ctl-activity"

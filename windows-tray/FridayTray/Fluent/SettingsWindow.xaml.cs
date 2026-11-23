@@ -331,6 +331,7 @@ internal sealed partial class SettingsWindow : FluentWindow
         }
         if (AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "risk-table"))
             yield return Row(Pill("What FRIDAY may do on its own…", SymbolRegular.ShieldCheckmark24), ShowRisks);
+        yield return Row(Pill("Check the action log…", SymbolRegular.DocumentCheckmark24), VerifyLog);
         if (AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "usage-page"))
             yield return Row(Pill("Usage and speed…", SymbolRegular.TopSpeed24), ShowUsage);
         yield return Row(Pill("What FRIDAY remembers about you…", SymbolRegular.Bookmark24), OpenMemoryFile);
@@ -360,6 +361,13 @@ internal sealed partial class SettingsWindow : FluentWindow
     }
 
     /// <summary>Every tool action and whether it runs, is watched, asks first or never runs.</summary>
+    private async void VerifyLog()
+    {
+        var (ok, said) = await Ctl.RunAsync(_install, ["verify-log"], TimeSpan.FromSeconds(15));
+        MessageBox.Show(this, said.Trim(), "Check the action log", MessageBoxButton.OK,
+            ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+    }
+
     private async void ShowRisks()
     {
         var (_, said) = await Ctl.RunAsync(_install, ["risks"], TimeSpan.FromSeconds(15));
