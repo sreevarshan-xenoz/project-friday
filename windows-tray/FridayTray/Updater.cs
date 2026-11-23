@@ -76,6 +76,9 @@ internal static class Updater
         if (expected is null)
             return (null, $"The release's checksum file doesn't list {r.MsiName}.");
         Directory.CreateDirectory(dir);
+        // Kept beside it, so a kept MSI can be checked again later (Rollback.Verified).
+        await File.WriteAllBytesAsync(Path.Combine(dir, "SHA256SUMS"), sums);
+        await File.WriteAllBytesAsync(Path.Combine(dir, "SHA256SUMS.sig"), sig);
         var path = Path.Combine(dir, r.MsiName);
         await using (var body = await http.GetStreamAsync(r.MsiUrl))
         await using (var file = File.Create(path))
@@ -93,20 +96,28 @@ internal static class Updater
     /// unreachable) the update goes ahead with nothing to go back to.</summary>
     private static async Task KeepForRollbackAsync(HttpClient http, Paths paths, Release next, string nextMsi)
     {
+        // Gathered beside the folder and swapped in whole: a failed download
+        // leaves the plan that was there as it was.
+        var dir = paths.RollbackDir + ".next";
         try
         {
-            if (Directory.Exists(paths.RollbackDir))
-                Directory.Delete(paths.RollbackDir, recursive: true);
+            if (Directory.Exists(dir))
+                Directory.Delete(dir, recursive: true);
             var now = Updates.Parse(await http.GetStringAsync(Updates.TagUrl(Current)));
-            if (now is null || now.Version != Current)
+            if (now is null || Rollback.Plain(now.Version) != Current)
                 return;
-            var (oldMsi, _) = await FetchAsync(http, now, Path.Combine(paths.RollbackDir, "old"));
+            var (oldMsi, _) = await FetchAsync(http, now, Path.Combine(dir, "old"));
             if (oldMsi is null)
                 return;
-            var newMsi = Path.Combine(paths.RollbackDir, "new", next.MsiName);
-            Directory.CreateDirectory(Path.GetDirectoryName(newMsi)!);
-            File.Copy(nextMsi, newMsi, overwrite: true);
-            Rollback.Write(paths.RollbackFile, new RollbackPlan(Current, next.Version, oldMsi, newMsi, DateTime.UtcNow));
+            var newDir = Path.Combine(dir, "new");
+            Directory.CreateDirectory(newDir);
+            foreach (var f in new[] { nextMsi, Path.Combine(Path.GetDirectoryName(nextMsi)!, "SHA256SUMS"), Path.Combine(Path.GetDirectoryName(nextMsi)!, "SHA256SUMS.sig") })
+                File.Copy(f, Path.Combine(newDir, Path.GetFileName(f)), overwrite: true);
+            if (Directory.Exists(paths.RollbackDir))
+                Directory.Delete(paths.RollbackDir, recursive: true);
+            Directory.Move(dir, paths.RollbackDir);
+            Rollback.Write(paths.RollbackFile, new RollbackPlan(Current, Rollback.Plain(next.Version),
+                Path.Combine(paths.RollbackDir, "old", now.MsiName), Path.Combine(paths.RollbackDir, "new", next.MsiName), DateTime.UtcNow));
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException or UnauthorizedAccessException)
         {

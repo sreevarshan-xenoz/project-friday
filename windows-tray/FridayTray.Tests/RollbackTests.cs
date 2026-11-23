@@ -49,8 +49,50 @@ public class RollbackTests
         {
             Directory.Delete(Path.GetDirectoryName(file)!, recursive: true);
         }
-        var script = Rollback.RevertScript(Plan).Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
-        Assert.Equal(["msiexec /x \"C:\\r\\new\\FRIDAY-0.8.3-x64.msi\" /passive", "msiexec /i \"C:\\r\\old\\FRIDAY-0.8.2-x64.msi\" /passive"], script);
+        var script = Rollback.RevertScript(Plan, @"C:\f\friday-tray.exe");
+        Assert.Contains("start \"\" /wait msiexec /x \"C:\\r\\new\\FRIDAY-0.8.3-x64.msi\" /passive /norestart\r\n", script);
+        Assert.Contains("start \"\" /wait msiexec /i \"C:\\r\\old\\FRIDAY-0.8.2-x64.msi\" /passive /norestart\r\n", script);
+        // The old one failing puts the new one back; FRIDAY starts again either way.
+        Assert.Contains("if not \"%rc%\"==\"0\" if not \"%rc%\"==\"3010\" start \"\" /wait msiexec /i \"C:\\r\\new\\FRIDAY-0.8.3-x64.msi\"", script);
+        Assert.Contains("start \"\" \"C:\\f\\friday-tray.exe\"", script);
         Assert.Equal("https://api.github.com/repos/sreevarshan-xenoz/project-friday/releases/tags/v0.8.2", Updates.TagUrl("0.8.2"));
+    }
+
+    [Fact]
+    public void Pre_release_tags_count_as_their_version()
+    {
+        var alpha = Plan with { To = "0.8.3-alpha" };
+        Assert.Equal(RollbackStep.Wait, Rollback.Decide(alpha, "0.8.3", null, At));
+    }
+
+    [Fact]
+    public void Only_a_kept_msi_its_signed_sums_still_vouch_for_is_run()
+    {
+        using var key = System.Security.Cryptography.ECDsa.Create(System.Security.Cryptography.ECCurve.NamedCurves.nistP256);
+        var pub = key.ExportSubjectPublicKeyInfoPem();
+        var dir = Path.Combine(Path.GetTempPath(), "friday-rollback-" + Guid.NewGuid().ToString("N"));
+        var old = Path.Combine(dir, "old");
+        Directory.CreateDirectory(old);
+        try
+        {
+            var msi = Path.Combine(old, "FRIDAY-0.8.2-x64.msi");
+            File.WriteAllText(msi, "the old installer");
+            var sums = System.Text.Encoding.UTF8.GetBytes($"{Updates.Sha256(msi)}  FRIDAY-0.8.2-x64.msi\n");
+            File.WriteAllBytes(Path.Combine(old, "SHA256SUMS"), sums);
+            File.WriteAllBytes(Path.Combine(old, "SHA256SUMS.sig"),
+                key.SignData(sums, System.Security.Cryptography.HashAlgorithmName.SHA256, System.Security.Cryptography.DSASignatureFormat.Rfc3279DerSequence));
+            Assert.True(Rollback.Verified(dir, msi, pub));
+            // Not FRIDAY's key, a file outside the folder, or a changed MSI: never run.
+            Assert.False(Rollback.Verified(dir, msi));
+            var elsewhere = Path.Combine(dir, "FRIDAY-0.8.2-x64.msi");
+            File.Copy(msi, elsewhere);
+            Assert.False(Rollback.Verified(dir, elsewhere, pub));
+            File.WriteAllText(msi, "something else");
+            Assert.False(Rollback.Verified(dir, msi, pub));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
     }
 }

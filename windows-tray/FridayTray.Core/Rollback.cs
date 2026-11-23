@@ -48,18 +48,22 @@ public static class Rollback
         File.WriteAllText(file, JsonSerializer.Serialize(plan));
     }
 
+    /// <summary>x.y.z without a pre-release part: what the running tray calls its version.</summary>
+    public static string Plain(string version) => version.Split('-')[0];
+
     /// <summary>What to do now, running <paramref name="current"/>; <paramref name="healthy"/>
     /// is null until the daemon has come up or the grace time ran out.</summary>
     public static RollbackStep Decide(RollbackPlan? plan, string current, bool? healthy, DateTime now)
     {
         if (plan is null)
             return RollbackStep.None;
-        if (current == plan.From)
+        current = Plain(current);
+        if (current == Plain(plan.From))
             // Reverted: say so. Otherwise the update hasn't run (yet): a day
             // later it never will (the installer was cancelled).
             return plan.Reverted ? RollbackStep.TellReverted
                 : now - plan.At > TimeSpan.FromDays(1) ? RollbackStep.Clear : RollbackStep.None;
-        if (current != plan.To || plan.Reverted)
+        if (current != Plain(plan.To) || plan.Reverted)
             return RollbackStep.Clear;
         return healthy switch
         {
@@ -69,7 +73,43 @@ public static class Rollback
         };
     }
 
-    /// <summary>The commands that take the new version off and put the old one back.</summary>
-    public static string RevertScript(RollbackPlan plan) =>
-        $"msiexec /x \"{plan.NewMsi}\" /passive\r\nmsiexec /i \"{plan.OldMsi}\" /passive\r\n";
+    /// <summary>Whether <paramref name="msi"/> is a FRIDAY MSI kept in <paramref name="dir"/>
+    /// (its old or new folder) that the signed SHA256SUMS beside it still vouches for: the
+    /// plan is a file anyone running as the person could edit, so it is checked again
+    /// right before a revert runs it.</summary>
+    public static bool Verified(string dir, string msi, string publicKey = Updates.UpdateKey)
+    {
+        try
+        {
+            var full = Path.GetFullPath(msi);
+            var folder = Path.GetDirectoryName(full)!;
+            var name = Path.GetFileName(full);
+            var root = Path.GetFullPath(dir);
+            if (!(folder == Path.Combine(root, "old") || folder == Path.Combine(root, "new"))
+                || !name.StartsWith("FRIDAY-", StringComparison.Ordinal) || !name.EndsWith("-x64.msi", StringComparison.Ordinal))
+                return false;
+            var sums = File.ReadAllBytes(Path.Combine(folder, "SHA256SUMS"));
+            var sig = File.ReadAllBytes(Path.Combine(folder, "SHA256SUMS.sig"));
+            return Updates.Signed(sums, sig, publicKey)
+                && Updates.ExpectedSha(System.Text.Encoding.UTF8.GetString(sums), name) == Updates.Sha256(full);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Takes the new version off and puts the old one back, each step waited for;
+    /// if the old one won't go on, the new one goes back on, so FRIDAY is never left off.
+    /// Then FRIDAY starts again.</summary>
+    public static string RevertScript(RollbackPlan plan, string trayExe) => $"""
+        @echo off
+        start "" /wait msiexec /x "{plan.NewMsi}" /passive /norestart
+        start "" /wait msiexec /i "{plan.OldMsi}" /passive /norestart
+        set rc=%errorlevel%
+        if not "%rc%"=="0" if not "%rc%"=="3010" start "" /wait msiexec /i "{plan.NewMsi}" /passive /norestart
+        start "" "{trayExe}"
+        schtasks /delete /tn "FRIDAY revert" /f >nul 2>&1
+
+        """.Replace("\n", "\r\n");
 }
