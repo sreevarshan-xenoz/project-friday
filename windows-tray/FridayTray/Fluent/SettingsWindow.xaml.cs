@@ -303,9 +303,18 @@ internal sealed partial class SettingsWindow : FluentWindow
                 ChangeEnv(env => AppSettings.WithScreenText(env, on));
             });
         yield return Row(Pill("What left this PC…", SymbolRegular.ArrowUpload24), _do.ShowEgress);
+        if (AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "usage-page"))
+            yield return Row(Pill("Usage and speed…", SymbolRegular.TopSpeed24), ShowUsage);
         yield return Row(Pill("What FRIDAY remembers about you…", SymbolRegular.Bookmark24), OpenMemoryFile);
         yield return Row(Pill("Bring in notes from another assistant…", SymbolRegular.ArrowImport24), ImportMemory);
         yield return Row(Pill("Forget saved data…", SymbolRegular.Delete24), _do.ForgetSavedData);
+    }
+
+    /// <summary>Calls, failures, free-limit hits and speed per provider, from this PC's egress log.</summary>
+    private async void ShowUsage()
+    {
+        var (_, said) = await Ctl.RunAsync(_install, ["usage"], TimeSpan.FromSeconds(15));
+        MessageBox.Show(this, said.Trim(), "Usage and speed", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     /// <summary>The memory file in Notepad (made first, with a line saying how).</summary>

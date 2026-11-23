@@ -1099,6 +1099,20 @@ impl Provider for CopilotCliProvider {
     }
 }
 
+/// How one call went, for the egress log's usage fields.
+#[derive(Debug, Clone, Default)]
+pub struct CallFacts {
+    pub ms: Option<u64>,
+    pub first_ms: Option<u64>,
+    pub tokens: Option<u64>,
+    /// The error, reduced to its kind before it is written.
+    pub error: Option<String>,
+}
+
+fn ms_since(t: std::time::Instant) -> Option<u64> {
+    Some(t.elapsed().as_millis() as u64)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InferenceMetrics {
     pub request_id: String,
@@ -1323,6 +1337,27 @@ impl InferenceFabric {
         is_local: bool,
         outcome: &str,
     ) {
+        self.log_egress_call(
+            provider,
+            model,
+            prompt,
+            is_local,
+            outcome,
+            CallFacts::default(),
+        );
+    }
+
+    /// [`Self::log_egress_attempt`] with how the call went: its time, first
+    /// words, tokens and the kind of failure (`friday usage`).
+    pub fn log_egress_call(
+        &self,
+        provider: &str,
+        model: &str,
+        prompt: &str,
+        is_local: bool,
+        outcome: &str,
+        facts: CallFacts,
+    ) {
         let ctx = crate::egress::current_egress_context();
         let (kinds, text_chars, image_bytes) = parse_payload_metadata(prompt);
         let entry = crate::egress::EgressEntry {
@@ -1336,6 +1371,12 @@ impl InferenceFabric {
             masked: ctx.masked,
             outcome: outcome.to_string(),
             local: if is_local { Some(true) } else { None },
+            ms: facts.ms,
+            first_ms: facts.first_ms,
+            tokens: facts.tokens,
+            error: facts
+                .error
+                .map(|e| crate::egress::error_kind(&e).to_string()),
         };
         crate::egress::append_entry(&self.egress_log_path, &entry);
     }
@@ -1710,6 +1751,7 @@ impl InferenceFabric {
         let is_local = model.capabilities.contains(&ModelCapability::Local)
             || provider_name == "ollama"
             || provider_name == "llamacpp";
+        let began = std::time::Instant::now();
         match run_attempt(
             at_least(
                 self.timeout_for_tier(tier, &prompt),
@@ -1720,13 +1762,34 @@ impl InferenceFabric {
         .await
         {
             Ok(response) => {
-                self.log_egress_attempt(&provider_name, &model.id, &prompt, is_local, "ok");
+                self.log_egress_call(
+                    &provider_name,
+                    &model.id,
+                    &prompt,
+                    is_local,
+                    "ok",
+                    CallFacts {
+                        ms: ms_since(began),
+                        ..Default::default()
+                    },
+                );
                 decision.served = Some((provider_name.clone(), model.id.clone()));
                 self.record_decision(decision);
                 Ok(response)
             }
             Err(e) => {
-                self.log_egress_attempt(&provider_name, &model.id, &prompt, is_local, "error");
+                self.log_egress_call(
+                    &provider_name,
+                    &model.id,
+                    &prompt,
+                    is_local,
+                    "error",
+                    CallFacts {
+                        ms: ms_since(began),
+                        error: Some(e.clone()),
+                        ..Default::default()
+                    },
+                );
                 decision.failures.push(CandidateFailure {
                     provider: provider_name.clone(),
                     model: model.id.clone(),
@@ -3897,19 +3960,54 @@ impl InferenceFabric {
                     && provider.min_request_timeout().is_none()
                     && parse_screen_capture(&prompt).is_none()
             });
+            let began = std::time::Instant::now();
+            // When its first words came (`friday usage`).
+            // (first words, pieces): one piece is a whole answer handed over at
+            // the end, not a stream.
+            let first = std::sync::Mutex::new((None::<u64>, 0u32));
             let attempt = match progress {
                 Some(p) => {
-                    run_streaming_attempt(timeout, first_words, provider, &model.id, &prompt, p)
-                        .await
+                    let noted = |text: &str| {
+                        {
+                            let mut f = first.lock().unwrap();
+                            f.0.get_or_insert_with(|| began.elapsed().as_millis() as u64);
+                            f.1 += 1;
+                        }
+                        p(text);
+                    };
+                    run_streaming_attempt(
+                        timeout,
+                        first_words,
+                        provider,
+                        &model.id,
+                        &prompt,
+                        &noted,
+                    )
+                    .await
                 }
                 None => run_attempt(timeout, provider.complete(&model.id, &prompt, false)).await,
+            };
+            let first_ms = match *first.lock().unwrap() {
+                (Some(ms), pieces) if pieces > 1 => Some(ms),
+                _ => None,
             };
             let is_local = model.capabilities.contains(&ModelCapability::Local)
                 || provider.name() == "ollama"
                 || provider.name() == "llamacpp";
             match attempt {
                 Ok(response) => {
-                    self.log_egress_attempt(provider.name(), &model.id, &prompt, is_local, "ok");
+                    self.log_egress_call(
+                        provider.name(),
+                        &model.id,
+                        &prompt,
+                        is_local,
+                        "ok",
+                        CallFacts {
+                            ms: ms_since(began),
+                            first_ms,
+                            ..Default::default()
+                        },
+                    );
                     let latency_ms = start.elapsed().as_millis() as u64;
                     tracing::info!(
                         "[Inference Request {}] Success on candidate {}/{} ({}ms)",
@@ -3973,7 +4071,19 @@ impl InferenceFabric {
                     return Ok(response);
                 }
                 Err(err) => {
-                    self.log_egress_attempt(provider.name(), &model.id, &prompt, is_local, "error");
+                    self.log_egress_call(
+                        provider.name(),
+                        &model.id,
+                        &prompt,
+                        is_local,
+                        "error",
+                        CallFacts {
+                            ms: ms_since(began),
+                            first_ms,
+                            error: Some(err.clone()),
+                            ..Default::default()
+                        },
+                    );
                     tracing::warn!(
                         "[Inference Request {}] Candidate {}/{} failed: {}. Retrying next...",
                         request_id,
@@ -4126,7 +4236,18 @@ impl InferenceFabric {
 
             match result {
                 Ok(Ok(response)) => {
-                    self.log_egress_attempt(provider.name(), &model.id, prompt, is_local, "ok");
+                    self.log_egress_call(
+                        provider.name(),
+                        &model.id,
+                        prompt,
+                        is_local,
+                        "ok",
+                        CallFacts {
+                            ms: Some(latency),
+                            tokens: response.usage.as_ref().and_then(|u| u.total_tokens),
+                            ..Default::default()
+                        },
+                    );
                     let metrics = InferenceMetrics {
                         request_id: request_id.to_string(),
                         timestamp: chrono::Utc::now(),
@@ -4167,7 +4288,18 @@ impl InferenceFabric {
                     return Ok(response);
                 }
                 Ok(Err(e)) => {
-                    self.log_egress_attempt(provider.name(), &model.id, prompt, is_local, "error");
+                    self.log_egress_call(
+                        provider.name(),
+                        &model.id,
+                        prompt,
+                        is_local,
+                        "error",
+                        CallFacts {
+                            ms: Some(latency),
+                            error: Some(e.clone()),
+                            ..Default::default()
+                        },
+                    );
                     failures.push((
                         provider.name().to_string(),
                         model.id.clone(),
@@ -4193,7 +4325,18 @@ impl InferenceFabric {
                     }
                 }
                 Err(_) => {
-                    self.log_egress_attempt(provider.name(), &model.id, prompt, is_local, "error");
+                    self.log_egress_call(
+                        provider.name(),
+                        &model.id,
+                        prompt,
+                        is_local,
+                        "error",
+                        CallFacts {
+                            ms: Some(latency),
+                            error: Some("timed out".into()),
+                            ..Default::default()
+                        },
+                    );
                     let last_err = format!("Provider {} timed out", provider.name());
                     failures.push((
                         provider.name().to_string(),

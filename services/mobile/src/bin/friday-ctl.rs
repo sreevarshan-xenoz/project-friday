@@ -1428,6 +1428,21 @@ async fn main() -> std::process::ExitCode {
         }
         return std::process::ExitCode::SUCCESS;
     }
+    // How each AI provider has done lately, from the local egress log.
+    if raw.first().map(String::as_str) == Some("usage") {
+        let days: u32 = raw
+            .iter()
+            .position(|a| a == "--days")
+            .and_then(|i| raw.get(i + 1))
+            .and_then(|d| d.parse().ok())
+            .filter(|d| (1..=365).contains(d))
+            .unwrap_or(7);
+        let log =
+            std::fs::read_to_string(friday_intelligence::default_egress_path()).unwrap_or_default();
+        let since = chrono::Utc::now().timestamp() - i64::from(days) * 86400;
+        println!("{}", friday_mobile::usage::report(&log, since, days));
+        return std::process::ExitCode::SUCCESS;
+    }
     // Another assistant's notes into memory.md: a preview first, --apply adds.
     if raw.first().map(String::as_str) == Some("memory") {
         return match memory_import(&raw[1..]) {

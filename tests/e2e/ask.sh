@@ -97,6 +97,15 @@ print(len(parts) if ok else "bad:" + json.dumps(parts)[:200])' "$answer" <<<"$ou
   else pass "egress.jsonl does not contain the question text"; fi
 done
 
+# The usage page reads the same log: calls and how fast, per provider.
+echo "usage page"
+out=$("${offline[@]}" "$CTL_BIN" usage 2>&1)
+if grep -q "llamacpp (on this computer): [0-9]* calls\? · .*first words in [0-9.]* s · answers in [0-9.]* s" <<<"$out"; then
+  pass "friday usage: the local model's calls, first words and answer time"
+else fail "friday usage: $out"; fi
+if grep -q '"first_ms":[0-9]' "$W/egress.jsonl" && grep -q '"ms":[0-9]' "$W/egress.jsonl"; then pass "egress.jsonl keeps each call's timing"
+else fail "no timings in egress.jsonl"; fi
+
 # --json, the stable form for scripts (specs/ask-json.md): one JSON object on
 # stdout, a fixed exit code for each kind of end.
 echo "for scripts (--json)"

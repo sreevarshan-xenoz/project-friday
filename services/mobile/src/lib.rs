@@ -51,6 +51,7 @@ pub mod timeline;
 pub mod tinyvoca;
 pub mod transport;
 pub mod upgrade;
+pub mod usage;
 pub mod voice;
 pub mod watch;
 pub mod web_search;
