@@ -466,10 +466,11 @@ mod tests {
         let host = Host::new(sample());
         let r = run(&host, "close_window", json!({"target": "inbox"})).await;
         assert!(r.success, "{:?}", r.error);
-        assert_eq!(
-            host.calls().last().unwrap(),
-            &("close".to_string(), json!({"window_id": "w3"}))
-        );
+        assert!(host
+            .calls()
+            .contains(&("close".to_string(), json!({"window_id": "w3"}))));
+        // This host keeps listing it: the window asked to stay (unsaved work).
+        assert_eq!(r.output["still_open"], json!(true), "{:?}", r.output);
     }
 
     #[tokio::test]

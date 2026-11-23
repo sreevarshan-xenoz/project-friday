@@ -822,7 +822,7 @@ mod tests {
         );
         assert_eq!(
             package_job_verdict(&SysOp::Remove("htop".into()), None),
-            "Done: htop is gone."
+            "Done: the helper removed htop (not checked: pacman didn't answer)."
         );
 
         // Update
