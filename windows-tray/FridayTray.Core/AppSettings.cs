@@ -90,6 +90,7 @@ public static class AppSettings
         ("dictation-cleanup", "Speech drops \"um\" and \"uh\" and uses your own words (dictionary in %APPDATA%\\friday)"),
         ("propose-memories", "\"I use fish …\" in a question: offer to remember it (nothing is kept unless you say so)"),
         ("memory-file", "Every ask carries what you asked FRIDAY to remember (memory.md in %APPDATA%\\friday)"),
+        ("brief", "\"What did I miss?\" answered from FRIDAY's own records (agents, standing tasks, reminders)"),
         ("call-pause", "\"Hey Friday\" rests while a call or meeting app uses the microphone"),
     ];
 
