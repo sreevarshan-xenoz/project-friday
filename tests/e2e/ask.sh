@@ -122,6 +122,15 @@ for how in "no state file" "nothing listening"; do
   else fail "unreachable ($how): rc=$rc out=$out"; fi
 done
 
+# Gave up waiting (FRIDAY_CTL_WAIT_SECS): exit 4, outcome timed_out.
+rc=0; out=$("${offline[@]}" FRIDAY_CTL_WAIT_SECS=0 "$CTL_BIN" goal --json "What is 2 plus 2?" 2>/dev/null) || rc=$?
+if [[ $rc == 4 && "$out" == *'"outcome":"timed_out"'* ]]; then pass "a wait that runs out: exit 4, outcome timed_out"
+else fail "timed out: rc=$rc out=$out"; fi
+# That ask goes on: let it finish before the next check.
+for _ in $(seq 60); do
+  grep -q '"active": *true' "$W/state.json" 2>/dev/null || break; sleep 0.5
+done
+
 # A question that mentions a tool is answered, not run as a shell command, and
 # selected text (untrusted: it can come from any web page) never runs either.
 echo "nothing runs unless asked"
@@ -321,11 +330,6 @@ if [[ "$(uname -s)" == Linux ]]; then
   if [[ -z "$kept" ]]; then pass "no file keeps the private window's name or pixels"
   else fail "the private window reached: $kept"; fi
 fi
-
-# Gave up waiting (FRIDAY_CTL_WAIT_SECS): exit 4, outcome timed_out.
-rc=0; out=$("${offline[@]}" FRIDAY_CTL_WAIT_SECS=0 "$CTL_BIN" goal --json "What is 2 plus 2?" 2>/dev/null) || rc=$?
-if [[ $rc == 4 && "$out" == *'"outcome":"timed_out"'* ]]; then pass "a wait that runs out: exit 4, outcome timed_out"
-else fail "timed out: rc=$rc out=$out"; fi
 
 # No model reachable at all (the local one down, and every remote one behind
 # a dead proxy): the ask fails and says why in plain words, instead of
