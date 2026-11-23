@@ -30,6 +30,8 @@ public class SpeakingTests : IDisposable
         Assert.Equal("Sure, I", speech.Next("Sure, I"));
         Assert.Equal("", speech.Next("Sure, I"));
         Assert.Equal(" found it.", speech.Next("Sure, I found it."));
+        Assert.Equal("  ", speech.Next("Sure, I found it.  "));
+        Assert.Equal(" Then more.", speech.Next("Sure, I found it. Then more."));
         Assert.Null(speech.Next("Actually, no."));
         Assert.Null(speech.Next("Sure, I found it. And more."));
     }

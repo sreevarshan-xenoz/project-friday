@@ -82,12 +82,17 @@ public sealed class StreamedSpeech
     /// or null when it doesn't continue what was sent.</summary>
     public string? Next(string soFar)
     {
-        if (_broken || !soFar.StartsWith(_sent, StringComparison.Ordinal))
+        // Trailing spaces sent aren't part of what must match (the end of a
+        // streamed piece can differ from the finished answer there).
+        var sent = _sent.TrimEnd();
+        if (_broken || !soFar.StartsWith(sent, StringComparison.Ordinal))
         {
             _broken = true;
             return null;
         }
-        var add = soFar[_sent.Length..];
+        var add = soFar[sent.Length..];
+        if (_sent.Length > sent.Length && add.StartsWith(_sent[sent.Length..], StringComparison.Ordinal))
+            add = add[(_sent.Length - sent.Length)..];
         _sent = soFar;
         return add;
     }

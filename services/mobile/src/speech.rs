@@ -1091,7 +1091,8 @@ mod wave_out {
             })
         }
 
-        /// Frees the sentences that have been played.
+        /// Frees the sentences that have been played. One is freed only when
+        /// Windows says it's done with it and gives it back.
         fn reap(&mut self) {
             let device = self.device;
             self.queued.retain_mut(|q| {
@@ -1099,17 +1100,25 @@ mod wave_out {
                     return true;
                 }
                 // SAFETY: the header was prepared on this device and is done.
-                unsafe {
+                let rc = unsafe {
                     waveOutUnprepareHeader(device, &mut *q.header, size_of::<WAVEHDR>() as u32)
                 };
-                false
+                rc != 0
             });
         }
 
+        /// Stops at once: Windows hands every queued sentence back (it may take
+        /// a moment to say so) before any is freed.
         fn stop(&mut self) {
-            // SAFETY: marks every queued header done, so all can be unprepared.
+            // SAFETY: the device is open; this marks the queued headers done.
             unsafe { waveOutReset(self.device) };
-            self.reap();
+            for _ in 0..100 {
+                self.reap();
+                if self.queued.is_empty() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
         }
     }
 
@@ -1167,6 +1176,12 @@ mod wave_out {
     impl Drop for WaveOut {
         fn drop(&mut self) {
             self.stop();
+            if !self.queued.is_empty() {
+                // Windows still holds these: leaking them is safe, freeing
+                // them isn't, and the device can't close while they're out.
+                std::mem::forget(std::mem::take(&mut self.queued));
+                return;
+            }
             // SAFETY: nothing is queued any more.
             unsafe { waveOutClose(self.device) };
         }

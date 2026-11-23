@@ -2254,14 +2254,18 @@ friday_say_feed() {
     say_dir=$(mktemp -d) || return 0
     mkfifo "$say_dir/in" || return 0
     ( friday-ctl say - <"$say_dir/in" >/dev/null 2>&1; echo $? >"$say_dir/rc" ) &
-    exec {say_fd}>"$say_dir/in"
+    # Read-write: opening never waits for the reader (which may fail to start).
+    exec {say_fd}<>"$say_dir/in"
     say_sent=""
   fi
+  # Trailing spaces sent aren't part of what must match (the end of a
+  # streamed piece can differ from the finished answer there).
+  local sent="${say_sent%"${say_sent##*[![:space:]]}"}"
   case "$so_far" in
     # A write after the voice stopped hits a closed pipe: in a subshell, so
     # only that subshell gets the signal.
-    "$say_sent"*) ( printf '%s' "${so_far:${#say_sent}}" >&"$say_fd" ) 2>/dev/null || true
-                  say_sent="$so_far" ;;
+    "$sent"*) ( printf '%s' "${so_far:${#sent}}" >&"$say_fd" ) 2>/dev/null || true
+              say_sent="$so_far" ;;
     # The answer was rewritten: nothing more is sent.
     *) say_off=1 ;;
   esac
@@ -5073,7 +5077,11 @@ case "${1:-}" in
         # Its progress card says where the answer went instead of going stale.
         [ -z "${nid:-}" ] || notify-send -a FRIDAY -t 3000 -r "$nid" -- "FRIDAY" \
           "Replaced by your newer question (this answer is in friday answers)." 2>/dev/null || true
-        friday_say_close
+        if [ -n "${say_fd:-}" ]; then
+          friday_say_close
+          friday-ctl say --stop >/dev/null 2>&1 || true
+          rm -rf "${say_dir:-}"
+        fi
         return 0
       fi
       # Spoken answers (friday voice speak on): the answer is read aloud while
