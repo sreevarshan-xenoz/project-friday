@@ -150,7 +150,7 @@ if [[ "\$*" == *gated* ]]; then
 fi
 target_arg="\$3"
 for arg in "\$@"; do
-  if [[ "\$arg" != "goal" && "\$arg" != "--wait" && "\$arg" != "--web" && "\$arg" != "--stream" && "\$arg" != friday* ]]; then
+  if [[ "\$arg" != "goal" && "\$arg" != "--wait" && "\$arg" != "--web" && "\$arg" != "--stream" && "\$arg" != "--scheduled" && "\$arg" != friday* ]]; then
     target_arg="\$arg"
   fi
 done
@@ -160,6 +160,9 @@ if [[ "\$*" == *"--web"* ]]; then
 fi
 if [[ "\$*" == *"--thorough"* ]]; then
   printf 'friday-ctl-thorough %s\n' "\$*" >> "$LOG"
+fi
+if [[ "\$*" == *"--scheduled"* ]]; then
+  printf 'friday-ctl-scheduled %s\n' "\$*" >> "$LOG"
 fi
 echo '{"accepted":true}'
 if [[ "\$target_arg" == *nodaemon* ]]; then echo "no token found; daemon not running at /x/state.json (is friday-linux-daemon up?)" >&2; exit 1; fi
@@ -256,6 +259,10 @@ if grep -q "friday-ctl-thorough" "$LOG"; then fail "a plain ask went thorough"; 
 : >"$LOG"; bash "$F" ask --web "what is the latest stable rust"; sleep 0.3
 contains "ask --web passes --web flag" "$(cat "$LOG")" "friday-ctl-web"
 contains "ask --web passes the question" "$(cat "$LOG")" "what is the latest stable rust"
+: >"$LOG"; FRIDAY_STANDING=1 bash "$F" ask "tidy my downloads"; sleep 0.3
+contains "a standing task's ask is marked scheduled" "$(cat "$LOG")" "friday-ctl-scheduled"
+: >"$LOG"; bash "$F" ask "tidy my downloads"; sleep 0.3
+if grep -q friday-ctl-scheduled "$LOG"; then fail "the person's own ask is marked scheduled"; else pass "the person's own ask isn't"; fi
 
 : >"$LOG"; bash "$F" ask "search what is the latest stable rust"; sleep 0.3
 contains "ask 'search q' passes --web flag" "$(cat "$LOG")" "friday-ctl-web"

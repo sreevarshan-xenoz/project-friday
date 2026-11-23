@@ -55,6 +55,9 @@ public class AskingTests
     public void Ctl_arguments_carry_the_web_flag_and_the_retry_options()
     {
         Assert.Equal(["goal", "--wait", "q"], Asking.CtlArguments(AskKind.Plain, "q", "q"));
+        // A standing task asks on its own: the daemon then runs only what can be undone.
+        Assert.Equal(["goal", "--wait", "--scheduled", "q"],
+            Asking.CtlArguments(AskKind.Plain, "q", "q", null, new AskOptions(Scheduled: true)));
         Assert.Equal(["goal", "--wait", "--web", "q"],
             Asking.CtlArguments(AskKind.Plain, "q", "q", null, new AskOptions(Web: true)));
         Assert.Equal(["goal", "--wait", "--thorough", "--avoid", "opencode/big-pickle", "q"],

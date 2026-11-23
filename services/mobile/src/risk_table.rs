@@ -95,6 +95,7 @@ pub const TABLE: &[Rule] = &[
     rule("browser", "open an address that isn't http or https", Level::Block, "file: and other schemes can read this computer"),
     rule("system", "diagnose with a command that changes something", Level::Block, "diagnosing never changes anything"),
     rule("agents", "start a run in private mode", Level::Block, "private asks stay on this computer"),
+    rule("tasks", "a standing task, running on its own, does something that would ask first", Level::Block, "nobody is there to say yes; it's logged in the action log"),
 ];
 
 /// The table for people, by level.

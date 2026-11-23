@@ -12,7 +12,7 @@ public enum AskKind { Plain, Selection, Screen }
 /// "provider/model" that gave the answer being retried). <see cref="Spoken"/>:
 /// asked by voice, so a confirmation can be answered by voice too.
 /// </summary>
-public sealed record AskOptions(bool Web = false, bool Thorough = false, string? Avoid = null, string? Region = null, bool Spoken = false);
+public sealed record AskOptions(bool Web = false, bool Thorough = false, string? Avoid = null, string? Region = null, bool Spoken = false, bool Scheduled = false);
 
 /// <summary>A tool action pending explicit confirmation before execution.</summary>
 public sealed record NeedsConfirmation(string Tool, string Action, string? Preview = null);
@@ -90,6 +90,9 @@ public static partial class Asking
             args.AddRange(["--confirm", confirm]);
         if (options?.Web == true)
             args.Add("--web");
+        // A standing task on its own: only what can be undone runs.
+        if (options?.Scheduled == true)
+            args.Add("--scheduled");
         if (options?.Thorough == true)
         {
             args.Add("--thorough");

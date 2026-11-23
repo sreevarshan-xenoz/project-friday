@@ -458,7 +458,7 @@ internal sealed class TrayContext : ApplicationContext
             {
                 while (_asking)
                     await Task.Delay(1000);
-                await AskTextAsync(goal);
+                await AskTextAsync(goal, scheduled: true);
             }
         }
         catch (IOException e)
@@ -658,7 +658,7 @@ internal sealed class TrayContext : ApplicationContext
 
     private static bool YHeld() => (Native.GetAsyncKeyState('Y') & 0x8000) != 0;
 
-    private async Task AskTextAsync(string question, bool spoken = false)
+    private async Task AskTextAsync(string question, bool spoken = false, bool scheduled = false)
     {
         if (_asking)
             return;
@@ -669,7 +669,7 @@ internal sealed class TrayContext : ApplicationContext
         {
             _log.Remember(question);
             var (asked, web) = Asking.WebQuestion(question);
-            await RunRequestAsync(AskKind.Plain, asked, null, Asking.BuildRequest(asked, null), confirm: null, answer: null, new AskOptions(Web: web, Spoken: spoken));
+            await RunRequestAsync(AskKind.Plain, asked, null, Asking.BuildRequest(asked, null), confirm: null, answer: null, new AskOptions(Web: web, Spoken: spoken, Scheduled: scheduled));
         }
         finally
         {

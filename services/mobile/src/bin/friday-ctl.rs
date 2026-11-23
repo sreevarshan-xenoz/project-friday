@@ -1670,6 +1670,10 @@ async fn main() -> std::process::ExitCode {
         } else if w == "--thorough" {
             ask_opts.insert("thorough".into(), serde_json::json!(true));
             i += 1;
+        } else if w == "--scheduled" {
+            // A standing task asking on its own: only what can be undone runs.
+            ask_opts.insert("scheduled".into(), serde_json::json!(true));
+            i += 1;
         } else if w == "--new-conversation" {
             new_conversation = true;
             i += 1;
