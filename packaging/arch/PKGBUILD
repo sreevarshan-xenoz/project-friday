@@ -32,6 +32,7 @@ depends=('gcc-libs' 'glibc' 'openssl' 'bash' 'curl' 'jq' 'fuzzel' 'libnotify' 'w
 makedepends=('cargo' 'git')
 optdepends=(
   'grim: ask about the screen (friday ask --screen)'
+  'bubblewrap: coding agents in a sandbox (friday agents sandbox on)'
   'tesseract: a picked area, or a window with no text of its own, goes as its words read here, not a picture'
   'hyprland: the bundled keybindings and window context'
   'niri: the bundled keybindings (/usr/share/friday/niri/friday.kdl)'

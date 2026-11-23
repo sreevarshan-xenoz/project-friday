@@ -775,6 +775,47 @@ pub async fn run_agent(
                 command.args(["acp", "--cli_dir_name", "friday"]);
             }
         }
+        // In the sandbox (asked for, Linux): its folder writable, keys hidden.
+        #[cfg(target_os = "linux")]
+        let sandboxed = crate::agent_sandbox::on();
+        #[cfg(not(target_os = "linux"))]
+        let sandboxed = false;
+        #[cfg(target_os = "linux")]
+        if let (true, Some(home)) = (sandboxed, crate::agent_sandbox::home()) {
+            let std = command.as_std();
+            let args: Vec<String> = std
+                .get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect();
+            let envs: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)> = std
+                .get_envs()
+                .map(|(k, v)| (k.to_owned(), v.map(|v| v.to_owned())))
+                .collect();
+            let git_dir = rec
+                .run
+                .worktree
+                .as_ref()
+                .map(|_| rec.run.folder.join(".git"))
+                .filter(|g| g.exists());
+            crate::agent_sandbox::prepare(rec.run.agent, &home);
+            let (prog, wrapped) = crate::agent_sandbox::wrap(
+                rec.run.agent,
+                &program,
+                &args,
+                rec.run.workdir(),
+                git_dir.as_deref(),
+                &home,
+            );
+            let mut c = tokio::process::Command::new(prog);
+            c.args(wrapped);
+            for (k, v) in envs {
+                match v {
+                    Some(v) => c.env(k, v),
+                    None => c.env_remove(k),
+                };
+            }
+            command = c;
+        }
         // Claude Code says a session it no longer has on stderr: keep that.
         let claude = rec.run.agent == Agent::Claude;
         let mut child = command
@@ -788,7 +829,13 @@ pub async fn run_agent(
             })
             .kill_on_drop(true)
             .spawn()
-            .map_err(|e| format!("couldn't start {}: {e}", rec.run.agent.name()))?;
+            .map_err(|e| {
+                if sandboxed && e.kind() == std::io::ErrorKind::NotFound {
+                    "the agent sandbox needs bubblewrap (install bubblewrap, or turn the sandbox off: FRIDAY_AGENT_SANDBOX=0)".to_string()
+                } else {
+                    format!("couldn't start {}: {e}", rec.run.agent.name())
+                }
+            })?;
         let stderr = child.stderr.take().map(|err| {
             tokio::spawn(async move {
                 use tokio::io::AsyncReadExt;
