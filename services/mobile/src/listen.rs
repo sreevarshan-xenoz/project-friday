@@ -158,6 +158,109 @@ pub fn clean_text(raw: &str) -> String {
     text
 }
 
+/// Sounds whisper writes out that nobody means to type or ask.
+const FILLERS: &[&str] = &["um", "umm", "uh", "uhh", "uhm", "erm", "hmm", "mm"];
+
+/// The text without "um" and "uh": "So, um, open it" → "So, open it", and
+/// a first word dropped hands its capital on.
+pub fn drop_fillers(text: &str) -> String {
+    let bare = |w: &str| {
+        w.trim_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase()
+    };
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let kept: Vec<&str> = words
+        .iter()
+        .copied()
+        .filter(|w| !FILLERS.contains(&bare(w).as_str()))
+        .collect();
+    let mut out = kept.join(" ");
+    if kept.first() != words.first() {
+        if let Some(c) = out.chars().next() {
+            out = c.to_uppercase().chain(out.chars().skip(1)).collect();
+        }
+    }
+    out
+}
+
+/// The person's own words for voice (`dictionary` in FRIDAY's config folder):
+/// a line `Kubernetes` is a word whisper should know (it is told them up
+/// front), a line `cube cuddle => kubectl` fixes what it hears.
+#[derive(Debug, Default, PartialEq)]
+pub struct Dictionary {
+    pub words: Vec<String>,
+    pub fixes: Vec<(String, String)>,
+}
+
+impl Dictionary {
+    pub fn parse(text: &str) -> Self {
+        let mut dict = Dictionary::default();
+        for line in text.lines().map(str::trim) {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            match line.split_once("=>") {
+                Some((heard, written))
+                    if !heard.trim().is_empty() && !written.trim().is_empty() =>
+                {
+                    dict.fixes
+                        .push((heard.trim().to_lowercase(), written.trim().to_string()))
+                }
+                Some(_) => {}
+                None => dict.words.push(line.to_string()),
+            }
+        }
+        dict
+    }
+
+    /// `dictionary` in FRIDAY's config folder (`%APPDATA%\friday` on Windows).
+    pub fn load() -> Self {
+        #[cfg(windows)]
+        let base = std::env::var_os("APPDATA").map(std::path::PathBuf::from);
+        #[cfg(not(windows))]
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .filter(|v| !v.is_empty())
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
+            });
+        base.and_then(|b| std::fs::read_to_string(b.join("friday").join("dictionary")).ok())
+            .map(|t| Self::parse(&t))
+            .unwrap_or_default()
+    }
+
+    /// The text with each fix applied, whole words only, any case; a fixed
+    /// phrase keeps the punctuation after it.
+    pub fn apply(&self, text: &str) -> String {
+        let mut words: Vec<String> = text.split_whitespace().map(str::to_string).collect();
+        for (heard, written) in &self.fixes {
+            let want: Vec<&str> = heard.split_whitespace().collect();
+            let mut i = 0;
+            while !want.is_empty() && i + want.len() <= words.len() {
+                let matches = want.iter().enumerate().all(|(k, w)| {
+                    words[i + k]
+                        .trim_matches(|c: char| !c.is_alphanumeric())
+                        .eq_ignore_ascii_case(w)
+                });
+                if matches {
+                    let last = &words[i + want.len() - 1];
+                    let tail: String = last
+                        .chars()
+                        .rev()
+                        .take_while(|c| !c.is_alphanumeric())
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect();
+                    words.splice(i..i + want.len(), [format!("{written}{tail}")]);
+                }
+                i += 1;
+            }
+        }
+        words.join(" ")
+    }
+}
+
 /// Whether the text starts with "hey Friday" (or "ok / okay / hi Friday"),
 /// and what follows it. "Friday" alone isn't enough: it is a day of the week.
 pub fn wake_phrase(text: &str) -> Option<String> {
@@ -268,16 +371,27 @@ pub fn transcribe(whisper: &Path, model: &Path, samples: &[i16]) -> Option<Strin
         std::os::windows::process::CommandExt::creation_flags(&mut c, 0x0800_0000);
         c
     };
-    let out = with_timeout(
-        cmd.arg("-m")
-            .arg(model)
-            .arg("-f")
-            .arg(&file)
-            .args(["-nt", "-np"])
-            .stderr(std::process::Stdio::null()),
-    );
+    // Your own words go first, so whisper spells them your way.
+    let cleanup = crate::features::on("dictation-cleanup");
+    let dict = if cleanup {
+        Dictionary::load()
+    } else {
+        Dictionary::default()
+    };
+    cmd.arg("-m")
+        .arg(model)
+        .arg("-f")
+        .arg(&file)
+        .args(["-nt", "-np"]);
+    if !dict.words.is_empty() {
+        cmd.arg("--prompt").arg(dict.words.join(", "));
+    }
+    let out = with_timeout(cmd.stderr(std::process::Stdio::null()));
     let _ = std::fs::remove_file(&file);
-    let text = clean_text(&String::from_utf8_lossy(&out.ok()?.stdout));
+    let mut text = clean_text(&String::from_utf8_lossy(&out.ok()?.stdout));
+    if cleanup {
+        text = dict.apply(&drop_fillers(&text));
+    }
     (!text.is_empty()).then_some(text)
 }
 
@@ -870,6 +984,31 @@ pub fn notes_file(now: chrono::DateTime<chrono::Local>) -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fillers_go_and_the_sentence_stays() {
+        assert_eq!(drop_fillers("So, um, open Firefox"), "So, open Firefox");
+        assert_eq!(
+            drop_fillers("um open firefox uh please"),
+            "Open firefox please"
+        );
+        assert_eq!(drop_fillers("Umbrella or summary"), "Umbrella or summary");
+        assert_eq!(drop_fillers("Uh."), "");
+    }
+
+    #[test]
+    fn the_dictionary_teaches_words_and_fixes_what_was_heard() {
+        let dict = Dictionary::parse(
+            "# my words\nKubernetes\nSreevarsh => Sreevarshan\ncube cuddle => kubectl\n=> nothing\n",
+        );
+        assert_eq!(dict.words, vec!["Kubernetes".to_string()]);
+        assert_eq!(dict.fixes.len(), 2);
+        assert_eq!(
+            dict.apply("Run cube cuddle get pods, then CUBE CUDDLE logs."),
+            "Run kubectl get pods, then kubectl logs."
+        );
+        assert_eq!(dict.apply("cubes cuddle"), "cubes cuddle");
+    }
 
     fn tone(level: i16) -> Vec<i16> {
         (0..FRAME)

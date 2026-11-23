@@ -73,6 +73,7 @@ public static class AppSettings
         ("voice-confirm", "Asked by voice: say run or cancel after the sound to answer a confirmation"),
         ("voice-followup", "Asked by voice: after a spoken answer and a sound, a follow-up needs no key"),
         ("which-this", "\"Explain this\" with nothing picked: ask whether it means the window in front"),
+        ("dictation-cleanup", "Speech drops \"um\" and \"uh\" and uses your own words (dictionary in %APPDATA%\\friday)"),
     ];
 
     public static bool FeatureOn(IReadOnlyDictionary<string, string> env, string name) =>
