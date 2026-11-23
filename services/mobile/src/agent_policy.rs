@@ -75,6 +75,8 @@ pub enum Decision {
     Allow,
     /// The person decides; says why in a few words.
     Ask(String),
+    /// Never, whoever approves (FRIDAY's hard blocklist); says why.
+    Deny(String),
 }
 
 fn ask(why: impl Into<String>) -> Decision {
@@ -83,6 +85,13 @@ fn ask(why: impl Into<String>) -> Decision {
 
 /// Decides one step of a run in `folder`.
 pub fn decide(step: &Step, folder: &Path) -> Decision {
+    if let Some(why) = step
+        .command
+        .as_deref()
+        .and_then(friday_actions::blocklist::never_run)
+    {
+        return Decision::Deny(format!("FRIDAY never runs this: {why}"));
+    }
     match step.kind {
         Kind::Think => Decision::Allow,
         // A fetch can carry what the agent read (a key in the URL) out to

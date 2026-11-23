@@ -116,8 +116,8 @@ pub fn decide_session_step(
     log(
         log_dir,
         json!({"agent": label, "folder": folder, "step": what,
-            "decision": match &decision { Decision::Allow => "approved", Decision::Ask(_) => "left to you" },
-            "why": match &decision { Decision::Allow => "", Decision::Ask(w) => w.as_str() }}),
+            "decision": match &decision { Decision::Allow => "approved", Decision::Ask(_) => "left to you", Decision::Deny(_) => "refused" },
+            "why": match &decision { Decision::Allow => "", Decision::Ask(w) | Decision::Deny(w) => w.as_str() }}),
     );
     if let Decision::Ask(why) = &decision {
         notify(
@@ -145,6 +145,9 @@ pub fn claude_permission(input: &Value, log_dir: &Path) -> Option<Value> {
         Decision::Allow => Some(json!({"hookSpecificOutput": {
             "hookEventName": "PermissionRequest",
             "decision": {"behavior": "allow"}}})),
+        Decision::Deny(why) => Some(json!({"hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": {"behavior": "deny", "message": why}}})),
         Decision::Ask(_) => None,
     }
 }
@@ -259,6 +262,7 @@ pub fn agy_pre_tool(input: &Value, log_dir: &Path) -> Value {
     let step = step_from_agy(tool, &call["args"]);
     match decide_session_step("agy", &step, &folder, false, log_dir) {
         Decision::Allow => json!({"decision": "allow"}),
+        Decision::Deny(why) => json!({"decision": "deny", "reason": why}),
         // agy goes ahead on "ask" when the person lets it run on its own
         // (auto, always-proceed), so FRIDAY holds the step and asks itself.
         Decision::Ask(why) => {
@@ -623,6 +627,17 @@ mod tests {
             ok.unwrap()["hookSpecificOutput"]["decision"]["behavior"],
             "allow"
         );
+        // Never run: denied with the reason, whoever would approve.
+        let never = claude_permission(
+            &request("Bash", json!({"command": "rm -rf ~"}), cwd),
+            &logs.0,
+        )
+        .unwrap();
+        assert_eq!(never["hookSpecificOutput"]["decision"]["behavior"], "deny");
+        assert!(never["hookSpecificOutput"]["decision"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("never runs"));
         assert!(claude_permission(
             &request("Bash", json!({"command": "git push"}), cwd),
             &logs.0
@@ -634,8 +649,9 @@ mod tests {
             claude_permission(&request("Bash", json!({"command": "ls"}), "/"), &logs.0).is_none()
         );
         let log = std::fs::read_to_string(logs.0.join("hooks.jsonl")).unwrap();
-        assert_eq!(log.lines().count(), 4);
+        assert_eq!(log.lines().count(), 5);
         assert!(log.contains(r#""decision":"approved""#) && log.contains("left to you"));
+        assert!(log.contains(r#""decision":"refused""#));
     }
 
     #[test]

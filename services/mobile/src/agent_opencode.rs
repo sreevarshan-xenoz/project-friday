@@ -60,8 +60,8 @@ pub fn service(file: &Path) -> Option<(String, String)> {
 }
 
 /// What FRIDAY does about one `permission.asked` event: the reply to send,
-/// if any, as (session id, request id, folder).
-pub fn handle(event: &Value, log_dir: &Path) -> Option<(String, String, String)> {
+/// if any, as (session id, request id, folder, "once" or "reject").
+pub fn handle(event: &Value, log_dir: &Path) -> Option<(String, String, String, &'static str)> {
     let data = &event["data"];
     let folder = event["location"]["directory"].as_str().unwrap_or("");
     let resources: Vec<String> = data["resources"]
@@ -76,6 +76,14 @@ pub fn handle(event: &Value, log_dir: &Path) -> Option<(String, String, String)>
             data["sessionID"].as_str()?.to_string(),
             data["id"].as_str()?.to_string(),
             folder.to_string(),
+            "once",
+        )),
+        // FRIDAY's hard blocklist: refused, nobody asked.
+        Decision::Deny(_) => Some((
+            data["sessionID"].as_str()?.to_string(),
+            data["id"].as_str()?.to_string(),
+            folder.to_string(),
+            "reject",
         )),
         Decision::Ask(_) => None,
     }
@@ -110,14 +118,14 @@ pub async fn follow(base: &str, password: &str, log_dir: &Path) -> Result<(), St
             if event["type"] != "permission.asked" || sessions_off_marker().exists() {
                 continue;
             }
-            if let Some((session, request, folder)) = handle(&event, log_dir) {
+            if let Some((session, request, folder, decision)) = handle(&event, log_dir) {
                 let reply = client
                     .post(format!(
                         "{base}/api/session/{session}/permission/{request}/reply"
                     ))
                     .query(&[("location[directory]", folder.as_str())])
                     .basic_auth("opencode", Some(password))
-                    .json(&json!({"decision": "once"}))
+                    .json(&json!({"decision": decision}))
                     .send()
                     .await;
                 if let Err(e) = reply {
@@ -180,6 +188,15 @@ mod tests {
         assert!(handle(&event("shell", "rm -rf build"), &logs).is_none());
         assert!(handle(&event("edit", "package.json"), &logs).is_none());
         assert!(handle(&event("edit", "src/app.ts"), &logs).is_some());
+        // Never run, whoever would approve: rejected, not left waiting.
+        assert_eq!(
+            handle(&event("shell", "rm -rf ~"), &logs).unwrap().3,
+            "reject"
+        );
+        assert_eq!(
+            handle(&event("shell", "git status"), &logs).unwrap().3,
+            "once"
+        );
         let _ = std::fs::remove_dir_all(base);
     }
 

@@ -110,6 +110,11 @@ impl TerminalSession {
     }
 
     async fn run(&self, command: &str, timeout: Duration) -> ActionResult {
+        // Never, whatever was confirmed or set: wipes, deleting the home
+        // folder, sending keys away (`crate::blocklist`).
+        if let Some(why) = crate::blocklist::never_run(command) {
+            return ActionResult::error(format!("FRIDAY never runs this ({why}): {command}"));
+        }
         let sentinel = format!("__friday_done_{}__", Uuid::new_v4().simple());
         let run_future = async {
             {
@@ -282,6 +287,22 @@ pub fn capabilities() -> Vec<friday_capabilities::model::Capability> {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    /// On the hard blocklist: refused before the shell sees it. (Harmless
+    /// even if it ran: there is no such file.)
+    #[tokio::test]
+    async fn a_never_run_command_never_reaches_the_shell() {
+        let adapter = TerminalAdapter::new();
+        let res = adapter
+            .execute(ActionRequest::new(
+                "terminal",
+                "run",
+                json!({ "command": "mkfs.ext4 /tmp/friday-blocklist-none.img" }),
+            ))
+            .await;
+        assert!(!res.success);
+        assert!(res.error.unwrap_or_default().contains("never runs"));
+    }
 
     #[tokio::test]
     #[cfg(unix)]
