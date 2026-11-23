@@ -3803,6 +3803,7 @@ big-output-file|A very long output is kept whole in a file named under the answe
 task-recipes|Ready-made standing tasks in one click (friday tasks recipes)
 undo-file-writes|friday undo puts back a file FRIDAY wrote (kept while it's unchanged since)
 day-summary|friday day: a short summary of a day by project, from FRIDAY's own logs, kept on this computer
+thread-compaction|In a long conversation, turns older than the last few ride along as one short line each
 log-chain|Each action in the action log is chained to the one before, so a changed line shows (friday verify-log)
 standing-reversible|A standing task runs only what can be undone; anything that would ask first is refused and logged
 memory-tidy|When memory is fuller than an ask carries, friday memory tidy proposes a shorter list to approve
