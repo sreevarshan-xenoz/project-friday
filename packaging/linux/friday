@@ -3235,7 +3235,9 @@ friday_memory() {
         return 0
       fi
       echo "What FRIDAY remembers about you ($f; every ask carries it):"
-      grep '^- ' "$f" ;;
+      grep '^- ' "$f"
+      # What stopped being true (a newer fact replaced it): kept, never sent.
+      if grep -q '^## No longer true' "$f"; then echo; echo "No longer true:"; sed -n '/^## No longer true/,$p' "$f" | grep '^\* ' | sed 's/^\* /  /'; fi ;;
     edit)
       mkdir -p "$(dirname "$f")"
       [ -s "$f" ] || printf '# What FRIDAY remembers about you. Edit freely: one "- " line each.\n' >"$f"
@@ -3683,6 +3685,7 @@ voice-followup|Asked by voice: after a spoken answer and a sound, a follow-up ne
 suggestions|Suggested asks for the app you're in, in the ask box
 phone-send|\"Send the answer to my phone\"
 area-text|A picked screen area goes as its text when it has enough (read here by tesseract)
+screen-secret-check|No screenshot leaves when the window or area shows a key or password (its text is checked here first)
 couldnt-check|Say when an answer comes from general knowledge, with nothing on this computer checked
 easy-local|With local AI set up, short general questions are answered on this computer first
 agent-resume|A follow-up to a coding agent goes on in its session (\"tell opencode to also add tests\")
@@ -3693,6 +3696,7 @@ which-this|\"Explain this\" with nothing picked: ask whether it means the select
 dictation-cleanup|Speech drops \"um\" and \"uh\" and uses your own words (~/.config/friday/dictionary)
 propose-memories|\"I use fish …\" in a question: offer to remember it (nothing is kept unless you say so)
 memory-file|Every ask carries what you asked FRIDAY to remember (~/.config/friday/memory.md)
+memory-changes|A changed fact (\"I moved to Pune\") closes the old one with a date in memory.md
 brief|\"What did I miss?\" answered from FRIDAY's own records (agents, standing tasks, reminders)
 call-pause|\"Hey Friday\" rests while a call or meeting app uses the microphone"
 friday_features_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/features-off"; }

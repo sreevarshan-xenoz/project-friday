@@ -566,6 +566,8 @@ echo "the memory file"
 contains "empty at first" "$(bash "$F" memory)" "FRIDAY remembers nothing about you yet"
 printf '# mine, about helix too\n- I use fish\n- my editor is Helix\n' >"$HOME/.config/friday/memory.md"
 contains "lists what it keeps" "$(bash "$F" memory)" "- my editor is Helix"
+printf '\n## No longer true\n* I live in Chennai (until 2026-11-23)\n' >>"$HOME/.config/friday/memory.md"
+contains "and what stopped being true" "$(bash "$F" memory)" "  I live in Chennai (until 2026-11-23)"
 contains "forgets a line" "$(bash "$F" memory forget helix)" "Forgot 1 line(s)"
 if grep -q "^- my editor is Helix" "$HOME/.config/friday/memory.md"; then fail "the line is still there"; else pass "the line is gone, the rest stays"; fi
 contains "the rest stays" "$(cat "$HOME/.config/friday/memory.md")" "- I use fish"

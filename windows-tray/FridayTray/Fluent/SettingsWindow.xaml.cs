@@ -274,7 +274,7 @@ internal sealed partial class SettingsWindow : FluentWindow
         var env = EnvFile.Load(_install.Paths.EnvFile);
         foreach (var (name, what) in AppSettings.Features)
             yield return Switch(what, "Switch off if you don't want it.", AppSettings.FeatureOn(env, name),
-                on => ChangeEnv(e => AppSettings.WithFeature(e, name, on), restart: name is "couldnt-check" or "agent-resume" or "memory-file"));
+                on => ChangeEnv(e => AppSettings.WithFeature(e, name, on), restart: name is "couldnt-check" or "agent-resume" or "memory-file" or "screen-secret-check"));
         yield return Row(Pill("Restart FRIDAY", SymbolRegular.ArrowSync24), () => { _do.RestartDaemon(); Said("FRIDAY restarted."); });
         yield return Row(Pill("Open logs", SymbolRegular.DocumentBulletList24), _do.OpenLogs);
     }

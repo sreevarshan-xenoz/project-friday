@@ -1534,9 +1534,6 @@ fn front_window(windows: &[Value], app: &str, title: &str) -> Option<String> {
     w.get("id").and_then(Value::as_str).map(str::to_string)
 }
 
-/// Not much to say about a window whose tree gives less than this: ask with a
-/// screenshot instead.
-const MIN_SCREEN_TEXT: usize = 200;
 /// The most text of one window sent to a model.
 const MAX_SCREEN_TEXT: usize = 12_000;
 
@@ -1577,10 +1574,9 @@ impl crate::context_read::ScreenText for AgentDesktopUi {
             .await
             .ok()?;
         let tree = snap.get("data")?.get("tree")?;
+        // Short is returned too: it is checked for secrets before a
+        // screenshot of the window goes instead.
         let mut text = tree_text(tree, MAX_SCREEN_TEXT);
-        if text.chars().count() < MIN_SCREEN_TEXT {
-            return None;
-        }
         // More than fits: say so, to the model and in the answer.
         if tree_text(tree, MAX_SCREEN_TEXT + 1).len() > text.len() {
             text.push('\n');
@@ -2577,7 +2573,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn window_text_is_none_for_a_thin_tree_and_some_for_a_full_one() {
+    async fn window_text_is_short_for_a_thin_tree_and_full_for_a_full_one() {
         use crate::context_read::ScreenText;
         let apps = json!({"ok": true, "data": {"apps": [{"name": "Nautilus"}]}});
         let wins =
@@ -2591,11 +2587,15 @@ mod tests {
         stub.push_response("list-apps", Ok(apps.to_string()));
         stub.push_response("list-windows", Ok(wins.to_string()));
         stub.push_response("snapshot", Ok(thin.to_string()));
-        assert_eq!(
-            AgentDesktopUi::new(stub.clone())
-                .window_text("nautilus", "Home")
-                .await,
-            None
+        // A thin tree's few words come back too: the reader checks them for a
+        // key, then sends a screenshot instead.
+        let few = AgentDesktopUi::new(stub.clone())
+            .window_text("nautilus", "Home")
+            .await
+            .unwrap_or_default();
+        assert!(
+            few.chars().count() < crate::context_read::MIN_SCREEN_TEXT,
+            "{few}"
         );
 
         let stub = StubSpawn::new();

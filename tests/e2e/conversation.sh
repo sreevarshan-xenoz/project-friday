@@ -95,5 +95,17 @@ seen=$(ask "What did we just talk about?" --new-conversation)
 if grep -q "\[session context\]" <<<"$seen"; then fail "--new-conversation still carried earlier turns"
 else pass "--new-conversation starts clean"; fi
 
+# A changed fact closes the old one: only the new one goes with an ask.
+echo "a changed fact"
+ask "Remember that I live in Chennai." --new-conversation >/dev/null
+ask "Remember that I moved to Pune." >/dev/null
+mem="$W/config/friday/memory.md"; [[ -f "$mem" ]] || mem="$W/appdata/friday/memory.md"
+seen=$(ask "Where do I live?")
+if grep -q "^\* I live in Chennai (until " "$mem" && ! grep -q "^- I live in Chennai" "$mem"; then pass "the old fact is closed with a date"
+else fail "memory file: $(cat "$mem")"; fi
+about=$(grep -o 'about you:[^"\\]*' <<<"$seen" | head -1)
+if [[ "$about" == *"I moved to Pune"* && "$about" != *"Chennai"* ]]; then pass "and only the new one goes with an ask"
+else fail "the ask carried: $about"; fi
+
 if (( fails > 0 )); then echo "e2e conversation: $fails failure(s) (logs in $W)"; exit 1; fi
 echo "e2e conversation: ok"
