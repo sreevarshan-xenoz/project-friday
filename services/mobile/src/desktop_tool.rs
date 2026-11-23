@@ -595,6 +595,9 @@ impl Tool for DesktopControlTool {
         let mut steps: Vec<String> = Vec::new();
         let mut undoable = false;
         let mut log = String::new();
+        // Apps started for this request: a second launch_app of one would
+        // open another empty window (a browser opens one per launch).
+        let mut launched: Vec<String> = Vec::new();
         for n in 1..=MAX_STEPS {
             if self.abort.load(Ordering::SeqCst) {
                 return ToolResult::error(stopped_message(&steps));
@@ -717,6 +720,21 @@ impl Tool for DesktopControlTool {
                 if let Err(err) = asked {
                     return err;
                 }
+            }
+            if verb == "launch_app" {
+                let app = params
+                    .get("app")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_lowercase();
+                if launched.contains(&app) {
+                    log.push_str(&format!(
+                        "{n}. {verb}: {app} was already started for this request; don't start it again (use windows to see it, or finish)\n"
+                    ));
+                    continue;
+                }
+                launched.push(app);
             }
             let (ok, out) = self.run_verb(verb, params.clone()).await;
             self.record(verb, &params, ok, &goal);
@@ -977,6 +995,25 @@ mod tests {
             "{}",
             prompts[2]
         );
+    }
+
+    /// A model that launches the same app again (it can't see a page load)
+    /// gets told it's already started: one browser window, not one per step.
+    #[tokio::test]
+    async fn an_app_is_launched_once_per_request() {
+        let model = Script::new(&[
+            r#"{"action":"launch_app","params":{"app":"brave"}}"#,
+            r#"{"action":"launch_app","params":{"app":"Brave"}}"#,
+            r#"{"done":"Opened Brave."}"#,
+        ]);
+        let stub = Arc::new(Stub::default());
+        let t = tool(model.clone(), stub.clone(), Arc::default());
+        let r = run(&t, "open brave").await;
+        assert!(r.success, "{:?}", r.error);
+        let launches = stub.calls().iter().filter(|c| c.contains("brave")).count();
+        assert_eq!(launches, 1, "{:?}", stub.calls());
+        let prompts = model.prompts.lock().unwrap();
+        assert!(prompts[2].contains("already started"), "{}", prompts[2]);
     }
 
     #[tokio::test]

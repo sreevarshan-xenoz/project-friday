@@ -150,7 +150,9 @@ public static class AppResolver
         return best is null ? null : FromShortcut(best);
     }
 
-    /// <summary>3 exact, 2 starts with, 1 contains (in either direction); 0 no match.</summary>
+    /// <summary>3 exact, 2 starts with, 1 contains, or the name is the shortcut and more
+    /// words ("brave browser" for Brave, "google chrome" for Chrome); 0 no match. A sentence that only mentions an
+    /// app ("youtube in brave") is no match: it would start that app with nothing in it.</summary>
     public static int Score(string shortcut, string name)
     {
         var s = shortcut.Trim().ToLowerInvariant();
@@ -159,7 +161,9 @@ public static class AppResolver
             return 0;
         if (s == n) return 3;
         if (s.StartsWith(n, StringComparison.Ordinal)) return 2;
-        if (s.Contains(n, StringComparison.Ordinal) || n.Contains(s, StringComparison.Ordinal)) return 1;
+        if (s.Contains(n, StringComparison.Ordinal) || n.StartsWith(s + " ", StringComparison.Ordinal)) return 1;
+        // "google chrome" for Chrome: a two-word name ending in the shortcut's.
+        if (n.EndsWith(" " + s, StringComparison.Ordinal) && n.Count(c => c == ' ') == 1) return 1;
         return 0;
     }
 
