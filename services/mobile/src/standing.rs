@@ -50,6 +50,12 @@ pub enum Trigger {
     BatteryBelow { percent: u8 },
     /// Once, at `at` (unix seconds): a reminder. Removed after it runs.
     Once { at: i64 },
+    /// Each time a download finishes: a new finished file in Downloads.
+    DownloadDone,
+    /// Each time the file at `path` changes (or appears).
+    FileChanged { path: String },
+    /// Each time an app (a program by name, like `firefox`) starts.
+    AppOpens { app: String },
 }
 
 impl Trigger {
@@ -73,7 +79,18 @@ impl Trigger {
             Trigger::Once { at } => {
                 format!("once at {}", local_naive(*at).format("%H:%M on %-d %b"))
             }
+            Trigger::DownloadDone => "when a download finishes".to_string(),
+            Trigger::FileChanged { path } => format!("when {path} changes"),
+            Trigger::AppOpens { app } => format!("when {app} opens"),
         }
+    }
+
+    /// Fires on something happening on this computer, not on the clock.
+    pub fn is_event(&self) -> bool {
+        matches!(
+            self,
+            Trigger::DownloadDone | Trigger::FileChanged { .. } | Trigger::AppOpens { .. }
+        )
     }
 
     fn valid(&self) -> Result<(), String> {
@@ -89,6 +106,21 @@ impl Trigger {
             }
             Trigger::BatteryBelow { percent } if !(1..=99).contains(percent) => {
                 Err("the battery level must be between 1 and 99%".into())
+            }
+            Trigger::FileChanged { path }
+                if path.chars().count() > 300
+                    || !(Path::new(path).is_absolute() || path.starts_with("~/")) =>
+            {
+                Err("name the file by its full path".into())
+            }
+            Trigger::AppOpens { app }
+                if app.is_empty()
+                    || app.chars().count() > 40
+                    || !app
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.')) =>
+            {
+                Err("name the app by its program name, like firefox".into())
             }
             _ => Ok(()),
         }
@@ -112,6 +144,10 @@ pub struct Task {
     /// Battery tasks: false after firing until the battery recovers.
     #[serde(default = "yes")]
     pub armed: bool,
+    /// Event tasks: what was last seen (a file's or the newest download's
+    /// modified time, or 1/0 for an app running), so only a change fires.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mark: Option<i64>,
 }
 
 fn yes() -> bool {
@@ -224,6 +260,7 @@ impl Store {
             last_run: None,
             runs: 0,
             armed: true,
+            mark: None,
         });
         Ok(self.tasks.last().expect("just pushed"))
     }
@@ -280,7 +317,104 @@ pub fn due(task: &Task, now: NaiveDateTime, now_ts: i64, battery: Option<Battery
         Trigger::Once { at } => {
             task.runs == 0 && now_ts >= *at && now_ts < *at + CATCH_UP.num_seconds()
         }
+        // Decided in `tick`, from what is seen.
+        Trigger::DownloadDone | Trigger::FileChanged { .. } | Trigger::AppOpens { .. } => false,
     }
+}
+
+/// What an event task's trigger sees now: a file's or the newest finished
+/// download's modified time (0: none), or 1/0 for its app running. `None`
+/// when it can't be told (no Downloads folder).
+pub fn observe(trigger: &Trigger) -> Option<i64> {
+    if !crate::features::on("event-tasks") {
+        return None;
+    }
+    let mtime = |p: &Path| {
+        std::fs::metadata(p)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_secs() as i64)
+    };
+    let home = || std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+    match trigger {
+        Trigger::DownloadDone => {
+            let dir = downloads_dir()?;
+            Some(newest_finished(&dir, mtime))
+        }
+        Trigger::FileChanged { path } => {
+            let p = match path.strip_prefix("~/") {
+                Some(rest) => PathBuf::from(home()?).join(rest),
+                None => PathBuf::from(path),
+            };
+            Some(mtime(&p))
+        }
+        Trigger::AppOpens { app } => Some(i64::from(app_running(app))),
+        _ => None,
+    }
+}
+
+/// The newest modified time of a finished download in `dir` (0: none).
+/// Files still downloading (`.part`, `.crdownload`, …) and hidden ones don't count.
+fn newest_finished(dir: &Path, mtime: impl Fn(&Path) -> i64) -> i64 {
+    const PARTIAL: [&str; 6] = [
+        ".part",
+        ".crdownload",
+        ".download",
+        ".partial",
+        ".tmp",
+        ".opdownload",
+    ];
+    std::fs::read_dir(dir)
+        .map(|d| {
+            d.flatten()
+                .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+                .filter(|e| {
+                    let n = e.file_name().to_string_lossy().to_lowercase();
+                    !n.starts_with('.') && !PARTIAL.iter().any(|s| n.ends_with(s))
+                })
+                .map(|e| mtime(&e.path()))
+                .max()
+                .unwrap_or(0)
+        })
+        .unwrap_or(0)
+}
+
+/// The Downloads folder: `XDG_DOWNLOAD_DIR` from `user-dirs.dirs` on Linux,
+/// else `~/Downloads`.
+fn downloads_dir() -> Option<PathBuf> {
+    let home = PathBuf::from(std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?);
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".config"));
+    let named = std::fs::read_to_string(config.join("user-dirs.dirs"))
+        .ok()
+        .and_then(|t| {
+            t.lines().find_map(|l| {
+                let v = l
+                    .trim()
+                    .strip_prefix("XDG_DOWNLOAD_DIR=")?
+                    .trim_matches('"');
+                Some(match v.strip_prefix("$HOME") {
+                    Some(rest) => home.join(rest.trim_start_matches('/')),
+                    None => PathBuf::from(v),
+                })
+            })
+        });
+    let dir = named.unwrap_or_else(|| home.join("Downloads"));
+    dir.is_dir().then_some(dir)
+}
+
+/// Whether a program named `app` runs now (`firefox`, `firefox.exe`).
+fn app_running(app: &str) -> bool {
+    let want = app.to_lowercase();
+    let want = want.trim_end_matches(".exe");
+    let mut sys = sysinfo::System::new();
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    sys.processes().values().any(|p| {
+        let n = p.name().to_string_lossy().to_lowercase();
+        n.trim_end_matches(".exe") == want
+    })
 }
 
 /// A one-off's moment from the model's `{"kind": "at", "hour", "minute",
@@ -325,6 +459,7 @@ pub fn tick(
     now: NaiveDateTime,
     now_ts: i64,
     battery: Option<Battery>,
+    seen: &dyn Fn(&Trigger) -> Option<i64>,
 ) -> Vec<(String, String)> {
     let mut run = Vec::new();
     let quiet_now = store.quiet.is_some_and(|q| in_quiet(now.hour(), q));
@@ -342,14 +477,38 @@ pub fn tick(
                 t.armed = true;
             }
         }
-        if due(t, now, now_ts, battery) {
+        // An event task fires when what it watches changed since last seen
+        // (the first look only notes it; a paused task keeps looking).
+        let now_seen = if t.trigger.is_event() {
+            seen(&t.trigger)
+        } else {
+            None
+        };
+        let happened = match (now_seen, t.mark) {
+            (Some(v), Some(m)) => {
+                !t.paused
+                    && match t.trigger {
+                        Trigger::AppOpens { .. } => v == 1 && m == 0,
+                        _ => v > m,
+                    }
+            }
+            _ => false,
+        };
+        if happened || due(t, now, now_ts, battery) {
             // Quiet hours hold recurring tasks; the day's limit holds the rest.
-            let recurring = matches!(t.trigger, Trigger::Daily { .. } | Trigger::Every { .. });
+            let recurring = matches!(t.trigger, Trigger::Daily { .. } | Trigger::Every { .. })
+                || t.trigger.is_event();
             // (A reminder is never held by the limit: it would go unsaid.)
             let reminder = matches!(t.trigger, Trigger::Once { .. });
             if (quiet_now && recurring) || (ran_today >= cap && !reminder) {
+                // Held, not lost: what was seen stays new until it runs.
                 continue;
             }
+        }
+        if now_seen.is_some() {
+            t.mark = now_seen;
+        }
+        if happened || due(t, now, now_ts, battery) {
             ran_today += 1;
             t.last_run = Some(now_ts);
             t.runs += 1;
@@ -488,6 +647,7 @@ pub async fn run_loop(path: PathBuf, runner: std::sync::Arc<dyn Runner>) {
             now.naive_local(),
             now.timestamp(),
             read_battery(),
+            &observe,
         );
         if store != before {
             // Saved before running, so a slow or crashing run is never repeated.
@@ -498,6 +658,7 @@ pub async fn run_loop(path: PathBuf, runner: std::sync::Arc<dyn Runner>) {
                     l.last_run = t.last_run;
                     l.runs = t.runs;
                     l.armed = t.armed;
+                    l.mark = t.mark;
                 }
             }
             latest.ran_on = store.ran_on.clone();
@@ -617,6 +778,9 @@ A trigger is one of:
   {"kind": "battery_below", "percent": 20}                         once each time the battery falls under that level while unplugged
   {"kind": "at", "hour": 12, "minute": 57}                         once, at the next such local time (24-hour); add "days": 1 for tomorrow
   {"kind": "in", "minutes": 20}                                    once, that many minutes from now
+  {"kind": "download_done"}                                        each time a download finishes
+  {"kind": "file_changed", "path": "/home/me/notes.txt"}           each time that file changes (its full path; ~/ for the home folder)
+  {"kind": "app_opens", "app": "firefox"}                          each time that program starts (its program name)
 For a reminder the goal is what to say, like "say: Time to dance." ("remind me at 1 to dance").
 "morning" is 8:00, "noon" 12:00, "evening" 18:00, "night" 21:00 unless a time is given.
 The goal must not mention the schedule: "every morning tell me the weather" -> goal "tell me the weather"."#;
@@ -688,7 +852,7 @@ impl friday_goal_execution::Tool for StandingTool {
     }
 
     fn description(&self) -> &str {
-        "Creates and lists standing tasks that run on a schedule or a battery level (standing.tasks)"
+        "Creates and lists standing tasks that run on a schedule, a battery level, or a local event: a download finishing, a file changing, an app opening (standing.tasks)"
     }
 
     fn capabilities(&self) -> Vec<friday_goal_execution::Capability> {
@@ -830,7 +994,119 @@ mod tests {
             last_run: None,
             runs: 0,
             armed: true,
+            mark: None,
         }
+    }
+
+    #[test]
+    fn an_event_task_fires_on_a_change_not_on_what_was_there() {
+        let now = at(2026, 11, 22, 10, 0);
+        let mut store = Store {
+            tasks: vec![
+                task(Trigger::DownloadDone, now),
+                Task {
+                    id: "t2".into(),
+                    ..task(
+                        Trigger::AppOpens {
+                            app: "firefox".into(),
+                        },
+                        now,
+                    )
+                },
+            ],
+            ..Store::default()
+        };
+        let seen = |download: i64, app: i64| {
+            move |t: &Trigger| match t {
+                Trigger::DownloadDone => Some(download),
+                Trigger::AppOpens { .. } => Some(app),
+                _ => None,
+            }
+        };
+        // The first look notes what's there: a download already done and an
+        // app already open don't fire.
+        assert!(tick(&mut store, now, ts(now), None, &seen(500, 1)).is_empty());
+        assert!(tick(&mut store, now, ts(now), None, &seen(500, 1)).is_empty());
+        // A new download fires once.
+        let run = tick(&mut store, now, ts(now), None, &seen(900, 1));
+        assert_eq!(
+            run,
+            vec![("t1".to_string(), "tell me the weather".to_string())]
+        );
+        assert!(tick(&mut store, now, ts(now), None, &seen(900, 1)).is_empty());
+        // The app closes, then opens: that fires once.
+        assert!(tick(&mut store, now, ts(now), None, &seen(900, 0)).is_empty());
+        assert_eq!(tick(&mut store, now, ts(now), None, &seen(900, 1)).len(), 1);
+        assert!(tick(&mut store, now, ts(now), None, &seen(900, 1)).is_empty());
+        // Paused: a change is noted, not run, and doesn't fire on resume.
+        store.tasks[0].paused = true;
+        assert!(tick(&mut store, now, ts(now), None, &seen(1200, 1)).is_empty());
+        store.tasks[0].paused = false;
+        assert!(tick(&mut store, now, ts(now), None, &seen(1200, 1)).is_empty());
+        // Quiet hours hold them like other recurring tasks, and the download
+        // seen then is still told once they end.
+        store.quiet = Some([22, 7]);
+        let night = at(2026, 11, 22, 23, 0);
+        assert!(tick(&mut store, night, ts(night), None, &seen(1500, 1)).is_empty());
+        let morning = at(2026, 11, 23, 8, 0);
+        assert_eq!(
+            tick(&mut store, morning, ts(morning), None, &seen(1500, 1)).len(),
+            1
+        );
+        assert!(tick(&mut store, morning, ts(morning), None, &seen(1500, 1)).is_empty());
+    }
+
+    #[test]
+    fn event_triggers_are_checked_and_read_from_the_model() {
+        let file = |p: &str| Trigger::FileChanged { path: p.into() };
+        assert!(file("/home/me/notes.txt").valid().is_ok());
+        assert!(file("~/notes.txt").valid().is_ok());
+        assert!(file("notes.txt").valid().is_err());
+        let app = |a: &str| Trigger::AppOpens { app: a.into() };
+        assert!(app("firefox").valid().is_ok());
+        assert!(app("rm -rf /").valid().is_err());
+        assert!(app("").valid().is_err());
+        let t: Trigger =
+            serde_json::from_value(serde_json::json!({"kind": "download_done"})).unwrap();
+        assert_eq!(t.describe(), "when a download finishes");
+        let t: Trigger =
+            serde_json::from_value(serde_json::json!({"kind": "app_opens", "app": "slack"}))
+                .unwrap();
+        assert_eq!(t.describe(), "when slack opens");
+    }
+
+    #[test]
+    fn a_finished_download_counts_and_one_still_coming_does_not() {
+        let d = std::env::temp_dir().join(format!("friday-dl-{}", rand::random::<u32>()));
+        std::fs::create_dir_all(&d).unwrap();
+        let mtime = |p: &Path| {
+            if p.extension().is_some_and(|e| e == "part") {
+                99
+            } else {
+                10
+            }
+        };
+        assert_eq!(newest_finished(&d, mtime), 0);
+        std::fs::write(d.join("big.iso.part"), "x").unwrap();
+        std::fs::write(d.join(".hidden"), "x").unwrap();
+        assert_eq!(newest_finished(&d, mtime), 0);
+        std::fs::write(d.join("photo.jpg"), "x").unwrap();
+        assert_eq!(newest_finished(&d, mtime), 10);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_file_task_sees_the_file_change_and_appear() {
+        let d = std::env::temp_dir().join(format!("friday-fc-{}", rand::random::<u32>()));
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("notes.txt");
+        let trig = Trigger::FileChanged {
+            path: f.display().to_string(),
+        };
+        assert_eq!(observe(&trig), Some(0), "not there yet");
+        std::fs::write(&f, "x").unwrap();
+        assert!(observe(&trig).unwrap() > 0);
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     fn daily(h: u8, m: u8) -> Trigger {
@@ -907,28 +1183,28 @@ mod tests {
             percent: 15,
             charging: false,
         });
-        assert_eq!(tick(&mut store, now, ts(now), low).len(), 1);
+        assert_eq!(tick(&mut store, now, ts(now), low, &|_| None).len(), 1);
         assert!(
-            tick(&mut store, now, ts(now), low).is_empty(),
+            tick(&mut store, now, ts(now), low, &|_| None).is_empty(),
             "not again while low"
         );
         let plugged = Some(Battery {
             percent: 15,
             charging: true,
         });
-        assert!(tick(&mut store, now, ts(now), plugged).is_empty());
+        assert!(tick(&mut store, now, ts(now), plugged, &|_| None).is_empty());
         assert_eq!(
-            tick(&mut store, now, ts(now), low).len(),
+            tick(&mut store, now, ts(now), low, &|_| None).len(),
             1,
             "plugging in re-armed it"
         );
         // No battery reading (a desktop): nothing fires.
-        assert!(tick(&mut store, now, ts(now), None).is_empty());
+        assert!(tick(&mut store, now, ts(now), None, &|_| None).is_empty());
         let high = Some(Battery {
             percent: 80,
             charging: false,
         });
-        assert!(tick(&mut store, now, ts(now), high).is_empty());
+        assert!(tick(&mut store, now, ts(now), high, &|_| None).is_empty());
     }
 
     #[tokio::test]
@@ -999,9 +1275,18 @@ mod tests {
             ..Default::default()
         };
         store.tasks[0].goal = "say: Time to dance.".into();
-        assert!(tick(&mut store, at(2026, 11, 22, 12, 56), due_at - 60, None).is_empty());
+        assert!(tick(
+            &mut store,
+            at(2026, 11, 22, 12, 56),
+            due_at - 60,
+            None,
+            &|_| None
+        )
+        .is_empty());
         assert_eq!(store.tasks.len(), 1);
-        let run = tick(&mut store, at(2026, 11, 22, 12, 57), due_at, None);
+        let run = tick(&mut store, at(2026, 11, 22, 12, 57), due_at, None, &|_| {
+            None
+        });
         assert_eq!(
             run,
             vec![("t1".to_string(), "say: Time to dance.".to_string())]
@@ -1012,7 +1297,14 @@ mod tests {
             tasks: vec![task(Trigger::Once { at: due_at }, made)],
             ..Default::default()
         };
-        assert!(tick(&mut store, at(2026, 11, 22, 19, 0), due_at + 7 * 3600, None).is_empty());
+        assert!(tick(
+            &mut store,
+            at(2026, 11, 22, 19, 0),
+            due_at + 7 * 3600,
+            None,
+            &|_| None
+        )
+        .is_empty());
         assert!(store.tasks.is_empty());
     }
 
@@ -1056,7 +1348,7 @@ mod tests {
             .add("say: Bed.", Trigger::Once { at: reminder }, ts(created))
             .unwrap();
         let night = at(2026, 11, 16, 23, 0);
-        let run = tick(&mut store, night, ts(night), None);
+        let run = tick(&mut store, night, ts(night), None, &|_| None);
         assert_eq!(
             run,
             vec![("t2".to_string(), "say: Bed.".to_string())],
@@ -1064,12 +1356,12 @@ mod tests {
         );
         let early = at(2026, 11, 17, 6, 31);
         assert!(
-            tick(&mut store, early, ts(early), None).is_empty(),
+            tick(&mut store, early, ts(early), None, &|_| None).is_empty(),
             "6:30 is quiet"
         );
         let morning = at(2026, 11, 17, 7, 0);
         assert_eq!(
-            tick(&mut store, morning, ts(morning), None).len(),
+            tick(&mut store, morning, ts(morning), None, &|_| None).len(),
             1,
             "caught up after"
         );
@@ -1088,12 +1380,12 @@ mod tests {
         let mut ran = 0;
         for m in (0..60).step_by(5) {
             let now = at(2026, 11, 16, 21, m);
-            ran += tick(&mut store, now, ts(now), None).len();
+            ran += tick(&mut store, now, ts(now), None, &|_| None).len();
         }
         assert_eq!(ran, 2, "no more than the day's limit");
         let next_day = at(2026, 11, 17, 9, 0);
         assert_eq!(
-            tick(&mut store, next_day, ts(next_day), None).len(),
+            tick(&mut store, next_day, ts(next_day), None, &|_| None).len(),
             1,
             "a new day, a new count"
         );
@@ -1114,11 +1406,11 @@ mod tests {
             .unwrap();
         let now = at(2026, 11, 16, 8, 1);
         assert_eq!(
-            tick(&mut store, now, ts(now), None),
+            tick(&mut store, now, ts(now), None, &|_| None),
             vec![("t1".into(), "play the news".into())]
         );
         assert_eq!(store.tasks[0].runs, 1);
-        assert!(tick(&mut store, now, ts(now), None).is_empty());
+        assert!(tick(&mut store, now, ts(now), None, &|_| None).is_empty());
     }
 
     #[test]

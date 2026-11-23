@@ -62,6 +62,12 @@ public static class StandingTasks
                 return $"every {m} minutes";
             case "battery_below":
                 return $"when the battery is under {Int("percent")}%";
+            case "download_done":
+                return "when a download finishes";
+            case "file_changed":
+                return $"when {trigger["path"]?.GetValue<string>()} changes";
+            case "app_opens":
+                return $"when {trigger["app"]?.GetValue<string>()} opens";
             case "once":
                 var at = DateTimeOffset.FromUnixTimeSeconds(trigger["at"]?.GetValue<long>() ?? 0).ToLocalTime();
                 return $"once at {at:HH:mm} on {at:d MMM}";

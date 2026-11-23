@@ -197,6 +197,7 @@ mod tests {
                 last_run: None,
                 runs: 0,
                 armed: true,
+                mark: None,
             }],
             ..Default::default()
         };

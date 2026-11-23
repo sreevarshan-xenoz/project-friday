@@ -1037,13 +1037,41 @@ fn is_standing_intent(d: &str) -> bool {
         }
     }
     if let Some(rest) = d.strip_prefix("when ") {
-        return rest.contains("battery")
+        // "when is/was/did/will …" asks a question.
+        let second = rest.split_whitespace().next().unwrap_or("");
+        if [
+            "is", "was", "are", "were", "did", "does", "do", "will", "would", "has", "have", "can",
+            "could", "should",
+        ]
+        .contains(&second)
+        {
+            return false;
+        }
+        // Up to the comma: the event itself.
+        let event = rest.split([',']).next().unwrap_or(rest);
+        let words: Vec<&str> = event.split_whitespace().collect();
+        let has = |w: &str| words.contains(&w);
+        return (rest.contains("battery")
             && ["below", "under", "drops", "falls"]
                 .iter()
-                .any(|w| rest.contains(w));
+                .any(|w| rest.contains(w)))
+            // "when a download finishes", "when my download is done"
+            || (words.iter().any(|w| w.starts_with("download"))
+                && (has("finishes") || has("finished") || has("done") || has("completes") || has("ends")))
+            // "when ~/notes.txt changes", "when the file /x/y is modified"
+            || (words.iter().any(|w| w.contains('/') || w.contains('\\'))
+                && (has("changes") || has("changed") || has("modified") || has("appears")))
+            // "when firefox opens ...": a program by name, then opens/starts.
+            || (words.len() >= 2
+                && matches!(words[1], "opens" | "starts")
+                && !NOT_AN_APP.contains(&words[0])
+                && words[0].chars().all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.')));
     }
     false
 }
+
+/// First words of "when … opens" that aren't a program ("when the shop opens").
+const NOT_AN_APP: [&str; 6] = ["the", "a", "my", "it", "school", "this"];
 
 /// An instruction to update the system or install or remove a package of it.
 /// "update my system", "install htop", "uninstall vlc". Not "how do I install
@@ -2015,6 +2043,10 @@ mod tests {
             "remind me today at 12:57PM to dance",
             "Please remind me in 20 minutes to check the oven",
             "remind me tomorrow to call mum",
+            "when a download finishes tell me its name",
+            "when my download is done, say done",
+            "when ~/notes/todo.md changes summarise it",
+            "when firefox opens tell me the weather",
         ] {
             assert_eq!(capability_for_description(yes), st, "{yes}");
         }
@@ -2026,6 +2058,12 @@ mod tests {
             "what is a standing desk",
             "tell me about battery drops",
             "remind me what a monad is",
+            "when the shop opens tell me",
+            "when does the download finish",
+            "when did notes.txt change",
+            "when is the download done",
+            "when was /home/me/notes.txt modified",
+            "when will firefox start",
         ] {
             assert_ne!(capability_for_description(no), st, "{no}");
         }

@@ -3377,6 +3377,9 @@ friday_tasks() {
            (if .trigger.minutes % 60 == 0 then "every " + ((.trigger.minutes / 60) | tostring) + " h"
             else "every " + (.trigger.minutes | tostring) + " min" end)
          elif .trigger.kind == "once" then "once at " + (.trigger.at | localtime | strftime("%H:%M on %d %b"))
+         elif .trigger.kind == "download_done" then "when a download finishes"
+         elif .trigger.kind == "file_changed" then "when " + .trigger.path + " changes"
+         elif .trigger.kind == "app_opens" then "when " + .trigger.app + " opens"
          else "battery under " + (.trigger.percent | tostring) + "%" end),
         .goal, (if .paused then "(paused)" else "" end)] | join("  ")' "$f" 2>/dev/null \
         | sed 's/[[:space:]]*$//' \
@@ -3805,6 +3808,7 @@ undo-file-writes|friday undo puts back a file FRIDAY wrote (kept while it's unch
 day-summary|friday day: a short summary of a day by project, from FRIDAY's own logs, kept on this computer
 thread-compaction|In a long conversation, turns older than the last few ride along as one short line each
 routine-offer|After FRIDAY does the same desktop steps three times, the answer offers to keep them as a routine
+event-tasks|Standing tasks that start when a download finishes, a file changes or an app opens (local events only)
 log-chain|Each action in the action log is chained to the one before, so a changed line shows (friday verify-log)
 standing-reversible|A standing task runs only what can be undone; anything that would ask first is refused and logged
 memory-tidy|When memory is fuller than an ask carries, friday memory tidy proposes a shorter list to approve

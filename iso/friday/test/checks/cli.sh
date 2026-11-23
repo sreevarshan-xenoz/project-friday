@@ -1114,6 +1114,11 @@ tl=$(bash "$F" tasks)
 contains "tasks lists a daily task" "$tl" "t1  every day at 08:05  tell me the weather"
 contains "tasks lists a battery task" "$tl" "t2  battery under 20%  say hi"
 cp "$FD/standing.json" "$W/standing.saved"
+printf '%s\n' '{"tasks":[{"id":"t4","goal":"tell me","trigger":{"kind":"download_done"},"created":1},{"id":"t5","goal":"say it","trigger":{"kind":"file_changed","path":"/tmp/notes.txt"},"created":1},{"id":"t6","goal":"say hi","trigger":{"kind":"app_opens","app":"firefox"},"created":1}]}' >"$FD/standing.json"
+tl=$(bash "$F" tasks)
+contains "tasks lists a download task" "$tl" "t4  when a download finishes  tell me"
+contains "tasks lists a file task" "$tl" "t5  when /tmp/notes.txt changes  say it"
+contains "tasks lists an app task" "$tl" "t6  when firefox opens  say hi"
 printf '%s\n' '{"tasks":[{"id":"t3","goal":"say: Time to dance.","trigger":{"kind":"once","at":1795000000},"created":1}]}' >"$FD/standing.json"
 [[ "$(bash "$F" tasks)" =~ ^t3\ \ once\ at\ [0-9]{2}:[0-9]{2}\ on\ [0-9]{2}\ [A-Z][a-z]{2}\ \ say:\ Time\ to\ dance\.$ ]] \
   && pass "tasks lists a reminder with its time" || fail "a reminder listed as: $(bash "$F" tasks)"

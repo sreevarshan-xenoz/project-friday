@@ -25,6 +25,12 @@ Singleton {
       return t.minutes % 60 === 0 ? "every " + (t.minutes / 60) + " h" : "every " + t.minutes + " min";
     if (t.kind === "battery_below")
       return "battery under " + t.percent + "%";
+    if (t.kind === "download_done")
+      return "when a download finishes";
+    if (t.kind === "file_changed")
+      return "when " + t.path + " changes";
+    if (t.kind === "app_opens")
+      return "when " + t.app + " opens";
     if (t.kind === "once") {
       const d = new Date(t.at * 1000);
       return "once at " + pad(d.getHours()) + ":" + pad(d.getMinutes()) + " on " + d.toLocaleDateString(Qt.locale(), "d MMM");
