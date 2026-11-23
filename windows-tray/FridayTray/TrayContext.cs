@@ -659,7 +659,7 @@ internal sealed class TrayContext : ApplicationContext
             return;
         }
         var outcome = Asking.Interpret(kind, question, exitCode, output);
-        _log.Save(question, context, outcome, DateTime.Now);
+        _log.Save(question, context, outcome, DateTime.Now, kind == AskKind.Screen && outcome.Ok);
 
         // A screen ask, or closed while it was on its way: show it now.
         if (answer is null || answer.IsClosed)

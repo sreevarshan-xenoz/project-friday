@@ -245,6 +245,42 @@ out=$("${priv[@]}" timeout 180 "$CTL_BIN" goal --wait "$q" 2>&1) || true
 if grep -qF "\"result\": \"FAKE-MODEL-ANSWER: $q" <<<"$out"; then pass "still answers after askers left, with its own answer"
 else fail "no answer of its own after askers left"; sed 's/^/       /' <<<"$out" | tail -8; fi
 
+# A screen ask's capture is used once and never written anywhere: a fake
+# grim returns a picture carrying a canary, and after the answer no file
+# FRIDAY could have written (its state, memory, temp, cache, config) holds it.
+# Linux only: Windows captures through its own host. No session bus and an
+# empty runtime folder, so nothing of this desktop is read.
+if [[ "$(uname -s)" == Linux ]]; then
+  echo "screen capture is used once"
+  mkdir -p "$W/shot-bin" "$W/run" "$W/tmp" "$W/xdg" "$W/home"
+  printf '#!/bin/sh\nprintf "\\211PNG\\r\\n\\032\\n"\nprintf "FRIDAY-CAPTURE-CANARY%%.0s" 1 2 3 4 5 6 7 8\n' >"$W/shot-bin/grim"
+  chmod +x "$W/shot-bin/grim"
+  kill $DAEMON 2>/dev/null; wait $DAEMON 2>/dev/null || true
+  rm -f "$W/state.json"
+  shot=(env -u HTTPS_PROXY -u HTTP_PROXY -u https_proxy -u http_proxy -u ALL_PROXY -u all_proxy
+    -u DBUS_SESSION_BUS_ADDRESS -u WAYLAND_DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE -u NIRI_SOCKET
+    PATH="$W/shot-bin:$PATH" HOME="$W/home" XDG_RUNTIME_DIR="$W/run" TMPDIR="$W/tmp"
+    XDG_STATE_HOME="$W/xdg/state" XDG_CACHE_HOME="$W/xdg/cache" XDG_CONFIG_HOME="$W/xdg/config" XDG_DATA_HOME="$W/xdg/data"
+    FRIDAY_STATE_FILE="$W/state.json" FRIDAY_MEMORY_DIR="$W/memory-shot" FRIDAY_LISTEN=127.0.0.1:0
+    LLAMACPP_ENABLED=1 LLAMACPP_VISION=1 LLAMACPP_BASE_URL="http://127.0.0.1:$PORT/v1")
+  "${shot[@]}" "$DAEMON_BIN" >"$W/daemon-shot.log" 2>&1 &
+  DAEMON=$!
+  for _ in $(seq 120); do grep -q '"status": *"running"' "$W/state.json" 2>/dev/null && break; sleep 0.5; done
+  : >"$W/model.log"
+  out=$("${shot[@]}" timeout 120 "$CTL_BIN" context screen --yes --ask "what is this" 2>&1) || true
+  # The canary as text and in base64 at each of the three byte offsets.
+  forms=("FRIDAY-CAPTURE-CANARY")
+  for pad in "" x xx; do forms+=("$(printf '%sFRIDAY-CAPTURE-CANARYFRIDAY-CAPTURE-CANARY' "$pad" | base64 -w0 | cut -c5-28)"); done
+  pats=(); for f in "${forms[@]}"; do pats+=(-e "$f"); done
+  # The fake model logs only a picture's size: 8 header bytes + 8 canaries.
+  if grep -qF '"176-byte' "$W/model.log"; then
+    pass "the capture reached the model"
+  else fail "the capture never reached the model"; sed 's/^/       /' <<<"$out" | tail -6; tail -5 "$W/daemon-shot.log"; fi
+  kept=$(grep -rlaF "${pats[@]}" "$W" 2>/dev/null | grep -v "/shot-bin/" || true)
+  if [[ -z "$kept" ]]; then pass "no file keeps the capture"
+  else fail "the capture was written to: $kept"; fi
+fi
+
 # No model reachable at all (the local one down, and every remote one behind
 # a dead proxy): the ask fails and says why in plain words, instead of
 # "completing" with an empty memory lookup.

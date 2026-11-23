@@ -779,6 +779,7 @@ printf 'LLAMACPP_ENABLED=1\nLLAMACPP_BASE_URL=http://127.0.0.1:8080/v1\n' >"$env
 : >"$LOG"; bash "$F" ask --screen "what is this"; sleep 0.3
 if grep -q "context screen" "$LOG"; then fail "took a screenshot of a private window"; else pass "no screenshot of a private window"; fi
 contains "and says so" "$(cat "$LOG")" "no screenshot of it leaves"
+if grep -q "on your screen, sent this once" "$state/last-answer.md" 2>/dev/null; then fail "a screen ask that sent nothing says it was sent"; else pass "a screen ask that sent nothing doesn't say it was sent"; fi
 # With words to read: they go to the local model, never to the daemon.
 : >"$LOG"; LOCAL_REPLY="It's your vault's entry list." WINDOW_TEXT="Entries: email, bank, wifi" bash "$F" ask --screen "what is this"; sleep 0.3
 contains "a private window's text goes to the local model" "$(cat "$LOG")" "http://127.0.0.1:8080/v1/chat/completions"
@@ -1258,6 +1259,7 @@ contains "and its text" "$(cat "$LOG")" "Ownership rules"
 contains "the page is marked as quoted material (it can't pick the tool)" "$(cat "$LOG")" "[page]"
 : >"$LOG"; bash "$F" ask --screen "summarize this page"; sleep 0.3
 contains "without the extension it's a screenshot as before" "$(cat "$LOG")" "context screen"
+contains "the saved answer says the screen went once and wasn't kept" "$(cat "$state/last-answer.md")" "> (with what was on your screen, sent this once; not kept)"
 # A private window the extension can't see: its tab answer is another window's.
 printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s %q\nexit 0\n' '{"class":"firefox","title":"Mozilla Firefox Private Browsing"}' >"$S/hyprctl"
 : >"$LOG"; PATH="$W/bt-bin:$PATH" bash "$F" ask --screen "summarize this page"; sleep 0.3
