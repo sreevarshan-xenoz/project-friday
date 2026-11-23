@@ -31,6 +31,27 @@ pub enum Risk {
     Destructive,
 }
 
+/// Every verb `risk_of` knows: a new verb goes in both (FRIDAY's risk
+/// table is tested against this list).
+pub const VERBS: [&str; 16] = [
+    "windows",
+    "active_window",
+    "workspaces",
+    "now_playing",
+    "find_app",
+    "system_health",
+    "focus_window",
+    "move_window",
+    "place_window",
+    "switch_workspace",
+    "launch_app",
+    "media",
+    "volume",
+    "brightness",
+    "power_profile",
+    "close_window",
+];
+
 /// The risk class of a desktop verb; `None` for a verb this adapter lacks.
 pub fn risk_of(action: &str) -> Option<Risk> {
     Some(match action {
