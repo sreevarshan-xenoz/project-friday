@@ -36,7 +36,7 @@ pub fn mark_seen(state_dir: &Path, now: i64) -> std::io::Result<()> {
     std::fs::write(seen_file(state_dir), now.to_string())
 }
 
-fn piece(text: &str) -> String {
+pub(crate) fn piece(text: &str) -> String {
     let one = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if one.chars().count() <= PIECE {
         return one;
@@ -47,7 +47,7 @@ fn piece(text: &str) -> String {
 }
 
 /// "08:30", or "yesterday at 15:00" for a time before today.
-fn clock(ts: i64, now: i64) -> String {
+pub(crate) fn clock(ts: i64, now: i64) -> String {
     let (Some(t), Some(n)) = (
         Local.timestamp_opt(ts, 0).earliest(),
         Local.timestamp_opt(now, 0).earliest(),

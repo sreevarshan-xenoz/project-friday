@@ -33,6 +33,11 @@ if [[ "\$1" == thread ]]; then
   printf '# FRIDAY conversation\n\n**You:** what is rust\n\nA language.\n'
   exit 0
 fi
+if [[ "\$1" == activity ]]; then
+  printf 'friday-ctl-activity\n' >> "$LOG"
+  echo 'Standing tasks'
+  exit 0
+fi
 if [[ "\$1" == brief ]]; then
   printf 'friday-ctl-brief %s\n' "\$*" >> "$LOG"
   echo 'opencode finished "fix the tests": all pass.'
@@ -573,6 +578,12 @@ contains "friday risks shows the table" "$(bash "$F" risks)" "Asks first"
 bash "$F" feature risk-table off >/dev/null
 contains "the risk table can be turned off" "$(bash "$F" risks)" "turned off"
 bash "$F" feature risk-table on >/dev/null
+# One list of runs, standing tasks and approvals.
+: >"$LOG"; contains "friday activity shows the list" "$(bash "$F" activity)" "Standing tasks"
+contains "from friday-ctl" "$(cat "$LOG")" "friday-ctl-activity"
+bash "$F" feature activity off >/dev/null
+contains "activity can be turned off" "$(bash "$F" activity)" "turned off"
+bash "$F" feature activity on >/dev/null
 
 echo "checking agents' work"
 contains "off unless turned on" "$(bash "$F" agents check)" "Checking agents' work: off"
