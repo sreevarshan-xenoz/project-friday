@@ -109,8 +109,9 @@ pub trait ScreenText: Send + Sync {
     }
 }
 
-/// A picked area this small was a click: the control under it is asked about.
-pub const POINT_SIZE: u32 = 24;
+/// A picked area this small was a click (Linux 1 px, Windows 8 px): the
+/// control under it is asked about. A drag is bigger than this.
+pub const POINT_SIZE: u32 = 10;
 
 /// A secret field whose place the tree didn't give: the picture isn't sent.
 pub const UNPLACED: [i64; 4] = [-1, -1, -1, -1];
@@ -675,7 +676,7 @@ where
         // nothing else of the screen.
         if let (Some(r), Some(source)) = (region, self.text.as_ref()) {
             if r.width <= POINT_SIZE && r.height <= POINT_SIZE && crate::features::on("point-ask") {
-                if let Ok(CapturedContext::AppInfo {
+                let Ok(CapturedContext::AppInfo {
                     class,
                     title,
                     geometry,
@@ -683,6 +684,16 @@ where
                 }) = self
                     .collector
                     .capture(ContextChannel::App, &CaptureOptions::default())
+                else {
+                    self.revoke();
+                    return Err(ContextReadError::Capture(
+                        "couldn't tell which window is in front".into(),
+                    ));
+                };
+                if crate::recall::private(&class, &title, &crate::recall::own_list()) {
+                    self.revoke();
+                    return Err(ContextReadError::PrivateWindow);
+                }
                 {
                     let (cx, cy) = (
                         r.x as i64 + r.width as i64 / 2,
@@ -699,6 +710,10 @@ where
                             "couldn't tell which control is there; drag out an area instead".into(),
                         ));
                     };
+                    if shows_secret(&control) {
+                        self.revoke();
+                        return Err(secret_on_screen());
+                    }
                     {
                         let (shown, masked) = friday_goal_execution::mask_secrets(&title);
                         let shown = shown.replace(['\n', '\r'], " ");
@@ -710,10 +725,13 @@ where
                         let tell = |r: String| {
                             receipt(format!("{class} · the control you pointed at, {r}"))
                         };
-                        return self
+                        let sent = self
                             .send_words(&intro, &control, masked, question, progress, &tell)
-                            .await
-                            .map(|answer| (answer, ScreenSent::Text { cut: false }));
+                            .await;
+                        if sent.is_err() {
+                            self.revoke();
+                        }
+                        return sent.map(|answer| (answer, ScreenSent::Text { cut: false }));
                     }
                 }
             }
@@ -2624,7 +2642,7 @@ mod tests {
         }
         async fn control_at(&self, _: &str, _: &str, points: &[(i64, i64)]) -> Option<String> {
             points
-                .contains(&(110, 110))
+                .contains(&(109, 109))
                 .then(|| "Pointed at: button: Deploy".to_string())
         }
     }
@@ -2638,7 +2656,7 @@ mod tests {
         let (_, sent) = reader
             .ask_routed(
                 Some("what does this do?"),
-                Some(ScreenRegion::new(100, 100, 20, 20)),
+                Some(ScreenRegion::new(105, 105, 8, 8)),
                 &|_| {},
                 &|_| {},
             )

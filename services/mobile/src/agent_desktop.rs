@@ -1654,6 +1654,36 @@ pub fn secret_field_bounds(tree: &Value) -> Vec<[i64; 4]> {
     out
 }
 
+/// Whether a node is a password, protected or card field (as for blanking).
+fn secret_node(node: &Value) -> bool {
+    let s = |k: &str| {
+        node.get(k)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_lowercase()
+    };
+    let role = s("role");
+    let states: Vec<String> = node
+        .get("states")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_lowercase)
+                .collect()
+        })
+        .unwrap_or_default();
+    let field = ["text", "entry", "field", "password"]
+        .iter()
+        .any(|w| role.contains(w));
+    role.contains("password")
+        || role.contains("secret")
+        || states
+            .iter()
+            .any(|x| x == "protected" || x == "password" || x.contains("secure"))
+        || (field && CARD_WORDS.iter().any(|w| s("name").contains(w)))
+}
+
 /// The smallest control whose bounds hold any of `points`, as text: its own
 /// line, the line of what it sits in, and up to six neighbours. `None` when
 /// no control is there, or it is a secret field.
@@ -1691,7 +1721,11 @@ pub fn control_at(tree: &Value, points: &[(i64, i64)]) -> Option<String> {
             let inside = points
                 .iter()
                 .any(|&(px, py)| w > 0 && h > 0 && px >= x && py >= y && px < x + w && py < y + h);
-            if inside && !line(node).is_empty() && best.as_ref().is_none_or(|b| w * h < b.0) {
+            // A secret field counts too, so pointing at one sends nothing.
+            if inside
+                && (secret_node(node) || !line(node).is_empty())
+                && best.as_ref().is_none_or(|b| w * h < b.0)
+            {
                 *best = Some((w * h, node, parent));
             }
         }
@@ -1704,6 +1738,9 @@ pub fn control_at(tree: &Value, points: &[(i64, i64)]) -> Option<String> {
     let mut best = None;
     walk(tree, None, points, &mut best);
     let (_, node, parent) = best?;
+    if secret_node(node) {
+        return None;
+    }
     // A secret field gives no line at all: nothing about it goes.
     let own = line(node);
     let mut out = format!("Pointed at: {own}");
@@ -1717,7 +1754,7 @@ pub fn control_at(tree: &Value, points: &[(i64, i64)]) -> Option<String> {
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
-            .filter(|c| !std::ptr::eq(*c, node))
+            .filter(|c| !std::ptr::eq(*c, node) && !secret_node(c))
             .map(|c| tree_text(c, 200).lines().next().unwrap_or("").to_string())
             .filter(|l| !l.is_empty())
             .take(6)
@@ -2850,8 +2887,8 @@ mod tests {
             !got.contains("Far away") && !got.contains("Proxy password"),
             "{got}"
         );
-        // The password field itself: nothing about it.
-        assert!(control_at(&tree, &[(20, 75)]).is_none_or(|g| !g.contains("Proxy password")));
+        // The password field itself: nothing at all.
+        assert!(control_at(&tree, &[(20, 75)]).is_none());
         assert!(control_at(&tree, &[(5000, 5000)]).is_none());
     }
 
