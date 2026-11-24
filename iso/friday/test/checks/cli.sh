@@ -119,6 +119,7 @@ fi
 if [[ "\$1" == browser && "\$2" == find ]]; then
   printf 'friday-ctl-browser-find %s\n' "\$*" >> "$LOG"
   [ -n "\${PAGE_FIND:-}" ] && { echo '{"found":true,"name":"Sign in"}'; exit 0; }
+  [ -n "\${PAGE_PRIVATE:-}" ] && { echo '{"error":"no tab FRIDAY may read"}'; exit 1; }
   echo '{"found":false}'; exit 1
 fi
 if [[ "\$1" == show ]]; then
@@ -1499,6 +1500,9 @@ contains "a page in front: the extension looks on the page" "$(cat "$LOG")" "fri
 if grep -q "friday-ctl-show" "$LOG"; then fail "looked in the app after the page found it"; else pass "and found there, nothing else is asked"; fi
 : >"$LOG"; bash "$F" ask "where is the bookmarks bar"; sleep 0.3
 contains "not on the page: the browser's own controls are looked at" "$(cat "$LOG")" "friday-ctl-show show where is the bookmarks bar"
+: >"$LOG"; PAGE_PRIVATE=1 SHOW_REPLY='{"found":false,"app":"Chromium","controls":["Bank login"]}' bash "$F" ask "where is the bookmarks bar"; sleep 0.3
+if grep -q "friday-ctl-show\|friday-ctl-pick" "$LOG"; then fail "the browser called the tab private, but its controls were still read"
+else pass "a tab the browser calls private: nothing else is looked at"; fi
 unset FRIDAY_SHELL_DIR; rm -f "$S/hyprctl" "$S/quickshell"
 
 echo "routines"

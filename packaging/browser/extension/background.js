@@ -70,8 +70,13 @@ function connect() {
     return;
   }
   port.onMessage.addListener(async (msg) => {
-    if (msg?.type === "tab") port.postMessage({ id: msg.id, ...(await activeTab()) });
-    else if (msg?.type === "find") port.postMessage({ id: msg.id, ...(await findInTab(msg.question)) });
+    // Always an answer, so the host isn't left waiting on a failure.
+    try {
+      if (msg?.type === "tab") port.postMessage({ id: msg.id, ...(await activeTab()) });
+      else if (msg?.type === "find") port.postMessage({ id: msg.id, ...(await findInTab(msg.question)) });
+    } catch (e) {
+      port?.postMessage({ id: msg?.id, error: "the browser couldn't answer" });
+    }
   });
   port.onDisconnect.addListener(() => {
     port = null;

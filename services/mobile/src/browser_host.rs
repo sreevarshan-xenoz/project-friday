@@ -52,7 +52,8 @@ pub fn request(line: &str) -> Option<Value> {
         return Some(serde_json::json!({"type": "tab"}));
     }
     let q = line.strip_prefix("find ")?.trim();
-    (!q.is_empty() && q.len() <= 500).then(|| serde_json::json!({"type": "find", "question": q}))
+    (!q.is_empty() && q.chars().count() <= 500)
+        .then(|| serde_json::json!({"type": "find", "question": q}))
 }
 
 /// The browser's half of the host: questions go out on stdout, the
@@ -244,6 +245,9 @@ pub fn find(question: &str) -> Result<Value, String> {
         .filter(|c| !c.is_control())
         .take(500)
         .collect();
+    if q.trim().is_empty() {
+        return Err("no question to find".into());
+    }
     ask_host(&format!("find {}", q.trim()))
 }
 
@@ -336,6 +340,17 @@ mod tests {
         assert_eq!(request("find   "), None);
         assert_eq!(request("eval alert(1)"), None);
         assert_eq!(request(&format!("find {}", "a".repeat(501))), None);
+        // 500 characters is the limit, however many bytes they take.
+        let wide = "é".repeat(500);
+        assert_eq!(
+            request(&format!("find {wide}")),
+            Some(json!({"type": "find", "question": wide}))
+        );
+    }
+
+    #[test]
+    fn an_empty_question_is_not_sent() {
+        assert_eq!(find("  \n\t "), Err("no question to find".into()));
     }
 
     #[test]
