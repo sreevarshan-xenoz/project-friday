@@ -475,15 +475,21 @@ friday_aur_install() {
   local pkg dir
   pacstrap_with_retry /mnt base-devel git
   for pkg in "$@"; do
-    dir=$(arch-chroot /mnt runuser -u "$USERNAME" -- mktemp -d) || continue
-    if arch-chroot /mnt runuser -u "$USERNAME" -- bash -c 'cd "$1" && git clone -q "https://aur.archlinux.org/$2.git" p && cd p && makepkg --nodeps --noconfirm --nocheck' _ "$dir" "$pkg" \
+    # On the disk, in the user's own cache: every arch-chroot gets a fresh,
+    # empty /tmp, so a folder made there is gone by the next call.
+    dir="$USER_HOME/.cache/friday-aur/$pkg"
+    rm -rf "/mnt$dir"
+    if arch-chroot /mnt runuser -u "$USERNAME" -- bash -c 'mkdir -p "$1" && cd "$1" && git clone -q "https://aur.archlinux.org/$2.git" p && cd p && makepkg --nodeps --noconfirm --nocheck' _ "$dir" "$pkg" \
         && arch-chroot /mnt bash -c 'pacman -U --noconfirm --needed "$1"/p/*.pkg.tar.zst' _ "$dir"; then
       echo "Installed $pkg from the AUR."
     else
       echo "Couldn't build $pkg from the AUR; install it later with: yay -S $pkg" >&2
+      echo "AUR build of $pkg failed"
+      friday_note "  Couldn't install $pkg; after the restart: yay -S $pkg (details in /var/log/friday-install.log)" >&3
     fi
     rm -rf "/mnt$dir"
   done
+  rmdir "/mnt$USER_HOME/.cache/friday-aur" 2>/dev/null || true
 }
 if (( ${#aur_pkgs[@]} )) && [ "$USERNAME" != root ]; then friday_aur_install "${aur_pkgs[@]}"; fi
 
@@ -860,6 +866,9 @@ if [[ "$INSTALL_MODE" == alongside ]]; then
   fi
   friday_note "  The partition table from before is kept in /var/lib/friday/install/."
 fi
+# The install's log, kept on the new system (root only): a step that went
+# wrong can be read after the restart. Passwords never reach it.
+install -Dm600 "$LOG_FILE" /mnt/var/log/friday-install.log 2>/dev/null || true
 echo
 friday_say "All done, $USERNAME. Remove the USB stick and I'll see you on the other side."
 echo
