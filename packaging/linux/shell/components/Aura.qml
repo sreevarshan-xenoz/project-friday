@@ -14,6 +14,9 @@ Item {
 
   property real size: 40
   property string mode: "working"
+  // Still (motion off): drawn once for each change instead of every frame.
+  onModeChanged: if (!Theme.motion) canvas.requestPaint()
+  onEnergyChanged: if (!Theme.motion) canvas.requestPaint()
   property color primary: "#ff8f4c"
   property color secondary: "#5fd3bc"
   property color tertiary: "#b48cff"

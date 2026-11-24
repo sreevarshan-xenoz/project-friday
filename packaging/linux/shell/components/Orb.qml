@@ -81,6 +81,7 @@ Item {
         }
       }
       RotationAnimation on rotation {
+        running: Theme.motion
         loops: Animation.Infinite
         from: index === 0 ? 0 : 360
         to: index === 0 ? 360 : 0

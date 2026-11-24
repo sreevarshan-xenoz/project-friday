@@ -83,19 +83,25 @@ phase_msg() {
 
 # A live one-line status under the step header while a long step runs:
 # spinner, elapsed time, and the latest package pacman is handling.
-LIVE_PID=""
+LIVE_PID="" LIVE_ORB=false
 live_status_start() {
   [[ -t 3 ]] || return 0
+  # FRIDAY's orb pulses under the line while it waits: on a screen tall
+  # enough for it, and not with friday.nomotion on the boot line. Its rows are
+  # made first (scrolling now if they must), so drawing it never scrolls.
+  local rows
+  LIVE_ORB=false rows=$(stty size <&3 2>/dev/null | cut -d' ' -f1)
+  if [[ "$rows" =~ ^[0-9]+$ ]] && (( rows >= 30 )) && ! grep -qw friday.nomotion /proc/cmdline 2>/dev/null \
+      && [[ "${FRIDAY_NO_MOTION:-0}" != 1 ]]; then
+    LIVE_ORB=true
+    printf '\n\n\n\n\n\n\n\n\n\e[9A' >&3
+  fi
+  local orb=$LIVE_ORB
   (
     trap - ERR EXIT
     set +e
     # The console font has no Braille (or half blocks): a plain spinner there.
     frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'; [[ "${TERM:-}" == linux ]] && frames='|/-\|/-\|/'; i=0
-    # FRIDAY's orb pulses under the line while it waits: on a screen tall
-    # enough for it, and not with friday.nomotion on the boot line.
-    orb=false rows=$(stty size </dev/tty 2>/dev/null | cut -d' ' -f1)
-    if [[ "$rows" =~ ^[0-9]+$ ]] && (( rows >= 30 )) && ! grep -qw friday.nomotion /proc/cmdline 2>/dev/null \
-        && [[ "${FRIDAY_NO_MOTION:-0}" != 1 ]]; then orb=true; fi
     while true; do
       line=$(tail -n 40 "$LOG_FILE" 2>/dev/null | tr '\r' '\n' \
         | grep -oE '\(\s*[0-9]+/[0-9]+\) (installing|upgrading|checking|downloading|loading|resolving)[^ ]* ?[^ ]*|downloading [^ ]+|:: [A-Za-z ]+\.\.\.' \
@@ -118,8 +124,9 @@ live_status_stop() {
   # A killed job makes `wait` return 143; never let that trip set -e / ERR.
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  # The line and the orb under it.
-  printf '\r\e[2K\e[J' >&3
+  # The line, and the orb's rows under it when it was drawn.
+  if $LIVE_ORB; then printf '\r\e[2K\e[J' >&3; else printf '\r\e[2K' >&3; fi
+  LIVE_ORB=false
 }
 trap 'live_status_stop' EXIT
 
