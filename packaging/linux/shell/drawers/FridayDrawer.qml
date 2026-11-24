@@ -97,14 +97,32 @@ FocusScope {
       }
     }
 
-    // Ask.
+    // Ask. A file dropped here goes with the question (@file "<path>"):
+    // a text file or a PDF, one at a time.
     Rectangle {
       Layout.fillWidth: true
       implicitHeight: 48
       radius: height / 2
       color: Theme.glassWell
-      border.width: 1
-      border.color: input.activeFocus ? Theme.alpha(Theme.accent, 0.6) : Theme.outline
+      border.width: drop.containsDrag ? 2 : 1
+      border.color: drop.containsDrag || input.activeFocus ? Theme.alpha(Theme.accent, 0.6) : Theme.outline
+
+      DropArea {
+        id: drop
+        anchors.fill: parent
+        keys: ["text/uri-list"]
+        onDropped: event => {
+          const url = event.urls.length > 0 ? event.urls[0].toString() : "";
+          if (!url.startsWith("file://"))
+            return;
+          const mention = root.fileMention(decodeURIComponent(url.slice(7)));
+          input.text = input.text.replace(/@file\s+("[^"]*"|\S+)\s*/g, "").trim();
+          input.text = (input.text === "" ? "" : input.text + " ") + mention + " ";
+          input.forceActiveFocus();
+          input.cursorPosition = input.text.length;
+          event.accept();
+        }
+      }
 
       RowLayout {
         anchors.fill: parent
@@ -374,6 +392,9 @@ FocusScope {
       }
     }
   }
+
+  // @file for a path, in quotes when it has spaces.
+  function fileMention(path) { return /\s/.test(path) ? '@file "' + path + '"' : "@file " + path; }
 
   function send() {
     const q = input.text.trim();
