@@ -137,6 +137,7 @@ public static class AppSettings
         ("watch-until", "Tell me when a command works or a window closes, checked less often over time (Linux)"),
         ("upgrade-restore", "When an upgrade is undone, settings and memory go back too (Linux)"),
         ("mask-history", "Keys and passwords are masked in the questions and answers FRIDAY keeps"),
+        ("key-pools", "A rate-limited provider is left alone a while; several keys for one provider (k1,k2) take turns"),
         ("log-chain", "Each action in the action log is chained to the one before, so a changed line shows"),
         ("standing-reversible", "A standing task runs only what can be undone; anything that would ask first is refused and logged"),
         ("memory-tidy", "When memory is fuller than an ask carries, offer a shorter list to approve"),

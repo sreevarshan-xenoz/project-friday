@@ -3986,6 +3986,7 @@ config-import|friday import: keys and a model from OpenCode, Aider or your envir
 watch-until|friday watch until <command> / gone <window>: told when it works or closes, checked less often over time
 upgrade-restore|When a system upgrade is undone, your FRIDAY settings and memory go back to how they were before it too
 mask-history|Keys and passwords are masked in the questions and answers FRIDAY keeps, and in screen recall and thoughts
+key-pools|A rate-limited provider is left alone a while (an hour for a daily limit); several keys (GROQ_API_KEY=k1,k2) take turns
 log-chain|Each action in the action log is chained to the one before, so a changed line shows (friday verify-log)
 standing-reversible|A standing task runs only what can be undone; anything that would ask first is refused and logged
 memory-tidy|When memory is fuller than an ask carries, friday memory tidy proposes a shorter list to approve
