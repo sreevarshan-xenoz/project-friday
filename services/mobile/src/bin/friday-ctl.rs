@@ -1571,6 +1571,52 @@ async fn main() -> std::process::ExitCode {
     if raw.first().map(String::as_str) == Some("timeline") {
         return timeline(&raw[1..]);
     }
+    // `friday-ctl import [--apply]`: keys and a model from other assistants,
+    // previewed (keys shown by their last 4 characters), then added.
+    if raw.first().map(String::as_str) == Some("import") {
+        use friday_mobile::import;
+        let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        else {
+            return std::process::ExitCode::FAILURE;
+        };
+        let found = import::find_all(std::path::Path::new(&home));
+        let env_path = friday_mobile::backup::folders()[0].1.join("friday.env");
+        let env = std::fs::read_to_string(&env_path).unwrap_or_default();
+        print!("{}", import::preview(&found, &env));
+        if raw.get(1).map(String::as_str) != Some("--apply") {
+            if import::apply(&found, &env).1 > 0 {
+                println!("Nothing was changed. Add these: friday import --apply");
+            }
+            return std::process::ExitCode::SUCCESS;
+        }
+        let (text, added) = import::apply(&found, &env);
+        if added == 0 {
+            println!("Nothing new to add.");
+            return std::process::ExitCode::SUCCESS;
+        }
+        let tmp = env_path.with_extension("env.tmp");
+        let written = env_path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| {
+                let mut opts = std::fs::OpenOptions::new();
+                opts.write(true).create(true).truncate(true);
+                #[cfg(unix)]
+                std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+                std::io::Write::write_all(&mut opts.open(&tmp)?, text.as_bytes())
+            })
+            .and_then(|()| std::fs::rename(&tmp, &env_path));
+        return match written {
+            Ok(()) => {
+                println!("Added {added}.");
+                std::process::ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("friday-ctl: couldn't write {}: {e}", env_path.display());
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
     if raw.first().map(String::as_str) == Some("answers") {
         return answers(&raw[1..], &friday_intelligence::default_state_dir());
     }
