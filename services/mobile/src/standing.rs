@@ -1059,7 +1059,12 @@ mod tests {
     #[test]
     fn event_triggers_are_checked_and_read_from_the_model() {
         let file = |p: &str| Trigger::FileChanged { path: p.into() };
-        assert!(file("/home/me/notes.txt").valid().is_ok());
+        let full = if cfg!(windows) {
+            r"C:\Users\me\notes.txt"
+        } else {
+            "/home/me/notes.txt"
+        };
+        assert!(file(full).valid().is_ok());
         assert!(file("~/notes.txt").valid().is_ok());
         assert!(file("notes.txt").valid().is_err());
         let app = |a: &str| Trigger::AppOpens { app: a.into() };
