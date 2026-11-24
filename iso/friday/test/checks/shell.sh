@@ -257,8 +257,8 @@ mkdir -p "$HOME/.config/friday"
 # the half of the screen the style puts the bar in (png_colour.py). The bar
 # is frosted glass (Theme.glass: the background at 72%, 80% for the light
 # dawn) over the headless output's black, with no blur here.
-declare -A look_bg=([ember]=090b0e [frost]=0a0e13 [moss]=0b0d0a [dawn]=c6c3be)
-for look in island:frost dock:moss ember:dawn island:dawn dock:ember; do
+declare -A look_bg=([ember]=090b0e [polar]=21252e [frost]=0a0e13 [moss]=0b0d0a [dawn]=c6c3be)
+for look in lean:polar island:frost dock:moss ember:dawn island:dawn dock:ember; do
   style=${look%%:*} palette=${look##*:}
   printf '{ "style": "%s", "palette": "%s" }\n' "$style" "$palette" >"$HOME/.config/friday/shell.json"
   sleep 3; grim "$W/look-${look/:/-}-bar.png" 2>/dev/null || true

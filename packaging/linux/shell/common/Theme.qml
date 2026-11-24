@@ -8,7 +8,9 @@ import Quickshell.Io
 //
 // Palettes (shell.json "palette"): FRIDAY's own, each with an accent for
 // FRIDAY and anything it is doing and a signal colour for system state:
-//   ember  warm near-black, ember accent, teal signal (the default)
+//   ember  warm near-black, ember accent, teal signal
+//   polar  Nord's arctic blue-greys, frost-cyan accent, aurora purple signal
+//          (FRIDAY OS's default)
 //   frost  cool slate, ice-blue accent, lilac signal
 //   moss   dark olive, lichen-green accent, amber signal
 //   dawn   light: warm paper, rust accent, deep-teal signal
@@ -18,6 +20,8 @@ import Quickshell.Io
 // Styles (shell.json "style") change where the bar sits and its shape:
 //   ember   flush with the top edge, flowing into the screen through
 //           concave corners; drawers grow out of it
+//   lean    the ember bar with windows kept plain: thin borders, small gaps,
+//           no blur (FRIDAY OS's default)
 //   island  three floating pills along the top; drawers are floating cards
 //   dock    one floating bar along the bottom; drawers rise from it
 Singleton {
@@ -91,7 +95,24 @@ Singleton {
     ok: "#3f8f3a"
   })
 
-  readonly property var own: ({ ember: ember, frost: frost, moss: moss, dawn: dawn })
+  readonly property var polar: ({
+    bg: "#2e3440",
+    surface: "#3b4252",
+    raised: "#434c5e",
+    overlay: "#4c566a",
+    outline: "#4c566a",
+    text: "#eceff4",
+    subtext: "#d8dee9",
+    faint: "#7b88a1",
+    accent: "#88c0d0",
+    onAccent: "#242933",
+    signal: "#b48ead",
+    error: "#bf616a",
+    warn: "#ebcb8b",
+    ok: "#a3be8c"
+  })
+
+  readonly property var own: ({ ember: ember, polar: polar, frost: frost, moss: moss, dawn: dawn })
   readonly property var palette: own[Config.palette] || ember
 
   property var omarchy: ({})
@@ -155,7 +176,7 @@ Singleton {
 
   // Style. `floating` styles keep the bar off the screen edge by `barInset`.
   readonly property string style: Config.style
-  readonly property bool floating: style !== "ember"
+  readonly property bool floating: style !== "ember" && style !== "lean"
   readonly property bool barAtBottom: style === "dock"
   readonly property int barInset: floating ? 10 : 0
   // How far from its screen edge the bar's far side is (windows start there).

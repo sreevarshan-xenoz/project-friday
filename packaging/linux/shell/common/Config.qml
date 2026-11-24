@@ -10,8 +10,9 @@ import Quickshell.Io
 //
 //   {
 //     "style": "ember",         // "ember" (bar flush with the top edge),
-//                               // "island" (three floating pills) or "dock"
-//                               // (a floating bar at the bottom)
+//                               // "lean" (the same bar; thin borders, small
+//                               // gaps, no blur), "island" (three floating
+//                               // pills) or "dock" (a floating bar at the bottom)
 //     "palette": "ember",       // FRIDAY's own: "ember", "frost", "moss",
 //                               // "dawn" (light); or "classic" (follow the
 //                               // desktop theme). "friday" = "ember"; the old
@@ -32,8 +33,8 @@ Singleton {
   property var featuresOff: []
   function featureOn(name) { return !root.featuresOff.includes(name); }
 
-  readonly property var styles: ["ember", "island", "dock"]
-  readonly property var palettes: ["ember", "frost", "moss", "dawn", "classic"]
+  readonly property var styles: ["ember", "lean", "island", "dock"]
+  readonly property var palettes: ["ember", "polar", "frost", "moss", "dawn", "classic"]
   readonly property string style: styles.includes(pick("style", "ember")) ? pick("style", "ember") : "ember"
   readonly property string palette: pick("palette", "ember") === "friday" ? "ember" : pick("palette", "ember") === "omarchy" ? "classic" : pick("palette", "ember")
   readonly property bool clock24h: pick("clock24h", true) === true
