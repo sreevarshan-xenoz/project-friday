@@ -155,6 +155,7 @@ public static class AppSettings
         ("suggestions", "Asks that fit the app in front (a page, an email, a chat) are offered first in the ask box"),
         ("clipboard-expiry", "A clipboard copied over 10 minutes ago is not used as context for a new question"),
         ("ask-timings", "How long each stage of an ask takes is kept on this computer (friday-ctl timings)"),
+        ("spoken-length", "Spoken answers say two, six or all sentences (Voice page); the card shows all"),
         ("screen-what-changed", "\"What changed?\" about the same window sends only the lines that changed since the last ask"),
         ("agent-compare", "Two agents on the same task, each in its own copy, compared before you keep one"),
         ("backup-new-home", "A backup restored on another computer points saved folders at the new home"),

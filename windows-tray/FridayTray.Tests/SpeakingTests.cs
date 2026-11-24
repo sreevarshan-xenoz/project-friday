@@ -90,4 +90,20 @@ public class SpeakingTests : IDisposable
         Speaking.SetSpeaker(_paths, 2);
         Assert.Equal(2, Speaking.Speaker(_paths));
     }
+
+    [Fact]
+    public void The_spoken_length_is_kept_beside_the_voice_and_normal_by_default()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "friday-length-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var paths = new Paths(Path.Combine(root, "cfg"), Path.Combine(root, "state"));
+            Assert.Equal("normal", Speaking.Length(paths));
+            Speaking.SetSpeaker(paths, 2);
+            Speaking.SetLength(paths, "brief");
+            Assert.Equal("brief", Speaking.Length(paths));
+            Assert.Equal(2, Speaking.Speaker(paths));
+        }
+        finally { try { Directory.Delete(root, true); } catch (IOException) { } }
+    }
 }

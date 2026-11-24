@@ -1920,6 +1920,10 @@ contains "hold with no words: says so" "$(cat "$LOG")" "I didn't catch that"
 printf '#!/bin/bash\necho "wtype $*" >>"%s"\n' "$LOG" >"$S/wtype"; chmod +x "$S/wtype"
 : >"$LOG"; bash "$F" hold start --type; sleep 0.9; bash "$F" hold end --type; sleep 0.5
 contains "voice typing: the spoken words are typed" "$(cat "$LOG")" "wtype -- what time is it in Tokyo"
+VD="$W/spoken-voice"; mkdir -p "$VD"; echo '{"kind":"tinyvoca","speaker":3}' >"$VD/settings.json"
+contains "the spoken length is set" "$(FRIDAY_VOICE_DIR="$VD" bash "$F" voice speak length brief)" "Spoken answers: brief."
+[ "$(jq -r '.length + " " + (.speaker|tostring)' "$VD/settings.json")" = "brief 3" ] && pass "and kept beside the voice's other settings" || fail "voice settings: $(cat "$VD/settings.json")"
+FRIDAY_VOICE_DIR="$VD" bash "$F" voice speak length loud >/dev/null 2>&1 && fail "a made-up spoken length was taken" || pass "a made-up spoken length is refused"
 if grep -q "friday-ctl" "$LOG"; then fail "voice typing sent the words to the AI"; else pass "voice typing asks nothing"; fi
 : >"$LOG"; bash "$F" hold start --type; sleep 0.9; WHISPER_SILENT=1 bash "$F" hold end --type; sleep 0.3
 contains "voice typing with no words: says so" "$(cat "$LOG")" "Super+Shift+Y"

@@ -2390,7 +2390,19 @@ friday_voice_speak() {
       jq --argjson n "$2" '.speaker = $n' "$dir/settings.json" >"$dir/settings.json.tmp" && mv "$dir/settings.json.tmp" "$dir/settings.json"
       echo "Voice $2."
       ;;
-    *) echo "Usage: friday voice speak [setup|on|off|voices|voice N|status]" >&2; return 1 ;;
+    length)
+      # How much of an answer is said aloud; the card always shows all of it.
+      case "${2:-}" in
+        brief|normal|detailed) ;;
+        "") echo "Spoken length: $(jq -r '.length // "normal"' "$dir/settings.json" 2>/dev/null || echo normal) (brief: 2 sentences, normal: 6, detailed: all)"; return 0 ;;
+        *) echo "Usage: friday voice speak length [brief|normal|detailed]" >&2; return 1 ;;
+      esac
+      mkdir -p "$dir"
+      { jq --arg l "$2" '.length = $l' "$dir/settings.json" 2>/dev/null || jq -n --arg l "$2" '{length: $l}'; } >"$dir/settings.json.tmp" \
+        && mv "$dir/settings.json.tmp" "$dir/settings.json"
+      echo "Spoken answers: $2."
+      ;;
+    *) echo "Usage: friday voice speak [setup|on|off|voices|voice N|length L|status]" >&2; return 1 ;;
   esac
 }
 
@@ -3898,6 +3910,7 @@ live-web|Questions about the weather, news, scores or prices search the web with
 speak-as-it-comes|Spoken answers start with the first sentence while the rest is still coming
 clipboard-expiry|A clipboard copied over 10 minutes ago is not used as context (known when friday clips are on); password-manager copies never are
 ask-timings|How long each stage of an ask takes is kept on this computer (friday doctor shows the median and slow end)
+spoken-length|Spoken answers say two, six or all sentences (friday voice speak length brief, normal or detailed); the card shows all
 screen-what-changed|What changed? about the same window sends only the lines that changed since the last screen ask (kept in memory 30 minutes)
 agent-compare|Two agents on the same task, each in its own copy, then friday agents compare to pick one
 backup-new-home|A backup restored on another computer points saved folders (workspaces, threads, settings) at the new home

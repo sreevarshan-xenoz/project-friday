@@ -155,6 +155,32 @@ pub fn detect(dir: &Path) -> Option<Voice> {
     })
 }
 
+/// Said instead of the rest of an answer past the spoken length.
+pub const REST_ON_SCREEN: &str = "The rest is on screen.";
+
+/// How many sentences of an answer are said aloud: `length` in the voice's
+/// `settings.json` ("brief" two, "normal" six, "detailed" all); normal
+/// when unset. All of it with the switch off.
+pub fn spoken_limit(dir: &Path) -> Option<usize> {
+    if !crate::features::on("spoken-length") {
+        return None;
+    }
+    let settings: Value = std::fs::read_to_string(dir.join("settings.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or(Value::Null);
+    limit_for(settings["length"].as_str().unwrap_or("normal"))
+}
+
+/// The sentences said for a spoken length.
+pub fn limit_for(length: &str) -> Option<usize> {
+    match length {
+        "brief" => Some(2),
+        "detailed" => None,
+        _ => Some(6),
+    }
+}
+
 /// The engine's command line for one piece of text.
 pub fn engine_args(v: &Voice, text: &str, out: &Path) -> Vec<String> {
     let m = |f: &str| v.model.join(f).to_string_lossy().into_owned();
@@ -607,7 +633,7 @@ pub fn speak(
     let (tx, rx) = mpsc::channel();
     let _ = tx.send(text.to_string());
     drop(tx);
-    speak_stream(rx, synth, player, cancel)
+    speak_stream(rx, synth, player, cancel, None)
 }
 
 /// Speaks text as it arrives on `input` (an answer still streaming in), until
@@ -620,6 +646,7 @@ pub fn speak_stream(
     synth: Arc<dyn Synth>,
     player: &dyn Player,
     cancel: Arc<AtomicBool>,
+    limit: Option<usize>,
 ) -> Result<Spoken, String> {
     struct State {
         queue: std::collections::VecDeque<(usize, String)>,
@@ -644,26 +671,48 @@ pub fn speak_stream(
         let (shared, cancel) = (shared.clone(), cancel.clone());
         std::thread::spawn(move || {
             let mut chunker = Chunker::default();
+            // A spoken length set: past it, one line says where the rest is
+            // and the speech ends there, without waiting for the rest.
+            // Returns whether it was cut.
             let add = |chunks: Vec<String>| {
                 let (lock, cv) = &*shared;
                 let mut st = lock.lock().unwrap();
-                for chunk in chunks {
+                let mut cut = false;
+                'all: for chunk in chunks {
                     for s in sentences(&clean_for_speech(&chunk), 220) {
+                        let s = if limit.is_some_and(|n| st.total >= n) {
+                            cut = true;
+                            REST_ON_SCREEN.to_string()
+                        } else {
+                            s
+                        };
                         let i = st.total;
                         st.queue.push_back((i, s));
                         st.total += 1;
+                        if cut {
+                            break 'all;
+                        }
                     }
                 }
                 cv.notify_all();
+                cut
             };
+            let mut cut = false;
             loop {
                 match input.recv_timeout(tick) {
-                    Ok(text) => add(chunker.push(&text)),
+                    Ok(text) => {
+                        if add(chunker.push(&text)) {
+                            cut = true;
+                            break;
+                        }
+                    }
                     Err(mpsc::RecvTimeoutError::Timeout) if !cancel.load(Ordering::SeqCst) => {}
                     Err(_) => break,
                 }
             }
-            add(chunker.finish());
+            if !cut {
+                add(chunker.finish());
+            }
             let (lock, cv) = &*shared;
             lock.lock().unwrap().closed = true;
             cv.notify_all();
@@ -1365,7 +1414,7 @@ fn say_from(input: mpsc::Receiver<String>) -> Result<Spoken, String> {
     let player = SystemPlayer {
         dump: std::env::var_os("FRIDAY_SAY_DUMP").map(PathBuf::from),
     };
-    let result = speak_stream(input, synth, &player, cancel);
+    let result = speak_stream(input, synth, &player, cancel, spoken_limit(&dir));
     done.store(true, Ordering::SeqCst);
     let _ = std::fs::remove_dir_all(&work);
     if std::fs::read_to_string(pid_file())
@@ -2253,6 +2302,60 @@ mod tests {
         );
     }
 
+    /// A cut answer ends its speech without waiting for the rest of the stream.
+    #[test]
+    fn a_cut_answer_ends_before_the_stream_does() {
+        let player = FakePlayer::new(None);
+        let synth = Arc::new(FakeSynth {
+            made: Mutex::new(vec![]),
+            fail_on: None,
+        });
+        let (tx, rx) = mpsc::channel();
+        tx.send("One is here. Two is here. Three is here. Four".to_string())
+            .unwrap();
+        let started = std::time::Instant::now();
+        // The sender stays open: the answer is still streaming.
+        speak_stream(
+            rx,
+            synth,
+            &player,
+            Arc::new(AtomicBool::new(false)),
+            Some(2),
+        )
+        .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(5));
+        drop(tx);
+    }
+
+    /// A spoken length says that many sentences, then where the rest is.
+    #[test]
+    fn a_spoken_length_stops_with_the_rest_on_screen() {
+        let player = FakePlayer::new(None);
+        let synth = Arc::new(FakeSynth {
+            made: Mutex::new(vec![]),
+            fail_on: None,
+        });
+        let (tx, rx) = mpsc::channel();
+        tx.send("One is here. Two is here. Three is here. Four is here.".to_string())
+            .unwrap();
+        drop(tx);
+        speak_stream(
+            rx,
+            synth.clone(),
+            &player,
+            Arc::new(AtomicBool::new(false)),
+            Some(2),
+        )
+        .unwrap();
+        let made = synth.made.lock().unwrap().clone();
+        assert_eq!(made.len(), 3, "{made:?}");
+        assert!(made.iter().any(|m| m == REST_ON_SCREEN), "{made:?}");
+        assert!(!made.iter().any(|m| m.contains("Three")), "{made:?}");
+        assert_eq!(limit_for("brief"), Some(2));
+        assert_eq!(limit_for("detailed"), None);
+        assert_eq!(limit_for("anything"), Some(6));
+    }
+
     /// The first sentence plays before the rest of the answer has arrived.
     #[test]
     fn speech_starts_before_the_answer_is_complete() {
@@ -2268,6 +2371,7 @@ mod tests {
                 }),
                 &player,
                 Arc::new(AtomicBool::new(false)),
+                None,
             )
         });
         tx.send("First one. Second".to_string()).unwrap();
