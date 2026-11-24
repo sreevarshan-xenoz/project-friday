@@ -424,6 +424,7 @@ rm -f "$S/hyprctl"
 echo "safe upgrade"
 U="$W/upgrade"; rm -rf "$U"; mkdir -p "$U/bin" "$U/state" "$U/cache" "$U/sys/class/power_supply/AC" "$U/home/alice/.config/friday"
 echo "pref=1" >"$U/home/alice/.config/friday/friday.env"
+mkdir -p "$U/home/alice/.local/state/friday/memory"; echo '{"fact":"before"}' >"$U/home/alice/.local/state/friday/memory/episodes.jsonl"
 echo "root only" >"$U/secret"; ln -s "$U/secret" "$U/home/alice/.config/friday/link"
 truncate -s 5M "$U/home/alice/.config/friday/huge"
 # A pacman that keeps what's installed in a file: -Su takes the pending
@@ -464,13 +465,24 @@ contains "a new kernel asks for a restart" "$out" '"restart_for_kernel": true'
 contains "the new versions are installed" "$(cat "$U/installed")" "friday-git 1.1"
 backup_list=$(tar -tf "$(ls -1t "$U"/state/settings-*.tar | head -n1)")
 contains "the person's FRIDAY settings were backed up first" "$backup_list" "alice/.config/friday/friday.env"
+contains "and what FRIDAY remembers" "$backup_list" "alice/.local/state/friday/memory/episodes.jsonl"
 [[ "$backup_list" != *link* && "$backup_list" != *huge* ]] && pass "a symlink or a huge file in there isn't copied as root" || fail "the backup took a symlink or a huge file: $backup_list"
 [ "$(stat -c %a "$U/state/last.json")" = 644 ] && [ "$(stat -c %a "$(ls -1 "$U"/state/before-*.txt | head -n1)")" = 600 ] \
   && pass "the outcome is readable by all, the package list only by root" || fail "upgrade file permissions"
-# Broken afterwards: the previous versions come back from the cache.
+# Broken afterwards: the previous versions come back from the cache, and so
+# do the settings and memory as they were (the new version changed them).
 touch "$U/cache/friday-git-1.1-1-x86_64.pkg.tar.zst" "$U/cache/hyprland-0.41-1-x86_64.pkg.tar.zst"
 : >"$U/log"; touch "$U/broken"
+printf '#!/bin/bash\n[ -e "$UP/broken" ] && [[ "$1" == *friday-linux-daemon ]] && { echo "pref=2" >"$UP/home/alice/.config/friday/friday.env"; echo "{\\"fact\\":\\"migrated\\"}" >"$UP/home/alice/.local/state/friday/memory/episodes.jsonl"; echo "libgone.so => not found"; }\nexit 0\n' >"$U/bin/ldd"
 out=$(up $'friday-git 1.1\nhyprland 0.41' $'friday-git 1.2\nhyprland 0.42')
+contains "the settings are as they were before the upgrade" "$(cat "$U/home/alice/.config/friday/friday.env")" "pref=1"
+contains "and so is the memory" "$(cat "$U/home/alice/.local/state/friday/memory/episodes.jsonl")" "before"
+echo upgrade-restore >"$U/home/alice/.config/friday/features-off"
+touch "$U/cache/friday-git-1.1-1-x86_64.pkg.tar.zst" "$U/cache/hyprland-0.41-1-x86_64.pkg.tar.zst"; touch "$U/broken"
+up $'friday-git 1.1\nhyprland 0.41' $'friday-git 1.2\nhyprland 0.42' >/dev/null
+contains "with the switch off, a revert leaves the settings alone" "$(cat "$U/home/alice/.config/friday/friday.env")" "pref=2"
+rm -f "$U/home/alice/.config/friday/features-off"; echo "pref=1" >"$U/home/alice/.config/friday/friday.env"
+[ ! -e "$U/home/alice/.config/friday/link" ] || [ -L "$U/home/alice/.config/friday/link" ] && pass "the restore brings back no symlink target" || fail "the restore wrote through a symlink"
 contains "something broken afterwards is reverted" "$out" '"outcome": "reverted"'
 contains "FRIDAY goes back to the version before" "$(cat "$U/installed")" "friday-git 1.1"
 contains "and so does what came with it" "$(cat "$U/installed")" "hyprland 0.41"

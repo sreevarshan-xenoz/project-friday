@@ -3898,6 +3898,7 @@ blank-secret-fields|Password and card fields the window shows are painted over b
 doctor-fix|friday doctor --fix repairs what it can by itself: a stopped daemon, missing keys, FRIDAY Shell not running
 config-import|friday import: keys and a model from OpenCode, Aider or your environment, previewed first
 watch-until|friday watch until <command> / gone <window>: told when it works or closes, checked less often over time
+upgrade-restore|When a system upgrade is undone, your FRIDAY settings and memory go back to how they were before it too
 log-chain|Each action in the action log is chained to the one before, so a changed line shows (friday verify-log)
 standing-reversible|A standing task runs only what can be undone; anything that would ask first is refused and logged
 memory-tidy|When memory is fuller than an ask carries, friday memory tidy proposes a shorter list to approve
