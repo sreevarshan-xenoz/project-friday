@@ -1912,6 +1912,13 @@ rm -rf "$RT"
 : >"$LOG"; bash "$F" hold start; sleep 0.9; bash "$F" hold end; sleep 0.3
 contains "hold: records 16 kHz mono" "$(cat "$LOG")" "pw-record --rate 16000 --channels 1"
 contains "hold: the spoken words are asked" "$(cat "$LOG")" "what time is it in Tokyo"
+contains "voice preview turns on" "$(bash "$F" voice preview on)" "Voice preview: on"
+: >"$LOG"; bash "$F" hold start; sleep 0.9; PICK="what time is it in Osaka" bash "$F" hold end; sleep 0.3
+contains "preview: what was heard opens in the box" "$(cat "$LOG")" "--search=what time is it in Tokyo"
+contains "and the edited words are asked" "$(cat "$LOG")" "what time is it in Osaka"
+: >"$LOG"; bash "$F" hold start; sleep 0.9; PICK="" bash "$F" hold end; sleep 0.3
+if grep -q "Tokyo" <(grep -v "^fuzzel" "$LOG"); then fail "a dropped preview was still asked"; else pass "preview: Esc drops what was heard"; fi
+bash "$F" voice preview off >/dev/null
 if pgrep -f "$S/pw-record" >/dev/null; then fail "the recorder kept running after the release"; else pass "the recorder stops on release"; fi
 : >"$LOG"; bash "$F" hold start; sleep 0.9; WHISPER_SILENT=1 bash "$F" hold end; sleep 0.3
 contains "hold with no words: says so" "$(cat "$LOG")" "I didn't catch that"
