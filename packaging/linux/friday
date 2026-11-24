@@ -98,6 +98,7 @@ Autonomous Agent & Cognitive Loop:
   friday status | system-info      Inspect daemon state, memory, and telemetry
   friday context screen [--yes]    Share screen context with assistant
   friday daemon <status|restart|logs> Control friday-linux-daemon service
+  friday health                    Each part of FRIDAY (voice, memory, local AI, providers, screen), whether it works here, and its switches
   friday doctor [--quick] [--fix]  Check daemon, AI provider and desktop health, then a real ask (--quick: no ask;
                                    --fix: restart what's stopped and put keys back, then check again)
   friday report [file]             Write a redacted bug report to read and share
@@ -293,6 +294,39 @@ shell_supervise() {
 
 # `friday doctor`: one screen answering "why isn't FRIDAY working?".
 # Read-only; never prints secrets. Exit 1 if any check fails.
+# `friday health`: each part of FRIDAY in one line, whether it works here,
+# and the switches that turn it off (friday feature <name> off).
+friday_health() {
+  local on="\e[32m✓\e[0m" off="\e[33m·\e[0m"
+  sw() { local n out=""; for n in "$@"; do if friday_feature_on "$n"; then out+="$n on, "; else out+="$n OFF, "; fi; done; printf '      switches: %s\n' "${out%, }"; }
+  echo "FRIDAY's parts"
+  if friday_voice_ready; then printf "  $on Voice in: hold Super+Y and speak (on this computer)\n"
+  else printf "  $off Voice in: not set up (friday voice setup)\n"; fi
+  sw dictation-cleanup voice-followup dictation-latch voice-preview
+  if friday_speak_ready && [ -e "$(friday_speak_flag)" ]; then printf "  $on Spoken answers: on\n"
+  elif friday_speak_ready; then printf "  $off Spoken answers: installed, off (friday voice speak on)\n"
+  else printf "  $off Spoken answers: not installed (friday voice speak setup)\n"; fi
+  sw speak-as-it-comes spoken-length voice-try
+  local facts=0 journal=0 mem_dir
+  facts=$(grep -c '^- ' "$(friday_memory_file)" 2>/dev/null || true)
+  mem_dir="${FRIDAY_MEMORY_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/friday/memory}"
+  journal=$( { wc -l <"$mem_dir/episodes.jsonl"; } 2>/dev/null || echo 0)
+  printf "  $on Memory: ${facts:-0} facts you set, ${journal// /} past asks in the journal (friday memory)\n"
+  sw memory-file propose-memories memory-changes forget-everywhere
+  printf "  %b %s\n" "$( [ -f "$FRIDAY_LOCAL_CONF" ] && echo "$on" || echo "$off" )" "$(friday_local_ai_status 2>/dev/null | grep '^Local AI' | head -n1)"
+  sw easy-local model-per-job
+  local prov
+  prov=$(timeout 5 friday-ctl providers 2>/dev/null | grep -v '^\s*$' | head -n 4 || true)
+  if [ -n "$prov" ]; then printf "  $on AI providers:\n"; sed 's/^/      /' <<<"$prov"
+  else printf "  $off AI providers: nothing to say yet (friday providers)\n"; fi
+  sw live-web usage-page
+  if command -v grim >/dev/null 2>&1 && command -v slurp >/dev/null 2>&1; then printf "  $on Screen asks: Super+Ctrl+Y (each one asks first)\n"
+  else printf "  $off Screen asks: needs grim and slurp\n"; fi
+  if command -v tesseract >/dev/null 2>&1; then printf "  $on Screen words read here: tesseract\n"
+  else printf "  $off Screen words read here: needs tesseract (sudo pacman -S tesseract tesseract-data-eng)\n"; fi
+  sw screen-what-changed screen-secret-check blank-secret-fields screen-ocr tree-trim point-ask screen-quote
+}
+
 friday_doctor() {
   # Proof that nothing left: the egress log and the daemon's connections now.
   if [ "${1:-}" = "--offline" ]; then
@@ -3978,6 +4012,7 @@ memory-file|Every ask carries what you asked FRIDAY to remember (~/.config/frida
 live-web|Questions about the weather, news, scores or prices search the web without \"search\" first
 speak-as-it-comes|Spoken answers start with the first sentence while the rest is still coming
 voice-preview|friday voice preview on: what whisper heard opens in the ask box to edit or drop before it is used
+health-page|friday health: each part of FRIDAY, whether it works here, and its switches
 clipboard-expiry|A clipboard copied over 10 minutes ago is not used as context (known when friday clips are on); password-manager copies never are
 ask-timings|How long each stage of an ask takes is kept on this computer (friday doctor shows the median and slow end)
 spoken-length|Spoken answers say two, six or all sentences (friday voice speak length brief, normal or detailed); the card shows all
@@ -5813,6 +5848,11 @@ $offer"
       echo "Nothing to cancel: no goal is running." >&2
       exit 1
     fi
+    ;;
+  health)
+    # Each part of FRIDAY, whether it works here, and its switches.
+    friday_feature_on health-page || { echo "The health page is turned off (friday feature health-page on)."; exit 0; }
+    friday_health
     ;;
   doctor)
     shift
