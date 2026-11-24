@@ -111,6 +111,8 @@ public partial class AskWindow : Window
             foreach (var s in value)
                 AddRow(s);
             Quick.Visibility = _rows.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            if (_rows.Count > 0)
+                Keys.Text = "↑↓ suggestions, then recent questions   ·   ↵ ask   ·   esc close";
         }
     }
 

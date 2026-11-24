@@ -38,6 +38,10 @@ public static class AppSuggestions
     }
 
     /// <summary>The suggestion whose label was picked, if <paramref name="question"/> is one.</summary>
-    public static Suggestion? Picked(IReadOnlyList<Suggestion> offered, string question) =>
-        offered.FirstOrDefault(s => s.Label == question.Trim());
+    public static Suggestion? Picked(IReadOnlyList<Suggestion> offered, string question)
+    {
+        var q = question.Trim();
+        // The label as shown (with what goes after " · "), or typed without that.
+        return offered.FirstOrDefault(s => s.Label == q || s.Label.Split(" · ")[0] == q);
+    }
 }

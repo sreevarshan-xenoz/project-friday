@@ -34,5 +34,8 @@ public class AppProfilesTests
         var mail = AppSuggestions.For("thunderbird");
         Assert.Equal("Draft a short reply to this email, in my voice, ready to paste", AppSuggestions.Picked(mail, "Draft a reply")!.Question);
         Assert.Null(AppSuggestions.Picked(mail, "something else"));
+        var shown = mail.Select(s => s with { Label = s.Label + " · this window goes to your AI" }).ToList();
+        Assert.NotNull(AppSuggestions.Picked(shown, "Draft a reply · this window goes to your AI"));
+        Assert.NotNull(AppSuggestions.Picked(shown, "Draft a reply"));
     }
 }

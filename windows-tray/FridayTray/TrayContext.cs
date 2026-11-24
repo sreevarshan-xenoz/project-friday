@@ -332,9 +332,15 @@ internal sealed class TrayContext : ApplicationContext
                 kind == AskKind.Plain && area is null && !frontPrivate && AppSettings.FeatureOn(env, "suggestions")
                     ? AppSuggestions.For(frontApp)
                     : [];
-            if (offered.Count > 0 && AppSettings.FeatureOn(env, "sensitive-warn")
-                && SensitiveWindows.Match(_install.Paths, frontApp, Native.GetWindowTitle(targetWindow)) is { } chatApp)
-                offered = offered.Select(s => s with { Label = $"{s.Label} · a screenshot of {chatApp} goes to your AI" }).ToList();
+            // Picking one is the consent, so each says what goes.
+            if (offered.Count > 0)
+            {
+                var goes = AppSettings.FeatureOn(env, "sensitive-warn")
+                    && SensitiveWindows.Match(_install.Paths, frontApp, Native.GetWindowTitle(targetWindow)) is { } chatApp
+                    ? $"{chatApp}, so someone else's words, goes to your AI"
+                    : "this window goes to your AI";
+                offered = offered.Select(s => s with { Label = $"{s.Label} · {goes}" }).ToList();
+            }
             string? context = null;
             string? preview = null;
             string? appLine = null;
