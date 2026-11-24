@@ -608,9 +608,11 @@ else
     for d in "$wp"/*/; do
       d=${d%/}; g=${d##*/}
       if [[ $g == "$first" ]]; then p=0; else p=1; fi
-      for f in "$d"/*.jpg; do ln -sf "${f#/mnt}" "$bg/$p-$g-${f##*/}"; done
+      for f in "$d"/*.jpg; do [[ -f $f ]] && ln -sf "${f#/mnt}" "$bg/$p-$g-${f##*/}"; done
     done
-    arch-chroot /mnt chown -R "$USERNAME:$USERNAME" "$USER_HOME/.config/omarchy"
+    if [ "$USERNAME" != "root" ]; then
+      arch-chroot /mnt chown -R "$USERNAME:$USERNAME" "$USER_HOME/.config/omarchy" 2>/dev/null || true
+    fi
   fi
   # A login shell outside the desktop session has neither OMARCHY_PATH nor
   # Omarchy's bin/ on PATH (uwsm sets both at login), so pass them here.
