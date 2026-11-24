@@ -133,6 +133,26 @@ impl Agent {
     }
 }
 
+/// The environment variables holding keys that `agent` doesn't get: every
+/// `…_API_KEY` and FRIDAY's provider keys, but its own vendor's key.
+fn keys_to_strip(agent: Agent, names: impl Iterator<Item = String>) -> Vec<String> {
+    let own: &[&str] = match agent {
+        Agent::Opencode => &["OPENCODE_API_KEY"],
+        Agent::Agy => &["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        Agent::Claude => &["ANTHROPIC_API_KEY"],
+        Agent::Codex => &["OPENAI_API_KEY", "CODEX_API_KEY"],
+    };
+    names
+        .filter(|k| {
+            (k.ends_with("_API_KEY")
+                || friday_intelligence::providers::PROVIDER_ENV_VARS
+                    .iter()
+                    .any(|(v, _)| v == k))
+                && !own.contains(&k.as_str())
+        })
+        .collect()
+}
+
 /// Where a run is, as `friday agents` shows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -896,6 +916,11 @@ pub async fn run_agent(
                 turn it on with `friday agents sandbox on` (Linux, needs bubblewrap)"
                     .into(),
             );
+        }
+        // FRIDAY's own provider keys aren't the agent's business; its own
+        // vendor's key it keeps.
+        for k in keys_to_strip(rec.run.agent, std::env::vars().map(|(k, _)| k)) {
+            command.env_remove(k);
         }
         // Claude Code says a session it no longer has on stderr: keep that.
         let claude = rec.run.agent == Agent::Claude;
@@ -2592,6 +2617,26 @@ mod tests {
         drop(acp);
         drop(lines);
         agent.await.unwrap();
+    }
+
+    #[test]
+    fn an_agent_gets_no_key_but_its_own_vendors() {
+        let names = [
+            "PATH",
+            "GROQ_API_KEY",
+            "GITHUB_TOKEN",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "HOME",
+        ]
+        .map(String::from);
+        let mut codex = keys_to_strip(Agent::Codex, names.clone().into_iter());
+        codex.sort();
+        assert_eq!(codex, ["ANTHROPIC_API_KEY", "GITHUB_TOKEN", "GROQ_API_KEY"]);
+        let claude = keys_to_strip(Agent::Claude, names.into_iter());
+        assert!(claude.contains(&"OPENAI_API_KEY".to_string()));
+        assert!(!claude.contains(&"ANTHROPIC_API_KEY".to_string()));
+        assert!(!claude.contains(&"PATH".to_string()));
     }
 
     async fn follow_up_run(keeps: bool) -> (Vec<String>, Outcome, Run) {
