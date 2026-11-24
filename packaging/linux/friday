@@ -2456,6 +2456,8 @@ friday_hold() {
         sleep "$delay"
         [ "$(cat "$d/pressed" 2>/dev/null)" = "$token" ] || exit 0
         : >"$d/recording"
+        # Where voice typing started: a private window there keeps nothing.
+        if [ "${2:-}" = "--type" ]; then timeout 2 hyprctl activewindow -j >"$d/typewin" 2>/dev/null || : >"$d/typewin"; fi
         if [ "$mode" = "--type" ] && [ -e "$d/latched" ]; then pill dictatingLatched || true
         elif [ "$mode" = "--type" ]; then pill dictating || true; else pill listening || true; fi
         timeout "$most" pw-record --rate 16000 --channels 1 --format s16 "$d/rec.wav" &
@@ -2500,7 +2502,7 @@ friday_hold() {
         fi
         if [ "${2:-}" = "--type" ]; then
           # Voice typing: the words go into the field you were in, not to the AI.
-          friday_dictation_keep "$text" || true
+          friday_dictation_keep "$text" "$(cat "$d/typewin" 2>/dev/null)" || true
           pill dismiss || true
           if command -v wtype >/dev/null 2>&1; then
             sleep 0.2
@@ -3091,33 +3093,41 @@ friday_sensitive_window() {
 # wrong window can be had again (friday dictations). Never what was typed
 # into a private window.
 friday_dictations_file() { echo "${XDG_STATE_HOME:-$HOME/.local/state}/friday/dictations.jsonl"; }
-friday_dictation_keep() { # <text>
+friday_dictation_keep() { # <text> [the window where it started, as JSON]
   friday_feature_on dictation-history || return 0
+  # Neither where it started nor where it goes may be a private window.
   [ -z "$(friday_private_window)" ] || return 0
+  [ -z "${2:-}" ] || [ -z "$(friday_private_window "$2")" ] || return 0
   local f app line
   f=$(friday_dictations_file)
   app=$(timeout 2 hyprctl activewindow -j 2>/dev/null | jq -r '.class // empty' 2>/dev/null || true)
   line=$(jq -cn --arg t "$1" --arg a "$app" --argjson ts "$(date +%s)" '{ts: $ts, app: $a, text: $t}') || return 0
-  mkdir -p "$(dirname "$f")"
   (
     umask 077
+    mkdir -p "$(dirname "$f")"
     { cat "$f" 2>/dev/null || true; printf '%s\n' "$line"; } | tail -n 20 >"$f.tmp"
     mv -f "$f.tmp" "$f"
   )
 }
+# The kept dictations, newest first, one JSON array (a damaged line skipped,
+# so the numbers shown are the numbers copy takes).
+friday_dictations_newest() {
+  tac "$(friday_dictations_file)" 2>/dev/null | jq -Rs '[split("\n")[] | fromjson? | select(type == "object" and (.text | type) == "string")]' 2>/dev/null || echo '[]'
+}
 friday_dictations() { # [list | copy [n] | clear]
-  local f n text
+  local f n text all
   f=$(friday_dictations_file)
   case "${1:-list}" in
     list)
       friday_feature_on dictation-history || { echo "Dictation history is turned off (friday feature dictation-history on)."; return 0; }
-      [ -s "$f" ] || { echo "No dictations kept yet. Voice typing (Super+Shift+Y) keeps the last 20 here."; return 0; }
-      tac "$f" | jq -r '"\(input_line_number)  \(.ts | strflocaltime("%H:%M %b %d"))  \(if .app == "" then "" else "[\(.app)] " end)\(.text | gsub("\\s+"; " ") | .[0:90])"' 2>/dev/null
+      all=$(friday_dictations_newest)
+      [ "$(jq length <<<"$all")" -gt 0 ] || { echo "No dictations kept yet. Voice typing (Super+Shift+Y) keeps the last 20 here."; return 0; }
+      jq -r 'to_entries[] | "\(.key + 1)  \(.value.ts // 0 | strflocaltime("%H:%M on %d %b"))  \(if (.value.app // "") == "" then "" else "[\(.value.app)] " end)\(.value.text | gsub("\\s+"; " ") | .[0:90])"' <<<"$all"
       echo "friday dictations copy <n> puts one on the clipboard." ;;
     copy)
       n="${2:-1}"
       [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -ge 1 ] || { echo "usage: friday dictations copy <n>   (numbers are in: friday dictations)" >&2; return 2; }
-      text=$(tac "$f" 2>/dev/null | sed -n "${n}p" | jq -r '.text // empty' 2>/dev/null || true)
+      text=$(friday_dictations_newest | jq -r --argjson n "$n" '.[$n - 1].text // empty')
       [ -n "$text" ] || { echo "There's no dictation $n." >&2; return 1; }
       printf '%s' "$text" | wl-copy 2>/dev/null || { echo "Couldn't reach the clipboard (wl-copy)." >&2; return 1; }
       echo "Dictation $n is on the clipboard: paste it with Ctrl+V." ;;
