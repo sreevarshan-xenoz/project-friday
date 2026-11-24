@@ -151,6 +151,7 @@ public static class AppSettings
         ("extension-autoinstall", "Settings installs the browser extension for you (Developer mode, Load unpacked)"),
         ("speak-as-it-comes", "Spoken answers start with the first sentence while the rest is still coming"),
         ("screen-what-changed", "\"What changed?\" about the same window sends only the lines that changed since the last ask"),
+        ("agent-compare", "Two agents on the same task, each in its own copy, compared before you keep one"),
     ];
 
     public static bool ExtensionAutoinstallOn(IReadOnlyDictionary<string, string> env) =>

@@ -314,6 +314,7 @@ mod tests {
                 session: None,
                 follows: None,
                 worktree: None,
+                compared: None,
             },
         )
         .unwrap()

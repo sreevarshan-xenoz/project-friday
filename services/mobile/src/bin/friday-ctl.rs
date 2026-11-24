@@ -1947,7 +1947,8 @@ async fn main() -> std::process::ExitCode {
         let done = match (raw.get(1).map(String::as_str), raw.get(2)) {
             (Some("accept"), Some(id)) => friday_mobile::agent_runs::accept(&dir, id),
             (Some("discard"), Some(id)) => friday_mobile::agent_runs::discard(&dir, id),
-            _ => Err("usage: friday-ctl agents accept|discard <id>".into()),
+            (Some("compare"), Some(id)) => friday_mobile::agent_runs::compare(&dir, id),
+            _ => Err("usage: friday-ctl agents accept|discard|compare <id>".into()),
         };
         return match done {
             Ok(said) => {

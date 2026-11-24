@@ -165,6 +165,10 @@ pub struct Run {
     /// FRIDAY's state folder, until they accept or discard it.
     #[serde(default)]
     pub worktree: Option<PathBuf>,
+    /// Two agents on one brief: the tag both runs share
+    /// (`friday agents compare <id>`).
+    #[serde(default)]
+    pub compared: Option<String>,
 }
 
 impl Run {
@@ -1081,6 +1085,74 @@ fn forget_copy(dir: &Path, tree: &Path) {
     }
 }
 
+/// `friday agents compare <id>`: the two runs on one brief side by side:
+/// how each went, how long it took, what it changed, and its last words.
+pub fn compare(dir: &Path, id: &str) -> Result<String, String> {
+    let runs = list(dir);
+    let tag = runs
+        .iter()
+        .find(|r| r.id == id)
+        .ok_or_else(|| format!("there's no run {id}"))?
+        .compared
+        .clone()
+        .ok_or_else(|| format!("run {id} wasn't one of two compared runs"))?;
+    let mut pair: Vec<&Run> = runs
+        .iter()
+        .filter(|r| r.compared.as_deref() == Some(tag.as_str()))
+        .collect();
+    pair.sort_by_key(|r| r.started);
+    let mut out = format!("Same task, two agents: {}\n", first_line(&pair[0].request));
+    for r in &pair {
+        let took = r
+            .ended
+            .map(|e| format!("{} min", ((e - r.started).max(0) + 59) / 60))
+            .unwrap_or_else(|| "still going".into());
+        let changed = r
+            .worktree
+            .as_ref()
+            .filter(|w| w.is_dir())
+            .map(|w| changes_in(w))
+            .unwrap_or_else(|| "its copy is gone (accepted or discarded)".into());
+        out.push_str(&format!(
+            "\n{} (run {}): {:?}, {took}\n  changed: {changed}\n",
+            r.agent.name(),
+            r.id,
+            r.status
+        ));
+        if !r.summary.trim().is_empty() {
+            out.push_str(&format!("  said: {}\n", first_line(&r.summary)));
+        }
+    }
+    if pair.iter().any(|r| still_going(r)) {
+        out.push_str("\nWait for both to finish before you pick one.\n");
+    } else {
+        out.push_str(
+            "\nKeep one: friday agents accept <id>; drop the other: friday agents discard <id>.\n",
+        );
+    }
+    Ok(out)
+}
+
+fn first_line(s: &str) -> String {
+    let l = s.trim().lines().next().unwrap_or("");
+    let mut out: String = l.chars().take(160).collect();
+    if l.chars().count() > 160 {
+        out.push('…');
+    }
+    out
+}
+
+/// Files and lines changed in a run's copy, new files included.
+fn changes_in(tree: &Path) -> String {
+    // New files count too (marked, not staged).
+    let _ = git(tree, &["add", "-A", "-N"]);
+    match git(tree, &["diff", "HEAD", "--shortstat"]) {
+        Ok(s) if s.trim().is_empty() => "nothing".into(),
+        Ok(s) => s.trim().to_string(),
+        Err(e) => format!("couldn't tell ({e})"),
+    }
+}
+
 /// `friday agents accept <id>`: the run's changes come into the folder,
 /// staged for the person to look over and commit; the copy goes.
 pub fn accept(dir: &Path, id: &str) -> Result<String, String> {
@@ -1427,6 +1499,7 @@ fn expand(folder: &str) -> PathBuf {
 
 const GUIDE: &str = r#"FRIDAY can run a coding agent for the person: opencode, agy (Antigravity) or Claude Code. Turn the person's request into JSON only, one of:
   {"op": "run", "agent": "opencode" | "agy" | "claude", "folder": "<folder named in the request, or empty>", "task": "<the task for the agent>"}
+     add "agent2": "<the second agent>" only when the person asks two agents to do the same task side by side, to compare them
   {"op": "followup", "agent": "<agent named, or empty>", "task": "<the follow-up for the agent>"}   the person adds to or continues the agent's latest work ("also add tests", "tell it to use tabs", "and fix the lint too"); not when they ask for a new run
   {"op": "status"}     the person asks how their agent runs are going
   {"op": "none", "say": "<one short sentence>"}   not a request to run an agent
@@ -1487,6 +1560,7 @@ impl AgentsTool {
                     task,
                     run.session.clone(),
                     None,
+                    None,
                 )
             },
         );
@@ -1511,6 +1585,7 @@ impl AgentsTool {
 
     /// Starts a run in the background (after `wait_for`, a run still going,
     /// ends) and returns its id.
+    #[allow(clippy::too_many_arguments)]
     fn start(
         &self,
         agent: Agent,
@@ -1519,11 +1594,18 @@ impl AgentsTool {
         task: String,
         session: Option<String>,
         wait_for: Option<&Run>,
+        compared: Option<&str>,
     ) -> String {
         let id = format!("r{}", &uuid::Uuid::new_v4().simple().to_string()[..6]);
         // Its changes kept apart, when the person asked for that: the open
-        // copy of this folder (a follow-up), else a new one.
-        let worktree = if worktree_on() {
+        // copy of this folder (a follow-up), else a new one. One of two
+        // compared runs always gets a copy of its own.
+        let worktree = if compared.is_some() {
+            make_worktree(&self.dir, folder, &id).unwrap_or_else(|e| {
+                tracing::warn!("couldn't make a copy of {}: {e}", folder.display());
+                None
+            })
+        } else if worktree_on() {
             open_worktree(&self.dir, folder).or_else(|| {
                 make_worktree(&self.dir, folder, &id).unwrap_or_else(|e| {
                     // Asked to keep changes apart and couldn't: the log says why.
@@ -1551,6 +1633,7 @@ impl AgentsTool {
             session,
             follows: wait_for.map(|r| r.id.clone()),
             worktree,
+            compared: compared.map(str::to_string),
         };
         let id = run.id.clone();
         let earlier = wait_for.map(|r| r.id.clone());
@@ -1630,7 +1713,7 @@ impl AgentsTool {
         let (agent, folder) = (prev.agent, prev.folder.clone());
         let resume = crate::features::on("agent-resume");
         if still_going(&prev) {
-            let id = self.start(agent, &folder, request, task, None, Some(&prev));
+            let id = self.start(agent, &folder, request, task, None, Some(&prev), None);
             return ToolResult::success(format!(
                 "{} is still on run {}; this follow-up (run {id}) goes to it as soon as that's done.\nFollow it with: friday agents",
                 agent.name(),
@@ -1639,7 +1722,7 @@ impl AgentsTool {
         }
         let session = followup_session(&prev, chrono::Utc::now().timestamp(), resume);
         let continues = session.is_some();
-        let id = self.start(agent, &folder, request, task, session, None);
+        let id = self.start(agent, &folder, request, task, session, None, None);
         ToolResult::success(if continues {
             format!(
                 "{} goes on from run {} in {} (run {id}), in the same session.\nFollow it with: friday agents",
@@ -1798,7 +1881,33 @@ impl friday_goal_execution::Tool for AgentsTool {
                     return ToolResult::error("couldn't tell what the agent should do");
                 }
                 remember_folder(&self.dir, agent, &folder);
-                let id = self.start(agent, &folder, request, task, None, None);
+                // Two agents on the same brief, each in its own copy.
+                let second = choice["agent2"]
+                    .as_str()
+                    .and_then(Agent::from_name)
+                    .filter(|b| *b != agent && crate::features::on("agent-compare"));
+                if let Some(other) = second {
+                    if other.program().is_none() {
+                        return ToolResult::error(format!("{} isn't installed", other.name()));
+                    }
+                    if git(&folder, &["rev-parse", "--show-toplevel"]).is_err() {
+                        return ToolResult::error(
+                            "comparing two agents needs a git folder, so each works in its own copy",
+                        );
+                    }
+                    let tag = format!("c{}", &uuid::Uuid::new_v4().simple().to_string()[..6]);
+                    let a = self.start(agent, &folder, request.clone(), task.clone(), None, None, Some(&tag));
+                    let b = self.start(other, &folder, request, task, None, None, Some(&tag));
+                    return ToolResult::success(format!(
+                        "Started {} (run {a}) and {} (run {b}) on the same task in {}, each in its own copy. \
+                         When both are done: friday agents compare {a}, then keep one with \
+                         friday agents accept <id> and drop the other with friday agents discard <id>.",
+                        agent.name(),
+                        other.name(),
+                        folder.display()
+                    ));
+                }
+                let id = self.start(agent, &folder, request, task, None, None, None);
                 ToolResult::success(format!(
                     "Started {} in {} (run {id}). FRIDAY approves routine steps and asks you before \
                      anything risky; you'll get a notification when it's done.\nFollow it with: friday agents",
@@ -1832,6 +1941,66 @@ mod tests {
             std::fs::write(dir.join(f), text).unwrap();
         }
         dir
+    }
+
+    /// Two runs on one brief are shown side by side with what each changed.
+    #[test]
+    fn two_compared_runs_show_side_by_side() {
+        let base = std::env::temp_dir().join(format!("friday-cmp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (repo, dir) = (base.join("repo"), base.join("runs"));
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        let g = |args: &[&str]| git(&repo, args).unwrap();
+        g(&["init", "-q"]);
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        g(&["add", "a.txt"]);
+        g(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-qm",
+            "first",
+        ]);
+        let make = |id: &str, agent: Agent, new_file: bool, started: i64| {
+            let tree = make_worktree(&dir, &repo, id).unwrap().expect("a worktree");
+            std::fs::write(tree.join("a.txt"), format!("changed by {id}\n")).unwrap();
+            if new_file {
+                std::fs::write(tree.join("b.txt"), "new\n").unwrap();
+            }
+            let mut run = run_in(&dir, "x").run.clone();
+            run.id = id.into();
+            run.agent = agent;
+            run.folder = repo.clone();
+            run.status = Status::Done;
+            run.started = started;
+            run.ended = Some(started + 120);
+            run.summary = format!("{id} done\nmore");
+            run.worktree = Some(tree);
+            run.compared = Some("ctag".into());
+            Recorder::new(&dir, run).unwrap().save().unwrap();
+        };
+        make("ra", Agent::Opencode, false, 10);
+        make("rb", Agent::Claude, true, 11);
+        let out = compare(&dir, "rb").unwrap();
+        assert!(
+            out.find("opencode (run ra)").unwrap() < out.find("(run rb)").unwrap(),
+            "{out}"
+        );
+        assert!(out.contains("1 file changed"), "{out}");
+        assert!(
+            out.contains("2 files changed"),
+            "the new file counts: {out}"
+        );
+        assert!(
+            out.contains("2 min") && out.contains("said: rb done"),
+            "{out}"
+        );
+        assert!(out.contains("friday agents accept"), "{out}");
+        assert!(compare(&dir, "nope").is_err());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// A run kept apart works in its own worktree; accept brings its changes
@@ -1876,6 +2045,7 @@ mod tests {
                 session: None,
                 follows: None,
                 worktree: Some(tree),
+                compared: None,
             };
             Recorder::new(&dir, run).unwrap().save().unwrap();
         };
@@ -2023,6 +2193,7 @@ mod tests {
                 session: None,
                 follows: None,
                 worktree: None,
+                compared: None,
             },
         )
         .unwrap()
