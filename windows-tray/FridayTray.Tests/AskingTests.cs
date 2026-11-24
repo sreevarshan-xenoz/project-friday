@@ -109,6 +109,23 @@ public class AskingTests
     }
 
     [Fact]
+    public void A_receipt_says_what_left_before_the_answer()
+    {
+        Assert.Equal("firefox · the window's text, 2.1k chars", Asking.ReceiptLine("""{"receipt":"firefox · the window's text, 2.1k chars"}"""));
+        Assert.Null(Asking.ReceiptLine("""{"partial":"The screen sh"}"""));
+        Assert.Null(Asking.ReceiptLine("""{"receipt": broken"""));
+        Assert.Equal("your selection, 640 chars", Asking.SelectionReceipt(AskKind.Selection, new string('x', 640)));
+        Assert.Equal("your selection, 2.1k chars", Asking.SelectionReceipt(AskKind.Selection, new string('x', 2100)));
+        Assert.Null(Asking.SelectionReceipt(AskKind.Plain, "x"));
+        Assert.Null(Asking.SelectionReceipt(AskKind.Selection, ""));
+        // A result after a receipt is still the result.
+        var outcome = Asking.Interpret(AskKind.Screen, "what is this?", 0,
+            "{\"receipt\":\"a screenshot of the window\"}\n{\"partial\":\"It is\"}\n{\"response\":\"It is a dialog.\"}");
+        Assert.True(outcome.Ok);
+        Assert.Contains("It is a dialog.", outcome.Answer);
+    }
+
+    [Fact]
     public void Screen_result_is_the_final_object_not_a_partial()
     {
         var output = "{\"partial\":\"A ter\"}\n{\"partial\":\"A terminal\"}\n{\n  \"response\": \"A terminal with an error.\"\n}\n";

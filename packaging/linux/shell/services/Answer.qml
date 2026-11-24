@@ -28,6 +28,9 @@ Singleton {
   property string served: ""
   // Bumped on every new answer, so the pill restarts its timers.
   property int serial: 0
+  // What went to the model with the question, shown while it works
+  // ("firefox · the window's text, 2.1k chars"); "" when nothing did.
+  property string receipt: ""
 
   readonly property bool visible: state !== "idle"
 
@@ -41,6 +44,7 @@ Singleton {
         root.goal = Friday.goal;
         root.body = Friday.partial;
         root.meta = "";
+        root.receipt = "";
         root.serial++;
       } else if (root.state === "working") {
         settle.restart();
@@ -73,6 +77,31 @@ Singleton {
     root.meta = meta;
     root.state = "answer";
     root.serial++;
+  }
+
+  // `friday ask` says what it sent, before the first word: the pill shows it
+  // working on `goal` (a screen ask has no goal in state.json to wake it).
+  // A screen ask has no goal in state.json: if no answer comes after its
+  // receipt (the ask timed out, FRIDAY stopped), the pill doesn't stay.
+  Timer {
+    id: sentGiveUp
+    interval: 250000
+    onTriggered: if (root.state === "working" && !Friday.working) root.dismiss();
+  }
+
+  function sent(goal, text) {
+    sentGiveUp.restart();
+    if (root.state !== "working") {
+      settle.stop();
+      root.ok = true;
+      root.body = "";
+      root.meta = "";
+      root.state = "working";
+      root.serial++;
+    }
+    if (goal)
+      root.goal = goal;
+    root.receipt = text;
   }
 
   function dismiss() { root.state = "idle"; }
@@ -136,6 +165,7 @@ Singleton {
     target: "answer"
     function present(ok: bool, goal: string, body: string, meta: string, mode: string, served: string): void { root.show(ok, goal, body, meta, mode, served); }
     function dismiss(): void { root.dismiss(); }
+    function receipt(goal: string, text: string): void { root.sent(goal, text); }
     function listening(): void { root.listening(false); }
     function dictating(): void { root.listening(true); }
     function state(): string { return root.state; }

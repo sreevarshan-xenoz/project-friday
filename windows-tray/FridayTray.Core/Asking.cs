@@ -160,6 +160,40 @@ public static partial class Asking
     }
 
     /// <summary>
+    /// What left for the model, from one line of <c>friday-ctl --stream</c>
+    /// output (<c>{"receipt": "firefox · the window's text, 2.1k chars"}</c>),
+    /// or null for any other line.
+    /// </summary>
+    public static string? ReceiptLine(string line)
+    {
+        if (!line.StartsWith("{\"receipt\"", StringComparison.Ordinal))
+            return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(line);
+            var text = doc.RootElement.GetProperty("receipt").GetString();
+            return string.IsNullOrWhiteSpace(text) ? null : text;
+        }
+        catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// What a selection ask sends besides the question, for the card before
+    /// the first word: "your selection, 2.1k chars". Null for other asks.
+    /// </summary>
+    public static string? SelectionReceipt(AskKind kind, string? context)
+    {
+        if (kind != AskKind.Selection || string.IsNullOrEmpty(context))
+            return null;
+        var n = context.Length;
+        var size = n < 1000 ? $"{n} chars" : $"{n / 1000.0:0.0}k chars";
+        return $"your selection, {size}";
+    }
+
+    /// <summary>
     /// The answer so far from one line of <c>friday-ctl --stream</c> output
     /// (<c>{"partial": "..."}</c>), or null for any other line.
     /// </summary>

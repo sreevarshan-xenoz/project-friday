@@ -233,6 +233,32 @@ impl ScreenSent {
     }
 }
 
+/// "2.1k chars", "640 chars".
+fn chars_note(n: usize) -> String {
+    if n < 1000 {
+        format!("{n} chars")
+    } else {
+        format!("{:.1}k chars", n as f64 / 1000.0)
+    }
+}
+
+/// ", 2 secrets masked" (nothing when none were).
+fn masked_note(n: usize) -> String {
+    match n {
+        0 => String::new(),
+        1 => ", 1 secret masked".into(),
+        n => format!(", {n} secrets masked"),
+    }
+}
+
+/// "firefox · " for a window ask (its app); nothing for a picked area.
+fn front_app(region: Option<ScreenRegion>, front: Option<(String, String)>) -> String {
+    match (region, front) {
+        (None, Some((class, _))) if !class.is_empty() => format!("{class} · "),
+        _ => String::new(),
+    }
+}
+
 /// Why an explicit Screen context read did not produce a provider response.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContextReadError {
@@ -412,18 +438,22 @@ where
         region: Option<ScreenRegion>,
         progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
     ) -> Result<String, ContextReadError> {
-        self.ask_routed(question, region, progress)
+        self.ask_routed(question, region, progress, &|_| {})
             .await
             .map(|(answer, _)| answer)
     }
 
     /// [`ScreenReader::ask_region_streaming`], also saying what went to the
     /// model: the window's text or a screenshot.
+    /// `receipt` is told, once, what is about to leave for the model (the
+    /// app, the window's text or a screenshot, its size, what was masked),
+    /// before the first word of the answer.
     pub async fn ask_routed(
         &self,
         question: Option<&str>,
         region: Option<ScreenRegion>,
         progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+        receipt: &(dyn Fn(String) + Send + Sync),
     ) -> Result<(String, ScreenSent), ContextReadError> {
         // Check authorization BEFORE capturing the screen — with no consent,
         // nothing is captured at all.
@@ -465,7 +495,9 @@ where
         if region.is_none() {
             let front = self.window_in_front();
             let mut secret = false;
-            let from_text = self.ask_from_text(question, progress, &mut secret).await;
+            let from_text = self
+                .ask_from_text(question, progress, receipt, &mut secret)
+                .await;
             // The text went masked; a picture can't be: it never goes.
             if secret && !matches!(from_text, Some(Ok(_))) {
                 self.revoke();
@@ -555,7 +587,17 @@ where
                     streamed.store(true, std::sync::atomic::Ordering::Relaxed);
                     progress(chunk);
                 };
-                match self.send_words(&intro, &words, 0, question, &watch).await {
+                let what = if region.is_some() {
+                    "the text in the area you picked, read here"
+                } else {
+                    "the window's text, read from the screen here"
+                };
+                let app = front_app(region, self.window_in_front());
+                let tell = |r: String| receipt(format!("{app}{what}, {r}"));
+                match self
+                    .send_words(&intro, &words, 0, question, &watch, &tell)
+                    .await
+                {
                     Ok(answer) => return Ok((answer, route)),
                     Err(ContextReadError::Provider(e))
                         if streamed.load(std::sync::atomic::Ordering::Relaxed) =>
@@ -600,6 +642,16 @@ where
             .egress
             .process(&self.provider_name, &payload)
             .map_err(|reason| ContextReadError::EgressBlocked { reason })?;
+        receipt(format!(
+            "{}{}{}",
+            front_app(region, self.window_in_front()),
+            if region.is_some() {
+                "a screenshot of the area you picked"
+            } else {
+                "a screenshot of the window"
+            },
+            masked_note(masked_count)
+        ));
 
         let current_ctx = friday_intelligence::current_egress_context();
         let egress_ctx = if current_ctx.masked.is_none() {
@@ -646,6 +698,7 @@ where
         &self,
         question: Option<&str>,
         progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+        receipt: &(dyn Fn(String) + Send + Sync),
         secret: &mut bool,
     ) -> Option<Result<(String, bool), ContextReadError>> {
         let source = self.text.as_ref()?;
@@ -670,8 +723,14 @@ where
             "The person asked about the window they are looking at ({class}: {title}). \
              Its text, read from the app's accessibility tree, follows between the lines."
         );
+        let what = if cut {
+            "the window's text (its first part)"
+        } else {
+            "the window's text"
+        };
+        let tell = |r: String| receipt(format!("{class} · {what}, {r}"));
         Some(
-            self.send_words(&intro, &words, masked_title, question, progress)
+            self.send_words(&intro, &words, masked_title, question, progress, &tell)
                 .await
                 .map(|answer| (answer, cut)),
         )
@@ -687,7 +746,9 @@ where
         masked_before: usize,
         question: Option<&str>,
         progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+        receipt: &(dyn Fn(String) + Send + Sync),
     ) -> Result<String, ContextReadError> {
+        let size = chars_note(words.chars().count());
         let (words, masked_words) = friday_goal_execution::mask_secrets(words);
         let question = question.map(str::trim).filter(|q| !q.is_empty());
         let (task, masked_q) = match question {
@@ -702,6 +763,10 @@ where
             .egress
             .process(&self.provider_name, &payload)
             .map_err(|reason| ContextReadError::EgressBlocked { reason })?;
+        receipt(format!(
+            "{size}{}",
+            masked_note(masked_words + masked_q + masked_before)
+        ));
         let current = friday_intelligence::current_egress_context();
         let ctx = if current.masked.is_none() {
             friday_intelligence::EgressContext {
@@ -930,9 +995,20 @@ where
                 goal_id: Some(task_cmd_id.clone()),
                 masked: None,
             };
+            let receipt_out = result_out.clone();
+            let receipt_id = task_cmd_id.clone();
+            let receipt = move |sent: String| {
+                if !crate::features::on("capture-receipt") {
+                    return;
+                }
+                let _ = receipt_out.send(ServerMessage::Event {
+                    topic: "context.progress".to_string(),
+                    payload: serde_json::json!({ "id": receipt_id, "receipt": sent }),
+                });
+            };
             let asked = friday_intelligence::with_egress_context(
                 egress_ctx,
-                reader.ask_routed(question.as_deref(), region, &progress),
+                reader.ask_routed(question.as_deref(), region, &progress, &receipt),
             )
             .await;
 
@@ -2089,7 +2165,7 @@ mod tests {
             .with_text(Arc::new(FakeText(Some("Report.pdf\nbutton: Open".into()))));
         reader.consent();
         let (answer, sent) = reader
-            .ask_routed(Some("what is here?"), None, &|_| {})
+            .ask_routed(Some("what is here?"), None, &|_| {}, &|_| {})
             .await
             .unwrap();
         assert!(answer.contains("FRIDAY"));
@@ -2127,7 +2203,7 @@ mod tests {
         let reader = ScreenReader::new(ContextCollector::new(runner), seam.clone(), "fabric")
             .with_text(Arc::new(FakeText(Some("Report.pdf".into()))));
         reader.consent();
-        let got = reader.ask_routed(None, None, &|_| {}).await;
+        let got = reader.ask_routed(None, None, &|_| {}, &|_| {}).await;
         assert!(matches!(got, Err(ContextReadError::Provider(_))), "{got:?}");
         assert_eq!(seam.0.sent(), 0, "no screenshot of the other window");
     }
@@ -2139,13 +2215,58 @@ mod tests {
                 "Report.pdf\n{SCREEN_TEXT_CUT}"
             )))));
         reader.consent();
-        let (_, sent) = reader.ask_routed(None, None, &|_| {}).await.unwrap();
+        let (_, sent) = reader
+            .ask_routed(None, None, &|_| {}, &|_| {})
+            .await
+            .unwrap();
         assert_eq!(sent, ScreenSent::Text { cut: true });
         assert_eq!(sent.used(), "the window's text (only its first part)");
         let reader = ScreenReader::new(collector_with_window(), RecordingSeam::default(), "fabric");
         reader.consent();
-        let (_, sent) = reader.ask_routed(None, None, &|_| {}).await.unwrap();
+        let (_, sent) = reader
+            .ask_routed(None, None, &|_| {}, &|_| {})
+            .await
+            .unwrap();
         assert_eq!(sent, ScreenSent::Screenshot { text_failed: false });
+    }
+
+    #[tokio::test]
+    async fn the_receipt_says_what_leaves_before_the_answer() {
+        let told = std::sync::Mutex::new(Vec::<String>::new());
+        let words = format!(
+            "{} sk-ant-api03-{}",
+            "Report line. ".repeat(200),
+            "A".repeat(40)
+        );
+        let reader = ScreenReader::new(collector_with_window(), RecordingSeam::default(), "fabric")
+            .with_text(Arc::new(FakeText(Some(words))));
+        reader.consent();
+        reader
+            .ask_routed(None, None, &|_| {}, &|r| told.lock().unwrap().push(r))
+            .await
+            .unwrap();
+        let r = told.lock().unwrap().clone();
+        assert_eq!(r.len(), 1, "told once: {r:?}");
+        assert!(
+            r[0].starts_with("nautilus · the window's text, 2.")
+                && r[0].ends_with("k chars, 1 secret masked"),
+            "{r:?}"
+        );
+        told.lock().unwrap().clear();
+        let reader = ScreenReader::new(collector_with_window(), RecordingSeam::default(), "fabric");
+        reader.consent();
+        reader
+            .ask_routed(Some("what is this?"), None, &|_| {}, &|r| {
+                told.lock().unwrap().push(r)
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            *told.lock().unwrap(),
+            ["nautilus · a screenshot of the window"]
+        );
+        assert_eq!(chars_note(640), "640 chars");
+        assert_eq!(masked_note(2), ", 2 secrets masked");
     }
 
     #[tokio::test]
@@ -2260,7 +2381,7 @@ mod tests {
             .with_area_text(Arc::new(FakeOcr(Some(AREA_WORDS.into()))));
         reader.consent();
         let (_, sent) = reader
-            .ask_routed(Some("why?"), Some(area), &|_| {})
+            .ask_routed(Some("why?"), Some(area), &|_| {}, &|_| {})
             .await
             .unwrap();
         assert_eq!(sent, ScreenSent::AreaText);
@@ -2277,7 +2398,10 @@ mod tests {
         let reader = ScreenReader::new(collector_with_window(), RecordingSeam::default(), "fabric")
             .with_area_text(Arc::new(FakeOcr(None)));
         reader.consent();
-        let (_, sent) = reader.ask_routed(None, Some(area), &|_| {}).await.unwrap();
+        let (_, sent) = reader
+            .ask_routed(None, Some(area), &|_| {}, &|_| {})
+            .await
+            .unwrap();
         assert_eq!(sent, ScreenSent::Area);
         assert!(reader
             .provider
@@ -2293,7 +2417,10 @@ mod tests {
         let reader = ScreenReader::new(collector_with_window(), seam.clone(), "fabric")
             .with_area_text(Arc::new(FakeOcr(Some(AREA_WORDS.into()))));
         reader.consent();
-        let (_, sent) = reader.ask_routed(None, Some(area), &|_| {}).await.unwrap();
+        let (_, sent) = reader
+            .ask_routed(None, Some(area), &|_| {}, &|_| {})
+            .await
+            .unwrap();
         assert_eq!(sent, ScreenSent::Area);
         assert!(seam.0.last().unwrap().starts_with("SCREEN_CAPTURE"));
     }
@@ -2307,7 +2434,7 @@ mod tests {
             .with_area_text(Arc::new(FakeOcr(Some(AREA_WORDS.into()))));
         reader.consent();
         let (_, sent) = reader
-            .ask_routed(Some("why?"), None, &|_| {})
+            .ask_routed(Some("why?"), None, &|_| {}, &|_| {})
             .await
             .unwrap();
         assert_eq!(sent, ScreenSent::ScreenOcr);
@@ -2325,7 +2452,10 @@ mod tests {
         let reader = ScreenReader::new(collector_with_window(), RecordingSeam::default(), "fabric")
             .with_area_text(Arc::new(FakeOcr(Some("OK".into()))));
         reader.consent();
-        let (_, sent) = reader.ask_routed(None, None, &|_| {}).await.unwrap();
+        let (_, sent) = reader
+            .ask_routed(None, None, &|_| {}, &|_| {})
+            .await
+            .unwrap();
         assert_eq!(sent, ScreenSent::Screenshot { text_failed: false });
         assert!(reader
             .provider
@@ -2354,7 +2484,7 @@ mod tests {
             .with_text(Arc::new(FewWords(ON_SCREEN_KEY)));
         reader.consent();
         let got = reader
-            .ask_routed(Some("what is this?"), None, &|_| {})
+            .ask_routed(Some("what is this?"), None, &|_| {}, &|_| {})
             .await;
         assert!(
             matches!(got, Err(ContextReadError::EgressBlocked { .. })),
@@ -2378,7 +2508,7 @@ mod tests {
         )
         .with_text(Arc::new(FewWords("a few words")));
         reader.consent();
-        let got = reader.ask_routed(None, None, &|_| {}).await;
+        let got = reader.ask_routed(None, None, &|_| {}, &|_| {}).await;
         assert!(
             matches!(got, Err(ContextReadError::EgressBlocked { .. })),
             "{got:?}"
@@ -2390,7 +2520,7 @@ mod tests {
         let reader = ScreenReader::new(collector_with_window(), seam.clone(), "fabric")
             .with_text(Arc::new(FakeText(Some(ON_SCREEN_KEY.into()))));
         reader.consent();
-        let got = reader.ask_routed(None, None, &|_| {}).await;
+        let got = reader.ask_routed(None, None, &|_| {}, &|_| {}).await;
         assert!(
             matches!(got, Err(ContextReadError::EgressBlocked { .. })),
             "{got:?}"
@@ -2405,7 +2535,7 @@ mod tests {
                 "{AREA_WORDS}\n{ON_SCREEN_KEY}"
             )))));
         reader.consent();
-        let got = reader.ask_routed(None, Some(area), &|_| {}).await;
+        let got = reader.ask_routed(None, Some(area), &|_| {}, &|_| {}).await;
         assert!(
             matches!(got, Err(ContextReadError::EgressBlocked { .. })),
             "{got:?}"
@@ -2415,7 +2545,7 @@ mod tests {
         let reader = ScreenReader::new(collector_with_window(), RecordingSeam::default(), "fabric")
             .with_area_text(Arc::new(FakeOcr(Some(ON_SCREEN_KEY.into()))));
         reader.consent();
-        let got = reader.ask_routed(None, Some(area), &|_| {}).await;
+        let got = reader.ask_routed(None, Some(area), &|_| {}, &|_| {}).await;
         assert!(
             matches!(got, Err(ContextReadError::EgressBlocked { .. })),
             "{got:?}"
@@ -2429,14 +2559,17 @@ mod tests {
             .with_text(Arc::new(FakeText(Some("Report.pdf".into()))))
             .check_only();
         reader.consent();
-        let (_, sent) = reader.ask_routed(None, None, &|_| {}).await.unwrap();
+        let (_, sent) = reader
+            .ask_routed(None, None, &|_| {}, &|_| {})
+            .await
+            .unwrap();
         assert_eq!(sent, ScreenSent::Screenshot { text_failed: false });
         assert!(!reader.provider.last().unwrap().contains("Report.pdf"));
         let reader = ScreenReader::new(collector_with_window(), RecordingSeam::default(), "fabric")
             .with_text(Arc::new(FakeText(Some(ON_SCREEN_KEY.into()))))
             .check_only();
         reader.consent();
-        let got = reader.ask_routed(None, None, &|_| {}).await;
+        let got = reader.ask_routed(None, None, &|_| {}, &|_| {}).await;
         assert!(
             matches!(got, Err(ContextReadError::EgressBlocked { .. })),
             "{got:?}"
@@ -2467,7 +2600,7 @@ mod tests {
             "fabric",
         );
         reader.consent();
-        let got = reader.ask_routed(None, Some(area), &|_| {}).await;
+        let got = reader.ask_routed(None, Some(area), &|_| {}, &|_| {}).await;
         assert_eq!(got.map(|(_, s)| s), Err(ContextReadError::PrivateWindow));
         assert_eq!(reader.provider.sent(), 0);
         assert!(!reader.is_consented());
@@ -2482,7 +2615,10 @@ mod tests {
             "fabric",
         );
         reader.consent();
-        let (_, sent) = reader.ask_routed(None, Some(area), &|_| {}).await.unwrap();
+        let (_, sent) = reader
+            .ask_routed(None, Some(area), &|_| {}, &|_| {})
+            .await
+            .unwrap();
         assert_eq!(sent, ScreenSent::Area);
     }
 
@@ -2504,7 +2640,10 @@ mod tests {
                 "{AREA_WORDS}\ntoken {secret} shown"
             )))));
         reader.consent();
-        let (_, sent) = reader.ask_routed(None, Some(area), &|_| {}).await.unwrap();
+        let (_, sent) = reader
+            .ask_routed(None, Some(area), &|_| {}, &|_| {})
+            .await
+            .unwrap();
         assert_eq!(sent, ScreenSent::AreaText);
         assert!(!reader.provider.last().unwrap().contains(&secret));
     }
@@ -2535,7 +2674,7 @@ mod tests {
         let reader = ScreenReader::new(collector_with_window(), seam.clone(), "fabric")
             .with_area_text(Arc::new(FakeOcr(Some(AREA_WORDS.into()))));
         reader.consent();
-        let got = reader.ask_routed(None, Some(area), &|_| {}).await;
+        let got = reader.ask_routed(None, Some(area), &|_| {}, &|_| {}).await;
         assert!(matches!(got, Err(ContextReadError::Provider(_))), "{got:?}");
         assert_eq!(seam.0.sent(), 0, "no second answer from the picture");
         assert!(!reader.is_consented());

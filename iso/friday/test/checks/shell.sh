@@ -96,6 +96,9 @@ if timeout 10 qs -p "$FS" ipc call answer present true "What's using my disk?" "
   timeout 10 qs -p "$FS" ipc call answer dictating >/dev/null 2>&1 || true
   [[ "$(timeout 10 qs -p "$FS" ipc call answer state 2>/dev/null)" == listening ]] \
     && pass "answer pill shows Listening while Super+Shift+Y (voice typing) is held" || fail "answer pill has no dictating state"
+  timeout 10 qs -p "$FS" ipc call answer receipt "what is this?" "nautilus · a screenshot of the window" >/dev/null 2>&1 || true
+  [[ "$(timeout 10 qs -p "$FS" ipc call answer state 2>/dev/null)" == working ]] \
+    && pass "answer pill shows what was sent while it works" || fail "the pill didn't take the capture receipt"
   timeout 10 qs -p "$FS" ipc call answer dismiss >/dev/null 2>&1 || true
   sleep 1
   [[ "$(timeout 10 qs -p "$FS" ipc call answer state 2>/dev/null)" == idle ]] \
