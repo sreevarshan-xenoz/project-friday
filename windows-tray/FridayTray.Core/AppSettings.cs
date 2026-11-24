@@ -135,6 +135,7 @@ public static class AppSettings
         ("blank-secret-fields", "Password and card fields are painted over before a screenshot leaves"),
         ("config-import", "friday import: keys and a model from other assistants, previewed first (Linux)"),
         ("watch-until", "Tell me when a command works or a window closes, checked less often over time (Linux)"),
+        ("upgrade-restore", "When an upgrade is undone, settings and memory go back too (Linux)"),
         ("log-chain", "Each action in the action log is chained to the one before, so a changed line shows"),
         ("standing-reversible", "A standing task runs only what can be undone; anything that would ask first is refused and logged"),
         ("memory-tidy", "When memory is fuller than an ask carries, offer a shorter list to approve"),

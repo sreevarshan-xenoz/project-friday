@@ -4,12 +4,13 @@
 #   1. Only when it's a good moment: on mains power, online, room on disk,
 #      pacman not busy.
 #   2. Before: the package list, a Btrfs snapshot when snapper is set up, and
-#      each person's FRIDAY settings backed up.
+#      each person's FRIDAY settings and memory backed up.
 #   3. The upgrade itself. pacman doesn't restart your apps: they pick up the
 #      new versions when next started, a new kernel at the next restart.
 #      (FRIDAY's own daemon notices its new version and restarts by itself.)
 #   4. After: FRIDAY's daemon, its CLI and the desktop must still start; if
-#      one doesn't, the previous versions go back from pacman's cache.
+#      one doesn't, the previous versions go back from pacman's cache, and
+#      each person's FRIDAY settings and memory as they were before.
 # The outcome is in $STATE/last.json (read by `friday upgrade status`).
 set -uo pipefail
 
@@ -58,15 +59,20 @@ snapshot=""
 if command -v snapper >/dev/null 2>&1 && [ "$(stat -f -c %T / 2>/dev/null)" = btrfs ]; then
   snapshot=$(snapper create -t pre -p -d "FRIDAY upgrade $ts" 2>>"$LOG" || true)
 fi
-# Small regular files only (under 1 MB each, two levels deep): a symlink
-# or a huge file someone put there can't make root copy what it shouldn't
-# or fill the disk.
+# Small regular files only: settings under 1 MB each, what FRIDAY remembers
+# (the memory journal, conversations, thoughts, lessons) under 16 MB. A
+# symlink or a huge file someone put there can't make root copy what it
+# shouldn't or fill the disk.
 backup="$STATE/settings-$ts.tar"
 (
   umask 077
   cd "$HOMES" 2>/dev/null || exit 0
-  find . -mindepth 3 -maxdepth 5 -path './*/.config/friday/*' -type f -size -1024k -print0 2>/dev/null \
-    | head -z -n 2000 | tar -cf "$backup" --null --no-recursion -T - 2>/dev/null || true
+  {
+    find . -mindepth 3 -maxdepth 5 -path './*/.config/friday/*' -type f -size -1024k -print0 2>/dev/null
+    find . -mindepth 5 -maxdepth 6 \( -path './*/.local/state/friday/memory/*' \
+      -o -path './*/.local/state/friday/conversations.json' -o -path './*/.local/state/friday/thoughts.jsonl' \
+      -o -path './*/.local/state/friday/lessons.jsonl' \) -type f -size -16M -print0 2>/dev/null
+  } | head -z -n 2000 | tar -cf "$backup" --null --no-recursion -T - 2>/dev/null || true
 )
 # Keep the newest three of each.
 ls -1t "$STATE"/before-*.txt 2>/dev/null | tail -n +4 | xargs -r rm -f
@@ -116,6 +122,26 @@ revert() {
   (( ${#files[@]} )) || return 1
   pacman -U --noconfirm "${files[@]}" >>"$LOG" 2>&1
 }
+# With the previous versions back, so are each person's FRIDAY settings and
+# memory as they were before (a new version may have changed them). Each
+# person's part is unpacked by that person, so nothing lands outside what
+# they can write.
+restore_settings() {
+  [ -s "$backup" ] || return 0
+  local home user
+  for home in "$HOMES"/*/; do
+    user=$(basename "$home")
+    # Their own switch (friday feature upgrade-restore off).
+    grep -qsx upgrade-restore "$home.config/friday/features-off" && continue
+    tar -tf "$backup" 2>/dev/null | grep -q "^\./$user/" || continue
+    if [ "$(id -u)" = 0 ]; then
+      runuser -u "$user" -- tar -xf - -C "$HOMES" "./$user/" <"$backup" 2>>"$LOG" \
+        && log "put back $user's FRIDAY settings and memory" || log "couldn't put back $user's FRIDAY settings"
+    else
+      tar -xf - -C "$HOMES" "./$user/" <"$backup" 2>>"$LOG" && log "put back $user's FRIDAY settings and memory"
+    fi
+  done
+}
 # A failed upgrade that changed nothing (a download that didn't finish) has
 # nothing to undo.
 if $failed_upgrade && [ "$(cat "$before")" = "$(pacman -Q)" ]; then
@@ -126,6 +152,7 @@ if $failed_upgrade || ! healthy; then
   why="the upgrade failed"
   $failed_upgrade || why="something didn't start after the upgrade"
   if revert && healthy; then
+    restore_settings
     result reverted "$why; the previous versions are back" true
   else
     result broken "$why, and going back didn't fix it: see $LOG${snapshot:+ (snapshot $snapshot)}" false
