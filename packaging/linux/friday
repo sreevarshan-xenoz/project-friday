@@ -6287,6 +6287,7 @@ $offer"
   dictations)
     # The last 20 voice-typed texts, newest first; copy one back.
     shift; friday_dictations "$@"; exit $?
+    ;;
   sounds)
     # Quiet cues for listening, done and failed (off unless turned on).
     shift; friday_sounds "$@"; exit $?
