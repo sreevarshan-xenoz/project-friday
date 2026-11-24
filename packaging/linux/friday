@@ -3882,6 +3882,7 @@ live-web|Questions about the weather, news, scores or prices search the web with
 speak-as-it-comes|Spoken answers start with the first sentence while the rest is still coming
 screen-what-changed|What changed? about the same window sends only the lines that changed since the last screen ask (kept in memory 30 minutes)
 agent-compare|Two agents on the same task, each in its own copy, then friday agents compare to pick one
+backup-new-home|A backup restored on another computer points saved folders (workspaces, threads, settings) at the new home
 backup|friday backup: a checked backup of settings, memory and history, and a restore that checks first
 risk-table|friday risks: what FRIDAY may do on its own, what asks first and what never runs
 offline-proof|friday doctor --offline: what went off this computer lately and what FRIDAY is connected to now
