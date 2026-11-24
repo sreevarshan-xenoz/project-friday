@@ -113,6 +113,59 @@ pub trait ScreenText: Send + Sync {
 /// control under it is asked about. A drag is bigger than this.
 pub const POINT_SIZE: u32 = 10;
 
+/// Asked of the model with a window's text: the phrase it relied on, to show.
+const QUOTE_ASK: &str = " After the answer, on a last line of its own, write QUOTE: followed by \
+     the exact words from the text between the lines that the answer relied on most (at most 15 \
+     words, copied as they are), or QUOTE: none.";
+
+/// The answer so far without a (perhaps half-written) quote line at its end.
+pub fn without_quote_line(text: &str) -> &str {
+    let last_start = text.rfind('\n').map_or(0, |i| i + 1);
+    let last = text[last_start..].trim_start();
+    // The quote line, whole or still being written ("QU", "QUOTE: err").
+    let is_quote = if last.len() >= 6 {
+        last.starts_with("QUOTE:")
+    } else {
+        !last.is_empty() && last_start > 0 && "QUOTE:".starts_with(last)
+    };
+    if is_quote {
+        text[..last_start].trim_end()
+    } else {
+        text
+    }
+}
+
+/// The answer with its quote line replaced by "From the screen: “…”" when
+/// the quote really is in `words` (spacing and case aside), and dropped
+/// otherwise: a phrase the window didn't have is never shown as its own.
+pub fn with_checked_quote(answer: &str, words: &str) -> String {
+    let body = without_quote_line(answer);
+    if body.len() == answer.len() {
+        return answer.to_string();
+    }
+    let line = answer[body.len()..].trim();
+    let quote = line
+        .strip_prefix("QUOTE:")
+        .unwrap_or("")
+        .trim()
+        .trim_matches(['"', '“', '”', '\''])
+        .trim();
+    let norm = |s: &str| {
+        s.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+    let q = norm(quote);
+    if q.is_empty() || q == "none" || q.split(' ').count() > 25 || !norm(words).contains(&q) {
+        return body.to_string();
+    }
+    format!(
+        "{body}\n\nFrom the screen: “{q_shown}”",
+        q_shown = quote.split_whitespace().collect::<Vec<_>>().join(" ")
+    )
+}
+
 /// A secret field whose place the tree didn't give: the picture isn't sent.
 pub const UNPLACED: [i64; 4] = [-1, -1, -1, -1];
 
@@ -1092,7 +1145,9 @@ where
             }
             None => ("Describe what the person is looking at.".to_string(), 0),
         };
-        let payload = format!("{intro}\n---\n{words}\n---\nQUESTION: {task}");
+        let quoting = crate::features::on("screen-quote");
+        let ask_quote = if quoting { QUOTE_ASK } else { "" };
+        let payload = format!("{intro}{ask_quote}\n---\n{words}\n---\nQUESTION: {task}");
         let composed = self
             .egress
             .process(&self.provider_name, &payload)
@@ -1111,12 +1166,19 @@ where
             current
         };
         crate::timings::end("screen", "capture");
-        friday_intelligence::with_egress_context(
+        // The quote line never shows while the answer streams.
+        let shown = |so_far: &str| progress(without_quote_line(so_far));
+        let answer = friday_intelligence::with_egress_context(
             ctx,
-            self.provider.send_text_streaming(&composed, progress),
+            self.provider.send_text_streaming(&composed, &shown),
         )
         .await
-        .map_err(ContextReadError::Provider)
+        .map_err(ContextReadError::Provider)?;
+        Ok(if quoting {
+            with_checked_quote(&answer, &words)
+        } else {
+            answer
+        })
     }
 
     // --- Re-exposed authorize for library/test drivers that want the exact
@@ -2667,6 +2729,36 @@ mod tests {
         assert!(
             payload.contains("button: Deploy") && !payload.contains("SCREEN_CAPTURE"),
             "{payload}"
+        );
+    }
+
+    #[test]
+    fn a_quote_is_shown_only_when_the_screen_had_it() {
+        let words = "Build failed\nerror: linker `cc` not found\nhelp: install a C compiler";
+        let a = "Install a C compiler.\nQUOTE: error: linker `cc` not found";
+        assert_eq!(
+            with_checked_quote(a, words),
+            "Install a C compiler.\n\nFrom the screen: “error: linker `cc` not found”"
+        );
+        let made_up = "Install gcc.\nQUOTE: gcc is missing from PATH";
+        assert_eq!(with_checked_quote(made_up, words), "Install gcc.");
+        assert_eq!(with_checked_quote("Fine.\nQUOTE: none", words), "Fine.");
+        assert_eq!(
+            with_checked_quote("No quote line.", words),
+            "No quote line."
+        );
+        assert_eq!(without_quote_line("Answer here.\nQUO"), "Answer here.");
+        assert_eq!(
+            without_quote_line("Answer here.\nQUOTE: err"),
+            "Answer here."
+        );
+        assert_eq!(
+            without_quote_line("The QUOTE: word stays"),
+            "The QUOTE: word stays"
+        );
+        assert_eq!(
+            without_quote_line("Short\nQ is a letter"),
+            "Short\nQ is a letter"
         );
     }
 

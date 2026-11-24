@@ -159,6 +159,7 @@ public static class AppSettings
         ("retention", "Finished agent runs and wrong-answer reports go after 30 days"),
         ("retention", "Finished agent runs, the agent hooks log and wrong-answer reports go after 30 days"),
         ("state-sounds", "With Quiet sounds on (Voice page): soft cues for listening, an answer done and one that failed"),
+        ("screen-quote", "An answer about a window shows the exact line it relied on, checked against what was sent"),
         ("app-instructions", "Your instructions for each app (app-instructions in the config folder) go with asks from it"),
         ("suggestions", "Asks that fit the app in front (a page, an email, a chat) are offered first in the ask box"),
         ("clipboard-expiry", "A clipboard copied over 10 minutes ago is not used as context for a new question"),
