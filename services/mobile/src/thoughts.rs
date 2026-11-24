@@ -30,16 +30,13 @@ pub fn file(state_dir: &Path) -> std::path::PathBuf {
 }
 
 pub fn add(state_dir: &Path, thought: &Thought) -> std::io::Result<()> {
-    use std::io::Write;
     std::fs::create_dir_all(state_dir)?;
-    let mut opts = std::fs::OpenOptions::new();
-    opts.create(true).append(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
-    let mut f = opts.open(file(state_dir))?;
     let mut t = thought.clone();
     t.text = t.text.trim().chars().take(MAX_CHARS).collect();
-    writeln!(f, "{}", serde_json::to_string(&t).unwrap_or_default())
+    crate::jsonl::append(
+        &file(state_dir),
+        &serde_json::to_string(&t).unwrap_or_default(),
+    )
 }
 
 pub fn load(state_dir: &Path) -> Vec<Thought> {
