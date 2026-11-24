@@ -98,6 +98,8 @@ Autonomous Agent & Cognitive Loop:
   friday secrets [status|keychain|file]  API keys in your desktop keyring, or back in friday.env
   friday desktop [status|on|off]   Let FRIDAY control your windows, apps, volume and music
   friday keys list                 Every key and what it does, read from Hyprland (Super+K)
+  friday bundles [list|install <bundle>...]  Apps for developer, gaming, productivity or
+                                   creative work, installed in one go (no argument: pick)
   friday keys update               Add FRIDAY keys from a newer version to your key file (FRIDAY OS)
   friday status | system-info      Inspect daemon state, memory, and telemetry
   friday context screen [--yes]    Share screen context with assistant
@@ -998,6 +1000,78 @@ friday_keys_list() {
       sub(/mouse:275$/, "Mouse back", k); sub(/mouse:276$/, "Mouse forward", k)
       n = split(k, p, "+"); if (length(p[n]) == 1) { p[n] = toupper(p[n]); k = p[1]; for (i = 2; i <= n; i++) k = k "+" p[i] }
     } !seen[k]++ { printf "%-22s %s\n", k, $2 }' <<<"$rows"
+# `friday bundles [pick | list | install <bundle>...]`: apps for a kind of work,
+# installed in one go. Each bundle is a file in /usr/share/friday/bundles: a
+# "# Name: what it is" line, then a package a line ("aur:" for one built from
+# the AUR, as you). One that doesn't install never stops the rest; the end
+# says what did and what didn't, and a notification says it's done.
+friday_bundles_dir() { echo "${FRIDAY_BUNDLES_DIR:-/usr/share/friday/bundles}"; }
+friday_bundles() {
+  local dir f; dir=$(friday_bundles_dir)
+  case "${1:-pick}" in
+    list)
+      for f in "$dir"/*; do
+        [ -f "$f" ] || continue
+        printf '%-13s %s\n' "$(basename "$f")" "$(sed -n '1s/^# *//p' "$f")"
+        printf '              %s\n' "$(grep -v '^#' "$f" | sed 's/^aur://' | paste -sd ' ')"
+      done ;;
+    pick)
+      command -v gum >/dev/null 2>&1 || { echo "Pick bundles with: friday bundles install <name>... (friday bundles list)"; return 2; }
+      local -a rows=() picks=()
+      for f in "$dir"/*; do [ -f "$f" ] && rows+=("$(basename "$f"): $(sed -n '1s/^# *[^:]*: *//p' "$f")"); done
+      (( ${#rows[@]} )) || { echo "No bundles here ($dir)."; return 1; }
+      echo "Pick the kinds of apps you want (space picks, Enter installs):"
+      mapfile -t picks < <(printf '%s\n' "${rows[@]}" | gum choose --no-limit --height=8 || true)
+      (( ${#picks[@]} )) || { echo "Nothing picked; nothing installed."; return 0; }
+      friday_bundles_install "${picks[@]%%:*}" ;;
+    install) shift; friday_bundles_install "$@" ;;
+    *) echo "Usage: friday bundles [pick|list|install <bundle>...]" >&2; return 2 ;;
+  esac
+}
+
+friday_bundles_install() {
+  local dir b p; dir=$(friday_bundles_dir)
+  local -a repo=() aur=() got=() failed=()
+  (( $# )) || { echo "Usage: friday bundles install <bundle>... (friday bundles list)" >&2; return 2; }
+  for b in "$@"; do
+    [[ "$b" =~ ^[a-z0-9-]+$ && -f "$dir/$b" ]] || { echo "No bundle called \"$b\" (friday bundles list)" >&2; return 2; }
+    while IFS= read -r p; do
+      case "$p" in ''|'#'*) ;; aur:*) aur+=("${p#aur:}") ;; *) repo+=("$p") ;; esac
+    done <"$dir/$b"
+  done
+  # Steam is in Arch's 32-bit repo (multilib), which stays off until something needs it.
+  if printf '%s\n' "${repo[@]}" | grep -qx steam && ! grep -q '^\[multilib\]' "${FRIDAY_PACMAN_CONF:-/etc/pacman.conf}" 2>/dev/null; then
+    echo "Steam needs Arch's 32-bit repo (multilib); turning it on in /etc/pacman.conf."
+    { sudo sed -i '/^#\[multilib\]$/,/^#Include/ s/^#//' "${FRIDAY_PACMAN_CONF:-/etc/pacman.conf}" && sudo pacman -Sy --noconfirm >/dev/null; } || true
+  fi
+  if (( ${#repo[@]} )); then
+    echo "Installing ${#repo[@]} apps from the Arch repos..."
+    if sudo pacman -S --needed --noconfirm "${repo[@]}"; then got+=("${repo[@]}")
+    else
+      # One at a time, to find the ones that won't install.
+      for p in "${repo[@]}"; do
+        if sudo pacman -S --needed --noconfirm "$p" >/dev/null 2>&1; then got+=("$p"); else failed+=("$p"); fi
+      done
+    fi
+  fi
+  if (( ${#aur[@]} )); then
+    { command -v git && command -v makepkg; } >/dev/null 2>&1 \
+      || sudo pacman -S --needed --noconfirm base-devel git >/dev/null 2>&1 || true
+    local cache="${XDG_CACHE_HOME:-$HOME/.cache}/friday-aur"
+    for p in "${aur[@]}"; do
+      echo "Building $p from the AUR..."
+      rm -rf "${cache:?}/$p"; mkdir -p "$cache"
+      if git clone -q --depth 1 "https://aur.archlinux.org/$p.git" "$cache/$p" \
+          && (cd "$cache/$p" && makepkg -si --noconfirm --needed); then got+=("$p"); else failed+=("$p"); fi
+      rm -rf "${cache:?}/$p"
+    done
+  fi
+  echo
+  local msg="Installed ${#got[@]} of $(( ${#repo[@]} + ${#aur[@]} )) apps."
+  (( ${#failed[@]} == 0 )) || msg+=" Didn't install: ${failed[*]} (try again: friday bundles install $*)."
+  echo "$msg"
+  notify-send -a FRIDAY "App bundles done" "$msg" 2>/dev/null || true
+  (( ${#failed[@]} == 0 ))
 }
 
 # FRIDAY OS's key file is copied into a new home once, so keys added by a
@@ -4194,6 +4268,7 @@ friday_local_ai_bench() {
 # are listed, one a line, in features-off in FRIDAY's config folder.
 FRIDAY_FEATURES="instant-answers|Arithmetic and unit conversions worked out here at once
 motion|FRIDAY Shell's animations: the answer card, drawers and the pulsing orb (off: everything changes at once)
+app-bundles|The first-login tour offers app bundles (developer, gaming, productivity, creative) to install in one go
 what-works|When FRIDAY is offline, say so and what still works
 app-instructions|Your instructions for each app go with asks from it
 mentions|@screen, @tab, @clip, @web and @file in a question
@@ -6369,6 +6444,10 @@ $offer"
   desktop)
     shift
     friday_desktop "$@"
+    ;;
+  bundles)
+    # Apps for a kind of work, installed in one go.
+    shift; friday_bundles "$@"; exit $?
     ;;
   keys)
     shift

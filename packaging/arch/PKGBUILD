@@ -128,6 +128,8 @@ package() {
   install -Dm644 "$lin/friday-settings.desktop" -t "$pkgdir/usr/share/applications"
   install -Dm644 "$lin/hyprland/friday.lua" -t "$pkgdir/usr/share/friday/hyprland"
   install -Dm644 "$lin/niri/friday.kdl" -t "$pkgdir/usr/share/friday/niri"
+  # App bundles for `friday bundles` (the first-login tour offers them).
+  install -Dm644 "$lin"/bundles/* -t "$pkgdir/usr/share/friday/bundles"
   # System helper service and policy files (inert until enabled by `friday helper enable`).
   install -Dm644 "$lin/helper/friday-os-helper.service" \
     "$lin/helper/org.friday.Helper1.service" \

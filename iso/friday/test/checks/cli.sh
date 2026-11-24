@@ -2211,6 +2211,38 @@ for c in $(awk '/^case "\$\{1:-\}" in/ { on = 1 } on && /^  [a-z][a-z0-9|-]*\)/ 
   n=$((n + 1)); grep -qE "^  friday $c( |$)" <<<"$hl" || missing+="$c "
 done
 [[ -z "$missing" && $n -gt 40 ]] && pass "help lists every command" || fail "help lacks: $missing"
+echo "app bundles"
+B="$W/bundles"; mkdir -p "$B/bin" "$B/cache"
+export FRIDAY_BUNDLES_DIR="$REPO_ROOT/packaging/linux/bundles" FRIDAY_PACMAN_CONF="$B/pacman.conf"
+printf '[core]\nInclude = /etc/pacman.d/mirrorlist\n\n#[multilib]\n#Include = /etc/pacman.d/mirrorlist\n' >"$FRIDAY_PACMAN_CONF"
+# sudo runs the command (pacman and sed are stubs or work on the copy); pacman
+# fails for a package named in FAIL_PKG; makepkg fails for FAIL_AUR.
+printf '#!/bin/bash\necho "sudo $*" >>"%s/log"\n"$@"\n' "$B" >"$B/bin/sudo"
+printf '#!/bin/bash\necho "pacman $*" >>"%s/log"\n[[ -n "${FAIL_PKG:-}" && " $* " == *" $FAIL_PKG "* ]] && exit 1\nexit 0\n' "$B" >"$B/bin/pacman"
+printf '#!/bin/bash\necho "git $*" >>"%s/log"\nmkdir -p "${@: -1}"\n' "$B" >"$B/bin/git"
+printf '#!/bin/bash\necho "makepkg $PWD" >>"%s/log"\n[[ -n "${FAIL_AUR:-}" && "$PWD" == *"$FAIL_AUR" ]] && exit 1\nexit 0\n' "$B" >"$B/bin/makepkg"
+chmod +x "$B/bin"/*
+bl() { PATH="$B/bin:$PATH" XDG_CACHE_HOME="$B/cache" bash "$F" bundles "$@"; }
+out=$(bl list)
+contains "list names each bundle" "$out" "developer"
+contains "and what's in it" "$out" "neovim"
+: >"$B/log"; out=$(bl install productivity 2>&1)
+contains "repo apps go in with one pacman" "$(cat "$B/log")" "pacman -S --needed --noconfirm libreoffice-fresh obsidian thunderbird"
+contains "and it says how many" "$out" "Installed 3 of 3 apps."
+contains "a notification says it's done" "$(cat "$LOG")" "App bundles done"
+: >"$B/log"; out=$(FAIL_PKG=obsidian bl install productivity 2>&1) && fail "a failed app counted as done" || pass "a failed app makes it exit non-zero"
+contains "one that fails doesn't stop the rest" "$out" "Installed 2 of 3 apps."
+contains "and it says which and how to retry" "$out" "Didn't install: obsidian (try again: friday bundles install productivity)"
+: >"$B/log"; out=$(FAIL_AUR=claude-code bl install developer 2>&1 || true)
+contains "an AUR app is built as you, not root" "$(cat "$B/log")" "makepkg $B/cache/friday-aur/claude-code"
+if grep -q "sudo makepkg" "$B/log"; then fail "makepkg ran as root"; else pass "makepkg never runs as root"; fi
+contains "a failed AUR build is named" "$out" "Didn't install: claude-code"
+: >"$B/log"; bl install gaming >/dev/null 2>&1 || true
+contains "Steam turns on multilib first" "$(cat "$FRIDAY_PACMAN_CONF")" $'[multilib]\nInclude'
+contains "the core section is untouched" "$(cat "$FRIDAY_PACMAN_CONF")" $'[core]\nInclude'
+refuse "an unknown bundle is refused" bl install nonsense
+refuse "a bundle name can't be a path" bl install ../../etc/passwd
+unset FRIDAY_BUNDLES_DIR FRIDAY_PACMAN_CONF
 
 echo "phone"
 # `friday phone`, without Pocketdesk installed (the global stub hidden).

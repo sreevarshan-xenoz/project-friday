@@ -15,6 +15,11 @@ export XDG_RUNTIME_DIR="$W/run" LANG=C.UTF-8
 export FRIDAY_VIDEO_DEVS="$W/video0" FRIDAY_FACE_PAM="$W/no-face-pam"
 # tourup: wait (up to 5 s) for the tour to show, once its checks are done.
 tourup() { local i; for i in $(seq 25); do [[ "$(timeout 10 qs -p "$FS" ipc call tour step 2>/dev/null)" == 0 ]] && return 0; sleep 0.2; done; return 1; }
+# A stand-in friday for the shell: the app-bundles switch is on while
+# $W/bundles-on exists (the tour then offers app bundles).
+mkdir -p "$W/bin"
+printf '#!/bin/sh\n[ "$*" = "feature app-bundles status" ] && { [ -e "%s/bundles-on" ] && echo "app-bundles: on" || echo "app-bundles: off"; }\nexit 0\n' "$W" >"$W/bin/friday"
+chmod +x "$W/bin/friday"; export PATH="$W/bin:$PATH"
 chmod 700 "$XDG_RUNTIME_DIR"
 
 printf 'output HEADLESS-1 resolution 1600x900\n' >"$W/sway.conf"
@@ -186,6 +191,15 @@ timeout 10 qs -p "$FS" ipc call tour begin "Alex" true false >/dev/null 2>&1 || 
 tourup || fail "the tour didn't show without a camera"
 [[ "$(timeout 10 qs -p "$FS" ipc call tour count 2>/dev/null)" == 5 ]] && pass "without one it doesn't" || fail "a face unlock step without a camera"
 timeout 10 qs -p "$FS" ipc call tour finish >/dev/null 2>&1 || true
+# The app bundles step, unless switched off.
+: >"$W/bundles-on"
+timeout 10 qs -p "$FS" ipc call tour begin "Alex" true false >/dev/null 2>&1 || true
+tourup || fail "the tour didn't show with app bundles on"
+[[ "$(timeout 10 qs -p "$FS" ipc call tour count 2>/dev/null)" == 6 ]] && pass "the tour offers app bundles" || fail "no app bundles step"
+for _ in 1 2 3 4; do timeout 10 qs -p "$FS" ipc call tour next >/dev/null 2>&1 || true; done
+sleep 1; grim "$W/friday-tour-bundles.png" 2>/dev/null || true
+timeout 10 qs -p "$FS" ipc call tour finish >/dev/null 2>&1 || true
+rm -f "$W/bundles-on"
 # Past answers, as friday ask writes them, are searchable.
 printf '# what is using my disk\n\n_2026-11-14 21:10_\n\nMostly photos.\n\n---\n\n# explain rust error E0308\n\n_2026-11-14 22:30_\n\n> fn main\n\nMismatched types.\n\n---\n\n' \
   >"$XDG_STATE_HOME/friday/answers.md"
