@@ -95,9 +95,9 @@ pub fn plain_screen_error(e: &ContextReadError) -> String {
     // What still works when the screen can't be used: select the text and
     // ask about the selection, which never needs a screenshot.
     let select = if cfg!(windows) {
-        "Select the text you mean and press Win+Y to ask about it."
+        "Select the text you mean and press Win+Alt+Y to ask about it."
     } else {
-        "Select the text you mean and press Super+Y to ask about it."
+        "Select the text you mean and press Super+Alt+Y to ask about it."
     };
     match e {
         ContextReadError::Capture(m) => {
