@@ -430,6 +430,71 @@ where
     /// Whether the window's words may go instead of a screenshot (screen text
     /// on). Off, they are still read here, only to check for a key.
     text_route: bool,
+    /// The window text the last screen ask sent (in memory only), so the next
+    /// "what changed?" about that app sends just the changed lines.
+    last_seen: std::sync::Arc<std::sync::Mutex<Option<LastSeen>>>,
+}
+
+struct LastSeen {
+    class: String,
+    words: String,
+    at: std::time::Instant,
+}
+
+/// How long a window's text is kept to compare with.
+const LAST_SEEN_KEEP: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// Whether a screen question asks what changed since the last look.
+pub fn asks_what_changed(question: &str) -> bool {
+    let q = question.to_lowercase();
+    [
+        "what changed",
+        "what's changed",
+        "what has changed",
+        "anything changed",
+        "has anything changed",
+        "what is different",
+        "what's different",
+        "what's new here",
+    ]
+    .iter()
+    .any(|p| q.contains(p))
+}
+
+/// The lines of `new` not in `old` (`+ `) and of `old` not in `new` (`- `),
+/// in order; empty when the text is the same. `None` when either is too long
+/// to compare (then the whole text goes).
+pub fn line_diff(old: &str, new: &str) -> Option<String> {
+    let a: Vec<&str> = old.lines().collect();
+    let b: Vec<&str> = new.lines().collect();
+    if a.len() > 1500 || b.len() > 1500 {
+        return None;
+    }
+    // Longest common subsequence of lines, then a walk that emits the rest.
+    let mut lcs = vec![vec![0u16; b.len() + 1]; a.len() + 1];
+    for i in (0..a.len()).rev() {
+        for j in (0..b.len()).rev() {
+            lcs[i][j] = if a[i] == b[j] {
+                lcs[i + 1][j + 1] + 1
+            } else {
+                lcs[i + 1][j].max(lcs[i][j + 1])
+            };
+        }
+    }
+    let (mut i, mut j, mut out) = (0, 0, Vec::new());
+    while i < a.len() || j < b.len() {
+        if i < a.len() && j < b.len() && a[i] == b[j] {
+            i += 1;
+            j += 1;
+        } else if j < b.len() && (i == a.len() || lcs[i][j + 1] >= lcs[i + 1][j]) {
+            out.push(format!("+ {}", b[j]));
+            j += 1;
+        } else {
+            out.push(format!("- {}", a[i]));
+            i += 1;
+        }
+    }
+    Some(out.join("\n"))
 }
 
 impl<C, P> ScreenReader<C, P>
@@ -452,6 +517,7 @@ where
             text: None,
             area_text: None,
             text_route: true,
+            last_seen: Default::default(),
         }
     }
 
@@ -842,10 +908,48 @@ where
         // A title can carry a token too (a URL with a key in it, a terminal).
         let (title, masked_title) = friday_goal_execution::mask_secrets(&title);
         let title = title.replace(['\n', '\r'], " ");
-        let intro = format!(
+        let mut intro = format!(
             "The person asked about the window they are looking at ({class}: {title}). \
              Its text, read from the app's accessibility tree, follows between the lines."
         );
+        // "What changed?" after an earlier ask about the same app: only the
+        // changed lines go, or nothing at all when nothing changed.
+        let before = self.last_seen.lock().unwrap().replace(LastSeen {
+            class: class.clone(),
+            words: words.clone(),
+            at: std::time::Instant::now(),
+        });
+        let mut words = words;
+        if let Some(b) = before.filter(|b| {
+            crate::features::on("screen-what-changed")
+                && b.class == class
+                && b.at.elapsed() < LAST_SEEN_KEEP
+                && question.is_some_and(asks_what_changed)
+        }) {
+            let mins = (b.at.elapsed().as_secs() / 60).max(1);
+            let ago = if mins == 1 {
+                "a minute ago".to_string()
+            } else {
+                format!("{mins} minutes ago")
+            };
+            match line_diff(&b.words, &words) {
+                Some(d) if d.is_empty() => {
+                    return Some(Ok((
+                        format!("Nothing in the window's text changed since you asked {ago}."),
+                        false,
+                    )));
+                }
+                Some(d) => {
+                    intro = format!(
+                        "The person asks what changed in the window they are looking at \
+                         ({class}: {title}) since they asked about it {ago}. The lines that \
+                         went (-) and came (+) follow between the lines; the rest is the same."
+                    );
+                    words = d;
+                }
+                None => {}
+            }
+        }
         let what = if cut {
             "the window's text (its first part)"
         } else {
@@ -1683,6 +1787,7 @@ mod tests {
             text: None,
             area_text: None,
             text_route: true,
+            last_seen: Default::default(),
         };
         let second_err = working_reader.read().await.unwrap_err();
         assert!(matches!(second_err, ContextReadError::NotAuthorized { .. }));
@@ -2340,6 +2445,80 @@ mod tests {
                 .clone()
                 .map(|t| format!("{}\n{t}", "row: item ".repeat(MIN_SCREEN_TEXT / 10)))
         }
+    }
+
+    /// Window text that changes from one read to the next.
+    struct ChangingText(std::sync::Mutex<Vec<&'static str>>);
+
+    #[async_trait]
+    impl ScreenText for ChangingText {
+        async fn window_text(&self, _: &str, _: &str) -> Option<String> {
+            let mut v = self.0.lock().unwrap();
+            let t = if v.len() > 1 { v.remove(0) } else { v[0] };
+            Some(format!(
+                "{}\n{t}",
+                "row: item\n".repeat(MIN_SCREEN_TEXT / 10)
+            ))
+        }
+    }
+
+    #[test]
+    fn a_line_diff_names_what_came_and_went() {
+        assert_eq!(line_diff("a\nb\nc", "a\nb\nc").unwrap(), "");
+        assert_eq!(line_diff("a\nb\nc", "a\nc\nd").unwrap(), "- b\n+ d");
+        assert!(line_diff(&"x\n".repeat(2000), "y").is_none());
+        assert!(asks_what_changed("What changed since then?"));
+        assert!(!asks_what_changed("what is this?"));
+    }
+
+    #[tokio::test]
+    async fn what_changed_sends_only_the_changed_lines() {
+        let seam = RecordingSeam::default();
+        let text = ChangingText(std::sync::Mutex::new(vec![
+            "build: running",
+            "build: failed",
+        ]));
+        let reader = ScreenReader::new(collector_with_window(), seam.clone(), "fabric")
+            .with_text(Arc::new(text));
+        reader.consent();
+        reader
+            .ask_routed(Some("what is here?"), None, &|_| {}, &|_| {})
+            .await
+            .unwrap();
+        reader.consent();
+        reader
+            .ask_routed(Some("what changed?"), None, &|_| {}, &|_| {})
+            .await
+            .unwrap();
+        let sent = seam.last().unwrap();
+        assert!(
+            sent.contains("- build: running") && sent.contains("+ build: failed"),
+            "{sent}"
+        );
+        assert!(!sent.contains("row: item"), "the same lines stay home");
+    }
+
+    #[tokio::test]
+    async fn nothing_changed_answers_without_the_model() {
+        let seam = RecordingSeam::default();
+        let reader = ScreenReader::new(collector_with_window(), seam.clone(), "fabric")
+            .with_text(Arc::new(ChangingText(std::sync::Mutex::new(vec!["same"]))));
+        reader.consent();
+        reader
+            .ask_routed(Some("what is here?"), None, &|_| {}, &|_| {})
+            .await
+            .unwrap();
+        let before = seam.sent();
+        reader.consent();
+        let (answer, _) = reader
+            .ask_routed(Some("anything changed?"), None, &|_| {}, &|_| {})
+            .await
+            .unwrap();
+        assert!(
+            answer.starts_with("Nothing in the window's text changed"),
+            "{answer}"
+        );
+        assert_eq!(seam.sent(), before, "no model call");
     }
 
     fn collector_with_window() -> ContextCollector<FakeCommandRunner> {
