@@ -94,7 +94,8 @@ Autonomous Agent & Cognitive Loop:
   friday status | system-info      Inspect daemon state, memory, and telemetry
   friday context screen [--yes]    Share screen context with assistant
   friday daemon <status|restart|logs> Control friday-linux-daemon service
-  friday doctor [--quick]          Check daemon, AI provider and desktop health, then a real ask (--quick: no ask)
+  friday doctor [--quick] [--fix]  Check daemon, AI provider and desktop health, then a real ask (--quick: no ask;
+                                   --fix: restart what's stopped and put keys back, then check again)
   friday report [file]             Write a redacted bug report to read and share
   friday setup-ai [--keep-others|--only] [provider]
                                    Set or change the AI provider key (local: a model on this computer)
@@ -295,7 +296,14 @@ friday_doctor() {
     friday-ctl offline-proof "${2:-24}"
     return
   fi
+  # `--fix`: repair what FRIDAY can by itself (no sudo), then check again.
+  local do_fix=false quick=false a
+  for a in "$@"; do
+    case "$a" in --fix) do_fix=true ;; --quick) quick=true ;; esac
+  done
   local fails=0 warns=0
+  local -a fixes=()
+  can_fix() { [[ " ${fixes[*]} " == *" $1 "* ]] || fixes+=("$1"); }
   local state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
   local state="$state_dir/state.json"
   local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
@@ -311,23 +319,23 @@ friday_doctor() {
     svc_active=true
     ok "friday-linux-daemon service is active"
   else
-    bad "friday-linux-daemon service is not active" "friday daemon start; then: friday daemon logs"
+    bad "friday-linux-daemon service is not active" "friday daemon start; then: friday daemon logs"; can_fix daemon
   fi
   if [ -r "$state" ]; then
     local status
     status=$(jq -r '.status // "unknown"' "$state" 2>/dev/null || echo "unreadable")
     if [ "$status" = "running" ] && ! $svc_active; then
       bad "state.json says running, but the service is not (stale: the daemon crashed or was killed)" \
-        "friday daemon restart; if it fails again: friday daemon logs"
+        "friday daemon restart; if it fails again: friday daemon logs"; can_fix daemon
     elif [ "$status" = "running" ]; then ok "state.json reports: running"
-    else bad "state.json reports: $status" "friday daemon restart; then: friday daemon logs"; fi
+    else bad "state.json reports: $status" "friday daemon restart; then: friday daemon logs"; can_fix daemon; fi
     if [ "$(jq -r '(.token // "") | length > 0' "$state" 2>/dev/null)" = "true" ]; then
       ok "command token present"
     else
-      bad "no command token in state.json" "friday daemon restart (the daemon writes a fresh token)"
+      bad "no command token in state.json" "friday daemon restart (the daemon writes a fresh token)"; can_fix daemon
     fi
   else
-    bad "no state file at $state" "the daemon has not started for this user: friday daemon start"
+    bad "no state file at $state" "the daemon has not started for this user: friday daemon start"; can_fix daemon
   fi
   # The daemon publishes its real address; :18432 is only the default (a second
   # user's daemon falls back to a free port).
@@ -338,7 +346,7 @@ friday_doctor() {
   if (exec 3<>"/dev/tcp/$host/$port") 2>/dev/null; then
     ok "listening on $listen"
   else
-    bad "nothing listening on $listen" "friday daemon logs"
+    bad "nothing listening on $listen" "friday daemon logs"; can_fix daemon
   fi
 
   echo
@@ -459,14 +467,14 @@ friday_doctor() {
     if hyprctl binds -j 2>/dev/null | jq -e 'any(.[]; .modmask == 64 and .key == "Y" and .description == "FRIDAY: Ask")' >/dev/null 2>&1; then
       ok "Super+Y is bound to FRIDAY"
     else
-      bad "Super+Y isn't bound to FRIDAY (pressing it does nothing)" "friday keys update, then sign in again"
+      bad "Super+Y isn't bound to FRIDAY (pressing it does nothing)" "friday keys update, then sign in again"; can_fix keys
     fi
   else warn "not inside a Hyprland session" "desktop checks below may not apply over SSH/TTY"; fi
   # FRIDAY OS copies its key file into a new home once; keys added later
   # (voice typing) don't reach a home made before them.
   local keys="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/bindings.lua"
   if grep -qs '"friday hold start"' "$keys" && ! grep -qs 'friday hold start --type' "$keys"; then
-    warn "the voice typing key (Super+Shift+Y) isn't in your key file" "friday keys update"
+    warn "the voice typing key (Super+Shift+Y) isn't in your key file" "friday keys update"; can_fix keys
   fi
   # The Quickshell bar is FRIDAY OS's desktop; a standalone install (the
   # `friday` package on any Wayland desktop) only needs the prompt and
@@ -477,7 +485,7 @@ friday_doctor() {
     ok "FRIDAY Shell is running"
     pkgs=(quickshell ttf-jetbrains-mono-nerd noto-fonts "${pkgs[@]}")
   elif grep -rqs 'friday shell' "${XDG_CONFIG_HOME:-$HOME/.config}/hypr"; then
-    warn "FRIDAY Shell is not running" "friday shell restart"
+    warn "FRIDAY Shell is not running" "friday shell restart"; can_fix shell
     pkgs=(quickshell ttf-jetbrains-mono-nerd noto-fonts "${pkgs[@]}")
   elif [ -d "${XDG_CONFIG_HOME:-$HOME/.config}/quickshell/ii" ]; then
     if pgrep -x qs >/dev/null || pgrep -x quickshell >/dev/null; then ok "Quickshell bar is running"
@@ -500,7 +508,7 @@ friday_doctor() {
 
   # A real ask, end to end: the daemon, the provider and an answer back
   # (skipped with --quick, or when the daemon isn't listening).
-  if [ "${1:-}" != "--quick" ]; then
+  if ! $quick; then
     echo
     echo "A real ask"
     if ! (exec 3<>"/dev/tcp/$host/$port") 2>/dev/null; then
@@ -531,6 +539,34 @@ friday_doctor() {
     echo "All good."
   else
     echo "$fails problem(s), $warns warning(s)."
+  fi
+  if (( ${#fixes[@]} )) && friday_feature_on doctor-fix; then
+    local f
+    if ! $do_fix; then
+      echo "friday doctor --fix repairs these by itself: ${fixes[*]}"
+    else
+      echo
+      echo "Repairing"
+      for f in "${fixes[@]}"; do
+        case "$f" in
+          daemon)
+            if systemctl --user restart friday-linux-daemon 2>/dev/null; then echo "  restarted the daemon"; sleep "${FRIDAY_FIX_WAIT:-3}"
+            else echo "  couldn't restart the daemon: friday daemon logs"; fi ;;
+          keys)
+            if friday_keys update >/dev/null 2>&1; then
+              hyprctl reload >/dev/null 2>&1 || true
+              echo "  put FRIDAY's keys back in your key file"
+            else echo "  couldn't update the keys: friday keys update"; fi ;;
+          shell)
+            if bash "$0" shell restart >/dev/null 2>&1; then echo "  restarted FRIDAY Shell"
+            else echo "  couldn't start FRIDAY Shell: friday shell restart"; fi ;;
+        esac
+      done
+      echo
+      echo "Checking again"
+      if $quick; then friday_doctor --quick; else friday_doctor; fi
+      return
+    fi
   fi
   [ "$fails" -eq 0 ]
 }
@@ -3856,6 +3892,7 @@ dictation-latch|Tap Super+Shift+Y twice to keep voice typing without holding it;
 past-answers|What did you tell me about X last week, and friday answers search: past answers with their dates, read on this computer
 answer-cards|Answers show tables and steps, and each code block gets its own Copy
 blank-secret-fields|Password and card fields the window shows are painted over before a screenshot of it leaves
+doctor-fix|friday doctor --fix repairs what it can by itself: a stopped daemon, missing keys, FRIDAY Shell not running
 log-chain|Each action in the action log is chained to the one before, so a changed line shows (friday verify-log)
 standing-reversible|A standing task runs only what can be undone; anything that would ask first is refused and logged
 memory-tidy|When memory is fuller than an ask carries, friday memory tidy proposes a shorter list to approve
