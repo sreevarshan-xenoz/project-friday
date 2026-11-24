@@ -2492,7 +2492,6 @@ friday_voice_speak() {
         && mv "$dir/settings.json.tmp" "$dir/settings.json"
       echo "Spoken answers: $2."
       ;;
-    *) echo "Usage: friday voice speak [setup|on|off|voices|voice N|length L|status]" >&2; return 1 ;;
     try)
       # Hear a voice (or each, in turn) before choosing; the choice stays.
       friday_feature_on voice-try || { echo "Trying voices is turned off (friday feature voice-try on)."; return 0; }
@@ -2510,7 +2509,7 @@ friday_voice_speak() {
       done <<<"$list"
       echo "Keep one: friday voice speak voice <number>"
       ;;
-    *) echo "Usage: friday voice speak [setup|on|off|voices|try [N]|voice N|status]" >&2; return 1 ;;
+    *) echo "Usage: friday voice speak [setup|on|off|voices|try [N]|voice N|length L|status]" >&2; return 1 ;;
   esac
 }
 
