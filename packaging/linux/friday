@@ -121,6 +121,8 @@ Autonomous Agent & Cognitive Loop:
   friday face [status|setup|remove] Face unlock for the lock screen (Gaze)
   friday voice [status|setup|remove|preview on|off] Hold Super+Y and speak (speech to text on this computer)
   friday voice speak [setup [tinyvoca|kokoro|kitten|supertonic]|on|off|voices|voice N|status]
+  friday voice [status|setup|remove] Hold Super+Y and speak (speech to text on this computer)
+  friday voice speak [setup [tinyvoca|kokoro|kitten|supertonic]|on|off|voices|try [N]|voice N|status]
   friday voice talk-over [on|off|status]  Talk over a spoken answer to stop it and ask (echo cancellation)
                                    FRIDAY answers out loud, in a voice made on this computer
   friday say "text"                Say something now (friday say --stop to stop)
@@ -2491,6 +2493,24 @@ friday_voice_speak() {
       echo "Spoken answers: $2."
       ;;
     *) echo "Usage: friday voice speak [setup|on|off|voices|voice N|length L|status]" >&2; return 1 ;;
+    try)
+      # Hear a voice (or each, in turn) before choosing; the choice stays.
+      friday_feature_on voice-try || { echo "Trying voices is turned off (friday feature voice-try on)."; return 0; }
+      friday_speak_ready || { echo "friday: the voice isn't installed yet (friday voice speak setup)" >&2; return 1; }
+      local list n name
+      list=$(friday-ctl say --voices 2>/dev/null) || return 1
+      if [ -n "${2:-}" ]; then
+        [[ "$2" =~ ^[0-9]+$ ]] && grep -q "^$2 " <<<"$list" || { echo "There's no voice $2 (friday voice speak voices)." >&2; return 1; }
+        list=$(grep "^$2 " <<<"$list")
+      fi
+      while read -r n name; do
+        [ -n "$n" ] || continue
+        echo "Voice $n: $name"
+        FRIDAY_SAY_SPEAKER="$n" friday-ctl say "Hi, I'm FRIDAY. This is voice $n, $name." || return 0
+      done <<<"$list"
+      echo "Keep one: friday voice speak voice <number>"
+      ;;
+    *) echo "Usage: friday voice speak [setup|on|off|voices|try [N]|voice N|status]" >&2; return 1 ;;
   esac
 }
 
@@ -4055,6 +4075,7 @@ live-web|Questions about the weather, news, scores or prices search the web with
 speak-as-it-comes|Spoken answers start with the first sentence while the rest is still coming
 voice-preview|friday voice preview on: what whisper heard opens in the ask box to edit or drop before it is used
 health-page|friday health: each part of FRIDAY, whether it works here, and its switches
+voice-try|friday voice speak try [N]: hear a voice, or each in turn, before choosing; the choice stays
 clipboard-expiry|A clipboard copied over 10 minutes ago is not used as context (known when friday clips are on); password-manager copies never are
 ask-timings|How long each stage of an ask takes is kept on this computer (friday doctor shows the median and slow end)
 spoken-length|Spoken answers say two, six or all sentences (friday voice speak length brief, normal or detailed); the card shows all
