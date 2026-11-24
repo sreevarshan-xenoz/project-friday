@@ -70,6 +70,8 @@ Singleton {
     // The steps are settled before the tour shows, so none appears or
     // shifts while you're on it.
     root.active = false;
+    // A tour begun again while a check still runs starts it over.
+    cameraCheck.running = false;
     cameraCheck.running = true;
   }
 
