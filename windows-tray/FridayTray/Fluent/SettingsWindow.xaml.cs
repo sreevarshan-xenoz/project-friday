@@ -1026,6 +1026,19 @@ internal sealed partial class SettingsWindow : FluentWindow
         yield return picker;
         yield return Row(Pill("Hear it", SymbolRegular.Play24), () => Ctl.Say(_install, "Hi, I'm FRIDAY. This is how I sound."));
         yield return Row(Pill("Stop", SymbolRegular.Stop24), () => Ctl.StopSaying(_install));
+        // How much of an answer is said; the card always shows all of it.
+        var length = new ComboBox { Width = 240, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 12) };
+        AutomationProperties.SetName(length, "How much is said");
+        foreach (var (_, label) in Speaking.Lengths)
+            length.Items.Add(label);
+        length.SelectedIndex = Math.Max(0, Speaking.Lengths.ToList().FindIndex(l => l.Value == Speaking.Length(paths)));
+        length.SelectionChanged += (_, _) =>
+        {
+            if (length.SelectedIndex >= 0)
+                Speaking.SetLength(paths, Speaking.Lengths[length.SelectedIndex].Value);
+        };
+        yield return Caption("How much is said");
+        yield return length;
     }
 
     private IEnumerable<UIElement> Desktop()

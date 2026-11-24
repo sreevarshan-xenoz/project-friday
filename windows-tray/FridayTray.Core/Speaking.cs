@@ -56,6 +56,37 @@ public static class Speaking
         }
     }
 
+    /// <summary>How much of an answer is said aloud (the voice's <c>length</c> setting).</summary>
+    public static readonly IReadOnlyList<(string Value, string Label)> Lengths =
+    [
+        ("brief", "Brief: two sentences"),
+        ("normal", "Normal: six sentences"),
+        ("detailed", "Detailed: all of it"),
+    ];
+
+    public static string Length(Paths p)
+    {
+        try
+        {
+            var v = (string?)JsonNode.Parse(File.ReadAllText(SettingsFile(p)))?["length"];
+            return Lengths.Any(l => l.Value == v) ? v! : "normal";
+        }
+        catch (Exception e) when (e is IOException or System.Text.Json.JsonException or InvalidOperationException)
+        {
+            return "normal";
+        }
+    }
+
+    public static void SetLength(Paths p, string length)
+    {
+        JsonNode settings;
+        try { settings = JsonNode.Parse(File.ReadAllText(SettingsFile(p))) ?? new JsonObject(); }
+        catch (Exception e) when (e is IOException or System.Text.Json.JsonException) { settings = new JsonObject(); }
+        settings["length"] = length;
+        Directory.CreateDirectory(VoiceDir(p));
+        File.WriteAllText(SettingsFile(p), settings.ToJsonString());
+    }
+
     /// <summary>Chooses a voice, keeping the other settings (which model is installed).</summary>
     public static void SetSpeaker(Paths p, int speaker)
     {
