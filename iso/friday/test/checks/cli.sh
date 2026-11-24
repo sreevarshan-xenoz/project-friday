@@ -648,6 +648,7 @@ bash "$F" agents worktree on >/dev/null
 contains "on writes the setting" "$(cat "$HOME/.config/friday/friday.env")" "FRIDAY_AGENT_WORKTREE=1"
 bash "$F" agents worktree off >/dev/null
 contains "accept needs a run id" "$(bash "$F" agents accept nope 2>&1)" "usage: friday agents accept <id>"
+contains "compare needs a run id" "$(bash "$F" agents compare nope 2>&1)" "usage: friday agents compare <id>"
 # A checked backup, and a restore through friday-ctl.
 : >"$LOG"; contains "friday backup makes a checked backup" "$(bash "$F" backup)" "checked them"
 bash "$F" backup restore /tmp/some-backup >/dev/null

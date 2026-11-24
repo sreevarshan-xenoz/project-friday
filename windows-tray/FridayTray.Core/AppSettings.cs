@@ -154,6 +154,7 @@ public static class AppSettings
         ("app-instructions", "Your instructions for each app (app-instructions in the config folder) go with asks from it"),
         ("suggestions", "Asks that fit the app in front (a page, an email, a chat) are offered first in the ask box"),
         ("screen-what-changed", "\"What changed?\" about the same window sends only the lines that changed since the last ask"),
+        ("agent-compare", "Two agents on the same task, each in its own copy, compared before you keep one"),
     ];
 
     public static bool ExtensionAutoinstallOn(IReadOnlyDictionary<string, string> env) =>
