@@ -32,7 +32,11 @@ pub fn file(state_dir: &Path) -> std::path::PathBuf {
 pub fn add(state_dir: &Path, thought: &Thought) -> std::io::Result<()> {
     std::fs::create_dir_all(state_dir)?;
     let mut t = thought.clone();
-    t.text = t.text.trim().chars().take(MAX_CHARS).collect();
+    t.text = friday_goal_execution::mask_secrets(t.text.trim())
+        .0
+        .chars()
+        .take(MAX_CHARS)
+        .collect();
     crate::jsonl::append(
         &file(state_dir),
         &serde_json::to_string(&t).unwrap_or_default(),
@@ -117,6 +121,28 @@ pub fn render(thoughts: &[Thought]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_key_in_a_thought_is_never_kept() {
+        let dir =
+            std::env::temp_dir().join(format!("friday-thought-key-{}", rand::random::<u32>()));
+        add(
+            &dir,
+            &Thought {
+                ts: 1,
+                project: None,
+                kind: "idea".into(),
+                text: "rotate ghp_PLANTED0123456789abcdefghijklmnopqrstu soon".into(),
+            },
+        )
+        .unwrap();
+        let kept = std::fs::read_to_string(file(&dir)).unwrap();
+        assert!(
+            !kept.contains("PLANTED") && kept.contains("[secret masked]"),
+            "{kept}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     fn dir() -> std::path::PathBuf {

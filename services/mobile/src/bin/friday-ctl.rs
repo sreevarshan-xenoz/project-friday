@@ -1675,6 +1675,27 @@ async fn main() -> std::process::ExitCode {
             }
         };
     }
+    // `friday-ctl mask [--] <text…>`: the text with keys and passwords
+    // masked, for history the hosts keep (one rule for both).
+    if raw.first().map(String::as_str) == Some("mask") {
+        // `mask -`: all of stdin (a whole answer), printed as it came.
+        if raw.get(1).map(String::as_str) == Some("-") {
+            let mut text = String::new();
+            let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut text);
+            print!("{}", friday_goal_execution::mask_secrets(&text).0);
+            return std::process::ExitCode::SUCCESS;
+        }
+        let words: Vec<&str> = raw[1..]
+            .iter()
+            .map(String::as_str)
+            .skip_while(|w| *w == "--")
+            .collect();
+        println!(
+            "{}",
+            friday_goal_execution::mask_secrets(&words.join(" ")).0
+        );
+        return std::process::ExitCode::SUCCESS;
+    }
     if raw.first().map(String::as_str) == Some("answers") {
         return answers(&raw[1..], &friday_intelligence::default_state_dir());
     }
