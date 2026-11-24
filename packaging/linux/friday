@@ -65,6 +65,7 @@ Autonomous Agent & Cognitive Loop:
   friday ask --new ["<objective>"] Start a new conversation (asks within 15 minutes of
                                    each other otherwise share one)
   friday answers                   Show past answers (last one: friday answers --last)
+  friday answers search <words> [--since today|yesterday|week|month|7d]  Find past answers, with their dates
   friday app-context [on|off]      Whether a question about selected text names the app it came from
   friday forget [what]             Show what FRIDAY keeps on this computer, or wipe it
   friday actions [N]               Show what FRIDAY did on your desktop (windows, apps, media)
@@ -2130,6 +2131,10 @@ friday_local_command() {
     friday_phone_send || true
   elif friday_feature_on phone-send && [[ "$q" =~ ^(send|share|continue)\ (this|the|our)\ (conversation|chat|thread)\ (to|on)\ (my\ )?phone$ ]]; then
     friday_phone_send thread || true
+  elif friday_feature_on past-answers && [[ "$q" =~ ^what\ (did|have)\ (you|friday)\ (tell|told|say|said)\ (me\ )?(about|on)\  ]] \
+      && friday-ctl answers told "$q" 2>/dev/null; then
+    # "What did you tell me about X last week": past answers with their dates, read here.
+    :
   elif friday_feature_on brief && [[ "$q" =~ ^((so\ )?what\ did\ i\ miss|catch\ me\ up|brief\ me|(my\ |the\ )?morning\ brief|good\ morning,?(\ friday)?)$ ]]; then
     # From FRIDAY's own state: nothing is sent anywhere.
     friday-ctl brief 2>/dev/null || return 1
@@ -3848,6 +3853,7 @@ routine-offer|After FRIDAY does the same desktop steps three times, the answer o
 event-tasks|Standing tasks that start when a download finishes, a file changes or an app opens (local events only)
 capture-receipt|Before the first word, the answer says what was sent: the app, its text and size or a screenshot, what was masked
 dictation-latch|Tap Super+Shift+Y twice to keep voice typing without holding it; the next press types the words
+past-answers|What did you tell me about X last week, and friday answers search: past answers with their dates, read on this computer
 log-chain|Each action in the action log is chained to the one before, so a changed line shows (friday verify-log)
 standing-reversible|A standing task runs only what can be undone; anything that would ask first is refused and logged
 memory-tidy|When memory is fuller than an ask carries, friday memory tidy proposes a shorter list to approve
@@ -5823,6 +5829,11 @@ $offer"
     friday_helper "$@"
     ;;
   answers)
+    if [ "${2:-}" = search ]; then
+      shift 2
+      friday_feature_on past-answers || { echo "Searching past answers is turned off (friday feature past-answers on)."; exit 0; }
+      exec friday-ctl answers search "$@"
+    fi
     d="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
     f="$d/answers.md"; [ "${2:-}" = "--last" ] && f="$d/last-answer.md"
     if [ ! -s "$f" ]; then echo "No answers yet. Try: friday ask \"what's using my disk?\""; exit 0; fi

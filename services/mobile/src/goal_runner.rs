@@ -1619,6 +1619,9 @@ fn used_labels(
     if count("thoughts the person kept") > 0 {
         used.push("your kept thoughts".to_string());
     }
+    if count("past answers FRIDAY gave") > 0 {
+        used.push("past answers".to_string());
+    }
     used.extend(some(
         count("lesson: "),
         "a lesson from a failure",
@@ -2670,6 +2673,35 @@ impl GoalRunner {
                              say what was done and what is unfinished, then offer the next step):\n{text}"
                         ));
                     }
+                }
+            }
+            // "What did you tell me about X last week": the past answers,
+            // with their dates (never one kept on this computer).
+            if let (Some(dir), true) = (&self.timeline, crate::features::on("past-answers")) {
+                if let Some((topic, since)) =
+                    crate::timeline::told_about(&goal, chrono::Local::now())
+                {
+                    let text = ["answers.1.md", "answers.md"]
+                        .iter()
+                        .filter_map(|f| std::fs::read_to_string(dir.join(f)).ok())
+                        .collect::<String>();
+                    let found = crate::timeline::search_answers(
+                        &text,
+                        &crate::timeline::search_words(&topic),
+                        since,
+                        false,
+                        8,
+                    );
+                    let list = if found.is_empty() {
+                        format!("none about {topic}")
+                    } else {
+                        crate::timeline::render_found(&found)
+                    };
+                    let (list, _) = friday_goal_execution::mask_secrets(&list);
+                    lines.push(format!(
+                        "past answers FRIDAY gave (newest first; answer from these, cite each one's \
+                         date, and say so if there are none):\n{list}"
+                    ));
                 }
             }
             if let Some(dir) = &self.timeline {
@@ -3925,6 +3957,52 @@ mod tests {
         drive_goal(&bus, &mut rx, json!({ "goal": goal })).await;
         let prompt = answerer.prompts.lock().unwrap().join("\n");
         prompt
+    }
+
+    /// "What did you tell me about X last week" gets those past answers,
+    /// dated, and never one kept on this computer.
+    #[tokio::test]
+    async fn what_did_you_tell_me_gets_the_past_answers_with_dates() {
+        let dir = std::env::temp_dir().join(format!("friday-mobile-told-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let day = (chrono::Local::now() - chrono::Duration::days(2)).format("%Y-%m-%d 09:30");
+        std::fs::write(
+            dir.join("answers.md"),
+            format!("<!-- friday answer -->\n# how do docker volumes work\n\n_{day}_\n\nA docker volume keeps data outside the container.\n\n---\n\n\
+                     <!-- friday answer -->\n# my docker bank notes\n\n_{day}_\n\n_On this computer · nothing was sent_\n\nPrivate docker numbers.\n\n---\n\n"),
+        )
+        .unwrap();
+        let answerer = Arc::new(ScriptedAnswerer {
+            reply: Ok("On that day I said volumes keep data.".to_string()),
+            prompts: Mutex::new(Vec::new()),
+        });
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        GoalRunner::new(bus.clone())
+            .with_answerer(answerer.clone())
+            .with_timeline(dir.clone())
+            .start();
+        let (_, done) = drive_goal(
+            &bus,
+            &mut rx,
+            json!({ "goal": "What did you tell me about docker last week?" }),
+        )
+        .await;
+        let prompt = answerer.prompts.lock().unwrap().join("\n");
+        assert!(prompt.contains("past answers FRIDAY gave"), "{prompt}");
+        assert!(
+            prompt.contains(&format!("{day} — \"how do docker volumes work\"")),
+            "{prompt}"
+        );
+        assert!(!prompt.contains("Private docker numbers"), "{prompt}");
+        assert!(
+            done["used"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("past answers")),
+            "{done}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// "Continue where we stopped" and "continue building the site" get the

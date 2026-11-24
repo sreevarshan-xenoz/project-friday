@@ -983,6 +983,77 @@ fn day(args: &[String], state: &std::path::Path) -> std::process::ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `friday-ctl answers search <words…> [--since today|yesterday|week|month|<N>d]`:
+/// past answers holding every word, newest first, with their dates.
+/// `friday-ctl answers told <ask>`: the same for "what did you tell me
+/// about X last week" (exit 1 when the ask isn't that). Read here only.
+fn answers(args: &[String], state: &std::path::Path) -> std::process::ExitCode {
+    use friday_mobile::timeline;
+    use std::process::ExitCode;
+    let text = ["answers.1.md", "answers.md"]
+        .iter()
+        .filter_map(|f| std::fs::read_to_string(state.join(f)).ok())
+        .collect::<String>();
+    let now = chrono::Local::now();
+    let (words, since, topic) = match args.first().map(String::as_str) {
+        Some("told") => match timeline::told_about(&args[1..].join(" "), now) {
+            Some((topic, since)) => (timeline::search_words(&topic), since, topic),
+            None => return ExitCode::FAILURE,
+        },
+        Some("search") => {
+            let mut words = Vec::new();
+            let mut since = 0;
+            let mut rest = args[1..].iter();
+            while let Some(a) = rest.next() {
+                if a != "--since" {
+                    words.push(a.clone());
+                    continue;
+                }
+                let today = now.date_naive().and_hms_opt(0, 0, 0).unwrap_or_default();
+                let midnight = |d: chrono::NaiveDateTime| {
+                    d.and_local_timezone(chrono::Local)
+                        .earliest()
+                        .map_or(0, |t| t.timestamp())
+                };
+                since = match rest.next().map(String::as_str) {
+                    Some("today") => midnight(today),
+                    Some("yesterday") => midnight(today - chrono::Duration::days(1)),
+                    Some("week") => (now - chrono::Duration::days(7)).timestamp(),
+                    Some("month") => (now - chrono::Duration::days(30)).timestamp(),
+                    Some(n) if n.ends_with('d') && n[..n.len() - 1].parse::<i64>().is_ok() => {
+                        let days: i64 = n[..n.len() - 1].parse().unwrap_or(0);
+                        (now - chrono::Duration::days(days.clamp(0, 3650))).timestamp()
+                    }
+                    _ => {
+                        eprintln!("usage: friday-ctl answers search <words…> [--since today|yesterday|week|month|<N>d]");
+                        return ExitCode::from(2);
+                    }
+                };
+            }
+            let topic = words.join(" ");
+            (timeline::search_words(&topic), since, topic)
+        }
+        _ => {
+            eprintln!("usage: friday-ctl answers search <words…> [--since …] | answers told <ask>");
+            return ExitCode::from(2);
+        }
+    };
+    if words.is_empty() {
+        eprintln!("Say what to look for: friday answers search <words>");
+        return ExitCode::from(2);
+    }
+    let found = timeline::search_answers(&text, &words, since, true, 10);
+    if found.is_empty() {
+        println!("Nothing in past answers about {topic}.");
+    } else {
+        println!(
+            "Past answers about {topic}:\n{}",
+            timeline::render_found(&found)
+        );
+    }
+    ExitCode::SUCCESS
+}
+
 /// `friday-ctl thought add [idea|decision|question|action] <text> | list [words]`:
 /// keep a thought under the project in front (the terminal's git repo), and
 /// read a thread back (`friday_mobile::thoughts`).
@@ -1499,6 +1570,9 @@ async fn main() -> std::process::ExitCode {
     }
     if raw.first().map(String::as_str) == Some("timeline") {
         return timeline(&raw[1..]);
+    }
+    if raw.first().map(String::as_str) == Some("answers") {
+        return answers(&raw[1..], &friday_intelligence::default_state_dir());
     }
     if raw.first().map(String::as_str) == Some("day") {
         return day(&raw[1..], &friday_intelligence::default_state_dir());

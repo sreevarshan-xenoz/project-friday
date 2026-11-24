@@ -27,6 +27,12 @@ if [[ "\$1" == day ]]; then
   echo 'friday: 3 things'
   exit 0
 fi
+if [[ "\$1" == answers ]]; then
+  printf 'friday-ctl-answers %s\n' "\${*:2}" >> "$LOG"
+  [[ "\$2" == told && "\$*" != *docker* ]] && exit 1
+  echo 'Past answers about docker:'
+  exit 0
+fi
 if [[ "\$1" == verify-log ]]; then
   printf 'friday-ctl-verify-log\n' >> "$LOG"
   echo 'The action log is intact: 3 actions'
@@ -629,6 +635,14 @@ contains "for the last day by default" "$(cat "$LOG")" "friday-ctl-offline-proof
 bash "$F" tasks recipe weather >/dev/null
 contains "a recipe is added through friday-ctl" "$(cat "$LOG")" "friday-ctl-tasks recipe weather"
 contains "friday verify-log checks the chain through friday-ctl" "$(bash "$F" verify-log)" "intact"
+: >"$LOG"; contains "friday answers search goes to friday-ctl" "$(bash "$F" answers search docker --since week)" "Past answers about docker"
+contains "with its words and time" "$(cat "$LOG")" "friday-ctl-answers search docker --since week"
+: >"$LOG"; bash "$F" ask "What did you tell me about docker last week?"; sleep 0.3
+contains "what did you tell me about: answered from past answers" "$(cat "$state/last-answer.md")" "Past answers about docker"
+if grep -q "^friday-ctl '" "$LOG"; then fail "what did you tell me about asked the AI"; else pass "what did you tell me about asks no AI"; fi
+bash "$F" feature past-answers off >/dev/null
+contains "searching past answers has a switch" "$(bash "$F" answers search docker)" "turned off"
+bash "$F" feature past-answers on >/dev/null
 : >"$LOG"; bash "$F" memory tidy >/dev/null 2>&1 || true
 contains "friday memory tidy goes to friday-ctl" "$(cat "$LOG")" "memory tidy"
 : >"$LOG"; contains "friday day sums up a day through friday-ctl" "$(bash "$F" day yesterday)" "friday: 3 things"
