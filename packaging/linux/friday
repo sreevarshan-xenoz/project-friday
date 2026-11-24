@@ -537,6 +537,12 @@ friday_doctor() {
     fi
   fi
 
+  # How long asks took lately, stage by stage (kept on this computer).
+  if friday_feature_on ask-timings && [ -s "$state_dir/timings.jsonl" ]; then
+    echo
+    timeout 5 friday-ctl timings 2>/dev/null || true
+  fi
+
   echo
   if [ "$fails" -eq 0 ] && [ "$warns" -eq 0 ]; then
     echo "All good."
@@ -3891,6 +3897,7 @@ memory-file|Every ask carries what you asked FRIDAY to remember (~/.config/frida
 live-web|Questions about the weather, news, scores or prices search the web without \"search\" first
 speak-as-it-comes|Spoken answers start with the first sentence while the rest is still coming
 clipboard-expiry|A clipboard copied over 10 minutes ago is not used as context (known when friday clips are on); password-manager copies never are
+ask-timings|How long each stage of an ask takes is kept on this computer (friday doctor shows the median and slow end)
 screen-what-changed|What changed? about the same window sends only the lines that changed since the last screen ask (kept in memory 30 minutes)
 agent-compare|Two agents on the same task, each in its own copy, then friday agents compare to pick one
 backup-new-home|A backup restored on another computer points saved folders (workspaces, threads, settings) at the new home
