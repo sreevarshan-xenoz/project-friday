@@ -1468,6 +1468,7 @@ dependencies = [
  "friday-goal-execution",
  "friday-intelligence",
  "friday-investigation",
+ "friday-mcp",
  "friday-sensors",
  "friday-windows",
  "futures",

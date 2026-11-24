@@ -1591,6 +1591,21 @@ bash "$F" mcp deny friday_ask >/dev/null
 contains "deny takes it back" "$(bash "$F" mcp)" "friday_ask: not allowed"
 refuse "an unknown tool can't be allowed" bash "$F" mcp allow rm_rf
 
+echo "MCP client servers"
+local_s_cfg="${XDG_CONFIG_HOME:-$HOME/.config}/friday/mcp-servers.json"
+local_s_on="${XDG_CONFIG_HOME:-$HOME/.config}/friday/mcp-on"
+mkdir -p "$(dirname "$local_s_cfg")"
+echo '{"mcpServers": {"demo": {"command": "echo", "args": ["hi"]}}}' >"$local_s_cfg"
+contains "friday mcp servers shows config path and servers" "$(bash "$F" mcp servers)" "$local_s_cfg"
+contains "server starts off" "$(bash "$F" mcp servers)" "demo                 off"
+contains "turn server on" "$(bash "$F" mcp on demo)" "demo: on"
+contains "server is now on" "$(bash "$F" mcp servers)" "demo                 on"
+contains "the on file is owner-only" "$(stat -c %a "$local_s_on")" "600"
+contains "turn server off" "$(bash "$F" mcp off demo)" "demo: off"
+contains "server is off again" "$(bash "$F" mcp servers)" "demo                 off"
+refuse "refuses unconfigured server" bash "$F" mcp on nonexistent
+rm -f "$local_s_cfg" "$local_s_on"
+
 echo "that was wrong: a repro without the text"
 rm -rf "$state/repros"
 : >"$LOG"; bash "$F" ask "what is the capital of peru"; sleep 0.3
