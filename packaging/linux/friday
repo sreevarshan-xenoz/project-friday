@@ -3950,8 +3950,11 @@ friday_sent() {
 # Tests point FRIDAY_HW_ROOT at a fake /proc and /sys, and set
 # FRIDAY_DISK_FREE_MB.
 
-# The ladder: id|memory it needs (MB)|largest download, Ollama or GGUF (MB)|sees screenshots
-FRIDAY_LOCAL_MODELS="qwen3:1.7b|2048|1834|0
+# The ladder: id|memory it needs (MB)|largest download, Ollama or GGUF (MB)|sees screenshots|engine
+# (empty: both; ollama or llamacpp: only there, so Ollama lists only models
+# in its own library, and llama.cpp can offer GGUF-only ones).
+FRIDAY_LOCAL_MODELS="lfm3-vl:2b|2304|1243|1|llamacpp
+qwen3:1.7b|2048|1834|0|ollama
 qwen3:4b|3584|2497|0
 gemma3:4b|4608|3350|1
 gemma3:12b|9216|8164|1
@@ -3998,13 +4001,20 @@ friday_local_ai_detect() {
   echo "disk_free_mb=${disk:-0}"
 }
 
-# friday_local_ai_model <budget_mb>: the largest ladder model that fits.
+# friday_local_ai_model <budget_mb> [engine]: the largest ladder model that
+# fits (and that the engine has, when one is given).
 friday_local_ai_model() {
-  local id need _ best=""
-  while IFS='|' read -r id need _ _; do
+  local id need _ eng best=""
+  while IFS='|' read -r id need _ _ eng; do
+    [[ -z "$eng" || -z "${2:-}" || "$eng" == "$2" ]] || continue
     (( $1 >= need )) && best=$id
   done <<<"$FRIDAY_LOCAL_MODELS"
   echo "$best"
+}
+
+# friday_local_ai_models [engine]: every ladder model the engine has, one id a line.
+friday_local_ai_models() {
+  awk -F'|' -v e="${1:-}" '$5 == "" || e == "" || $5 == e { print $1 }' <<<"$FRIDAY_LOCAL_MODELS"
 }
 
 # friday_local_ai_info <id>: "need_mb download_mb vision"
@@ -4243,7 +4253,7 @@ friday_gb() { awk -v m="$1" 'BEGIN { g = m / 1024; if (g == int(g)) printf "%d G
 
 # One line per preset: id|label|budget_mb|model|download_mb|vision|fast|available|note
 friday_local_ai_presets() {
-  local hw ram_mb discrete vram disk
+  local engine="${1:-}" hw ram_mb discrete vram disk
   hw=$(friday_local_ai_detect)
   ram_mb=$(sed -n 's/^ram_mb=//p' <<<"$hw")
   discrete=$(sed -n 's/^gpu_discrete=//p' <<<"$hw"); vram=$(sed -n 's/^vram_mb=//p' <<<"$hw")
@@ -4261,7 +4271,7 @@ friday_local_ai_presets() {
   done
   local model need dl vision available note
   for i in "${!ids[@]}"; do
-    model=$(friday_local_ai_model "${budgets[$i]}")
+    model=$(friday_local_ai_model "${budgets[$i]}" "$engine")
     if [[ -z "$model" ]]; then
       echo "${ids[$i]}|${labels[$i]}|${budgets[$i]}||0|0|${fast[$i]}|0|too little memory for local AI; use a cloud provider"
       continue
@@ -4286,8 +4296,10 @@ FRIDAY_LLAMA_BUILD=b12556
 # llama.cpp's own release builds: cpu|vulkan → SHA-256.
 FRIDAY_LLAMA_SHA="cpu|1a573b6089d29c9048eefe8497dd40cac4115400f223d33f2a71e506bf6d5b18
 vulkan|75ea69b93eea3abfb9539cc0bb21701cfa1f7f791e6fc30b290eab4d5dbcee4f"
-# GGUF for each ladder model: id|repo|revision|file|sha256|mmproj sha256 (vision only).
-FRIDAY_LOCAL_GGUF="qwen3:1.7b|Qwen/Qwen3-1.7B-GGUF|90862c4b9d2787eaed51d12237eafdfe7c5f6077|Qwen3-1.7B-Q8_0.gguf|061b54daade076b5d3362dac252678d17da8c68f07560be70818cace6590cb1a|
+# GGUF for each ladder model: id|repo|revision|file|sha256|mmproj sha256 (vision
+# only)|mmproj file (when it isn't mmproj-model-f16.gguf).
+FRIDAY_LOCAL_GGUF="lfm3-vl:2b|LiquidAI/LFM3-VL-2B-GGUF|1add221a5ea6c047fcf1eaaf2d247939d7cf8849|LFM3-VL-2B-Q4_K_M.gguf|56dac2e192ff0d9ab8507f4f1aeb4aed0463449bbbefaac79497f041c95f21eb|c5c5b58d544a18da919172d2d0368090ea1a4a351b6feb7f8a326a264a5918ab|mmproj-LFM3-VL-2B-Q8_0.gguf
+qwen3:1.7b|Qwen/Qwen3-1.7B-GGUF|90862c4b9d2787eaed51d12237eafdfe7c5f6077|Qwen3-1.7B-Q8_0.gguf|061b54daade076b5d3362dac252678d17da8c68f07560be70818cace6590cb1a|
 qwen3:4b|Qwen/Qwen3-4B-GGUF|bc640142c66e1fdd12af0bd68f40445458f3869b|Qwen3-4B-Q4_K_M.gguf|7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5|
 gemma3:4b|ggml-org/gemma-3-4b-it-GGUF|d0976223747697cb51e056d85c532013931fe52e|gemma-3-4b-it-Q4_K_M.gguf|882e8d2db44dc554fb0ea5077cb7e4bc49e7342a1f0da57901c0802ea21a0863|8c0fb064b019a6972856aaae2c7e4792858af3ca4561be2dbf649123ba6c40cb
 gemma3:12b|ggml-org/gemma-3-12b-it-GGUF|ec0cbabd8dbff316f659876a50202295c3c4a314|gemma-3-12b-it-Q4_K_M.gguf|7bb69bff3f48a7b642355d64a90e481182a7794707b3133890646b1efa778ff5|30c02d056410848227001830866e0a269fcc28aaf8ca971bded494003de9f5a5
@@ -4370,12 +4382,12 @@ friday_local_install_ollama() {
 
 # The model on llama.cpp's release build, served by friday-llama.service.
 friday_local_install_llamacpp() {
-  local model="$1" gpu="$2" kind=cpu asset sha row repo rev file fsha msha args
+  local model="$1" gpu="$2" kind=cpu asset sha row repo rev file fsha msha mfile args
   [[ $gpu != none ]] && kind=vulkan
   asset="llama-$FRIDAY_LLAMA_BUILD-bin-ubuntu-$([[ $kind == vulkan ]] && echo vulkan-)x64.tar.gz"
   sha=$(awk -F'|' -v k="$kind" '$1 == k { print $2 }' <<<"$FRIDAY_LLAMA_SHA")
   row=$(awk -F'|' -v id="$model" '$1 == id' <<<"$FRIDAY_LOCAL_GGUF")
-  IFS='|' read -r _ repo rev file fsha msha <<<"$row"
+  IFS='|' read -r _ repo rev file fsha msha mfile <<<"$row"
   [[ -n "$file" ]] || { echo "no llama.cpp download for $model"; return 1; }
   local dl="$FRIDAY_LLAMA_DIR/downloads"
   friday_fetch "https://github.com/ggml-org/llama.cpp/releases/download/$FRIDAY_LLAMA_BUILD/$asset" "$sha" "$dl/$asset" || return 1
@@ -4388,7 +4400,7 @@ friday_local_install_llamacpp() {
   # the next question wakes it in about a second.
   args="-m $FRIDAY_LLAMA_DIR/models/$file -c 8192 --reasoning off --sleep-idle-seconds 300"
   if [[ -n "$msha" ]]; then
-    friday_fetch "$hf/mmproj-model-f16.gguf" "$msha" "$FRIDAY_LLAMA_DIR/models/${file%.gguf}-mmproj.gguf" || return 1
+    friday_fetch "$hf/${mfile:-mmproj-model-f16.gguf}" "$msha" "$FRIDAY_LLAMA_DIR/models/${file%.gguf}-mmproj.gguf" || return 1
     args="$args --mmproj $FRIDAY_LLAMA_DIR/models/${file%.gguf}-mmproj.gguf"
   fi
   [[ $kind == vulkan ]] && args="$args --n-gpu-layers 99"
@@ -4402,16 +4414,19 @@ friday_local_install_llamacpp() {
   LOCAL_BASE_URL="http://127.0.0.1:8080/v1"
 }
 
-# friday local-ai install [--engine ollama|llamacpp] [--budget MB] [--first-login]
+# friday local-ai install [--engine ollama|llamacpp] [--budget MB] [--model ID] [--first-login]
+# --model (or, at first login, the one the installer saved) picks a ladder
+# model the engine has; otherwise the budget picks the largest that fits.
 friday_local_ai_install() {
-  local engine budget first=false
+  local engine budget first=false chosen=""
   engine=$(friday_local_conf_get engine); budget=$(friday_local_conf_get budget_mb)
   while (( $# )); do
     case "$1" in
       --engine) engine="$2"; shift ;;
       --budget) budget="$2"; shift ;;
+      --model) chosen="$2"; shift ;;
       --first-login) first=true ;;
-      *) echo "usage: friday local-ai install [--engine ollama|llamacpp] [--budget MB]" >&2; return 2 ;;
+      *) echo "usage: friday local-ai install [--engine ollama|llamacpp] [--budget MB] [--model ID]" >&2; return 2 ;;
     esac
     shift
   done
@@ -4427,7 +4442,11 @@ friday_local_ai_install() {
   friday_local_conf_set engine "$engine"
   friday_local_conf_set budget_mb "$budget"
   local model need dl vision gpu
-  model=$(friday_local_ai_model "$budget")
+  $first && [[ -z "$chosen" ]] && chosen=$(friday_local_conf_get model)
+  if [[ -n "$chosen" ]] && friday_local_ai_models "$engine" | grep -qxF -- "$chosen"; then model=$chosen
+  elif [[ -n "$chosen" ]] && ! $first; then
+    echo "$chosen isn't a model FRIDAY sets up on $engine; these are: $(friday_local_ai_models "$engine" | paste -sd ' ')" >&2; return 2
+  else model=$(friday_local_ai_model "$budget" "$engine"); fi
   [[ -n "$model" ]] || { friday_local_failed "too little memory for local AI ($(friday_gb "$budget"))"; return 1; }
   read -r need dl vision <<<"$(friday_local_ai_info "$model")"
   gpu=$(friday_local_ai_detect | sed -n 's/^gpu=//p')
@@ -4692,7 +4711,7 @@ friday_setup_local() {
   fi
   local presets id label budget model dl vision fast available note
   local -a options=() rows=()
-  presets=$(friday_local_ai_presets)
+  presets=$(friday_local_ai_presets "$engine")
   while IFS='|' read -r id label budget model dl vision fast available note; do
     [ -n "$id" ] || continue
     if [ -z "$model" ] || [ "$available" != 1 ]; then echo "  ${label%% (*}: $note"; continue; fi
@@ -4726,7 +4745,10 @@ friday_local_ai() {
   local sub="${1:-presets}"
   case "$sub" in
     detect) friday_local_ai_detect ;;
-    presets) friday_local_ai_presets ;;
+    presets) friday_local_ai_presets "${2:-}" ;;
+    models)
+      # Every model FRIDAY sets up on an engine: id|memory MB|download MB|sees screenshots
+      awk -F'|' -v e="${2:-}" '$5 == "" || e == "" || $5 == e { print $1 "|" $2 "|" $3 "|" $4 }' <<<"$FRIDAY_LOCAL_MODELS" ;;
     summary) friday_local_ai_summary ;;
     install) shift; friday_local_ai_install "$@" ;;
     status) friday_local_ai_status ;;
@@ -4736,7 +4758,7 @@ friday_local_ai() {
     bench) friday_local_ai_bench_cmd ;;
     engines) shift; friday-ctl local-ai engines "$@" ;;
     use) shift; friday_local_ai_use "$@" ;;
-    *) echo "usage: friday local-ai [detect|presets|summary|install|status|engines|use|order|bench|off|packages]" >&2; return 2 ;;
+    *) echo "usage: friday local-ai [detect|presets [engine]|models [engine]|summary|install|status|engines|use|order|bench|off|packages]" >&2; return 2 ;;
   esac
 }
 
@@ -4754,7 +4776,7 @@ friday_private() {
         # The Balanced preset: half the memory (friday local-ai presets).
         local ram_mb
         ram_mb=$(friday_local_ai_detect | sed -n 's/^ram_mb=//p')
-        model=$(friday_local_ai_model $((ram_mb / 2)))
+        model=$(friday_local_ai_model $((ram_mb / 2)) ollama)
         if [ -z "$model" ]; then
           echo "This computer has too little memory for a local model ($(friday_gb "$ram_mb"))." >&2
           return 1
