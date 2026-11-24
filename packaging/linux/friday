@@ -4097,6 +4097,7 @@ friday_local_ai_bench() {
 # FRIDAY Settings → Features). All are on until switched off; the ones off
 # are listed, one a line, in features-off in FRIDAY's config folder.
 FRIDAY_FEATURES="instant-answers|Arithmetic and unit conversions worked out here at once
+motion|FRIDAY Shell's animations: the answer card, drawers and the pulsing orb (off: everything changes at once)
 what-works|When FRIDAY is offline, say so and what still works
 app-instructions|Your instructions for each app go with asks from it
 mentions|@screen, @tab, @clip, @web and @file in a question

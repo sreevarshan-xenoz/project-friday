@@ -117,6 +117,24 @@ friday_banner() {
   echo
 }
 
+# friday_orb <frame>: FRIDAY's orb in plain ASCII (the console font has
+# nothing fancier), its rings of light moving outward frame by frame. Drawn
+# under the live status line while a long step waits.
+FRIDAY_ORB_FRAMES=4
+friday_orb() {
+  local k=$(( $1 % FRIDAY_ORB_FRAMES )) a=" " b=" " c=" "
+  # The wave: the inner ring lights, then the middle, then the outer.
+  case $k in 0) a="*" ;; 1) a="." b="*" ;; 2) b="." c="*" ;; 3) c="." ;; esac
+  printf '%s\n' \
+    "            $c       $c" \
+    "        $c     $b   $b     $c" \
+    "      $c    $b   $a $a $a   $b    $c" \
+    "     $c   $b   $a (@) $a   $b   $c" \
+    "      $c    $b   $a $a $a   $b    $c" \
+    "        $c     $b   $b     $c" \
+    "            $c       $c"
+}
+
 # The escape for a foreground colour: a console slot number or a #rrggbb.
 friday_fg() {
   case "$1" in

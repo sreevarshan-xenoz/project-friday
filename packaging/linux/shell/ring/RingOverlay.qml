@@ -43,7 +43,7 @@ PanelWindow {
 
     // A slow pulse, so the eye finds it.
     SequentialAnimation on scale {
-      running: ring.opacity > 0
+      running: ring.opacity > 0 && Theme.motion
       loops: Animation.Infinite
       NumberAnimation { from: 1.0; to: 1.08; duration: 650; easing.type: Easing.InOutQuad }
       NumberAnimation { from: 1.08; to: 1.0; duration: 650; easing.type: Easing.InOutQuad }

@@ -83,9 +83,20 @@ phase_msg() {
 
 # A live one-line status under the step header while a long step runs:
 # spinner, elapsed time, and the latest package pacman is handling.
-LIVE_PID=""
+LIVE_PID="" LIVE_ORB=false
 live_status_start() {
   [[ -t 3 ]] || return 0
+  # FRIDAY's orb pulses under the line while it waits: on a screen tall
+  # enough for it, and not with friday.nomotion on the boot line. Its rows are
+  # made first (scrolling now if they must), so drawing it never scrolls.
+  local rows
+  LIVE_ORB=false rows=$(stty size <&3 2>/dev/null | cut -d' ' -f1)
+  if [[ "$rows" =~ ^[0-9]+$ ]] && (( rows >= 30 )) && ! grep -qw friday.nomotion /proc/cmdline 2>/dev/null \
+      && [[ "${FRIDAY_NO_MOTION:-0}" != 1 ]]; then
+    LIVE_ORB=true
+    printf '\n\n\n\n\n\n\n\n\n\e[9A' >&3
+  fi
+  local orb=$LIVE_ORB
   (
     trap - ERR EXIT
     set +e
@@ -97,6 +108,9 @@ live_status_start() {
         | tail -n 1)
       printf '\r\e[2K%s%s%s\e[0m %s  %s%s\e[0m' "$FRIDAY_PAD" "$(friday_fg "$FRIDAY_ACCENT")" \
         "${frames:i%10:1}" "$(elapsed)" "$(friday_fg "$FRIDAY_MUTED")" "${line:0:60}" >&3
+      # Below the line, then back to it: \e7 keeps the cursor, \e8 returns.
+      $orb && (( i % 3 == 0 )) && printf '\e7\n\n%s%s\e[0m\e8' "$(friday_fg "$FRIDAY_ACCENT")" \
+        "$(friday_orb $((i / 3)) | sed "s/^/$FRIDAY_PAD/")" >&3
       i=$((i + 1))
       sleep 0.15
     done
@@ -110,7 +124,9 @@ live_status_stop() {
   # A killed job makes `wait` return 143; never let that trip set -e / ERR.
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  printf '\r\e[2K' >&3
+  # The line, and the orb's rows under it when it was drawn.
+  if $LIVE_ORB; then printf '\r\e[2K\e[J' >&3; else printf '\r\e[2K' >&3; fi
+  LIVE_ORB=false
 }
 trap 'live_status_stop' EXIT
 
