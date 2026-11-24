@@ -461,6 +461,14 @@ internal sealed class TrayContext : ApplicationContext
             // "search ..." and "look up ..." ask for a web search, and only they do.
             var (asked, web) = Asking.WebQuestion(question);
             var request = SourceApp.Append(Asking.BuildRequest(asked, context), appLine);
+            // "Close this window": the one in front at the keypress, never
+            // one switched to while FRIDAY thinks (not a private one).
+            if (kind == AskKind.Plain && targetWindow != IntPtr.Zero && ThisWindow.Matches(asked)
+                && SourceApp.Enabled(_install.Paths)
+                && AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "this-window")
+                && PrivateWindows.Match(_install.Paths, Native.ProcessNameOf(targetWindow), Native.GetWindowTitle(targetWindow)) is null
+                && ThisWindow.Block(Native.ProcessNameOf(targetWindow), Native.GetWindowTitle(targetWindow)) is { } frozen)
+                request += frozen;
             if (kind != AskKind.Screen && !frontPrivate && AppSettings.FeatureOn(env, "app-instructions")
                 && AppInstructions.For(_install.Paths.AppInstructionsFile, frontApp) is { } rule)
                 request = AppInstructions.Append(request, frontApp!, rule);
