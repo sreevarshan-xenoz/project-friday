@@ -783,9 +783,10 @@ mkdir -p "$HOME/.local/state/friday"
 printf 'I use fish\nmy editor is Helix\n' >"$HOME/.local/state/friday/last-memories"
 contains "lists the memories numbered" "$(bash "$F" memory used)" "1. I use fish"
 contains "lists all memories" "$(bash "$F" memory used)" "2. my editor is Helix"
-printf '# mine\n- I use fish\n- my editor is Helix\n' >"$HOME/.config/friday/memory.md"
-contains "forgets line 1 via memory used forget" "$(bash "$F" memory used forget 1)" "Forgot 1 line(s)"
-if grep -q "^- I use fish" "$HOME/.config/friday/memory.md"; then fail "I use fish still in memory.md"; else pass "I use fish forgotten from memory.md"; fi
+printf '# mine\n- I use fish\n- I use fish and zsh at work\n- my editor is Helix\n' >"$HOME/.config/friday/memory.md"
+contains "forgets line 1 via memory used forget" "$(bash "$F" memory used forget 1)" "Forgot: I use fish"
+if grep -qx -- "- I use fish" "$HOME/.config/friday/memory.md"; then fail "I use fish still in memory.md"; else pass "I use fish forgotten from memory.md"; fi
+contains "only that line: a longer one with the same words stays" "$(cat "$HOME/.config/friday/memory.md")" "- I use fish and zsh at work"
 contains "last-memories now has line 2 as line 1" "$(bash "$F" memory used)" "1. my editor is Helix"
 if grep -q "I use fish" "$HOME/.local/state/friday/last-memories"; then fail "I use fish still in last-memories"; else pass "I use fish removed from last-memories"; fi
 bash "$F" memory used forget 1 >/dev/null

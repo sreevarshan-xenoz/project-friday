@@ -3722,7 +3722,14 @@ friday_memory() {
           local fact
           fact=$(sed -n "${n}p" "$mem_file")
           [ -n "$fact" ] || { echo "No memory numbered $n in the last answer." >&2; return 1; }
-          friday_memory forget "$fact" || true
+          # Exactly that fact's line: "forget" by words could take others with it.
+          local f; f=$(friday_memory_file)
+          if awk -v l="- $fact" '$0 == l { n++ } END { exit !n }' "$f" 2>/dev/null; then
+            awk -v l="- $fact" '$0 != l' "$f" >"$f.tmp" && mv -f "$f.tmp" "$f"
+            echo "Forgot: $fact"
+          else
+            echo "\"$fact\" isn't in $f any more."
+          fi
           sed "${n}d" "$mem_file" >"$mem_file.tmp" && mv -f "$mem_file.tmp" "$mem_file"
           chmod 0600 "$mem_file" 2>/dev/null || true
           ;;
@@ -5679,7 +5686,7 @@ $offer"
       jq -n --arg mode "${ask_args[0]:-plain}" --argjson ok "$ans_ok" --argjson local "$local_only" \
         --argjson q "${#goal}" --argjson a "${#answer}" --argjson s "$shape" \
         '{mode: ($mode | ltrimstr("--")), ok: $ok, local: $local, served_by: ($s.served_by // null),
-          used: ($s.used // []), memories: ($s.memories // []), masked: ($s.masked // 0),
+          used: ($s.used // []), memories: (($s.memories // []) | length), masked: ($s.masked // 0),
           error: ($s.error // null | if . == null then null else (tostring | ascii_downcase |
             if test("timed out") then "timeout"
             elif test("429|rate.?limit|usage limit") then "rate_limited"

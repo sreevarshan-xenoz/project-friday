@@ -1641,14 +1641,33 @@ fn used_labels(
     used
 }
 
-/// The remembered facts this answer was given: recalled lines starting with
-/// "about you: ", prefix removed, at most 5, each at most 200 chars.
-fn used_memories(recalled: &[String]) -> Vec<String> {
+/// The remembered facts that shaped this answer. Every ask carries all of
+/// them on one "about you: a; b; c" line, so a fact counts only when the
+/// question or the answer shares a word of four letters or more with it
+/// (not a common one). A fact with a secret masked in it is left out: it
+/// can't be matched to its line to forget it. At most 5.
+fn used_memories(recalled: &[String], question: &str, answer: &str) -> Vec<String> {
+    const COMMON: [&str; 16] = [
+        "that", "this", "with", "have", "from", "your", "what", "when", "which", "about", "they",
+        "them", "there", "their", "would", "should",
+    ];
+    let words = |s: &str| -> std::collections::HashSet<String> {
+        s.split(|c: char| !c.is_alphanumeric())
+            .map(str::to_lowercase)
+            .filter(|w| w.chars().count() >= 4 && !COMMON.contains(&w.as_str()))
+            .collect()
+    };
+    let asked: std::collections::HashSet<String> =
+        words(question).union(&words(answer)).cloned().collect();
     recalled
         .iter()
         .filter_map(|l| l.strip_prefix("about you: "))
+        .flat_map(|line| line.split("; "))
+        .map(str::trim)
+        .filter(|f| !f.is_empty() && !f.contains(friday_goal_execution::MASKED_PLACEHOLDER))
+        .filter(|f| !words(f).is_disjoint(&asked))
         .take(5)
-        .map(|fact| fact.chars().take(200).collect())
+        .map(|f| f.chars().take(200).collect())
         .collect()
 }
 
@@ -3240,7 +3259,11 @@ impl GoalRunner {
             if answered_by_model && !used.is_empty() {
                 payload["used"] = json!(used);
             }
-            let memories = used_memories(&recalled);
+            let memories = used_memories(
+                &recalled,
+                friday_goal_execution::planning::goal_segment(&goal),
+                payload["result"]["text"].as_str().unwrap_or_default(),
+            );
             if answered_by_model && !memories.is_empty() {
                 payload["memories"] = json!(memories);
             }
@@ -4799,19 +4822,25 @@ mod tests {
         assert_eq!(payload["used"], json!([USED_NOTHING]), "{payload}");
     }
 
-    /// A recall with two "about you:" lines and a "goal:" line gives exactly
-    /// the two facts.
+    /// The facts ride on one "about you:" line; only those the question or
+    /// answer touches count, and one with a secret masked never shows.
     #[test]
-    fn memories_used_carries_only_about_you_facts() {
+    fn memories_used_are_the_facts_the_answer_touched() {
         let recalled = vec![
-            "about you: I use fish shell".to_string(),
+            "about you: I use fish shell; I prefer concise answers; my token is [secret masked]; I live in Chennai"
+                .to_string(),
             "goal: how do I write a loop\nresult: for i in 1 2 3".to_string(),
-            "about you: prefer concise answers".to_string(),
         ];
         assert_eq!(
-            used_memories(&recalled),
-            vec!["I use fish shell", "prefer concise answers"]
+            used_memories(
+                &recalled,
+                "how do I write a loop in my shell?",
+                "In fish: for i in 1 2 3; end"
+            ),
+            vec!["I use fish shell"]
         );
+        assert!(used_memories(&recalled, "what's 2+2?", "4").is_empty());
+        assert!(used_memories(&recalled, "my token?", "Your token is hidden").is_empty());
     }
 
     /// The prompt carries the request, what the tool produced, and evidence.
