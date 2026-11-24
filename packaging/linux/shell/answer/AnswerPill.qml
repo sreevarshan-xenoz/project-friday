@@ -140,6 +140,16 @@ PanelWindow {
         }
       }
 
+      // What went with the question, before the first word.
+      Label {
+        Layout.fillWidth: true
+        visible: Answer.state === "working" && Answer.receipt !== ""
+        text: "Sent: " + Answer.receipt
+        color: Theme.subtext
+        font.pixelSize: Theme.fontS
+        wrapMode: Text.Wrap
+      }
+
       // The answer: the tail while it streams, all of it (scrollable) after.
       Flickable {
         id: flick

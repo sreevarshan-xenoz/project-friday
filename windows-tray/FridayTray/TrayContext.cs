@@ -766,10 +766,14 @@ internal sealed class TrayContext : ApplicationContext
         }
         else
         {
+            // What goes with the question, before the first word.
+            var waiting = Asking.SelectionReceipt(kind, context) is { } sent && ReceiptOn()
+                ? "Thinking… · Sent: " + sent
+                : "Thinking…";
             if (answer is null || answer.IsClosed)
-                answer = NewAnswerWindow(kind, question, "Thinking…");
+                answer = NewAnswerWindow(kind, question, waiting);
             else
-                answer.ShowWaiting("Thinking…");
+                answer.ShowWaiting(waiting);
 
             poll.Tick += (_, _) =>
             {
@@ -790,6 +794,23 @@ internal sealed class TrayContext : ApplicationContext
         var ui = SynchronizationContext.Current;
         Action<string>? onLine = kind != AskKind.Screen || ui is null ? null : line =>
         {
+            // What left for the model: the card opens with it, before the
+            // first word (the capture is done by then).
+            if (Asking.ReceiptLine(line) is { } receipt)
+            {
+                ui.Post(_ =>
+                {
+                    if (inflight.IsCancellationRequested)
+                        return;
+                    // The latest: a screenshot after the text got no answer
+                    // replaces what the card said (no word was shown yet).
+                    if (answer is null || answer.IsClosed)
+                        answer = NewAnswerWindow(kind, question, "Thinking… · Sent: " + receipt);
+                    else
+                        answer.ShowWaiting("Thinking… · Sent: " + receipt);
+                }, null);
+                return;
+            }
             if (Asking.PartialLine(line) is not { } partial)
                 return;
             ui.Post(_ =>
@@ -1059,6 +1080,9 @@ internal sealed class TrayContext : ApplicationContext
                 card.ShowSpeaking(false);
         }
     }
+
+    private bool ReceiptOn() =>
+        AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "capture-receipt");
 
     private AnswerWindow NewAnswerWindow(AskKind kind, string question, string waiting)
     {

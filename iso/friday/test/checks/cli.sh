@@ -159,6 +159,8 @@ if [[ "\$1" == cancel ]]; then
 fi
 if [[ "\$1" == context ]]; then
   printf 'friday-ctl-context %s\n' "\$*" >> "$LOG"
+  [ -z "\${RECEIPT:-}" ] || { printf '{"receipt":"%s"}\n' "\$RECEIPT"; sleep 1; }
+  [ -z "\${RECEIPT2:-}" ] || { printf '{"receipt":"%s"}\n' "\$RECEIPT2"; sleep 1; }
   printf '{\n "response": "The error says E0308.\\\\nFix the type."\n}\n'; exit 0
 fi
 if [[ "\$*" == *"--confirm"* ]]; then
@@ -213,6 +215,8 @@ EOF
 cat >"$S/notify-send" <<EOF
 #!/bin/bash
 echo "notify \$*" >> "$LOG"
+# With NOTIFY_ID set, -p prints it, as the real one prints the new id.
+[ -z "\${NOTIFY_ID:-}" ] || [[ " \$* " != *" -p "* ]] || echo "\$NOTIFY_ID"
 # Like the real one: text that starts with "-" before "--" is an unknown option.
 args=("\$@"); i=0
 while (( i < \${#args[@]} )); do
@@ -1173,6 +1177,17 @@ PICK="what does this error mean" bash "$F" ask --screen; sleep 0.3
 contains "screen: asks the daemon with consent and the question" "$(cat "$LOG")" "friday-ctl-context context screen --yes --ask what does this error mean"
 contains "screen: prompt says what is shared" "$(cat "$LOG")" "its text, or a screenshot if it has too little, goes to your AI provider"
 contains "screen: full answer saved" "$(cat "$state/last-answer.md")" $'The error says E0308.\nFix the type.'
+: >"$LOG"; NOTIFY_ID=7 RECEIPT="nautilus · a screenshot of the window" PICK="what is this" bash "$F" ask --screen; sleep 0.3
+contains "screen: the card says what was sent before the answer" "$(cat "$LOG")" "Sent: nautilus · a screenshot of the window"
+: >"$LOG"; NOTIFY_ID=7 RECEIPT="nautilus · the window's text, 2.1k chars" RECEIPT2="nautilus · a screenshot of the window" PICK="what is this" bash "$F" ask --screen; sleep 0.3
+contains "screen: the text first, then the screenshot after it got no answer" "$(cat "$LOG")" "Sent: nautilus · a screenshot of the window"
+: >"$LOG"; PRIMARY="$(printf 'x%.0s' $(seq 1 2100))" PICK="explain" bash "$F" ask --selection; sleep 0.3
+contains "selection: the card says what goes with the question" "$(cat "$LOG")" "Sent: your selection"
+contains "and its size" "$(cat "$LOG")" "2.1k chars"
+bash "$F" feature capture-receipt off >/dev/null
+: >"$LOG"; NOTIFY_ID=7 RECEIPT="nautilus · a screenshot of the window" PICK="what is this" bash "$F" ask --screen; sleep 0.3
+if grep -q "Sent: " "$LOG"; then fail "the capture receipt showed while turned off"; else pass "the capture receipt has a switch"; fi
+bash "$F" feature capture-receipt on >/dev/null
 # Asking about the screen in words looks at it; a how-to about the screen does not.
 : >"$LOG"; bash "$F" ask "what is on my screen right now" >/dev/null 2>&1; sleep 0.4
 contains "screen by words: 'what is on my screen' looks at the screen" "$(cat "$LOG")" "context screen --yes --ask what is on my screen right now"

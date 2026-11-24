@@ -3809,6 +3809,7 @@ day-summary|friday day: a short summary of a day by project, from FRIDAY's own l
 thread-compaction|In a long conversation, turns older than the last few ride along as one short line each
 routine-offer|After FRIDAY does the same desktop steps three times, the answer offers to keep them as a routine
 event-tasks|Standing tasks that start when a download finishes, a file changes or an app opens (local events only)
+capture-receipt|Before the first word, the answer says what was sent: the app, its text and size or a screenshot, what was masked
 log-chain|Each action in the action log is chained to the one before, so a changed line shows (friday verify-log)
 standing-reversible|A standing task runs only what can be undone; anything that would ask first is refused and logged
 memory-tidy|When memory is fuller than an ask carries, friday memory tidy proposes a shorter list to approve
@@ -5058,8 +5059,18 @@ case "${1:-}" in
         && friday_feature_on speak-as-it-comes && speak_early=true
       "$@" --stream >"$outf" 2>&1 &
       ctl=$!
+      local receipt_shown="" sent
       while kill -0 "$ctl" 2>/dev/null; do
         sleep 0.4
+        # What the daemon sent with a screen ask, before the first word (the
+        # latest: a screenshot after the text got no answer replaces it).
+        if friday_feature_on capture-receipt \
+            && sent=$(grep '^{"receipt"' "$outf" | tail -n 1 | jq -r '.receipt // empty' 2>/dev/null) \
+            && [ -n "$sent" ] && [ "$sent" != "$receipt_shown" ]; then
+          receipt_shown="$sent"
+          if $use_pill; then pill receipt "$goal" "$sent" || true
+          elif [ -n "$nid" ]; then notify-send -a FRIDAY -r "$nid" -- "FRIDAY · $goal" "Sent: $sent" 2>/dev/null || true; fi
+        fi
         $speak_early || [ -n "$nid" ] || continue
         partial=$(grep '^{"partial"' "$outf" | tail -n 1 | jq -r '.partial // empty' 2>/dev/null || true)
         [ -z "$partial" ] || ! $speak_early || friday_say_feed "$partial"
@@ -5342,6 +5353,8 @@ $offer"
         && pill present "$ans_ok" "$goal" "$answer" "$meta" "${ask_args[0]:-}" "${served_model:-}"; then
         return 0
       fi
+      # A notification instead: the pill doesn't stay on "working".
+      ! $use_pill || pill dismiss || true
       urgency=normal; $ans_ok || urgency=critical
       if $ans_ok; then
         actions=(-A copy="Copy" -A again="Ask again" -A open="Open full answer" -A wrong="That was wrong")
@@ -5484,7 +5497,28 @@ $offer"
       summary=$(jq -s 'map(select(type == "object" and (has("partial") | not))) | last // {} | {result: .response, error: .error, used: .used}' <<<"$out" 2>/dev/null || echo '{}')
     else
       nid=""
-      $use_pill || nid=$(notify-send -a FRIDAY -p -- "FRIDAY" "Working on: $goal" 2>/dev/null || true)
+      # What goes with the question, said before the first word.
+      sent_here=""
+      if friday_feature_on capture-receipt; then
+        n=0 what=""
+        if $use_selection && [ -n "${context:-}" ] && ! $use_followup; then
+          n=${#context}
+          case "$source_label" in
+            Clipboard) what="your clipboard" ;;
+            File) what="the file $(basename -- "$mention_file")" ;;
+            *) what="your selection${ask_app:+ from $ask_app}" ;;
+          esac
+        elif [ -n "${tab:-}" ]; then
+          n=$(jq -r '(.text // "") | length' <<<"$tab" 2>/dev/null || echo 0)
+          what="the page's text"
+        fi
+        if [ -n "$what" ]; then
+          if [ "$n" -lt 1000 ]; then sent_here="$what, $n chars"
+          else sent_here="$what, $((n / 1000)).$(( (n % 1000) / 100 ))k chars"; fi
+        fi
+      fi
+      if [ -n "$sent_here" ] && $use_pill; then pill receipt "$goal" "$sent_here" || true; fi
+      $use_pill || nid=$(notify-send -a FRIDAY -p -- "FRIDAY" "Working on: $goal${sent_here:+$'\n'Sent: $sent_here}" 2>/dev/null || true)
       [[ "$nid" =~ ^[0-9]+$ ]] || nid=""
       ctl_args=(goal --wait)
       $use_web && ctl_args+=(--web)

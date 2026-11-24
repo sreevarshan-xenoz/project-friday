@@ -2389,11 +2389,20 @@ fn wait_secs() -> u64 {
 
 /// The partial answer a `context.progress` event carries for command `id`.
 fn context_progress(msg: &ServerMessage, id: &str) -> Option<String> {
+    progress_field(msg, id, "partial")
+}
+
+/// What a `context.progress` event says left for the model, for command `id`.
+fn context_receipt(msg: &ServerMessage, id: &str) -> Option<String> {
+    progress_field(msg, id, "receipt")
+}
+
+fn progress_field(msg: &ServerMessage, id: &str, field: &str) -> Option<String> {
     match msg {
         ServerMessage::Event { topic, payload }
             if topic == "context.progress" && payload["id"] == id =>
         {
-            payload["partial"].as_str().map(str::to_string)
+            payload[field].as_str().map(str::to_string)
         }
         _ => None,
     }
@@ -2479,8 +2488,13 @@ async fn exchange(
         if let Message::Text(t) = msg {
             let decoded = decode_server(&t);
             if let (true, Ok(m)) = (stream, &decoded) {
-                if let Some(partial) = context_progress(m, &want_id) {
-                    let line = serde_json::json!({ "partial": partial });
+                let line = context_progress(m, &want_id)
+                    .map(|partial| serde_json::json!({ "partial": partial }))
+                    .or_else(|| {
+                        context_receipt(m, &want_id)
+                            .map(|receipt| serde_json::json!({ "receipt": receipt }))
+                    });
+                if let Some(line) = line {
                     let mut out = std::io::stdout().lock();
                     let _ = writeln!(out, "{line}");
                     let _ = out.flush();
@@ -2714,6 +2728,16 @@ mod tests {
             payload: json!({"id": "c1", "partial": "x"}),
         };
         assert_eq!(context_progress(&other_topic, "c1"), None);
+        let receipt = ServerMessage::Event {
+            topic: "context.progress".to_string(),
+            payload: json!({"id": "c1", "receipt": "firefox · the window's text, 2.1k chars"}),
+        };
+        assert_eq!(
+            context_receipt(&receipt, "c1").as_deref(),
+            Some("firefox · the window's text, 2.1k chars")
+        );
+        assert_eq!(context_progress(&receipt, "c1"), None);
+        assert_eq!(context_receipt(&ev("c1"), "c1"), None);
     }
 
     #[test]
