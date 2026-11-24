@@ -1314,6 +1314,8 @@ contains "screen: prompt says what is shared" "$(cat "$LOG")" "its text, or a sc
 contains "screen: full answer saved" "$(cat "$state/last-answer.md")" $'The error says E0308.\nFix the type.'
 : >"$LOG"; bash "$F" ask --screen --picture "look closer"; sleep 0.3
 contains "screen picture: passes --picture to friday-ctl" "$(cat "$LOG")" "friday-ctl-context context screen --yes --ask look closer --picture"
+: >"$LOG"; bash "$F" ask --picture --screen "look closer"; sleep 0.3
+contains "screen picture: either order works" "$(cat "$LOG")" "friday-ctl-context context screen --yes --ask look closer --picture"
 : >"$LOG"; NOTIFY_ID=7 RECEIPT="nautilus · a screenshot of the window" PICK="what is this" bash "$F" ask --screen; sleep 0.3
 contains "screen: the card says what was sent before the answer" "$(cat "$LOG")" "Sent: nautilus · a screenshot of the window"
 : >"$LOG"; NOTIFY_ID=7 RECEIPT="nautilus · the window's text, 2.1k chars" RECEIPT2="nautilus · a screenshot of the window" PICK="what is this" bash "$F" ask --screen; sleep 0.3

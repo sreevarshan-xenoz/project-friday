@@ -211,7 +211,8 @@ Singleton {
   // screenshot (those go through the screen-reading path).
   readonly property bool canTryAnother: root.goal !== "" && root.mode !== "--screen" && root.mode !== "--region"
   // Whether the screen answer came from the window's text rather than a picture.
-  readonly property bool usedWindowText: (root.meta.indexOf("the window's text") !== -1) || (root.receipt.indexOf("the window's text") !== -1)
+  // From this answer's own "Used:" line, never an earlier ask's receipt.
+  readonly property bool usedWindowText: root.meta.indexOf("the window's text") !== -1
   // Ask the same question again with a fresh screenshot of the window.
   function lookAgain() {
     root.dismiss();

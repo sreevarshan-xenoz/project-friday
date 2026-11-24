@@ -753,11 +753,9 @@ where
         // A click instead of a drag: the control under it, as text, and
         // nothing else of the screen.
         if let (Some(r), Some(source)) = (region, self.text.as_ref()) {
-            if !picture
-                && r.width <= POINT_SIZE
-                && r.height <= POINT_SIZE
-                && crate::features::on("point-ask")
-            {
+            // Even with `picture`: a few pixels say nothing, the control's
+            // text does.
+            if r.width <= POINT_SIZE && r.height <= POINT_SIZE && crate::features::on("point-ask") {
                 let Ok(CapturedContext::AppInfo {
                     class,
                     title,

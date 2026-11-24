@@ -5380,7 +5380,8 @@ case "${1:-}" in
       case "${1:-}" in
         --selection|-s) use_selection=true; ask_args+=(--selection); shift ;;
         --screen) use_screen=true; ask_args+=(--screen); shift ;;
-        --picture) use_picture=true; ask_args+=(--picture); shift ;;
+        # Not a mode of its own (the card keeps --screen as the mode).
+        --picture) use_picture=true; shift ;;
         --region|-r) use_screen=true; use_region=true; ask_args+=(--region); shift ;;
         # Click one control: only it, what it sits in and its neighbours go.
         --point|-p) use_screen=true; use_region=true; use_point=true; ask_args+=(--point); shift ;;
