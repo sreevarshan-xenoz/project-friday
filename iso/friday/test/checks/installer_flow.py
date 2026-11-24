@@ -58,7 +58,7 @@ STEPS = [
     (3, ENTER),  # autologin? default No
     (3, ENTER),  # encrypt the disk? default Yes
     (3, "n"),  # FRIDAY's look? choose my own
-    (3, ENTER),  # desktop colours: FRIDAY Shell Polar (default)
+    (3, ENTER),  # desktop colours: FRIDAY Shell Core (default)
     (2, DOWN),
     (1, ENTER),  # window manager: niri
     (2, DOWN * 2),

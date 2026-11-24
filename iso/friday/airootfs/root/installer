@@ -26,7 +26,7 @@ HOSTNAME="${FRIDAY_HOSTNAME:-friday}"
 USERNAME="${USERNAME:-friday}"
 PASSWORD="${PASSWORD:-}"
 TIMEZONE="${TIMEZONE:-UTC}"
-THEME="${THEME:-FRIDAY Shell Polar (arctic Nord blues; the FRIDAY OS look)}"
+THEME="${THEME:-FRIDAY Shell Core (obsidian and core red; the FRIDAY OS look)}"
 SHELL_STYLE="${SHELL_STYLE:-Lean (thin borders, small gaps, no blur; the FRIDAY OS look)}"
 SESSION="${SESSION:-Hyprland (tiling, the FRIDAY OS default)}"
 SDDM_THEME="${SDDM_THEME:-SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)}"
@@ -568,6 +568,7 @@ else
   # FRIDAY Shell from the Omarchy theme.
   THEME_SLUG="matte-black"; SHELL_PALETTE="classic"
   case "$THEME" in
+    *"FRIDAY Shell Core"*)  THEME_SLUG="matte-black"; SHELL_PALETTE="core" ;;
     *"FRIDAY Shell Polar"*) THEME_SLUG="nord"; SHELL_PALETTE="polar" ;;
     *"FRIDAY Shell Frost"*) THEME_SLUG="matte-black"; SHELL_PALETTE="frost" ;;
     *"FRIDAY Shell Moss"*)  THEME_SLUG="matte-black"; SHELL_PALETTE="moss" ;;
