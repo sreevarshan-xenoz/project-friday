@@ -759,6 +759,205 @@ async fn local_ai_engines(json: bool) -> std::process::ExitCode {
     std::process::ExitCode::SUCCESS
 }
 
+/// `friday-ctl models rank-screen [--json]`: ranks models on screen questions.
+async fn models(args: &[String]) -> std::process::ExitCode {
+    if args.first().map(String::as_str) != Some("rank-screen") {
+        eprintln!("usage: friday-ctl models rank-screen [--json]");
+        return std::process::ExitCode::from(2);
+    }
+    let json = args.iter().any(|a| a == "--json");
+
+    let state_path = if let Ok(p) = std::env::var("FRIDAY_STATE_FILE") {
+        std::path::PathBuf::from(p)
+    } else {
+        ShellState::default_path()
+    };
+    let fabric_dir = state_path
+        .parent()
+        .map(|d| d.join("fabric"))
+        .unwrap_or_else(|| std::path::PathBuf::from(".fabric"));
+    let mut fabric = friday_intelligence::InferenceFabric::default_from_env_in(&fabric_dir);
+    fabric.request_timeout = Some(std::time::Duration::from_secs(15));
+    fabric.screen_request_timeout = Some(std::time::Duration::from_secs(45));
+
+    let needs_vision = friday_intelligence::RequestRequirements {
+        vision: friday_intelligence::Requirement::Required,
+        ..Default::default()
+    };
+    let mut vision: Vec<String> = fabric
+        .models
+        .iter()
+        .filter(|m| {
+            m.capabilities
+                .contains(&friday_intelligence::ModelCapability::Vision)
+        })
+        .map(|m| m.provider.clone())
+        .collect();
+    vision.sort();
+    vision.dedup();
+
+    let candidates =
+        match friday_mobile::context_read::screen_route(&fabric.user_providers(), &vision) {
+            friday_mobile::context_read::ScreenRoute::Defaults => {
+                fabric.select_preferring(&needs_vision, None, None)
+            }
+            friday_mobile::context_read::ScreenRoute::Among(providers) => {
+                fabric.select_preferring(&needs_vision, None, Some(&providers))
+            }
+            friday_mobile::context_read::ScreenRoute::Refuse(why) => {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "outcome": "refused",
+                            "error": why,
+                            "models": []
+                        })
+                    );
+                } else {
+                    eprintln!("friday-ctl: {why}");
+                }
+                return std::process::ExitCode::from(1);
+            }
+        };
+
+    let mut model_names = Vec::new();
+    for (m, _) in &candidates {
+        let name = format!("{}/{}", m.provider, m.id);
+        if !model_names.contains(&name) {
+            model_names.push(name);
+        }
+    }
+    model_names.truncate(6);
+
+    if model_names.is_empty() {
+        if json {
+            println!("{}", serde_json::json!([]));
+        } else {
+            println!("No vision-capable models available to rank.");
+        }
+        return std::process::ExitCode::SUCCESS;
+    }
+
+    if !json {
+        let total_reqs = model_names.len() * 8;
+        println!(
+            "Requests go to your providers: {} requests ({} models x 8).",
+            total_reqs,
+            model_names.len()
+        );
+    }
+
+    struct FabricAsk {
+        fabric: std::sync::Arc<friday_intelligence::InferenceFabric>,
+    }
+
+    #[async_trait::async_trait]
+    impl friday_mobile::screen_rank::Ask for FabricAsk {
+        async fn ask(&self, model: &str, prompt: &str) -> Result<(String, u64), String> {
+            let (provider, id) = model.split_once('/').unwrap_or(("", model));
+            let start = std::time::Instant::now();
+            let req = friday_intelligence::RequestRequirements {
+                vision: friday_intelligence::Requirement::Required,
+                ..Default::default()
+            };
+            tracing::debug!(
+                "screen_rank asking model {} with prompt len {}",
+                model,
+                prompt.len()
+            );
+            let res = self
+                .fabric
+                .complete_preferring(
+                    &req,
+                    Some(model),
+                    Some(&[provider.to_string()]),
+                    prompt,
+                    None,
+                )
+                .await;
+            let elapsed_ms = start.elapsed().as_millis() as u64;
+
+            match res {
+                Ok(text) => {
+                    tracing::debug!(
+                        "screen_rank received response from model {} len {}",
+                        model,
+                        text.len()
+                    );
+                    let served = {
+                        let d = self.fabric.last_decision.lock().unwrap();
+                        d.as_ref().and_then(|dec| dec.served.clone())
+                    };
+                    if let Some((p, m)) = served {
+                        if p == provider && m == id {
+                            return Ok((text, elapsed_ms));
+                        }
+                    }
+                    Err(format!("model {} did not serve response", model))
+                }
+                Err(e) => Err(e),
+            }
+        }
+    }
+
+    let fabric = std::sync::Arc::new(fabric);
+    let rows = friday_mobile::screen_rank::rank(&model_names, FabricAsk { fabric }).await;
+
+    if json {
+        let out: Vec<serde_json::Value> = rows
+            .iter()
+            .enumerate()
+            .map(|(i, r)| {
+                serde_json::json!({
+                    "rank": i + 1,
+                    "model": r.model,
+                    "correct": r.correct,
+                    "total": 8,
+                    "median_ms": r.median_ms,
+                    "median_s": (r.median_ms as f64) / 1000.0,
+                    "failed": r.failed,
+                    "unavailable": r.unavailable(),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::Value::Array(out));
+        return std::process::ExitCode::SUCCESS;
+    }
+
+    println!();
+    println!(
+        "{:<5} {:<35} {:<12} {:<10}",
+        "Rank", "Model", "Correct", "Median"
+    );
+    for (i, r) in rows.iter().enumerate() {
+        let rank_str = format!("{}", i + 1);
+        let correct_str = format!("{}/8", r.correct);
+        let median_str = if r.unavailable() {
+            "unavailable".to_string()
+        } else {
+            format!("{:.2}s", (r.median_ms as f64) / 1000.0)
+        };
+        println!(
+            "{:<5} {:<35} {:<12} {:<10}",
+            rank_str, r.model, correct_str, median_str
+        );
+    }
+
+    if let Some(best) = rows
+        .iter()
+        .find(|r| !r.unavailable())
+        .or_else(|| rows.first())
+    {
+        println!(
+            "\nUse the best for screen asks: friday model screen {}",
+            best.model
+        );
+    }
+
+    std::process::ExitCode::SUCCESS
+}
+
 /// `friday-ctl docs "<question>"`: excerpts from the documentation on this
 /// computer (nothing when nothing fits). `--prepare` unpacks the Arch wiki
 /// for searching; a search starts that in the background when it's due.
@@ -1466,6 +1665,9 @@ fn say(args: &[String]) -> std::process::ExitCode {
 async fn main() -> std::process::ExitCode {
     friday_mobile::secrets::resolve_env();
     let raw: Vec<String> = std::env::args().skip(1).collect();
+    if raw.first().map(String::as_str) == Some("models") {
+        return models(&raw[1..]).await;
+    }
     if raw.first().map(String::as_str) == Some("say") {
         return say(&raw[1..]);
     }

@@ -52,6 +52,7 @@ pub mod recall;
 pub mod retention;
 pub mod risk_table;
 pub mod routine;
+pub mod screen_rank;
 pub mod secrets;
 pub mod session;
 pub mod shell_state;
