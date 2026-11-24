@@ -58,10 +58,17 @@ pub fn sweep(state: &Path, now: i64) -> usize {
     let mut gone = 0;
     // Agent runs that ended over 30 days ago and have no copy left open.
     let agents = state.join("agents");
-    for run in crate::agent_runs::list(&agents) {
+    let runs = crate::agent_runs::list(&agents);
+    for run in &runs {
         let ended_long_ago = run.ended.is_some_and(old);
-        let copy_open = run.worktree.as_ref().is_some_and(|w| w.is_dir());
-        if ended_long_ago && !copy_open {
+        // Still needed: its copy (or the copy named after it) is open, or
+        // another kept run follows on from it.
+        let copy_open = run.worktree.as_ref().is_some_and(|w| w.is_dir())
+            || agents.join("worktrees").join(&run.id).is_dir();
+        let followed = runs
+            .iter()
+            .any(|r| r.follows.as_deref() == Some(run.id.as_str()));
+        if ended_long_ago && !copy_open && !followed {
             for ext in ["json", "jsonl"] {
                 if std::fs::remove_file(agents.join(format!("{}.{ext}", run.id))).is_ok()
                     && ext == "json"
@@ -148,6 +155,17 @@ mod tests {
         std::fs::write(agents.join("rold.jsonl"), "{}\n").unwrap();
         std::fs::write(agents.join("rnew.json"), run("rnew", Some(now - 3600))).unwrap();
         std::fs::write(agents.join("rgoing.json"), run("rgoing", None)).unwrap();
+        // Ended long ago, but a kept run follows on from it.
+        std::fs::write(
+            agents.join("rbase.json"),
+            run("rbase", Some(now - 50 * 24 * 3600)),
+        )
+        .unwrap();
+        std::fs::write(
+            agents.join("rnext.json"),
+            run("rnext", None).replace("\"ended\":null", "\"ended\":null,\"follows\":\"rbase\""),
+        )
+        .unwrap();
         std::fs::write(
             agents.join("hooks.jsonl"),
             format!(
@@ -161,6 +179,10 @@ mod tests {
         let gone = sweep(&state, now);
         assert!(!agents.join("rold.json").exists() && !agents.join("rold.jsonl").exists());
         assert!(agents.join("rnew.json").exists() && agents.join("rgoing.json").exists());
+        assert!(
+            agents.join("rbase.json").exists(),
+            "a run followed on from stays"
+        );
         let hooks = std::fs::read_to_string(agents.join("hooks.jsonl")).unwrap();
         assert_eq!(hooks.lines().count(), 1, "{hooks}");
         assert!(state.join("memory.md").exists());

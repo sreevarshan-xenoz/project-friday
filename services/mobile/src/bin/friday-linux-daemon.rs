@@ -457,7 +457,9 @@ async fn main() {
     let state_cancel_lock = state.clone();
     let state_cancel_path = state_path.clone();
     // What only helped with one moment goes on its own: at start, then daily.
-    if let Some(state_dir) = state_path.parent().map(std::path::Path::to_path_buf) {
+    {
+        // The same state folder the rest of FRIDAY uses (FRIDAY_STATE_FILE's).
+        let state_dir = friday_intelligence::egress::default_state_dir();
         tokio::spawn(async move {
             loop {
                 if friday_mobile::features::on("retention") {
