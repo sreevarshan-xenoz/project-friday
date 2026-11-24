@@ -1039,7 +1039,11 @@ fn make_worktree(dir: &Path, folder: &Path, id: &str) -> Result<Option<PathBuf>,
 fn open_worktree(dir: &Path, folder: &Path) -> Option<PathBuf> {
     list(dir)
         .into_iter()
-        .find(|r| r.folder == folder && r.worktree.as_ref().is_some_and(|w| w.is_dir()))
+        .find(|r| {
+            r.folder == folder
+                && r.compared.is_none()
+                && r.worktree.as_ref().is_some_and(|w| w.is_dir())
+        })
         .and_then(|r| r.worktree)
 }
 
@@ -1142,14 +1146,24 @@ fn first_line(s: &str) -> String {
     out
 }
 
-/// Files and lines changed in a run's copy, new files included.
+/// Files and lines changed in a run's copy, and new files, read without
+/// touching the copy (an agent may still be working in it).
 fn changes_in(tree: &Path) -> String {
-    // New files count too (marked, not staged).
-    let _ = git(tree, &["add", "-A", "-N"]);
-    match git(tree, &["diff", "HEAD", "--shortstat"]) {
-        Ok(s) if s.trim().is_empty() => "nothing".into(),
+    let changed = match git(tree, &["diff", "HEAD", "--shortstat", "--", ":/"]) {
         Ok(s) => s.trim().to_string(),
-        Err(e) => format!("couldn't tell ({e})"),
+        Err(e) => return format!("couldn't tell ({e})"),
+    };
+    let new = git(
+        tree,
+        &["ls-files", "--others", "--exclude-standard", "--", ":/"],
+    )
+    .map(|s| s.lines().filter(|l| !l.trim().is_empty()).count())
+    .unwrap_or(0);
+    match (changed.is_empty(), new) {
+        (true, 0) => "nothing".into(),
+        (true, n) => format!("{n} new file{}", if n == 1 { "" } else { "s" }),
+        (false, 0) => changed,
+        (false, n) => format!("{changed}; {n} new file{}", if n == 1 { "" } else { "s" }),
     }
 }
 
@@ -1511,6 +1525,16 @@ fn first_json(reply: &str) -> Option<Value> {
     serde_json::from_str(reply.get(start..=end)?).ok()
 }
 
+/// Where a new run works.
+enum Copy {
+    /// The folder, or its open copy when copies are on.
+    Usual,
+    /// A new copy of its own, one of two compared runs (their shared tag).
+    New(String),
+    /// The copy of the compared run it follows up.
+    Of(PathBuf),
+}
+
 /// Starts agent runs and reports on them (`agents.run`).
 pub struct AgentsTool {
     model: Arc<dyn LlmStrategyClient>,
@@ -1560,7 +1584,7 @@ impl AgentsTool {
                     task,
                     run.session.clone(),
                     None,
-                    None,
+                    Copy::Usual,
                 )
             },
         );
@@ -1594,17 +1618,27 @@ impl AgentsTool {
         task: String,
         session: Option<String>,
         wait_for: Option<&Run>,
-        compared: Option<&str>,
+        copy: Copy,
     ) -> String {
         let id = format!("r{}", &uuid::Uuid::new_v4().simple().to_string()[..6]);
         // Its changes kept apart, when the person asked for that: the open
         // copy of this folder (a follow-up), else a new one. One of two
-        // compared runs always gets a copy of its own.
-        let worktree = if compared.is_some() {
-            make_worktree(&self.dir, folder, &id).unwrap_or_else(|e| {
-                tracing::warn!("couldn't make a copy of {}: {e}", folder.display());
-                None
-            })
+        // compared runs always gets a copy of its own, or doesn't run.
+        let mut no_copy = None;
+        let worktree = if let Copy::Of(tree) = &copy {
+            Some(tree.clone())
+        } else if let Copy::New(_) = &copy {
+            match make_worktree(&self.dir, folder, &id) {
+                Ok(Some(tree)) => Some(tree),
+                Ok(None) => {
+                    no_copy = Some("it isn't a git folder".to_string());
+                    None
+                }
+                Err(e) => {
+                    no_copy = Some(e);
+                    None
+                }
+            }
         } else if worktree_on() {
             open_worktree(&self.dir, folder).or_else(|| {
                 make_worktree(&self.dir, folder, &id).unwrap_or_else(|e| {
@@ -1633,9 +1667,22 @@ impl AgentsTool {
             session,
             follows: wait_for.map(|r| r.id.clone()),
             worktree,
-            compared: compared.map(str::to_string),
+            compared: match copy {
+                Copy::New(tag) => Some(tag),
+                _ => None,
+            },
         };
         let id = run.id.clone();
+        if let Some(why) = no_copy {
+            // Never in the folder itself beside the other agent.
+            if let Ok(mut rec) = Recorder::new(&self.dir, run) {
+                finish(
+                    &mut rec,
+                    Err(format!("Couldn't make a separate copy to work in ({why}), so this agent didn't start.")),
+                );
+            }
+            return id;
+        }
         let earlier = wait_for.map(|r| r.id.clone());
         let (dir, model) = (self.dir.clone(), self.model.clone());
         let mut run = run;
@@ -1712,8 +1759,13 @@ impl AgentsTool {
         }
         let (agent, folder) = (prev.agent, prev.folder.clone());
         let resume = crate::features::on("agent-resume");
+        // A compared run's follow-up goes on in that run's own copy.
+        let copy = || match (&prev.compared, &prev.worktree) {
+            (Some(_), Some(tree)) if tree.is_dir() => Copy::Of(tree.clone()),
+            _ => Copy::Usual,
+        };
         if still_going(&prev) {
-            let id = self.start(agent, &folder, request, task, None, Some(&prev), None);
+            let id = self.start(agent, &folder, request, task, None, Some(&prev), copy());
             return ToolResult::success(format!(
                 "{} is still on run {}; this follow-up (run {id}) goes to it as soon as that's done.\nFollow it with: friday agents",
                 agent.name(),
@@ -1722,7 +1774,7 @@ impl AgentsTool {
         }
         let session = followup_session(&prev, chrono::Utc::now().timestamp(), resume);
         let continues = session.is_some();
-        let id = self.start(agent, &folder, request, task, session, None, None);
+        let id = self.start(agent, &folder, request, task, session, None, copy());
         ToolResult::success(if continues {
             format!(
                 "{} goes on from run {} in {} (run {id}), in the same session.\nFollow it with: friday agents",
@@ -1895,9 +1947,22 @@ impl friday_goal_execution::Tool for AgentsTool {
                             "comparing two agents needs a git folder, so each works in its own copy",
                         );
                     }
+                    remember_folder(&self.dir, other, &folder);
                     let tag = format!("c{}", &uuid::Uuid::new_v4().simple().to_string()[..6]);
-                    let a = self.start(agent, &folder, request.clone(), task.clone(), None, None, Some(&tag));
-                    let b = self.start(other, &folder, request, task, None, None, Some(&tag));
+                    let a = self.start(agent, &folder, request.clone(), task.clone(), None, None, Copy::New(tag.clone()));
+                    let b = self.start(other, &folder, request, task, None, None, Copy::New(tag));
+                    let failed: Vec<String> = list(&self.dir)
+                        .into_iter()
+                        .filter(|r| (r.id == a || r.id == b) && r.status == Status::Failed)
+                        .map(|r| format!("{} (run {}): {}", r.agent.name(), r.id, r.summary))
+                        .collect();
+                    if !failed.is_empty() {
+                        return ToolResult::error(format!(
+                            "Not both could start, and nothing ran in {} itself. {}",
+                            folder.display(),
+                            failed.join(" ")
+                        ));
+                    }
                     return ToolResult::success(format!(
                         "Started {} (run {a}) and {} (run {b}) on the same task in {}, each in its own copy. \
                          When both are done: friday agents compare {a}, then keep one with \
@@ -1907,7 +1972,7 @@ impl friday_goal_execution::Tool for AgentsTool {
                         folder.display()
                     ));
                 }
-                let id = self.start(agent, &folder, request, task, None, None, None);
+                let id = self.start(agent, &folder, request, task, None, None, Copy::Usual);
                 ToolResult::success(format!(
                     "Started {} in {} (run {id}). FRIDAY approves routine steps and asks you before \
                      anything risky; you'll get a notification when it's done.\nFollow it with: friday agents",
@@ -1991,7 +2056,7 @@ mod tests {
         );
         assert!(out.contains("1 file changed"), "{out}");
         assert!(
-            out.contains("2 files changed"),
+            out.contains("1 file changed, 1 insertion(+), 1 deletion(-); 1 new file"),
             "the new file counts: {out}"
         );
         assert!(
@@ -2000,6 +2065,14 @@ mod tests {
         );
         assert!(out.contains("friday agents accept"), "{out}");
         assert!(compare(&dir, "nope").is_err());
+        assert!(
+            open_worktree(&dir, &repo).is_none(),
+            "a later run never lands in a compared copy"
+        );
+        assert!(
+            git(&repo, &["status", "--porcelain"]).unwrap().is_empty(),
+            "the folder itself is untouched"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 
