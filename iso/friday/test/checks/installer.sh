@@ -312,14 +312,19 @@ LOG="$WORK/browser-section/pacstrap.log"
 pacstrap_with_retry() { shift; echo "pacstrap: $*" >> "$LOG"; }
 # arch-chroot: log what runs as whom; "mktemp" gives a folder; a build of
 # a package named in FAIL_AUR fails.
+# Like the real one, each call gets a fresh, empty /tmp: a build folder
+# there would be gone by the next call.
+friday_section_mktemp_used=0
 arch-chroot() {
   shift
+  rm -rf "$WORK/browser-section/mnt/tmp"; mkdir -p "$WORK/browser-section/mnt/tmp"
   case "$*" in
-    *mktemp*) mkdir -p "$WORK/browser-section/mnt/tmp/b"; echo /tmp/b ;;
-    *makepkg*) echo "build: $*" >> "$LOG"; [[ -z "${FAIL_AUR:-}" || "$*" != *"$FAIL_AUR"* ]] ;;
+    *mktemp*) echo "mktemp: $*" >> "$LOG"; echo /tmp/b ;;
+    *makepkg*) echo "build: $*" >> "$LOG"; [[ "$*" != *" /tmp/"* ]] && [[ -z "${FAIL_AUR:-}" || "$*" != *"$FAIL_AUR"* ]] ;;
     *) echo "chroot: $*" >> "$LOG" ;;
   esac
 }
+friday_note() { echo "$*"; }
 EOF
 browsers() {
   {
@@ -339,7 +344,7 @@ log=$(cat "$W/pacstrap.log" 2>/dev/null)
 contains "repo browsers pacstrapped" "$log" "pacstrap: firefox"
 contains "the AUR build tools come first" "$log" "pacstrap: base-devel git"
 contains "brave-bin is built as the user from the AUR" "$log" "build: runuser -u alice -- bash -c"
-contains "zen-browser-bin too" "$log" "/tmp/b zen-browser-bin"
+contains "zen-browser-bin too, built on the disk (not in a /tmp a new chroot empties)" "$log" "/home/alice/.cache/friday-aur/zen-browser-bin zen-browser-bin"
 contains "pacman installs what was built" "$log" "chroot: bash -c pacman -U --noconfirm --needed"
 contains "default browser set in mimeapps.list" "$(cat "$W/mnt/home/alice/.config/mimeapps.list" 2>/dev/null)" "x-scheme-handler/https=zen.desktop"
 
