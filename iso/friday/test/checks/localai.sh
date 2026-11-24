@@ -42,6 +42,9 @@ contains "CPU threads" "$d" "cpu_threads=8"
 contains "AVX2" "$d" "avx2=yes"
 contains "free disk" "$d" "disk_free_mb=50000"
 hw_nv=$(machine nvidia16 16 yes 0x10de)
+# No NVIDIA driver here, even on a computer that has one (its nvidia-smi would answer).
+nosmi() { printf '#!/bin/sh\nexit 127\n' >"$S/nvidia-smi"; chmod +x "$S/nvidia-smi"; }
+nosmi
 d=$(FRIDAY_HW_ROOT="$hw_nv" bash "$F" local-ai detect)
 contains "NVIDIA without its driver: VRAM unknown" "$d" "vram_mb=unknown"
 printf '#!/bin/sh\necho "NVIDIA-SMI has failed" >&2; exit 9\n' >"$S/nvidia-smi"; chmod +x "$S/nvidia-smi"
@@ -50,7 +53,7 @@ contains "nvidia-smi failing (no driver) is not an error" "$d" "vram_mb=unknown"
 printf '#!/bin/sh\necho 4096\n' >"$S/nvidia-smi"
 d=$(FRIDAY_HW_ROOT="$hw_nv" bash "$F" local-ai detect)
 contains "NVIDIA VRAM from nvidia-smi" "$d" "vram_mb=4096"
-rm "$S/nvidia-smi"
+nosmi
 hw_none=$(machine none8 8 yes)
 contains "no GPU (a non-display PCI device doesn't count)" "$(FRIDAY_HW_ROOT="$hw_none" bash "$F" local-ai detect)" "gpu=none"
 
@@ -75,6 +78,16 @@ contains "and the summary says why" "$(FRIDAY_HW_ROOT="$hw_nv" bash "$F" local-a
 p=$(presets "$hw" 1500)
 [[ "$(field "$p" most 8)" == 0 ]] && pass "not enough disk: the preset is unavailable" || fail "Most available with 1.5 GB free"
 contains "and says why" "$(field "$p" most 9)" "disk"
+
+echo "each engine's own models"
+hw_3=$(machine small4 4 yes)
+pl=$(FRIDAY_HW_ROOT="$hw_3" FRIDAY_DISK_FREE_MB=100000 bash "$F" local-ai presets llamacpp)
+po=$(FRIDAY_HW_ROOT="$hw_3" FRIDAY_DISK_FREE_MB=100000 bash "$F" local-ai presets ollama)
+[[ "$(field "$pl" most 4)" == lfm3-vl:2b ]] && pass "4 GB on llama.cpp: a small model that sees screenshots (LFM3-VL 2B)" || fail "4 GB llama.cpp Most: $(field "$pl" most 4)"
+[[ "$(field "$po" most 4)" == qwen3:1.7b ]] && pass "4 GB on Ollama: a model from Ollama's library" || fail "4 GB Ollama Most: $(field "$po" most 4)"
+mo=$(bash "$F" local-ai models ollama); ml=$(bash "$F" local-ai models llamacpp)
+[[ "$mo" != *lfm3* && "$mo" == *"qwen3:1.7b|"* && "$mo" == *"gemma3:27b|"* ]] && pass "Ollama lists only models in its library" || fail "Ollama models: $mo"
+[[ "$ml" == *"lfm3-vl:2b|2304|1243|1"* && "$ml" != *"qwen3:1.7b|"* && "$ml" == *"gemma3:4b|"* ]] && pass "llama.cpp lists its GGUF models, the small LFM3 one first" || fail "llama.cpp models: $ml"
 
 hw_old=$(machine old8 8 no)
 contains "no AVX2 and no GPU: very slow" "$(FRIDAY_HW_ROOT="$hw_old" bash "$F" local-ai summary)" "very slow"
@@ -173,6 +186,18 @@ else fail "install with no settings file failed: $(tail -2 "$W/out")"; fi
 printf 'engine=ollama\nbudget_mb=1000\nstate=pending\n' >"$CONF"
 FRIDAY_HW_ROOT="$hw" bash "$F" local-ai install --first-login >/dev/null 2>&1
 contains "too little memory: failed, in words" "$(cat "$CONF")" "too little memory"
+
+echo "a model picked by name"
+: >"$LOG"
+printf 'engine=ollama\nbudget_mb=6144\nmodel=qwen3:4b\nstate=pending\n' >"$CONF"
+FRIDAY_HW_ROOT="$hw" bash "$F" local-ai install --first-login >/dev/null 2>&1
+contains "first login installs the model picked in the installer" "$(cat "$LOG")" "ollama pull qwen3:4b"
+: >"$LOG"
+printf 'engine=ollama\nbudget_mb=6144\nmodel=lfm3-vl:2b\nstate=pending\n' >"$CONF"
+FRIDAY_HW_ROOT="$hw" bash "$F" local-ai install --first-login >/dev/null 2>&1
+contains "a saved model the engine doesn't have: the budget picks" "$(cat "$LOG")" "ollama pull gemma3:4b"
+out=$(FRIDAY_HW_ROOT="$hw" bash "$F" local-ai install --engine ollama --budget 6144 --model lfm3-vl:2b 2>&1 || true)
+contains "--model the engine doesn't have is refused, with the ones it has" "$out" "isn't a model FRIDAY sets up on ollama"
 
 echo "packages per GPU"
 [[ "$(FRIDAY_HW_ROOT="$hw_nv" bash "$F" local-ai packages ollama)" == ollama-cuda ]] && pass "NVIDIA: ollama-cuda" || fail "NVIDIA Ollama package"
