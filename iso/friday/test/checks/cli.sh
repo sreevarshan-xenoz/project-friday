@@ -44,6 +44,11 @@ if [[ "\$1" == watch && ( "\$2" == until || "\$2" == gone ) ]]; then
   [[ "\$*" == *nowindow* ]] && { echo 'No window has "nowindow" in its title.'; exit 1; }
   sleep 2; exit 0
 fi
+if [[ "\$1" == mask ]]; then
+  if [[ "\$2" == - ]]; then sed 's/sk-ant-[A-Za-z0-9_-]*/[secret masked]/g'
+  else shift; [[ "\$1" == -- ]] && shift; printf '%s\n' "\$*" | sed 's/sk-ant-[A-Za-z0-9_-]*/[secret masked]/g'; fi
+  exit 0
+fi
 if [[ "\$1" == verify-log ]]; then
   printf 'friday-ctl-verify-log\n' >> "$LOG"
   echo 'The action log is intact: 3 actions'
@@ -673,6 +678,9 @@ contains "friday watch gone with no such window says so" "$(bash "$F" watch gone
 bash "$F" feature watch-until off >/dev/null
 contains "watching for a condition has a switch" "$(bash "$F" watch until true)" "turned off"
 bash "$F" feature watch-until on >/dev/null
+: >"$LOG"; bash "$F" ask "is sk-ant-api03-PLANTEDKEY123 still valid"; sleep 0.3
+if grep -q "PLANTEDKEY123" "$state/answers.md" "$state/last-answer.md" "$state/ask-history"; then fail "a planted key reached the answers or the question history"; else pass "a planted key is masked in the answers and the question history"; fi
+contains "the masked question is kept" "$(head -n 1 "$state/ask-history")" "is [secret masked] still valid"
 : >"$LOG"; contains "friday answers search goes to friday-ctl" "$(bash "$F" answers search docker --since week)" "Past answers about docker"
 contains "with its words and time" "$(cat "$LOG")" "friday-ctl-answers search docker --since week"
 : >"$LOG"; bash "$F" ask "What did you tell me about docker last week?"; sleep 0.3

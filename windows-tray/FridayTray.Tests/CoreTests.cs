@@ -110,6 +110,19 @@ public class AnswerLogTests
         Assert.DoesNotContain("on your screen", AnswerLog.Render("what's this?", null, new AskOutcome(false, "Nothing was sent", null, false), when));
         Assert.Equal(Path.Combine(dir, "local", "friday", "state.json"), paths.StateFile);
     }
+
+    [Fact]
+    public void Kept_questions_and_answers_go_through_the_mask()
+    {
+        var dir = Directory.CreateTempSubdirectory().FullName;
+        var paths = new Paths(Path.Combine(dir, "local"), Path.Combine(dir, "roaming"));
+        var log = new AnswerLog(paths, s => s.Replace("sk-SECRET", "[secret masked]"));
+        log.Remember("is sk-SECRET still valid?");
+        Assert.Equal(["is [secret masked] still valid?"], log.History());
+        log.Save("is sk-SECRET still valid?", null, new AskOutcome(true, "sk-SECRET looks revoked", null, false), DateTime.Now);
+        Assert.DoesNotContain("sk-SECRET", File.ReadAllText(paths.AnswersFile));
+        Assert.DoesNotContain("sk-SECRET", File.ReadAllText(paths.LastAnswerFile));
+    }
 }
 
 public class ProviderMappingTests

@@ -43,7 +43,8 @@ internal sealed class TrayContext : ApplicationContext
             e.Handled = true;
         };
 
-        _log = new AnswerLog(install.Paths);
+        _log = new AnswerLog(install.Paths, text =>
+            AppSettings.FeatureOn(EnvFile.Load(install.Paths.EnvFile), "mask-history") ? Ctl.Mask(install, text) : text);
         ApplyInstallerChoices();
         MigrateSecrets();
         _daemon = new Supervised("friday-daemon", install.Daemon, install.ChildEnvironment, install.Paths.LogDir);

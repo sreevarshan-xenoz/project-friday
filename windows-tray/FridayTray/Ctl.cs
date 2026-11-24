@@ -69,6 +69,40 @@ internal static class Ctl
     }
 
     /// <summary>Reads <paramref name="text"/> aloud (a new one replaces the one being read). Doesn't wait.</summary>
+    /// <summary>
+    /// <paramref name="text"/> with keys and passwords masked by friday-ctl
+    /// (the daemon's own rule), or as it is when that can't run in 3 s.
+    /// </summary>
+    public static string Mask(Install install, string text)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(install.Ctl)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                StandardOutputEncoding = Encoding.UTF8,
+            };
+            psi.ArgumentList.Add("mask");
+            psi.ArgumentList.Add("-");
+            using var p = Process.Start(psi);
+            if (p is null)
+                return text;
+            using (var input = new StreamWriter(p.StandardInput.BaseStream, new UTF8Encoding(false)))
+                input.Write(text);
+            var read = p.StandardOutput.ReadToEndAsync();
+            if (!p.WaitForExit(3000) || p.ExitCode != 0 || !read.Wait(500))
+                return text;
+            return string.IsNullOrEmpty(read.Result) ? text : read.Result;
+        }
+        catch (Exception)
+        {
+            return text;
+        }
+    }
+
     public static void Say(Install install, string text)
     {
         var psi = new ProcessStartInfo(install.Ctl)

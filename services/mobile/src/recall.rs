@@ -105,6 +105,12 @@ pub fn load(path: &Path, now: i64) -> Vec<Seen> {
 /// hours) had the same text. Hours older than the keep, and the oldest past
 /// [`MAX_BYTES`], are dropped either way.
 pub fn add(path: &Path, seen: Seen) -> std::io::Result<bool> {
+    // A key or password on screen is never kept.
+    let seen = Seen {
+        title: friday_goal_execution::mask_secrets(&seen.title).0,
+        text: friday_goal_execution::mask_secrets(&seen.text).0,
+        ..seen
+    };
     migrate(path)?;
     let hour = seen.ts.div_euclid(HOUR);
     let recent: Vec<Seen> = segments(path)
@@ -282,6 +288,30 @@ fn has_words(hay: &str, words: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_key_on_screen_is_never_kept() {
+        let dir = std::env::temp_dir().join(format!("friday-recall-key-{}", rand::random::<u32>()));
+        let path = dir.join("recall.jsonl");
+        add(
+            &path,
+            Seen {
+                ts: 1_790_000_000,
+                app: "kitty".into(),
+                title: "export KEY=sk-ant-api03-PLANTED0123456789".into(),
+                text: "OPENAI_API_KEY=sk-proj-PLANTED0123456789abcdef".into(),
+            },
+        )
+        .unwrap();
+        let kept: String = std::fs::read_dir(segments_dir(&path))
+            .unwrap()
+            .flatten()
+            .map(|e| std::fs::read_to_string(e.path()).unwrap())
+            .collect();
+        assert!(kept.contains("[secret masked]"), "{kept}");
+        assert!(!kept.contains("PLANTED"), "{kept}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     fn tmp() -> PathBuf {

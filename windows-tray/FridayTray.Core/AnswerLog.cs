@@ -8,8 +8,15 @@ namespace FridayTray.Core;
 public sealed class AnswerLog
 {
     private readonly Paths _paths;
+    private readonly Func<string, string> _mask;
 
-    public AnswerLog(Paths paths) => _paths = paths;
+    /// <param name="mask">Masks keys and passwords in text that is kept
+    /// (friday-ctl mask: the daemon's own rule); none: kept as it is.</param>
+    public AnswerLog(Paths paths, Func<string, string>? mask = null)
+    {
+        _paths = paths;
+        _mask = mask ?? (s => s);
+    }
 
     public IReadOnlyList<string> History() =>
         File.Exists(_paths.HistoryFile)
@@ -18,6 +25,7 @@ public sealed class AnswerLog
 
     public void Remember(string question)
     {
+        question = _mask(question);
         Directory.CreateDirectory(_paths.StateDir);
         var lines = new List<string> { question };
         lines.AddRange(History().Where(l => l != question));
@@ -45,7 +53,7 @@ public sealed class AnswerLog
     public void Save(string question, string? context, AskOutcome outcome, DateTime when, bool screen = false)
     {
         Directory.CreateDirectory(_paths.StateDir);
-        var text = Render(question, context, outcome, when, screen);
+        var text = _mask(Render(question, context, outcome, when, screen));
         File.WriteAllText(_paths.LastAnswerFile, text);
         File.AppendAllText(_paths.AnswersFile, SavedData.AnswerMarker + "\n" + text + "\n---\n\n");
     }

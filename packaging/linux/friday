@@ -3900,6 +3900,7 @@ doctor-fix|friday doctor --fix repairs what it can by itself: a stopped daemon, 
 config-import|friday import: keys and a model from OpenCode, Aider or your environment, previewed first
 watch-until|friday watch until <command> / gone <window>: told when it works or closes, checked less often over time
 upgrade-restore|When a system upgrade is undone, your FRIDAY settings and memory go back to how they were before it too
+mask-history|Keys and passwords are masked in the questions and answers FRIDAY keeps, and in screen recall and thoughts
 log-chain|Each action in the action log is chained to the one before, so a changed line shows (friday verify-log)
 standing-reversible|A standing task runs only what can be undone; anything that would ask first is refused and logged
 memory-tidy|When memory is fuller than an ask carries, friday memory tidy proposes a shorter list to approve
@@ -5066,8 +5067,14 @@ case "${1:-}" in
     # (Not an explained error or a rewrite: they mean nothing without the
     # error or the selection. Nor a suggestion: it comes back by itself
     # whenever it fits the app.)
+    # Kept with keys and passwords masked (what was typed still goes as typed;
+    # the daemon masks it before a model sees it).
+    goal_kept="$goal"
+    if friday_feature_on mask-history; then
+      goal_kept=$(friday-ctl mask -- "$goal" 2>/dev/null) && [ -n "$goal_kept" ] || goal_kept="$goal"
+    fi
     if ! ${explaining_error:-false} && [[ "$goal" != "Rewrite: "* ]] && [ -z "${FRIDAY_SUGGESTED:-}" ]; then
-      { printf '%s\n' "$goal"; grep -vxF -- "$goal" "$history_file" 2>/dev/null || true; } \
+      { printf '%s\n' "$goal_kept"; grep -vxF -- "$goal_kept" "$history_file" 2>/dev/null || true; } \
         | head -n 50 >"$history_file.tmp" && mv -f "$history_file.tmp" "$history_file"
     fi
 
@@ -5229,7 +5236,7 @@ $offer"
       # Full answer on disk; the notification shows a preview with an Open button.
       answer_file="$state_dir/last-answer.md"
       {
-        printf '# %s\n\n_%s_\n\n' "$goal" "$(date '+%Y-%m-%d %H:%M')"
+        printf '# %s\n\n_%s_\n\n' "${goal_kept:-$goal}" "$(date '+%Y-%m-%d %H:%M')"
         # Kept on this computer: the timeline never sends these to a cloud model.
         ! $local_only || printf '_On this computer · nothing was sent_\n\n'
         [ -z "${ask_project:-}" ] || printf '_project: %s_\n\n' "$ask_project"
@@ -5243,6 +5250,10 @@ $offer"
         printf '%s\n' "$answer"
         [ -z "${details:-}" ] || printf '\n<details>\n\n```\n%s\n```\n' "$details"
       } >"$answer_file"
+      # A key in the answer (one a local model echoed) isn't kept either.
+      if friday_feature_on mask-history && masked_file=$(friday-ctl mask - <"$answer_file" 2>/dev/null) && [ -n "$masked_file" ]; then
+        printf '%s\n' "$masked_file" >"$answer_file"
+      fi
       # Each entry opens with a marker line, so a "---" inside an answer
       # never splits it (FRIDAY Shell's answer history reads these).
       # Past 2 MiB its older half (whole entries) becomes answers.1.md, the
