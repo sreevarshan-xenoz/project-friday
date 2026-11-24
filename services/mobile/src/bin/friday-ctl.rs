@@ -1897,6 +1897,42 @@ async fn main() -> std::process::ExitCode {
         println!("{}", friday_mobile::retention::describe());
         return std::process::ExitCode::SUCCESS;
     }
+    // A fact forgotten from every place it was copied to.
+    if raw.first().map(String::as_str) == Some("forget-everywhere") {
+        let words = raw[1..].join(" ");
+        let state_path = ShellState::default_path();
+        let state = state_path
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_default();
+        let places = friday_mobile::forget::Places {
+            memory: friday_mobile::shell_state::memory_dir(
+                std::env::var("FRIDAY_MEMORY_DIR").ok(),
+                &state_path,
+                std::path::Path::new("friday-data"),
+            ),
+            state,
+            proposal: friday_mobile::about::tidy_path(),
+        };
+        return match friday_mobile::forget::everywhere(&places, &words) {
+            Ok(done) if done.is_empty() => {
+                println!("No other copy had \"{words}\".");
+                std::process::ExitCode::SUCCESS
+            }
+            Ok(done) => {
+                let list: Vec<String> = done.iter().map(|(w, n)| format!("{n} from {w}")).collect();
+                println!(
+                    "Also forgot it everywhere it was copied: {}.",
+                    list.join(", ")
+                );
+                std::process::ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("friday-ctl: {e}");
+                std::process::ExitCode::from(2)
+            }
+        };
+    }
     if raw.first().map(String::as_str) == Some("usage") {
         let days: u32 = raw
             .iter()
