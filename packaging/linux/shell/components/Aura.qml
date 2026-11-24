@@ -1,4 +1,5 @@
 import QtQuick
+import qs.common
 
 // FRIDAY's presence while it listens or thinks: layered ribbons of light that
 // flow like a voice, pinched to nothing at both ends and glowing where they
@@ -30,7 +31,7 @@ Item {
   Timer {
     interval: 33
     repeat: true
-    running: root.visible
+    running: root.visible && Theme.motion
     onTriggered: { root.t += 0.033 * (0.6 + root.energy); canvas.requestPaint(); }
   }
 

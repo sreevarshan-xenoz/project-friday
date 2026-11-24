@@ -42,7 +42,7 @@ Item {
     color: Theme.alpha(Theme.accent, 0.35)
     visible: root.mode === "ready"
     SequentialAnimation on scale {
-      running: halo.visible
+      running: halo.visible && Theme.motion
       loops: Animation.Infinite
       NumberAnimation { from: 0.8; to: 1.35; duration: 1600; easing.type: Easing.InOutSine }
       NumberAnimation { from: 1.35; to: 0.8; duration: 1600; easing.type: Easing.InOutSine }
