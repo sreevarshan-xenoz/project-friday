@@ -1604,6 +1604,14 @@ contains "the on file is owner-only" "$(stat -c %a "$local_s_on")" "600"
 contains "turn server off" "$(bash "$F" mcp off demo)" "demo: off"
 contains "server is off again" "$(bash "$F" mcp servers)" "demo                 off"
 refuse "refuses unconfigured server" bash "$F" mcp on nonexistent
+refuse "a key of a server isn't a server" bash "$F" mcp on command
+refuse "nor is mcpServers" bash "$F" mcp on mcpServers
+echo '{"mcpServers": {"my files": {"command": "echo"}, "demo": {"command": "echo"}}}' >"$local_s_cfg"
+contains "a name with a space is listed whole" "$(bash "$F" mcp servers)" "my files             off"
+bash "$F" mcp on demo >/dev/null
+echo '{"mcpServers": {"my files": {"command": "echo"}}}' >"$local_s_cfg"
+contains "off works for a server taken out of the file" "$(bash "$F" mcp off demo)" "demo: off"
+if grep -qx demo "$local_s_on"; then fail "the removed server stayed on"; else pass "and it is off"; fi
 rm -f "$local_s_cfg" "$local_s_on"
 
 echo "that was wrong: a repro without the text"

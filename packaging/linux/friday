@@ -1669,35 +1669,23 @@ friday_mcp() {
         return 0
       fi
       local names
-      if command -v jq >/dev/null 2>&1; then
-        names=$(jq -r '.mcpServers // {} | keys[]' "$servers_file" 2>/dev/null || true)
-      else
-        names=$(sed -n 's/^[[:space:]]*"\([^"]*\)":[[:space:]]*{.*/\1/p' "$servers_file")
-      fi
+      names=$(jq -r '.mcpServers // {} | keys[]' "$servers_file" 2>/dev/null || true)
       if [ -z "$names" ]; then
         echo "  (none configured)"
         return 0
       fi
       local name st
-      for name in $names; do
-        if grep -qxF -- "$name" "$on_file" 2>/dev/null; then
-          st="on"
-        else
-          st="off"
-        fi
+      while IFS= read -r name; do
+        if grep -qxF -- "$name" "$on_file" 2>/dev/null; then st="on"; else st="off"; fi
         printf '  %-20s %s\n' "$name" "$st"
-      done ;;
+      done <<<"$names" ;;
     on|off)
       local name="${2:-}"
       [ -n "$name" ] || { echo "Usage: friday mcp $1 <name>" >&2; return 1; }
       local configured=false
-      if [ -s "$servers_file" ]; then
-        if command -v jq >/dev/null 2>&1; then
-          jq -e --arg n "$name" '.mcpServers[$n] != null' "$servers_file" >/dev/null 2>&1 && configured=true
-        else
-          grep -q "\"$name\"[[:space:]]*:" "$servers_file" 2>/dev/null && configured=true
-        fi
-      fi
+      jq -e --arg n "$name" '.mcpServers[$n] != null' "$servers_file" >/dev/null 2>&1 && configured=true
+      # Off always works for a name that's on, even one since taken out of the file.
+      [ "$1" = off ] && grep -qxF -- "$name" "$on_file" 2>/dev/null && configured=true
       if ! $configured; then
         echo "friday mcp: \"$name\" is not configured in $servers_file" >&2
         return 1

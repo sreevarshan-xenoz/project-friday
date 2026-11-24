@@ -208,12 +208,12 @@ static TOOLS_CACHE: tokio::sync::Mutex<ToolsCache> = tokio::sync::Mutex::const_n
 pub async fn get_tools() -> Vec<ToolInfo> {
     let active = load_active_servers();
     let names: Vec<String> = active.iter().map(|s| s.name.clone()).collect();
-    let mut lock = TOOLS_CACHE.lock().await;
-    if let Some((cached_names, cached)) = &*lock {
+    if let Some((cached_names, cached)) = &*TOOLS_CACHE.lock().await {
         if *cached_names == names {
             return cached.clone();
         }
     }
+    // Connected without holding the cache, so a slow server holds up nothing else.
     let mut all_tools = Vec::new();
     for server in active {
         match connect(&server).await {
@@ -223,7 +223,7 @@ pub async fn get_tools() -> Vec<ToolInfo> {
             }
         }
     }
-    *lock = Some((names, all_tools.clone()));
+    *TOOLS_CACHE.lock().await = Some((names, all_tools.clone()));
     all_tools
 }
 
@@ -323,7 +323,9 @@ pub fn parse_pick(reply: &str, tools: &[ToolInfo]) -> Option<Pick> {
 /// confirmation gate showed it), so a confirmed run calls exactly that
 /// instead of asking the model again (which could pick differently).
 pub fn parse_confirmed(confirm: &str, tools: &[ToolInfo]) -> Option<Pick> {
-    tools.iter().find_map(|t| {
+    // Names can hold dots ("db" + "table.get" reads like "db.table" + "get"):
+    // a confirmation that fits more than one tool runs none.
+    let mut found = tools.iter().filter_map(|t| {
         let rest = confirm
             .trim()
             .strip_prefix(&format!("{}.{} ", t.server, t.name))?;
@@ -333,7 +335,9 @@ pub fn parse_confirmed(confirm: &str, tools: &[ToolInfo]) -> Option<Pick> {
             tool: t.name.clone(),
             arguments,
         })
-    })
+    });
+    let pick = found.next()?;
+    found.next().is_none().then_some(pick)
 }
 
 /// Call the picked tool, returning its text result capped at 8000 characters.
@@ -582,6 +586,15 @@ mod tests {
         assert!(parse_confirmed("files.write {}", &tools).is_none());
         assert!(parse_confirmed("files.read not-json", &tools).is_none());
         assert!(parse_confirmed("rm -rf /", &tools).is_none());
+        // "db" + "table.get" and "db.table" + "get" read the same: neither runs.
+        let two = |server: &str, name: &str| ToolInfo {
+            server: server.into(),
+            name: name.into(),
+            description: String::new(),
+            input_schema: serde_json::json!({}),
+        };
+        let clash = vec![two("db", "table.get"), two("db.table", "get")];
+        assert!(parse_confirmed("db.table.get {}", &clash).is_none());
     }
 
     /// A real server over stdio: a few lines of Python speaking MCP's
