@@ -1000,6 +1000,8 @@ friday_keys_list() {
       sub(/mouse:275$/, "Mouse back", k); sub(/mouse:276$/, "Mouse forward", k)
       n = split(k, p, "+"); if (length(p[n]) == 1) { p[n] = toupper(p[n]); k = p[1]; for (i = 2; i <= n; i++) k = k "+" p[i] }
     } !seen[k]++ { printf "%-22s %s\n", k, $2 }' <<<"$rows"
+}
+
 # `friday bundles [pick | list | install <bundle>...]`: apps for a kind of work,
 # installed in one go. Each bundle is a file in /usr/share/friday/bundles: a
 # "# Name: what it is" line, then a package a line ("aur:" for one built from
