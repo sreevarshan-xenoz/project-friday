@@ -128,6 +128,22 @@ Owner-approved on 2026-11-23: every idea from the 12-repo brainstorm except the 
 | 117 | ACT-7 | Safe recovery when a UI step fails | new | L | 1 | A failed click proposes one safe alternative instead of retrying blindly. |
 | 118 | CTX-2 | GNOME and KDE support | new | L | 15 | The keys, the ask box and screen asks work on GNOME and KDE (their own shortcuts or the GlobalShortcuts portal, an ask box and screenshots that work there; grim and fuzzel don't). Needs a GNOME/KDE test VM. |
 | 119 | MEM-17 | Meeting notes from what the computer plays | owner-approved (from Cicada, Apache-2.0) | M | owner | Opt-in, off by default: `friday meeting start` listens to system audio (the PipeWire monitor on Linux, WASAPI loopback on Windows), transcribes it with the local whisper, and keeps the transcript and short notes (decisions, to-dos) on this computer. "What did we decide in the 3pm call?" and `friday answers search` find them. Audio never leaves; text goes to a model only for the notes. Exit test: a recorded clip played through the speakers becomes a transcript and notes with nothing sent but text, and stops when told. Later and separate: live subtitles, voice interpreting. |
+| 120 | LAI-6 | Public free models, opt-in, with a red warning | owner-approved | S | owner | Free tiers with a named operator and published terms (OpenRouter free models, Groq, Cerebras, Gemini, NVIDIA NIM), and last apisfreellm.com (no key, no terms, unknown operator), each added only when the person turns it on. A red line says the provider may keep or train on what is sent, so it should be treated as public. Typed questions only: screen, selection, clipboard, private-window and private-mode asks never go there. Never a default or an automatic fallback. Exit test: with one turned on, a typed ask reaches it and a screen ask and a private-mode ask do not. Not built: tools that pose as another app, pool accounts or get around rate limits. |
+
+## The owner's ISO list (2026-11-24), worked before row 101
+
+From the owner's live-ISO test, brainstormed with nine models (all nine agreed on the order below, give or take one place). Worked top to bottom before the rest of the table.
+
+| # | Id | Item | Exit test |
+|---|---|---|---|
+| I1 | UI-9 | Super+I opens FRIDAY Settings; a Commands page lists every `friday` command; a key sheet built from the real Hyprland binds | Super+I opens Settings; a CI check fails when a command or bind is missing from the pages. |
+| I2 | LAI-7 | Local AI step in the installer: what was found (GPU, VRAM, RAM, disk), a recommended model; Ollama shows Ollama-library models only, llama.cpp a GGUF list with an LFM2 rung for low-end machines; the list ships on the ISO, downloads run at first login and resume | In the VM, the step works offline, recommends a model that fits, and the model downloads after login. |
+| I3 | PKG-12 | App bundles at first login (developer, gaming, productivity, creative): repo packages with pacman, AUR built as the user, one failure doesn't stop the rest, a report at the end | In the VM, two bundles install with one forced failure reported and retryable. |
+| I4 | UI-10 | FRIDAY OS's own look (from the owner's own setup: Nord colours, small gaps, thin border, no blur or shadow, dimmed inactive windows, quick slide animations), own wallpaper and accent; Omarchy kept only for lock, idle and polkit | A screenshot of the default desktop has no Omarchy look; the look can be switched back. |
+| I5 | UI-11 | Face unlock in the tour (only when a camera exists) and in Settings, with a short guide; the password always still works; Windows opens Windows Hello settings | In the VM with a fake camera the step shows; without one it doesn't. |
+| I6 | UI-12 | Motion: one shared motion file for the pill, orb and transitions with a reduce-motion switch; installer ASCII art that plays only while it waits, skippable | Reduce-motion turns every animation off; the installer is unchanged on a slow console. |
+
+Not built: xnulinux (arm64 only, Apple's licence, taints the kernel), atomic-engine (preview, Apple Silicon only), linger (licence). Possible later: a small-GPU llama.cpp preset that keeps a MoE model's busy experts on the GPU (`--n-cpu-moe`).
 
 ## Left out on purpose
 
