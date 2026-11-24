@@ -61,6 +61,14 @@ if [[ "${SKIP_PACKAGE_BUILD:-false}" != "true" ]]; then
   cp "$PROJECT_ROOT/packaging/arch/friday-mobile/PKGBUILD" "$PROJECT_ROOT/packaging/arch/friday-mobile/friday-mobile.install" "$PD_BUILD_DIR/"
   (cd "$PD_BUILD_DIR" && PKGDEST="$FRIDAY_REPO_DIR" makepkg -f --noconfirm --syncdeps --nocheck)
   rm -rf "$PD_BUILD_DIR"
+
+  # FRIDAY's wallpapers: the pinned set, downloaded and packaged, no build.
+  echo "Building the wallpapers package..."
+  find "$FRIDAY_REPO_DIR" -maxdepth 1 -name 'friday-wallpapers*' -type f -delete
+  WP_BUILD_DIR=$(mktemp -d)
+  cp "$PROJECT_ROOT/packaging/arch/wallpapers/PKGBUILD" "$WP_BUILD_DIR/"
+  (cd "$WP_BUILD_DIR" && PKGDEST="$FRIDAY_REPO_DIR" makepkg -f --noconfirm --nocheck)
+  rm -rf "$WP_BUILD_DIR"
 fi
 FRIDAY_PKG=$(find "$FRIDAY_REPO_DIR" -maxdepth 1 -name 'friday-git-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1)
 if [[ -z "$FRIDAY_PKG" ]]; then
@@ -74,8 +82,14 @@ if [[ -z "$PHONE_PKG" ]]; then
   echo "  Run without SKIP_PACKAGE_BUILD=true." >&2
   exit 1
 fi
+WALLPAPERS_PKG=$(find "$FRIDAY_REPO_DIR" -maxdepth 1 -name 'friday-wallpapers-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1)
+if [[ -z "$WALLPAPERS_PKG" ]]; then
+  echo "Error: no friday-wallpapers package in $FRIDAY_REPO_DIR" >&2
+  echo "  Run without SKIP_PACKAGE_BUILD=true." >&2
+  exit 1
+fi
 rm -f "$FRIDAY_REPO_DIR"/friday.db* "$FRIDAY_REPO_DIR"/friday.files*
-repo-add -q "$FRIDAY_REPO_DIR/friday.db.tar.gz" "$FRIDAY_PKG" "$PHONE_PKG"
+repo-add -q "$FRIDAY_REPO_DIR/friday.db.tar.gz" "$FRIDAY_PKG" "$PHONE_PKG" "$WALLPAPERS_PKG"
 # The profile's pacman.conf plus the local repo, for this build only.
 BUILD_PACMAN_CONF=$(mktemp)
 trap 'rm -f "$BUILD_PACMAN_CONF"' EXIT
