@@ -139,11 +139,14 @@ pub fn without_quote_line(text: &str) -> &str {
 /// the quote really is in `words` (spacing and case aside), and dropped
 /// otherwise: a phrase the window didn't have is never shown as its own.
 pub fn with_checked_quote(answer: &str, words: &str) -> String {
-    let body = without_quote_line(answer);
-    if body.len() == answer.len() {
+    // Only a whole last line "QUOTE: …" is the quote line (an answer whose
+    // last word is QUOTE stays as it is).
+    let last_start = answer.trim_end().rfind('\n').map_or(0, |i| i + 1);
+    if !answer[last_start..].trim_start().starts_with("QUOTE:") {
         return answer.to_string();
     }
-    let line = answer[body.len()..].trim();
+    let body = answer[..last_start].trim_end();
+    let line = answer[last_start..].trim();
     let quote = line
         .strip_prefix("QUOTE:")
         .unwrap_or("")
@@ -157,7 +160,15 @@ pub fn with_checked_quote(answer: &str, words: &str) -> String {
             .to_lowercase()
     };
     let q = norm(quote);
-    if q.is_empty() || q == "none" || q.split(' ').count() > 25 || !norm(words).contains(&q) {
+    // Long enough to mean something, short enough to be a quote, really in
+    // the text, and never a mask marker shown as if the window said it.
+    let n = q.split(' ').count();
+    if q == "none"
+        || n > 20
+        || (n < 3 && q.chars().count() < 12)
+        || q.contains(&friday_goal_execution::MASKED_PLACEHOLDER.to_lowercase())
+        || !norm(words).contains(&q)
+    {
         return body.to_string();
     }
     format!(
@@ -2746,6 +2757,16 @@ mod tests {
         assert_eq!(
             with_checked_quote("No quote line.", words),
             "No quote line."
+        );
+        assert_eq!(
+            with_checked_quote("Run this.\nSELECT QUOTE", words),
+            "Run this.\nSELECT QUOTE"
+        );
+        assert_eq!(with_checked_quote("Hm.\nQUOTE: help", words), "Hm.");
+        let masked = "key = [secret masked] in use";
+        assert_eq!(
+            with_checked_quote("It's set.\nQUOTE: key = [secret masked] in use", masked),
+            "It's set."
         );
         assert_eq!(without_quote_line("Answer here.\nQUO"), "Answer here.");
         assert_eq!(
