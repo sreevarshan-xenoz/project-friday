@@ -5241,6 +5241,10 @@ case "${1:-}" in
       goal="${goal/"${BASH_REMATCH[0]}"/ }"
     done
     goal=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<<"$goal")
+    if friday_feature_on mentions && [[ "$goal" =~ (^|[[:space:]])@file[[:space:]]+\" ]]; then
+      notify "FRIDAY" "@file \"… needs its closing quote."
+      exit 0
+    fi
     # @clip and @file are the text asked about: one of them, in a plain ask
     # (not with the screen, a selection or a follow-up, which bring their own).
     if { $use_clip || [ -n "$mention_file" ]; } \
@@ -5263,10 +5267,6 @@ case "${1:-}" in
       # A PDF is read as its text (pdftotext, from poppler), its first 20 pages.
       mention_pdf=false
       [[ "${mention_file,,}" == *.pdf && -r "$mention_file" ]] && mention_pdf=true
-      if $mention_pdf && ! command -v pdftotext >/dev/null 2>&1; then
-        notify "FRIDAY" "Reading a PDF needs pdftotext: sudo pacman -S poppler"
-        exit 0
-      fi
       case "${mention_file,,}" in
         *.png|*.jpg|*.jpeg|*.webp|*.gif)
           notify "FRIDAY" "I can't read a picture from a file yet: open it, then ask about the screen (Super+Ctrl+Y)."
@@ -5285,6 +5285,10 @@ case "${1:-}" in
       # out of a private one).
       if [ -n "$(friday_private_folder "$given_dir")" ] || [ -n "$(friday_private_folder "$(dirname -- "$mention_file")")" ]; then
         notify "FRIDAY" "That file is in a folder you marked private, so it isn't sent."
+        exit 0
+      fi
+      if $mention_pdf && ! command -v pdftotext >/dev/null 2>&1; then
+        notify "FRIDAY" "Reading a PDF needs pdftotext: sudo pacman -S poppler"
         exit 0
       fi
       if $mention_pdf; then context=$(timeout 20 pdftotext -l 20 -q -- "$mention_file" - 2>/dev/null | head -c 8000 || true)
