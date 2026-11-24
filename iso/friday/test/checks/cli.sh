@@ -2400,6 +2400,15 @@ printf '{"status":"running","token":"s3cret-token"}' >"$state/state.json"
 printf 'GEMINI_API_KEY=abc123secret\n' >"$envf"
 out=$(bash "$F" doctor 2>&1 || true)
 contains "reads daemon status" "$out" "state.json reports: running"
+out=$(STUB_INACTIVE=1 bash "$F" doctor --quick 2>&1 || true)
+contains "doctor says what --fix would repair" "$out" "friday doctor --fix repairs these by itself: daemon"
+: >"$LOG"; out=$(STUB_INACTIVE=1 FRIDAY_FIX_WAIT=0 bash "$F" doctor --quick --fix 2>&1 || true)
+contains "doctor --fix restarts a stopped daemon" "$(cat "$LOG")" "systemctl --user restart friday-linux-daemon"
+contains "and checks again" "$out" "Checking again"
+if grep -qE "pacman -S|sudo " "$LOG"; then fail "doctor --fix installed something or used sudo"; else pass "doctor --fix never runs sudo or pacman"; fi
+bash "$F" feature doctor-fix off >/dev/null
+if [[ "$(STUB_INACTIVE=1 bash "$F" doctor --quick 2>&1 || true)" == *"--fix repairs"* ]]; then fail "doctor --fix offered while turned off"; else pass "doctor --fix has a switch"; fi
+bash "$F" feature doctor-fix on >/dev/null
 contains "doctor reports configured search backends" "$out" "search backends: DuckDuckGo, Wikipedia"
 printf 'BRAVE_SEARCH_API_KEY=testbravesecret123\nFRIDAY_SEARXNG_URL=http://localhost:8888\n' >>"$envf"
 out=$(bash "$F" doctor 2>&1 || true)
