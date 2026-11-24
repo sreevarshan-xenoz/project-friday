@@ -40,6 +40,7 @@ fn own_state(agent: Agent) -> &'static [&'static str] {
         ],
         Agent::Claude => &[".claude", ".claude.json", ".config/claude"],
         Agent::Agy => &[".gemini"],
+        Agent::Codex => &[".codex"],
     }
 }
 

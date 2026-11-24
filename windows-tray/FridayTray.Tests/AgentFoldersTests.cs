@@ -19,11 +19,12 @@ public class AgentFoldersTests : IDisposable
     [Fact]
     public void A_request_naming_an_agent_says_the_folder_it_last_used()
     {
-        File.WriteAllText(Path.Combine(_dir, "last-folder.json"), $$"""{"opencode": "/home/me/code/site", "claude": "/srv/api"}""");
+        File.WriteAllText(Path.Combine(_dir, "last-folder.json"), $$"""{"opencode": "/home/me/code/site", "claude": "/srv/api", "codex": "/srv/web"}""");
         var folders = AgentFolders.Load(_dir, "/home/me");
         Assert.Equal("opencode works in ~/code/site", folders.Chip("ask opencode to fix the tests"));
         Assert.Equal("opencode works in ~/code/site", folders.Chip("have OpenCode add a README"));
         Assert.Equal("Claude Code works in /srv/api", folders.Chip("Claude Code, tidy the imports"));
+        Assert.Equal("Codex works in /srv/web", folders.Chip("have codex add tests"));
         Assert.Equal($"Say which folder agy works in, like ~{S}code{S}site", folders.Chip("get antigravity to write docs"));
     }
 

@@ -90,7 +90,7 @@ Autonomous Agent & Cognitive Loop:
   friday tasks [pause|resume|delete <id>|recipes|recipe <name>|status|on|off]
                                    Standing tasks ("every morning ..."): list, pause, delete, turn all off
   friday agents [show|allow|deny|reply|accept|discard|compare <id>|hooks|check|worktree|sandbox [on|off]|status|on|off]
-                                   Coding agents FRIDAY runs for you (opencode, agy, Claude Code): follow, answer, turn off
+                                   Coding agents FRIDAY runs for you (opencode, agy, Claude Code, Codex): follow, answer, turn off
   friday ask --json [--web] [--new] <question>  The answer as one JSON object, for scripts
   friday brief [--say]             What you missed: agents, standing tasks, today's reminders (local only)
   friday memory [list|edit|forget <words>]  What FRIDAY remembers about you (memory.md)
@@ -3942,7 +3942,7 @@ friday_agents() {
       ;;
     status|on|off)
       friday_switch FRIDAY_AGENTS "Coding agents" agents \
-        "FRIDAY can run opencode, agy or Claude Code for you and answer their routine approvals; risky steps wait for you" \
+        "FRIDAY can run opencode, agy, Claude Code or Codex for you and answer their routine approvals; risky steps wait for you" \
         "FRIDAY won't start coding agents" "$cmd" ;;
     *)
       echo "usage: friday agents [list|show <id>|allow <id>|deny <id>|reply <id> \"text\"|hooks [on|off]|status|on|off]" >&2

@@ -73,6 +73,9 @@ pub enum Agent {
     Opencode,
     Agy,
     Claude,
+    /// OpenAI's Codex CLI, through the ACP adapter `codex-acp`
+    /// (`npm i -g @agentclientprotocol/codex-acp`).
+    Codex,
 }
 
 impl Agent {
@@ -81,6 +84,7 @@ impl Agent {
             "opencode" | "open code" => Some(Agent::Opencode),
             "agy" | "antigravity" => Some(Agent::Agy),
             "claude" | "claude code" | "claude-code" => Some(Agent::Claude),
+            "codex" | "codex cli" | "openai codex" => Some(Agent::Codex),
             _ => None,
         }
     }
@@ -90,6 +94,24 @@ impl Agent {
             Agent::Opencode => "opencode",
             Agent::Agy => "agy",
             Agent::Claude => "claude",
+            Agent::Codex => "codex",
+        }
+    }
+
+    /// The ACP session mode that makes the agent ask before each step, for an
+    /// agent whose default doesn't.
+    fn supervised_mode(self) -> Option<&'static str> {
+        match self {
+            Agent::Codex => Some("read-only"),
+            _ => None,
+        }
+    }
+
+    /// The program that speaks to FRIDAY: Codex through its ACP adapter.
+    fn program_name(self) -> &'static str {
+        match self {
+            Agent::Codex => "codex-acp",
+            other => other.name(),
         }
     }
 
@@ -98,7 +120,7 @@ impl Agent {
     pub fn program(self) -> Option<PathBuf> {
         let path = std::env::var_os("PATH")?;
         std::env::split_paths(&path).find_map(|dir| {
-            let base = dir.join(self.name());
+            let base = dir.join(self.program_name());
             let candidates = if cfg!(windows) {
                 vec![base.with_extension("exe"), base.with_extension("cmd")]
             } else {
@@ -660,6 +682,24 @@ impl<'a, W: AsyncWrite + Unpin> Driver<'a, W> {
                     .to_string()
             }
         };
+        // Codex's adapter ignores the approval setting and starts its sessions
+        // in "Auto review" (it asks only about what it judges unsafe), so each
+        // session, new or resumed, is put in Read-only: every edit asks, and
+        // FRIDAY's rules decide it. If Codex won't, nothing runs.
+        if let Some(mode) = self.rec.run.agent.supervised_mode() {
+            let set = self
+                .request(
+                    "session/set_mode",
+                    json!({"sessionId": session, "modeId": mode}),
+                )
+                .await?;
+            self.wait(lines, set).await.map_err(|e| {
+                format!(
+                    "couldn't make {} ask before each step: {e}",
+                    self.rec.run.agent.name()
+                )
+            })?;
+        }
         self.rec.run.session = Some(session.clone());
         let _ = self.rec.save();
         let mut text = self.rec.run.task.clone();
@@ -737,10 +777,12 @@ pub async fn run_agent(
     run: Run,
     model: Option<Arc<dyn LlmStrategyClient>>,
 ) -> Result<(), String> {
-    let program = run
-        .agent
-        .program()
-        .ok_or_else(|| format!("{} isn't installed", run.agent.name()))?;
+    let program = run.agent.program().ok_or_else(|| match run.agent {
+        Agent::Codex => "Codex's ACP adapter isn't installed \
+                (npm i -g @agentclientprotocol/codex-acp)"
+            .to_string(),
+        other => format!("{} isn't installed", other.name()),
+    })?;
     let mut rec = Recorder::new(&dir, run).map_err(|e| e.to_string())?;
     let mut lost = false;
     let mut told = false;
@@ -778,6 +820,10 @@ pub async fn run_agent(
                 agy_settings().map_err(|e| format!("couldn't set up agy for FRIDAY: {e}"))?;
                 command.args(["acp", "--cli_dir_name", "friday"]);
             }
+            // Codex asks before each step through its session mode, set once
+            // the session exists (`supervised_mode`); its adapter ignores
+            // `approval_policy`.
+            Agent::Codex => {}
         }
         // In the sandbox (asked for, Linux): its folder writable, keys hidden.
         #[cfg(target_os = "linux")]
@@ -1511,8 +1557,8 @@ fn expand(folder: &str) -> PathBuf {
     }
 }
 
-const GUIDE: &str = r#"FRIDAY can run a coding agent for the person: opencode, agy (Antigravity) or Claude Code. Turn the person's request into JSON only, one of:
-  {"op": "run", "agent": "opencode" | "agy" | "claude", "folder": "<folder named in the request, or empty>", "task": "<the task for the agent>"}
+const GUIDE: &str = r#"FRIDAY can run a coding agent for the person: opencode, agy (Antigravity), Claude Code or Codex. Turn the person's request into JSON only, one of:
+  {"op": "run", "agent": "opencode" | "agy" | "claude" | "codex", "folder": "<folder named in the request, or empty>", "task": "<the task for the agent>"}
      add "agent2": "<the second agent>" only when the person asks two agents to do the same task side by side, to compare them
   {"op": "followup", "agent": "<agent named, or empty>", "task": "<the follow-up for the agent>"}   the person adds to or continues the agent's latest work ("also add tests", "tell it to use tabs", "and fix the lint too"); not when they ask for a new run
   {"op": "status"}     the person asks how their agent runs are going
@@ -1857,7 +1903,7 @@ impl friday_goal_execution::Tool for AgentsTool {
     }
 
     fn description(&self) -> &str {
-        "Runs a coding agent (opencode, agy, Claude Code) on a task in a folder, answers its routine approvals, and reports (agents.run)"
+        "Runs a coding agent (opencode, agy, Claude Code, Codex) on a task in a folder, answers its routine approvals, and reports (agents.run)"
     }
 
     fn capabilities(&self) -> Vec<friday_goal_execution::Capability> {
@@ -1902,7 +1948,7 @@ impl friday_goal_execution::Tool for AgentsTool {
             Some("run") => {
                 let Some(agent) = Agent::from_name(choice["agent"].as_str().unwrap_or("opencode"))
                 else {
-                    return ToolResult::error("FRIDAY can run opencode, agy or Claude Code");
+                    return ToolResult::error("FRIDAY can run opencode, agy, Claude Code or Codex");
                 };
                 if agent.program().is_none() {
                     return ToolResult::error(format!("{} isn't installed", agent.name()));
@@ -2395,6 +2441,12 @@ mod tests {
                 "session/resume" => json!({"jsonrpc": "2.0", "id": id,
                     "error": {"code": -32002, "message": "Session not found"}}),
                 "session/new" => json!({"jsonrpc": "2.0", "id": id, "result": {"sessionId": "s2"}}),
+                // Like Codex's adapter: only Read-only is taken here.
+                "session/set_mode" if msg["params"]["modeId"] == "read-only" && keeps => {
+                    json!({"jsonrpc": "2.0", "id": id, "result": {}})
+                }
+                "session/set_mode" => json!({"jsonrpc": "2.0", "id": id,
+                    "error": {"code": -32602, "message": "unknown mode"}}),
                 "session/prompt" => {
                     let chunk = json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "s1",
                         "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "Added the tests."}}}});
@@ -2413,6 +2465,54 @@ mod tests {
                 .unwrap();
         }
         seen
+    }
+
+    /// Codex asks before each step only in Read-only: a follow-up's resumed
+    /// session is put there before the prompt, and a session that won't go
+    /// there runs nothing.
+    #[tokio::test]
+    async fn codex_sessions_are_put_in_read_only_or_run_nothing() {
+        for keeps in [true, false] {
+            let dir = TempDir(std::env::temp_dir().join(format!(
+                "friday-agents-codex-{keeps}-{}",
+                std::process::id()
+            )));
+            std::fs::create_dir_all(dir.path()).unwrap();
+            let mut rec = run_in(dir.path(), "/w/site");
+            rec.run.agent = Agent::Codex;
+            rec.run.session = Some("s1".into());
+            let (friday_out, agent_in) = duplex(1 << 16);
+            let (agent_out, friday_in) = duplex(1 << 16);
+            // `keeps` false: the session is lost and the mode refused.
+            let agent = tokio::spawn(resuming_agent(agent_out, agent_in, keeps));
+            let mut lines = read_lines(friday_in);
+            let mut acp = Driver::new(&mut rec, friday_out, None);
+            let outcome = acp.drive(&mut lines).await;
+            drop(acp);
+            drop(lines);
+            let seen = agent.await.unwrap();
+            if keeps {
+                assert!(outcome.is_ok(), "{:?}", outcome.err());
+                assert_eq!(
+                    seen,
+                    [
+                        "initialize ",
+                        "session/resume s1",
+                        "session/set_mode s1",
+                        "session/prompt s1"
+                    ]
+                );
+            } else {
+                let Err(err) = outcome else {
+                    panic!("a session not in Read-only ran");
+                };
+                assert!(err.contains("couldn't make codex ask"), "{err}");
+                assert!(
+                    !seen.iter().any(|m| m.starts_with("session/prompt")),
+                    "{seen:?}"
+                );
+            }
+        }
     }
 
     async fn follow_up_run(keeps: bool) -> (Vec<String>, Outcome, Run) {
@@ -2845,7 +2945,7 @@ mod tests {
         assert!(unknown
             .error
             .unwrap()
-            .contains("opencode, agy or Claude Code"));
+            .contains("opencode, agy, Claude Code or Codex"));
         // A follow-up with no run before it says how to start one.
         let nothing = ask_tool(
             r#"{"op": "followup", "task": "also add tests"}"#,
@@ -2917,20 +3017,25 @@ mod tests {
         run.agent = agent;
         run.folder = folder.path().to_path_buf();
         run.task =
-            "Create a file hello.txt containing the word hi. Then run the shell command `ls`. \
-            Then delete old.txt with the shell command `rm old.txt`. Report what happened."
+            "Do these as three separate steps, one command each, never chained: create a file \
+            hello.txt containing the word hi. Then run the shell command `ls`. Then delete \
+            old.txt with the shell command `rm old.txt`. Report what happened."
                 .into();
         let id = run.id.clone();
-        // The person refuses the rm when it waits.
+        // The person refuses the rm when it waits, and says yes to anything
+        // else that waits (Codex makes files with a shell redirect, which asks).
         let watch = dir.path().to_path_buf();
         let person = tokio::spawn(async move {
-            for _ in 0..1800 {
+            for _ in 0..3000 {
                 if let Ok(b) = std::fs::read(watch.join(format!("{id}.json"))) {
                     let r: Run = serde_json::from_slice(&b).unwrap();
                     if r.status == Status::WaitingForYou {
                         let step = r.pending.unwrap().step;
-                        answer(&watch, &id, false).unwrap();
-                        return Some(step);
+                        if step.contains("rm") {
+                            answer(&watch, &id, false).unwrap();
+                            return Some(step);
+                        }
+                        answer(&watch, &id, true).unwrap();
                     }
                     if matches!(r.status, Status::Done | Status::Failed) {
                         return None;
@@ -2959,6 +3064,6 @@ mod tests {
             asked.is_some_and(|s| s.contains("rm")),
             "rm never waited for the person"
         );
-        assert!(done.approved_by_friday >= 1 && done.rejected >= 1);
+        assert!(done.approved_by_friday + done.approved_by_you >= 1 && done.rejected >= 1);
     }
 }
