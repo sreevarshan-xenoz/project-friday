@@ -67,17 +67,22 @@ Singleton {
     root.phone = phone;
     root.step = 0;
     root.failedStep = -1;
-    root.camera = false;
+    // The steps are settled before the tour shows, so none appears or
+    // shifts while you're on it.
+    root.active = false;
     cameraCheck.running = true;
-    root.active = true;
   }
 
-  // Only a camera FRIDAY could use, and only while face unlock is off.
+  // Only a camera FRIDAY could use, and only while face unlock is off. In
+  // tests FRIDAY_VIDEO_DEVS stands in for /dev/video* and FRIDAY_FACE_PAM for
+  // the face unlock PAM file.
   Process {
     id: cameraCheck
-    // FRIDAY_VIDEO_DEVS stands in for /dev/video* in tests.
-    command: ["sh", "-c", "ls ${FRIDAY_VIDEO_DEVS:-/dev/video*} >/dev/null 2>&1 && [ ! -e /etc/pam.d/friday-lock-face ]"]
-    onExited: code => root.camera = code === 0
+    command: ["sh", "-c", "[ -e \"${FRIDAY_FACE_PAM:-/etc/pam.d/friday-lock-face}\" ] && exit 1; for d in ${FRIDAY_VIDEO_DEVS:-/dev/video*}; do [ -e \"$d\" ] && exit 0; done; exit 1"]
+    onExited: code => {
+      root.camera = code === 0;
+      root.active = true;
+    }
   }
   function next() { if (root.last) root.finish(); else root.step++; }
   function back() { if (root.step > 0) root.step--; }

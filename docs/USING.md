@@ -234,12 +234,13 @@ checks that everything is running; `friday report` writes a redacted bug report.
 The lock screen can know your face. The first-login tour offers it when the
 computer has a camera; any time later, run `friday face setup` in a terminal.
 
-1. It installs Gaze (`gaze-bin`, built from the AUR on this computer) and asks
-   for your password to do so.
-2. Gaze learns your face: look at the camera and follow its prompts.
-3. It turns face unlock on for the lock screen only. It asks before using your
-   face for `sudo` and password prompts too; say no if you're unsure.
-4. Press Super+L and look at the camera to try it. Typing your password always
+1. It says what it will do and asks before starting.
+2. If Gaze isn't installed yet, it installs it (`gaze-bin`, built from the AUR
+   on this computer), which asks for your password.
+3. Gaze learns your face: look at the camera and follow its prompts.
+4. It turns face unlock on for the lock screen. Then it asks whether to use
+   your face for `sudo` and password prompts too; say no if you're unsure.
+5. Press Super+L and look at the camera to try it. Typing your password always
    works too, so a failed look never locks you out.
 
 Your face is checked on this computer; no picture is sent anywhere. An
