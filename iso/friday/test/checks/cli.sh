@@ -1287,6 +1287,17 @@ contains "health: and each part's switches" "$hp" "switches: screen-what-changed
 bash "$F" feature screen-ocr off >/dev/null
 contains "health: a switched-off part says so" "$(bash "$F" health 2>&1)" "screen-ocr OFF"
 bash "$F" feature screen-ocr on >/dev/null
+echo "state sounds"
+SND="$W/sounds"; mkdir -p "$SND"; touch "$SND/complete.oga" "$SND/dialog-error.oga" "$SND/message.oga"
+printf '#!/bin/sh\necho "pw-play $*" >>"%s"\n' "$LOG" >"$S/pw-play"; chmod +x "$S/pw-play"
+: >"$LOG"; FRIDAY_SOUNDS_DIR="$SND" bash "$F" ask "a quiet one"; sleep 0.5
+if grep -q "pw-play" "$LOG"; then fail "a sound played with sounds off"; else pass "sounds are off unless turned on"; fi
+contains "sounds turn on" "$(FRIDAY_SOUNDS_DIR="$SND" bash "$F" sounds on)" "Sounds: on"
+: >"$LOG"; FRIDAY_SOUNDS_DIR="$SND" bash "$F" ask "a quiet one"; sleep 0.5
+contains "an answer done plays the done cue" "$(cat "$LOG")" "complete.oga"
+: >"$LOG"; FRIDAY_SOUNDS_DIR="$SND" bash "$F" ask "hit the limit"; sleep 0.5
+contains "a failed answer plays the failed cue" "$(cat "$LOG")" "dialog-error.oga"
+bash "$F" sounds off >/dev/null; rm -f "$S/pw-play"
 echo "region ask"
 printf '#!/bin/sh\n[ -n "$SLURP_CANCEL" ] && exit 1\necho "10,20 300x200"\n' >"$S/slurp"; chmod +x "$S/slurp"
 : >"$LOG"; PICK="what is this chart" bash "$F" ask --region; sleep 0.3

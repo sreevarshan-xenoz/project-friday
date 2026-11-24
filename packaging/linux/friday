@@ -81,6 +81,7 @@ Autonomous Agent & Cognitive Loop:
   friday retention                 How long each kind of record FRIDAY keeps stays
   friday day [today|yesterday|YYYY-MM-DD|forget <date|all>]  A short summary of a day by project, kept here
   friday dictations [copy <n>|clear]  The last 20 voice-typed texts, to get one back
+  friday sounds [on|off]           Quiet sounds for listening, an answer done, one that failed
   friday activity                  Agent steps waiting for you, runs going now, standing tasks, runs finished lately
   friday providers                 How each AI provider is doing (limit hit, OK…) and who answered last
   friday model [ask|screen|chores] [provider/model|auto]  The model each job tries first
@@ -1186,6 +1187,30 @@ friday_conversation_end() {
   return 1
 }
 # friday_chime: the short sound that means "FRIDAY is listening now".
+# Soft state sounds (friday sounds on; off unless turned on): the desktop's
+# own quiet cues for listening, an answer done, and one that failed.
+friday_sounds_flag() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/sounds"; }
+friday_cue() { # listening|done|failed
+  [ -e "$(friday_sounds_flag)" ] && friday_feature_on state-sounds || return 0
+  local name
+  case "$1" in
+    listening) name=message ;;
+    done) name=complete ;;
+    failed) name=dialog-error ;;
+    *) return 0 ;;
+  esac
+  local f="${FRIDAY_SOUNDS_DIR:-/usr/share/sounds/freedesktop/stereo}/$name.oga"
+  [ -f "$f" ] && command -v pw-play >/dev/null 2>&1 || return 0
+  ( timeout 3 pw-play --volume 0.5 "$f" >/dev/null 2>&1 & ) || true
+}
+friday_sounds() { # [on|off|status]
+  case "${1:-status}" in
+    on) mkdir -p "$(dirname "$(friday_sounds_flag)")"; : >"$(friday_sounds_flag)"; echo "Sounds: on (listening, done, failed)."; friday_cue done ;;
+    off) rm -f "$(friday_sounds_flag)"; echo "Sounds: off." ;;
+    status) if [ -e "$(friday_sounds_flag)" ]; then echo "Sounds: on"; else echo "Sounds: off (friday sounds on)"; fi ;;
+    *) echo "Usage: friday sounds [on|off|status]" >&2; return 2 ;;
+  esac
+}
 friday_chime() {
   local f=/usr/share/sounds/freedesktop/stereo/message.oga
   [ -f "$f" ] && command -v pw-play >/dev/null 2>&1 && timeout 3 pw-play "$f" >/dev/null 2>&1 || true
@@ -2580,6 +2605,7 @@ friday_hold() {
         if [ "${2:-}" = "--type" ]; then timeout 2 hyprctl activewindow -j >"$d/typewin" 2>/dev/null || : >"$d/typewin"; fi
         if [ "$mode" = "--type" ] && [ -e "$d/latched" ]; then pill dictatingLatched || true
         elif [ "$mode" = "--type" ]; then pill dictating || true; else pill listening || true; fi
+        friday_cue listening
         timeout "$most" pw-record --rate 16000 --channels 1 --format s16 "$d/rec.wav" &
         echo $! >"$d/rec.pid"
         [ "$(cat "$d/pressed" 2>/dev/null)" = "$token" ] || kill -TERM $! 2>/dev/null
@@ -4099,6 +4125,7 @@ speak-as-it-comes|Spoken answers start with the first sentence while the rest is
 voice-preview|friday voice preview on: what whisper heard opens in the ask box to edit or drop before it is used
 health-page|friday health: each part of FRIDAY, whether it works here, and its switches
 voice-try|friday voice speak try [N]: hear a voice, or each in turn, before choosing; the choice stays
+state-sounds|With friday sounds on: quiet cues for listening, an answer done and one that failed
 clipboard-expiry|A clipboard copied over 10 minutes ago is not used as context (known when friday clips are on); password-manager copies never are
 ask-timings|How long each stage of an ask takes is kept on this computer (friday doctor shows the median and slow end)
 spoken-length|Spoken answers say two, six or all sentences (friday voice speak length brief, normal or detailed); the card shows all
@@ -5450,6 +5477,7 @@ case "${1:-}" in
       local ans_ok="$1" summary_json="$2" raw_out="$3"
       local answer title details preview urgency actions meta=""
       local local_only=false
+      if $ans_ok; then friday_cue done; else friday_cue failed; fi
       [ "$(jq -r '.local // false' <<<"$summary_json" 2>/dev/null)" = true ] && meta="On this computer · nothing was sent" && local_only=true
       if $ans_ok; then
         answer=$(jq -r '.result // empty' <<<"$summary_json")
@@ -6259,6 +6287,9 @@ $offer"
   dictations)
     # The last 20 voice-typed texts, newest first; copy one back.
     shift; friday_dictations "$@"; exit $?
+  sounds)
+    # Quiet cues for listening, done and failed (off unless turned on).
+    shift; friday_sounds "$@"; exit $?
     ;;
   retention)
     # How long each kind of record FRIDAY keeps stays.
