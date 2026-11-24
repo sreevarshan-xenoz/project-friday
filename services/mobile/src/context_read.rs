@@ -435,8 +435,10 @@ where
     last_seen: std::sync::Arc<std::sync::Mutex<Option<LastSeen>>>,
 }
 
+#[derive(Clone)]
 struct LastSeen {
     class: String,
+    title: String,
     words: String,
     at: std::time::Instant,
 }
@@ -446,19 +448,28 @@ const LAST_SEEN_KEEP: std::time::Duration = std::time::Duration::from_secs(30 * 
 
 /// Whether a screen question asks what changed since the last look.
 pub fn asks_what_changed(question: &str) -> bool {
-    let q = question.to_lowercase();
+    // Only the short question itself: "what changed in this commit?" or
+    // "what's different between these columns?" is about the content.
+    let q = question
+        .trim()
+        .trim_end_matches(['?', '.', '!'])
+        .to_lowercase();
+    let q = q
+        .trim_end_matches(" since then")
+        .trim_end_matches(" now")
+        .trim_end_matches(" here");
     [
         "what changed",
         "what's changed",
         "what has changed",
         "anything changed",
         "has anything changed",
-        "what is different",
+        "did anything change",
         "what's different",
-        "what's new here",
+        "what is different",
+        "what's new",
     ]
-    .iter()
-    .any(|p| q.contains(p))
+    .contains(&q)
 }
 
 /// The lines of `new` not in `old` (`+ `) and of `old` not in `new` (`- `),
@@ -486,12 +497,12 @@ pub fn line_diff(old: &str, new: &str) -> Option<String> {
         if i < a.len() && j < b.len() && a[i] == b[j] {
             i += 1;
             j += 1;
-        } else if j < b.len() && (i == a.len() || lcs[i][j + 1] >= lcs[i + 1][j]) {
-            out.push(format!("+ {}", b[j]));
-            j += 1;
-        } else {
+        } else if i < a.len() && (j == b.len() || lcs[i + 1][j] >= lcs[i][j + 1]) {
             out.push(format!("- {}", a[i]));
             i += 1;
+        } else {
+            out.push(format!("+ {}", b[j]));
+            j += 1;
         }
     }
     Some(out.join("\n"))
@@ -912,42 +923,55 @@ where
             "The person asked about the window they are looking at ({class}: {title}). \
              Its text, read from the app's accessibility tree, follows between the lines."
         );
-        // "What changed?" after an earlier ask about the same app: only the
-        // changed lines go, or nothing at all when nothing changed.
-        let before = self.last_seen.lock().unwrap().replace(LastSeen {
-            class: class.clone(),
-            words: words.clone(),
-            at: std::time::Instant::now(),
-        });
+        // "What changed?" after an earlier ask about the same window: only the
+        // changed lines go, or nothing at all when nothing changed. What is
+        // kept and compared is the masked text, and never a window showing a
+        // secret or one whose text was cut.
         let mut words = words;
-        if let Some(b) = before.filter(|b| {
-            crate::features::on("screen-what-changed")
-                && b.class == class
-                && b.at.elapsed() < LAST_SEEN_KEEP
-                && question.is_some_and(asks_what_changed)
-        }) {
-            let mins = (b.at.elapsed().as_secs() / 60).max(1);
-            let ago = if mins == 1 {
-                "a minute ago".to_string()
-            } else {
-                format!("{mins} minutes ago")
+        let mut masked_before = masked_title;
+        if crate::features::on("screen-what-changed") {
+            let (masked, n) = friday_goal_execution::mask_secrets(&words);
+            let keep = !*secret && !cut;
+            let now = LastSeen {
+                class: class.clone(),
+                title: title.clone(),
+                words: masked,
+                at: std::time::Instant::now(),
             };
-            match line_diff(&b.words, &words) {
-                Some(d) if d.is_empty() => {
-                    return Some(Ok((
-                        format!("Nothing in the window's text changed since you asked {ago}."),
-                        false,
-                    )));
+            let before = {
+                let mut last = self.last_seen.lock().unwrap();
+                std::mem::replace(&mut *last, keep.then(|| now.clone()))
+            };
+            if let Some(b) = before.filter(|b| {
+                keep && b.class == class
+                    && b.title == title
+                    && b.at.elapsed() < LAST_SEEN_KEEP
+                    && question.is_some_and(asks_what_changed)
+            }) {
+                let mins = (b.at.elapsed().as_secs() / 60).max(1);
+                let ago = if mins == 1 {
+                    "a minute ago".to_string()
+                } else {
+                    format!("{mins} minutes ago")
+                };
+                match line_diff(&b.words, &now.words) {
+                    Some(d) if d.is_empty() => {
+                        return Some(Ok((
+                            format!("Nothing in the window's text changed since you asked {ago}."),
+                            false,
+                        )));
+                    }
+                    Some(d) => {
+                        intro = format!(
+                            "The person asks what changed in the window they are looking at \
+                             ({class}: {title}) since they asked about it {ago}. The lines that \
+                             went (-) and came (+) follow between the lines; the rest is the same."
+                        );
+                        words = d;
+                        masked_before += n;
+                    }
+                    None => {}
                 }
-                Some(d) => {
-                    intro = format!(
-                        "The person asks what changed in the window they are looking at \
-                         ({class}: {title}) since they asked about it {ago}. The lines that \
-                         went (-) and came (+) follow between the lines; the rest is the same."
-                    );
-                    words = d;
-                }
-                None => {}
             }
         }
         let what = if cut {
@@ -957,7 +981,7 @@ where
         };
         let tell = |r: String| receipt(format!("{class} · {what}, {r}"));
         Some(
-            self.send_words(&intro, &words, masked_title, question, progress, &tell)
+            self.send_words(&intro, &words, masked_before, question, progress, &tell)
                 .await
                 .map(|answer| (answer, cut)),
         )
@@ -2466,9 +2490,12 @@ mod tests {
     fn a_line_diff_names_what_came_and_went() {
         assert_eq!(line_diff("a\nb\nc", "a\nb\nc").unwrap(), "");
         assert_eq!(line_diff("a\nb\nc", "a\nc\nd").unwrap(), "- b\n+ d");
+        assert_eq!(line_diff("a\nx\nc", "a\ny\nc").unwrap(), "- x\n+ y");
         assert!(line_diff(&"x\n".repeat(2000), "y").is_none());
         assert!(asks_what_changed("What changed since then?"));
         assert!(!asks_what_changed("what is this?"));
+        assert!(asks_what_changed("Anything changed now?"));
+        assert!(!asks_what_changed("what changed in this commit?"));
     }
 
     #[tokio::test]
