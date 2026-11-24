@@ -96,6 +96,7 @@ Autonomous Agent & Cognitive Loop:
   friday memory import <file> [--apply]  Bring in another assistant's notes (a preview first)
   friday secrets [status|keychain|file]  API keys in your desktop keyring, or back in friday.env
   friday desktop [status|on|off]   Let FRIDAY control your windows, apps, volume and music
+  friday keys list                 Every key and what it does, read from Hyprland (Super+K)
   friday keys update               Add FRIDAY keys from a newer version to your key file (FRIDAY OS)
   friday status | system-info      Inspect daemon state, memory, and telemetry
   friday context screen [--yes]    Share screen context with assistant
@@ -124,7 +125,8 @@ Autonomous Agent & Cognitive Loop:
                                    FRIDAY answers out loud, in a voice made on this computer
   friday say "text"                Say something now (friday say --stop to stop)
   friday hold start|end --type     Voice typing: Super+Shift+Y, hold and speak, the words are typed where you are
-  friday app                       Open FRIDAY Settings (a window for all of this, no terminal)
+  friday settings [page]           Open FRIDAY Settings (Super+I), e.g. friday settings Keys;
+                                   friday app does the same
   friday tour                      Take the first-login tour again
   friday screen-text [status|on|off]
   friday feature [list|<name> on|off]  Switch one of FRIDAY's features off or on again
@@ -954,12 +956,30 @@ FRIDAY_FREE_NOTICE="Free models (OpenCode Zen, Kilo, OVHcloud) may keep what you
 # exposes enough text (its accessibility tree) is asked about as that text
 # instead: up to 12,000 characters, which can include text scrolled out of
 # view, and it can go to any provider you use, not only ones that see images.
+# `friday keys list`: every key Hyprland has now, with what it does, read
+# from Hyprland itself so the sheet can't go stale. A key bound twice (press
+# and let go) shows once.
+friday_keys_list() {
+  command -v hyprctl >/dev/null 2>&1 || { echo "The key sheet needs Hyprland (hyprctl isn't here)."; return 1; }
+  local binds
+  binds=$(timeout 3 hyprctl binds -j 2>/dev/null) || binds=""
+  [ -n "$binds" ] || { echo "Hyprland didn't answer; is it running?"; return 1; }
+  jq -r '.[] | select((.description // "") != "") |
+    ([ (if ((.modmask / 64) | floor) % 2 == 1 then "Super" else empty end),
+       (if ((.modmask / 4) | floor) % 2 == 1 then "Ctrl" else empty end),
+       (if ((.modmask / 8) | floor) % 2 == 1 then "Alt" else empty end),
+       (if .modmask % 2 == 1 then "Shift" else empty end),
+       (.key | if length == 1 then ascii_upcase else . end) ] | join("+")) + "\t" + .description' <<<"$binds" 2>/dev/null \
+    | awk -F'\t' '!seen[$1]++ { printf "%-22s %s\n", $1, $2 }'
+}
+
 # FRIDAY OS's key file is copied into a new home once, so keys added by a
 # later update don't reach older homes. `friday keys update` adds the missing
 # FRIDAY keys right after Super+Y and changes nothing else.
 friday_keys() {
   local keys="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/bindings.lua"
   case "${1:-update}" in
+    list) friday_keys_list ;;
     update)
       if ! grep -qs '"friday hold start"' "$keys"; then
         echo "No FRIDAY OS key file here ($keys); nothing to update."
@@ -979,9 +999,10 @@ friday_keys() {
 friday hold start --type|"friday hold end", { release = true })|o.bind("SUPER + SHIFT + Y", "FRIDAY: Voice typing", "friday hold start --type")\no.bind("SUPER + SHIFT + Y", "FRIDAY: Voice typing (let go)", "friday hold end --type", { release = true })|Added voice typing: hold Super+Shift+Y, speak, let go (friday voice setup first).
 friday paste-as|"friday ask --selection")|o.bind("SUPER + ALT + V", "FRIDAY: Paste as…", "friday paste-as")|Added Paste as: copy text, press Super+Alt+V, pick how to paste it.
 friday clips pick|"friday paste-as")|o.bind("SUPER + CTRL + V", "FRIDAY: Clips and snippets", "friday clips pick")|Added clips: Super+Ctrl+V pastes something you copied earlier or a snippet (friday clips on first).
+"friday settings"|"friday cancel")|o.bind("SUPER + I", "FRIDAY: Settings", "friday settings")|Added Settings: Super+I opens FRIDAY Settings.
 KEYS
       $added || echo "Your keys are up to date." ;;
-    *) echo "Usage: friday keys update" >&2; return 1 ;;
+    *) echo "Usage: friday keys [list|update]" >&2; return 1 ;;
   esac
 }
 
@@ -2633,7 +2654,7 @@ friday_welcome() {
     setup) foot -T "FRIDAY setup" bash -c 'friday setup-ai; echo; read -rsn1 -p "Press any key to close."' ;;
     connect) foot -T "FRIDAY · connect an account" bash -c 'friday connect; echo; read -rsn1 -p "Press any key to close."' ;;
     keys)  notify-send -a FRIDAY -t 20000 "FRIDAY shortcuts" \
-             $'Super+Y  ask\nSuper+Alt+Y  ask about selected text\nSuper+Ctrl+Y  ask about the screen\nSuper  apps · Super+L  lock · Super+K  every key\nfriday doctor  check health\nfriday answers  past answers\nfriday sent  egress log' ;;
+             $'Super+Y  ask\nSuper+Alt+Y  ask about selected text\nSuper+Ctrl+Y  ask about the screen\nSuper  apps · Super+L  lock · Super+I  settings · Super+K  every key\nfriday doctor  check health\nfriday answers  past answers\nfriday sent  egress log' ;;
   esac
 }
 
