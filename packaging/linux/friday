@@ -3722,10 +3722,16 @@ friday_memory() {
           local fact
           fact=$(sed -n "${n}p" "$mem_file")
           [ -n "$fact" ] || { echo "No memory numbered $n in the last answer." >&2; return 1; }
+          # The card names the fact too: a list that moved since (a quick
+          # second click) forgets nothing.
+          if [ -n "${4:-}" ] && [ "$fact" != "$4" ]; then
+            echo "The list changed; nothing forgotten." >&2; return 1
+          fi
           # Exactly that fact's line: "forget" by words could take others with it.
           local f; f=$(friday_memory_file)
-          if awk -v l="- $fact" '$0 == l { n++ } END { exit !n }' "$f" 2>/dev/null; then
-            awk -v l="- $fact" '$0 != l' "$f" >"$f.tmp" && mv -f "$f.tmp" "$f"
+          # Through the environment: awk -v would turn backslashes into escapes.
+          if L="- $fact" awk '$0 == ENVIRON["L"] { n++ } END { exit !n }' "$f" 2>/dev/null; then
+            L="- $fact" awk '$0 != ENVIRON["L"]' "$f" >"$f.tmp" && mv -f "$f.tmp" "$f"
             echo "Forgot: $fact"
           else
             echo "\"$fact\" isn't in $f any more."
@@ -3733,7 +3739,7 @@ friday_memory() {
           sed "${n}d" "$mem_file" >"$mem_file.tmp" && mv -f "$mem_file.tmp" "$mem_file"
           chmod 0600 "$mem_file" 2>/dev/null || true
           ;;
-        *) echo "usage: friday memory used [forget <n>]" >&2; return 2 ;;
+        *) echo "usage: friday memory used [forget <n> [the fact]]" >&2; return 2 ;;
       esac
       ;;
     *) echo "Usage: friday memory [list|edit|forget <words>|import <file> [--apply]|tidy [apply]|used [forget <n>]]" >&2; return 2 ;;

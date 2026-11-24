@@ -789,6 +789,16 @@ if grep -qx -- "- I use fish" "$HOME/.config/friday/memory.md"; then fail "I use
 contains "only that line: a longer one with the same words stays" "$(cat "$HOME/.config/friday/memory.md")" "- I use fish and zsh at work"
 contains "last-memories now has line 2 as line 1" "$(bash "$F" memory used)" "1. my editor is Helix"
 if grep -q "I use fish" "$HOME/.local/state/friday/last-memories"; then fail "I use fish still in last-memories"; else pass "I use fish removed from last-memories"; fi
+# A second quick click names a fact that's no longer line 1: nothing goes.
+refuse "a moved list forgets nothing" bash "$F" memory used forget 1 "I use fish"
+contains "and Helix is still remembered" "$(cat "$HOME/.config/friday/memory.md")" "- my editor is Helix"
+# Backslashes are matched as written.
+printf '%s\n' 'C:\notes\today is my folder' >"$HOME/.local/state/friday/last-memories"
+printf -- '- %s\n' 'C:\notes\today is my folder' 'C:\notesXtoday' >>"$HOME/.config/friday/memory.md"
+contains "a fact with backslashes is forgotten" "$(bash "$F" memory used forget 1 'C:\notes\today is my folder')" "Forgot:"
+contains "and the similar line stays" "$(cat "$HOME/.config/friday/memory.md")" 'C:\notesXtoday'
+if grep -qF -- '- C:\notes\today is my folder' "$HOME/.config/friday/memory.md"; then fail "the backslash fact stayed"; else pass "the backslash fact is gone"; fi
+printf 'my editor is Helix\n' >"$HOME/.local/state/friday/last-memories"
 bash "$F" memory used forget 1 >/dev/null
 contains "empty again" "$(bash "$F" memory used)" "No remembered facts were used in the last answer"
 rm -f "$HOME/.local/state/friday/last-memories" "$HOME/.config/friday/memory.md"

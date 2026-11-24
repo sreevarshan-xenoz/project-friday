@@ -66,7 +66,7 @@ Singleton {
 
   function forgetMemory(index) {
     if (index >= 0 && index < root.memories.length) {
-      Quickshell.execDetached(["friday", "memory", "used", "forget", String(index + 1)]);
+      Quickshell.execDetached(["friday", "memory", "used", "forget", String(index + 1), root.memories[index]]);
       const copy = root.memories.slice();
       copy.splice(index, 1);
       root.memories = copy;

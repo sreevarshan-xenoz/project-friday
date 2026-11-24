@@ -220,7 +220,8 @@ PanelWindow {
           onClicked: { Answer.tryAnother(); Answer.dismiss(); }
         }
         Chip {
-          visible: Answer.memories.length > 0 && Config.featureOn("memories-used")
+          // A finished answer's: never the last one's while a new one works.
+          visible: win.answering && Answer.memories.length > 0 && Config.featureOn("memories-used")
           icon: Icons.memory
           text: "Used " + Answer.memories.length + (Answer.memories.length === 1 ? " memory" : " memories")
           primary: card.memoriesOpen

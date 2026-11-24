@@ -1644,8 +1644,9 @@ fn used_labels(
 /// The remembered facts that shaped this answer. Every ask carries all of
 /// them on one "about you: a; b; c" line, so a fact counts only when the
 /// question or the answer shares a word of four letters or more with it
-/// (not a common one). A fact with a secret masked in it is left out: it
-/// can't be matched to its line to forget it. At most 5.
+/// (not a common one). A fact with a secret masked in it, or over 200
+/// characters, is left out: it couldn't be matched to its line to forget it.
+/// At most 5.
 fn used_memories(recalled: &[String], question: &str, answer: &str) -> Vec<String> {
     const COMMON: [&str; 16] = [
         "that", "this", "with", "have", "from", "your", "what", "when", "which", "about", "they",
@@ -1666,8 +1667,10 @@ fn used_memories(recalled: &[String], question: &str, answer: &str) -> Vec<Strin
         .map(str::trim)
         .filter(|f| !f.is_empty() && !f.contains(friday_goal_execution::MASKED_PLACEHOLDER))
         .filter(|f| !words(f).is_disjoint(&asked))
+        // A longer one is left out rather than cut: cut, it matches no line.
+        .filter(|f| f.chars().count() <= 200)
         .take(5)
-        .map(|f| f.chars().take(200).collect())
+        .map(str::to_string)
         .collect()
 }
 
