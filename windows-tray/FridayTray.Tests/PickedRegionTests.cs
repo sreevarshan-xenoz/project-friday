@@ -20,6 +20,14 @@ public class PickedRegionTests
     }
 
     [Fact]
+    public void A_click_is_a_small_area_around_the_point()
+    {
+        Assert.True(PickedRegion.IsClick(50, 50, 52, 51));
+        Assert.False(PickedRegion.IsClick(50, 50, 55, 400));
+        Assert.Equal("396,296 8x8", PickedRegion.Point(400, 300).Arg);
+    }
+
+    [Fact]
     public void An_area_left_of_or_above_the_primary_screen_keeps_its_negative_origin()
     {
         Assert.Equal("-1920,-40 800x600", PickedRegion.FromCorners(-1920, -40, -1120, 560)!.Value.Arg);

@@ -1292,6 +1292,9 @@ printf '#!/bin/sh\n[ -n "$SLURP_CANCEL" ] && exit 1\necho "10,20 300x200"\n' >"$
 contains "region: the picked area goes with the question" "$(cat "$LOG")" "context screen --yes --ask what is this chart --region 10,20 300x200"
 : >"$LOG"; SLURP_CANCEL=1 PICK="never asked" bash "$F" ask --region; sleep 0.3
 if grep -q "never asked" "$LOG"; then fail "region: Esc while dragging still asked"; else pass "region: Esc while dragging sends nothing"; fi
+printf '#!/bin/sh\n[ "$1" = -p ] && { echo "400,300 1x1"; exit 0; }\necho "10,20 300x200"\n' >"$S/slurp"; chmod +x "$S/slurp"
+: >"$LOG"; PICK="what does this do" bash "$F" ask --point; sleep 0.3
+contains "point: the clicked spot goes with the question" "$(cat "$LOG")" "context screen --yes --ask what does this do --region 400,300 1x1"
 bash "$F" ask "hit the limit"; sleep 0.3
 contains "free-limit error explained with a way out" "$(cat "$state/last-answer.md")" "free limit is used up for now"
 : >"$LOG"; bash "$F" ask "nodaemon test"; sleep 0.5

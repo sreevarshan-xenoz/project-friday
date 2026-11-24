@@ -45,10 +45,16 @@ internal sealed class RegionForm : Form
         Invalidate();
     }
 
+    /// <summary>A click picks the control under it (the point-ask switch).</summary>
+    public bool AllowPoint { get; init; }
+
     protected override void OnMouseUp(MouseEventArgs e)
     {
         if (_start is not { } s) return;
-        Picked = PickedRegion.FromCorners(s.X, s.Y, Cursor.Position.X, Cursor.Position.Y);
+        var end = Cursor.Position;
+        Picked = AllowPoint && PickedRegion.IsClick(s.X, s.Y, end.X, end.Y)
+            ? PickedRegion.Point(end.X, end.Y)
+            : PickedRegion.FromCorners(s.X, s.Y, end.X, end.Y);
         DialogResult = Picked is null ? DialogResult.Cancel : DialogResult.OK;
         Close();
     }
