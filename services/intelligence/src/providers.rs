@@ -216,12 +216,81 @@ pub enum CircuitState {
     HalfOpen,
 }
 
+/// Whether the `key-pools` switch is on (FRIDAY's `features-off` list, or
+/// `FRIDAY_FEATURES_OFF` on Windows; the same check as friday-mobile's).
+fn key_pools_on() -> bool {
+    let file = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
+        .map(|d| std::fs::read_to_string(d.join("friday/features-off")).unwrap_or_default())
+        .unwrap_or_default();
+    let var = std::env::var("FRIDAY_FEATURES_OFF").unwrap_or_default();
+    !file.lines().any(|l| l.trim() == "key-pools")
+        && !var.split(',').any(|v| v.trim() == "key-pools")
+}
+
+/// The keys of a pool (`k1,k2`, spaces ignored); one key is a pool of one.
+/// With the `key-pools` switch off, the whole value is one key, as before.
+pub fn key_pool(api_key: &str) -> Vec<&str> {
+    if !key_pools_on() {
+        return vec![api_key];
+    }
+    let keys: Vec<&str> = api_key
+        .split(',')
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+        .collect();
+    if keys.is_empty() {
+        vec![""]
+    } else {
+        keys
+    }
+}
+
+/// Which key of a provider's pool is in turn, by provider name.
+static KEY_TURN: std::sync::LazyLock<Mutex<HashMap<String, usize>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn next_key(provider: &str, len: usize) -> usize {
+    KEY_TURN.lock().unwrap().get(provider).copied().unwrap_or(0) % len.max(1)
+}
+
+fn turn_key(provider: &str, len: usize) {
+    let mut turns = KEY_TURN.lock().unwrap();
+    let t = turns.entry(provider.to_string()).or_insert(0);
+    *t = (*t + 1) % len.max(1);
+}
+
+/// How long a rate-limited provider is left alone: an hour when its answer
+/// names a daily limit or quota, two minutes otherwise; `None` for another error.
+pub fn rate_limit_rest(err: &str) -> Option<std::time::Duration> {
+    let e = err.to_lowercase();
+    if !(e.contains("error status 429")
+        || e.contains("rate limit")
+        || e.contains("rate_limit")
+        || e.contains("too many requests"))
+    {
+        return None;
+    }
+    let daily = ["per-day", "per day", "daily", "quota"]
+        .iter()
+        .any(|w| e.contains(w));
+    Some(std::time::Duration::from_secs(if daily {
+        3600
+    } else {
+        120
+    }))
+}
+
 /// State machine for a provider's circuit breaker.
 pub struct CircuitBreaker {
     pub state: CircuitState,
     pub failures: usize,
     pub last_failure: Option<Instant>,
     pub cooldown_seconds: u64,
+    /// Rate-limited: left alone until then, whatever the cooldown.
+    pub resting_until: Option<Instant>,
 }
 
 impl CircuitBreaker {
@@ -231,11 +300,27 @@ impl CircuitBreaker {
             failures: 0,
             last_failure: None,
             cooldown_seconds,
+            resting_until: None,
+        }
+    }
+
+    /// A failure that names a rate limit opens the circuit at once, for as
+    /// long as [`rate_limit_rest`] says; any other counts as before.
+    pub fn record_error(&mut self, err: &str) {
+        match rate_limit_rest(err).filter(|_| key_pools_on()) {
+            Some(rest) => {
+                self.failures += 1;
+                self.last_failure = Some(Instant::now());
+                self.resting_until = Some(Instant::now() + rest);
+                self.state = CircuitState::Open;
+            }
+            None => self.record_failure(),
         }
     }
 
     pub fn record_success(&mut self) {
         self.failures = 0;
+        self.resting_until = None;
         self.state = CircuitState::Closed;
     }
 
@@ -252,6 +337,9 @@ impl CircuitBreaker {
         match self.state {
             CircuitState::Closed => true,
             CircuitState::Open => {
+                if self.resting_until.is_some_and(|u| Instant::now() < u) {
+                    return false;
+                }
                 if let Some(last) = self.last_failure {
                     if last.elapsed().as_secs() >= self.cooldown_seconds {
                         self.state = CircuitState::HalfOpen;
@@ -441,15 +529,52 @@ impl OpenAiProvider {
         stream: bool,
         json: bool,
     ) -> Result<reqwest::Response, String> {
+        // A pool of keys (`GROQ_API_KEY=k1,k2`): a rate-limited key hands
+        // the request to the next one, and the next request starts there.
+        let keys = key_pool(&self.api_key);
+        let mut tries = 0;
+        loop {
+            let key = keys
+                .get(next_key(&self.name, keys.len()))
+                .copied()
+                .unwrap_or("");
+            let res = self
+                .send_chat_with(key, model_id, prompt, stream, json)
+                .await;
+            tries += 1;
+            match res {
+                Err(e) if keys.len() > 1 && e.contains("error status 429") => {
+                    turn_key(&self.name, keys.len());
+                    if tries >= keys.len() {
+                        return Err(e);
+                    }
+                    tracing::warn!(
+                        "[Provider {}] a key is rate-limited; trying the next one",
+                        self.name
+                    );
+                }
+                other => return other,
+            }
+        }
+    }
+
+    async fn send_chat_with(
+        &self,
+        api_key: &str,
+        model_id: &str,
+        prompt: &str,
+        stream: bool,
+        json: bool,
+    ) -> Result<reqwest::Response, String> {
         let client = http_client();
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
 
         let mut headers = reqwest::header::HeaderMap::new();
         // Keyless providers (OpenCode Zen and Kilo free tiers) get no Authorization.
-        if !self.api_key.is_empty() {
+        if !api_key.is_empty() {
             headers.insert(
                 reqwest::header::AUTHORIZATION,
-                reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.api_key))
+                reqwest::header::HeaderValue::from_str(&format!("Bearer {api_key}"))
                     .map_err(|e| e.to_string())?,
             );
         }
@@ -4205,7 +4330,7 @@ impl InferenceFabric {
                         let mut cb_guard = self.circuits.lock().unwrap();
                         if let Some(cb) = cb_guard.get_mut(provider.name()) {
                             let state_before = cb.state;
-                            cb.record_failure();
+                            cb.record_error(&err);
                             state_before != cb.state && cb.state == CircuitState::Open
                         } else {
                             false
@@ -4414,7 +4539,7 @@ impl InferenceFabric {
                     {
                         let mut cb_guard = self.circuits.lock().unwrap();
                         if let Some(cb) = cb_guard.get_mut(provider.name()) {
-                            cb.record_failure();
+                            cb.record_error(&e);
                         }
                     }
                 }
@@ -4500,6 +4625,43 @@ impl Default for InferenceFabric {
 #[cfg(test)]
 mod tests {
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn a_rate_limited_provider_rests_and_a_pool_takes_turns() {
+        assert_eq!(key_pool("k1, k2,,k3"), ["k1", "k2", "k3"]);
+        assert_eq!(key_pool(""), [""]);
+        let rest = |e: &str| rate_limit_rest(e).map(|d| d.as_secs());
+        assert_eq!(
+            rest("Provider groq returned error status 429 Too Many Requests: slow down"),
+            Some(120)
+        );
+        assert_eq!(
+            rest("Provider x returned error status 429: free-models-per-day"),
+            Some(3600)
+        );
+        assert_eq!(rest("Provider x returned error status 500: oops"), None);
+        let mut cb = CircuitBreaker::new(30);
+        cb.record_error("Provider x returned error status 429: free-models-per-day");
+        assert_eq!(cb.state, CircuitState::Open);
+        assert!(
+            !cb.allow_request(),
+            "rests for the hour, past the 30 s cooldown"
+        );
+        cb.record_success();
+        assert!(cb.allow_request());
+        // Another error still needs three in a row.
+        let mut cb = CircuitBreaker::new(30);
+        cb.record_error("timed out");
+        assert!(cb.allow_request());
+        // Turns go round the pool, per provider.
+        assert_eq!(next_key("pool-test", 3), 0);
+        turn_key("pool-test", 3);
+        assert_eq!(next_key("pool-test", 3), 1);
+        turn_key("pool-test", 3);
+        turn_key("pool-test", 3);
+        assert_eq!(next_key("pool-test", 3), 0);
+        assert_eq!(next_key("other", 3), 0);
+    }
 
     struct EnvVarGuard(&'static str);
     impl Drop for EnvVarGuard {
@@ -5992,6 +6154,48 @@ mod tests {
             base_url,
             api_key: String::new(),
         }
+    }
+
+    /// A server that answers 429 to the key `k1` and streams an answer to any other.
+    async fn serve_pool() -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            for _ in 0..4 {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut buf = vec![0u8; 65536];
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_lowercase();
+                let reply = if req.contains("bearer k1") {
+                    let body = "rate limited";
+                    format!("HTTP/1.1 429 Too Many Requests\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+                } else {
+                    let body = sse(&["from the second key"]);
+                    format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+                };
+                let _ = sock.write_all(reply.as_bytes()).await;
+            }
+        });
+        format!("http://{addr}/v1")
+    }
+
+    #[tokio::test]
+    async fn a_rate_limited_key_hands_the_ask_to_the_next_one() {
+        let provider = OpenAiProvider {
+            name: "pool-provider-test".to_string(),
+            base_url: serve_pool().await,
+            api_key: "k1,k2".to_string(),
+        };
+        let text = provider
+            .complete_streaming("m", "q", false, &|_: &str| {})
+            .await
+            .unwrap();
+        assert_eq!(text, "from the second key");
+        // The next ask starts with the key that worked.
+        assert_eq!(next_key("pool-provider-test", 2), 1);
     }
 
     #[tokio::test]

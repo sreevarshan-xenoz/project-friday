@@ -679,7 +679,9 @@ pub async fn r5_2_3_2_groq_429_circuit_trips_after_threshold() -> ChaosVerdict {
         (cb.state, cb.failures)
     };
     let opened = state == CircuitState::Open;
-    let at_least_three = failures >= 3;
+    // A 429 is a rate limit: the provider rests at once (LAI-4), so one
+    // recorded failure is enough to open it; other errors still take three.
+    let recorded = failures >= 1;
     // After the breaker opens, later requests must not attempt groq (no retry
     // storm): the last request in the run must show no served provider and no
     // fresh groq failure recorded against it.
@@ -687,7 +689,7 @@ pub async fn r5_2_3_2_groq_429_circuit_trips_after_threshold() -> ChaosVerdict {
         .iter()
         .all(|o| no_deadlock(o) && bounded(o, 2000));
 
-    let passed = opened && at_least_three && no_retry_storm;
+    let passed = opened && recorded && no_retry_storm;
     ChaosVerdict {
         id: "r5_2_3_2::groq_429_circuit_trips_after_threshold",
         passed,
