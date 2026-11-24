@@ -58,7 +58,11 @@ fn record(stage: &str, ms: u64) {
         if let Ok(text) = std::fs::read_to_string(&p) {
             let lines: Vec<&str> = text.lines().collect();
             let keep = lines[lines.len().saturating_sub(2000)..].join("\n") + "\n";
-            let _ = std::fs::write(&p, keep);
+            // A reader never sees it half written.
+            let tmp = p.with_extension("jsonl.tmp");
+            if std::fs::write(&tmp, keep).is_ok() {
+                let _ = std::fs::rename(&tmp, &p);
+            }
         }
     }
 }
@@ -68,9 +72,11 @@ pub fn read() -> String {
     std::fs::read_to_string(path()).unwrap_or_default()
 }
 
+/// The nearest-rank percentile: p95 of a few asks is the slowest of them.
 fn pct(v: &mut [u64], p: usize) -> u64 {
     v.sort_unstable();
-    v[((v.len() - 1) * p) / 100]
+    let rank = (v.len() * p).div_ceil(100).max(1);
+    v[rank - 1]
 }
 
 fn secs(ms: u64) -> String {
@@ -145,7 +151,7 @@ mod tests {
         let egress = r#"{"ts":"2026-11-24T08:00:00Z","provider":"p","model":"m","kinds":["text"],"text_chars":1,"outcome":"ok","ms":3000,"first_ms":700}"#;
         let out = report(&t, egress, 50, 7);
         assert!(
-            out.contains("the first word, from the ask: 1.1 s / 1.2 s (5)"),
+            out.contains("the first word, from the ask: 1.1 s / 8.0 s (5)"),
             "{out}"
         );
         assert!(
