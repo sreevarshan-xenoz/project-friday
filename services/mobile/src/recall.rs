@@ -127,7 +127,6 @@ pub fn add(path: &Path, seen: Seen) -> std::io::Result<bool> {
 }
 
 fn append(file: &Path, seen: &Seen) -> std::io::Result<()> {
-    use std::io::Write;
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir)?;
         #[cfg(unix)]
@@ -136,13 +135,8 @@ fn append(file: &Path, seen: &Seen) -> std::io::Result<()> {
             let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
         }
     }
-    let mut opts = std::fs::OpenOptions::new();
-    opts.append(true).create(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
-    let mut f = opts.open(file)?;
     // One write per look, so a reader never sees half a line.
-    f.write_all(format!("{}\n", serde_json::to_string(seen).unwrap_or_default()).as_bytes())
+    crate::jsonl::append(file, &serde_json::to_string(seen).unwrap_or_default())
 }
 
 /// Drops the hours past the keep, then the oldest while the rest is over

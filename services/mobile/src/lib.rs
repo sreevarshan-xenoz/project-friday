@@ -32,6 +32,7 @@ pub mod failures;
 pub mod features;
 pub mod file_undo;
 pub mod goal_runner;
+pub mod jsonl;
 pub mod lessons;
 pub mod listen;
 pub mod local_ai;
