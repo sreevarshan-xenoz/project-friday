@@ -96,7 +96,12 @@ pub fn wrap(
     if let Some(g) = git_dir {
         rw(g.to_path_buf(), &mut a);
     }
-    for p in HIDDEN {
+    // Nor the other agents' sign-ins and sessions.
+    let others = Agent::ALL
+        .into_iter()
+        .filter(|a| *a != agent)
+        .flat_map(|a| own_state(a).iter().copied());
+    for p in HIDDEN.into_iter().chain(others) {
         let p = home.join(p);
         if p.is_dir() {
             a.extend(["--tmpfs".into(), s(&p)]);
@@ -163,13 +168,17 @@ mod tests {
         }
         std::fs::write(home.join(".ssh/id_ed25519"), "SECRET KEY").unwrap();
         std::fs::write(home.join(".netrc"), "machine x password p").unwrap();
+        // Another agent's sign-in: hidden from this one.
+        std::fs::create_dir_all(home.join(".codex")).unwrap();
+        std::fs::write(home.join(".codex/auth.json"), "CODEX TOKEN").unwrap();
+        std::fs::write(home.join(".claude.json"), "CLAUDE TOKEN").unwrap();
         prepare(Agent::Opencode, &home);
         assert!(
             home.join(".local/share/opencode").is_dir(),
             "its state folder is made first"
         );
         let script = format!(
-            "cat {h}/.ssh/id_ed25519 {h}/.netrc 2>/dev/null; \
+            "cat {h}/.ssh/id_ed25519 {h}/.netrc {h}/.codex/auth.json {h}/.claude.json 2>/dev/null; \
              echo sock=$SSH_AUTH_SOCK; \
              echo leak > /var/tmp/friday-sandbox-leak 2>/dev/null; \
              echo state > {h}/.local/share/opencode/s 2>/dev/null; \
@@ -195,6 +204,10 @@ mod tests {
         assert!(
             !said.contains("SECRET KEY") && !said.contains("password"),
             "{said}"
+        );
+        assert!(
+            !said.contains("CODEX TOKEN") && !said.contains("CLAUDE TOKEN"),
+            "saw another agent's sign-in: {said}"
         );
         assert_eq!(
             std::fs::read_to_string(work.join("made.txt")).unwrap(),

@@ -79,6 +79,8 @@ pub enum Agent {
 }
 
 impl Agent {
+    pub const ALL: [Agent; 4] = [Agent::Opencode, Agent::Agy, Agent::Claude, Agent::Codex];
+
     pub fn from_name(name: &str) -> Option<Agent> {
         match name.trim().to_lowercase().as_str() {
             "opencode" | "open code" => Some(Agent::Opencode),
@@ -448,7 +450,22 @@ impl<'a, W: AsyncWrite + Unpin> Driver<'a, W> {
                     self.send(json!({"jsonrpc": "2.0", "id": msg["id"], "result": reply}))
                         .await?;
                 }
-                Some("session/update") => self.update(&msg["params"]["update"]),
+                Some("session/update") => {
+                    let update = &msg["params"]["update"];
+                    // Out of the mode that makes it ask: stop at once.
+                    if let (Some(mode), "current_mode_update") = (
+                        self.rec.run.agent.supervised_mode(),
+                        update["sessionUpdate"].as_str().unwrap_or(""),
+                    ) {
+                        if update["currentModeId"].as_str() != Some(mode) {
+                            return Err(format!(
+                                "{} left the mode where it asks before each step, so FRIDAY stopped it",
+                                self.rec.run.agent.name()
+                            ));
+                        }
+                    }
+                    self.update(update)
+                }
                 Some(_) if msg.get("id").is_some() => {
                     // A request FRIDAY doesn't offer (files, terminals): say so.
                     self.send(json!({"jsonrpc": "2.0", "id": msg["id"],
@@ -830,8 +847,12 @@ pub async fn run_agent(
         let sandboxed = crate::agent_sandbox::on();
         #[cfg(not(target_os = "linux"))]
         let sandboxed = false;
+        // Whether this run really is wrapped (the sandbox needs a home folder).
+        #[allow(unused_mut)]
+        let mut wrapped = false;
         #[cfg(target_os = "linux")]
         if let (true, Some(home)) = (sandboxed, crate::agent_sandbox::home()) {
+            wrapped = true;
             let std = command.as_std();
             let args: Vec<String> = std
                 .get_args()
@@ -865,6 +886,16 @@ pub async fn run_agent(
                 };
             }
             command = c;
+        }
+        // Codex's Read-only mode still runs plain reads unasked, anywhere: a
+        // `cat` of a key would reach OpenAI. So it runs only in the sandbox,
+        // where keys and other agents' sign-ins are hidden (Linux for now).
+        if rec.run.agent == Agent::Codex && !wrapped {
+            return Err(
+                "Codex runs only in FRIDAY's sandbox, where your keys are hidden: \
+                turn it on with `friday agents sandbox on` (Linux, needs bubblewrap)"
+                    .into(),
+            );
         }
         // Claude Code says a session it no longer has on stderr: keep that.
         let claude = rec.run.agent == Agent::Claude;
@@ -2513,6 +2544,54 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Codex saying mid-turn that it left Read-only stops the run there.
+    #[tokio::test]
+    async fn codex_leaving_read_only_is_stopped() {
+        let dir = TempDir(
+            std::env::temp_dir().join(format!("friday-agents-codex-mode-{}", std::process::id())),
+        );
+        std::fs::create_dir_all(dir.path()).unwrap();
+        let mut rec = run_in(dir.path(), "/w/site");
+        rec.run.agent = Agent::Codex;
+        let (friday_out, agent_in) = duplex(1 << 16);
+        let (agent_out, friday_in) = duplex(1 << 16);
+        let agent = tokio::spawn(async move {
+            let mut out = agent_out;
+            let mut lines = BufReader::new(agent_in).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let msg: Value = serde_json::from_str(&line).unwrap();
+                let id = msg["id"].clone();
+                let reply = match msg["method"].as_str().unwrap_or("") {
+                    "initialize" => json!({"jsonrpc": "2.0", "id": id, "result": {}}),
+                    "session/new" => {
+                        json!({"jsonrpc": "2.0", "id": id, "result": {"sessionId": "s1"}})
+                    }
+                    "session/set_mode" => json!({"jsonrpc": "2.0", "id": id, "result": {}}),
+                    "session/prompt" => json!({"jsonrpc": "2.0", "method": "session/update",
+                        "params": {"sessionId": "s1", "update": {"sessionUpdate": "current_mode_update",
+                        "currentModeId": "agent-full-access"}}}),
+                    _ => continue,
+                };
+                if out
+                    .write_all(format!("{reply}\n").as_bytes())
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        let mut lines = read_lines(friday_in);
+        let mut acp = Driver::new(&mut rec, friday_out, None);
+        let Err(err) = acp.drive(&mut lines).await else {
+            panic!("ran on outside Read-only");
+        };
+        assert!(err.contains("left the mode"), "{err}");
+        drop(acp);
+        drop(lines);
+        agent.await.unwrap();
     }
 
     async fn follow_up_run(keeps: bool) -> (Vec<String>, Outcome, Run) {
