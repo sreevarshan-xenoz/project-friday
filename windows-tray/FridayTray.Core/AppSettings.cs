@@ -152,6 +152,7 @@ public static class AppSettings
         ("action-check", "Before a risky action, say what will change; after it, check and say done, partly or failed"),
         ("extension-autoinstall", "Settings installs the browser extension for you (Developer mode, Load unpacked)"),
         ("speak-as-it-comes", "Spoken answers start with the first sentence while the rest is still coming"),
+        ("tree-trim", "A window's text leaves out what the app marks hidden, repeated controls and icon glyphs, so asks are smaller"),
         ("app-instructions", "Your instructions for each app (app-instructions in the config folder) go with asks from it"),
         ("suggestions", "Asks that fit the app in front (a page, an email, a chat) are offered first in the ask box"),
         ("clipboard-expiry", "A clipboard copied over 10 minutes ago is not used as context for a new question"),

@@ -412,8 +412,28 @@ pub fn tree_text(tree: &Value, max_chars: usize) -> String {
                 })
             })
     }
-    fn walk(node: &Value, out: &mut String, last: &mut String, max: usize) {
+    fn has_state(node: &Value, names: &[&str]) -> bool {
+        node.get("states")
+            .and_then(Value::as_array)
+            .is_some_and(|s| {
+                s.iter()
+                    .filter_map(Value::as_str)
+                    .any(|x| names.iter().any(|n| x.eq_ignore_ascii_case(n)))
+            })
+    }
+    struct Seen {
+        last: String,
+        all: std::collections::HashSet<String>,
+        trim: bool,
+    }
+    fn walk(node: &Value, out: &mut String, seen: &mut Seen, max: usize) {
         if out.len() >= max || secret(node) {
+            return;
+        }
+        // What the app marks hidden isn't sent (with the tree-trim switch).
+        // "offscreen" and "invisible" aren't trusted: toolkits set them on
+        // things in scroll views that are in plain sight.
+        if seen.trim && has_state(node, &["hidden"]) {
             return;
         }
         let role = lower(node, "role");
@@ -443,19 +463,40 @@ pub fn tree_text(tree: &Value, max_chars: usize) -> String {
             }
         }
         let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
-        if !line.is_empty() && line != *last {
+        // Trimmed: a control already sent (a toolbar's "Save" and the
+        // menu's; repeated text, like a table's values, stays), and an icon
+        // font's glyph ("⋮", a private-use character), say nothing new. A
+        // symbol that is a real control (+, ?, <) stays.
+        let control = !(TEXT_ROLES.contains(&role.as_str()) || role.is_empty());
+        let glyph = value.is_empty()
+            && name.chars().count() == 1
+            && name
+                .chars()
+                .all(|c| matches!(c, '⋮' | '⋯' | '☰' | '\u{E000}'..='\u{F8FF}'));
+        let noise = seen.trim && ((control && seen.all.contains(&line)) || glyph);
+        if !line.is_empty() && line != seen.last && !noise {
             out.push_str(&line);
             out.push('\n');
-            *last = line;
+            seen.all.insert(line.clone());
+            seen.last = line;
+        }
+        // A collapsed menu or tree item: its name, not what it hides.
+        if seen.trim && has_state(node, &["collapsed"]) {
+            return;
         }
         if let Some(children) = node.get("children").and_then(Value::as_array) {
             for child in children {
-                walk(child, out, last, max);
+                walk(child, out, seen, max);
             }
         }
     }
     let mut out = String::new();
-    walk(tree, &mut out, &mut String::new(), max_chars);
+    let mut seen = Seen {
+        last: String::new(),
+        all: Default::default(),
+        trim: crate::features::on("tree-trim"),
+    };
+    walk(tree, &mut out, &mut seen, max_chars);
     if out.len() > max_chars {
         let mut cut = max_chars;
         while !out.is_char_boundary(cut) {
@@ -2662,6 +2703,43 @@ mod tests {
         assert!(res.success);
         let text = res.output["text"].as_str().unwrap();
         assert_eq!(text.len(), 2000);
+    }
+
+    #[test]
+    fn what_isnt_on_screen_and_repeats_are_left_out() {
+        let tree = serde_json::json!({
+            "role": "window", "name": "Editor", "children": [
+                { "role": "button", "name": "Save", "states": [] },
+                { "role": "button", "name": "⋮", "states": [] },
+                { "role": "button", "name": "+", "states": [] },
+                { "role": "label", "name": "Active", "states": [] },
+                { "role": "label", "name": "Active", "states": [] },
+                { "role": "menu", "name": "File", "states": ["collapsed"], "children": [
+                    { "role": "menu item", "name": "Export everything", "states": [] }
+                ]},
+                { "role": "panel", "name": "Old tab", "states": ["hidden"], "children": [
+                    { "role": "label", "name": "Hidden draft text", "states": [] }
+                ]},
+                { "role": "label", "name": "Body words", "states": [] },
+                { "role": "button", "name": "Save", "states": [] }
+            ]
+        });
+        let text = tree_text(&tree, 4000);
+        assert_eq!(text.matches("button: Save").count(), 1, "{text}");
+        assert!(!text.contains('⋮') && text.contains("button: +"), "{text}");
+        assert!(
+            text.contains("Active\nActive") || text.matches("Active").count() == 1,
+            "{text}"
+        );
+        assert!(
+            text.contains("menu: File") && !text.contains("Export everything"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("Hidden draft text") && !text.contains("Old tab"),
+            "{text}"
+        );
+        assert!(text.contains("Body words"), "{text}");
     }
 
     #[test]
