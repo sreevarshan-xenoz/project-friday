@@ -20,5 +20,9 @@ public class ThisWindowTests
         Assert.Contains("is evilapp (title: \"a titlenew line\")", b);
         Assert.Null(ThisWindow.Block("  ", "x"));
         Assert.Null(ThisWindow.Block(null, "x"));
+        var emoji = new string('a', 119) + "😀" + "tail";
+        var cut = ThisWindow.Block("app", emoji)!;
+        Assert.DoesNotContain("\ud83d\"", cut);
+        Assert.Contains(new string('a', 119) + "\")", cut);
     }
 }

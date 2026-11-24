@@ -25,7 +25,7 @@ public static partial class ThisWindow
             a = a[..60];
         var t = new string((title ?? "").Where(c => !char.IsControl(c) && c != '"').ToArray());
         if (t.Length > 120)
-            t = t[..120];
+            t = char.IsHighSurrogate(t[119]) ? t[..119] : t[..120];
         return $"\n\n[window in front when asked]\n\"this window\" is {a} (title: \"{t}\"), even if another is in front now.";
     }
 }

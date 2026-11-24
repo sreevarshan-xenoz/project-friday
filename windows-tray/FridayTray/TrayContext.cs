@@ -320,6 +320,9 @@ internal sealed class TrayContext : ApplicationContext
             if (Native.GetClassName(targetWindow) is "Shell_TrayWnd" or "NotifyIconOverflowWindow" or "Shell_SecondaryTrayWnd")
                 targetWindow = IntPtr.Zero;
             _askTarget = targetWindow;
+            // The window's app and title at the keypress, read once.
+            var keyApp = targetWindow == IntPtr.Zero ? null : Native.ProcessNameOf(targetWindow);
+            var keyTitle = targetWindow == IntPtr.Zero ? null : Native.GetWindowTitle(targetWindow);
             // Drag out the area first: only that part of the screen is captured.
             PickedRegion? area = null;
             if (pickArea)
@@ -463,11 +466,12 @@ internal sealed class TrayContext : ApplicationContext
             var request = SourceApp.Append(Asking.BuildRequest(asked, context), appLine);
             // "Close this window": the one in front at the keypress, never
             // one switched to while FRIDAY thinks (not a private one).
-            if (kind == AskKind.Plain && targetWindow != IntPtr.Zero && ThisWindow.Matches(asked)
+            // Only with no quoted context after it (as on Linux).
+            if (kind == AskKind.Plain && context is null && keyApp is not null && ThisWindow.Matches(asked)
                 && SourceApp.Enabled(_install.Paths)
                 && AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "this-window")
-                && PrivateWindows.Match(_install.Paths, Native.ProcessNameOf(targetWindow), Native.GetWindowTitle(targetWindow)) is null
-                && ThisWindow.Block(Native.ProcessNameOf(targetWindow), Native.GetWindowTitle(targetWindow)) is { } frozen)
+                && PrivateWindows.Match(_install.Paths, keyApp, keyTitle) is null
+                && ThisWindow.Block(keyApp, keyTitle) is { } frozen)
                 request += frozen;
             if (kind != AskKind.Screen && !frontPrivate && AppSettings.FeatureOn(env, "app-instructions")
                 && AppInstructions.For(_install.Paths.AppInstructionsFile, frontApp) is { } rule)
