@@ -18,6 +18,8 @@ Singleton {
   property string name: ""
   property bool freeModels: false
   property bool phone: false
+  // A camera, and face unlock not set up yet: the tour offers it.
+  property bool camera: false
 
   // keys: shown as keycaps. action: a button that runs `command` in a terminal.
   readonly property var steps: [
@@ -37,12 +39,19 @@ Singleton {
       keys: "",
       body: "I can read my answers out loud, in a voice made on this computer (about 50 MB, nothing is sent anywhere). Skip this if you prefer quiet.",
       action: { label: "Give me a voice", command: "friday voice speak setup; friday voice speak on" },
-      waits: false },
+      waits: false }
+  ].concat(root.camera ? [
+    { title: "Unlock with your face",
+      keys: "Super+L",
+      body: "The lock screen can know your face (Gaze, checked on this computer; no picture is sent anywhere). Setting it up asks for your password, then has you look at the camera. Typing your password always works too. After that, press Super+L and look at the camera to try it; turn it off with: friday face remove",
+      action: { label: "Set up face unlock", command: "friday face setup" },
+      waits: false }
+  ] : []).concat([
     { title: "The rest of your desktop",
       keys: "",
       body: "Tap Super for apps · Super+N for controls and notifications · Super+L to lock · Super+K for every key. Take this tour again any time with: friday tour",
       waits: false }
-  ].concat(root.phone ? [
+  ]).concat(root.phone ? [
     { title: "Your phone",
       keys: "",
       body: "Pocketdesk shows this computer on your phone and lets it answer FRIDAY's questions. Pairing shows a PIN to type on the phone.",
@@ -58,7 +67,22 @@ Singleton {
     root.phone = phone;
     root.step = 0;
     root.failedStep = -1;
-    root.active = true;
+    // The steps are settled before the tour shows, so none appears or
+    // shifts while you're on it.
+    root.active = false;
+    cameraCheck.running = true;
+  }
+
+  // Only a camera FRIDAY could use, and only while face unlock is off. In
+  // tests FRIDAY_VIDEO_DEVS stands in for /dev/video* and FRIDAY_FACE_PAM for
+  // the face unlock PAM file.
+  Process {
+    id: cameraCheck
+    command: ["sh", "-c", "[ -e \"${FRIDAY_FACE_PAM:-/etc/pam.d/friday-lock-face}\" ] && exit 1; for d in ${FRIDAY_VIDEO_DEVS:-/dev/video*}; do [ -e \"$d\" ] && exit 0; done; exit 1"]
+    onExited: code => {
+      root.camera = code === 0;
+      root.active = true;
+    }
   }
   function next() { if (root.last) root.finish(); else root.step++; }
   function back() { if (root.step > 0) root.step--; }
@@ -81,6 +105,7 @@ Singleton {
   IpcHandler {
     target: "tour"
     function begin(name: string, freeModels: bool, phone: bool): void { root.begin(name, freeModels, phone); }
+    function count(): int { return root.steps.length; }
     function step(): int { return root.active ? root.step : -1; }
     function next(): void { root.next(); }
     function back(): void { root.back(); }

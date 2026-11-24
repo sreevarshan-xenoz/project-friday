@@ -11,6 +11,10 @@ need sway qs grim || { skip "desktop shells (need sway, quickshell, grim)"; exit
 
 W="$WORK/shell"; rm -rf "$W"; mkdir -p "$W/run"
 export XDG_RUNTIME_DIR="$W/run" LANG=C.UTF-8
+# A camera is a file here (the tour offers face unlock when one exists).
+export FRIDAY_VIDEO_DEVS="$W/video0" FRIDAY_FACE_PAM="$W/no-face-pam"
+# tourup: wait (up to 5 s) for the tour to show, once its checks are done.
+tourup() { local i; for i in $(seq 25); do [[ "$(timeout 10 qs -p "$FS" ipc call tour step 2>/dev/null)" == 0 ]] && return 0; sleep 0.2; done; return 1; }
 chmod 700 "$XDG_RUNTIME_DIR"
 
 printf 'output HEADLESS-1 resolution 1600x900\n' >"$W/sway.conf"
@@ -162,11 +166,25 @@ timeout 10 qs -p "$FS" ipc call tour finish >/dev/null 2>&1 || true
 [[ "$(timeout 10 qs -p "$FS" ipc call tour step 2>/dev/null)" == -1 ]] && pass "tour can be skipped" || fail "tour did not finish"
 # With Pocketdesk installed the tour has a last step about the phone.
 timeout 10 qs -p "$FS" ipc call tour begin "Alex" true true >/dev/null 2>&1 || true
+tourup || true
 for _ in 1 2 3 4 5; do timeout 10 qs -p "$FS" ipc call tour next >/dev/null 2>&1 || true; done
 [[ "$(timeout 10 qs -p "$FS" ipc call tour step 2>/dev/null)" == 5 ]] && pass "tour has a phone step when Pocketdesk is installed" || fail "tour has no phone step"
 sleep 1; grim "$W/friday-tour-phone.png" 2>/dev/null || true
 timeout 10 qs -p "$FS" ipc call tour back >/dev/null 2>&1 || true
 [[ "$(timeout 10 qs -p "$FS" ipc call tour step 2>/dev/null)" == 4 ]] && pass "tour can go back a step" || fail "tour did not go back"
+timeout 10 qs -p "$FS" ipc call tour finish >/dev/null 2>&1 || true
+# With a camera the tour offers face unlock, one step more.
+: >"$W/video0"
+timeout 10 qs -p "$FS" ipc call tour begin "Alex" true false >/dev/null 2>&1 || true
+tourup || fail "the tour didn't show with a camera"
+[[ "$(timeout 10 qs -p "$FS" ipc call tour count 2>/dev/null)" == 6 ]] && pass "with a camera the tour offers face unlock" || fail "no face unlock step with a camera"
+for _ in 1 2 3 4; do timeout 10 qs -p "$FS" ipc call tour next >/dev/null 2>&1 || true; done
+sleep 1; grim "$W/friday-tour-face.png" 2>/dev/null || true
+timeout 10 qs -p "$FS" ipc call tour finish >/dev/null 2>&1 || true
+rm -f "$W/video0"
+timeout 10 qs -p "$FS" ipc call tour begin "Alex" true false >/dev/null 2>&1 || true
+tourup || fail "the tour didn't show without a camera"
+[[ "$(timeout 10 qs -p "$FS" ipc call tour count 2>/dev/null)" == 5 ]] && pass "without one it doesn't" || fail "a face unlock step without a camera"
 timeout 10 qs -p "$FS" ipc call tour finish >/dev/null 2>&1 || true
 # Past answers, as friday ask writes them, are searchable.
 printf '# what is using my disk\n\n_2026-11-14 21:10_\n\nMostly photos.\n\n---\n\n# explain rust error E0308\n\n_2026-11-14 22:30_\n\n> fn main\n\nMismatched types.\n\n---\n\n' \
