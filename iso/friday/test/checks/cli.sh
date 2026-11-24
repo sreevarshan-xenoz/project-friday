@@ -37,6 +37,12 @@ if [[ "\$1" == import ]]; then
   printf 'friday-ctl-import %s\n' "\${*:2}" >> "$LOG"
   echo 'GROQ_API_KEY (…6789) from OpenCode: will be added'
   exit 0
+  exit 0
+fi
+if [[ "\$1" == watch && ( "\$2" == until || "\$2" == gone ) ]]; then
+  printf 'friday-ctl-watch %s\n' "\${*:2}" >> "$LOG"
+  [[ "\$*" == *nowindow* ]] && { echo 'No window has "nowindow" in its title.'; exit 1; }
+  sleep 2; exit 0
 fi
 if [[ "\$1" == verify-log ]]; then
   printf 'friday-ctl-verify-log\n' >> "$LOG"
@@ -646,6 +652,12 @@ contains "friday import --apply adds through friday-ctl" "$(cat "$LOG")" "friday
 bash "$F" feature config-import off >/dev/null
 contains "importing has a switch" "$(bash "$F" import)" "turned off"
 bash "$F" feature config-import on >/dev/null
+: >"$LOG"; contains "friday watch until starts a watch" "$(bash "$F" watch until curl -sf https://example.com)" "I'll tell you when this works"
+contains "with the command" "$(cat "$LOG")" "friday-ctl-watch until curl -sf https://example.com"
+contains "friday watch gone with no such window says so" "$(bash "$F" watch gone nowindow 2>&1)" "No window has"
+bash "$F" feature watch-until off >/dev/null
+contains "watching for a condition has a switch" "$(bash "$F" watch until true)" "turned off"
+bash "$F" feature watch-until on >/dev/null
 : >"$LOG"; contains "friday answers search goes to friday-ctl" "$(bash "$F" answers search docker --since week)" "Past answers about docker"
 contains "with its words and time" "$(cat "$LOG")" "friday-ctl-answers search docker --since week"
 : >"$LOG"; bash "$F" ask "What did you tell me about docker last week?"; sleep 0.3
