@@ -445,6 +445,41 @@ async fn routine(args: &[String]) -> std::process::ExitCode {
             }
             ExitCode::SUCCESS
         }
+        // After an ask: when FRIDAY has now done the same desktop steps
+        // three times, offer (once) to keep them as a routine.
+        Some("suggest") => {
+            let Some(audit) = friday_mobile::desktop_tool::audit_dir() else {
+                return ExitCode::SUCCESS;
+            };
+            let log = std::fs::read_to_string(audit.join("actions.jsonl")).unwrap_or_default();
+            let Some((rec, times)) = r::repeated(&log, &r::list(&dir)) else {
+                return ExitCode::SUCCESS;
+            };
+            use sha2::Digest;
+            let key: String = sha2::Sha256::digest(
+                serde_json::to_string(&rec.steps)
+                    .unwrap_or_default()
+                    .as_bytes(),
+            )
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+            let offered = audit.join("routine-offered");
+            let seen = std::fs::read_to_string(&offered).unwrap_or_default();
+            if seen.lines().any(|l| l == key) {
+                return ExitCode::SUCCESS;
+            }
+            let _ = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&offered)
+                .and_then(|mut f| std::io::Write::write_all(&mut f, format!("{key}\n").as_bytes()));
+            println!(
+                "FRIDAY has done these {} steps {times} times now. Keep them as a routine: friday routine save <name>",
+                rec.steps.len()
+            );
+            ExitCode::SUCCESS
+        }
         Some("list") => {
             for x in r::list(&dir) {
                 println!("{}\t{} steps\t{}", x.name, x.steps.len(), x.goal);
