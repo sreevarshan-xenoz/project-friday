@@ -2512,7 +2512,7 @@ friday_hold() {
           return 0
         fi
         # What was heard, to edit or drop before it's used (friday voice preview on).
-        if [ -e "$(friday_voice_preview_flag)" ] && friday_feature_on voice-preview; then
+        if [ -e "$(friday_voice_preview_flag)" ] && friday_feature_on voice-preview && command -v fuzzel >/dev/null 2>&1; then
           pill dismiss || true
           text=$(fuzzel --dmenu --prompt-only="Heard › " --search="$text" --width=60 \
             --placeholder="Edit what was heard, Enter to use it, Esc to drop it" </dev/null) || return 0
