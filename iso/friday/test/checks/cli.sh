@@ -1924,6 +1924,11 @@ VD="$W/spoken-voice"; mkdir -p "$VD"; echo '{"kind":"tinyvoca","speaker":3}' >"$
 contains "the spoken length is set" "$(FRIDAY_VOICE_DIR="$VD" bash "$F" voice speak length brief)" "Spoken answers: brief."
 [ "$(jq -r '.length + " " + (.speaker|tostring)' "$VD/settings.json")" = "brief 3" ] && pass "and kept beside the voice's other settings" || fail "voice settings: $(cat "$VD/settings.json")"
 FRIDAY_VOICE_DIR="$VD" bash "$F" voice speak length loud >/dev/null 2>&1 && fail "a made-up spoken length was taken" || pass "a made-up spoken length is refused"
+contains "voice typing keeps the words to get back" "$(bash "$F" dictations)" "what time is it in Tokyo"
+printf '#!/bin/bash\ncat >"%s"\n' "$W/copied" >"$S/wl-copy"; chmod +x "$S/wl-copy"
+contains "a dictation goes back on the clipboard" "$(bash "$F" dictations copy 1)" "Dictation 1 is on the clipboard"
+[[ "$(cat "$W/copied")" == *"what time is it in Tokyo"* ]] && pass "and it's the words said" || fail "the copied dictation was: $(cat "$W/copied")"
+contains "a missing dictation is said" "$(bash "$F" dictations copy 9 2>&1)" "There's no dictation 9"
 if grep -q "friday-ctl" "$LOG"; then fail "voice typing sent the words to the AI"; else pass "voice typing asks nothing"; fi
 : >"$LOG"; bash "$F" hold start --type; sleep 0.9; WHISPER_SILENT=1 bash "$F" hold end --type; sleep 0.3
 contains "voice typing with no words: says so" "$(cat "$LOG")" "Super+Shift+Y"

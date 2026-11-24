@@ -78,6 +78,7 @@ Autonomous Agent & Cognitive Loop:
   friday verify-log                Check the action log wasn't changed: each action is chained to the one before
   friday import [--apply]          Keys and a model from OpenCode, Aider or your environment: preview, then add
   friday day [today|yesterday|YYYY-MM-DD|forget <date|all>]  A short summary of a day by project, kept here
+  friday dictations [copy <n>|clear]  The last 20 voice-typed texts, to get one back
   friday activity                  Agent steps waiting for you, runs going now, standing tasks, runs finished lately
   friday providers                 How each AI provider is doing (limit hit, OK…) and who answered last
   friday model [ask|screen|chores] [provider/model|auto]  The model each job tries first
@@ -2499,6 +2500,7 @@ friday_hold() {
         fi
         if [ "${2:-}" = "--type" ]; then
           # Voice typing: the words go into the field you were in, not to the AI.
+          friday_dictation_keep "$text" || true
           pill dismiss || true
           if command -v wtype >/dev/null 2>&1; then
             sleep 0.2
@@ -3085,6 +3087,45 @@ friday_sensitive_window() {
 }
 
 # friday_private_window: what made the focused window private, or nothing.
+# The last 20 dictations, kept on this computer so words typed into the
+# wrong window can be had again (friday dictations). Never what was typed
+# into a private window.
+friday_dictations_file() { echo "${XDG_STATE_HOME:-$HOME/.local/state}/friday/dictations.jsonl"; }
+friday_dictation_keep() { # <text>
+  friday_feature_on dictation-history || return 0
+  [ -z "$(friday_private_window)" ] || return 0
+  local f app line
+  f=$(friday_dictations_file)
+  app=$(timeout 2 hyprctl activewindow -j 2>/dev/null | jq -r '.class // empty' 2>/dev/null || true)
+  line=$(jq -cn --arg t "$1" --arg a "$app" --argjson ts "$(date +%s)" '{ts: $ts, app: $a, text: $t}') || return 0
+  mkdir -p "$(dirname "$f")"
+  (
+    umask 077
+    { cat "$f" 2>/dev/null || true; printf '%s\n' "$line"; } | tail -n 20 >"$f.tmp"
+    mv -f "$f.tmp" "$f"
+  )
+}
+friday_dictations() { # [list | copy [n] | clear]
+  local f n text
+  f=$(friday_dictations_file)
+  case "${1:-list}" in
+    list)
+      friday_feature_on dictation-history || { echo "Dictation history is turned off (friday feature dictation-history on)."; return 0; }
+      [ -s "$f" ] || { echo "No dictations kept yet. Voice typing (Super+Shift+Y) keeps the last 20 here."; return 0; }
+      tac "$f" | jq -r '"\(input_line_number)  \(.ts | strflocaltime("%H:%M %b %d"))  \(if .app == "" then "" else "[\(.app)] " end)\(.text | gsub("\\s+"; " ") | .[0:90])"' 2>/dev/null
+      echo "friday dictations copy <n> puts one on the clipboard." ;;
+    copy)
+      n="${2:-1}"
+      [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -ge 1 ] || { echo "usage: friday dictations copy <n>   (numbers are in: friday dictations)" >&2; return 2; }
+      text=$(tac "$f" 2>/dev/null | sed -n "${n}p" | jq -r '.text // empty' 2>/dev/null || true)
+      [ -n "$text" ] || { echo "There's no dictation $n." >&2; return 1; }
+      printf '%s' "$text" | wl-copy 2>/dev/null || { echo "Couldn't reach the clipboard (wl-copy)." >&2; return 1; }
+      echo "Dictation $n is on the clipboard: paste it with Ctrl+V." ;;
+    clear) rm -f "$f"; echo "Forgot every kept dictation." ;;
+    *) echo "Usage: friday dictations [list | copy [n] | clear]" >&2; return 2 ;;
+  esac
+}
+
 friday_private_window() { # [window JSON, else the one in front now]
   command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 0
   local win="${1:-}" hay pat own="${XDG_CONFIG_HOME:-$HOME/.config}/friday/private-windows" drop never
@@ -3398,7 +3439,7 @@ friday_forget() {
     if systemctl --user is-active --quiet friday-linux-daemon 2>/dev/null; then
       was_up=true; systemctl --user stop friday-linux-daemon 2>/dev/null || true
     fi
-    rm -f "$mem_dir/episodes.jsonl" "$state_dir/conversations.json" "$state_dir/conversation" "$state_dir/lessons.jsonl" "$state_dir/thoughts.jsonl" \
+    rm -f "$mem_dir/episodes.jsonl" "$state_dir/conversations.json" "$state_dir/conversation" "$state_dir/lessons.jsonl" "$state_dir/thoughts.jsonl" "$state_dir/dictations.jsonl" \
       "$(friday_memory_file)"
     if $was_up; then systemctl --user start friday-linux-daemon 2>/dev/null || true; fi
     echo "Deleted ${n_mem:-0} remembered things."
@@ -3911,6 +3952,7 @@ speak-as-it-comes|Spoken answers start with the first sentence while the rest is
 clipboard-expiry|A clipboard copied over 10 minutes ago is not used as context (known when friday clips are on); password-manager copies never are
 ask-timings|How long each stage of an ask takes is kept on this computer (friday doctor shows the median and slow end)
 spoken-length|Spoken answers say two, six or all sentences (friday voice speak length brief, normal or detailed); the card shows all
+dictation-history|The last 20 voice-typed texts stay on this computer, to get one back (friday dictations)
 screen-what-changed|What changed? about the same window sends only the lines that changed since the last screen ask (kept in memory 30 minutes)
 agent-compare|Two agents on the same task, each in its own copy, then friday agents compare to pick one
 backup-new-home|A backup restored on another computer points saved folders (workspaces, threads, settings) at the new home
@@ -6028,6 +6070,10 @@ $offer"
       exit 0
     fi
     exec friday-ctl import
+    ;;
+  dictations)
+    # The last 20 voice-typed texts, newest first; copy one back.
+    shift; friday_dictations "$@"; exit $?
     ;;
   day)
     # A short summary of a day by project, from FRIDAY's own logs; kept in
