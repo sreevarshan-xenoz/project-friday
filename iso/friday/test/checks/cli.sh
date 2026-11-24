@@ -2071,7 +2071,7 @@ contains "keys update adds Paste as" "$(bash "$F" keys update)" "Added Paste as"
 contains "right after the selection key" "$(grep -A1 'friday ask --selection' "$HOME/.config/hypr/bindings.lua")" '"SUPER + ALT + V", "FRIDAY: Paste as…", "friday paste-as"'
 grep -vF -- '"friday settings"' "$REPO_ROOT/iso/friday/airootfs/etc/skel/.config/hypr/bindings.lua" >"$HOME/.config/hypr/bindings.lua"
 contains "keys update adds Super+I for Settings" "$(bash "$F" keys update)" "Added Settings"
-contains "right after the stop key" "$(grep -A1 '"friday cancel")' "$HOME/.config/hypr/bindings.lua")" '"SUPER + I", "FRIDAY: Settings", "friday settings"'
+contains "right after Super+Y, which every FRIDAY OS home has" "$(grep -A1 '"friday hold end", { release = true })' "$HOME/.config/hypr/bindings.lua")" '"SUPER + I", "FRIDAY: Settings", "friday settings"'
 rm -rf "$HOME/.config/hypr"
 contains "keys update without a FRIDAY OS key file does nothing" "$(bash "$F" keys update)" "nothing to update"
 
@@ -2079,8 +2079,11 @@ echo "key sheet and commands (Settings' Keys and Commands pages)"
 cat >"$S/hyprctl" <<'HYPR'
 #!/bin/bash
 [[ "$*" == "binds -j" ]] && cat <<'JSON'
-[{"modmask":64,"key":"Y","description":"FRIDAY: Ask","release":false},
- {"modmask":64,"key":"Y","description":"FRIDAY: Ask (let go)","release":true},
+[{"modmask":64,"key":"Y","description":"FRIDAY: Ask (let go)","release":true},
+ {"modmask":64,"key":"Y","description":"FRIDAY: Ask","release":false},
+ {"key":"F1","description":"No modifier field"},
+ {"modmask":64,"key":"","keycode":28,"description":"A key by its code"},
+ {"modmask":64,"key":"mouse:272","description":"Move a window"},
  {"modmask":68,"key":"Y","description":"FRIDAY: Ask about the screen","release":false},
  {"modmask":64,"key":"i","description":"FRIDAY: Settings","release":false},
  {"modmask":0,"key":"Print","description":"","release":false}]
@@ -2093,14 +2096,19 @@ contains "key sheet names Super+I" "$kl" "Super+I"
 contains "key sheet says what it does" "$kl" "FRIDAY: Settings"
 contains "key sheet reads Ctrl from the mask" "$kl" "Super+Ctrl+Y"
 [[ "$(grep -c '^Super+Y ' <<<"$kl")" == 1 ]] && pass "a press-and-let-go key shows once" || fail "key sheet shows Super+Y twice"
+contains "with what pressing it does, even when let go comes first" "$(grep '^Super+Y ' <<<"$kl")" "FRIDAY: Ask"
+[[ "$(grep '^Super+Y ' <<<"$kl")" != *"let go"* ]] && pass "not the let-go line" || fail "Super+Y shows its let-go line"
+contains "a bind with no modifier field" "$kl" "F1"
+contains "a key bound by its code" "$kl" "Super+code:28"
+contains "a mouse button in words" "$kl" "Super+Left click"
 [[ "$kl" != *Print* ]] && pass "a key with no description is left out" || fail "key sheet shows an undescribed key"
 rm -f "$S/hyprctl"
 # Every command `friday` takes is in its help (the Settings Commands page), apart from aliases and internal ones.
 hl=$(bash "$F" help)
 missing="" n=0
 for c in $(awk '/^case "\$\{1:-\}" in/ { on = 1 } on && /^  [a-z][a-z0-9|-]*\)/ { sub(/\).*/, ""); gsub(/ /, ""); gsub(/\|/, " "); print }' "$F"); do
-  case "$c" in features|system-info|welcome|term-watch|settings) continue ;; esac
-  n=$((n + 1)); grep -qE "^ *friday $c( |$)" <<<"$hl" || missing+="$c "
+  case "$c" in features|system-info|welcome|term-watch) continue ;; esac
+  n=$((n + 1)); grep -qE "^  friday $c( |$)" <<<"$hl" || missing+="$c "
 done
 [[ -z "$missing" && $n -gt 40 ]] && pass "help lists every command" || fail "help lacks: $missing"
 

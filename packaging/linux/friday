@@ -125,8 +125,8 @@ Autonomous Agent & Cognitive Loop:
                                    FRIDAY answers out loud, in a voice made on this computer
   friday say "text"                Say something now (friday say --stop to stop)
   friday hold start|end --type     Voice typing: Super+Shift+Y, hold and speak, the words are typed where you are
-  friday settings [page]           Open FRIDAY Settings (Super+I), e.g. friday settings Keys;
-                                   friday app does the same
+  friday settings [page]           Open FRIDAY Settings (Super+I), e.g. friday settings keys
+  friday app                       The same
   friday tour                      Take the first-login tour again
   friday screen-text [status|on|off]
   friday feature [list|<name> on|off]  Switch one of FRIDAY's features off or on again
@@ -964,13 +964,23 @@ friday_keys_list() {
   local binds
   binds=$(timeout 3 hyprctl binds -j 2>/dev/null) || binds=""
   [ -n "$binds" ] || { echo "Hyprland didn't answer; is it running?"; return 1; }
-  jq -r '.[] | select((.description // "") != "") |
-    ([ (if ((.modmask / 64) | floor) % 2 == 1 then "Super" else empty end),
-       (if ((.modmask / 4) | floor) % 2 == 1 then "Ctrl" else empty end),
-       (if ((.modmask / 8) | floor) % 2 == 1 then "Alt" else empty end),
-       (if .modmask % 2 == 1 then "Shift" else empty end),
-       (.key | if length == 1 then ascii_upcase else . end) ] | join("+")) + "\t" + .description' <<<"$binds" 2>/dev/null \
-    | awk -F'\t' '!seen[$1]++ { printf "%-22s %s\n", $1, $2 }'
+  local rows
+  # A key pressed comes before the same key let go, so its own description shows.
+  rows=$(jq -r 'sort_by(.release // false) | .[] | select((.description // "") != "") |
+    (.modmask // 0) as $m |
+    ([ (if (($m / 64) | floor) % 2 == 1 then "Super" else empty end),
+       (if (($m / 4) | floor) % 2 == 1 then "Ctrl" else empty end),
+       (if (($m / 8) | floor) % 2 == 1 then "Alt" else empty end),
+       (if $m % 2 == 1 then "Shift" else empty end),
+       (if (.key // "") == "" then "code:\(.keycode // 0)" else .key end) ] | join("+")) + "\t" + (.description | gsub("\t"; " "))' \
+    <<<"$binds" 2>/dev/null) || rows=""
+  [ -n "$rows" ] || { echo "Couldn't read Hyprland's keys."; return 1; }
+  awk -F'\t' '{
+      k = $1
+      sub(/mouse:272$/, "Left click", k); sub(/mouse:273$/, "Right click", k); sub(/mouse:274$/, "Middle click", k)
+      sub(/mouse:275$/, "Mouse back", k); sub(/mouse:276$/, "Mouse forward", k)
+      n = split(k, p, "+"); if (length(p[n]) == 1) { p[n] = toupper(p[n]); k = p[1]; for (i = 2; i <= n; i++) k = k "+" p[i] }
+    } !seen[k]++ { printf "%-22s %s\n", k, $2 }' <<<"$rows"
 }
 
 # FRIDAY OS's key file is copied into a new home once, so keys added by a
@@ -999,7 +1009,7 @@ friday_keys() {
 friday hold start --type|"friday hold end", { release = true })|o.bind("SUPER + SHIFT + Y", "FRIDAY: Voice typing", "friday hold start --type")\no.bind("SUPER + SHIFT + Y", "FRIDAY: Voice typing (let go)", "friday hold end --type", { release = true })|Added voice typing: hold Super+Shift+Y, speak, let go (friday voice setup first).
 friday paste-as|"friday ask --selection")|o.bind("SUPER + ALT + V", "FRIDAY: Paste as…", "friday paste-as")|Added Paste as: copy text, press Super+Alt+V, pick how to paste it.
 friday clips pick|"friday paste-as")|o.bind("SUPER + CTRL + V", "FRIDAY: Clips and snippets", "friday clips pick")|Added clips: Super+Ctrl+V pastes something you copied earlier or a snippet (friday clips on first).
-"friday settings"|"friday cancel")|o.bind("SUPER + I", "FRIDAY: Settings", "friday settings")|Added Settings: Super+I opens FRIDAY Settings.
+"friday settings"|"friday hold end", { release = true })|o.bind("SUPER + I", "FRIDAY: Settings", "friday settings")|Added Settings: Super+I opens FRIDAY Settings.
 KEYS
       $added || echo "Your keys are up to date." ;;
     *) echo "Usage: friday keys [list|update]" >&2; return 1 ;;
@@ -6057,11 +6067,14 @@ $offer"
   app|settings)
     # FRIDAY Settings is a window of FRIDAY Shell: start the shell if it isn't up.
     shift
-    if ! timeout 3 "$0" shell ipc settings open "${1:-Home}" >/dev/null 2>&1; then
+    # A page by any case: keys, Keys and KEYS all open the Keys page.
+    page="${1:-Home}"
+    case "${page,,}" in ai) page=AI ;; *) page="${page,,}"; page="${page^}" ;; esac
+    if ! timeout 3 "$0" shell ipc settings open "$page" >/dev/null 2>&1; then
       "$0" shell start >/dev/null 2>&1 || true
       for _ in 1 2 3 4 5 6 7 8 9 10; do
         sleep 1
-        timeout 3 "$0" shell ipc settings open "${1:-Home}" >/dev/null 2>&1 && exit 0
+        timeout 3 "$0" shell ipc settings open "$page" >/dev/null 2>&1 && exit 0
       done
       echo "friday: FRIDAY Shell isn't running here, so there is no settings window (try: friday --help)" >&2
       exit 1
