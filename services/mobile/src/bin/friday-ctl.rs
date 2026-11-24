@@ -1753,14 +1753,14 @@ async fn main() -> std::process::ExitCode {
                     // Made on another computer: saved folders now name this home.
                     let moved = match backup::this_home() {
                         Some(home) if friday_mobile::features::on("backup-new-home") => {
-                            backup::rehome(dir, &backup::folders(), &home).unwrap_or(0)
+                            backup::rehome(dir, &backup::folders(), &home)
                         }
-                        _ => 0,
+                        _ => Ok(0),
                     };
-                    let moved = if moved > 0 {
-                        format!(" Saved folders in {moved} files now point at this computer's home.")
-                    } else {
-                        String::new()
+                    let moved = match moved {
+                        Ok(0) => String::new(),
+                        Ok(n) => format!(" Saved folders in {n} files now point at this computer's home."),
+                        Err(e) => format!(" Saved folders couldn't all be pointed at this computer's home ({e})."),
                     };
                     format!(
                         "Restored {n} files. What they replaced is in before-restore-{stamp} in FRIDAY's folders, and your API keys were kept.{moved} Restart FRIDAY to use them."

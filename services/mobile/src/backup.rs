@@ -73,28 +73,52 @@ pub fn this_home() -> Option<String> {
         .filter(|h| h.len() > 1)
 }
 
-/// `text` with the folder `old` (and what is under it) changed to `new`.
-/// `/home/al` isn't touched inside `/home/alice`. A Windows path is also
-/// changed where JSON doubled its backslashes.
+/// `text` with the folder `old` (and what is under it) changed to `new`:
+/// only where `old` is a whole path, so `/home/al` isn't touched inside
+/// `/home/alice`, `/home/al+work` or `/mnt/home/al`. A Windows path is also
+/// changed where JSON doubled its backslashes. Nothing changes between a
+/// Linux and a Windows home, or into a root folder.
 pub fn moved_home(text: &str, old: &str, new: &str) -> String {
-    let mut out = replace_folder(text, old, new);
+    let trim = |s: &str| s.trim_end_matches(['/', '\\']).to_string();
+    let (old, new) = (trim(old), trim(new));
+    if old.len() < 2 || new.len() < 2 || old.contains('\\') != new.contains('\\') {
+        return text.to_string();
+    }
+    let mut out = replace_folder(text, &old, &new);
     if old.contains('\\') {
         out = replace_folder(&out, &old.replace('\\', "\\\\"), &new.replace('\\', "\\\\"));
     }
     out
 }
 
+/// Whether `c` can be part of a path name next to the folder.
+fn path_char(c: char) -> bool {
+    !(c.is_whitespace()
+        || matches!(
+            c,
+            '"' | '\'' | '/' | '\\' | ',' | ';' | ')' | ']' | '}' | '=' | ':' | '(' | '[' | '{'
+        ))
+}
+
 fn replace_folder(text: &str, old: &str, new: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(at) = rest.find(old) {
+        let before = if at > 0 {
+            rest[..at].chars().last()
+        } else {
+            out.chars().last()
+        };
         let after = &rest[at + old.len()..];
+        // A separator or the end of a string after it, and nothing that
+        // makes it part of a longer path before it.
         let ends = after
             .chars()
             .next()
-            .is_none_or(|c| !(c.is_alphanumeric() || matches!(c, '_' | '-' | '.')));
+            .is_none_or(|c| matches!(c, '/' | '\\') || !path_char(c));
+        let starts = before.is_none_or(|c| !path_char(c) && !matches!(c, '/' | '\\'));
         out.push_str(&rest[..at]);
-        out.push_str(if ends { new } else { old });
+        out.push_str(if ends && starts { new } else { old });
         rest = after;
     }
     out.push_str(rest);
@@ -109,7 +133,7 @@ const TEXT_ENDINGS: &[&str] = &[".json", ".jsonl", ".toml", ".env", ".md", ".txt
 /// how many files changed.
 pub fn rehome(backup: &Path, targets: &[(&str, PathBuf)], new_home: &str) -> Result<usize, String> {
     let manifest = check(backup)?;
-    let Some(old) = manifest.home.filter(|o| o != new_home && o.len() > 1) else {
+    let Some(old) = manifest.home.filter(|o| o != new_home) else {
         return Ok(0);
     };
     let mut changed = 0;
@@ -401,6 +425,19 @@ mod tests {
         assert_eq!(
             super::moved_home(t, "/home/al", "/home/bo"),
             r#"{"cwd":"/home/bo/code","other":"/home/alice/x","end":"/home/bo"}"#
+        );
+        let t = r#"["/home/al+work","/mnt/home/al/x","PATH=/home/al:/usr","cd /home/al/"]"#;
+        assert_eq!(
+            super::moved_home(t, "/home/al/", "/home/bo"),
+            r#"["/home/al+work","/mnt/home/al/x","PATH=/home/bo:/usr","cd /home/bo/"]"#
+        );
+        assert_eq!(
+            super::moved_home("/home/al/x", "/home/al", "/"),
+            "/home/al/x"
+        );
+        assert_eq!(
+            super::moved_home("/home/al/x", "/home/al", r"C:\Users\bo"),
+            "/home/al/x"
         );
         let w = r#"{"cwd":"C:\\Users\\al\\code"}"#;
         assert_eq!(
