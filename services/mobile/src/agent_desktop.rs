@@ -1654,6 +1654,82 @@ pub fn secret_field_bounds(tree: &Value) -> Vec<[i64; 4]> {
     out
 }
 
+/// The smallest control whose bounds hold any of `points`, as text: its own
+/// line, the line of what it sits in, and up to six neighbours. `None` when
+/// no control is there, or it is a secret field.
+pub fn control_at(tree: &Value, points: &[(i64, i64)]) -> Option<String> {
+    fn bounds(node: &Value) -> Option<[i64; 4]> {
+        let b = node.get("bounds")?;
+        let n = |k: &str, alt: &str| {
+            b.get(k)
+                .or_else(|| b.get(alt))
+                .and_then(Value::as_f64)
+                .map(|v| v.round() as i64)
+        };
+        Some([
+            n("x", "left")?,
+            n("y", "top")?,
+            n("width", "w")?,
+            n("height", "h")?,
+        ])
+    }
+    fn line(node: &Value) -> String {
+        let mut leaf = node.clone();
+        if let Some(o) = leaf.as_object_mut() {
+            o.remove("children");
+        }
+        tree_text(&leaf, 300)
+    }
+    // (area, node, parent)
+    fn walk<'a>(
+        node: &'a Value,
+        parent: Option<&'a Value>,
+        points: &[(i64, i64)],
+        best: &mut Option<(i64, &'a Value, Option<&'a Value>)>,
+    ) {
+        if let Some([x, y, w, h]) = bounds(node) {
+            let inside = points
+                .iter()
+                .any(|&(px, py)| w > 0 && h > 0 && px >= x && py >= y && px < x + w && py < y + h);
+            if inside && !line(node).is_empty() && best.as_ref().is_none_or(|b| w * h < b.0) {
+                *best = Some((w * h, node, parent));
+            }
+        }
+        if let Some(children) = node.get("children").and_then(Value::as_array) {
+            for c in children {
+                walk(c, Some(node), points, best);
+            }
+        }
+    }
+    let mut best = None;
+    walk(tree, None, points, &mut best);
+    let (_, node, parent) = best?;
+    // A secret field gives no line at all: nothing about it goes.
+    let own = line(node);
+    let mut out = format!("Pointed at: {own}");
+    if let Some(p) = parent {
+        let in_line = line(p);
+        if !in_line.is_empty() {
+            out.push_str(&format!("\nInside: {in_line}"));
+        }
+        let near: Vec<String> = p
+            .get("children")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|c| !std::ptr::eq(*c, node))
+            .map(|c| tree_text(c, 200).lines().next().unwrap_or("").to_string())
+            .filter(|l| !l.is_empty())
+            .take(6)
+            .collect();
+        if !near.is_empty() {
+            out.push_str("\nNext to it:\n");
+            out.push_str(&near.join("\n"));
+        }
+    }
+    Some(out)
+}
+
 impl AgentDesktopUi {
     /// The accessibility tree of `class`'s window titled `title` (the one in
     /// front), never another window's, with `extra` snapshot flags.
@@ -1693,6 +1769,11 @@ impl crate::context_read::ScreenText for AgentDesktopUi {
     async fn secret_fields(&self, class: &str, title: &str) -> Option<Vec<[i64; 4]>> {
         let tree = self.front_tree(class, title, &["--include-bounds"]).await?;
         Some(secret_field_bounds(&tree))
+    }
+
+    async fn control_at(&self, class: &str, title: &str, points: &[(i64, i64)]) -> Option<String> {
+        let tree = self.front_tree(class, title, &["--include-bounds"]).await?;
+        control_at(&tree, points)
     }
 
     async fn window_text(&self, class: &str, title: &str) -> Option<String> {
@@ -2740,6 +2821,38 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("Body words"), "{text}");
+    }
+
+    #[test]
+    fn the_control_pointed_at_comes_with_its_neighbours_only() {
+        let b = |x: i64, y: i64, w: i64, h: i64| serde_json::json!({"x": x, "y": y, "width": w, "height": h});
+        let tree = serde_json::json!({
+            "role": "window", "name": "Settings", "bounds": b(0, 0, 800, 600), "children": [
+                { "role": "panel", "name": "Network", "bounds": b(0, 0, 400, 300), "children": [
+                    { "role": "check box", "name": "Use a proxy", "bounds": b(10, 10, 120, 20) },
+                    { "role": "label", "name": "Proxies slow things down", "bounds": b(10, 40, 200, 20) },
+                    { "role": "password text", "name": "Proxy password", "bounds": b(10, 70, 120, 20) }
+                ]},
+                { "role": "label", "name": "Far away text", "bounds": b(500, 500, 100, 20) }
+            ]
+        });
+        let got = control_at(&tree, &[(20, 15)]).unwrap();
+        assert!(
+            got.starts_with("Pointed at: check box: Use a proxy"),
+            "{got}"
+        );
+        assert!(
+            got.contains("Inside: panel: Network") || got.contains("Inside: Network"),
+            "{got}"
+        );
+        assert!(got.contains("Proxies slow things down"), "{got}");
+        assert!(
+            !got.contains("Far away") && !got.contains("Proxy password"),
+            "{got}"
+        );
+        // The password field itself: nothing about it.
+        assert!(control_at(&tree, &[(20, 75)]).is_none_or(|g| !g.contains("Proxy password")));
+        assert!(control_at(&tree, &[(5000, 5000)]).is_none());
     }
 
     #[test]

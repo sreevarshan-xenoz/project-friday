@@ -95,7 +95,22 @@ pub trait ScreenText: Send + Sync {
     async fn secret_fields(&self, _class: &str, _title: &str) -> Option<Vec<[i64; 4]>> {
         Some(Vec::new())
     }
+
+    /// The one control at any of `points` in that window (its place read as
+    /// on the screen and as inside the window), with what it sits in and its
+    /// neighbours, as text; `None` when there is none or it is a secret.
+    async fn control_at(
+        &self,
+        _class: &str,
+        _title: &str,
+        _points: &[(i64, i64)],
+    ) -> Option<String> {
+        None
+    }
 }
+
+/// A picked area this small was a click: the control under it is asked about.
+pub const POINT_SIZE: u32 = 24;
 
 /// A secret field whose place the tree didn't give: the picture isn't sent.
 pub const UNPLACED: [i64; 4] = [-1, -1, -1, -1];
@@ -653,6 +668,54 @@ where
             if covered && crate::recall::private(&class, &title, &crate::recall::own_list()) {
                 self.revoke();
                 return Err(ContextReadError::PrivateWindow);
+            }
+        }
+
+        // A click instead of a drag: the control under it, as text, and
+        // nothing else of the screen.
+        if let (Some(r), Some(source)) = (region, self.text.as_ref()) {
+            if r.width <= POINT_SIZE && r.height <= POINT_SIZE && crate::features::on("point-ask") {
+                if let Ok(CapturedContext::AppInfo {
+                    class,
+                    title,
+                    geometry,
+                    ..
+                }) = self
+                    .collector
+                    .capture(ContextChannel::App, &CaptureOptions::default())
+                {
+                    let (cx, cy) = (
+                        r.x as i64 + r.width as i64 / 2,
+                        r.y as i64 + r.height as i64 / 2,
+                    );
+                    let mut points = vec![(cx, cy)];
+                    if let Some(w) = geometry {
+                        points.push((cx - w.x as i64, cy - w.y as i64));
+                    }
+                    let Some(control) = source.control_at(&class, &title, &points).await else {
+                        // A picture of a few pixels says nothing: no send.
+                        self.revoke();
+                        return Err(ContextReadError::Capture(
+                            "couldn't tell which control is there; drag out an area instead".into(),
+                        ));
+                    };
+                    {
+                        let (shown, masked) = friday_goal_execution::mask_secrets(&title);
+                        let shown = shown.replace(['\n', '\r'], " ");
+                        let intro = format!(
+                            "The person pointed at one control in the window they are looking at \
+                             ({class}: {shown}) and asks about it. The control, what it sits in and \
+                             its neighbours, read from the app's accessibility tree, follow between the lines."
+                        );
+                        let tell = |r: String| {
+                            receipt(format!("{class} · the control you pointed at, {r}"))
+                        };
+                        return self
+                            .send_words(&intro, &control, masked, question, progress, &tell)
+                            .await
+                            .map(|answer| (answer, ScreenSent::Text { cut: false }));
+                    }
+                }
             }
         }
 
@@ -2549,6 +2612,44 @@ mod tests {
             "{answer}"
         );
         assert_eq!(seam.sent(), before, "no model call");
+    }
+
+    /// A window whose tree has one control at (100, 100) inside it.
+    struct PointText;
+
+    #[async_trait]
+    impl ScreenText for PointText {
+        async fn window_text(&self, _: &str, _: &str) -> Option<String> {
+            None
+        }
+        async fn control_at(&self, _: &str, _: &str, points: &[(i64, i64)]) -> Option<String> {
+            points
+                .contains(&(110, 110))
+                .then(|| "Pointed at: button: Deploy".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_click_asks_about_the_control_under_it_as_text() {
+        let seam = RecordingSeam::default();
+        let reader = ScreenReader::new(collector_with_window(), seam.clone(), "fabric")
+            .with_text(Arc::new(PointText));
+        reader.consent();
+        let (_, sent) = reader
+            .ask_routed(
+                Some("what does this do?"),
+                Some(ScreenRegion::new(100, 100, 20, 20)),
+                &|_| {},
+                &|_| {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(sent, ScreenSent::Text { cut: false });
+        let payload = seam.last().unwrap();
+        assert!(
+            payload.contains("button: Deploy") && !payload.contains("SCREEN_CAPTURE"),
+            "{payload}"
+        );
     }
 
     fn collector_with_window() -> ContextCollector<FakeCommandRunner> {

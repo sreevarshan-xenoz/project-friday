@@ -327,7 +327,7 @@ internal sealed class TrayContext : ApplicationContext
             PickedRegion? area = null;
             if (pickArea)
             {
-                using var picker = new RegionForm();
+                using var picker = new RegionForm { AllowPoint = AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "point-ask") };
                 if (picker.ShowDialog() != DialogResult.OK)
                     return;
                 area = picker.Picked;

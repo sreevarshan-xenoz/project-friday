@@ -25,6 +25,7 @@ Autonomous Agent & Cognitive Loop:
   friday ask --selection           Ask about the selected/copied text (Super+Alt+Y)
   friday ask --screen              Ask about what's on screen (Super+Ctrl+Y)
   friday ask --region              Drag out an area of the screen and ask about it
+  friday ask --point               Click one control (a button, a setting) and ask about it
   friday ask --follow-up           Ask a follow-up about the last answer
   friday ask --web ["<objective>"] Ask with web search results and cited sources
                                    In the question: @screen, @tab, @clip, @web or @file <path>
@@ -4028,6 +4029,7 @@ spoken-length|Spoken answers say two, six or all sentences (friday voice speak l
 dictation-history|The last 20 voice-typed texts stay on this computer, to get one back (friday dictations)
 tree-trim|A window's text leaves out what isn't on screen, collapsed menus' items, repeats and lone icons, so asks are smaller
 tree-trim|A window's text leaves out what the app marks hidden, collapsed menus' items, repeated controls and icon glyphs, so asks are smaller
+point-ask|friday ask --point: click one control and ask about it; only it, what it sits in and its neighbours go, as text
 screen-what-changed|What changed? about the same window sends only the lines that changed since the last screen ask (kept in memory 30 minutes)
 agent-compare|Two agents on the same task, each in its own copy, then friday agents compare to pick one
 backup-new-home|A backup restored on another computer points saved folders (workspaces, threads, settings) at the new home
@@ -4827,7 +4829,7 @@ case "${1:-}" in
     # With FRIDAY Shell running, the answer opens in its answer pill (which also
     # streams it); otherwise it arrives as a notification.
     shift
-    use_selection=false use_screen=false use_region=false use_followup=false use_web=false use_new=false use_clip=false another="" details="" daemon_down=false use_json=false
+    use_point=false use_selection=false use_screen=false use_region=false use_followup=false use_web=false use_new=false use_clip=false another="" details="" daemon_down=false use_json=false
     rewrite="" sel_window="" source_label=""
     ask_args=()
     while [ $# -gt 0 ]; do
@@ -4835,6 +4837,8 @@ case "${1:-}" in
         --selection|-s) use_selection=true; ask_args+=(--selection); shift ;;
         --screen) use_screen=true; ask_args+=(--screen); shift ;;
         --region|-r) use_screen=true; use_region=true; ask_args+=(--region); shift ;;
+        # Click one control: only it, what it sits in and its neighbours go.
+        --point|-p) use_screen=true; use_region=true; use_point=true; ask_args+=(--point); shift ;;
         --follow-up|-f) use_followup=true; ask_args+=(--follow-up); shift ;;
         --web) use_web=true; ask_args+=(--web); shift ;;
         --new|-n) use_new=true; shift ;;
@@ -4959,7 +4963,12 @@ case "${1:-}" in
     region=""
     if $use_region; then
       # Esc while dragging cancels; nothing is captured or sent.
-      region=$(slurp 2>/dev/null) || exit 0
+      if $use_point; then
+        friday_feature_on point-ask || { notify "FRIDAY" "Asking about one control is turned off (friday feature point-ask on)."; exit 0; }
+        region=$(slurp -p 2>/dev/null) || exit 0
+      else
+        region=$(slurp 2>/dev/null) || exit 0
+      fi
       [ -n "$region" ] || exit 0
     fi
 
