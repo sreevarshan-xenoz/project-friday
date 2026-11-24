@@ -13,6 +13,24 @@ public static class Listening
 
     public static string WhisperDir(Paths p) => Path.Combine(p.StateDir, "whisper");
 
+    /// <summary>What was heard opens in the ask box first, to edit or drop (off unless turned on).</summary>
+    public static string PreviewFlag(Paths p) => Path.Combine(p.ConfigDir, "voice-preview");
+
+    public static bool PreviewOn(Paths p) => File.Exists(PreviewFlag(p));
+
+    public static void SetPreview(Paths p, bool on)
+    {
+        if (on)
+        {
+            Directory.CreateDirectory(p.ConfigDir);
+            File.WriteAllText(PreviewFlag(p), "");
+        }
+        else
+        {
+            try { File.Delete(PreviewFlag(p)); } catch (IOException) { }
+        }
+    }
+
     /// <summary>"Hey Friday": the switch (off unless turned on) and whether it can run.</summary>
     public static string WakeFlag(Paths p) => Path.Combine(p.ConfigDir, "wake");
 

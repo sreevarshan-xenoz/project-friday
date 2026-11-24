@@ -154,6 +154,7 @@ public static class AppSettings
         ("speak-as-it-comes", "Spoken answers start with the first sentence while the rest is still coming"),
         ("tree-trim", "A window's text leaves out what the app marks hidden, repeated controls and icon glyphs, so asks are smaller"),
         ("this-window", "\"Close this window\" acts on the window in front when you asked, even if you switch while FRIDAY thinks"),
+        ("voice-preview", "With \"Show what was heard first\" on (Voice page), what you said opens in the ask box to edit or drop"),
         ("app-instructions", "Your instructions for each app (app-instructions in the config folder) go with asks from it"),
         ("suggestions", "Asks that fit the app in front (a page, an email, a chat) are offered first in the ask box"),
         ("clipboard-expiry", "A clipboard copied over 10 minutes ago is not used as context for a new question"),

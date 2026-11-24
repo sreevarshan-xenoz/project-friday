@@ -975,6 +975,11 @@ internal sealed partial class SettingsWindow : FluentWindow
                 "The tray icon says when it is listening.",
                 Listening.WakeOn(paths),
                 on => { Listening.SetWake(paths, on); _do.WakeChanged(); });
+            yield return Switch(
+                "Show what was heard first",
+                "What you said opens in the ask box before it is asked: fix a word and press Enter, or Esc to drop it.",
+                Listening.PreviewOn(paths),
+                on => Listening.SetPreview(paths, on));
         }
         yield return Caption("Spoken answers");
         if (!Speaking.Installed(paths))

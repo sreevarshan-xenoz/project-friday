@@ -715,6 +715,14 @@ internal sealed class TrayContext : ApplicationContext
             Notify("FRIDAY", Listening.Problem(code == 0 ? 1 : code, key)!, ToolTipIcon.Info);
             return;
         }
+        // What was heard, to edit or drop first (Voice page: show what was heard first).
+        if (Listening.PreviewOn(_install.Paths) && AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "voice-preview"))
+        {
+            var box = new AskWindow(AskKind.Plain, "What was heard", null, []) { Initial = text };
+            if (box.ShowDialog() != true || box.Question.Length == 0)
+                return;
+            text = box.Question;
+        }
         // Spoken like typed: "set a timer for 5 minutes" is answered here too.
         if (LocalCommands.Parse(text) is { } local && LocalOn(local))
         {
