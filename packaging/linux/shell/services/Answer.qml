@@ -168,6 +168,7 @@ Singleton {
     function receipt(goal: string, text: string): void { root.sent(goal, text); }
     function listening(): void { root.listening(false); }
     function dictating(): void { root.listening(true); }
+    function dictatingLatched(): void { root.listening(true); root.listenHint = "press Super+Shift+Y again to type it"; }
     function state(): string { return root.state; }
   }
 }

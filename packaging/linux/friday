@@ -2350,6 +2350,27 @@ friday_hold() {
   pill() { command -v quickshell >/dev/null 2>&1 && timeout 3 bash "$0" shell ipc answer "$@" >/dev/null 2>&1; }
   case "${1:-}" in
     start)
+      # Voice typing latched by a double tap: this press stops it and types.
+      if [ "${2:-}" = "--type" ] && [ -e "$d/latched" ]; then
+        rm -f "$d/latched" "$d/lasttap"
+        : >"$d/stopping"
+        friday_hold end --type now
+        return $?
+      fi
+      # A second tap of the voice typing key right after a first one latches:
+      # it records until the next press, without holding the key.
+      local latch=false
+      if [ "${2:-}" = "--type" ] && friday_feature_on dictation-latch && [ -s "$d/lasttap" ] \
+          && (( $(date +%s%3N) - $(cat "$d/lasttap" 2>/dev/null || echo 0) < ${FRIDAY_DOUBLE_TAP_MS:-600} )); then
+        latch=true
+      fi
+      rm -f "$d/lasttap" "$d/stopping"
+      # Another press while voice typing is latched (Super+Y): that
+      # recording stops; nothing of it is kept.
+      if [ -e "$d/latched" ]; then
+        kill -TERM "$(cat "$d/rec.pid" 2>/dev/null)" 2>/dev/null || true
+        rm -f "$d/latched"
+      fi
       rm -f "$d/rec.pid" "$d/recording" "$d/rec.wav"
       # The key stops FRIDAY talking at once, tap or hold, and ends a wait
       # for a spoken follow-up or run/cancel (the key is the answer now).
@@ -2364,14 +2385,17 @@ friday_hold() {
         return 0
       fi
       # Held past the delay: record until the release (or 30 s at most).
+      # Latched: at once, until the next press (or 2 minutes).
       # SIGTERM stops the recorder: background jobs here start with SIGINT ignored.
-      local mode="${2:-}"
+      local mode="${2:-}" delay="${FRIDAY_HOLD_DELAY:-0.4}" most=30
+      if $latch; then date +%s%3N >"$d/latched"; delay=0; most=120; fi
       (
-        sleep "${FRIDAY_HOLD_DELAY:-0.4}"
+        sleep "$delay"
         [ "$(cat "$d/pressed" 2>/dev/null)" = "$token" ] || exit 0
         : >"$d/recording"
-        if [ "$mode" = "--type" ]; then pill dictating || true; else pill listening || true; fi
-        timeout 30 pw-record --rate 16000 --channels 1 --format s16 "$d/rec.wav" &
+        if [ "$mode" = "--type" ] && [ -e "$d/latched" ]; then pill dictatingLatched || true
+        elif [ "$mode" = "--type" ]; then pill dictating || true; else pill listening || true; fi
+        timeout "$most" pw-record --rate 16000 --channels 1 --format s16 "$d/rec.wav" &
         echo $! >"$d/rec.pid"
         [ "$(cat "$d/pressed" 2>/dev/null)" = "$token" ] || kill -TERM $! 2>/dev/null
         wait
@@ -2379,6 +2403,19 @@ friday_hold() {
       disown 2>/dev/null || true
       ;;
     end)
+      # The release of the press that stopped a latched recording, or of the
+      # press that latched one: nothing more to do.
+      if [ "${2:-}" = "--type" ] && [ "${3:-}" != now ] && [ -e "$d/stopping" ]; then rm -f "$d/stopping"; return 0; fi
+      # The release of the press that latched: a quick one keeps recording;
+      # one held past the hold delay was a normal hold, typed now.
+      if [ "${2:-}" = "--type" ] && [ -s "$d/latched" ]; then
+        local held=$(( $(date +%s%3N) - $(cat "$d/latched" 2>/dev/null || echo 0) ))
+        if (( held < ${FRIDAY_HOLD_MS:-400} )); then return 0; fi
+        rm -f "$d/latched"
+      fi
+      # A tap of the voice typing key (released before it recorded): a
+      # second one right after latches.
+      if [ "${2:-}" = "--type" ] && [ ! -e "$d/recording" ]; then date +%s%3N >"$d/lasttap"; fi
       rm -f "$d/pressed"
       if [ -e "$d/recording" ]; then
         local i text
@@ -3810,6 +3847,7 @@ thread-compaction|In a long conversation, turns older than the last few ride alo
 routine-offer|After FRIDAY does the same desktop steps three times, the answer offers to keep them as a routine
 event-tasks|Standing tasks that start when a download finishes, a file changes or an app opens (local events only)
 capture-receipt|Before the first word, the answer says what was sent: the app, its text and size or a screenshot, what was masked
+dictation-latch|Tap Super+Shift+Y twice to keep voice typing without holding it; the next press types the words
 log-chain|Each action in the action log is chained to the one before, so a changed line shows (friday verify-log)
 standing-reversible|A standing task runs only what can be undone; anything that would ask first is refused and logged
 memory-tidy|When memory is fuller than an ask carries, friday memory tidy proposes a shorter list to approve

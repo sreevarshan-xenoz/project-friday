@@ -1855,6 +1855,31 @@ contains "voice typing with no words: says so" "$(cat "$LOG")" "Super+Shift+Y"
 if grep -q "wtype" "$LOG"; then fail "voice typing typed when nothing was said"; else pass "voice typing types nothing when nothing was said"; fi
 : >"$LOG"; bash "$F" hold start --type; bash "$F" hold end --type; sleep 0.3
 if grep -qE "pw-record|wtype|friday-ctl" "$LOG"; then fail "a quick tap on the voice typing key did something"; else pass "a quick tap on the voice typing key does nothing"; fi
+# A double tap latches voice typing: it records after the key is let go,
+# and the next press types the words.
+sleep 0.7
+: >"$LOG"; bash "$F" hold start --type; bash "$F" hold end --type; bash "$F" hold start --type; bash "$F" hold end --type; sleep 0.6
+contains "double tap: voice typing records without holding the key" "$(cat "$LOG")" "pw-record --rate 16000 --channels 1"
+if grep -q "wtype" "$LOG"; then fail "the latched recording typed before the next press"; else pass "the latched recording keeps going after the key is let go"; fi
+bash "$F" hold start --type; sleep 0.5; bash "$F" hold end --type; sleep 0.3
+contains "the next press types the words" "$(cat "$LOG")" "wtype -- what time is it in Tokyo"
+if pgrep -f "$S/pw-record" >/dev/null; then fail "the latched recorder kept running"; else pass "the latched recorder stops on the next press"; fi
+: >"$LOG"; sleep 0.7; bash "$F" hold start --type; bash "$F" hold end --type; sleep 0.8; bash "$F" hold start --type; bash "$F" hold end --type; sleep 0.6
+if grep -q "pw-record" "$LOG"; then fail "two slow taps latched"; else pass "two slow taps don't latch"; fi
+# A tap then a normal hold: the hold types its words on release.
+: >"$LOG"; sleep 0.7; bash "$F" hold start --type; bash "$F" hold end --type; bash "$F" hold start --type; sleep 0.9; bash "$F" hold end --type; sleep 0.5
+contains "a tap then a hold: the hold still types" "$(cat "$LOG")" "wtype -- what time is it in Tokyo"
+if pgrep -f "$S/pw-record" >/dev/null; then fail "the hold after a tap left the recorder running"; else pass "the hold after a tap stops its recorder"; fi
+# Latched, then Super+Y: the latched recording stops, and voice typing works after.
+: >"$LOG"; sleep 0.7; bash "$F" hold start --type; bash "$F" hold end --type; bash "$F" hold start --type; bash "$F" hold end --type; sleep 0.4
+PICK="x" bash "$F" hold start; PICK="x" bash "$F" hold end; sleep 0.3
+if pgrep -f "$S/pw-record" >/dev/null; then fail "Super+Y left the latched recorder running"; else pass "Super+Y stops a latched recording"; fi
+: >"$LOG"; sleep 0.7; bash "$F" hold start --type; sleep 0.9; bash "$F" hold end --type; sleep 0.5
+contains "voice typing works after that" "$(cat "$LOG")" "wtype -- what time is it in Tokyo"
+bash "$F" feature dictation-latch off >/dev/null
+: >"$LOG"; sleep 0.7; bash "$F" hold start --type; bash "$F" hold end --type; bash "$F" hold start --type; bash "$F" hold end --type; sleep 0.6
+if grep -q "pw-record" "$LOG"; then fail "the double tap latched while turned off"; else pass "the double tap latch has a switch"; fi
+bash "$F" feature dictation-latch on >/dev/null
 if grep -q "friday-ctl" "$LOG"; then fail "an empty recording was asked"; else pass "an empty recording asks nothing"; fi
 # niri has no release bind: one press listens, the next one asks.
 : >"$LOG"; bash "$F" hold toggle; sleep 0.5
