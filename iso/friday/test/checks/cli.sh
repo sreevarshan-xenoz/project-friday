@@ -33,6 +33,11 @@ if [[ "\$1" == answers ]]; then
   echo 'Past answers about docker:'
   exit 0
 fi
+if [[ "\$1" == import ]]; then
+  printf 'friday-ctl-import %s\n' "\${*:2}" >> "$LOG"
+  echo 'GROQ_API_KEY (…6789) from OpenCode: will be added'
+  exit 0
+fi
 if [[ "\$1" == verify-log ]]; then
   printf 'friday-ctl-verify-log\n' >> "$LOG"
   echo 'The action log is intact: 3 actions'
@@ -635,6 +640,12 @@ contains "for the last day by default" "$(cat "$LOG")" "friday-ctl-offline-proof
 bash "$F" tasks recipe weather >/dev/null
 contains "a recipe is added through friday-ctl" "$(cat "$LOG")" "friday-ctl-tasks recipe weather"
 contains "friday verify-log checks the chain through friday-ctl" "$(bash "$F" verify-log)" "intact"
+: >"$LOG"; contains "friday import previews first" "$(bash "$F" import)" "will be added"
+bash "$F" import --apply >/dev/null
+contains "friday import --apply adds through friday-ctl" "$(cat "$LOG")" "friday-ctl-import --apply"
+bash "$F" feature config-import off >/dev/null
+contains "importing has a switch" "$(bash "$F" import)" "turned off"
+bash "$F" feature config-import on >/dev/null
 : >"$LOG"; contains "friday answers search goes to friday-ctl" "$(bash "$F" answers search docker --since week)" "Past answers about docker"
 contains "with its words and time" "$(cat "$LOG")" "friday-ctl-answers search docker --since week"
 : >"$LOG"; bash "$F" ask "What did you tell me about docker last week?"; sleep 0.3

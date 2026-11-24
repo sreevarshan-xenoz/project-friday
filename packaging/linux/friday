@@ -74,6 +74,7 @@ Autonomous Agent & Cognitive Loop:
   friday backup [folder|check <f>|restore <f>]  Back up settings, memory and history; check or restore one
   friday risks                     What FRIDAY may do on its own, what asks first and what never runs
   friday verify-log                Check the action log wasn't changed: each action is chained to the one before
+  friday import [--apply]          Keys and a model from OpenCode, Aider or your environment: preview, then add
   friday day [today|yesterday|YYYY-MM-DD|forget <date|all>]  A short summary of a day by project, kept here
   friday activity                  Agent steps waiting for you, runs going now, standing tasks, runs finished lately
   friday providers                 How each AI provider is doing (limit hit, OK…) and who answered last
@@ -3893,6 +3894,7 @@ past-answers|What did you tell me about X last week, and friday answers search: 
 answer-cards|Answers show tables and steps, and each code block gets its own Copy
 blank-secret-fields|Password and card fields the window shows are painted over before a screenshot of it leaves
 doctor-fix|friday doctor --fix repairs what it can by itself: a stopped daemon, missing keys, FRIDAY Shell not running
+config-import|friday import: keys and a model from OpenCode, Aider or your environment, previewed first
 log-chain|Each action in the action log is chained to the one before, so a changed line shows (friday verify-log)
 standing-reversible|A standing task runs only what can be undone; anything that would ask first is refused and logged
 memory-tidy|When memory is fuller than an ask carries, friday memory tidy proposes a shorter list to approve
@@ -5929,6 +5931,21 @@ $offer"
   verify-log)
     # Whether the action log is as FRIDAY wrote it (hash-chained lines).
     exec friday-ctl verify-log
+    ;;
+  import)
+    # Keys and a model from other assistants: a preview, then --apply adds
+    # what friday.env doesn't have (into the keyring when keys live there).
+    shift
+    friday_feature_on config-import || { echo "Importing settings is turned off (friday feature config-import on)."; exit 0; }
+    if [ "${1:-}" = --apply ]; then
+      env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
+      had_keyring=false; grep -qs '=keyring:$' "$env_file" && had_keyring=true
+      friday-ctl import --apply || exit 1
+      if $had_keyring; then friday_secrets keychain >/dev/null 2>&1 || true; fi
+      systemctl --user restart friday-linux-daemon 2>/dev/null || true
+      exit 0
+    fi
+    exec friday-ctl import
     ;;
   day)
     # A short summary of a day by project, from FRIDAY's own logs; kept in
