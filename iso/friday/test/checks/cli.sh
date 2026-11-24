@@ -13,8 +13,9 @@ export HOME="$W/home" XDG_STATE_HOME="" XDG_CONFIG_HOME="" USER="${USER:-tester}
 cat >"$S/friday-ctl" <<EOF
 #!/bin/bash
 if [[ "\$1" == say ]]; then
+  if [[ "\$2" == --voices ]]; then printf 'friday-ctl-say --voices\n' >> "$LOG"; printf '0 Bella\n1 Heart\n'; exit 0; fi
   if [[ "\$2" == "-" ]]; then text=\$(cat); else text="\${*:2}"; fi
-  printf 'friday-ctl-say %s\n' "\$text" >> "$LOG"
+  printf 'friday-ctl-say %s%s\n' "\${FRIDAY_SAY_SPEAKER:+[voice \$FRIDAY_SAY_SPEAKER] }" "\$text" >> "$LOG"
   exit "\${SAY_EXIT:-0}"
 fi
 if [[ "\$1" == backup ]]; then
@@ -2408,6 +2409,12 @@ contains "setup kokoro installs the expressive voice" "$(cat "$LOG")" "friday-ct
 contains "setup with no name installs tiny voca, the default voice" "$(cat "$LOG")" "friday-ctl-say --setup tinyvoca"
 : >"$LOG"; bash "$F" voice speak voices >/dev/null
 contains "voices asks friday-ctl for the installed voice's names" "$(cat "$LOG")" "friday-ctl-say --voices"
+: >"$LOG"; bash "$F" voice speak try 1 >/dev/null
+contains "try plays that voice once" "$(cat "$LOG")" "friday-ctl-say [voice 1] Hi, I'm FRIDAY. This is voice 1, Heart."
+contains "and the chosen voice stays" "$(cat "$VD/settings.json")" '"speaker": 4'
+: >"$LOG"; bash "$F" voice speak try >/dev/null
+[ "$(grep -c '^friday-ctl-say \[voice' "$LOG")" = 2 ] && pass "try with no number plays each voice" || fail "try played: $(cat "$LOG")"
+bash "$F" voice speak try 9 >/dev/null 2>&1 && fail "try took a voice that isn't there" || pass "try refuses a voice that isn't there"
 bash "$F" voice speak off >/dev/null
 if [[ -e "$SPK" ]]; then fail "off left the switch on"; else pass "off removes the switch"; fi
 : >"$LOG"; PATH="$TOUR/bin:$PATH" FRIDAY_SHELL_DIR="$TOUR/shell" bash "$F" tour

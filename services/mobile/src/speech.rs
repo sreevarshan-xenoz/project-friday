@@ -149,7 +149,13 @@ pub fn detect(dir: &Path) -> Option<Voice> {
         engine,
         model,
         kind,
-        speaker: settings["speaker"].as_u64().unwrap_or(0).min(63) as u32,
+        // FRIDAY_SAY_SPEAKER: one voice tried once, the choice unchanged.
+        speaker: std::env::var("FRIDAY_SAY_SPEAKER")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .or_else(|| settings["speaker"].as_u64())
+            .unwrap_or(0)
+            .min(63) as u32,
         speed: settings["speed"].as_f64().unwrap_or(1.0).clamp(0.6, 1.6) as f32,
         threads: settings["threads"].as_u64().unwrap_or(2).clamp(1, 8) as u32,
     })
