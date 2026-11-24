@@ -130,6 +130,7 @@ public static class AppSettings
         ("event-tasks", "Standing tasks that start when a download finishes, a file changes or an app opens"),
         ("capture-receipt", "Before the first word, the answer card says what was sent: the app, its text and size or a screenshot, what was masked"),
         ("dictation-latch", "Tap the voice typing key twice to keep recording without holding it (Linux)"),
+        ("past-answers", "\"What did you tell me about X last week\": past answers with their dates"),
         ("log-chain", "Each action in the action log is chained to the one before, so a changed line shows"),
         ("standing-reversible", "A standing task runs only what can be undone; anything that would ask first is refused and logged"),
         ("memory-tidy", "When memory is fuller than an ask carries, offer a shorter list to approve"),

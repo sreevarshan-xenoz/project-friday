@@ -413,9 +413,205 @@ pub fn day_summary(entries: &[Entry], day: NaiveDate) -> String {
     out
 }
 
+/// A past answer that matched a search.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Found {
+    /// Unix seconds.
+    pub ts: i64,
+    pub question: String,
+    /// The answer's line with the most of the words (or its first line).
+    pub line: String,
+}
+
+const STOP: [&str; 16] = [
+    "the", "a", "an", "my", "me", "of", "to", "and", "for", "in", "on", "with", "about", "is",
+    "it", "that",
+];
+
+/// The words a search looks for: lower case, two letters or more, not "the".
+pub fn search_words(text: &str) -> Vec<String> {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_' && c != '.')
+        .map(|w| w.trim_matches('.'))
+        .filter(|w| w.chars().count() >= 2 && !STOP.contains(w))
+        .map(String::from)
+        .collect()
+}
+
+/// Past answers (`answers.md` text, oldest first) holding every word, since
+/// `since` (unix seconds), newest first, at most `limit`. With `keep_local`
+/// false, answers kept on this computer are left out (for a cloud model).
+pub fn search_answers(
+    text: &str,
+    words: &[String],
+    since: i64,
+    keep_local: bool,
+    limit: usize,
+) -> Vec<Found> {
+    if words.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for block in text.split("<!-- friday answer -->").skip(1) {
+        if !keep_local && block.contains(LOCAL_MARK) {
+            continue;
+        }
+        let mut lines = block.lines().map(str::trim).filter(|l| !l.is_empty());
+        let Some(question) = lines.next().and_then(|l| l.strip_prefix("# ")) else {
+            continue;
+        };
+        let Some(ts) = lines
+            .next()
+            .and_then(|l| l.strip_prefix('_')?.strip_suffix('_'))
+            .and_then(|d| NaiveDateTime::parse_from_str(d, "%Y-%m-%d %H:%M").ok())
+            .and_then(|d| Local.from_local_datetime(&d).single())
+            .map(|d| d.timestamp())
+        else {
+            continue;
+        };
+        if ts < since {
+            continue;
+        }
+        let body: Vec<&str> = lines
+            .filter(|l| {
+                !l.starts_with('_') && !l.starts_with('>') && !l.starts_with('<') && *l != "---"
+            })
+            .collect();
+        let all = format!("{question}\n{}", body.join("\n")).to_lowercase();
+        if !words.iter().all(|w| all.contains(w.as_str())) {
+            continue;
+        }
+        let hits = |l: &str| {
+            let l = l.to_lowercase();
+            words.iter().filter(|w| l.contains(w.as_str())).count()
+        };
+        // The first line with the most words.
+        let line = body
+            .iter()
+            .enumerate()
+            .max_by_key(|(i, l)| (hits(l), std::cmp::Reverse(*i)))
+            .map(|(_, l)| *l)
+            .unwrap_or_default();
+        out.push(Found {
+            ts,
+            question: question.to_string(),
+            line: short(line),
+        });
+    }
+    out.reverse();
+    out.truncate(limit);
+    out
+}
+
+/// "What did you tell me about X last week": X and since when (unix
+/// seconds; 0 for any time). `None` when the ask isn't that.
+pub fn told_about(goal: &str, now: DateTime<Local>) -> Option<(String, i64)> {
+    let g = goal.lines().next()?.trim().to_lowercase();
+    let g = g.trim_end_matches(['?', '.', '!', ' ']);
+    let rest = [
+        "what did you tell me about ",
+        "what did you say about ",
+        "what have you told me about ",
+        "what did friday tell me about ",
+        "what did friday say about ",
+        "what did you tell me on ",
+        "what did we talk about ",
+    ]
+    .iter()
+    .find_map(|p| g.strip_prefix(p))?;
+    let midnight = |d: NaiveDate| {
+        Local
+            .from_local_datetime(&d.and_hms_opt(0, 0, 0)?)
+            .earliest()
+            .map(|t| t.timestamp())
+    };
+    let today = now.date_naive();
+    let (topic, since) = if let Some(t) = rest
+        .strip_suffix(" last week")
+        .or_else(|| rest.strip_suffix(" this week"))
+    {
+        (t, (now - Duration::days(7)).timestamp())
+    } else if let Some(t) = rest.strip_suffix(" yesterday") {
+        (t, midnight(today.pred_opt()?)?)
+    } else if let Some(t) = rest.strip_suffix(" today") {
+        (t, midnight(today)?)
+    } else if let Some(t) = rest
+        .strip_suffix(" last month")
+        .or_else(|| rest.strip_suffix(" this month"))
+    {
+        (t, (now - Duration::days(30)).timestamp())
+    } else {
+        (rest, 0)
+    };
+    let topic = topic.trim();
+    (!search_words(topic).is_empty()).then(|| (topic.to_string(), since))
+}
+
+/// The hits as a list with their dates, for a person or a model.
+pub fn render_found(found: &[Found]) -> String {
+    found
+        .iter()
+        .filter_map(|f| {
+            let t = Local.timestamp_opt(f.ts, 0).single()?;
+            Some(format!(
+                "{} — \"{}\"\n    {}",
+                t.format("%a %Y-%m-%d %H:%M"),
+                f.question,
+                f.line
+            ))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn past_answers_are_found_by_their_words_with_dates() {
+        let text = "<!-- friday answer -->\n# how do rust lifetimes work\n\n_2026-11-17 09:00_\n\nA lifetime says how long a borrow lives.\nRust checks them at compile time.\n\n---\n\n\
+                    <!-- friday answer -->\n# summarise my bank statement\n\n_2026-11-18 10:00_\n\n_On this computer · nothing was sent_\n\nRust money spent: 40.\n\n---\n\n\
+                    <!-- friday answer -->\n# why is cargo slow\n\n_2026-11-20 11:00_\n\n> (a follow-up)\n\nIt rebuilds; rust lifetimes aren't the cause.\n\n---\n\n";
+        let words = search_words("Rust lifetimes");
+        assert_eq!(words, ["rust", "lifetimes"]);
+        let found = search_answers(text, &words, 0, true, 10);
+        let qs: Vec<&str> = found.iter().map(|f| f.question.as_str()).collect();
+        assert_eq!(
+            qs,
+            ["why is cargo slow", "how do rust lifetimes work"],
+            "newest first"
+        );
+        assert_eq!(found[1].line, "Rust checks them at compile time.");
+        // Since a day: only the newer one.
+        let since = at("2026-11-19", "00:00").timestamp();
+        assert_eq!(search_answers(text, &words, since, true, 10).len(), 1);
+        // A local answer: in the person's own view, never for a model.
+        let rust = search_words("rust");
+        assert_eq!(search_answers(text, &rust, 0, true, 10).len(), 3);
+        assert_eq!(search_answers(text, &rust, 0, false, 10).len(), 2);
+        assert!(render_found(&found).contains("2026-11-20 11:00 — \"why is cargo slow\""));
+        assert!(search_answers(text, &[], 0, true, 10).is_empty());
+    }
+
+    #[test]
+    fn what_did_you_tell_me_about_names_a_topic_and_a_time() {
+        let now = at("2026-11-24", "15:00");
+        let (topic, since) =
+            told_about("What did you tell me about Rust lifetimes last week?", now).unwrap();
+        assert_eq!(topic, "rust lifetimes");
+        assert_eq!(since, (now - Duration::days(7)).timestamp());
+        let (_, since) = told_about("what did you say about docker yesterday", now).unwrap();
+        assert_eq!(since, at("2026-11-23", "00:00").timestamp());
+        assert_eq!(told_about("what did you tell me about it", now), None);
+        assert_eq!(told_about("what is rust", now), None);
+        assert_eq!(
+            told_about("what did we talk about the planner", now)
+                .unwrap()
+                .1,
+            0
+        );
+    }
 
     #[test]
     fn a_day_is_summed_up_by_project() {
