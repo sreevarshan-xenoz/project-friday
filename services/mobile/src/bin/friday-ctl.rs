@@ -1873,6 +1873,11 @@ async fn main() -> std::process::ExitCode {
         );
         return std::process::ExitCode::SUCCESS;
     }
+    // How long each kind of record stays.
+    if raw.first().map(String::as_str) == Some("retention") {
+        println!("{}", friday_mobile::retention::describe());
+        return std::process::ExitCode::SUCCESS;
+    }
     if raw.first().map(String::as_str) == Some("usage") {
         let days: u32 = raw
             .iter()

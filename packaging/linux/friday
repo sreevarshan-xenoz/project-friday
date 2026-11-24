@@ -4030,6 +4030,7 @@ dictation-history|The last 20 voice-typed texts stay on this computer, to get on
 tree-trim|A window's text leaves out what isn't on screen, collapsed menus' items, repeats and lone icons, so asks are smaller
 tree-trim|A window's text leaves out what the app marks hidden, collapsed menus' items, repeated controls and icon glyphs, so asks are smaller
 point-ask|friday ask --point: click one control and ask about it; only it, what it sits in and its neighbours go, as text
+retention|Finished agent runs, the agent hooks log and wrong-answer reports go after 30 days (friday-ctl retention shows every rule)
 screen-what-changed|What changed? about the same window sends only the lines that changed since the last screen ask (kept in memory 30 minutes)
 agent-compare|Two agents on the same task, each in its own copy, then friday agents compare to pick one
 backup-new-home|A backup restored on another computer points saved folders (workspaces, threads, settings) at the new home

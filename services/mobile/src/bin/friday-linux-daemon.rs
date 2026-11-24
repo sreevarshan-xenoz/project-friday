@@ -456,6 +456,21 @@ async fn main() {
     let result_out_cancel = outbound.clone();
     let state_cancel_lock = state.clone();
     let state_cancel_path = state_path.clone();
+    // What only helped with one moment goes on its own: at start, then daily.
+    if let Some(state_dir) = state_path.parent().map(std::path::Path::to_path_buf) {
+        tokio::spawn(async move {
+            loop {
+                if friday_mobile::features::on("retention") {
+                    let gone =
+                        friday_mobile::retention::sweep(&state_dir, chrono::Utc::now().timestamp());
+                    if gone > 0 {
+                        tracing::info!("[retention] removed {gone} old records");
+                    }
+                }
+                tokio::time::sleep(Duration::from_secs(24 * 60 * 60)).await;
+            }
+        });
+    }
     tokio::spawn(async move {
         while let Some(ev) = friday_mobile::next_event(&mut cancel_bus).await {
             if ev.kind == "task.cancel" {

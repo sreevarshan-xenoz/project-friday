@@ -156,6 +156,7 @@ public static class AppSettings
         ("this-window", "\"Close this window\" acts on the window in front when you asked, even if you switch while FRIDAY thinks"),
         ("voice-preview", "With \"Show what was heard first\" on (Voice page), what you said opens in the ask box to edit or drop"),
         ("point-ask", "A click instead of a drag in the area picker asks about that one control; only it and its neighbours go, as text"),
+        ("retention", "Finished agent runs and wrong-answer reports go after 30 days"),
         ("app-instructions", "Your instructions for each app (app-instructions in the config folder) go with asks from it"),
         ("suggestions", "Asks that fit the app in front (a page, an email, a chat) are offered first in the ask box"),
         ("clipboard-expiry", "A clipboard copied over 10 minutes ago is not used as context for a new question"),
