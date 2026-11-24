@@ -226,8 +226,30 @@ The last row, "Ask FRIDAY", is the only one that asks the AI: typing alone sends
 ## The desktop
 
 FRIDAY OS has its own keymap (Super+K lists it), Super+L locks (with face unlock
-after `friday face setup`), and Super+Alt+G switches game mode. `friday doctor`
+after `friday face setup`, below), and Super+Alt+G switches game mode. `friday doctor`
 checks that everything is running; `friday report` writes a redacted bug report.
+
+## Face unlock
+
+The lock screen can know your face. The first-login tour offers it when the
+computer has a camera; any time later, run `friday face setup` in a terminal.
+
+1. It installs Gaze (`gaze-bin`, built from the AUR on this computer) and asks
+   for your password to do so.
+2. Gaze learns your face: look at the camera and follow its prompts.
+3. It turns face unlock on for the lock screen only. It asks before using your
+   face for `sudo` and password prompts too; say no if you're unsure.
+4. Press Super+L and look at the camera to try it. Typing your password always
+   works too, so a failed look never locks you out.
+
+Your face is checked on this computer; no picture is sent anywhere. An
+ordinary webcam can be fooled by a photo more easily than a laptop's infrared
+camera, so keep it to the lock screen on a shared or mobile machine.
+`friday face status` says what's on; `friday face remove` turns it all off
+(Gaze stays installed: `gaze uninstall` removes it).
+
+On Windows, face unlock is Windows Hello: Settings → Accounts → Sign-in
+options.
 
 ## System helper
 
