@@ -15,6 +15,8 @@ internal sealed class TrayContext : ApplicationContext
     private readonly AnswerLog _log;
     private readonly NotifyIcon _icon;
     private readonly Hotkeys _hotkeys = new();
+    private readonly ClipboardAge _clipAges = new();
+    private DateTime _ownClipboardUntil = DateTime.MinValue;
     private readonly Supervised _daemon;
     private readonly Supervised _host;
     // FRIDAY's own llama-server, when llama.cpp is the local engine (Settings, Local AI).
@@ -59,6 +61,25 @@ internal sealed class TrayContext : ApplicationContext
 
         _hotkeys.Pressed += kind => _ = kind == AskKind.Plain ? AskOrTalkAsync() : AskAsync(kind);
         _hotkeys.RegisterAll();
+        // When each clipboard text was copied: an old one isn't used as context.
+        // FRIDAY's own copy and put-back while reading a selection don't
+        // count, nor does a password manager's copy (it is never read).
+        _hotkeys.ClipboardChanged += () =>
+        {
+            if (DateTime.UtcNow < _ownClipboardUntil)
+                return;
+            try
+            {
+                if (Clipboard.ContainsText() && !Selection.MarkedPrivate())
+                {
+                    var text = Clipboard.GetText();
+                    if (!Asking.LooksLikeSecret(text))
+                        _clipAges.Seen(text, DateTime.UtcNow);
+                }
+            }
+            catch (System.Runtime.InteropServices.ExternalException) { }
+        };
+        _hotkeys.WatchClipboard();
         _icon = new NotifyIcon { Visible = true, Text = "FRIDAY" };
         _icon.MouseUp += (_, e) => { if (e.Button == MouseButtons.Right) ShowMenu(); };
         // Opening FRIDAY again (the Start menu entry) opens its window instead of doing nothing.
@@ -348,10 +369,19 @@ internal sealed class TrayContext : ApplicationContext
             var selected = false;
             if (kind == AskKind.Selection)
             {
-                var sel = await Selection.CaptureAsync();
+                _ownClipboardUntil = DateTime.MaxValue;
+                Selection.Result sel;
+                try { sel = await Selection.CaptureAsync(); }
+                finally { _ownClipboardUntil = DateTime.UtcNow.AddMilliseconds(500); }
                 if (sel.Problem != null)
                 {
                     Notify("FRIDAY", sel.Problem, ToolTipIcon.Info);
+                    return;
+                }
+                if (sel.Source == "Clipboard" && AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "clipboard-expiry")
+                    && _clipAges.TooOld(sel.Text!, DateTime.UtcNow) is { } old)
+                {
+                    Notify("FRIDAY", old, ToolTipIcon.Info);
                     return;
                 }
                 context = sel.Text!.Length > Asking.MaxContextChars ? sel.Text[..Asking.MaxContextChars] : sel.Text;

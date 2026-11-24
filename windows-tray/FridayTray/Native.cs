@@ -23,6 +23,12 @@ internal static partial class Native
     [LibraryImport("user32.dll")]
     public static partial uint GetClipboardSequenceNumber();
 
+    public const int WM_CLIPBOARDUPDATE = 0x031D;
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool AddClipboardFormatListener(IntPtr hwnd);
+
     [LibraryImport("user32.dll")]
     public static partial IntPtr GetForegroundWindow();
 

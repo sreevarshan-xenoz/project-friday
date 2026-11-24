@@ -269,7 +269,7 @@ EOF
 printf '#!/bin/bash\necho "wl-copy: $(cat)" >> %q\n' "$LOG" >"$S/wl-copy"
 printf '#!/bin/bash\necho "foot $*" >> %q\n' "$LOG" >"$S/foot"
 printf '#!/bin/bash\necho "systemctl $*" >> %q\n[[ "$*" == *is-active* && -n "$STUB_INACTIVE" ]] && exit 3\nexit 0\n' "$LOG" >"$S/systemctl"
-printf '#!/bin/bash\n[[ "$*" == *--primary* ]] && { printf %%s "$PRIMARY"; exit 0; }\nprintf %%s "$CLIP"\n' >"$S/wl-paste"
+printf '#!/bin/bash\n[[ "$*" == *--primary* ]] && { printf %%s "$PRIMARY"; exit 0; }\n[[ "$*" == *--list-types* ]] && { printf "%%s\\n" text/plain $CLIPTYPES; exit 0; }\nprintf %%s "$CLIP"\n' >"$S/wl-paste"
 printf '#!/bin/bash\necho "fuzzel $*" >> %q\necho "$PICK"\n' "$LOG" >"$S/fuzzel"
 printf '#!/bin/bash\necho "curl $*" >> %q\n[[ -n "$OFFLINE" ]] && exit 6\nexit 0\n' "$LOG" >"$S/curl"
 printf '#!/bin/bash\necho "sudo $*" >> %q\n"$@"\n' "$LOG" >"$S/sudo"
@@ -1227,6 +1227,16 @@ contains "prompt says the text came from the clipboard" "$(cat "$LOG")" 'Clipboa
 if grep -q "friday-ctl" "$LOG"; then fail "a password-shaped clipboard was sent"
 else pass "password-shaped clipboard is never sent"; fi
 contains "and the user is told why" "$(cat "$LOG")" "looks like a password or token"
+: >"$LOG"; PRIMARY="" CLIP="my bank login words" CLIPTYPES="x-kde-passwordManagerHint" bash "$F" ask -s "explain"; sleep 0.3
+if grep -q "friday-ctl" "$LOG"; then fail "a password manager's copy was sent"; else pass "a password manager's copy is never sent"; fi
+mkdir -p "$FD"; printf '{"ts":%s,"text":"an old note"}\n' "$(( $(date +%s) - 1820 ))" >"$FD/clips.jsonl"
+: >"$LOG"; PRIMARY="" CLIP="an old note" bash "$F" ask -s "explain"; sleep 0.3
+if grep -q "friday-ctl" "$LOG"; then fail "a copy from 30 minutes ago was used"; else pass "a copy from 30 minutes ago isn't used"; fi
+contains "and it says how old it is" "$(cat "$LOG")" "copied 30 minutes ago"
+printf '{"ts":%s,"text":"a new note"}\n' "$(date +%s)" >>"$FD/clips.jsonl"
+: >"$LOG"; PRIMARY="" CLIP="a new note" bash "$F" ask -s "explain"; sleep 0.3
+contains "a fresh copy is used" "$(cat "$LOG")" "a new note"
+rm -f "$FD/clips.jsonl"
 : >"$LOG"; PRIMARY="hunter2SecretToken99" PICK="explain" bash "$F" ask -s; sleep 0.3
 contains "highlighted text is sent as chosen" "$(cat "$LOG")" "hunter2SecretToken99"
 : >"$LOG"; rm -f "$W/again_done"

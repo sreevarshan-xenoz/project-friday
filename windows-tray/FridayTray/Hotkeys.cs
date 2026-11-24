@@ -15,6 +15,11 @@ internal sealed class Hotkeys : NativeWindow, IDisposable
 
     public event Action<AskKind>? Pressed;
 
+    /// <summary>The clipboard changed (once <see cref="WatchClipboard"/> is on).</summary>
+    public event Action? ClipboardChanged;
+
+    public void WatchClipboard() => Native.AddClipboardFormatListener(Handle);
+
     public Hotkeys(Action<TimeSpan>? delay = null)
     {
         _delay = delay;
@@ -51,6 +56,8 @@ internal sealed class Hotkeys : NativeWindow, IDisposable
     {
         if (m.Msg == Native.WM_HOTKEY && _ids.TryGetValue((int)m.WParam, out var kind))
             Pressed?.Invoke(kind);
+        else if (m.Msg == Native.WM_CLIPBOARDUPDATE)
+            ClipboardChanged?.Invoke();
         base.WndProc(ref m);
     }
 
