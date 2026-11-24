@@ -633,6 +633,7 @@ where
             }
         }
 
+        crate::timings::start("screen");
         // Every host and client gets this, not only FRIDAY's own CLI: a
         // private window is neither read nor captured, nor is an area that
         // covers it (or might: its place unknown).
@@ -863,6 +864,7 @@ where
             current_ctx
         };
 
+        crate::timings::end("screen", "capture");
         friday_intelligence::with_egress_context(
             egress_ctx,
             self.provider.send_streaming(&composed, progress),
@@ -1027,6 +1029,7 @@ where
         } else {
             current
         };
+        crate::timings::end("screen", "capture");
         friday_intelligence::with_egress_context(
             ctx,
             self.provider.send_text_streaming(&composed, progress),

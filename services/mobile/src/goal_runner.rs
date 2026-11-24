@@ -2767,6 +2767,7 @@ impl GoalRunner {
         }
         let composed = compose_goal_with_context(&goal, &prior, &recalled);
         let goal_start = std::time::Instant::now();
+        crate::timings::start(&id);
 
         let _ = self
             .bus
@@ -3128,6 +3129,7 @@ impl GoalRunner {
                 .and_then(|f| f.last_decision())
                 .and_then(|d| d.served);
             let elapsed_ms = goal_start.elapsed().as_millis() as u64;
+            crate::timings::end(&id, "answer");
             let served_by = if answered_by_model {
                 served
                     .as_ref()
@@ -3260,6 +3262,9 @@ async fn forward_progress(
         let open = rx.changed().await.is_ok();
         let text = rx.borrow_and_update().clone();
         if !text.trim().is_empty() && text != sent {
+            if sent.is_empty() {
+                crate::timings::lap(&goal_id, "first_word");
+            }
             let _ = bus
                 .publish(Event::new(
                     "goal.progress",

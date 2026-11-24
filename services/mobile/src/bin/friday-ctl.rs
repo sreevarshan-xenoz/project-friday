@@ -1862,6 +1862,17 @@ async fn main() -> std::process::ExitCode {
         return std::process::ExitCode::SUCCESS;
     }
     // How each AI provider has done lately, from the local egress log.
+    // How long each stage of an ask took lately (median and p95).
+    if raw.first().map(String::as_str) == Some("timings") {
+        let log =
+            std::fs::read_to_string(friday_intelligence::default_egress_path()).unwrap_or_default();
+        let since = chrono::Utc::now().timestamp() - 7 * 86400;
+        println!(
+            "{}",
+            friday_mobile::timings::report(&friday_mobile::timings::read(), &log, since, 7)
+        );
+        return std::process::ExitCode::SUCCESS;
+    }
     if raw.first().map(String::as_str) == Some("usage") {
         let days: u32 = raw
             .iter()

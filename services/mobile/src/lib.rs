@@ -58,6 +58,7 @@ pub mod standing;
 pub mod system_tool;
 pub mod thoughts;
 pub mod timeline;
+pub mod timings;
 pub mod tinyvoca;
 pub mod transport;
 pub mod upgrade;

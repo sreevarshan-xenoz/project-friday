@@ -106,6 +106,13 @@ else fail "friday usage: $out"; fi
 if grep -q '"first_ms":[0-9]' "$W/egress.jsonl" && grep -q '"ms":[0-9]' "$W/egress.jsonl"; then pass "egress.jsonl keeps each call's timing"
 else fail "no timings in egress.jsonl"; fi
 
+# Each ask's stages are timed on this computer: the first word and the whole
+# answer, with the provider's own first words (friday doctor shows them).
+out=$("${offline[@]}" "$CTL_BIN" timings 2>&1)
+if grep -q "the first word, from the ask: [0-9.]* s / [0-9.]* s" <<<"$out" \
+    && grep -q "the whole answer: [0-9.]* s / [0-9.]* s" <<<"$out"; then pass "friday-ctl timings: the first word and the whole answer, median and p95"
+else fail "friday-ctl timings: $out"; fi
+
 # --json, the stable form for scripts (specs/ask-json.md): one JSON object on
 # stdout, a fixed exit code for each kind of end.
 echo "for scripts (--json)"
