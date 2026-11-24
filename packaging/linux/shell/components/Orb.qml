@@ -18,7 +18,10 @@ Item {
   id: root
 
   property real size: 22
-  property string mode: Friday.mode
+  // FRIDAY's state, with the voice on top: listening while a spoken ask is
+  // heard, speaking while an answer is read out.
+  property string mode: Answer.state === "listening" ? "listening"
+    : Friday.speaking ? "speaking" : Friday.mode
 
   implicitWidth: size
   implicitHeight: size
@@ -34,10 +37,13 @@ Item {
   // what is going on instead.
   readonly property bool showLetter: !scanning && !thinking
 
-  readonly property color bladeColor: offline ? Theme.alpha(Theme.faint, 0.35)
+  // Dimmed blades need more of the colour on a light palette to show.
+  readonly property real dim: Theme.light ? 0.5 : 0.3
+  readonly property bool turning: (scanning || thinking) && Theme.motion && visible
+  readonly property color bladeColor: offline ? Theme.alpha(Theme.faint, root.dim + 0.1)
     : mode === "stopped" ? Theme.warn
     : active ? Theme.accent
-    : (scanning || thinking) ? Theme.alpha(Theme.subtext, 0.28)
+    : (scanning || thinking) ? Theme.alpha(Theme.subtext, root.dim)
     : Theme.subtext
 
   // Glow behind the mark while it answers.
@@ -50,19 +56,20 @@ Item {
     color: Theme.alpha(Theme.accent, 0.45)
     visible: root.active
     SequentialAnimation on scale {
-      running: glow.visible && Theme.motion
+      running: glow.visible && root.visible && Theme.motion
+      onRunningChanged: if (!running) glow.scale = 1
       loops: Animation.Infinite
       NumberAnimation { from: 0.85; to: 1.25; duration: 900; easing.type: Easing.InOutSine }
       NumberAnimation { from: 1.25; to: 0.85; duration: 900; easing.type: Easing.InOutSine }
     }
   }
 
-  // The 100 x 100 drawing, scaled.
+  // The 100 x 100 drawing, scaled about the middle.
   Item {
+    anchors.centerIn: parent
     width: 100
     height: 100
     scale: root.size / 100
-    transformOrigin: Item.TopLeft
 
     // The blades turn slowly while FRIDAY is busy.
     Shape {
@@ -75,13 +82,13 @@ Item {
         PathSvg { path: root.blades }
       }
       RotationAnimation on rotation {
-        running: (root.scanning || root.thinking) && Theme.motion
+        running: root.turning
+        onRunningChanged: if (!running) bladeShape.rotation = 0
         loops: Animation.Infinite
         from: 0
         to: 360
         duration: root.thinking ? 2400 : 6000
       }
-      Binding on rotation { when: !(root.scanning || root.thinking) || !Theme.motion; value: 0 }
     }
 
     // The F, cut out from the blades by a band of the background round it.
@@ -125,7 +132,7 @@ Item {
         }
       }
       RotationAnimation on rotation {
-        running: ticks.visible && Theme.motion
+        running: ticks.visible && root.visible && Theme.motion
         loops: Animation.Infinite
         from: 0
         to: 360
@@ -144,7 +151,8 @@ Item {
       radius: 11
       color: Theme.accent
       SequentialAnimation on opacity {
-        running: dot.visible && Theme.motion
+        running: dot.visible && root.visible && Theme.motion
+        onRunningChanged: if (!running) dot.opacity = 1
         loops: Animation.Infinite
         NumberAnimation { from: 1; to: 0.45; duration: 700; easing.type: Easing.InOutSine }
         NumberAnimation { from: 0.45; to: 1; duration: 700; easing.type: Easing.InOutSine }
@@ -162,7 +170,7 @@ Item {
         PathAngleArc { centerX: 50; centerY: 50; radiusX: 45; radiusY: 45; startAngle: -90; sweepAngle: 100 }
       }
       RotationAnimation on rotation {
-        running: root.thinking && Theme.motion
+        running: root.thinking && root.visible && Theme.motion
         loops: Animation.Infinite
         from: 0
         to: 360
