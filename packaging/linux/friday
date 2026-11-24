@@ -1021,7 +1021,7 @@ friday_bundles() {
       for f in "$dir"/*; do [ -f "$f" ] && rows+=("$(basename "$f"): $(sed -n '1s/^# *[^:]*: *//p' "$f")"); done
       (( ${#rows[@]} )) || { echo "No bundles here ($dir)."; return 1; }
       echo "Pick the kinds of apps you want (space picks, Enter installs):"
-      mapfile -t picks < <(printf '%s\n' "${rows[@]}" | gum choose --no-limit --height=8 || true)
+      mapfile -t picks < <(printf '%s\n' "${rows[@]}" | gum choose --no-limit --height=8 | grep . || true)
       (( ${#picks[@]} )) || { echo "Nothing picked; nothing installed."; return 0; }
       friday_bundles_install "${picks[@]%%:*}" ;;
     install) shift; friday_bundles_install "$@" ;;
@@ -1035,14 +1035,20 @@ friday_bundles_install() {
   (( $# )) || { echo "Usage: friday bundles install <bundle>... (friday bundles list)" >&2; return 2; }
   for b in "$@"; do
     [[ "$b" =~ ^[a-z0-9-]+$ && -f "$dir/$b" ]] || { echo "No bundle called \"$b\" (friday bundles list)" >&2; return 2; }
-    while IFS= read -r p; do
+    # One package a line; spaces around it don't count, and a last line
+    # without a newline still does.
+    while IFS= read -r p || [ -n "$p" ]; do
+      p="${p//[[:space:]]/}"
       case "$p" in ''|'#'*) ;; aur:*) aur+=("${p#aur:}") ;; *) repo+=("$p") ;; esac
     done <"$dir/$b"
   done
+  local total=$(( ${#repo[@]} + ${#aur[@]} ))
   # Steam is in Arch's 32-bit repo (multilib), which stays off until something needs it.
   if printf '%s\n' "${repo[@]}" | grep -qx steam && ! grep -q '^\[multilib\]' "${FRIDAY_PACMAN_CONF:-/etc/pacman.conf}" 2>/dev/null; then
     echo "Steam needs Arch's 32-bit repo (multilib); turning it on in /etc/pacman.conf."
-    { sudo sed -i '/^#\[multilib\]$/,/^#Include/ s/^#//' "${FRIDAY_PACMAN_CONF:-/etc/pacman.conf}" && sudo pacman -Sy --noconfirm >/dev/null; } || true
+    # Only the [multilib] line and the Include line right after it.
+    { sudo sed -i '/^#\[multilib\]$/{s/^#//;n;s/^#[[:space:]]*Include/Include/}' "${FRIDAY_PACMAN_CONF:-/etc/pacman.conf}" \
+        && sudo pacman -Sy --noconfirm >/dev/null; } || true
   fi
   if (( ${#repo[@]} )); then
     echo "Installing ${#repo[@]} apps from the Arch repos..."
@@ -1054,24 +1060,29 @@ friday_bundles_install() {
       done
     fi
   fi
+  if (( ${#aur[@]} )) && [ "$(id -u)" = 0 ]; then
+    # makepkg won't build as root: these wait for a run as yourself.
+    echo "Run friday bundles as yourself (not with sudo) to build: ${aur[*]}"
+    failed+=("${aur[@]}"); aur=()
+  fi
   if (( ${#aur[@]} )); then
     { command -v git && command -v makepkg; } >/dev/null 2>&1 \
       || sudo pacman -S --needed --noconfirm base-devel git >/dev/null 2>&1 || true
     local cache="${XDG_CACHE_HOME:-$HOME/.cache}/friday-aur"
     for p in "${aur[@]}"; do
       echo "Building $p from the AUR..."
-      rm -rf "${cache:?}/$p"; mkdir -p "$cache"
+      rm -rf "${cache:?}/$p"; mkdir -p "$cache" || true
       if git clone -q --depth 1 "https://aur.archlinux.org/$p.git" "$cache/$p" \
           && (cd "$cache/$p" && makepkg -si --noconfirm --needed); then got+=("$p"); else failed+=("$p"); fi
       rm -rf "${cache:?}/$p"
     done
   fi
   echo
-  local msg="Installed ${#got[@]} of $(( ${#repo[@]} + ${#aur[@]} )) apps."
+  local msg="Installed ${#got[@]} of $total apps."
   (( ${#failed[@]} == 0 )) || msg+=" Didn't install: ${failed[*]} (try again: friday bundles install $*)."
   echo "$msg"
   notify-send -a FRIDAY "App bundles done" "$msg" 2>/dev/null || true
-  (( ${#failed[@]} == 0 ))
+  [ ${#failed[@]} -eq 0 ]
 }
 
 # FRIDAY OS's key file is copied into a new home once, so keys added by a

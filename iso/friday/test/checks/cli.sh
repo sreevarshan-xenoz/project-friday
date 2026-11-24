@@ -2214,7 +2214,7 @@ done
 echo "app bundles"
 B="$W/bundles"; mkdir -p "$B/bin" "$B/cache"
 export FRIDAY_BUNDLES_DIR="$REPO_ROOT/packaging/linux/bundles" FRIDAY_PACMAN_CONF="$B/pacman.conf"
-printf '[core]\nInclude = /etc/pacman.d/mirrorlist\n\n#[multilib]\n#Include = /etc/pacman.d/mirrorlist\n' >"$FRIDAY_PACMAN_CONF"
+printf '[core]\nInclude = /etc/pacman.d/mirrorlist\n\n#[multilib-testing]\n#Include = /etc/pacman.d/mirrorlist\n\n#[multilib]\n#Include = /etc/pacman.d/mirrorlist\n\n# An example of a custom repo:\n#[custom]\n#Server = file:///home/custompkgs\n' >"$FRIDAY_PACMAN_CONF"
 # sudo runs the command (pacman and sed are stubs or work on the copy); pacman
 # fails for a package named in FAIL_PKG; makepkg fails for FAIL_AUR.
 printf '#!/bin/bash\necho "sudo $*" >>"%s/log"\n"$@"\n' "$B" >"$B/bin/sudo"
@@ -2240,6 +2240,8 @@ contains "a failed AUR build is named" "$out" "Didn't install: claude-code"
 : >"$B/log"; bl install gaming >/dev/null 2>&1 || true
 contains "Steam turns on multilib first" "$(cat "$FRIDAY_PACMAN_CONF")" $'[multilib]\nInclude'
 contains "the core section is untouched" "$(cat "$FRIDAY_PACMAN_CONF")" $'[core]\nInclude'
+contains "nothing after it is uncommented" "$(cat "$FRIDAY_PACMAN_CONF")" $'#[custom]\n#Server'
+contains "nor multilib-testing before it" "$(cat "$FRIDAY_PACMAN_CONF")" $'#[multilib-testing]\n#Include'
 refuse "an unknown bundle is refused" bl install nonsense
 refuse "a bundle name can't be a path" bl install ../../etc/passwd
 unset FRIDAY_BUNDLES_DIR FRIDAY_PACMAN_CONF
