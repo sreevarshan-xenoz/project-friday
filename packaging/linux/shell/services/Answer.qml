@@ -3,6 +3,7 @@ pragma Singleton
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import qs.common
 
 // What the answer pill shows. It wakes up on its own while FRIDAY works on a
 // goal (state.json, via Friday), streaming the answer as it arrives; `friday
@@ -128,6 +129,25 @@ Singleton {
   }
 
   function copy() { Quickshell.execDetached(["wl-copy", "--", root.body]); }
+
+  // The answer's code blocks (``` fences), at most three, each copied on its own.
+  readonly property var codeBlocks: {
+    if (!Config.featureOn("answer-cards"))
+      return [];
+    const out = [];
+    const re = /```[^\n]*\n([\s\S]*?)```/g;
+    let m;
+    while ((m = re.exec(root.body)) !== null && out.length < 3) {
+      const code = m[1].replace(/\n$/, "");
+      if (code.trim() !== "")
+        out.push(code);
+    }
+    return out;
+  }
+  function copyCode(i) {
+    if (i >= 0 && i < root.codeBlocks.length)
+      Quickshell.execDetached(["wl-copy", "--", root.codeBlocks[i]]);
+  }
   // Types the answer into the window that had focus, replacing a selection
   // there; the short wait lets focus go back to it first. Line breaks become
   // spaces: typed, each one is an Enter (a terminal would run every line).
@@ -166,6 +186,7 @@ Singleton {
     function present(ok: bool, goal: string, body: string, meta: string, mode: string, served: string): void { root.show(ok, goal, body, meta, mode, served); }
     function dismiss(): void { root.dismiss(); }
     function receipt(goal: string, text: string): void { root.sent(goal, text); }
+    function codeCount(): int { return root.codeBlocks.length; }
     function listening(): void { root.listening(false); }
     function dictating(): void { root.listening(true); }
     function dictatingLatched(): void { root.listening(true); root.listenHint = "press Super+Shift+Y again to type it"; }

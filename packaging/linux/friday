@@ -3854,6 +3854,7 @@ event-tasks|Standing tasks that start when a download finishes, a file changes o
 capture-receipt|Before the first word, the answer says what was sent: the app, its text and size or a screenshot, what was masked
 dictation-latch|Tap Super+Shift+Y twice to keep voice typing without holding it; the next press types the words
 past-answers|What did you tell me about X last week, and friday answers search: past answers with their dates, read on this computer
+answer-cards|Answers show tables and steps, and each code block gets its own Copy
 log-chain|Each action in the action log is chained to the one before, so a changed line shows (friday verify-log)
 standing-reversible|A standing task runs only what can be undone; anything that would ask first is refused and logged
 memory-tidy|When memory is fuller than an ask carries, friday memory tidy proposes a shorter list to approve

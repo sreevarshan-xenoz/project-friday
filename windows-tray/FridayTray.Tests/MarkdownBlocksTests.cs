@@ -52,4 +52,18 @@ public class MarkdownBlocksTests
         Assert.Equal(new[] { BlockKind.Paragraph, BlockKind.Code }, blocks.Select(b => b.Kind));
         Assert.Equal("friday doctor", blocks[1].Spans.Single().Text);
     }
+
+    [Fact]
+    public void A_table_is_rows_of_cells_with_its_header_first()
+    {
+        var blocks = MarkdownBlocks.Parse("Sizes:\n\n| Folder | Size |\n|---|---:|\n| `~/Pictures` | **41 GB** |\n| /var/cache | 12 GB |\n\nDone.");
+        Assert.Equal([BlockKind.Paragraph, BlockKind.Table, BlockKind.Paragraph], blocks.Select(b => b.Kind));
+        var rows = blocks[1].Rows!;
+        Assert.Equal(3, rows.Count);
+        Assert.Equal(["Folder", "Size"], rows[0]);
+        Assert.Equal(["`~/Pictures`", "**41 GB**"], rows[1]);
+        // A pipe inside a code block is code, not a table.
+        var code = MarkdownBlocks.Parse("```\n| not | a table |\n```");
+        Assert.Equal(BlockKind.Code, Assert.Single(code).Kind);
+    }
 }
