@@ -981,6 +981,11 @@ internal sealed partial class SettingsWindow : FluentWindow
                 Listening.PreviewOn(paths),
                 on => Listening.SetPreview(paths, on));
         }
+        yield return Switch(
+            "Quiet sounds",
+            "A soft sound when FRIDAY starts listening, when an answer is done, and when one fails (Windows' own sounds).",
+            Sounds.On(paths),
+            on => Sounds.Set(paths, on));
         yield return Caption("Spoken answers");
         if (!Speaking.Installed(paths))
         {
