@@ -10,10 +10,11 @@ public class ClipboardAgeTests
         var t0 = new DateTime(2026, 11, 24, 9, 0, 0, DateTimeKind.Utc);
         ages.Seen("old text", t0);
         ages.Seen("new text", t0.AddMinutes(20));
-        // Put back after a selection was read: it keeps its first time.
-        ages.Seen("old text", t0.AddMinutes(21));
         var now = t0.AddMinutes(22);
         Assert.Contains("copied 22 minutes ago", ages.TooOld("old text", now));
+        // Copied again: fresh.
+        ages.Seen("old text", now);
+        Assert.Null(ages.TooOld("old text", now.AddMinutes(1)));
         Assert.Null(ages.TooOld("new text", now));
         Assert.Null(ages.TooOld("never seen", now));
         Assert.Null(ages.Age("never seen", now));

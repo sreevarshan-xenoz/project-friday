@@ -1,7 +1,7 @@
 namespace FridayTray.Core;
 
 /// <summary>
-/// When each clipboard text was first seen, so an old copy isn't taken as
+/// When each clipboard text was last copied, so an old copy isn't taken as
 /// context for a new question. Only a hash of each text is kept, in memory.
 /// A text the tray never saw change (copied before it started) has no age.
 /// </summary>
@@ -15,13 +15,15 @@ public sealed class ClipboardAge
     private static string Hash(string text) =>
         Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text)));
 
-    /// <summary>The clipboard now holds <paramref name="text"/>; a text seen before keeps its first time.</summary>
+    /// <summary>The person copied <paramref name="text"/> now (copying it again counts as new).</summary>
     public void Seen(string? text, DateTime now)
     {
         if (string.IsNullOrEmpty(text))
             return;
         var h = Hash(text);
-        if (!_first.TryAdd(h, now))
+        var known = _first.ContainsKey(h);
+        _first[h] = now;
+        if (known)
             return;
         _order.Enqueue(h);
         while (_order.Count > Keep)

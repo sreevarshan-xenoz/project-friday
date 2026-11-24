@@ -111,7 +111,7 @@ internal static class Selection
     /// Password managers mark what they copy so clipboard history and other
     /// tools leave it alone; FRIDAY does too.
     /// </summary>
-    private static bool MarkedPrivate()
+    internal static bool MarkedPrivate()
     {
         try
         {

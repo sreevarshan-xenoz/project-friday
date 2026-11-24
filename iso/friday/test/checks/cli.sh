@@ -1229,7 +1229,7 @@ else pass "password-shaped clipboard is never sent"; fi
 contains "and the user is told why" "$(cat "$LOG")" "looks like a password or token"
 : >"$LOG"; PRIMARY="" CLIP="my bank login words" CLIPTYPES="x-kde-passwordManagerHint" bash "$F" ask -s "explain"; sleep 0.3
 if grep -q "friday-ctl" "$LOG"; then fail "a password manager's copy was sent"; else pass "a password manager's copy is never sent"; fi
-mkdir -p "$FD"; printf '{"ts":%s,"text":"an old note"}\n' "$(( $(date +%s) - 1800 ))" >"$FD/clips.jsonl"
+mkdir -p "$FD"; printf '{"ts":%s,"text":"an old note"}\n' "$(( $(date +%s) - 1820 ))" >"$FD/clips.jsonl"
 : >"$LOG"; PRIMARY="" CLIP="an old note" bash "$F" ask -s "explain"; sleep 0.3
 if grep -q "friday-ctl" "$LOG"; then fail "a copy from 30 minutes ago was used"; else pass "a copy from 30 minutes ago isn't used"; fi
 contains "and it says how old it is" "$(cat "$LOG")" "copied 30 minutes ago"
