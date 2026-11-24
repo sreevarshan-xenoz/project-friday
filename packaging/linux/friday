@@ -5229,13 +5229,14 @@ case "${1:-}" in
     # @clip (the clipboard), @web (a web search), @file <path> (a text file's
     # contents). Each is taken out of the question.
     mention_file=""
-    while friday_feature_on mentions && [[ "$goal" =~ (^|[[:space:]])@(screen|tab|clip|web|file[[:space:]]+([^[:space:]]+))([[:space:]]|$) ]]; do
+    # A path with spaces goes in double quotes: @file "My notes.pdf".
+    while friday_feature_on mentions && [[ "$goal" =~ (^|[[:space:]])@(screen|tab|clip|web|file[[:space:]]+(\"[^\"]+\"|[^[:space:]\"]+))([[:space:]]|$) ]]; do
       case "${BASH_REMATCH[2],,}" in
         screen|tab) $use_screen || ask_args+=(--screen); use_screen=true ;;
         clip) use_clip=true ;;
         web) use_web=true ;;
         file*) [ -z "$mention_file" ] || { notify "FRIDAY" "One @file at a time."; exit 0; }
-               mention_file="${BASH_REMATCH[3]}" ;;
+               mention_file="${BASH_REMATCH[3]}"; mention_file="${mention_file#\"}"; mention_file="${mention_file%\"}" ;;
       esac
       goal="${goal/"${BASH_REMATCH[0]}"/ }"
     done
@@ -5259,8 +5260,20 @@ case "${1:-}" in
       mention_file="${mention_file/#\~/$HOME}"
       given_dir=$(dirname -- "$(realpath -s -m -- "$mention_file")")
       mention_file=$(realpath -e -- "$mention_file" 2>/dev/null || true)
-      if [ ! -f "$mention_file" ] || [ ! -r "$mention_file" ] || ! grep -Iq . "$mention_file" 2>/dev/null; then
-        notify "FRIDAY" "@file needs a text file I can read."
+      # A PDF is read as its text (pdftotext, from poppler), its first 20 pages.
+      mention_pdf=false
+      [[ "${mention_file,,}" == *.pdf && -r "$mention_file" ]] && mention_pdf=true
+      if $mention_pdf && ! command -v pdftotext >/dev/null 2>&1; then
+        notify "FRIDAY" "Reading a PDF needs pdftotext: sudo pacman -S poppler"
+        exit 0
+      fi
+      case "${mention_file,,}" in
+        *.png|*.jpg|*.jpeg|*.webp|*.gif)
+          notify "FRIDAY" "I can't read a picture from a file yet: open it, then ask about the screen (Super+Ctrl+Y)."
+          exit 0 ;;
+      esac
+      if [ ! -f "$mention_file" ] || [ ! -r "$mention_file" ] || { ! $mention_pdf && ! grep -Iq . "$mention_file" 2>/dev/null; }; then
+        notify "FRIDAY" "@file needs a text file or a PDF I can read."
         exit 0
       fi
       case "${mention_file##*/}" in
@@ -5274,7 +5287,9 @@ case "${1:-}" in
         notify "FRIDAY" "That file is in a folder you marked private, so it isn't sent."
         exit 0
       fi
-      context=$(head -c 8000 -- "$mention_file")
+      if $mention_pdf; then context=$(timeout 20 pdftotext -l 20 -q -- "$mention_file" - 2>/dev/null | head -c 8000 || true)
+      else context=$(head -c 8000 -- "$mention_file"); fi
+      [ -n "${context//[[:space:]]/}" ] || { notify "FRIDAY" "That file has no text I can read (a scanned PDF has only pictures)."; exit 0; }
       if friday_secret_shaped "$context"; then
         notify "FRIDAY" "That file looks like a password or token, so I won't send it."
         exit 0

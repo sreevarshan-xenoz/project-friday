@@ -378,6 +378,19 @@ if grep -q "^friday-ctl" "$LOG"; then fail "@clip with @file asked anyway"; else
 if grep -qE "^friday-ctl|context screen" "$LOG"; then fail "@screen with @file asked anyway"; else pass "@screen with @file is refused"; fi
 : >"$LOG"; bash "$F" ask "summarise @file /nonexistent/x.txt"; sleep 0.3
 if grep -q "^friday-ctl" "$LOG"; then fail "@file with no such file still asked"; else pass "@file with no such file asks nothing"; fi
+# A file dropped on the ask box: a path with spaces comes in quotes; a PDF is read as its text.
+mkdir -p "$W/drop/my notes"; printf 'ship it on friday\n' >"$W/drop/my notes/plan.txt"
+: >"$LOG"; bash "$F" ask "when do we ship? @file \"$W/drop/my notes/plan.txt\""; sleep 0.3
+contains "@file takes a quoted path with spaces" "$(cat "$LOG")" "ship it on friday"
+printf '%%PDF-1.4 not really\n' >"$W/drop/report.pdf"
+printf '#!/bin/sh\necho "quarterly numbers went up"\n' >"$S/pdftotext"; chmod +x "$S/pdftotext"
+: >"$LOG"; bash "$F" ask "sum up @file $W/drop/report.pdf"; sleep 0.3
+contains "a PDF is read as its text" "$(cat "$LOG")" "quarterly numbers went up"
+rm -f "$S/pdftotext"
+printf 'PNG' >"$W/drop/shot.png"
+: >"$LOG"; bash "$F" ask "what is this @file $W/drop/shot.png"; sleep 0.3
+contains "a picture says how to ask about it instead" "$(cat "$LOG")" "Super+Ctrl+Y"
+if grep -q "^friday-ctl" "$LOG"; then fail "a picture file still asked"; else pass "and asks nothing"; fi
 # "What changed …": the project's commits and the package log since then.
 mkdir -p "$W/wc"; git -C "$W/wc" init -q -b main; printf 'x\n' >"$W/wc/a.txt"
 git -C "$W/wc" add a.txt; git -C "$W/wc" -c user.name=t -c user.email=t@example.com commit -q -m "add the parser"
