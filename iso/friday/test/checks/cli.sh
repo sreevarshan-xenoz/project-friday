@@ -446,6 +446,9 @@ STUB
 printf '#!/bin/bash\n[ -e "$UP/broken" ] && [[ "$1" == *friday-linux-daemon ]] && echo "libgone.so => not found"\nexit 0\n' >"$U/bin/ldd"
 printf '#!/bin/bash\necho "Filesystem 1M-blocks Used Available"; echo "/dev/x 100000 1000 ${FREE_MB:-50000}"\n' >"$U/bin/df"
 printf '#!/bin/bash\nexit 0\n' >"$U/bin/friday-linux-daemon"
+# CI runs as root, where the restore goes through runuser and the made-up
+# user doesn't exist: run the command as is.
+printf '#!/bin/bash\nshift 3\nexec "$@"\n' >"$U/bin/runuser"
 chmod +x "$U/bin"/*
 up() { # <installed> <pending> [env…]: run friday-upgrade, print last.json
   printf '%s\n' "$1" >"$U/installed"; if [ -n "$2" ]; then printf '%s\n' "$2" >"$U/pending"; else : >"$U/pending"; fi; shift 2
