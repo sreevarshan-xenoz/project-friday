@@ -23,7 +23,8 @@ Autonomous Agent & Cognitive Loop:
   friday ask ["<objective>"]       Ask FRIDAY (prompts if no text); the answer opens in
                                    FRIDAY Shell's answer pill, else a notification
   friday ask --selection           Ask about the selected/copied text (Super+Alt+Y)
-  friday ask --screen              Ask about what's on screen (Super+Ctrl+Y)
+  friday ask --screen [--picture]  Ask about what's on screen (Super+Ctrl+Y; --picture
+                                   forces a screenshot, not the window's text)
   friday ask --region              Drag out an area of the screen and ask about it
   friday ask --point               Click one control (a button, a setting) and ask about it
   friday ask --follow-up           Ask a follow-up about the last answer
@@ -361,7 +362,7 @@ friday_health() {
   else printf '  %b Screen asks: needs grim and slurp\n' "$off"; fi
   if command -v tesseract >/dev/null 2>&1; then printf '  %b Screen words read here: tesseract\n' "$on"
   else printf '  %b Screen words read here: needs tesseract (sudo pacman -S tesseract tesseract-data-eng)\n' "$off"; fi
-  sw screen-what-changed screen-secret-check blank-secret-fields screen-ocr tree-trim point-ask screen-quote
+  sw screen-what-changed screen-secret-check blank-secret-fields screen-ocr tree-trim point-ask screen-quote look-again
 }
 
 friday_doctor() {
@@ -4519,6 +4520,7 @@ memory-file|Every ask carries what you asked FRIDAY to remember (~/.config/frida
 memories-used|An answer shows which remembered facts shaped it, each with Forget
 live-web|Questions about the weather, news, scores or prices search the web without \"search\" first
 mcp-tools|Tools from MCP servers you switch on, each asked before it runs
+look-again|After a screen answer from the window's text, offer a Look again chip to ask with a screenshot
 speak-as-it-comes|Spoken answers start with the first sentence while the rest is still coming
 voice-preview|friday voice preview on: what whisper heard opens in the ask box to edit or drop before it is used
 health-page|friday health: each part of FRIDAY, whether it works here, and its switches
@@ -5348,8 +5350,9 @@ case "${1:-}" in
     # as a notification, and keep the full answer on disk.
     #   friday ask [text]               ask (prompts if no text)
     #   friday ask --selection [text]   ask about the selected/copied text (SUPER+ALT+Y)
-    #   friday ask --screen [text]      ask about what's on screen (SUPER+CTRL+Y);
+    #   friday ask --screen [--picture] [text] ask about what's on screen (SUPER+CTRL+Y);
     #                                   its text (or a screenshot) goes to the AI provider, this once
+    #                                   (--picture forces a screenshot, not the window's text)
     #   friday ask --region [text]      drag out an area of the screen and ask about
     #                                   just that (any monitor)
     #   friday ask --follow-up [text]   ask about the last answer (the answer pill's
@@ -5370,13 +5373,14 @@ case "${1:-}" in
     # With FRIDAY Shell running, the answer opens in its answer pill (which also
     # streams it); otherwise it arrives as a notification.
     shift
-    use_point=false use_selection=false use_screen=false use_region=false use_followup=false use_web=false use_new=false use_clip=false another="" details="" daemon_down=false use_json=false
+    use_point=false use_selection=false use_screen=false use_region=false use_followup=false use_web=false use_new=false use_clip=false another="" details="" daemon_down=false use_json=false use_picture=false
     rewrite="" sel_window="" source_label=""
     ask_args=()
     while [ $# -gt 0 ]; do
       case "${1:-}" in
         --selection|-s) use_selection=true; ask_args+=(--selection); shift ;;
         --screen) use_screen=true; ask_args+=(--screen); shift ;;
+        --picture) use_picture=true; ask_args+=(--picture); shift ;;
         --region|-r) use_screen=true; use_region=true; ask_args+=(--region); shift ;;
         # Click one control: only it, what it sits in and its neighbours go.
         --point|-p) use_screen=true; use_region=true; use_point=true; ask_args+=(--point); shift ;;
@@ -6323,7 +6327,7 @@ $offer"
 
     # A browser in front with FRIDAY's extension: the tab's own text instead
     # of a screenshot (an area you dragged out is still a screenshot).
-    if $use_screen && [ -z "${region:-}" ] && [[ "$(friday_app_class)" =~ firefox|chromium|chrome|brave|librewolf|zen|vivaldi|edge ]] \
+    if $use_screen && [ -z "${region:-}" ] && ! $use_picture && [[ "$(friday_app_class)" =~ firefox|chromium|chrome|brave|librewolf|zen|vivaldi|edge ]] \
         && tab=$(timeout 8 friday-ctl browser tab 2>/dev/null) && [ -n "$(jq -r '.text // empty' <<<"$tab" 2>/dev/null)" ] \
         && friday_tab_in_front "$tab"; then
       request=$(jq -r --arg q "$goal" '"\($q)\n\n[page]\nThe page in front (read from the browser when asked):\nTitle: \(.title)\nAddress: \(.url)\n" + (if (.selection // "") != "" then "Selected: \(.selection)\n" else "" end) + "Text:\n\"\"\"\n\(.text)\n\"\"\""' <<<"$tab")
@@ -6335,7 +6339,10 @@ $offer"
       nid=""
       $use_pill || nid=$(notify-send -a FRIDAY -p -- "FRIDAY" "Looking at your screen: $goal" 2>/dev/null || true)
       [[ "$nid" =~ ^[0-9]+$ ]] || nid=""
-      stream_ctl friday-ctl context screen --yes --ask "$goal" ${region:+--region "$region"}
+      ctl_args=(context screen --yes --ask "$goal")
+      [ -n "${region:-}" ] && ctl_args+=(--region "$region")
+      $use_picture && ctl_args+=(--picture)
+      stream_ctl friday-ctl "${ctl_args[@]}"
       summary=$(jq -s 'map(select(type == "object" and (has("partial") | not))) | last // {} | {result: .response, error: .error, used: .used}' <<<"$out" 2>/dev/null || echo '{}')
     else
       nid=""

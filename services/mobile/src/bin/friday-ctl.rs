@@ -30,6 +30,8 @@
 //!   friday-ctl context screen --yes    (consent already collected by the shell panel)
 //!   friday-ctl context screen --yes --ask "what does this error mean?"
 //!                                      (answer a question about the screen)
+//!   friday-ctl context screen --yes --picture --ask "what does this error mean?"
+//!                                      (answer with a screenshot, not the window's text)
 //!
 //! The daemon's address comes from `state.json` (`listen`). `FRIDAY_CTL_ADDR`
 //! and `FRIDAY_CTL_TOKEN` override the state-file values for
@@ -2357,6 +2359,7 @@ async fn main() -> std::process::ExitCode {
     let mut i = 0;
     let mut confirm: Option<String> = None;
     let mut region: Option<String> = None;
+    let mut picture = false;
     while i < raw.len() {
         let w = &raw[i];
         if w == "--addr" && i + 1 < raw.len() {
@@ -2374,6 +2377,9 @@ async fn main() -> std::process::ExitCode {
         } else if w == "--confirm" && i + 1 < raw.len() {
             confirm = Some(raw[i + 1].clone());
             i += 2;
+        } else if w == "--picture" {
+            picture = true;
+            i += 1;
         } else if w == "--wait" {
             wait = true;
             i += 1;
@@ -2508,6 +2514,7 @@ async fn main() -> std::process::ExitCode {
             &cmd_token,
             question.as_deref(),
             region,
+            picture,
             &conversation,
             stream,
         )
@@ -2879,6 +2886,7 @@ async fn run_context(
     token: &str,
     question: Option<&str>,
     region: Option<serde_json::Value>,
+    picture: bool,
     conversation: &str,
     stream: bool,
 ) -> std::process::ExitCode {
@@ -2889,6 +2897,9 @@ async fn run_context(
     }
     if let Some(r) = region {
         params["region"] = r;
+    }
+    if picture {
+        params["picture"] = serde_json::Value::Bool(true);
     }
     let wait = Duration::from_secs(wait_secs());
     send_command(

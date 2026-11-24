@@ -1312,6 +1312,8 @@ PICK="what does this error mean" bash "$F" ask --screen; sleep 0.3
 contains "screen: asks the daemon with consent and the question" "$(cat "$LOG")" "friday-ctl-context context screen --yes --ask what does this error mean"
 contains "screen: prompt says what is shared" "$(cat "$LOG")" "its text, or a screenshot if it has too little, goes to your AI provider"
 contains "screen: full answer saved" "$(cat "$state/last-answer.md")" $'The error says E0308.\nFix the type.'
+: >"$LOG"; bash "$F" ask --screen --picture "look closer"; sleep 0.3
+contains "screen picture: passes --picture to friday-ctl" "$(cat "$LOG")" "friday-ctl-context context screen --yes --ask look closer --picture"
 : >"$LOG"; NOTIFY_ID=7 RECEIPT="nautilus · a screenshot of the window" PICK="what is this" bash "$F" ask --screen; sleep 0.3
 contains "screen: the card says what was sent before the answer" "$(cat "$LOG")" "Sent: nautilus · a screenshot of the window"
 : >"$LOG"; NOTIFY_ID=7 RECEIPT="nautilus · the window's text, 2.1k chars" RECEIPT2="nautilus · a screenshot of the window" PICK="what is this" bash "$F" ask --screen; sleep 0.3
