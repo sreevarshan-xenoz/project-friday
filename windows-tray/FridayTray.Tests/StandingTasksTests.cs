@@ -44,6 +44,9 @@ public class StandingTasksTests : IDisposable
         Assert.Equal(3, tasks[0].Runs);
         Assert.Equal("every 45 minutes", StandingTasks.Describe(new JsonObject { ["kind"] = "every", ["minutes"] = 45 }));
         Assert.Equal("every hour", StandingTasks.Describe(new JsonObject { ["kind"] = "every", ["minutes"] = 60 }));
+        Assert.Equal("when a download finishes", StandingTasks.Describe(new JsonObject { ["kind"] = "download_done" }));
+        Assert.Equal("when firefox opens", StandingTasks.Describe(new JsonObject { ["kind"] = "app_opens", ["app"] = "firefox" }));
+        Assert.Equal(@"when C:\notes.txt changes", StandingTasks.Describe(new JsonObject { ["kind"] = "file_changed", ["path"] = @"C:\notes.txt" }));
         var at = new DateTimeOffset(2026, 11, 22, 12, 57, 0, TimeZoneInfo.Local.GetUtcOffset(new DateTime(2026, 11, 22, 12, 57, 0)));
         Assert.Equal("once at 12:57 on 22 Nov", StandingTasks.Describe(new JsonObject { ["kind"] = "once", ["at"] = at.ToUnixTimeSeconds() }));
     }
