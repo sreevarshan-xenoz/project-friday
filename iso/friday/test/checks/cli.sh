@@ -1456,6 +1456,12 @@ contains "and the question is answered in words" "$(cat "$LOG")" "friday-ctl whe
 printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s %q\nexit 0\n' '{"class":"org.keepassxc.KeePassXC","pid":78,"title":"Passwords","at":[0,0]}' >"$S/hyprctl"
 : >"$LOG"; SHOW_REPLY='{"found":false,"app":"KeePassXC","controls":["Entry 1"]}' bash "$F" ask "where is my bank entry"; sleep 0.3
 if grep -q "friday-ctl-pick" "$LOG"; then fail "sent a private window's controls to the model"; else pass "a private window's controls stay here"; fi
+# A FRIDAY Shell slow to reply (4 s) still gets the answer in its centre pill,
+# never a notification on the right instead.
+printf '#!/bin/bash\n[[ "$*" == *"call answer"* ]] && sleep 4\necho "quickshell $*" >>"%s"\n' "$LOG" >"$S/quickshell"
+: >"$LOG"; bash "$F" ask "what is my uptime"; sleep 0.3
+contains "a slow FRIDAY Shell still shows the answer in its pill" "$(cat "$LOG")" "call answer present true"
+if grep -q "^notify .*uptime" "$LOG"; then fail "a slow FRIDAY Shell's answer went to a notification"; else pass "and not in a notification on the right"; fi
 unset FRIDAY_SHELL_DIR; rm -f "$S/hyprctl" "$S/quickshell"
 
 echo "routines"

@@ -4894,10 +4894,10 @@ case "${1:-}" in
     trap 'rm -rf "$lookups"' EXIT
     { timeout 2 friday-ctl workspace project >"$lookups/project" 2>/dev/null || true; } &
     lookup_pids=$!
-    # FRIDAY Shell running means its pill shows the answer, even when its
-    # reply to this check is slow: answers never jump between the centre
-    # pill and a notification on the right.
-    { { pgrep -f 'quickshell.*friday/shell' >/dev/null 2>&1 || pill state; } && : >"$lookups/pill"; } &
+    # FRIDAY Shell can be slow to reply while the ask box is up; 3 seconds
+    # wasn't always enough, and a slow reply sent the answer to a
+    # notification on the right instead of the centre pill.
+    { if pill_wait=8 pill state; then : >"$lookups/pill"; fi; } &
     lookup_pids+=" $!"
     # The window in front at the keypress: "this window" means it, even if
     # another is in front by the time FRIDAY acts.
@@ -5624,8 +5624,7 @@ $offer"
       # only when it isn't there, or for "Start FRIDAY", which only a
       # notification offers.
       if $use_pill && [ "${daemon_down:-false}" != true ] \
-        && { pill_wait=8 pill present "$ans_ok" "$goal" "$answer" "$meta" "${ask_args[0]:-}" "${served_model:-}" \
-          || { sleep 1; pill_wait=8 pill present "$ans_ok" "$goal" "$answer" "$meta" "${ask_args[0]:-}" "${served_model:-}"; }; }; then
+        && pill_wait=8 pill present "$ans_ok" "$goal" "$answer" "$meta" "${ask_args[0]:-}" "${served_model:-}"; then
         return 0
       fi
       # A notification instead: the pill doesn't stay on "working".
