@@ -3963,6 +3963,7 @@ clipboard-expiry|A clipboard copied over 10 minutes ago is not used as context (
 ask-timings|How long each stage of an ask takes is kept on this computer (friday doctor shows the median and slow end)
 spoken-length|Spoken answers say two, six or all sentences (friday voice speak length brief, normal or detailed); the card shows all
 dictation-history|The last 20 voice-typed texts stay on this computer, to get one back (friday dictations)
+tree-trim|A window's text leaves out what isn't on screen, collapsed menus' items, repeats and lone icons, so asks are smaller
 screen-what-changed|What changed? about the same window sends only the lines that changed since the last screen ask (kept in memory 30 minutes)
 agent-compare|Two agents on the same task, each in its own copy, then friday agents compare to pick one
 backup-new-home|A backup restored on another computer points saved folders (workspaces, threads, settings) at the new home
