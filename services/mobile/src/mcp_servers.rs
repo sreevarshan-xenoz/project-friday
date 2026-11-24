@@ -198,15 +198,22 @@ pub async fn connect(server: &ServerConfig) -> Result<Vec<ToolInfo>, String> {
     }
 }
 
-static TOOLS_CACHE: tokio::sync::Mutex<Option<Vec<ToolInfo>>> = tokio::sync::Mutex::const_new(None);
+/// The tools of the servers switched on, with the names of those servers:
+/// `friday mcp on|off` changes the names, so the next ask lists them again.
+type ToolsCache = Option<(Vec<String>, Vec<ToolInfo>)>;
+static TOOLS_CACHE: tokio::sync::Mutex<ToolsCache> = tokio::sync::Mutex::const_new(None);
 
-/// Get tools from all switched-on servers, connecting lazily and caching per daemon run.
+/// Get tools from all switched-on servers, connecting lazily; kept until the
+/// set of servers switched on changes.
 pub async fn get_tools() -> Vec<ToolInfo> {
-    let mut lock = TOOLS_CACHE.lock().await;
-    if let Some(cached) = &*lock {
-        return cached.clone();
-    }
     let active = load_active_servers();
+    let names: Vec<String> = active.iter().map(|s| s.name.clone()).collect();
+    let mut lock = TOOLS_CACHE.lock().await;
+    if let Some((cached_names, cached)) = &*lock {
+        if *cached_names == names {
+            return cached.clone();
+        }
+    }
     let mut all_tools = Vec::new();
     for server in active {
         match connect(&server).await {
@@ -216,7 +223,7 @@ pub async fn get_tools() -> Vec<ToolInfo> {
             }
         }
     }
-    *lock = Some(all_tools.clone());
+    *lock = Some((names, all_tools.clone()));
     all_tools
 }
 
@@ -312,6 +319,23 @@ pub fn parse_pick(reply: &str, tools: &[ToolInfo]) -> Option<Pick> {
     })
 }
 
+/// The call a person confirmed ("<server>.<tool> <arguments json>", as the
+/// confirmation gate showed it), so a confirmed run calls exactly that
+/// instead of asking the model again (which could pick differently).
+pub fn parse_confirmed(confirm: &str, tools: &[ToolInfo]) -> Option<Pick> {
+    tools.iter().find_map(|t| {
+        let rest = confirm
+            .trim()
+            .strip_prefix(&format!("{}.{} ", t.server, t.name))?;
+        let arguments: serde_json::Value = serde_json::from_str(rest).ok()?;
+        arguments.is_object().then(|| Pick {
+            server: t.server.clone(),
+            tool: t.name.clone(),
+            arguments,
+        })
+    })
+}
+
 /// Call the picked tool, returning its text result capped at 8000 characters.
 /// Arguments and results are never logged (lengths only).
 pub async fn call(pick: &Pick) -> Result<String, String> {
@@ -319,7 +343,11 @@ pub async fn call(pick: &Pick) -> Result<String, String> {
     let server = servers
         .get(&pick.server)
         .ok_or_else(|| format!("unknown MCP server '{}'", pick.server))?;
+    call_on(server, pick).await
+}
 
+/// [`call`] on a server already looked up.
+async fn call_on(server: &ServerConfig, pick: &Pick) -> Result<String, String> {
     let args_str = serde_json::to_string(&pick.arguments).unwrap_or_default();
     tracing::info!(
         server = %pick.server,
@@ -538,5 +566,67 @@ mod tests {
         assert_eq!(pick.server, "git");
         assert_eq!(pick.tool, "status");
         assert_eq!(pick.arguments, json!({"repo": "."}));
+    }
+
+    #[test]
+    fn a_confirmed_call_is_read_back_exactly() {
+        let tools = vec![ToolInfo {
+            server: "files".into(),
+            name: "read".into(),
+            description: String::new(),
+            input_schema: serde_json::json!({}),
+        }];
+        let pick = parse_confirmed("files.read {\"path\":\"a.txt\"}", &tools).unwrap();
+        assert_eq!(pick.tool, "read");
+        assert_eq!(pick.arguments, serde_json::json!({"path": "a.txt"}));
+        assert!(parse_confirmed("files.write {}", &tools).is_none());
+        assert!(parse_confirmed("files.read not-json", &tools).is_none());
+        assert!(parse_confirmed("rm -rf /", &tools).is_none());
+    }
+
+    /// A real server over stdio: a few lines of Python speaking MCP's
+    /// JSON-RPC (initialize, tools/list, tools/call), with its env passed.
+    #[tokio::test]
+    async fn a_real_server_lists_its_tools_and_answers_a_call() {
+        if std::process::Command::new("python3")
+            .arg("-V")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let script = r#"
+import json, os, sys
+for line in sys.stdin:
+    m = json.loads(line)
+    if "id" not in m:
+        continue
+    if m["method"] == "initialize":
+        r = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "t", "version": "1"}}
+    elif m["method"] == "tools/list":
+        r = {"tools": [{"name": "greet", "description": "Says hello", "inputSchema": {"type": "object"}}]}
+    else:
+        who = m["params"]["arguments"].get("who", "?")
+        r = {"content": [{"type": "text", "text": "hello " + who + " " + os.environ.get("GREETING_SUFFIX", "")}]}
+    print(json.dumps({"jsonrpc": "2.0", "id": m["id"], "result": r}), flush=True)
+"#;
+        let server = ServerConfig {
+            name: "t".into(),
+            command: "python3".into(),
+            args: vec!["-c".into(), script.into()],
+            env: HashMap::from([("GREETING_SUFFIX".to_string(), "!".to_string())]),
+        };
+        let tools = connect(&server).await.expect("connects");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "greet");
+        let pick = Pick {
+            server: "t".into(),
+            tool: "greet".into(),
+            arguments: serde_json::json!({"who": "FRIDAY"}),
+        };
+        assert_eq!(
+            call_on(&server, &pick).await.unwrap().trim(),
+            "hello FRIDAY !"
+        );
     }
 }

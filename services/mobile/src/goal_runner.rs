@@ -2792,6 +2792,9 @@ impl GoalRunner {
             exec.cycle(&self.workspace).await
         };
 
+        // Tools from MCP servers the person switched on (`friday mcp on`): the
+        // model picks one or none, the person confirms the exact call, and its
+        // result is what the answer is written from. Never in private mode.
         let mut mcp_response: Option<SearchResponse> = None;
         let mut mcp_note: Option<String> = None;
         if crate::features::on("mcp-tools")
@@ -2799,53 +2802,58 @@ impl GoalRunner {
             && crate::mcp_servers::has_servers_on()
         {
             let tools = crate::mcp_servers::get_tools().await;
-            if !tools.is_empty() {
-                if let Some(answerer) = &self.answerer {
-                    let prompt = crate::mcp_servers::pick_prompt(&goal, &tools);
-                    let reply = match tokio::time::timeout(
-                        std::time::Duration::from_secs(45),
-                        answerer.complete_json(&prompt),
-                    )
-                    .await
-                    {
-                        Ok(Ok(r)) => r,
-                        Ok(Err(e)) => {
-                            tracing::warn!("MCP pick prompt failed: {e}");
-                            String::new()
+            // A confirmed run calls exactly what was confirmed; asking the
+            // model again could pick differently and ask again.
+            let confirmed = self.confirmation_gate.lock().unwrap().confirm.clone();
+            let mut pick = confirmed
+                .as_deref()
+                .and_then(|c| crate::mcp_servers::parse_confirmed(c, &tools));
+            if let (None, Some(answerer), false) = (&pick, &self.answerer, tools.is_empty()) {
+                let prompt = crate::mcp_servers::pick_prompt(&goal, &tools);
+                let reply = match tokio::time::timeout(
+                    std::time::Duration::from_secs(45),
+                    answerer.complete_json(&prompt),
+                )
+                .await
+                {
+                    Ok(Ok(r)) => r,
+                    Ok(Err(e)) => {
+                        tracing::warn!("MCP pick failed: {e}");
+                        String::new()
+                    }
+                    Err(_) => {
+                        tracing::warn!("MCP pick timed out");
+                        String::new()
+                    }
+                };
+                pick = crate::mcp_servers::parse_pick(&reply, &tools);
+            }
+            if let Some(pick) = pick {
+                let args_json =
+                    serde_json::to_string(&pick.arguments).unwrap_or_else(|_| "{}".to_string());
+                let exact = format!("{}.{} {}", pick.server, pick.tool, args_json);
+                let check = self
+                    .confirmation_gate
+                    .lock()
+                    .unwrap()
+                    .check_or_record("mcp", &exact);
+                if check.is_ok() {
+                    match crate::mcp_servers::call(&pick).await {
+                        Ok(result) => {
+                            mcp_response = Some(SearchResponse {
+                                backend: format!("{} (MCP)", pick.server),
+                                results: vec![crate::web_search::SearchResult {
+                                    title: pick.tool.clone(),
+                                    url: String::new(),
+                                    snippet: result,
+                                }],
+                            });
                         }
-                        Err(_) => {
-                            tracing::warn!("MCP pick prompt timed out");
-                            String::new()
-                        }
-                    };
-                    if let Some(pick) = crate::mcp_servers::parse_pick(&reply, &tools) {
-                        let args_json = serde_json::to_string(&pick.arguments)
-                            .unwrap_or_else(|_| "{}".to_string());
-                        let exact = format!("{}.{} {}", pick.server, pick.tool, args_json);
-                        let check = self
-                            .confirmation_gate
-                            .lock()
-                            .unwrap()
-                            .check_or_record("mcp", &exact);
-                        if check.is_ok() {
-                            match crate::mcp_servers::call(&pick).await {
-                                Ok(result) => {
-                                    mcp_response = Some(SearchResponse {
-                                        backend: format!("{} (MCP)", pick.server),
-                                        results: vec![crate::web_search::SearchResult {
-                                            title: pick.tool.clone(),
-                                            url: String::new(),
-                                            snippet: result,
-                                        }],
-                                    });
-                                }
-                                Err(err) => {
-                                    mcp_note = Some(format!(
-                                        "{} couldn't answer ({err}), so this is from the model alone.",
-                                        pick.server
-                                    ));
-                                }
-                            }
+                        Err(err) => {
+                            mcp_note = Some(format!(
+                                "{} couldn't answer ({err}), so this is from the model alone.",
+                                pick.server
+                            ));
                         }
                     }
                 }
