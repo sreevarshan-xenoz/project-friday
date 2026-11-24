@@ -18,7 +18,7 @@ for f in usr/bin/friday usr/bin/friday-linux-daemon usr/bin/friday-ctl \
   usr/lib/systemd/user/friday-session-save.service \
   usr/lib/systemd/user/friday-session-save.timer \
   usr/share/zsh/site-functions/_friday usr/share/applications/friday.desktop \
-  usr/share/applications/friday-settings.desktop usr/share/icons/hicolor/scalable/apps/friday.svg usr/share/friday/shell/settings/SettingsWindow.qml \
+  usr/share/applications/friday-settings.desktop usr/share/icons/hicolor/scalable/apps/friday.svg usr/share/fonts/friday/Michroma-Regular.ttf usr/share/friday/shell/settings/SettingsWindow.qml \
   usr/share/friday/hyprland/friday.lua usr/share/friday/niri/friday.kdl \
   usr/share/licenses/friday-git/LICENSE-MIT usr/share/licenses/friday-git/agent-desktop-LICENSE \
   usr/lib/friday/agent-desktop usr/lib/friday/agent-desktop-linux-clipboard-owner \

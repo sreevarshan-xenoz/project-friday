@@ -33,7 +33,7 @@ FloatingWindow {
         anchors.fill: parent
         anchors.margins: 12
         spacing: 4
-        Label { text: "FRIDAY"; color: Theme.accent; font.pixelSize: Theme.fontL; font.weight: Font.Bold; font.letterSpacing: 2; Layout.bottomMargin: 10 }
+        Label { text: "FRIDAY"; color: Theme.accent; font.family: Theme.display; font.pixelSize: Theme.fontL; font.letterSpacing: 5; Layout.bottomMargin: 10 }
         Repeater {
           model: win.pages
           Rectangle {

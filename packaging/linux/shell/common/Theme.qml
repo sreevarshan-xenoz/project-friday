@@ -185,7 +185,10 @@ Singleton {
   readonly property color glassEdge: alpha(text, light ? 0.16 : 0.11)
 
   // Type: Noto Sans for words, JetBrains Mono for numbers and glyphs.
-  readonly property string sans: "Noto Sans"
+  // FRIDAY's type (packaging/linux/fonts, OFL): Space Grotesk for text,
+  // Michroma for the FRIDAY wordmark, JetBrains Mono for numbers and icons.
+  readonly property string sans: "Space Grotesk"
+  readonly property string display: "Michroma"
   readonly property string mono: "JetBrainsMono Nerd Font Propo"
   readonly property int fontS: 11
   readonly property int fontM: 13

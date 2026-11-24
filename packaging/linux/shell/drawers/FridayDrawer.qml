@@ -31,9 +31,9 @@ FocusScope {
         spacing: 2
         Label {
           text: "FRIDAY"
+          font.family: Theme.display
           font.pixelSize: Theme.fontL
-          font.weight: Font.Bold
-          font.letterSpacing: 2
+          font.letterSpacing: 5
         }
         Label {
           Layout.fillWidth: true

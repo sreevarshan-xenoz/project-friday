@@ -14,7 +14,7 @@ ColumnLayout {
     Orb { size: 44 }
     ColumnLayout {
       spacing: 2
-      Label { text: "FRIDAY"; font.pixelSize: Theme.fontXL; font.weight: Font.Bold; font.letterSpacing: 2 }
+      Label { text: "FRIDAY"; font.family: Theme.display; font.pixelSize: Theme.fontXL; font.letterSpacing: 6 }
       Label {
         text: Friday.headline
         color: Friday.mode === "ready" || Friday.mode === "working" ? Theme.subtext : Theme.warn

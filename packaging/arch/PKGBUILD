@@ -40,7 +40,7 @@ optdepends=(
   'gum: interactive provider picker in friday setup-ai'
   'quickshell: FRIDAY Shell (friday shell)'
   'ttf-jetbrains-mono-nerd: FRIDAY Shell icons'
-  'noto-fonts: FRIDAY Shell text'
+  "noto-fonts: characters FRIDAY's own fonts lack"
   'brightnessctl: brightness slider in FRIDAY Shell'
   'networkmanager: network status in FRIDAY Shell'
   'pocketdesk: pair a phone (friday phone) and answer FRIDAY from it'
@@ -127,6 +127,8 @@ package() {
   install -Dm644 "$lin/friday.desktop" -t "$pkgdir/usr/share/applications"
   install -Dm644 "$lin/friday-settings.desktop" -t "$pkgdir/usr/share/applications"
   install -Dm644 "$lin/brand/friday.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/friday.svg"
+  install -Dm644 "$lin/fonts/"*.ttf -t "$pkgdir/usr/share/fonts/friday"
+  install -Dm644 "$lin/fonts/"OFL-*.txt -t "$pkgdir/usr/share/licenses/$pkgname"
   install -Dm644 "$lin/hyprland/friday.lua" -t "$pkgdir/usr/share/friday/hyprland"
   install -Dm644 "$lin/niri/friday.kdl" -t "$pkgdir/usr/share/friday/niri"
   # App bundles for `friday bundles` (the first-login tour offers them).
