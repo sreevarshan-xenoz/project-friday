@@ -2920,6 +2920,16 @@ EOF2
   esac
 }
 
+# How many seconds ago the clipboard text <text> was copied, from the clips
+# log; nothing (status 1) when clips are off or don't have it as the newest.
+friday_clip_age() {
+  local clips="${XDG_STATE_HOME:-$HOME/.local/state}/friday/clips.jsonl" ts
+  [ -s "$clips" ] || return 1
+  ts=$(tail -n 1 "$clips" | jq -r --arg t "$1" 'select(.text == $t) | .ts' 2>/dev/null) || return 1
+  [[ "$ts" =~ ^[0-9]+$ ]] || return 1
+  echo $(( $(date +%s) - ts ))
+}
+
 # The Super+Ctrl+V picker: snippets first (type ;name), then clips, newest
 # first. A snippet is pasted as it is; a clip can also be rewritten.
 friday_clips_pick() {
@@ -3880,6 +3890,7 @@ propose-memories|\"I use fish …\" in a question: offer to remember it (nothing
 memory-file|Every ask carries what you asked FRIDAY to remember (~/.config/friday/memory.md)
 live-web|Questions about the weather, news, scores or prices search the web without \"search\" first
 speak-as-it-comes|Spoken answers start with the first sentence while the rest is still coming
+clipboard-expiry|A clipboard copied over 10 minutes ago is not used as context (known when friday clips are on); password-manager copies never are
 screen-what-changed|What changed? about the same window sends only the lines that changed since the last screen ask (kept in memory 30 minutes)
 agent-compare|Two agents on the same task, each in its own copy, then friday agents compare to pick one
 backup-new-home|A backup restored on another computer points saved folders (workspaces, threads, settings) at the new home
@@ -4785,8 +4796,16 @@ case "${1:-}" in
         # The clipboard often holds a just-copied password or token. Never
         # send something shaped like one (a single long token mixing letters
         # and digits) to a cloud model by accident.
-        if friday_secret_shaped "$context"; then
+        if friday_secret_shaped "$context" \
+            || timeout 2 wl-paste --list-types 2>/dev/null | grep -qi 'passwordmanagerhint'; then
           notify "FRIDAY" "The clipboard looks like a password or token, so I won't send it. Highlight the text you mean instead."
+          exit 0
+        fi
+        # An old copy isn't context for a new question (known when clips
+        # are on: they keep when each copy was made).
+        if [ -n "${context//[[:space:]]/}" ] && friday_feature_on clipboard-expiry \
+            && old=$(friday_clip_age "$context") && [ "$old" -gt 600 ]; then
+          notify "FRIDAY" "The clipboard was copied $((old / 60)) minutes ago, so I didn't use it. Copy it again, or highlight the text you mean."
           exit 0
         fi
       fi

@@ -15,6 +15,7 @@ internal sealed class TrayContext : ApplicationContext
     private readonly AnswerLog _log;
     private readonly NotifyIcon _icon;
     private readonly Hotkeys _hotkeys = new();
+    private readonly ClipboardAge _clipAges = new();
     private readonly Supervised _daemon;
     private readonly Supervised _host;
     // FRIDAY's own llama-server, when llama.cpp is the local engine (Settings, Local AI).
@@ -59,6 +60,17 @@ internal sealed class TrayContext : ApplicationContext
 
         _hotkeys.Pressed += kind => _ = kind == AskKind.Plain ? AskOrTalkAsync() : AskAsync(kind);
         _hotkeys.RegisterAll();
+        // When each clipboard text was copied: an old one isn't used as context.
+        _hotkeys.ClipboardChanged += () =>
+        {
+            try
+            {
+                if (Clipboard.ContainsText())
+                    _clipAges.Seen(Clipboard.GetText(), DateTime.UtcNow);
+            }
+            catch (System.Runtime.InteropServices.ExternalException) { }
+        };
+        _hotkeys.WatchClipboard();
         _icon = new NotifyIcon { Visible = true, Text = "FRIDAY" };
         _icon.MouseUp += (_, e) => { if (e.Button == MouseButtons.Right) ShowMenu(); };
         // Opening FRIDAY again (the Start menu entry) opens its window instead of doing nothing.
@@ -352,6 +364,12 @@ internal sealed class TrayContext : ApplicationContext
                 if (sel.Problem != null)
                 {
                     Notify("FRIDAY", sel.Problem, ToolTipIcon.Info);
+                    return;
+                }
+                if (sel.Source == "Clipboard" && AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "clipboard-expiry")
+                    && _clipAges.TooOld(sel.Text!, DateTime.UtcNow) is { } old)
+                {
+                    Notify("FRIDAY", old, ToolTipIcon.Info);
                     return;
                 }
                 context = sel.Text!.Length > Asking.MaxContextChars ? sel.Text[..Asking.MaxContextChars] : sel.Text;
