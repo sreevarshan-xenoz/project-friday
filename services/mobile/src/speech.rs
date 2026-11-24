@@ -671,17 +671,15 @@ pub fn speak_stream(
         let (shared, cancel) = (shared.clone(), cancel.clone());
         std::thread::spawn(move || {
             let mut chunker = Chunker::default();
-            // A spoken length set: past it, one line says where the rest is,
-            // and the rest of the answer is read in but not said.
-            let mut cut = false;
-            let mut add = |chunks: Vec<String>| {
+            // A spoken length set: past it, one line says where the rest is
+            // and the speech ends there, without waiting for the rest.
+            // Returns whether it was cut.
+            let add = |chunks: Vec<String>| {
                 let (lock, cv) = &*shared;
                 let mut st = lock.lock().unwrap();
-                for chunk in chunks {
+                let mut cut = false;
+                'all: for chunk in chunks {
                     for s in sentences(&clean_for_speech(&chunk), 220) {
-                        if cut {
-                            break;
-                        }
                         let s = if limit.is_some_and(|n| st.total >= n) {
                             cut = true;
                             REST_ON_SCREEN.to_string()
@@ -691,18 +689,30 @@ pub fn speak_stream(
                         let i = st.total;
                         st.queue.push_back((i, s));
                         st.total += 1;
+                        if cut {
+                            break 'all;
+                        }
                     }
                 }
                 cv.notify_all();
+                cut
             };
+            let mut cut = false;
             loop {
                 match input.recv_timeout(tick) {
-                    Ok(text) => add(chunker.push(&text)),
+                    Ok(text) => {
+                        if add(chunker.push(&text)) {
+                            cut = true;
+                            break;
+                        }
+                    }
                     Err(mpsc::RecvTimeoutError::Timeout) if !cancel.load(Ordering::SeqCst) => {}
                     Err(_) => break,
                 }
             }
-            add(chunker.finish());
+            if !cut {
+                add(chunker.finish());
+            }
             let (lock, cv) = &*shared;
             lock.lock().unwrap().closed = true;
             cv.notify_all();
@@ -2290,6 +2300,31 @@ mod tests {
                 "There is some code on screen."
             ]
         );
+    }
+
+    /// A cut answer ends its speech without waiting for the rest of the stream.
+    #[test]
+    fn a_cut_answer_ends_before_the_stream_does() {
+        let player = FakePlayer::new(None);
+        let synth = Arc::new(FakeSynth {
+            made: Mutex::new(vec![]),
+            fail_on: None,
+        });
+        let (tx, rx) = mpsc::channel();
+        tx.send("One is here. Two is here. Three is here. Four".to_string())
+            .unwrap();
+        let started = std::time::Instant::now();
+        // The sender stays open: the answer is still streaming.
+        speak_stream(
+            rx,
+            synth,
+            &player,
+            Arc::new(AtomicBool::new(false)),
+            Some(2),
+        )
+        .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(5));
+        drop(tx);
     }
 
     /// A spoken length says that many sentences, then where the rest is.
