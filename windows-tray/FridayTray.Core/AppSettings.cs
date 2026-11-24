@@ -125,6 +125,7 @@ public static class AppSettings
         ("task-recipes", "Ready-made standing tasks in one click (Settings > Tasks)"),
         ("undo-file-writes", "What a file held before FRIDAY wrote it is kept for undo"),
         ("day-summary", "A short summary of a day by project, from FRIDAY's own logs, kept on this computer"),
+        ("thread-compaction", "In a long conversation, older turns ride along as one short line each"),
         ("log-chain", "Each action in the action log is chained to the one before, so a changed line shows"),
         ("standing-reversible", "A standing task runs only what can be undone; anything that would ask first is refused and logged"),
         ("memory-tidy", "When memory is fuller than an ask carries, offer a shorter list to approve"),

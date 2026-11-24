@@ -1408,6 +1408,13 @@ const MAX_TURNS: usize = 4;
 /// Executive.
 const MAX_CONTEXT_CHARS: usize = 400;
 
+/// Turns older than [`MAX_TURNS`] stay as one short line each, at most this
+/// many (the conversation's first line is kept), so a long follow-up chain
+/// still fits a small free model.
+const MAX_EARLIER: usize = 10;
+/// Longest earlier line, in characters.
+const EARLIER_CHARS: usize = 160;
+
 /// How many memory entries the Context Builder recalls into the composed goal
 /// and the recall tool returns — bounded so memory never floods a turn.
 const MEMORY_RECALL_LIMIT: usize = 3;
@@ -1423,6 +1430,9 @@ struct SessionContext {
     /// matters from them lives on in memory recall.
     #[serde(default)]
     history: Vec<Turn>,
+    /// Turns that dropped off `history`, one short line each, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    earlier: Vec<String>,
     last_seen_ms: u64,
 }
 
@@ -1437,6 +1447,7 @@ impl SessionContext {
         Self {
             turn: 0,
             history: Vec::new(),
+            earlier: Vec::new(),
             last_seen_ms: now_ms(),
         }
     }
@@ -1447,10 +1458,30 @@ impl SessionContext {
             result,
         });
         if self.history.len() > MAX_TURNS {
-            self.history.remove(0);
+            let gone = self.history.remove(0);
+            if crate::features::on("thread-compaction") {
+                self.earlier.push(gist(&gone));
+                // The first line says what the conversation is about.
+                if self.earlier.len() > MAX_EARLIER {
+                    self.earlier.remove(1);
+                }
+            }
         }
         self.last_seen_ms = now_ms();
     }
+}
+
+/// A turn in one short line: the question, then how the answer began.
+fn gist(t: &Turn) -> String {
+    let one = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let asked = one(friday_goal_execution::planning::goal_segment(&t.goal));
+    let answer = one(&t.result);
+    let line = if answer.is_empty() {
+        asked
+    } else {
+        format!("{} → {answer}", truncate(&asked, EARLIER_CHARS / 2))
+    };
+    truncate(&line, EARLIER_CHARS)
 }
 
 /// Conversations saved to disk so a daemon restart picks them up: the
@@ -1524,6 +1555,13 @@ fn now_ms() -> u64 {
 fn compose_goal_with_context(goal: &str, prior: &SessionContext, recalled: &[String]) -> String {
     let mut out = String::with_capacity(goal.len() + 640);
     out.push_str(goal);
+    if !prior.earlier.is_empty() {
+        out.push_str("\n\n[earlier in this conversation]");
+        for line in &prior.earlier {
+            out.push_str("\n- ");
+            out.push_str(line);
+        }
+    }
     if !prior.history.is_empty() {
         out.push_str("\n\n[session context]");
         for t in &prior.history {
@@ -5754,10 +5792,52 @@ mod tests {
         assert_eq!(big.history.len(), MAX_TURNS, "older turns drop off");
         let composed = compose_goal_with_context("next", &big, &[]);
         assert!(
-            composed.len() < MAX_TURNS * MAX_CONTEXT_CHARS * 3,
+            composed.len()
+                < MAX_TURNS * MAX_CONTEXT_CHARS * 3 + MAX_EARLIER * (EARLIER_CHARS + 4) * 4,
             "composed context stays bounded: {}",
             composed.len()
         );
+    }
+
+    /// A 30-turn follow-up chain: the last turns ride in full, the ones
+    /// before as one line each (the first kept), and the whole stays small.
+    #[test]
+    fn a_long_conversation_is_compacted_into_short_lines() {
+        let mut c = SessionContext::new();
+        for i in 1..=30 {
+            c.record(
+                &format!("question {i} about the planner\n\n[session context]\nprevious goal: x"),
+                format!("Answer {i}: the planner {}", "does things ".repeat(40)),
+            );
+        }
+        assert_eq!(c.history.len(), MAX_TURNS);
+        assert_eq!(c.earlier.len(), MAX_EARLIER);
+        assert!(
+            c.earlier[0].starts_with("question 1 about the planner → Answer 1:"),
+            "{}",
+            c.earlier[0]
+        );
+        assert!(
+            c.earlier[MAX_EARLIER - 1].starts_with("question 26 "),
+            "{:?}",
+            c.earlier
+        );
+        assert!(c
+            .earlier
+            .iter()
+            .all(|l| l.chars().count() <= EARLIER_CHARS + 1 && !l.contains("[session")));
+        let composed = compose_goal_with_context("and the next step?", &c, &[]);
+        assert!(composed.contains("[earlier in this conversation]\n- question 1 about"));
+        assert!(composed.find("[earlier").unwrap() < composed.find("[session context]").unwrap());
+        assert!(
+            composed.len() < 6000,
+            "fits a small model: {}",
+            composed.len()
+        );
+        // Saved and loaded with the conversation.
+        let back: SessionContext =
+            serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(back.earlier, c.earlier);
     }
 
     /// A conversation outlives the daemon: saved after a turn, loaded by the
