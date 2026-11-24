@@ -60,6 +60,8 @@ Autonomous Agent & Cognitive Loop:
   friday undo                      Put back the last thing FRIDAY changed (volume, mute,
                                    Do not disturb, a rewrite or paste, a window it moved);
                                    "undo" in the ask box too
+  friday watch until <command>     Tell me when a command works (a site is back up); it checks less often over time
+  friday watch gone <title words>  Tell me when that window closes (an export, a render)
   friday watch [region|stop]       Drag an area; FRIDAY says when it changes (or stops
                                    changing). A kitty command: "Tell me when this finishes"
   friday ask --new ["<objective>"] Start a new conversation (asks within 15 minutes of
@@ -3895,6 +3897,7 @@ answer-cards|Answers show tables and steps, and each code block gets its own Cop
 blank-secret-fields|Password and card fields the window shows are painted over before a screenshot of it leaves
 doctor-fix|friday doctor --fix repairs what it can by itself: a stopped daemon, missing keys, FRIDAY Shell not running
 config-import|friday import: keys and a model from OpenCode, Aider or your environment, previewed first
+watch-until|friday watch until <command> / gone <window>: told when it works or closes, checked less often over time
 log-chain|Each action in the action log is chained to the one before, so a changed line shows (friday verify-log)
 standing-reversible|A standing task runs only what can be undone; anything that would ask first is refused and logged
 memory-tidy|When memory is fuller than an ask carries, friday memory tidy proposes a shorter list to approve
@@ -5793,7 +5796,32 @@ $offer"
         geom=$(slurp 2>/dev/null) || exit 0
         setsid friday-ctl watch region "$geom" </dev/null >/dev/null 2>&1 &
         notify-send -a FRIDAY -- "FRIDAY" "Watching that area. I'll tell you when it changes, or when it stops changing if it's busy now. Stop with: friday watch stop" 2>/dev/null || true ;;
-      *) echo "Usage: friday watch [region|stop]" >&2; exit 2 ;;
+      until|gone)
+        # Self-paced: until a command works (a site is back, a file is there),
+        # or until a window with those words in its title closes.
+        friday_feature_on watch-until || { echo "Watching for a condition is turned off (friday feature watch-until on)."; exit 0; }
+        what="$2"; shift 2
+        [ -n "$*" ] || { echo "Usage: friday watch until <command> | gone <window title words>" >&2; exit 2; }
+        # Started in the background; one that ends at once (a refused
+        # command, no such window) says why here.
+        out=$(mktemp)
+        setsid friday-ctl watch "$what" "$@" </dev/null >"$out" 2>&1 &
+        pid=$!
+        sleep 0.5
+        if ! kill -0 "$pid" 2>/dev/null; then
+          rc=0; wait "$pid" || rc=$?
+          if [ -s "$out" ] || [ "$rc" -ne 0 ]; then cat "$out"; else echo "That works already."; fi
+          rm -f "$out"
+          [ "$rc" -eq 0 ] || exit 1
+          exit 0
+        fi
+        rm -f "$out"
+        if [ "$what" = until ]; then
+          echo "Watching. I'll tell you when this works: $*  (checked less often as time goes on; stop: friday watch stop)"
+        else
+          echo "Watching. I'll tell you when the \"$*\" window closes. Stop: friday watch stop"
+        fi ;;
+      *) echo "Usage: friday watch [region|until <command>|gone <title words>|stop]" >&2; exit 2 ;;
     esac
     ;;
   show)

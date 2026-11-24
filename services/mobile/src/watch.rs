@@ -178,8 +178,41 @@ pub fn valid_geometry(g: &str) -> bool {
     nums(xy, ',') && nums(wh, 'x')
 }
 
+/// The wait before a self-paced watch's next look (`friday watch until`,
+/// `gone`): 10 s, doubling with each look to 5 minutes.
+pub fn paced(looks: u32) -> u64 {
+    (10u64 << looks.min(5)).min(300)
+}
+
+/// Whether a window whose title holds `words` (any case) is open, from
+/// `hyprctl clients -j`. `None` when that can't be read.
+pub fn window_open(clients: &str, words: &str) -> Option<bool> {
+    let list: serde_json::Value = serde_json::from_str(clients).ok()?;
+    let words = words.to_lowercase();
+    Some(list.as_array()?.iter().any(|c| {
+        c["title"]
+            .as_str()
+            .is_some_and(|t| t.to_lowercase().contains(&words))
+    }))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_self_paced_watch_looks_less_often_over_time() {
+        let waits: Vec<u64> = (0..8).map(paced).collect();
+        assert_eq!(waits, [10, 20, 40, 80, 160, 300, 300, 300]);
+    }
+
+    #[test]
+    fn a_window_is_found_by_words_in_its_title() {
+        let clients =
+            r#"[{"class":"gimp","title":"Export Image as PNG"},{"class":"kitty","title":"zsh"}]"#;
+        assert_eq!(window_open(clients, "export image"), Some(true));
+        assert_eq!(window_open(clients, "render"), Some(false));
+        assert_eq!(window_open("not json", "x"), None);
+    }
+
     use super::*;
 
     fn ls(at_prompt: bool, status: i64) -> String {

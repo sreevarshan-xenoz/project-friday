@@ -124,7 +124,7 @@ fn watch(args: &[String]) -> std::process::ExitCode {
             .status();
     };
     let usage = || {
-        eprintln!("usage: friday-ctl watch kitty <socket> <window id> <command> | region <X,Y WxH> | stop");
+        eprintln!("usage: friday-ctl watch kitty <socket> <window id> <command> | region <X,Y WxH> | until <command> | gone <title words> | stop");
         ExitCode::from(2)
     };
     match args.first().map(String::as_str) {
@@ -142,6 +142,24 @@ fn watch(args: &[String]) -> std::process::ExitCode {
         }
         Some("kitty") if args.len() >= 4 && args[2].parse::<u64>().is_ok() => {}
         Some("region") if args.len() == 2 && w::valid_geometry(&args[1]) => {}
+        Some("until") if args.len() >= 2 => {
+            let cmd = args[1..].join(" ");
+            if let Some(why) = friday_actions::blocklist::never_run(&cmd) {
+                eprintln!("FRIDAY never runs that: {why}.");
+                return ExitCode::from(2);
+            }
+        }
+        Some("gone") if args.len() >= 2 => {
+            let clients = Command::new("hyprctl")
+                .args(["clients", "-j"])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                .unwrap_or_default();
+            if w::window_open(&clients, &args[1..].join(" ")) != Some(true) {
+                println!("No window has \"{}\" in its title.", args[1..].join(" "));
+                return ExitCode::FAILURE;
+            }
+        }
         _ => return usage(),
     }
     stop_running();
@@ -150,10 +168,50 @@ fn watch(args: &[String]) -> std::process::ExitCode {
     let mut region = Region::default();
     let me = std::process::id().to_string();
     let mut blind = 0;
+    let mut looks = 0;
     while std::time::Instant::now() < deadline {
         // Replaced by a newer watch (or stopped): this one ends quietly.
         if std::fs::read_to_string(&pidfile).ok().as_deref() != Some(me.as_str()) {
             return ExitCode::SUCCESS;
+        }
+        if args[0] == "until" || args[0] == "gone" {
+            let what = args[1..].join(" ");
+            let done = if args[0] == "until" {
+                Command::new("timeout")
+                    .args(["60", "sh", "-c", &what])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .is_ok_and(|s| s.success())
+            } else {
+                let clients = Command::new("hyprctl")
+                    .args(["clients", "-j"])
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                    .unwrap_or_default();
+                w::window_open(&clients, &what) == Some(false)
+            };
+            if done {
+                let body = if args[0] == "until" {
+                    format!("This works now: {what}")
+                } else {
+                    format!("The \"{what}\" window closed.")
+                };
+                notify("FRIDAY", &body);
+                break;
+            }
+            // Self-paced: less often the longer it takes.
+            let wait = Duration::from_secs(w::paced(looks));
+            looks += 1;
+            let until = std::time::Instant::now() + wait;
+            while std::time::Instant::now() < until.min(deadline) {
+                if std::fs::read_to_string(&pidfile).ok().as_deref() != Some(me.as_str()) {
+                    return ExitCode::SUCCESS;
+                }
+                std::thread::sleep(Duration::from_secs(1));
+            }
+            continue;
         }
         if args[0] == "kitty" {
             let ls = Command::new("timeout")
