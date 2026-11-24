@@ -3804,6 +3804,7 @@ task-recipes|Ready-made standing tasks in one click (friday tasks recipes)
 undo-file-writes|friday undo puts back a file FRIDAY wrote (kept while it's unchanged since)
 day-summary|friday day: a short summary of a day by project, from FRIDAY's own logs, kept on this computer
 thread-compaction|In a long conversation, turns older than the last few ride along as one short line each
+routine-offer|After FRIDAY does the same desktop steps three times, the answer offers to keep them as a routine
 log-chain|Each action in the action log is chained to the one before, so a changed line shows (friday verify-log)
 standing-reversible|A standing task runs only what can be undone; anything that would ask first is refused and logged
 memory-tidy|When memory is fuller than an ask carries, friday memory tidy proposes a shorter list to approve
@@ -5112,6 +5113,14 @@ case "${1:-}" in
         title="FRIDAY ✗ $goal"
       fi
 
+      # The same desktop steps a third time: offer (once) to keep them.
+      if $ans_ok && friday_feature_on routine-offer; then
+        local offer
+        offer=$(friday-ctl routine suggest 2>/dev/null || true)
+        [ -z "$offer" ] || answer="$answer
+
+$offer"
+      fi
       # Full answer on disk; the notification shows a preview with an Open button.
       answer_file="$state_dir/last-answer.md"
       {

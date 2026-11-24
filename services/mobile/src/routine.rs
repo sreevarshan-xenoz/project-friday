@@ -105,6 +105,16 @@ pub fn last_task(log: &str) -> Option<Recorded> {
         task.push(l);
     }
     task.reverse();
+    let (steps, left_out) = steps_of(&task)?;
+    (!steps.is_empty()).then_some(Recorded {
+        steps,
+        goal,
+        left_out,
+    })
+}
+
+/// The steps of one task worth doing again, and how many were left out.
+fn steps_of(task: &[&Value]) -> Option<(Vec<Step>, usize)> {
     let mut steps = Vec::new();
     let mut left_out = 0;
     for l in task {
@@ -122,10 +132,55 @@ pub fn last_task(log: &str) -> Option<Recorded> {
             _ => {}
         }
     }
-    (!steps.is_empty()).then_some(Recorded {
-        steps,
-        goal,
-        left_out,
+    Some((steps, left_out))
+}
+
+/// How many times the same steps make a routine worth offering.
+pub const OFFER_AFTER: usize = 3;
+
+/// When the last desktop task did the very same steps (two or more) as
+/// earlier ones, [`OFFER_AFTER`] times in all, and no saved routine
+/// (`saved`) already does them: that task and the count, to offer saving
+/// it. Only offered, never saved without the person.
+pub fn repeated(log: &str, saved: &[Routine]) -> Option<(Recorded, usize)> {
+    // The log's tasks, oldest first: a new goal or a two-minute gap starts one.
+    let mut tasks: Vec<(String, Vec<Value>)> = Vec::new();
+    let mut last_ts: Option<i64> = None;
+    for l in log
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+    {
+        let goal = l["goal"].as_str().unwrap_or_default().to_string();
+        let gap = matches!((last_ts, secs(&l)), (Some(a), Some(b)) if b - a > TASK_GAP_SECS);
+        last_ts = secs(&l).or(last_ts);
+        match tasks.last_mut() {
+            Some((g, lines)) if !gap && (goal == *g || goal == "(confirmed)") => lines.push(l),
+            _ if goal == "(confirmed)" => {}
+            _ => tasks.push((goal, vec![l])),
+        }
+    }
+    let steps = |lines: &[Value]| {
+        let refs: Vec<&Value> = lines.iter().collect();
+        steps_of(&refs)
+    };
+    let (goal, lines) = tasks.last()?;
+    let (last, left_out) = steps(lines)?;
+    if last.len() < 2 || saved.iter().any(|r| r.steps == last) {
+        return None;
+    }
+    let times = tasks
+        .iter()
+        .filter(|(_, l)| steps(l).is_some_and(|(s, _)| s == last))
+        .count();
+    (times >= OFFER_AFTER).then(|| {
+        (
+            Recorded {
+                steps: last,
+                goal: goal.clone(),
+                left_out,
+            },
+            times,
+        )
     })
 }
 
@@ -300,6 +355,45 @@ mod tests {
         assert!(last_task(&line("windows", "read", true, "g")).is_none());
         // A lone confirmed action isn't a task.
         assert!(last_task(&line("close_window", "destructive", true, "(confirmed)")).is_none());
+    }
+
+    #[test]
+    fn the_same_steps_a_third_time_are_offered_once_saved_never() {
+        let task = |t: i64, goal: &str| {
+            [
+                at(t, "ui_tree", "read", true, goal),
+                at(t + 5, "launch_app", "reversible", true, goal),
+                at(t + 10, "switch_workspace", "reversible", true, goal),
+            ]
+            .join("\n")
+        };
+        let two = [task(0, "set up"), task(1000, "get my desk ready")].join("\n");
+        assert!(repeated(&two, &[]).is_none(), "twice isn't yet");
+        let three = [two.clone(), task(2000, "set up")].join("\n");
+        let (rec, n) = repeated(&three, &[]).unwrap();
+        assert_eq!(n, 3);
+        assert_eq!(rec.goal, "set up");
+        assert_eq!(rec.steps.len(), 2);
+        // Something else since: the last task is what counts.
+        let other = [
+            three.clone(),
+            at(3000, "move_window", "reversible", true, "x"),
+        ]
+        .join("\n");
+        assert!(repeated(&other, &[]).is_none());
+        // Already a routine: not offered.
+        let saved = Routine {
+            name: "desk".into(),
+            goal: "set up".into(),
+            steps: rec.steps.clone(),
+        };
+        assert!(repeated(&three, &[saved]).is_none());
+        // One step isn't worth a routine.
+        let one = (0..3)
+            .map(|i| at(i * 1000, "launch_app", "reversible", true, "kitty"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(repeated(&one, &[]).is_none());
     }
 
     #[test]

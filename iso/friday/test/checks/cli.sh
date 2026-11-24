@@ -107,6 +107,10 @@ if [[ "\$*" == *"should they click first"* ]]; then
   printf 'friday-ctl-pick %s\n' "\$*" >> "$LOG"
   echo '{"accepted":true}'; printf '{\n "outcome": "completed",\n "result": "Appearance"\n}\n'; exit 0
 fi
+if [[ "\$1" == routine && "\$2" == suggest ]]; then
+  [ -z "\${ROUTINE_OFFER:-}" ] || echo "\$ROUTINE_OFFER"
+  exit 0
+fi
 if [[ "\$1" == routine ]]; then
   printf 'friday-ctl-routine %s\n' "\$*" >> "$LOG"
   echo "stub routine output"
@@ -1399,6 +1403,13 @@ echo "what FRIDAY used"
 contains "the answer says what the daemon added" "$(cat "$LOG")" "Used: your timeline, a lesson from a failure"
 : >"$LOG"; bash "$F" ask "what is the capital of peru"; sleep 0.3
 if grep -q "Used:" "$LOG"; then fail "an answer with nothing extra said it used something"; else pass "nothing extra: no used line"; fi
+echo "a routine offered after the same steps three times"
+: >"$LOG"; ROUTINE_OFFER="Keep them as a routine: friday routine save <name>" bash "$F" ask "useditems please"; sleep 0.3
+contains "the answer offers the routine" "$(cat "$state/last-answer.md")" "Keep them as a routine"
+bash "$F" feature routine-offer off >/dev/null
+: >"$LOG"; ROUTINE_OFFER="Keep them as a routine" bash "$F" ask "useditems please"; sleep 0.3
+if grep -q "Keep them as a routine" "$state/last-answer.md"; then fail "the routine offer came while turned off"; else pass "the routine offer has a switch"; fi
+bash "$F" feature routine-offer on >/dev/null
 
 echo "one resume grammar: friday ask and the daemon read the same table"
 # timeline.rs checks the daemon against tests/fixtures/resume-phrases.tsv;
