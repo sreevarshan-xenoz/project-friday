@@ -600,7 +600,7 @@ step_local_ai() {
     size_mb=$(lsblk -b -d -n -o SIZE "$TARGET_DISK" 2>/dev/null | head -n1 | xargs)
     if [[ "$size_mb" =~ ^[0-9]+$ ]]; then size_mb=$(( size_mb / 1048576 - 20480 )); else size_mb=1000000; fi
   fi
-  presets=$(FRIDAY_DISK_FREE_MB="$size_mb" friday local-ai presets 2>/dev/null) || presets=""
+  presets=$(FRIDAY_DISK_FREE_MB="$size_mb" friday local-ai presets "$eng" 2>/dev/null) || presets=""
   local -a options=() ids=()
   local id label budget model dl vision fast available note speed
   while IFS='|' read -r id label budget model dl vision fast available note; do
@@ -621,7 +621,11 @@ step_local_ai() {
     return 0
   fi
   local pick i
-  pick=$(printf '%s\n' "${options[@]}" "No local AI after all" | gum choose --cursor="$FRIDAY_CURSOR" --height=8) || pick=""
+  pick=$(printf '%s\n' "${options[@]}" "Pick the model myself" "No local AI after all" | gum choose --cursor="$FRIDAY_CURSOR" --height=9) || pick=""
+  if [[ $pick == "Pick the model myself" ]]; then
+    pick_local_model "$eng" "$engine" "$size_mb"
+    return 0
+  fi
   for i in "${!options[@]}"; do
     [[ "${options[$i]}" == "$pick" ]] || continue
     IFS='|' read -r _ FRIDAY_LOCAL_BUDGET_MB FRIDAY_LOCAL_MODEL vision <<<"${ids[$i]}"
@@ -629,6 +633,34 @@ step_local_ai() {
     local sees="text only"; (( vision )) && sees="sees screenshots"
     local when="backs up cloud"; [[ $pick == *", answers first,"* ]] && when="answers first"
     FRIDAY_LOCAL_LABEL="Local: $FRIDAY_LOCAL_MODEL on ${engine%% (*} ($sees, $when)"
+    friday_ok "$FRIDAY_LOCAL_LABEL; it downloads after your first login"
+  done
+}
+
+# Every model FRIDAY sets up on the engine (Ollama: its own library only;
+# llama.cpp: GGUF files, small ones for low-end computers too), each with
+# what it needs; one too big for this computer's memory or disk says so.
+pick_local_model() {
+  local eng="$1" engine="$2" disk_mb="$3" ram_mb rows id need dl vision line
+  local -a options=() ids=()
+  ram_mb=$(friday local-ai detect 2>/dev/null | sed -n 's/^ram_mb=//p')
+  rows=$(friday local-ai models "$eng" 2>/dev/null) || rows=""
+  while IFS='|' read -r id need dl vision; do
+    [[ -n "$id" ]] || continue
+    line="$id: needs $(friday_gb "$need") of memory, $(friday_gb "$dl") download"
+    (( vision )) && line+=", sees screenshots" || line+=", text only"
+    if (( dl + 1024 > disk_mb )); then line+=" (not enough disk)"
+    elif [[ "$ram_mb" =~ ^[0-9]+$ ]] && (( need > ram_mb * 3 / 4 )); then line+=" (too big for this computer's memory)"; fi
+    options+=("$line"); ids+=("$id|$need|$vision")
+  done <<<"$rows"
+  local pick i
+  pick=$(printf '%s\n' "${options[@]}" "No local AI after all" | gum choose --cursor="$FRIDAY_CURSOR" --height=10) || pick=""
+  for i in "${!options[@]}"; do
+    [[ "${options[$i]}" == "$pick" ]] || continue
+    IFS='|' read -r FRIDAY_LOCAL_MODEL FRIDAY_LOCAL_BUDGET_MB vision <<<"${ids[$i]}"
+    FRIDAY_LOCAL_ENGINE="$eng"
+    local sees="text only"; (( vision )) && sees="sees screenshots"
+    FRIDAY_LOCAL_LABEL="Local: $FRIDAY_LOCAL_MODEL on ${engine%% (*} ($sees)"
     friday_ok "$FRIDAY_LOCAL_LABEL; it downloads after your first login"
   done
 }
