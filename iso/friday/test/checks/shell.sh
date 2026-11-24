@@ -90,6 +90,11 @@ if timeout 10 qs -p "$FS" ipc call answer present true "What's using my disk?" "
   sleep 1.5; grim "$W/friday-answer.png" 2>/dev/null || true
   [[ "$(timeout 10 qs -p "$FS" ipc call answer state 2>/dev/null)" == answer ]] \
     && pass "answer pill shows an answer over IPC" || fail "answer pill did not take the answer"
+  [[ "$(timeout 10 qs -p "$FS" ipc call answer codeCount 2>/dev/null)" == 0 ]] \
+    && pass "an answer with no code has no Copy code" || fail "Copy code shown with no code"
+  timeout 10 qs -p "$FS" ipc call answer present true "Clean the cache" $'Run:\n\n```bash\nsudo paccache -r\n```\n\nThen:\n\n```\nfriday doctor\n```' "" "" "" >/dev/null 2>&1 || true
+  [[ "$(timeout 10 qs -p "$FS" ipc call answer codeCount 2>/dev/null)" == 2 ]] \
+    && pass "each code block in an answer gets its own Copy" || fail "code blocks not found: $(timeout 10 qs -p "$FS" ipc call answer codeCount 2>/dev/null)"
   timeout 10 qs -p "$FS" ipc call answer listening >/dev/null 2>&1 || true
   [[ "$(timeout 10 qs -p "$FS" ipc call answer state 2>/dev/null)" == listening ]] \
     && pass "answer pill shows Listening while Super+Y is held" || fail "answer pill has no listening state"

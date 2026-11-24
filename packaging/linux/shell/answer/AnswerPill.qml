@@ -191,6 +191,16 @@ PanelWindow {
         spacing: 8
 
         Chip { visible: Answer.body !== ""; icon: Icons.copy; text: "Copy"; onClicked: Answer.copy() }
+        // Each code block in the answer, copied on its own.
+        Repeater {
+          model: win.answering ? Answer.codeBlocks.length : 0
+          Chip {
+            required property int index
+            icon: Icons.copy
+            text: Answer.codeBlocks.length > 1 ? "Copy code " + (index + 1) : "Copy code"
+            onClicked: Answer.copyCode(index)
+          }
+        }
         Chip { visible: Answer.ok; icon: Icons.selection; text: "Type it"; onClicked: Answer.typeIt() }
         Chip {
           visible: Answer.ok

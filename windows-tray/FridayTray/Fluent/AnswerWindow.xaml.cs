@@ -540,7 +540,9 @@ public partial class AnswerWindow : Window
                 text.Margin = new Thickness(0, 4, 0, 6);
                 return text;
             case BlockKind.Code:
-                return CodeWell(block.Spans.Single().Text, Resource("Signal"));
+                return CardsOn ? CodeWithCopy(block.Spans.Single().Text) : CodeWell(block.Spans.Single().Text, Resource("Signal"));
+            case BlockKind.Table:
+                return CardsOn ? Table(block.Rows ?? []) : TableAsText(block.Rows ?? []);
             case BlockKind.Bullet:
             case BlockKind.Numbered:
                 var row = new Grid { Margin = new Thickness(2, 0, 0, 5) };
@@ -581,6 +583,67 @@ public partial class AnswerWindow : Window
             t.Inlines.Add(run);
         }
         return t;
+    }
+
+    /// <summary>Tables and per-block Copy (the answer-cards switch).</summary>
+    public bool CardsOn { get; set; } = true;
+
+    private FrameworkElement CodeWithCopy(string code)
+    {
+        var grid = new Grid();
+        grid.Children.Add(CodeWell(code, Resource("Signal")));
+        var copy = new Button
+        {
+            Content = "Copy",
+            FontSize = 11,
+            Padding = new Thickness(8, 2, 8, 2),
+            Margin = new Thickness(0, 6, 6, 0),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top,
+            ToolTip = "Copy this code",
+        };
+        AutomationProperties.SetName(copy, "Copy code");
+        copy.Click += (_, _) => Copy(copy, code);
+        grid.Children.Add(copy);
+        return grid;
+    }
+
+    private FrameworkElement Table(IReadOnlyList<IReadOnlyList<string>> rows)
+    {
+        var grid = new Grid { Margin = new Thickness(0, 2, 0, 10) };
+        var columns = rows.Max(r => r.Count);
+        for (var c = 0; c < columns; c++)
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        for (var r = 0; r < rows.Count; r++)
+        {
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            for (var c = 0; c < rows[r].Count; c++)
+            {
+                var cell = Text(MarkdownBlocks.Inline(rows[r][c], bold: r == 0));
+                cell.Margin = new Thickness(0, 0, 18, 4);
+                cell.TextWrapping = TextWrapping.Wrap;
+                cell.MaxWidth = 260;
+                var border = new Border
+                {
+                    BorderBrush = Resource("Hairline"),
+                    BorderThickness = new Thickness(0, 0, 0, r == 0 ? 1 : 0),
+                    Padding = new Thickness(0, 2, 0, 2),
+                    Child = cell,
+                };
+                Grid.SetRow(border, r);
+                Grid.SetColumn(border, c);
+                grid.Children.Add(border);
+            }
+        }
+        return grid;
+    }
+
+    private FrameworkElement TableAsText(IReadOnlyList<IReadOnlyList<string>> rows)
+    {
+        var panel = new StackPanel();
+        foreach (var row in rows)
+            panel.Children.Add(Text(MarkdownBlocks.Inline(string.Join("  |  ", row))));
+        return panel;
     }
 
     private Border CodeWell(string code, Brush color) => new()

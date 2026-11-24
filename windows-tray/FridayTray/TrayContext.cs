@@ -1089,6 +1089,7 @@ internal sealed class TrayContext : ApplicationContext
         var form = new AnswerWindow(question, waiting)
         {
             OrbOn = AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "status-orb"),
+            CardsOn = AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "answer-cards"),
         };
         // Closing the card (or asking again) ends the reading.
         form.Closed += (_, _) => { if (Speaking.Enabled(_install.Paths)) Ctl.StopSaying(_install); };

@@ -3,13 +3,14 @@ namespace FridayTray.Core;
 using System.Text.RegularExpressions;
 
 /// <summary>What a line of an answer is.</summary>
-public enum BlockKind { Paragraph, Heading, Bullet, Numbered, Code }
+public enum BlockKind { Paragraph, Heading, Bullet, Numbered, Code, Table }
 
 /// <summary>A run of text with its marks.</summary>
 public sealed record Span(string Text, bool Bold = false, bool Italic = false, bool Code = false);
 
-/// <summary>One block of an answer; <see cref="Marker"/> is a numbered item's number.</summary>
-public sealed record Block(BlockKind Kind, IReadOnlyList<Span> Spans, string Marker = "");
+/// <summary>One block of an answer; <see cref="Marker"/> is a numbered item's
+/// number; <see cref="Rows"/> a table's cells, its header row first.</summary>
+public sealed record Block(BlockKind Kind, IReadOnlyList<Span> Spans, string Marker = "", IReadOnlyList<IReadOnlyList<string>>? Rows = null);
 
 /// <summary>
 /// An answer's Markdown as blocks and marked spans, for the answer window to
@@ -22,9 +23,25 @@ public static partial class MarkdownBlocks
     {
         var blocks = new List<Block>();
         List<string>? code = null;
+        List<IReadOnlyList<string>>? table = null;
+        void EndTable()
+        {
+            if (table is { Count: > 0 })
+                blocks.Add(new Block(BlockKind.Table, [], Rows: table));
+            table = null;
+        }
         foreach (var raw in markdown.Replace("\r\n", "\n").Split('\n'))
         {
             var line = raw.TrimEnd();
+            // A table: rows of | cells |; the --- row under the header is skipped.
+            if (code is null && line.TrimStart().StartsWith('|') && line.Trim().Length > 1)
+            {
+                var cells = line.Trim().Trim('|').Split('|').Select(c => c.Trim()).ToList();
+                if (!cells.All(c => c.Length > 0 && c.Trim(':', '-', ' ').Length == 0))
+                    (table ??= []).Add(cells);
+                continue;
+            }
+            EndTable();
             if (line.TrimStart().StartsWith("```"))
             {
                 if (code is null)
@@ -52,6 +69,7 @@ public static partial class MarkdownBlocks
             else
                 blocks.Add(new Block(BlockKind.Paragraph, Inline(line)));
         }
+        EndTable();
         // An unclosed fence still shows its code.
         if (code is { Count: > 0 })
             blocks.Add(new Block(BlockKind.Code, [new Span(string.Join("\n", code), Code: true)]));
