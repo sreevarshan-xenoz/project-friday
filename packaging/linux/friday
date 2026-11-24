@@ -4884,7 +4884,7 @@ case "${1:-}" in
     history_file="$state_dir/ask-history"
     notify() { notify-send -a FRIDAY -- "$@" 2>/dev/null || true; }
     # FRIDAY Shell's answer pill (services/Answer.qml); fails when it isn't running.
-    pill() { command -v quickshell >/dev/null 2>&1 && timeout 3 bash "$0" shell ipc answer "$@" >/dev/null 2>&1; }
+    pill() { command -v quickshell >/dev/null 2>&1 && timeout "${pill_wait:-3}" bash "$0" shell ipc answer "$@" >/dev/null 2>&1; }
     # Looked up while the ask box is open, not before it (each can take a
     # few seconds): the project in front (a terminal's git repo, kept with
     # the answer so "continue building X" finds X's history) and whether
@@ -4894,7 +4894,10 @@ case "${1:-}" in
     trap 'rm -rf "$lookups"' EXIT
     { timeout 2 friday-ctl workspace project >"$lookups/project" 2>/dev/null || true; } &
     lookup_pids=$!
-    { pill state && : >"$lookups/pill"; } &
+    # FRIDAY Shell running means its pill shows the answer, even when its
+    # reply to this check is slow: answers never jump between the centre
+    # pill and a notification on the right.
+    { { pgrep -f 'quickshell.*friday/shell' >/dev/null 2>&1 || pill state; } && : >"$lookups/pill"; } &
     lookup_pids+=" $!"
     # The window in front at the keypress: "this window" means it, even if
     # another is in front by the time FRIDAY acts.
@@ -5621,7 +5624,8 @@ $offer"
       # only when it isn't there, or for "Start FRIDAY", which only a
       # notification offers.
       if $use_pill && [ "${daemon_down:-false}" != true ] \
-        && pill present "$ans_ok" "$goal" "$answer" "$meta" "${ask_args[0]:-}" "${served_model:-}"; then
+        && { pill_wait=8 pill present "$ans_ok" "$goal" "$answer" "$meta" "${ask_args[0]:-}" "${served_model:-}" \
+          || { sleep 1; pill_wait=8 pill present "$ans_ok" "$goal" "$answer" "$meta" "${ask_args[0]:-}" "${served_model:-}"; }; }; then
         return 0
       fi
       # A notification instead: the pill doesn't stay on "working".
