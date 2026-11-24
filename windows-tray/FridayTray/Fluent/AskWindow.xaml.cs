@@ -103,6 +103,17 @@ public partial class AskWindow : Window
     /// <summary>Whether a vague "this" may mean the window in front (one is there, not private or mail).</summary>
     public bool OfferWindow { get; init; }
 
+    /// <summary>Asks that fit the app in front, shown first (↑ walks them before recent questions).</summary>
+    public IReadOnlyList<string> Suggested
+    {
+        init
+        {
+            foreach (var s in value)
+                AddRow(s);
+            Quick.Visibility = _rows.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+    }
+
     /// <summary>The question's "this" is the window in front: ask about the screen.</summary>
     public bool AboutWindow { get; private set; }
 

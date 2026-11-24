@@ -322,6 +322,19 @@ internal sealed class TrayContext : ApplicationContext
                 && AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "sensitive-warn")
                 ? SensitiveWindows.Match(_install.Paths, Native.ProcessNameOf(targetWindow), Native.GetWindowTitle(targetWindow))
                 : null;
+            // Asks that fit the app in front (a page, an email, a chat), and
+            // the person's own instruction for it: never for a private window.
+            var env = EnvFile.Load(_install.Paths.EnvFile);
+            var frontApp = Native.ProcessNameOf(targetWindow);
+            var frontPrivate = targetWindow == IntPtr.Zero
+                || PrivateWindows.Match(_install.Paths, frontApp, Native.GetWindowTitle(targetWindow)) is not null;
+            IReadOnlyList<AppSuggestions.Suggestion> offered =
+                kind == AskKind.Plain && area is null && !frontPrivate && AppSettings.FeatureOn(env, "suggestions")
+                    ? AppSuggestions.For(frontApp)
+                    : [];
+            if (offered.Count > 0 && AppSettings.FeatureOn(env, "sensitive-warn")
+                && SensitiveWindows.Match(_install.Paths, frontApp, Native.GetWindowTitle(targetWindow)) is { } chatApp)
+                offered = offered.Select(s => s with { Label = $"{s.Label} · a screenshot of {chatApp} goes to your AI" }).ToList();
             string? context = null;
             string? preview = null;
             string? appLine = null;
@@ -345,7 +358,7 @@ internal sealed class TrayContext : ApplicationContext
 
             var form = new AskWindow(kind, preview, sensitiveBy, kind switch
             {
-                AskKind.Plain => _log.History(),
+                AskKind.Plain => offered.Select(s => s.Label).Concat(_log.History()).ToList(),
                 AskKind.Selection => QuickActions.All(_install.Paths.PromptsFile, selected),
                 _ => [],
             })
@@ -357,10 +370,17 @@ internal sealed class TrayContext : ApplicationContext
                     && AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "which-this")
                     && PrivateWindows.Match(_install.Paths, Native.ProcessNameOf(targetWindow), Native.GetWindowTitle(targetWindow)) is null
                     && SensitiveWindows.Match(_install.Paths, Native.ProcessNameOf(targetWindow), Native.GetWindowTitle(targetWindow)) is null,
+                Suggested = offered.Select(s => s.Label).ToList(),
             };
             if (form.ShowDialog() != true)
                 return;
             var question = form.Question;
+            // A suggestion asks about the window in front, with the usual consent.
+            if (kind == AskKind.Plain && AppSuggestions.Picked(offered, question) is { } chip)
+            {
+                question = chip.Question;
+                kind = AskKind.Screen;
+            }
             _log.Remember(question);
             if (form.AboutWindow)
                 kind = AskKind.Screen;
@@ -404,6 +424,9 @@ internal sealed class TrayContext : ApplicationContext
             // "search ..." and "look up ..." ask for a web search, and only they do.
             var (asked, web) = Asking.WebQuestion(question);
             var request = SourceApp.Append(Asking.BuildRequest(asked, context), appLine);
+            if (kind != AskKind.Screen && !frontPrivate && AppSettings.FeatureOn(env, "app-instructions")
+                && AppInstructions.For(_install.Paths.AppInstructionsFile, frontApp) is { } rule)
+                request = AppInstructions.Append(request, frontApp!, rule);
             // "How do I … in FRIDAY?": FRIDAY's guide goes with the question.
             if (kind == AskKind.Plain && context is null && !web && Asking.AboutFriday(asked))
             {
