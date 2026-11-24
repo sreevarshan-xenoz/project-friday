@@ -1899,8 +1899,23 @@ async fn main() -> std::process::ExitCode {
     }
     // A fact forgotten from every place it was copied to.
     if raw.first().map(String::as_str) == Some("forget-everywhere") {
-        let words = raw[1..].join(" ");
+        let words = raw[1..]
+            .iter()
+            .filter(|a| *a != "--daemon-stopped")
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ");
         let state_path = ShellState::default_path();
+        // A running daemon holds conversations in memory and would write
+        // them back: it stops first (friday memory forget does that, and
+        // says so with --daemon-stopped).
+        let running = std::fs::read_to_string(&state_path).is_ok_and(|s| {
+            s.contains("\"status\": \"running\"") || s.contains("\"status\":\"running\"")
+        });
+        if running && raw.iter().all(|a| a != "--daemon-stopped") {
+            eprintln!("friday-ctl: stop FRIDAY first (friday memory forget does it for you)");
+            return std::process::ExitCode::from(1);
+        }
         let state = state_path
             .parent()
             .map(std::path::Path::to_path_buf)

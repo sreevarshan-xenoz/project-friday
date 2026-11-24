@@ -3657,7 +3657,7 @@ friday_memory() {
       if systemctl --user is-active --quiet friday-linux-daemon 2>/dev/null; then
         was_up=true; systemctl --user stop friday-linux-daemon 2>/dev/null || true
       fi
-      friday-ctl forget-everywhere "$words" || true
+      friday-ctl forget-everywhere --daemon-stopped "$words" || true
       if $was_up; then systemctl --user start friday-linux-daemon 2>/dev/null || true; fi ;;
     import)
       # Another assistant's notes (a CLAUDE.md, an exported memory list):

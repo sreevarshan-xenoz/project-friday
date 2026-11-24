@@ -770,7 +770,7 @@ printf '\n## No longer true\n* I live in Chennai (until 2026-11-23)\n' >>"$HOME/
 contains "and what stopped being true" "$(bash "$F" memory)" "  I live in Chennai (until 2026-11-23)"
 : >"$LOG"
 contains "forgets a line" "$(bash "$F" memory forget helix)" "Forgot 1 line(s)"
-contains "and every copy of it" "$(cat "$LOG")" "friday-ctl-forget-everywhere helix"
+contains "and every copy of it" "$(cat "$LOG")" "friday-ctl-forget-everywhere --daemon-stopped helix"
 if grep -q "^- my editor is Helix" "$HOME/.config/friday/memory.md"; then fail "the line is still there"; else pass "the line is gone, the rest stays"; fi
 contains "the rest stays" "$(cat "$HOME/.config/friday/memory.md")" "- I use fish"
 contains "headings stay too" "$(cat "$HOME/.config/friday/memory.md")" "# mine, about helix too"
