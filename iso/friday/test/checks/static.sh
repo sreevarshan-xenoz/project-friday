@@ -70,7 +70,7 @@ F_CLI="$REPO_ROOT/packaging/linux/friday"
 THEME_QML="$REPO_ROOT/packaging/linux/shell/common/Theme.qml"
 # The window borders use the palettes' accent and outline: the CLI's copy of
 # them must match Theme.qml.
-for pal in ember frost moss dawn; do
+for pal in core ember polar frost moss dawn; do
   block=$(sed -n "/readonly property var $pal: ({/,/})/p" "$THEME_QML")
   acc=$(grep -oE 'accent: "#[0-9a-f]{6}"' <<<"$block" | grep -oE '[0-9a-f]{6}')
   out=$(grep -oE 'outline: "#[0-9a-f]{6}"' <<<"$block" | grep -oE '[0-9a-f]{6}')
@@ -83,7 +83,7 @@ grep -q 'dofile(friday_look)' "$AIROOTFS/etc/skel/.config/hypr/hyprland.lua" \
   || fail "FRIDAY OS's hyprland.lua does not load ~/.config/friday/hypr-look.lua"
 if ! $omarchy_ok; then skip "the window looks in Hyprland (Omarchy not fetched)"
 elif need Hyprland jq && [ "${unpriv[0]:-}" != false ]; then
-  for look in island:frost dock:omarchy; do
+  for look in lean:core island:polar dock:omarchy; do
     H=$(mktemp -d /tmp/friday-hypr-look.XXXXXX); chmod 755 "$H"
     mkdir -p "$H/.config/friday"; cp -a "$AIROOTFS/etc/skel/.config/hypr" "$H/.config/hypr"
     printf '{ "style": "%s", "palette": "%s" }\n' "${look%%:*}" "${look##*:}" >"$H/.config/friday/shell.json"
@@ -109,7 +109,7 @@ if [[ -n "$own_line" && -n "$style_line" ]] && (( own_line < style_line )) \
 else
   fail "installer doesn't save the style, or runs friday shell style before the user owns ~/.config/friday"
 fi
-for opt in "Island (floating pills along the top)" "Dock (floating bar along the bottom)" "FRIDAY Shell Dawn"; do
+for opt in "Lean (thin borders, small gaps, no blur" "FRIDAY Shell Core" "FRIDAY Shell Polar" "Island (floating pills along the top)" "Dock (floating bar along the bottom)" "FRIDAY Shell Dawn"; do
   grep -qF "$opt" "$AIROOTFS/root/configurator" && pass "installer offers: $opt" || fail "installer no longer offers: $opt"
 done
 
@@ -123,7 +123,7 @@ grep -q 'SESSION_FILE=niri.desktop' "$AIROOTFS/root/installer" \
 NIRI_CONF="$AIROOTFS/etc/skel/.config/niri/config.kdl"
 expect "the new user gets a default niri look" test -s "$AIROOTFS/etc/skel/.config/friday/niri-look.kdl"
 if need niri jq; then
-  for look in default island:frost dock:omarchy; do
+  for look in default lean:core island:polar dock:omarchy; do
     H=$(mktemp -d /tmp/friday-niri.XXXXXX)
     mkdir -p "$H/.config/niri" "$H/.config/friday"
     # The packaged FRIDAY snippet from this tree instead of /usr/share.

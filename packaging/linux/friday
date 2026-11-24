@@ -148,8 +148,8 @@ Desktop & System Substrate:
   friday shell [start|restart|stop] Run FRIDAY Shell (bar, drawers, notifications)
   friday shell <drawer>            Toggle a drawer: friday control calendar launcher session
   friday shell ipc <target> <fn>   Call FRIDAY Shell IPC (e.g. notifications dismissAll)
-  friday shell style [name]        Shell style: ember, island, dock (lists without a name)
-  friday shell palette [name]      Shell colours: ember, frost, moss, dawn, classic
+  friday shell style [name]        Shell style: ember, lean, island, dock (lists without a name)
+  friday shell palette [name]      Shell colours: core, ember, polar, frost, moss, dawn, classic
   friday theme [list|set <name>]   Switch desktop visual theme (22 available)
   friday bar [toggle|reload]       Configure Quickshell bar and widgets
   friday update                    Update system and OS components
@@ -184,18 +184,22 @@ shell_window_look() {
   local conf="${XDG_CONFIG_HOME:-$HOME/.config}/friday/shell.json" style palette
   local gi go bs r accent outline
   style=$(jq -r '.style // "ember"' "$conf" 2>/dev/null || echo ember)
-  palette=$(jq -r '.palette // "ember"' "$conf" 2>/dev/null || echo ember)
+  palette=$(jq -r '.palette // "core"' "$conf" 2>/dev/null || echo core)
   case "$style" in
+    lean)   gi=3 go=6 bs=1 r=6 ;;
     island) gi=6 go=14 bs=2 r=16 ;;
     dock)   gi=8 go=16 bs=1 r=20 ;;
     *)      style=ember gi=5 go=10 bs=2 r=10 ;;
   esac
   case "$palette" in
+    ember)   accent=ff8f4c outline=323844 ;;
+    friday)  palette=ember accent=ff8f4c outline=323844 ;;
+    polar)   accent=88c0d0 outline=4c566a ;;
     frost)   accent=7cc4ff outline=2c3a4d ;;
     moss)    accent=a8d46f outline=323b2d ;;
     dawn)    accent=d9622b outline=d2c7ba ;;
     classic|omarchy) accent="" outline="" ;;
-    *)       palette=ember accent=ff8f4c outline=323844 ;;
+    *)       palette=core accent=d42d51 outline=343842 ;;
   esac
   {
     echo "-- FRIDAY Shell's look for windows (style: $style, palette: $palette)."
@@ -214,11 +218,21 @@ shell_window_look() {
     echo "  },"
     echo "  decoration = {"
     echo "    rounding = $r,"
-    echo "    blur = { enabled = true, size = 10, passes = 3, vibrancy = 0.2, noise = 0.02 },"
-    echo "  },"
-    echo "})"
-    echo "-- Frosted glass behind FRIDAY Shell's surfaces (see-through pixels stay clear)."
-    echo "hl.layer_rule({ match = { namespace = \"^friday-.*$\" }, blur = true, ignore_alpha = 0.2 })"
+    if [ "$style" = lean ]; then
+      # Plain windows: no blur or shadow; the ones you aren't in dim a little.
+      echo "    blur = { enabled = false },"
+      echo "    shadow = { enabled = false },"
+      echo "    dim_inactive = true,"
+      echo "    dim_strength = 0.15,"
+      echo "  },"
+      echo "})"
+    else
+      echo "    blur = { enabled = true, size = 10, passes = 3, vibrancy = 0.2, noise = 0.02 },"
+      echo "  },"
+      echo "})"
+      echo "-- Frosted glass behind FRIDAY Shell's surfaces (see-through pixels stay clear)."
+      echo "hl.layer_rule({ match = { namespace = \"^friday-.*$\" }, blur = true, ignore_alpha = 0.2 })"
+    fi
   } >"${conf%/*}/hypr-look.lua.tmp" && mv -f "${conf%/*}/hypr-look.lua.tmp" "${conf%/*}/hypr-look.lua"
   {
     echo "// FRIDAY Shell's look for windows (style: $style, palette: $palette)."
@@ -6324,7 +6338,7 @@ $offer"
         # The look, as the control drawer's Look picker sets it: merged into
         # shell.json, which the shell applies live.
         key=$1; shift
-        if [ "$key" = style ]; then opts="ember island dock"; else opts="ember frost moss dawn classic"; fi
+        if [ "$key" = style ]; then opts="ember lean island dock"; else opts="core ember polar frost moss dawn classic"; fi
         conf="${XDG_CONFIG_HOME:-$HOME/.config}/friday/shell.json"
         cur=$(jq -r --arg k "$key" '.[$k] // empty' "$conf" 2>/dev/null || true)
         [ "$cur" = friday ] && cur=ember

@@ -19,8 +19,8 @@ INSTALL_MODE="erase" FRIDAY_SIZE_MB="" BOOT_DEFAULT="friday" ALONGSIDE_OS="" BIT
 # Empty until named, so typing replaces the placeholder (empty input means "friday").
 HOSTNAME="" USERNAME="" PASSWORD=""
 KEYBOARD="us" TIMEZONE="UTC"
-THEME="FRIDAY Shell (Ember, made for FRIDAY)"
-SHELL_STYLE="Ember (bar flush with the top edge)"
+THEME="FRIDAY Shell Core (obsidian and core red; the FRIDAY OS look)"
+SHELL_STYLE="Lean (thin borders, small gaps, no blur; the FRIDAY OS look)"
 SESSION="Hyprland (tiling, the FRIDAY OS default)"
 SDDM_THEME="SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)"
 BROWSERS=""
@@ -340,14 +340,16 @@ step_look() {
   # Most people keep FRIDAY's look; four questions only for those who don't.
   # From the review screen ("Change desktop") it goes straight to them.
   if [[ "${1:-}" != choose ]]; then
-    friday_note "  FRIDAY's look: the Ember shell on Hyprland, with FRIDAY's login screen. Change any of it later in the controls drawer (Look)."
+    friday_note "  FRIDAY's look: FRIDAY Shell in obsidian and core red with plain, thin-bordered windows on Hyprland, and FRIDAY's login screen. Change any of it later in the controls drawer (Look)."
     if gum confirm --affirmative="Keep FRIDAY's look" --negative="Choose my own" "Use FRIDAY's look?"; then
       friday_ok "FRIDAY's look"
       return 0
     fi
   fi
   friday_note "  Colours. Change them any time in the controls drawer (Look) or with friday shell palette."
-  v=$(gum choose --cursor="$FRIDAY_CURSOR" --height=10 --selected="$THEME" \
+  v=$(gum choose --cursor="$FRIDAY_CURSOR" --height=11 --selected="$THEME" \
+    "FRIDAY Shell Core (obsidian and core red; the FRIDAY OS look)" \
+    "FRIDAY Shell Polar (arctic Nord blues)" \
     "FRIDAY Shell (Ember, made for FRIDAY)" \
     "FRIDAY Shell Frost (cool slate, ice blue)" \
     "FRIDAY Shell Moss (dark olive, lichen green)" \
@@ -368,7 +370,8 @@ step_look() {
     echo
     friday_head "Style"
     friday_note "  Where the bar sits and its shape; windows' gaps and corners follow it."
-    v=$(gum choose --cursor="$FRIDAY_CURSOR" --height=5 --selected="$SHELL_STYLE" \
+    v=$(gum choose --cursor="$FRIDAY_CURSOR" --height=6 --selected="$SHELL_STYLE" \
+      "Lean (thin borders, small gaps, no blur; the FRIDAY OS look)" \
       "Ember (bar flush with the top edge)" \
       "Island (floating pills along the top)" \
       "Dock (floating bar along the bottom)") && SHELL_STYLE="$v"

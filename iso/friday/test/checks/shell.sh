@@ -74,11 +74,11 @@ if notify; then pass "notification accepted by FRIDAY Shell"; sleep 2
 else skip "notification popup (no D-Bus session; run under dbus-run-session)"; fi
 grim "$W/friday-bar.png" 2>/dev/null || true
 # Workspaces off Hyprland come from the ext-workspace protocol (as on niri):
-# sway has it, so its active workspace shows as an ember pill by the launcher.
+# sway has it, so its active workspace shows as a core-red pill (the default palette) by the launcher.
 if [[ -s "$W/friday-bar.png" ]] && need python3; then
-  n=$(python3 "$(dirname "$0")/png_colour.py" "$W/friday-bar.png" "#ff8f4c" "36,6,120,30" 2>/dev/null || echo 0)
+  n=$(python3 "$(dirname "$0")/png_colour.py" "$W/friday-bar.png" "#d42d51" "36,6,120,30" 2>/dev/null || echo 0)
   if (( n > 40 )); then pass "workspaces show off Hyprland (ext-workspace, as on niri)"
-  else fail "no workspace pill off Hyprland ($n ember px by the launcher)"; fi
+  else fail "no workspace pill off Hyprland ($n core-red px by the launcher)"; fi
 fi
 for d in friday control calendar launcher session; do
   if timeout 10 qs -p "$FS" ipc call shell open "$d" >/dev/null 2>&1; then
@@ -257,8 +257,8 @@ mkdir -p "$HOME/.config/friday"
 # the half of the screen the style puts the bar in (png_colour.py). The bar
 # is frosted glass (Theme.glass: the background at 72%, 80% for the light
 # dawn) over the headless output's black, with no blur here.
-declare -A look_bg=([ember]=090b0e [frost]=0a0e13 [moss]=0b0d0a [dawn]=c6c3be)
-for look in island:frost dock:moss ember:dawn island:dawn dock:ember; do
+declare -A look_bg=([core]=0c0e11 [ember]=090b0e [polar]=21252e [frost]=0a0e13 [moss]=0b0d0a [dawn]=c6c3be)
+for look in lean:core island:polar dock:frost lean:moss ember:dawn island:dawn dock:ember; do
   style=${look%%:*} palette=${look##*:}
   printf '{ "style": "%s", "palette": "%s" }\n' "$style" "$palette" >"$HOME/.config/friday/shell.json"
   sleep 3; grim "$W/look-${look/:/-}-bar.png" 2>/dev/null || true

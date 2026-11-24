@@ -10,9 +10,11 @@ import Quickshell.Io
 //
 //   {
 //     "style": "ember",         // "ember" (bar flush with the top edge),
-//                               // "island" (three floating pills) or "dock"
-//                               // (a floating bar at the bottom)
-//     "palette": "ember",       // FRIDAY's own: "ember", "frost", "moss",
+//                               // "lean" (the same bar; thin borders, small
+//                               // gaps, no blur), "island" (three floating
+//                               // pills) or "dock" (a floating bar at the bottom)
+//     "palette": "core",        // FRIDAY's own: "core" (the logo's obsidian
+//                               // and red), "ember", "polar", "frost", "moss",
 //                               // "dawn" (light); or "classic" (follow the
 //                               // desktop theme). "friday" = "ember"; the old
 //                               // name "omarchy" = "classic".
@@ -32,10 +34,10 @@ Singleton {
   property var featuresOff: []
   function featureOn(name) { return !root.featuresOff.includes(name); }
 
-  readonly property var styles: ["ember", "island", "dock"]
-  readonly property var palettes: ["ember", "frost", "moss", "dawn", "classic"]
+  readonly property var styles: ["ember", "lean", "island", "dock"]
+  readonly property var palettes: ["core", "ember", "polar", "frost", "moss", "dawn", "classic"]
   readonly property string style: styles.includes(pick("style", "ember")) ? pick("style", "ember") : "ember"
-  readonly property string palette: pick("palette", "ember") === "friday" ? "ember" : pick("palette", "ember") === "omarchy" ? "classic" : pick("palette", "ember")
+  readonly property string palette: pick("palette", "core") === "friday" ? "ember" : pick("palette", "core") === "omarchy" ? "classic" : pick("palette", "core")
   readonly property bool clock24h: pick("clock24h", true) === true
   readonly property int workspaces: Math.max(1, Math.min(10, Number(pick("workspaces", 5)) || 5))
   readonly property int notificationTimeout: Math.max(2, Number(pick("notificationTimeout", 6)) || 6)
