@@ -777,6 +777,21 @@ contains "headings stay too" "$(cat "$HOME/.config/friday/memory.md")" "# mine, 
 bash "$F" forget memory --yes >/dev/null
 [ ! -e "$HOME/.config/friday/memory.md" ] && pass "friday forget memory clears it" || fail "forget memory left the memory file"
 
+echo "memories used in the last answer"
+contains "none used at first" "$(bash "$F" memory used)" "No remembered facts were used in the last answer"
+mkdir -p "$HOME/.local/state/friday"
+printf 'I use fish\nmy editor is Helix\n' >"$HOME/.local/state/friday/last-memories"
+contains "lists the memories numbered" "$(bash "$F" memory used)" "1. I use fish"
+contains "lists all memories" "$(bash "$F" memory used)" "2. my editor is Helix"
+printf '# mine\n- I use fish\n- my editor is Helix\n' >"$HOME/.config/friday/memory.md"
+contains "forgets line 1 via memory used forget" "$(bash "$F" memory used forget 1)" "Forgot 1 line(s)"
+if grep -q "^- I use fish" "$HOME/.config/friday/memory.md"; then fail "I use fish still in memory.md"; else pass "I use fish forgotten from memory.md"; fi
+contains "last-memories now has line 2 as line 1" "$(bash "$F" memory used)" "1. my editor is Helix"
+if grep -q "I use fish" "$HOME/.local/state/friday/last-memories"; then fail "I use fish still in last-memories"; else pass "I use fish removed from last-memories"; fi
+bash "$F" memory used forget 1 >/dev/null
+contains "empty again" "$(bash "$F" memory used)" "No remembered facts were used in the last answer"
+rm -f "$HOME/.local/state/friday/last-memories" "$HOME/.config/friday/memory.md"
+
 echo "friday ask --json"
 : >"$LOG"; bash "$F" ask --json --web --new "jsonq words" >/dev/null 2>&1
 contains "goes straight to friday-ctl goal --json" "$(cat "$LOG")" "friday-ctl-web goal --json --web --new-conversation jsonq words"

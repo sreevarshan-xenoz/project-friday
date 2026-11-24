@@ -56,4 +56,7 @@ Singleton {
   readonly property string terminal: "\u{f018d}"
   readonly property string app: "\u{f08c6}"
   readonly property string file: "\u{f0214}"
+  readonly property string memory: "\u{f035b}"
+  readonly property string brain: "\u{f09ec}"
+  readonly property string info: "\u{f02fd}"
 }

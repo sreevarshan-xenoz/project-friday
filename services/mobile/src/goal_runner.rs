@@ -1641,6 +1641,17 @@ fn used_labels(
     used
 }
 
+/// The remembered facts this answer was given: recalled lines starting with
+/// "about you: ", prefix removed, at most 5, each at most 200 chars.
+fn used_memories(recalled: &[String]) -> Vec<String> {
+    recalled
+        .iter()
+        .filter_map(|l| l.strip_prefix("about you: "))
+        .take(5)
+        .map(|fact| fact.chars().take(200).collect())
+        .collect()
+}
+
 /// Format one recalled episode as a `[memory]` block line: the episode's goal
 /// and its result, both size-capped.
 fn format_recalled_memory(ep: &CognitiveEpisode) -> String {
@@ -3229,6 +3240,10 @@ impl GoalRunner {
             if answered_by_model && !used.is_empty() {
                 payload["used"] = json!(used);
             }
+            let memories = used_memories(&recalled);
+            if answered_by_model && !memories.is_empty() {
+                payload["memories"] = json!(memories);
+            }
             let _ = self
                 .bus
                 .publish(Event::new("goal.completed", "planner", payload))
@@ -4782,6 +4797,21 @@ mod tests {
         });
         let payload = run_with_answerer("what is rust", answerer).await;
         assert_eq!(payload["used"], json!([USED_NOTHING]), "{payload}");
+    }
+
+    /// A recall with two "about you:" lines and a "goal:" line gives exactly
+    /// the two facts.
+    #[test]
+    fn memories_used_carries_only_about_you_facts() {
+        let recalled = vec![
+            "about you: I use fish shell".to_string(),
+            "goal: how do I write a loop\nresult: for i in 1 2 3".to_string(),
+            "about you: prefer concise answers".to_string(),
+        ];
+        assert_eq!(
+            used_memories(&recalled),
+            vec!["I use fish shell", "prefer concise answers"]
+        );
     }
 
     /// The prompt carries the request, what the tool produced, and evidence.

@@ -33,6 +33,46 @@ Singleton {
   // ("firefox · the window's text, 2.1k chars"); "" when nothing did.
   property string receipt: ""
 
+  // Memory facts that shaped the last answer.
+  property var memories: []
+
+  readonly property string memoriesFile: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state")
+    + "/friday/last-memories"
+
+  FileView {
+    id: memoriesView
+    path: root.memoriesFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: {
+      const raw = text().trim();
+      if (!raw) {
+        root.memories = [];
+        return;
+      }
+      const lines = raw.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+      root.memories = lines;
+    }
+    onLoadFailed: root.memories = []
+  }
+
+  Connections {
+    target: root
+    function onSerialChanged() {
+      memoriesView.reload();
+    }
+  }
+
+  function forgetMemory(index) {
+    if (index >= 0 && index < root.memories.length) {
+      Quickshell.execDetached(["friday", "memory", "used", "forget", String(index + 1)]);
+      const copy = root.memories.slice();
+      copy.splice(index, 1);
+      root.memories = copy;
+    }
+  }
+
   readonly property bool visible: state !== "idle"
 
   // A goal FRIDAY starts from anywhere (Super+Y, the drawer, the CLI) opens the
