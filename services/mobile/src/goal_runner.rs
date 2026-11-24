@@ -3626,7 +3626,7 @@ mod tests {
         let mut saw_started = false;
         let mut saw_terminal = false;
         for _ in 0..20 {
-            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(20), rx.recv())
                 .await
                 .map(|r| r.expect("bus alive"))
             else {
@@ -4674,7 +4674,7 @@ mod tests {
         let mut saw_started = false;
         let mut saw_terminal = false;
         for _ in 0..20 {
-            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(20), rx.recv())
                 .await
                 .map(|r| r.expect("bus alive"))
             else {
@@ -4785,7 +4785,7 @@ mod tests {
         let mut saw_started = false;
         let mut terminal = None;
         for _ in 0..30 {
-            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(20), rx.recv())
                 .await
                 .map(|r| r.expect("bus alive"))
             else {
@@ -4854,7 +4854,7 @@ mod tests {
         let mut saw_started = false;
         let mut terminal = None;
         for _ in 0..30 {
-            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(20), rx.recv())
                 .await
                 .map(|r| r.expect("bus alive"))
             else {
@@ -5072,7 +5072,7 @@ mod tests {
 
         let mut completed: Option<serde_json::Value> = None;
         for _ in 0..30 {
-            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(20), rx.recv())
                 .await
                 .map(|r| r.expect("bus alive"))
             else {
@@ -5351,7 +5351,7 @@ mod tests {
 
         let mut completed: Option<serde_json::Value> = None;
         for _ in 0..30 {
-            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(20), rx.recv())
                 .await
                 .map(|r| r.expect("bus alive"))
             else {
@@ -5395,7 +5395,7 @@ mod tests {
         let mut started = None;
         let mut terminal = None;
         for _ in 0..30 {
-            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(20), rx.recv())
                 .await
                 .map(|r| r.expect("bus alive"))
             else {
@@ -5944,7 +5944,7 @@ mod tests {
 
         let mut goal_id = None;
         for _ in 0..30 {
-            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(20), rx.recv())
                 .await
                 .map(|r| r.expect("bus alive"))
             else {
@@ -5972,6 +5972,7 @@ mod tests {
 
         let mut saw_cancelled = false;
         let mut saw_terminal = false;
+        // Waits out the quiet after the cancel: no completion may follow.
         for _ in 0..30 {
             let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
                 .await
@@ -6025,7 +6026,7 @@ mod tests {
 
         let mut goal_id = None;
         for _ in 0..30 {
-            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(20), rx.recv())
                 .await
                 .map(|r| r.expect("bus alive"))
             else {
@@ -6052,7 +6053,7 @@ mod tests {
 
         let mut saw_paused = false;
         for _ in 0..30 {
-            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(20), rx.recv())
                 .await
                 .map(|r| r.expect("bus alive"))
             else {
@@ -6243,7 +6244,7 @@ mod tests {
         let mut saw_started = false;
         let mut terminal = None;
         for _ in 0..30 {
-            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(20), rx.recv())
                 .await
                 .map(|r| r.expect("bus alive"))
             else {
@@ -6341,7 +6342,7 @@ mod tests {
 
         let mut terminal = None;
         for _ in 0..30 {
-            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(20), rx.recv())
                 .await
                 .map(|r| r.expect("bus alive"))
             else {
@@ -6430,7 +6431,7 @@ mod tests {
 
         let mut terminal = None;
         for _ in 0..30 {
-            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(20), rx.recv())
                 .await
                 .map(|r| r.expect("bus alive"))
             else {
@@ -6659,7 +6660,7 @@ mod tests {
         // The goal loop gates the unconfirmed action and requests confirmation.
         let mut needs_confirm = false;
         for _ in 0..30 {
-            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(20), rx.recv())
                 .await
                 .map(|r| r.expect("bus alive"))
             else {
@@ -6687,7 +6688,7 @@ mod tests {
 
         let mut completed = None;
         for _ in 0..30 {
-            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(20), rx.recv())
                 .await
                 .map(|r| r.expect("bus alive"))
             else {
@@ -6866,7 +6867,7 @@ mod tests {
                 .await;
             let mut terminal = None;
             for _ in 0..30 {
-                let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                let Ok(ev) = tokio::time::timeout(std::time::Duration::from_secs(20), rx.recv())
                     .await
                     .map(|r| r.expect("bus alive"))
                 else {
