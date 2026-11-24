@@ -132,6 +132,7 @@ public static class AppSettings
         ("dictation-latch", "Tap the voice typing key twice to keep recording without holding it (Linux)"),
         ("past-answers", "\"What did you tell me about X last week\": past answers with their dates"),
         ("answer-cards", "Answers show tables and steps, and each code block gets its own Copy"),
+        ("blank-secret-fields", "Password and card fields are painted over before a screenshot leaves"),
         ("log-chain", "Each action in the action log is chained to the one before, so a changed line shows"),
         ("standing-reversible", "A standing task runs only what can be undone; anything that would ask first is refused and logged"),
         ("memory-tidy", "When memory is fuller than an ask carries, offer a shorter list to approve"),
