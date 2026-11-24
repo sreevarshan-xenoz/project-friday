@@ -1537,8 +1537,123 @@ fn front_window(windows: &[Value], app: &str, title: &str) -> Option<String> {
 /// The most text of one window sent to a model.
 const MAX_SCREEN_TEXT: usize = 12_000;
 
+/// Words in a field's name that make it a card field.
+const CARD_WORDS: [&str; 7] = [
+    "card number",
+    "credit card",
+    "debit card",
+    "cvv",
+    "cvc",
+    "security code",
+    "expiry",
+];
+
+/// Where `tree`'s password and card fields are (`bounds` the snapshot took
+/// with `--include-bounds`): `[x, y, width, height]` each, or
+/// [`crate::context_read::UNPLACED`] for one without bounds.
+pub fn secret_field_bounds(tree: &Value) -> Vec<[i64; 4]> {
+    fn walk(node: &Value, out: &mut Vec<[i64; 4]>) {
+        let s = |k: &str| {
+            node.get(k)
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_lowercase()
+        };
+        let states: Vec<String> = node
+            .get("states")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_lowercase)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let role = s("role");
+        let field = role.contains("text")
+            || role.contains("entry")
+            || role.contains("field")
+            || role.contains("password");
+        let secret = role.contains("password")
+            || role.contains("secret")
+            || states
+                .iter()
+                .any(|x| x == "protected" || x == "password" || x.contains("secure"))
+            || (field && CARD_WORDS.iter().any(|w| s("name").contains(w)));
+        if secret {
+            if let Some(b) = node.get("bounds") {
+                let n = |k: &str, alt: &str| {
+                    b.get(k)
+                        .or_else(|| b.get(alt))
+                        .and_then(Value::as_f64)
+                        .map(|v| v.round() as i64)
+                };
+                if let (Some(x), Some(y), Some(w), Some(h)) = (
+                    n("x", "left"),
+                    n("y", "top"),
+                    n("width", "w"),
+                    n("height", "h"),
+                ) {
+                    out.push([x, y, w, h]);
+                } else {
+                    out.push(crate::context_read::UNPLACED);
+                }
+            } else {
+                out.push(crate::context_read::UNPLACED);
+            }
+        }
+        if let Some(children) = node.get("children").and_then(Value::as_array) {
+            for c in children {
+                walk(c, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(tree, &mut out);
+    out
+}
+
+impl AgentDesktopUi {
+    /// The accessibility tree of `class`'s window titled `title` (the one in
+    /// front), never another window's, with `extra` snapshot flags.
+    async fn front_tree(&self, class: &str, title: &str, extra: &[&str]) -> Option<Value> {
+        let listed = self
+            .run_cli_envelope(&["list-apps".to_string()], None)
+            .await
+            .ok()?;
+        let names: Vec<String> = listed
+            .get("data")
+            .and_then(|d| d.get("apps"))
+            .and_then(Value::as_array)?
+            .iter()
+            .filter_map(|a| a.get("name").and_then(Value::as_str).map(str::to_string))
+            .collect();
+        let app = pick_app(&names, class)?;
+        validate_app(&app).ok()?;
+        let listed = self
+            .run_cli_envelope(&["list-windows".to_string()], None)
+            .await
+            .ok()?;
+        let id = front_window(listed.get("data")?.as_array()?, &app, title)?;
+        let mut args = vec![
+            "snapshot".to_string(),
+            "--app".to_string(),
+            app,
+            format!("--window-id={id}"),
+        ];
+        args.extend(extra.iter().map(|s| s.to_string()));
+        let snap = self.run_cli_envelope(&args, None).await.ok()?;
+        snap.get("data")?.get("tree").cloned()
+    }
+}
+
 #[async_trait]
 impl crate::context_read::ScreenText for AgentDesktopUi {
+    async fn secret_fields(&self, class: &str, title: &str) -> Option<Vec<[i64; 4]>> {
+        let tree = self.front_tree(class, title, &["--include-bounds"]).await?;
+        Some(secret_field_bounds(&tree))
+    }
+
     async fn window_text(&self, class: &str, title: &str) -> Option<String> {
         let listed = self
             .run_cli_envelope(&["list-apps".to_string()], None)
@@ -1591,6 +1706,32 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::sync::Mutex;
+
+    #[test]
+    fn password_and_card_fields_are_found_with_their_bounds() {
+        let tree = serde_json::json!({
+            "role": "window", "name": "Checkout",
+            "children": [
+                {"role": "textfield", "name": "Email", "bounds": {"x": 10, "y": 10, "width": 200, "height": 24}},
+                {"role": "password_text", "name": "Password", "bounds": {"x": 10, "y": 40, "width": 200, "height": 24}},
+                {"role": "textfield", "name": "Card number", "bounds": {"x": 10, "y": 70.4, "width": 200, "height": 24}},
+                {"role": "label", "name": "Card number"},
+                {"role": "password_text", "name": "PIN"},
+                {"role": "group", "children": [
+                    {"role": "textfield", "name": "CVV", "states": ["focused"], "bounds": {"x": 220, "y": 70, "width": 60, "height": 24}}
+                ]}
+            ]
+        });
+        assert_eq!(
+            secret_field_bounds(&tree),
+            [
+                [10, 40, 200, 24],
+                [10, 70, 200, 24],
+                crate::context_read::UNPLACED,
+                [220, 70, 60, 24]
+            ]
+        );
+    }
 
     /// Stub spawn that records all calls and returns canned envelopes keyed by subcommand.
     #[derive(Default)]

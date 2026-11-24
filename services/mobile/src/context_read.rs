@@ -88,6 +88,93 @@ pub trait ScreenText: Send + Sync {
     /// The words of `class`'s window titled `title` (the one in front), never
     /// of its other windows.
     async fn window_text(&self, class: &str, title: &str) -> Option<String>;
+
+    /// Where the window's password and card fields are, as `[x, y, width,
+    /// height]` from its accessibility tree, to paint over before a picture
+    /// of it leaves. `None` when the tree couldn't be read.
+    async fn secret_fields(&self, _class: &str, _title: &str) -> Option<Vec<[i64; 4]>> {
+        Some(Vec::new())
+    }
+}
+
+/// A secret field whose place the tree didn't give: the picture isn't sent.
+pub const UNPLACED: [i64; 4] = [-1, -1, -1, -1];
+
+/// Paints `fields` over in the PNG `png_bytes` of the screen area `area`
+/// (`None`: the whole screen), inside the window at `window`. A field's place
+/// is read both as on the screen and as inside the window (toolkits differ),
+/// and every reading that lands in the picture is painted. `None` when the
+/// picture can't be edited, a field has no place, or (`whole_window`: the
+/// picture is that window) a field lands nowhere in it: then it isn't sent.
+/// A picked area may leave a field out; it is painted only where it is.
+pub fn blank_fields(
+    png_bytes: &[u8],
+    area: Option<ScreenRegion>,
+    window: Option<ScreenRegion>,
+    fields: &[[i64; 4]],
+    whole_window: bool,
+) -> Option<Vec<u8>> {
+    if fields.contains(&UNPLACED) {
+        return None;
+    }
+    let decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).ok()?;
+    let channels = match (info.color_type, info.bit_depth) {
+        (png::ColorType::Rgb, png::BitDepth::Eight) => 3,
+        (png::ColorType::Rgba, png::BitDepth::Eight) => 4,
+        _ => return None,
+    };
+    let (iw, ih) = (info.width as i64, info.height as i64);
+    let (ax, ay, aw, ah) = match area {
+        Some(a) => (a.x as i64, a.y as i64, a.width as i64, a.height as i64),
+        None => (0, 0, iw, ih),
+    };
+    if aw <= 0 || ah <= 0 {
+        return None;
+    }
+    let (sx, sy) = (iw as f64 / aw as f64, ih as f64 / ah as f64);
+    let (wx, wy) = window.map_or((ax, ay), |w| (w.x as i64, w.y as i64));
+    let stride = info.line_size;
+    for &[fx, fy, fw, fh] in fields {
+        if fw <= 0 || fh <= 0 {
+            continue;
+        }
+        let mut landed = false;
+        for (ox, oy) in [(0, 0), (wx, wy)] {
+            // Two pixels more on each side.
+            let x0 = (fx + ox - ax - 2).max(0);
+            let y0 = (fy + oy - ay - 2).max(0);
+            let x1 = (fx + ox - ax + fw + 2).min(aw);
+            let y1 = (fy + oy - ay + fh + 2).min(ah);
+            if x1 <= x0 || y1 <= y0 {
+                continue;
+            }
+            landed = true;
+            let (px0, py0) = ((x0 as f64 * sx) as usize, (y0 as f64 * sy) as usize);
+            let px1 = ((x1 as f64 * sx).ceil() as usize).min(iw as usize);
+            let py1 = ((y1 as f64 * sy).ceil() as usize).min(ih as usize);
+            for y in py0..py1 {
+                for x in px0..px1 {
+                    let i = y * stride + x * channels;
+                    buf[i..i + 3].copy_from_slice(&[0, 0, 0]);
+                }
+            }
+        }
+        if !landed && whole_window {
+            return None;
+        }
+    }
+    let mut out = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut out, info.width, info.height);
+        enc.set_color(info.color_type);
+        enc.set_depth(info.bit_depth);
+        let mut w = enc.write_header().ok()?;
+        w.write_image_data(&buf[..info.buffer_size()]).ok()?;
+    }
+    Some(out)
 }
 
 /// The words in a picture of the screen (an area the person picked), read on
@@ -541,6 +628,42 @@ where
                 return Err(ContextReadError::Capture(e.to_string()));
             }
         };
+
+        // Password and card fields the window's tree shows are painted over
+        // before any of the picture is read or sent.
+        let mut captured = captured;
+        if crate::features::on("blank-secret-fields") {
+            if let (Some(source), Some((class, title))) =
+                (self.text.as_ref(), self.window_in_front())
+            {
+                if let Some(fields) = source
+                    .secret_fields(&class, &title)
+                    .await
+                    .filter(|f| !f.is_empty())
+                {
+                    let window = match self
+                        .collector
+                        .capture(ContextChannel::App, &CaptureOptions::default())
+                    {
+                        Ok(CapturedContext::AppInfo { geometry, .. }) => geometry,
+                        _ => None,
+                    };
+                    let painted = match &captured {
+                        CapturedContext::Image {
+                            bytes, geometry, ..
+                        } => blank_fields(bytes, *geometry, window, &fields, region.is_none()),
+                        _ => None,
+                    };
+                    match (painted, &mut captured) {
+                        (Some(p), CapturedContext::Image { bytes, .. }) => *bytes = p,
+                        _ => {
+                            self.revoke();
+                            return Err(secret_on_screen());
+                        }
+                    }
+                }
+            }
+        }
 
         // A picked area, or a window whose app gave no text (Electron, a
         // canvas, a remote desktop): its words first, read here; the picture
@@ -2109,6 +2232,101 @@ mod tests {
             err,
             "Private mode is on and no local model is running (start it: friday private on)"
         );
+    }
+
+    fn white_png(w: u32, h: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        {
+            let mut enc = png::Encoder::new(&mut out, w, h);
+            enc.set_color(png::ColorType::Rgb);
+            enc.set_depth(png::BitDepth::Eight);
+            let mut wr = enc.write_header().unwrap();
+            wr.write_image_data(&vec![255u8; (w * h * 3) as usize])
+                .unwrap();
+        }
+        out
+    }
+
+    fn pixel(png_bytes: &[u8], x: usize, y: usize) -> [u8; 3] {
+        let mut r = png::Decoder::new(std::io::Cursor::new(png_bytes))
+            .read_info()
+            .unwrap();
+        let mut buf = vec![0; r.output_buffer_size()];
+        let info = r.next_frame(&mut buf).unwrap();
+        let i = y * info.line_size + x * 3;
+        [buf[i], buf[i + 1], buf[i + 2]]
+    }
+
+    #[test]
+    fn password_fields_are_painted_over_where_either_reading_puts_them() {
+        // A 200x100 window at (1000, 500), captured at twice the size (HiDPI).
+        let win = ScreenRegion::new(1000, 500, 200, 100);
+        let shot = white_png(400, 200);
+        // On the screen: (1050, 520). Inside the window: the same field at (50, 20).
+        let painted =
+            blank_fields(&shot, Some(win), Some(win), &[[1050, 520, 40, 10]], true).unwrap();
+        assert_eq!(
+            pixel(&painted, 2 * 60, 2 * 25),
+            [0, 0, 0],
+            "painted where the screen says"
+        );
+        assert_eq!(
+            pixel(&painted, 2 * 150, 2 * 80),
+            [255, 255, 255],
+            "the rest is left"
+        );
+        let painted = blank_fields(&shot, Some(win), Some(win), &[[50, 20, 40, 10]], true).unwrap();
+        assert_eq!(
+            pixel(&painted, 2 * 60, 2 * 25),
+            [0, 0, 0],
+            "painted where the window says"
+        );
+        // A field that lands nowhere in the picture: it isn't sent.
+        assert!(blank_fields(&shot, Some(win), Some(win), &[[5000, 5000, 40, 10]], true).is_none());
+        // A picked area that leaves the field out: sent, nothing painted.
+        assert!(
+            blank_fields(&shot, Some(win), Some(win), &[[5000, 5000, 40, 10]], false).is_some()
+        );
+        // A field with no place: never sent.
+        assert!(blank_fields(&shot, Some(win), Some(win), &[UNPLACED], false).is_none());
+        // Not a PNG: not sent either.
+        assert!(blank_fields(
+            b"not a png",
+            Some(win),
+            Some(win),
+            &[[50, 20, 40, 10]],
+            false
+        )
+        .is_none());
+    }
+
+    struct SecretFields;
+
+    #[async_trait]
+    impl ScreenText for SecretFields {
+        async fn window_text(&self, _: &str, _: &str) -> Option<String> {
+            None
+        }
+        async fn secret_fields(&self, _: &str, _: &str) -> Option<Vec<[i64; 4]>> {
+            Some(vec![[10, 10, 100, 20]])
+        }
+    }
+
+    #[tokio::test]
+    async fn a_picture_with_a_password_field_it_cant_paint_over_never_leaves() {
+        let seam = RecordingSeam::default();
+        let reader = ScreenReader::new(collector_with_window(), seam.clone(), "fabric")
+            .with_text(Arc::new(SecretFields));
+        reader.consent();
+        // The fake capture isn't a real PNG, so it can't be painted over.
+        let got = reader
+            .ask_routed(Some("what is this?"), None, &|_| {}, &|_| {})
+            .await;
+        assert!(
+            matches!(got, Err(ContextReadError::EgressBlocked { .. })),
+            "{got:?}"
+        );
+        assert_eq!(seam.sent(), 0, "nothing was sent");
     }
 
     struct FakeText(Option<String>);
