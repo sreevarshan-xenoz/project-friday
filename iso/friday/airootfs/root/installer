@@ -484,7 +484,8 @@ friday_aur_install() {
       echo "Installed $pkg from the AUR."
     else
       echo "Couldn't build $pkg from the AUR; install it later with: yay -S $pkg" >&2
-      friday_note "  Couldn't install $pkg; after the restart: yay -S $pkg (details in /var/log/friday-install.log)"
+      echo "AUR build of $pkg failed"
+      friday_note "  Couldn't install $pkg; after the restart: yay -S $pkg (details in /var/log/friday-install.log)" >&3
     fi
     rm -rf "/mnt$dir"
   done

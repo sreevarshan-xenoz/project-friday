@@ -310,16 +310,14 @@ USER_HOME=/home/alice
 USERNAME=alice
 LOG="$WORK/browser-section/pacstrap.log"
 pacstrap_with_retry() { shift; echo "pacstrap: $*" >> "$LOG"; }
-# arch-chroot: log what runs as whom; "mktemp" gives a folder; a build of
-# a package named in FAIL_AUR fails.
+# arch-chroot: log what runs as whom; a build of a package named in
+# FAIL_AUR fails.
 # Like the real one, each call gets a fresh, empty /tmp: a build folder
 # there would be gone by the next call.
-friday_section_mktemp_used=0
 arch-chroot() {
   shift
   rm -rf "$WORK/browser-section/mnt/tmp"; mkdir -p "$WORK/browser-section/mnt/tmp"
   case "$*" in
-    *mktemp*) echo "mktemp: $*" >> "$LOG"; echo /tmp/b ;;
     *makepkg*) echo "build: $*" >> "$LOG"; [[ "$*" != *" /tmp/"* ]] && [[ -z "${FAIL_AUR:-}" || "$*" != *"$FAIL_AUR"* ]] ;;
     *) echo "chroot: $*" >> "$LOG" ;;
   esac
@@ -357,8 +355,8 @@ contains "default browser is chromium when none chosen" "$(cat "$W/mnt/home/alic
 # A failed AUR build is skipped with a way out, and the install goes on
 rm -f "$W/pacstrap.log"
 printf 'x=1' >"$W/mnt/home/alice/.config/mimeapps.list"
-out=$(FAIL_AUR=zen-browser-bin browsers "brave zen" brave 2>&1) && pass "a failed AUR build doesn't stop the install" || fail "a failed AUR build stopped the install"
-contains "it says how to get it later" "$out" "yay -S zen-browser-bin"
+out=$(FAIL_AUR=zen-browser-bin browsers "brave zen" brave 3>&1 2>&1) && pass "a failed AUR build doesn't stop the install" || fail "a failed AUR build stopped the install"
+contains "it says on screen (fd 3) how to get it later" "$out" "yay -S zen-browser-bin"
 contains "the other one is still installed" "$out" "Installed brave-bin from the AUR."
 contains "mimeapps.list without a final newline still gets the header" "$(cat "$W/mnt/home/alice/.config/mimeapps.list")" $'x=1\n[Default Applications]'
 
