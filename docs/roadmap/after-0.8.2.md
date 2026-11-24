@@ -127,6 +127,7 @@ Owner-approved on 2026-11-23: every idea from the 12-repo brainstorm except the 
 | 116 | UI-8 | FRIDAY's own accessibility | new | M | 1 | Screen-reader labels, keyboard use and high contrast for the pill and Settings. |
 | 117 | ACT-7 | Safe recovery when a UI step fails | new | L | 1 | A failed click proposes one safe alternative instead of retrying blindly. |
 | 118 | CTX-2 | GNOME and KDE support | new | L | 15 | The keys, the ask box and screen asks work on GNOME and KDE (their own shortcuts or the GlobalShortcuts portal, an ask box and screenshots that work there; grim and fuzzel don't). Needs a GNOME/KDE test VM. |
+| 119 | MEM-13 | Meeting notes from what the computer plays | owner-approved (from Cicada, Apache-2.0) | M | owner | Opt-in, off by default: `friday meeting start` listens to system audio (the PipeWire monitor on Linux, WASAPI loopback on Windows), transcribes it with the local whisper, and keeps the transcript and short notes (decisions, to-dos) on this computer. "What did we decide in the 3pm call?" and `friday answers search` find them. Audio never leaves; text goes to a model only for the notes. Exit test: a recorded clip played through the speakers becomes a transcript and notes with nothing sent but text, and stops when told. Later and separate: live subtitles, voice interpreting. |
 
 ## Left out on purpose
 
