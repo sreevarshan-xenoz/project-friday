@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FRIDAY",
-  "version": "1.0",
+  "version": "1.1",
   "description": "Lets FRIDAY on this computer read the tab you're on when you ask about it. Nothing is read until you ask; never private windows.",
   "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" },
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvtghy/ynwu7HcPsfgByVPZgIKGAW5vWxXmVMl3jHOTXSKo2OZe8TdmIrrvdheVgX8RMkHGcSf7vS4yWDGoV2S/VCWCfca3VWmZouGnGYWfuK/jYjnPPAdbU5p64TKsucA285ZkLZ6+Tgynm7jkFwADvRkoEnt1QMdghh3PbOKh/Dq0drxP+LfFGUITXu16YHw1+xVi8xTR/TA7BFKw/LnLzqqEhBKEHnsO8ndSTLfw08BQKsZT20KXaL0HNacsExmSGJujhvPbn1e8e5YbT8tJTPHDigWEliICSpE4x9fiHBS+OHRR4OtD5JLQXpQ8cAWG/MjsXKkgWoKcmu32JuDwIDAQAB",

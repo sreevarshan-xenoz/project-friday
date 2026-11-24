@@ -1606,6 +1606,25 @@ async fn main() -> std::process::ExitCode {
             .unwrap_or(1);
         return std::process::ExitCode::from(code);
     }
+    // `friday-ctl browser find <question>`: ring what it names on the page in front.
+    if raw.first().map(String::as_str) == Some("browser")
+        && raw.get(1).map(String::as_str) == Some("find")
+    {
+        return match friday_mobile::browser_host::find(&raw[2..].join(" ")) {
+            Ok(v) if v.get("found").and_then(serde_json::Value::as_bool) == Some(true) => {
+                println!("{v}");
+                std::process::ExitCode::SUCCESS
+            }
+            Ok(v) => {
+                println!("{v}");
+                std::process::ExitCode::FAILURE
+            }
+            Err(e) => {
+                eprintln!("friday-ctl: {e}");
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
     if raw.first().map(String::as_str) == Some("browser")
         && raw.get(1).map(String::as_str) == Some("tab")
     {

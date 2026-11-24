@@ -116,6 +116,11 @@ if [[ "\$1" == docs ]]; then
   exit 0
   exit 0
 fi
+if [[ "\$1" == browser && "\$2" == find ]]; then
+  printf 'friday-ctl-browser-find %s\n' "\$*" >> "$LOG"
+  [ -n "\${PAGE_FIND:-}" ] && { echo '{"found":true,"name":"Sign in"}'; exit 0; }
+  echo '{"found":false}'; exit 1
+fi
 if [[ "\$1" == show ]]; then
   printf 'friday-ctl-show %s\n' "\$*" >> "$LOG"
   if [[ "\$2" == --exact ]]; then
@@ -1487,6 +1492,13 @@ printf '#!/bin/bash\n[[ "$*" == *"call answer"* ]] && sleep 4\necho "quickshell 
 : >"$LOG"; bash "$F" ask "what is my uptime"; sleep 0.3
 contains "a slow FRIDAY Shell still shows the answer in its pill" "$(cat "$LOG")" "call answer present true"
 if grep -q "^notify .*uptime" "$LOG"; then fail "a slow FRIDAY Shell's answer went to a notification"; else pass "and not in a notification on the right"; fi
+# A web page in front: the browser extension outlines it on the page.
+printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s %q\nexit 0\n' '{"class":"chromium","pid":79,"title":"Example - Chromium","at":[0,0]}' >"$S/hyprctl"
+: >"$LOG"; PAGE_FIND=1 bash "$F" ask "where is sign in"; sleep 0.3
+contains "a page in front: the extension looks on the page" "$(cat "$LOG")" "friday-ctl-browser-find browser find where is sign in"
+if grep -q "friday-ctl-show" "$LOG"; then fail "looked in the app after the page found it"; else pass "and found there, nothing else is asked"; fi
+: >"$LOG"; bash "$F" ask "where is the bookmarks bar"; sleep 0.3
+contains "not on the page: the browser's own controls are looked at" "$(cat "$LOG")" "friday-ctl-show show where is the bookmarks bar"
 unset FRIDAY_SHELL_DIR; rm -f "$S/hyprctl" "$S/quickshell"
 
 echo "routines"
