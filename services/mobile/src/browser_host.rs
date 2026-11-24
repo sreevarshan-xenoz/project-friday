@@ -43,6 +43,19 @@ pub fn write_message(w: &mut impl Write, msg: &Value) -> std::io::Result<()> {
     w.flush()
 }
 
+/// A line asked on the host's socket as the message for the extension:
+/// `tab` (the tab in front) or `find <question>` (ring the thing on the page
+/// the question names). Anything else is no question.
+pub fn request(line: &str) -> Option<Value> {
+    let line = line.trim();
+    if line == "tab" {
+        return Some(serde_json::json!({"type": "tab"}));
+    }
+    let q = line.strip_prefix("find ")?.trim();
+    (!q.is_empty() && q.chars().count() <= 500)
+        .then(|| serde_json::json!({"type": "find", "question": q}))
+}
+
 /// The browser's half of the host: questions go out on stdout, the
 /// extension's answers come in on stdin and go back to whoever asked.
 struct Relay {
@@ -75,15 +88,13 @@ impl Relay {
         relay
     }
 
-    /// Asks the extension for the tab in front and waits up to 5 s.
-    fn ask(&self) -> Value {
+    /// Asks the extension (a [`request`]) and waits up to 5 s.
+    fn ask(&self, mut req: Value) -> Value {
         let id = self.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let (tx, rx) = std::sync::mpsc::channel();
         self.waiting.lock().unwrap().insert(id, tx);
-        let asked = write_message(
-            &mut *self.out.lock().unwrap(),
-            &serde_json::json!({"type": "tab", "id": id}),
-        );
+        req["id"] = serde_json::json!(id);
+        let asked = write_message(&mut *self.out.lock().unwrap(), &req);
         let reply = asked
             .ok()
             .and_then(|_| rx.recv_timeout(std::time::Duration::from_secs(5)).ok())
@@ -128,10 +139,11 @@ pub fn run_host() -> u8 {
         // A client that never says anything can't hold the host up.
         let _ = conn.set_read_timeout(Some(std::time::Duration::from_secs(2)));
         let mut line = String::new();
-        if BufReader::new(&conn).read_line(&mut line).is_err() || line.trim() != "tab" {
+        if BufReader::new(&conn).read_line(&mut line).is_err() {
             continue;
         }
-        let _ = writeln!(conn, "{}", relay.ask());
+        let Some(req) = request(&line) else { continue };
+        let _ = writeln!(conn, "{}", relay.ask(req));
     }
     0
 }
@@ -176,10 +188,11 @@ pub fn run_host() -> u8 {
         let read =
             tokio::time::timeout(std::time::Duration::from_secs(2), conn.read_line(&mut line))
                 .await;
-        if !matches!(read, Ok(Ok(_))) || line.trim() != "tab" {
+        if !matches!(read, Ok(Ok(_))) {
             return;
         }
-        let reply = tokio::task::spawn_blocking(move || relay.ask())
+        let Some(req) = request(&line) else { return };
+        let reply = tokio::task::spawn_blocking(move || relay.ask(req))
             .await
             .unwrap_or_default();
         let _ = conn
@@ -220,8 +233,26 @@ pub fn run_host() -> u8 {
 }
 
 /// Asks the host for the tab in front: its answer, or why there is none.
-#[cfg(windows)]
 pub fn tab() -> Result<Value, String> {
+    ask_host("tab")
+}
+
+/// Asks the extension to ring what `question` names on the page in front
+/// ({"found": true, "name": …} or {"found": false}).
+pub fn find(question: &str) -> Result<Value, String> {
+    let q: String = question
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(500)
+        .collect();
+    if q.trim().is_empty() {
+        return Err("no question to find".into());
+    }
+    ask_host(&format!("find {}", q.trim()))
+}
+
+#[cfg(windows)]
+fn ask_host(line: &str) -> Result<Value, String> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::windows::named_pipe::ClientOptions;
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -249,7 +280,7 @@ pub fn tab() -> Result<Value, String> {
         };
         let mut conn = BufReader::new(client);
         conn.get_mut()
-            .write_all(b"tab\n")
+            .write_all(format!("{line}\n").as_bytes())
             .await
             .map_err(|e| e.to_string())?;
         let mut line = String::new();
@@ -266,20 +297,22 @@ pub fn tab() -> Result<Value, String> {
     })
 }
 
-/// Asks the host for the tab in front: its answer, or why there is none.
 #[cfg(unix)]
-pub fn tab() -> Result<Value, String> {
-    tab_at(&socket().ok_or("no runtime folder (XDG_RUNTIME_DIR)")?)
+fn ask_host(line: &str) -> Result<Value, String> {
+    ask_at(
+        &socket().ok_or("no runtime folder (XDG_RUNTIME_DIR)")?,
+        line,
+    )
 }
 
 #[cfg(unix)]
-fn tab_at(path: &std::path::Path) -> Result<Value, String> {
+fn ask_at(path: &std::path::Path, ask: &str) -> Result<Value, String> {
     use std::io::{BufRead, BufReader};
     let mut conn = std::os::unix::net::UnixStream::connect(path).map_err(|_| {
         "FRIDAY's browser extension isn't connected (friday browser setup)".to_string()
     })?;
     let _ = conn.set_read_timeout(Some(std::time::Duration::from_secs(8)));
-    writeln!(conn, "tab").map_err(|e| e.to_string())?;
+    writeln!(conn, "{ask}").map_err(|e| e.to_string())?;
     let mut line = String::new();
     BufReader::new(conn)
         .read_line(&mut line)
@@ -296,6 +329,29 @@ fn tab_at(path: &std::path::Path) -> Result<Value, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn only_tab_and_find_are_asked() {
+        assert_eq!(request("tab\n"), Some(json!({"type": "tab"})));
+        assert_eq!(
+            request("find where is sign in\n"),
+            Some(json!({"type": "find", "question": "where is sign in"}))
+        );
+        assert_eq!(request("find   "), None);
+        assert_eq!(request("eval alert(1)"), None);
+        assert_eq!(request(&format!("find {}", "a".repeat(501))), None);
+        // 500 characters is the limit, however many bytes they take.
+        let wide = "é".repeat(500);
+        assert_eq!(
+            request(&format!("find {wide}")),
+            Some(json!({"type": "find", "question": wide}))
+        );
+    }
+
+    #[test]
+    fn an_empty_question_is_not_sent() {
+        assert_eq!(find("  \n\t "), Err("no question to find".into()));
+    }
 
     #[test]
     fn native_messages_are_length_prefixed_json() {
@@ -348,7 +404,7 @@ mod tests {
         );
         let asker = std::thread::spawn({
             let sock = sock.clone();
-            move || tab_at(&sock)
+            move || ask_at(&sock, "tab")
         });
         let mut from_host = host.stdout.take().unwrap();
         // The test harness prints a line or two first; skip to the message.

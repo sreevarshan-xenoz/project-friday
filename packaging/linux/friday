@@ -1571,7 +1571,16 @@ friday_undo() {
 # when FRIDAY can't see inside that app, or nothing fits.
 friday_show() {
   command -v friday-ctl >/dev/null 2>&1 && command -v hyprctl >/dev/null 2>&1 || return 1
-  local out names app request reply pick
+  local out names app request reply pick class
+  # A web page: FRIDAY's browser extension outlines the thing on the page
+  # itself (never in a private window: the extension isn't let in there).
+  class=$(timeout 2 hyprctl activewindow -j 2>/dev/null | jq -r '.class // ""' 2>/dev/null || true)
+  if [[ "${class,,}" =~ (chromium|chrome|brave|firefox|zen|vivaldi|librewolf) ]] && [ -z "$(friday_private_window)" ]; then
+    out=$(timeout 10 friday-ctl browser find "$1" 2>/dev/null) && return 0
+    # The browser said the tab is private (its own check, which also knows
+    # windows the title doesn't show): nothing of it goes anywhere else.
+    [ "$(jq -r '.error // empty' <<<"$out" 2>/dev/null)" = "no tab FRIDAY may read" ] && return 1
+  fi
   out=$(timeout 20 friday-ctl show "$1" 2>/dev/null) || return 1
   if [ "$(jq -r '.found' <<<"$out" 2>/dev/null)" != true ]; then
     names=$(jq -r '(.controls // []) | join("\n")' <<<"$out" 2>/dev/null || true)
