@@ -1278,6 +1278,14 @@ if grep -q "friday-ctl-watch" "$LOG"; then fail "watched after Esc"; else pass "
 : >"$LOG"; bash "$F" watch stop
 contains "friday watch stop stops it" "$(cat "$LOG")" "friday-ctl-watch watch stop"
 rm -f "$S/grim"
+echo "health page"
+hp=$(bash "$F" health 2>&1)
+contains "health: lists voice" "$hp" "Voice in:"
+contains "health: lists memory with its count" "$hp" "Memory:"
+contains "health: and each part's switches" "$hp" "switches: screen-what-changed on"
+bash "$F" feature screen-ocr off >/dev/null
+contains "health: a switched-off part says so" "$(bash "$F" health 2>&1)" "screen-ocr OFF"
+bash "$F" feature screen-ocr on >/dev/null
 echo "region ask"
 printf '#!/bin/sh\n[ -n "$SLURP_CANCEL" ] && exit 1\necho "10,20 300x200"\n' >"$S/slurp"; chmod +x "$S/slurp"
 : >"$LOG"; PICK="what is this chart" bash "$F" ask --region; sleep 0.3
