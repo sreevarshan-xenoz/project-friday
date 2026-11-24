@@ -312,7 +312,9 @@ FRIDAY_PKG=$(find /opt/friday/repo -maxdepth 1 -name 'friday-git-*.pkg.tar.zst' 
 [[ -n "$FRIDAY_PKG" ]] || { echo "the FRIDAY package is missing from /opt/friday/repo" >&2; exit 1; }
 POCKETDESK_PKG=$(find /opt/friday/repo -maxdepth 1 -name 'pocketdesk-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1)
 [[ -n "$POCKETDESK_PKG" ]] || { echo "the Pocketdesk package is missing from /opt/friday/repo" >&2; exit 1; }
-pacstrap_with_retry -U /mnt "$FRIDAY_PKG" "$POCKETDESK_PKG"
+WALLPAPERS_PKG=$(find /opt/friday/repo -maxdepth 1 -name 'friday-wallpapers-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1)
+[[ -n "$WALLPAPERS_PKG" ]] || { echo "the wallpapers package is missing from /opt/friday/repo" >&2; exit 1; }
+pacstrap_with_retry -U /mnt "$FRIDAY_PKG" "$POCKETDESK_PKG" "$WALLPAPERS_PKG"
 # Local AI: the engine's packages now (first login has no root); the model
 # downloads at first login (friday-local-ai.service). friday-git is on the
 # live ISO, and it sees the same GPU.
@@ -594,6 +596,22 @@ else
     *"Catppuccin"*)   THEME_SLUG="catppuccin" ;;
     *"Nord"*)         THEME_SLUG="nord" ;;
   esac
+  # FRIDAY's wallpapers on the themes FRIDAY Shell's palettes sit on: the
+  # palette's own set first (Horizon leads core), then every other set, all
+  # linked from the package. Omarchy starts on the first; its menu's Style >
+  # Background picks another. Linked before omarchy-theme-set, which picks one.
+  wp=/mnt/usr/share/friday/wallpapers
+  if [[ -d $wp && ( $THEME_SLUG == "matte-black" || $THEME_SLUG == "nord" ) ]]; then
+    bg="/mnt$USER_HOME/.config/omarchy/backgrounds/$THEME_SLUG"
+    mkdir -p "$bg"
+    first=$SHELL_PALETTE; [[ -d $wp/$first ]] || first=core
+    for d in "$wp"/*/; do
+      d=${d%/}; g=${d##*/}
+      if [[ $g == "$first" ]]; then p=0; else p=1; fi
+      for f in "$d"/*.jpg; do ln -sf "${f#/mnt}" "$bg/$p-$g-${f##*/}"; done
+    done
+    arch-chroot /mnt chown -R "$USERNAME:$USERNAME" "$USER_HOME/.config/omarchy"
+  fi
   # A login shell outside the desktop session has neither OMARCHY_PATH nor
   # Omarchy's bin/ on PATH (uwsm sets both at login), so pass them here.
   # omarchy-theme-set exits 0 even when it fails, so check what it left.

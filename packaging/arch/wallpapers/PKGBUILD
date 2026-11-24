@@ -1,0 +1,25 @@
+# FRIDAY OS's wallpapers: 3840x2160 images in one folder per FRIDAY Shell
+# palette (core, polar, frost, ember, moss, dawn) plus styles, under
+# /usr/share/friday/wallpapers. Their own package, so the 110 MB isn't
+# downloaded again with every friday-git update. The files live on a GitHub
+# release (wallpapers-<version>), pinned below by checksum; a new set is a new
+# version and hash, in its own commit.
+
+pkgname=friday-wallpapers
+pkgver=2026.11.24
+pkgrel=1
+pkgdesc="FRIDAY OS wallpapers, one set per FRIDAY Shell palette"
+arch=('any')
+url="https://github.com/sreevarshan-xenoz/project-friday"
+license=('custom')
+source=("friday-wallpapers-${pkgver}.tar::${url}/releases/download/wallpapers-${pkgver}/friday-wallpapers-${pkgver}.tar")
+sha256sums=('9c67ce82a503df08cfd8ef3aa16fcef79ed993dff7180a0a21917d1464a70564')
+
+package() {
+  cd "friday-wallpapers-${pkgver}"
+  local d
+  for d in */; do
+    install -Dm644 "$d"*.jpg -t "$pkgdir/usr/share/friday/wallpapers/${d%/}"
+  done
+  install -Dm644 README -t "$pkgdir/usr/share/doc/friday-wallpapers"
+}
