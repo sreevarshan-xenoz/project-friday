@@ -142,13 +142,15 @@ fn keys_to_strip(agent: Agent, names: impl Iterator<Item = String>) -> Vec<Strin
         Agent::Claude => &["ANTHROPIC_API_KEY"],
         Agent::Codex => &["OPENAI_API_KEY", "CODEX_API_KEY"],
     };
+    // Upper and lower case alike: Windows doesn't tell them apart.
     names
         .filter(|k| {
-            (k.ends_with("_API_KEY")
+            let up = k.to_ascii_uppercase();
+            (up.ends_with("_API_KEY")
                 || friday_intelligence::providers::PROVIDER_ENV_VARS
                     .iter()
-                    .any(|(v, _)| v == k))
-                && !own.contains(&k.as_str())
+                    .any(|(v, _)| *v == up))
+                && !own.contains(&up.as_str())
         })
         .collect()
 }
@@ -2633,10 +2635,27 @@ mod tests {
         let mut codex = keys_to_strip(Agent::Codex, names.clone().into_iter());
         codex.sort();
         assert_eq!(codex, ["ANTHROPIC_API_KEY", "GITHUB_TOKEN", "GROQ_API_KEY"]);
-        let claude = keys_to_strip(Agent::Claude, names.into_iter());
+        let claude = keys_to_strip(Agent::Claude, names.clone().into_iter());
         assert!(claude.contains(&"OPENAI_API_KEY".to_string()));
         assert!(!claude.contains(&"ANTHROPIC_API_KEY".to_string()));
         assert!(!claude.contains(&"PATH".to_string()));
+        // opencode and agy sign in with their own tools: FRIDAY's keys, and
+        // the GitHub token it uses for GitHub Models, aren't theirs.
+        for agent in [Agent::Opencode, Agent::Agy] {
+            let got = keys_to_strip(agent, names.clone().into_iter());
+            for k in [
+                "GROQ_API_KEY",
+                "GITHUB_TOKEN",
+                "OPENAI_API_KEY",
+                "ANTHROPIC_API_KEY",
+            ] {
+                assert!(got.contains(&k.to_string()), "{agent:?} kept {k}");
+            }
+        }
+        // Windows doesn't tell upper and lower case apart.
+        let mixed = ["groq_api_key", "Github_Token", "openai_api_key"].map(String::from);
+        let got = keys_to_strip(Agent::Codex, mixed.into_iter());
+        assert_eq!(got, ["groq_api_key", "Github_Token"]);
     }
 
     async fn follow_up_run(keeps: bool) -> (Vec<String>, Outcome, Run) {
