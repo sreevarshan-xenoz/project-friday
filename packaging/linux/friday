@@ -115,7 +115,7 @@ Autonomous Agent & Cognitive Loop:
                                    A model on this computer, sized to it; answers first,
                                    cloud covers what it can't (friday setup-ai local)
   friday face [status|setup|remove] Face unlock for the lock screen (Gaze)
-  friday voice [status|setup|remove] Hold Super+Y and speak (speech to text on this computer)
+  friday voice [status|setup|remove|preview on|off] Hold Super+Y and speak (speech to text on this computer)
   friday voice speak [setup [tinyvoca|kokoro|kitten|supertonic]|on|off|voices|voice N|status]
   friday voice talk-over [on|off|status]  Talk over a spoken answer to stop it and ask (echo cancellation)
                                    FRIDAY answers out loud, in a voice made on this computer
@@ -2286,9 +2286,20 @@ CONF
   esac
 }
 
+friday_voice_preview_flag() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/voice-preview"; }
 friday_voice() {
   local model; model=$(friday_voice_model)
   case "${1:-status}" in
+    preview)
+      # What whisper heard opens in the ask box first: edit, Enter, or Esc.
+      case "${2:-status}" in
+        on) mkdir -p "$(dirname "$(friday_voice_preview_flag)")"; : >"$(friday_voice_preview_flag)"
+            echo "Voice preview: on. What was heard opens in the ask box first: edit it, Enter to use it, Esc to drop it." ;;
+        off) rm -f "$(friday_voice_preview_flag)"; echo "Voice preview: off. What was heard is used right away." ;;
+        status) if [ -e "$(friday_voice_preview_flag)" ]; then echo "Voice preview: on"; else echo "Voice preview: off (friday voice preview on)"; fi ;;
+        *) echo "Usage: friday voice preview [on|off|status]" >&2; return 1 ;;
+      esac
+      ;;
     status)
       if friday_voice_ready; then echo "Voice: on (hold Super+Y and speak)"
       else echo "Voice: off (turn it on: friday voice setup)"; fi
@@ -2309,7 +2320,7 @@ friday_voice() {
     remove|off)
       rm -f "$model"; echo "Voice is off (whisper-cpp stays installed)."
       ;;
-    *) echo "Usage: friday voice [status|setup|remove]" >&2; return 1 ;;
+    *) echo "Usage: friday voice [status|setup|remove|preview on|off]" >&2; return 1 ;;
   esac
 }
 
@@ -2499,6 +2510,13 @@ friday_hold() {
             notify-send -a FRIDAY "FRIDAY" "I didn't catch that. Hold Super+Y and speak, or tap it to type." 2>/dev/null || true
           fi
           return 0
+        fi
+        # What was heard, to edit or drop before it's used (friday voice preview on).
+        if [ -e "$(friday_voice_preview_flag)" ] && friday_feature_on voice-preview && command -v fuzzel >/dev/null 2>&1; then
+          pill dismiss || true
+          text=$(fuzzel --dmenu --prompt-only="Heard › " --search="$text" --width=60 \
+            --placeholder="Edit what was heard, Enter to use it, Esc to drop it" </dev/null) || return 0
+          [ -n "${text//[[:space:]]/}" ] || return 0
         fi
         if [ "${2:-}" = "--type" ]; then
           # Voice typing: the words go into the field you were in, not to the AI.
@@ -3959,6 +3977,7 @@ propose-memories|\"I use fish …\" in a question: offer to remember it (nothing
 memory-file|Every ask carries what you asked FRIDAY to remember (~/.config/friday/memory.md)
 live-web|Questions about the weather, news, scores or prices search the web without \"search\" first
 speak-as-it-comes|Spoken answers start with the first sentence while the rest is still coming
+voice-preview|friday voice preview on: what whisper heard opens in the ask box to edit or drop before it is used
 clipboard-expiry|A clipboard copied over 10 minutes ago is not used as context (known when friday clips are on); password-manager copies never are
 ask-timings|How long each stage of an ask takes is kept on this computer (friday doctor shows the median and slow end)
 spoken-length|Spoken answers say two, six or all sentences (friday voice speak length brief, normal or detailed); the card shows all

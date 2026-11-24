@@ -103,6 +103,16 @@ public partial class AskWindow : Window
     /// <summary>Whether a vague "this" may mean the window in front (one is there, not private or mail).</summary>
     public bool OfferWindow { get; init; }
 
+    /// <summary>Text already in the field (what was heard, to edit before it's asked).</summary>
+    public string Initial
+    {
+        init
+        {
+            Input.Text = value;
+            Input.CaretIndex = value.Length;
+        }
+    }
+
     /// <summary>Asks that fit the app in front, shown first (↑ walks them before recent questions).</summary>
     public IReadOnlyList<string> Suggested
     {

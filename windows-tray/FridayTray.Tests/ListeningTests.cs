@@ -115,4 +115,20 @@ public class WakeTests
             root.Delete(true);
         }
     }
+
+    [Fact]
+    public void The_preview_switch_is_off_until_turned_on()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "friday-preview-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var p = new Paths(Path.Combine(root, "local"), Path.Combine(root, "roaming"));
+            Assert.False(Listening.PreviewOn(p));
+            Listening.SetPreview(p, true);
+            Assert.True(Listening.PreviewOn(p));
+            Listening.SetPreview(p, false);
+            Assert.False(Listening.PreviewOn(p));
+        }
+        finally { try { Directory.Delete(root, true); } catch (IOException) { } }
+    }
 }
