@@ -60,6 +60,102 @@ pub struct Manifest {
     pub format: u32,
     pub created: String,
     pub files: Vec<Entry>,
+    /// The home folder of the computer it was made on, so a restore on a new
+    /// one can point saved paths at the new home.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<String>,
+}
+
+/// This computer's home folder.
+pub fn this_home() -> Option<String> {
+    std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .ok()
+        .filter(|h| h.len() > 1)
+}
+
+/// `text` with the folder `old` (and what is under it) changed to `new`:
+/// only where `old` is a whole path, so `/home/al` isn't touched inside
+/// `/home/alice`, `/home/al+work` or `/mnt/home/al`. A Windows path is also
+/// changed where JSON doubled its backslashes. Nothing changes between a
+/// Linux and a Windows home, or into a root folder.
+pub fn moved_home(text: &str, old: &str, new: &str) -> String {
+    let trim = |s: &str| s.trim_end_matches(['/', '\\']).to_string();
+    let (old, new) = (trim(old), trim(new));
+    if old.len() < 2 || new.len() < 2 || old.contains('\\') != new.contains('\\') {
+        return text.to_string();
+    }
+    let mut out = replace_folder(text, &old, &new);
+    if old.contains('\\') {
+        out = replace_folder(&out, &old.replace('\\', "\\\\"), &new.replace('\\', "\\\\"));
+    }
+    out
+}
+
+/// Whether `c` can be part of a path name next to the folder.
+fn path_char(c: char) -> bool {
+    !(c.is_whitespace()
+        || matches!(
+            c,
+            '"' | '\'' | '/' | '\\' | ',' | ';' | ')' | ']' | '}' | '=' | ':' | '(' | '[' | '{'
+        ))
+}
+
+fn replace_folder(text: &str, old: &str, new: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(old) {
+        let before = if at > 0 {
+            rest[..at].chars().last()
+        } else {
+            out.chars().last()
+        };
+        let after = &rest[at + old.len()..];
+        // A separator or the end of a string after it, and nothing that
+        // makes it part of a longer path before it.
+        let ends = after
+            .chars()
+            .next()
+            .is_none_or(|c| matches!(c, '/' | '\\') || !path_char(c));
+        let starts = before.is_none_or(|c| !path_char(c) && !matches!(c, '/' | '\\'));
+        out.push_str(&rest[..at]);
+        out.push_str(if ends && starts { new } else { old });
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Files whose text can name a folder: settings, records and notes.
+const TEXT_ENDINGS: &[&str] = &[".json", ".jsonl", ".toml", ".env", ".md", ".txt", ".conf"];
+
+/// After a restore on another computer: saved paths under the old home
+/// (workspaces, threads, folders in settings) now name `new_home`. Returns
+/// how many files changed.
+pub fn rehome(backup: &Path, targets: &[(&str, PathBuf)], new_home: &str) -> Result<usize, String> {
+    let manifest = check(backup)?;
+    let Some(old) = manifest.home.filter(|o| o != new_home) else {
+        return Ok(0);
+    };
+    let mut changed = 0;
+    for f in &manifest.files {
+        if !TEXT_ENDINGS.iter().any(|e| f.path.ends_with(e)) {
+            continue;
+        }
+        let (top, rest) = f.path.split_once('/').expect("checked above");
+        let Some((_, dir)) = targets.iter().find(|(t, _)| *t == top) else {
+            continue;
+        };
+        let dest = rest.split('/').fold(dir.clone(), |p, part| p.join(part));
+        let Ok(text) = std::fs::read_to_string(&dest) else {
+            continue;
+        };
+        let moved = moved_home(&text, &old, new_home);
+        if moved != text {
+            std::fs::write(&dest, moved).map_err(|e| e.to_string())?;
+            changed += 1;
+        }
+    }
+    Ok(changed)
 }
 
 const MANIFEST: &str = "manifest.json";
@@ -180,6 +276,7 @@ pub fn create(
         format: 1,
         created: stamp.to_string(),
         files,
+        home: this_home(),
     };
     std::fs::write(
         out.join(MANIFEST),
@@ -322,6 +419,72 @@ fn keep_keys(restored: &str, current: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_new_home_replaces_the_old_one_only_as_a_whole_folder() {
+        let t = r#"{"cwd":"/home/al/code","other":"/home/alice/x","end":"/home/al"}"#;
+        assert_eq!(
+            super::moved_home(t, "/home/al", "/home/bo"),
+            r#"{"cwd":"/home/bo/code","other":"/home/alice/x","end":"/home/bo"}"#
+        );
+        let t = r#"["/home/al+work","/mnt/home/al/x","PATH=/home/al:/usr","cd /home/al/"]"#;
+        assert_eq!(
+            super::moved_home(t, "/home/al/", "/home/bo"),
+            r#"["/home/al+work","/mnt/home/al/x","PATH=/home/bo:/usr","cd /home/bo/"]"#
+        );
+        assert_eq!(
+            super::moved_home("/home/al/x", "/home/al", "/"),
+            "/home/al/x"
+        );
+        assert_eq!(
+            super::moved_home("/home/al/x", "/home/al", r"C:\Users\bo"),
+            "/home/al/x"
+        );
+        let w = r#"{"cwd":"C:\\Users\\al\\code"}"#;
+        assert_eq!(
+            super::moved_home(w, r"C:\Users\al", r"C:\Users\bo"),
+            r#"{"cwd":"C:\\Users\\bo\\code"}"#
+        );
+    }
+
+    #[test]
+    fn a_restore_on_a_new_computer_points_saved_paths_at_the_new_home() {
+        let tmp = tmp("rehome");
+        let state = tmp.join("state");
+        std::fs::create_dir_all(state.join("workspaces")).unwrap();
+        std::fs::write(
+            state.join("workspaces/w.json"),
+            r#"{"folder":"/home/old/proj"}"#,
+        )
+        .unwrap();
+        std::fs::write(state.join("photo.png"), "/home/old/proj").unwrap();
+        let out = tmp.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let (backup, _) = super::create(&[("state", state.clone())], &out, "s1").unwrap();
+        // Made on a computer whose home was /home/old.
+        let m = backup.join(super::MANIFEST);
+        let mut man: super::Manifest = serde_json::from_slice(&std::fs::read(&m).unwrap()).unwrap();
+        man.home = Some("/home/old".into());
+        std::fs::write(&m, serde_json::to_vec(&man).unwrap()).unwrap();
+        let target = tmp.join("new");
+        super::restore(&backup, &[("state", target.clone())], "s2").unwrap();
+        let n = super::rehome(&backup, &[("state", target.clone())], "/home/new").unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(
+            std::fs::read_to_string(target.join("workspaces/w.json")).unwrap(),
+            r#"{"folder":"/home/new/proj"}"#
+        );
+        assert_eq!(
+            std::fs::read_to_string(target.join("photo.png")).unwrap(),
+            "/home/old/proj",
+            "only text records"
+        );
+        // The same computer: nothing to change.
+        assert_eq!(
+            super::rehome(&backup, &[("state", target)], "/home/old").unwrap(),
+            0
+        );
+    }
+
     use super::*;
 
     fn tmp(name: &str) -> PathBuf {

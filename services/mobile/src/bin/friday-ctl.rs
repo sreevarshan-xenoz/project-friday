@@ -1741,12 +1741,29 @@ async fn main() -> std::process::ExitCode {
         let stamp = chrono::Local::now().format("%Y-%m-%d-%H%M%S").to_string();
         let said = match (raw.get(1).map(String::as_str), raw.get(2)) {
             (Some("check"), Some(dir)) => backup::check(std::path::Path::new(dir)).map(|m| {
-                format!("The backup is whole: {} files, made {}.", m.files.len(), m.created)
+                format!(
+                    "The backup is whole: {} files, made {}.",
+                    m.files.len(),
+                    m.created
+                )
             }),
             (Some("restore"), Some(dir)) => {
-                backup::restore(std::path::Path::new(dir), &backup::folders(), &stamp).map(|n| {
+                let dir = std::path::Path::new(dir);
+                backup::restore(dir, &backup::folders(), &stamp).map(|n| {
+                    // Made on another computer: saved folders now name this home.
+                    let moved = match backup::this_home() {
+                        Some(home) if friday_mobile::features::on("backup-new-home") => {
+                            backup::rehome(dir, &backup::folders(), &home)
+                        }
+                        _ => Ok(0),
+                    };
+                    let moved = match moved {
+                        Ok(0) => String::new(),
+                        Ok(n) => format!(" Saved folders in {n} files now point at this computer's home."),
+                        Err(e) => format!(" Saved folders couldn't all be pointed at this computer's home ({e})."),
+                    };
                     format!(
-                        "Restored {n} files. What they replaced is in before-restore-{stamp} in FRIDAY's folders, and your API keys were kept. Restart FRIDAY to use them."
+                        "Restored {n} files. What they replaced is in before-restore-{stamp} in FRIDAY's folders, and your API keys were kept.{moved} Restart FRIDAY to use them."
                     )
                 })
             }
