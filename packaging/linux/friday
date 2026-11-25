@@ -88,6 +88,7 @@ Autonomous Agent & Cognitive Loop:
   friday model rank                Benchmark models on screen questions and pick the best
   friday goal "<objective>"        Dispatch an autonomous goal to FRIDAY agent
   friday cancel                    Cancel the goal FRIDAY is working on
+  friday panic [on|off|status]     Stop agents, voice, capture and routines at once, until off (Super+Ctrl+Shift+Escape)
   friday tasks [pause|resume|delete <id>|recipes|recipe <name>|status|on|off]
                                    Standing tasks ("every morning ..."): list, pause, delete, turn all off
   friday agents [show|allow|deny|reply|accept|discard|compare <id>|hooks|check|worktree|sandbox [on|off]|status|on|off]
@@ -392,7 +393,11 @@ friday_doctor() {
     svc_active=true
     ok "friday-linux-daemon service is active"
   else
-    bad "friday-linux-daemon service is not active" "friday daemon start; then: friday daemon logs"; can_fix daemon
+    if [ -e "$(friday_panic_file)" ]; then
+      warn "FRIDAY is stopped by the panic switch" "friday panic off (or Super+Ctrl+Shift+Escape)"
+    else
+      bad "friday-linux-daemon service is not active" "friday daemon start; then: friday daemon logs"; can_fix daemon
+    fi
   fi
   if [ -r "$state" ]; then
     local status
@@ -1117,6 +1122,7 @@ friday hold start --type|"friday hold end", { release = true })|o.bind("SUPER + 
 friday paste-as|"friday ask --selection")|o.bind("SUPER + ALT + V", "FRIDAY: Paste as…", "friday paste-as")|Added Paste as: copy text, press Super+Alt+V, pick how to paste it.
 friday clips pick|"friday paste-as")|o.bind("SUPER + CTRL + V", "FRIDAY: Clips and snippets", "friday clips pick")|Added clips: Super+Ctrl+V pastes something you copied earlier or a snippet (friday clips on first).
 "friday settings"|"friday hold end", { release = true })|o.bind("SUPER + I", "FRIDAY: Settings", "friday settings")|Added Settings: Super+I opens FRIDAY Settings.
+friday panic toggle|"friday cancel")|o.bind("SUPER + CTRL + SHIFT + Escape", "FRIDAY: Stop everything (again: back on)", "friday panic toggle")|Added the panic switch: Super+Ctrl+Shift+Escape stops agents, voice, capture and routines until pressed again.
 KEYS
       $added || echo "Your keys are up to date." ;;
     *) echo "Usage: friday keys [list|update]" >&2; return 1 ;;
@@ -2900,6 +2906,51 @@ friday_whats_new() {
   friday_whats_new --record
 }
 
+# `friday panic [on|off|toggle|status]`: one switch that stops everything
+# FRIDAY does on its own: the daemon (with the agents, goals and standing
+# tasks it runs), "hey Friday", screen recall, clips, captions, watches, speech
+# and listening. The marker keeps them off (the units won't start while it is
+# there, after a restart too) until `friday panic off`, which starts again
+# what was running. Super+Ctrl+Shift+Escape toggles it.
+FRIDAY_PANIC_UNITS="friday-linux-daemon friday-wake friday-recall friday-clips"
+friday_panic_file() { echo "${XDG_STATE_HOME:-$HOME/.local/state}/friday/panic"; }
+friday_panic() {
+  local f u was=() back=()
+  f=$(friday_panic_file)
+  case "${1:-status}" in
+    toggle)
+      friday_feature_on panic-key || return 0
+      if [ -e "$f" ]; then friday_panic off; else friday_panic on; fi ;;
+    on)
+      for u in $FRIDAY_PANIC_UNITS; do
+        systemctl --user is-active --quiet "$u" 2>/dev/null && was+=("$u")
+      done
+      mkdir -p "$(dirname "$f")"
+      # Kept if already panicked: what to start again is what ran before.
+      [ -e "$f" ] || printf '%s\n' "${was[@]}" >"$f"
+      systemctl --user stop $FRIDAY_PANIC_UNITS 2>/dev/null || true
+      friday-ctl watch stop >/dev/null 2>&1 || true
+      friday-ctl say --stop >/dev/null 2>&1 || true
+      # Captions and a held Super+Y both listen through friday-ctl listen.
+      pkill -u "$(id -u)" -f "friday-ctl listen" 2>/dev/null || true
+      notify-send -a FRIDAY -u critical -- "FRIDAY is stopped" \
+        "Agents, standing tasks, voice, screen recall, clips and captions are off, and stay off until you turn FRIDAY back on: Super+Ctrl+Shift+Escape or friday panic off" 2>/dev/null || true
+      echo "FRIDAY is stopped: agents, standing tasks, voice, screen recall, clips and captions, until: friday panic off" ;;
+    off)
+      [ -e "$f" ] || { echo "FRIDAY isn't stopped."; return 0; }
+      mapfile -t back <"$f"
+      rm -f "$f"
+      for u in "${back[@]}"; do
+        [[ " $FRIDAY_PANIC_UNITS " == *" $u "* ]] && systemctl --user start "$u" 2>/dev/null || true
+      done
+      notify-send -a FRIDAY -- "FRIDAY is back" "What was running before is running again." 2>/dev/null || true
+      echo "FRIDAY is back on.${back[*]:+ Started again: ${back[*]}}" ;;
+    status)
+      if [ -e "$f" ]; then echo "Stopped by the panic switch (turn back on: friday panic off)"; else echo "Not stopped (stop everything: friday panic on, or Super+Ctrl+Shift+Escape)"; fi ;;
+    *) echo "Usage: friday panic [on|off|status]" >&2; return 2 ;;
+  esac
+}
+
 friday_welcome() {
   local stamp="${XDG_STATE_HOME:-$HOME/.local/state}/friday/welcomed"
   local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
@@ -4370,6 +4421,7 @@ friday_local_ai_bench() {
 # FRIDAY Settings → Features). All are on until switched off; the ones off
 # are listed, one a line, in features-off in FRIDAY's config folder.
 FRIDAY_FEATURES="whats-new|After an update, one card says what changed and which switches are new
+panic-key|Super+Ctrl+Shift+Escape stops agents, voice, capture and routines at once (friday panic)
 instant-answers|Arithmetic and unit conversions worked out here at once
 motion|FRIDAY Shell's animations: the answer card, drawers and the pulsing orb (off: everything changes at once)
 app-bundles|The first-login tour offers app bundles (developer, gaming, productivity, creative) to install in one go
@@ -5220,6 +5272,10 @@ case "${1:-}" in
     exit 0
     ;;
   ask)
+    if [ -e "$(friday_panic_file)" ]; then
+      notify-send -a FRIDAY -- "FRIDAY is stopped" "The panic switch is on. Turn FRIDAY back on: Super+Ctrl+Shift+Escape or friday panic off" 2>/dev/null || true
+      echo "FRIDAY is stopped by the panic switch (friday panic off)" >&2; exit 1
+    fi
     # Desktop entry point (SUPER+Y): prompt, run the goal, report the outcome
     # as a notification, and keep the full answer on disk.
     #   friday ask [text]               ask (prompts if no text)
@@ -6500,6 +6556,10 @@ $offer"
   whats-new)
     shift
     friday_whats_new "$@"
+    ;;
+  panic)
+    shift
+    friday_panic "$@"
     ;;
   voice)
     shift

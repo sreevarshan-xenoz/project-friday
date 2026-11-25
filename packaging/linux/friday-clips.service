@@ -1,5 +1,7 @@
 [Unit]
 Description=FRIDAY: keep the last 200 texts you copy (friday clips)
+# Not while the panic switch is on (friday panic off).
+ConditionPathExists=!%S/friday/panic
 # Off unless the person turns it on (friday clips on enables it).
 ConditionUser=!@system
 PartOf=graphical-session.target

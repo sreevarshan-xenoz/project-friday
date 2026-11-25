@@ -14,6 +14,8 @@ hl.bind("SUPER + CTRL + V", hl.dsp.exec_cmd("friday clips pick"), { description 
 hl.bind("SUPER + CTRL + Y", hl.dsp.exec_cmd("friday ask --screen"), { description = "FRIDAY: Ask about the screen" })
 -- The kill key: stops whatever FRIDAY is doing on your desktop, at once.
 hl.bind("SUPER + CTRL + Escape", hl.dsp.exec_cmd("friday cancel"), { description = "FRIDAY: Stop what it is doing" })
+-- The panic switch: agents, voice, capture and routines off until pressed again.
+hl.bind("SUPER + CTRL + SHIFT + Escape", hl.dsp.exec_cmd("friday panic toggle"), { description = "FRIDAY: Stop everything (again: back on)" })
 hl.bind("SUPER + I", hl.dsp.exec_cmd("friday settings"), { description = "FRIDAY: Settings" })
 -- Qt 6 and Chromium apps join the accessibility bus only when asked; without
 -- it FRIDAY can't read or operate them (`friday doctor` checks).
