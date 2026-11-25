@@ -210,6 +210,14 @@ Singleton {
   // Whether another model can be asked: a question about text, not a
   // screenshot (those go through the screen-reading path).
   readonly property bool canTryAnother: root.goal !== "" && root.mode !== "--screen" && root.mode !== "--region"
+  // Whether the screen answer came from the window's text rather than a picture.
+  // From this answer's own "Used:" line, never an earlier ask's receipt.
+  readonly property bool usedWindowText: root.meta.indexOf("the window's text") !== -1
+  // Ask the same question again with a fresh screenshot of the window.
+  function lookAgain() {
+    root.dismiss();
+    Quickshell.execDetached(["friday", "ask", "--screen", "--picture", root.goal]);
+  }
   // The same question again, answered with more care by a different model.
   function tryAnother() {
     const args = ["friday", "ask"];

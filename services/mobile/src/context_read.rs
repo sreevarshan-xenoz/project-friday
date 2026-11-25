@@ -699,6 +699,20 @@ where
         progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
         receipt: &(dyn Fn(String) + Send + Sync),
     ) -> Result<(String, ScreenSent), ContextReadError> {
+        self.ask_routed_picture(question, region, false, progress, receipt)
+            .await
+    }
+
+    /// [`ScreenReader::ask_routed`], with `picture` forcing a screenshot
+    /// of the window even when its text is available.
+    pub async fn ask_routed_picture(
+        &self,
+        question: Option<&str>,
+        region: Option<ScreenRegion>,
+        picture: bool,
+        progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+        receipt: &(dyn Fn(String) + Send + Sync),
+    ) -> Result<(String, ScreenSent), ContextReadError> {
         // Check authorization BEFORE capturing the screen — with no consent,
         // nothing is captured at all.
         {
@@ -739,6 +753,8 @@ where
         // A click instead of a drag: the control under it, as text, and
         // nothing else of the screen.
         if let (Some(r), Some(source)) = (region, self.text.as_ref()) {
+            // Even with `picture`: a few pixels say nothing, the control's
+            // text does.
             if r.width <= POINT_SIZE && r.height <= POINT_SIZE && crate::features::on("point-ask") {
                 let Ok(CapturedContext::AppInfo {
                     class,
@@ -806,7 +822,7 @@ where
             let front = self.window_in_front();
             let mut secret = false;
             let from_text = self
-                .ask_from_text(question, progress, receipt, &mut secret)
+                .ask_from_text(question, picture, progress, receipt, &mut secret)
                 .await;
             // The text went masked; a picture can't be: it never goes.
             if secret && !matches!(from_text, Some(Ok(_))) {
@@ -907,7 +923,8 @@ where
         ) {
             let words = ocr.image_text(bytes).await;
             let secret = words.as_deref().is_some_and(shows_secret);
-            let words = words.filter(|w| self.text_route && words_on && enough_area_words(w));
+            let words =
+                words.filter(|w| !picture && self.text_route && words_on && enough_area_words(w));
             if let Some(words) = words {
                 let intro = match region {
                     Some(r) => format!(
@@ -1044,6 +1061,7 @@ where
     async fn ask_from_text(
         &self,
         question: Option<&str>,
+        picture: bool,
         progress: &(dyn for<'s> Fn(&'s str) + Send + Sync),
         receipt: &(dyn Fn(String) + Send + Sync),
         secret: &mut bool,
@@ -1059,7 +1077,7 @@ where
         let words = source.window_text(&class, &title).await?;
         // The title too: a browser's address or a terminal's prompt is in the picture.
         *secret = shows_secret(&words) || shows_secret(&title);
-        if !self.text_route || words.chars().count() < MIN_SCREEN_TEXT {
+        if picture || !self.text_route || words.chars().count() < MIN_SCREEN_TEXT {
             return None;
         }
         let cut = words.ends_with(SCREEN_TEXT_CUT);
@@ -1350,6 +1368,11 @@ where
                     && c.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
             })
             .map(str::to_string);
+        let picture = cmd
+            .params
+            .get("picture")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let bus = self.bus.clone();
         let region = match cmd.params.get("region") {
             None | Some(serde_json::Value::Null) => None,
@@ -1416,7 +1439,13 @@ where
             };
             let asked = friday_intelligence::with_egress_context(
                 egress_ctx,
-                reader.ask_routed(question.as_deref(), region, &progress, &receipt),
+                reader.ask_routed_picture(
+                    question.as_deref(),
+                    region,
+                    picture,
+                    &progress,
+                    &receipt,
+                ),
             )
             .await;
 
@@ -2887,6 +2916,34 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(sent, ScreenSent::Screenshot { text_failed: false });
+    }
+
+    #[tokio::test]
+    async fn picture_flag_forces_screenshot_even_when_window_text_available() {
+        let seam = RecordingSeam::default();
+        let reader = ScreenReader::new(collector_with_window(), seam.clone(), "fabric")
+            .with_text(Arc::new(FakeText(Some("Report.pdf\nbutton: Open".into()))));
+        reader.consent();
+        let (_, sent) = reader
+            .ask_routed_picture(None, None, true, &|_| {}, &|_| {})
+            .await
+            .unwrap();
+        assert_eq!(sent, ScreenSent::Screenshot { text_failed: false });
+        assert!(!reader.provider.last().unwrap().contains("Report.pdf"));
+        assert!(reader.provider.last().unwrap().contains("SCREEN_CAPTURE"));
+
+        // A secret on screen is still blocked even when picture is requested.
+        let reader = ScreenReader::new(collector_with_window(), RecordingSeam::default(), "fabric")
+            .with_text(Arc::new(FakeText(Some(ON_SCREEN_KEY.into()))));
+        reader.consent();
+        let got = reader
+            .ask_routed_picture(None, None, true, &|_| {}, &|_| {})
+            .await;
+        assert!(
+            matches!(got, Err(ContextReadError::EgressBlocked { .. })),
+            "{got:?}"
+        );
+        assert_eq!(reader.provider.sent(), 0);
     }
 
     #[tokio::test]
