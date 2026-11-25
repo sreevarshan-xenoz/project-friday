@@ -107,13 +107,17 @@ pub const PUBLIC_TIER_PROVIDERS: [&str; 6] = [
 
 /// apisfreellm.com's keyless, OpenAI-compatible endpoint: no account, no
 /// named operator, no terms; it logs each request's IP and reads the prompt.
-/// Registered only when the person lists it (`friday free-tiers on apisfreellm`).
+/// Registered only when the person turned it on (`friday free-tiers on
+/// apisfreellm`) and the `free-tiers` switch is on.
 pub const APISFREELLM_BASE_URL: &str = "https://api.apisfreellm.com/v1";
 
 /// Register apisfreellm.com when it is listed as a public tier: one text
 /// model, `free-ai` (~35B, 32k context, 1 request a second per IP).
 fn register_listed_keyless(fabric: &mut InferenceFabric) {
-    if !fabric.public.contains("apisfreellm") {
+    if !fabric.public.contains("apisfreellm")
+        || fabric.public_off.contains("apisfreellm")
+        || !feature_on("free-tiers")
+    {
         return;
     }
     fabric.register_provider(Box::new(OpenAiProvider {
@@ -1682,11 +1686,13 @@ impl InferenceFabric {
 
     /// The registered providers the user configured (a key, a local server
     /// they enabled), sorted. Empty when FRIDAY runs on its defaults alone.
+    /// Public free tiers are left out: they may be fenced off for an ask, so
+    /// they never stand for "the user's own model" (screen routing).
     pub fn user_providers(&self) -> Vec<String> {
         let mut names: Vec<String> = self
             .providers
             .keys()
-            .filter(|p| !self.automatic.contains(*p))
+            .filter(|p| !self.automatic.contains(*p) && !self.public.contains(*p))
             .cloned()
             .collect();
         names.sort();
@@ -4189,7 +4195,7 @@ impl InferenceFabric {
                 4
             } else if is_account_provider(&m.provider) {
                 0
-            } else if !self.automatic.contains(&m.provider) {
+            } else if !self.automatic.contains(&m.provider) && !self.public.contains(&m.provider) {
                 1
             } else if m.tier == Some(CapabilityTier::ReasoningFree) {
                 2
@@ -5955,12 +5961,18 @@ mod tests {
         assert!(public_tier_shut(true, true, false, true)); // this tier turned off
     }
 
-    /// apisfreellm.com is registered only when listed, never on its own.
+    /// apisfreellm.com is registered only when turned on, never on its own,
+    /// and never counts as the person's own model.
     #[test]
     fn apisfreellm_is_registered_only_when_listed() {
         let mut fabric = InferenceFabric::new();
         register_listed_keyless(&mut fabric);
         assert!(!fabric.providers.contains_key("apisfreellm"));
+        fabric.public.insert("apisfreellm".to_string());
+        fabric.public_off.insert("apisfreellm".to_string());
+        register_listed_keyless(&mut fabric);
+        assert!(!fabric.providers.contains_key("apisfreellm"), "turned off");
+        fabric.public_off.clear();
         fabric.public.insert("apisfreellm".to_string());
         register_listed_keyless(&mut fabric);
         assert!(fabric.providers.contains_key("apisfreellm"));
@@ -5970,6 +5982,10 @@ mod tests {
             .any(|m| m.provider == "apisfreellm" && m.id == "free-ai"));
         assert!(!fabric.automatic.contains("apisfreellm"));
         assert!(is_free_provider("apisfreellm"));
+        assert!(
+            fabric.user_providers().is_empty(),
+            "a public tier is not the user's own"
+        );
     }
 
     #[test]
