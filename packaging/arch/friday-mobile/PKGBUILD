@@ -14,7 +14,7 @@
 # package keeps it untouched: the icon is installed as dev.friday.Mobile.
 
 pkgname=friday-mobile
-pkgver=0.10.0
+pkgver=0.11.0
 pkgrel=1
 pkgdesc="FRIDAY's phone app: your Linux or Windows desktop on your Android phone (screen, input, clipboard, files and notifications), and answers to FRIDAY's questions"
 arch=('x86_64')
@@ -38,8 +38,8 @@ _dir="friday-mobile-${_tag}-linux-x86_64"
 source=("friday-mobile-${pkgver}.tar.gz::${url}/releases/download/${_tag}/${_dir}.tar.gz"
         "dev.friday.Mobile-${pkgver}.desktop::https://raw.githubusercontent.com/sreevarshan-xenoz/friday-mobile/${_tag}/packaging/linux/dev.friday.Mobile.desktop"
         "friday-mobile-icon-${pkgver}.svg::https://raw.githubusercontent.com/sreevarshan-xenoz/friday-mobile/${_tag}/assets/brand/friday/friday.svg")
-sha256sums=('706b6b3782f824555b8d87e115bbbe3d7c0838005ba9e324bc3868daa68dbdc7'
-            'db5a5a6c410f290ed1c71fcb32b911a97112f334f91070c098d16200dd7fa6ef'
+sha256sums=('0413c140e94d158d7f11059fd7afbc9cf54c586340a09ef46226a3ad3e3ef146'
+            '39c4addf31c444563e2bdf61da0fe6ecef9d0443f6f067349b07a0e337dab61e'
             '642e84390eb53c96107516d4c28c14f56252198193355a74718d370b3510d18b')
 
 package() {
