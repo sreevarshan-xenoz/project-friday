@@ -790,6 +790,14 @@ async fn models(args: &[String]) -> std::process::ExitCode {
     // A folder of its own for provider health and timings: a benchmark's
     // slow or refused answers must never change how FRIDAY routes your asks.
     let fabric_dir = std::env::temp_dir().join(format!("friday-rank-{}", std::process::id()));
+    // Removed on every way out of here.
+    struct RemoveDir(std::path::PathBuf);
+    impl Drop for RemoveDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let _cleanup = RemoveDir(fabric_dir.clone());
     let mut fabric = friday_intelligence::InferenceFabric::default_from_env_in(&fabric_dir);
     // A vision model on a free tier can be slow: the screen ask's own limit.
     fabric.request_timeout = Some(std::time::Duration::from_secs(45));
@@ -962,7 +970,6 @@ async fn models(args: &[String]) -> std::process::ExitCode {
         );
     }
 
-    let _ = std::fs::remove_dir_all(&fabric_dir);
     if rows.iter().any(|r| r.rate_limited) {
         println!("\n\"rate limited\": that provider said too many requests (free tiers cap how often you ask); try again later.");
     }
