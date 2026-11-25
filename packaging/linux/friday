@@ -1243,10 +1243,15 @@ friday_screen_text() {
 }
 
 # The phone app's command, which is also its user unit's name: FRIDAY Mobile
-# (friday-mobile), or Pocketdesk on a computer that still has only that.
-# Prints nothing and fails when neither is installed.
+# (friday-mobile), or Pocketdesk on a computer that still has it. The one
+# whose server is running wins (both installed, Pocketdesk on: that's the one
+# the phone talks to); otherwise FRIDAY Mobile first. Prints nothing and
+# fails when neither is installed.
 friday_phone_app() {
   local c
+  for c in friday-mobile pocketdesk; do
+    command -v "$c" >/dev/null 2>&1 && systemctl --user is-active --quiet "$c" 2>/dev/null && { echo "$c"; return 0; }
+  done
   for c in friday-mobile pocketdesk; do
     command -v "$c" >/dev/null 2>&1 && { echo "$c"; return 0; }
   done
@@ -1276,6 +1281,9 @@ friday_phone() {
         local n
         n=$("$pd" devices --json 2>/dev/null | jq '.devices | length' 2>/dev/null || echo "?")
         echo "Phone: on, $n paired (answer FRIDAY from it: turn on \"Answer my questions\" on the phone's Devices page)"
+      fi
+      if [ "$pd" = pocketdesk ]; then
+        echo "This is Pocketdesk. FRIDAY Mobile replaces it: sudo pacman -S friday-mobile, then friday phone on (pair the phone again)."
       fi
       ;;
     on|pair)
