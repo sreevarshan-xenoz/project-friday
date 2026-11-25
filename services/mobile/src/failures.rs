@@ -28,10 +28,13 @@ pub fn plain_model_error(raw: &str) -> String {
     }
     if has(&["no eligible providers"]) {
         // Every provider failed recently (their circuits are open) or none
-        // fits the request.
-        return "None of your AI providers is reachable right now. Check your internet \
-                connection (or your local model server), or choose another provider with \
-                `friday setup-ai` (on Windows: AI provider in the tray menu)."
+        // fits the request. Free ones that refused for their rate limit open
+        // their circuits too, so this isn't only "no internet".
+        return "None of your AI providers can answer right now: free ones may be busy \
+                (wait a minute and try again), or this computer can't reach them (check \
+                your internet connection or your local model server). You can also choose \
+                another provider with `friday setup-ai` (on Windows: AI provider in the \
+                tray menu)."
             .to_string();
     }
     if has(&["no model registered", "not registered"]) {
@@ -144,7 +147,7 @@ mod tests {
         assert!(plain_model_error("request timed out: no answer for 15s")
             .contains("didn't answer in time"));
         assert!(plain_model_error("No eligible providers for this request.")
-            .contains("None of your AI providers is reachable"));
+            .contains("free ones may be busy"));
         assert!(plain_model_error("provider gemini not registered")
             .contains("No AI provider is available"));
         assert!(
