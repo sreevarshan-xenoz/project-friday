@@ -1808,6 +1808,15 @@ contains "actions" "$(cat "$LOG")" "thought add action (meeting 2026-11-21-1000,
 contains "and open questions" "$(cat "$LOG")" "thought add question (meeting 2026-11-21-1000, 10:05:30) Do we need a beta?"
 if grep -q "chatter" "$LOG"; then fail "kept a line that wasn't a decision, action or question"; else pass "anything else in the reply is dropped"; fi
 contains "it says what it kept" "$out" "Kept 3 under the project in front"
+A="$HOME/.local/state/friday/answers.md"
+contains "the call's notes are kept with the answers, named by its hour" "$(cat "$A")" "# Notes from the 10am call (10:02 to 10:04)"
+contains "with each decision and to-do" "$(cat "$A")" "- Decision at 10:02:15: Ship v0.8 on Friday"
+if grep -A3 "10am call" "$A" | grep -q "nothing was sent"; then fail "notes made by the provider marked as kept here"; else pass "made by the provider: not marked as never sent"; fi
+: >"$LOG"; out=$(bash "$F" meeting stop --yes)
+contains "meeting stop makes the notes of the newest call" "$(cat "$LOG")" "thought add decision (meeting 2026-11-21-1000"
+bash "$F" feature meeting-notes off >/dev/null; n=$(grep -c "10am call" "$A")
+bash "$F" meeting --yes >/dev/null; [[ "$(grep -c "10am call" "$A")" == "$n" ]] && pass "meeting-notes off: not kept with the answers" || fail "kept with the answers while switched off"
+bash "$F" feature meeting-notes on >/dev/null
 : >"$LOG"; out=$(bash "$F" meeting </dev/null)
 contains "without --yes and no local model it asks first" "$out" "Nothing sent."
 if grep -q "meeting transcript" "$LOG"; then fail "sent a transcript without a yes"; else pass "no transcript sent without a yes"; fi

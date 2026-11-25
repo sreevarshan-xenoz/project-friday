@@ -47,6 +47,7 @@ Autonomous Agent & Cognitive Loop:
   friday folders [add|rm|list|update] Folders whose notes and PDFs FRIDAY searches, quoting
                                    the file
   friday mcp [servers|on|off <name>|allow|deny <tool>] Use MCP servers; let other apps use FRIDAY
+  friday meeting start|stop        Notes of a call: what the computer plays is transcribed here; stop keeps its decisions and to-dos
   friday meeting [notes] [--yes]   A meeting's captions become decisions, actions and open
                                    questions, kept with the project
   friday browser [setup|status]    The tab you're on goes to FRIDAY as text (its extension)
@@ -1885,15 +1886,31 @@ friday_mcp() {
 # The local model reads the transcript when there is one; otherwise it goes to
 # your AI provider, after you say yes.
 friday_meeting() {
-  local notes="" yes=false arg dir request out reply line kind at text kept=0
+  local notes="" yes=false arg dir request out reply line kind at text kept=0 here=false listed=""
+  dir="${XDG_DATA_HOME:-$HOME/.local/share}/friday/captions"
+  case "${1:-}" in
+    start)
+      # What the computer plays (the call), transcribed here like captions.
+      friday_captions on || return 1
+      echo "Taking notes of this call. When it ends: friday meeting stop"
+      return 0 ;;
+    stop)
+      shift
+      friday_captions off
+      notes=$(ls -t "$dir"/*.txt 2>/dev/null | head -n1 || true)
+      [ -n "$notes" ] || { echo "Nothing was transcribed." >&2; return 1; }
+      friday_meeting "$notes" "$@"
+      return ;;
+    notes) shift ;;
+  esac
   for arg in "$@"; do
     case "$arg" in --yes) yes=true ;; *) notes="$arg" ;; esac
   done
-  dir="${XDG_DATA_HOME:-$HOME/.local/share}/friday/captions"
   [ -n "$notes" ] || notes=$(ls -t "$dir"/*.txt 2>/dev/null | head -n1 || true)
   [ -s "$notes" ] || { echo "No meeting notes yet: friday captions on keeps them (in $dir)." >&2; return 1; }
   request=$(printf 'Below is a meeting transcript; each line starts with the time it was said. List only what was actually said, one per line, exactly in this form:\ndecision|HH:MM:SS|what was decided\naction|HH:MM:SS|who does what (when said)\nquestion|HH:MM:SS|a question left open\nNo other lines. If there are none, reply NONE.\n"""\n%s\n"""' "$(tail -c 12000 "$notes")")
-  if ! reply=$(friday_ask_local "$request" 2>/dev/null); then
+  if reply=$(friday_ask_local "$request" 2>/dev/null); then here=true
+  else
     if ! $yes; then
       echo "There's no local model, so the transcript ($(wc -l <"$notes") lines) would go to your AI provider."
       local a; read -r -p "Send it? [y/N] " a || a=n
@@ -1907,7 +1924,26 @@ friday_meeting() {
     [[ "$kind" =~ ^(decision|action|question)$ && "$at" =~ ^[[:space:]]*[0-9]{1,2}:[0-9]{2}(:[0-9]{2})?[[:space:]]*$ && -n "${text// /}" ]] || continue
     friday-ctl thought add "$kind" "(meeting $(basename "$notes" .txt), ${at// /}) ${text# }" >/dev/null 2>&1 && kept=$((kept + 1))
     echo "$kind at ${at// /}: ${text# }"
+    listed+="- ${kind^} at ${at// /}: ${text# }"$'\n'
   done <<<"$reply"
+  # Kept with the answers too, named by when the call was ("the 3pm call"),
+  # so friday answers search and "what did we decide in the 3pm call?" find it.
+  if [ -n "$listed" ] && friday_feature_on meeting-notes; then
+    local from to day hour label state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/friday"
+    from=$(grep -oE '^[0-9]{1,2}:[0-9]{2}' "$notes" | head -n1 || true)
+    to=$(grep -oE '^[0-9]{1,2}:[0-9]{2}' "$notes" | tail -n1 || true)
+    [ -n "$from" ] || from=$(date +%H:%M); [ -n "$to" ] || to="$from"
+    day=$(basename "$notes" .txt | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2}' || date +%F)
+    hour=$((10#${from%%:*}))
+    if (( hour == 0 )); then label="12am"; elif (( hour < 12 )); then label="${hour}am"; elif (( hour == 12 )); then label="12pm"; else label="$((hour - 12))pm"; fi
+    mkdir -p "$state_dir"
+    (umask 077
+     exec 9>"$state_dir/answers.lock"
+     flock -w 5 9 2>/dev/null || ! command -v flock >/dev/null || exit 0
+     { printf '<!-- friday answer -->\n# Notes from the %s call (%s to %s)\n_%s %s_\n' "$label" "$from" "$to" "$day" "$from"
+       ! $here || printf '%s\n' "_On this computer · nothing was sent_"
+       printf '\n%s\n---\n\n' "$listed"; } >>"$state_dir/answers.md") || true
+  fi
   if [ "$kept" -eq 0 ]; then echo "Nothing to keep from that meeting."; else echo "Kept $kept under the project in front (friday-ctl thought list)."; fi
 }
 
@@ -4488,6 +4524,7 @@ friday_local_ai_bench() {
 # FRIDAY Settings → Features). All are on until switched off; the ones off
 # are listed, one a line, in features-off in FRIDAY's config folder.
 FRIDAY_FEATURES="whats-new|After an update, one card says what changed and which switches are new
+meeting-notes|A call's decisions and to-dos are kept with your answers, found by friday answers search
 panic-key|Super+Ctrl+Shift+Escape stops agents, voice, capture and routines at once (friday panic)
 voice-vad|A small speech detector checks a piece has a voice in it before whisper runs
 key-check|friday doctor says when another bind has one of FRIDAY's keys

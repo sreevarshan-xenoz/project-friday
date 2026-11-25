@@ -516,6 +516,13 @@ pub fn told_about(goal: &str, now: DateTime<Local>) -> Option<(String, i64)> {
         "what did friday say about ",
         "what did you tell me on ",
         "what did we talk about ",
+        // A call's notes (friday meeting): "what did we decide in the 3pm call".
+        "what did we decide in ",
+        "what did we decide on ",
+        "what did we decide at ",
+        "what did we decide about ",
+        "what was decided in ",
+        "what was decided at ",
     ]
     .iter()
     .find_map(|p| g.strip_prefix(p))?;
@@ -611,6 +618,12 @@ mod tests {
                 .1,
             0
         );
+        let (topic, _) = told_about("What did we decide in the 3pm call?", now).unwrap();
+        assert_eq!(search_words(&topic), ["3pm", "call"]);
+        let notes = "<!-- friday answer -->\n# Notes from the 3pm call (15:02 to 15:40)\n_2026-11-25 15:02_\n\n- Decision at 15:05:12: Ship on Friday\n---\n";
+        let found = search_answers(notes, &search_words(&topic), 0, true, 5);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].line, "- Decision at 15:05:12: Ship on Friday");
     }
 
     #[test]
