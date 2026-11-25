@@ -2471,13 +2471,38 @@ contains "offers connecting an account" "$(cat "$LOG")" "connect=Connect an acco
 contains "offers choosing a provider" "$(cat "$LOG")" "setup=Choose AI provider"
 contains "setup opens in a terminal" "$(cat "$LOG")" "foot -T FRIDAY setup"
 : >"$LOG"; bash "$F" welcome
-if [[ ! -s "$LOG" ]]; then pass "shown only once"; else fail "shown twice"; fi
+if grep -q "^notify " "$LOG"; then fail "shown twice"; else pass "shown only once"; fi
 # With FRIDAY Shell running, the welcome is its tour instead of a notification.
 TOUR="$W/tour"; mkdir -p "$TOUR/bin" "$TOUR/shell"; : >"$TOUR/shell/shell.qml"
 printf '#!/bin/bash\necho "quickshell $*" >>"%s"\n' "$LOG" >"$TOUR/bin/quickshell"; chmod +x "$TOUR/bin/quickshell"
 : >"$LOG"; PATH="$TOUR/bin:$PATH" FRIDAY_SHELL_DIR="$TOUR/shell" bash "$F" welcome --force
 contains "with FRIDAY Shell, the welcome starts its tour" "$(cat "$LOG")" "ipc call tour begin"
 if grep -q "^notify " "$LOG"; then fail "the tour welcome also notified"; else pass "the tour replaces the welcome notification"; fi
+
+echo "what's new"
+WN="$W/whats-new"; printf '# notes\n## 0.11.0\n- eleven\n## 0.10.0\n- ten a\n- ten b\n## 0.9.0\n- nine\n' >"$WN"
+export FRIDAY_WHATS_NEW_FILE="$WN"
+WS="$HOME/.local/state/friday"; rm -f "$WS/whats-new-seen" "$WS/features-seen"
+FRIDAY_VERSION=0.9.0 bash "$F" whats-new --record
+: >"$LOG"; FRIDAY_VERSION=0.9.0 bash "$F" welcome
+if [[ ! -s "$LOG" ]]; then pass "no card while the version is the same"; else fail "a card without an update"; fi
+grep -vx instant-answers "$WS/features-seen" >"$WS/fs" && mv "$WS/fs" "$WS/features-seen"
+: >"$LOG"; FRIDAY_VERSION=0.10.0.r12.gabcdef0-1 bash "$F" welcome
+contains "after an update, one card says what changed" "$(cat "$LOG")" "What's new in FRIDAY 0.10.0"
+contains "with the lines since the version seen" "$(cat "$LOG")" "- ten b"
+if grep -qE "eleven|nine" "$LOG"; then fail "the card shows other versions"; else pass "and only those"; fi
+contains "and the switch that is new" "$(cat "$LOG")" "friday feature instant-answers on|off"
+: >"$LOG"; FRIDAY_VERSION=0.10.0.r13.g1234567-1 bash "$F" welcome
+if [[ ! -s "$LOG" ]]; then pass "the card shows once per version"; else fail "the card came back"; fi
+out=$(FRIDAY_VERSION=0.10.0 bash "$F" whats-new)
+contains "friday whats-new shows this version's again" "$out" "- ten a"
+rm -f "$WS/whats-new-seen"; out=$(FRIDAY_VERSION=0.10.0 bash "$F" whats-new)
+contains "an older install that never looked sees what it has" "$out" "- nine"
+bash "$F" feature whats-new off >/dev/null
+: >"$LOG"; FRIDAY_VERSION=0.11.0 bash "$F" welcome
+if [[ ! -s "$LOG" ]]; then pass "the whats-new switch turns the card off"; else fail "a card with the switch off"; fi
+bash "$F" feature whats-new on >/dev/null
+unset FRIDAY_WHATS_NEW_FILE
 
 # The newest question wins: a slow answer that lands after a later question is kept, not shown.
 mkdir -p "$W/slow-ask"
@@ -2581,7 +2606,7 @@ printf '#!/bin/bash\necho "quickshell never" >>"%s"\nexit 1\n' "$LOG" >"$SLOW/bi
 : >"$LOG"; PATH="$SLOW/bin:$PATH" FRIDAY_SHELL_DIR="$SLOW/shell" FRIDAY_WELCOME_WAIT=1 FRIDAY_WELCOME_RETRY_TENTHS=2 bash "$F" welcome
 contains "no shell at all: the notification is shown" "$(cat "$LOG")" "Hello,"
 : >"$LOG"; PATH="$SLOW/bin:$PATH" FRIDAY_SHELL_DIR="$SLOW/shell" FRIDAY_WELCOME_WAIT=1 bash "$F" welcome
-if [[ ! -s "$LOG" ]]; then pass "and it is not shown again"; else fail "shown again after the fallback"; fi
+if grep -q "^notify " "$LOG"; then fail "shown again after the fallback"; else pass "and it is not shown again"; fi
 
 echo "shell supervision"
 # A stub quickshell: `-n -p DIR` starts it (crashing the first $QS_CRASHES

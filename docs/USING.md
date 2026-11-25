@@ -175,6 +175,10 @@ moves on. The steps offer buttons for turning on a voice and pairing a phone. Ta
 `friday tour`. On Windows the first run opens a welcome window with the same idea (reopen it from the tray menu's
 "Welcome…").
 
+After an update, the first login shows one card with what changed since the version you last saw and any new
+feature switches. It shows once per version; `friday whats-new` shows it again, and `friday feature whats-new off`
+turns the card off (Linux; Windows to follow).
+
 ## Other ways to ask
 
 ```

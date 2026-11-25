@@ -1,0 +1,15 @@
+# What changed in each FRIDAY version, newest first, in plain words: a
+# "## X.Y.Z" line, then one "- " line per change people will notice. After an
+# update FRIDAY shows the lines since the version you last saw, once
+# (friday whats-new shows them again).
+## 0.10.0
+- Super+I opens FRIDAY Settings, with every key and every command in one place.
+- Click one control and ask about it: only that part of the window is sent.
+- An answer about a window shows the exact line it relied on.
+- Drop a text file or PDF on the ask box to ask about it.
+- Tap Super+Shift+Y twice to keep voice typing on; the last 20 dictations stay here to get one back.
+- Spoken answers can be brief, normal or detailed.
+- "What did you tell me about X last week?" finds past answers with their dates.
+- Password and card fields are painted over before a screenshot leaves.
+- Two coding agents can try one task, each in its own copy, and you keep the better one.
+- friday doctor --fix restarts what's stopped and checks again.

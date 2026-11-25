@@ -134,6 +134,7 @@ Autonomous Agent & Cognitive Loop:
   friday settings [page]           Open FRIDAY Settings (Super+I), e.g. friday settings keys
   friday app                       The same
   friday tour                      Take the first-login tour again
+  friday whats-new                 What changed in this version, and switches that are new
   friday screen-text [status|on|off]
   friday feature [list|<name> on|off]  Switch one of FRIDAY's features off or on again
   friday autonomy [ask-all|ask-risky|act]  How much FRIDAY may do without asking
@@ -2820,10 +2821,75 @@ friday_hold() {
   esac
 }
 
+# `friday whats-new`: the changes since the version you last saw, from the
+# package's whats-new file, and feature switches added since. --login shows
+# them once as a notification after an update; --record notes this version
+# and today's switches as seen without showing anything (a new install).
+friday_whats_new_seen() { echo "${XDG_STATE_HOME:-$HOME/.local/state}/friday/whats-new-seen"; }
+friday_whats_new_version() {
+  local v="${FRIDAY_VERSION:-}"
+  [ -n "$v" ] || v=$(pacman -Q friday-git 2>/dev/null | awk '{print $2}')
+  v="${v%%.r*}"; echo "${v%%-*}"
+}
+friday_whats_new() {
+  local file="${FRIDAY_WHATS_NEW_FILE:-/usr/share/friday/whats-new}" seen_file feats_file ver seen changes switches name what body
+  seen_file=$(friday_whats_new_seen); feats_file="$(dirname "$seen_file")/features-seen"
+  ver=$(friday_whats_new_version)
+  [ -n "$ver" ] || { echo "friday whats-new: FRIDAY isn't installed as a package here, so there's no version to compare." >&2; return 1; }
+  if [ "${1:-}" = --record ]; then
+    mkdir -p "$(dirname "$seen_file")"
+    echo "$ver" >"$seen_file"; cut -d'|' -f1 <<<"$FRIDAY_FEATURES" >"$feats_file"
+    return 0
+  fi
+  seen=$(cat "$seen_file" 2>/dev/null || true)
+  # Each version after the one seen, up to this one (this one's own, when it
+  # was seen already and you ask by hand).
+  changes=$(awk -v seen="${seen:-0}" -v ver="$ver" '
+    function newer(a, b,   x, y, i, n) {   # a > b, by dotted numbers
+      n = split(a, x, "."); split(b, y, ".")
+      for (i = 1; i <= 3; i++) if (x[i] + 0 != y[i] + 0) return x[i] + 0 > y[i] + 0
+      return 0
+    }
+    /^## / { v = $2; show = newer(v, seen) && !newer(v, ver); next }
+    show && /^- / { print }' "$file" 2>/dev/null || true)
+  if [ -z "$changes" ] && [ "${1:-}" != --login ]; then
+    changes=$(awk -v ver="$ver" '/^## / { show = $2 == ver; next } show && /^- /' "$file" 2>/dev/null || true)
+  fi
+  # Switches that weren't there last time (none listed on a first look: they
+  # would all be new).
+  if [ -f "$feats_file" ]; then
+    while IFS='|' read -r name what; do
+      grep -qxF -- "$name" "$feats_file" || switches+="- $what (friday feature $name on|off)"$'\n'
+    done <<<"$FRIDAY_FEATURES"
+  fi
+  body="$changes"
+  [ -z "$switches" ] || body+="${body:+$'\n'}New switches, on unless you turn them off:"$'\n'"${switches%$'\n'}"
+  if [ "${1:-}" = --login ]; then
+    if [ -n "$body" ]; then
+      # A card, not a wall: the first 8 lines, and where the rest are.
+      [ "$(wc -l <<<"$body")" -le 8 ] || body="$(head -n 8 <<<"$body")"$'\n'"… and more: friday whats-new"
+      notify-send -a FRIDAY -t 30000 -- "What's new in FRIDAY $ver" "$body" 2>/dev/null || return 0
+    fi
+  else
+    echo "What's new in FRIDAY $ver"
+    echo "${body:-Nothing new to tell since you last looked.}"
+  fi
+  friday_whats_new --record
+}
+
 friday_welcome() {
   local stamp="${XDG_STATE_HOME:-$HOME/.local/state}/friday/welcomed"
   local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
-  [ "${1:-}" = "--force" ] || [ ! -e "$stamp" ] || return 0
+  if [ "${1:-}" != "--force" ] && [ -e "$stamp" ]; then
+    # Welcomed before: after an update, say once what changed.
+    local v; v=$(friday_whats_new_version)
+    friday_feature_on whats-new && [ -n "$v" ] && [ "$v" != "$(cat "$(friday_whats_new_seen)" 2>/dev/null)" ] || return 0
+    sleep "${FRIDAY_WELCOME_DELAY:-6}"
+    friday_whats_new --login
+    return 0
+  fi
+  # A new install starts with the tour, not a list of changes.
+  friday_whats_new --record 2>/dev/null || true
   sleep "${FRIDAY_WELCOME_DELAY:-6}"   # let the notification daemon come up
   local name action
   name=$(getent passwd "${USER:-$(id -un)}" | cut -d: -f5 | cut -d, -f1 || true); name="${name:-${USER:-friend}}"
@@ -4280,7 +4346,8 @@ friday_local_ai_bench() {
 # The features that can be switched off one by one (`friday feature`, and
 # FRIDAY Settings → Features). All are on until switched off; the ones off
 # are listed, one a line, in features-off in FRIDAY's config folder.
-FRIDAY_FEATURES="instant-answers|Arithmetic and unit conversions worked out here at once
+FRIDAY_FEATURES="whats-new|After an update, one card says what changed and which switches are new
+instant-answers|Arithmetic and unit conversions worked out here at once
 motion|FRIDAY Shell's animations: the answer card, drawers and the pulsing orb (off: everything changes at once)
 app-bundles|The first-login tour offers app bundles (developer, gaming, productivity, creative) to install in one go
 what-works|When FRIDAY is offline, say so and what still works
@@ -6406,6 +6473,10 @@ $offer"
   welcome)
     shift
     friday_welcome "$@"
+    ;;
+  whats-new)
+    shift
+    friday_whats_new "$@"
     ;;
   voice)
     shift
