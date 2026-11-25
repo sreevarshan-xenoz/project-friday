@@ -57,8 +57,8 @@ pub use telemetry::{MeasuredOutcome, ProviderStats, ProviderTelemetry};
 pub use terminal::TerminalAdapter;
 #[cfg(target_os = "linux")]
 pub use ui::{
-    is_password_role, label_is_dangerous, ui_risk_of, validate_path, AppInfo, AtspiBackend,
-    NodeDetails, ResolvedTarget, UiAdapter, UiBackend, UiRisk,
+    closest_label, is_password_role, label_is_dangerous, ui_risk_of, validate_path, AppInfo,
+    AtspiBackend, NodeDetails, ResolvedTarget, UiAdapter, UiBackend, UiRisk,
 };
 pub use web::{urlencode, WebAdapter};
 pub use webagent::{

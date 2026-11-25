@@ -365,7 +365,7 @@ Inside apps (only where an app lets FRIDAY look into it; GTK4 apps like Nautilus
   ui_type_text       params: {"app": "<app name>", "name": "<field label>" or "path": "...", "text": "<text>"}   (never into password fields)
 What you read inside an app is sent to the AI model answering, so read only what the request needs.
 
-Rules: when the request names the window that was in front when it was asked, "this window" (or app, or tab) is that one, not whatever active_window says now. For "is my computer okay / why is it slow", call system_health, then say in plain words what is wrong and the one safest fix; never run a fix without being asked. To open an app you are not sure of the exact name of, call find_app first and launch what it returns. Look first (windows) when you don't know a window's exact name. Never invent a window. If an action fails, read why and fix it or say you couldn't."#;
+Rules: when the request names the window that was in front when it was asked, "this window" (or app, or tab) is that one, not whatever active_window says now. For "is my computer okay / why is it slow", call system_health, then say in plain words what is wrong and the one safest fix; never run a fix without being asked. To open an app you are not sure of the exact name of, call find_app first and launch what it returns. Look first (windows) when you don't know a window's exact name. Never invent a window. If an action fails, read why and fix it or say you couldn't. Never repeat a step that failed: try one different thing, and when a failure names the closest control, that is the alternative to try."#;
 
 /// The same loop's instructions on Windows: the windows and apps the Windows
 /// host can see and act on; its desktops can be listed and switched but not
@@ -399,7 +399,7 @@ Inside apps (only where an app lets FRIDAY look into it through Windows UI Autom
   ui_type_text       params: {"app": "<app name>", "name": "<field label>", "text": "<text>"}   (never into password fields)
 What you read inside an app is sent to the AI model answering, so read only what the request needs.
 
-Rules: when the request names the window that was in front when it was asked, "this window" (or app, or tab) is that one, not whatever active_window says now. For "is my computer okay / why is it slow", call system_health, then say in plain words what is wrong and the one safest fix; never run a fix without being asked. To open an app you are not sure of the exact name of, call find_app first and launch what it returns. Look first (windows) when you don't know a window's exact name. Never invent a window. If an action fails, read why and fix it or say you couldn't."#;
+Rules: when the request names the window that was in front when it was asked, "this window" (or app, or tab) is that one, not whatever active_window says now. For "is my computer okay / why is it slow", call system_health, then say in plain words what is wrong and the one safest fix; never run a fix without being asked. To open an app you are not sure of the exact name of, call find_app first and launch what it returns. Look first (windows) when you don't know a window's exact name. Never invent a window. If an action fails, read why and fix it or say you couldn't. Never repeat a step that failed: try one different thing, and when a failure names the closest control, that is the alternative to try."#;
 
 /// The first JSON object in a model reply (it may add words around it).
 fn first_json(reply: &str) -> Option<Value> {
@@ -479,6 +479,19 @@ pub(crate) fn desktop_verdict(ok: bool, output: &str) -> String {
 }
 
 /// What the person is told when they stopped the task partway.
+/// Failed steps after which a task stops instead of trying more guesses.
+pub const MAX_FAILS: usize = 3;
+
+/// What a task that kept failing says: the last reason (which names the
+/// closest control when a click found none) and the steps taken.
+fn gave_up_message(last: &str, steps: &[String]) -> String {
+    format!(
+        "stopped after {MAX_FAILS} steps failed, rather than guess again. The last one: {}\nSteps taken:\n{}",
+        last.trim(),
+        steps.join("\n")
+    )
+}
+
 fn stopped_message(steps: &[String]) -> String {
     if steps.is_empty() {
         "Stopped. Nothing was changed.".to_string()
@@ -593,6 +606,11 @@ impl Tool for DesktopControlTool {
         // Apps started for this request: a second launch_app of one would
         // open another empty window (a browser opens one per launch).
         let mut launched: Vec<String> = Vec::new();
+        // Steps that failed, exactly as asked: not run again (ui-recovery),
+        // and after MAX_FAILS of them the task stops and says why.
+        let recovery = crate::features::on("ui-recovery");
+        let mut failed: Vec<String> = Vec::new();
+        let mut last_failure = String::new();
         for n in 1..=MAX_STEPS {
             if self.abort.load(Ordering::SeqCst) {
                 return ToolResult::error(stopped_message(&steps));
@@ -641,6 +659,16 @@ impl Tool for DesktopControlTool {
                 .filter(Value::is_object)
                 .unwrap_or(json!({}));
             let mut params = params;
+            let asked = format!(
+                "{verb} {}",
+                serde_json::to_string(&params).unwrap_or_default()
+            );
+            if recovery && failed.contains(&asked) {
+                log.push_str(&format!(
+                    "{n}. {asked} -> not tried again: that exact step already failed. Do one different thing (another control, the closest one a failure named, reading the window first) or reply done saying what stopped you\n"
+                ));
+                continue;
+            }
             let is_ui = verb.starts_with("ui_");
             let risk = if is_ui {
                 // Inside-of-apps actions are known by the UI adapter; whether a
@@ -674,6 +702,11 @@ impl Tool for DesktopControlTool {
                         self.record(verb, &params, false, &goal);
                         log.push_str(&format!("{n}. {verb} -> failed: {e}\n"));
                         steps.push(format!("- {verb}: failed"));
+                        failed.push(asked);
+                        last_failure = e;
+                        if recovery && failed.len() >= MAX_FAILS {
+                            return ToolResult::error(gave_up_message(&last_failure, &steps));
+                        }
                         continue;
                     }
                     Ok((path, label)) => {
@@ -752,9 +785,21 @@ impl Tool for DesktopControlTool {
                 serde_json::to_string(&params).unwrap_or_default(),
                 if ok { "ok" } else { "failed" }
             ));
+            if !ok {
+                failed.push(asked);
+                last_failure = out;
+                if recovery && failed.len() >= MAX_FAILS {
+                    return ToolResult::error(gave_up_message(&last_failure, &steps));
+                }
+            }
         }
         ToolResult::error(format!(
-            "stopped after {MAX_STEPS} steps without finishing. Steps taken:\n{}",
+            "stopped after {MAX_STEPS} steps without finishing.{} Steps taken:\n{}",
+            if last_failure.is_empty() {
+                String::new()
+            } else {
+                format!(" The last failure: {}.", last_failure.trim())
+            },
             if steps.is_empty() {
                 "(none)".to_string()
             } else {
@@ -1565,6 +1610,34 @@ mod tests {
             ran[1].1.get("confirmed").is_none(),
             "no confirmation was needed or claimed"
         );
+    }
+
+    #[tokio::test]
+    async fn a_failed_step_is_not_retried_and_three_failures_stop_the_task() {
+        let model = Script::new(&[
+            r#"{"action":"ui_click","params":{"app":"gedit","name":"Save file"}}"#,
+            r#"{"action":"ui_click","params":{"app":"gedit","name":"Save file"}}"#,
+            r#"{"action":"ui_click","params":{"app":"gedit","name":"Store"}}"#,
+            r#"{"action":"ui_click","params":{"app":"gedit","name":"Keep"}}"#,
+            r#"{"done":"should never get here"}"#,
+        ]);
+        let ui = StubUi::new(&[("Save As…", "0/1")]);
+        let t = tool_with_ui(model.clone(), ui.clone(), Arc::default());
+        let r = run(&t, "save the file in gedit").await;
+        assert!(!r.success);
+        let err = r.error.unwrap_or_default();
+        assert!(err.contains("stopped after 3 steps failed"), "{err}");
+        // The person hears why the last one failed.
+        assert!(err.contains("\"keep\""), "{err}");
+        // The repeat was refused, and the model was told why.
+        let prompts = model.prompts.lock().unwrap().clone();
+        assert!(prompts[2].contains("not tried again: that exact step already failed"));
+        assert_eq!(
+            prompts.len(),
+            4,
+            "the model wasn't asked again after the third failure"
+        );
+        assert!(ui.ran().is_empty(), "nothing was pressed");
     }
 
     #[tokio::test]

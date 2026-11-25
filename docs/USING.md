@@ -136,6 +136,8 @@ first and shows the button's name. Passwords are never read or typed into. What
 it reads inside an app goes to the AI model answering you; in private mode that
 model is on your computer.
 
+When a step fails, FRIDAY doesn't retry it blindly: the same step isn't run twice, a click that finds no such button names the closest one that can't delete or send anything ("the closest is \"Save As…\"") as the one thing to try instead, and after three failed steps it stops and tells you the last reason. Nothing is pressed that wasn't asked for. `friday feature ui-recovery off` turns this off.
+
 ## Talking to FRIDAY
 
 When something you asked by voice needs your OK, FRIDAY stops talking, plays a short sound and listens once (about six seconds, only while the Run/Cancel prompt is on screen): say "run" or "cancel" ("yes", "no" and the like work too, but only as the whole answer). Something that can't be undone, like deleting files or closing a window, can be cancelled by voice but needs a click (or your phone) to run. A question you typed never opens the microphone. `friday feature voice-confirm off` (Windows: Features, voice-confirm) turns it off.

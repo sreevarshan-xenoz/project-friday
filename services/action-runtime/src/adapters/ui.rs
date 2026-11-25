@@ -103,6 +103,47 @@ pub fn label_is_dangerous(label: &str) -> bool {
     })
 }
 
+/// The one label most like `wanted` that pressing can't lose or send
+/// anything with: it shares a word with it (or a word starts the other's,
+/// "save" and "saving"), and of those the closest in length. None when
+/// nothing is alike. A failed click names it instead of guessing again; it is
+/// never pressed without the model asking for it.
+pub fn closest_label<'a>(
+    wanted: &str,
+    labels: impl IntoIterator<Item = &'a str>,
+) -> Option<&'a str> {
+    fn words(s: &str) -> Vec<String> {
+        s.to_lowercase()
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| w.chars().count() >= 2)
+            .map(str::to_string)
+            .collect()
+    }
+    let want = words(wanted);
+    let alike = |a: &str, b: &str| {
+        a == b || (a.len().min(b.len()) >= 3 && (a.starts_with(b) || b.starts_with(a)))
+    };
+    labels
+        .into_iter()
+        .filter(|l| !l.trim().is_empty() && !label_is_dangerous(l))
+        .filter(|l| !l.trim().eq_ignore_ascii_case(wanted.trim()))
+        .map(|l| {
+            let shared = words(l)
+                .iter()
+                .filter(|w| want.iter().any(|v| alike(w, v)))
+                .count();
+            (shared, l)
+        })
+        .filter(|(shared, _)| *shared > 0)
+        .max_by(|(a, la), (b, lb)| {
+            a.cmp(b).then_with(|| {
+                let d = |l: &str| l.chars().count().abs_diff(wanted.chars().count());
+                d(lb).cmp(&d(la))
+            })
+        })
+        .map(|(_, l)| l)
+}
+
 /// Validates a path string composed of slash-separated child indexes (e.g. "0/2/5/1").
 /// Must contain digits and slashes only, with 1 to `MAX_DEPTH` segments.
 pub fn validate_path(path: &str) -> Result<Vec<usize>, String> {
@@ -1137,8 +1178,11 @@ impl UiAdapter {
                             .search_nodes(&app_info.id, "", 1, MAX_DEPTH, &criteria, &mut seen)
                             .await;
                         if seen.is_empty() {
+                            let near = closest_label(n, candidates.iter().map(|c| c.3.as_str()))
+                                .map(|l| format!("; the closest is \"{l}\""))
+                                .unwrap_or_default();
                             Err(format!(
-                                "no clickable element in \"{}\" matches \"{n}\"",
+                                "no clickable element in \"{}\" matches \"{n}\"{near}",
                                 app_info.name
                             ))
                         } else {
@@ -1580,6 +1624,33 @@ impl ActionAdapter for UiAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_click_names_the_closest_safe_control() {
+        let labels = [
+            "Save As…",
+            "Open",
+            "Delete file",
+            "Saved searches",
+            "Cancel",
+        ];
+        assert_eq!(closest_label("Save", labels), Some("Save As…"));
+        // A word that starts another counts ("save" and "saved").
+        assert_eq!(
+            closest_label("Saved", ["Save As…", "Open"]),
+            Some("Save As…")
+        );
+        // Never one that could delete or send something.
+        assert_eq!(closest_label("Delete", labels), None);
+        assert_eq!(closest_label("Remove file", ["Delete file", "Open"]), None);
+        // Nothing alike: nothing offered.
+        assert_eq!(closest_label("Print", labels), None);
+        // Not the very label that failed.
+        assert_eq!(
+            closest_label("Open", ["Open", "Open recent"]),
+            Some("Open recent")
+        );
+    }
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;

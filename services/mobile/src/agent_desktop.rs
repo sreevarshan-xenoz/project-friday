@@ -888,7 +888,34 @@ impl AgentDesktopUi {
                 .await?;
         }
         if matches.is_empty() {
-            return Err(format!("nothing named \"{name}\" in {app} to press"));
+            // One safe control like it, found by its words, to offer instead
+            // of guessing again (ui-recovery). Linux only: the label rules
+            // live in friday_actions' AT-SPI module.
+            #[allow(unused_mut)]
+            let mut near = String::new();
+            #[cfg(target_os = "linux")]
+            if crate::features::on("ui-recovery") {
+                let mut seen: Vec<ActionableMatch> = Vec::new();
+                let mut words: Vec<&str> = name
+                    .split(|c: char| !c.is_alphanumeric())
+                    .filter(|w| w.chars().count() >= 3)
+                    .collect();
+                words.sort_by_key(|w| std::cmp::Reverse(w.len()));
+                for w in words.into_iter().take(3) {
+                    if let Ok(found) = self
+                        .find_elements(app, Some(w), None, false, window_id)
+                        .await
+                    {
+                        seen.extend(found);
+                    }
+                }
+                if let Some(l) =
+                    friday_actions::closest_label(name, seen.iter().map(|m| m.name.as_str()))
+                {
+                    near = format!("; the closest is \"{l}\"");
+                }
+            }
+            return Err(format!("nothing named \"{name}\" in {app} to press{near}"));
         }
         if matches.len() > 1 {
             let candidates = matches

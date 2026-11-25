@@ -4529,6 +4529,7 @@ FRIDAY_FEATURES="whats-new|After an update, one card says what changed and which
 meeting-notes|A call's decisions and to-dos are kept with your answers, found by friday answers search
 free-tiers|Public free models you turned on (friday free-tiers) can answer (off: none of them is used)
 free-tiers-everywhere|Public free models you turned on answer every ask, the screen and selections too (off: only plain typed questions with nothing added)
+ui-recovery|A step that failed isn't tried again; a click that finds nothing names the closest safe control; three failures stop
 panic-key|Super+Ctrl+Shift+Escape stops agents, voice, capture and routines at once (friday panic)
 voice-vad|A small speech detector checks a piece has a voice in it before whisper runs
 key-check|friday doctor says when another bind has one of FRIDAY's keys
