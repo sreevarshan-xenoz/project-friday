@@ -53,12 +53,12 @@ if [[ "${SKIP_PACKAGE_BUILD:-false}" != "true" ]]; then
     makepkg -f --noconfirm --syncdeps --nocheck)
   rm -rf "$PKG_BUILD_DIR"
 
-  # Pocketdesk (the phone as a screen, keyboard and remote; it can also answer
-  # FRIDAY's questions): the pinned release, repackaged, no compile.
-  echo "Building the Pocketdesk package..."
-  find "$FRIDAY_REPO_DIR" -maxdepth 1 -name 'pocketdesk*' -type f -delete
+  # FRIDAY Mobile (the phone as a screen, keyboard and remote; it can also
+  # answer FRIDAY's questions): the pinned release, repackaged, no compile.
+  echo "Building the FRIDAY Mobile package..."
+  find "$FRIDAY_REPO_DIR" -maxdepth 1 \( -name 'friday-mobile*' -o -name 'pocketdesk*' \) -type f -delete
   PD_BUILD_DIR=$(mktemp -d)
-  cp "$PROJECT_ROOT/packaging/arch/pocketdesk/PKGBUILD" "$PROJECT_ROOT/packaging/arch/pocketdesk/pocketdesk.install" "$PD_BUILD_DIR/"
+  cp "$PROJECT_ROOT/packaging/arch/friday-mobile/PKGBUILD" "$PROJECT_ROOT/packaging/arch/friday-mobile/friday-mobile.install" "$PD_BUILD_DIR/"
   (cd "$PD_BUILD_DIR" && PKGDEST="$FRIDAY_REPO_DIR" makepkg -f --noconfirm --syncdeps --nocheck)
   rm -rf "$PD_BUILD_DIR"
 fi
@@ -68,14 +68,14 @@ if [[ -z "$FRIDAY_PKG" ]]; then
   echo "  Run without SKIP_PACKAGE_BUILD=true (needs base-devel and rust)." >&2
   exit 1
 fi
-POCKETDESK_PKG=$(find "$FRIDAY_REPO_DIR" -maxdepth 1 -name 'pocketdesk-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1)
-if [[ -z "$POCKETDESK_PKG" ]]; then
-  echo "Error: no pocketdesk package in $FRIDAY_REPO_DIR" >&2
+PHONE_PKG=$(find "$FRIDAY_REPO_DIR" -maxdepth 1 -name 'friday-mobile-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1)
+if [[ -z "$PHONE_PKG" ]]; then
+  echo "Error: no friday-mobile package in $FRIDAY_REPO_DIR" >&2
   echo "  Run without SKIP_PACKAGE_BUILD=true." >&2
   exit 1
 fi
 rm -f "$FRIDAY_REPO_DIR"/friday.db* "$FRIDAY_REPO_DIR"/friday.files*
-repo-add -q "$FRIDAY_REPO_DIR/friday.db.tar.gz" "$FRIDAY_PKG" "$POCKETDESK_PKG"
+repo-add -q "$FRIDAY_REPO_DIR/friday.db.tar.gz" "$FRIDAY_PKG" "$PHONE_PKG"
 # The profile's pacman.conf plus the local repo, for this build only.
 BUILD_PACMAN_CONF=$(mktemp)
 trap 'rm -f "$BUILD_PACMAN_CONF"' EXIT

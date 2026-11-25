@@ -43,7 +43,7 @@ optdepends=(
   "noto-fonts: characters FRIDAY's own fonts lack"
   'brightnessctl: brightness slider in FRIDAY Shell'
   'networkmanager: network status in FRIDAY Shell'
-  'pocketdesk: pair a phone (friday phone) and answer FRIDAY from it'
+  'friday-mobile: pair a phone (friday phone) and answer FRIDAY from it'
   'fd: file search in the FRIDAY Shell launcher'
   'age: encrypted sync between your machines (friday sync, with openssh to sign)'
   'opencode: more free answers when Zen refuses other apps (same free quota)'

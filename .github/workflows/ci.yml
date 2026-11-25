@@ -124,12 +124,12 @@ jobs:
           runuser -u builder -- env RUSTFLAGS= makepkg --noconfirm
       - name: Smoke test the package
         run: bash packaging/arch/check-package.sh packaging/arch/friday-git-*.pkg.tar.zst
-      - name: Build and smoke test Pocketdesk
+      - name: Build and smoke test FRIDAY Mobile
         run: |
-          cd packaging/arch/pocketdesk
+          cd packaging/arch/friday-mobile
           runuser -u builder -- makepkg --noconfirm
           cd ../../..
-          bash packaging/arch/check-pocketdesk.sh packaging/arch/pocketdesk/pocketdesk-*.pkg.tar.zst
+          bash packaging/arch/check-friday-mobile.sh packaging/arch/friday-mobile/friday-mobile-*.pkg.tar.zst
       - uses: actions/upload-artifact@v4
         with:
           name: friday-arch-package

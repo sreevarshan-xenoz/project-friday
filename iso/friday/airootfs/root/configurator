@@ -400,7 +400,7 @@ step_features() {
   local b="Run tasks I schedule (\"every morning at 8 ...\")"
   local c="Tell the AI which app a selected text came from"
   local d="Send a window's text instead of a screenshot when the app offers it (faster; it can include text scrolled out of view)"
-  local e="Offer to pair my Android phone at first login (Pocketdesk; it stays off until I pair)"
+  local e="Offer to pair my Android phone at first login (FRIDAY Mobile; it stays off until I pair)"
   local picks
   picks=$(printf '%s\n' "$a" "$b" "$c" "$d" "$e" \
     | gum choose --no-limit --cursor="$FRIDAY_CURSOR" --height=7 \

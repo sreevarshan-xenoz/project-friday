@@ -310,9 +310,9 @@ phase_msg 4 "Installing FRIDAY and the desktop"
 # package upgrade work on the installed system.
 FRIDAY_PKG=$(find /opt/friday/repo -maxdepth 1 -name 'friday-git-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1)
 [[ -n "$FRIDAY_PKG" ]] || { echo "the FRIDAY package is missing from /opt/friday/repo" >&2; exit 1; }
-POCKETDESK_PKG=$(find /opt/friday/repo -maxdepth 1 -name 'pocketdesk-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1)
-[[ -n "$POCKETDESK_PKG" ]] || { echo "the Pocketdesk package is missing from /opt/friday/repo" >&2; exit 1; }
-pacstrap_with_retry -U /mnt "$FRIDAY_PKG" "$POCKETDESK_PKG"
+PHONE_PKG=$(find /opt/friday/repo -maxdepth 1 -name 'friday-mobile-*.pkg.tar.zst' 2>/dev/null | sort | tail -n1)
+[[ -n "$PHONE_PKG" ]] || { echo "the FRIDAY Mobile package is missing from /opt/friday/repo" >&2; exit 1; }
+pacstrap_with_retry -U /mnt "$FRIDAY_PKG" "$PHONE_PKG"
 # Local AI: the engine's packages now (first login has no root); the model
 # downloads at first login (friday-local-ai.service). friday-git is on the
 # live ISO, and it sees the same GPU.

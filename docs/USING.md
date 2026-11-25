@@ -331,11 +331,11 @@ Tell FRIDAY what's wrong, for example `friday ask "my wifi keeps dropping"`, `"w
 
 A fixed list decides which commands may run, not the AI. Each command may only take the options on its list, so ones that print secrets (saved Wi-Fi passwords, a process's environment) or read a file they're given are refused too. Nothing that changes your system runs here: no restarts, no installs, no `sudo`, no reading your files or keys. When the fix needs such a command, FRIDAY tells you what it is so you can run it yourself, or say `friday ask "run <command>"`, which asks you first. Command output has secrets masked before it goes to your AI provider. `FRIDAY_DIAGNOSE=0` turns troubleshooting off.
 
-## Your phone (Pocketdesk)
+## Your phone (FRIDAY Mobile)
 
-The installer offers pairing at first login unless you untick it (the "What may FRIDAY do?" step). FRIDAY OS installs Pocketdesk, which shows this computer on your Android phone and lets the phone act as its screen, keyboard and remote. It stays off until you turn it on: `friday phone on` asks first, starts it in your session and prints a PIN to enter in the Pocketdesk app on the phone; `friday phone off` stops it and `friday phone status` says where it stands.
+The installer offers pairing at first login unless you untick it (the "What may FRIDAY do?" step). FRIDAY OS installs [FRIDAY Mobile](https://github.com/sreevarshan-xenoz/friday-mobile), FRIDAY's phone app, which shows this computer on your Android phone and lets the phone act as its screen, keyboard and remote. It stays off until you turn it on: `friday phone on` asks first, starts it in your session and prints a PIN to enter in the FRIDAY Mobile app on the phone (`friday-mobile-…-android-arm64.apk` from its releases); `friday phone off` stops it and `friday phone status` says where it stands.
 
 Once a phone is paired and has "Answer my questions" turned on (its Devices page; it is off by default), FRIDAY's questions before it does anything that deletes or sends also go to the phone as a notification. Answer on either one: the first answer wins. No on the phone is one tap; Yes needs the phone's fingerprint or screen lock, so a phone without one can only say No. With no phone set up, nothing changes.
 
-To ask FRIDAY from the phone, add a deck button in Pocketdesk's Settings ("Deck buttons"): a label like "Ask FRIDAY" that presses `super+y`. A tap on the phone opens FRIDAY's ask box on the computer, as if you had pressed the key.
+To ask FRIDAY from the phone, add a deck button in FRIDAY Mobile's Settings ("Deck buttons"): a label like "Ask FRIDAY" that presses `super+y`. A tap on the phone opens FRIDAY's ask box on the computer, as if you had pressed the key.
 

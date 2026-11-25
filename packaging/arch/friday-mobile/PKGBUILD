@@ -1,0 +1,67 @@
+# FRIDAY Mobile (FRIDAY's phone app: your computer on your Android phone, and
+# a place to answer FRIDAY's questions) for FRIDAY OS. FRIDAY OS and the
+# [friday] pacman repo carry this package, so it installs and updates with
+# pacman and nothing is fetched from the AUR at install time.
+#
+# It repackages the project's own Linux release (the tarball is a static
+# build) rather than compiling it: the release is pinned below by version and
+# checksum. To move the pin, change the version and the three hashes in their
+# own commit (the release's SHA256SUMS lists the tarball's; the desktop entry
+# and icon are fetched from the same tag). The service is installed but not
+# turned on: pairing a phone (`friday phone`) does that, with consent.
+#
+# Its files never overlap Pocketdesk's, so a computer that has the pocketdesk
+# package keeps it untouched: the icon is installed as dev.friday.Mobile.
+
+pkgname=friday-mobile
+pkgver=0.10.0
+pkgrel=1
+pkgdesc="FRIDAY's phone app: your Linux or Windows desktop on your Android phone (screen, input, clipboard, files and notifications), and answers to FRIDAY's questions"
+arch=('x86_64')
+url="https://github.com/sreevarshan-xenoz/friday-mobile"
+license=('MIT OR Apache-2.0')
+# What the static binaries still load (as the Pocketdesk build they come from).
+depends=('glibc' 'gcc-libs' 'hicolor-icon-theme' 'libdrm' 'libpipewire' 'libxcb' 'mesa' 'wayland')
+optdepends=(
+  'pipewire: screen capture through the portal, and sound'
+  'xdg-desktop-portal: screen capture on GNOME and KDE'
+  'wl-clipboard: the clipboard on Wayland'
+  'xclip: the clipboard on X11'
+  'playerctl: what is playing, and Play/Pause and skip from the phone'
+  'tailscale: reaching the computer through a tailnet'
+)
+install=friday-mobile.install
+options=('!strip' '!debug' '!lto')
+
+_tag="v${pkgver}"
+_dir="friday-mobile-${_tag}-linux-x86_64"
+source=("friday-mobile-${pkgver}.tar.gz::${url}/releases/download/${_tag}/${_dir}.tar.gz"
+        "dev.friday.Mobile-${pkgver}.desktop::https://raw.githubusercontent.com/sreevarshan-xenoz/friday-mobile/${_tag}/packaging/linux/dev.friday.Mobile.desktop"
+        "friday-mobile-icon-${pkgver}.svg::https://raw.githubusercontent.com/sreevarshan-xenoz/friday-mobile/${_tag}/assets/brand/friday/friday.svg")
+sha256sums=('706b6b3782f824555b8d87e115bbbe3d7c0838005ba9e324bc3868daa68dbdc7'
+            'db5a5a6c410f290ed1c71fcb32b911a97112f334f91070c098d16200dd7fa6ef'
+            '642e84390eb53c96107516d4c28c14f56252198193355a74718d370b3510d18b')
+
+package() {
+  cd "$srcdir/$_dir"
+  for bin in friday-mobile friday-mobile-app friday-mobile-tray; do
+    install -Dm755 "$bin" "$pkgdir/usr/bin/$bin"
+  done
+  # "Approve with my phone": PAM's helper, root's. Unused until the owner
+  # adds its line to /etc/pam.d; the package never touches PAM.
+  install -Dm755 friday-mobile-pam-ask "$pkgdir/usr/lib/friday-mobile/friday-mobile-pam-ask"
+  # A session-bound user unit: off until `friday phone` (or systemctl --user
+  # enable --now friday-mobile) turns it on.
+  sed 's|^ExecStart=.*|ExecStart=/usr/bin/friday-mobile start|' friday-mobile.service \
+    | install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/user/friday-mobile.service"
+  # FRIDAY's mark, under FRIDAY Mobile's own icon name (Pocketdesk owns "pocketdesk").
+  sed 's|^Icon=.*|Icon=dev.friday.Mobile|' "$srcdir/dev.friday.Mobile-${pkgver}.desktop" \
+    | install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/dev.friday.Mobile.desktop"
+  install -Dm644 "$srcdir/friday-mobile-icon-${pkgver}.svg" \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/dev.friday.Mobile.svg"
+  install -Dm644 man/friday-mobile.1 "$pkgdir/usr/share/man/man1/friday-mobile.1"
+  for file in README.md SECURITY.md config.toml.example; do
+    install -Dm644 "$file" "$pkgdir/usr/share/doc/$pkgname/$file"
+  done
+  install -Dm644 LICENSE-MIT LICENSE-APACHE -t "$pkgdir/usr/share/licenses/$pkgname"
+}
