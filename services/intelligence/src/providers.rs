@@ -1537,8 +1537,9 @@ pub struct InferenceFabric {
     /// How long a streaming text answer may take to start while another
     /// candidate is still left to try: a busy free provider that has said
     /// nothing after this is dropped for the next one instead of costing the
-    /// whole [`request_timeout`]. Not for screen asks, providers with their own
-    /// minimum (connected accounts start a whole app) or the last candidate.
+    /// whole [`request_timeout`]. Only for a short text prompt (not a screenshot,
+    /// a screen's text or a big selection), and not for providers with their
+    /// own minimum (connected accounts start a whole app) or the last candidate.
     pub first_words_timeout: Option<std::time::Duration>,
     /// Where provider health (scores + circuit state) persists. Defaults to
     /// `.fabric/provider_health.json` (cwd-relative). Chaos laboratory Phase 2
@@ -3380,6 +3381,17 @@ pub fn opencode_static_models() -> Vec<ModelInfo> {
 /// The llama.cpp model entry. `vision` is set when llama-server was started
 /// with a multimodal projector (`--mmproj`) and the user says so
 /// (LLAMACPP_VISION=1): screen asks can then stay on this machine.
+/// Longest prompt held to [`InferenceFabric::first_words_timeout`]: a long
+/// one (a screen's text, a big selection) takes a free model longer to start
+/// than a typed question, so it gets the whole per-attempt deadline.
+const FIRST_WORDS_MAX_PROMPT_CHARS: usize = 4_000;
+
+/// Whether a provider that says nothing for the first-words deadline is
+/// dropped for the next: a short text prompt, not a screenshot.
+fn held_to_first_words(prompt: &str) -> bool {
+    parse_screen_capture(prompt).is_none() && prompt.chars().count() <= FIRST_WORDS_MAX_PROMPT_CHARS
+}
+
 /// The local model's rank when it backs up cloud: after a user's keys (800 ms),
 /// Zen (3000), the OpenCode CLI (3200) and Kilo (3500); before OVHcloud and
 /// connected accounts (4000).
@@ -4352,7 +4364,7 @@ impl InferenceFabric {
             let first_words = self.first_words_timeout.filter(|_| {
                 index + 1 < count
                     && provider.min_request_timeout().is_none()
-                    && parse_screen_capture(&prompt).is_none()
+                    && held_to_first_words(&prompt)
             });
             let began = std::time::Instant::now();
             // When its first words came (`friday usage`).
@@ -6600,6 +6612,20 @@ mod tests {
         let out =
             run_streaming_attempt(Some(ms(150)), None, &stalls, "m", "p", &|_: &str| {}).await;
         assert!(out.unwrap_err().contains("timed out"));
+    }
+
+    /// A screen's text or a big selection isn't dropped after the first-words
+    /// deadline: free models take longer to start on it (VM pass 2026-11-26:
+    /// every screen ask lost its only free model at 8 s).
+    #[test]
+    fn only_a_short_text_prompt_is_held_to_the_first_words_deadline() {
+        assert!(held_to_first_words("What does a VPN do?"));
+        assert!(held_to_first_words(
+            &"x".repeat(FIRST_WORDS_MAX_PROMPT_CHARS)
+        ));
+        assert!(!held_to_first_words(
+            &"x".repeat(FIRST_WORDS_MAX_PROMPT_CHARS + 1)
+        ));
     }
 
     #[tokio::test]
