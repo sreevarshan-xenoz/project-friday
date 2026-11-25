@@ -92,19 +92,27 @@ pub fn plain_model_error(raw: &str) -> String {
 
 /// Say why a screen ask gave no answer.
 pub fn plain_screen_error(e: &ContextReadError) -> String {
+    // What still works when the screen can't be used: select the text and
+    // ask about the selection, which never needs a screenshot.
+    let select = if cfg!(windows) {
+        "Select the text you mean and press Win+Alt+Y to ask about it."
+    } else {
+        "Select the text you mean and press Super+Alt+Y to ask about it."
+    };
     match e {
         ContextReadError::Capture(m) => {
             let m = m.to_ascii_lowercase();
             if m.contains("no such file") || m.contains("not found") || m.contains("cannot find") {
-                "Couldn't take a screenshot: the screenshot tool isn't installed \
-                 (grim on Linux; on Windows, reinstall FRIDAY)."
-                    .to_string()
+                format!(
+                    "Couldn't take a screenshot: the screenshot tool isn't installed \
+                     (grim on Linux; on Windows, reinstall FRIDAY). {select}"
+                )
             } else {
-                "Couldn't take a screenshot. Nothing was sent.".to_string()
+                format!("Couldn't take a screenshot. Nothing was sent. {select}")
             }
         }
         ContextReadError::NotAuthorized { .. } => {
-            "The screenshot needs your go-ahead each time; nothing was sent.".to_string()
+            format!("The screenshot needs your go-ahead each time; nothing was sent. {select}")
         }
         ContextReadError::EgressBlocked { reason } if reason.contains("key or password") => {
             "The screen shows what looks like a key or password, so no picture of it was sent. \
@@ -112,13 +120,13 @@ pub fn plain_screen_error(e: &ContextReadError) -> String {
                 .to_string()
         }
         ContextReadError::EgressBlocked { .. } => {
-            "The screenshot looked like it held a secret, so it wasn't sent.".to_string()
+            format!("The screenshot looked like it held a secret, so it wasn't sent. {select}")
         }
-        ContextReadError::InvalidPayload(_) => "Couldn't read the screenshot.".to_string(),
+        ContextReadError::InvalidPayload(_) => format!("Couldn't read the screenshot. {select}"),
         ContextReadError::Provider(raw) => plain_model_error(raw),
         ContextReadError::PrivateWindow => {
             "That's a private window, so FRIDAY doesn't read it or take a screenshot. \
-             Nothing was sent."
+             Nothing was sent. Questions that don't need the screen still work."
                 .to_string()
         }
     }
@@ -180,10 +188,25 @@ mod tests {
         );
         assert!(plain_screen_error(&missing).contains("screenshot tool isn't installed"));
         let failed = ContextReadError::Capture("grim exited 1: no outputs".into());
-        assert_eq!(
-            plain_screen_error(&failed),
-            "Couldn't take a screenshot. Nothing was sent."
-        );
+        assert!(plain_screen_error(&failed)
+            .starts_with("Couldn't take a screenshot. Nothing was sent."));
+        // Each one says what still works.
+        for e in [
+            failed,
+            missing,
+            ContextReadError::NotAuthorized {
+                reason: "no".into(),
+                disclosure: None,
+            },
+            ContextReadError::EgressBlocked {
+                reason: "secret".into(),
+            },
+            ContextReadError::InvalidPayload("x".into()),
+        ] {
+            let plain = plain_screen_error(&e);
+            assert!(plain.contains("Select the text you mean"), "{plain}");
+        }
+        assert!(plain_screen_error(&ContextReadError::PrivateWindow).contains("still work"));
         let provider = ContextReadError::Provider("request timed out: no answer for 15s".into());
         assert!(plain_screen_error(&provider).contains("didn't answer in time"));
     }
