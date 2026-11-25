@@ -6972,7 +6972,9 @@ $offer"
         shell_window_look
         echo "FRIDAY Shell $key: $1" ;;
       close)   exec quickshell -p "$dir" ipc call shell close ;;
-      ipc)     shift; exec quickshell -p "$dir" ipc call "$@" ;;
+      # "--" first: a value like --screen (the answer card's mode) is an
+      # argument, not one of quickshell's options.
+      ipc)     shift; exec quickshell -p "$dir" ipc call -- "$@" ;;
       friday|control|calendar|launcher|session)
                exec quickshell -p "$dir" ipc call shell toggle "$1" ;;
       *) echo "Usage: friday shell [start|restart|stop|close|friday|control|calendar|launcher|session|style [name]|palette [name]|ipc <target> <fn> [args]]" >&2; exit 1 ;;
