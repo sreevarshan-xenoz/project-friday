@@ -2080,6 +2080,23 @@ bash "$F" voice preview off >/dev/null
 if pgrep -f "$S/pw-record" >/dev/null; then fail "the recorder kept running after the release"; else pass "the recorder stops on release"; fi
 : >"$LOG"; bash "$F" hold start; sleep 0.9; WHISPER_SILENT=1 bash "$F" hold end; sleep 0.3
 contains "hold with no words: says so" "$(cat "$LOG")" "I didn't catch that"
+# The speech detector hears no voice: whisper never starts.
+printf '#!/bin/bash\necho "whisper-cli ran" >>"%s"\necho " what time is it in Tokyo"\n' "$LOG" >"$S/whisper-cli"
+printf '#!/bin/bash\necho "vad $*" >>"%s"\necho "Detected ${VAD_N:-0} speech segments:"\n' "$LOG" >"$S/whisper-vad-speech-segments"
+chmod +x "$S/whisper-cli" "$S/whisper-vad-speech-segments"
+head -c 100 /dev/zero >"$HOME/.local/share/friday/whisper/ggml-silero-v5.1.2.bin"
+: >"$LOG"; bash "$F" hold start; sleep 0.9; bash "$F" hold end; sleep 0.3
+contains "no voice in it: the speech detector looked" "$(cat "$LOG")" "vad -np -vm"
+if grep -q "whisper-cli ran" "$LOG"; then fail "whisper ran with no voice heard"; else pass "and whisper didn't run"; fi
+contains "and it says so" "$(cat "$LOG")" "I didn't catch that"
+: >"$LOG"; bash "$F" hold start; sleep 0.9; VAD_N=2 bash "$F" hold end; sleep 0.3
+contains "a voice heard: whisper runs and it's asked" "$(cat "$LOG")" "what time is it in Tokyo"
+bash "$F" feature voice-vad off >/dev/null
+: >"$LOG"; bash "$F" hold start; sleep 0.9; bash "$F" hold end; sleep 0.3
+if grep -q "^vad " "$LOG"; then fail "the detector ran with voice-vad off"; else pass "voice-vad off: no detector"; fi
+bash "$F" feature voice-vad on >/dev/null
+rm -f "$S/whisper-vad-speech-segments" "$HOME/.local/share/friday/whisper/ggml-silero-v5.1.2.bin"
+printf '#!/bin/bash\n[ -n "$WHISPER_SILENT" ] && exit 0\necho " what time is it in Tokyo"\n' >"$S/whisper-cli"
 # (The tap just above is followed at once by more key presses: its half-second timer must not start a recording for them.)
 # Voice typing (hold Super+Shift+Y): the same recording, but the words are typed where you are, not asked.
 printf '#!/bin/bash\necho "wtype $*" >>"%s"\n' "$LOG" >"$S/wtype"; chmod +x "$S/wtype"

@@ -329,7 +329,7 @@ friday_health() {
   echo "FRIDAY's parts"
   if friday_voice_ready; then printf '  %b Voice in: hold Super+Y and speak (on this computer)\n' "$on"
   else printf '  %b Voice in: not set up (friday voice setup)\n' "$off"; fi
-  sw dictation-cleanup voice-followup dictation-latch voice-preview
+  sw dictation-cleanup voice-followup dictation-latch voice-preview voice-vad
   if friday_speak_ready && [ -e "$(friday_speak_flag)" ]; then printf '  %b Spoken answers: on\n' "$on"
   elif friday_speak_ready; then printf '  %b Spoken answers: installed, off (friday voice speak on)\n' "$off"
   else printf '  %b Spoken answers: not installed (friday voice speak setup)\n' "$off"; fi
@@ -2515,6 +2515,17 @@ friday_local_command() {
 # Super+Y's press and release: a tap opens the prompt as before.
 friday_voice_model() { echo "${XDG_DATA_HOME:-$HOME/.local/share}/friday/whisper/ggml-base.en.bin"; }
 friday_whisper() { command -v whisper-cli 2>/dev/null || command -v whisper-cpp 2>/dev/null; }
+# friday_voice_silent <wav>: true only when whisper.cpp's speech detector
+# (Silero, beside the model; `friday voice setup` fetches it) ran and heard
+# no voice, so whisper isn't started for a held key with nothing said.
+friday_voice_vad() { echo "$(dirname "$(friday_voice_model)")/ggml-silero-v5.1.2.bin"; }
+friday_voice_silent() {
+  local vad tool
+  friday_feature_on voice-vad || return 1
+  vad=$(friday_voice_vad); tool=$(command -v whisper-vad-speech-segments 2>/dev/null) || return 1
+  [ -s "$vad" ] || return 1
+  timeout 10 "$tool" -np -vm "$vad" -f "$1" 2>/dev/null | grep -qx 'Detected 0 speech segments:'
+}
 friday_voice_ready() { [ -s "$(friday_voice_model)" ] && [ -n "$(friday_whisper)" ] && command -v pw-record >/dev/null 2>&1; }
 
 # Talk-over: PipeWire's echo cancellation gives FRIDAY its own speaker and
@@ -2595,6 +2606,15 @@ friday_voice() {
           https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin || { rm -f "$model.part"; return 1; }
         [ "$(stat -c %s "$model.part")" -gt 50000000 ] || { rm -f "$model.part"; echo "friday: the model download looks wrong" >&2; return 1; }
         mv "$model.part" "$model"
+      fi
+      # The speech detector (0.9 MB): no whisper run for a piece with no voice.
+      local vad; vad=$(friday_voice_vad)
+      if [ ! -s "$vad" ]; then
+        curl -fsSL -o "$vad.part" \
+          https://huggingface.co/ggml-org/whisper-vad/resolve/9ffd54a1e1ee413ddf265af9913beaf518d1639b/ggml-silero-v5.1.2.bin \
+          && echo "29940d98d42b91fbd05ce489f3ecf7c72f0a42f027e4875919a28fb4c04ea2cf  $vad.part" | sha256sum -c --quiet - 2>/dev/null \
+          && mv "$vad.part" "$vad" \
+          || { rm -f "$vad.part"; echo "(The speech detector didn't download; voice works without it.)"; }
       fi
       echo "Voice is on. Hold Super+Y and speak."
       ;;
@@ -2798,7 +2818,8 @@ friday_hold() {
         kill -TERM "$(cat "$d/rec.pid" 2>/dev/null)" 2>/dev/null || true
         for i in $(seq 20); do kill -0 "$(cat "$d/rec.pid" 2>/dev/null)" 2>/dev/null || break; sleep 0.05; done
         rm -f "$d/recording" "$d/rec.pid"
-        text=$("$(friday_whisper)" -m "$(friday_voice_model)" -f "$d/rec.wav" -nt -np 2>/dev/null \
+        text=""
+        friday_voice_silent "$d/rec.wav" || text=$("$(friday_whisper)" -m "$(friday_voice_model)" -f "$d/rec.wav" -nt -np 2>/dev/null \
           | tr '\n' ' ' | sed -e 's/\[[^]]*\]//g' -e 's/  */ /g' -e 's/^ //' -e 's/ $//')
         rm -f "$d/rec.wav"
         if [ -z "${text//[[:space:]]/}" ]; then
@@ -4422,6 +4443,7 @@ friday_local_ai_bench() {
 # are listed, one a line, in features-off in FRIDAY's config folder.
 FRIDAY_FEATURES="whats-new|After an update, one card says what changed and which switches are new
 panic-key|Super+Ctrl+Shift+Escape stops agents, voice, capture and routines at once (friday panic)
+voice-vad|A small speech detector checks a piece has a voice in it before whisper runs
 instant-answers|Arithmetic and unit conversions worked out here at once
 motion|FRIDAY Shell's animations: the answer card, drawers and the pulsing orb (off: everything changes at once)
 app-bundles|The first-login tour offers app bundles (developer, gaming, productivity, creative) to install in one go
