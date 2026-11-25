@@ -281,6 +281,19 @@ jobs:
           pattern: release-*
           path: dist
           merge-multiple: true
+      # A software bill of materials: every crate and package FRIDAY is built
+      # from (Cargo.lock, the .NET projects), as SPDX, made by syft from the
+      # tagged source and covered by the signed checksums below.
+      - uses: actions/checkout@v4
+        with:
+          path: full
+      - uses: anchore/sbom-action@v0
+        with:
+          path: full
+          format: spdx-json
+          output-file: dist/friday-${{ needs.version.outputs.version }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
       - name: Checksums
         working-directory: dist
         run: sha256sum * | tee SHA256SUMS
@@ -320,12 +333,12 @@ jobs:
             echo "### FRIDAY ${{ needs.version.outputs.version }} (${{ needs.version.outputs.publish == 'true' && 'published' || 'dry run, not published' }})"
             echo; echo '```'; ls -l; echo; cat SHA256SUMS; echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
-          for f in friday-git-*.pkg.tar.zst FRIDAY-*.msi winget-manifests-*.zip friday-os-*.iso SHA256SUMS SHA256SUMS.sig; do
+          for f in friday-git-*.pkg.tar.zst FRIDAY-*.msi winget-manifests-*.zip friday-os-*.iso friday-*.spdx.json SHA256SUMS SHA256SUMS.sig; do
             compgen -G "$f" >/dev/null || { echo "::error::the release is missing $f"; exit 1; }
           done
           for f in *; do
             case "$f" in
-              friday-git-*.pkg.tar.zst|FRIDAY-*.msi|winget-manifests-*.zip|friday-os-*.iso|SHA256SUMS|SHA256SUMS.sig) ;;
+              friday-git-*.pkg.tar.zst|FRIDAY-*.msi|winget-manifests-*.zip|friday-os-*.iso|friday-*.spdx.json|SHA256SUMS|SHA256SUMS.sig) ;;
               *) echo "::error::unexpected file in the release: $f"; exit 1 ;;
             esac
           done
@@ -342,6 +355,7 @@ jobs:
             --repo "${{ github.repository }}" \
             --title "FRIDAY ${{ needs.version.outputs.tag }}" \
             ${{ needs.version.outputs.prerelease == 'true' && '--prerelease' || '' }} \
+            --notes "Check a download before you install it: https://github.com/${{ github.repository }}/blob/${{ needs.version.outputs.tag }}/docs/VERIFY.md" \
             --generate-notes
       # A fixed tag, so installed systems have one URL to update from (a
       # pre-release is never "latest", so releases/latest wouldn't do). The
