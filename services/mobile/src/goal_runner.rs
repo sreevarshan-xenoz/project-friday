@@ -3335,13 +3335,16 @@ const ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 fn stands_without_the_model(result: Option<&GoalResult>) -> bool {
     match result {
         None => false,
-        Some(r) => {
-            let text = r.text.trim();
-            let lookup = r.tool.as_deref() == Some("memory")
-                && (text == "no memory matches yet" || text.starts_with("recalled "));
-            r.success && !text.is_empty() && !lookup
-        }
+        Some(r) => r.success && !r.text.trim().is_empty() && !is_memory_lookup(r),
     }
+}
+
+/// A memory recall's own result (empty, or the entries it found): context
+/// gathered for the model, not output the person asked to see.
+fn is_memory_lookup(r: &GoalResult) -> bool {
+    let text = r.text.trim();
+    r.tool.as_deref() == Some("memory")
+        && (text == "no memory matches yet" || text.starts_with("recalled "))
 }
 
 /// Whether nothing was looked at for this request: no tool ran (an empty
@@ -3615,6 +3618,8 @@ async fn compose_answer(
         .result
         .as_ref()
         .filter(|r| r.text.chars().count() > ANSWER_SOURCE_CHARS)
+        // Recalled memory is context, not an output to point at.
+        .filter(|r| !is_memory_lookup(r))
         .filter(|_| crate::features::on("big-output-file"))
     {
         if let Some(path) = save_whole_output(&outputs_dir(), goal_id, &r.text) {
