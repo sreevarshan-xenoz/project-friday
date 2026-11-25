@@ -13,7 +13,7 @@ public sealed record AgentFolders(IReadOnlyDictionary<string, string> Last, IRea
     /// <summary>Most folders offered when the chip is clicked.</summary>
     public const int MaxKnown = 6;
 
-    private static readonly Regex AgentName = new(@"\b(opencode|agy|antigravity|claude[ -]code)\b",
+    private static readonly Regex AgentName = new(@"\b(opencode|agy|antigravity|claude[ -]code|codex)\b",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // ~/x, C:\x, \\server\x, /x, or code/site (the daemon reads that from the
@@ -60,6 +60,7 @@ public sealed record AgentFolders(IReadOnlyDictionary<string, string> Last, IRea
         {
             "agy" or "antigravity" => "agy",
             "claude code" or "claude-code" => "claude",
+            "codex" => "codex",
             _ => "opencode",
         };
     }
@@ -71,7 +72,7 @@ public sealed record AgentFolders(IReadOnlyDictionary<string, string> Last, IRea
     {
         if (NamedAgent(text) is not { } agent || NamesFolder(text))
             return null;
-        var name = agent == "claude" ? "Claude Code" : agent;
+        var name = agent switch { "claude" => "Claude Code", "codex" => "Codex", _ => agent };
         return Last.TryGetValue(agent, out var folder)
             ? $"{name} works in {Tilde(folder)}"
             : $"Say which folder {name} works in, like ~{Path.DirectorySeparatorChar}code{Path.DirectorySeparatorChar}site";
