@@ -4665,7 +4665,7 @@ friday_free_tiers() {
     on|off) ;;
     *) echo "Usage: friday free-tiers [list | on <id> | off <id>]" >&2; return 1 ;;
   esac
-  [[ " $ids " == *" $id "* ]] || { echo "friday: choose one of: $ids" >&2; return 1; }
+  [[ -n "$id" && "$id" != *[[:space:]]* && " $ids " == *" $id "* ]] || { echo "friday: choose one of: $ids" >&2; return 1; }
   if [ "$sub" = on ]; then
     var=$(tr 'a-z-' 'A-Z_' <<<"$id")_API_KEY
     if ! grep -qE "^${var}=[^[:space:]]" "$env_file" 2>/dev/null; then
@@ -6472,7 +6472,7 @@ $offer"
       [ "${FRIDAY_STANDING:-}" = 1 ] && ctl_args+=(--scheduled)
       [ -z "$another" ] || ctl_args+=(--thorough --avoid "$another")
       # Typed, with nothing added here: a public free tier may answer (LAI-6).
-      if [ "$request" = "$goal" ] && [ -z "${FRIDAY_SPOKEN:-}" ] && [ "${FRIDAY_STANDING:-}" != 1 ] \
+      if [ "$request" = "$goal" ] && ! $use_web && [ -z "${FRIDAY_SPOKEN:-}" ] && [ "${FRIDAY_STANDING:-}" != 1 ] \
           && ! $use_followup && ! $use_selection && [ -z "${context:-}" ] && [ -z "${tab:-}" ]; then
         ctl_args+=(--typed)
       fi

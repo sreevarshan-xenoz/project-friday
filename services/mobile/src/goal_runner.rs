@@ -2800,9 +2800,6 @@ impl GoalRunner {
             recalled.insert(0, about);
         }
         let composed = compose_goal_with_context(&goal, &prior, &recalled);
-        if may_use_public_tiers(&opts, &goal, &composed, masked_count) {
-            friday_intelligence::open_public_tier_gate();
-        }
         let goal_start = std::time::Instant::now();
         crate::timings::start(&id);
 
@@ -2998,6 +2995,15 @@ impl GoalRunner {
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 };
+                // A public free tier may write this answer only when the
+                // answer prompt is the bare typed question: no tool output,
+                // evidence or web results were added to it (LAI-6 guard).
+                if may_use_public_tiers(&opts, &goal, &composed, masked_count)
+                    && answer_prompt(&composed, &report, web_response.as_ref())
+                        == answer_prompt(&composed, &ExecutiveReport::default(), None)
+                {
+                    friday_intelligence::open_public_tier_gate();
+                }
                 let composing = compose_answer(
                     answerer.as_ref(),
                     &composed,
@@ -4024,6 +4030,17 @@ mod tests {
             assert!(!may_use_public_tiers(&typed, &g, &g, 0), "{added}");
         }
         assert!(AskOptions::from_payload(&json!({ "typed": true })).typed);
+        // At the answer step the gate also needs a bare prompt: a tool's
+        // output (git status, a file listing) makes it differ, so it stays shut.
+        let bare = answer_prompt(q, &ExecutiveReport::default(), None);
+        let ran = ExecutiveReport {
+            result: Some(
+                GoalResult::from_tool_result(&ToolResult::success("M secret-plan.md"))
+                    .with_tool("terminal"),
+            ),
+            ..Default::default()
+        };
+        assert_ne!(answer_prompt(q, &ran, None), bare);
     }
 
     /// Streams its reply in words, with pauses longer than the progress

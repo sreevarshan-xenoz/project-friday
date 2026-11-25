@@ -586,6 +586,9 @@ contains "a plain typed question is marked typed" "$(cat "$LOG")" "friday-ctl-ty
 if grep -q "friday-ctl-typed" "$LOG"; then fail "a standing task was marked typed"; else pass "a standing task is not marked typed"; fi
 refuse "a free tier needs its key first" bash "$F" free-tiers on groq --yes
 refuse "an unknown free tier is refused" bash "$F" free-tiers on nosuch --yes
+refuse "off with no name is refused" bash "$F" free-tiers off
+refuse "two names at once are refused" bash "$F" free-tiers off "groq cerebras"
+[ ! -s "$HOME/.config/friday/public-providers" ] && pass "and nothing was written" || fail "a refused name was written: $(cat "$HOME/.config/friday/public-providers")"
 echo "GROQ_API_KEY=placeholder-key" >>"$HOME/.config/friday/friday.env"
 out=$(bash "$F" free-tiers on groq --yes 2>&1)
 contains "turning one on shows the red warning" "$out" "treat it as public"
