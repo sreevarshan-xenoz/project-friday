@@ -383,6 +383,12 @@ fn transcribe_as(whisper: &Path, model: &Path, samples: &[i16], tidy: bool) -> O
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
     std::io::Write::write_all(&mut opts.open(&file).ok()?, &wav_bytes(samples)).ok()?;
+    // A loud piece with no voice in it (music, typing, a fan) never reaches
+    // the model: the small speech detector looks first (`voice-vad`).
+    if crate::features::on("voice-vad") && speech_in(whisper, model, &file) == Some(false) {
+        let _ = std::fs::remove_file(&file);
+        return None;
+    }
     #[cfg(unix)]
     let mut cmd = {
         let mut c = std::process::Command::new("timeout");
@@ -418,6 +424,51 @@ fn transcribe_as(whisper: &Path, model: &Path, samples: &[i16], tidy: bool) -> O
         text = dict.apply(&drop_fillers(&text));
     }
     (!text.is_empty()).then_some(text)
+}
+
+/// Whether whisper.cpp's speech detector (Silero, beside the model) hears a
+/// voice in `wav`: Some(false) only when it ran and found none. Anything
+/// missing or going wrong is None, and the piece goes to whisper as before.
+fn speech_in(whisper: &Path, model: &Path, wav: &Path) -> Option<bool> {
+    let vad = model.with_file_name(VAD_MODEL.0);
+    let name = if cfg!(windows) {
+        "whisper-vad-speech-segments.exe"
+    } else {
+        "whisper-vad-speech-segments"
+    };
+    let tool = whisper.with_file_name(name);
+    if !vad.is_file() || !tool.is_file() {
+        return None;
+    }
+    #[cfg(unix)]
+    let mut cmd = {
+        let mut c = std::process::Command::new("timeout");
+        c.arg("10").arg(&tool);
+        c
+    };
+    #[cfg(windows)]
+    let mut cmd = {
+        let mut c = std::process::Command::new(&tool);
+        std::os::windows::process::CommandExt::creation_flags(&mut c, 0x0800_0000);
+        c
+    };
+    cmd.arg("-np").arg("-vm").arg(&vad).arg("-f").arg(wav);
+    let out = with_timeout(cmd.stderr(std::process::Stdio::null())).ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    speech_segments(&String::from_utf8_lossy(&out.stdout)).map(|n| n > 0)
+}
+
+/// The count in the speech detector's "Detected N speech segments:" line.
+pub fn speech_segments(out: &str) -> Option<usize> {
+    out.lines().find_map(|l| {
+        l.trim()
+            .strip_prefix("Detected ")?
+            .strip_suffix(" speech segments:")?
+            .parse()
+            .ok()
+    })
 }
 
 /// Runs whisper.cpp and returns what it printed; `timeout 60` already bounds
@@ -501,6 +552,14 @@ pub const MODEL: (&str, &str, &str) = (
     "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002",
 );
 
+/// whisper.cpp's speech detector, Silero VAD v5.1.2 in ggml form (MIT,
+/// ggml-org/whisper-vad on Hugging Face, 0.9 MB), pinned at one revision.
+pub const VAD_MODEL: (&str, &str, &str) = (
+    "ggml-silero-v5.1.2.bin",
+    "https://huggingface.co/ggml-org/whisper-vad/resolve/9ffd54a1e1ee413ddf265af9913beaf518d1639b/ggml-silero-v5.1.2.bin",
+    "29940d98d42b91fbd05ce489f3ecf7c72f0a42f027e4875919a28fb4c04ea2cf",
+);
+
 /// whisper.cpp's own Windows build (MIT), pinned by the sha256 GitHub publishes.
 pub const WHISPER_WIN: (&str, &str, &str) = (
     "whisper-bin-x64.zip",
@@ -529,11 +588,13 @@ pub fn setup(dir: &std::path::Path) -> Result<(), String> {
             return Err("couldn't unpack whisper.cpp".into());
         }
     }
-    let model = dir.join(MODEL.0);
-    if !model.is_file() {
-        let part = dir.join(format!("{}.part", MODEL.0));
-        crate::speech::download(MODEL.1, &part, MODEL.2)?;
-        std::fs::rename(&part, &model).map_err(|e| e.to_string())?;
+    for (name, url, sha) in [MODEL, VAD_MODEL] {
+        let file = dir.join(name);
+        if !file.is_file() {
+            let part = dir.join(format!("{name}.part"));
+            crate::speech::download(url, &part, sha)?;
+            std::fs::rename(&part, &file).map_err(|e| e.to_string())?;
+        }
     }
     Ok(())
 }
@@ -1434,12 +1495,73 @@ HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessMana
 
     #[test]
     fn the_downloads_are_pinned_by_full_digests() {
-        for (_, url, sha) in [MODEL, WHISPER_WIN] {
+        for (_, url, sha) in [MODEL, WHISPER_WIN, VAD_MODEL] {
             assert!(url.starts_with("https://"));
             assert_eq!(sha.len(), 64);
             assert!(sha.chars().all(|c| c.is_ascii_hexdigit()));
         }
         // The model at a fixed revision, not whatever "main" is today.
         assert!(!MODEL.1.contains("/main/"));
+        assert!(!VAD_MODEL.1.contains("/main/"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_piece_with_no_voice_never_reaches_whisper() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("friday-vad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = |name: &str, body: &str| {
+            let p = dir.join(name);
+            std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            p
+        };
+        let ran = dir.join("whisper-ran");
+        let whisper = script(
+            "whisper-cli",
+            &format!("touch {}; echo hello there", ran.display()),
+        );
+        let model = dir.join("ggml-base.en.bin");
+        std::fs::write(&model, b"m").unwrap();
+        let piece = vec![1000i16; FRAME * 5];
+        // No detector beside it: whisper as before.
+        assert_eq!(
+            transcribe_as(&whisper, &model, &piece, false).as_deref(),
+            Some("hello there")
+        );
+        std::fs::write(dir.join(VAD_MODEL.0), b"v").unwrap();
+        script(
+            "whisper-vad-speech-segments",
+            "echo 'Detected 0 speech segments:'",
+        );
+        let _ = std::fs::remove_file(&ran);
+        assert_eq!(transcribe_as(&whisper, &model, &piece, false), None);
+        assert!(!ran.exists(), "whisper ran on a piece with no voice");
+        script(
+            "whisper-vad-speech-segments",
+            "echo 'Detected 1 speech segments:'",
+        );
+        assert_eq!(
+            transcribe_as(&whisper, &model, &piece, false).as_deref(),
+            Some("hello there")
+        );
+        // A detector that fails doesn't drop what was said.
+        script("whisper-vad-speech-segments", "exit 1");
+        assert_eq!(
+            transcribe_as(&whisper, &model, &piece, false).as_deref(),
+            Some("hello there")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_speech_detector_s_count_is_read() {
+        let found = "\nDetected 2 speech segments:\nSpeech segment 0: start = 0.10, end = 1.20\n";
+        assert_eq!(speech_segments(found), Some(2));
+        assert_eq!(speech_segments("Detected 0 speech segments:\n"), Some(0));
+        // Anything else is not a "no": the piece goes to whisper as before.
+        assert_eq!(speech_segments("error: failed to detect speech"), None);
+        assert_eq!(speech_segments(""), None);
     }
 }

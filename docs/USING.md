@@ -127,6 +127,12 @@ or meeting app (Zoom, Teams, Slack, Discord, a browser and the like) is using th
 rests, with a notification when it pauses and when it listens again. `friday feature call-pause off`
 (Windows: Settings → Features) keeps it listening during calls.
 
+Before whisper turns a piece of sound into words, a small speech detector (Silero VAD in whisper.cpp, 0.9 MB,
+downloaded by `friday voice setup` and on Windows with the rest of voice) checks there's a voice in it. Music, typing
+or a fan loud enough to start a piece then never reaches the model, so "Hey Friday" and captions cost less while
+nobody speaks, and holding the talk key without saying anything doesn't start whisper. If the detector is missing
+or fails, the piece goes to whisper as before. `friday feature voice-vad off` turns it off.
+
 To stop FRIDAY talking, press the talk key or close the answer (Esc). On Linux, `friday voice talk-over on` lets you simply talk over a spoken answer: PipeWire's echo cancellation gives FRIDAY its own microphone and speaker (your default devices stay as they are), so it hears you and not itself; it stops and asks what you said. `friday voice talk-over off` removes it.
 
 Asking something new while an answer is still on its way replaces it: the newest question wins (on Windows the old one is stopped; on Linux its answer is still kept in `friday answers`, just not shown or read out).
